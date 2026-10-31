@@ -275,6 +275,27 @@ std::string encounter_body(const SocialEncounter& e){
         std::to_string(e.slot)+"|"+std::to_string(e.prior_id)+"|"+
         std::to_string(e.ordinal);
 }
+SocialInteractionEvent read_interaction(sqlite3_stmt* q) {
+    SocialInteractionEvent e;
+    const auto id=sqlite3_column_int64(q,0),encounter=sqlite3_column_int64(q,1),
+        prior=sqlite3_column_int64(q,7),gen=sqlite3_column_int64(q,8),tick=sqlite3_column_int64(q,9);
+    if(id<=0||encounter<=0||prior<0||gen<=0||tick<0)
+        throw std::runtime_error("SQLite: invalid social interaction row");
+    e.id=id;e.encounter_id=encounter;
+    e.observer_npc=parse_u64(sqlite3_column_text(q,2));
+    e.actor_npc=parse_u64(sqlite3_column_text(q,3));
+    e.kind=static_cast<SocialInteractionKind>(sqlite3_column_int(q,4));
+    e.delta=sqlite3_column_int(q,5);e.rapport=sqlite3_column_int(q,6);
+    e.prior_id=prior;e.generation=gen;e.tick=tick;
+    return e;
+}
+std::string interaction_body(const SocialInteractionEvent& e){
+    return std::to_string(e.id)+"|"+std::to_string(e.encounter_id)+"|"+
+        std::to_string(e.observer_npc)+"|"+std::to_string(e.actor_npc)+"|"+
+        std::to_string(static_cast<int>(e.kind))+"|"+std::to_string(e.delta)+"|"+
+        std::to_string(e.rapport)+"|"+std::to_string(e.prior_id)+"|"+
+        std::to_string(e.generation)+"|"+std::to_string(e.tick);
+}
 struct EncounterCycle {
     std::uint64_t id=0,generation=0,tick=0,population=0,pairs=0,start=0,
                   scanned=0,end=0,contacts=0;
@@ -367,7 +388,7 @@ public:
         Statement version(db_, "PRAGMA user_version");
         if (!version.row()) throw std::runtime_error("SQLite: no schema version");
         const int v = sqlite3_column_int(version.get(), 0);
-        if (v < 0 || v > 11) throw std::runtime_error("SQLite: incompatible schema version");
+        if (v < 0 || v > 12) throw std::runtime_error("SQLite: incompatible schema version");
         if (v == 0) {
             run(db_, "BEGIN IMMEDIATE");
             try {
@@ -638,6 +659,34 @@ public:
                         " BEGIN SELECT RAISE(ABORT,'encounter history immutable'); END").c_str());
                 }
                 run(db_,"PRAGMA user_version=11");run(db_,"COMMIT");
+            }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
+        }
+        if (v <= 11) {
+            // GRSM-03c.3: no fabricated historical cooperation/conflict on
+            // migration from older worlds or their empty encounter logs.
+            run(db_,"BEGIN IMMEDIATE");
+            try {
+                run(db_,"CREATE TABLE interaction_meta(singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
+                    "event_count INTEGER NOT NULL CHECK(event_count>=0),tip TEXT NOT NULL)");
+                run(db_,"INSERT INTO interaction_meta VALUES(1,0,'origin')");
+                run(db_,"CREATE TABLE social_interactions(id INTEGER PRIMARY KEY,"
+                    "encounter_id INTEGER NOT NULL REFERENCES social_encounters(id),"
+                    "observer TEXT NOT NULL,actor TEXT NOT NULL,"
+                    "kind INTEGER NOT NULL CHECK(kind BETWEEN 1 AND 2),"
+                    "delta INTEGER NOT NULL CHECK(delta IN (8,-12)),"
+                    "rapport INTEGER NOT NULL CHECK(rapport BETWEEN -100 AND 100),"
+                    "prior_id INTEGER NOT NULL CHECK(prior_id>=0),"
+                    "generation INTEGER NOT NULL CHECK(generation>0),tick INTEGER NOT NULL CHECK(tick>=0),"
+                    "digest TEXT NOT NULL)");
+                run(db_,"CREATE UNIQUE INDEX social_interaction_once ON "
+                    "social_interactions(encounter_id,observer,actor)");
+                run(db_,"CREATE INDEX social_interaction_pair ON "
+                    "social_interactions(observer,actor,id)");
+                run(db_,"CREATE TRIGGER social_interactions_no_update BEFORE UPDATE ON social_interactions "
+                    "BEGIN SELECT RAISE(ABORT,'interaction history immutable'); END");
+                run(db_,"CREATE TRIGGER social_interactions_no_delete BEFORE DELETE ON social_interactions "
+                    "BEGIN SELECT RAISE(ABORT,'interaction history immutable'); END");
+                run(db_,"PRAGMA user_version=12");run(db_,"COMMIT");
             }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
         }
         } catch (...) { sqlite3_close_v2(db_); db_ = nullptr; throw; }
@@ -1719,6 +1768,54 @@ public:
                scan_tip!=scan_tip_meta||contact_tip!=contact_tip_meta)
                 throw std::runtime_error("SQLite: missing encounter cycle/contact or invalid cursor");
         }
+        // GRSM-03c.3: replay directed rapport as a *separate dimension* from
+        // testimony credibility. Every change must be anchored in a real,
+        // same-tick encountered pair. A proximity receipt alone changes nothing.
+        {
+            Statement meta(db_,"SELECT event_count,tip FROM interaction_meta WHERE singleton=1");
+            if(!meta.row())throw std::runtime_error("SQLite: missing interaction metadata");
+            const auto expected=sqlite3_column_int64(meta.get(),0);
+            const auto expected_tip=sqlite_str(meta.get(),1);
+            if(expected<0||meta.row())throw std::runtime_error("SQLite: invalid interaction metadata");
+            std::uint64_t count=0;std::string tip="origin";
+            std::map<std::pair<std::uint64_t,std::uint64_t>,SocialInteractionEvent> last;
+            std::set<std::pair<std::uint64_t,std::uint64_t>> used;
+            Statement events(db_,"SELECT id,encounter_id,observer,actor,kind,delta,rapport,"
+                "prior_id,generation,tick,digest FROM social_interactions ORDER BY id");
+            while(events.row()){
+                const auto e=read_interaction(events.get());
+                if(e.id!=++count||e.observer_npc==0||e.actor_npc==0||
+                   e.observer_npc==e.actor_npc||e.generation>generation||
+                   e.tick>restored.tick()||
+                   (e.kind!=SocialInteractionKind::Assistance&&e.kind!=SocialInteractionKind::Harm)||
+                   e.delta!=(e.kind==SocialInteractionKind::Assistance?8:-12)||
+                   !used.emplace(e.encounter_id,e.observer_npc).second)
+                    throw std::runtime_error("SQLite: invalid social reaction provenance");
+                Statement contact(db_,"SELECT npc_low,npc_high,generation,tick "
+                    "FROM social_encounters WHERE id=?");
+                contact.i64(1,static_cast<sqlite3_int64>(e.encounter_id));
+                if(!contact.row())throw std::runtime_error("SQLite: reaction lacks encounter evidence");
+                const auto low=parse_u64(sqlite3_column_text(contact.get(),0)),
+                    high=parse_u64(sqlite3_column_text(contact.get(),1));
+                if(std::min(e.observer_npc,e.actor_npc)!=low||
+                   std::max(e.observer_npc,e.actor_npc)!=high||
+                   e.generation<static_cast<std::uint64_t>(sqlite3_column_int64(contact.get(),2))||
+                   e.tick!=static_cast<std::uint64_t>(sqlite3_column_int64(contact.get(),3)))
+                    throw std::runtime_error("SQLite: reaction has impossible meeting timestamp or actors");
+                const auto key=std::make_pair(e.observer_npc,e.actor_npc);
+                const auto prev=last.find(key);
+                if(e.prior_id!=(prev==last.end()?0:prev->second.id)||
+                   e.rapport!=std::clamp((prev==last.end()?0:prev->second.rapport)+e.delta,-100,100)||
+                   (prev!=last.end()&&(e.generation<prev->second.generation||e.tick<prev->second.tick)))
+                    throw std::runtime_error("SQLite: invalid directional rapport sequence");
+                tip=social_digest(tip,interaction_body(e));
+                if(sqlite_str(events.get(),10)!=tip)
+                    throw std::runtime_error("SQLite: social interaction chain altered");
+                last[key]=e;
+            }
+            if(count!=static_cast<std::uint64_t>(expected)||tip!=expected_tip)
+                throw std::runtime_error("SQLite: missing or corrupted social interactions");
+        }
         out.swap(restored);
         return true;
     }
@@ -2457,6 +2554,77 @@ public:
         while(q.row())out.push_back(read_encounter(q.get()));
         return out;
     }
+    std::vector<SocialInteractionEvent> recent_social_interactions(std::size_t limit) const {
+        if(!limit||limit>128)throw std::invalid_argument("interaction limit must be 1..128");
+        Statement q(db_,"SELECT id,encounter_id,observer,actor,kind,delta,rapport,"
+            "prior_id,generation,tick FROM social_interactions ORDER BY id DESC LIMIT ?");
+        q.i64(1,static_cast<sqlite3_int64>(limit));
+        std::vector<SocialInteractionEvent> result;
+        while(q.row())result.push_back(read_interaction(q.get()));
+        return result;
+    }
+    int directed_rapport(std::uint64_t observer,std::uint64_t actor) const {
+        if(!observer||!actor||observer==actor)return 0;
+        Statement q(db_,"SELECT rapport FROM social_interactions WHERE observer=? AND actor=? "
+            "ORDER BY id DESC LIMIT 1");
+        q.text(1,std::to_string(observer));q.text(2,std::to_string(actor));
+        return q.row()?sqlite3_column_int(q.get(),0):0;
+    }
+    bool record_social_interaction(const Simulation& world,std::uint64_t gen,
+            std::uint64_t encounter_id,std::uint64_t observer,std::uint64_t actor,
+            SocialInteractionKind kind){
+        if(!encounter_id||!observer||!actor||observer==actor||
+           (kind!=SocialInteractionKind::Assistance&&kind!=SocialInteractionKind::Harm))return false;
+        run(db_,"BEGIN IMMEDIATE");
+        try {
+            if(latest_generation(db_)!=gen)
+                throw std::runtime_error("stale interaction world generation");
+            if(!co_located(world,observer,actor)){
+                run(db_,"ROLLBACK");return false;
+            }
+            Statement contact(db_,"SELECT npc_low,npc_high,generation,tick FROM social_encounters WHERE id=?");
+            contact.i64(1,static_cast<sqlite3_int64>(encounter_id));
+            if(!contact.row()||
+               parse_u64(sqlite3_column_text(contact.get(),0))!=std::min(observer,actor)||
+               parse_u64(sqlite3_column_text(contact.get(),1))!=std::max(observer,actor)||
+               sqlite3_column_int64(contact.get(),2)>static_cast<sqlite3_int64>(gen)||
+               sqlite3_column_int64(contact.get(),3)!=static_cast<sqlite3_int64>(world.tick())){
+                run(db_,"ROLLBACK");return false;
+            }
+            Statement used(db_,"SELECT id FROM social_interactions WHERE encounter_id=? AND observer=?");
+            used.i64(1,static_cast<sqlite3_int64>(encounter_id));
+            used.text(2,std::to_string(observer));
+            if(used.row()) {run(db_,"ROLLBACK");return false;}
+            Statement previous(db_,"SELECT id,rapport FROM social_interactions WHERE observer=? AND actor=? "
+                "ORDER BY id DESC LIMIT 1");
+            previous.text(1,std::to_string(observer));previous.text(2,std::to_string(actor));
+            const bool existed=previous.row();
+            const auto prior=existed?sqlite3_column_int64(previous.get(),0):0;
+            const auto prior_rapport=existed?sqlite3_column_int(previous.get(),1):0;
+            Statement meta(db_,"SELECT event_count,tip FROM interaction_meta WHERE singleton=1");
+            if(!meta.row())throw std::runtime_error("missing interaction metadata");
+            const auto n=sqlite3_column_int64(meta.get(),0);
+            if(n<0||n==std::numeric_limits<sqlite3_int64>::max())
+                throw std::runtime_error("interaction sequence exhausted");
+            SocialInteractionEvent e;
+            e.id=static_cast<std::uint64_t>(n+1);e.encounter_id=encounter_id;
+            e.observer_npc=observer;e.actor_npc=actor;e.prior_id=prior;
+            e.kind=kind;e.delta=kind==SocialInteractionKind::Assistance?8:-12;
+            e.rapport=std::clamp(prior_rapport+e.delta,-100,100);
+            e.generation=gen;e.tick=world.tick();
+            const auto tip=social_digest(sqlite_str(meta.get(),1),interaction_body(e));
+            Statement add(db_,"INSERT INTO social_interactions VALUES(?,?,?,?,?,?,?,?,?,?,?)");
+            add.i64(1,e.id);add.i64(2,e.encounter_id);
+            add.text(3,std::to_string(observer));add.text(4,std::to_string(actor));
+            add.i64(5,static_cast<int>(kind));add.i64(6,e.delta);add.i64(7,e.rapport);
+            add.i64(8,e.prior_id);add.i64(9,e.generation);add.i64(10,e.tick);
+            add.text(11,tip);add.execute();
+            Statement update(db_,"UPDATE interaction_meta SET event_count=?,tip=? WHERE singleton=1");
+            update.i64(1,e.id);update.text(2,tip);update.execute();
+            if(sqlite3_changes(db_)!=1)throw std::runtime_error("missing interaction metadata");
+            run(db_,"COMMIT");return true;
+        }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
+    }
     std::size_t schedule_social_encounters(const Simulation& world,std::uint64_t gen,
                                           std::size_t scan_budget,std::size_t contact_budget){
         if(!scan_budget||scan_budget>64||!contact_budget||contact_budget>8)
@@ -3006,6 +3174,16 @@ std::size_t PersistentWorld::schedule_social_encounters(std::size_t scan_budget,
 }
 std::vector<SocialEncounter> PersistentWorld::recent_social_encounters(std::size_t limit) const {
     return store_->recent_social_encounters(limit);
+}
+bool PersistentWorld::record_social_interaction(std::uint64_t encounter_id,
+        std::uint64_t observer,std::uint64_t actor,SocialInteractionKind kind){
+    return store_->record_social_interaction(world_,generation_,encounter_id,observer,actor,kind);
+}
+std::vector<SocialInteractionEvent> PersistentWorld::recent_social_interactions(std::size_t limit) const {
+    return store_->recent_social_interactions(limit);
+}
+int PersistentWorld::directed_rapport(std::uint64_t observer,std::uint64_t actor) const {
+    return store_->directed_rapport(observer,actor);
 }
 void PersistentWorld::steps(std::uint64_t n) { for (std::uint64_t i = 0; i < n; ++i) step(); }
 } // namespace galaxy

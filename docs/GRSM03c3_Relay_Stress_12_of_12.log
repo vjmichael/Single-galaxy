@@ -1,0 +1,45 @@
+===relay_round_1===
+Internal ctest changing into directory: /mnt/data/sg03c/single-galaxy/build-grsm03c3
+Test project /mnt/data/sg03c/single-galaxy/build-grsm03c3
+    Start 16: galaxy_b62c_relay_gate_controls
+    Start 33: galaxy_b70d_live_agriculture_relay
+    Start 29: galaxy_b70b_live_colony_e2e
+    Start 31: galaxy_b70c_live_mineral_relay
+1/4 Test #31: galaxy_b70c_live_mineral_relay .......   Passed    4.97 sec
+2/4 Test #29: galaxy_b70b_live_colony_e2e ..........   Passed    5.56 sec
+3/4 Test #16: galaxy_b62c_relay_gate_controls ......   Passed    6.30 sec
+4/4 Test #33: galaxy_b70d_live_agriculture_relay ...   Passed    6.52 sec
+
+100% tests passed, 0 tests failed out of 4
+
+Total Test time (real) =   6.52 sec
+===relay_round_2===
+Internal ctest changing into directory: /mnt/data/sg03c/single-galaxy/build-grsm03c3
+Test project /mnt/data/sg03c/single-galaxy/build-grsm03c3
+    Start 16: galaxy_b62c_relay_gate_controls
+    Start 33: galaxy_b70d_live_agriculture_relay
+    Start 29: galaxy_b70b_live_colony_e2e
+    Start 31: galaxy_b70c_live_mineral_relay
+1/4 Test #31: galaxy_b70c_live_mineral_relay .......   Passed    2.73 sec
+2/4 Test #29: galaxy_b70b_live_colony_e2e ..........   Passed    3.53 sec
+3/4 Test #33: galaxy_b70d_live_agriculture_relay ...   Passed    4.16 sec
+4/4 Test #16: galaxy_b62c_relay_gate_controls ......   Passed    5.89 sec
+
+100% tests passed, 0 tests failed out of 4
+
+Total Test time (real) =   5.89 sec
+===relay_round_3===
+Internal ctest changing into directory: /mnt/data/sg03c/single-galaxy/build-grsm03c3
+Test project /mnt/data/sg03c/single-galaxy/build-grsm03c3
+    Start 16: galaxy_b62c_relay_gate_controls
+    Start 33: galaxy_b70d_live_agriculture_relay
+    Start 29: galaxy_b70b_live_colony_e2e
+    Start 31: galaxy_b70c_live_mineral_relay
+1/4 Test #31: galaxy_b70c_live_mineral_relay .......   Passed    2.92 sec
+2/4 Test #29: galaxy_b70b_live_colony_e2e ..........   Passed    4.56 sec
+3/4 Test #33: galaxy_b70d_live_agriculture_relay ...   Passed    4.91 sec
+4/4 Test #16: galaxy_b62c_relay_gate_controls ......   Passed    6.29 sec
+
+100% tests passed, 0 tests failed out of 4
+
+Total Test time (real) =   6.29 sec

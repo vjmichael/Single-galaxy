@@ -113,7 +113,7 @@ static void migration_and_stale_commit(const fs::path& root){
     }
     // Exact original v7 metadata shape: v8 tables absent, physically real NPC
     // knowledge intact. Migration must not fabricate a group or an opinion.
-    sql(db,"DROP TABLE social_encounters; DROP TABLE encounter_scans; DROP TABLE encounter_meta; DROP TABLE group_membership_events; DROP TABLE membership_meta; "
+    sql(db,"DROP TABLE social_interactions; DROP TABLE interaction_meta; DROP TABLE social_encounters; DROP TABLE encounter_scans; DROP TABLE encounter_meta; DROP TABLE group_membership_events; DROP TABLE membership_meta; "
                        "DROP TABLE social_tie_events; DROP TABLE social_tie_meta; "
                        "DROP TABLE group_views; DROP TABLE group_relays; DROP TABLE social_groups; "
            "DROP TABLE social_meta; PRAGMA user_version=7;");

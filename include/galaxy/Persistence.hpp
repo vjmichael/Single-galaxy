@@ -85,6 +85,19 @@ struct SocialEncounter {
     std::uint64_t generation=0, tick=0, slot=0, prior_id=0, ordinal=0;
 };
 
+// GRSM-03c.3: directed interpersonal rapport, distinct from evidence-trust.
+// A genuine *host-attested interaction* must name one actual, same-tick
+// encounter receipt. Physical co-presence alone NEVER writes one of these.
+// The host is responsible for validating whether assistance/harm occurred;
+// the current world engine does not yet independently simulate those acts.
+enum class SocialInteractionKind : int { Assistance=1, Harm=2 };
+struct SocialInteractionEvent {
+    std::uint64_t id=0, encounter_id=0, observer_npc=0, actor_npc=0;
+    std::uint64_t prior_id=0, generation=0, tick=0;
+    SocialInteractionKind kind=SocialInteractionKind::Assistance;
+    int delta=0, rapport=0; // directed score -100..100, neutral 0
+};
+
 // GRSM-03b: directional, evidence-linked interpersonal trust. Each event is
 // an immutable record of a witnessed contact or a character's reassessment;
 // it is neither historical truth nor proof of the accuracy of the allegation.
@@ -186,6 +199,14 @@ public:
     std::size_t schedule_social_encounters(std::size_t scan_budget=16,
                                           std::size_t contact_budget=4);
     std::vector<SocialEncounter> recent_social_encounters(std::size_t limit=50) const;
+    // An interaction is an EXPLICIT host decision, never an automatic result
+    // of proximity or encountering. Only a real same-tick encounter can anchor
+    // it; at most one directed reaction per encounter and observer/actor pair.
+    bool record_social_interaction(std::uint64_t encounter_id,
+              std::uint64_t observer,std::uint64_t actor,SocialInteractionKind kind);
+    std::vector<SocialInteractionEvent> recent_social_interactions(std::size_t limit=50) const;
+    int directed_rapport(std::uint64_t observer,std::uint64_t actor) const;
+
 
 
 
