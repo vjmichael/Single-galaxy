@@ -1,0 +1,14 @@
+[1/87] Building CXX object CMakeFiles/galaxy_persistence_tests.dir/tests/PersistenceTests.cpp.o
+[2/87] Building CXX object CMakeFiles/galaxy_client_contract_tests.dir/tests/ClientContractTests.cpp.o
+[3/87] Building CXX object CMakeFiles/galaxy_mining_lifecycle_tests.dir/tests/MiningLifecycleTests.cpp.o
+[4/87] Building CXX object CMakeFiles/galaxy_persistence_demo.dir/src/persistence_demo.cpp.o
+[5/87] Building CXX object CMakeFiles/galaxy_recover_copy.dir/src/recover_copy.cpp.o
+[6/87] Building CXX object CMakeFiles/galaxy_persistence_benchmark.dir/src/persistence_benchmark.cpp.o
+[7/87] Building CXX object CMakeFiles/galaxy_client_stream_demo.dir/src/client_stream_demo.cpp.o
+[8/87] Building CXX object CMakeFiles/galaxy_client_wire_producer.dir/src/client_wire_producer.cpp.o
+[9/87] Building CXX object CMakeFiles/galaxy_visual_scenario_recorder.dir/src/visual_scenario_recorder.cpp.o
+[10/87] Building CXX object CMakeFiles/galaxy_live_scenario_host.dir/src/live_scenario_host.cpp.o
+[11/87] Building CXX object CMakeFiles/galaxy_interactive_host.dir/src/interactive_host.cpp.o
+[12/87] Building CXX object CMakeFiles/galaxy_logistics_tests.dir/tests/LogisticsTests.cpp.o
+[13/87] Building CXX object CMakeFiles/galaxy_station_lifecycle_tests.dir/tests/StationLifecycleTests.cpp.o
+ninja: build stopped: interrupted by user.

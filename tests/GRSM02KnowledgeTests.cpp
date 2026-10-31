@@ -141,7 +141,8 @@ static void legacy_boundary(const fs::path& root){
         CHECK(w.submit_testing_crew_loss(home,1,401));w.step();
         CHECK(w.recent_physical_incidents().size()==1);
     }
-    sql(db,"DROP TABLE group_views; DROP TABLE group_relays; DROP TABLE social_groups; "
+    sql(db,"DROP TABLE social_tie_events; DROP TABLE social_tie_meta; "
+                       "DROP TABLE group_views; DROP TABLE group_relays; DROP TABLE social_groups; "
            "DROP TABLE social_meta; "
            "DROP TRIGGER knowledge_no_update; DROP TRIGGER knowledge_no_delete; "
            "DROP TABLE npc_knowledge; DROP TABLE knowledge_meta; PRAGMA user_version=6;");

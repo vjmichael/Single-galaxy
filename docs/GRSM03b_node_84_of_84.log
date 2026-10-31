@@ -1,0 +1,514 @@
+TAP version 13
+# Subtest: B5.2 HUD shows real initial docked ship and empty local hangar
+ok 1 - B5.2 HUD shows real initial docked ship and empty local hangar
+  ---
+  duration_ms: 77.122572
+  type: 'test'
+  ...
+# Subtest: B5.2 HUD shows final docked 20 ore hangar and empty cargo after verified frames
+ok 2 - B5.2 HUD shows final docked 20 ore hangar and empty cargo after verified frames
+  ---
+  duration_ms: 51.469885
+  type: 'test'
+  ...
+# Subtest: B5.2 docked snapshot has verified station, dock state and local hangar
+ok 3 - B5.2 docked snapshot has verified station, dock state and local hangar
+  ---
+  duration_ms: 27.055459
+  type: 'test'
+  ...
+# Subtest: B5.2 tampered dock state cannot pass projection hash
+ok 4 - B5.2 tampered dock state cannot pass projection hash
+  ---
+  duration_ms: 1.860958
+  type: 'test'
+  ...
+# Subtest: B5.2 invalid hangar amounts and dock station are rejected
+ok 5 - B5.2 invalid hangar amounts and dock station are rejected
+  ---
+  duration_ms: 6.973366
+  type: 'test'
+  ...
+# Subtest: B5.2 undocking deletion and inventory delta apply only after correct hash
+ok 6 - B5.2 undocking deletion and inventory delta apply only after correct hash
+  ---
+  duration_ms: 5.295031
+  type: 'test'
+  ...
+# Subtest: B5.3 full station trade recording remains verifiable
+ok 7 - B5.3 full station trade recording remains verifiable
+  ---
+  duration_ms: 1.382304
+  type: 'test'
+  ...
+# Subtest: B5.3 market stock and wallet event tampering cannot pass projection hash
+ok 8 - B5.3 market stock and wallet event tampering cannot pass projection hash
+  ---
+  duration_ms: 1.656451
+  type: 'test'
+  ...
+# Subtest: B5.3 malformed monetary fields are rejected
+ok 9 - B5.3 malformed monetary fields are rejected
+  ---
+  duration_ms: 8.539281
+  type: 'test'
+  ...
+# Subtest: B5.3 UI shows committed Station B sale, player wallet and market funding
+ok 10 - B5.3 UI shows committed Station B sale, player wallet and market funding
+  ---
+  duration_ms: 135.972935
+  type: 'test'
+  ...
+# Subtest: B5.4 committed off-axis ship motion is non-teleporting in both axes
+ok 11 - B5.4 committed off-axis ship motion is non-teleporting in both axes
+  ---
+  duration_ms: 1.707429
+  type: 'test'
+  ...
+# Subtest: B6.1 survey parser accepts bounded server-origin directional and probe messages
+ok 12 - B6.1 survey parser accepts bounded server-origin directional and probe messages
+  ---
+  duration_ms: 7.88955
+  type: 'test'
+  ...
+# Subtest: B6.1 rejects fabricated, noncanonical, malformed and out-of-range scan messages
+ok 13 - B6.1 rejects fabricated, noncanonical, malformed and out-of-range scan messages
+  ---
+  duration_ms: 0.913829
+  type: 'test'
+  ...
+# Subtest: B6.2c accepts destination snapshots and displays protective cloak, local market, and cargo
+ok 14 - B6.2c accepts destination snapshots and displays protective cloak, local market, and cargo
+  ---
+  duration_ms: 98.10295
+  type: 'test'
+  ...
+# Subtest: B6.2c rejects unannounced second snapshot or a rewinding snapshot
+ok 15 - B6.2c rejects unannounced second snapshot or a rewinding snapshot
+  ---
+  duration_ms: 6.846219
+  type: 'test'
+  ...
+# Subtest: B6.3 validates system routes and labels advisory vs travel
+ok 16 - B6.3 validates system routes and labels advisory vs travel
+  ---
+  duration_ms: 4.508423
+  type: 'test'
+  ...
+# Subtest: B6.3 validates history timestamps and publication flags
+ok 17 - B6.3 validates history timestamps and publication flags
+  ---
+  duration_ms: 0.443374
+  type: 'test'
+  ...
+# Subtest: B6.3 rejects fabricated routes, malformed history and noncanonical data
+ok 18 - B6.3 rejects fabricated routes, malformed history and noncanonical data
+  ---
+  duration_ms: 1.504467
+  type: 'test'
+  ...
+# Subtest: B6.4 seven original systems have nine mapped links and named sovereignty zones
+ok 19 - B6.4 seven original systems have nine mapped links and named sovereignty zones
+  ---
+  duration_ms: 0.826556
+  type: 'test'
+  ...
+# Subtest: B6.4 accepts committed multi-hop paths and next-leg indication
+ok 20 - B6.4 accepts committed multi-hop paths and next-leg indication
+  ---
+  duration_ms: 1.705043
+  type: 'test'
+  ...
+# Subtest: B6.4 rejects malformed route-leg telemetry
+ok 21 - B6.4 rejects malformed route-leg telemetry
+  ---
+  duration_ms: 0.425373
+  type: 'test'
+  ...
+# Subtest: B6.4 local interface exposes route selection and manual physical leg controls
+ok 22 - B6.4 local interface exposes route selection and manual physical leg controls
+  ---
+  duration_ms: 10.630386
+  type: 'test'
+  ...
+# Subtest: B6.5 accepts explicit QA gate status and authoritative reroutes
+ok 23 - B6.5 accepts explicit QA gate status and authoritative reroutes
+  ---
+  duration_ms: 2.617232
+  type: 'test'
+  ...
+# Subtest: B6.5 rejects malformed or forged QA telemetry
+ok 24 - B6.5 rejects malformed or forged QA telemetry
+  ---
+  duration_ms: 0.613204
+  type: 'test'
+  ...
+# Subtest: B6.5 only exposes test automation controls behind server QA mode
+ok 25 - B6.5 only exposes test automation controls behind server QA mode
+  ---
+  duration_ms: 2.386996
+  type: 'test'
+  ...
+# Subtest: B6.6 local gate health status is decoded and displayed
+ok 26 - B6.6 local gate health status is decoded and displayed
+  ---
+  duration_ms: 3.732778
+  type: 'test'
+  ...
+# Subtest: B6.6 rejects malformed, out-of-range and impossible gate status
+ok 27 - B6.6 rejects malformed, out-of-range and impossible gate status
+  ---
+  duration_ms: 0.690232
+  type: 'test'
+  ...
+# Subtest: colony status, geology, minerals and outcomes validated
+ok 28 - colony status, geology, minerals and outcomes validated
+  ---
+  duration_ms: 6.678953
+  type: 'test'
+  ...
+# Subtest: reject malformed or forged geology and overflow
+ok 29 - reject malformed or forged geology and overflow
+  ---
+  duration_ms: 0.785
+  type: 'test'
+  ...
+# Subtest: visual colony controls and server-only request boundary exist
+ok 30 - visual colony controls and server-only request boundary exist
+  ---
+  duration_ms: 6.104573
+  type: 'test'
+  ...
+# Subtest: B7.0c separated mineral and goods telemetry is bounded and explicitly typed
+ok 31 - B7.0c separated mineral and goods telemetry is bounded and explicitly typed
+  ---
+  duration_ms: 3.561235
+  type: 'test'
+  ...
+# Subtest: B7.0d accepts bounded life-support telemetry
+ok 32 - B7.0d accepts bounded life-support telemetry
+  ---
+  duration_ms: 1.906787
+  type: 'test'
+  ...
+# Subtest: B7.0d rejects forged stage, truncated payload and malformed numbers
+ok 33 - B7.0d rejects forged stage, truncated payload and malformed numbers
+  ---
+  duration_ms: 0.644273
+  type: 'test'
+  ...
+# Subtest: B7.0d has actual agriculture controls without player authority arguments
+ok 34 - B7.0d has actual agriculture controls without player authority arguments
+  ---
+  duration_ms: 2.860228
+  type: 'test'
+  ...
+# Subtest: player outpost/farm telemetry decodes with bounded inventory and headcount
+ok 35 - player outpost/farm telemetry decodes with bounded inventory and headcount
+  ---
+  duration_ms: 11.537692
+  type: 'test'
+  ...
+# Subtest: three-cycle production assessment is not a promise of full self-sufficiency
+ok 36 - three-cycle production assessment is not a promise of full self-sufficiency
+  ---
+  duration_ms: 0.590079
+  type: 'test'
+  ...
+# Subtest: reject malformed, excessive or fabricated farm/viability telemetry
+ok 37 - reject malformed, excessive or fabricated farm/viability telemetry
+  ---
+  duration_ms: 0.717053
+  type: 'test'
+  ...
+# Subtest: controls available for building, staffing, local stock transfer
+ok 38 - controls available for building, staffing, local stock transfer
+  ---
+  duration_ms: 21.41468
+  type: 'test'
+  ...
+# Subtest: B7.0f habitat telemetry is strictly bounded and typed
+ok 39 - B7.0f habitat telemetry is strictly bounded and typed
+  ---
+  duration_ms: 18.438413
+  type: 'test'
+  ...
+# Subtest: B7.0f assessment distinguishes housing from full autonomy
+ok 40 - B7.0f assessment distinguishes housing from full autonomy
+  ---
+  duration_ms: 0.356142
+  type: 'test'
+  ...
+# Subtest: B7.0f housing controls provide a real local command path
+ok 41 - B7.0f housing controls provide a real local command path
+  ---
+  duration_ms: 3.271727
+  type: 'test'
+  ...
+# Subtest: B7.0g typed utility status preserves service, wear and repair readings
+ok 42 - B7.0g typed utility status preserves service, wear and repair readings
+  ---
+  duration_ms: 25.053343
+  type: 'test'
+  ...
+# Subtest: B7.0g utility assessment never implies autonomous growth
+ok 43 - B7.0g utility assessment never implies autonomous growth
+  ---
+  duration_ms: 0.576308
+  type: 'test'
+  ...
+# Subtest: B7.0g visual controls connect to explicit local commands
+ok 44 - B7.0g visual controls connect to explicit local commands
+  ---
+  duration_ms: 3.790962
+  type: 'test'
+  ...
+# Subtest: B7.0h bounded durable maintenance telemetry contracts
+ok 45 - B7.0h bounded durable maintenance telemetry contracts
+  ---
+  duration_ms: 8.125768
+  type: 'test'
+  ...
+# Subtest: B7.0h nonautonomous viability is explicit and typed
+ok 46 - B7.0h nonautonomous viability is explicit and typed
+  ---
+  duration_ms: 23.666437
+  type: 'test'
+  ...
+# Subtest: B7.0h local UI controls and relay wire actions are bound
+ok 47 - B7.0h local UI controls and relay wire actions are bound
+  ---
+  duration_ms: 10.3205
+  type: 'test'
+  ...
+# Subtest: B7.0i strict resilience diagnostic and no autonomous-growth claim
+ok 48 - B7.0i strict resilience diagnostic and no autonomous-growth claim
+  ---
+  duration_ms: 28.001933
+  type: 'test'
+  ...
+# Subtest: B7.0i telemetry is read-only and visible in local interface
+ok 49 - B7.0i telemetry is read-only and visible in local interface
+  ---
+  duration_ms: 5.699788
+  type: 'test'
+  ...
+# Subtest: B7.0j community telemetry strict, bounded and nonclinical
+ok 50 - B7.0j community telemetry strict, bounded and nonclinical
+  ---
+  duration_ms: 8.895814
+  type: 'test'
+  ...
+# Subtest: B7.0j independent community assessment never grants growth
+ok 51 - B7.0j independent community assessment never grants growth
+  ---
+  duration_ms: 0.731663
+  type: 'test'
+  ...
+# Subtest: B7.0j browser controls and relay use allowlisted commands only
+ok 52 - B7.0j browser controls and relay use allowlisted commands only
+  ---
+  duration_ms: 14.045076
+  type: 'test'
+  ...
+# Subtest: B7.0k clinic packet validates real inputs, patient outcomes and continuity
+ok 53 - B7.0k clinic packet validates real inputs, patient outcomes and continuity
+  ---
+  duration_ms: 14.579515
+  type: 'test'
+  ...
+# Subtest: B7.0k clinic readiness never advertises growth or full healthcare
+ok 54 - B7.0k clinic readiness never advertises growth or full healthcare
+  ---
+  duration_ms: 0.708726
+  type: 'test'
+  ...
+# Subtest: B7.0k UI, relay and host expose only bounded clinic commands
+ok 55 - B7.0k UI, relay and host expose only bounded clinic commands
+  ---
+  duration_ms: 7.390022
+  type: 'test'
+  ...
+# Subtest: B7.0k-2 reclaimer rejects inconsistent physical mass and service counts
+ok 56 - B7.0k-2 reclaimer rejects inconsistent physical mass and service counts
+  ---
+  duration_ms: 13.308183
+  type: 'test'
+  ...
+# Subtest: B7.0k-2 recent throughput is not independent water renewal
+ok 57 - B7.0k-2 recent throughput is not independent water renewal
+  ---
+  duration_ms: 0.691275
+  type: 'test'
+  ...
+# Subtest: B7.0k-2 UI and relay expose only player-owned bounded local construction
+ok 58 - B7.0k-2 UI and relay expose only player-owned bounded local construction
+  ---
+  duration_ms: 3.188231
+  type: 'test'
+  ...
+# Subtest: B7.0l local purified-water telemetry is mass-balanced
+ok 59 - B7.0l local purified-water telemetry is mass-balanced
+  ---
+  duration_ms: 10.358261
+  type: 'test'
+  ...
+# Subtest: B7.0l three-period water supply cannot claim infinite renewal
+ok 60 - B7.0l three-period water supply cannot claim infinite renewal
+  ---
+  duration_ms: 0.653703
+  type: 'test'
+  ...
+# Subtest: B7.0l UI and relay contain bounded local player commands only
+ok 61 - B7.0l UI and relay contain bounded local player commands only
+  ---
+  duration_ms: 14.365342
+  type: 'test'
+  ...
+# Subtest: B7.0m audit distinguishes declared policy, staff and observed operations
+ok 62 - B7.0m audit distinguishes declared policy, staff and observed operations
+  ---
+  duration_ms: 4.654159
+  type: 'test'
+  ...
+# Subtest: B7.0m contradictory or noncanonical audit frames reject
+ok 63 - B7.0m contradictory or noncanonical audit frames reject
+  ---
+  duration_ms: 1.742602
+  type: 'test'
+  ...
+# Subtest: B7.0m dashboard, host and relay expose bounded policy commands
+ok 64 - B7.0m dashboard, host and relay expose bounded policy commands
+  ---
+  duration_ms: 2.861492
+  type: 'test'
+  ...
+# Subtest: interpolation only changes presentation coordinates, not authoritative state
+ok 65 - interpolation only changes presentation coordinates, not authoritative state
+  ---
+  duration_ms: 8.19109
+  type: 'test'
+  ...
+# Subtest: clamps progress and preserves entity removals, regardless of prior visibility
+ok 66 - clamps progress and preserves entity removals, regardless of prior visibility
+  ---
+  duration_ms: 1.025055
+  type: 'test'
+  ...
+# Subtest: incremental frame validator matches original full-recording validator
+ok 67 - incremental frame validator matches original full-recording validator
+  ---
+  duration_ms: 12.317459
+  type: 'test'
+  ...
+# Subtest: real live ten stream validates all incremental frames
+ok 68 - real live ten stream validates all incremental frames
+  ---
+  duration_ms: 16.98059
+  type: 'test'
+  ...
+# Subtest: real live hold stream validates all incremental frames
+ok 69 - real live hold stream validates all incremental frames
+  ---
+  duration_ms: 2.91077
+  type: 'test'
+  ...
+# Subtest: real live motion stream validates all incremental frames
+ok 70 - real live motion stream validates all incremental frames
+  ---
+  duration_ms: 1.108384
+  type: 'test'
+  ...
+# Subtest: missed or reordered real-time frame is rejected rather than silently shown
+ok 71 - missed or reordered real-time frame is rejected rather than silently shown
+  ---
+  duration_ms: 1.436517
+  type: 'test'
+  ...
+# Subtest: tampered entity update is rejected before client state publication
+ok 72 - tampered entity update is rejected before client state publication
+  ---
+  duration_ms: 9.645782
+  type: 'test'
+  ...
+# Subtest: live frames update HUD and cargo-full notification as C++ world commits
+ok 73 - live frames update HUD and cargo-full notification as C++ world commits
+  ---
+  duration_ms: 155.521943
+  type: 'test'
+  ...
+# Subtest: live frame gap is rejected without updating displayed world
+ok 74 - live frame gap is rejected without updating displayed world
+  ---
+  duration_ms: 113.662442
+  type: 'test'
+  ...
+# Subtest: live client shows depleted rocks disappearing
+ok 75 - live client shows depleted rocks disappearing
+  ---
+  duration_ms: 64.269197
+  type: 'test'
+  ...
+# Subtest: 10 asteroids despawn in viewer, ore conserved, hold 100
+ok 76 - 10 asteroids despawn in viewer, ore conserved, hold 100
+  ---
+  duration_ms: 23.201461
+  type: 'test'
+  ...
+# Subtest: automatic mining stops at hold full, remaining rock 10
+ok 77 - automatic mining stops at hold full, remaining rock 10
+  ---
+  duration_ms: 12.344468
+  type: 'test'
+  ...
+# Subtest: motion updates ship positions and preserves inertia
+ok 78 - motion updates ship positions and preserves inertia
+  ---
+  duration_ms: 1.975507
+  type: 'test'
+  ...
+# Subtest: packet corruption fails consistency hash
+ok 79 - packet corruption fails consistency hash
+  ---
+  duration_ms: 1.551882
+  type: 'test'
+  ...
+# Subtest: dropped delta does not silently desynchronize
+ok 80 - dropped delta does not silently desynchronize
+  ---
+  duration_ms: 6.452299
+  type: 'test'
+  ...
+# Subtest: noncanonical or invalid recording is rejected
+ok 81 - noncanonical or invalid recording is rejected
+  ---
+  duration_ms: 0.80952
+  type: 'test'
+  ...
+# Subtest: visual interface renders initial recorded snapshot without errors
+ok 82 - visual interface renders initial recorded snapshot without errors
+  ---
+  duration_ms: 44.707678
+  type: 'test'
+  ...
+# Subtest: scrubbing to depleted final state updates HUD and event log
+ok 83 - scrubbing to depleted final state updates HUD and event log
+  ---
+  duration_ms: 12.930386
+  type: 'test'
+  ...
+# Subtest: hold-full scenario displays automatic stop at tick 3
+ok 84 - hold-full scenario displays automatic stop at tick 3
+  ---
+  duration_ms: 21.549867
+  type: 'test'
+  ...
+1..84
+# tests 84
+# suites 0
+# pass 84
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 2803.911138

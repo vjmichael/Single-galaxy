@@ -68,6 +68,17 @@ struct GroupView {
     std::string account;
 };
 
+// GRSM-03b: directional, evidence-linked interpersonal trust. Each event is
+// an immutable record of a witnessed contact or a character's reassessment;
+// it is neither historical truth nor proof of the accuracy of the allegation.
+enum class SocialTieKind : int { Contact=1, Reassessment=2 };
+struct SocialTieEvent {
+    std::uint64_t id=0, observer_npc=0, source_npc=0, prior_id=0;
+    std::uint64_t knowledge_id=0, generation=0, tick=0;
+    SocialTieKind kind=SocialTieKind::Contact;
+    int delta=0, trust=50;
+};
+
 class PersistentWorld {
 public:
     // If the SQLite file is new, persist the supplied initial world.
@@ -131,6 +142,20 @@ public:
                            GroupStance stance,int confidence,const std::string& account);
     std::vector<SocialGroup> recent_social_groups(std::size_t limit=50) const;
     std::vector<GroupView> recent_group_views(std::size_t limit=50) const;
+    // Directed social tie: observer's trust in source, not automatically mutual.
+    // Both characters must be real survivors at the same present location.
+    bool record_social_contact(std::uint64_t observer,std::uint64_t source);
+    // A bounded subjective reassessment following an actual claim *received*
+    // from this source. A specific claim cannot be reassessed twice.
+    bool reassess_social_trust(std::uint64_t observer,std::uint64_t source,
+                              std::uint64_t received_claim_id,int delta);
+    // New opt-in contact-gated transmission across group boundaries. The
+    // listener must know/trust the speaker. Confidence is capped by the
+    // incoming claim and listener's current directed trust at COMMIT time.
+    bool relay_trusted_claim(std::uint64_t parent_knowledge_id,std::uint64_t listener,
+                             ClaimFidelity fidelity,int valence,int proposed_confidence,
+                             const std::string& account);
+    std::vector<SocialTieEvent> recent_social_ties(std::size_t limit=50) const;
 
 
 

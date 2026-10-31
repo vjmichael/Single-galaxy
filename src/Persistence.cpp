@@ -220,6 +220,28 @@ std::string view_body(const GroupView& r){
         std::to_string(r.confidence)+"|"+r.account+"|"+
         std::to_string(r.generation)+"|"+std::to_string(r.tick);
 }
+SocialTieEvent read_tie(sqlite3_stmt* q){
+    const auto id=sqlite3_column_int64(q,0),prior=sqlite3_column_int64(q,3),
+        claim=sqlite3_column_int64(q,4),gen=sqlite3_column_int64(q,8),tick=sqlite3_column_int64(q,9);
+    if(id<=0||prior<0||claim<0||gen<=0||tick<0)
+        throw std::runtime_error("SQLite: invalid social tie identity");
+    SocialTieEvent r;r.id=static_cast<std::uint64_t>(id);
+    r.observer_npc=parse_u64(sqlite3_column_text(q,1));
+    r.source_npc=parse_u64(sqlite3_column_text(q,2));
+    r.prior_id=static_cast<std::uint64_t>(prior);
+    r.knowledge_id=static_cast<std::uint64_t>(claim);
+    r.kind=static_cast<SocialTieKind>(sqlite3_column_int(q,5));
+    r.delta=sqlite3_column_int(q,6);r.trust=sqlite3_column_int(q,7);
+    r.generation=static_cast<std::uint64_t>(gen);r.tick=static_cast<std::uint64_t>(tick);
+    return r;
+}
+std::string tie_body(const SocialTieEvent& r){
+    return std::to_string(r.id)+"|"+std::to_string(r.observer_npc)+"|"+
+        std::to_string(r.source_npc)+"|"+std::to_string(r.prior_id)+"|"+
+        std::to_string(r.knowledge_id)+"|"+std::to_string(static_cast<int>(r.kind))+"|"+
+        std::to_string(r.delta)+"|"+std::to_string(r.trust)+"|"+
+        std::to_string(r.generation)+"|"+std::to_string(r.tick);
+}
 KnowledgeRecord read_knowledge(sqlite3_stmt* s) {
     KnowledgeRecord r;
     const auto ident=sqlite3_column_int64(s,0),parent=sqlite3_column_int64(s,2),
@@ -273,7 +295,7 @@ public:
         Statement version(db_, "PRAGMA user_version");
         if (!version.row()) throw std::runtime_error("SQLite: no schema version");
         const int v = sqlite3_column_int(version.get(), 0);
-        if (v < 0 || v > 8) throw std::runtime_error("SQLite: incompatible schema version");
+        if (v < 0 || v > 9) throw std::runtime_error("SQLite: incompatible schema version");
         if (v == 0) {
             run(db_, "BEGIN IMMEDIATE");
             try {
@@ -461,6 +483,30 @@ public:
                              " BEGIN SELECT RAISE(ABORT,'social history immutable'); END").c_str());
                 }
                 run(db_,"PRAGMA user_version=8");run(db_,"COMMIT");
+            }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
+        }
+        if (v <= 8) {
+            // GRSM-03b: pre-existing games have no invented contacts or trust.
+            run(db_,"BEGIN IMMEDIATE");
+            try {
+                run(db_,"CREATE TABLE social_tie_meta(singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
+                    "event_count INTEGER NOT NULL DEFAULT 0 CHECK(event_count>=0),tip TEXT NOT NULL)");
+                run(db_,"INSERT INTO social_tie_meta VALUES(1,0,'origin')");
+                run(db_,"CREATE TABLE social_tie_events(id INTEGER PRIMARY KEY,"
+                    "observer TEXT NOT NULL,source TEXT NOT NULL,prior_id INTEGER NOT NULL DEFAULT 0,"
+                    "knowledge_id INTEGER NOT NULL DEFAULT 0,"
+                    "kind INTEGER NOT NULL CHECK(kind BETWEEN 1 AND 2),"
+                    "delta INTEGER NOT NULL CHECK(delta BETWEEN -25 AND 25),"
+                    "trust INTEGER NOT NULL CHECK(trust BETWEEN 0 AND 100),"
+                    "generation INTEGER NOT NULL CHECK(generation>0),tick INTEGER NOT NULL CHECK(tick>=0),"
+                    "digest TEXT NOT NULL)");
+                run(db_,"CREATE INDEX social_ties_pair ON social_tie_events(observer,source,id)");
+                run(db_,"CREATE UNIQUE INDEX social_tie_one_reassessment ON social_tie_events(knowledge_id) WHERE knowledge_id>0");
+                run(db_,"CREATE TRIGGER social_tie_no_update BEFORE UPDATE ON social_tie_events "
+                    "BEGIN SELECT RAISE(ABORT,'social tie history immutable'); END");
+                run(db_,"CREATE TRIGGER social_tie_no_delete BEFORE DELETE ON social_tie_events "
+                    "BEGIN SELECT RAISE(ABORT,'social tie history immutable'); END");
+                run(db_,"PRAGMA user_version=9");run(db_,"COMMIT");
             }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
         }
         } catch (...) { sqlite3_close_v2(db_); db_ = nullptr; throw; }
@@ -1311,6 +1357,73 @@ public:
             if(view_count!=static_cast<std::uint64_t>(vc)||view_tip!=vt)
                 throw std::runtime_error("SQLite: social views missing or changed");
         }
+        // GRSM-03b: replay event-sourced directed trust, with cross-references
+        // into immutable received claims and retained physical snapshots.
+        {
+            Statement meta(db_,"SELECT event_count,tip FROM social_tie_meta WHERE singleton=1");
+            if(!meta.row())throw std::runtime_error("SQLite: missing tie metadata");
+            const auto count=sqlite3_column_int64(meta.get(),0);
+            if(count<0)throw std::runtime_error("SQLite: negative social tie count");
+            const auto final_tip=sqlite_str(meta.get(),1);
+            if(meta.row())throw std::runtime_error("SQLite: duplicate tie metadata");
+            std::uint64_t seq=0;std::string tip="origin";
+            std::map<std::pair<std::uint64_t,std::uint64_t>,SocialTieEvent> last;
+            std::map<std::uint64_t,bool> feedback_claims;
+            Statement events(db_,"SELECT id,observer,source,prior_id,knowledge_id,kind,delta,trust,"
+                "generation,tick,digest FROM social_tie_events ORDER BY id");
+            while(events.row()){
+                const auto e=read_tie(events.get());
+                if(e.id!=++seq||e.observer_npc==0||e.source_npc==0||
+                   e.observer_npc==e.source_npc||e.generation>generation||
+                   static_cast<int>(e.kind)<1||static_cast<int>(e.kind)>2)
+                    throw std::runtime_error("SQLite: invalid directed social tie event");
+                const auto pair=std::make_pair(e.observer_npc,e.source_npc);
+                const auto previous=last.find(pair);
+                if(e.kind==SocialTieKind::Contact){
+                    if(previous!=last.end()||e.prior_id||e.knowledge_id||e.delta||e.trust!=50)
+                        throw std::runtime_error("SQLite: fabricated/repeated first social contact");
+                }else{
+                    if(previous==last.end()||e.prior_id!=previous->second.id||
+                       !e.knowledge_id||e.delta==0||e.delta<-25||e.delta>25||
+                       e.trust!=std::clamp(previous->second.trust+e.delta,0,100)||
+                       !feedback_claims.emplace(e.knowledge_id,true).second)
+                        throw std::runtime_error("SQLite: invalid trust change receipt");
+                    Statement claim(db_,"SELECT id,incident_id,COALESCE(parent_id,0),speaker_id,recipient_id,"
+                        "fidelity,valence,confidence,generation,tick,account FROM npc_knowledge WHERE id=?");
+                    claim.i64(1,static_cast<sqlite3_int64>(e.knowledge_id));
+                    if(!claim.row())throw std::runtime_error("SQLite: trust has no source testimony");
+                    const auto k=read_knowledge(claim.get());
+                    if(k.speaker_npc!=e.source_npc||k.recipient_npc!=e.observer_npc||
+                       k.parent_id==0||k.generation>e.generation||k.tick>e.tick)
+                        throw std::runtime_error("SQLite: trust does not reference received testimony");
+                }
+                if(previous!=last.end() && (e.generation<previous->second.generation||
+                     e.tick<previous->second.tick))
+                    throw std::runtime_error("SQLite: social trust time reversed");
+                // Contact is verified against the actual checkpoint whenever
+                // one survives, not invented on migration from old saves.
+                Statement snap(db_,"SELECT state FROM snapshots WHERE generation=?");
+                snap.i64(1,static_cast<sqlite3_int64>(e.generation));
+                if(snap.row()){
+                    const auto bytes=sqlite3_column_bytes(snap.get(),0);
+                    const auto* data=static_cast<const char*>(sqlite3_column_blob(snap.get(),0));
+                    if(bytes<=0||bytes>16*1024*1024||!data)
+                        throw std::runtime_error("SQLite: malformed social tie checkpoint");
+                    const auto past=Simulation::from_snapshot(std::string(data,static_cast<std::size_t>(bytes)));
+                    const auto a=past.npc_records().find(e.observer_npc);
+                    const auto b=past.npc_records().find(e.source_npc);
+                    if(a==past.npc_records().end()||b==past.npc_records().end()||
+                       a->second.location!=b->second.location)
+                        throw std::runtime_error("SQLite: social tie without physical contact");
+                }
+                tip=social_digest(tip,tie_body(e));
+                if(sqlite_str(events.get(),10)!=tip)
+                    throw std::runtime_error("SQLite: social trust chain mismatch");
+                last[pair]=e;
+            }
+            if(seq!=static_cast<std::uint64_t>(count)||tip!=final_tip)
+                throw std::runtime_error("SQLite: deleted or altered social trust event");
+        }
         out.swap(restored);
         return true;
     }
@@ -1940,13 +2053,131 @@ public:
             run(db_,"COMMIT");return true;
         }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
     }
+    std::vector<SocialTieEvent> recent_social_ties(std::size_t limit) const {
+        if(limit==0||limit>128)throw std::invalid_argument("tie limit must be 1..128");
+        Statement q(db_,"SELECT id,observer,source,prior_id,knowledge_id,kind,delta,trust,"
+            "generation,tick FROM social_tie_events ORDER BY id DESC LIMIT ?");
+        q.i64(1,static_cast<sqlite3_int64>(limit));
+        std::vector<SocialTieEvent> out;
+        while(q.row())out.push_back(read_tie(q.get()));
+        return out;
+    }
+    bool co_located(const Simulation& world,std::uint64_t a,std::uint64_t b) const {
+        if(!a||!b||a==b)return false;
+        const auto x=world.npc_records().find(a),y=world.npc_records().find(b);
+        return x!=world.npc_records().end()&&y!=world.npc_records().end()&&
+            x->second.location==y->second.location;
+    }
+    bool record_social_contact(const Simulation& world,std::uint64_t gen,
+                               std::uint64_t observer,std::uint64_t source){
+        if(!co_located(world,observer,source))return false;
+        return append_social_tie(world,gen,observer,source,SocialTieKind::Contact,0,0);
+    }
+    bool reassess_social_trust(const Simulation& world,std::uint64_t gen,
+            std::uint64_t observer,std::uint64_t source,std::uint64_t claim_id,int delta){
+        if(!claim_id||delta==0||delta<-25||delta>25||
+           !co_located(world,observer,source))return false;
+        return append_social_tie(world,gen,observer,source,SocialTieKind::Reassessment,claim_id,delta);
+    }
+    bool relay_trusted_claim(const Simulation& world,std::uint64_t gen,
+            std::uint64_t parent,std::uint64_t listener,ClaimFidelity fidelity,
+            int valence,int confidence,const std::string& account){
+        if(!parent||!listener||fidelity==ClaimFidelity::LocalObservation)return false;
+        Statement source(db_,"SELECT id,incident_id,COALESCE(parent_id,0),speaker_id,recipient_id,"
+            "fidelity,valence,confidence,generation,tick,account FROM npc_knowledge WHERE id=?");
+        source.i64(1,static_cast<sqlite3_int64>(parent));
+        if(!source.row())return false;
+        const auto from=read_knowledge(source.get());
+        if(!co_located(world,listener,from.recipient_npc))return false;
+        KnowledgeRecord e;
+        e.parent_id=parent;e.incident_id=from.incident_id;
+        e.speaker_npc=from.recipient_npc;e.recipient_npc=listener;
+        e.fidelity=fidelity;e.valence=valence;e.confidence=confidence;
+        e.generation=gen;e.tick=world.tick();e.account=account;
+        return append_knowledge(e,gen,0,true);
+    }
 private:
-    bool append_knowledge(KnowledgeRecord e,std::uint64_t generation,std::uint64_t group_id=0){
+    bool append_social_tie(const Simulation& world,std::uint64_t gen,
+            std::uint64_t observer,std::uint64_t source,SocialTieKind kind,
+            std::uint64_t claim_id,int delta){
+        run(db_,"BEGIN IMMEDIATE");
+        try{
+            if(latest_generation(db_)!=gen)
+                throw std::runtime_error("stale interpersonal trust generation");
+            if(!co_located(world,observer,source)){
+                run(db_,"ROLLBACK");return false;
+            }
+            Statement last(db_,"SELECT id,observer,source,prior_id,knowledge_id,kind,delta,trust,"
+                "generation,tick FROM social_tie_events WHERE observer=? AND source=? ORDER BY id DESC LIMIT 1");
+            last.text(1,std::to_string(observer));last.text(2,std::to_string(source));
+            const bool prior=last.row();
+            const auto previous=prior?read_tie(last.get()):SocialTieEvent{};
+            if((kind==SocialTieKind::Contact&&prior)||
+               (kind==SocialTieKind::Reassessment&&!prior)){
+                run(db_,"ROLLBACK");return false;
+            }
+            if(kind==SocialTieKind::Reassessment){
+                Statement claim(db_,"SELECT speaker_id,recipient_id,generation,tick,parent_id FROM npc_knowledge WHERE id=?");
+                claim.i64(1,static_cast<sqlite3_int64>(claim_id));
+                if(!claim.row()||parse_u64(sqlite3_column_text(claim.get(),0))!=source||
+                   parse_u64(sqlite3_column_text(claim.get(),1))!=observer||
+                   sqlite3_column_type(claim.get(),4)==SQLITE_NULL||
+                   sqlite3_column_int64(claim.get(),2)>static_cast<sqlite3_int64>(gen)||
+                   sqlite3_column_int64(claim.get(),3)>static_cast<sqlite3_int64>(world.tick())){
+                    run(db_,"ROLLBACK");return false;
+                }
+                Statement used(db_,"SELECT id FROM social_tie_events WHERE knowledge_id=?");
+                used.i64(1,static_cast<sqlite3_int64>(claim_id));
+                if(used.row()) {run(db_,"ROLLBACK");return false;}
+            }
+            Statement meta(db_,"SELECT event_count,tip FROM social_tie_meta WHERE singleton=1");
+            if(!meta.row())throw std::runtime_error("missing trust metadata");
+            const auto n=sqlite3_column_int64(meta.get(),0);
+            if(n<0||n==std::numeric_limits<sqlite3_int64>::max())
+                throw std::runtime_error("trust sequence exhausted");
+            SocialTieEvent e;e.id=static_cast<std::uint64_t>(n+1);
+            e.observer_npc=observer;e.source_npc=source;e.kind=kind;
+            e.prior_id=prior?previous.id:0;e.knowledge_id=claim_id;
+            e.delta=delta;e.trust=prior?std::clamp(previous.trust+delta,0,100):50;
+            e.generation=gen;e.tick=world.tick();
+            const auto tip=social_digest(sqlite_str(meta.get(),1),tie_body(e));
+            Statement insert(db_,"INSERT INTO social_tie_events VALUES(?,?,?,?,?,?,?,?,?,?,?)");
+            insert.i64(1,static_cast<sqlite3_int64>(e.id));
+            insert.text(2,std::to_string(observer));insert.text(3,std::to_string(source));
+            insert.i64(4,static_cast<sqlite3_int64>(e.prior_id));
+            insert.i64(5,static_cast<sqlite3_int64>(claim_id));
+            insert.i64(6,static_cast<int>(kind));insert.i64(7,delta);insert.i64(8,e.trust);
+            insert.i64(9,static_cast<sqlite3_int64>(gen));
+            insert.i64(10,static_cast<sqlite3_int64>(world.tick()));
+            insert.text(11,tip);insert.execute();
+            Statement update(db_,"UPDATE social_tie_meta SET event_count=?,tip=? WHERE singleton=1");
+            update.i64(1,static_cast<sqlite3_int64>(e.id));update.text(2,tip);update.execute();
+            if(sqlite3_changes(db_)!=1)throw std::runtime_error("trust metadata absent");
+            run(db_,"COMMIT");return true;
+        }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
+    }
+    bool append_knowledge(KnowledgeRecord e,std::uint64_t generation,std::uint64_t group_id=0,
+                          bool require_social_trust=false){
         if(!valid_knowledge(e))return false;
         run(db_,"BEGIN IMMEDIATE");
         try {
             if(latest_generation(db_)!=generation)
                 throw std::runtime_error("stale knowledge witness generation");
+            if(require_social_trust){
+                Statement tie(db_,"SELECT trust FROM social_tie_events WHERE observer=? AND source=? ORDER BY id DESC LIMIT 1");
+                tie.text(1,std::to_string(e.recipient_npc));
+                tie.text(2,std::to_string(e.speaker_npc));
+                if(!tie.row()||sqlite3_column_int(tie.get(),0)<25){
+                    run(db_,"ROLLBACK");return false;
+                }
+                const auto trust=sqlite3_column_int(tie.get(),0);
+                Statement origin(db_,"SELECT confidence,recipient_id FROM npc_knowledge WHERE id=?");
+                origin.i64(1,static_cast<sqlite3_int64>(e.parent_id));
+                if(!origin.row()||parse_u64(sqlite3_column_text(origin.get(),1))!=e.speaker_npc){
+                    run(db_,"ROLLBACK");return false;
+                }
+                e.confidence=std::min({e.confidence,trust,sqlite3_column_int(origin.get(),0)});
+            }
             Statement meta(db_,"SELECT row_count,tip_digest FROM knowledge_meta WHERE singleton=1");
             if(!meta.row())throw std::runtime_error("missing knowledge metadata");
             const auto count=sqlite3_column_int64(meta.get(),0);
@@ -2248,6 +2479,21 @@ std::vector<SocialGroup> PersistentWorld::recent_social_groups(std::size_t limit
 }
 std::vector<GroupView> PersistentWorld::recent_group_views(std::size_t limit) const {
     return store_->recent_group_views(limit);
+}
+bool PersistentWorld::record_social_contact(std::uint64_t observer,std::uint64_t source){
+    return store_->record_social_contact(world_,generation_,observer,source);
+}
+bool PersistentWorld::reassess_social_trust(std::uint64_t observer,std::uint64_t source,
+                                            std::uint64_t knowledge_id,int delta){
+    return store_->reassess_social_trust(world_,generation_,observer,source,knowledge_id,delta);
+}
+bool PersistentWorld::relay_trusted_claim(std::uint64_t parent,std::uint64_t listener,
+              ClaimFidelity fidelity,int valence,int confidence,const std::string& account){
+    return store_->relay_trusted_claim(world_,generation_,parent,listener,fidelity,
+                                       valence,confidence,account);
+}
+std::vector<SocialTieEvent> PersistentWorld::recent_social_ties(std::size_t limit) const {
+    return store_->recent_social_ties(limit);
 }
 void PersistentWorld::steps(std::uint64_t n) { for (std::uint64_t i = 0; i < n; ++i) step(); }
 } // namespace galaxy

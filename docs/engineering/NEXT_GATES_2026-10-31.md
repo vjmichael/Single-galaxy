@@ -40,3 +40,19 @@ Use bounded regression groups if older slow gate tests stall. Preserve failing/i
 - **GRSM-03a local working gate:** overlapping founded groups, member-to-member contact, durable conflicting discussion views; see `docs/GRSM03_Social_Groups_Relays_Report_2026-10-31.md` for precise test qualifications and known checkpoint-compaction limitation. **Not a complete faction/APS/reputation system.**
 
 **Next engineering priority:** GRSM-03b contact schedule/communication-topology evidence and institutional memory, with bounded worker processing, non-universal diffusion and durability under old checkpoint compaction. Do not add galaxy-wide broadcasting merely from membership or notoriety tier.
+
+
+## 2026-10-31 update: GRSM-03b verified trust slice
+
+- **GRSM-03b:** completed bounded directional NPC contacts, knowledge-linked
+  subjective trust transitions and an opt-in trust-gated relay path with
+  transaction-time confidence caps. New SQLite v9 migration fabricates no old
+  relationships. Explicit host-only APIs; **not** autonomous NPC gossip.
+- **Local Linux Debug verification:** **59/59 CTest**, **84/84 Node** and
+  **3/3 Python design tests** passed. See
+  `docs/GRSM03b_Directional_Trust_Evidence_Report_2026-10-31.md`.
+- **Next gate GRSM-03c:** versioned join/leave group membership, event-based
+  social-contact scheduling, and bounded message routes with physical travel
+  or established communication infrastructure. Harden old-contact receipts
+  after snapshot compaction. No instant intercolony news or mandatory universal
+  trust policy in this slice.

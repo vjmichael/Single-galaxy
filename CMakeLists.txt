@@ -451,4 +451,8 @@ if(BUILD_TESTING)
   add_executable(galaxy_grsm03_social_tests tests/GRSM03SocialTests.cpp)
   target_link_libraries(galaxy_grsm03_social_tests PRIVATE galaxy_kernel)
   add_test(NAME galaxy_grsm03_social_tests COMMAND galaxy_grsm03_social_tests)
+
+  add_executable(galaxy_grsm03b_trust_tests tests/GRSM03bTrustTests.cpp)
+  target_link_libraries(galaxy_grsm03b_trust_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_grsm03b_trust_tests COMMAND galaxy_grsm03b_trust_tests)
 endif()
