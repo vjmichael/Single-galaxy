@@ -6,7 +6,7 @@ In the released game's intended opening, one player colony ship with finite NPC 
 
 ## Current prototype status
 
-This repository begins from the **B7.0n** source/testing archive, dated 2026-10-31. The archived evidence records a Linux pass of 54/54 CTest native/integration suites and 84/84 Node tests. The opt-in individual workforce model persists up to 24 original NPC crew identities and farm work/mentoring; a separate statistical cohort prototype demonstrates bounded large-number accounting. **Those are not a live trillion-NPC universe.** The game remains a bounded 2D colony/space prototype, not a continuous 3D multiplayer galaxy. Native Windows and full interactive Chromium playthrough remain open gates.
+The current engineering baseline is **GRSM-03c.1** (SQLite v10 membership epochs, October 31, 2026), descended from the **B7.0n** source/testing archive. The archived evidence records a Linux pass of 54/54 CTest native/integration suites and 84/84 Node tests. The opt-in individual workforce model persists up to 24 original NPC crew identities and farm work/mentoring; a separate statistical cohort prototype demonstrates bounded large-number accounting. **Those are not a live trillion-NPC universe.** The game remains a bounded 2D colony/space prototype, not a continuous 3D multiplayer galaxy. Native Windows and full interactive Chromium playthrough remain open gates.
 
 ## Design documentation
 
@@ -32,7 +32,7 @@ Tests and development are local-first. This repository is for version control, c
 
 ## Status warning
 
-GRSM, automatic personality-driven faction formation, multi-colony migration, true persistent passenger traffic, voice rumors, galaxy-scale APS and full autonomous colony governance are **design proposals**, not implemented systems. See milestone reports for actual feature evidence.
+The foundational GRSM event, evidence, testimony, social-group, directional trust and membership slices are implemented. **Automatic gossip**, personality-driven faction formation, multi-colony migration, persistent passenger traffic, voice rumors, galaxy-scale APS and full autonomous colony governance remain **proposals**, not implemented systems. See milestone reports for actual feature evidence.
 
 ## License / distribution
 
@@ -61,3 +61,10 @@ GRSM-03b adds an optional host-controlled **trust-gated individual testimony pat
 ## GRSM-03c · Changing memberships and receipt-time group eligibility (2026-10-31)
 
 SQLite v10 now supports **durable, event-sourced group joins, exits and rejoins** by living workforce NPCs. Joining requires an existing, physically co-located member as sponsor; group claims capture immutable membership sequence receipts so later departures do not rewrite past social history. A group does not broadcast facts by membership alone, and no automatic gossip, comm-network, social decay, player recognition, or autonomous politics is claimed. See [`docs/GRSM03c_Membership_Epochs_Report_2026-10-31.md`](docs/GRSM03c_Membership_Epochs_Report_2026-10-31.md).
+
+
+## GRSM-03c.2 · Bounded social-contact opportunities (active engineering gate)
+
+The next gate builds deterministic, host-supervised *opportunities* for living NPCs to meet when the world actually locates them together. It must not create universal knowledge, change historical truth or bypass the existing claim and trust controls. The design, acceptance checklist and test-readiness requirements are in [GRSM-03c.2 implementation plan](docs/engineering/GRSM03c2_Implementation_and_Acceptance_Plan_2026-10-31.md).
+
+**Verification qualification for GRSM-03c.1:** targeted native suites 5/5, Node 84/84, Python design 3/3, full Linux compilation successful. A pre-final-code full CTest pass was 60/60; after final guards, complete runs at 59/60, 59/60 and 58/60 exposed intermittent older live-relay failures. Failed cases later passed individually, but **the final-code complete native gate remains open**. See [GRSM-03c test evidence](docs/GRSM03c_Membership_Epochs_Report_2026-10-31.md).
