@@ -102,7 +102,7 @@ static void migrate_v10_without_fake_encounters(const fs::path& root){
         CHECK(w.found_social_group("Crew committee",{2,3})==1);
     }
     // Recreate genuine schema-v10 shape rather than lying with the version flag.
-    sql(db,"DROP TABLE group_attributions; DROP TABLE attribution_meta; DROP TABLE social_interactions; DROP TABLE interaction_meta; DROP TABLE social_encounters; DROP TABLE encounter_scans; DROP TABLE encounter_meta; "
+    sql(db,"DROP TABLE physical_appraisals; DROP TABLE physical_appraisal_meta; DROP TABLE group_attributions; DROP TABLE attribution_meta; DROP TABLE social_interactions; DROP TABLE interaction_meta; DROP TABLE social_encounters; DROP TABLE encounter_scans; DROP TABLE encounter_meta; "
            "PRAGMA user_version=10;");
     {
         PersistentWorld w(db.string(),Simulation(40));

@@ -118,6 +118,19 @@ struct GroupRelationSummary {
     int mean_feeling=0; // informed members only; NOT official group policy
 };
 
+// GRSM-04a: one individual interpretation of an ACTUAL physical incident,
+// anchored to an authenticated firsthand observation. Contextual opinions are
+// subjective, not physical facts, proof of an NPC culprit, or an institution's
+// official policy. 0 context means the person's unaffiliated viewpoint.
+enum class PhysicalAppraisalStance : int { Beneficial=1, Damaging=2, Uncertain=3 };
+struct PhysicalAppraisalEvent {
+    std::uint64_t id=0, observation_id=0, observer_npc=0, context_group=0;
+    std::uint64_t membership_seq=0, generation=0, tick=0;
+    std::string incident_id;
+    PhysicalAppraisalStance stance=PhysicalAppraisalStance::Uncertain;
+    int confidence=0; // subjective certainty 0..100, NOT testimony proof
+};
+
 // GRSM-03b: directional, evidence-linked interpersonal trust. Each event is
 // an immutable record of a witnessed contact or a character's reassessment;
 // it is neither historical truth nor proof of the accuracy of the allegation.
@@ -239,6 +252,13 @@ public:
     GroupRelationSummary group_relation_summary(std::uint64_t observer_group,
         std::uint64_t actor_group) const;
     std::vector<GroupAttributionEvent> recent_group_attributions(std::size_t limit=50) const;
+    // Records an explicitly assessed actual physical incident by a *firsthand*
+    // witness. Its direct-observation receipt must be from the current tick;
+    // hearsay and invented incidents cannot act as physical proof. Group context
+    // is optional, but a group member must belong there at this exact epoch.
+    bool appraise_witnessed_incident(std::uint64_t observation_id,
+          std::uint64_t context_group,PhysicalAppraisalStance stance,int confidence);
+    std::vector<PhysicalAppraisalEvent> recent_physical_appraisals(std::size_t limit=50) const;
 
 
 

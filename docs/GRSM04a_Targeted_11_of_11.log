@@ -1,0 +1,28 @@
+Internal ctest changing into directory: /mnt/data/sg_group_next/build
+Test project /mnt/data/sg_group_next/build
+      Start  2: galaxy_persistence_tests
+      Start 62: galaxy_grsm03d_group_relations_tests
+ 1/11 Test #62: galaxy_grsm03d_group_relations_tests ......   Passed    0.16 sec
+      Start 59: galaxy_grsm03b_trust_tests
+ 2/11 Test #59: galaxy_grsm03b_trust_tests ................   Passed    0.20 sec
+      Start 56: galaxy_grsm01b_physical_tests
+ 3/11 Test #56: galaxy_grsm01b_physical_tests .............   Passed    0.23 sec
+      Start 57: galaxy_grsm02_knowledge_tests
+ 4/11 Test #57: galaxy_grsm02_knowledge_tests .............   Passed    0.20 sec
+      Start 58: galaxy_grsm03_social_tests
+ 5/11 Test #58: galaxy_grsm03_social_tests ................   Passed    0.16 sec
+      Start 64: galaxy_grsm03c2_encounter_tests
+ 6/11 Test #64: galaxy_grsm03c2_encounter_tests ...........   Passed    0.20 sec
+      Start 61: galaxy_grsm03c3_relationship_tests
+ 7/11 Test #61: galaxy_grsm03c3_relationship_tests ........   Passed    0.23 sec
+      Start 55: galaxy_grsm01_history_tests
+ 8/11 Test #55: galaxy_grsm01_history_tests ...............   Passed    0.12 sec
+      Start 60: galaxy_grsm03c_membership_tests
+ 9/11 Test  #2: galaxy_persistence_tests ..................   Passed    1.57 sec
+      Start 63: galaxy_grsm04a_physical_appraisal_tests
+10/11 Test #60: galaxy_grsm03c_membership_tests ...........   Passed    0.19 sec
+11/11 Test #63: galaxy_grsm04a_physical_appraisal_tests ...   Passed    0.16 sec
+
+100% tests passed, 0 tests failed out of 11
+
+Total Test time (real) =   1.73 sec

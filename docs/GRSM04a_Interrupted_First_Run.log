@@ -1,0 +1,50 @@
+Internal ctest changing into directory: /mnt/data/sg_group_next/build
+Test project /mnt/data/sg_group_next/build
+      Start 22: galaxy_b65_live_gate_qa_e2e
+      Start  8: galaxy_b53_live_logistics_e2e
+      Start  6: galaxy_b52_station_live_e2e
+      Start 20: galaxy_b64_live_multihop_e2e
+ 1/64 Test  #6: galaxy_b52_station_live_e2e ...............   Passed   10.13 sec
+      Start 23: galaxy_b65_relay_qa_controls
+ 2/64 Test  #8: galaxy_b53_live_logistics_e2e .............   Passed   10.25 sec
+      Start 11: galaxy_b61_live_scanning_e2e
+ 3/64 Test #20: galaxy_b64_live_multihop_e2e ..............   Passed   10.38 sec
+      Start 15: galaxy_b62c_live_multisystem_e2e
+ 4/64 Test #22: galaxy_b65_live_gate_qa_e2e ...............   Passed   12.58 sec
+      Start 16: galaxy_b62c_relay_gate_controls
+ 5/64 Test #16: galaxy_b62c_relay_gate_controls ...........   Passed    4.78 sec
+      Start 37: galaxy_b70f_live_habitat_relay
+ 6/64 Test #15: galaxy_b62c_live_multisystem_e2e ..........   Passed    7.40 sec
+      Start 51: galaxy_b70l_live_waterworks_relay
+ 7/64 Test #11: galaxy_b61_live_scanning_e2e ..............   Passed    9.33 sec
+      Start 41: galaxy_b70h_live_maintenance_relay
+ 8/64 Test #23: galaxy_b65_relay_qa_controls ..............   Passed   10.02 sec
+      Start 49: galaxy_b70k_live_reclaimer_relay
+ 9/64 Test #37: galaxy_b70f_live_habitat_relay ............   Passed    4.80 sec
+      Start 47: galaxy_b70k_live_clinic_relay
+10/64 Test #51: galaxy_b70l_live_waterworks_relay .........   Passed    4.79 sec
+      Start 45: galaxy_b70j_live_community_relay
+11/64 Test #41: galaxy_b70h_live_maintenance_relay ........   Passed    4.05 sec
+      Start 53: galaxy_b70m_live_policy_relay
+12/64 Test #49: galaxy_b70k_live_reclaimer_relay ..........   Passed    4.32 sec
+      Start 18: galaxy_b63_relay_route_controls
+13/64 Test #47: galaxy_b70k_live_clinic_relay .............   Passed    4.39 sec
+      Start 43: galaxy_b70i_live_resilience_relay
+14/64 Test #45: galaxy_b70j_live_community_relay ..........   Passed    4.54 sec
+      Start 17: galaxy_b63_live_routes_history_e2e
+15/64 Test #53: galaxy_b70m_live_policy_relay .............   Passed    4.84 sec
+      Start 39: galaxy_b70g_live_utility_relay
+16/64 Test #18: galaxy_b63_relay_route_controls ...........   Passed    4.17 sec
+      Start 33: galaxy_b70d_live_agriculture_relay
+17/64 Test #43: galaxy_b70i_live_resilience_relay .........   Passed    3.98 sec
+      Start 35: galaxy_b70e_live_farm_relay
+18/64 Test #17: galaxy_b63_live_routes_history_e2e ........   Passed    4.18 sec
+      Start 29: galaxy_b70b_live_colony_e2e
+19/64 Test #39: galaxy_b70g_live_utility_relay ............   Passed    4.23 sec
+      Start 31: galaxy_b70c_live_mineral_relay
+20/64 Test #33: galaxy_b70d_live_agriculture_relay ........   Passed    4.25 sec
+      Start 25: galaxy_b66_live_gate_telemetry
+21/64 Test #35: galaxy_b70e_live_farm_relay ...............   Passed    3.72 sec
+      Start  2: galaxy_persistence_tests
+22/64 Test #29: galaxy_b70b_live_colony_e2e ...............   Passed    3.36 sec
+      Start 27: galaxy_b70_colony_cli_e2e

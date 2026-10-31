@@ -332,6 +332,27 @@ int attribution_delta(GroupAttributionStance stance){
     return 0;
 }
 
+PhysicalAppraisalEvent read_physical_appraisal(sqlite3_stmt* q){
+    PhysicalAppraisalEvent e;
+    const auto id=sqlite3_column_int64(q,0),observation=sqlite3_column_int64(q,1),
+        grp=sqlite3_column_int64(q,4),epoch=sqlite3_column_int64(q,5),
+        gen=sqlite3_column_int64(q,8),tick=sqlite3_column_int64(q,9);
+    if(id<=0||observation<=0||grp<0||epoch<0||gen<=0||tick<0)
+        throw std::runtime_error("SQLite: invalid physical appraisal row");
+    e.id=id;e.observation_id=observation;e.incident_id=sqlite_str(q,2);
+    e.observer_npc=parse_u64(sqlite3_column_text(q,3));e.context_group=grp;
+    e.membership_seq=epoch;e.stance=static_cast<PhysicalAppraisalStance>(sqlite3_column_int(q,6));
+    e.confidence=sqlite3_column_int(q,7);e.generation=gen;e.tick=tick;
+    return e;
+}
+std::string physical_appraisal_body(const PhysicalAppraisalEvent& e){
+    return std::to_string(e.id)+"|"+std::to_string(e.observation_id)+"|"+
+        e.incident_id+"|"+std::to_string(e.observer_npc)+"|"+
+        std::to_string(e.context_group)+"|"+std::to_string(e.membership_seq)+"|"+
+        std::to_string(static_cast<int>(e.stance))+"|"+std::to_string(e.confidence)+"|"+
+        std::to_string(e.generation)+"|"+std::to_string(e.tick);
+}
+
 struct EncounterCycle {
     std::uint64_t id=0,generation=0,tick=0,population=0,pairs=0,start=0,
                   scanned=0,end=0,contacts=0;
@@ -424,7 +445,7 @@ public:
         Statement version(db_, "PRAGMA user_version");
         if (!version.row()) throw std::runtime_error("SQLite: no schema version");
         const int v = sqlite3_column_int(version.get(), 0);
-        if (v < 0 || v > 13) throw std::runtime_error("SQLite: incompatible schema version");
+        if (v < 0 || v > 14) throw std::runtime_error("SQLite: incompatible schema version");
         if (v == 0) {
             run(db_, "BEGIN IMMEDIATE");
             try {
@@ -754,6 +775,32 @@ public:
                 run(db_,"CREATE TRIGGER group_attributions_no_delete BEFORE DELETE ON group_attributions "
                     "BEGIN SELECT RAISE(ABORT,'group attributions immutable'); END");
                 run(db_,"PRAGMA user_version=13");run(db_,"COMMIT");
+            }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
+        }
+        if(v<=13){
+            // GRSM-04a: old worlds cannot be granted retrospective eyewitness
+            // opinions. New appraisals require a real firsthand claim on tick.
+            run(db_,"BEGIN IMMEDIATE");
+            try {
+                run(db_,"CREATE TABLE physical_appraisal_meta(singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
+                    "event_count INTEGER NOT NULL CHECK(event_count>=0),tip TEXT NOT NULL)");
+                run(db_,"INSERT INTO physical_appraisal_meta VALUES(1,0,'origin')");
+                run(db_,"CREATE TABLE physical_appraisals(id INTEGER PRIMARY KEY,"
+                    "observation_id INTEGER NOT NULL REFERENCES npc_knowledge(id),"
+                    "incident_id TEXT NOT NULL REFERENCES physical_incidents(incident_id),"
+                    "observer TEXT NOT NULL,context_group INTEGER NOT NULL CHECK(context_group>=0),"
+                    "membership_seq INTEGER NOT NULL CHECK(membership_seq>=0),"
+                    "stance INTEGER NOT NULL CHECK(stance BETWEEN 1 AND 3),"
+                    "confidence INTEGER NOT NULL CHECK(confidence BETWEEN 0 AND 100),"
+                    "generation INTEGER NOT NULL CHECK(generation>0),"
+                    "tick INTEGER NOT NULL CHECK(tick>=0),digest TEXT NOT NULL,"
+                    "UNIQUE(observation_id,context_group))");
+                run(db_,"CREATE INDEX physical_appraisal_observer ON physical_appraisals(observer,context_group,id)");
+                run(db_,"CREATE TRIGGER physical_appraisals_no_update BEFORE UPDATE ON physical_appraisals "
+                    "BEGIN SELECT RAISE(ABORT,'physical appraisal immutable'); END");
+                run(db_,"CREATE TRIGGER physical_appraisals_no_delete BEFORE DELETE ON physical_appraisals "
+                    "BEGIN SELECT RAISE(ABORT,'physical appraisal immutable'); END");
+                run(db_,"PRAGMA user_version=14");run(db_,"COMMIT");
             }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
         }
         } catch (...) { sqlite3_close_v2(db_); db_ = nullptr; throw; }
@@ -1947,6 +1994,60 @@ public:
             if(count!=static_cast<std::uint64_t>(expected)||tip!=expected_tip)
                 throw std::runtime_error("SQLite: missing or corrupted group viewpoints");
         }
+        // GRSM-04a: appraisals are subjective, but their evidence is not.
+        // Verify the source is a genuine *firsthand* claim of the same physical
+        // incident, not hearsay or invented past contact. Group membership is
+        // checked at the original epoch even if the person subsequently quits.
+        {
+            Statement meta(db_,"SELECT event_count,tip FROM physical_appraisal_meta WHERE singleton=1");
+            if(!meta.row())throw std::runtime_error("SQLite: missing physical appraisal metadata");
+            const auto expected=sqlite3_column_int64(meta.get(),0);
+            const auto end_tip=sqlite_str(meta.get(),1);
+            if(expected<0||meta.row())throw std::runtime_error("SQLite: invalid physical appraisal metadata");
+            const auto latest_epoch=last_membership_seq();
+            std::uint64_t count=0;std::string tip="origin";
+            Statement records(db_,"SELECT id,observation_id,incident_id,observer,context_group,"
+                "membership_seq,stance,confidence,generation,tick,digest FROM physical_appraisals ORDER BY id");
+            while(records.row()){
+                const auto e=read_physical_appraisal(records.get());
+                if(e.id!=++count||e.generation>generation||e.tick>restored.tick()||
+                   e.membership_seq>latest_epoch||
+                   static_cast<int>(e.stance)<1||static_cast<int>(e.stance)>3||
+                   e.confidence<0||e.confidence>100||
+                   (e.context_group==0&&e.membership_seq!=0))
+                    throw std::runtime_error("SQLite: invalid appraisal identity or epoch");
+                Statement claim(db_,"SELECT incident_id,COALESCE(parent_id,0),recipient_id,"
+                    "fidelity,generation,tick FROM npc_knowledge WHERE id=?");
+                claim.i64(1,static_cast<sqlite3_int64>(e.observation_id));
+                if(!claim.row()||sqlite_str(claim.get(),0)!=e.incident_id||
+                   sqlite3_column_int64(claim.get(),1)!=0||
+                   parse_u64(sqlite3_column_text(claim.get(),2))!=e.observer_npc||
+                   sqlite3_column_int(claim.get(),3)!=static_cast<int>(ClaimFidelity::LocalObservation)||
+                   sqlite3_column_int64(claim.get(),4)!=static_cast<sqlite3_int64>(e.generation)||
+                   sqlite3_column_int64(claim.get(),5)!=static_cast<sqlite3_int64>(e.tick))
+                    throw std::runtime_error("SQLite: appraisal lacks firsthand evidence");
+                Statement fact(db_,"SELECT generation,tick FROM physical_incidents WHERE incident_id=?");
+                fact.text(1,e.incident_id);
+                if(!fact.row()||
+                   sqlite3_column_int64(fact.get(),0)!=static_cast<sqlite3_int64>(e.generation)||
+                   sqlite3_column_int64(fact.get(),1)!=static_cast<sqlite3_int64>(e.tick))
+                    throw std::runtime_error("SQLite: appraisal lacks committed physical source");
+                if(e.context_group){
+                    Statement g(db_,"SELECT generation FROM social_groups WHERE id=?");
+                    g.i64(1,static_cast<sqlite3_int64>(e.context_group));
+                    if(!g.row()||sqlite3_column_int64(g.get(),0)>static_cast<sqlite3_int64>(e.generation))
+                        throw std::runtime_error("SQLite: appraisal predates its group");
+                    const auto members=group_members_at(e.context_group,e.membership_seq);
+                    if(!std::binary_search(members.begin(),members.end(),e.observer_npc))
+                        throw std::runtime_error("SQLite: appraiser lacks original group membership");
+                }
+                tip=social_digest(tip,physical_appraisal_body(e));
+                if(tip!=sqlite_str(records.get(),10))
+                    throw std::runtime_error("SQLite: altered physical appraisal digest");
+            }
+            if(count!=static_cast<std::uint64_t>(expected)||tip!=end_tip)
+                throw std::runtime_error("SQLite: deleted or altered appraisal history");
+        }
         out.swap(restored);
         return true;
     }
@@ -2814,6 +2915,80 @@ public:
             run(db_,"COMMIT");return true;
         }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
     }
+    std::vector<PhysicalAppraisalEvent> recent_physical_appraisals(std::size_t limit) const {
+        if(!limit||limit>256)throw std::invalid_argument("physical appraisal limit 1..256");
+        Statement rows(db_,"SELECT id,observation_id,incident_id,observer,context_group,"
+            "membership_seq,stance,confidence,generation,tick FROM physical_appraisals "
+            "ORDER BY id DESC LIMIT ?");
+        rows.i64(1,static_cast<sqlite3_int64>(limit));
+        std::vector<PhysicalAppraisalEvent> out;
+        while(rows.row())out.push_back(read_physical_appraisal(rows.get()));
+        return out;
+    }
+    bool appraise_witnessed_incident(const Simulation& world,std::uint64_t gen,
+             std::uint64_t observation_id,std::uint64_t context_group,
+             PhysicalAppraisalStance stance,int confidence){
+        if(!observation_id||confidence<0||confidence>100||
+           static_cast<int>(stance)<1||static_cast<int>(stance)>3)return false;
+        run(db_,"BEGIN IMMEDIATE");
+        try {
+            if(latest_generation(db_)!=gen)
+                throw std::runtime_error("stale physical appraisal generation");
+            Statement source(db_,"SELECT incident_id,COALESCE(parent_id,0),recipient_id,"
+                "fidelity,generation,tick FROM npc_knowledge WHERE id=?");
+            source.i64(1,static_cast<sqlite3_int64>(observation_id));
+            if(!source.row()||sqlite3_column_int64(source.get(),1)!=0||
+               sqlite3_column_int(source.get(),3)!=static_cast<int>(ClaimFidelity::LocalObservation)||
+               sqlite3_column_int64(source.get(),4)!=static_cast<sqlite3_int64>(gen)||
+               sqlite3_column_int64(source.get(),5)!=static_cast<sqlite3_int64>(world.tick())){
+                run(db_,"ROLLBACK");return false;
+            }
+            const auto incident=sqlite_str(source.get(),0);
+            const auto observer=parse_u64(sqlite3_column_text(source.get(),2));
+            if(world.npc_records().find(observer)==world.npc_records().end()){
+                run(db_,"ROLLBACK");return false;
+            }
+            Statement physical(db_,"SELECT generation,tick FROM physical_incidents WHERE incident_id=?");
+            physical.text(1,incident);
+            if(!physical.row()||
+               sqlite3_column_int64(physical.get(),0)!=static_cast<sqlite3_int64>(gen)||
+               sqlite3_column_int64(physical.get(),1)!=static_cast<sqlite3_int64>(world.tick())){
+                run(db_,"ROLLBACK");return false;
+            }
+            std::uint64_t epoch=0;
+            if(context_group){
+                const auto group=load_social_group(context_group);
+                if(!group.id||!std::binary_search(group.members.begin(),group.members.end(),observer)){
+                    run(db_,"ROLLBACK");return false;
+                }
+                epoch=last_membership_seq();
+            }
+            Statement previous(db_,"SELECT id FROM physical_appraisals WHERE observation_id=? AND context_group=?");
+            previous.i64(1,static_cast<sqlite3_int64>(observation_id));
+            previous.i64(2,static_cast<sqlite3_int64>(context_group));
+            if(previous.row()){run(db_,"ROLLBACK");return false;}
+            Statement meta(db_,"SELECT event_count,tip FROM physical_appraisal_meta WHERE singleton=1");
+            if(!meta.row())throw std::runtime_error("missing appraisal metadata");
+            const auto n=sqlite3_column_int64(meta.get(),0);
+            if(n<0||n==std::numeric_limits<sqlite3_int64>::max())
+                throw std::runtime_error("appraisal sequence exhausted");
+            PhysicalAppraisalEvent e;
+            e.id=n+1;e.observation_id=observation_id;e.incident_id=incident;
+            e.observer_npc=observer;e.context_group=context_group;e.membership_seq=epoch;
+            e.stance=stance;e.confidence=confidence;e.generation=gen;e.tick=world.tick();
+            const auto tip=social_digest(sqlite_str(meta.get(),1),physical_appraisal_body(e));
+            Statement insert(db_,"INSERT INTO physical_appraisals VALUES(?,?,?,?,?,?,?,?,?,?,?)");
+            insert.i64(1,e.id);insert.i64(2,e.observation_id);insert.text(3,e.incident_id);
+            insert.text(4,std::to_string(observer));insert.i64(5,e.context_group);
+            insert.i64(6,e.membership_seq);insert.i64(7,static_cast<int>(stance));
+            insert.i64(8,confidence);insert.i64(9,gen);insert.i64(10,world.tick());
+            insert.text(11,tip);insert.execute();
+            Statement update(db_,"UPDATE physical_appraisal_meta SET event_count=?,tip=? WHERE singleton=1");
+            update.i64(1,e.id);update.text(2,tip);update.execute();
+            if(sqlite3_changes(db_)!=1)throw std::runtime_error("missing appraisal metadata update");
+            run(db_,"COMMIT");return true;
+        }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
+    }
     bool record_social_interaction(const Simulation& world,std::uint64_t gen,
             std::uint64_t encounter_id,std::uint64_t observer,std::uint64_t actor,
             SocialInteractionKind kind){
@@ -3445,6 +3620,13 @@ GroupRelationSummary PersistentWorld::group_relation_summary(
 }
 std::vector<GroupAttributionEvent> PersistentWorld::recent_group_attributions(std::size_t limit) const{
     return store_->recent_group_attributions(limit);
+}
+bool PersistentWorld::appraise_witnessed_incident(std::uint64_t observation_id,
+        std::uint64_t context_group,PhysicalAppraisalStance stance,int confidence){
+    return store_->appraise_witnessed_incident(world_,generation_,observation_id,context_group,stance,confidence);
+}
+std::vector<PhysicalAppraisalEvent> PersistentWorld::recent_physical_appraisals(std::size_t limit) const {
+    return store_->recent_physical_appraisals(limit);
 }
 void PersistentWorld::steps(std::uint64_t n) { for (std::uint64_t i = 0; i < n; ++i) step(); }
 } // namespace galaxy

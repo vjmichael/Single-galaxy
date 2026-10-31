@@ -114,7 +114,7 @@ static void legacy_migration(const fs::path& root){
         CHECK(w.found_social_group("Real crew",{2,3})==1);
     }
     // Construct a *true* v8 fixture, removing every object belonging to v9.
-    sql(db,"DROP TABLE group_attributions; DROP TABLE attribution_meta; DROP TABLE social_interactions; DROP TABLE interaction_meta; DROP TABLE social_encounters; DROP TABLE encounter_scans; DROP TABLE encounter_meta; DROP TABLE group_membership_events; DROP TABLE membership_meta; "
+    sql(db,"DROP TABLE physical_appraisals; DROP TABLE physical_appraisal_meta; DROP TABLE group_attributions; DROP TABLE attribution_meta; DROP TABLE social_interactions; DROP TABLE interaction_meta; DROP TABLE social_encounters; DROP TABLE encounter_scans; DROP TABLE encounter_meta; DROP TABLE group_membership_events; DROP TABLE membership_meta; "
            "DROP TABLE social_tie_events; DROP TABLE social_tie_meta; "
            "CREATE TABLE old_group_relays AS SELECT id,group_id,knowledge_id,digest FROM group_relays; "
            "DROP TRIGGER group_relays_no_update; DROP TRIGGER group_relays_no_delete; "
