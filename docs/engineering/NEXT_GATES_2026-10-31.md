@@ -63,3 +63,12 @@ Use bounded regression groups if older slow gate tests stall. Preserve failing/i
 - **Local Linux verification:** native full build succeeded; core targeted 5/5 suites, Node 84/84 and design 3/3 passed. One full pre-final-code run passed 60/60; later full reruns had intermittent legacy relay failures (59/60, 59/60, 58/60), each failed case subsequently passing in isolation. The final full-suite gate remains **open**, and exact logs are preserved in the GRSM-03c archive. See `docs/GRSM03c_Membership_Epochs_Report_2026-10-31.md`.
 - **Remaining GRSM-03c.2:** bounded autonomous contact opportunity scheduling, communication topology/travel proof, and relationship/contact aging rules. These are *not* present in GRSM-03c's membership gate and must not be reported as working.
 - **GRSM-04 afterward:** ratified group policy versus personal interpretation, actual faction governance/leadership and APS-cohort knowledge routing. All future work remains locally tested and source-isolated from Lu/Cognitum/EVEmu archival research.
+
+
+## 2026-10-31 update: GRSM-03c.2 planning and documentation status
+
+- The current code baseline is **GRSM-03c.1**, SQLite v10 with persistent join/leave/rejoin membership epochs, group-relay eligibility at record time, and preserved pre-v10 social history. This replaces the outdated B7.0n-only current-status language at the beginning of this document; B7.0n remains an archived starting point.
+- **Verification: qualified, not fully green.** Native build, targeted 5/5 suites, Node 84/84, design 3/3 passed. A pre-final-code native full pass was 60/60, followed by final-code complete-suite runs at 59/60, 59/60 and 58/60 with intermittent older live relay failures. Individual reruns passed; root cause remains open.
+- **03c.2 active priority:** deterministic bounded real-contact opportunities, explicit host scheduling, append-only receipts, no automatic rumors or cross-colony broadcasts, migration/recovery integrity and legacy relay readiness stabilization.
+- **Acceptance contract and scoping:** [GRSM-03c.2 implementation plan](GRSM03c2_Implementation_and_Acceptance_Plan_2026-10-31.md). Gate 03c.2-C explicitly requires a *final-code complete native suite* before the whole milestone can be called green.
+- Keep original Single Galaxy source isolated from EVEmu archival research, Lu and Cognitum; GitHub is a source/version record, not the principal local development environment.
