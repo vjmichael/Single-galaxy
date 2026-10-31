@@ -32,3 +32,11 @@ Use bounded regression groups if older slow gate tests stall. Preserve failing/i
 - Keep original simulation changes isolated from Lu, Cognitum, and historical EVEmu audit code.
 - Do not add a license or publish publicly before provenance/license review and user visibility choice.
 - New GRSM specifications are prospective: **no implemented GRSM claims** until integration and acceptance tests pass.
+
+## 2026-10-31 update: GRSM milestones
+
+- **GRSM-01 / 01b:** committed executed-command truth, physical incidents, durable wrecks, shipments and named losses.
+- **GRSM-02:** committed local observation and NPC-to-NPC provenance-linked testimony; see `docs/GRSM02_Evidence_Claims_Provenance_Report_2026-10-31.md`.
+- **GRSM-03a local working gate:** overlapping founded groups, member-to-member contact, durable conflicting discussion views; see `docs/GRSM03_Social_Groups_Relays_Report_2026-10-31.md` for precise test qualifications and known checkpoint-compaction limitation. **Not a complete faction/APS/reputation system.**
+
+**Next engineering priority:** GRSM-03b contact schedule/communication-topology evidence and institutional memory, with bounded worker processing, non-universal diffusion and durability under old checkpoint compaction. Do not add galaxy-wide broadcasting merely from membership or notoriety tier.

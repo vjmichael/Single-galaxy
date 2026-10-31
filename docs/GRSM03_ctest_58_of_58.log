@@ -1,0 +1,122 @@
+Internal ctest changing into directory: /mnt/data/sg_work/single-galaxy/build-grsm03-debug
+Test project /mnt/data/sg_work/single-galaxy/build-grsm03-debug
+      Start 22: galaxy_b65_live_gate_qa_e2e
+      Start  8: galaxy_b53_live_logistics_e2e
+      Start 23: galaxy_b65_relay_qa_controls
+      Start  6: galaxy_b52_station_live_e2e
+      Start 11: galaxy_b61_live_scanning_e2e
+      Start 20: galaxy_b64_live_multihop_e2e
+      Start 15: galaxy_b62c_live_multisystem_e2e
+      Start 37: galaxy_b70f_live_habitat_relay
+ 1/58 Test #37: galaxy_b70f_live_habitat_relay ............   Passed    7.17 sec
+      Start 39: galaxy_b70g_live_utility_relay
+ 2/58 Test #15: galaxy_b62c_live_multisystem_e2e ..........   Passed    9.18 sec
+      Start 47: galaxy_b70k_live_clinic_relay
+ 3/58 Test #11: galaxy_b61_live_scanning_e2e ..............   Passed   10.47 sec
+      Start 51: galaxy_b70l_live_waterworks_relay
+ 4/58 Test #20: galaxy_b64_live_multihop_e2e ..............   Passed   11.32 sec
+      Start 53: galaxy_b70m_live_policy_relay
+ 5/58 Test  #6: galaxy_b52_station_live_e2e ...............   Passed   11.41 sec
+      Start 16: galaxy_b62c_relay_gate_controls
+ 6/58 Test #23: galaxy_b65_relay_qa_controls ..............   Passed   11.82 sec
+      Start 43: galaxy_b70i_live_resilience_relay
+ 7/58 Test #39: galaxy_b70g_live_utility_relay ............   Passed    4.69 sec
+      Start 33: galaxy_b70d_live_agriculture_relay
+ 8/58 Test  #8: galaxy_b53_live_logistics_e2e .............   Passed   12.80 sec
+      Start 35: galaxy_b70e_live_farm_relay
+ 9/58 Test #22: galaxy_b65_live_gate_qa_e2e ...............   Passed   14.30 sec
+      Start 18: galaxy_b63_relay_route_controls
+10/58 Test #47: galaxy_b70k_live_clinic_relay .............   Passed    5.16 sec
+      Start 45: galaxy_b70j_live_community_relay
+11/58 Test #51: galaxy_b70l_live_waterworks_relay .........   Passed    5.18 sec
+      Start 49: galaxy_b70k_live_reclaimer_relay
+12/58 Test #53: galaxy_b70m_live_policy_relay .............   Passed    6.22 sec
+      Start 41: galaxy_b70h_live_maintenance_relay
+13/58 Test #16: galaxy_b62c_relay_gate_controls ...........   Passed    6.51 sec
+14/58 Test #35: galaxy_b70e_live_farm_relay ...............   Passed    5.12 sec
+      Start 17: galaxy_b63_live_routes_history_e2e
+      Start 31: galaxy_b70c_live_mineral_relay
+15/58 Test #33: galaxy_b70d_live_agriculture_relay ........   Passed    6.26 sec
+      Start 25: galaxy_b66_live_gate_telemetry
+16/58 Test #43: galaxy_b70i_live_resilience_relay .........   Passed    6.70 sec
+      Start  2: galaxy_persistence_tests
+17/58 Test #18: galaxy_b63_relay_route_controls ...........   Passed    5.73 sec
+      Start 27: galaxy_b70_colony_cli_e2e
+18/58 Test #45: galaxy_b70j_live_community_relay ..........   Passed    6.17 sec
+      Start 29: galaxy_b70b_live_colony_e2e
+19/58 Test  #2: galaxy_persistence_tests ..................   Passed    2.01 sec
+      Start 40: galaxy_b70h_delegated_maintenance_tests
+20/58 Test #25: galaxy_b66_live_gate_telemetry ............   Passed    3.36 sec
+      Start 38: galaxy_b70g_utilities_tests
+21/58 Test #27: galaxy_b70_colony_cli_e2e .................   Passed    1.59 sec
+      Start  5: galaxy_station_lifecycle_tests
+22/58 Test  #5: galaxy_station_lifecycle_tests ............   Passed    0.72 sec
+      Start  7: galaxy_b53_logistics_tests
+23/58 Test #40: galaxy_b70h_delegated_maintenance_tests ...   Passed    1.97 sec
+      Start 48: galaxy_b70k_reclaimer_tests
+24/58 Test #17: galaxy_b63_live_routes_history_e2e ........   Passed    4.73 sec
+      Start  4: galaxy_mining_lifecycle_tests
+25/58 Test #31: galaxy_b70c_live_mineral_relay ............   Passed    4.92 sec
+      Start 13: galaxy_b62b_durable_jumps_tests
+26/58 Test #38: galaxy_b70g_utilities_tests ...............   Passed    1.55 sec
+      Start 34: galaxy_b70e_colony_farms_tests
+27/58 Test  #7: galaxy_b53_logistics_tests ................   Passed    0.74 sec
+      Start 36: galaxy_b70f_habitation_tests
+28/58 Test #49: galaxy_b70k_live_reclaimer_relay ..........   Passed    7.43 sec
+      Start 52: galaxy_b70m_policy_tests
+29/58 Test  #4: galaxy_mining_lifecycle_tests .............   Passed    0.50 sec
+      Start 42: galaxy_b70i_resilience_tests
+30/58 Test #13: galaxy_b62b_durable_jumps_tests ...........   Passed    0.48 sec
+      Start 44: galaxy_b70j_community_tests
+31/58 Test #52: galaxy_b70m_policy_tests ..................   Passed    0.50 sec
+      Start 10: galaxy_b54_navigation_tests
+32/58 Test #41: galaxy_b70h_live_maintenance_relay ........   Passed    6.16 sec
+      Start 46: galaxy_b70k_clinic_tests
+33/58 Test #42: galaxy_b70i_resilience_tests ..............   Passed    0.58 sec
+      Start 54: galaxy_b70n_workforce_tests
+34/58 Test #48: galaxy_b70k_reclaimer_tests ...............   Passed    1.23 sec
+      Start 50: galaxy_b70l_waterworks_tests
+35/58 Test #36: galaxy_b70f_habitation_tests ..............   Passed    0.70 sec
+      Start  3: galaxy_client_contract_tests
+36/58 Test #34: galaxy_b70e_colony_farms_tests ............   Passed    0.92 sec
+      Start 24: galaxy_b66_gate_operations_tests
+37/58 Test #44: galaxy_b70j_community_tests ...............   Passed    0.70 sec
+      Start 57: galaxy_grsm02_knowledge_tests
+38/58 Test  #3: galaxy_client_contract_tests ..............   Passed    0.31 sec
+      Start 58: galaxy_grsm03_social_tests
+39/58 Test #10: galaxy_b54_navigation_tests ...............   Passed    0.56 sec
+      Start 32: galaxy_b70d_life_support_tests
+40/58 Test #54: galaxy_b70n_workforce_tests ...............   Passed    0.43 sec
+      Start 56: galaxy_grsm01b_physical_tests
+41/58 Test #50: galaxy_b70l_waterworks_tests ..............   Passed    0.45 sec
+      Start 28: galaxy_b70b_geology_tests
+42/58 Test #24: galaxy_b66_gate_operations_tests ..........   Passed    0.29 sec
+      Start 26: galaxy_b70_colony_core_tests
+43/58 Test #57: galaxy_grsm02_knowledge_tests .............   Passed    0.25 sec
+      Start 55: galaxy_grsm01_history_tests
+44/58 Test #28: galaxy_b70b_geology_tests .................   Passed    0.11 sec
+      Start 21: galaxy_b65_gate_disruption_tests
+45/58 Test #58: galaxy_grsm03_social_tests ................   Passed    0.29 sec
+      Start 14: galaxy_b62c_projection_tests
+46/58 Test #26: galaxy_b70_colony_core_tests ..............   Passed    0.15 sec
+      Start 30: galaxy_b70c_mineral_industry_tests
+47/58 Test #21: galaxy_b65_gate_disruption_tests ..........   Passed    0.11 sec
+      Start  9: galaxy_b54_b60_geography_scanning_tests
+48/58 Test  #9: galaxy_b54_b60_geography_scanning_tests ...   Passed    0.03 sec
+      Start 19: galaxy_b64_region_tests
+49/58 Test #19: galaxy_b64_region_tests ...................   Passed    0.01 sec
+      Start  1: galaxy_kernel_tests
+50/58 Test  #1: galaxy_kernel_tests .......................   Passed    0.01 sec
+      Start 12: galaxy_b62a_gate_transit_tests
+51/58 Test #12: galaxy_b62a_gate_transit_tests ............   Passed    0.01 sec
+52/58 Test #55: galaxy_grsm01_history_tests ...............   Passed    0.23 sec
+53/58 Test #14: galaxy_b62c_projection_tests ..............   Passed    0.12 sec
+54/58 Test #56: galaxy_grsm01b_physical_tests .............   Passed    0.34 sec
+55/58 Test #32: galaxy_b70d_life_support_tests ............   Passed    0.37 sec
+56/58 Test #30: galaxy_b70c_mineral_industry_tests ........   Passed    0.13 sec
+57/58 Test #46: galaxy_b70k_clinic_tests ..................   Passed    0.82 sec
+58/58 Test #29: galaxy_b70b_live_colony_e2e ...............   Passed    4.54 sec
+
+100% tests passed, 0 tests failed out of 58
+
+Total Test time (real) =  25.08 sec

@@ -170,6 +170,56 @@ std::string knowledge_digest(const std::string& previous, const KnowledgeRecord&
     for(const unsigned char byte:text){value^=byte;value*=1099511628211ULL;}
     return std::to_string(value);
 }
+std::string social_digest(const std::string& previous,const std::string& contents){
+    std::uint64_t v=14695981039346656037ULL;
+    for(const unsigned char b:previous+"|"+contents){v^=b;v*=1099511628211ULL;}
+    return std::to_string(v); // Corruption detector; NOT adversarial authentication.
+}
+std::string social_members(const std::vector<std::uint64_t>& members){
+    std::string s;
+    for(auto id:members){if(!s.empty())s+=",";s+=std::to_string(id);}
+    return s;
+}
+std::vector<std::uint64_t> parse_social_members(const std::string& record){
+    std::vector<std::uint64_t> out;std::stringstream ss(record);std::string piece;
+    while(std::getline(ss,piece,',')){
+        if(piece.empty()||piece.find_first_not_of("0123456789")!=std::string::npos)
+            throw std::runtime_error("invalid social group membership encoding");
+        const auto id=std::stoull(piece);
+        if(id==0 || (!out.empty() && id<=out.back()))
+            throw std::runtime_error("noncanonical social group membership");
+        out.push_back(id);
+    }
+    if(out.size()<2||out.size()>24||social_members(out)!=record)
+        throw std::runtime_error("social group membership out of bounds");
+    return out;
+}
+SocialGroup read_group(sqlite3_stmt* q){
+    const auto id=sqlite3_column_int64(q,0),g=sqlite3_column_int64(q,2);
+    if(id<=0||g<=0)throw std::runtime_error("invalid social group identity");
+    SocialGroup r;r.id=static_cast<std::uint64_t>(id);r.name=sqlite_str(q,1);
+    r.generation=static_cast<std::uint64_t>(g);
+    r.members=parse_social_members(sqlite_str(q,3));return r;
+}
+GroupView read_view(sqlite3_stmt* q){
+    const auto id=sqlite3_column_int64(q,0),gid=sqlite3_column_int64(q,1),kid=sqlite3_column_int64(q,2),
+        g=sqlite3_column_int64(q,6),tick=sqlite3_column_int64(q,7);
+    if(id<=0||gid<=0||kid<=0||g<=0||tick<0)
+        throw std::runtime_error("invalid social group view identity");
+    GroupView r;r.id=id;r.group_id=gid;r.knowledge_id=kid;
+    r.stance=static_cast<GroupStance>(sqlite3_column_int(q,3));
+    r.confidence=sqlite3_column_int(q,4);r.account=sqlite_str(q,5);
+    r.generation=g;r.tick=tick;return r;
+}
+std::string group_body(const SocialGroup& r){
+    return std::to_string(r.id)+"|"+r.name+"|"+std::to_string(r.generation)+"|"+social_members(r.members);
+}
+std::string view_body(const GroupView& r){
+    return std::to_string(r.id)+"|"+std::to_string(r.group_id)+"|"+
+        std::to_string(r.knowledge_id)+"|"+std::to_string(static_cast<int>(r.stance))+"|"+
+        std::to_string(r.confidence)+"|"+r.account+"|"+
+        std::to_string(r.generation)+"|"+std::to_string(r.tick);
+}
 KnowledgeRecord read_knowledge(sqlite3_stmt* s) {
     KnowledgeRecord r;
     const auto ident=sqlite3_column_int64(s,0),parent=sqlite3_column_int64(s,2),
@@ -223,7 +273,7 @@ public:
         Statement version(db_, "PRAGMA user_version");
         if (!version.row()) throw std::runtime_error("SQLite: no schema version");
         const int v = sqlite3_column_int(version.get(), 0);
-        if (v < 0 || v > 7) throw std::runtime_error("SQLite: incompatible schema version");
+        if (v < 0 || v > 8) throw std::runtime_error("SQLite: incompatible schema version");
         if (v == 0) {
             run(db_, "BEGIN IMMEDIATE");
             try {
@@ -380,6 +430,38 @@ public:
                 meta.i64(1,static_cast<std::int64_t>(baseline));meta.execute();
                 run(db_, "PRAGMA user_version=7");run(db_, "COMMIT");
             } catch (...) {sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
+        }
+        if (v <= 7) {
+            // GRSM-03: no retrospective groups, memberships, or opinions.
+            run(db_,"BEGIN IMMEDIATE");
+            try {
+                run(db_,"CREATE TABLE social_meta(singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
+                    "groups_count INTEGER NOT NULL DEFAULT 0,groups_tip TEXT NOT NULL,"
+                    "relays_count INTEGER NOT NULL DEFAULT 0,relays_tip TEXT NOT NULL,"
+                    "views_count INTEGER NOT NULL DEFAULT 0,views_tip TEXT NOT NULL)");
+                run(db_,"INSERT INTO social_meta VALUES(1,0,'origin',0,'origin',0,'origin')");
+                run(db_,"CREATE TABLE social_groups(id INTEGER PRIMARY KEY,name TEXT NOT NULL,"
+                    "generation INTEGER NOT NULL CHECK(generation>0),members TEXT NOT NULL,digest TEXT NOT NULL)");
+                run(db_,"CREATE TABLE group_relays(id INTEGER PRIMARY KEY,"
+                    "group_id INTEGER NOT NULL REFERENCES social_groups(id),"
+                    "knowledge_id INTEGER NOT NULL UNIQUE REFERENCES npc_knowledge(id),digest TEXT NOT NULL)");
+                run(db_,"CREATE TABLE group_views(id INTEGER PRIMARY KEY,"
+                    "group_id INTEGER NOT NULL REFERENCES social_groups(id),"
+                    "knowledge_id INTEGER NOT NULL REFERENCES npc_knowledge(id),"
+                    "stance INTEGER NOT NULL CHECK(stance BETWEEN 1 AND 3),"
+                    "confidence INTEGER NOT NULL CHECK(confidence BETWEEN 0 AND 100),"
+                    "account TEXT NOT NULL CHECK(length(account) BETWEEN 1 AND 240),"
+                    "generation INTEGER NOT NULL CHECK(generation>0),tick INTEGER NOT NULL CHECK(tick>=0),"
+                    "digest TEXT NOT NULL)");
+                for(const auto* table:{"social_groups","group_relays","group_views"}){
+                    const auto name=std::string(table);
+                    run(db_,("CREATE TRIGGER "+name+"_no_update BEFORE UPDATE ON "+name+
+                             " BEGIN SELECT RAISE(ABORT,'social history immutable'); END").c_str());
+                    run(db_,("CREATE TRIGGER "+name+"_no_delete BEFORE DELETE ON "+name+
+                             " BEGIN SELECT RAISE(ABORT,'social history immutable'); END").c_str());
+                }
+                run(db_,"PRAGMA user_version=8");run(db_,"COMMIT");
+            }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
         }
         } catch (...) { sqlite3_close_v2(db_); db_ = nullptr; throw; }
     }
@@ -1113,6 +1195,122 @@ public:
             if(expected_id!=static_cast<std::uint64_t>(count) || chain!=tip)
                 throw std::runtime_error("SQLite: missing or changed knowledge entries");
         }
+        // GRSM-03: validate social history independently of physical facts.
+        // A group records its REAL founders at a historical snapshot; its
+        // relays record contact between two members, not omniscient news.
+        {
+            Statement meta(db_,"SELECT groups_count,groups_tip,relays_count,relays_tip,"
+                               "views_count,views_tip FROM social_meta WHERE singleton=1");
+            if(!meta.row())throw std::runtime_error("SQLite: missing social history metadata");
+            const auto gc=sqlite3_column_int64(meta.get(),0),rc=sqlite3_column_int64(meta.get(),2),
+                       vc=sqlite3_column_int64(meta.get(),4);
+            if(gc<0||rc<0||vc<0)throw std::runtime_error("SQLite: social history negative count");
+            const auto gt=sqlite_str(meta.get(),1),rt=sqlite_str(meta.get(),3),
+                       vt=sqlite_str(meta.get(),5);
+            if(meta.row())throw std::runtime_error("SQLite: extra social metadata");
+            std::map<std::uint64_t,SocialGroup> groups;
+            std::map<std::uint64_t,std::pair<std::uint64_t,KnowledgeRecord>> relays;
+            std::map<std::uint64_t,Simulation> snapshots;
+            // Only three recent full snapshots are retained by the existing
+            // checkpoint policy. Older contacts are proven by durable append-
+            // only host receipts and chained checksums, not by retained world
+            // snapshots. Never reject a legitimate aged conversation merely
+            // because its historical full snapshot was compacted away.
+            auto historic_world=[&](std::uint64_t g)->const Simulation*{
+                auto it=snapshots.find(g);
+                if(it==snapshots.end()){
+                    Statement snap(db_,"SELECT state FROM snapshots WHERE generation=?");
+                    snap.i64(1,static_cast<sqlite3_int64>(g));
+                    if(!snap.row())return nullptr;
+                    const auto bytes=sqlite3_column_bytes(snap.get(),0);
+                    const auto* data=static_cast<const char*>(sqlite3_column_blob(snap.get(),0));
+                    if(bytes<=0||bytes>16*1024*1024||!data)
+                        throw std::runtime_error("SQLite: social history malformed checkpoint");
+                    auto world=Simulation::from_snapshot(std::string(data,static_cast<std::size_t>(bytes)));
+                    it=snapshots.emplace(g,std::move(world)).first;
+                }
+                return &it->second;
+            };
+            std::uint64_t group_count=0,relay_count=0,view_count=0;
+            std::string group_tip="origin",relay_tip="origin",view_tip="origin";
+            Statement group(db_,"SELECT id,name,generation,members,digest FROM social_groups ORDER BY id");
+            while(group.row()){
+                const auto r=read_group(group.get());
+                if(r.id!=++group_count||r.generation>generation||r.name.empty()||
+                   r.name.size()>64||r.name.find('\0')!=std::string::npos)
+                    throw std::runtime_error("SQLite: invalid social group");
+                if(const auto* past=historic_world(r.generation)){
+                    EntityId home=0,location=0;
+                    for(const auto member:r.members){
+                        const auto it=past->npc_records().find(member);
+                        if(it==past->npc_records().end())
+                            throw std::runtime_error("SQLite: group invented an NPC");
+                        if(!home){home=it->second.home_ship;location=it->second.location;}
+                        if(it->second.home_ship!=home||it->second.location!=location)
+                            throw std::runtime_error("SQLite: group membership impossible at founding");
+                    }
+                }
+                group_tip=social_digest(group_tip,group_body(r));
+                if(sqlite_str(group.get(),4)!=group_tip)
+                    throw std::runtime_error("SQLite: group history digest mismatch");
+                groups.emplace(r.id,r);
+            }
+            if(group_count!=static_cast<std::uint64_t>(gc)||group_tip!=gt)
+                throw std::runtime_error("SQLite: group history count or tip mismatch");
+            Statement relay(db_,"SELECT id,group_id,knowledge_id,digest FROM group_relays ORDER BY id");
+            while(relay.row()){
+                const auto id=sqlite3_column_int64(relay.get(),0),
+                           gid=sqlite3_column_int64(relay.get(),1),
+                           kid=sqlite3_column_int64(relay.get(),2);
+                if(id!=static_cast<sqlite3_int64>(++relay_count)||gid<=0||kid<=0||
+                   !groups.count(static_cast<std::uint64_t>(gid)))
+                    throw std::runtime_error("SQLite: invalid group relay");
+                Statement claim(db_,"SELECT id,incident_id,COALESCE(parent_id,0),speaker_id,recipient_id,"
+                    "fidelity,valence,confidence,generation,tick,account FROM npc_knowledge WHERE id=?");
+                claim.i64(1,kid);
+                if(!claim.row())throw std::runtime_error("SQLite: group relay has no actual claim");
+                const auto k=read_knowledge(claim.get());
+                const auto& group_members=groups.at(static_cast<std::uint64_t>(gid)).members;
+                if(!k.parent_id||k.generation<groups.at(static_cast<std::uint64_t>(gid)).generation||
+                   !std::binary_search(group_members.begin(),group_members.end(),k.speaker_npc)||
+                   !std::binary_search(group_members.begin(),group_members.end(),k.recipient_npc))
+                    throw std::runtime_error("SQLite: group relay was not member-to-member");
+                if(const auto* past=historic_world(k.generation)){
+                    const auto a=past->npc_records().find(k.speaker_npc),
+                               b=past->npc_records().find(k.recipient_npc);
+                    if(a==past->npc_records().end()||b==past->npc_records().end()||
+                       a->second.location!=b->second.location)
+                        throw std::runtime_error("SQLite: group relay had no real physical contact");
+                }
+                relay_tip=social_digest(relay_tip,std::to_string(id)+"|"+
+                    std::to_string(gid)+"|"+std::to_string(kid));
+                if(sqlite_str(relay.get(),3)!=relay_tip)
+                    throw std::runtime_error("SQLite: group relay digest mismatch");
+                if(!relays.emplace(static_cast<std::uint64_t>(kid),
+                        std::make_pair(static_cast<std::uint64_t>(gid),k)).second)
+                    throw std::runtime_error("SQLite: group relay duplicated knowledge");
+            }
+            if(relay_count!=static_cast<std::uint64_t>(rc)||relay_tip!=rt)
+                throw std::runtime_error("SQLite: group relays missing or changed");
+            Statement view(db_,"SELECT id,group_id,knowledge_id,stance,confidence,account,"
+                               "generation,tick,digest FROM group_views ORDER BY id");
+            while(view.row()){
+                const auto r=read_view(view.get());
+                const auto k=relays.find(r.knowledge_id);
+                if(r.id!=++view_count||k==relays.end()||k->second.first!=r.group_id||
+                   r.generation!=k->second.second.generation ||
+                   r.tick!=k->second.second.tick||r.generation>generation||
+                   static_cast<int>(r.stance)<1||static_cast<int>(r.stance)>3||
+                   r.confidence<0||r.confidence>100||r.account.empty()||
+                   r.account.size()>240||r.account.find('\0')!=std::string::npos)
+                    throw std::runtime_error("SQLite: group view has no eligible witnessed relay");
+                view_tip=social_digest(view_tip,view_body(r));
+                if(sqlite_str(view.get(),8)!=view_tip)
+                    throw std::runtime_error("SQLite: group view digest mismatch");
+            }
+            if(view_count!=static_cast<std::uint64_t>(vc)||view_tip!=vt)
+                throw std::runtime_error("SQLite: social views missing or changed");
+        }
         out.swap(restored);
         return true;
     }
@@ -1618,8 +1816,132 @@ public:
         while(entries.row())out.push_back(read_knowledge(entries.get()));
         return out;
     }
+    SocialGroup load_social_group(std::uint64_t group_id) const {
+        Statement q(db_,"SELECT id,name,generation,members FROM social_groups WHERE id=?");
+        q.i64(1,static_cast<sqlite3_int64>(group_id));
+        if(!q.row())return {};
+        return read_group(q.get());
+    }
+    std::vector<SocialGroup> recent_social_groups(std::size_t limit) const {
+        if(limit==0||limit>128)throw std::invalid_argument("group limit must be 1..128");
+        Statement q(db_,"SELECT id,name,generation,members FROM social_groups ORDER BY id DESC LIMIT ?");
+        q.i64(1,static_cast<sqlite3_int64>(limit));
+        std::vector<SocialGroup> out;while(q.row())out.push_back(read_group(q.get()));return out;
+    }
+    std::vector<GroupView> recent_group_views(std::size_t limit) const {
+        if(limit==0||limit>128)throw std::invalid_argument("view limit must be 1..128");
+        Statement q(db_,"SELECT id,group_id,knowledge_id,stance,confidence,account,generation,tick "
+                        "FROM group_views ORDER BY id DESC LIMIT ?");
+        q.i64(1,static_cast<sqlite3_int64>(limit));
+        std::vector<GroupView> out;while(q.row())out.push_back(read_view(q.get()));return out;
+    }
+    std::uint64_t found_social_group(const Simulation& world,std::uint64_t gen,
+                                     const std::string& name,std::vector<std::uint64_t> members){
+        if(name.empty()||name.size()>64||name.find('\0')!=std::string::npos||
+           members.size()<2||members.size()>24)return 0;
+        std::sort(members.begin(),members.end());
+        if(std::adjacent_find(members.begin(),members.end())!=members.end() || !members.front())return 0;
+        EntityId home=0,location=0;
+        for(const auto id:members){
+            const auto it=world.npc_records().find(id);
+            if(it==world.npc_records().end())return 0;
+            if(home==0){home=it->second.home_ship;location=it->second.location;}
+            if(it->second.home_ship!=home||it->second.location!=location)return 0;
+        }
+        run(db_,"BEGIN IMMEDIATE");
+        try{
+            if(latest_generation(db_)!=gen)throw std::runtime_error("stale social group generation");
+            Statement m(db_,"SELECT groups_count,groups_tip FROM social_meta WHERE singleton=1");
+            if(!m.row())throw std::runtime_error("missing social metadata");
+            const auto n=sqlite3_column_int64(m.get(),0);
+            if(n<0||n==std::numeric_limits<sqlite3_int64>::max())
+                throw std::runtime_error("social group sequence exhausted");
+            SocialGroup g;g.id=static_cast<std::uint64_t>(n+1);g.generation=gen;
+            g.name=name;g.members=std::move(members);
+            const auto tip=social_digest(sqlite_str(m.get(),1),group_body(g));
+            Statement add(db_,"INSERT INTO social_groups VALUES(?,?,?,?,?)");
+            add.i64(1,static_cast<sqlite3_int64>(g.id));add.text(2,g.name);
+            add.i64(3,static_cast<sqlite3_int64>(g.generation));
+            add.text(4,social_members(g.members));add.text(5,tip);add.execute();
+            Statement update(db_,"UPDATE social_meta SET groups_count=?,groups_tip=? WHERE singleton=1");
+            update.i64(1,static_cast<sqlite3_int64>(g.id));update.text(2,tip);update.execute();
+            if(sqlite3_changes(db_)!=1)throw std::runtime_error("social metadata missing");
+            run(db_,"COMMIT");return g.id;
+        }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
+    }
+    bool relay_group_claim(const Simulation& world,std::uint64_t gen,std::uint64_t group_id,
+                           std::uint64_t parent_id,std::uint64_t listener,ClaimFidelity fidelity,
+                           int valence,int confidence,const std::string& account){
+        if(!group_id||!parent_id||!listener||fidelity==ClaimFidelity::LocalObservation)return false;
+        const auto g=load_social_group(group_id);if(!g.id)return false;
+        Statement source(db_,"SELECT id,incident_id,COALESCE(parent_id,0),speaker_id,recipient_id,"
+            "fidelity,valence,confidence,generation,tick,account FROM npc_knowledge WHERE id=?");
+        source.i64(1,static_cast<sqlite3_int64>(parent_id));
+        if(!source.row())return false;
+        const auto from=read_knowledge(source.get());
+        if(!std::binary_search(g.members.begin(),g.members.end(),from.recipient_npc)||
+           !std::binary_search(g.members.begin(),g.members.end(),listener)||
+           from.recipient_npc==listener)return false;
+        const auto a=world.npc_records().find(from.recipient_npc);
+        const auto b=world.npc_records().find(listener);
+        if(a==world.npc_records().end()||b==world.npc_records().end()||
+           a->second.location!=b->second.location)return false;
+        KnowledgeRecord e;
+        e.parent_id=parent_id;e.incident_id=from.incident_id;
+        e.speaker_npc=from.recipient_npc;e.recipient_npc=listener;
+        e.fidelity=fidelity;e.valence=valence;e.confidence=confidence;
+        e.generation=gen;e.tick=world.tick();e.account=account;
+        return append_knowledge(e,gen,group_id);
+    }
+    bool record_group_view(const Simulation& world,std::uint64_t gen,std::uint64_t group_id,
+                           std::uint64_t knowledge_id,GroupStance stance,int confidence,
+                           const std::string& account){
+        if(!group_id||!knowledge_id||static_cast<int>(stance)<1||static_cast<int>(stance)>3||
+           confidence<0||confidence>100||account.empty()||account.size()>240||
+           account.find('\0')!=std::string::npos)return false;
+        const auto g=load_social_group(group_id);if(!g.id)return false;
+        Statement relay(db_,"SELECT k.generation,k.tick,k.speaker_id,k.recipient_id FROM group_relays r "
+            "JOIN npc_knowledge k ON k.id=r.knowledge_id "
+            "WHERE r.group_id=? AND r.knowledge_id=?");
+        relay.i64(1,static_cast<sqlite3_int64>(group_id));
+        relay.i64(2,static_cast<sqlite3_int64>(knowledge_id));
+        if(!relay.row()||sqlite3_column_int64(relay.get(),0)!=static_cast<sqlite3_int64>(gen)||
+           sqlite3_column_int64(relay.get(),1)!=static_cast<sqlite3_int64>(world.tick()))return false;
+        const auto speaker=parse_u64(sqlite3_column_text(relay.get(),2));
+        const auto recipient=parse_u64(sqlite3_column_text(relay.get(),3));
+        if(!std::binary_search(g.members.begin(),g.members.end(),speaker)||
+           !std::binary_search(g.members.begin(),g.members.end(),recipient))return false;
+        const auto a=world.npc_records().find(speaker),b=world.npc_records().find(recipient);
+        if(a==world.npc_records().end()||b==world.npc_records().end()||
+           a->second.location!=b->second.location)return false;
+        // A view is formed by an actual member meeting; the already-recorded
+        // witnessed relay is immutable. Later physical separation is fine.
+        run(db_,"BEGIN IMMEDIATE");
+        try{
+            if(latest_generation(db_)!=gen)throw std::runtime_error("stale group view generation");
+            Statement m(db_,"SELECT views_count,views_tip FROM social_meta WHERE singleton=1");
+            if(!m.row())throw std::runtime_error("missing social view metadata");
+            const auto n=sqlite3_column_int64(m.get(),0);
+            if(n<0||n==std::numeric_limits<sqlite3_int64>::max())
+                throw std::runtime_error("social view sequence exhausted");
+            GroupView r;r.id=static_cast<std::uint64_t>(n+1);r.group_id=group_id;
+            r.knowledge_id=knowledge_id;r.stance=stance;r.confidence=confidence;
+            r.account=account;r.generation=gen;r.tick=world.tick();
+            const auto tip=social_digest(sqlite_str(m.get(),1),view_body(r));
+            Statement add(db_,"INSERT INTO group_views VALUES(?,?,?,?,?,?,?,?,?)");
+            add.i64(1,static_cast<sqlite3_int64>(r.id));add.i64(2,static_cast<sqlite3_int64>(r.group_id));
+            add.i64(3,static_cast<sqlite3_int64>(r.knowledge_id));add.i64(4,static_cast<int>(r.stance));
+            add.i64(5,r.confidence);add.text(6,r.account);
+            add.i64(7,static_cast<sqlite3_int64>(r.generation));add.i64(8,static_cast<sqlite3_int64>(r.tick));
+            add.text(9,tip);add.execute();
+            Statement up(db_,"UPDATE social_meta SET views_count=?,views_tip=? WHERE singleton=1");
+            up.i64(1,static_cast<sqlite3_int64>(r.id));up.text(2,tip);up.execute();
+            if(sqlite3_changes(db_)!=1)throw std::runtime_error("social view metadata missing");
+            run(db_,"COMMIT");return true;
+        }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
+    }
 private:
-    bool append_knowledge(KnowledgeRecord e,std::uint64_t generation){
+    bool append_knowledge(KnowledgeRecord e,std::uint64_t generation,std::uint64_t group_id=0){
         if(!valid_knowledge(e))return false;
         run(db_,"BEGIN IMMEDIATE");
         try {
@@ -1645,6 +1967,22 @@ private:
             Statement update(db_,"UPDATE knowledge_meta SET row_count=?,tip_digest=? WHERE singleton=1");
             update.i64(1,static_cast<sqlite3_int64>(e.id));update.text(2,digest);update.execute();
             if(sqlite3_changes(db_)!=1)throw std::runtime_error("knowledge metadata missing");
+            if(group_id){
+                Statement sm(db_,"SELECT relays_count,relays_tip FROM social_meta WHERE singleton=1");
+                if(!sm.row())throw std::runtime_error("missing social relay metadata");
+                const auto n=sqlite3_column_int64(sm.get(),0);
+                if(n<0||n==std::numeric_limits<sqlite3_int64>::max())
+                    throw std::runtime_error("social relay sequence exhausted");
+                const auto id=n+1;
+                const auto tip=social_digest(sqlite_str(sm.get(),1),std::to_string(id)+"|"+
+                    std::to_string(group_id)+"|"+std::to_string(e.id));
+                Statement relay(db_,"INSERT INTO group_relays VALUES(?,?,?,?)");
+                relay.i64(1,id);relay.i64(2,static_cast<sqlite3_int64>(group_id));
+                relay.i64(3,static_cast<sqlite3_int64>(e.id));relay.text(4,tip);relay.execute();
+                Statement up(db_,"UPDATE social_meta SET relays_count=?,relays_tip=? WHERE singleton=1");
+                up.i64(1,id);up.text(2,tip);up.execute();
+                if(sqlite3_changes(db_)!=1)throw std::runtime_error("social relay metadata missing");
+            }
             run(db_,"COMMIT");
             return true;
         }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
@@ -1889,6 +2227,27 @@ bool PersistentWorld::transmit_claim(std::uint64_t source_record_id,std::uint64_
 }
 std::vector<KnowledgeRecord> PersistentWorld::recent_knowledge(std::size_t limit) const {
     return store_->recent_knowledge(limit);
+}
+std::uint64_t PersistentWorld::found_social_group(const std::string& name,
+        const std::vector<std::uint64_t>& members){
+    return store_->found_social_group(world_,generation_,name,members);
+}
+bool PersistentWorld::relay_group_claim(std::uint64_t group_id,std::uint64_t parent_knowledge_id,
+        std::uint64_t listener,ClaimFidelity fidelity,int valence,int confidence,
+        const std::string& account){
+    return store_->relay_group_claim(world_,generation_,group_id,parent_knowledge_id,
+                                     listener,fidelity,valence,confidence,account);
+}
+bool PersistentWorld::record_group_view(std::uint64_t group_id,std::uint64_t relay_knowledge_id,
+        GroupStance stance,int confidence,const std::string& account){
+    return store_->record_group_view(world_,generation_,group_id,relay_knowledge_id,
+                                     stance,confidence,account);
+}
+std::vector<SocialGroup> PersistentWorld::recent_social_groups(std::size_t limit) const {
+    return store_->recent_social_groups(limit);
+}
+std::vector<GroupView> PersistentWorld::recent_group_views(std::size_t limit) const {
+    return store_->recent_group_views(limit);
 }
 void PersistentWorld::steps(std::uint64_t n) { for (std::uint64_t i = 0; i < n; ++i) step(); }
 } // namespace galaxy

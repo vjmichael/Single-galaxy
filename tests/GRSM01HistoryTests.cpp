@@ -101,7 +101,9 @@ int main() {
         // historical facts for already-executed commands.
         fs::copy_file(copy,legacy);
         sql(legacy,"DROP TRIGGER historical_no_update; DROP TRIGGER historical_no_delete; "
-                   "DROP TRIGGER knowledge_no_update; DROP TRIGGER knowledge_no_delete; "
+                   "DROP TABLE group_views; DROP TABLE group_relays; DROP TABLE social_groups; "
+                       "DROP TABLE social_meta; "
+                       "DROP TRIGGER knowledge_no_update; DROP TRIGGER knowledge_no_delete; "
                    "DROP TABLE npc_knowledge; DROP TABLE knowledge_meta; "
                    "DROP TRIGGER physical_no_update; DROP TRIGGER physical_no_delete; "
                    "DROP TABLE physical_incidents; DROP TABLE physical_meta; "

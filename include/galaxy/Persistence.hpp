@@ -52,6 +52,22 @@ struct KnowledgeRecord {
     std::string account;  // bounded player-independent NPC claim text
 };
 
+// GRSM-03: persistent overlapping groups and bounded, witnessed social relays.
+// A group view is an interpretation grounded in a relay between two members;
+// it is not a verdict or a broadcast to every member of the organization.
+enum class GroupStance : int { Admiring=1, Condemning=2, Mixed=3 };
+struct SocialGroup {
+    std::uint64_t id=0, generation=0;
+    std::string name;
+    std::vector<std::uint64_t> members;
+};
+struct GroupView {
+    std::uint64_t id=0, group_id=0, knowledge_id=0, generation=0, tick=0;
+    GroupStance stance=GroupStance::Mixed;
+    int confidence=0;
+    std::string account;
+};
+
 class PersistentWorld {
 public:
     // If the SQLite file is new, persist the supplied initial world.
@@ -100,6 +116,22 @@ public:
                         ClaimFidelity fidelity, int valence, int confidence,
                         const std::string& account);
     std::vector<KnowledgeRecord> recent_knowledge(std::size_t limit = 50) const;
+    // Trusted host/test-only social operations; no pre-existing organizations.
+    // An initial group must be founded by 2..24 living, physically co-located
+    // NPCs from one original colony; NPCs can belong to many groups.
+    std::uint64_t found_social_group(const std::string& name,
+                                    const std::vector<std::uint64_t>& members);
+    // Same-location contact between two living MEMBERS; creates an individual
+    // claim AND durable group relay evidence in one atomic transaction.
+    bool relay_group_claim(std::uint64_t group_id,std::uint64_t parent_knowledge_id,
+                           std::uint64_t listener,ClaimFidelity fidelity,
+                           int valence,int confidence,const std::string& account);
+    // View requires a verified group relay, preserving distinct perspectives.
+    bool record_group_view(std::uint64_t group_id,std::uint64_t relay_knowledge_id,
+                           GroupStance stance,int confidence,const std::string& account);
+    std::vector<SocialGroup> recent_social_groups(std::size_t limit=50) const;
+    std::vector<GroupView> recent_group_views(std::size_t limit=50) const;
+
 
 
 private:
