@@ -1,0 +1,255 @@
+{
+  "description": "Read-only preservation backup of explicitly EVEmu-labeled materials in ChatGPT Library, gathered 2026-10-31. This is NOT a GitHub upload. The separate Single Galaxy root-level artifacts are not in this archive.",
+  "source_scopes": [
+    "/Eve-Mu/*",
+    "/root-level filenames beginning with evemu, EVEmu, Eve-Mu, or EveMu"
+  ],
+  "file_count": 49,
+  "items": [
+    {
+      "archive_path": "Eve-Mu/Eve-Mu_Client_Server_Educational_Research_Charter.md",
+      "size": 5592,
+      "sha256": "c8f494258dac6d3551565afc6e3d9c7cf44850ee288f69c9641fd84dce2a26d5"
+    },
+    {
+      "archive_path": "Eve-Mu/Eve-Mu_ED01_Desktop_Edition_Architecture_and_Roadmap_2026-10-27.md",
+      "size": 17892,
+      "sha256": "59f6872b9b880c6bca83a959cc8e2de32bdaa94f33e5a0d4179a00203a35c787"
+    },
+    {
+      "archive_path": "Eve-Mu/Eve-Mu_Master_Research_Plan.md",
+      "size": 50660,
+      "sha256": "290be335c551edfb9f4b6dbb91207946c6569a71ea351562c9731ca80418e56e"
+    },
+    {
+      "archive_path": "Eve-Mu/Eve-Mu_P0_Repository_Manifest.json",
+      "size": 56771,
+      "sha256": "8ba81353aa2534945915fc44e9c39a0685bcb7b4d2892f90f2ce05d29d7247a4"
+    },
+    {
+      "archive_path": "Eve-Mu/Eve-Mu_P1_Comparison_Screen.md",
+      "size": 14247,
+      "sha256": "f5f102e45501156266411b93ebaf602a518679f9af8564126f177386cd15cb75"
+    },
+    {
+      "archive_path": "Eve-Mu/Eve-Mu_P1_Fork_Registry.json",
+      "size": 132705,
+      "sha256": "54bef8a4cfa39b66b2ad0865181c4ce2cc99ff4c6f9d8e19e600f324fd116d99"
+    },
+    {
+      "archive_path": "Eve-Mu/Eve-Mu_P1_Fork_Registry.md",
+      "size": 73631,
+      "sha256": "4de62adf37875305f3c7b652b20921ad0cf36a88f47ee90164ce5bda70b2375d"
+    },
+    {
+      "archive_path": "Eve-Mu/Eve-Mu_P1_Fork_Survey_2026-10-27.docx",
+      "size": 44883,
+      "sha256": "b82a1989e7b6dc7c7876487e34cc42310cb4e793f3b3ff0dd70115bc1c3efddd"
+    },
+    {
+      "archive_path": "Eve-Mu/Eve-Mu_P1_Fork_Survey_Report.md",
+      "size": 21405,
+      "sha256": "4b677d38c773eed1c81a6ec1af120c744c6be343739a80c1edbe31f7a4a378d6"
+    },
+    {
+      "archive_path": "Eve-Mu/Eve-Mu_P2_80Fork_Branch_Audit.json",
+      "size": 88695,
+      "sha256": "598c30a09a15197f5111fc5b3044a70610dea97e604a458f0dd0063815b041ea"
+    },
+    {
+      "archive_path": "Eve-Mu/Eve-Mu_P2_80Fork_Branch_Audit.md",
+      "size": 17184,
+      "sha256": "3abc2804bfd65211dc8bdc9c106c3f16d82ced06d532b2a583e8f1dcf3a03950"
+    },
+    {
+      "archive_path": "Eve-Mu/Eve-Mu_P2_80Fork_Findings.md",
+      "size": 24354,
+      "sha256": "a075ae3a0da69a33217311ccb07fac4e678e8fc43780ed928b1394e7fdcff32f"
+    },
+    {
+      "archive_path": "Eve-Mu/Eve-Mu_P2_Detailed_Server_Code_Review_2026-10-27.md",
+      "size": 13407,
+      "sha256": "256e8c508a30ede08cdfc5d18ae37e8f769266db1583c02cdaf4cf909d08f347"
+    },
+    {
+      "archive_path": "Eve-Mu/Eve-Mu_P2_S2A_Isolated_Test_Bundle_2026-10-27.zip",
+      "size": 11340,
+      "sha256": "037ef17090727ebd752d8ca6b691dba3b0738ea2dd3638bfeef0321cb081b2fb"
+    },
+    {
+      "archive_path": "Eve-Mu/Eve-Mu_P2_S2A_Isolated_Test_Report_2026-10-27.md",
+      "size": 9892,
+      "sha256": "948f25107d8b4683e5092e11182bf3ab0ba984433cb15602a1577483de20db2a"
+    },
+    {
+      "archive_path": "Eve-Mu/Eve-Mu_P2_S2B_Original_Source_Test_Bundle_2026-10-27.zip",
+      "size": 28474,
+      "sha256": "63b6c8c92e0fbe5766eb8585ee2cb8b4e52b26ec397584969fec90a003fe2c49"
+    },
+    {
+      "archive_path": "Eve-Mu/Eve-Mu_P2_S2B_Original_Source_Test_Report_2026-10-27.md",
+      "size": 8264,
+      "sha256": "4c35ea182624e4e13d01ff4b4cc917697aaf23769a15b11b3b00ee90255eb11e"
+    },
+    {
+      "archive_path": "Eve-Mu/Eve-Mu_P2_S2C_First_Login_Market_Readiness_Report.md",
+      "size": 11245,
+      "sha256": "8aaee76858676102e28ef24c057ab24c926867fe71b4e009aa9b1a201487d289"
+    },
+    {
+      "archive_path": "Eve-Mu/Eve-Mu_P2_Server_Code_Trace_2026-10-27.md",
+      "size": 13032,
+      "sha256": "e889eb1f87718282e19b4c9bf7b425cddd34050573cc4d39948d9e986f88ae53"
+    },
+    {
+      "archive_path": "Eve-Mu/Eve-Mu_P2_Server_Test_Matrix_2026-10-27.csv",
+      "size": 5513,
+      "sha256": "c4bfbc0f54e65b7ba3e24aa791a0cab2e4ef6ebdd617c637a8309a917a397c61"
+    },
+    {
+      "archive_path": "Eve-Mu/Eve-Mu_Research_Plan_P0.docx",
+      "size": 44115,
+      "sha256": "97953130d6f676877f2d5fa1c7fdbe50ec063bea0cf47124dabe9024a1a1b076"
+    },
+    {
+      "archive_path": "Eve-Mu/Eve-Mu_S2-D1_Check_EVEmu_Database.sql",
+      "size": 1116,
+      "sha256": "bc531620d5ecbba40b8a1c6bcdb6f6a9d188206cc37b2ee63cfd5802751e59ad"
+    },
+    {
+      "archive_path": "Eve-Mu/Eve-Mu_S2-D1_Public_Research_2026-10-27.md",
+      "size": 5740,
+      "sha256": "5ce97acdc45f377b7158bb760c07a4929dde36bd6d5f8557c6bfc5d1bed5537b"
+    },
+    {
+      "archive_path": "Eve-Mu/Eve-Mu_S2-D1_TypeID_Candidates_2026-10-27.csv",
+      "size": 4124,
+      "sha256": "2cad75dbf817bbb0f1ee26e332e73fcfedbf999ddaa581733aadef5bc61df6f7"
+    },
+    {
+      "archive_path": "Eve-Mu/Eve-Mu_S2-D_Validated_Data_and_Bootstrap_Report_2026-10-27.md",
+      "size": 9782,
+      "sha256": "43dd8f8b44a9021ec06ffb2553b6f0ab5b932ff2f60514e3bee3ba7d402f07bb"
+    },
+    {
+      "archive_path": "Eve-Mu/Eve-Mu_S2C_First_Login_Market_Bootstrap_2026-10-27.zip",
+      "size": 15082,
+      "sha256": "26d326c40593acfc7837850d2732b868f39f85e15b1e46941a21460f83927cd3"
+    },
+    {
+      "archive_path": "Eve-Mu/Eve-Mu_S2D_Read_Only_Market_Readiness.sql",
+      "size": 2718,
+      "sha256": "3108f4e320208d892365231e374e00a4bda3536e53e813298696b3d94047556e"
+    },
+    {
+      "archive_path": "Eve-Mu/Eve-Mu_S2D_Starter_Market_Integration_2026-10-27.zip",
+      "size": 28874,
+      "sha256": "e3985ceda0337e47f5ae1412ecd113568919e075836742be57837fc45c5a6c54"
+    },
+    {
+      "archive_path": "Eve-Mu/Eve-Mu_S2D_Verified_Refining_Materials.json",
+      "size": 514,
+      "sha256": "553e2eea80cf1e7110d9f5dc31fff7fd6c1e83075f30e7d4af7b59b837e022cc"
+    },
+    {
+      "archive_path": "Eve-Mu/Eve-Mu_S2D_Verified_Stations.json",
+      "size": 1557,
+      "sha256": "6b8c1ea40ff28eb1c14bd679036d2ce279e5dcef962213a036b8dabbfb584e5a"
+    },
+    {
+      "archive_path": "Eve-Mu/Eve-Mu_S2E_Integration_Gate_Status.json",
+      "size": 685,
+      "sha256": "9dfa32399f2cbbeef6d519a6b8d940222f60f7ef9433bdd9ff6f285345f4d0cf"
+    },
+    {
+      "archive_path": "Eve-Mu/Eve-Mu_S2E_Native_Market_Integration_2026-10-27.zip",
+      "size": 67773,
+      "sha256": "014c14c3a513bd645a83ed0a06dab95416aadf30122ce071cb3d14f0ff9be316"
+    },
+    {
+      "archive_path": "Eve-Mu/Eve-Mu_S2E_Production_Market_Test_Report_2026-10-27.md",
+      "size": 5791,
+      "sha256": "288700bae8efe02f3a4a84da090f201345f6f894ef6d0fd187d65f405f84c2d0"
+    },
+    {
+      "archive_path": "Eve-Mu/Eve-Mu_S2E_Proposed_F42_Startup_Market.patch",
+      "size": 5642,
+      "sha256": "87c3be0b4bf55827a04cced894886ea1c944912aaef83db4cf44f2fedddd5ef1"
+    },
+    {
+      "archive_path": "Root-EVEmu/EVEmu_Crucible_Market_Audit_Summary.md",
+      "size": 25632,
+      "sha256": "f6b63f0ec28cfa4255e2b6cb7cd456fa56692a8ed2691814886d4e4a57c62211"
+    },
+    {
+      "archive_path": "Root-EVEmu/Eve-Mu_P1_Fork_Survey_2026-10-27(1).docx",
+      "size": 44883,
+      "sha256": "b82a1989e7b6dc7c7876487e34cc42310cb4e793f3b3ff0dd70115bc1c3efddd"
+    },
+    {
+      "archive_path": "Root-EVEmu/Eve-Mu_P1_Fork_Survey_2026-10-27.docx",
+      "size": 44883,
+      "sha256": "b82a1989e7b6dc7c7876487e34cc42310cb4e793f3b3ff0dd70115bc1c3efddd"
+    },
+    {
+      "archive_path": "Root-EVEmu/Eve-Mu_P2_S2A_Isolated_Test_Bundle.zip",
+      "size": 11340,
+      "sha256": "037ef17090727ebd752d8ca6b691dba3b0738ea2dd3638bfeef0321cb081b2fb"
+    },
+    {
+      "archive_path": "Root-EVEmu/Eve-Mu_Research_Plan_P0.docx",
+      "size": 44115,
+      "sha256": "97953130d6f676877f2d5fa1c7fdbe50ec063bea0cf47124dabe9024a1a1b076"
+    },
+    {
+      "archive_path": "Root-EVEmu/Eve-Mu_S2B_Original_Source_Tests_2026-10-27.zip",
+      "size": 28474,
+      "sha256": "63b6c8c92e0fbe5766eb8585ee2cb8b4e52b26ec397584969fec90a003fe2c49"
+    },
+    {
+      "archive_path": "Root-EVEmu/Eve-Mu_S2C_First_Login_Market_Bootstrap_2026-10-27.zip",
+      "size": 15082,
+      "sha256": "26d326c40593acfc7837850d2732b868f39f85e15b1e46941a21460f83927cd3"
+    },
+    {
+      "archive_path": "Root-EVEmu/Eve-Mu_S2D_Starter_Market_Integration_2026-10-27.zip",
+      "size": 28874,
+      "sha256": "e3985ceda0337e47f5ae1412ecd113568919e075836742be57837fc45c5a6c54"
+    },
+    {
+      "archive_path": "Root-EVEmu/Eve-Mu_S2E_Native_Market_Integration_2026-10-27.zip",
+      "size": 67773,
+      "sha256": "014c14c3a513bd645a83ed0a06dab95416aadf30122ce071cb3d14f0ff9be316"
+    },
+    {
+      "archive_path": "Root-EVEmu/EveMu_Architecture_Evidence_and_Backend_Tasks_2026-10-30.md",
+      "size": 9487,
+      "sha256": "b872f46b63d252b965785fd14faf1057377b21b4af43c0f010624a15348d05c2"
+    },
+    {
+      "archive_path": "Root-EVEmu/evemu_client_server_calls.csv",
+      "size": 12396,
+      "sha256": "47a7b301691949da9220cca73e3aed4d203baa878b8112c5bdc008eccf8fe937"
+    },
+    {
+      "archive_path": "Root-EVEmu/evemu_client_server_calls_normalized(1).csv",
+      "size": 12342,
+      "sha256": "dac391cd249c282b6aae580bb18508a7746a5c3db6fdb0684e9679f287378138"
+    },
+    {
+      "archive_path": "Root-EVEmu/evemu_client_server_calls_normalized.csv",
+      "size": 12342,
+      "sha256": "dac391cd249c282b6aae580bb18508a7746a5c3db6fdb0684e9679f287378138"
+    },
+    {
+      "archive_path": "Root-EVEmu/evemu_client_server_interaction_report.md",
+      "size": 38167,
+      "sha256": "88fcdbf46776080ef663101b7bf3a49bb063f34b6269338445c94ccb543d1250"
+    },
+    {
+      "archive_path": "Root-EVEmu/evemu_test_seed.sql",
+      "size": 3897,
+      "sha256": "aa385148c40ab9aad3384777c5d85248eb11500193203fd3d9500de91a7bf8cd"
+    }
+  ]
+}
