@@ -114,7 +114,19 @@ static void legacy_migration(const fs::path& root){
         CHECK(w.found_social_group("Real crew",{2,3})==1);
     }
     // Construct a *true* v8 fixture, removing every object belonging to v9.
-    sql(db,"DROP TABLE social_tie_events; DROP TABLE social_tie_meta; PRAGMA user_version=8;");
+    sql(db,"DROP TABLE group_membership_events; DROP TABLE membership_meta; "
+           "DROP TABLE social_tie_events; DROP TABLE social_tie_meta; "
+           "CREATE TABLE old_group_relays AS SELECT id,group_id,knowledge_id,digest FROM group_relays; "
+           "DROP TRIGGER group_relays_no_update; DROP TRIGGER group_relays_no_delete; "
+           "DROP TABLE group_relays; "
+           "CREATE TABLE group_relays(id INTEGER PRIMARY KEY, group_id INTEGER NOT NULL REFERENCES social_groups(id), "
+           "knowledge_id INTEGER NOT NULL UNIQUE REFERENCES npc_knowledge(id),digest TEXT NOT NULL); "
+           "INSERT INTO group_relays SELECT * FROM old_group_relays; DROP TABLE old_group_relays; "
+           "CREATE TRIGGER group_relays_no_update BEFORE UPDATE ON group_relays "
+           "BEGIN SELECT RAISE(ABORT,'social history immutable'); END; "
+           "CREATE TRIGGER group_relays_no_delete BEFORE DELETE ON group_relays "
+           "BEGIN SELECT RAISE(ABORT,'social history immutable'); END; "
+           "PRAGMA user_version=8;");
     {
         PersistentWorld w(db.string(),Simulation(42));
         CHECK(w.recent_social_groups().size()==1);

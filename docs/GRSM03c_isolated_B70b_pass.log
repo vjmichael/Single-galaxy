@@ -1,0 +1,28 @@
+Internal ctest changing into directory: /mnt/data/sg03c/single-galaxy/build-grsm03c
+UpdateCTestConfiguration  from :/mnt/data/sg03c/single-galaxy/build-grsm03c/DartConfiguration.tcl
+Parse Config file:/mnt/data/sg03c/single-galaxy/build-grsm03c/DartConfiguration.tcl
+UpdateCTestConfiguration  from :/mnt/data/sg03c/single-galaxy/build-grsm03c/DartConfiguration.tcl
+Parse Config file:/mnt/data/sg03c/single-galaxy/build-grsm03c/DartConfiguration.tcl
+Test project /mnt/data/sg03c/single-galaxy/build-grsm03c
+Constructing a list of tests
+Done constructing a list of tests
+Updating test list for fixtures
+Added 0 tests to meet fixture requirements
+Checking test dependency graph...
+Checking test dependency graph end
+test 29
+    Start 29: galaxy_b70b_live_colony_e2e
+
+29: Test command: /opt/pyvenv/bin/python3 "/mnt/data/sg03c/single-galaxy/tests/B70bLiveColonyTests.py" "--host" "/mnt/data/sg03c/single-galaxy/build-grsm03c/galaxy_colony_live_host" "--relay" "/mnt/data/sg03c/single-galaxy/live/interactive_relay.py"
+29: Working Directory: /mnt/data/sg03c/single-galaxy/build-grsm03c
+29: Test timeout computed to be: 1500
+29: PASS B7.0b live colony: committed SGVIEW, true construction and mass, mineral telemetry, restart
+29: PASS B7.0b relay: local token/origin/schema/QA rejection, authorized scan-mining-refining-fabrication-building
+1/1 Test #29: galaxy_b70b_live_colony_e2e ......   Passed    3.46 sec
+
+The following tests passed:
+	galaxy_b70b_live_colony_e2e
+
+100% tests passed, 0 tests failed out of 1
+
+Total Test time (real) =   3.46 sec

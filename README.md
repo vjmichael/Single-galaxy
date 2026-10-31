@@ -57,3 +57,7 @@ SQLite schema v8 adds overlapping groups founded from existing, co-located workf
 ## GRSM-03b · Directed social trust (2026-10-31)
 
 GRSM-03b adds an optional host-controlled **trust-gated individual testimony path** (SQLite v9): physically grounded directed contacts, claim-specific trust reassessment, and confidence capped by trust and the actual source chain. Old host APIs are unchanged; this is **not** autonomous faction formation, mandatory trust policy, or omniscient NPC gossip. See [GRSM-03b engineering evidence](docs/GRSM03b_Directional_Trust_Evidence_Report_2026-10-31.md) for scope and verified tests.
+
+## GRSM-03c · Changing memberships and receipt-time group eligibility (2026-10-31)
+
+SQLite v10 now supports **durable, event-sourced group joins, exits and rejoins** by living workforce NPCs. Joining requires an existing, physically co-located member as sponsor; group claims capture immutable membership sequence receipts so later departures do not rewrite past social history. A group does not broadcast facts by membership alone, and no automatic gossip, comm-network, social decay, player recognition, or autonomous politics is claimed. See [`docs/GRSM03c_Membership_Epochs_Report_2026-10-31.md`](docs/GRSM03c_Membership_Epochs_Report_2026-10-31.md).

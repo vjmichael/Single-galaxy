@@ -1,0 +1,16 @@
+Internal ctest changing into directory: /mnt/data/sg03c/single-galaxy/build-grsm03c
+Test project /mnt/data/sg03c/single-galaxy/build-grsm03c
+    Start  2: galaxy_persistence_tests
+    Start 57: galaxy_grsm02_knowledge_tests
+1/5 Test #57: galaxy_grsm02_knowledge_tests .....   Passed    0.14 sec
+    Start 58: galaxy_grsm03_social_tests
+2/5 Test #58: galaxy_grsm03_social_tests ........   Passed    0.44 sec
+    Start 59: galaxy_grsm03b_trust_tests
+3/5 Test #59: galaxy_grsm03b_trust_tests ........   Passed    0.13 sec
+    Start 60: galaxy_grsm03c_membership_tests
+4/5 Test #60: galaxy_grsm03c_membership_tests ...   Passed    0.23 sec
+5/5 Test  #2: galaxy_persistence_tests ..........   Passed    2.05 sec
+
+100% tests passed, 0 tests failed out of 5
+
+Total Test time (real) =   2.05 sec

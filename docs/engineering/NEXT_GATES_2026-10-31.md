@@ -56,3 +56,10 @@ Use bounded regression groups if older slow gate tests stall. Preserve failing/i
   or established communication infrastructure. Harden old-contact receipts
   after snapshot compaction. No instant intercolony news or mandatory universal
   trust policy in this slice.
+
+## 2026-10-31 update: GRSM-03c membership epochs
+
+- **Implemented and locally tested** SQLite v10 append-only membership epochs: co-located sponsor for voluntary join/rejoin, surviving member exit, durable receipts, member-only relay eligibility evaluated inside the claim transaction, current-membership validation for group views, recovery/migration and tamper scenarios.
+- **Local Linux verification:** native full build succeeded; core targeted 5/5 suites, Node 84/84 and design 3/3 passed. One full pre-final-code run passed 60/60; later full reruns had intermittent legacy relay failures (59/60, 59/60, 58/60), each failed case subsequently passing in isolation. The final full-suite gate remains **open**, and exact logs are preserved in the GRSM-03c archive. See `docs/GRSM03c_Membership_Epochs_Report_2026-10-31.md`.
+- **Remaining GRSM-03c.2:** bounded autonomous contact opportunity scheduling, communication topology/travel proof, and relationship/contact aging rules. These are *not* present in GRSM-03c's membership gate and must not be reported as working.
+- **GRSM-04 afterward:** ratified group policy versus personal interpretation, actual faction governance/leadership and APS-cohort knowledge routing. All future work remains locally tested and source-isolated from Lu/Cognitum/EVEmu archival research.

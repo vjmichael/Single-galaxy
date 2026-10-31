@@ -68,6 +68,15 @@ struct GroupView {
     std::string account;
 };
 
+// GRSM-03c: changes to membership are durable epochs. Founders remain
+// immutable; a member may subsequently leave and rejoin through real contacts.
+enum class GroupMembershipKind : int { Join=1, Leave=2 };
+struct GroupMembershipEvent {
+    std::uint64_t id=0, group_id=0, npc_id=0, sponsor_npc=0;
+    std::uint64_t epoch=0, prior_id=0, generation=0, tick=0;
+    GroupMembershipKind kind=GroupMembershipKind::Join;
+};
+
 // GRSM-03b: directional, evidence-linked interpersonal trust. Each event is
 // an immutable record of a witnessed contact or a character's reassessment;
 // it is neither historical truth nor proof of the accuracy of the allegation.
@@ -141,6 +150,13 @@ public:
     bool record_group_view(std::uint64_t group_id,std::uint64_t relay_knowledge_id,
                            GroupStance stance,int confidence,const std::string& account);
     std::vector<SocialGroup> recent_social_groups(std::size_t limit=50) const;
+    // Host-only voluntary membership transitions: a join is attested by an
+    // existing member physically meeting the applicant. A leave is self-only.
+    // This is not broadcast to or learned by any other NPC automatically.
+    bool change_group_membership(std::uint64_t group_id,std::uint64_t npc_id,
+                                 GroupMembershipKind kind,std::uint64_t sponsor_npc=0);
+    std::vector<std::uint64_t> active_social_group_members(std::uint64_t group_id) const;
+    std::vector<GroupMembershipEvent> recent_group_membership(std::size_t limit=50) const;
     std::vector<GroupView> recent_group_views(std::size_t limit=50) const;
     // Directed social tie: observer's trust in source, not automatically mutual.
     // Both characters must be real survivors at the same present location.

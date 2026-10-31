@@ -211,6 +211,25 @@ GroupView read_view(sqlite3_stmt* q){
     r.confidence=sqlite3_column_int(q,4);r.account=sqlite_str(q,5);
     r.generation=g;r.tick=tick;return r;
 }
+GroupMembershipEvent read_membership(sqlite3_stmt* q){
+    const auto id=sqlite3_column_int64(q,0),group=sqlite3_column_int64(q,1);
+    const auto epoch=sqlite3_column_int64(q,5),prior=sqlite3_column_int64(q,6);
+    const auto gen=sqlite3_column_int64(q,7),tick=sqlite3_column_int64(q,8);
+    if(id<=0||group<=0||epoch<=0||prior<0||gen<=0||tick<0)
+        throw std::runtime_error("SQLite: invalid membership event identity");
+    GroupMembershipEvent r;
+    r.id=id;r.group_id=group;r.npc_id=parse_u64(sqlite3_column_text(q,2));
+    r.sponsor_npc=parse_u64(sqlite3_column_text(q,3));
+    r.kind=static_cast<GroupMembershipKind>(sqlite3_column_int(q,4));
+    r.epoch=epoch;r.prior_id=prior;r.generation=gen;r.tick=tick;
+    return r;
+}
+std::string membership_body(const GroupMembershipEvent& r){
+    return std::to_string(r.id)+"|"+std::to_string(r.group_id)+"|"+
+        std::to_string(r.npc_id)+"|"+std::to_string(r.sponsor_npc)+"|"+
+        std::to_string(static_cast<int>(r.kind))+"|"+std::to_string(r.epoch)+"|"+
+        std::to_string(r.prior_id)+"|"+std::to_string(r.generation)+"|"+std::to_string(r.tick);
+}
 std::string group_body(const SocialGroup& r){
     return std::to_string(r.id)+"|"+r.name+"|"+std::to_string(r.generation)+"|"+social_members(r.members);
 }
@@ -295,7 +314,7 @@ public:
         Statement version(db_, "PRAGMA user_version");
         if (!version.row()) throw std::runtime_error("SQLite: no schema version");
         const int v = sqlite3_column_int(version.get(), 0);
-        if (v < 0 || v > 9) throw std::runtime_error("SQLite: incompatible schema version");
+        if (v < 0 || v > 10) throw std::runtime_error("SQLite: incompatible schema version");
         if (v == 0) {
             run(db_, "BEGIN IMMEDIATE");
             try {
@@ -507,6 +526,31 @@ public:
                 run(db_,"CREATE TRIGGER social_tie_no_delete BEFORE DELETE ON social_tie_events "
                     "BEGIN SELECT RAISE(ABORT,'social tie history immutable'); END");
                 run(db_,"PRAGMA user_version=9");run(db_,"COMMIT");
+            }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
+        }
+        if (v <= 9) {
+            // GRSM-03c: never synthesize memberships for old stories.
+            // Prior relays have epoch marker 0: founding members only.
+            run(db_,"BEGIN IMMEDIATE");
+            try {
+                run(db_,"CREATE TABLE membership_meta(singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
+                    "event_count INTEGER NOT NULL DEFAULT 0 CHECK(event_count>=0),tip TEXT NOT NULL)");
+                run(db_,"INSERT INTO membership_meta VALUES(1,0,'origin')");
+                run(db_,"CREATE TABLE group_membership_events(id INTEGER PRIMARY KEY,"
+                    "group_id INTEGER NOT NULL REFERENCES social_groups(id),"
+                    "npc_id TEXT NOT NULL,sponsor_id TEXT NOT NULL,"
+                    "kind INTEGER NOT NULL CHECK(kind BETWEEN 1 AND 2),"
+                    "epoch INTEGER NOT NULL CHECK(epoch>0),prior_id INTEGER NOT NULL CHECK(prior_id>=0),"
+                    "generation INTEGER NOT NULL CHECK(generation>0),tick INTEGER NOT NULL CHECK(tick>=0),"
+                    "digest TEXT NOT NULL)");
+                run(db_,"CREATE INDEX membership_group_history ON group_membership_events(group_id,id)");
+                run(db_,"CREATE TRIGGER membership_no_update BEFORE UPDATE ON group_membership_events "
+                    "BEGIN SELECT RAISE(ABORT,'membership history immutable'); END");
+                run(db_,"CREATE TRIGGER membership_no_delete BEFORE DELETE ON group_membership_events "
+                    "BEGIN SELECT RAISE(ABORT,'membership history immutable'); END");
+                run(db_,"ALTER TABLE group_relays ADD COLUMN membership_seq INTEGER NOT NULL DEFAULT 0 "
+                    "CHECK(membership_seq>=0)");
+                run(db_,"PRAGMA user_version=10");run(db_,"COMMIT");
             }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
         }
         } catch (...) { sqlite3_close_v2(db_); db_ = nullptr; throw; }
@@ -1303,7 +1347,76 @@ public:
             }
             if(group_count!=static_cast<std::uint64_t>(gc)||group_tip!=gt)
                 throw std::runtime_error("SQLite: group history count or tip mismatch");
-            Statement relay(db_,"SELECT id,group_id,knowledge_id,digest FROM group_relays ORDER BY id");
+            // Rebuild the group member states from the founder list and the
+            // complete append-only membership stream BEFORE validating relays.
+            std::map<std::uint64_t,std::vector<std::uint64_t>> current_members;
+            std::map<std::uint64_t,std::uint64_t> prior_event,epochs;
+            for(const auto& entry:groups)current_members.emplace(entry.first,entry.second.members);
+            std::uint64_t member_seq=0;
+            std::string member_tip="origin";
+            Statement member_meta(db_,"SELECT event_count,tip FROM membership_meta WHERE singleton=1");
+            if(!member_meta.row())throw std::runtime_error("SQLite: missing membership metadata");
+            const auto member_count=sqlite3_column_int64(member_meta.get(),0);
+            if(member_count<0)throw std::runtime_error("SQLite: negative membership count");
+            const auto expected_member_tip=sqlite_str(member_meta.get(),1);
+            if(member_meta.row())throw std::runtime_error("SQLite: duplicate membership metadata");
+            std::map<std::uint64_t,std::vector<std::uint64_t>> members_by_seq;
+            // Every membership event is verified in order. Relay epochs below
+            // refer to this globally monotonic sequence, not wall-clock time.
+            Statement member(db_,"SELECT id,group_id,npc_id,sponsor_id,kind,epoch,prior_id,"
+                "generation,tick,digest FROM group_membership_events ORDER BY id");
+            std::vector<GroupMembershipEvent> member_events;
+            while(member.row()){
+                const auto e=read_membership(member.get());
+                const auto group=groups.find(e.group_id);
+                if(e.id!=++member_seq||group==groups.end()||e.npc_id==0||
+                   e.generation<group->second.generation||e.generation>generation||
+                   (e.kind!=GroupMembershipKind::Join&&e.kind!=GroupMembershipKind::Leave)||
+                   e.epoch!=epochs[e.group_id]+1||e.prior_id!=prior_event[e.group_id])
+                    throw std::runtime_error("SQLite: invalid group membership epoch");
+                if(!member_events.empty() && (e.generation<member_events.back().generation||
+                   e.tick<member_events.back().tick))
+                    throw std::runtime_error("SQLite: membership time reversed");
+                auto& active=current_members[e.group_id];
+                const auto found=std::lower_bound(active.begin(),active.end(),e.npc_id);
+                if(e.kind==GroupMembershipKind::Join){
+                    if((found!=active.end()&&*found==e.npc_id)||!e.sponsor_npc||
+                       e.sponsor_npc==e.npc_id||active.size()>=24||
+                       !std::binary_search(active.begin(),active.end(),e.sponsor_npc))
+                        throw std::runtime_error("SQLite: invalid membership sponsor");
+                    if(const auto* past=historic_world(e.generation)){
+                        const auto a=past->npc_records().find(e.npc_id),
+                                   b=past->npc_records().find(e.sponsor_npc);
+                        if(a==past->npc_records().end()||b==past->npc_records().end()||
+                           a->second.location!=b->second.location)
+                            throw std::runtime_error("SQLite: membership join without contact");
+                    }
+                    active.insert(found,e.npc_id);
+                }else{
+                    if(e.sponsor_npc||found==active.end()||*found!=e.npc_id)
+                        throw std::runtime_error("SQLite: invalid membership exit");
+                    active.erase(found);
+                }
+                member_tip=social_digest(member_tip,membership_body(e));
+                if(sqlite_str(member.get(),9)!=member_tip)
+                    throw std::runtime_error("SQLite: membership chain damaged");
+                epochs[e.group_id]=e.epoch;prior_event[e.group_id]=e.id;
+                member_events.push_back(e);
+            }
+            if(member_seq!=static_cast<std::uint64_t>(member_count)||member_tip!=expected_member_tip)
+                throw std::runtime_error("SQLite: membership history missing or changed");
+            auto members_at=[&](std::uint64_t gid,std::uint64_t upto){
+                auto active=groups.at(gid).members;
+                for(const auto& e:member_events){
+                    if(e.id>upto)break;
+                    if(e.group_id!=gid)continue;
+                    const auto pos=std::lower_bound(active.begin(),active.end(),e.npc_id);
+                    if(e.kind==GroupMembershipKind::Join)active.insert(pos,e.npc_id);
+                    else active.erase(pos);
+                }
+                return active;
+            };
+            Statement relay(db_,"SELECT id,group_id,knowledge_id,digest,membership_seq FROM group_relays ORDER BY id");
             while(relay.row()){
                 const auto id=sqlite3_column_int64(relay.get(),0),
                            gid=sqlite3_column_int64(relay.get(),1),
@@ -1316,7 +1429,13 @@ public:
                 claim.i64(1,kid);
                 if(!claim.row())throw std::runtime_error("SQLite: group relay has no actual claim");
                 const auto k=read_knowledge(claim.get());
-                const auto& group_members=groups.at(static_cast<std::uint64_t>(gid)).members;
+                const auto seq=sqlite3_column_int64(relay.get(),4);
+                if(seq<0||static_cast<std::uint64_t>(seq)>member_seq)
+                    throw std::runtime_error("SQLite: group relay references impossible membership epoch");
+                const auto group_members=members_at(static_cast<std::uint64_t>(gid),static_cast<std::uint64_t>(seq));
+                if(seq && (member_events[static_cast<std::size_t>(seq-1)].generation>k.generation||
+                    member_events[static_cast<std::size_t>(seq-1)].tick>k.tick))
+                    throw std::runtime_error("SQLite: group relay predates membership receipt");
                 if(!k.parent_id||k.generation<groups.at(static_cast<std::uint64_t>(gid)).generation||
                    !std::binary_search(group_members.begin(),group_members.end(),k.speaker_npc)||
                    !std::binary_search(group_members.begin(),group_members.end(),k.recipient_npc))
@@ -1329,7 +1448,8 @@ public:
                         throw std::runtime_error("SQLite: group relay had no real physical contact");
                 }
                 relay_tip=social_digest(relay_tip,std::to_string(id)+"|"+
-                    std::to_string(gid)+"|"+std::to_string(kid));
+                    std::to_string(gid)+"|"+std::to_string(kid)+
+                    (seq?"|epoch:"+std::to_string(seq):""));
                 if(sqlite_str(relay.get(),3)!=relay_tip)
                     throw std::runtime_error("SQLite: group relay digest mismatch");
                 if(!relays.emplace(static_cast<std::uint64_t>(kid),
@@ -1929,17 +2049,101 @@ public:
         while(entries.row())out.push_back(read_knowledge(entries.get()));
         return out;
     }
+    std::vector<std::uint64_t> group_members_at(std::uint64_t group_id,std::uint64_t upto) const {
+        Statement q(db_,"SELECT id,name,generation,members FROM social_groups WHERE id=?");
+        q.i64(1,static_cast<sqlite3_int64>(group_id));
+        if(!q.row())return {};
+        auto active=read_group(q.get()).members;
+        Statement changes(db_,"SELECT id,group_id,npc_id,sponsor_id,kind,epoch,prior_id,"
+            "generation,tick FROM group_membership_events WHERE group_id=? AND id<=? ORDER BY id");
+        changes.i64(1,static_cast<sqlite3_int64>(group_id));
+        changes.i64(2,static_cast<sqlite3_int64>(upto));
+        while(changes.row()){
+            const auto e=read_membership(changes.get());
+            const auto pos=std::lower_bound(active.begin(),active.end(),e.npc_id);
+            if(e.kind==GroupMembershipKind::Join)active.insert(pos,e.npc_id);
+            else if(pos!=active.end()&&*pos==e.npc_id)active.erase(pos);
+        }
+        return active;
+    }
+    std::uint64_t last_membership_seq() const {
+        Statement meta(db_,"SELECT event_count FROM membership_meta WHERE singleton=1");
+        if(!meta.row())throw std::runtime_error("missing membership metadata");
+        return static_cast<std::uint64_t>(sqlite3_column_int64(meta.get(),0));
+    }
     SocialGroup load_social_group(std::uint64_t group_id) const {
         Statement q(db_,"SELECT id,name,generation,members FROM social_groups WHERE id=?");
         q.i64(1,static_cast<sqlite3_int64>(group_id));
         if(!q.row())return {};
-        return read_group(q.get());
+        auto g=read_group(q.get());g.members=group_members_at(group_id,last_membership_seq());return g;
     }
     std::vector<SocialGroup> recent_social_groups(std::size_t limit) const {
         if(limit==0||limit>128)throw std::invalid_argument("group limit must be 1..128");
         Statement q(db_,"SELECT id,name,generation,members FROM social_groups ORDER BY id DESC LIMIT ?");
         q.i64(1,static_cast<sqlite3_int64>(limit));
-        std::vector<SocialGroup> out;while(q.row())out.push_back(read_group(q.get()));return out;
+        std::vector<SocialGroup> out;
+        while(q.row()){
+            auto g=read_group(q.get());g.members=group_members_at(g.id,last_membership_seq());
+            out.push_back(std::move(g));
+        }
+        return out;
+    }
+    std::vector<std::uint64_t> active_social_group_members(std::uint64_t gid) const {
+        if(!load_social_group(gid).id)return {};
+        return group_members_at(gid,last_membership_seq());
+    }
+    std::vector<GroupMembershipEvent> recent_group_membership(std::size_t limit) const {
+        if(!limit||limit>128)throw std::invalid_argument("membership limit must be 1..128");
+        Statement q(db_,"SELECT id,group_id,npc_id,sponsor_id,kind,epoch,prior_id,"
+            "generation,tick FROM group_membership_events ORDER BY id DESC LIMIT ?");
+        q.i64(1,static_cast<sqlite3_int64>(limit));
+        std::vector<GroupMembershipEvent> out;while(q.row())out.push_back(read_membership(q.get()));
+        return out;
+    }
+    bool change_group_membership(const Simulation& world,std::uint64_t gen,std::uint64_t gid,
+                                 std::uint64_t npc,GroupMembershipKind kind,std::uint64_t sponsor){
+        if(!gid||!npc||(kind!=GroupMembershipKind::Join&&kind!=GroupMembershipKind::Leave)||
+           (kind==GroupMembershipKind::Leave&&sponsor))return false;
+        if(world.npc_records().find(npc)==world.npc_records().end())return false;
+        run(db_,"BEGIN IMMEDIATE");
+        try {
+            if(latest_generation(db_)!=gen)
+                throw std::runtime_error("stale group membership generation");
+            const auto g=load_social_group(gid);
+            if(!g.id){run(db_,"ROLLBACK");return false;}
+            const auto found=std::binary_search(g.members.begin(),g.members.end(),npc);
+            if(kind==GroupMembershipKind::Join){
+                if(found||g.members.size()>=24||!sponsor||sponsor==npc||
+                   !std::binary_search(g.members.begin(),g.members.end(),sponsor)||
+                   !co_located(world,npc,sponsor)){
+                    run(db_,"ROLLBACK");return false;
+                }
+            }else if(!found){run(db_,"ROLLBACK");return false;}
+            Statement prior(db_,"SELECT id,epoch FROM group_membership_events WHERE group_id=? ORDER BY id DESC LIMIT 1");
+            prior.i64(1,static_cast<sqlite3_int64>(gid));
+            const bool existed=prior.row();
+            const auto previous_id=existed?sqlite3_column_int64(prior.get(),0):0;
+            const auto previous_epoch=existed?sqlite3_column_int64(prior.get(),1):0;
+            Statement meta(db_,"SELECT event_count,tip FROM membership_meta WHERE singleton=1");
+            if(!meta.row())throw std::runtime_error("missing membership metadata");
+            const auto count=sqlite3_column_int64(meta.get(),0);
+            if(count<0||count==std::numeric_limits<sqlite3_int64>::max())
+                throw std::runtime_error("membership sequence exhausted");
+            GroupMembershipEvent e;
+            e.id=count+1;e.group_id=gid;e.npc_id=npc;e.sponsor_npc=sponsor;
+            e.kind=kind;e.epoch=previous_epoch+1;e.prior_id=previous_id;
+            e.generation=gen;e.tick=world.tick();
+            const auto tip=social_digest(sqlite_str(meta.get(),1),membership_body(e));
+            Statement insert(db_,"INSERT INTO group_membership_events VALUES(?,?,?,?,?,?,?,?,?,?)");
+            insert.i64(1,e.id);insert.i64(2,e.group_id);insert.text(3,std::to_string(e.npc_id));
+            insert.text(4,std::to_string(e.sponsor_npc));insert.i64(5,static_cast<int>(e.kind));
+            insert.i64(6,e.epoch);insert.i64(7,e.prior_id);insert.i64(8,e.generation);
+            insert.i64(9,e.tick);insert.text(10,tip);insert.execute();
+            Statement update(db_,"UPDATE membership_meta SET event_count=?,tip=? WHERE singleton=1");
+            update.i64(1,e.id);update.text(2,tip);update.execute();
+            if(sqlite3_changes(db_)!=1)throw std::runtime_error("missing membership metadata");
+            run(db_,"COMMIT");return true;
+        }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
     }
     std::vector<GroupView> recent_group_views(std::size_t limit) const {
         if(limit==0||limit>128)throw std::invalid_argument("view limit must be 1..128");
@@ -2032,6 +2236,13 @@ public:
         run(db_,"BEGIN IMMEDIATE");
         try{
             if(latest_generation(db_)!=gen)throw std::runtime_error("stale group view generation");
+            // Membership is mutable. Recheck under the write lock to prevent
+            // a view from being attributed to speakers who just left.
+            const auto active=group_members_at(group_id,last_membership_seq());
+            if(!std::binary_search(active.begin(),active.end(),speaker)||
+               !std::binary_search(active.begin(),active.end(),recipient)){
+                run(db_,"ROLLBACK");return false;
+            }
             Statement m(db_,"SELECT views_count,views_tip FROM social_meta WHERE singleton=1");
             if(!m.row())throw std::runtime_error("missing social view metadata");
             const auto n=sqlite3_column_int64(m.get(),0);
@@ -2178,6 +2389,15 @@ private:
                 }
                 e.confidence=std::min({e.confidence,trust,sqlite3_column_int(origin.get(),0)});
             }
+            std::uint64_t membership_seq=0;
+            if(group_id){
+                membership_seq=last_membership_seq();
+                const auto active=group_members_at(group_id,membership_seq);
+                if(!std::binary_search(active.begin(),active.end(),e.speaker_npc)||
+                   !std::binary_search(active.begin(),active.end(),e.recipient_npc)){
+                    run(db_,"ROLLBACK");return false;
+                }
+            }
             Statement meta(db_,"SELECT row_count,tip_digest FROM knowledge_meta WHERE singleton=1");
             if(!meta.row())throw std::runtime_error("missing knowledge metadata");
             const auto count=sqlite3_column_int64(meta.get(),0);
@@ -2206,10 +2426,13 @@ private:
                     throw std::runtime_error("social relay sequence exhausted");
                 const auto id=n+1;
                 const auto tip=social_digest(sqlite_str(sm.get(),1),std::to_string(id)+"|"+
-                    std::to_string(group_id)+"|"+std::to_string(e.id));
-                Statement relay(db_,"INSERT INTO group_relays VALUES(?,?,?,?)");
+                    std::to_string(group_id)+"|"+std::to_string(e.id)+
+                    (membership_seq?"|epoch:"+std::to_string(membership_seq):""));
+                Statement relay(db_,"INSERT INTO group_relays(id,group_id,knowledge_id,digest,membership_seq) "
+                    "VALUES(?,?,?,?,?)");
                 relay.i64(1,id);relay.i64(2,static_cast<sqlite3_int64>(group_id));
-                relay.i64(3,static_cast<sqlite3_int64>(e.id));relay.text(4,tip);relay.execute();
+                relay.i64(3,static_cast<sqlite3_int64>(e.id));relay.text(4,tip);
+                relay.i64(5,static_cast<sqlite3_int64>(membership_seq));relay.execute();
                 Statement up(db_,"UPDATE social_meta SET relays_count=?,relays_tip=? WHERE singleton=1");
                 up.i64(1,id);up.text(2,tip);up.execute();
                 if(sqlite3_changes(db_)!=1)throw std::runtime_error("social relay metadata missing");
@@ -2462,6 +2685,16 @@ std::vector<KnowledgeRecord> PersistentWorld::recent_knowledge(std::size_t limit
 std::uint64_t PersistentWorld::found_social_group(const std::string& name,
         const std::vector<std::uint64_t>& members){
     return store_->found_social_group(world_,generation_,name,members);
+}
+bool PersistentWorld::change_group_membership(std::uint64_t gid,std::uint64_t npc,
+        GroupMembershipKind kind,std::uint64_t sponsor){
+    return store_->change_group_membership(world_,generation_,gid,npc,kind,sponsor);
+}
+std::vector<std::uint64_t> PersistentWorld::active_social_group_members(std::uint64_t gid) const{
+    return store_->active_social_group_members(gid);
+}
+std::vector<GroupMembershipEvent> PersistentWorld::recent_group_membership(std::size_t limit) const{
+    return store_->recent_group_membership(limit);
 }
 bool PersistentWorld::relay_group_claim(std::uint64_t group_id,std::uint64_t parent_knowledge_id,
         std::uint64_t listener,ClaimFidelity fidelity,int valence,int confidence,

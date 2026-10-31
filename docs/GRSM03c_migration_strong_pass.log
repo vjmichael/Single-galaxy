@@ -1,0 +1,8 @@
+Internal ctest changing into directory: /mnt/data/sg03c/single-galaxy/build-grsm03c
+Test project /mnt/data/sg03c/single-galaxy/build-grsm03c
+    Start 60: galaxy_grsm03c_membership_tests
+1/1 Test #60: galaxy_grsm03c_membership_tests ...   Passed    0.48 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Total Test time (real) =   0.49 sec

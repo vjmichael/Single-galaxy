@@ -1,0 +1,27 @@
+Internal ctest changing into directory: /mnt/data/sg03c/single-galaxy/build-grsm03c
+UpdateCTestConfiguration  from :/mnt/data/sg03c/single-galaxy/build-grsm03c/DartConfiguration.tcl
+Parse Config file:/mnt/data/sg03c/single-galaxy/build-grsm03c/DartConfiguration.tcl
+UpdateCTestConfiguration  from :/mnt/data/sg03c/single-galaxy/build-grsm03c/DartConfiguration.tcl
+Parse Config file:/mnt/data/sg03c/single-galaxy/build-grsm03c/DartConfiguration.tcl
+Test project /mnt/data/sg03c/single-galaxy/build-grsm03c
+Constructing a list of tests
+Done constructing a list of tests
+Updating test list for fixtures
+Added 0 tests to meet fixture requirements
+Checking test dependency graph...
+Checking test dependency graph end
+test 16
+    Start 16: galaxy_b62c_relay_gate_controls
+
+16: Test command: /opt/pyvenv/bin/python3 "/mnt/data/sg03c/single-galaxy/tests/B62cRelayTests.py" "--executable" "/mnt/data/sg03c/single-galaxy/build-grsm03c/galaxy_interactive_host" "--relay" "/mnt/data/sg03c/single-galaxy/live/interactive_relay.py"
+16: Working Directory: /mnt/data/sg03c/single-galaxy/build-grsm03c
+16: Test timeout computed to be: 1500
+16: PASS B6.2c relay: safe jump commands, forbidden target selection, 57 authoritative frames, destination snapshot
+1/1 Test #16: galaxy_b62c_relay_gate_controls ...   Passed    5.59 sec
+
+The following tests passed:
+	galaxy_b62c_relay_gate_controls
+
+100% tests passed, 0 tests failed out of 1
+
+Total Test time (real) =   5.60 sec
