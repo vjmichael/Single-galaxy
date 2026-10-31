@@ -139,7 +139,7 @@ Positive stories receive exactly the same treatment: a true rescue can become an
 
 ## 11. Implementation status and gates
 
-**Not currently implemented:** GRSM event ledger, rumors, evidence provenance, NPC reputational belief stores, social speech, recognition and notoriety levels. B7.0n currently supplies opt-in individual IDs, farm XP/mentoring, and a standalone stratified cohort arithmetic foundation.
+**Implementation update (2026-10-31):** GRSM-01 durable *executed command outcome* history has now been implemented and verified in SQLite schema v5 (see `docs/GRSM01_Durable_Historical_Events_Report_2026-10-31.md`). Rumors, evidence provenance, NPC reputational belief stores, social speech, recognition, notoriety levels, and complete typed physical casualty/ship records are **not implemented**. B7.0n provides opt-in individual IDs, farm XP/mentoring, and standalone stratified cohort arithmetic.
 
 Proposed sequence:
 1. **GRSM-01 — Durable events:** canonical committed event IDs, references, transaction/ship/NPC integration, replay and corruption checks.

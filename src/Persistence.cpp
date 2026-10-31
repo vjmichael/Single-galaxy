@@ -127,6 +127,17 @@ void quick_integrity(sqlite3* db) {
         std::string(reinterpret_cast<const char*>(sqlite3_column_text(q.get(), 0))) != "ok" || q.row())
         throw std::runtime_error("SQLite integrity_check failed; source must be preserved");
 }
+// Deterministic, non-cryptographic change detector, complemented by strict
+// cross-checks against the independent command journal and world snapshot.
+std::string historical_digest(const std::string& id, std::uint64_t generation,
+                              const Event& ev, const std::string& command) {
+    const std::string record = id + "|" + std::to_string(generation) + "|" +
+        std::to_string(ev.tick) + "|" + command + "|" +
+        std::to_string(static_cast<int>(ev.result)) + "|" + std::to_string(ev.transferred);
+    std::uint64_t value = 14695981039346656037ULL;
+    for (unsigned char byte : record) { value ^= byte; value *= 1099511628211ULL; }
+    return std::to_string(value);
+}
 std::uint64_t latest_generation(sqlite3* db) {
     Statement q(db, "SELECT COALESCE(MAX(generation),0) FROM snapshots");
     if (!q.row()) throw std::runtime_error("SQLite: missing generation result");
@@ -151,7 +162,7 @@ public:
         Statement version(db_, "PRAGMA user_version");
         if (!version.row()) throw std::runtime_error("SQLite: no schema version");
         const int v = sqlite3_column_int(version.get(), 0);
-        if (v < 0 || v > 4) throw std::runtime_error("SQLite: incompatible schema version");
+        if (v < 0 || v > 5) throw std::runtime_error("SQLite: incompatible schema version");
         if (v == 0) {
             run(db_, "BEGIN IMMEDIATE");
             try {
@@ -219,6 +230,35 @@ public:
                 run(db_, "CREATE UNIQUE INDEX IF NOT EXISTS one_pending_jump_per_ship "
                          "ON jump_ledger(ship_id) WHERE completed_tick IS NULL");
                 run(db_, "PRAGMA user_version=4");
+                run(db_, "COMMIT");
+            } catch (...) { sqlite3_exec(db_, "ROLLBACK", nullptr, nullptr, nullptr); throw; }
+        }
+        if (v <= 4) {
+            // Existing v4 worlds retain all their snapshots/receipts. Earlier
+            // events are not silently invented; new events start at this boundary.
+            run(db_, "BEGIN IMMEDIATE");
+            try {
+                const auto baseline = latest_generation(db_);
+                run(db_, "CREATE TABLE IF NOT EXISTS historical_meta ("
+                         "singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
+                         "start_generation INTEGER NOT NULL CHECK(start_generation>=0))");
+                run(db_, "CREATE TABLE IF NOT EXISTS historical_events ("
+                         "event_id TEXT PRIMARY KEY, command_id TEXT NOT NULL UNIQUE,"
+                         "generation INTEGER NOT NULL CHECK(generation>0),"
+                         "tick INTEGER NOT NULL CHECK(tick>=0),"
+                         "actor_id TEXT NOT NULL, target_id TEXT NOT NULL,"
+                         "action INTEGER NOT NULL CHECK(action>=0),"
+                         "outcome INTEGER NOT NULL CHECK(outcome>=0),"
+                         "transferred INTEGER NOT NULL CHECK(transferred>=0),"
+                         "command TEXT NOT NULL, digest TEXT NOT NULL)");
+                run(db_, "CREATE INDEX IF NOT EXISTS historical_by_generation ON historical_events(generation)");
+                run(db_, "CREATE TRIGGER IF NOT EXISTS historical_no_update BEFORE UPDATE ON historical_events "
+                         "BEGIN SELECT RAISE(ABORT, 'historical events are immutable'); END");
+                run(db_, "CREATE TRIGGER IF NOT EXISTS historical_no_delete BEFORE DELETE ON historical_events "
+                         "BEGIN SELECT RAISE(ABORT, 'historical events are immutable'); END");
+                Statement boundary(db_, "INSERT INTO historical_meta(singleton,start_generation) VALUES(1,?)");
+                boundary.i64(1, static_cast<std::int64_t>(baseline)); boundary.execute();
+                run(db_, "PRAGMA user_version=5");
                 run(db_, "COMMIT");
             } catch (...) { sqlite3_exec(db_, "ROLLBACK", nullptr, nullptr, nullptr); throw; }
         }
@@ -298,6 +338,75 @@ public:
                     throw std::runtime_error("SQLite: duplicate/unknown command in operation journal");
             }
         }
+        // GRSM-01 facts must agree with the independent transaction journal,
+        // executed receipts and snapshot. A missing record is a hard error,
+        // not a story the world is allowed to silently forget.
+        std::uint64_t history_start = 0;
+        {
+            Statement m(db_, "SELECT start_generation FROM historical_meta WHERE singleton=1");
+            if (!m.row()) throw std::runtime_error("SQLite: missing history boundary");
+            const auto n = sqlite3_column_int64(m.get(), 0);
+            if (n < 0 || static_cast<std::uint64_t>(n) > generation || m.row())
+                throw std::runtime_error("SQLite: invalid historical migration boundary");
+            history_start = static_cast<std::uint64_t>(n);
+        }
+        std::map<std::uint64_t, std::uint64_t> expected_event_generation;
+        {
+            Statement steps(db_, "SELECT generation,tick FROM operation_log WHERE kind=2 AND generation>? ORDER BY generation");
+            steps.i64(1, static_cast<std::int64_t>(history_start));
+            std::map<std::uint64_t,std::uint64_t> tick_generation;
+            while (steps.row()) {
+                const auto g = sqlite3_column_int64(steps.get(), 0);
+                const auto tick = sqlite3_column_int64(steps.get(), 1);
+                if (g <= 0 || tick <= 0 || !tick_generation.emplace(static_cast<std::uint64_t>(tick),
+                    static_cast<std::uint64_t>(g)).second)
+                    throw std::runtime_error("SQLite: duplicate historical step generation");
+            }
+            for (const auto& [id,ev] : event_by_id) {
+                const auto it=tick_generation.find(ev.tick);
+                if (it != tick_generation.end()) expected_event_generation.emplace(id,it->second);
+            }
+        }
+        std::size_t historical_rows=0;
+        {
+            Statement history(db_, "SELECT event_id,command_id,generation,tick,actor_id,target_id,action,"
+                         "outcome,transferred,command,digest FROM historical_events ORDER BY generation,command_id");
+            while(history.row()) {
+                ++historical_rows;
+                const auto read_text=[&](int n)->std::string {
+                    if (sqlite3_column_type(history.get(), n)!=SQLITE_TEXT)
+                        throw std::runtime_error("SQLite: nontext historical field");
+                    const auto raw=sqlite3_column_text(history.get(),n);
+                    if(!raw) throw std::runtime_error("SQLite: missing historical field");
+                    return reinterpret_cast<const char*>(raw);
+                };
+                const auto id=parse_u64(sqlite3_column_text(history.get(),1));
+                const auto g=sqlite3_column_int64(history.get(),2);
+                const auto tick=sqlite3_column_int64(history.get(),3);
+                const auto actor=parse_u64(sqlite3_column_text(history.get(),4));
+                const auto target=parse_u64(sqlite3_column_text(history.get(),5));
+                const auto action=sqlite3_column_int(history.get(),6);
+                const auto outcome=sqlite3_column_int(history.get(),7);
+                const auto transferred=sqlite3_column_int64(history.get(),8);
+                const auto serialized=read_text(9);
+                const auto entry=expected_event_generation.find(id);
+                const auto ev=event_by_id.find(id);
+                const auto cmd=journal_commands.find(id);
+                if (entry==expected_event_generation.end() || ev==event_by_id.end() ||
+                    cmd==journal_commands.end() || g<=0 || static_cast<std::uint64_t>(g)!=entry->second ||
+                    tick<0 || static_cast<std::uint64_t>(tick)!=ev->second.tick ||
+                    actor!=cmd->second.actor || target!=cmd->second.target ||
+                    action!=static_cast<int>(cmd->second.action) ||
+                    outcome!=static_cast<int>(ev->second.result) ||
+                    transferred!=ev->second.transferred ||
+                    read_text(0)!="command:"+std::to_string(id) ||
+                    serialized!=command_record(cmd->second) ||
+                    read_text(10)!=historical_digest(read_text(0),static_cast<std::uint64_t>(g),ev->second,serialized))
+                    throw std::runtime_error("SQLite: historical fact contradicts world/journal");
+            }
+        }
+        if (historical_rows!=expected_event_generation.size())
+            throw std::runtime_error("SQLite: missing committed historical facts");
         // The ledger is a second durable accounting record, not a second source
         // of authority. Detect discrepancies before exposing a restored world.
         Statement ledger(db_, "SELECT command_id,tick,amount,reason,source_id,destination_id FROM resource_ledger ORDER BY id");
@@ -775,6 +884,29 @@ public:
                 update.execute();
                 if (sqlite3_changes(db_) != 1)
                     throw std::runtime_error("missing/double execution receipt");
+                // Same transaction as receipts, physical resource ledgers and
+                // snapshot. A rejected action is recorded as rejected, never
+                // inferred to have harmed people, ships or cargo.
+                const auto due = due_commands.find(ev.command_id);
+                if (due==due_commands.end() || due->second.execute_tick!=ev.tick ||
+                    ev.transferred<0 || ev.tick!=state.tick())
+                    throw std::runtime_error("history: unmatched executed command");
+                const auto record=command_record(due->second);
+                const auto historical_id="command:"+std::to_string(ev.command_id);
+                Statement history(db_, "INSERT INTO historical_events(event_id,command_id,generation,tick,"
+                    "actor_id,target_id,action,outcome,transferred,command,digest) VALUES(?,?,?,?,?,?,?,?,?,?,?)");
+                history.text(1,historical_id);
+                history.text(2,std::to_string(ev.command_id));
+                history.i64(3,static_cast<std::int64_t>(next));
+                history.i64(4,static_cast<std::int64_t>(ev.tick));
+                history.text(5,std::to_string(due->second.actor));
+                history.text(6,std::to_string(due->second.target));
+                history.i64(7,static_cast<int>(due->second.action));
+                history.i64(8,static_cast<int>(ev.result));
+                history.i64(9,ev.transferred);
+                history.text(10,record);
+                history.text(11,historical_digest(historical_id,next,ev,record));
+                history.execute();
                 if (ev.result == Outcome::Applied && ev.transferred > 0) {
                     const auto cmd = due_commands.find(ev.command_id);
                     if (cmd == due_commands.end() ||
@@ -1031,6 +1163,31 @@ public:
             throw;
         }
     }
+    std::vector<HistoricalEvent> recent_history(std::size_t limit) const {
+        if(limit==0 || limit>256) throw std::invalid_argument("history limit must be 1..256");
+        Statement q(db_, "SELECT event_id,command_id,generation,tick,actor_id,target_id,action,"
+                         "outcome,transferred FROM historical_events ORDER BY generation DESC, event_id DESC LIMIT ?");
+        q.i64(1,static_cast<std::int64_t>(limit));
+        std::vector<HistoricalEvent> entries;
+        while(q.row()) {
+            HistoricalEvent e;
+            const auto str=[&](int col)->std::string {
+                const auto* p=sqlite3_column_text(q.get(),col);
+                if(!p)throw std::runtime_error("invalid history row");
+                return reinterpret_cast<const char*>(p);
+            };
+            e.event_id=str(0);e.command_id=parse_u64(sqlite3_column_text(q.get(),1));
+            e.generation=static_cast<std::uint64_t>(sqlite3_column_int64(q.get(),2));
+            e.tick=static_cast<std::uint64_t>(sqlite3_column_int64(q.get(),3));
+            e.actor=parse_u64(sqlite3_column_text(q.get(),4));
+            e.target=parse_u64(sqlite3_column_text(q.get(),5));
+            e.action=static_cast<Action>(sqlite3_column_int(q.get(),6));
+            e.result=static_cast<Outcome>(sqlite3_column_int(q.get(),7));
+            e.transferred=sqlite3_column_int64(q.get(),8);
+            entries.push_back(e);
+        }
+        return entries;
+    }
     // Explicit repair on a COPY ONLY. This never operates on the original file.
     void repair_latest_from_journal() {
         quick_integrity(db_);
@@ -1233,5 +1390,8 @@ void PersistentWorld::step(FailPoint fail) {
     ++generation_;
 }
 
+std::vector<HistoricalEvent> PersistentWorld::recent_history(std::size_t limit) const {
+    return store_->recent_history(limit);
+}
 void PersistentWorld::steps(std::uint64_t n) { for (std::uint64_t i = 0; i < n; ++i) step(); }
 } // namespace galaxy

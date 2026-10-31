@@ -422,3 +422,11 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_b70n_workforce_tests PRIVATE galaxy_kernel)
   add_test(NAME galaxy_b70n_workforce_tests COMMAND galaxy_b70n_workforce_tests)
 endif()
+
+# GRSM-01: one canonical historical fact per executed command, committed
+# atomically with physical state and verified on restart/recovery.
+if(BUILD_TESTING)
+  add_executable(galaxy_grsm01_history_tests tests/GRSM01HistoryTests.cpp)
+  target_link_libraries(galaxy_grsm01_history_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_grsm01_history_tests COMMAND galaxy_grsm01_history_tests)
+endif()

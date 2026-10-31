@@ -3,10 +3,26 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
+#include <cstddef>
 
 namespace galaxy {
 // Failures occur inside an SQLite transaction, before durable COMMIT.
 enum class FailPoint { None, AfterReceiptWrite, AfterSnapshotWrite };
+
+// GRSM-01: an authoritative outcome of a committed player/host command.
+// This is not a reputation, moral judgment, casualty count, or NPC belief.
+struct HistoricalEvent {
+    std::string event_id;             // Stable event identity: command:<command_id>
+    std::uint64_t generation = 0;
+    std::uint64_t tick = 0;
+    std::uint64_t command_id = 0;
+    EntityId actor = 0;
+    EntityId target = 0;
+    Action action = Action::Mine;
+    Outcome result = Outcome::InvalidArgument;
+    std::int64_t transferred = 0;
+};
 
 class PersistentWorld {
 public:
@@ -37,6 +53,9 @@ public:
     const Simulation& world() const noexcept { return world_; }
     std::int64_t resource_origin() const noexcept { return resource_origin_; }
     std::uint64_t generation() const noexcept { return generation_; }
+    // Bounded, read-only records; older v4 actions are not retroactively invented.
+    std::vector<HistoricalEvent> recent_history(std::size_t limit = 50) const;
+
 
 private:
     class Store;
