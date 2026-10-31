@@ -24,6 +24,18 @@ struct HistoricalEvent {
     std::int64_t transferred = 0;
 };
 
+// GRSM-01b: immutable, observed physical facts, not rumors or moral judgments.
+enum class PhysicalKind : int { CargoMovement=1, JourneyStarted=2, JourneyCompleted=3,
+                                ShipDestroyed=4, NpcLost=5 };
+struct PhysicalIncident {
+    std::string incident_id;
+    std::uint64_t generation=0, tick=0, command_id=0;
+    PhysicalKind kind=PhysicalKind::CargoMovement;
+    std::string source, destination;
+    std::int64_t amount=0;
+    std::string detail;
+};
+
 class PersistentWorld {
 public:
     // If the SQLite file is new, persist the supplied initial world.
@@ -48,6 +60,12 @@ public:
     bool submit_testing_gate_operations(EntityId forward, EntityId reverse,
         Action action, std::int64_t amount, std::uint64_t command_id,
         FailPoint fail = FailPoint::None);
+    // Host/test-only consequences; future combat/risk systems supply the
+    // validated destructive cause. Never available via player command submission.
+    bool submit_testing_destroy_ship(EntityId attacker, EntityId victim,
+                                     std::uint64_t command_id, FailPoint fail = FailPoint::None);
+    bool submit_testing_crew_loss(EntityId colony_ship, std::int64_t count,
+                                  std::uint64_t command_id, FailPoint fail = FailPoint::None);
     void step(FailPoint fail = FailPoint::None);
     void steps(std::uint64_t n);
     const Simulation& world() const noexcept { return world_; }
@@ -55,6 +73,7 @@ public:
     std::uint64_t generation() const noexcept { return generation_; }
     // Bounded, read-only records; older v4 actions are not retroactively invented.
     std::vector<HistoricalEvent> recent_history(std::size_t limit = 50) const;
+    std::vector<PhysicalIncident> recent_physical_incidents(std::size_t limit = 50) const;
 
 
 private:

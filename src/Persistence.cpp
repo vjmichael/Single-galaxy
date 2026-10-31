@@ -115,7 +115,7 @@ Command decode_command(const std::string& record) {
           >> c.target >> action >> c.thrust_x >> c.thrust_y >> c.amount))
         throw std::runtime_error("recovery: invalid command journal record");
     std::string extra;
-    if (in >> extra || action < 0 || action > static_cast<int>(Action::AssignFarmMentor) || c.id == 0 || c.issuer == 0)
+    if (in >> extra || action < 0 || action > static_cast<int>(Action::HostCrewLoss) || c.id == 0 || c.issuer == 0)
         throw std::runtime_error("recovery: invalid command journal values");
     c.action = static_cast<Action>(action);
     if (command_record(c) != record) throw std::runtime_error("recovery: noncanonical command journal");
@@ -137,6 +137,23 @@ std::string historical_digest(const std::string& id, std::uint64_t generation,
     std::uint64_t value = 14695981039346656037ULL;
     for (unsigned char byte : record) { value ^= byte; value *= 1099511628211ULL; }
     return std::to_string(value);
+}
+std::string physical_digest(const PhysicalIncident& e) {
+    // Non-cryptographic corruption detector; strict reconciliation with
+    // independent resource/jump ledgers and simulation activity is mandatory.
+    const auto value=e.incident_id+"|"+std::to_string(e.generation)+"|"+
+        std::to_string(e.tick)+"|"+std::to_string(e.command_id)+"|"+
+        std::to_string(static_cast<int>(e.kind))+"|"+e.source+"|"+
+        e.destination+"|"+std::to_string(e.amount)+"|"+e.detail;
+    std::uint64_t digest=14695981039346656037ULL;
+    for(const unsigned char byte:value){digest^=byte;digest*=1099511628211ULL;}
+    return std::to_string(digest);
+}
+std::string sqlite_str(sqlite3_stmt* q,int column){
+    const auto* text=sqlite3_column_text(q,column);
+    if(!text || sqlite3_column_type(q,column)!=SQLITE_TEXT)
+        throw std::runtime_error("SQLite: missing/invalid physical field");
+    return reinterpret_cast<const char*>(text);
 }
 std::uint64_t latest_generation(sqlite3* db) {
     Statement q(db, "SELECT COALESCE(MAX(generation),0) FROM snapshots");
@@ -162,7 +179,7 @@ public:
         Statement version(db_, "PRAGMA user_version");
         if (!version.row()) throw std::runtime_error("SQLite: no schema version");
         const int v = sqlite3_column_int(version.get(), 0);
-        if (v < 0 || v > 5) throw std::runtime_error("SQLite: incompatible schema version");
+        if (v < 0 || v > 6) throw std::runtime_error("SQLite: incompatible schema version");
         if (v == 0) {
             run(db_, "BEGIN IMMEDIATE");
             try {
@@ -261,6 +278,30 @@ public:
                 run(db_, "PRAGMA user_version=5");
                 run(db_, "COMMIT");
             } catch (...) { sqlite3_exec(db_, "ROLLBACK", nullptr, nullptr, nullptr); throw; }
+        }
+        if (v <= 5) {
+            // Preserve old journals/snapshots. Never backfill legacy physical
+            // events from incomplete evidence or claim old casualties.
+            run(db_, "BEGIN IMMEDIATE");
+            try {
+                const auto baseline=latest_generation(db_);
+                run(db_, "CREATE TABLE physical_meta(singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
+                         "start_generation INTEGER NOT NULL CHECK(start_generation>=0))");
+                run(db_, "CREATE TABLE physical_incidents("
+                         "incident_id TEXT PRIMARY KEY, generation INTEGER NOT NULL CHECK(generation>0),"
+                         "tick INTEGER NOT NULL CHECK(tick>0),command_id TEXT NOT NULL,"
+                         "kind INTEGER NOT NULL CHECK(kind BETWEEN 1 AND 5),"
+                         "source TEXT NOT NULL,destination TEXT NOT NULL,"
+                         "amount INTEGER NOT NULL CHECK(amount>=0),detail TEXT NOT NULL,digest TEXT NOT NULL)");
+                run(db_, "CREATE INDEX physical_by_generation ON physical_incidents(generation)");
+                run(db_, "CREATE TRIGGER physical_no_update BEFORE UPDATE ON physical_incidents "
+                         "BEGIN SELECT RAISE(ABORT,'physical facts are immutable'); END");
+                run(db_, "CREATE TRIGGER physical_no_delete BEFORE DELETE ON physical_incidents "
+                         "BEGIN SELECT RAISE(ABORT,'physical facts are immutable'); END");
+                Statement m(db_,"INSERT INTO physical_meta(singleton,start_generation) VALUES(1,?)");
+                m.i64(1,static_cast<std::int64_t>(baseline));m.execute();
+                run(db_,"PRAGMA user_version=6");run(db_,"COMMIT");
+            } catch (...) {sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
         }
         } catch (...) { sqlite3_close_v2(db_); db_ = nullptr; throw; }
     }
@@ -822,7 +863,8 @@ public:
                cmd->second.actor!=ship_id || cmd->second.target!=gate_id ||
                event==event_by_id.end() || event->second.result!=Outcome::Applied ||
                event->second.tick!=accepted_tick || event->second.transferred!=0 ||
-               !gate || gate->type!=EntityType::Stargate || !ship || ship->type!=EntityType::Ship ||
+               !gate || gate->type!=EntityType::Stargate || !ship ||
+               (ship->type!=EntityType::Ship && (ship->type!=EntityType::Wreck || !completed)) ||
                gate->system_id!=source || gate->gate_destination!=destination ||
                cargo<0 || cargo>ship->cargo_capacity)
                 throw std::runtime_error("SQLite: jump departure ledger inconsistent");
@@ -841,6 +883,116 @@ public:
         }
         if(jump_rows!=successful_jump_events || completed_rows!=completed_jump_events)
             throw std::runtime_error("SQLite: missing or duplicate jump journal entry");
+        // GRSM-01b: compare every immutable incident after migration against
+        // independent transactional resource/jump journals and activity facts.
+        std::uint64_t physical_start=0;
+        {
+            Statement m(db_,"SELECT start_generation FROM physical_meta WHERE singleton=1");
+            if(!m.row())throw std::runtime_error("SQLite: missing physical boundary");
+            const auto n=sqlite3_column_int64(m.get(),0);
+            if(n<0 || static_cast<std::uint64_t>(n)>generation || m.row())
+                throw std::runtime_error("SQLite: invalid physical boundary");
+            physical_start=static_cast<std::uint64_t>(n);
+        }
+        std::map<std::string,PhysicalIncident> expected_physical;
+        const auto expect=[&](const PhysicalIncident& p){
+            if(p.generation<=physical_start || p.generation>generation || p.tick==0 ||
+               !expected_physical.emplace(p.incident_id,p).second)
+                throw std::runtime_error("SQLite: duplicate/invalid expected physical fact");
+        };
+        {
+            Statement r(db_,"SELECT id,generation,tick,command_id,source_id,destination_id,amount,reason "
+                            "FROM resource_ledger WHERE generation>? AND source_id IS NOT NULL ORDER BY id");
+            r.i64(1,static_cast<std::int64_t>(physical_start));
+            while(r.row()){
+                PhysicalIncident e;
+                e.incident_id="cargo:"+std::to_string(sqlite3_column_int64(r.get(),0));
+                e.generation=static_cast<std::uint64_t>(sqlite3_column_int64(r.get(),1));
+                e.tick=static_cast<std::uint64_t>(sqlite3_column_int64(r.get(),2));
+                if(sqlite3_column_type(r.get(),3)!=SQLITE_NULL)e.command_id=parse_u64(sqlite3_column_text(r.get(),3));
+                e.kind=PhysicalKind::CargoMovement;
+                e.source=sqlite_str(r.get(),4);e.destination=sqlite_str(r.get(),5);
+                e.amount=sqlite3_column_int64(r.get(),6);e.detail=sqlite_str(r.get(),7);
+                if(e.amount<=0 || e.source.empty() || e.destination.empty())
+                    throw std::runtime_error("SQLite: invalid physical cargo reference");
+                expect(e);
+            }
+        }
+        // Jumps retain exact ship ID, origin/destination, and departure cargo.
+        // Completed journeys are separate facts, never overwritten start facts.
+        {
+            Statement j(db_,"SELECT j.command_id,j.ship_id,j.gate_id,j.source_system,j.dest_system,"
+                "j.cargo_at_departure,j.accepted_tick,j.completed_tick,h.generation "
+                "FROM jump_ledger j JOIN historical_events h ON h.command_id=j.command_id "
+                "WHERE h.generation>? ORDER BY j.command_id");
+            j.i64(1,static_cast<std::int64_t>(physical_start));
+            while(j.row()){
+                const auto id=parse_u64(sqlite3_column_text(j.get(),0));
+                const auto ship=sqlite_str(j.get(),1),gate=sqlite_str(j.get(),2);
+                const auto source=std::to_string(sqlite3_column_int64(j.get(),3));
+                const auto dest=std::to_string(sqlite3_column_int64(j.get(),4));
+                const auto cargo=sqlite3_column_int64(j.get(),5);
+                const auto departed=static_cast<std::uint64_t>(sqlite3_column_int64(j.get(),6));
+                const auto startgen=static_cast<std::uint64_t>(sqlite3_column_int64(j.get(),8));
+                expect(PhysicalIncident{"journey:start:"+std::to_string(id),startgen,departed,id,
+                    PhysicalKind::JourneyStarted,source,dest,cargo,ship+":"+gate});
+                if(sqlite3_column_type(j.get(),7)!=SQLITE_NULL){
+                    const auto arrival=static_cast<std::uint64_t>(sqlite3_column_int64(j.get(),7));
+                    Statement step(db_,"SELECT generation FROM operation_log WHERE kind=2 AND tick=?");
+                    step.i64(1,static_cast<std::int64_t>(arrival));
+                    if(!step.row())throw std::runtime_error("SQLite: arrival missing committed tick");
+                    const auto arrgen=static_cast<std::uint64_t>(sqlite3_column_int64(step.get(),0));
+                    expect(PhysicalIncident{"journey:end:"+std::to_string(id),arrgen,arrival,id,
+                        PhysicalKind::JourneyCompleted,source,dest,cargo,ship+":"+gate});
+                }
+            }
+        }
+        for(const auto& a:restored.activity_events()){
+            if(a.kind!=ActivityKind::ShipDestroyed && a.kind!=ActivityKind::NpcLost)continue;
+            const auto h=expected_event_generation.find(a.start_command_id);
+            const auto cmd=journal_commands.find(a.start_command_id);
+            if(h==expected_event_generation.end() || cmd==journal_commands.end() ||
+               ((a.kind==ActivityKind::ShipDestroyed && cmd->second.action!=Action::HostDestroyShip) ||
+                (a.kind==ActivityKind::NpcLost && cmd->second.action!=Action::HostCrewLoss)) ||
+               a.tick!=event_by_id.at(a.start_command_id).tick ||
+               event_by_id.at(a.start_command_id).result!=Outcome::Applied)
+                throw std::runtime_error("SQLite: physical loss lacks executed host action");
+            if(h->second<=physical_start)continue;
+            expect(PhysicalIncident{(a.kind==ActivityKind::ShipDestroyed?"wreck:":"death:")+
+                    std::to_string(a.start_command_id)+(a.kind==ActivityKind::NpcLost?":"+std::to_string(a.target):""),
+                h->second,a.tick,a.start_command_id,
+                a.kind==ActivityKind::ShipDestroyed?PhysicalKind::ShipDestroyed:PhysicalKind::NpcLost,
+                std::to_string(a.actor),std::to_string(a.target),1,
+                a.kind==ActivityKind::ShipDestroyed?"wreck_persists":"individual_identity_lost"});
+        }
+        {
+            Statement facts(db_,"SELECT incident_id,generation,tick,command_id,kind,source,destination,amount,detail,digest "
+                                "FROM physical_incidents");
+            std::size_t count=0;
+            while(facts.row()){
+                ++count;
+                PhysicalIncident e;
+                e.incident_id=sqlite_str(facts.get(),0);
+                const auto gen=sqlite3_column_int64(facts.get(),1),tick=sqlite3_column_int64(facts.get(),2);
+                if(gen<=0 || tick<=0)throw std::runtime_error("SQLite: invalid physical timestamp");
+                e.generation=static_cast<std::uint64_t>(gen);e.tick=static_cast<std::uint64_t>(tick);
+                e.command_id=parse_u64(sqlite3_column_text(facts.get(),3));
+                const auto kind=sqlite3_column_int(facts.get(),4);
+                if(kind<1 || kind>5)throw std::runtime_error("SQLite: invalid physical kind");
+                e.kind=static_cast<PhysicalKind>(kind);
+                e.source=sqlite_str(facts.get(),5);e.destination=sqlite_str(facts.get(),6);
+                e.amount=sqlite3_column_int64(facts.get(),7);e.detail=sqlite_str(facts.get(),8);
+                const auto it=expected_physical.find(e.incident_id);
+                if(it==expected_physical.end() || e.generation!=it->second.generation ||
+                   e.tick!=it->second.tick || e.command_id!=it->second.command_id ||
+                   e.kind!=it->second.kind || e.source!=it->second.source ||
+                   e.destination!=it->second.destination || e.amount!=it->second.amount ||
+                   e.detail!=it->second.detail || sqlite_str(facts.get(),9)!=physical_digest(e))
+                    throw std::runtime_error("SQLite: physical incident contradicts authoritative source");
+            }
+            if(count!=expected_physical.size())
+                throw std::runtime_error("SQLite: physical incident missing or duplicated");
+        }
         out.swap(restored);
         return true;
     }
@@ -1136,6 +1288,75 @@ public:
                 ledger.text(6, "automated_mining_transfer");
                 ledger.execute();
             }
+            // Write physical incident rows in the SAME transaction as all
+            // sources, receipts, state snapshot and operation journal.
+            auto add_physical=[&](const PhysicalIncident& e){
+                Statement add(db_,"INSERT INTO physical_incidents(incident_id,generation,tick,command_id,"
+                    "kind,source,destination,amount,detail,digest) VALUES(?,?,?,?,?,?,?,?,?,?)");
+                add.text(1,e.incident_id);add.i64(2,static_cast<std::int64_t>(e.generation));
+                add.i64(3,static_cast<std::int64_t>(e.tick));add.text(4,std::to_string(e.command_id));
+                add.i64(5,static_cast<int>(e.kind));add.text(6,e.source);add.text(7,e.destination);
+                add.i64(8,e.amount);add.text(9,e.detail);add.text(10,physical_digest(e));add.execute();
+            };
+            {
+                Statement r(db_,"SELECT id,tick,command_id,source_id,destination_id,amount,reason "
+                                "FROM resource_ledger WHERE generation=? AND source_id IS NOT NULL ORDER BY id");
+                r.i64(1,static_cast<std::int64_t>(next));
+                while(r.row()){
+                    PhysicalIncident e;
+                    e.incident_id="cargo:"+std::to_string(sqlite3_column_int64(r.get(),0));
+                    e.generation=next;e.tick=static_cast<std::uint64_t>(sqlite3_column_int64(r.get(),1));
+                    if(sqlite3_column_type(r.get(),2)!=SQLITE_NULL)e.command_id=parse_u64(sqlite3_column_text(r.get(),2));
+                    e.kind=PhysicalKind::CargoMovement;
+                    e.source=sqlite_str(r.get(),3);e.destination=sqlite_str(r.get(),4);
+                    e.amount=sqlite3_column_int64(r.get(),5);e.detail=sqlite_str(r.get(),6);
+                    add_physical(e);
+                }
+            }
+            for(const auto& ev:new_events){
+                const auto cmd=due_commands.find(ev.command_id);
+                if(ev.result!=Outcome::Applied || cmd==due_commands.end() ||
+                   cmd->second.action!=Action::RequestJump)continue;
+                Statement j(db_,"SELECT ship_id,gate_id,source_system,dest_system,cargo_at_departure "
+                                "FROM jump_ledger WHERE command_id=?");
+                j.text(1,std::to_string(ev.command_id));
+                if(!j.row())throw std::runtime_error("history: missing jump start source");
+                const auto ship=sqlite_str(j.get(),0),gate=sqlite_str(j.get(),1);
+                add_physical(PhysicalIncident{"journey:start:"+std::to_string(ev.command_id),
+                    next,ev.tick,ev.command_id,PhysicalKind::JourneyStarted,
+                    std::to_string(sqlite3_column_int64(j.get(),2)),
+                    std::to_string(sqlite3_column_int64(j.get(),3)),
+                    sqlite3_column_int64(j.get(),4),ship+":"+gate});
+            }
+            for(const auto& a:activity_delta){
+                if(a.kind==ActivityKind::JumpCompleted){
+                    Statement j(db_,"SELECT command_id,ship_id,gate_id,source_system,dest_system,cargo_at_departure "
+                                    "FROM jump_ledger WHERE ship_id=? AND gate_id=? AND completed_tick=?");
+                    j.text(1,std::to_string(a.actor));j.text(2,std::to_string(a.target));
+                    j.i64(3,static_cast<std::int64_t>(a.tick));
+                    if(!j.row())throw std::runtime_error("history: missing jump completion source");
+                    const auto id=parse_u64(sqlite3_column_text(j.get(),0));
+                    Statement start(db_,"SELECT generation FROM historical_events WHERE command_id=?");
+                    start.text(1,std::to_string(id));
+                    Statement boundary(db_,"SELECT start_generation FROM physical_meta WHERE singleton=1");
+                    if(!boundary.row())throw std::runtime_error("history: missing physical boundary");
+                    const auto physical_start=sqlite3_column_int64(boundary.get(),0);
+                    if(start.row() && sqlite3_column_int64(start.get(),0)>physical_start){
+                        add_physical(PhysicalIncident{"journey:end:"+std::to_string(id),next,a.tick,id,
+                            PhysicalKind::JourneyCompleted,std::to_string(sqlite3_column_int64(j.get(),3)),
+                            std::to_string(sqlite3_column_int64(j.get(),4)),sqlite3_column_int64(j.get(),5),
+                            sqlite_str(j.get(),1)+":"+sqlite_str(j.get(),2)});
+                    }
+                } else if(a.kind==ActivityKind::ShipDestroyed || a.kind==ActivityKind::NpcLost){
+                    add_physical(PhysicalIncident{(a.kind==ActivityKind::ShipDestroyed?"wreck:":"death:")+
+                            std::to_string(a.start_command_id)+
+                            (a.kind==ActivityKind::NpcLost?":"+std::to_string(a.target):""),
+                        next,a.tick,a.start_command_id,
+                        a.kind==ActivityKind::ShipDestroyed?PhysicalKind::ShipDestroyed:PhysicalKind::NpcLost,
+                        std::to_string(a.actor),std::to_string(a.target),1,
+                        a.kind==ActivityKind::ShipDestroyed?"wreck_persists":"individual_identity_lost"});
+                }
+            }
             if (fail == FailPoint::AfterReceiptWrite)
                 throw std::runtime_error("injected failure after receipt changes");
             Statement snapshot(db_, "INSERT INTO snapshots(generation,format,state,checksum,ore_total,credit_total) VALUES(?,?,?,?,?,?)");
@@ -1187,6 +1408,25 @@ public:
             entries.push_back(e);
         }
         return entries;
+    }
+    std::vector<PhysicalIncident> recent_physical_incidents(std::size_t limit) const {
+        if(limit==0 || limit>256)throw std::invalid_argument("physical history limit must be 1..256");
+        Statement q(db_,"SELECT incident_id,generation,tick,command_id,kind,source,destination,amount,detail "
+                        "FROM physical_incidents ORDER BY generation DESC,incident_id DESC LIMIT ?");
+        q.i64(1,static_cast<std::int64_t>(limit));
+        std::vector<PhysicalIncident> out;
+        while(q.row()){
+            PhysicalIncident e;
+            e.incident_id=sqlite_str(q.get(),0);
+            e.generation=static_cast<std::uint64_t>(sqlite3_column_int64(q.get(),1));
+            e.tick=static_cast<std::uint64_t>(sqlite3_column_int64(q.get(),2));
+            e.command_id=parse_u64(sqlite3_column_text(q.get(),3));
+            e.kind=static_cast<PhysicalKind>(sqlite3_column_int(q.get(),4));
+            e.source=sqlite_str(q.get(),5);e.destination=sqlite_str(q.get(),6);
+            e.amount=sqlite3_column_int64(q.get(),7);e.detail=sqlite_str(q.get(),8);
+            out.push_back(std::move(e));
+        }
+        return out;
     }
     // Explicit repair on a COPY ONLY. This never operates on the original file.
     void repair_latest_from_journal() {
@@ -1324,7 +1564,8 @@ PersistentWorld::PersistentWorld(const std::string& path, Simulation initial_wor
 PersistentWorld::~PersistentWorld() = default;
 
 bool PersistentWorld::submit(const Command& command, FailPoint fail) {
-    if (command.action == Action::SetGatePairOnline ||
+    if (command.action == Action::HostDestroyShip || command.action == Action::HostCrewLoss ||
+        command.action == Action::SetGatePairOnline ||
         command.action == Action::SetGateStaff ||
         command.action == Action::DeliverGateSpares ||
         command.issuer == Simulation::kServerAuthority) return false;
@@ -1372,6 +1613,26 @@ bool PersistentWorld::submit_testing_gate_operations(EntityId forward,EntityId r
     world_.swap(next);++generation_;
     return true;
 }
+bool PersistentWorld::submit_testing_destroy_ship(EntityId attacker, EntityId victim,
+        std::uint64_t command_id,FailPoint fail) {
+    Command c{};c.id=command_id;c.sequence=command_id;c.execute_tick=world_.tick()+1;
+    c.issuer=Simulation::kServerAuthority;c.actor=attacker;c.target=victim;
+    c.action=Action::HostDestroyShip;
+    auto next=world_;
+    if(!next.submit(c))return false;
+    store_->commit(next,generation_,resource_origin_,credit_origin_,&c,{},{},{},fail);
+    world_.swap(next);++generation_;return true;
+}
+bool PersistentWorld::submit_testing_crew_loss(EntityId ship,std::int64_t count,
+        std::uint64_t command_id,FailPoint fail) {
+    Command c{};c.id=command_id;c.sequence=command_id;c.execute_tick=world_.tick()+1;
+    c.issuer=Simulation::kServerAuthority;c.actor=ship;c.target=ship;
+    c.action=Action::HostCrewLoss;c.amount=count;
+    auto next=world_;
+    if(!next.submit(c))return false;
+    store_->commit(next,generation_,resource_origin_,credit_origin_,&c,{},{},{},fail);
+    world_.swap(next);++generation_;return true;
+}
 void PersistentWorld::step(FailPoint fail) {
     auto next = world_;
     const auto before = next.events().size();
@@ -1392,6 +1653,9 @@ void PersistentWorld::step(FailPoint fail) {
 
 std::vector<HistoricalEvent> PersistentWorld::recent_history(std::size_t limit) const {
     return store_->recent_history(limit);
+}
+std::vector<PhysicalIncident> PersistentWorld::recent_physical_incidents(std::size_t limit) const {
+    return store_->recent_physical_incidents(limit);
 }
 void PersistentWorld::steps(std::uint64_t n) { for (std::uint64_t i = 0; i < n; ++i) step(); }
 } // namespace galaxy

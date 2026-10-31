@@ -537,7 +537,12 @@ std::vector<EntityId> Simulation::generate_asteroids(std::size_t count, std::int
 
 bool Simulation::submit(const Command& c) {
     if (c.id == 0 || c.execute_tick <= tick_ || c.issuer == 0 || submitted_ids_.count(c.id)) return false;
-    if (c.action == Action::SetGatePairOnline ||
+    if (c.action == Action::HostDestroyShip || c.action == Action::HostCrewLoss) {
+        if(c.issuer != kServerAuthority || !c.actor || !c.target ||
+           c.thrust_x || c.thrust_y ||
+           (c.action==Action::HostDestroyShip && (c.actor==c.target || c.amount!=0)) ||
+           (c.action==Action::HostCrewLoss && (c.actor!=c.target || c.amount<1 || c.amount>1000)))return false;
+    } else if (c.action == Action::SetGatePairOnline ||
         c.action == Action::SetGateStaff || c.action == Action::DeliverGateSpares) {
         if (c.issuer != kServerAuthority || c.actor == 0 || c.target == 0 ||
             c.actor == c.target || c.thrust_x != 0 || c.thrust_y != 0 ||
@@ -718,6 +723,52 @@ void Simulation::stop_mining(EntityId actor, Outcome reason) {
 
 Event Simulation::execute(const Command& c) {
     Event result{tick_, c.id, Outcome::InvalidActor, 0};
+    // GRSM-01b: host-authorized deterministic physical incidents. These are
+    // simulation state transitions, NOT user-invokable reputation events.
+    // Combat/damage resolution will eventually authorize these outcomes.
+    if (c.action==Action::HostDestroyShip || c.action==Action::HostCrewLoss) {
+        if(c.issuer!=kServerAuthority || !c.actor || !c.target || c.thrust_x || c.thrust_y)
+            {result.result=Outcome::Unauthorized;return result;}
+        if(c.action==Action::HostDestroyShip){
+            const auto attacker=entities_.find(c.actor), victim=entities_.find(c.target);
+            if(attacker==entities_.end() || victim==entities_.end() || c.actor==c.target ||
+               attacker->second.type!=EntityType::Ship || victim->second.type!=EntityType::Ship ||
+               attacker->second.system_id!=victim->second.system_id || colony_ships_.count(c.target))
+                {result.result=Outcome::InvalidTarget;return result;}
+            auto& ship=victim->second;
+            if(ship.dock_state!=DockState::InSpace || ship.jump_state!=ShipJumpState::Ready)
+                {result.result=Outcome::InTransition;return result;}
+            if(c.amount!=0){result.result=Outcome::InvalidArgument;return result;}
+            stop_mining(ship.id,Outcome::NotInSpace);
+            // Cargo remains on the persistent wreck; there is no magical
+            // deletion, addition, or instant looting of physical ore.
+            ship.type=EntityType::Wreck;
+            // Preserve former ship owner for salvage claims and victim attribution.
+            // The Wreck entity is never an executable player ship.
+            ship.velocity={};
+            activity_events_.push_back({tick_,ActivityKind::ShipDestroyed,c.id,c.actor,c.target,Outcome::Applied,0});
+            snapshot_version_=std::max(snapshot_version_,21);
+            result.result=Outcome::Applied;return result;
+        }
+        const auto ship=entities_.find(c.actor);
+        const auto crew=colony_ships_.find(c.actor);
+        if(c.actor!=c.target || ship==entities_.end() || ship->second.type!=EntityType::Ship ||
+           crew==colony_ships_.end() || npcs_.empty())
+            {result.result=Outcome::InvalidTarget;return result;}
+        if(c.amount<=0 || c.amount>=crew->second.crew){result.result=Outcome::InvalidArgument;return result;}
+        std::vector<std::uint64_t> casualties;
+        for(const auto& [id,n]:npcs_)if(n.home_ship==c.actor && n.location==c.actor &&
+             n.role==NpcRole::Ship && casualties.size()<static_cast<std::size_t>(c.amount))casualties.push_back(id);
+        if(casualties.size()!=static_cast<std::size_t>(c.amount))
+            throw std::logic_error("NPC manifest inconsistent with crew loss");
+        for(const auto id:casualties){
+            npcs_.erase(id);
+            activity_events_.push_back({tick_,ActivityKind::NpcLost,c.id,c.actor,id,Outcome::Applied,0});
+        }
+        crew->second.crew-=c.amount;
+        snapshot_version_=std::max(snapshot_version_,21);
+        result.result=Outcome::Applied;return result;
+    }
     if (c.action == Action::SetGatePairOnline ||
         c.action == Action::SetGateStaff || c.action == Action::DeliverGateSpares) {
         if (c.issuer != kServerAuthority || c.actor == c.target ||
@@ -1922,7 +1973,7 @@ void Simulation::steps(std::uint64_t count) {
 
 std::string Simulation::canonical_state() const {
     std::ostringstream out;
-    out << (snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
+    out << (snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
         << '|' << rng_state_ << '\n';
     if (snapshot_version_>=5) for(const auto system:systems_)out<<"system|"<<system<<'\n';
     for (const auto& entry : entities_) {
@@ -2173,12 +2224,12 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
     if (!std::getline(in, line)) throw std::runtime_error("snapshot: missing header");
     auto h = fields(line);
     require_fields(h, 5);
-    if (h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20") throw std::runtime_error("snapshot: unsupported version");
+    if (h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21") throw std::runtime_error("snapshot: unsupported version");
     const auto sys = u64(h[1]);
     if (sys == 0 || sys > std::numeric_limits<std::uint32_t>::max())
         throw std::runtime_error("snapshot: invalid system");
     Simulation result(u64(h[4]), static_cast<std::uint32_t>(sys));
-    result.snapshot_version_ = h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
+    result.snapshot_version_ = h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
     result.tick_ = u64(h[2]);
     result.next_entity_id_ = u64(h[3]);
     if (result.next_entity_id_ == 0) throw std::runtime_error("snapshot: invalid next entity ID");
@@ -2201,7 +2252,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             e.id = u64(f[1]);
             const auto es = u64(f[2]), type = u64(f[3]);
             if ((result.snapshot_version_<5 && es!=sys) || es==0 || es>std::numeric_limits<std::uint32_t>::max() ||
-                type > (result.snapshot_version_>=5?3U:2U) || e.id == 0 || e.id >= result.next_entity_id_)
+                type > (result.snapshot_version_>=21?4U:result.snapshot_version_>=5?3U:2U) || e.id == 0 || e.id >= result.next_entity_id_)
                 throw std::runtime_error("snapshot: invalid entity header");
             e.system_id = static_cast<std::uint32_t>(es);
             e.type = static_cast<EntityType>(type);
@@ -2234,6 +2285,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 e.ore < 0 || e.cargo < 0 || e.cargo_capacity < 0 ||
                 (e.type == EntityType::Ship && (e.owner_id == 0 || e.ore != 0 || e.cargo_capacity == 0 || e.cargo > e.cargo_capacity)) ||
                 (e.type == EntityType::Asteroid && (e.owner_id != 0 || e.cargo != 0 || e.cargo_capacity != 0)) ||
+                (e.type == EntityType::Wreck && (e.owner_id == 0 || e.ore != 0 || e.cargo_capacity == 0 || e.cargo > e.cargo_capacity)) ||
                 (e.type == EntityType::Station && ((result.snapshot_version_<7 && e.owner_id != 0) || e.ore != 0 || e.cargo != 0 || e.cargo_capacity != 0)) ||
                 (e.type != EntityType::Ship && (e.velocity.x != 0 || e.velocity.y != 0)) ||
                 (e.type != EntityType::Ship && (e.dock_state != DockState::InSpace || e.dock_station != 0 || e.transition_ticks != 0)) ||
@@ -2476,7 +2528,8 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 throw std::runtime_error("snapshot: repeated NPC counter");
             result.next_npc_id_=u64(f[1]);
             result.npc_next_seen_=true;
-            if(result.next_npc_id_<2 || result.next_npc_id_>100000000)
+            if(result.next_npc_id_==0 || result.next_npc_id_>100000000 ||
+               (result.next_npc_id_==1 && (result.snapshot_version_==20 || !result.colony_ships_.empty())))
                 throw std::runtime_error("snapshot: invalid NPC counter");
         } else if(f[0]=="npc" && result.snapshot_version_>=20){
             require_fields(f,7);
@@ -2543,7 +2596,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             c.id = u64(f[1]); c.execute_tick = u64(f[2]); c.sequence = u64(f[3]);
             c.issuer = u64(f[4]); c.actor = u64(f[5]); c.target = u64(f[6]);
             auto action = u64(f[7]);
-            if (action > (result.snapshot_version_ >= 20 ? static_cast<unsigned>(Action::AssignFarmMentor) : result.snapshot_version_ >= 19 ? static_cast<unsigned>(Action::AssignPolicyInspectors) : result.snapshot_version_ >= 18 ? static_cast<unsigned>(Action::TransferWaterworksFeed) : result.snapshot_version_ >= 17 ? static_cast<unsigned>(Action::ConstructReclaimer) : result.snapshot_version_ >= 16 ? static_cast<unsigned>(Action::AssignClinicStaff) : result.snapshot_version_ >= 15 ? static_cast<unsigned>(Action::AssignCommunityStaff) : result.snapshot_version_ >= 14 ? static_cast<unsigned>(Action::SetUtilityMaintenance) : result.snapshot_version_ >= 13 ? static_cast<unsigned>(Action::RepairUtility) : result.snapshot_version_ >= 12 ? static_cast<unsigned>(Action::AssignHabitatResidents) : result.snapshot_version_ >= 11 ? static_cast<unsigned>(Action::AssignFarmWorkers) : result.snapshot_version_ >= 10 ? static_cast<unsigned>(Action::LoadLifeWater) : result.snapshot_version_ >= 9 ? static_cast<unsigned>(Action::FabricateMaterialModule) : result.snapshot_version_ >= 7 ? static_cast<unsigned>(Action::ConstructOutpost) : result.snapshot_version_ >= 6 ? static_cast<unsigned>(Action::DeliverGateSpares) : result.snapshot_version_ >= 5 ? static_cast<unsigned>(Action::SetGatePairOnline) : result.snapshot_version_ >= 4 ? static_cast<unsigned>(Action::SellOre) : static_cast<unsigned>(Action::UnloadOre))) throw std::runtime_error("snapshot: invalid action");
+            if (action > (result.snapshot_version_ >= 21 ? static_cast<unsigned>(Action::HostCrewLoss) : result.snapshot_version_ >= 20 ? static_cast<unsigned>(Action::AssignFarmMentor) : result.snapshot_version_ >= 19 ? static_cast<unsigned>(Action::AssignPolicyInspectors) : result.snapshot_version_ >= 18 ? static_cast<unsigned>(Action::TransferWaterworksFeed) : result.snapshot_version_ >= 17 ? static_cast<unsigned>(Action::ConstructReclaimer) : result.snapshot_version_ >= 16 ? static_cast<unsigned>(Action::AssignClinicStaff) : result.snapshot_version_ >= 15 ? static_cast<unsigned>(Action::AssignCommunityStaff) : result.snapshot_version_ >= 14 ? static_cast<unsigned>(Action::SetUtilityMaintenance) : result.snapshot_version_ >= 13 ? static_cast<unsigned>(Action::RepairUtility) : result.snapshot_version_ >= 12 ? static_cast<unsigned>(Action::AssignHabitatResidents) : result.snapshot_version_ >= 11 ? static_cast<unsigned>(Action::AssignFarmWorkers) : result.snapshot_version_ >= 10 ? static_cast<unsigned>(Action::LoadLifeWater) : result.snapshot_version_ >= 9 ? static_cast<unsigned>(Action::FabricateMaterialModule) : result.snapshot_version_ >= 7 ? static_cast<unsigned>(Action::ConstructOutpost) : result.snapshot_version_ >= 6 ? static_cast<unsigned>(Action::DeliverGateSpares) : result.snapshot_version_ >= 5 ? static_cast<unsigned>(Action::SetGatePairOnline) : result.snapshot_version_ >= 4 ? static_cast<unsigned>(Action::SellOre) : static_cast<unsigned>(Action::UnloadOre))) throw std::runtime_error("snapshot: invalid action");
             c.action = static_cast<Action>(action);
             auto tx = i64(f[8]), ty = i64(f[9]);
             if (tx < std::numeric_limits<int>::min() || tx > std::numeric_limits<int>::max() ||
@@ -2552,6 +2605,11 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             c.thrust_x = static_cast<int>(tx); c.thrust_y = static_cast<int>(ty);
             c.amount = i64(f[10]);
             if (c.id == 0 || c.issuer == 0 || c.execute_tick <= result.tick_ ||
+                ((c.action==Action::HostDestroyShip || c.action==Action::HostCrewLoss) &&
+                 (result.snapshot_version_<21 || c.issuer!=Simulation::kServerAuthority ||
+                  c.actor==0 || c.target==0 || c.thrust_x || c.thrust_y ||
+                  (c.action==Action::HostDestroyShip && (c.actor==c.target || c.amount!=0)) ||
+                  (c.action==Action::HostCrewLoss && (c.actor!=c.target || c.amount<1 || c.amount>1000)))) ||
                 ((c.action==Action::SetGatePairOnline || c.action==Action::SetGateStaff ||
                   c.action==Action::DeliverGateSpares) &&
                  (c.issuer!=Simulation::kServerAuthority || c.actor==c.target ||
@@ -2561,7 +2619,8 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                   (c.action==Action::DeliverGateSpares && (c.amount<1 || c.amount>10000)) ||
                   c.thrust_x!=0 || c.thrust_y!=0)) ||
                 (c.action!=Action::SetGatePairOnline && c.action!=Action::SetGateStaff &&
-                 c.action!=Action::DeliverGateSpares && c.issuer==Simulation::kServerAuthority) ||
+                 c.action!=Action::DeliverGateSpares && c.action!=Action::HostDestroyShip &&
+                 c.action!=Action::HostCrewLoss && c.issuer==Simulation::kServerAuthority) ||
                 ((c.action==Action::RefineOre || c.action==Action::FabricateModule ||
                   c.action==Action::ConstructOutpost) && (c.target!=0 || c.thrust_x || c.thrust_y ||
                   c.amount<1 || c.amount>1000 ||
@@ -2677,12 +2736,15 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             a.tick = u64(f[1]); const auto kind = u64(f[2]);
             a.start_command_id = u64(f[3]); a.actor = u64(f[4]); a.target = u64(f[5]);
             const auto outcome = u64(f[6]); a.transferred = i64(f[7]);
-            if (kind > (result.snapshot_version_>=5 ? static_cast<unsigned>(ActivityKind::JumpCompleted) : static_cast<unsigned>(ActivityKind::Docked)) ||
+            if (kind > (result.snapshot_version_>=21 ? static_cast<unsigned>(ActivityKind::NpcLost) : result.snapshot_version_>=5 ? static_cast<unsigned>(ActivityKind::JumpCompleted) : static_cast<unsigned>(ActivityKind::Docked)) ||
                 outcome > static_cast<std::uint64_t>(Outcome::HangarFull) ||
                 a.tick == 0 || a.tick > result.tick_ || a.target == 0 || a.transferred < 0 ||
                 (kind == 1 && (a.start_command_id == 0 || a.actor == 0 ||
                                outcome != static_cast<std::uint64_t>(Outcome::Applied) || a.transferred == 0)) ||
-                (kind != 1 && a.transferred != 0))
+                (kind != 1 && a.transferred != 0) ||
+                ((kind==static_cast<unsigned>(ActivityKind::ShipDestroyed) ||
+                  kind==static_cast<unsigned>(ActivityKind::NpcLost)) &&
+                  (!a.start_command_id || !a.actor || outcome!=static_cast<std::uint64_t>(Outcome::Applied))))
                 throw std::runtime_error("snapshot: invalid activity event");
             a.kind = static_cast<ActivityKind>(kind);
             a.result = static_cast<Outcome>(outcome);
@@ -2710,11 +2772,13 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
         }
         for(const auto& a:result.activity_events_)if(a.kind==ActivityKind::JumpCompleted){
             const auto* ship=result.find(a.actor);const auto* gate=result.find(a.target);
-            if(!ship || ship->type!=EntityType::Ship || !gate || gate->type!=EntityType::Stargate ||
+            if(!ship || (ship->type!=EntityType::Ship && ship->type!=EntityType::Wreck) ||
+               !gate || gate->type!=EntityType::Stargate ||
                ship->system_id!=gate->gate_destination) {
                // Future return travel could legitimately move a ship again; each
                // historical jump is validated by durable per-commit snapshots.
-               if(!ship || !gate || ship->type!=EntityType::Ship || gate->type!=EntityType::Stargate)
+               if(!ship || !gate || (ship->type!=EntityType::Ship && ship->type!=EntityType::Wreck) ||
+                  gate->type!=EntityType::Stargate)
                    throw std::runtime_error("snapshot: bad historic transfer references");
             }
         }
@@ -2831,6 +2895,16 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
            !result.colony_ships_.count(h.source_ship) ||
            (result.farms_.count(id) && result.farms_.at(id).workers+h.residents>h.capacity))
             throw std::runtime_error("snapshot: orphaned or over-capacity habitat");
+    }
+    if(result.snapshot_version_>=21) for(const auto& a:result.activity_events_){
+        if(a.kind==ActivityKind::NpcLost && (a.target>=result.next_npc_id_ || !a.target ||
+              result.npcs_.count(a.target) || !result.colony_ships_.count(a.actor)))
+            throw std::runtime_error("snapshot: invalid deceased NPC identity");
+        if(a.kind==ActivityKind::ShipDestroyed){
+            const auto* wreck=result.find(a.target);
+            if(!wreck || wreck->type!=EntityType::Wreck)
+                throw std::runtime_error("snapshot: missing destroyed ship wreck");
+        }
     }
     if(result.snapshot_version_>=20){
         if(!result.npc_next_seen_)throw std::runtime_error("snapshot: missing NPC counter");

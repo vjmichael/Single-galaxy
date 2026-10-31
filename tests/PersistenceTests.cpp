@@ -247,6 +247,8 @@ void v1_to_v2_migration_preserves_world() {
     // Mimic an actual v1 database. Remove all later-schema objects, not just
     // operation_log: otherwise this is an impossible v1/v5 hybrid fixture.
     direct_sql(db.path, "DROP TRIGGER historical_no_update; DROP TRIGGER historical_no_delete; "
+                       "DROP TRIGGER physical_no_update; DROP TRIGGER physical_no_delete; "
+                       "DROP TABLE physical_incidents; DROP TABLE physical_meta; "
                        "DROP TABLE historical_events; DROP TABLE historical_meta; "
                        "DROP TABLE operation_log; PRAGMA user_version=1;");
     {
@@ -261,7 +263,7 @@ void v1_to_v2_migration_preserves_world() {
     sqlite3_stmt* version = nullptr;
     CHECK(sqlite3_prepare_v2(raw, "PRAGMA user_version", -1, &version, nullptr) == SQLITE_OK);
     CHECK(sqlite3_step(version) == SQLITE_ROW);
-    CHECK(sqlite3_column_int(version, 0) == 5); // GRSM-01 history ledger migration
+    CHECK(sqlite3_column_int(version, 0) == 6); // GRSM-01b physical ledger migration
     sqlite3_finalize(version);
     sqlite3_close(raw);
     PersistentWorld reopened(db.path.string(), Simulation(9));

@@ -80,9 +80,10 @@ void validate_projection(const ClientProjection& p) {
         throw std::runtime_error("invalid projection metadata");
     for (const auto& [id,e] : p.entities) {
         if (id == 0 || id != e.id || e.system_id != p.system_id ||
-            static_cast<unsigned>(e.type) > 3 || e.ore < 0 || e.cargo < 0 || e.cargo_capacity < 0 ||
+            static_cast<unsigned>(e.type) > 4 || e.ore < 0 || e.cargo < 0 || e.cargo_capacity < 0 ||
             (e.type == EntityType::Ship && (e.owner_id == 0 || e.cargo_capacity == 0 || e.cargo > e.cargo_capacity || e.ore != 0)) ||
             (e.type == EntityType::Asteroid && (e.owner_id != 0 || e.cargo != 0 || e.cargo_capacity != 0)) ||
+            (e.type == EntityType::Wreck && (e.owner_id == 0 || e.ore != 0 || e.cargo_capacity == 0 || e.cargo > e.cargo_capacity)) ||
             ((e.type == EntityType::Station || e.type == EntityType::Stargate) &&
               ((e.type==EntityType::Stargate && e.owner_id!=0) || e.ore != 0 || e.cargo != 0 || e.cargo_capacity != 0)))
             throw std::runtime_error("invalid projected entity");
@@ -166,7 +167,7 @@ Entity parse_entity(const std::vector<std::string>& f) {
     e.id=number<std::uint64_t>(f[1]);
     e.system_id=number<std::uint32_t>(f[2]);
     const auto type=number<std::uint32_t>(f[3]);
-    if(type>3) throw std::runtime_error("invalid entity type");
+    if(type>4) throw std::runtime_error("invalid entity type");
     e.type=static_cast<EntityType>(type); e.owner_id=number<std::uint64_t>(f[4]);
     e.position.x=number<std::int64_t>(f[5]); e.position.y=number<std::int64_t>(f[6]);
     e.velocity.x=number<std::int64_t>(f[7]); e.velocity.y=number<std::int64_t>(f[8]);
@@ -600,7 +601,7 @@ ViewFrame decode_frame(const std::string& bytes) {
         else if(p[0]=="A") {
             require(p,8); c.kind=ChangeKind::Activity;
             c.activity.tick=number<std::uint64_t>(p[1]); const auto kind=number<unsigned>(p[2]);
-            if(kind>static_cast<unsigned>(ActivityKind::JumpCompleted)) throw std::runtime_error("invalid activity kind");
+            if(kind>static_cast<unsigned>(ActivityKind::NpcLost)) throw std::runtime_error("invalid activity kind");
             c.activity.kind=static_cast<ActivityKind>(kind);
             c.activity.start_command_id=number<std::uint64_t>(p[3]);
             c.activity.actor=number<std::uint64_t>(p[4]); c.activity.target=number<std::uint64_t>(p[5]);

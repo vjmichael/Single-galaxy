@@ -20,10 +20,10 @@ struct Vector2 {
     std::int64_t y = 0;
 };
 
-enum class EntityType { Ship, Asteroid, Station, Stargate };
-enum class Action { Thrust, Mine, StartMining, StopMining, RequestUndock, RequestDock, UnloadOre, LoadOre, SellOre, RequestJump, SetGatePairOnline, SetGateStaff, DeliverGateSpares, RefineOre, FabricateModule, ConstructOutpost, RefineMineral, FabricateMaterialModule, PlantCrops, HarvestCrops, RecycleWater, RecycleCompost, ProduceOxygen, LoadLifeWater, ConstructFarm, TransferFarmStock, AssignFarmWorkers, ConstructHabitat, TransferHabitatStock, AssignHabitatResidents, ConstructUtility, RepairUtility, TransferUtilitySpares, AssignUtilityTechnicians, SetUtilityMaintenance, ConstructCommunity, TransferCommunityStock, AssignCommunityStaff, ConstructClinic, TransferClinicStock, AssignClinicStaff, ConstructReclaimer, ConstructWaterworks, TransferWaterworksFeed, SetPolicyAssurance, AssignPolicyInspectors, AssignFarmMentor };
+enum class EntityType { Ship, Asteroid, Station, Stargate, Wreck };
+enum class Action { Thrust, Mine, StartMining, StopMining, RequestUndock, RequestDock, UnloadOre, LoadOre, SellOre, RequestJump, SetGatePairOnline, SetGateStaff, DeliverGateSpares, RefineOre, FabricateModule, ConstructOutpost, RefineMineral, FabricateMaterialModule, PlantCrops, HarvestCrops, RecycleWater, RecycleCompost, ProduceOxygen, LoadLifeWater, ConstructFarm, TransferFarmStock, AssignFarmWorkers, ConstructHabitat, TransferHabitatStock, AssignHabitatResidents, ConstructUtility, RepairUtility, TransferUtilitySpares, AssignUtilityTechnicians, SetUtilityMaintenance, ConstructCommunity, TransferCommunityStock, AssignCommunityStaff, ConstructClinic, TransferClinicStock, AssignClinicStaff, ConstructReclaimer, ConstructWaterworks, TransferWaterworksFeed, SetPolicyAssurance, AssignPolicyInspectors, AssignFarmMentor, HostDestroyShip, HostCrewLoss };
 enum class Outcome { Applied, InvalidActor, Unauthorized, InvalidTarget, OutOfRange, InvalidArgument, NoResources, CargoFull, NotMining, NotInSpace, NotDocked, InTransition, ShipMoving, HangarFull, InsufficientFunds, WrongSystem, GateOffline, NotColonyShip, InsufficientCrew };
-enum class ActivityKind { AsteroidDespawned, AutoMiningTransfer, MiningStopped, Undocked, Docked, JumpCompleted };
+enum class ActivityKind { AsteroidDespawned, AutoMiningTransfer, MiningStopped, Undocked, Docked, JumpCompleted, ShipDestroyed, NpcLost };
 enum class DockState { InSpace, Docked, Undocking, Docking };
 enum class ShipJumpState { Ready, Jumping, ArrivalCloak };
 struct StationHangar { std::int64_t ore = 0; std::int64_t capacity = 0; };

@@ -101,6 +101,8 @@ int main() {
         // historical facts for already-executed commands.
         fs::copy_file(copy,legacy);
         sql(legacy,"DROP TRIGGER historical_no_update; DROP TRIGGER historical_no_delete; "
+                   "DROP TRIGGER physical_no_update; DROP TRIGGER physical_no_delete; "
+                   "DROP TABLE physical_incidents; DROP TABLE physical_meta; "
                    "DROP TABLE historical_events; DROP TABLE historical_meta; PRAGMA user_version=4");
         {
             PersistentWorld w(legacy.string(),Simulation(999));
