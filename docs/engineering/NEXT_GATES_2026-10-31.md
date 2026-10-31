@@ -102,3 +102,12 @@ Use bounded regression groups if older slow gate tests stall. Preserve failing/i
 - **Design recorded:** [Nested loyalties and macro-group policy](GRSM03d_Group_Opinions_And_Nested_Loyalties_2026-10-31.md) separates individual feelings, descriptive member distributions, formal group charters/policies and federation-level negotiated decisions.
 - **Next concrete gates:** (1) independently committed physical action receipts for aid, harm, rescue or theft; (2) individual context-dependent affiliation/loyalty profiles without one fixed loyalty bar; (3) ratified group positions/contested leadership and explicit temporal parent-group edges; (4) real travel/communications proofs, cohort scalability and Windows-native/interactive verification.
 - Preserve local-first testing; GitHub is source and milestone record; never import EVEmu runtime or Lu/Cognitum modules into this game implicitly.
+
+
+## 2026-10-31 update: GRSM-04a physical evidence appraisals passed
+
+- **Current verified Linux baseline:** SQLite v14 direct-physical-incident appraisals, distinct from witness claims, subjective source trust, dyadic rapport and intergroup policy. A physical source must exist and be referenced by an individual **same-tick local-observation receipt**; secondhand claims cannot be promoted to physical evidence.
+- **Measured tests:** 64/64 full native/integration CTest, 84/84 Node, 3/3 design, 11/11 persistence/GRSM suites; targeted triple repeats pass. An earlier unbounded full CTest was interrupted after partial progress; this failed-to-finish trace is retained, not counted. [Engineering acceptance report](../GRSM04a_Physical_Evidence_Appraisals_Report_2026-10-31.md).
+- **Provenance and safety:** append-only v14 appraisal + epoch receipts, recovery-copy, non-member and remote observation denial, original first-person witness requirement, no retrospective attitudes, no physical-state mutation and negative corrupted-DB tests. This is a bounded local prototype, not cryptographic tamper proof.
+- **Next GRSM-04b:** verify individual responsibility for real game actions using *actor-specific, committed* command or job-effect receipts. Separate actor, beneficiary, victim and eyewitness and forbid group blame without evidence. Only then allow bounded personality/loyalty-driven consequences.
+- **Beyond that:** multi-dimensional loyalties, institutionally ratified positions, nested parent-group authority, communication topology, player-facing UI, real emergent NPC decisions, scale testing and native Windows acceptance remain open.
