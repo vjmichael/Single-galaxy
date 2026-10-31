@@ -82,3 +82,13 @@ Use bounded regression groups if older slow gate tests stall. Preserve failing/i
 - **Non-capabilities:** No autonomous conversation, rumor transmission, trust changes, omniscient group knowledge, NPC travel, remote communications, or large-scale faction beliefs are created by encounters. FNV-based integrity is not a cryptographic security boundary.
 - **Next GRSM-03c.3 design gate:** host-authorized social encounter effects and relationship deltas only upon causally grounded interaction events; prevent proximity from directly granting trust or changing canonical history. Consider group-route contact topology and explicit route/communication proofs as separate work. Preserve sparse APS scaling and bounded scheduling.
 - Preserve single-galaxy source isolation from EVEmu archival audit, Lu, and Cognitum. Continue local-first development and use GitHub for source and milestone evidence.
+
+
+## 2026-10-31 update: GRSM-03c.3 Linux milestone and next causal gate
+
+- **Latest working baseline:** GRSM-03c.3, SQLite v12 with append-only host-attested directional rapport from explicit same-tick real NPC encounters. Existing trust, group knowledge, casualties, goods and history are not automatically altered. No autonomous social decision or intercolony communications implemented.
+- **Verified local Linux:** full native/integration CTest **62/62**, Node.js **84/84**, Python design **3/3**, and prior troublemaking parallel relay group **12/12** over three consecutive rounds. New relationship gate contains two scenarios and survives reload/recover-copy, v11 migration and corruption attacks. [Detailed report](../GRSM03c3_Directional_Rapport_Report_2026-10-31.md).
+- **Causality limitation:** The host-supplied assistance/harm classification has no independently derived physical action receipt. Co-location proves an eligible meeting, not assistance, attack, conversation, consent or faction-wide judgment.
+- **Next GRSM-03c.4 engineering priority:** Introduce typed, physically committed, independently checkable interaction effect receipts (actor, beneficiary, source transaction, jurisdiction/context), then attach bounded individual interpretation and update directed rapport only when evidence is valid. Add negative tests for forged actions, false beneficiaries, replay, actor mismatch and migration. Keep mixed reputation, source credibility and legal opinions distinct.
+- **Farther gates:** personality-guided decisions, group deliberation and leadership, verifiable communications/travel channels, APS cohort summaries and scale tests, Windows-native and visual-client end-to-end acceptance.
+- GitHub stays a source/documentation mirror; local build/test is authoritative for this Linux gate. No EVEmu, Lu or Cognitum runtime changes.
