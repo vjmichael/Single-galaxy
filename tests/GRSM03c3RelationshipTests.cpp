@@ -98,7 +98,7 @@ static void genuine_v11_migration(const fs::path& root){
         CHECK(w.recent_social_encounters().size()==1);
     }
     // Genuine v11 contains real encounters but no v12 interaction table.
-    sql(db,"DROP TABLE social_interactions; DROP TABLE interaction_meta; PRAGMA user_version=11;");
+    sql(db,"DROP TABLE group_attributions; DROP TABLE attribution_meta; DROP TABLE social_interactions; DROP TABLE interaction_meta; PRAGMA user_version=11;");
     {
         PersistentWorld w(db.string(),Simulation(999));
         CHECK(w.recent_social_encounters().size()==1);

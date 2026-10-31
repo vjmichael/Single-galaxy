@@ -98,6 +98,26 @@ struct SocialInteractionEvent {
     int delta=0, rapport=0; // directed score -100..100, neutral 0
 };
 
+// GRSM-03d: a particular member's *attribution* of one actual social
+// interaction to a second group. Never represents unanimous group consent.
+// The stance is individual and may differ from rapport toward the actor.
+// Source interactions remain host-attested, NOT yet independently derived
+// from committed physical assistance/harm transactions.
+enum class GroupAttributionStance : int { Appreciative=1, Resentful=2, Ambivalent=3 };
+struct GroupAttributionEvent {
+    std::uint64_t id=0,interaction_id=0,observer_group=0,actor_group=0;
+    std::uint64_t observer_npc=0,actor_npc=0,membership_seq=0,prior_id=0;
+    std::uint64_t generation=0,tick=0;
+    GroupAttributionStance stance=GroupAttributionStance::Ambivalent;
+    int delta=0,feeling=0; // directional, contextual, [-100,+100]
+};
+struct GroupRelationSummary {
+    std::uint64_t observer_group=0,actor_group=0;
+    std::size_t current_members=0,informed_members=0;
+    std::size_t favorable=0,unfavorable=0,neutral=0;
+    int mean_feeling=0; // informed members only; NOT official group policy
+};
+
 // GRSM-03b: directional, evidence-linked interpersonal trust. Each event is
 // an immutable record of a witnessed contact or a character's reassessment;
 // it is neither historical truth nor proof of the accuracy of the allegation.
@@ -206,6 +226,20 @@ public:
               std::uint64_t observer,std::uint64_t actor,SocialInteractionKind kind);
     std::vector<SocialInteractionEvent> recent_social_interactions(std::size_t limit=50) const;
     int directed_rapport(std::uint64_t observer,std::uint64_t actor) const;
+    // Explicit interpretation by an individual observer of a documented
+    // reaction. Both actors must belong to the named groups *at attribution*
+    // and the source reaction must be current-tick, witnessed and unreplayed.
+    // A group summary merely counts distinct active members' latest views;
+    // it is never a faction vote or a legal / historical truth.
+    bool attribute_interaction_to_group(std::uint64_t interaction_id,
+        std::uint64_t observer_group,std::uint64_t actor_group,
+        GroupAttributionStance stance);
+    int individual_group_feeling(std::uint64_t observer_npc,
+        std::uint64_t observer_group,std::uint64_t actor_group) const;
+    GroupRelationSummary group_relation_summary(std::uint64_t observer_group,
+        std::uint64_t actor_group) const;
+    std::vector<GroupAttributionEvent> recent_group_attributions(std::size_t limit=50) const;
+
 
 
 

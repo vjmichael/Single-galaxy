@@ -296,6 +296,42 @@ std::string interaction_body(const SocialInteractionEvent& e){
         std::to_string(e.rapport)+"|"+std::to_string(e.prior_id)+"|"+
         std::to_string(e.generation)+"|"+std::to_string(e.tick);
 }
+GroupAttributionEvent read_attribution(sqlite3_stmt* q){
+    GroupAttributionEvent e;
+    const auto positive=[&](int i)->std::uint64_t{
+        auto n=sqlite3_column_int64(q,i);
+        if(n<=0)throw std::runtime_error("SQLite: invalid group attribution identity");
+        return static_cast<std::uint64_t>(n);
+    };
+    e.id=positive(0);e.interaction_id=positive(1);e.observer_group=positive(2);
+    e.actor_group=positive(3);
+    e.observer_npc=parse_u64(sqlite3_column_text(q,4));
+    e.actor_npc=parse_u64(sqlite3_column_text(q,5));
+    const auto seq=sqlite3_column_int64(q,6),prior=sqlite3_column_int64(q,10),
+        tick=sqlite3_column_int64(q,12);
+    if(seq<0||prior<0||tick<0)throw std::runtime_error("SQLite: negative attribution epoch");
+    e.membership_seq=static_cast<std::uint64_t>(seq);
+    e.stance=static_cast<GroupAttributionStance>(sqlite3_column_int(q,7));
+    e.delta=sqlite3_column_int(q,8);e.feeling=sqlite3_column_int(q,9);
+    e.prior_id=static_cast<std::uint64_t>(prior);
+    e.generation=positive(11);e.tick=static_cast<std::uint64_t>(tick);
+    return e;
+}
+std::string attribution_body(const GroupAttributionEvent& e){
+    return std::to_string(e.id)+"|"+std::to_string(e.interaction_id)+"|"+
+        std::to_string(e.observer_group)+"|"+std::to_string(e.actor_group)+"|"+
+        std::to_string(e.observer_npc)+"|"+std::to_string(e.actor_npc)+"|"+
+        std::to_string(e.membership_seq)+"|"+std::to_string(static_cast<int>(e.stance))+"|"+
+        std::to_string(e.delta)+"|"+std::to_string(e.feeling)+"|"+
+        std::to_string(e.prior_id)+"|"+std::to_string(e.generation)+"|"+
+        std::to_string(e.tick);
+}
+int attribution_delta(GroupAttributionStance stance){
+    if(stance==GroupAttributionStance::Appreciative)return 8;
+    if(stance==GroupAttributionStance::Resentful)return -12;
+    return 0;
+}
+
 struct EncounterCycle {
     std::uint64_t id=0,generation=0,tick=0,population=0,pairs=0,start=0,
                   scanned=0,end=0,contacts=0;
@@ -388,7 +424,7 @@ public:
         Statement version(db_, "PRAGMA user_version");
         if (!version.row()) throw std::runtime_error("SQLite: no schema version");
         const int v = sqlite3_column_int(version.get(), 0);
-        if (v < 0 || v > 12) throw std::runtime_error("SQLite: incompatible schema version");
+        if (v < 0 || v > 13) throw std::runtime_error("SQLite: incompatible schema version");
         if (v == 0) {
             run(db_, "BEGIN IMMEDIATE");
             try {
@@ -687,6 +723,37 @@ public:
                 run(db_,"CREATE TRIGGER social_interactions_no_delete BEFORE DELETE ON social_interactions "
                     "BEGIN SELECT RAISE(ABORT,'interaction history immutable'); END");
                 run(db_,"PRAGMA user_version=12");run(db_,"COMMIT");
+            }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
+        }
+        if(v<=12){
+            // GRSM-03d: old worlds have no invented between-group sentiment.
+            run(db_,"BEGIN IMMEDIATE");
+            try {
+                run(db_,"CREATE TABLE attribution_meta(singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
+                    "event_count INTEGER NOT NULL CHECK(event_count>=0),tip TEXT NOT NULL)");
+                run(db_,"INSERT INTO attribution_meta VALUES(1,0,'origin')");
+                run(db_,"CREATE TABLE group_attributions(id INTEGER PRIMARY KEY,"
+                    "interaction_id INTEGER NOT NULL REFERENCES social_interactions(id),"
+                    "observer_group INTEGER NOT NULL REFERENCES social_groups(id),"
+                    "actor_group INTEGER NOT NULL REFERENCES social_groups(id),"
+                    "observer TEXT NOT NULL,actor TEXT NOT NULL,"
+                    "membership_seq INTEGER NOT NULL CHECK(membership_seq>=0),"
+                    "stance INTEGER NOT NULL CHECK(stance BETWEEN 1 AND 3),"
+                    "delta INTEGER NOT NULL CHECK(delta IN (8,-12,0)),"
+                    "feeling INTEGER NOT NULL CHECK(feeling BETWEEN -100 AND 100),"
+                    "prior_id INTEGER NOT NULL CHECK(prior_id>=0),"
+                    "generation INTEGER NOT NULL CHECK(generation>0),"
+                    "tick INTEGER NOT NULL CHECK(tick>=0),digest TEXT NOT NULL,"
+                    "CHECK(observer_group<>actor_group))");
+                run(db_,"CREATE UNIQUE INDEX group_attribution_source_once ON "
+                    "group_attributions(interaction_id,observer_group,actor_group)");
+                run(db_,"CREATE INDEX group_attribution_member_history ON "
+                    "group_attributions(observer,observer_group,actor_group,id)");
+                run(db_,"CREATE TRIGGER group_attributions_no_update BEFORE UPDATE ON group_attributions "
+                    "BEGIN SELECT RAISE(ABORT,'group attributions immutable'); END");
+                run(db_,"CREATE TRIGGER group_attributions_no_delete BEFORE DELETE ON group_attributions "
+                    "BEGIN SELECT RAISE(ABORT,'group attributions immutable'); END");
+                run(db_,"PRAGMA user_version=13");run(db_,"COMMIT");
             }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
         }
         } catch (...) { sqlite3_close_v2(db_); db_ = nullptr; throw; }
@@ -1816,6 +1883,70 @@ public:
             if(count!=static_cast<std::uint64_t>(expected)||tip!=expected_tip)
                 throw std::runtime_error("SQLite: missing or corrupted social interactions");
         }
+        // GRSM-03d: individually interpreted group reputation, NOT group
+        // ratification. Reconstruct each directed score from source receipts
+        // and membership as of the frozen epoch, not today's roster.
+        {
+            Statement meta(db_,"SELECT event_count,tip FROM attribution_meta WHERE singleton=1");
+            if(!meta.row())throw std::runtime_error("SQLite: absent attribution metadata");
+            const auto expected=sqlite3_column_int64(meta.get(),0);
+            const auto expected_tip=sqlite_str(meta.get(),1);
+            if(expected<0||meta.row())throw std::runtime_error("SQLite: invalid attribution metadata");
+            Statement membership(db_,"SELECT event_count FROM membership_meta WHERE singleton=1");
+            if(!membership.row())throw std::runtime_error("SQLite: missing membership epoch");
+            const auto latest_epoch=sqlite3_column_int64(membership.get(),0);
+            std::uint64_t count=0;std::string tip="origin";
+            using PerceptionKey=std::tuple<std::uint64_t,std::uint64_t,std::uint64_t>;
+            std::map<PerceptionKey,GroupAttributionEvent> last;
+            Statement rows(db_,"SELECT id,interaction_id,observer_group,actor_group,observer,actor,"
+                "membership_seq,stance,delta,feeling,prior_id,generation,tick,digest "
+                "FROM group_attributions ORDER BY id");
+            while(rows.row()){
+                auto e=read_attribution(rows.get());
+                if(e.id!=++count||e.observer_group==e.actor_group||
+                   e.observer_npc==e.actor_npc||e.generation>generation||
+                   e.tick>restored.tick()||e.membership_seq>static_cast<std::uint64_t>(latest_epoch)||
+                   static_cast<int>(e.stance)<1||static_cast<int>(e.stance)>3||
+                   e.delta!=attribution_delta(e.stance))
+                    throw std::runtime_error("SQLite: invalid group viewpoint evidence");
+                Statement source(db_,"SELECT encounter_id,observer,actor,kind,delta,rapport,"
+                    "prior_id,generation,tick FROM social_interactions WHERE id=?");
+                source.i64(1,static_cast<sqlite3_int64>(e.interaction_id));
+                if(!source.row())throw std::runtime_error("SQLite: group viewpoint has no reaction");
+                if(parse_u64(sqlite3_column_text(source.get(),1))!=e.observer_npc||
+                   parse_u64(sqlite3_column_text(source.get(),2))!=e.actor_npc||
+                   static_cast<std::uint64_t>(sqlite3_column_int64(source.get(),7))!=e.generation||
+                   static_cast<std::uint64_t>(sqlite3_column_int64(source.get(),8))!=e.tick)
+                    throw std::runtime_error("SQLite: group viewpoint mismatches source reaction");
+                Statement groups(db_,"SELECT id,generation FROM social_groups WHERE id IN (?,?)");
+                groups.i64(1,static_cast<sqlite3_int64>(e.observer_group));
+                groups.i64(2,static_cast<sqlite3_int64>(e.actor_group));
+                int found=0;
+                while(groups.row()){
+                    if(sqlite3_column_int64(groups.get(),1)>static_cast<sqlite3_int64>(e.generation))
+                        throw std::runtime_error("SQLite: group attribution predates group");
+                    ++found;
+                }
+                if(found!=2)throw std::runtime_error("SQLite: group viewpoint lacks group identity");
+                const auto observers=group_members_at(e.observer_group,e.membership_seq);
+                const auto actors=group_members_at(e.actor_group,e.membership_seq);
+                if(!std::binary_search(observers.begin(),observers.end(),e.observer_npc)||
+                   !std::binary_search(actors.begin(),actors.end(),e.actor_npc))
+                    throw std::runtime_error("SQLite: group viewpoint fabricated membership");
+                const PerceptionKey key={e.observer_npc,e.observer_group,e.actor_group};
+                const auto prev=last.find(key);
+                if(e.prior_id!=(prev==last.end()?0:prev->second.id)||
+                   e.feeling!=std::clamp((prev==last.end()?0:prev->second.feeling)+e.delta,-100,100)||
+                   (prev!=last.end()&&(e.generation<prev->second.generation||e.tick<prev->second.tick)))
+                    throw std::runtime_error("SQLite: group viewpoint sequence altered");
+                tip=social_digest(tip,attribution_body(e));
+                if(tip!=sqlite_str(rows.get(),13))
+                    throw std::runtime_error("SQLite: group viewpoint digest mismatch");
+                last[key]=e;
+            }
+            if(count!=static_cast<std::uint64_t>(expected)||tip!=expected_tip)
+                throw std::runtime_error("SQLite: missing or corrupted group viewpoints");
+        }
         out.swap(restored);
         return true;
     }
@@ -2570,6 +2701,119 @@ public:
         q.text(1,std::to_string(observer));q.text(2,std::to_string(actor));
         return q.row()?sqlite3_column_int(q.get(),0):0;
     }
+    std::vector<GroupAttributionEvent> recent_group_attributions(std::size_t limit) const{
+        if(!limit||limit>128)throw std::invalid_argument("group attribution limit must be 1..128");
+        Statement q(db_,"SELECT id,interaction_id,observer_group,actor_group,observer,actor,"
+            "membership_seq,stance,delta,feeling,prior_id,generation,tick "
+            "FROM group_attributions ORDER BY id DESC LIMIT ?");
+        q.i64(1,static_cast<sqlite3_int64>(limit));
+        std::vector<GroupAttributionEvent> out;
+        while(q.row())out.push_back(read_attribution(q.get()));
+        return out;
+    }
+    int individual_group_feeling(std::uint64_t observer,std::uint64_t observer_group,
+                                 std::uint64_t actor_group) const{
+        if(!observer||!observer_group||!actor_group||observer_group==actor_group)return 0;
+        Statement q(db_,"SELECT feeling FROM group_attributions WHERE observer=? "
+            "AND observer_group=? AND actor_group=? ORDER BY id DESC LIMIT 1");
+        q.text(1,std::to_string(observer));q.i64(2,static_cast<sqlite3_int64>(observer_group));
+        q.i64(3,static_cast<sqlite3_int64>(actor_group));
+        return q.row()?sqlite3_column_int(q.get(),0):0;
+    }
+    GroupRelationSummary group_relation_summary(std::uint64_t from,std::uint64_t toward) const{
+        GroupRelationSummary r;r.observer_group=from;r.actor_group=toward;
+        if(!from||!toward||from==toward||!load_social_group(from).id||
+           !load_social_group(toward).id)return r;
+        const auto active=group_members_at(from,last_membership_seq());
+        r.current_members=active.size();
+        int total=0;
+        Statement q(db_,"SELECT feeling FROM group_attributions WHERE observer=? "
+            "AND observer_group=? AND actor_group=? ORDER BY id DESC LIMIT 1");
+        for(auto npc:active){
+            sqlite3_reset(q.get());sqlite3_clear_bindings(q.get());
+            q.text(1,std::to_string(npc));q.i64(2,static_cast<sqlite3_int64>(from));
+            q.i64(3,static_cast<sqlite3_int64>(toward));
+            if(q.row()){
+                const int opinion=sqlite3_column_int(q.get(),0);
+                ++r.informed_members;total+=opinion;
+                if(opinion>0)++r.favorable;
+                else if(opinion<0)++r.unfavorable;
+                else ++r.neutral;
+            }
+        }
+        if(r.informed_members)r.mean_feeling=total/static_cast<int>(r.informed_members);
+        return r;
+    }
+    bool attribute_interaction_to_group(const Simulation& world,std::uint64_t gen,
+             std::uint64_t interaction_id,std::uint64_t from_group,
+             std::uint64_t toward_group,GroupAttributionStance stance){
+        if(!interaction_id||!from_group||!toward_group||from_group==toward_group||
+           (stance!=GroupAttributionStance::Appreciative&&
+            stance!=GroupAttributionStance::Resentful&&
+            stance!=GroupAttributionStance::Ambivalent))return false;
+        run(db_,"BEGIN IMMEDIATE");
+        try{
+            if(latest_generation(db_)!=gen)
+                throw std::runtime_error("stale group attribution generation");
+            Statement source(db_,"SELECT encounter_id,observer,actor,kind,delta,rapport,"
+                "prior_id,generation,tick FROM social_interactions WHERE id=?");
+            source.i64(1,static_cast<sqlite3_int64>(interaction_id));
+            if(!source.row()||
+               sqlite3_column_int64(source.get(),7)!=static_cast<sqlite3_int64>(gen)||
+               sqlite3_column_int64(source.get(),8)!=static_cast<sqlite3_int64>(world.tick())){
+                run(db_,"ROLLBACK");return false;
+            }
+            const auto observer=parse_u64(sqlite3_column_text(source.get(),1));
+            const auto actor=parse_u64(sqlite3_column_text(source.get(),2));
+            const auto observers=load_social_group(from_group);
+            const auto actors=load_social_group(toward_group);
+            const auto epoch=last_membership_seq();
+            if(!observers.id||!actors.id||
+               !std::binary_search(observers.members.begin(),observers.members.end(),observer)||
+               !std::binary_search(actors.members.begin(),actors.members.end(),actor)||
+               !co_located(world,observer,actor)){
+                run(db_,"ROLLBACK");return false;
+            }
+            Statement used(db_,"SELECT id FROM group_attributions WHERE interaction_id=? "
+                "AND observer_group=? AND actor_group=?");
+            used.i64(1,static_cast<sqlite3_int64>(interaction_id));
+            used.i64(2,static_cast<sqlite3_int64>(from_group));
+            used.i64(3,static_cast<sqlite3_int64>(toward_group));
+            if(used.row()){run(db_,"ROLLBACK");return false;}
+            Statement previous(db_,"SELECT id,feeling FROM group_attributions WHERE observer=? "
+                "AND observer_group=? AND actor_group=? ORDER BY id DESC LIMIT 1");
+            previous.text(1,std::to_string(observer));
+            previous.i64(2,static_cast<sqlite3_int64>(from_group));
+            previous.i64(3,static_cast<sqlite3_int64>(toward_group));
+            const bool existed=previous.row();
+            const auto prior=existed?sqlite3_column_int64(previous.get(),0):0;
+            const int prior_feeling=existed?sqlite3_column_int(previous.get(),1):0;
+            Statement m(db_,"SELECT event_count,tip FROM attribution_meta WHERE singleton=1");
+            if(!m.row())throw std::runtime_error("missing group attribution metadata");
+            const auto count=sqlite3_column_int64(m.get(),0);
+            if(count<0||count==std::numeric_limits<sqlite3_int64>::max())
+                throw std::runtime_error("group attribution sequence exhausted");
+            GroupAttributionEvent e;
+            e.id=count+1;e.interaction_id=interaction_id;
+            e.observer_group=from_group;e.actor_group=toward_group;
+            e.observer_npc=observer;e.actor_npc=actor;e.membership_seq=epoch;
+            e.stance=stance;e.delta=attribution_delta(stance);
+            e.feeling=std::clamp(prior_feeling+e.delta,-100,100);
+            e.prior_id=prior;e.generation=gen;e.tick=world.tick();
+            const auto tip=social_digest(sqlite_str(m.get(),1),attribution_body(e));
+            Statement add(db_,"INSERT INTO group_attributions VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+            add.i64(1,e.id);add.i64(2,e.interaction_id);add.i64(3,e.observer_group);
+            add.i64(4,e.actor_group);add.text(5,std::to_string(e.observer_npc));
+            add.text(6,std::to_string(e.actor_npc));add.i64(7,e.membership_seq);
+            add.i64(8,static_cast<int>(e.stance));add.i64(9,e.delta);
+            add.i64(10,e.feeling);add.i64(11,e.prior_id);add.i64(12,e.generation);
+            add.i64(13,e.tick);add.text(14,tip);add.execute();
+            Statement update(db_,"UPDATE attribution_meta SET event_count=?,tip=? WHERE singleton=1");
+            update.i64(1,e.id);update.text(2,tip);update.execute();
+            if(sqlite3_changes(db_)!=1)throw std::runtime_error("missing group attribution metadata");
+            run(db_,"COMMIT");return true;
+        }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
+    }
     bool record_social_interaction(const Simulation& world,std::uint64_t gen,
             std::uint64_t encounter_id,std::uint64_t observer,std::uint64_t actor,
             SocialInteractionKind kind){
@@ -3184,6 +3428,23 @@ std::vector<SocialInteractionEvent> PersistentWorld::recent_social_interactions(
 }
 int PersistentWorld::directed_rapport(std::uint64_t observer,std::uint64_t actor) const {
     return store_->directed_rapport(observer,actor);
+}
+bool PersistentWorld::attribute_interaction_to_group(std::uint64_t interaction_id,
+        std::uint64_t observer_group,std::uint64_t actor_group,
+        GroupAttributionStance stance){
+    return store_->attribute_interaction_to_group(world_,generation_,interaction_id,
+        observer_group,actor_group,stance);
+}
+int PersistentWorld::individual_group_feeling(std::uint64_t observer,
+        std::uint64_t observer_group,std::uint64_t actor_group) const{
+    return store_->individual_group_feeling(observer,observer_group,actor_group);
+}
+GroupRelationSummary PersistentWorld::group_relation_summary(
+        std::uint64_t observer_group,std::uint64_t actor_group) const{
+    return store_->group_relation_summary(observer_group,actor_group);
+}
+std::vector<GroupAttributionEvent> PersistentWorld::recent_group_attributions(std::size_t limit) const{
+    return store_->recent_group_attributions(limit);
 }
 void PersistentWorld::steps(std::uint64_t n) { for (std::uint64_t i = 0; i < n; ++i) step(); }
 } // namespace galaxy

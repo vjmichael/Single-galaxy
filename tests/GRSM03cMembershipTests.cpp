@@ -99,7 +99,7 @@ static void legacy_v9_migration(const fs::path& root){
         CHECK(w.record_group_view(1,2,GroupStance::Condemning,60,"V9 institutional interpretation"));
     }
     // Emulate actual v9: no membership tables or epoch column.
-    sql(db,"DROP TABLE social_interactions; DROP TABLE interaction_meta; DROP TABLE social_encounters; DROP TABLE encounter_scans; DROP TABLE encounter_meta; DROP TABLE group_membership_events; DROP TABLE membership_meta; "
+    sql(db,"DROP TABLE group_attributions; DROP TABLE attribution_meta; DROP TABLE social_interactions; DROP TABLE interaction_meta; DROP TABLE social_encounters; DROP TABLE encounter_scans; DROP TABLE encounter_meta; DROP TABLE group_membership_events; DROP TABLE membership_meta; "
        "CREATE TABLE original_group_relays AS SELECT id,group_id,knowledge_id,digest FROM group_relays; "
        "DROP TRIGGER group_relays_no_update; DROP TRIGGER group_relays_no_delete; "
        "DROP TABLE group_relays; "
