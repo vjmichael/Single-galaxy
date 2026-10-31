@@ -132,3 +132,10 @@ Use bounded regression groups if older slow gate tests stall. Preserve failing/i
 - **Next GRSM-04b.B2 priority:** reusable actor-bound job outcomes for at least one additional physical labor path, separating commander, assigned worker and actual effect; reject ineligible workers, forgery, action failure, replay, stale location and source mismatch. Maintain role-specific consent/authorization and no unearned reputation transfer.
 - **Defer multiplayer/launcher:** [NET-01](NET01_Deferred_Binary_Transport_And_Dual_Mode_Launcher_2026-10-31.md) records compact ID-based binary messages, invisible local host startup, optional Server Manager GUI, independent headless mode and single installer as *future* requirements. Do not implement them during GRSM work unless explicitly prioritized.
 - Maintain the original Single Galaxy architecture separate from Lu, Cognitum and EVEmu research. GitHub remains source/documentation storage; testing is local-first.
+
+
+## 2026-10-31 audit: ECON-01 practical supply chains and trades
+
+- [ECON-01 foundational value-chain, skills/trades and management audit](ECON01_Foundational_Value_Chains_Trades_Management_Audit_2026-10-31.md) distinguishes tested mining/processing/farming/facilities/local hauling from missing professional equipment, scheduling, automated haulage, wages, markets and independent management.
+- Continue **GRSM-04b.B2** as the next *concrete code gate*: effect-proven named fabrication or equipment repair, with explicit worksite, input goods and responsible actor receipt, not inferred culpability. It also serves as **ECON-01A** and the starting point for reusable occupation capability tags and work orders.
+- After B2, build a complete small repair-and-resupply loop before broadening to many professions, player-founded markets, or simulated corporate politics. Preserve no-infrastructure genesis and no mandatory daily management.
