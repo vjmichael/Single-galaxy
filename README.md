@@ -6,7 +6,7 @@ In the released game's intended opening, one player colony ship with finite NPC 
 
 ## Current prototype status
 
-The current engineering baseline is **GRSM-03d** (SQLite v13 member-level intergroup perspectives, October 31, 2026), descended from the **B7.0n** source/testing archive. The archived evidence records a Linux pass of 54/54 CTest native/integration suites and 84/84 Node tests. The opt-in individual workforce model persists up to 24 original NPC crew identities and farm work/mentoring; a separate statistical cohort prototype demonstrates bounded large-number accounting. **Those are not a live trillion-NPC universe.** The game remains a bounded 2D colony/space prototype, not a continuous 3D multiplayer galaxy. Native Windows and full interactive Chromium playthrough remain open gates.
+The current engineering baseline is **GRSM-04a** (SQLite v14 firsthand physical-event appraisals, October 31, 2026), descended from the **B7.0n** source/testing archive. The archived evidence records a Linux pass of 54/54 CTest native/integration suites and 84/84 Node tests. The opt-in individual workforce model persists up to 24 original NPC crew identities and farm work/mentoring; a separate statistical cohort prototype demonstrates bounded large-number accounting. **Those are not a live trillion-NPC universe.** The game remains a bounded 2D colony/space prototype, not a continuous 3D multiplayer galaxy. Native Windows and full interactive Chromium playthrough remain open gates.
 
 ## Design documentation
 
@@ -86,3 +86,12 @@ GRSM-03d adds durable, host-attested **individual evaluations of one group by me
 **Verified locally on Linux:** native/integration CTest **63/63**, Node **84/84**, Python design **3/3**. An initial 62/63 run exposed an outdated v1 migration fixture; the fixture was corrected and a new complete 63/63 run passed. Earlier failure logs remain archived. See [GRSM-03d engineering report](docs/GRSM03d_Intergroup_Perspectives_Report_2026-10-31.md) and the [nested loyalty / macro-group design](docs/engineering/GRSM03d_Group_Opinions_And_Nested_Loyalties_2026-10-31.md).
 
 **Not yet implemented:** automatic classification of real physical help/harm, NPC political choices, multiaxis loyalty, nested organization authority, voting, secession, federation-wide consensus, or remote knowledge delivery. The social prototype is host-invoked and small-roster. Windows-native/UI acceptance remains open.
+
+
+## GRSM-04a · Physical evidence–linked individual appraisals (2026-10-31)
+
+A local NPC who has an **actual firsthand witness receipt of a committed physical incident** may express a subjective appraisal in an unaffiliated or verified group-membership context. The same ore movement can produce an appreciative miner-guild opinion and a damaging relief-group interpretation without changing the objective event. A hearsay claim or remote NPC cannot masquerade as direct physical proof. SQLite v14 creates append-only appraisal history with original membership epochs, migration without retrospective opinions, integrity/recovery checks and replay limits.
+
+**Linux acceptance:** native/integration CTest **64/64**, Node **84/84**, Python design **3/3**, targeted social/persistence suites **11/11**; earlier interrupted unbounded full run is recorded, not counted. [GRSM-04a engineering report](docs/GRSM04a_Physical_Evidence_Appraisals_Report_2026-10-31.md).
+
+**Still future work:** independently proving which particular NPC caused an effect, automatic interpretation of physical consequences, autonomous decisions, federation government, long-range information routes and Windows-native/visual manual acceptance. Physical proof of ore moved is not proof an individual stole it.
