@@ -106,18 +106,47 @@ def relay(exe, relay_path):
             code,_=post(base,doc);check(code==expect,'unauthorized or malformed station request accepted')
         code,_=post(base,{'token':token,'action':'undock'},origin=False)
         check(code==403,'cross-origin station request accepted')
+        # A third, read-only SSE observer provides authoritative state barriers.
+        # A wall-clock sleep cannot guarantee a mined hold or completed docking
+        # when the host is descheduled by concurrent tests.
+        observed=[];observer_errors=[];condition=threading.Condition()
+        def state_observer():
+            try:
+                with urllib.request.urlopen(base+'/events',timeout=20) as stream:
+                    for line in stream:
+                        if not line.startswith(b'data: '):continue
+                        try:frame=base64.b64decode(line[6:].strip(),validate=True).decode('ascii')
+                        except (ValueError,UnicodeError):continue
+                        if not frame.startswith('SGVIEW|1|'):continue
+                        with condition:
+                            observed.append(frame)
+                            condition.notify_all()
+            except Exception as error:
+                with condition:
+                    observer_errors.append(repr(error))
+                    condition.notify_all()
+        ts=threading.Thread(target=state_observer,daemon=True);ts.start()
+        def await_state(marker,after=0):
+            with condition:
+                ready=condition.wait_for(
+                    lambda:any(marker in frame.splitlines() for frame in observed[after:]) or observer_errors,
+                    timeout=15)
+                check(ready and not observer_errors,
+                      'authoritative state not received: '+marker+' '+str(observer_errors))
         a=[];b=[]
         ta=threading.Thread(target=collect,args=(base,a),daemon=True);ta.start()
         code,_=post(base,{**good,'action':'undock'});check(code==202,'undock POST not queued')
         # An immediate docking attempt must be rejected by the authoritative model as IN_TRANSITION.
         code,_=post(base,{**good,'action':'dock'});check(code==202,'dock POST not queued')
-        time.sleep(.43)
+        await_state('Z|2')  # committed undocking before we ask for ore
         tb=threading.Thread(target=collect,args=(base,b),daemon=True);tb.start()
         code,_=post(base,{**good,'action':'mine','amount':4});check(code==202,'mine not queued')
-        time.sleep(.52)
+        await_state('X|2')  # actual full cargo hold; no hard-coded time sleep
+        mark=len(observed)
         code,_=post(base,{**good,'action':'dock'});check(code==202,'dock not queued')
-        time.sleep(.29)
+        await_state('Q|2|1|1|0',mark)  # committed return docking
         code,_=post(base,{**good,'action':'unload'});check(code==202,'unload not queued')
+        await_state('H|1|7|20|100')  # durable hangar transfer before assertions
         ta.join(15);tb.join(15)
         check(not ta.is_alive() and not tb.is_alive(),'SSE replay hung')
         fa,fb=extract_sse(a[0]),extract_sse(b[0]);check(len(fa)==69 and fa==fb,'replayed viewers diverged')

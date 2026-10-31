@@ -1,0 +1,14 @@
+Internal ctest changing into directory: /mnt/data/sg03c/single-galaxy/build-grsm03c
+Test project /mnt/data/sg03c/single-galaxy/build-grsm03c
+    Start 16: galaxy_b62c_relay_gate_controls
+    Start 33: galaxy_b70d_live_agriculture_relay
+1/4 Test #33: galaxy_b70d_live_agriculture_relay ...   Passed    3.96 sec
+    Start 31: galaxy_b70c_live_mineral_relay
+2/4 Test #16: galaxy_b62c_relay_gate_controls ......   Passed    4.75 sec
+    Start 29: galaxy_b70b_live_colony_e2e
+3/4 Test #31: galaxy_b70c_live_mineral_relay .......   Passed    3.67 sec
+4/4 Test #29: galaxy_b70b_live_colony_e2e ..........   Passed    4.47 sec
+
+100% tests passed, 0 tests failed out of 4
+
+Total Test time (real) =   9.24 sec

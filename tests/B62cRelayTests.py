@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """B6.2c local HTTP relay exercises real jump UI command boundary."""
-import argparse,json,pathlib,socket,subprocess,sys,time,urllib.error
+import argparse,base64,json,pathlib,socket,subprocess,sys,time,urllib.error,urllib.request,threading
 from B52InteractiveEndToEndTests import request,post,extract_sse,check
 
 def run(exe,relay):
@@ -9,11 +9,9 @@ def run(exe,relay):
     proc=subprocess.Popen([sys.executable,str(relay),'--host-exe',str(exe),'--port',str(port),
                            '--tick-ms','50','--max-ticks','56'],stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
     try:
-        for _ in range(100):
-            try:
-                if b'alive' in request(base,'/healthz'):break
-            except (OSError,urllib.error.URLError):time.sleep(.04)
-        else:raise AssertionError('relay not ready')
+        from RelayReadiness import wait_for_relay
+        wait_for_relay(proc,lambda: b'alive' in request(base,'/healthz'),
+                       label='B6.2c gate relay')
         session=json.loads(request(base,'/session'))
         check({'jump','travelGate'}.issubset(session['commands']),'gate controls missing')
         html=request(base,'/viewer/interactive.html')
@@ -27,9 +25,26 @@ def run(exe,relay):
         check(status==403,'invalid token accepted')
         status,_=post(base,{'token':token,'action':'jump'},origin=False)
         check(status==403,'cross-origin gate command accepted')
+        # Subscribe before the undock command, and wait for its *committed*
+        # SGVIEW transition rather than sleeping an assumed number of ticks.
+        undocked=threading.Event()
+        observer_error=[]
+        def watch_undock():
+            try:
+                with urllib.request.urlopen(base+'/events',timeout=15) as stream:
+                    for line in stream:
+                        if not line.startswith(b'data: '):continue
+                        try:frame=base64.b64decode(line[6:].strip(),validate=True)
+                        except (ValueError,base64.binascii.Error):continue
+                        if b'\nZ|2\n' in frame or b'\nZ|2|' in frame:
+                            undocked.set();return
+            except Exception as exc:
+                observer_error.append(repr(exc))
+        thread=threading.Thread(target=watch_undock,daemon=True)
+        thread.start()
         status,_=post(base,{'token':token,'action':'undock'})
         check(status==202,'undock request not queued')
-        time.sleep(.24)
+        check(undocked.wait(12),'authoritative undock state was not observed: '+str(observer_error))
         status,_=post(base,{'token':token,'action':'jump'})
         check(status==202,'valid gate action rejected by relay')
         event_raw=request(base,'/events').decode('ascii')

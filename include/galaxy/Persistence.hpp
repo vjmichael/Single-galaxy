@@ -77,6 +77,14 @@ struct GroupMembershipEvent {
     GroupMembershipKind kind=GroupMembershipKind::Join;
 };
 
+// GRSM-03c.2: a host-attested *meeting opportunity*, not a rumor or
+// automatic trust increase. The ordinal is a reproducible familiarity count
+// for this pair, and does not assert friendship or faction membership.
+struct SocialEncounter {
+    std::uint64_t id=0, cycle_id=0, npc_low=0, npc_high=0;
+    std::uint64_t generation=0, tick=0, slot=0, prior_id=0, ordinal=0;
+};
+
 // GRSM-03b: directional, evidence-linked interpersonal trust. Each event is
 // an immutable record of a witnessed contact or a character's reassessment;
 // it is neither historical truth nor proof of the accuracy of the allegation.
@@ -172,6 +180,12 @@ public:
                              ClaimFidelity fidelity,int valence,int proposed_confidence,
                              const std::string& account);
     std::vector<SocialTieEvent> recent_social_ties(std::size_t limit=50) const;
+    // Opt-in host-only deterministic encounter scan. Limits bound actual work
+    // per call; encounters only record real co-located survivors, with a fixed
+    // eight-tick same-pair cooldown. No automatic claims or trust change.
+    std::size_t schedule_social_encounters(std::size_t scan_budget=16,
+                                          std::size_t contact_budget=4);
+    std::vector<SocialEncounter> recent_social_encounters(std::size_t limit=50) const;
 
 
 

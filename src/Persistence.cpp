@@ -16,6 +16,7 @@
 #include <limits>
 #include <sstream>
 #include <map>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -254,6 +255,58 @@ SocialTieEvent read_tie(sqlite3_stmt* q){
     r.generation=static_cast<std::uint64_t>(gen);r.tick=static_cast<std::uint64_t>(tick);
     return r;
 }
+SocialEncounter read_encounter(sqlite3_stmt* q){
+    const auto id=sqlite3_column_int64(q,0),cycle=sqlite3_column_int64(q,1);
+    const auto gen=sqlite3_column_int64(q,4),tick=sqlite3_column_int64(q,5);
+    const auto slot=sqlite3_column_int64(q,6),prior=sqlite3_column_int64(q,7),ord=sqlite3_column_int64(q,8);
+    if(id<=0||cycle<=0||gen<=0||tick<0||slot<0||prior<0||ord<=0)
+        throw std::runtime_error("SQLite: malformed encounter record");
+    SocialEncounter e;
+    e.id=id;e.cycle_id=cycle;
+    e.npc_low=parse_u64(sqlite3_column_text(q,2));
+    e.npc_high=parse_u64(sqlite3_column_text(q,3));
+    e.generation=gen;e.tick=tick;e.slot=slot;e.prior_id=prior;e.ordinal=ord;
+    return e;
+}
+std::string encounter_body(const SocialEncounter& e){
+    return std::to_string(e.id)+"|"+std::to_string(e.cycle_id)+"|"+
+        std::to_string(e.npc_low)+"|"+std::to_string(e.npc_high)+"|"+
+        std::to_string(e.generation)+"|"+std::to_string(e.tick)+"|"+
+        std::to_string(e.slot)+"|"+std::to_string(e.prior_id)+"|"+
+        std::to_string(e.ordinal);
+}
+struct EncounterCycle {
+    std::uint64_t id=0,generation=0,tick=0,population=0,pairs=0,start=0,
+                  scanned=0,end=0,contacts=0;
+};
+EncounterCycle read_encounter_cycle(sqlite3_stmt* q){
+    EncounterCycle e;
+    const auto value=[&](int i){
+        const auto n=sqlite3_column_int64(q,i);
+        if(n<0)throw std::runtime_error("SQLite: negative encounter cycle field");
+        return static_cast<std::uint64_t>(n);
+    };
+    e.id=value(0);e.generation=value(1);e.tick=value(2);e.population=value(3);
+    e.pairs=value(4);e.start=value(5);e.scanned=value(6);e.end=value(7);
+    e.contacts=value(8);return e;
+}
+std::string encounter_cycle_body(const EncounterCycle& c){
+    return std::to_string(c.id)+"|"+std::to_string(c.generation)+"|"+
+        std::to_string(c.tick)+"|"+std::to_string(c.population)+"|"+
+        std::to_string(c.pairs)+"|"+std::to_string(c.start)+"|"+
+        std::to_string(c.scanned)+"|"+std::to_string(c.end)+"|"+
+        std::to_string(c.contacts);
+}
+// Decode one unordered NPC pair without expanding all O(N^2) possibilities.
+std::pair<std::uint64_t,std::uint64_t> encounter_pair_at(
+        const std::vector<std::uint64_t>& npcs,std::uint64_t slot){
+    for(std::size_t i=0;i+1<npcs.size();++i){
+        const auto width=static_cast<std::uint64_t>(npcs.size()-i-1);
+        if(slot<width)return {npcs[i],npcs[i+1+static_cast<std::size_t>(slot)]};
+        slot-=width;
+    }
+    throw std::runtime_error("SQLite: encounter scheduler slot overflow");
+}
 std::string tie_body(const SocialTieEvent& r){
     return std::to_string(r.id)+"|"+std::to_string(r.observer_npc)+"|"+
         std::to_string(r.source_npc)+"|"+std::to_string(r.prior_id)+"|"+
@@ -314,7 +367,7 @@ public:
         Statement version(db_, "PRAGMA user_version");
         if (!version.row()) throw std::runtime_error("SQLite: no schema version");
         const int v = sqlite3_column_int(version.get(), 0);
-        if (v < 0 || v > 10) throw std::runtime_error("SQLite: incompatible schema version");
+        if (v < 0 || v > 11) throw std::runtime_error("SQLite: incompatible schema version");
         if (v == 0) {
             run(db_, "BEGIN IMMEDIATE");
             try {
@@ -551,6 +604,40 @@ public:
                 run(db_,"ALTER TABLE group_relays ADD COLUMN membership_seq INTEGER NOT NULL DEFAULT 0 "
                     "CHECK(membership_seq>=0)");
                 run(db_,"PRAGMA user_version=10");run(db_,"COMMIT");
+            }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
+        }
+        if (v <= 10) {
+            // GRSM-03c.2: no historical contacts may be synthesized on upgrade.
+            run(db_,"BEGIN IMMEDIATE");
+            try {
+                run(db_,"CREATE TABLE encounter_meta(singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
+                    "scan_count INTEGER NOT NULL CHECK(scan_count>=0),scan_tip TEXT NOT NULL,"
+                    "contact_count INTEGER NOT NULL CHECK(contact_count>=0),contact_tip TEXT NOT NULL,"
+                    "cursor INTEGER NOT NULL CHECK(cursor>=0))");
+                run(db_,"INSERT INTO encounter_meta VALUES(1,0,'origin',0,'origin',0)");
+                run(db_,"CREATE TABLE encounter_scans(id INTEGER PRIMARY KEY,"
+                    "generation INTEGER NOT NULL CHECK(generation>0),tick INTEGER NOT NULL CHECK(tick>=0),"
+                    "population INTEGER NOT NULL CHECK(population BETWEEN 2 AND 1024),"
+                    "pair_count INTEGER NOT NULL CHECK(pair_count>0),"
+                    "start_slot INTEGER NOT NULL CHECK(start_slot>=0),"
+                    "scanned INTEGER NOT NULL CHECK(scanned BETWEEN 1 AND 64),"
+                    "end_slot INTEGER NOT NULL CHECK(end_slot>=0),"
+                    "contacts INTEGER NOT NULL CHECK(contacts BETWEEN 0 AND 8),digest TEXT NOT NULL)");
+                run(db_,"CREATE TABLE social_encounters(id INTEGER PRIMARY KEY,"
+                    "cycle_id INTEGER NOT NULL REFERENCES encounter_scans(id),"
+                    "npc_low TEXT NOT NULL,npc_high TEXT NOT NULL,"
+                    "generation INTEGER NOT NULL CHECK(generation>0),tick INTEGER NOT NULL CHECK(tick>=0),"
+                    "slot INTEGER NOT NULL CHECK(slot>=0),prior_id INTEGER NOT NULL CHECK(prior_id>=0),"
+                    "ordinal INTEGER NOT NULL CHECK(ordinal>0),digest TEXT NOT NULL)");
+                run(db_,"CREATE UNIQUE INDEX social_encounter_cycle_slot ON social_encounters(cycle_id,slot)");
+                run(db_,"CREATE INDEX social_encounter_pair ON social_encounters(npc_low,npc_high,id)");
+                for(const auto* name:{"encounter_scans","social_encounters"}) {
+                    run(db_,(std::string("CREATE TRIGGER ")+name+"_no_update BEFORE UPDATE ON "+name+
+                        " BEGIN SELECT RAISE(ABORT,'encounter history immutable'); END").c_str());
+                    run(db_,(std::string("CREATE TRIGGER ")+name+"_no_delete BEFORE DELETE ON "+name+
+                        " BEGIN SELECT RAISE(ABORT,'encounter history immutable'); END").c_str());
+                }
+                run(db_,"PRAGMA user_version=11");run(db_,"COMMIT");
             }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
         }
         } catch (...) { sqlite3_close_v2(db_); db_ = nullptr; throw; }
@@ -1544,6 +1631,94 @@ public:
             if(seq!=static_cast<std::uint64_t>(count)||tip!=final_tip)
                 throw std::runtime_error("SQLite: deleted or altered social trust event");
         }
+        // GRSM-03c.2: check the complete bounded encounter schedule ledger.
+        // Migrated v10 games have no invented meetings. Previously attested
+        // contacts survive rolling snapshot compaction via immutable receipts.
+        {
+            Statement meta(db_,"SELECT scan_count,scan_tip,contact_count,contact_tip,cursor "
+                "FROM encounter_meta WHERE singleton=1");
+            if(!meta.row())throw std::runtime_error("SQLite: missing encounter metadata");
+            const auto scans_meta=sqlite3_column_int64(meta.get(),0),
+                contacts_meta=sqlite3_column_int64(meta.get(),2),cursor_meta=sqlite3_column_int64(meta.get(),4);
+            if(scans_meta<0||contacts_meta<0||cursor_meta<0)
+                throw std::runtime_error("SQLite: invalid encounter metadata");
+            const auto scan_tip_meta=sqlite_str(meta.get(),1),contact_tip_meta=sqlite_str(meta.get(),3);
+            if(meta.row())throw std::runtime_error("SQLite: duplicate encounter metadata");
+            std::uint64_t scan_count=0,contact_count=0,cursor=0;
+            std::uint64_t prev_generation=0,prev_tick=0;
+            std::string scan_tip="origin",contact_tip="origin";
+            std::map<std::pair<std::uint64_t,std::uint64_t>,SocialEncounter> previous;
+            Statement scans(db_,"SELECT id,generation,tick,population,pair_count,start_slot,scanned,"
+                "end_slot,contacts,digest FROM encounter_scans ORDER BY id");
+            while(scans.row()){
+                const auto c=read_encounter_cycle(scans.get());
+                if(c.id!=++scan_count||c.generation>generation||c.tick>restored.tick()||
+                   c.generation<prev_generation||c.tick<prev_tick||
+                   c.population<2||c.population>1024||
+                   c.pairs!=c.population*(c.population-1)/2||
+                   !c.scanned||c.scanned>64||c.scanned>c.pairs||c.contacts>8||
+                   c.contacts>c.scanned||c.start!=cursor%c.pairs||
+                   c.end!=(c.start+c.scanned)%c.pairs)
+                    throw std::runtime_error("SQLite: invalid encounter scan receipt");
+                scan_tip=social_digest(scan_tip,encounter_cycle_body(c));
+                if(sqlite_str(scans.get(),9)!=scan_tip)
+                    throw std::runtime_error("SQLite: damaged encounter scan chain");
+                // When the precise physical snapshot still exists, re-attest
+                // participant identity and the pair's location/slot mapping.
+                std::vector<std::uint64_t> ids;
+                std::map<std::uint64_t,EntityId> locations;
+                Statement snap(db_,"SELECT state FROM snapshots WHERE generation=?");
+                snap.i64(1,static_cast<sqlite3_int64>(c.generation));
+                if(snap.row()){
+                    const auto sz=sqlite3_column_bytes(snap.get(),0);
+                    const auto* raw=static_cast<const char*>(sqlite3_column_blob(snap.get(),0));
+                    if(sz<=0||sz>16*1024*1024||!raw)
+                        throw std::runtime_error("SQLite: invalid encounter snapshot");
+                    const auto past=Simulation::from_snapshot(std::string(raw,static_cast<std::size_t>(sz)));
+                    if(past.tick()!=c.tick||past.npc_records().size()!=c.population)
+                        throw std::runtime_error("SQLite: encounter scan population mismatch");
+                    for(const auto& npc:past.npc_records()){
+                        ids.push_back(npc.first);
+                        locations.emplace(npc.first,npc.second.location);
+                    }
+                }
+                std::uint64_t observed=0;
+                Statement contacts(db_,"SELECT id,cycle_id,npc_low,npc_high,generation,tick,slot,"
+                    "prior_id,ordinal,digest FROM social_encounters WHERE cycle_id=? ORDER BY id");
+                contacts.i64(1,static_cast<sqlite3_int64>(c.id));
+                while(contacts.row()){
+                    const auto e=read_encounter(contacts.get());
+                    const auto key=std::make_pair(e.npc_low,e.npc_high);
+                    const auto prior=previous.find(key);
+                    if(e.id!=++contact_count||e.cycle_id!=c.id||e.npc_low==0||
+                       e.npc_low>=e.npc_high||e.generation!=c.generation||e.tick!=c.tick||
+                       e.slot>=c.pairs||((e.slot+c.pairs-c.start)%c.pairs)>=c.scanned||
+                       e.prior_id!=(prior==previous.end()?0:prior->second.id)||
+                       e.ordinal!=(prior==previous.end()?1:prior->second.ordinal+1)||
+                       (prior!=previous.end()&&(e.tick<prior->second.tick||
+                        e.tick-prior->second.tick<8)))
+                        throw std::runtime_error("SQLite: impossible encounter provenance");
+                    if(!ids.empty()){
+                        if(encounter_pair_at(ids,e.slot)!=key)
+                            throw std::runtime_error("SQLite: false encounter slot identity");
+                        if(locations.at(e.npc_low)!=locations.at(e.npc_high))
+                            throw std::runtime_error("SQLite: encounter had no physical proximity");
+                    }
+                    contact_tip=social_digest(contact_tip,encounter_body(e));
+                    if(sqlite_str(contacts.get(),9)!=contact_tip)
+                        throw std::runtime_error("SQLite: corrupted encounter receipt");
+                    previous[key]=e;++observed;
+                }
+                if(observed!=c.contacts)
+                    throw std::runtime_error("SQLite: scan contact tally mismatch");
+                cursor=c.end;prev_generation=c.generation;prev_tick=c.tick;
+            }
+            if(scan_count!=static_cast<std::uint64_t>(scans_meta)||
+               contact_count!=static_cast<std::uint64_t>(contacts_meta)||
+               cursor!=static_cast<std::uint64_t>(cursor_meta)||
+               scan_tip!=scan_tip_meta||contact_tip!=contact_tip_meta)
+                throw std::runtime_error("SQLite: missing encounter cycle/contact or invalid cursor");
+        }
         out.swap(restored);
         return true;
     }
@@ -2273,6 +2448,103 @@ public:
         while(q.row())out.push_back(read_tie(q.get()));
         return out;
     }
+    std::vector<SocialEncounter> recent_social_encounters(std::size_t limit) const {
+        if(!limit||limit>128)throw std::invalid_argument("encounter limit must be 1..128");
+        Statement q(db_,"SELECT id,cycle_id,npc_low,npc_high,generation,tick,slot,"
+            "prior_id,ordinal FROM social_encounters ORDER BY id DESC LIMIT ?");
+        q.i64(1,static_cast<sqlite3_int64>(limit));
+        std::vector<SocialEncounter> out;
+        while(q.row())out.push_back(read_encounter(q.get()));
+        return out;
+    }
+    std::size_t schedule_social_encounters(const Simulation& world,std::uint64_t gen,
+                                          std::size_t scan_budget,std::size_t contact_budget){
+        if(!scan_budget||scan_budget>64||!contact_budget||contact_budget>8)
+            throw std::invalid_argument("social encounter budgets exceed 1..64 / 1..8");
+        const auto n=world.npc_records().size();
+        if(n<2)return 0;
+        if(n>1024)throw std::invalid_argument("bounded encounter pilot allows <=1024 NPCs");
+        std::vector<std::uint64_t> ids;
+        ids.reserve(n);
+        for(const auto& kv:world.npc_records())ids.push_back(kv.first);
+        const auto total=static_cast<std::uint64_t>(n)*(n-1)/2;
+        run(db_,"BEGIN IMMEDIATE");
+        try {
+            if(latest_generation(db_)!=gen)
+                throw std::runtime_error("stale encounter world generation");
+            Statement meta(db_,"SELECT scan_count,scan_tip,contact_count,contact_tip,cursor "
+                "FROM encounter_meta WHERE singleton=1");
+            if(!meta.row())throw std::runtime_error("missing encounter metadata");
+            const auto scans=sqlite3_column_int64(meta.get(),0),
+                 prior_contacts=sqlite3_column_int64(meta.get(),2),prior_cursor=sqlite3_column_int64(meta.get(),4);
+            if(scans<0||prior_contacts<0||prior_cursor<0||
+               scans==std::numeric_limits<sqlite3_int64>::max()||
+               prior_contacts>std::numeric_limits<sqlite3_int64>::max()-8)
+                throw std::runtime_error("encounter sequence exhausted");
+            const auto scan_tip=sqlite_str(meta.get(),1),old_contact_tip=sqlite_str(meta.get(),3);
+            EncounterCycle cycle;
+            cycle.id=static_cast<std::uint64_t>(scans)+1;
+            cycle.generation=gen;cycle.tick=world.tick();
+            cycle.population=n;cycle.pairs=total;
+            cycle.start=static_cast<std::uint64_t>(prior_cursor)%total;
+            std::vector<SocialEncounter> contacts;
+            std::string next_contact_tip=old_contact_tip;
+            const auto scan_max=std::min(static_cast<std::uint64_t>(scan_budget),total);
+            for(std::uint64_t step=0;step<scan_max;step++){
+                const auto slot=(cycle.start+step)%total;
+                cycle.scanned=step+1;
+                const auto pair=encounter_pair_at(ids,slot);
+                const auto a=world.npc_records().at(pair.first),b=world.npc_records().at(pair.second);
+                if(a.location!=b.location)continue;
+                Statement prev(db_,"SELECT id,tick,ordinal FROM social_encounters "
+                    "WHERE npc_low=? AND npc_high=? ORDER BY id DESC LIMIT 1");
+                prev.text(1,std::to_string(pair.first));prev.text(2,std::to_string(pair.second));
+                const bool existed=prev.row();
+                const auto prev_id=existed?sqlite3_column_int64(prev.get(),0):0,
+                           prev_tick=existed?sqlite3_column_int64(prev.get(),1):0,
+                           prev_ordinal=existed?sqlite3_column_int64(prev.get(),2):0;
+                if(existed && (prev_tick<0||cycle.tick<static_cast<std::uint64_t>(prev_tick)||
+                   cycle.tick-static_cast<std::uint64_t>(prev_tick)<8))continue;
+                if(existed && prev_ordinal==std::numeric_limits<sqlite3_int64>::max())
+                    throw std::runtime_error("encounter familiarity counter exhausted");
+                SocialEncounter e;
+                e.id=static_cast<std::uint64_t>(prior_contacts)+contacts.size()+1;
+                e.cycle_id=cycle.id;e.npc_low=pair.first;e.npc_high=pair.second;
+                e.generation=gen;e.tick=cycle.tick;e.slot=slot;
+                e.prior_id=static_cast<std::uint64_t>(prev_id);
+                e.ordinal=static_cast<std::uint64_t>(prev_ordinal)+1;
+                next_contact_tip=social_digest(next_contact_tip,encounter_body(e));
+                contacts.push_back(e);
+                if(contacts.size()==contact_budget)break;
+            }
+            cycle.contacts=contacts.size();cycle.end=(cycle.start+cycle.scanned)%total;
+            const auto next_scan_tip=social_digest(scan_tip,encounter_cycle_body(cycle));
+            Statement add_cycle(db_,"INSERT INTO encounter_scans VALUES(?,?,?,?,?,?,?,?,?,?)");
+            add_cycle.i64(1,cycle.id);add_cycle.i64(2,cycle.generation);add_cycle.i64(3,cycle.tick);
+            add_cycle.i64(4,cycle.population);add_cycle.i64(5,cycle.pairs);
+            add_cycle.i64(6,cycle.start);add_cycle.i64(7,cycle.scanned);
+            add_cycle.i64(8,cycle.end);add_cycle.i64(9,cycle.contacts);
+            add_cycle.text(10,next_scan_tip);add_cycle.execute();
+            // Recompute chained tips during the *write*, not merely in memory.
+            std::string tip=old_contact_tip;
+            for(const auto& e:contacts){
+                tip=social_digest(tip,encounter_body(e));
+                Statement add(db_,"INSERT INTO social_encounters VALUES(?,?,?,?,?,?,?,?,?,?)");
+                add.i64(1,e.id);add.i64(2,e.cycle_id);add.text(3,std::to_string(e.npc_low));
+                add.text(4,std::to_string(e.npc_high));add.i64(5,e.generation);
+                add.i64(6,e.tick);add.i64(7,e.slot);add.i64(8,e.prior_id);
+                add.i64(9,e.ordinal);add.text(10,tip);add.execute();
+            }
+            if(tip!=next_contact_tip)throw std::runtime_error("encounter digest internal mismatch");
+            Statement update(db_,"UPDATE encounter_meta SET scan_count=?,scan_tip=?,"
+                "contact_count=?,contact_tip=?,cursor=? WHERE singleton=1");
+            update.i64(1,cycle.id);update.text(2,next_scan_tip);
+            update.i64(3,static_cast<sqlite3_int64>(prior_contacts+contacts.size()));
+            update.text(4,tip);update.i64(5,cycle.end);update.execute();
+            if(sqlite3_changes(db_)!=1)throw std::runtime_error("missing encounter metadata");
+            run(db_,"COMMIT");return contacts.size();
+        }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
+    }
     bool co_located(const Simulation& world,std::uint64_t a,std::uint64_t b) const {
         if(!a||!b||a==b)return false;
         const auto x=world.npc_records().find(a),y=world.npc_records().find(b);
@@ -2727,6 +2999,13 @@ bool PersistentWorld::relay_trusted_claim(std::uint64_t parent,std::uint64_t lis
 }
 std::vector<SocialTieEvent> PersistentWorld::recent_social_ties(std::size_t limit) const {
     return store_->recent_social_ties(limit);
+}
+std::size_t PersistentWorld::schedule_social_encounters(std::size_t scan_budget,
+                                                        std::size_t contact_budget){
+    return store_->schedule_social_encounters(world_,generation_,scan_budget,contact_budget);
+}
+std::vector<SocialEncounter> PersistentWorld::recent_social_encounters(std::size_t limit) const {
+    return store_->recent_social_encounters(limit);
 }
 void PersistentWorld::steps(std::uint64_t n) { for (std::uint64_t i = 0; i < n; ++i) step(); }
 } // namespace galaxy

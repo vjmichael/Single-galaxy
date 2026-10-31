@@ -22,15 +22,17 @@ def request(port, method, route, data=None, origin=True):
 def main(host,relay):
     with tempfile.TemporaryDirectory(prefix='sg_b70d_live_') as folder:
         root=Path(folder); db=root/'host.sqlite'
-        proc=subprocess.Popen([str(host),str(db),'20','75'],stdin=subprocess.PIPE,
-                              stdout=subprocess.PIPE,stderr=subprocess.PIPE)
-        assert proc.stdin
-        proc.stdin.write(b'PLANT|20\n');proc.stdin.flush()
-        time.sleep(0.24)
-        proc.stdin.write(b'HARVEST|20\n');proc.stdin.flush()
-        out,err=proc.communicate(timeout=12)
-        assert proc.returncode==0,err[-800:]
-        log=err.decode('ascii')
+        # Two durable simulation sessions avoid sleeping an assumed number of
+        # wall-clock ticks. The first session plants; the second proves crops
+        # matured and survived a persisted restart before harvest.
+        planted=subprocess.run([str(host),str(db),'20','24'],input=b'PLANT|20\n',
+                               capture_output=True,timeout=15)
+        assert planted.returncode==0,planted.stderr[-800:]
+        harvested=subprocess.run([str(host),str(db),'20','45'],input=b'HARVEST|20\n',
+                                 capture_output=True,timeout=15)
+        assert harvested.returncode==0,harvested.stderr[-800:]
+        assert b'|RESUMED' in harvested.stderr,'harvest did not resume persisted world'
+        log=(planted.stderr+harvested.stderr).decode('ascii')
         assert '|LIFE|' in log and '|PLANT' not in log
         assert log.count('|APPLIED|')>=2,log[-1400:]
         assert '|STOCK|' in log
@@ -50,13 +52,10 @@ def main(host,relay):
             '--save',str(root/'relay.sqlite'),'--port',str(port),'--tick-ms','20','--max-ticks','150'],
             stdout=subprocess.PIPE,stderr=subprocess.PIPE)
         try:
-            for _ in range(100):
-                try:
-                    code,body=request(port,'GET','/session')
-                    if code==200:break
-                except OSError:pass
-                time.sleep(.025)
-            else:raise AssertionError('relay unavailable')
+            from RelayReadiness import wait_for_relay
+            wait_for_relay(relay_server, lambda: request(port,'GET','/session')[0] == 200,
+                           label='B7.0d agricultural relay')
+            code,body=request(port,'GET','/session')
             doc=json.loads(body); assert doc['colony_mode']
             assert 'colonyPlant' in doc['commands'] and 'colonyOxygen' in doc['commands']
             token=doc['token'];permit={'token':token}

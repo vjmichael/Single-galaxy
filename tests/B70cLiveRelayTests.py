@@ -33,13 +33,10 @@ def check(host,relay):
             '--save',str(Path(tmp)/'relay.sqlite'),'--port',str(port),'--tick-ms','20','--max-ticks','200'],
             stdout=subprocess.PIPE,stderr=subprocess.PIPE)
         try:
-            for _ in range(80):
-                try:
-                    status,data=request(port,'GET','/session')
-                    if status==200:break
-                except OSError:pass
-                time.sleep(.025)
-            else:raise AssertionError('local relay unavailable')
+            from RelayReadiness import wait_for_relay
+            wait_for_relay(relay_server, lambda: request(port,'GET','/session')[0] == 200,
+                           label='B7.0c mineral relay')
+            status,data=request(port,'GET','/session')
             session=json.loads(data)
             assert session['colony_mode'] and 'colonyProcess' in session['commands']
             token=session['token'];root={'token':token}

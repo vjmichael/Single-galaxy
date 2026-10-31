@@ -37,13 +37,10 @@ def test_relay(host,relay):
              '--save',str(Path(tmp)/'colony.sqlite'),'--port',str(port),'--tick-ms','20','--max-ticks','100'],
              stdout=subprocess.PIPE,stderr=subprocess.PIPE)
         try:
-            for _ in range(60):
-                try:
-                    status,data=request(port,'GET','/session')
-                    if status==200:break
-                except (OSError,TimeoutError):pass
-                time.sleep(.025)
-            else:raise AssertionError('relay failed to listen')
+            from RelayReadiness import wait_for_relay
+            wait_for_relay(proc, lambda: request(port,'GET','/session')[0] == 200,
+                           label='B7.0b colony relay')
+            status,data=request(port,'GET','/session')
             session=json.loads(data)
             assert session['colony_mode'] is True and session['qa_mode'] is False,session
             token=session['token'];base={'token':token}

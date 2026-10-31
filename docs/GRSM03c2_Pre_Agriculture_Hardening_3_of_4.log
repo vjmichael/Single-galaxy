@@ -1,0 +1,77 @@
+=== RELAY_REPETITION_1 ===
+Internal ctest changing into directory: /mnt/data/sg03c/single-galaxy/build-grsm03c2
+Test project /mnt/data/sg03c/single-galaxy/build-grsm03c2
+    Start 16: galaxy_b62c_relay_gate_controls
+    Start 33: galaxy_b70d_live_agriculture_relay
+    Start 31: galaxy_b70c_live_mineral_relay
+    Start 29: galaxy_b70b_live_colony_e2e
+1/4 Test #31: galaxy_b70c_live_mineral_relay .......   Passed    2.73 sec
+2/4 Test #29: galaxy_b70b_live_colony_e2e ..........   Passed    3.96 sec
+3/4 Test #33: galaxy_b70d_live_agriculture_relay ...   Passed    4.57 sec
+4/4 Test #16: galaxy_b62c_relay_gate_controls ......   Passed    5.32 sec
+
+100% tests passed, 0 tests failed out of 4
+
+Total Test time (real) =   5.33 sec
+=== RELAY_REPETITION_2 ===
+Internal ctest changing into directory: /mnt/data/sg03c/single-galaxy/build-grsm03c2
+Test project /mnt/data/sg03c/single-galaxy/build-grsm03c2
+    Start 16: galaxy_b62c_relay_gate_controls
+    Start 33: galaxy_b70d_live_agriculture_relay
+    Start 31: galaxy_b70c_live_mineral_relay
+    Start 29: galaxy_b70b_live_colony_e2e
+1/4 Test #31: galaxy_b70c_live_mineral_relay .......   Passed    3.18 sec
+2/4 Test #33: galaxy_b70d_live_agriculture_relay ...***Failed    3.37 sec
+Traceback (most recent call last):
+  File "/mnt/data/sg03c/single-galaxy/tests/B70dLiveAgricultureTests.py", line 85, in <module>
+    args=parser.parse_args();main(args.host,args.relay)
+                             ~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/data/sg03c/single-galaxy/tests/B70dLiveAgricultureTests.py", line 35, in main
+    assert log.count('|APPLIED|')>=2,log[-1400:]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: NY|1|73|STATUS|24|0|0|0|0|16829904
+COLONY|1|73|LIFE|928|2888|948|980|1052|60|0|72|3|0|38|STABLE|6
+COLONY|1|73|UTILITY_ASSESS|0|0|0
+COLONY|1|73|MAINTENANCE_ASSESS|0|0|0|0
+COLONY|1|73|HAB_ASSESS|0|0|0|0|0|STABLE
+COLONY|1|73|ASSESS|24|0|0|72|0
+COLONY|1|73|RESILIENCE|38|0|0|0|0|0|0|0|0|0|0|3969
+COLONY|1|73|WATER_SUPPLY|0|0|0|0|0|0|0
+COLONY|1|73|LIFE_RECOVERY|0|0|0|0|0|0|0|0|0|0|0
+COLONY|1|73|CLINIC_ASSESS|0|0|0|0|0
+COLONY|1|73|COMMUNITY_ASSESS|0|0|0
+COLONY|1|74|STATUS|24|0|0|0|0|16829904
+COLONY|1|74|LIFE|928|2888|948|980|1052|60|0|72|3|0|38|STABLE|6
+COLONY|1|74|UTILITY_ASSESS|0|0|0
+COLONY|1|74|MAINTENANCE_ASSESS|0|0|0|0
+COLONY|1|74|HAB_ASSESS|0|0|0|0|0|STABLE
+COLONY|1|74|ASSESS|24|0|0|72|0
+COLONY|1|74|RESILIENCE|38|0|0|0|0|0|0|0|0|0|0|3969
+COLONY|1|74|WATER_SUPPLY|0|0|0|0|0|0|0
+COLONY|1|74|LIFE_RECOVERY|0|0|0|0|0|0|0|0|0|0|0
+COLONY|1|74|CLINIC_ASSESS|0|0|0|0|0
+COLONY|1|74|COMMUNITY_ASSESS|0|0|0
+COLONY|1|75|STATUS|24|0|0|0|0|16829904
+COLONY|1|75|LIFE|928|2888|948|980|1052|60|0|72|3|0|38|STABLE|6
+COLONY|1|75|UTILITY_ASSESS|0|0|0
+COLONY|1|75|MAINTENANCE_ASSESS|0|0|0|0
+COLONY|1|75|HAB_ASSESS|0|0|0|0|0|STABLE
+COLONY|1|75|ASSESS|24|0|0|72|0
+COLONY|1|75|RESILIENCE|38|0|0|0|0|0|0|0|0|0|0|3969
+COLONY|1|75|WATER_SUPPLY|0|0|0|0|0|0|0
+COLONY|1|75|LIFE_RECOVERY|0|0|0|0|0|0|0|0|0|0|0
+COLONY|1|75|CLINIC_ASSESS|0|0|0|0|0
+COLONY|1|75|COMMUNITY_ASSESS|0|0|0
+B7_0E COLONY HOST COMPLETED generation=78
+
+
+3/4 Test #29: galaxy_b70b_live_colony_e2e ..........   Passed    4.10 sec
+4/4 Test #16: galaxy_b62c_relay_gate_controls ......   Passed    6.14 sec
+
+75% tests passed, 1 tests failed out of 4
+
+Total Test time (real) =   6.15 sec
+
+The following tests FAILED:
+	 33 - galaxy_b70d_live_agriculture_relay (Failed)
+Errors while running CTest
