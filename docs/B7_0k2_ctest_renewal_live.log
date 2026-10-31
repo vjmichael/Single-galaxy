@@ -1,0 +1,8 @@
+Internal ctest changing into directory: /mnt/data/sg_b70k_renewal/build
+Test project /mnt/data/sg_b70k_renewal/build
+    Start 49: galaxy_b70k_live_reclaimer_relay
+1/1 Test #49: galaxy_b70k_live_reclaimer_relay ...   Passed    3.54 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Total Test time (real) =   3.55 sec

@@ -1,0 +1,29 @@
+Test project /mnt/data/sg_b70k/build
+      Start 33: galaxy_b70d_live_agriculture_relay
+      Start 35: galaxy_b70e_live_farm_relay
+      Start 29: galaxy_b70b_live_colony_e2e
+ 1/12 Test #29: galaxy_b70b_live_colony_e2e ..........   Passed    2.33 sec
+      Start 31: galaxy_b70c_live_mineral_relay
+ 2/12 Test #35: galaxy_b70e_live_farm_relay ..........   Passed    2.67 sec
+      Start 25: galaxy_b66_live_gate_telemetry
+ 3/12 Test #33: galaxy_b70d_live_agriculture_relay ...   Passed    3.00 sec
+      Start 27: galaxy_b70_colony_cli_e2e
+ 4/12 Test #27: galaxy_b70_colony_cli_e2e ............   Passed    0.80 sec
+      Start 34: galaxy_b70e_colony_farms_tests
+ 5/12 Test #34: galaxy_b70e_colony_farms_tests .......   Passed    0.12 sec
+      Start 36: galaxy_b70f_habitation_tests
+ 6/12 Test #36: galaxy_b70f_habitation_tests .........   Passed    0.11 sec
+      Start 32: galaxy_b70d_life_support_tests
+ 7/12 Test #32: galaxy_b70d_life_support_tests .......   Passed    0.05 sec
+      Start 28: galaxy_b70b_geology_tests
+ 8/12 Test #28: galaxy_b70b_geology_tests ............   Passed    0.02 sec
+      Start 30: galaxy_b70c_mineral_industry_tests
+ 9/12 Test #30: galaxy_b70c_mineral_industry_tests ...   Passed    0.02 sec
+      Start 26: galaxy_b70_colony_core_tests
+10/12 Test #26: galaxy_b70_colony_core_tests .........   Passed    0.02 sec
+11/12 Test #31: galaxy_b70c_live_mineral_relay .......   Passed    1.82 sec
+12/12 Test #25: galaxy_b66_live_gate_telemetry .......   Passed    1.65 sec
+
+100% tests passed, 0 tests failed out of 12
+
+Total Test time (real) =   4.32 sec

@@ -1,0 +1,55 @@
+{
+  "schema_version": "grsm-design-example-0.1",
+  "implementation_status": "illustrative-contract-only",
+  "canonical_events": [
+    {
+      "event_id": "ev-demo-0001",
+      "kind": "cargo_raid",
+      "actor_id": "player-founder",
+      "game_tick": 120500,
+      "location_id": "remote-transit-001",
+      "target_ship_id": "freighter-demo-17",
+      "cargo_containers_seized": 2,
+      "occupants_before": 8,
+      "occupants_deceased": 0,
+      "occupants_survived": 8,
+      "evidence_ids": ["sensor-log-demo-1", "witness-demo-1"]
+    }
+  ],
+  "claims": [
+    {
+      "claim_id": "claim-merchant-0001",
+      "related_event_id": "ev-demo-0001",
+      "speaker_faction_id": "merchant-guild",
+      "propagation_type": "intercolony-report",
+      "propositions": [{"kind": "cargo_containers_seized", "value": 2}],
+      "belief_confidence": 0.9,
+      "sentiments": {"perceived_danger": 0.8, "trust": 0.15, "admiration": 0.1},
+      "distorted": false
+    },
+    {
+      "claim_id": "claim-frontier-0002",
+      "related_event_id": "ev-demo-0001",
+      "speaker_faction_id": "frontier-relief-circle",
+      "propagation_type": "secondhand-social-telling",
+      "propositions": [{"kind": "cargo_donated_to_poor", "value": true}],
+      "belief_confidence": 0.65,
+      "sentiments": {"perceived_danger": 0.3, "trust": 0.6, "admiration": 0.8},
+      "distorted": true
+    },
+    {
+      "claim_id": "claim-cantina-0003",
+      "related_event_id": "ev-demo-0001",
+      "speaker_faction_id": "dockside-storytellers",
+      "propagation_type": "ambient-folklore",
+      "propositions": [{"kind": "freighters_captured", "value": 12}],
+      "belief_confidence": 0.45,
+      "sentiments": {"perceived_danger": 0.9, "trust": 0.3, "admiration": 0.75},
+      "distorted": true
+    }
+  ],
+  "identification_cases": [
+    {"npc_id": "npc-demo-a", "heard_claim_ids": ["claim-cantina-0003"], "recognizes_player": false},
+    {"npc_id": "npc-demo-b", "heard_claim_ids": ["claim-merchant-0001"], "recognizes_player": true}
+  ]
+}

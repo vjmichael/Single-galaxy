@@ -1,0 +1,26 @@
+Internal ctest changing into directory: /mnt/data/SingleGalaxy_B7_0b_Colony_Visual_Geology/build
+Test project /mnt/data/SingleGalaxy_B7_0b_Colony_Visual_Geology/build
+      Start 20: galaxy_b64_live_multihop_e2e
+ 1/10 Test #20: galaxy_b64_live_multihop_e2e .......   Passed   14.71 sec
+      Start 21: galaxy_b65_gate_disruption_tests
+ 2/10 Test #21: galaxy_b65_gate_disruption_tests ...   Passed    0.06 sec
+      Start 22: galaxy_b65_live_gate_qa_e2e
+ 3/10 Test #22: galaxy_b65_live_gate_qa_e2e ........   Passed   12.12 sec
+      Start 23: galaxy_b65_relay_qa_controls
+ 4/10 Test #23: galaxy_b65_relay_qa_controls .......   Passed    9.46 sec
+      Start 24: galaxy_b66_gate_operations_tests
+ 5/10 Test #24: galaxy_b66_gate_operations_tests ...   Passed    0.11 sec
+      Start 25: galaxy_b66_live_gate_telemetry
+ 6/10 Test #25: galaxy_b66_live_gate_telemetry .....   Passed    1.89 sec
+      Start 26: galaxy_b70_colony_core_tests
+ 7/10 Test #26: galaxy_b70_colony_core_tests .......   Passed    0.04 sec
+      Start 27: galaxy_b70_colony_cli_e2e
+ 8/10 Test #27: galaxy_b70_colony_cli_e2e ..........   Passed    1.16 sec
+      Start 28: galaxy_b70b_geology_tests
+ 9/10 Test #28: galaxy_b70b_geology_tests ..........   Passed    0.05 sec
+      Start 29: galaxy_b70b_live_colony_e2e
+10/10 Test #29: galaxy_b70b_live_colony_e2e ........   Passed    3.18 sec
+
+100% tests passed, 0 tests failed out of 10
+
+Total Test time (real) =  42.78 sec

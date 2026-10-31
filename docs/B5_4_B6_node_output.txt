@@ -1,0 +1,196 @@
+TAP version 13
+# Subtest: B5.2 HUD shows real initial docked ship and empty local hangar
+ok 1 - B5.2 HUD shows real initial docked ship and empty local hangar
+  ---
+  duration_ms: 48.78031
+  type: 'test'
+  ...
+# Subtest: B5.2 HUD shows final docked 20 ore hangar and empty cargo after verified frames
+ok 2 - B5.2 HUD shows final docked 20 ore hangar and empty cargo after verified frames
+  ---
+  duration_ms: 28.912116
+  type: 'test'
+  ...
+# Subtest: B5.2 docked snapshot has verified station, dock state and local hangar
+ok 3 - B5.2 docked snapshot has verified station, dock state and local hangar
+  ---
+  duration_ms: 3.759198
+  type: 'test'
+  ...
+# Subtest: B5.2 tampered dock state cannot pass projection hash
+ok 4 - B5.2 tampered dock state cannot pass projection hash
+  ---
+  duration_ms: 1.322655
+  type: 'test'
+  ...
+# Subtest: B5.2 invalid hangar amounts and dock station are rejected
+ok 5 - B5.2 invalid hangar amounts and dock station are rejected
+  ---
+  duration_ms: 2.370336
+  type: 'test'
+  ...
+# Subtest: B5.2 undocking deletion and inventory delta apply only after correct hash
+ok 6 - B5.2 undocking deletion and inventory delta apply only after correct hash
+  ---
+  duration_ms: 0.750316
+  type: 'test'
+  ...
+# Subtest: B5.3 full station trade recording remains verifiable
+ok 7 - B5.3 full station trade recording remains verifiable
+  ---
+  duration_ms: 1.371257
+  type: 'test'
+  ...
+# Subtest: B5.3 market stock and wallet event tampering cannot pass projection hash
+ok 8 - B5.3 market stock and wallet event tampering cannot pass projection hash
+  ---
+  duration_ms: 1.760415
+  type: 'test'
+  ...
+# Subtest: B5.3 malformed monetary fields are rejected
+ok 9 - B5.3 malformed monetary fields are rejected
+  ---
+  duration_ms: 3.102087
+  type: 'test'
+  ...
+# Subtest: B5.3 UI shows committed Station B sale, player wallet and market funding
+ok 10 - B5.3 UI shows committed Station B sale, player wallet and market funding
+  ---
+  duration_ms: 109.417082
+  type: 'test'
+  ...
+# Subtest: B5.4 committed off-axis ship motion is non-teleporting in both axes
+ok 11 - B5.4 committed off-axis ship motion is non-teleporting in both axes
+  ---
+  duration_ms: 3.805435
+  type: 'test'
+  ...
+# Subtest: interpolation only changes presentation coordinates, not authoritative state
+ok 12 - interpolation only changes presentation coordinates, not authoritative state
+  ---
+  duration_ms: 2.510258
+  type: 'test'
+  ...
+# Subtest: clamps progress and preserves entity removals, regardless of prior visibility
+ok 13 - clamps progress and preserves entity removals, regardless of prior visibility
+  ---
+  duration_ms: 0.466243
+  type: 'test'
+  ...
+# Subtest: incremental frame validator matches original full-recording validator
+ok 14 - incremental frame validator matches original full-recording validator
+  ---
+  duration_ms: 5.314791
+  type: 'test'
+  ...
+# Subtest: real live ten stream validates all incremental frames
+ok 15 - real live ten stream validates all incremental frames
+  ---
+  duration_ms: 5.374706
+  type: 'test'
+  ...
+# Subtest: real live hold stream validates all incremental frames
+ok 16 - real live hold stream validates all incremental frames
+  ---
+  duration_ms: 2.480859
+  type: 'test'
+  ...
+# Subtest: real live motion stream validates all incremental frames
+ok 17 - real live motion stream validates all incremental frames
+  ---
+  duration_ms: 1.023676
+  type: 'test'
+  ...
+# Subtest: missed or reordered real-time frame is rejected rather than silently shown
+ok 18 - missed or reordered real-time frame is rejected rather than silently shown
+  ---
+  duration_ms: 2.040509
+  type: 'test'
+  ...
+# Subtest: tampered entity update is rejected before client state publication
+ok 19 - tampered entity update is rejected before client state publication
+  ---
+  duration_ms: 1.143022
+  type: 'test'
+  ...
+# Subtest: live frames update HUD and cargo-full notification as C++ world commits
+ok 20 - live frames update HUD and cargo-full notification as C++ world commits
+  ---
+  duration_ms: 32.314875
+  type: 'test'
+  ...
+# Subtest: live frame gap is rejected without updating displayed world
+ok 21 - live frame gap is rejected without updating displayed world
+  ---
+  duration_ms: 6.571506
+  type: 'test'
+  ...
+# Subtest: live client shows depleted rocks disappearing
+ok 22 - live client shows depleted rocks disappearing
+  ---
+  duration_ms: 9.639353
+  type: 'test'
+  ...
+# Subtest: 10 asteroids despawn in viewer, ore conserved, hold 100
+ok 23 - 10 asteroids despawn in viewer, ore conserved, hold 100
+  ---
+  duration_ms: 5.481658
+  type: 'test'
+  ...
+# Subtest: automatic mining stops at hold full, remaining rock 10
+ok 24 - automatic mining stops at hold full, remaining rock 10
+  ---
+  duration_ms: 2.742584
+  type: 'test'
+  ...
+# Subtest: motion updates ship positions and preserves inertia
+ok 25 - motion updates ship positions and preserves inertia
+  ---
+  duration_ms: 1.496122
+  type: 'test'
+  ...
+# Subtest: packet corruption fails consistency hash
+ok 26 - packet corruption fails consistency hash
+  ---
+  duration_ms: 1.211513
+  type: 'test'
+  ...
+# Subtest: dropped delta does not silently desynchronize
+ok 27 - dropped delta does not silently desynchronize
+  ---
+  duration_ms: 0.9491
+  type: 'test'
+  ...
+# Subtest: noncanonical or invalid recording is rejected
+ok 28 - noncanonical or invalid recording is rejected
+  ---
+  duration_ms: 0.425081
+  type: 'test'
+  ...
+# Subtest: visual interface renders initial recorded snapshot without errors
+ok 29 - visual interface renders initial recorded snapshot without errors
+  ---
+  duration_ms: 25.455785
+  type: 'test'
+  ...
+# Subtest: scrubbing to depleted final state updates HUD and event log
+ok 30 - scrubbing to depleted final state updates HUD and event log
+  ---
+  duration_ms: 3.050395
+  type: 'test'
+  ...
+# Subtest: hold-full scenario displays automatic stop at tick 3
+ok 31 - hold-full scenario displays automatic stop at tick 3
+  ---
+  duration_ms: 4.051631
+  type: 'test'
+  ...
+1..31
+# tests 31
+# suites 0
+# pass 31
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 467.270004

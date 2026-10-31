@@ -1,0 +1,10 @@
+Internal ctest changing into directory: /tmp/sg_b70_zipcheck_Zbv9HB/b
+Test project /tmp/sg_b70_zipcheck_Zbv9HB/b
+    Start 26: galaxy_b70_colony_core_tests
+1/2 Test #26: galaxy_b70_colony_core_tests .....   Passed    0.07 sec
+    Start 27: galaxy_b70_colony_cli_e2e
+2/2 Test #27: galaxy_b70_colony_cli_e2e ........   Passed    1.50 sec
+
+100% tests passed, 0 tests failed out of 2
+
+Total Test time (real) =   1.57 sec

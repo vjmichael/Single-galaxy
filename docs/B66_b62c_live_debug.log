@@ -1,0 +1,2 @@
+PASS B6.2c live C++: 2 authorized gate jumps, correct survey scope, probe recovery, station trade
+PASS B6.2c Node parser: 116 authenticated-state frames, scopes, 2 jumps, 20 ore sale, 140 credits

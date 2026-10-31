@@ -1,0 +1,22 @@
+Internal ctest changing into directory: /mnt/data/SingleGalaxy_B7_0f_Habitation_Provisioning/build
+Test project /mnt/data/SingleGalaxy_B7_0f_Habitation_Provisioning/build
+    Start 12: galaxy_b62a_gate_transit_tests
+1/8 Test #12: galaxy_b62a_gate_transit_tests .......   Passed    0.00 sec
+    Start 13: galaxy_b62b_durable_jumps_tests
+2/8 Test #13: galaxy_b62b_durable_jumps_tests ......   Passed    0.08 sec
+    Start 14: galaxy_b62c_projection_tests
+3/8 Test #14: galaxy_b62c_projection_tests .........   Passed    0.02 sec
+    Start 15: galaxy_b62c_live_multisystem_e2e
+4/8 Test #15: galaxy_b62c_live_multisystem_e2e .....   Passed    6.51 sec
+    Start 16: galaxy_b62c_relay_gate_controls
+5/8 Test #16: galaxy_b62c_relay_gate_controls ......   Passed    4.02 sec
+    Start 17: galaxy_b63_live_routes_history_e2e
+6/8 Test #17: galaxy_b63_live_routes_history_e2e ...   Passed    3.46 sec
+    Start 18: galaxy_b63_relay_route_controls
+7/8 Test #18: galaxy_b63_relay_route_controls ......   Passed    3.22 sec
+    Start 19: galaxy_b64_region_tests
+8/8 Test #19: galaxy_b64_region_tests ..............   Passed    0.00 sec
+
+100% tests passed, 0 tests failed out of 8
+
+Total Test time (real) =  17.32 sec

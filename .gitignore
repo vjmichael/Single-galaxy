@@ -1,0 +1,23 @@
+# Local compilation and caches
+/build/
+/build-*/
+/production*/
+/out/
+/dist/
+/.cache/
+/node_modules/
+__pycache__/
+*.pyc
+# World and personal testing state
+*.sqlite
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
+# Editor / platform
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+# Local repo publishing artifacts
+*.bundle

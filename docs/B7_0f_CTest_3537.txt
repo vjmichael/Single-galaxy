@@ -1,0 +1,12 @@
+Internal ctest changing into directory: /mnt/data/SingleGalaxy_B7_0f_Habitation_Provisioning/build
+Test project /mnt/data/SingleGalaxy_B7_0f_Habitation_Provisioning/build
+    Start 35: galaxy_b70e_live_farm_relay
+1/3 Test #35: galaxy_b70e_live_farm_relay ......   Passed    2.45 sec
+    Start 36: galaxy_b70f_habitation_tests
+2/3 Test #36: galaxy_b70f_habitation_tests .....   Passed    0.11 sec
+    Start 37: galaxy_b70f_live_habitat_relay
+3/3 Test #37: galaxy_b70f_live_habitat_relay ...   Passed    3.71 sec
+
+100% tests passed, 0 tests failed out of 3
+
+Total Test time (real) =   6.27 sec

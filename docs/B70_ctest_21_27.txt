@@ -1,0 +1,20 @@
+Internal ctest changing into directory: /mnt/data/SingleGalaxy_B7_0a_Colony_Core_Loop/build
+Test project /mnt/data/SingleGalaxy_B7_0a_Colony_Core_Loop/build
+    Start 21: galaxy_b65_gate_disruption_tests
+1/7 Test #21: galaxy_b65_gate_disruption_tests ...   Passed    0.04 sec
+    Start 22: galaxy_b65_live_gate_qa_e2e
+2/7 Test #22: galaxy_b65_live_gate_qa_e2e ........   Passed   12.18 sec
+    Start 23: galaxy_b65_relay_qa_controls
+3/7 Test #23: galaxy_b65_relay_qa_controls .......   Passed    9.44 sec
+    Start 24: galaxy_b66_gate_operations_tests
+4/7 Test #24: galaxy_b66_gate_operations_tests ...   Passed    0.08 sec
+    Start 25: galaxy_b66_live_gate_telemetry
+5/7 Test #25: galaxy_b66_live_gate_telemetry .....   Passed    1.73 sec
+    Start 26: galaxy_b70_colony_core_tests
+6/7 Test #26: galaxy_b70_colony_core_tests .......   Passed    0.03 sec
+    Start 27: galaxy_b70_colony_cli_e2e
+7/7 Test #27: galaxy_b70_colony_cli_e2e ..........   Passed    1.23 sec
+
+100% tests passed, 0 tests failed out of 7
+
+Total Test time (real) =  24.73 sec

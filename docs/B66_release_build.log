@@ -1,0 +1,17 @@
+[1/10] Building CXX object CMakeFiles/galaxy_kernel.dir/src/Galaxy.cpp.o
+/mnt/data/SingleGalaxy_B6_6_Gate_Operations/src/Galaxy.cpp: In constructor 'galaxy::SurveyArchive::SurveyArchive(const std::string&)':
+/mnt/data/SingleGalaxy_B6_6_Gate_Operations/src/Galaxy.cpp:173:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  173 |         if(db_)sqlite3_close(db_); db_=nullptr;throw std::runtime_error(err);
+      |         ^~
+/mnt/data/SingleGalaxy_B6_6_Gate_Operations/src/Galaxy.cpp:173:36: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  173 |         if(db_)sqlite3_close(db_); db_=nullptr;throw std::runtime_error(err);
+      |                                    ^~~
+[2/10] Building CXX object CMakeFiles/galaxy_kernel.dir/src/Persistence.cpp.o
+[3/10] Building CXX object CMakeFiles/galaxy_kernel.dir/src/Navigation.cpp.o
+[4/10] Building CXX object CMakeFiles/galaxy_kernel.dir/src/GateTransit.cpp.o
+[5/10] Building CXX object CMakeFiles/galaxy_kernel.dir/src/ClientContract.cpp.o
+[6/10] Building CXX object CMakeFiles/galaxy_kernel.dir/src/Region.cpp.o
+[7/10] Building CXX object CMakeFiles/galaxy_kernel.dir/src/Simulation.cpp.o
+[8/10] Linking CXX static library libgalaxy_kernel.a
+[9/10] Building CXX object CMakeFiles/galaxy_interactive_host.dir/src/interactive_host.cpp.o
+[10/10] Linking CXX executable galaxy_interactive_host

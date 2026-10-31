@@ -1,0 +1,8 @@
+Internal ctest changing into directory: /mnt/data/SingleGalaxy_B6_6_Gate_Operations/build
+Test project /mnt/data/SingleGalaxy_B6_6_Gate_Operations/build
+    Start 19: galaxy_b64_region_tests
+1/1 Test #19: galaxy_b64_region_tests ..........   Passed    0.00 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Total Test time (real) =   0.01 sec

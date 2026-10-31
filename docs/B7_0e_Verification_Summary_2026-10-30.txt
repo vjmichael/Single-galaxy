@@ -1,0 +1,10 @@
+Single Galaxy — B7.0e verification 2026-10-30
+Native/integration (Linux): 35/35 passing, bounded runs
+  01-10: 10/10 PASS
+  11:    1/1 PASS isolated (earlier broad run stalled without verdict)
+  12-21: 10/10 PASS
+  22-35: 14/14 PASS
+JavaScript: 58/58 PASS
+Production-style Linux build: PASS (BUILD_TESTING=OFF, SG_QA_AUTOMATION=OFF)
+B7.0e live tests: 2/2 PASS; native and relay with save/restart
+Windows-native, actual Chromium visual click-through, continuously streaming 3D universe: NOT verified / NOT implemented.

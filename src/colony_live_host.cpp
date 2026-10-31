@@ -1,0 +1,479 @@
+// B7.0b: graphical colony-first local host. Authoritative C++/SQLite owns every
+// action, world state, player identity, construction and geological inventory.
+// stdout SGVIEW frames; stderr bounded COLONY telemetry for the local relay.
+#include "galaxy/Simulation.hpp"
+#include "galaxy/Persistence.hpp"
+#include "galaxy/ClientContract.hpp"
+#include <algorithm>
+#include <chrono>
+#include <cstdint>
+#include <filesystem>
+#include <iostream>
+#include <random>
+#include <sstream>
+#include <string>
+#include <thread>
+#include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#include <io.h>
+#include <fcntl.h>
+#else
+#include <poll.h>
+#include <unistd.h>
+#endif
+using namespace galaxy;
+using Clock=std::chrono::steady_clock;
+namespace fs=std::filesystem;
+namespace {
+constexpr PlayerId owner=7;
+constexpr std::int64_t sensor_mm=500000;
+std::string pending;
+std::vector<std::string> commands;
+void poll_input(){
+    char data[1024];
+    for(int n=0;n<4;++n){
+        int size=0;
+#ifdef _WIN32
+        HANDLE h=GetStdHandle(STD_INPUT_HANDLE);DWORD avail=0,got=0;
+        if(h==INVALID_HANDLE_VALUE || GetFileType(h)!=FILE_TYPE_PIPE ||
+           !PeekNamedPipe(h,nullptr,0,nullptr,&avail,nullptr) || !avail)break;
+        if(!ReadFile(h,data,static_cast<DWORD>(std::min<std::size_t>(sizeof(data),avail)),&got,nullptr))break;
+        size=static_cast<int>(got);
+#else
+        struct pollfd p{STDIN_FILENO,POLLIN,0};
+        if(::poll(&p,1,0)!=1 || !(p.revents&POLLIN))break;
+        size=static_cast<int>(::read(STDIN_FILENO,data,sizeof(data)));
+#endif
+        if(size<=0)break;
+        for(int k=0;k<size;++k){
+            if(data[k]=='\n'){
+                if(!pending.empty() && pending.size()<=64 && commands.size()<32)
+                    commands.push_back(pending);
+                pending.clear();
+            }else if(data[k]>=32 && data[k]<=126 && pending.size()<65)pending+=data[k];
+            else pending.clear();
+        }
+    }
+}
+std::vector<std::string> split(const std::string& s){
+    std::istringstream in(s);std::vector<std::string> parts;std::string item;
+    while(std::getline(in,item,'|'))parts.push_back(item);
+    return parts;
+}
+std::int64_t integer(const std::string& s){
+    if(s.empty()||s.size()>9||s[0]=='+' || s[0]=='-' && s.size()==1)
+        throw std::invalid_argument("bad number");
+    for(std::size_t i=s[0]=='-'?1:0;i<s.size();++i)
+        if(s[i]<'0'||s[i]>'9')throw std::invalid_argument("bad number");
+    return std::stoll(s);
+}
+void announce(const Simulation& w,const std::string& text){
+    std::cerr<<"COLONY|1|"<<w.tick()<<'|'<<text<<'\n'<<std::flush;
+}
+void status(const Simulation& w,EntityId ship){
+    const auto* s=w.find(ship);const auto* c=w.colony_ship(ship);
+    if(!s || !c)throw std::runtime_error("colony ship missing");
+    announce(w,"STATUS|"+std::to_string(c->crew)+"|"+std::to_string(s->cargo)+"|"+
+        std::to_string(c->refined)+"|"+std::to_string(c->modules)+"|"+
+        std::to_string(w.built_outposts().size())+"|"+std::to_string(w.total_ore()));
+    if(const auto* l=w.life_support(ship)){
+        const auto v=w.assess_colony(ship);
+        announce(w,"LIFE|"+std::to_string(l->food_kg)+"|"+std::to_string(l->water_kg)+"|"+
+            std::to_string(l->oxygen_kg)+"|"+std::to_string(l->nutrients_kg)+"|"+
+            std::to_string(l->co2_kg)+"|"+std::to_string(l->crops_kg)+"|"+
+            std::to_string(l->compost_kg)+"|"+std::to_string(l->wastewater_kg)+"|"+
+            std::to_string(l->cycles)+"|"+std::to_string(l->shortages)+"|"+
+            std::to_string(v.reserve_cycles)+"|"+viability_stage_name(v.stage)+"|"+
+            std::to_string(l->crops_ready_tick));
+    }
+    for(const auto& [id,outpost]:w.built_outposts()){
+        if(outpost.source_colony_ship!=ship)continue;
+        announce(w,"OUTPOST|"+std::to_string(id)+"|"+std::to_string(w.farm(id)?1:0));
+    }
+    for(const auto& [id,f]:w.farms()){
+        if(f.source_ship!=ship)continue;
+        const auto recent=f.recent_food_kg[0]+f.recent_food_kg[1]+f.recent_food_kg[2];
+        const auto& l=f.life;
+        announce(w,"FARM|"+std::to_string(id)+"|"+std::to_string(f.workers)+"|"+
+            std::to_string(l.food_kg)+"|"+std::to_string(l.water_kg)+"|"+
+            std::to_string(l.oxygen_kg)+"|"+std::to_string(l.nutrients_kg)+"|"+
+            std::to_string(l.co2_kg)+"|"+std::to_string(l.crops_kg)+"|"+
+            std::to_string(l.harvested_food_kg)+"|"+std::to_string(recent)+"|"+
+            std::to_string(l.cycles)+"|"+std::to_string(l.shortages)+"|"+
+            std::to_string(f.production_cycles));
+    }
+    for(const auto& [id,h]:w.habitats()){
+        if(h.source_ship!=ship)continue;
+        const auto* f=w.farm(id);
+        const auto staffed=f?f->workers:0;
+        announce(w,"HABITAT|"+std::to_string(id)+"|"+std::to_string(h.residents)+"|"+
+            std::to_string(h.capacity)+"|"+std::to_string(h.residents+staffed)+"|"+
+            std::to_string(h.life.food_kg)+"|"+std::to_string(h.life.water_kg)+"|"+
+            std::to_string(h.life.oxygen_kg)+"|"+std::to_string(h.cycles)+"|"+
+            std::to_string(h.consecutive_comfort_cycles)+"|"+std::to_string(h.life.shortages));
+    }
+    for(const auto& [id,u]:w.utilities()){
+        if(u.source_ship!=ship)continue;
+        announce(w,"UTILITY|"+std::to_string(id)+"|"+
+            std::to_string(u.condition)+"|"+std::to_string(u.stored_energy)+"|"+
+            std::to_string(u.powered?1:0)+"|"+
+            std::to_string(u.cycles)+"|"+
+            std::to_string(u.consecutive_powered_cycles)+"|"+
+            std::to_string(u.outages)+"|"+std::to_string(u.repairs));
+        announce(w,"MAINTENANCE|"+std::to_string(id)+"|"+
+            std::to_string(u.spare_modules)+"|"+std::to_string(u.technicians)+"|"+
+            std::to_string(u.delegated_maintenance?1:0)+"|"+
+            std::to_string(u.delegated_repairs)+"|"+
+            std::to_string(u.blocked_maintenance_cycles));
+    }
+    for(const auto& [id,c]:w.clinics()){
+        if(c.source_ship!=ship)continue;
+        announce(w,"CLINIC|"+std::to_string(id)+"|"+
+            std::to_string(c.medics)+"|"+std::to_string(c.water_kg)+"|"+
+            std::to_string(c.substrate_kg)+"|"+std::to_string(c.active_cases)+"|"+
+            std::to_string(c.cycles)+"|"+std::to_string(c.consecutive_care_cycles)+"|"+
+            std::to_string(c.shortages)+"|"+std::to_string(c.treated_cases)+"|"+
+            std::to_string(c.recorded_cases));
+    }
+    for(const auto& [id,c]:w.communities()){
+        if(c.source_ship!=ship)continue;
+        announce(w,"COMMUNITY|"+std::to_string(id)+"|"+
+            std::to_string(c.attendants)+"|"+std::to_string(c.food_kg)+"|"+
+            std::to_string(c.water_kg)+"|"+std::to_string(c.cycles)+"|"+
+            std::to_string(c.consecutive_service_cycles)+"|"+
+            std::to_string(c.shortages)+"|"+std::to_string(c.served_visits));
+    }
+    const auto v=w.assess_colony(ship);
+    announce(w,"UTILITY_ASSESS|"+std::to_string(v.powered_outposts)+"|"+
+        std::to_string(v.unpowered_outposts)+"|"+
+        std::to_string(v.utilities_sustained?1:0));
+    announce(w,"MAINTENANCE_ASSESS|"+std::to_string(v.maintenance_spare_modules)+"|"+
+        std::to_string(v.assigned_technicians)+"|"+
+        std::to_string(v.maintenance_blocked_sites)+"|"+
+        std::to_string(v.delegated_maintenance_ready?1:0));
+    announce(w,"HAB_ASSESS|"+std::to_string(v.habitat_residents)+"|"+
+        std::to_string(v.housed_colonists)+"|"+std::to_string(v.housing_capacity)+"|"+
+        std::to_string(v.homeless_outpost_workers)+"|"+
+        std::to_string(v.housing_provisioned?1:0)+"|"+viability_stage_name(v.stage));
+    announce(w,"ASSESS|"+std::to_string(v.crew_total)+"|"+
+        std::to_string(v.farm_workers)+"|"+std::to_string(v.recent_food_production_kg)+"|"+
+        std::to_string(v.recent_food_demand_kg)+"|"+
+        std::to_string(v.sustained_food_surplus?1:0));
+    const auto risk=w.assess_resilience(ship);
+    announce(w,"RESILIENCE|"+std::to_string(risk.onboard_reserve_cycles)+"|"+
+        std::to_string(risk.lowest_site_reserve_cycles)+"|"+
+        std::to_string(risk.occupied_sites)+"|"+
+        std::to_string(risk.sites_with_reserves)+"|"+
+        std::to_string(risk.serviced_sites)+"|"+
+        std::to_string(risk.maintained_sites)+"|"+
+        std::to_string(risk.spare_modules)+"|"+
+        std::to_string(risk.nonmaintenance_residents)+"|"+
+        std::to_string(risk.food_buffer_proven?1:0)+"|"+
+        std::to_string(risk.operational_delegation_candidate?1:0)+"|"+
+        std::to_string(risk.autonomous_growth_ready?1:0)+"|"+
+        std::to_string(risk.blocker_mask));
+    for(const auto& [site,p]:w.reclaimers()){
+        if(p.source_ship!=ship)continue;
+        announce(w,"RECLAIMER|"+std::to_string(site)+"|"+
+            std::to_string(p.water_recovered_total_kg)+"|"+
+            std::to_string(p.oxygen_generated_total_kg)+"|"+
+            std::to_string(p.sludge_kg)+"|"+std::to_string(p.carbon_residue_kg)+"|"+
+            std::to_string(p.cycles)+"|"+std::to_string(p.consecutive_powered_cycles));
+    }
+    for(const auto& [site,p]:w.waterworks_sites()){
+        if(p.source_ship!=ship)continue;
+        announce(w,"WATERWORKS|"+std::to_string(site)+"|"+
+            std::to_string(p.raw_feed_kg)+"|"+std::to_string(p.brine_kg)+"|"+
+            std::to_string(p.purified_total_kg)+"|"+
+            std::to_string(p.cycles)+"|"+std::to_string(p.consecutive_service_cycles));
+    }
+    for(const auto& p:w.assess_policies(ship)){
+        announce(w,"POLICY_AUDIT|"+std::to_string(p.site)+"|"+
+            std::to_string(static_cast<int>(p.domain))+"|"+
+            std::to_string(static_cast<int>(p.declared))+"|"+
+            std::to_string(p.assigned_inspectors)+"|"+
+            std::to_string(p.required_inspectors)+"|"+
+            std::to_string(p.operational_evidence?1:0)+"|"+
+            std::to_string(p.oversight_staffed?1:0)+"|"+
+            std::to_string(p.assurance_supported?1:0));
+    }
+    const auto water=w.assess_water_supply(ship);
+    announce(w,"WATER_SUPPLY|"+std::to_string(water.occupied_sites)+"|"+
+        std::to_string(water.equipped_sites)+"|"+
+        std::to_string(water.measured_sites)+"|"+
+        std::to_string(water.potable_output_last3_kg)+"|"+
+        std::to_string(water.water_demand_last3_kg)+"|"+
+        std::to_string(water.short_window_coverage?1:0)+"|"+
+        std::to_string(water.indefinitely_renewable?1:0));
+    const auto recovery=w.assess_life_recovery(ship);
+    announce(w,"LIFE_RECOVERY|"+std::to_string(recovery.occupied_sites)+"|"+
+        std::to_string(recovery.equipped_sites)+"|"+
+        std::to_string(recovery.measured_sites)+"|"+
+        std::to_string(recovery.water_recovered_last3_kg)+"|"+
+        std::to_string(recovery.oxygen_generated_last3_kg)+"|"+
+        std::to_string(recovery.water_demand_last3_kg)+"|"+
+        std::to_string(recovery.oxygen_demand_last3_kg)+"|"+
+        std::to_string(recovery.sludge_kg)+"|"+
+        std::to_string(recovery.carbon_residue_kg)+"|"+
+        std::to_string(recovery.local_recycling_coverage?1:0)+"|"+
+        std::to_string(recovery.independent_renewal_proven?1:0));
+    announce(w,"CLINIC_ASSESS|"+std::to_string(risk.clinic_supported_sites)+"|"+
+        std::to_string(risk.occupied_sites)+"|"+
+        std::to_string(risk.active_clinical_cases)+"|"+
+        std::to_string(risk.treated_clinical_cases)+"|"+
+        std::to_string(risk.basic_clinic_access_proven?1:0));
+    announce(w,"COMMUNITY_ASSESS|"+std::to_string(risk.community_supported_sites)+"|"+
+        std::to_string(risk.occupied_sites)+"|"+
+        std::to_string(risk.restorative_leisure_proven?1:0));
+    // Emit a complete, bounded inventory refresh only on change; avoid
+    // filling the SSE queue during idle ticks. Only allowlisted names emitted.
+    std::string stocks;
+    for(const auto& [name,kg]:c->minerals_kg)if(kg>0)stocks+="MINERAL|"+name+"|"+std::to_string(kg)+"\n";
+    for(const auto& [name,kg]:c->goods_kg)if(kg>0)stocks+="GOOD|"+name+"|"+std::to_string(kg)+"\n";
+    stocks+="TAILINGS|"+std::to_string(c->tailings_kg)+"\n";
+    static std::string last;
+    if(stocks!=last){
+        announce(w,"STOCK_CLEAR");
+        std::istringstream rows(stocks);std::string row;
+        while(std::getline(rows,row))announce(w,"STOCK|"+row);
+        last=stocks;
+    }
+}
+void scan(const Simulation& w,EntityId ship){
+    const auto* s=w.find(ship);if(!s)return;
+    int found=0;
+    for(const auto& [id,e]:w.entities()){
+        if(e.type!=EntityType::Asteroid)continue;
+        auto dx=e.position.x-s->position.x,dy=e.position.y-s->position.y;
+        if(dx*dx+dy*dy>sensor_mm*sensor_mm)continue;
+        ++found;
+        if(const auto* g=w.geology(id)){
+            announce(w,"ROCK|"+std::to_string(id)+"|"+std::to_string(static_cast<int>(g->taxonomy))+"|"+
+                std::to_string(g->radius_m)+"|"+std::to_string(g->density_kg_m3)+"|"+
+                std::to_string(g->original_tonnes)+"|"+std::to_string(e.ore));
+            for(const auto& mineral:mineral_profile(g->taxonomy))
+                announce(w,"MINERAL|"+std::to_string(id)+"|"+mineral.name+"|"+std::to_string(mineral.permille));
+        }else announce(w,"SMALL_ROCK|"+std::to_string(id)+"|"+std::to_string(e.ore));
+    }
+    announce(w,"SCAN_DONE|"+std::to_string(found));
+}
+EntityId nearest(const Simulation& w, EntityId ship){
+    const auto* s=w.find(ship);if(!s)return 0;
+    EntityId chosen=0;std::int64_t best=std::numeric_limits<std::int64_t>::max();
+    for(const auto& [id,e]:w.entities())if(e.type==EntityType::Asteroid){
+        auto dx=e.position.x-s->position.x,dy=e.position.y-s->position.y;
+        const auto dist=dx*dx+dy*dy;
+        if(dist<best){best=dist;chosen=id;}
+    }
+    return chosen;
+}
+void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uint64_t& nonce){
+    const auto v=split(line);if(v.empty())return;
+    if(v.size()==1 && v[0]=="SCAN") {scan(world.world(),ship);return;}
+    Command c{};c.issuer=owner;c.actor=ship;c.execute_tick=world.world().tick()+1;
+    c.id=++nonce;c.sequence=c.id;
+    try {
+        if(v.size()==3 && v[0]=="THRUST"){
+            auto x=integer(v[1]),y=integer(v[2]);
+            if(x<-1||x>1||y<-1||y>1)throw std::invalid_argument("bad thrust");
+            c.action=Action::Thrust;c.thrust_x=static_cast<int>(x);c.thrust_y=static_cast<int>(y);
+        }else if(v.size()==2 && v[0]=="MINE"){
+            c.amount=integer(v[1]);if(c.amount<1||c.amount>100)throw std::invalid_argument("bad mine amount");
+            c.action=Action::Mine;c.target=nearest(world.world(),ship);
+        }else if(v.size()==3 && v[0]=="MINE_TARGET"){
+            c.target=static_cast<EntityId>(integer(v[1]));
+            c.amount=integer(v[2]);
+            if(!c.target||c.target>100000000 || c.amount<1||c.amount>100)
+                throw std::invalid_argument("bad mineral target");
+            c.action=Action::Mine;
+        }else if(v.size()==3 && v[0]=="PROCESS"){
+            c.amount=integer(v[2]);
+            if(c.amount<1||c.amount>100000)throw std::invalid_argument("bad processing quantity");
+            c.target=0;
+            for(std::uint64_t i=1;i<=11;++i)if(v[1]==mineral_name(i))c.target=i;
+            if(!c.target||c.target==9)throw std::invalid_argument("unrefinable mineral");
+            c.action=Action::RefineMineral;
+        }else if(v.size()==3 && v[0]=="FABRICATE_MATERIAL"){
+            c.amount=integer(v[2]);
+            if(c.amount<1||c.amount>1000 || (v[1]!="alloy" && v[1]!="aluminum"))
+                throw std::invalid_argument("bad material recipe");
+            c.target=v[1]=="alloy"?1:2;c.action=Action::FabricateMaterialModule;
+        }else if(v.size()==2 && (v[0]=="PLANT" || v[0]=="HARVEST" ||
+             v[0]=="RECYCLE_WATER" || v[0]=="RECYCLE_COMPOST" ||
+             v[0]=="OXYGEN" || v[0]=="LIFE_WATER")) {
+            c.amount=integer(v[1]);
+            if(c.amount<1 || c.amount>(v[0]=="LIFE_WATER"?100:10000))
+                throw std::invalid_argument("invalid life-support batch");
+            c.action=v[0]=="PLANT"?Action::PlantCrops:
+              v[0]=="HARVEST"?Action::HarvestCrops:
+              v[0]=="RECYCLE_WATER"?Action::RecycleWater:
+              v[0]=="RECYCLE_COMPOST"?Action::RecycleCompost:
+              v[0]=="OXYGEN"?Action::ProduceOxygen:Action::LoadLifeWater;
+        }else if(v.size()==2 && v[0]=="FARM_BUILD"){
+            c.target=static_cast<EntityId>(integer(v[1]));
+            if(!c.target || c.target>100000000)throw std::invalid_argument("bad outpost");
+            c.action=Action::ConstructFarm;c.amount=1;
+        }else if(v.size()==3 && v[0]=="FARM_STAFF"){
+            c.target=static_cast<EntityId>(integer(v[1]));c.amount=integer(v[2]);
+            if(!c.target || c.target>100000000 || c.amount==0 ||
+               c.amount<-8 || c.amount>8)throw std::invalid_argument("bad farm assignment");
+            c.action=Action::AssignFarmWorkers;
+        }else if(v.size()==4 && v[0]=="FARM_STOCK"){
+            c.target=static_cast<EntityId>(integer(v[1]));c.amount=integer(v[3]);
+            if(!c.target || c.target>100000000 || c.amount==0 ||
+               c.amount<-10000 || c.amount>10000)throw std::invalid_argument("bad stock amount");
+            const char* stocks[]={"food","water","oxygen","nutrients","co2"};
+            for(int i=0;i<5;++i)if(v[2]==stocks[i])c.thrust_x=i+1;
+            if(!c.thrust_x)throw std::invalid_argument("bad stock resource");
+            c.action=Action::TransferFarmStock;
+        }else if(v.size()==4 && (v[0]=="POLICY_SET" || v[0]=="POLICY_STAFF")){
+            const auto id=integer(v[1]),domain=integer(v[2]),value=integer(v[3]);
+            if(id<1 || id>100000000 || domain<0 || domain>3 || value<0 || value>3)
+                throw std::invalid_argument("invalid policy request");
+            c.target=static_cast<EntityId>(id);c.thrust_x=static_cast<int>(domain);
+            c.amount=value;
+            c.action=v[0]=="POLICY_SET"?Action::SetPolicyAssurance:Action::AssignPolicyInspectors;
+        }else if(v.size()==2 && v[0]=="WATERWORKS_BUILD"){
+            c.target=static_cast<EntityId>(integer(v[1]));
+            if(!c.target || c.target>100000000)throw std::invalid_argument("bad waterworks site");
+            c.action=Action::ConstructWaterworks;c.amount=1;
+        }else if(v.size()==3 && v[0]=="WATERWORKS_FEED"){
+            c.target=static_cast<EntityId>(integer(v[1]));c.amount=integer(v[2]);
+            if(!c.target || c.target>100000000 || !c.amount ||
+               c.amount%1000 || c.amount<-10000 || c.amount>10000)
+                throw std::invalid_argument("bad sealed water delivery");
+            c.action=Action::TransferWaterworksFeed;
+        }else if(v.size()==2 && v[0]=="RECLAIMER_BUILD"){
+            c.target=static_cast<EntityId>(integer(v[1]));
+            if(!c.target || c.target>100000000)throw std::invalid_argument("bad reclaimer site");
+            c.action=Action::ConstructReclaimer;c.amount=1;
+        }else if(v.size()==2 && v[0]=="CLINIC_BUILD"){
+            c.target=static_cast<EntityId>(integer(v[1]));
+            if(!c.target || c.target>100000000)throw std::invalid_argument("bad clinic site");
+            c.action=Action::ConstructClinic;c.amount=1;
+        }else if(v.size()==3 && v[0]=="CLINIC_STAFF"){
+            c.target=static_cast<EntityId>(integer(v[1]));c.amount=integer(v[2]);
+            if(!c.target || c.target>100000000 || c.amount<0 || c.amount>4)
+                throw std::invalid_argument("bad clinic medics");
+            c.action=Action::AssignClinicStaff;
+        }else if(v.size()==4 && v[0]=="CLINIC_STOCK"){
+            c.target=static_cast<EntityId>(integer(v[1]));c.amount=integer(v[3]);
+            if(!c.target || c.target>100000000 || !c.amount ||
+               c.amount<-10000 || c.amount>10000)throw std::invalid_argument("bad care supply count");
+            c.thrust_x=v[2]=="water"?1:v[2]=="substrate"?2:0;
+            if(!c.thrust_x)throw std::invalid_argument("bad care resource");
+            c.action=Action::TransferClinicStock;
+        }else if(v.size()==2 && v[0]=="COMMUNITY_BUILD"){
+            c.target=static_cast<EntityId>(integer(v[1]));
+            if(!c.target || c.target>100000000)throw std::invalid_argument("bad hall site");
+            c.action=Action::ConstructCommunity;c.amount=1;
+        }else if(v.size()==3 && v[0]=="COMMUNITY_STAFF"){
+            c.target=static_cast<EntityId>(integer(v[1]));c.amount=integer(v[2]);
+            if(!c.target || c.target>100000000 || c.amount<0 || c.amount>4)
+                throw std::invalid_argument("bad hall staff");
+            c.action=Action::AssignCommunityStaff;
+        }else if(v.size()==4 && v[0]=="COMMUNITY_STOCK"){
+            c.target=static_cast<EntityId>(integer(v[1]));c.amount=integer(v[3]);
+            if(!c.target || c.target>100000000 || !c.amount ||
+               c.amount<-10000 || c.amount>10000)throw std::invalid_argument("bad hall stock");
+            c.thrust_x=v[2]=="food"?1:v[2]=="water"?2:0;
+            if(!c.thrust_x)throw std::invalid_argument("bad hall resource");
+            c.action=Action::TransferCommunityStock;
+        }else if(v.size()==2 && (v[0]=="UTILITY_BUILD" || v[0]=="UTILITY_REPAIR")){
+            c.target=static_cast<EntityId>(integer(v[1]));
+            if(!c.target || c.target>100000000)throw std::invalid_argument("bad utility site");
+            c.action=v[0]=="UTILITY_BUILD"?Action::ConstructUtility:Action::RepairUtility;
+            c.amount=1;
+        }else if(v.size()==3 &&
+           (v[0]=="UTILITY_SPARES" || v[0]=="UTILITY_STAFF" || v[0]=="UTILITY_AUTO")){
+            c.target=static_cast<EntityId>(integer(v[1]));c.amount=integer(v[2]);
+            if(!c.target || c.target>100000000)throw std::invalid_argument("bad utility site");
+            if(v[0]=="UTILITY_SPARES"){
+                if(!c.amount || c.amount<-32 || c.amount>32)
+                    throw std::invalid_argument("bad spare delivery count");
+                c.action=Action::TransferUtilitySpares;
+            }else if(v[0]=="UTILITY_STAFF"){
+                if(c.amount<0 || c.amount>8)
+                    throw std::invalid_argument("bad technician assignment");
+                c.action=Action::AssignUtilityTechnicians;
+            }else{
+                if(c.amount<0 || c.amount>1)throw std::invalid_argument("bad maintenance policy");
+                c.action=Action::SetUtilityMaintenance;
+            }
+        }else if(v.size()==2 && v[0]=="HAB_BUILD"){
+            c.target=static_cast<EntityId>(integer(v[1]));
+            if(!c.target || c.target>100000000)throw std::invalid_argument("bad habitat site");
+            c.action=Action::ConstructHabitat;c.amount=1;
+        }else if(v.size()==3 && v[0]=="HAB_RESIDENTS"){
+            c.target=static_cast<EntityId>(integer(v[1]));c.amount=integer(v[2]);
+            if(!c.target || c.target>100000000 || !c.amount ||
+               c.amount<-8 || c.amount>8)throw std::invalid_argument("bad residents");
+            c.action=Action::AssignHabitatResidents;
+        }else if(v.size()==4 && v[0]=="HAB_STOCK"){
+            c.target=static_cast<EntityId>(integer(v[1]));c.amount=integer(v[3]);
+            if(!c.target || c.target>100000000 || !c.amount ||
+               c.amount<-10000 || c.amount>10000)throw std::invalid_argument("bad habitat stock");
+            const char* stocks[]={"food","water","oxygen"};
+            for(int i=0;i<3;++i)if(v[2]==stocks[i])c.thrust_x=i+1;
+            if(!c.thrust_x)throw std::invalid_argument("bad habitat resource");
+            c.action=Action::TransferHabitatStock;
+        }else if(v.size()==2 && (v[0]=="REFINE"||v[0]=="FABRICATE")){
+            c.amount=integer(v[1]);if(c.amount<1||c.amount>1000)throw std::invalid_argument("bad amount");
+            c.action=v[0]=="REFINE"?Action::RefineOre:Action::FabricateModule;
+        }else if(v.size()==1 && v[0]=="BUILD"){
+            c.action=Action::ConstructOutpost;c.amount=1;
+        }else throw std::invalid_argument("bad command");
+        if(!world.submit(c))throw std::invalid_argument("rejected submission");
+        // The host emits the result only after the next committed tick.
+    }catch(const std::exception&){announce(world.world(),"ERROR|INVALID_INPUT");}
+}
+}
+int main(int argc,char** argv){
+    if(argc!=4){std::cerr<<"usage: galaxy_colony_live_host SAVE.sqlite TICK_MS MAX_TICKS\n";return 2;}
+    try{
+#ifdef _WIN32
+        if(_setmode(_fileno(stdout),_O_BINARY)==-1)throw std::runtime_error("binary stdout failed");
+#endif
+        auto ms=integer(argv[2]),max_ticks=integer(argv[3]);
+        if(ms<20||ms>5000||max_ticks<5||max_ticks>1200)throw std::invalid_argument("invalid run limits");
+        Simulation genesis(0xB70B);
+        const auto ship=genesis.add_colony_ship(owner,{0,0},60,24);
+        genesis.provision_colony_genesis(ship,1000,3000,1000,1000,1000);
+        genesis.add_asteroid({2000,1000},40); // small reachable starter resource
+        genesis.add_asteroid({15000,1000},30);
+        genesis.add_geological_asteroid({140000,0},AsteroidClass::Carbonaceous,70,1700);
+        genesis.add_geological_asteroid({320000,90000},AsteroidClass::Silicate,95,2900);
+        genesis.add_geological_asteroid({-220000,-90000},AsteroidClass::Metallic,55,5700);
+        // No stations, other ships, markets, factions or gates at start.
+        const bool was_saved=fs::exists(argv[1]);
+        PersistentWorld world(argv[1],std::move(genesis));
+        if(!world.world().colony_ship(ship)||world.world().find(ship)->owner_id!=owner)
+            throw std::runtime_error("not a colony start save");
+        std::random_device rd;auto stream=(std::uint64_t(rd())<<32)^rd();if(!stream)stream=1;
+        ServerViewBridge bridge(world.world(),stream,owner);
+        std::cout<<encode_frame(bridge.snapshot())<<std::flush;
+        announce(world.world(),was_saved?"RESUMED":"NEW_COLONY");
+        status(world.world(),ship);scan(world.world(),ship);
+        std::uint64_t nonce=900000000000ULL+world.generation();
+        const auto period=std::chrono::milliseconds(ms);
+        for(int i=0;i<max_ticks;++i){
+            const auto start=Clock::now();
+            poll_input();
+            const auto to_apply=std::move(commands);commands.clear();
+            for(const auto& line:to_apply)apply(world,ship,line,nonce);
+            const auto old=world.world().events().size();
+            world.step();
+            for(std::size_t ix=old;ix<world.world().events().size();++ix){
+                const auto& ev=world.world().events()[ix];
+                announce(world.world(),"RESULT|"+std::to_string(ev.command_id)+"|"+
+                    to_string(ev.result)+"|"+std::to_string(ev.transferred));
+            }
+            std::cout<<encode_frame(bridge.after_committed_step(world.world()))<<std::flush;
+            status(world.world(),ship);
+            std::this_thread::sleep_until(start+period);
+        }
+        std::cerr<<"B7_0E COLONY HOST COMPLETED generation="<<world.generation()<<'\n';
+        return 0;
+    }catch(const std::exception& e){std::cerr<<"B7_0E COLONY HOST FAILED "<<e.what()<<'\n';return 1;}
+}

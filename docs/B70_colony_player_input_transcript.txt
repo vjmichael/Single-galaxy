@@ -1,0 +1,20 @@
+NEW_COLONY one colony ship, 24 colonists, no prebuilt infrastructure
+Commands: status, scan, mine <asteroid_id> <1..1000>, refine <1..1000>, fabricate <1..1000>, build, thrust <-1..1> <-1..1>, dock <station_id>, undock, step <1..50>, help, quit
+STATUS tick=0 ship=1 position=(0,0) velocity=(0,0)
+  crew=24 raw_ore=0 refined=0 modules=0 loaded_mass=0/60 outposts=0 total_ore_equivalent=170
+SCAN radius=25000 mm (local development range)
+  asteroid=2 ore=40 position=(2000,1000)
+  asteroid=3 ore=30 position=(15000,0)
+RESULT APPLIED transfer=8
+STATUS tick=1 ship=1 position=(0,0) velocity=(0,0)
+  crew=24 raw_ore=8 refined=0 modules=0 loaded_mass=8/60 outposts=0 total_ore_equivalent=170
+RESULT APPLIED transfer=8
+STATUS tick=2 ship=1 position=(0,0) velocity=(0,0)
+  crew=24 raw_ore=0 refined=8 modules=0 loaded_mass=8/60 outposts=0 total_ore_equivalent=170
+RESULT APPLIED transfer=8
+STATUS tick=3 ship=1 position=(0,0) velocity=(0,0)
+  crew=24 raw_ore=0 refined=0 modules=4 loaded_mass=8/60 outposts=0 total_ore_equivalent=170
+RESULT APPLIED transfer=8
+STATUS tick=4 ship=1 position=(0,0) velocity=(0,0)
+  crew=24 raw_ore=0 refined=0 modules=0 loaded_mass=0/60 outposts=1 total_ore_equivalent=170
+SAVE_CLOSED generation=9

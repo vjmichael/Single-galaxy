@@ -1,0 +1,10 @@
+Internal ctest changing into directory: /mnt/data/sg_b70j/clean_extract/single_galaxy/build
+Test project /mnt/data/sg_b70j/clean_extract/single_galaxy/build
+    Start 44: galaxy_b70j_community_tests
+1/2 Test #44: galaxy_b70j_community_tests ........   Passed    0.12 sec
+    Start 45: galaxy_b70j_live_community_relay
+2/2 Test #45: galaxy_b70j_live_community_relay ...   Passed    3.36 sec
+
+100% tests passed, 0 tests failed out of 2
+
+Total Test time (real) =   3.48 sec

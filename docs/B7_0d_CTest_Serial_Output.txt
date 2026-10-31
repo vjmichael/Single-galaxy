@@ -1,0 +1,87 @@
+Internal ctest changing into directory: /mnt/data/SingleGalaxy_B7_0d_Agriculture_LifeSupport/build
+Test project /mnt/data/SingleGalaxy_B7_0d_Agriculture_LifeSupport/build
+      Start  1: galaxy_kernel_tests
+ 1/33 Test  #1: galaxy_kernel_tests .......................   Passed    0.00 sec
+      Start  2: galaxy_persistence_tests
+ 2/33 Test  #2: galaxy_persistence_tests ..................   Passed    0.37 sec
+      Start  3: galaxy_client_contract_tests
+ 3/33 Test  #3: galaxy_client_contract_tests ..............   Passed    0.04 sec
+      Start  4: galaxy_mining_lifecycle_tests
+ 4/33 Test  #4: galaxy_mining_lifecycle_tests .............   Passed    0.09 sec
+      Start  5: galaxy_station_lifecycle_tests
+ 5/33 Test  #5: galaxy_station_lifecycle_tests ............   Passed    0.12 sec
+      Start  6: galaxy_b52_station_live_e2e
+ 6/33 Test  #6: galaxy_b52_station_live_e2e ...............   Passed    9.21 sec
+      Start  7: galaxy_b53_logistics_tests
+ 7/33 Test  #7: galaxy_b53_logistics_tests ................   Passed    0.15 sec
+      Start  8: galaxy_b53_live_logistics_e2e
+ 8/33 Test  #8: galaxy_b53_live_logistics_e2e .............   Passed    9.12 sec
+      Start  9: galaxy_b54_b60_geography_scanning_tests
+ 9/33 Test  #9: galaxy_b54_b60_geography_scanning_tests ...   Passed    0.01 sec
+      Start 10: galaxy_b54_navigation_tests
+10/33 Test #10: galaxy_b54_navigation_tests ...............   Passed    0.08 sec
+      Start 11: galaxy_b61_live_scanning_e2e
+11/33 Test #11: galaxy_b61_live_scanning_e2e ..............   Passed    8.12 sec
+      Start 12: galaxy_b62a_gate_transit_tests
+12/33 Test #12: galaxy_b62a_gate_transit_tests ............   Passed    0.00 sec
+      Start 13: galaxy_b62b_durable_jumps_tests
+13/33 Test #13: galaxy_b62b_durable_jumps_tests ...........   Passed    0.07 sec
+      Start 14: galaxy_b62c_projection_tests
+14/33 Test #14: galaxy_b62c_projection_tests ..............   Passed    0.02 sec
+      Start 15: galaxy_b62c_live_multisystem_e2e
+15/33 Test #15: galaxy_b62c_live_multisystem_e2e ..........   Passed    6.52 sec
+      Start 16: galaxy_b62c_relay_gate_controls
+16/33 Test #16: galaxy_b62c_relay_gate_controls ...........   Passed    4.07 sec
+      Start 17: galaxy_b63_live_routes_history_e2e
+17/33 Test #17: galaxy_b63_live_routes_history_e2e ........   Passed    3.56 sec
+      Start 18: galaxy_b63_relay_route_controls
+18/33 Test #18: galaxy_b63_relay_route_controls ...........   Passed    3.32 sec
+      Start 19: galaxy_b64_region_tests
+19/33 Test #19: galaxy_b64_region_tests ...................   Passed    0.00 sec
+      Start 20: galaxy_b64_live_multihop_e2e
+20/33 Test #20: galaxy_b64_live_multihop_e2e ..............   Passed    9.52 sec
+      Start 21: galaxy_b65_gate_disruption_tests
+21/33 Test #21: galaxy_b65_gate_disruption_tests ..........   Passed    0.03 sec
+      Start 22: galaxy_b65_live_gate_qa_e2e
+22/33 Test #22: galaxy_b65_live_gate_qa_e2e ...............   Passed   11.75 sec
+      Start 23: galaxy_b65_relay_qa_controls
+23/33 Test #23: galaxy_b65_relay_qa_controls ..............   Passed    8.44 sec
+      Start 24: galaxy_b66_gate_operations_tests
+24/33 Test #24: galaxy_b66_gate_operations_tests ..........   Passed    0.04 sec
+      Start 25: galaxy_b66_live_gate_telemetry
+25/33 Test #25: galaxy_b66_live_gate_telemetry ............   Passed    1.57 sec
+      Start 26: galaxy_b70_colony_core_tests
+26/33 Test #26: galaxy_b70_colony_core_tests ..............   Passed    0.02 sec
+      Start 27: galaxy_b70_colony_cli_e2e
+27/33 Test #27: galaxy_b70_colony_cli_e2e .................   Passed    0.73 sec
+      Start 28: galaxy_b70b_geology_tests
+28/33 Test #28: galaxy_b70b_geology_tests .................   Passed    0.02 sec
+      Start 29: galaxy_b70b_live_colony_e2e
+29/33 Test #29: galaxy_b70b_live_colony_e2e ...............***Failed    0.95 sec
+Traceback (most recent call last):
+  File "/mnt/data/SingleGalaxy_B7_0d_Agriculture_LifeSupport/tests/B70bLiveColonyTests.py", line 110, in <module>
+    a=p.parse_args();check(a.host,a.relay)
+                     ~~~~~^^^^^^^^^^^^^^^^
+  File "/mnt/data/SingleGalaxy_B7_0d_Agriculture_LifeSupport/tests/B70bLiveColonyTests.py", line 99, in check
+    assert snapshot.startswith('galaxy-kernel-v8|'),snapshot[:60]
+           ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+AssertionError: galaxy-kernel-v10|1|14|8|46859
+system|1
+entity|1|1|0|7|0|0|0
+
+      Start 30: galaxy_b70c_mineral_industry_tests
+30/33 Test #30: galaxy_b70c_mineral_industry_tests ........   Passed    0.03 sec
+      Start 31: galaxy_b70c_live_mineral_relay
+31/33 Test #31: galaxy_b70c_live_mineral_relay ............   Passed    1.64 sec
+      Start 32: galaxy_b70d_life_support_tests
+32/33 Test #32: galaxy_b70d_life_support_tests ............   Passed    0.04 sec
+      Start 33: galaxy_b70d_live_agriculture_relay
+33/33 Test #33: galaxy_b70d_live_agriculture_relay ........   Passed    2.75 sec
+
+97% tests passed, 1 tests failed out of 33
+
+Total Test time (real) =  82.43 sec
+
+The following tests FAILED:
+	 29 - galaxy_b70b_live_colony_e2e (Failed)
+Errors while running CTest

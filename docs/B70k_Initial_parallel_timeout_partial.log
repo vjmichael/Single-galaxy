@@ -1,0 +1,38 @@
+Internal ctest changing into directory: /mnt/data/sg_b70k/build
+Test project /mnt/data/sg_b70k/build
+      Start 22: galaxy_b65_live_gate_qa_e2e
+      Start 20: galaxy_b64_live_multihop_e2e
+      Start  8: galaxy_b53_live_logistics_e2e
+      Start  6: galaxy_b52_station_live_e2e
+ 1/47 Test  #6: galaxy_b52_station_live_e2e ...............   Passed    8.97 sec
+      Start 23: galaxy_b65_relay_qa_controls
+ 2/47 Test  #8: galaxy_b53_live_logistics_e2e .............   Passed    9.20 sec
+      Start 11: galaxy_b61_live_scanning_e2e
+ 3/47 Test #20: galaxy_b64_live_multihop_e2e ..............   Passed    9.65 sec
+      Start 15: galaxy_b62c_live_multisystem_e2e
+ 4/47 Test #22: galaxy_b65_live_gate_qa_e2e ...............   Passed   11.87 sec
+      Start 16: galaxy_b62c_relay_gate_controls
+ 5/47 Test #16: galaxy_b62c_relay_gate_controls ...........   Passed    4.05 sec
+      Start 37: galaxy_b70f_live_habitat_relay
+ 6/47 Test #15: galaxy_b62c_live_multisystem_e2e ..........   Passed    6.61 sec
+      Start 41: galaxy_b70h_live_maintenance_relay
+ 7/47 Test #23: galaxy_b65_relay_qa_controls ..............   Passed    8.59 sec
+      Start 45: galaxy_b70j_live_community_relay
+ 8/47 Test #11: galaxy_b61_live_scanning_e2e ..............   Passed    8.44 sec
+      Start 17: galaxy_b63_live_routes_history_e2e
+ 9/47 Test #37: galaxy_b70f_live_habitat_relay ............   Passed    3.90 sec
+      Start 47: galaxy_b70k_live_clinic_relay
+10/47 Test #41: galaxy_b70h_live_maintenance_relay ........   Passed    3.70 sec
+      Start 39: galaxy_b70g_live_utility_relay
+11/47 Test #45: galaxy_b70j_live_community_relay ..........   Passed    3.51 sec
+      Start 18: galaxy_b63_relay_route_controls
+12/47 Test #17: galaxy_b63_live_routes_history_e2e ........   Passed    3.54 sec
+      Start 43: galaxy_b70i_live_resilience_relay
+13/47 Test #47: galaxy_b70k_live_clinic_relay .............   Passed    3.31 sec
+      Start 33: galaxy_b70d_live_agriculture_relay
+14/47 Test #39: galaxy_b70g_live_utility_relay ............   Passed    3.26 sec
+      Start 35: galaxy_b70e_live_farm_relay
+15/47 Test #18: galaxy_b63_relay_route_controls ...........   Passed    3.36 sec
+      Start 29: galaxy_b70b_live_colony_e2e
+16/47 Test #43: galaxy_b70i_live_resilience_relay .........   Passed    3.32 sec
+      Start 31: galaxy_b70c_live_mineral_relay

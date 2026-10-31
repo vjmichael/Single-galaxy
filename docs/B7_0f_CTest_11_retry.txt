@@ -1,0 +1,8 @@
+Internal ctest changing into directory: /mnt/data/SingleGalaxy_B7_0f_Habitation_Provisioning/build
+Test project /mnt/data/SingleGalaxy_B7_0f_Habitation_Provisioning/build
+    Start 11: galaxy_b61_live_scanning_e2e
+1/1 Test #11: galaxy_b61_live_scanning_e2e .....   Passed    8.20 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Total Test time (real) =   8.20 sec

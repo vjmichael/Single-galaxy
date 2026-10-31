@@ -1,0 +1,15 @@
+[1/15] Building CXX object CMakeFiles/galaxy_kernel.dir/src/Simulation.cpp.o
+[2/15] Linking CXX static library libgalaxy_kernel.a
+[3/15] Linking CXX executable galaxy_persistence_demo
+[4/15] Linking CXX executable galaxy_client_stream_demo
+[5/15] Linking CXX executable galaxy_recover_copy
+[6/15] Linking CXX executable galaxy_persistence_benchmark
+[7/15] Linking CXX executable galaxy_client_wire_producer
+[8/15] Linking CXX executable galaxy_live_scenario_host
+[9/15] Linking CXX executable galaxy_client_wire_consumer
+[10/15] Linking CXX executable galaxy_visual_scenario_recorder
+[11/15] Linking CXX executable galaxy_interactive_host
+[12/15] Linking CXX executable galaxy_survey_demo
+[13/15] Linking CXX executable galaxy_multisystem_demo
+[14/15] Linking CXX executable galaxy_colony_cli
+[15/15] Linking CXX executable galaxy_colony_live_host

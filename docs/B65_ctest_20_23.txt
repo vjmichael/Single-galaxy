@@ -1,0 +1,14 @@
+Internal ctest changing into directory: /mnt/data/SingleGalaxy_B6_5_Gate_Disruption_QA/build
+Test project /mnt/data/SingleGalaxy_B6_5_Gate_Disruption_QA/build
+    Start 20: galaxy_b64_live_multihop_e2e
+1/4 Test #20: galaxy_b64_live_multihop_e2e .......   Passed    9.89 sec
+    Start 21: galaxy_b65_gate_disruption_tests
+2/4 Test #21: galaxy_b65_gate_disruption_tests ...   Passed    0.04 sec
+    Start 22: galaxy_b65_live_gate_qa_e2e
+3/4 Test #22: galaxy_b65_live_gate_qa_e2e ........   Passed   12.05 sec
+    Start 23: galaxy_b65_relay_qa_controls
+4/4 Test #23: galaxy_b65_relay_qa_controls .......   Passed    9.07 sec
+
+100% tests passed, 0 tests failed out of 4
+
+Total Test time (real) =  31.06 sec

@@ -1,0 +1,28 @@
+Internal ctest changing into directory: /mnt/data/sg_b70j/build
+Test project /mnt/data/sg_b70j/build
+      Start 24: galaxy_b66_gate_operations_tests
+      Start 25: galaxy_b66_live_gate_telemetry
+ 1/11 Test #24: galaxy_b66_gate_operations_tests .....   Passed    0.06 sec
+      Start 26: galaxy_b70_colony_core_tests
+ 2/11 Test #26: galaxy_b70_colony_core_tests .........   Passed    0.02 sec
+      Start 27: galaxy_b70_colony_cli_e2e
+ 3/11 Test #27: galaxy_b70_colony_cli_e2e ............   Passed    0.74 sec
+      Start 28: galaxy_b70b_geology_tests
+ 4/11 Test #28: galaxy_b70b_geology_tests ............   Passed    0.02 sec
+      Start 29: galaxy_b70b_live_colony_e2e
+ 5/11 Test #25: galaxy_b66_live_gate_telemetry .......   Passed    1.78 sec
+      Start 30: galaxy_b70c_mineral_industry_tests
+ 6/11 Test #30: galaxy_b70c_mineral_industry_tests ...   Passed    0.02 sec
+      Start 31: galaxy_b70c_live_mineral_relay
+ 7/11 Test #29: galaxy_b70b_live_colony_e2e ..........   Passed    2.42 sec
+      Start 32: galaxy_b70d_life_support_tests
+ 8/11 Test #32: galaxy_b70d_life_support_tests .......   Passed    0.06 sec
+      Start 33: galaxy_b70d_live_agriculture_relay
+ 9/11 Test #31: galaxy_b70c_live_mineral_relay .......   Passed    1.73 sec
+      Start 34: galaxy_b70e_colony_farms_tests
+10/11 Test #34: galaxy_b70e_colony_farms_tests .......   Passed    0.13 sec
+11/11 Test #33: galaxy_b70d_live_agriculture_relay ...   Passed    2.85 sec
+
+100% tests passed, 0 tests failed out of 11
+
+Total Test time (real) =   6.18 sec

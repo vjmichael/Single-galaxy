@@ -1,0 +1,69 @@
+Call #,Service Domain,Client Call (CallReq),Server Response (CallRsp/Notify),Direction,Protocol Type,Server Module,EVE XMLP Definition,Status,Reason/Notes
+1,Startup,GetVersion,VersionExchangeServer,C→S then S→C,CALL_REQ/RESPONSE,src/eve-server/Client.cpp _GetVersion,VersionExchange.xmlp,CONFIRMED WORKING,Client sends version string; server validates and returns supported version
+2,Startup,VerifyCrypto,CryptoHandshakeResult,C→S then S→C,CALL_REQ/RESPONSE,src/eve-server/Client.cpp _VerifyCrypto;_VerifyLogin,Crypto.xmlp,CONFIRMED WORKING,Full crypto key exchange for session encryption
+3,Startup,AuthenticationReq,AuthenticationRsp,C→S then S→C,CALL_REQ/RESPONSE,src/eve-common/network/EVEPktDispatch.h,Authentication.xmlp,CONFIRMED WORKING,Username+password auth; returns session token
+4,Startup,SelectCharacter,SESSIONINITIALSTATENOTIFICATION,C→S then S→C,CALL_REQ + NOTIFY,src/eve-server/Client.cpp InitSession,Session.xmlp,CONFIRMED WORKING,Full session state: charID stationID corpid roles ship location
+5,Character,CreateCharacter,CharacterCreated,C→S then S→C,CALL_REQ/RESPONSE,src/eve-server/character/,Character.xmlp,CONFIRMED WORKING,Name race bloodline appearance; returns new characterID
+6,Character,GetSkillList,PyDict (skills),C→S then S→C,CALL_REQ/RESPONSE,src/eve-server/character/,Skills.xmlp,CONFIRMED WORKING,All skill IDs with levels and training progress
+7,Character,StartTraining,TrainingStarted (endTime),C→S then S→C,CALL_REQ/RESPONSE,src/eve-server/character/,Skills.xmlp,CONFIRMED WORKING,Begin skill queue training; returns completion time
+8,Character,StopTraining,[acknowledgment],C→S then S→C,CALL_REQ/RESPONSE,src/eve-server/character/,Skills.xmlp,CONFIRMED WORKING,Pause skill queue
+9,Character,GetCharacterInfo,PyDict (attributes),C→S then S→C,CALL_REQ/RESPONSE,src/eve-server/character/,Character.xmlp,CONFIRMED WORKING,Base attributes + bonuses
+10,Movement,Destiny.SetDest,DoDestinyUpdate,C→S then S→C,CALL_REQ + NOTIFY,src/eve-common/destiny/ + Client.cpp SetDest,Destiny.xmlp,CONFIRMED WORKING,Travel to absolute position (x y z); server validates range
+11,Movement,Destiny.SetState(STOP),DoDestinyUpdate,C→S then S→C,CALL_REQ + NOTIFY,src/eve-common/destiny/,Destiny.xmlp,CONFIRMED WORKING,Emergency stop; velocity to zero
+12,Movement,Destiny.SetState(ORBIT),DoDestinyUpdate,C→S then S→C,CALL_REQ + NOTIFY,src/eve-common/destiny/,Destiny.xmlp,CONFIRMED WORKING,Orbit target entity at specified range
+13,Movement,Destiny.SetState(WARP),SetState + effects,C→S then S→C,CALL_REQ + NOTIFY,src/eve-server/Client.cpp WarpIn WarpOut,Destiny.xmlp,CONFIRMED WORKING,Warp to destination with phase-based timing
+14,Movement,RequestJump,JumpIn+JumpOut effects,C→S then S→C,CALL_REQ + NOTIFY,src/eve-server/Client.cpp StargateJump,Stargate.xmlp,CONFIRMED WORKING,Stargate jump between systems
+15,Movement,Dock(stationID),Docking sequence,C→S then S→C,CALL_REQ + NOTIFY,src/eve-server/Client.cpp DockToStation,Station.xmlp,CONFIRMED WORKING,Dock at station; full undock/dock protocol
+16,Movement,Undock,[server-triggered],S→C,NOTIFY,src/eve-server/Client.cpp UndockFromStation,Station.xmlp,CONFIRMED WORKING,Server initiates undock with invulnerability
+17,Movement,[Passive - receive],MOVEMENTNOTIFICATION (type 100),S→C,NOTIFY,src/eve-server/EntityList.cpp,packet_types.h,CONFIRMED WORKING,1Hz position+velocity updates for all visible entities
+18,Movement,[Passive - receive],SetState (full snapshot),S→C,NOTIFY,src/eve-server/system/SystemManager,Destiny.xmlp,CONFIRMED WORKING,Complete world state on system entry/reconnection
+19,Combat,SetTarget(targetID),Targeting state,C→S then S→C,CALL_REQ/RESPONSE,src/eve-server/system/TargetManager.h,Target.xmlp,CONFIRMED WORKING,Select target; server validates range and lock time
+20,Combat,FireModule(slot),MultiEvent (damage),C→S then S→C,CALL_REQ + NOTIFY,src/eve-server/dogmaim/ + effects/,Effects.xmlp,CONFIRMED WORKING,Activate ship module; server calculates damage
+21,Combat,[Passive - receive],OnMultiEvent (batched),S→C,NOTIFY,src/eve-server/effects/,Destiny.xmlp,CONFIRMED WORKING,Combat events: damage taken/applied effect triggers
+22,Combat,[Passive - receive],OnDamageStateChange,S→C,NOTIFY,src/eve-server/dogmaim/,Destiny.xmlp,CONFIRMED WORKING,Shield/armor/hull HP ratios per entity
+23,Combat,[Passive - receive],TerminalExplosion,S→C,NOTIFY,src/eve-server/system/,Destiny.xmlp,CONFIRMED WORKING,Ship destruction event with explosion effect
+24,Inventory,GetInventoryList(location),PyList (items),C→S then S→C,CALL_REQ/RESPONSE,src/eve-server/inventory/,Inventory.xmlp,CONFIRMED WORKING,Full item list for given location
+25,Inventory,MoveItem(itemID from to),InventoryUpdate,C→S then S→C,CALL_REQ/RESPONSE,src/eve-server/Client.cpp MoveItem,Inventory.xmlp,CONFIRMED WORKING,Move item between containers
+26,Inventory,TransferItem(itemID qty to),TransferConfirmation,C→S then S→C,CALL_REQ/RESPONSE,src/eve-server/inventory/,Inventory.xmlp,CONFIRMED WORKING,Transfer items to another character
+27,Inventory,[Passive - receive],OnItemChange,S→C,NOTIFY,src/eve-server/inventory/,Inventory.xmlp,CONFIRMED WORKING,Item added/removed/quantity changed
+28,Market,PlaceBuyOrder(typeID qty price),OrderConfirmation,C→S then S→C,CALL_REQ/RESPONSE,src/eve-server/market/,Market.xmlp,CONFIRMED WORKING,Place buy order in station market (P0-P4 validated)
+29,Market,PlaceSellOrder(itemID qty price),OrderConfirmation,C→S then S→C,CALL_REQ/RESPONSE,src/eve-server/market/,Market.xmlp,CONFIRMED WORKING,Place sell order (P0-P4 validated)
+30,Market,CancelOrder(orderID),OrderRemoved,C→S then S→C,CALL_REQ/RESPONSE,src/eve-server/market/,Market.xmlp,CONFIRMED WORKING,Cancel existing market order
+31,Market,GetMarketOrders(systemID),OrderBook (buy+sell),C→S then S→C,CALL_REQ/RESPONSE,src/eve-server/market/,Market.xmlp,CONFIRMED WORKING,Get current buy and sell order lists
+32,Market,[Server-internal on match],MarketTransaction,S→C,NOTIFY,src/eve-server/market/MarketMgr.cpp,Market.xmlp,CONFIRMED WORKING,Transaction executed when orders match (P2-P4 validated)
+33,Manufacturing,StartJob(blueprint materials),JobStarted (jobID ETA),C→S then S→C,CALL_REQ/RESPONSE,src/eve-server/manufacturing/,Manufacturing.xmlp,CONFIRMED WORKING,Begin manufacturing or research job
+34,Manufacturing,GetJobQueue,JobList with progress,C→S then S→C,CALL_REQ/RESPONSE,src/eve-server/manufacturing/,Manufacturing.xmlp,CONFIRMED WORKING,Get all active manufacturing jobs
+35,Mail,SendMail(recipients subject body),MailSent (mailID),C→S then S→C,CALL_REQ/RESPONSE,src/eve-server/mail/,Mail.xmlp,CONFIRMED WORKING,Send in-game mail to characters or corp
+36,Mail,GetMailList,MailList,C→S then S→C,CALL_REQ/RESPONSE,src/eve-server/mail/,Mail.xmlp,CONFIRMED WORKING,Get list of mail headers
+37,Mail,GetMailBody(mailID),MailBody,C→S then S→C,CALL_REQ/RESPONSE,src/eve-server/mail/,Mail.xmlp,CONFIRMED WORKING,Get full mail content
+38,Chat,JoinChannel(channelID),ChannelJoined + history,C→S then S→C,CALL_REQ/RESPONSE,src/eve-server/chat/ + LSCService,LSCPkts.xmlp,CONFIRMED WORKING,Join LSC chat channel
+39,Chat,LeaveChannel(channelID),[acknowledgment],C→S then S→C,CALL_REQ/RESPONSE,src/eve-server/chat/,LSCPkts.xmlp,CONFIRMED WORKING,Leave LSC chat channel
+40,Chat,SendMessage(channelID text),MessageBroadcast,S→C (to all in channel),NOTIFY,src/eve-server/chat/,LSCPkts.xmlp,CONFIRMED WORKING,Send chat message to channel
+41,Voice,[Vivox protocol],N/A,C→Vivox→C,EXTERNAL,bin/_vivox.dll + vivoxsdk.dll,N/A,NOT IMPLEMENTED,Uses external Vivox service; not implementable without license
+42,Corporation,CreateCorporation(name ticker),CorporationCreated,C→S then S→C,CALL_REQ/RESPONSE,src/eve-server/corporation/,CorporationPkts.xmlp,CONFIRMED WORKING,Create new corporation
+43,Corporation,GetCorporationInfo,CorpData (members roles accounts),C→S then S→C,CALL_REQ/RESPONSE,src/eve-server/corporation/,CorporationPkts.xmlp,CONFIRMED WORKING,Get corporation details
+44,Corporation,JoinCorporation(corpID),[acknowledgment],C→S then S→C,CALL_REQ/RESPONSE,src/eve-server/corporation/,CorporationPkts.xmlp,CONFIRMED WORKING,Join corporation (with application if needed)
+45,Fleet,CreateFleet(name),FleetCreated,C→S then S→C,CALL_REQ/RESPONSE,src/eve-server/fleet/,Fleet.xmlp,CONFIRMED WORKING,Create new fleet
+46,Fleet,JoinFleet(fleetID),FleetJoined + roster,C→S then S→C,CALL_REQ/RESPONSE,src/eve-server/fleet/,Fleet.xmlp,CONFIRMED WORKING,Join existing fleet
+47,Fleet,GetFleetRoster,FleetComposition,C→S then S→C,CALL_REQ/RESPONSE,src/eve-server/fleet/,Fleet.xmlp,CONFIRMED WORKING,Get fleet member list with roles
+48,Scanning,SystemScan(range),ScanResults,C→S then S→C,CALL_REQ/RESPONSE,src/eve-server/system/ + Scan.xmlp,Scan.xmlp,HYPOTHESIS,Server-side scan calculation; marked as hypothesis in C2 matrix
+49,Planets,StartExtraction(planetID),ExtractionStarted,C→S then S→C,CALL_REQ/RESPONSE,src/eve-server/planet/,Planet.xmlp,CONFIRMED WORKING,Begin planet resource extraction
+50,Planets,GetPlanetInfo,Resources + installations,C→S then S→C,CALL_REQ/RESPONSE,src/eve-server/planet/,Planet.xmlp,CONFIRMED WORKING,Get planet resource and installation data
+51,Bookmarks,GetBookmarks,BookmarkList,C→S then S→C,CALL_REQ/RESPONSE,src/eve-server/system/BookmarkDB.cpp,Bookmarks.xmlp,CONFIRMED WORKING,Get player bookmark list
+52,Bookmarks,SaveBookmark(name position),BookmarkSaved,C→S then S→C,CALL_REQ/RESPONSE,src/eve-server/system/BookmarkDB.cpp,Bookmarks.xmlp,CONFIRMED WORKING,Save new bookmark
+53,Notifications,[Passive - receive all],NOTIFICATION (type 12),S→C,NOTIFY,src/eve-server/Client.cpp SendNotification,packet_types.h,CONFIRMED WORKING,Generic game notifications (24 identified types)
+54,Errors,[Passive - receive],ERRORRESPONSE (type 15),S→C,NOTIFY,src/eve-server/Client.cpp _SendException,packet_types.h,CONFIRMED WORKING,Error messages with type and description
+55,Ping,PING_REQ,PING_RSP (type 20/21),C→S then S→C,PING,src/eve-server/Client.cpp Handle_PingReq,packet_types.h,CONFIRMED WORKING,Keepalive and latency measurement
+56,Session,RequestSessionChange(newChar),SESSIONCHANGENOTIFICATION (type 16),C→S then S→C,CALL_REQ + NOTIFY,src/eve-server/Client.cpp SendSessionChange,packet_types.h,CONFIRMED WORKING,Switch to different character
+57,Session,Logout,[Disconnect],C→S,DISCONNECT,src/eve-server/Client.cpp DisconnectClient,N/A,CONFIRMED WORKING,Graceful logout and disconnect
+58,API,Crest service calls,REST responses,C→S then S→C,HTTP,src/eve-server/apiserver/,N/A,CONFIRMED WORKING,REST API for third-party access
+59,Spatial,[Passive - entity appears],AddBalls/AddBalls2,S→C,NOTIFY,src/eve-common/packets/Destiny.xmlp,,CONFIRMED WORKING,New entity visible in system
+60,Spatial,[Passive - entity removed],RemoveBall/RemoveBalls,S→C,NOTIFY,src/eve-common/packets/Destiny.xmlp,,CONFIRMED WORKING,Entity destroyed or left observable range
+61,Spatial,[Passive - mode change],DoDestinyUpdate (Cmd*),S→C,NOTIFY,src/eve-common/packets/Destiny.xmlp,,CONFIRMED WORKING,Entity behavior mode changed
+62,Spatial,[Passive - cloak],CloakBall/UncloakBall,S→C,NOTIFY,src/eve-common/packets/Destiny.xmlp,,CONFIRMED WORKING,Entity visibility state change
+63,Spatial,[Passive - drones],OnDroneStateChange,S→C,NOTIFY,src/eve-common/packets/Destiny.xmlp,,CONFIRMED WORKING,Drone state changes (online/offline/recycling)
+64,Spatial,[Passive - clear all],ClearAll,S→C,NOTIFY,src/eve-common/packets/Destiny.xmlp,,CONFIRMED WORKING,Remove all local balls (system change)
+65,Spatial,[Passive - effects],MultiEvent (dogma effects),S→C,NOTIFY,src/eve-server/effects/,,CONFIRMED WORKING,Visual effect triggers (weapon fire hit etc.)
+66,POS,DeployTower,DeploymentSequence,C→S then S→C,CALL_REQ/RESPONSE,src/eve-server/pos/,N/A,PARTIAL,Data model exists; full deployment+defense flow untested
+67,Dungeon,EnterDungeon,InstanceCreated,C→S then S→C,CALL_REQ/RESPONSE,src/eve-server/dungeon/,N/A,PARTIAL,Tables exist (dunActive dunGroupData dunRoomData); gameplay untested
+68,Faction,DeclareWar,WarDeclared,C→S then S→C,CALL_REQ/RESPONSE,src/eve-server/faction/,N/A,PARTIAL,"Framework exists; full war flow untested"""

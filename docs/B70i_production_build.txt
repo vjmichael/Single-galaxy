@@ -1,0 +1,44 @@
+[1/37] Building CXX object CMakeFiles/galaxy_kernel.dir/src/ColonyResilience.cpp.o
+[2/37] Building CXX object CMakeFiles/galaxy_kernel.dir/src/ClientContract.cpp.o
+[3/37] Building CXX object CMakeFiles/galaxy_kernel.dir/src/Galaxy.cpp.o
+/mnt/data/sg_b70i/single_galaxy/src/Galaxy.cpp: In constructor 'galaxy::SurveyArchive::SurveyArchive(const std::string&)':
+/mnt/data/sg_b70i/single_galaxy/src/Galaxy.cpp:173:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  173 |         if(db_)sqlite3_close(db_); db_=nullptr;throw std::runtime_error(err);
+      |         ^~
+/mnt/data/sg_b70i/single_galaxy/src/Galaxy.cpp:173:36: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  173 |         if(db_)sqlite3_close(db_); db_=nullptr;throw std::runtime_error(err);
+      |                                    ^~~
+[4/37] Building CXX object CMakeFiles/galaxy_kernel.dir/src/Navigation.cpp.o
+[5/37] Building CXX object CMakeFiles/galaxy_kernel.dir/src/GateTransit.cpp.o
+[6/37] Building CXX object CMakeFiles/galaxy_kernel.dir/src/Region.cpp.o
+[7/37] Building CXX object CMakeFiles/galaxy_kernel.dir/src/Persistence.cpp.o
+[8/37] Building CXX object CMakeFiles/galaxy_persistence_demo.dir/src/persistence_demo.cpp.o
+[9/37] Building CXX object CMakeFiles/galaxy_recover_copy.dir/src/recover_copy.cpp.o
+[10/37] Building CXX object CMakeFiles/galaxy_benchmark.dir/src/benchmark.cpp.o
+[11/37] Building CXX object CMakeFiles/galaxy_persistence_benchmark.dir/src/persistence_benchmark.cpp.o
+[12/37] Building CXX object CMakeFiles/galaxy_client_stream_demo.dir/src/client_stream_demo.cpp.o
+[13/37] Building CXX object CMakeFiles/galaxy_kernel.dir/src/Simulation.cpp.o
+[14/37] Linking CXX static library libgalaxy_kernel.a
+[15/37] Building CXX object CMakeFiles/galaxy_client_wire_consumer.dir/src/client_wire_consumer.cpp.o
+[16/37] Building CXX object CMakeFiles/galaxy_client_wire_producer.dir/src/client_wire_producer.cpp.o
+[17/37] Building CXX object CMakeFiles/galaxy_survey_demo.dir/src/survey_demo.cpp.o
+[18/37] Building CXX object CMakeFiles/galaxy_visual_scenario_recorder.dir/src/visual_scenario_recorder.cpp.o
+[19/37] Building CXX object CMakeFiles/galaxy_live_scenario_host.dir/src/live_scenario_host.cpp.o
+[20/37] Building CXX object CMakeFiles/galaxy_multisystem_demo.dir/src/multisystem_demo.cpp.o
+[21/37] Linking CXX executable galaxy_persistence_demo
+[22/37] Linking CXX executable galaxy_benchmark
+[23/37] Linking CXX executable galaxy_recover_copy
+[24/37] Linking CXX executable galaxy_persistence_benchmark
+[25/37] Linking CXX executable galaxy_client_stream_demo
+[26/37] Linking CXX executable galaxy_client_wire_producer
+[27/37] Linking CXX executable galaxy_client_wire_consumer
+[28/37] Building CXX object CMakeFiles/galaxy_colony_cli.dir/src/colony_cli.cpp.o
+[29/37] Linking CXX executable galaxy_visual_scenario_recorder
+[30/37] Linking CXX executable galaxy_live_scenario_host
+[31/37] Linking CXX executable galaxy_survey_demo
+[32/37] Linking CXX executable galaxy_multisystem_demo
+[33/37] Linking CXX executable galaxy_colony_cli
+[34/37] Building CXX object CMakeFiles/galaxy_interactive_host.dir/src/interactive_host.cpp.o
+[35/37] Linking CXX executable galaxy_interactive_host
+[36/37] Building CXX object CMakeFiles/galaxy_colony_live_host.dir/src/colony_live_host.cpp.o
+[37/37] Linking CXX executable galaxy_colony_live_host

@@ -1,0 +1,24 @@
+Internal ctest changing into directory: /mnt/data/SingleGalaxy_B7_0g_Colony_Utilities/build
+Test project /mnt/data/SingleGalaxy_B7_0g_Colony_Utilities/build
+    Start 31: galaxy_b70c_live_mineral_relay
+1/9 Test #31: galaxy_b70c_live_mineral_relay .......   Passed    1.71 sec
+    Start 32: galaxy_b70d_life_support_tests
+2/9 Test #32: galaxy_b70d_life_support_tests .......   Passed    0.06 sec
+    Start 33: galaxy_b70d_live_agriculture_relay
+3/9 Test #33: galaxy_b70d_live_agriculture_relay ...   Passed    2.92 sec
+    Start 34: galaxy_b70e_colony_farms_tests
+4/9 Test #34: galaxy_b70e_colony_farms_tests .......   Passed    0.11 sec
+    Start 35: galaxy_b70e_live_farm_relay
+5/9 Test #35: galaxy_b70e_live_farm_relay ..........   Passed    2.54 sec
+    Start 36: galaxy_b70f_habitation_tests
+6/9 Test #36: galaxy_b70f_habitation_tests .........   Passed    0.10 sec
+    Start 37: galaxy_b70f_live_habitat_relay
+7/9 Test #37: galaxy_b70f_live_habitat_relay .......   Passed    3.54 sec
+    Start 38: galaxy_b70g_utilities_tests
+8/9 Test #38: galaxy_b70g_utilities_tests ..........   Passed    0.41 sec
+    Start 39: galaxy_b70g_live_utility_relay
+9/9 Test #39: galaxy_b70g_live_utility_relay .......   Passed    3.08 sec
+
+100% tests passed, 0 tests failed out of 9
+
+Total Test time (real) =  14.47 sec

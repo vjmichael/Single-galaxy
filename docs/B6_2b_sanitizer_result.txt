@@ -1,0 +1,1 @@
+PASS B6.2b durable cross-system ship, cargo, station locality, reload, rollback, idempotency

@@ -1,0 +1,10 @@
+Internal ctest changing into directory: /mnt/data/SingleGalaxy_B7_0g_Colony_Utilities/build
+Test project /mnt/data/SingleGalaxy_B7_0g_Colony_Utilities/build
+    Start 38: galaxy_b70g_utilities_tests
+1/2 Test #38: galaxy_b70g_utilities_tests ......   Passed    0.24 sec
+    Start 39: galaxy_b70g_live_utility_relay
+2/2 Test #39: galaxy_b70g_live_utility_relay ...   Passed    3.52 sec
+
+100% tests passed, 0 tests failed out of 2
+
+Total Test time (real) =   3.76 sec

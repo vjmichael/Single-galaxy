@@ -1,0 +1,8 @@
+Internal ctest changing into directory: /mnt/data/SingleGalaxy_B6_6_Gate_Operations/build
+Test project /mnt/data/SingleGalaxy_B6_6_Gate_Operations/build
+    Start 18: galaxy_b63_relay_route_controls
+1/1 Test #18: galaxy_b63_relay_route_controls ...   Passed    3.66 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Total Test time (real) =   3.66 sec

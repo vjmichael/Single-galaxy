@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Single Galaxy — Matrix Vision / B4</title>
+<style>
+:root{color-scheme:dark;--bg:#070c16;--surface:#101a2a;--border:#2b3950;--muted:#94a7c2;--ink:#eaf4ff;--cyan:#6ee7ff;--gold:#ffcc75;--success:#65e0aa}
+*{box-sizing:border-box}body{margin:0;background:linear-gradient(140deg,#080d16,#0c1625 55%,#08101c);color:var(--ink);font:14px/1.45 system-ui,-apple-system,Segoe UI,Arial,sans-serif}
+header{display:flex;align-items:center;justify-content:space-between;padding:18px 22px;border-bottom:1px solid var(--border);background:rgba(9,17,31,.75);gap:20px}
+small,.muted{color:var(--muted)}.kicker{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--cyan);font-weight:700}
+h1{font-size:23px;margin:2px 0 0;letter-spacing:-.025em}h2{font-size:14px;margin:0 0 12px;font-weight:650}
+.pill{border:1px solid #35637b;border-radius:50px;padding:6px 11px;color:#9de8fc;background:#12273a;font-size:12px;font-weight:600;white-space:nowrap}
+main{max-width:1450px;margin:0 auto;padding:18px;display:grid;gap:14px;grid-template-columns:minmax(0,1fr) 300px}
+.view{min-width:0}.card{border:1px solid var(--border);background:rgba(15,24,40,.9);border-radius:14px;overflow:hidden}
+.canvashead{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border)}
+.canvaswrap{position:relative;height:min(66vh,690px);min-height:350px;overflow:hidden;background:#060d1a}
+canvas{display:block;width:100%;height:100%}#toast{position:absolute;left:18px;top:18px;color:#caedff;background:rgba(9,24,44,.86);border:1px solid #2b506a;padding:9px 12px;border-radius:9px;max-width:calc(100% - 36px);pointer-events:none}
+#toast:empty{display:none}.controls{padding:13px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+button,select,.filebutton{background:#17273c;color:var(--ink);border:1px solid #3b536e;border-radius:8px;padding:9px 12px;cursor:pointer;font:inherit}
+button:hover,select:hover,.filebutton:hover{border-color:#74bacc}button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
+button.primary{background:#175b70;border-color:#2385a2;font-weight:700}button:disabled{opacity:.4;cursor:default}
+#progress{flex:1;min-width:130px;accent-color:#76dced}.controller{display:flex;align-items:center;gap:8px}
+.side{display:flex;flex-direction:column;gap:14px}.pad{padding:16px}.metric{display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-top:1px solid var(--border)}.metric:first-of-type{border-top:0}.metric strong{font-size:19px;font-variant-numeric:tabular-nums}
+.meter{height:9px;border-radius:20px;background:#27364b;overflow:hidden;margin:10px 0 7px}.meter div{height:100%;background:linear-gradient(90deg,#30c1cf,#6ce7aa);width:0%;transition:width .25s}
+#status{color:#78e2ab;font-weight:700}#log{display:flex;flex-direction:column;gap:7px;min-height:130px;max-height:270px;overflow:auto}
+.entry{padding:9px 10px;background:#121f32;border-radius:8px;color:#d4e7f7;font-size:12px;border-left:2px solid #527897}.entry.important{border-color:#f9bf67;background:#2d261f}
+.legend{display:flex;gap:18px;align-items:center;flex-wrap:wrap;padding:10px 15px;border-top:1px solid var(--border);color:#9fb3cf;font-size:12px}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;vertical-align:middle;margin-right:5px}.ship{background:#66dfff}.rock{background:#e8b174}.station{background:#b49cfc}
+footer{grid-column:1/-1;color:#8b9db5;font-size:12px;padding:0 5px 15px}.help{margin-top:10px;color:#a9b9cf;font-size:12px}
+input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px solid #7b3f42;border-radius:8px;padding:10px 14px;display:none;margin-bottom:12px}
+@media(max-width:920px){main{grid-template-columns:1fr}.side{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.canvaswrap{height:53vh}}
+@media(max-width:580px){header{padding:15px}h1{font-size:19px}.side{grid-template-columns:1fr}.canvaswrap{min-height:320px;height:45vh}}
+</style>
+</head>
+<body>
+<header><div><div class="kicker">Single Galaxy / B4 live prototype</div><h1>Matrix Vision <span aria-hidden="true">✦</span></h1><small>Original shapes · SQLite-backed simulation streaming live from C++</small></div><div class="pill" id="sourcebadge">Replay mode · No EVE assets</div></header>
+<main>
+<section class="view">
+<div class="error" id="error" role="alert"></div>
+<div class="card">
+<div class="canvashead"><div><div class="kicker" id="sceneName">10 asteroids</div><div class="muted" id="frameLabel">Loading frames…</div></div><div class="pill" id="tickPill">Tick 0</div></div>
+<div class="canvaswrap" id="canvaswrap"><canvas id="space" aria-label="Top-down visualization of ship, station, and asteroid entities"></canvas><div id="toast" role="status"></div></div>
+<div class="legend"><span><i class="dot ship"></i>Ship</span><span><i class="dot rock"></i>Asteroid</span><span><i class="dot station"></i>Station</span><span style="margin-left:auto">Position unit: mm · Debug scale</span></div>
+<div class="controls"><div class="controller"><button class="primary" id="play">▶ Play</button><button id="back" title="Previous tick">◀</button><button id="next" title="Next tick">▶|</button></div><input type="range" id="progress" min="0" max="10" step="1" value="0" aria-label="Simulation tick"><span id="indexText" class="muted" style="white-space:nowrap">0 / 0</span><select id="speed" aria-label="Replay speed"><option value="0.5">0.5×</option><option selected value="1">1×</option><option value="2">2×</option><option value="4">4×</option></select></div>
+</div>
+<div class="help">Choose a scenario on the right. Play, step through ticks, or drag the timeline. You can also import another `.sgview` file recorded by the native simulation. Keyboard: Space = play/pause, ←/→ = step.</div>
+</section>
+<aside class="side">
+<div class="card pad"><h2>Scenario</h2><select id="scenario" style="width:100%"><option value="ten">10 asteroids · 10 ore each</option><option value="hold">Automatic mining · hold 10</option><option value="motion">Ship movement · inertia</option></select><div class="help" id="description">Ten finite asteroids are removed as they are mined.</div><label class="filebutton" for="import" style="display:block;text-align:center;margin-top:15px">Open other .sgview recording</label><input id="import" type="file" accept=".sgview,.txt,text/plain"></div>
+<div class="card pad"><h2>Ship telemetry</h2><div class="metric"><span class="muted">Cargo hold</span><strong id="cargo">0 / 100</strong></div><div class="meter"><div id="cargoBar"></div></div><div class="metric"><span class="muted">Status</span><span id="status">IDLE</span></div><div class="metric"><span class="muted">Position</span><span id="position">0, 0</span></div><div class="metric"><span class="muted">Velocity / tick</span><span id="velocity">0, 0</span></div><div class="metric"><span class="muted">Asteroids active</span><strong id="asteroids">10</strong></div><div class="metric"><span class="muted">Ore remaining</span><strong id="ore">100</strong></div></div>
+<div class="card pad"><h2>Simulation events</h2><div id="log" role="log" aria-live="polite"></div></div>
+</aside>
+<footer>This live viewer subscribes to a loopback-only simulation process; each displayed step follows an SQLite commit. No gameplay commands or remote networking are supported. Windows runtime testing remains outstanding.</footer>
+</main>
+<script src="contract.js"></script>
+<script src="recordings.js"></script>
+<script src="viewer.js"></script>
+<script src="live.js"></script>
+</body>
+</html>

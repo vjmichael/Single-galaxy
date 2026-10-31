@@ -1,0 +1,32 @@
+Internal ctest changing into directory: /mnt/data/b70m_work/single_galaxy/build
+Test project /mnt/data/b70m_work/single_galaxy/build
+      Start 53: galaxy_b70m_live_policy_relay
+      Start 52: galaxy_b70m_policy_tests
+ 1/13 Test #52: galaxy_b70m_policy_tests .............   Passed    0.15 sec
+      Start 41: galaxy_b70h_live_maintenance_relay
+ 2/13 Test #41: galaxy_b70h_live_maintenance_relay ...   Passed    3.76 sec
+      Start 42: galaxy_b70i_resilience_tests
+ 3/13 Test #42: galaxy_b70i_resilience_tests .........   Passed    0.13 sec
+      Start 43: galaxy_b70i_live_resilience_relay
+ 4/13 Test #53: galaxy_b70m_live_policy_relay ........   Passed    4.08 sec
+      Start 44: galaxy_b70j_community_tests
+ 5/13 Test #44: galaxy_b70j_community_tests ..........   Passed    0.16 sec
+      Start 45: galaxy_b70j_live_community_relay
+ 6/13 Test #43: galaxy_b70i_live_resilience_relay ....   Passed    3.43 sec
+      Start 46: galaxy_b70k_clinic_tests
+ 7/13 Test #46: galaxy_b70k_clinic_tests .............   Passed    0.14 sec
+      Start 47: galaxy_b70k_live_clinic_relay
+ 8/13 Test #45: galaxy_b70j_live_community_relay .....   Passed    3.54 sec
+      Start 48: galaxy_b70k_reclaimer_tests
+ 9/13 Test #48: galaxy_b70k_reclaimer_tests ..........   Passed    0.28 sec
+      Start 49: galaxy_b70k_live_reclaimer_relay
+10/13 Test #47: galaxy_b70k_live_clinic_relay ........   Passed    3.41 sec
+      Start 50: galaxy_b70l_waterworks_tests
+11/13 Test #50: galaxy_b70l_waterworks_tests .........   Passed    0.11 sec
+      Start 51: galaxy_b70l_live_waterworks_relay
+12/13 Test #49: galaxy_b70k_live_reclaimer_relay .....   Passed    3.70 sec
+13/13 Test #51: galaxy_b70l_live_waterworks_relay ....   Passed    3.64 sec
+
+100% tests passed, 0 tests failed out of 13
+
+Total Test time (real) =  14.79 sec

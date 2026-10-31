@@ -1,0 +1,10 @@
+Internal ctest changing into directory: /mnt/data/sg_b70k/clean_extract/build
+Test project /mnt/data/sg_b70k/clean_extract/build
+    Start 46: galaxy_b70k_clinic_tests
+    Start 47: galaxy_b70k_live_clinic_relay
+1/2 Test #46: galaxy_b70k_clinic_tests .........   Passed    0.14 sec
+2/2 Test #47: galaxy_b70k_live_clinic_relay ....   Passed    3.28 sec
+
+100% tests passed, 0 tests failed out of 2
+
+Total Test time (real) =   3.28 sec

@@ -1,0 +1,34 @@
+Internal ctest changing into directory: /mnt/data/SingleGalaxy_B6_6_Gate_Operations/build
+Test project /mnt/data/SingleGalaxy_B6_6_Gate_Operations/build
+      Start  1: galaxy_kernel_tests
+ 1/14 Test  #1: galaxy_kernel_tests .......................   Passed    0.00 sec
+      Start  2: galaxy_persistence_tests
+ 2/14 Test  #2: galaxy_persistence_tests ..................   Passed    0.77 sec
+      Start  3: galaxy_client_contract_tests
+ 3/14 Test  #3: galaxy_client_contract_tests ..............   Passed    0.07 sec
+      Start  4: galaxy_mining_lifecycle_tests
+ 4/14 Test  #4: galaxy_mining_lifecycle_tests .............   Passed    0.13 sec
+      Start  5: galaxy_station_lifecycle_tests
+ 5/14 Test  #5: galaxy_station_lifecycle_tests ............   Passed    0.21 sec
+      Start  6: galaxy_b52_station_live_e2e
+ 6/14 Test  #6: galaxy_b52_station_live_e2e ...............   Passed    9.55 sec
+      Start  7: galaxy_b53_logistics_tests
+ 7/14 Test  #7: galaxy_b53_logistics_tests ................   Passed    0.20 sec
+      Start  8: galaxy_b53_live_logistics_e2e
+ 8/14 Test  #8: galaxy_b53_live_logistics_e2e .............   Passed    9.91 sec
+      Start  9: galaxy_b54_b60_geography_scanning_tests
+ 9/14 Test  #9: galaxy_b54_b60_geography_scanning_tests ...   Passed    0.02 sec
+      Start 10: galaxy_b54_navigation_tests
+10/14 Test #10: galaxy_b54_navigation_tests ...............   Passed    0.14 sec
+      Start 11: galaxy_b61_live_scanning_e2e
+11/14 Test #11: galaxy_b61_live_scanning_e2e ..............   Passed    9.13 sec
+      Start 12: galaxy_b62a_gate_transit_tests
+12/14 Test #12: galaxy_b62a_gate_transit_tests ............   Passed    0.00 sec
+      Start 13: galaxy_b62b_durable_jumps_tests
+13/14 Test #13: galaxy_b62b_durable_jumps_tests ...........   Passed    0.14 sec
+      Start 14: galaxy_b62c_projection_tests
+14/14 Test #14: galaxy_b62c_projection_tests ..............   Passed    0.03 sec
+
+100% tests passed, 0 tests failed out of 14
+
+Total Test time (real) =  30.30 sec

@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Single Galaxy — Colony Ship & Geological Survey</title>
+<style>
+:root{color-scheme:dark;--bg:#070c16;--surface:#101a2a;--border:#2b3950;--muted:#94a7c2;--ink:#eaf4ff;--cyan:#6ee7ff;--gold:#ffcc75;--success:#65e0aa}
+*{box-sizing:border-box}body{margin:0;background:linear-gradient(140deg,#080d16,#0c1625 55%,#08101c);color:var(--ink);font:14px/1.45 system-ui,-apple-system,Segoe UI,Arial,sans-serif}
+header{display:flex;align-items:center;justify-content:space-between;padding:18px 22px;border-bottom:1px solid var(--border);background:rgba(9,17,31,.75);gap:20px}
+small,.muted{color:var(--muted)}.kicker{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--cyan);font-weight:700}
+h1{font-size:23px;margin:2px 0 0;letter-spacing:-.025em}h2{font-size:14px;margin:0 0 12px;font-weight:650}
+.pill{border:1px solid #35637b;border-radius:50px;padding:6px 11px;color:#9de8fc;background:#12273a;font-size:12px;font-weight:600;white-space:nowrap}
+main{max-width:1450px;margin:0 auto;padding:18px;display:grid;gap:14px;grid-template-columns:minmax(0,1fr) 300px}
+.view{min-width:0}.card{border:1px solid var(--border);background:rgba(15,24,40,.9);border-radius:14px;overflow:hidden}
+.canvashead{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border)}
+.canvaswrap{position:relative;height:min(66vh,690px);min-height:350px;overflow:hidden;background:#060d1a}
+canvas{display:block;width:100%;height:100%}#toast{position:absolute;left:18px;top:18px;color:#caedff;background:rgba(9,24,44,.86);border:1px solid #2b506a;padding:9px 12px;border-radius:9px;max-width:calc(100% - 36px);pointer-events:none}
+#toast:empty{display:none}#qaPanel[hidden],#colonyPanel[hidden],#interactiveControls[hidden],#surveyPanel[hidden]{display:none}.controls{padding:13px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+button,select,.filebutton{background:#17273c;color:var(--ink);border:1px solid #3b536e;border-radius:8px;padding:9px 12px;cursor:pointer;font:inherit}
+button:hover,select:hover,.filebutton:hover{border-color:#74bacc}button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
+button.primary{background:#175b70;border-color:#2385a2;font-weight:700}button:disabled{opacity:.4;cursor:default}
+#progress{flex:1;min-width:130px;accent-color:#76dced}.controller{display:flex;align-items:center;gap:8px}
+.side{display:flex;flex-direction:column;gap:14px}.pad{padding:16px}.metric{display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-top:1px solid var(--border)}.metric:first-of-type{border-top:0}.metric strong{font-size:19px;font-variant-numeric:tabular-nums}
+.meter{height:9px;border-radius:20px;background:#27364b;overflow:hidden;margin:10px 0 7px}.meter div{height:100%;background:linear-gradient(90deg,#30c1cf,#6ce7aa);width:0%;transition:width .25s}
+#status{color:#78e2ab;font-weight:700}#log{display:flex;flex-direction:column;gap:7px;min-height:130px;max-height:270px;overflow:auto}
+.entry{padding:9px 10px;background:#121f32;border-radius:8px;color:#d4e7f7;font-size:12px;border-left:2px solid #527897}.entry.important{border-color:#f9bf67;background:#2d261f}
+.legend{display:flex;gap:18px;align-items:center;flex-wrap:wrap;padding:10px 15px;border-top:1px solid var(--border);color:#9fb3cf;font-size:12px}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;vertical-align:middle;margin-right:5px}.ship{background:#66dfff}.rock{background:#e8b174}.station{background:#b49cfc}
+footer{grid-column:1/-1;color:#8b9db5;font-size:12px;padding:0 5px 15px}.help{margin-top:10px;color:#a9b9cf;font-size:12px}
+input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px solid #7b3f42;border-radius:8px;padding:10px 14px;display:none;margin-bottom:12px}
+@media(max-width:920px){main{grid-template-columns:1fr}.side{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.canvaswrap{height:53vh}}
+@media(max-width:580px){header{padding:15px}h1{font-size:19px}.side{grid-template-columns:1fr}.canvaswrap{min-height:320px;height:45vh}}
+</style>
+</head>
+<body>
+<header><div><div class="kicker">Single Galaxy / Colony Frontier & Lumen Reach tests</div><h1>Matrix Vision <span aria-hidden="true">✦</span></h1><small>Original shapes · SQLite-backed simulation streaming live from C++</small></div><div class="pill" id="sourcebadge">Replay mode · No EVE assets</div></header>
+<main>
+<section class="view">
+<div class="error" id="error" role="alert"></div>
+<div class="card">
+<div class="canvashead"><div><div class="kicker" id="sceneName">10 asteroids</div><div class="muted" id="frameLabel">Loading frames…</div></div><div class="pill" id="tickPill">Tick 0</div></div>
+<div class="canvaswrap" id="canvaswrap"><canvas id="space" aria-label="Top-down visualization of ship, station, and asteroid entities"></canvas><div id="toast" role="status"></div></div>
+<div class="legend"><span><i class="dot ship"></i>Ship</span><span><i class="dot rock"></i>Asteroid</span><span><i class="dot station"></i>Station</span><span style="margin-left:auto">Position unit: mm · Debug scale</span></div>
+<div class="controls"><div class="controller"><button class="primary" id="play">▶ Play</button><button id="back" title="Previous tick">◀</button><button id="next" title="Next tick">▶|</button></div><input type="range" id="progress" min="0" max="10" step="1" value="0" aria-label="Simulation tick"><span id="indexText" class="muted" style="white-space:nowrap">0 / 0</span><select id="speed" aria-label="Replay speed"><option value="0.5">0.5×</option><option selected value="1">1×</option><option value="2">2×</option><option value="4">4×</option></select></div>
+</div>
+<div class="help">Begin docked at Station A. Undock, mine, dock and unload; load the ore back into your hold, undock and select Travel to Station B. Wait until stopped within docking range, dock and unload or sell. Station B has a different ore bid. All transfers and credits are committed in C++/SQLite.</div>
+</section>
+<aside class="side">
+<div class="card pad" id="interactiveControls"><h2>Live ship controls</h2><div class="controls" style="padding:0;margin-bottom:8px"><button id="undock" class="primary">Undock</button><button id="dock">Request dock</button><button id="unload">Unload ore</button><button id="load">Load ore</button><button id="sell">Sell local ore</button></div><div class="controls" style="padding:0;margin-bottom:8px"><button id="mine4" class="primary">⛏ Mine 4/tick</button><button id="stopMine">Stop mining</button></div><div class="controls" style="padding:0;gap:5px"><button id="left">← Thrust</button><button id="right">→ Thrust</button><button id="up">↑ Thrust</button><button id="down">↓ Thrust</button><button id="drift">Drift</button></div><div class="controls" style="padding:0;gap:5px;margin-top:8px"><button id="travelA">Assist to Station A</button><button id="travelGate">Assist to Gate</button><button id="jump" class="primary">Jump Gate</button><button id="travelB">Assist to Station B</button></div><button style="margin-top:12px" id="reconnect">Reconnect viewer</button><div class="help" id="commandMessage" aria-live="polite">Opening the local session…</div></div><div class="card pad" style="display:none"><h2>Scenario</h2><select id="scenario" style="width:100%"><option value="ten">10 asteroids · 10 ore each</option><option value="hold">Automatic mining · hold 10</option><option value="motion">Ship movement · inertia</option></select><div class="help" id="description">Ten finite asteroids are removed as they are mined.</div><label class="filebutton" for="import" style="display:block;text-align:center;margin-top:15px">Open other .sgview recording</label><input id="import" type="file" accept=".sgview,.txt,text/plain"></div>
+<div class="card pad" id="colonyPanel" hidden><h2>Colony ship · first settlement</h2>
+<div class="help">One ship · finite crew · no starting stations or gates. Every resource action is executed and saved by the C++ simulation. The mineral distributions below are illustrative based on real mineral classes.</div>
+<div class="metric"><span class="muted">Colonists</span><strong id="colonyCrew">—</strong></div>
+<div class="metric"><span class="muted">Raw ore (t)</span><strong id="colonyRaw">—</strong></div>
+<div class="metric"><span class="muted">Refined material (t)</span><strong id="colonyRefined">—</strong></div>
+<div class="metric"><span class="muted">Construction modules</span><strong id="colonyModules">—</strong></div>
+<div class="metric"><span class="muted">Built outposts</span><strong id="colonyOutposts">—</strong></div>
+<div class="metric"><span class="muted">Conserved material total (t)</span><strong id="colonyTotal">—</strong></div>
+<div class="controls" style="padding:10px 0;gap:5px"><button id="colonyScan">Scan mineral fields</button><button class="primary" id="colonyMine">Mine 8 tonnes</button><button id="colonyRefine">Refine 8 t</button><button id="colonyFabricate">Make 4 modules</button><button class="primary" id="colonyBuild">Build outpost</button></div>
+<h2 style="margin-top:10px">B7.0c · Mineral industry</h2>
+<div class="help">Geological asteroid mining fills named mineral stock rather than generic ore. Processing conserves mineral mass across usable products and tailings; structural alloy or aluminum can become construction modules (2,000 kg each).</div>
+<div class="controls" style="padding:7px 0;gap:6px"><label>Geological body <select id="colonyRockTarget"><option value="">Scan first</option></select></label><button id="colonyMineTarget">Mine selected 8 t</button></div>
+<div class="controls" style="padding:7px 0;gap:6px"><label>Mineral <select id="colonyPhase"><option value="nickel_iron">Nickel–iron</option><option value="plagioclase">Plagioclase</option><option value="serpentine">Serpentine</option><option value="saponite">Saponite</option><option value="magnetite">Magnetite</option><option value="pyrrhotite">Pyrrhotite</option><option value="carbonates">Carbonates</option><option value="olivine">Olivine</option><option value="pyroxene">Pyroxene</option><option value="troilite">Troilite</option></select></label><label>kg <input id="colonyProcessKg" type="number" min="1" max="100000" value="1000" style="width:90px"></label><button id="colonyProcess">Process minerals</button></div>
+<div class="controls" style="padding:7px 0;gap:6px"><label>Material <select id="colonyMaterial"><option value="alloy">Structural alloy</option><option value="aluminum">Aluminum</option></select></label><button id="colonyFabricateMaterial">Make 1 material module</button></div>
+<div id="colonyStocks" class="help" style="white-space:pre-wrap">No separated mineral cargo yet.</div>
+<h2 style="margin-top:14px">B7.0d · Life support and hydroponics</h2>
+<div class="help">Starter provisions are finite. Each 20 committed simulation ticks the crew consumes food, water and oxygen. Crop batches mature after five ticks. Recycler output and waste are physically accounted. Colony status is not an automatic permission to expand.</div>
+<div class="metric"><span class="muted">Development assessment</span><strong id="lifeStage">—</strong></div>
+<div class="metric"><span class="muted">Food (kg)</span><strong id="lifeFood">—</strong></div>
+<div class="metric"><span class="muted">Water (kg)</span><strong id="lifeWater">—</strong></div>
+<div class="metric"><span class="muted">Oxygen (kg)</span><strong id="lifeOxygen">—</strong></div>
+<div class="metric"><span class="muted">Nutrients (kg)</span><strong id="lifeNutrients">—</strong></div>
+<div class="metric"><span class="muted">Growing crops (kg)</span><strong id="lifeCrops">—</strong></div>
+<div class="metric"><span class="muted">Compost / wastewater (kg)</span><strong><span id="lifeCompost">—</span> / <span id="lifeWastewater">—</span></strong></div>
+<div class="metric"><span class="muted">Life-support cycles / shortages</span><strong><span id="lifeCycles">—</span> / <span id="lifeShortages">—</span></strong></div>
+<div class="metric"><span class="muted">Reserve cycles at current rate</span><strong id="lifeReserves">—</strong></div>
+<div class="controls" style="padding:7px 0;gap:5px"><button id="lifePlant" class="primary">Plant 20 batches</button><button id="lifeHarvest">Harvest 20 batches</button><button id="lifeRecycleWater">Recycle 20 kg water</button><button id="lifeRecycleCompost">Compost 20 kg</button><button id="lifeOxygenAction">Produce O₂</button><button id="lifeLoadWater">Load 1 t mined water</button></div>
+<h2 style="margin-top:14px">B7.0e · Staffed outpost greenhouse</h2>
+<div class="help">Build at your own outpost (cost: 2 modules), then physically deliver food, water, oxygen, nutrients and CO₂. Assign real colonists from the ship to the farm. It produces while you travel away; supplies are finite. Negative cargo quantities retrieve stock. Food production alone does not certify self-sufficiency.</div>
+<div class="controls" style="padding:7px 0;gap:6px"><label>Outpost <select id="colonyFarmOutpost"><option value="">Build an outpost first</option></select></label><button class="primary" id="colonyFarmBuild">Build greenhouse</button><button id="colonyFarmAssign">Assign 1 worker</button><button id="colonyFarmRecall">Recall 1 worker</button></div>
+<div class="controls" style="padding:7px 0;gap:6px"><label>Resource <select id="colonyFarmResource"><option value="food">Food</option><option value="water">Water</option><option value="oxygen">Oxygen</option><option value="nutrients">Nutrients</option><option value="co2">Captured CO₂</option></select></label><label>kg (+ deliver, − retrieve) <input id="colonyFarmAmount" type="number" min="-10000" max="10000" value="50" style="width:90px"></label><button id="colonyFarmSupply">Transfer stock</button></div>
+<div class="help" id="farmViability">No production record yet.</div>
+<div class="help" id="farmTelemetry" style="white-space:pre-wrap">Build a greenhouse at a player-owned outpost.</div>
+<h2 style="margin-top:14px">B7.0f · Player-built habitation</h2>
+<div class="help">A habitat costs 2 modules and shelters up to 8 people (including the outpost's farm workers). Transfer food, water and oxygen for new residents; nobody consumes supplies twice. Three consecutive properly provisioned periods count toward Livable, but do not certify independent growth.</div>
+<div class="controls" style="padding:7px 0;gap:6px"><label>Outpost <select id="colonyHabOutpost"><option value="">Build an outpost first</option></select></label><button class="primary" id="colonyHabBuild">Build habitat</button><button id="colonyHabAssign">Move 1 resident in</button><button id="colonyHabRecall">Recall 1 resident</button></div>
+<div class="controls" style="padding:7px 0;gap:6px"><label>Supply <select id="colonyHabResource"><option value="food">Food</option><option value="water">Water</option><option value="oxygen">Oxygen</option></select></label><label>kg (+ deliver, − retrieve) <input id="colonyHabAmount" type="number" min="-10000" max="10000" value="50" style="width:90px"></label><button id="colonyHabSupply">Transfer provisions</button></div>
+<div class="help" id="habViability">No permanent habitation yet.</div>
+<div class="help" id="habTelemetry" style="white-space:pre-wrap">Build a habitat at a player-owned outpost.</div>
+<h2 style="margin-top:14px">B7.0g · Player-built solar utility</h2>
+<div class="help">Build solar service at a player-owned outpost for 2 modules. Power is generated and stored locally; staffed farms and occupied habitats draw from it. Service equipment wears, can fail, and consumes a real manufactured module when repaired. A powered habitat alone does not certify self-sufficiency.</div>
+<div class="controls" style="padding:7px 0;gap:6px"><label>Outpost <select id="colonyUtilityOutpost"><option value="">Build an outpost first</option></select></label><button class="primary" id="colonyUtilityBuild">Build solar utility</button><button id="colonyUtilityRepair">Repair (1 module)</button></div>
+<h2 style="margin-top:12px">B7.0h · Local technicians and spare-part maintenance</h2>
+<div class="help">Technicians must already be residents in the selected habitat. Deliver manufactured modules physically from the nearby colony ship before leaving. A standing repair order consumes one stored module when condition falls to 40% or below. No remote inventory transfers, resource spawning, or autonomous expansion.</div>
+<div class="controls" style="padding:7px 0;gap:6px">
+<label>Modules (+ deliver, − retrieve) <input id="colonyUtilitySpareAmount" type="number" min="-32" max="32" value="3" style="width:75px"></label>
+<button id="colonyUtilitySpares">Move spare modules</button>
+<label>Housed technicians <input id="colonyUtilityTechnicianCount" type="number" min="0" max="8" value="1" style="width:65px"></label>
+<button id="colonyUtilityStaff">Assign technicians</button>
+<button id="colonyUtilityAutoOn">Enable NPC repairs</button><button id="colonyUtilityAutoOff">Disable NPC repairs</button>
+</div>
+<h2 style="margin-top:12px">B7.0j · Community hall and restorative social service</h2>
+<div class="help">Construct a hall beside existing housing (2 manufactured modules). Assign actual housed residents as attendants, physically deliver food and water, and keep local solar power functioning. One attendant serves up to 4 people per needs cycle; each 4 visits consume an additional 1 kg of food and water, producing local waste. Three consecutive fully supplied cycles demonstrate access to restorative leisure—not clinical healthcare, universal happiness, or safe autonomous growth.</div>
+<div class="controls" style="padding:7px 0;gap:6px"><label>Outpost <select id="colonyCommunityOutpost"><option value="">Build an outpost first</option></select></label><button id="colonyCommunityBuild" class="primary">Build community hall</button><label>Attendants <input id="colonyCommunityStaffCount" type="number" min="0" max="4" value="1" style="width:65px"></label><button id="colonyCommunityStaff">Assign</button></div>
+<div class="controls" style="padding:7px 0;gap:6px"><label>Supplies <select id="colonyCommunityResource"><option value="food">Food</option><option value="water">Water</option></select></label><label>kg (+ deliver, − retrieve) <input id="colonyCommunityAmount" type="number" min="-10000" max="10000" value="25" style="width:90px"></label><button id="colonyCommunitySupply">Transfer stock</button></div>
+<div class="help" id="communityReadiness">Community services not yet assessed.</div>
+<div class="help" id="communityTelemetry" style="white-space:pre-wrap">No community hall yet.</div>
+<h2 style="margin-top:12px">B7.0k · First-aid clinic, local care and physical supplies</h2>
+<div class="help">Construct a clinic next to housing using 2 manufactured modules; assign existing housed medics, and deliver clean water and nutrient-based first-aid substrate by ship. A diagnosed care episode after local essential-supply shortages consumes 1 kg of each during treatment, leaving wastewater and medical waste on site. This is a limited deterministic care proxy, not real pharmacology or comprehensive medical care.</div>
+<div class="controls"><label>Outpost <select id="colonyClinicOutpost"><option value="">Build an outpost first</option></select></label><button id="colonyClinicBuild" class="primary">Build clinic</button><label>Medics <input id="colonyClinicStaffCount" type="number" min="0" max="4" value="1" style="width:65px"></label><button id="colonyClinicStaff">Assign</button></div>
+<div class="controls"><label>Supplies <select id="colonyClinicResource"><option value="water">Clean water</option><option value="substrate">First-aid nutrient substrate</option></select></label><label>kg (+ deliver, − retrieve) <input id="colonyClinicAmount" type="number" min="-10000" max="10000" value="25" style="width:80px"></label><button id="colonyClinicSupply">Transfer</button></div>
+<div class="help" id="clinicReadiness">Basic care readiness awaiting telemetry.</div><div class="help" id="clinicTelemetry" style="white-space:pre-wrap">No clinic yet.</div>
+<h2 style="margin-top:12px">B7.0k-2 · Local water/oxygen reclamation</h2>
+<div class="help">Build a reclamation unit next to housing and solar service, using 2 real manufactured modules. Each 20-tick needs period it can process up to 10 kg of wastewater and 10 kg of CO₂ from EACH site compartment: 10 wastewater → 9 clean water + 1 sludge; 10 CO₂ → 7 oxygen + 3 carbon-rich residue. All matter stays on site. A powered plant adds 1 unit per tick to demand. The rolling three-period assessment measures actual production against need, but finite feedstock and losses mean this is NOT proof of indefinite water renewal.</div>
+<div class="controls"><label>Outpost <select id="colonyReclaimerOutpost"><option value="">Build an outpost first</option></select></label><button id="colonyReclaimerBuild" class="primary">Build local reclamation</button></div>
+<div class="help" id="reclaimerReadiness">Reclamation throughput not yet assessed.</div><div class="help" id="reclaimerTelemetry" style="white-space:pre-wrap">No reclamation units yet.</div>
+<h2 style="margin-top:12px">B7.0l · Mineral water purification and delivery</h2>
+<div class="help">Mine water-bearing asteroid minerals such as serpentine or saponite, separate the water-bearing concentrate into raw water goods, and bring sealed 1,000 kg tank loads in a colony ship to this player-built waterworks. Each 20-tick period with local solar service the plant can purify 20 kg of raw feed into 18 kg potable water stored in the local habitat plus 2 kg retained brine. The finite mine and local delivery distance matter. Three successful periods measure replenishment, NOT indefinite water renewal or autonomous growth.</div>
+<div class="controls"><label>Outpost <select id="colonyWaterworksOutpost"><option value="">Build an outpost first</option></select></label><button id="colonyWaterworksBuild" class="primary">Build waterworks</button><label>Sealed feed kg (+ deliver, − retrieve) <input id="colonyWaterworksAmount" type="number" min="-10000" max="10000" step="1000" value="1000" style="width:90px"></label><button id="colonyWaterworksFeed">Transfer tanks</button></div>
+<div class="help" id="waterworksReadiness">Local mineral water replenishment not yet assessed.</div><div class="help" id="waterworksTelemetry" style="white-space:pre-wrap">No waterworks yet.</div>
+<h2 style="margin-top:12px">B7.0m · Policy execution and oversight</h2>
+<div class="help">Set a standing service-assurance mandate (none, lax, medium, strict) separately from assigning REAL housed residents as inspectors. The readout reports administrative coverage and operating evidence independently. Strict policy without personnel or a working service is not enforced. This is a first governance slice, not immigration processing or a formal bureaucracy.</div>
+<div class="controls"><label>Outpost <select id="colonyPolicyOutpost"><option value="">Build housing first</option></select></label><label>Domain <select id="colonyPolicyDomain"><option value="0">Maintenance</option><option value="1">Healthcare</option><option value="2">Community</option><option value="3">Waterworks</option></select></label></div>
+<div class="controls"><label>Declared oversight <select id="colonyPolicyLevel"><option value="0">None</option><option value="1">Lax</option><option value="2">Medium</option><option value="3">Strict</option></select></label><button class="primary" id="colonyPolicySet">Set mandate</button><label>Inspectors <input id="colonyPolicyStaffCount" type="number" min="0" max="3" step="1" value="1" style="width:60px"></label><button id="colonyPolicyStaff">Assign inspectors</button></div>
+<div class="help" id="colonyPolicyTelemetry" style="white-space:pre-wrap">No standing assurance policies configured.</div>
+<h2 style="margin-top:12px">B7.0i–k · Resilience and quality-of-life audit</h2>
+<div class="help">This is a read-only, conservative assessment of physical reserves at every occupied outpost, reliable power, spare-part coverage, staffing and recent food throughput. Six needs cycles is a diagnostic buffer, not an unlock. Healthcare, closed-loop water proof and growth governance remain unimplemented; restorative leisure now requires staffed, supplied community services; no automatic growth or time-skip is granted.</div>
+<div class="help" id="colonyResilience" style="white-space:pre-wrap">Resilience assessment awaiting colony telemetry.</div>
+<div class="help" id="maintenanceViability">No delegated maintenance readiness assessment yet.</div>
+<div class="help" id="utilityViability">No local utility installed yet.</div>
+<div class="help" id="utilityTelemetry" style="white-space:pre-wrap">No utility telemetry.</div>
+<div class="controls" style="padding:5px 0;gap:5px"><button id="colonyLeft">← Thrust</button><button id="colonyRight">→ Thrust</button><button id="colonyUp">↑ Thrust</button><button id="colonyDown">↓ Thrust</button><button id="colonyDrift">Drift</button></div>
+<div class="help">Mining targets the closest asteroid; the server checks surface distance, hold capacity and material stock. Thrust is physical, not teleportation. Larger asteroids hold millions of tonnes, not 10 fictional ore units.</div>
+<h2 style="margin-top:14px">Scanned geological deposits</h2><div id="colonyGeology" style="max-height:200px;overflow:auto"></div>
+<h2 style="margin-top:14px">Colony command results</h2><div id="colonyEvents" style="white-space:pre-wrap" class="help">Awaiting colony telemetry…</div></div>
+<div class="card pad" id="qaPanel" hidden><h2>QA automation · TESTING ONLY</h2>
+<div class="help">Enabled only by starting the local relay with <code>--qa-test</code>. Commands use real physical travel and authorized jumps. All automation inputs are explicitly labeled and audited; this is not an anti-cheat accusation system.</div>
+<div class="controls" style="padding:7px 0;gap:6px"><button id="qaRoute" class="primary">Auto-run selected route</button><button id="qaStop">Stop QA automation</button></div>
+<div class="controls" style="padding:7px 0;gap:6px"><button id="qaGateDown">Disable 2↔6 gate</button><button id="qaGateUp">Restore 2↔6 gate</button></div></div>
+<div class="card pad" id="surveyPanel"><h2>Environmental scanning</h2>
+<div class="help">Sensors use the current ship position after the C++ world commits a tick. Undock before scanning. Hidden sites are not automatically revealed.</div>
+<div class="controls" style="padding:8px 0;gap:6px;flex-wrap:wrap">
+<label for="scanBearing">Bearing</label><select id="scanBearing"><option value="0">0°</option><option value="45">45°</option><option value="90">90°</option><option value="180">180°</option><option value="270">270°</option></select>
+<label for="scanCone">Cone</label><select id="scanCone"><option value="30">30°</option><option value="90">90°</option><option value="180">180°</option><option value="360" selected>360°</option></select>
+<button id="directional" class="primary">Directional scan</button></div>
+<div class="controls" style="padding:0;gap:6px"><button id="probeDeploy">Deploy probe</button><button id="probeScan">Probe scan</button><button id="probeRecover">Recover probes</button></div>
+<div class="controls" style="padding:9px 0 0;gap:6px"><button id="surveyArchive">Latest survey records</button><button id="surveyHistory">Observation history</button><button id="surveyPublish">Publish records</button></div>
+<div class="controls" style="padding:9px 0 0;gap:6px"><label for="routeDestination">Destination</label><select id="routeDestination"><option value="1">1 · Haven</option><option value="2">2 · Sable Gap</option><option value="3">3 · Lumenford</option><option value="4">4 · Glass Meridian</option><option value="5">5 · Driftwater</option><option value="6">6 · Cinder Cut</option><option value="7">7 · Far Lantern</option></select><label for="routePolicy">Route</label><select id="routePolicy"><option value="S">Shortest</option><option value="Q">Safer</option></select><button id="planRoute">Plan route</button></div>
+<div class="controls" style="padding:9px 0 0;gap:7px"><button id="travelHop">Assist to next gate</button><button id="jumpHop" class="primary">Jump planned leg</button></div>
+<div class="help" id="routeResult">Plan a route, then assist to each gate and manually jump. No teleporting.</div>
+<div class="help" id="regionLegend">Original region · solid lines are known gate links · blue = current system · amber = planned route</div>
+<svg id="regionMap" viewBox="0 0 290 226" role="img" aria-label="Lumen Reach seven-system stargate map" style="width:100%;height:auto;background:#07111f;border:1px solid #33485d;border-radius:9px;margin-top:8px"></svg>
+<div class="help" id="surveyStatus" role="status">Awaiting scans · no private records released without Publish</div>
+<div id="surveyResults" role="log" aria-live="polite" style="display:flex;flex-direction:column;gap:6px;max-height:250px;overflow:auto;margin-top:10px"></div>
+</div>
+<div class="card pad"><h2>Ship telemetry</h2><div class="metric"><span class="muted">Cargo hold</span><strong id="cargo">0 / 100</strong></div><div class="meter"><div id="cargoBar"></div></div><div class="metric"><span class="muted">Status</span><span id="status">IDLE</span></div>
+<div class="metric"><span class="muted">Current system</span><strong id="currentSystem">—</strong></div><div class="metric"><span class="muted">Jump state</span><strong id="jumpState">READY</strong></div><div class="metric"><span class="muted">Docking</span><strong id="dockState">UNKNOWN</strong></div>
+<div class="metric"><span class="muted">Local hangar ore</span><strong id="hangarOre">—</strong></div><div class="metric"><span class="muted">Player credits</span><strong id="walletCredits">0</strong></div><div class="metric"><span class="muted">Station ore bid</span><strong id="marketPrice">—</strong></div><div class="metric"><span class="muted">Station market stock</span><strong id="marketStock">—</strong></div><div class="metric"><span class="muted">Position</span><span id="position">0, 0</span></div><div class="metric"><span class="muted">Velocity / tick</span><span id="velocity">0, 0</span></div><div class="metric"><span class="muted">Asteroids active</span><strong id="asteroids">10</strong></div><div class="metric"><span class="muted">Ore remaining</span><strong id="ore">100</strong></div></div>
+<div class="card pad"><h2>Simulation events</h2><div id="log" role="log" aria-live="polite"></div></div>
+</aside>
+<footer>Local development only: commands are brokered to one SQLite-backed simulation, with a per-session anti-CSRF token. Not secure multiplayer authentication. Windows runtime testing remains outstanding.</footer>
+</main>
+<script src="contract.js"></script>
+<script src="recordings.js"></script>
+<script src="interpolation.js"></script>
+<script src="viewer.js"></script>
+<script src="region.js"></script>
+<script src="survey.js"></script>
+<script src="colony.js"></script>
+<script src="interactive.js"></script>
+</body>
+</html>

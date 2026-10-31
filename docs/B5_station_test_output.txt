@@ -1,0 +1,13 @@
+SCENARIO A: spawn docked -> undock (2 ticks) -> fly -> mine 15 -> return/dock (2 ticks) -> unload 15/15; ship=0, local hangar=15, remote hangar=absent, ore conserved=15
+PASS full_unload_round_trip
+SCENARIO B: ship hold=20, local hangar=7, mined=20; unload requested=100, transferred=7, ship retains=13, local hangar=7/7, ore conserved=20; further unload HANGAR_FULL
+PASS partial_unload_round_trip
+PASS authority_and_transition_restrictions
+PASS moving_ship_cannot_dock_and_remote_hangar_is_local
+PASS failure_rolls_back_hangar_transfer
+PASS snapshot_validation_rejects_bogus_station
+PASS restart_during_station_transitions
+PASS recovered_copy_replays_partial_unload
+PASS station_events_cross_client_contract
+PASS tampered_hangar_ledger_is_rejected
+PASS 10/10 station lifecycle tests

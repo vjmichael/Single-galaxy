@@ -1,0 +1,32 @@
+Internal ctest changing into directory: /mnt/data/b70m_work/single_galaxy/build
+Test project /mnt/data/b70m_work/single_galaxy/build
+      Start 14: galaxy_b62c_projection_tests
+      Start 15: galaxy_b62c_live_multisystem_e2e
+ 1/13 Test #14: galaxy_b62c_projection_tests .........   Passed    0.03 sec
+      Start 16: galaxy_b62c_relay_gate_controls
+ 2/13 Test #16: galaxy_b62c_relay_gate_controls ......   Passed    4.11 sec
+      Start 17: galaxy_b63_live_routes_history_e2e
+ 3/13 Test #15: galaxy_b62c_live_multisystem_e2e .....   Passed    6.62 sec
+      Start 18: galaxy_b63_relay_route_controls
+ 4/13 Test #17: galaxy_b63_live_routes_history_e2e ...   Passed    3.59 sec
+      Start 19: galaxy_b64_region_tests
+ 5/13 Test #19: galaxy_b64_region_tests ..............   Passed    0.00 sec
+      Start 20: galaxy_b64_live_multihop_e2e
+ 6/13 Test #18: galaxy_b63_relay_route_controls ......   Passed    3.27 sec
+      Start 21: galaxy_b65_gate_disruption_tests
+ 7/13 Test #21: galaxy_b65_gate_disruption_tests .....   Passed    0.03 sec
+      Start 22: galaxy_b65_live_gate_qa_e2e
+ 8/13 Test #20: galaxy_b64_live_multihop_e2e .........   Passed    9.57 sec
+      Start 23: galaxy_b65_relay_qa_controls
+ 9/13 Test #22: galaxy_b65_live_gate_qa_e2e ..........   Passed   11.77 sec
+      Start 24: galaxy_b66_gate_operations_tests
+10/13 Test #24: galaxy_b66_gate_operations_tests .....   Passed    0.08 sec
+      Start 25: galaxy_b66_live_gate_telemetry
+11/13 Test #25: galaxy_b66_live_gate_telemetry .......   Passed    1.85 sec
+      Start 26: galaxy_b70_colony_core_tests
+12/13 Test #26: galaxy_b70_colony_core_tests .........   Passed    0.02 sec
+13/13 Test #23: galaxy_b65_relay_qa_controls .........   Passed    8.75 sec
+
+100% tests passed, 0 tests failed out of 13
+
+Total Test time (real) =  26.05 sec

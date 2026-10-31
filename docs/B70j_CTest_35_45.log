@@ -1,0 +1,28 @@
+Internal ctest changing into directory: /mnt/data/sg_b70j/build
+Test project /mnt/data/sg_b70j/build
+      Start 37: galaxy_b70f_live_habitat_relay
+      Start 41: galaxy_b70h_live_maintenance_relay
+ 1/11 Test #41: galaxy_b70h_live_maintenance_relay ........   Passed    3.48 sec
+      Start 43: galaxy_b70i_live_resilience_relay
+ 2/11 Test #37: galaxy_b70f_live_habitat_relay ............   Passed    3.81 sec
+      Start 39: galaxy_b70g_live_utility_relay
+ 3/11 Test #43: galaxy_b70i_live_resilience_relay .........   Passed    3.19 sec
+      Start 35: galaxy_b70e_live_farm_relay
+ 4/11 Test #39: galaxy_b70g_live_utility_relay ............   Passed    3.18 sec
+      Start 45: galaxy_b70j_live_community_relay
+ 5/11 Test #35: galaxy_b70e_live_farm_relay ...............   Passed    2.47 sec
+      Start 40: galaxy_b70h_delegated_maintenance_tests
+ 6/11 Test #40: galaxy_b70h_delegated_maintenance_tests ...   Passed    0.26 sec
+      Start 38: galaxy_b70g_utilities_tests
+ 7/11 Test #38: galaxy_b70g_utilities_tests ...............   Passed    0.24 sec
+      Start 36: galaxy_b70f_habitation_tests
+ 8/11 Test #36: galaxy_b70f_habitation_tests ..............   Passed    0.10 sec
+      Start 42: galaxy_b70i_resilience_tests
+ 9/11 Test #42: galaxy_b70i_resilience_tests ..............   Passed    0.17 sec
+      Start 44: galaxy_b70j_community_tests
+10/11 Test #44: galaxy_b70j_community_tests ...............   Passed    0.12 sec
+11/11 Test #45: galaxy_b70j_live_community_relay ..........   Passed    3.30 sec
+
+100% tests passed, 0 tests failed out of 11
+
+Total Test time (real) =  10.29 sec

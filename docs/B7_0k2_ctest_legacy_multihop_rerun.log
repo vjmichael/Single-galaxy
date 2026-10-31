@@ -1,0 +1,8 @@
+Internal ctest changing into directory: /mnt/data/sg_b70k_renewal/build
+Test project /mnt/data/sg_b70k_renewal/build
+    Start 20: galaxy_b64_live_multihop_e2e
+1/1 Test #20: galaxy_b64_live_multihop_e2e .....   Passed    9.48 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Total Test time (real) =   9.48 sec

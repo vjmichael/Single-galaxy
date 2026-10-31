@@ -1,0 +1,26 @@
+Internal ctest changing into directory: /mnt/data/SingleGalaxy_B7_0e_Colony_Farms_Autonomy/build
+Test project /mnt/data/SingleGalaxy_B7_0e_Colony_Farms_Autonomy/build
+      Start 12: galaxy_b62a_gate_transit_tests
+ 1/10 Test #12: galaxy_b62a_gate_transit_tests .......   Passed    0.00 sec
+      Start 13: galaxy_b62b_durable_jumps_tests
+ 2/10 Test #13: galaxy_b62b_durable_jumps_tests ......   Passed    0.07 sec
+      Start 14: galaxy_b62c_projection_tests
+ 3/10 Test #14: galaxy_b62c_projection_tests .........   Passed    0.02 sec
+      Start 15: galaxy_b62c_live_multisystem_e2e
+ 4/10 Test #15: galaxy_b62c_live_multisystem_e2e .....   Passed    6.57 sec
+      Start 16: galaxy_b62c_relay_gate_controls
+ 5/10 Test #16: galaxy_b62c_relay_gate_controls ......   Passed    3.96 sec
+      Start 17: galaxy_b63_live_routes_history_e2e
+ 6/10 Test #17: galaxy_b63_live_routes_history_e2e ...   Passed    3.43 sec
+      Start 18: galaxy_b63_relay_route_controls
+ 7/10 Test #18: galaxy_b63_relay_route_controls ......   Passed    3.16 sec
+      Start 19: galaxy_b64_region_tests
+ 8/10 Test #19: galaxy_b64_region_tests ..............   Passed    0.00 sec
+      Start 20: galaxy_b64_live_multihop_e2e
+ 9/10 Test #20: galaxy_b64_live_multihop_e2e .........   Passed    9.58 sec
+      Start 21: galaxy_b65_gate_disruption_tests
+10/10 Test #21: galaxy_b65_gate_disruption_tests .....   Passed    0.03 sec
+
+100% tests passed, 0 tests failed out of 10
+
+Total Test time (real) =  26.82 sec

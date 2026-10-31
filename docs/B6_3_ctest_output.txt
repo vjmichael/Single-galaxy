@@ -1,0 +1,42 @@
+Internal ctest changing into directory: /mnt/data/SingleGalaxy_B6_3_Routes_Survey_History/build
+Test project /mnt/data/SingleGalaxy_B6_3_Routes_Survey_History/build
+      Start  6: galaxy_b52_station_live_e2e
+      Start  8: galaxy_b53_live_logistics_e2e
+ 1/18 Test  #6: galaxy_b52_station_live_e2e ...............   Passed    9.63 sec
+      Start 11: galaxy_b61_live_scanning_e2e
+ 2/18 Test  #8: galaxy_b53_live_logistics_e2e .............   Passed    9.63 sec
+      Start 15: galaxy_b62c_live_multisystem_e2e
+ 3/18 Test #15: galaxy_b62c_live_multisystem_e2e ..........   Passed    6.90 sec
+      Start 16: galaxy_b62c_relay_gate_controls
+ 4/18 Test #11: galaxy_b61_live_scanning_e2e ..............   Passed    8.76 sec
+      Start  2: galaxy_persistence_tests
+ 5/18 Test  #2: galaxy_persistence_tests ..................   Passed    0.51 sec
+      Start  5: galaxy_station_lifecycle_tests
+ 6/18 Test  #5: galaxy_station_lifecycle_tests ............   Passed    0.23 sec
+      Start 13: galaxy_b62b_durable_jumps_tests
+ 7/18 Test #13: galaxy_b62b_durable_jumps_tests ...........   Passed    0.09 sec
+      Start  7: galaxy_b53_logistics_tests
+ 8/18 Test  #7: galaxy_b53_logistics_tests ................   Passed    0.21 sec
+      Start 10: galaxy_b54_navigation_tests
+ 9/18 Test #10: galaxy_b54_navigation_tests ...............   Passed    0.15 sec
+      Start  4: galaxy_mining_lifecycle_tests
+10/18 Test  #4: galaxy_mining_lifecycle_tests .............   Passed    0.17 sec
+      Start  3: galaxy_client_contract_tests
+11/18 Test  #3: galaxy_client_contract_tests ..............   Passed    0.07 sec
+      Start 14: galaxy_b62c_projection_tests
+12/18 Test #14: galaxy_b62c_projection_tests ..............   Passed    0.03 sec
+      Start  9: galaxy_b54_b60_geography_scanning_tests
+13/18 Test  #9: galaxy_b54_b60_geography_scanning_tests ...   Passed    0.02 sec
+      Start 12: galaxy_b62a_gate_transit_tests
+14/18 Test #12: galaxy_b62a_gate_transit_tests ............   Passed    0.00 sec
+      Start  1: galaxy_kernel_tests
+15/18 Test  #1: galaxy_kernel_tests .......................   Passed    0.00 sec
+      Start 17: galaxy_b63_live_routes_history_e2e
+16/18 Test #16: galaxy_b62c_relay_gate_controls ...........   Passed    4.51 sec
+      Start 18: galaxy_b63_relay_route_controls
+17/18 Test #17: galaxy_b63_live_routes_history_e2e ........   Passed    3.79 sec
+18/18 Test #18: galaxy_b63_relay_route_controls ...........   Passed    4.05 sec
+
+100% tests passed, 0 tests failed out of 18
+
+Total Test time (real) =  25.09 sec

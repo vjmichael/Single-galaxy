@@ -1,0 +1,10 @@
+Internal ctest changing into directory: /mnt/data/b70m_work/single_galaxy/build
+Test project /mnt/data/b70m_work/single_galaxy/build
+    Start 52: galaxy_b70m_policy_tests
+1/2 Test #52: galaxy_b70m_policy_tests .........   Passed    0.08 sec
+    Start 53: galaxy_b70m_live_policy_relay
+2/2 Test #53: galaxy_b70m_live_policy_relay ....   Passed    3.63 sec
+
+100% tests passed, 0 tests failed out of 2
+
+Total Test time (real) =   3.71 sec

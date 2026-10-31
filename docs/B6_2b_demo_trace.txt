@@ -1,0 +1,4 @@
+BEFORE_JUMP system=1 cargo=20
+ACCEPTED system=1 protected=1
+AFTER_JUMP system=2 cargo=20 protected=1
+FINAL system=2 cargo=0 credits=100 ore_total=30 credit_total=2000

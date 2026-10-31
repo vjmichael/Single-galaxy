@@ -1,0 +1,22 @@
+[1/15] Building CXX object CMakeFiles/galaxy_kernel.dir/src/ColonyRecovery.cpp.o
+[2/15] Building CXX object CMakeFiles/galaxy_kernel.dir/src/ColonyWaterSupply.cpp.o
+[3/15] Building CXX object CMakeFiles/galaxy_kernel.dir/src/ColonyResilience.cpp.o
+[4/15] Building CXX object CMakeFiles/galaxy_kernel.dir/src/Galaxy.cpp.o
+/mnt/data/sg_b70l_clean/single_galaxy/src/Galaxy.cpp: In constructor 'galaxy::SurveyArchive::SurveyArchive(const std::string&)':
+/mnt/data/sg_b70l_clean/single_galaxy/src/Galaxy.cpp:173:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  173 |         if(db_)sqlite3_close(db_); db_=nullptr;throw std::runtime_error(err);
+      |         ^~
+/mnt/data/sg_b70l_clean/single_galaxy/src/Galaxy.cpp:173:36: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  173 |         if(db_)sqlite3_close(db_); db_=nullptr;throw std::runtime_error(err);
+      |                                    ^~~
+[5/15] Building CXX object CMakeFiles/galaxy_kernel.dir/src/Navigation.cpp.o
+[6/15] Building CXX object CMakeFiles/galaxy_kernel.dir/src/ClientContract.cpp.o
+[7/15] Building CXX object CMakeFiles/galaxy_kernel.dir/src/GateTransit.cpp.o
+[8/15] Building CXX object CMakeFiles/galaxy_kernel.dir/src/Region.cpp.o
+[9/15] Building CXX object CMakeFiles/galaxy_kernel.dir/src/Persistence.cpp.o
+[10/15] Building CXX object CMakeFiles/galaxy_b70l_waterworks_tests.dir/tests/B70lWaterworksTests.cpp.o
+[11/15] Building CXX object CMakeFiles/galaxy_colony_live_host.dir/src/colony_live_host.cpp.o
+[12/15] Building CXX object CMakeFiles/galaxy_kernel.dir/src/Simulation.cpp.o
+[13/15] Linking CXX static library libgalaxy_kernel.a
+[14/15] Linking CXX executable galaxy_b70l_waterworks_tests
+[15/15] Linking CXX executable galaxy_colony_live_host

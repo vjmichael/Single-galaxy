@@ -1,0 +1,29 @@
+Test project /mnt/data/sg_b70k/build
+      Start 22: galaxy_b65_live_gate_qa_e2e
+      Start 20: galaxy_b64_live_multihop_e2e
+ 1/12 Test #20: galaxy_b64_live_multihop_e2e .........   Passed    9.57 sec
+      Start 23: galaxy_b65_relay_qa_controls
+ 2/12 Test #22: galaxy_b65_live_gate_qa_e2e ..........   Passed   11.71 sec
+      Start 15: galaxy_b62c_live_multisystem_e2e
+ 3/12 Test #23: galaxy_b65_relay_qa_controls .........   Passed    8.44 sec
+      Start 16: galaxy_b62c_relay_gate_controls
+ 4/12 Test #15: galaxy_b62c_live_multisystem_e2e .....   Passed    6.50 sec
+      Start 17: galaxy_b63_live_routes_history_e2e
+ 5/12 Test #17: galaxy_b63_live_routes_history_e2e ...   Passed    3.46 sec
+      Start 18: galaxy_b63_relay_route_controls
+ 6/12 Test #16: galaxy_b62c_relay_gate_controls ......   Passed    4.19 sec
+      Start 13: galaxy_b62b_durable_jumps_tests
+ 7/12 Test #13: galaxy_b62b_durable_jumps_tests ......   Passed    0.07 sec
+      Start 24: galaxy_b66_gate_operations_tests
+ 8/12 Test #24: galaxy_b66_gate_operations_tests .....   Passed    0.06 sec
+      Start 21: galaxy_b65_gate_disruption_tests
+ 9/12 Test #21: galaxy_b65_gate_disruption_tests .....   Passed    0.03 sec
+      Start 14: galaxy_b62c_projection_tests
+10/12 Test #14: galaxy_b62c_projection_tests .........   Passed    0.02 sec
+      Start 19: galaxy_b64_region_tests
+11/12 Test #19: galaxy_b64_region_tests ..............   Passed    0.00 sec
+12/12 Test #18: galaxy_b63_relay_route_controls ......   Passed    3.41 sec
+
+100% tests passed, 0 tests failed out of 12
+
+Total Test time (real) =  25.08 sec

@@ -1,0 +1,28 @@
+Internal ctest changing into directory: /mnt/data/SingleGalaxy_B7_0e_Colony_Farms_Autonomy/build
+UpdateCTestConfiguration  from :/mnt/data/SingleGalaxy_B7_0e_Colony_Farms_Autonomy/build/DartConfiguration.tcl
+Parse Config file:/mnt/data/SingleGalaxy_B7_0e_Colony_Farms_Autonomy/build/DartConfiguration.tcl
+UpdateCTestConfiguration  from :/mnt/data/SingleGalaxy_B7_0e_Colony_Farms_Autonomy/build/DartConfiguration.tcl
+Parse Config file:/mnt/data/SingleGalaxy_B7_0e_Colony_Farms_Autonomy/build/DartConfiguration.tcl
+Test project /mnt/data/SingleGalaxy_B7_0e_Colony_Farms_Autonomy/build
+Constructing a list of tests
+Done constructing a list of tests
+Updating test list for fixtures
+Added 0 tests to meet fixture requirements
+Checking test dependency graph...
+Checking test dependency graph end
+test 11
+    Start 11: galaxy_b61_live_scanning_e2e
+
+11: Test command: /opt/pyvenv/bin/python3 "/mnt/data/SingleGalaxy_B7_0e_Colony_Farms_Autonomy/tests/B61LiveScanningTests.py" "--executable" "/mnt/data/SingleGalaxy_B7_0e_Colony_Farms_Autonomy/build/galaxy_interactive_host" "--relay" "/mnt/data/SingleGalaxy_B7_0e_Colony_Farms_Autonomy/live/interactive_relay.py"
+11: Working Directory: /mnt/data/SingleGalaxy_B7_0e_Colony_Farms_Autonomy/build
+11: Test timeout computed to be: 18
+11: PASS B6.1 native: authoritative dock rejection, live directional contacts, probes, private SQLite, explicit publication, recovery, intact SGVIEW
+11: PASS B6.1 relay: token, same-origin and schema validation; two viewers + late replay of authoritative world and survey events
+1/1 Test #11: galaxy_b61_live_scanning_e2e .....   Passed    8.31 sec
+
+The following tests passed:
+	galaxy_b61_live_scanning_e2e
+
+100% tests passed, 0 tests failed out of 1
+
+Total Test time (real) =   8.31 sec

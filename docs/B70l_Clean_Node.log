@@ -1,0 +1,28 @@
+TAP version 13
+# Subtest: B7.0l local purified-water telemetry is mass-balanced
+ok 1 - B7.0l local purified-water telemetry is mass-balanced
+  ---
+  duration_ms: 2.170407
+  type: 'test'
+  ...
+# Subtest: B7.0l three-period water supply cannot claim infinite renewal
+ok 2 - B7.0l three-period water supply cannot claim infinite renewal
+  ---
+  duration_ms: 0.42511
+  type: 'test'
+  ...
+# Subtest: B7.0l UI and relay contain bounded local player commands only
+ok 3 - B7.0l UI and relay contain bounded local player commands only
+  ---
+  duration_ms: 1.564365
+  type: 'test'
+  ...
+1..3
+# tests 3
+# suites 0
+# pass 3
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 69.81523

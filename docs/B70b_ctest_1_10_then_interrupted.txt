@@ -1,0 +1,23 @@
+Internal ctest changing into directory: /mnt/data/SingleGalaxy_B7_0b_Colony_Visual_Geology/build
+Test project /mnt/data/SingleGalaxy_B7_0b_Colony_Visual_Geology/build
+      Start  1: galaxy_kernel_tests
+ 1/14 Test  #1: galaxy_kernel_tests .......................   Passed    0.01 sec
+      Start  2: galaxy_persistence_tests
+ 2/14 Test  #2: galaxy_persistence_tests ..................   Passed    1.53 sec
+      Start  3: galaxy_client_contract_tests
+ 3/14 Test  #3: galaxy_client_contract_tests ..............   Passed    0.10 sec
+      Start  4: galaxy_mining_lifecycle_tests
+ 4/14 Test  #4: galaxy_mining_lifecycle_tests .............   Passed    0.18 sec
+      Start  5: galaxy_station_lifecycle_tests
+ 5/14 Test  #5: galaxy_station_lifecycle_tests ............   Passed    0.72 sec
+      Start  6: galaxy_b52_station_live_e2e
+ 6/14 Test  #6: galaxy_b52_station_live_e2e ...............   Passed   12.80 sec
+      Start  7: galaxy_b53_logistics_tests
+ 7/14 Test  #7: galaxy_b53_logistics_tests ................   Passed    0.17 sec
+      Start  8: galaxy_b53_live_logistics_e2e
+ 8/14 Test  #8: galaxy_b53_live_logistics_e2e .............   Passed   16.32 sec
+      Start  9: galaxy_b54_b60_geography_scanning_tests
+ 9/14 Test  #9: galaxy_b54_b60_geography_scanning_tests ...   Passed    0.03 sec
+      Start 10: galaxy_b54_navigation_tests
+10/14 Test #10: galaxy_b54_navigation_tests ...............   Passed    0.42 sec
+      Start 11: galaxy_b61_live_scanning_e2e

@@ -1,0 +1,8 @@
+Internal ctest changing into directory: /mnt/data/SingleGalaxy_B6_6_Gate_Operations/build
+Test project /mnt/data/SingleGalaxy_B6_6_Gate_Operations/build
+    Start 25: galaxy_b66_live_gate_telemetry
+1/1 Test #25: galaxy_b66_live_gate_telemetry ...   Passed    2.04 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Total Test time (real) =   2.06 sec

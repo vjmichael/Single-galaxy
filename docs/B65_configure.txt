@@ -1,0 +1,4 @@
+-- Using OS SQLite SDK (amalgamation not present)
+-- Configuring done (6.1s)
+-- Generating done (0.0s)
+-- Build files have been written to: /mnt/data/SingleGalaxy_B6_5_Gate_Disruption_QA/build

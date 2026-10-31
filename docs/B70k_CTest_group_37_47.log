@@ -1,0 +1,27 @@
+Test project /mnt/data/sg_b70k/build
+      Start 37: galaxy_b70f_live_habitat_relay
+      Start 41: galaxy_b70h_live_maintenance_relay
+      Start 45: galaxy_b70j_live_community_relay
+ 1/11 Test #45: galaxy_b70j_live_community_relay ..........   Passed    3.63 sec
+      Start 47: galaxy_b70k_live_clinic_relay
+ 2/11 Test #41: galaxy_b70h_live_maintenance_relay ........   Passed    3.76 sec
+      Start 39: galaxy_b70g_live_utility_relay
+ 3/11 Test #37: galaxy_b70f_live_habitat_relay ............   Passed    4.14 sec
+      Start 43: galaxy_b70i_live_resilience_relay
+ 4/11 Test #47: galaxy_b70k_live_clinic_relay .............   Passed    3.38 sec
+      Start 40: galaxy_b70h_delegated_maintenance_tests
+ 5/11 Test #39: galaxy_b70g_live_utility_relay ............   Passed    3.32 sec
+      Start 38: galaxy_b70g_utilities_tests
+ 6/11 Test #38: galaxy_b70g_utilities_tests ...............   Passed    0.28 sec
+      Start 46: galaxy_b70k_clinic_tests
+ 7/11 Test #40: galaxy_b70h_delegated_maintenance_tests ...   Passed    0.37 sec
+      Start 44: galaxy_b70j_community_tests
+ 8/11 Test #46: galaxy_b70k_clinic_tests ..................   Passed    0.12 sec
+      Start 42: galaxy_b70i_resilience_tests
+ 9/11 Test #44: galaxy_b70j_community_tests ...............   Passed    0.14 sec
+10/11 Test #43: galaxy_b70i_live_resilience_relay .........   Passed    3.40 sec
+11/11 Test #42: galaxy_b70i_resilience_tests ..............   Passed    0.10 sec
+
+100% tests passed, 0 tests failed out of 11
+
+Total Test time (real) =   7.59 sec

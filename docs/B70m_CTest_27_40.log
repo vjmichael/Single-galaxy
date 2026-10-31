@@ -1,0 +1,34 @@
+Internal ctest changing into directory: /mnt/data/b70m_work/single_galaxy/build
+Test project /mnt/data/b70m_work/single_galaxy/build
+      Start 27: galaxy_b70_colony_cli_e2e
+      Start 28: galaxy_b70b_geology_tests
+ 1/14 Test #28: galaxy_b70b_geology_tests .................   Passed    0.06 sec
+      Start 29: galaxy_b70b_live_colony_e2e
+ 2/14 Test #27: galaxy_b70_colony_cli_e2e .................   Passed    1.05 sec
+      Start 30: galaxy_b70c_mineral_industry_tests
+ 3/14 Test #30: galaxy_b70c_mineral_industry_tests ........   Passed    0.04 sec
+      Start 31: galaxy_b70c_live_mineral_relay
+ 4/14 Test #29: galaxy_b70b_live_colony_e2e ...............   Passed    2.74 sec
+      Start 32: galaxy_b70d_life_support_tests
+ 5/14 Test #32: galaxy_b70d_life_support_tests ............   Passed    0.09 sec
+      Start 33: galaxy_b70d_live_agriculture_relay
+ 6/14 Test #31: galaxy_b70c_live_mineral_relay ............   Passed    1.93 sec
+      Start 34: galaxy_b70e_colony_farms_tests
+ 7/14 Test #34: galaxy_b70e_colony_farms_tests ............   Passed    0.23 sec
+      Start 35: galaxy_b70e_live_farm_relay
+ 8/14 Test #35: galaxy_b70e_live_farm_relay ...............   Passed    2.75 sec
+      Start 36: galaxy_b70f_habitation_tests
+ 9/14 Test #36: galaxy_b70f_habitation_tests ..............   Passed    0.13 sec
+      Start 37: galaxy_b70f_live_habitat_relay
+10/14 Test #33: galaxy_b70d_live_agriculture_relay ........   Passed    3.25 sec
+      Start 38: galaxy_b70g_utilities_tests
+11/14 Test #38: galaxy_b70g_utilities_tests ...............   Passed    0.27 sec
+      Start 39: galaxy_b70g_live_utility_relay
+12/14 Test #39: galaxy_b70g_live_utility_relay ............   Passed    3.39 sec
+      Start 40: galaxy_b70h_delegated_maintenance_tests
+13/14 Test #37: galaxy_b70f_live_habitat_relay ............   Passed    4.04 sec
+14/14 Test #40: galaxy_b70h_delegated_maintenance_tests ...   Passed    0.38 sec
+
+100% tests passed, 0 tests failed out of 14
+
+Total Test time (real) =  10.18 sec
