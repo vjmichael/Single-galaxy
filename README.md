@@ -6,7 +6,7 @@ In the released game's intended opening, one player colony ship with finite NPC 
 
 ## Current prototype status
 
-The current engineering baseline is **GRSM-04b.A** (SQLite v15 verified named victim/firsthand observer receipts, October 31, 2026), descended from the **B7.0n** source/testing archive. The archived evidence records a Linux pass of 54/54 CTest native/integration suites and 84/84 Node tests. The opt-in individual workforce model persists up to 24 original NPC crew identities and farm work/mentoring; a separate statistical cohort prototype demonstrates bounded large-number accounting. **Those are not a live trillion-NPC universe.** The game remains a bounded 2D colony/space prototype, not a continuous 3D multiplayer galaxy. Native Windows and full interactive Chromium playthrough remain open gates.
+The current engineering baseline is **GRSM-04b.B1** (SQLite v16 named mining assignments and effect-linked execution, October 31, 2026), descended from the **B7.0n** source/testing archive. The archived evidence records a Linux pass of 54/54 CTest native/integration suites and 84/84 Node tests. The opt-in individual workforce model persists up to 24 original NPC crew identities and farm work/mentoring; a separate statistical cohort prototype demonstrates bounded large-number accounting. **Those are not a live trillion-NPC universe.** The game remains a bounded 2D colony/space prototype, not a continuous 3D multiplayer galaxy. Native Windows and full interactive Chromium playthrough remain open gates.
 
 ## Design documentation
 
@@ -104,3 +104,14 @@ SQLite v15 adds append-only receipts recording only **NPC victims directly ident
 **Linux local verification:** complete final native/integration CTest **65/65**, Node.js **84/84**, Python design **3/3**, persistence/social **12/12**. An earlier whole-suite run was interrupted and is retained as a separate, nonpassing trace. See [GRSM-04b.A engineering report](docs/GRSM04bA_Verified_Roles_Report_2026-10-31.md).
 
 **Crucial limitation:** a player/host command naming a **ship** does not establish a particular **NPC actor**, perpetrator, beneficiary or culpable organization. GRSM-04b.B must implement independently committed NPC job/action-effect receipts before individual culpability can be inferred. No automatic blame, punishment, dialogue, social-policy change, autonomous political behavior, Windows-native or Chromium full playthrough is claimed in this slice.
+
+
+## GRSM-04b.B1 · Named NPC mining work with committed effect proof (2026-10-31)
+
+An explicitly authorized host pathway now accepts a **specific living onboard crew member** as the assigned executor of a real mining command. SQLite v16 records an immutable assignment separately from an **executed-work receipt**. The latter is written only with the successfully applied simulation step and a genuine positive ore-transfer incident. A failed command, ordinary ship-level mining, or a fellow passenger can never be retroactively credited as named work merely by association. The source is a host-owned job appointment plus independent committed physical outcome, **not yet** simulation of an NPC independently selecting the task or operating equipment. Replays, restarts, recovery, tampered identity and physical-source rows, and migrations from v15 are tested.
+
+**Linux verified:** complete native/integration CTest **66/66**, Node.js **84/84**, design tests **3/3**, targeted persistence/GRSM **13/13**. Earlier incomplete native runs and a separately passed legacy relay are retained. [GRSM-04b.B1 engineering report](docs/GRSM04bB1_Named_Mining_Execution_Report_2026-10-31.md).
+
+**Deferred network and launcher decision:** use a future **ID-centric versioned binary multiplayer protocol** over an authenticated transport; retain a single authoritative simulation whether single-player or dedicated-hosted. Eventually a single-click game launcher will start the local server invisibly and an optional separate **Server Manager GUI** can manage the same backend. These remain **design decisions, not present functionality**. See [NET-01 deferred transport / hosting design](docs/engineering/NET01_Deferred_Binary_Transport_And_Dual_Mode_Launcher_2026-10-31.md).
+
+**Not yet implemented:** generalized named NPC work across professions, causally validated individual assistance/harm in arbitrary commands, commander/executor/beneficiary attribution, autonomous NPC choices, legal culpability, a production multiplayer protocol, a single-click native launcher or a server GUI. Windows-native and full interactive UI acceptance remain future gates.
