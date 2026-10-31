@@ -1,6 +1,6 @@
 # GRSM-03c.2 — Bounded NPC Encounters and Provenance-Safe Information Routes
 
-**October 31, 2026 — engineering plan; implementation not yet accepted**
+**October 31, 2026 — engineering plan and final acceptance record: bounded Linux prototype implemented and passed**
 
 ## Baseline as of GRSM-03c.1
 
@@ -30,3 +30,13 @@
 Actual autonomous NPC transport, cross-colony messaging, institution-wide reputation consensus, AP​​S galaxy-scale sampling, fully dynamic factions, spontaneous dialogue, and folklore are separate gates. No external EVEmu code is introduced; original Single Galaxy remains isolated from Lu and Cognitum.
 
 Development is local-first. GitHub records verified source, test evidence and open issues, not the runtime development hub.
+
+
+## Post-implementation acceptance (October 31, 2026)
+
+- **A: Passed.** Explicit bounded, cursor-rotated contact scan with survivor/co-location enforcement and repeat-pair cooldown. Duplicate scan activity is retained as scan receipts; eligible contacts are not duplicated inside the cooldown.
+- **B: Passed in local Linux tests.** SQLite v11 migration from existing saves, source/lineage receipts, restart/recover-copy, deliberate tamper detection; no invention of old encounters and no changes to cargo, crew, group membership, trust or physical event history.
+- **C: Passed as final-code Linux regression.** Bounded listening readiness and authoritative state transitions hardened old Python relay tests; full CTest 61/61 and repeated relay group 12/12. Historical failed test logs are preserved; no claim that scheduling races are categorically eliminated across platforms.
+- **D: Passed.** Node 84/84, design 3/3, source and regression evidence locally archived and committed to repository; README and next-gates status updated.
+
+This is not fully automatic NPC conversational behavior. Host invocation is required and only a *meeting opportunity* is recorded. Recognition, dialogue, earned trust adjustments, group-wide deliberation, travel and actual communication routes remain future milestones. See [the tested engineering report](../GRSM03c2_Bounded_Encounter_Scheduler_Report_2026-10-31.md).
