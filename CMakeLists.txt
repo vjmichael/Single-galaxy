@@ -478,3 +478,10 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_grsm04b_responsibility_tests PRIVATE galaxy_kernel SQLite::SQLite3)
   add_test(NAME galaxy_grsm04b_responsibility_tests COMMAND galaxy_grsm04b_responsibility_tests)
 endif()
+
+# GRSM-04b.B1: explicit named NPC work and committed physical-effect proof.
+if(BUILD_TESTING)
+  add_executable(galaxy_grsm04b_named_job_tests tests/GRSM04bNamedJobTests.cpp)
+  target_link_libraries(galaxy_grsm04b_named_job_tests PRIVATE galaxy_kernel SQLite::SQLite3)
+  add_test(NAME galaxy_grsm04b_named_job_tests COMMAND galaxy_grsm04b_named_job_tests)
+endif()

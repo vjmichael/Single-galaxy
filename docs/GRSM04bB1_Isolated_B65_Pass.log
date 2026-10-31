@@ -1,0 +1,8 @@
+Internal ctest changing into directory: /mnt/data/sg04bB/build
+Test project /mnt/data/sg04bB/build
+    Start 22: galaxy_b65_live_gate_qa_e2e
+1/1 Test #22: galaxy_b65_live_gate_qa_e2e ......   Passed   12.06 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Total Test time (real) =  12.06 sec

@@ -141,6 +141,22 @@ struct IncidentRoleReceipt {
     VerifiedNpcRole role=VerifiedNpcRole::Victim;
 };
 
+// GRSM-04b.B1: a named onboard crew member may be assigned as the executor
+// of an actual authoritative mining command. Assignment is not proof that a
+// command succeeded; execution is independently reconciled to real ore moved.
+// This is a deliberately narrow, host-controlled work path, not a general
+// inference of criminal responsibility for ship / facility commands.
+struct NpcMiningAssignment {
+    std::uint64_t id=0, command_id=0, npc_id=0, ship_id=0, rock_id=0;
+    std::uint64_t generation=0, tick=0;
+};
+struct NpcMiningExecution {
+    std::uint64_t id=0, assignment_id=0, command_id=0, npc_id=0;
+    std::uint64_t generation=0, tick=0;
+    std::int64_t amount=0;
+    std::string incident_id;
+};
+
 // GRSM-03b: directional, evidence-linked interpersonal trust. Each event is
 // an immutable record of a witnessed contact or a character's reassessment;
 // it is neither historical truth nor proof of the accuracy of the allegation.
@@ -278,6 +294,16 @@ public:
     bool is_verified_incident_role(const std::string& incident_id,
             std::uint64_t npc_id,VerifiedNpcRole role) const;
     std::vector<IncidentRoleReceipt> recent_incident_roles(std::size_t limit=50) const;
+    // GRSM-04b.B1: Only this explicit host-owned execution route may name a
+    // worker. It accepts a real Mine command; a completion is recorded later,
+    // atomically with the executed command's actual ore-transfer incident.
+    // Merely sharing a ship or witnessing a mine is never execution proof.
+    bool submit_npc_mining_work(std::uint64_t npc_id, EntityId ship,EntityId rock,
+          std::int64_t amount,std::uint64_t command_id,FailPoint fail=FailPoint::None);
+    bool verified_npc_mining_execution(std::uint64_t command_id,std::uint64_t npc_id) const;
+    std::vector<NpcMiningAssignment> recent_npc_mining_assignments(std::size_t limit=50) const;
+    std::vector<NpcMiningExecution> recent_npc_mining_executions(std::size_t limit=50) const;
+
 
 
 

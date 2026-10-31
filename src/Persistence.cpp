@@ -372,6 +372,47 @@ std::string incident_role_body(const IncidentRoleReceipt& e){
       std::to_string(e.tick);
 }
 
+NpcMiningAssignment read_npc_mining_assignment(sqlite3_stmt* q){
+    NpcMiningAssignment e;
+    const auto v=[&](int i)->std::uint64_t {
+        const auto n=sqlite3_column_int64(q,i);
+        if(n<0)throw std::runtime_error("SQLite: negative NPC mining assignment field");
+        return static_cast<std::uint64_t>(n);
+    };
+    e.id=v(0);e.command_id=v(1);e.npc_id=v(2);e.ship_id=v(3);
+    e.rock_id=v(4);e.generation=v(5);e.tick=v(6);
+    if(!e.id||!e.command_id||!e.npc_id||!e.ship_id||!e.rock_id||!e.generation)
+        throw std::runtime_error("SQLite: invalid NPC mining assignment");
+    return e;
+}
+std::string npc_mining_assignment_body(const NpcMiningAssignment& e){
+    return std::to_string(e.id)+"|"+std::to_string(e.command_id)+"|"+
+        std::to_string(e.npc_id)+"|"+std::to_string(e.ship_id)+"|"+
+        std::to_string(e.rock_id)+"|"+std::to_string(e.generation)+"|"+
+        std::to_string(e.tick);
+}
+NpcMiningExecution read_npc_mining_execution(sqlite3_stmt* q){
+    NpcMiningExecution e;
+    const auto v=[&](int i)->std::uint64_t {
+        const auto n=sqlite3_column_int64(q,i);
+        if(n<0)throw std::runtime_error("SQLite: negative NPC mining execution field");
+        return static_cast<std::uint64_t>(n);
+    };
+    e.id=v(0);e.assignment_id=v(1);e.command_id=v(2);e.npc_id=v(3);
+    e.incident_id=sqlite_str(q,4);e.generation=v(5);e.tick=v(6);
+    e.amount=sqlite3_column_int64(q,7);
+    if(!e.id||!e.assignment_id||!e.command_id||!e.npc_id||
+       e.incident_id.empty()||!e.generation||e.amount<=0)
+        throw std::runtime_error("SQLite: invalid NPC mining execution");
+    return e;
+}
+std::string npc_mining_execution_body(const NpcMiningExecution& e){
+    return std::to_string(e.id)+"|"+std::to_string(e.assignment_id)+"|"+
+        std::to_string(e.command_id)+"|"+std::to_string(e.npc_id)+"|"+
+        e.incident_id+"|"+std::to_string(e.generation)+"|"+
+        std::to_string(e.tick)+"|"+std::to_string(e.amount);
+}
+
 struct EncounterCycle {
     std::uint64_t id=0,generation=0,tick=0,population=0,pairs=0,start=0,
                   scanned=0,end=0,contacts=0;
@@ -464,7 +505,7 @@ public:
         Statement version(db_, "PRAGMA user_version");
         if (!version.row()) throw std::runtime_error("SQLite: no schema version");
         const int v = sqlite3_column_int(version.get(), 0);
-        if (v < 0 || v > 15) throw std::runtime_error("SQLite: incompatible schema version");
+        if (v < 0 || v > 16) throw std::runtime_error("SQLite: incompatible schema version");
         if (v == 0) {
             run(db_, "BEGIN IMMEDIATE");
             try {
@@ -845,6 +886,42 @@ public:
                 run(db_,"CREATE TRIGGER incident_role_no_delete BEFORE DELETE ON incident_role_receipts "
                     "BEGIN SELECT RAISE(ABORT,'incident role immutable'); END");
                 run(db_,"PRAGMA user_version=15");run(db_,"COMMIT");
+            }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
+        }
+        if(v<=15){
+            // GRSM-04b.B1: pending assignment and independently measured
+            // execution are separate immutable rows. Neither exists for
+            // historical commands upgraded from v15.
+            run(db_,"BEGIN IMMEDIATE");
+            try {
+                run(db_,"CREATE TABLE npc_mining_assignment_meta(singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
+                    "event_count INTEGER NOT NULL CHECK(event_count>=0),tip TEXT NOT NULL)");
+                run(db_,"INSERT INTO npc_mining_assignment_meta VALUES(1,0,'origin')");
+                run(db_,"CREATE TABLE npc_mining_assignments(id INTEGER PRIMARY KEY,"
+                    "command_id TEXT NOT NULL UNIQUE REFERENCES receipts(id),"
+                    "npc_id TEXT NOT NULL,ship_id TEXT NOT NULL,rock_id TEXT NOT NULL,"
+                    "generation INTEGER NOT NULL CHECK(generation>0),"
+                    "tick INTEGER NOT NULL CHECK(tick>=0),digest TEXT NOT NULL)");
+                run(db_,"CREATE TRIGGER npc_mining_assignment_no_update BEFORE UPDATE ON npc_mining_assignments "
+                    "BEGIN SELECT RAISE(ABORT,'NPC mining assignment immutable'); END");
+                run(db_,"CREATE TRIGGER npc_mining_assignment_no_delete BEFORE DELETE ON npc_mining_assignments "
+                    "BEGIN SELECT RAISE(ABORT,'NPC mining assignment immutable'); END");
+                run(db_,"CREATE TABLE npc_mining_execution_meta(singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
+                    "event_count INTEGER NOT NULL CHECK(event_count>=0),tip TEXT NOT NULL)");
+                run(db_,"INSERT INTO npc_mining_execution_meta VALUES(1,0,'origin')");
+                run(db_,"CREATE TABLE npc_mining_executions(id INTEGER PRIMARY KEY,"
+                    "assignment_id INTEGER NOT NULL UNIQUE REFERENCES npc_mining_assignments(id),"
+                    "command_id TEXT NOT NULL UNIQUE REFERENCES receipts(id),"
+                    "npc_id TEXT NOT NULL,"
+                    "incident_id TEXT NOT NULL UNIQUE REFERENCES physical_incidents(incident_id),"
+                    "generation INTEGER NOT NULL CHECK(generation>0),"
+                    "tick INTEGER NOT NULL CHECK(tick>=0),"
+                    "amount INTEGER NOT NULL CHECK(amount>0),digest TEXT NOT NULL)");
+                run(db_,"CREATE TRIGGER npc_mining_execution_no_update BEFORE UPDATE ON npc_mining_executions "
+                    "BEGIN SELECT RAISE(ABORT,'NPC mining execution immutable'); END");
+                run(db_,"CREATE TRIGGER npc_mining_execution_no_delete BEFORE DELETE ON npc_mining_executions "
+                    "BEGIN SELECT RAISE(ABORT,'NPC mining execution immutable'); END");
+                run(db_,"PRAGMA user_version=16");run(db_,"COMMIT");
             }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
         }
         } catch (...) { sqlite3_close_v2(db_); db_ = nullptr; throw; }
@@ -2138,6 +2215,86 @@ public:
             if(count!=static_cast<std::uint64_t>(expected)||tip!=expected_tip)
                 throw std::runtime_error("SQLite: missing or altered NPC role receipts");
         }
+        // GRSM-04b.B1: do not treat a ship/crew association as executor proof.
+        // Only the explicit assigned work path, followed by actual committed
+        // mining effects and the original command journal, can yield a named
+        // execution. Both immutable chains and their tips must survive restore.
+        {
+            Statement meta(db_,"SELECT event_count,tip FROM npc_mining_assignment_meta WHERE singleton=1");
+            if(!meta.row())throw std::runtime_error("SQLite: missing mining assignment metadata");
+            const auto expected=sqlite3_column_int64(meta.get(),0);
+            const auto tip_end=sqlite_str(meta.get(),1);
+            if(expected<0||meta.row())throw std::runtime_error("SQLite: invalid mining assignment metadata");
+            std::uint64_t count=0;std::string tip="origin";
+            Statement q(db_,"SELECT id,command_id,npc_id,ship_id,rock_id,generation,tick,digest "
+                           "FROM npc_mining_assignments ORDER BY id");
+            while(q.row()){
+                const auto e=read_npc_mining_assignment(q.get());
+                if(e.id!=++count||e.generation>generation||e.tick>restored.tick())
+                    throw std::runtime_error("SQLite: invalid mining assignment sequence");
+                Statement cmd(db_,"SELECT command FROM operation_log WHERE kind=1 AND generation=?");
+                cmd.i64(1,e.generation);
+                if(!cmd.row())throw std::runtime_error("SQLite: orphaned mining assignment");
+                const auto parsed=decode_command(sqlite_str(cmd.get(),0));
+                if(parsed.id!=e.command_id||parsed.action!=Action::Mine||
+                   parsed.actor!=e.ship_id||parsed.target!=e.rock_id||
+                   parsed.execute_tick!=e.tick+1||cmd.row())
+                    throw std::runtime_error("SQLite: mining assignment contradicts command");
+                Statement receipt(db_,"SELECT accepted_generation FROM receipts WHERE id=?");
+                receipt.text(1,std::to_string(e.command_id));
+                if(!receipt.row()||sqlite3_column_int64(receipt.get(),0)!=static_cast<sqlite3_int64>(e.generation))
+                    throw std::runtime_error("SQLite: mining assignment lacks accepted receipt");
+                tip=social_digest(tip,npc_mining_assignment_body(e));
+                if(tip!=sqlite_str(q.get(),7))throw std::runtime_error("SQLite: altered mining assignment history");
+            }
+            if(count!=static_cast<std::uint64_t>(expected)||tip!=tip_end)
+                throw std::runtime_error("SQLite: deleted mining assignment history");
+        }
+        {
+            Statement meta(db_,"SELECT event_count,tip FROM npc_mining_execution_meta WHERE singleton=1");
+            if(!meta.row())throw std::runtime_error("SQLite: missing mining execution metadata");
+            const auto expected=sqlite3_column_int64(meta.get(),0);
+            const auto tip_end=sqlite_str(meta.get(),1);
+            if(expected<0||meta.row())throw std::runtime_error("SQLite: invalid mining execution metadata");
+            std::uint64_t count=0;std::string tip="origin";
+            Statement q(db_,"SELECT id,assignment_id,command_id,npc_id,incident_id,generation,tick,amount,digest "
+                           "FROM npc_mining_executions ORDER BY id");
+            while(q.row()){
+                const auto e=read_npc_mining_execution(q.get());
+                if(e.id!=++count||e.generation>generation||e.tick>restored.tick())
+                    throw std::runtime_error("SQLite: invalid mining executor sequence");
+                Statement assignment(db_,"SELECT command_id,npc_id,ship_id,rock_id,generation,tick "
+                    "FROM npc_mining_assignments WHERE id=?");
+                assignment.i64(1,e.assignment_id);
+                if(!assignment.row()||
+                   parse_u64(sqlite3_column_text(assignment.get(),0))!=e.command_id||
+                   parse_u64(sqlite3_column_text(assignment.get(),1))!=e.npc_id||
+                   sqlite3_column_int64(assignment.get(),4)>=static_cast<sqlite3_int64>(e.generation)||
+                   sqlite3_column_int64(assignment.get(),5)+1!=static_cast<sqlite3_int64>(e.tick))
+                    throw std::runtime_error("SQLite: executor lacks original named assignment");
+                const auto ship=sqlite_str(assignment.get(),2),rock=sqlite_str(assignment.get(),3);
+                Statement source(db_,"SELECT kind,source,destination,generation,tick,amount,command_id "
+                    "FROM physical_incidents WHERE incident_id=?");
+                source.text(1,e.incident_id);
+                if(!source.row()||sqlite3_column_int(source.get(),0)!=static_cast<int>(PhysicalKind::CargoMovement)||
+                   sqlite_str(source.get(),1)!=rock||sqlite_str(source.get(),2)!=ship||
+                   sqlite3_column_int64(source.get(),3)!=static_cast<sqlite3_int64>(e.generation)||
+                   sqlite3_column_int64(source.get(),4)!=static_cast<sqlite3_int64>(e.tick)||
+                   sqlite3_column_int64(source.get(),5)!=e.amount||
+                   parse_u64(sqlite3_column_text(source.get(),6))!=e.command_id)
+                    throw std::runtime_error("SQLite: NPC executor lacks real cargo movement");
+                Statement result(db_,"SELECT execution_tick,result,transferred FROM receipts WHERE id=?");
+                result.text(1,std::to_string(e.command_id));
+                if(!result.row()||sqlite3_column_int64(result.get(),0)!=static_cast<sqlite3_int64>(e.tick)||
+                   sqlite3_column_int(result.get(),1)!=static_cast<int>(Outcome::Applied)||
+                   sqlite3_column_int64(result.get(),2)!=e.amount)
+                    throw std::runtime_error("SQLite: NPC execution contradicts command result");
+                tip=social_digest(tip,npc_mining_execution_body(e));
+                if(tip!=sqlite_str(q.get(),8))throw std::runtime_error("SQLite: altered NPC execution history");
+            }
+            if(count!=static_cast<std::uint64_t>(expected)||tip!=tip_end)
+                throw std::runtime_error("SQLite: deleted NPC execution history");
+        }
         out.swap(restored);
         return true;
     }
@@ -2145,7 +2302,8 @@ public:
     void commit(const Simulation& state, std::uint64_t expected_generation, std::int64_t origin, std::int64_t credit_origin,
                 const Command* accepted, const std::vector<Event>& new_events,
                 const std::map<std::uint64_t, Command>& due_commands,
-                const std::vector<ActivityEvent>& activity_delta, FailPoint fail) {
+                const std::vector<ActivityEvent>& activity_delta, FailPoint fail,
+                const NpcMiningAssignment* npc_mining_assignment=nullptr) {
         if (state.total_ore() != origin || state.total_credits() != credit_origin)
             throw std::runtime_error("resource or credit conservation violation");
         const auto bytes = state.canonical_state();
@@ -2171,6 +2329,28 @@ public:
                 receipt.text(1, std::to_string(accepted->id));
                 receipt.i64(2, static_cast<std::int64_t>(next));
                 receipt.execute();
+            }
+            if(npc_mining_assignment){
+                const auto& e=*npc_mining_assignment;
+                if(!accepted||e.command_id!=accepted->id||e.ship_id!=accepted->actor||
+                   e.rock_id!=accepted->target||accepted->action!=Action::Mine||
+                   e.generation!=next||e.tick+1!=accepted->execute_tick||!e.npc_id)
+                    throw std::runtime_error("invalid accepted named NPC mining job");
+                Statement meta(db_,"SELECT event_count,tip FROM npc_mining_assignment_meta WHERE singleton=1");
+                if(!meta.row())throw std::runtime_error("missing NPC assignment sequence");
+                const auto count=sqlite3_column_int64(meta.get(),0);
+                if(count<0||count==std::numeric_limits<sqlite3_int64>::max()||
+                   e.id!=static_cast<std::uint64_t>(count+1))
+                    throw std::runtime_error("NPC mining assignment sequence mismatch");
+                const auto tip=social_digest(sqlite_str(meta.get(),1),npc_mining_assignment_body(e));
+                Statement add(db_,"INSERT INTO npc_mining_assignments VALUES(?,?,?,?,?,?,?,?)");
+                add.i64(1,e.id);add.text(2,std::to_string(e.command_id));
+                add.text(3,std::to_string(e.npc_id));add.text(4,std::to_string(e.ship_id));
+                add.text(5,std::to_string(e.rock_id));add.i64(6,e.generation);
+                add.i64(7,e.tick);add.text(8,tip);add.execute();
+                Statement update(db_,"UPDATE npc_mining_assignment_meta SET event_count=?,tip=? WHERE singleton=1");
+                update.i64(1,e.id);update.text(2,tip);update.execute();
+                if(sqlite3_changes(db_)!=1)throw std::runtime_error("missing NPC assignment metadata update");
             }
             for (const auto& ev : new_events) {
                 Statement update(db_, "UPDATE receipts SET execution_tick=?,result=?,transferred=? WHERE id=? AND execution_tick IS NULL");
@@ -2501,6 +2681,53 @@ public:
                         std::to_string(a.actor),std::to_string(a.target),1,
                         a.kind==ActivityKind::ShipDestroyed?"wreck_persists":"individual_identity_lost"});
                 }
+            }
+            // Named crew execution can only be recorded in the same COMMIT
+            // as a genuinely applied mining result and its cargo movement.
+            // A valid assignment without a real effect remains *only* an
+            // assignment; a ship's automatic work is never evidence by itself.
+            for(const auto& ev:new_events){
+                Statement assigned(db_,"SELECT id,npc_id,ship_id,rock_id FROM npc_mining_assignments WHERE command_id=?");
+                assigned.text(1,std::to_string(ev.command_id));
+                if(!assigned.row())continue;
+                if(ev.result!=Outcome::Applied||ev.transferred<=0)continue;
+                const auto npc=parse_u64(sqlite3_column_text(assigned.get(),1));
+                const auto ship=parse_u64(sqlite3_column_text(assigned.get(),2));
+                const auto rock=parse_u64(sqlite3_column_text(assigned.get(),3));
+                const auto n=state.npc_records().find(npc);
+                if(n==state.npc_records().end()||n->second.home_ship!=ship||
+                   n->second.location!=ship||n->second.role!=NpcRole::Ship)continue;
+                const auto cmd=due_commands.find(ev.command_id);
+                if(cmd==due_commands.end()||cmd->second.action!=Action::Mine||
+                   cmd->second.actor!=ship||cmd->second.target!=rock)
+                    throw std::runtime_error("named mining command provenance invalid");
+                Statement physical(db_,"SELECT incident_id,amount FROM physical_incidents "
+                    "WHERE command_id=? AND generation=? AND tick=? AND kind=? AND source=? AND destination=?");
+                physical.text(1,std::to_string(ev.command_id));physical.i64(2,next);
+                physical.i64(3,ev.tick);physical.i64(4,static_cast<int>(PhysicalKind::CargoMovement));
+                physical.text(5,std::to_string(rock));physical.text(6,std::to_string(ship));
+                if(!physical.row()||sqlite3_column_int64(physical.get(),1)!=ev.transferred)
+                    throw std::runtime_error("named mining result missing physical movement");
+                const auto incident=sqlite_str(physical.get(),0);
+                if(physical.row())throw std::runtime_error("multiple physical movements for one NPC work command");
+                Statement meta(db_,"SELECT event_count,tip FROM npc_mining_execution_meta WHERE singleton=1");
+                if(!meta.row())throw std::runtime_error("missing NPC execution metadata");
+                const auto count=sqlite3_column_int64(meta.get(),0);
+                if(count<0||count==std::numeric_limits<sqlite3_int64>::max())
+                    throw std::runtime_error("NPC execution sequence exhausted");
+                NpcMiningExecution e;
+                e.id=count+1;e.assignment_id=sqlite3_column_int64(assigned.get(),0);
+                e.command_id=ev.command_id;e.npc_id=npc;e.incident_id=incident;
+                e.generation=next;e.tick=ev.tick;e.amount=ev.transferred;
+                const auto tip=social_digest(sqlite_str(meta.get(),1),npc_mining_execution_body(e));
+                Statement ins(db_,"INSERT INTO npc_mining_executions VALUES(?,?,?,?,?,?,?,?,?)");
+                ins.i64(1,e.id);ins.i64(2,e.assignment_id);ins.text(3,std::to_string(e.command_id));
+                ins.text(4,std::to_string(e.npc_id));ins.text(5,incident);
+                ins.i64(6,e.generation);ins.i64(7,e.tick);ins.i64(8,e.amount);ins.text(9,tip);
+                ins.execute();
+                Statement update(db_,"UPDATE npc_mining_execution_meta SET event_count=?,tip=? WHERE singleton=1");
+                update.i64(1,e.id);update.text(2,tip);update.execute();
+                if(sqlite3_changes(db_)!=1)throw std::runtime_error("missing NPC execution metadata update");
             }
             if (fail == FailPoint::AfterReceiptWrite)
                 throw std::runtime_error("injected failure after receipt changes");
@@ -3079,6 +3306,35 @@ public:
             run(db_,"COMMIT");return true;
         }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
     }
+    std::uint64_t next_npc_mining_assignment_id() const {
+        Statement m(db_,"SELECT event_count FROM npc_mining_assignment_meta WHERE singleton=1");
+        if(!m.row())throw std::runtime_error("missing NPC mining assignment counter");
+        const auto n=sqlite3_column_int64(m.get(),0);
+        if(n<0||n==std::numeric_limits<sqlite3_int64>::max())
+            throw std::runtime_error("NPC assignment counter overflow");
+        return static_cast<std::uint64_t>(n+1);
+    }
+    std::vector<NpcMiningAssignment> recent_npc_mining_assignments(std::size_t limit) const {
+        if(!limit||limit>256)throw std::invalid_argument("NPC assignment limit 1..256");
+        Statement q(db_,"SELECT id,command_id,npc_id,ship_id,rock_id,generation,tick "
+                        "FROM npc_mining_assignments ORDER BY id DESC LIMIT ?");
+        q.i64(1,limit);std::vector<NpcMiningAssignment> out;
+        while(q.row())out.push_back(read_npc_mining_assignment(q.get()));
+        return out;
+    }
+    std::vector<NpcMiningExecution> recent_npc_mining_executions(std::size_t limit) const {
+        if(!limit||limit>256)throw std::invalid_argument("NPC execution limit 1..256");
+        Statement q(db_,"SELECT id,assignment_id,command_id,npc_id,incident_id,generation,tick,amount "
+                        "FROM npc_mining_executions ORDER BY id DESC LIMIT ?");
+        q.i64(1,limit);std::vector<NpcMiningExecution> out;
+        while(q.row())out.push_back(read_npc_mining_execution(q.get()));
+        return out;
+    }
+    bool verified_npc_mining_execution(std::uint64_t command_id,std::uint64_t npc_id) const {
+        if(!command_id||!npc_id)return false;
+        Statement q(db_,"SELECT id FROM npc_mining_executions WHERE command_id=? AND npc_id=?");
+        q.text(1,std::to_string(command_id));q.text(2,std::to_string(npc_id));return q.row();
+    }
     std::vector<IncidentRoleReceipt> recent_incident_roles(std::size_t limit) const{
         if(!limit||limit>256)throw std::invalid_argument("incident role limit 1..256");
         Statement q(db_,"SELECT id,incident_id,npc_id,role,observation_id,generation,tick "
@@ -3652,6 +3908,36 @@ bool PersistentWorld::submit_testing_gate_operations(EntityId forward,EntityId r
     store_->commit(next,generation_,resource_origin_,credit_origin_,&c,{},{},{},fail);
     world_.swap(next);++generation_;
     return true;
+}
+bool PersistentWorld::submit_npc_mining_work(std::uint64_t npc_id,EntityId ship,EntityId rock,
+        std::int64_t amount,std::uint64_t command_id,FailPoint fail){
+    if(!npc_id||!ship||!rock||!command_id||amount<1||amount>1000)return false;
+    const auto it=world_.npc_records().find(npc_id);
+    const auto* entity=world_.find(ship);
+    if(it==world_.npc_records().end()||!entity||entity->type!=EntityType::Ship||
+       !entity->owner_id||entity->owner_id==Simulation::kServerAuthority||
+       it->second.home_ship!=ship||it->second.location!=ship||
+       it->second.role!=NpcRole::Ship)return false;
+    Command c{};c.id=command_id;c.sequence=command_id;c.execute_tick=world_.tick()+1;
+    c.issuer=entity->owner_id;c.actor=ship;c.target=rock;
+    c.action=Action::Mine;c.amount=amount;
+    auto next=world_;
+    if(!next.submit(c))return false;
+    NpcMiningAssignment e;
+    e.id=store_->next_npc_mining_assignment_id();e.command_id=command_id;
+    e.npc_id=npc_id;e.ship_id=ship;e.rock_id=rock;
+    e.generation=generation_+1;e.tick=world_.tick();
+    store_->commit(next,generation_,resource_origin_,credit_origin_,&c,{},{},{},fail,&e);
+    world_.swap(next);++generation_;return true;
+}
+bool PersistentWorld::verified_npc_mining_execution(std::uint64_t command_id,std::uint64_t npc_id) const{
+    return store_->verified_npc_mining_execution(command_id,npc_id);
+}
+std::vector<NpcMiningAssignment> PersistentWorld::recent_npc_mining_assignments(std::size_t limit) const{
+    return store_->recent_npc_mining_assignments(limit);
+}
+std::vector<NpcMiningExecution> PersistentWorld::recent_npc_mining_executions(std::size_t limit) const{
+    return store_->recent_npc_mining_executions(limit);
 }
 bool PersistentWorld::submit_testing_destroy_ship(EntityId attacker, EntityId victim,
         std::uint64_t command_id,FailPoint fail) {
