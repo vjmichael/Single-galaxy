@@ -6,7 +6,7 @@ In the released game's intended opening, one player colony ship with finite NPC 
 
 ## Current prototype status
 
-The current engineering baseline is **GRSM-04a** (SQLite v14 firsthand physical-event appraisals, October 31, 2026), descended from the **B7.0n** source/testing archive. The archived evidence records a Linux pass of 54/54 CTest native/integration suites and 84/84 Node tests. The opt-in individual workforce model persists up to 24 original NPC crew identities and farm work/mentoring; a separate statistical cohort prototype demonstrates bounded large-number accounting. **Those are not a live trillion-NPC universe.** The game remains a bounded 2D colony/space prototype, not a continuous 3D multiplayer galaxy. Native Windows and full interactive Chromium playthrough remain open gates.
+The current engineering baseline is **GRSM-04b.A** (SQLite v15 verified named victim/firsthand observer receipts, October 31, 2026), descended from the **B7.0n** source/testing archive. The archived evidence records a Linux pass of 54/54 CTest native/integration suites and 84/84 Node tests. The opt-in individual workforce model persists up to 24 original NPC crew identities and farm work/mentoring; a separate statistical cohort prototype demonstrates bounded large-number accounting. **Those are not a live trillion-NPC universe.** The game remains a bounded 2D colony/space prototype, not a continuous 3D multiplayer galaxy. Native Windows and full interactive Chromium playthrough remain open gates.
 
 ## Design documentation
 
@@ -95,3 +95,12 @@ A local NPC who has an **actual firsthand witness receipt of a committed physica
 **Linux acceptance:** native/integration CTest **64/64**, Node **84/84**, Python design **3/3**, targeted social/persistence suites **11/11**; earlier interrupted unbounded full run is recorded, not counted. [GRSM-04a engineering report](docs/GRSM04a_Physical_Evidence_Appraisals_Report_2026-10-31.md).
 
 **Still future work:** independently proving which particular NPC caused an effect, automatic interpretation of physical consequences, autonomous decisions, federation government, long-range information routes and Windows-native/visual manual acceptance. Physical proof of ore moved is not proof an individual stole it.
+
+
+## GRSM-04b.A · Verified named NPC roles without fabricated culprit (2026-10-31)
+
+SQLite v15 adds append-only receipts recording only **NPC victims directly identified by committed NpcLost activity** and **firsthand observers possessing their own validated local-observation source**. These roles are cross-checked against physical event and NPC knowledge ledgers on restoration, survive recovery, and cannot be forged by replaying hearsay, substituting crew members, or retroactively declaring an old incident. The v14-to-v15 migration invents no earlier roles or opinions.
+
+**Linux local verification:** complete final native/integration CTest **65/65**, Node.js **84/84**, Python design **3/3**, persistence/social **12/12**. An earlier whole-suite run was interrupted and is retained as a separate, nonpassing trace. See [GRSM-04b.A engineering report](docs/GRSM04bA_Verified_Roles_Report_2026-10-31.md).
+
+**Crucial limitation:** a player/host command naming a **ship** does not establish a particular **NPC actor**, perpetrator, beneficiary or culpable organization. GRSM-04b.B must implement independently committed NPC job/action-effect receipts before individual culpability can be inferred. No automatic blame, punishment, dialogue, social-policy change, autonomous political behavior, Windows-native or Chromium full playthrough is claimed in this slice.
