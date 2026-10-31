@@ -161,7 +161,9 @@ static void migration_boundary(const fs::path& root){
     }
     // Exact v5 downgrade simulation: remove ONLY the forward v6 tables/triggers;
     // retained older histories and snapshots remain intact.
-    sql(db,"DROP TRIGGER physical_no_update; DROP TRIGGER physical_no_delete; "
+    sql(db,"DROP TRIGGER knowledge_no_update; DROP TRIGGER knowledge_no_delete; "
+           "DROP TABLE npc_knowledge; DROP TABLE knowledge_meta; "
+           "DROP TRIGGER physical_no_update; DROP TRIGGER physical_no_delete; "
            "DROP TABLE physical_incidents; DROP TABLE physical_meta; PRAGMA user_version=5;");
     {
         PersistentWorld w(db.string(),Simulation(99));

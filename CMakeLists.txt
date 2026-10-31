@@ -436,3 +436,11 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_grsm01b_physical_tests PRIVATE galaxy_kernel)
   add_test(NAME galaxy_grsm01b_physical_tests COMMAND galaxy_grsm01b_physical_tests)
 endif()
+
+# GRSM-02: locally observed incidents and provenance-linked contradictory NPC
+# stories, kept separate from immutable physical truth.
+if(BUILD_TESTING)
+  add_executable(galaxy_grsm02_knowledge_tests tests/GRSM02KnowledgeTests.cpp)
+  target_link_libraries(galaxy_grsm02_knowledge_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_grsm02_knowledge_tests COMMAND galaxy_grsm02_knowledge_tests)
+endif()

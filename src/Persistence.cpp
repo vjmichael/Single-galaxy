@@ -50,6 +50,9 @@ public:
         if (sqlite3_bind_text(s_, index, value.c_str(), static_cast<int>(value.size()), SQLITE_TRANSIENT) != SQLITE_OK)
             db_error(db_, "bind text");
     }
+    void null(int index) {
+        if (sqlite3_bind_null(s_,index) != SQLITE_OK) db_error(db_, "bind null");
+    }
     void blob(int index, const std::string& value) {
         if (sqlite3_bind_blob(s_, index, value.data(), static_cast<int>(value.size()), SQLITE_TRANSIENT) != SQLITE_OK)
             db_error(db_, "bind blob");
@@ -155,6 +158,47 @@ std::string sqlite_str(sqlite3_stmt* q,int column){
         throw std::runtime_error("SQLite: missing/invalid physical field");
     return reinterpret_cast<const char*>(text);
 }
+std::string knowledge_digest(const std::string& previous, const KnowledgeRecord& r) {
+    // Accidental-corruption detector, not a cryptographic signature. A chain
+    // also detects leaf deletion without depending on another descendant.
+    const std::string text=previous+"|"+std::to_string(r.id)+"|"+r.incident_id+"|"+
+        std::to_string(r.parent_id)+"|"+std::to_string(r.speaker_npc)+"|"+
+        std::to_string(r.recipient_npc)+"|"+std::to_string(static_cast<int>(r.fidelity))+"|"+
+        std::to_string(r.valence)+"|"+std::to_string(r.confidence)+"|"+
+        std::to_string(r.generation)+"|"+std::to_string(r.tick)+"|"+r.account;
+    std::uint64_t value=14695981039346656037ULL;
+    for(const unsigned char byte:text){value^=byte;value*=1099511628211ULL;}
+    return std::to_string(value);
+}
+KnowledgeRecord read_knowledge(sqlite3_stmt* s) {
+    KnowledgeRecord r;
+    const auto ident=sqlite3_column_int64(s,0),parent=sqlite3_column_int64(s,2),
+               generation=sqlite3_column_int64(s,8),tick=sqlite3_column_int64(s,9);
+    if(ident<=0 || parent<0 || generation<=0 || tick<0)
+        throw std::runtime_error("SQLite: invalid knowledge number");
+    r.id=static_cast<std::uint64_t>(ident);
+    r.incident_id=sqlite_str(s,1);
+    r.parent_id=static_cast<std::uint64_t>(parent);
+    r.speaker_npc=parse_u64(sqlite3_column_text(s,3));
+    r.recipient_npc=parse_u64(sqlite3_column_text(s,4));
+    r.fidelity=static_cast<ClaimFidelity>(sqlite3_column_int(s,5));
+    r.valence=sqlite3_column_int(s,6);r.confidence=sqlite3_column_int(s,7);
+    r.generation=static_cast<std::uint64_t>(generation);
+    r.tick=static_cast<std::uint64_t>(tick);
+    r.account=sqlite_str(s,10);
+    return r;
+}
+bool valid_knowledge(const KnowledgeRecord& r) {
+    return r.speaker_npc>0 && r.recipient_npc>0 && r.generation>0 &&
+        r.valence>=-100 && r.valence<=100 && r.confidence>=0 && r.confidence<=100 &&
+        static_cast<int>(r.fidelity)>=0 && static_cast<int>(r.fidelity)<=3 &&
+        r.account.size()>0 && r.account.size()<=240 &&
+        r.account.find('\0')==std::string::npos &&
+        ((r.parent_id==0 && r.fidelity==ClaimFidelity::LocalObservation &&
+          r.speaker_npc==r.recipient_npc) ||
+         (r.parent_id>0 && r.fidelity!=ClaimFidelity::LocalObservation &&
+          r.speaker_npc!=r.recipient_npc));
+}
 std::uint64_t latest_generation(sqlite3* db) {
     Statement q(db, "SELECT COALESCE(MAX(generation),0) FROM snapshots");
     if (!q.row()) throw std::runtime_error("SQLite: missing generation result");
@@ -179,7 +223,7 @@ public:
         Statement version(db_, "PRAGMA user_version");
         if (!version.row()) throw std::runtime_error("SQLite: no schema version");
         const int v = sqlite3_column_int(version.get(), 0);
-        if (v < 0 || v > 6) throw std::runtime_error("SQLite: incompatible schema version");
+        if (v < 0 || v > 7) throw std::runtime_error("SQLite: incompatible schema version");
         if (v == 0) {
             run(db_, "BEGIN IMMEDIATE");
             try {
@@ -301,6 +345,40 @@ public:
                 Statement m(db_,"INSERT INTO physical_meta(singleton,start_generation) VALUES(1,?)");
                 m.i64(1,static_cast<std::int64_t>(baseline));m.execute();
                 run(db_,"PRAGMA user_version=6");run(db_,"COMMIT");
+            } catch (...) {sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
+        }
+        if (v <= 6) {
+            // GRSM-02: knowledge starts empty on migration. It would be false
+            // to invent witness stories for events from previous saves.
+            run(db_, "BEGIN IMMEDIATE");
+            try {
+                const auto baseline=latest_generation(db_);
+                run(db_, "CREATE TABLE knowledge_meta(singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
+                         "start_generation INTEGER NOT NULL CHECK(start_generation>=0),"
+                         "row_count INTEGER NOT NULL CHECK(row_count>=0),"
+                         "tip_digest TEXT NOT NULL)");
+                run(db_, "CREATE TABLE npc_knowledge("
+                         "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                         "incident_id TEXT NOT NULL REFERENCES physical_incidents(incident_id),"
+                         "parent_id INTEGER REFERENCES npc_knowledge(id),"
+                         "speaker_id TEXT NOT NULL,recipient_id TEXT NOT NULL,"
+                         "fidelity INTEGER NOT NULL CHECK(fidelity BETWEEN 0 AND 3),"
+                         "valence INTEGER NOT NULL CHECK(valence BETWEEN -100 AND 100),"
+                         "confidence INTEGER NOT NULL CHECK(confidence BETWEEN 0 AND 100),"
+                         "generation INTEGER NOT NULL CHECK(generation>0),tick INTEGER NOT NULL CHECK(tick>=0),"
+                         "account TEXT NOT NULL CHECK(length(account) BETWEEN 1 AND 240),"
+                         "digest TEXT NOT NULL)");
+                run(db_, "CREATE INDEX knowledge_by_recipient ON npc_knowledge(recipient_id,id)");
+                run(db_, "CREATE UNIQUE INDEX unique_local_observation "
+                         "ON npc_knowledge(incident_id,recipient_id) WHERE parent_id IS NULL");
+                run(db_, "CREATE TRIGGER knowledge_no_update BEFORE UPDATE ON npc_knowledge "
+                         "BEGIN SELECT RAISE(ABORT,'knowledge accounts are immutable'); END");
+                run(db_, "CREATE TRIGGER knowledge_no_delete BEFORE DELETE ON npc_knowledge "
+                         "BEGIN SELECT RAISE(ABORT,'knowledge accounts are immutable'); END");
+                Statement meta(db_, "INSERT INTO knowledge_meta(singleton,start_generation,row_count,tip_digest) "
+                                    "VALUES(1,?,0,'origin')");
+                meta.i64(1,static_cast<std::int64_t>(baseline));meta.execute();
+                run(db_, "PRAGMA user_version=7");run(db_, "COMMIT");
             } catch (...) {sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
         }
         } catch (...) { sqlite3_close_v2(db_); db_ = nullptr; throw; }
@@ -993,6 +1071,48 @@ public:
             if(count!=expected_physical.size())
                 throw std::runtime_error("SQLite: physical incident missing or duplicated");
         }
+        // GRSM-02: verify the bounded-per-query *API* against a full ordered
+        // integrity scan. Preserve contradictory reports, but reject missing
+        // provenance, false source chains and changed records.
+        {
+            Statement m(db_,"SELECT start_generation,row_count,tip_digest FROM knowledge_meta WHERE singleton=1");
+            if(!m.row())throw std::runtime_error("SQLite: missing knowledge migration metadata");
+            const auto start=sqlite3_column_int64(m.get(),0),count=sqlite3_column_int64(m.get(),1);
+            const auto tip=sqlite_str(m.get(),2);
+            if(start<0 || static_cast<std::uint64_t>(start)>generation || count<0 || m.row())
+                throw std::runtime_error("SQLite: invalid knowledge migration metadata");
+            Statement entries(db_,"SELECT id,incident_id,COALESCE(parent_id,0),speaker_id,recipient_id,"
+                 "fidelity,valence,confidence,generation,tick,account,digest FROM npc_knowledge ORDER BY id");
+            std::map<std::uint64_t,KnowledgeRecord> prior;
+            std::uint64_t expected_id=0;
+            std::string chain="origin";
+            while(entries.row()){
+                const auto e=read_knowledge(entries.get());
+                if(e.id!=++expected_id || !valid_knowledge(e) || e.generation<=static_cast<std::uint64_t>(start) ||
+                   e.generation>generation || e.tick>restored.tick())
+                    throw std::runtime_error("SQLite: invalid knowledge record");
+                Statement incident(db_,"SELECT generation,tick FROM physical_incidents WHERE incident_id=?");
+                incident.text(1,e.incident_id);
+                if(!incident.row() || sqlite3_column_int64(incident.get(),0)>static_cast<sqlite3_int64>(e.generation) ||
+                   sqlite3_column_int64(incident.get(),1)>static_cast<sqlite3_int64>(e.tick))
+                    throw std::runtime_error("SQLite: knowledge references unavailable incident");
+                if(e.parent_id){
+                    const auto p=prior.find(e.parent_id);
+                    if(p==prior.end() || p->second.incident_id!=e.incident_id ||
+                       p->second.recipient_npc!=e.speaker_npc ||
+                       p->second.generation>e.generation || p->second.tick>e.tick)
+                        throw std::runtime_error("SQLite: NPC claim lacks personal source");
+                } else if(e.account!="local_proximity_observation") {
+                    throw std::runtime_error("SQLite: ungrounded direct observation");
+                }
+                chain=knowledge_digest(chain,e);
+                if(sqlite_str(entries.get(),11)!=chain)
+                    throw std::runtime_error("SQLite: knowledge chain mismatch");
+                prior.emplace(e.id,e);
+            }
+            if(expected_id!=static_cast<std::uint64_t>(count) || chain!=tip)
+                throw std::runtime_error("SQLite: missing or changed knowledge entries");
+        }
         out.swap(restored);
         return true;
     }
@@ -1428,6 +1548,108 @@ public:
         }
         return out;
     }
+    bool record_local_observation(const Simulation& world,std::uint64_t gen,
+                                  const std::string& incident_id,std::uint64_t npc_id) {
+        if(incident_id.empty() || incident_id.size()>120 || !npc_id)return false;
+        const auto it=world.npc_records().find(npc_id);
+        if(it==world.npc_records().end())return false;
+        const auto* location=world.find(it->second.location);
+        if(!location)return false;
+        Statement fact(db_,"SELECT generation,tick,kind,source,destination FROM physical_incidents WHERE incident_id=?");
+        fact.text(1,incident_id);
+        if(!fact.row() || sqlite3_column_int64(fact.get(),0)!=static_cast<sqlite3_int64>(gen) ||
+           sqlite3_column_int64(fact.get(),1)!=static_cast<sqlite3_int64>(world.tick()))return false;
+        Statement boundary(db_,"SELECT start_generation FROM knowledge_meta WHERE singleton=1");
+        if(!boundary.row() || sqlite3_column_int64(boundary.get(),0)>=static_cast<sqlite3_int64>(gen))
+            return false; // legacy incidents cannot create retrospective eyewitnesses
+        const auto kind=static_cast<PhysicalKind>(sqlite3_column_int(fact.get(),2));
+        const auto source=sqlite_str(fact.get(),3),destination=sqlite_str(fact.get(),4);
+        bool eligible=false;
+        if(kind==PhysicalKind::NpcLost) {
+            eligible=(source==std::to_string(it->second.location));
+        } else if(kind==PhysicalKind::CargoMovement) {
+            eligible=(source==std::to_string(it->second.location) ||
+                      destination==std::to_string(it->second.location));
+        } else if(kind==PhysicalKind::ShipDestroyed) {
+            // Nearby witness to an extant wreck, not its destroyed occupant.
+            const auto* wreck=world.find(static_cast<EntityId>(std::stoull(destination)));
+            if(wreck && wreck->type==EntityType::Wreck && wreck->system_id==location->system_id) {
+                const auto dx=static_cast<long double>(wreck->position.x)-location->position.x;
+                const auto dy=static_cast<long double>(wreck->position.y)-location->position.y;
+                eligible=(dx*dx+dy*dy<=5000.0L*5000.0L);
+            }
+        }
+        if(!eligible)return false;
+        Statement duplicate(db_,"SELECT 1 FROM npc_knowledge WHERE incident_id=? AND recipient_id=? AND parent_id IS NULL");
+        duplicate.text(1,incident_id);duplicate.text(2,std::to_string(npc_id));
+        if(duplicate.row())return false;
+        KnowledgeRecord e;
+        e.incident_id=incident_id;e.speaker_npc=npc_id;e.recipient_npc=npc_id;
+        e.fidelity=ClaimFidelity::LocalObservation;e.valence=0;e.confidence=100;
+        e.generation=gen;e.tick=world.tick();e.account="local_proximity_observation";
+        return append_knowledge(e,gen);
+    }
+    bool transmit_claim(const Simulation& world,std::uint64_t gen,
+                        std::uint64_t parent_id,std::uint64_t listener,
+                        ClaimFidelity fidelity,int valence,int confidence,const std::string& account) {
+        if(!parent_id || !listener || fidelity==ClaimFidelity::LocalObservation)return false;
+        Statement source(db_,"SELECT id,incident_id,COALESCE(parent_id,0),speaker_id,recipient_id,"
+            "fidelity,valence,confidence,generation,tick,account FROM npc_knowledge WHERE id=?");
+        source.i64(1,static_cast<sqlite3_int64>(parent_id));
+        if(!source.row())return false;
+        const auto from=read_knowledge(source.get());
+        const auto a=world.npc_records().find(from.recipient_npc),b=world.npc_records().find(listener);
+        if(a==world.npc_records().end() || b==world.npc_records().end() ||
+           from.recipient_npc==listener || a->second.location!=b->second.location)return false;
+        KnowledgeRecord e;
+        e.parent_id=parent_id;e.incident_id=from.incident_id;
+        e.speaker_npc=from.recipient_npc;e.recipient_npc=listener;
+        e.fidelity=fidelity;e.valence=valence;e.confidence=confidence;
+        e.generation=gen;e.tick=world.tick();e.account=account;
+        if(!valid_knowledge(e))return false;
+        return append_knowledge(e,gen);
+    }
+    std::vector<KnowledgeRecord> recent_knowledge(std::size_t limit) const {
+        if(limit==0 || limit>256)throw std::invalid_argument("knowledge limit must be 1..256");
+        Statement entries(db_,"SELECT id,incident_id,COALESCE(parent_id,0),speaker_id,recipient_id,"
+            "fidelity,valence,confidence,generation,tick,account FROM npc_knowledge ORDER BY id DESC LIMIT ?");
+        entries.i64(1,static_cast<sqlite3_int64>(limit));
+        std::vector<KnowledgeRecord> out;
+        while(entries.row())out.push_back(read_knowledge(entries.get()));
+        return out;
+    }
+private:
+    bool append_knowledge(KnowledgeRecord e,std::uint64_t generation){
+        if(!valid_knowledge(e))return false;
+        run(db_,"BEGIN IMMEDIATE");
+        try {
+            if(latest_generation(db_)!=generation)
+                throw std::runtime_error("stale knowledge witness generation");
+            Statement meta(db_,"SELECT row_count,tip_digest FROM knowledge_meta WHERE singleton=1");
+            if(!meta.row())throw std::runtime_error("missing knowledge metadata");
+            const auto count=sqlite3_column_int64(meta.get(),0);
+            if(count<0 || count==std::numeric_limits<sqlite3_int64>::max())
+                throw std::runtime_error("knowledge sequence exhausted");
+            const auto previous=sqlite_str(meta.get(),1);
+            e.id=static_cast<std::uint64_t>(count+1);
+            const auto digest=knowledge_digest(previous,e);
+            Statement insert(db_,"INSERT INTO npc_knowledge(id,incident_id,parent_id,speaker_id,recipient_id,"
+                "fidelity,valence,confidence,generation,tick,account,digest) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)");
+            insert.i64(1,static_cast<sqlite3_int64>(e.id));insert.text(2,e.incident_id);
+            if(e.parent_id)insert.i64(3,static_cast<sqlite3_int64>(e.parent_id));else insert.null(3);
+            insert.text(4,std::to_string(e.speaker_npc));insert.text(5,std::to_string(e.recipient_npc));
+            insert.i64(6,static_cast<int>(e.fidelity));insert.i64(7,e.valence);
+            insert.i64(8,e.confidence);insert.i64(9,static_cast<sqlite3_int64>(e.generation));
+            insert.i64(10,static_cast<sqlite3_int64>(e.tick));insert.text(11,e.account);
+            insert.text(12,digest);insert.execute();
+            Statement update(db_,"UPDATE knowledge_meta SET row_count=?,tip_digest=? WHERE singleton=1");
+            update.i64(1,static_cast<sqlite3_int64>(e.id));update.text(2,digest);update.execute();
+            if(sqlite3_changes(db_)!=1)throw std::runtime_error("knowledge metadata missing");
+            run(db_,"COMMIT");
+            return true;
+        }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
+    }
+public:
     // Explicit repair on a COPY ONLY. This never operates on the original file.
     void repair_latest_from_journal() {
         quick_integrity(db_);
@@ -1656,6 +1878,17 @@ std::vector<HistoricalEvent> PersistentWorld::recent_history(std::size_t limit) 
 }
 std::vector<PhysicalIncident> PersistentWorld::recent_physical_incidents(std::size_t limit) const {
     return store_->recent_physical_incidents(limit);
+}
+bool PersistentWorld::record_local_observation(const std::string& incident_id,std::uint64_t npc_id) {
+    return store_->record_local_observation(world_,generation_,incident_id,npc_id);
+}
+bool PersistentWorld::transmit_claim(std::uint64_t source_record_id,std::uint64_t listener_npc,
+        ClaimFidelity fidelity,int valence,int confidence,const std::string& account) {
+    return store_->transmit_claim(world_,generation_,source_record_id,listener_npc,
+                                  fidelity,valence,confidence,account);
+}
+std::vector<KnowledgeRecord> PersistentWorld::recent_knowledge(std::size_t limit) const {
+    return store_->recent_knowledge(limit);
 }
 void PersistentWorld::steps(std::uint64_t n) { for (std::uint64_t i = 0; i < n; ++i) step(); }
 } // namespace galaxy

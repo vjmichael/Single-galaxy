@@ -36,6 +36,22 @@ struct PhysicalIncident {
     std::string detail;
 };
 
+// GRSM-02: this is knowledge held or transmitted by individual NPCs, NOT a
+// historical fact. Distorted/contrary accounts never modify physical state.
+// Firsthand means *local, host-attested opportunity to witness* (not proof that
+// a character's report is accurate); hearsay preserves its parent claim.
+enum class ClaimFidelity : int { LocalObservation=0, Faithful=1, Embellished=2, Contrary=3 };
+struct KnowledgeRecord {
+    std::uint64_t id=0;
+    std::string incident_id;
+    std::uint64_t parent_id=0;  // 0 only for directly-attested observation
+    std::uint64_t speaker_npc=0, recipient_npc=0;
+    ClaimFidelity fidelity=ClaimFidelity::LocalObservation;
+    int valence=0, confidence=0;  // perception, -100..100 and 0..100
+    std::uint64_t generation=0, tick=0;
+    std::string account;  // bounded player-independent NPC claim text
+};
+
 class PersistentWorld {
 public:
     // If the SQLite file is new, persist the supplied initial world.
@@ -74,6 +90,16 @@ public:
     // Bounded, read-only records; older v4 actions are not retroactively invented.
     std::vector<HistoricalEvent> recent_history(std::size_t limit = 50) const;
     std::vector<PhysicalIncident> recent_physical_incidents(std::size_t limit = 50) const;
+    // Trusted host/test APIs; these are NOT player-submitted commands.
+    // Evidence requires a new, locally observable incident on this world tick.
+    // No NPC is automatically made omniscient when the historical ledger grows.
+    bool record_local_observation(const std::string& incident_id, std::uint64_t npc_id);
+    // The speaker is determined by the parent record's recipient. Speaker and
+    // listener must currently co-occupy a location and both remain alive.
+    bool transmit_claim(std::uint64_t source_record_id, std::uint64_t listener_npc,
+                        ClaimFidelity fidelity, int valence, int confidence,
+                        const std::string& account);
+    std::vector<KnowledgeRecord> recent_knowledge(std::size_t limit = 50) const;
 
 
 private:
