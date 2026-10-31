@@ -115,3 +115,14 @@ An explicitly authorized host pathway now accepts a **specific living onboard cr
 **Deferred network and launcher decision:** use a future **ID-centric versioned binary multiplayer protocol** over an authenticated transport; retain a single authoritative simulation whether single-player or dedicated-hosted. Eventually a single-click game launcher will start the local server invisibly and an optional separate **Server Manager GUI** can manage the same backend. These remain **design decisions, not present functionality**. See [NET-01 deferred transport / hosting design](docs/engineering/NET01_Deferred_Binary_Transport_And_Dual_Mode_Launcher_2026-10-31.md).
 
 **Not yet implemented:** generalized named NPC work across professions, causally validated individual assistance/harm in arbitrary commands, commander/executor/beneficiary attribution, autonomous NPC choices, legal culpability, a production multiplayer protocol, a single-click native launcher or a server GUI. Windows-native and full interactive UI acceptance remain future gates.
+
+
+## ECON-02A — Universal workshop and basic/advanced occupations (2026-10-31)
+
+The new **C++17 ECON-02A domain prototype** introduces one configurable workshop with a multi-stage recipe graph (aluminum feedstock → ingots → sheets/wire → brackets/valves → hull panels/pumps), explicit material input reservations, single-task-per-worker scheduling, selectable powered workstations, shortage proposals requiring authorization, and completed-work receipts identifying the worker. Basic work accepts a zero-experience volunteer; advanced assembly requires combined proficiencies. Seven example recipes use intentionally simplified test masses.
+
+**Scope:** This model compiles with `galaxy_kernel` but is **not yet wired into PersistentWorld, actual colony stores, SQLite work-order persistence, or GRSM personal/social effects**. It does not claim automated business formation, jobs/wages, real ship fuel, a minted currency or a complete NPC labor department.
+
+**Verification:** Linux all-target build passed; dedicated test **1/1**, non-live CTest **42/42**, Node **84/84**, design **3/3**. An attempted complete CTest **did not finish** in legacy live-relay scenarios and remains open; do not count that as 67/67. See [ECON-02A engineering report](docs/engineering/ECON02A_Universal_Workshop_Labor_Board_and_Skill_Convergence_2026-10-31.md) and [global money-slang/name research](docs/engineering/ECON02A_Global_Money_Slang_Currency_Name_Research_2026-10-31.md).
+
+**Development order:** retain GRSM-04b.B1 / SQLite v16 as the *latest verified durable game integration*, with ECON-02A as the latest *standalone economy domain*. Next join the two by binding the workshop's actual inputs/outputs and named labor completion to transaction-safe simulation receipts. Defer universal multiplayer transport and launcher UI as specified in NET-01.
