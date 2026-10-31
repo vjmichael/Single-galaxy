@@ -1,0 +1,47 @@
+Test project /mnt/data/sg04b/build
+      Start 56: galaxy_grsm01b_physical_tests
+      Start 62: galaxy_grsm03d_group_relations_tests
+      Start 57: galaxy_grsm02_knowledge_tests
+      Start 59: galaxy_grsm03b_trust_tests
+      Start 64: galaxy_grsm03c2_encounter_tests
+      Start 65: galaxy_grsm04b_responsibility_tests
+ 1/21 Test #59: galaxy_grsm03b_trust_tests ................   Passed    0.30 sec
+      Start 61: galaxy_grsm03c3_relationship_tests
+ 2/21 Test #57: galaxy_grsm02_knowledge_tests .............   Passed    0.32 sec
+      Start 58: galaxy_grsm03_social_tests
+ 3/21 Test #64: galaxy_grsm03c2_encounter_tests ...........   Passed    0.33 sec
+      Start 60: galaxy_grsm03c_membership_tests
+ 4/21 Test #65: galaxy_grsm04b_responsibility_tests .......   Passed    0.33 sec
+      Start 63: galaxy_grsm04a_physical_appraisal_tests
+ 5/21 Test #62: galaxy_grsm03d_group_relations_tests ......   Passed    0.36 sec
+      Start 55: galaxy_grsm01_history_tests
+ 6/21 Test #56: galaxy_grsm01b_physical_tests .............   Passed    0.39 sec
+      Start 45: galaxy_b70j_live_community_relay
+ 7/21 Test #58: galaxy_grsm03_social_tests ................   Passed    0.25 sec
+      Start 46: galaxy_b70k_clinic_tests
+ 8/21 Test #55: galaxy_grsm01_history_tests ...............   Passed    0.23 sec
+      Start 47: galaxy_b70k_live_clinic_relay
+ 9/21 Test #61: galaxy_grsm03c3_relationship_tests ........   Passed    0.29 sec
+      Start 48: galaxy_b70k_reclaimer_tests
+10/21 Test #60: galaxy_grsm03c_membership_tests ...........   Passed    0.41 sec
+      Start 49: galaxy_b70k_live_reclaimer_relay
+11/21 Test #63: galaxy_grsm04a_physical_appraisal_tests ...   Passed    0.46 sec
+      Start 50: galaxy_b70l_waterworks_tests
+12/21 Test #48: galaxy_b70k_reclaimer_tests ...............   Passed    0.52 sec
+      Start 51: galaxy_b70l_live_waterworks_relay
+13/21 Test #46: galaxy_b70k_clinic_tests ..................   Passed    0.79 sec
+      Start 52: galaxy_b70m_policy_tests
+14/21 Test #50: galaxy_b70l_waterworks_tests ..............   Passed    0.62 sec
+      Start 53: galaxy_b70m_live_policy_relay
+15/21 Test #52: galaxy_b70m_policy_tests ..................   Passed    0.63 sec
+      Start 54: galaxy_b70n_workforce_tests
+16/21 Test #54: galaxy_b70n_workforce_tests ...............   Passed    0.37 sec
+17/21 Test #45: galaxy_b70j_live_community_relay ..........   Passed    5.16 sec
+18/21 Test #49: galaxy_b70k_live_reclaimer_relay ..........   Passed    5.19 sec
+19/21 Test #47: galaxy_b70k_live_clinic_relay .............   Passed    5.39 sec
+20/21 Test #51: galaxy_b70l_live_waterworks_relay .........   Passed    5.30 sec
+21/21 Test #53: galaxy_b70m_live_policy_relay .............   Passed    5.41 sec
+
+100% tests passed, 0 tests failed out of 21
+
+Total Test time (real) =   6.83 sec

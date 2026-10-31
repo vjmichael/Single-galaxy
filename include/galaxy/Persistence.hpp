@@ -131,6 +131,16 @@ struct PhysicalAppraisalEvent {
     int confidence=0; // subjective certainty 0..100, NOT testimony proof
 };
 
+// GRSM-04b.A: narrow, objectively established roles on a committed physical
+// incident. This is NOT a perpetrator/beneficiary verdict. An automated ship
+// action never names a guilty NPC. New roles require their own source evidence.
+enum class VerifiedNpcRole : int { Victim=1, FirsthandObserver=2 };
+struct IncidentRoleReceipt {
+    std::uint64_t id=0, npc_id=0, observation_id=0, generation=0, tick=0;
+    std::string incident_id;
+    VerifiedNpcRole role=VerifiedNpcRole::Victim;
+};
+
 // GRSM-03b: directional, evidence-linked interpersonal trust. Each event is
 // an immutable record of a witnessed contact or a character's reassessment;
 // it is neither historical truth nor proof of the accuracy of the allegation.
@@ -259,6 +269,16 @@ public:
     bool appraise_witnessed_incident(std::uint64_t observation_id,
           std::uint64_t context_group,PhysicalAppraisalStance stance,int confidence);
     std::vector<PhysicalAppraisalEvent> recent_physical_appraisals(std::size_t limit=50) const;
+    // Host-only evidence receipt, never an accusation. Victim is permitted
+    // solely on an actual NpcLost incident naming the NPC; FirsthandObserver
+    // solely on a real current-tick direct-observation knowledge receipt.
+    // There is intentionally no NPC perpetrator/beneficiary role yet.
+    bool attest_incident_role(const std::string& incident_id,std::uint64_t npc_id,
+            VerifiedNpcRole role,std::uint64_t observation_id=0);
+    bool is_verified_incident_role(const std::string& incident_id,
+            std::uint64_t npc_id,VerifiedNpcRole role) const;
+    std::vector<IncidentRoleReceipt> recent_incident_roles(std::size_t limit=50) const;
+
 
 
 

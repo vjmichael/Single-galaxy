@@ -1,0 +1,29 @@
+Test project /mnt/data/sg04b/build
+      Start  2: galaxy_persistence_tests
+      Start 55: galaxy_grsm01_history_tests
+      Start 56: galaxy_grsm01b_physical_tests
+      Start 57: galaxy_grsm02_knowledge_tests
+ 1/12 Test #55: galaxy_grsm01_history_tests ...............   Passed    0.16 sec
+      Start 58: galaxy_grsm03_social_tests
+ 2/12 Test #57: galaxy_grsm02_knowledge_tests .............   Passed    0.25 sec
+      Start 59: galaxy_grsm03b_trust_tests
+ 3/12 Test #56: galaxy_grsm01b_physical_tests .............   Passed    0.29 sec
+      Start 60: galaxy_grsm03c_membership_tests
+ 4/12 Test #58: galaxy_grsm03_social_tests ................   Passed    0.21 sec
+      Start 61: galaxy_grsm03c3_relationship_tests
+ 5/12 Test #60: galaxy_grsm03c_membership_tests ...........   Passed    0.18 sec
+      Start 62: galaxy_grsm03d_group_relations_tests
+ 6/12 Test #59: galaxy_grsm03b_trust_tests ................   Passed    0.23 sec
+      Start 63: galaxy_grsm04a_physical_appraisal_tests
+ 7/12 Test #61: galaxy_grsm03c3_relationship_tests ........   Passed    0.21 sec
+      Start 64: galaxy_grsm03c2_encounter_tests
+ 8/12 Test #63: galaxy_grsm04a_physical_appraisal_tests ...   Passed    0.17 sec
+      Start 65: galaxy_grsm04b_responsibility_tests
+ 9/12 Test #62: galaxy_grsm03d_group_relations_tests ......   Passed    0.25 sec
+10/12 Test #64: galaxy_grsm03c2_encounter_tests ...........   Passed    0.22 sec
+11/12 Test #65: galaxy_grsm04b_responsibility_tests .......   Passed    0.21 sec
+12/12 Test  #2: galaxy_persistence_tests ..................   Passed    1.38 sec
+
+100% tests passed, 0 tests failed out of 12
+
+Total Test time (real) =   1.38 sec

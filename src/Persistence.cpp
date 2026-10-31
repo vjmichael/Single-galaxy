@@ -353,6 +353,25 @@ std::string physical_appraisal_body(const PhysicalAppraisalEvent& e){
         std::to_string(e.generation)+"|"+std::to_string(e.tick);
 }
 
+IncidentRoleReceipt read_incident_role(sqlite3_stmt* q){
+    IncidentRoleReceipt e;
+    const auto id=sqlite3_column_int64(q,0),npc=sqlite3_column_int64(q,2),
+      observation=sqlite3_column_int64(q,4),gen=sqlite3_column_int64(q,5),
+      tick=sqlite3_column_int64(q,6);
+    if(id<=0||npc<=0||observation<0||gen<=0||tick<0)
+        throw std::runtime_error("SQLite: invalid NPC incident role receipt");
+    e.id=id;e.incident_id=sqlite_str(q,1);e.npc_id=npc;
+    e.role=static_cast<VerifiedNpcRole>(sqlite3_column_int(q,3));
+    e.observation_id=observation;e.generation=gen;e.tick=tick;
+    return e;
+}
+std::string incident_role_body(const IncidentRoleReceipt& e){
+    return std::to_string(e.id)+"|"+e.incident_id+"|"+
+      std::to_string(e.npc_id)+"|"+std::to_string(static_cast<int>(e.role))+"|"+
+      std::to_string(e.observation_id)+"|"+std::to_string(e.generation)+"|"+
+      std::to_string(e.tick);
+}
+
 struct EncounterCycle {
     std::uint64_t id=0,generation=0,tick=0,population=0,pairs=0,start=0,
                   scanned=0,end=0,contacts=0;
@@ -445,7 +464,7 @@ public:
         Statement version(db_, "PRAGMA user_version");
         if (!version.row()) throw std::runtime_error("SQLite: no schema version");
         const int v = sqlite3_column_int(version.get(), 0);
-        if (v < 0 || v > 14) throw std::runtime_error("SQLite: incompatible schema version");
+        if (v < 0 || v > 15) throw std::runtime_error("SQLite: incompatible schema version");
         if (v == 0) {
             run(db_, "BEGIN IMMEDIATE");
             try {
@@ -801,6 +820,31 @@ public:
                 run(db_,"CREATE TRIGGER physical_appraisals_no_delete BEFORE DELETE ON physical_appraisals "
                     "BEGIN SELECT RAISE(ABORT,'physical appraisal immutable'); END");
                 run(db_,"PRAGMA user_version=14");run(db_,"COMMIT");
+            }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
+        }
+        if(v<=14){
+            // GRSM-04b.A: an auditable distinction between a *known* victim,
+            // firsthand observer, and an unproven NPC actor or beneficiary.
+            // Migrations never manufacture historical participation receipts.
+            run(db_,"BEGIN IMMEDIATE");
+            try {
+                run(db_,"CREATE TABLE incident_role_meta(singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
+                    "event_count INTEGER NOT NULL CHECK(event_count>=0),tip TEXT NOT NULL)");
+                run(db_,"INSERT INTO incident_role_meta VALUES(1,0,'origin')");
+                run(db_,"CREATE TABLE incident_role_receipts(id INTEGER PRIMARY KEY,"
+                    "incident_id TEXT NOT NULL REFERENCES physical_incidents(incident_id),"
+                    "npc_id TEXT NOT NULL,role INTEGER NOT NULL CHECK(role BETWEEN 1 AND 2),"
+                    "observation_id INTEGER NOT NULL CHECK(observation_id>=0),"
+                    "generation INTEGER NOT NULL CHECK(generation>0),"
+                    "tick INTEGER NOT NULL CHECK(tick>=0),digest TEXT NOT NULL,"
+                    "UNIQUE(incident_id,npc_id,role),"
+                    "CHECK((role=1 AND observation_id=0) OR (role=2 AND observation_id>0)))");
+                run(db_,"CREATE INDEX incident_role_by_npc ON incident_role_receipts(npc_id,role,id)");
+                run(db_,"CREATE TRIGGER incident_role_no_update BEFORE UPDATE ON incident_role_receipts "
+                    "BEGIN SELECT RAISE(ABORT,'incident role immutable'); END");
+                run(db_,"CREATE TRIGGER incident_role_no_delete BEFORE DELETE ON incident_role_receipts "
+                    "BEGIN SELECT RAISE(ABORT,'incident role immutable'); END");
+                run(db_,"PRAGMA user_version=15");run(db_,"COMMIT");
             }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
         }
         } catch (...) { sqlite3_close_v2(db_); db_ = nullptr; throw; }
@@ -2048,6 +2092,52 @@ public:
             if(count!=static_cast<std::uint64_t>(expected)||tip!=end_tip)
                 throw std::runtime_error("SQLite: deleted or altered appraisal history");
         }
+        // GRSM-04b.A: every named role is reconciled to an independently
+        // committed physical fact and (when needed) a true firsthand receipt.
+        // Neither a ship actor nor a host command implies an NPC culprit.
+        {
+            Statement meta(db_,"SELECT event_count,tip FROM incident_role_meta WHERE singleton=1");
+            if(!meta.row())throw std::runtime_error("SQLite: missing incident role metadata");
+            const auto expected=sqlite3_column_int64(meta.get(),0);
+            const auto expected_tip=sqlite_str(meta.get(),1);
+            if(expected<0||meta.row())throw std::runtime_error("SQLite: invalid incident role metadata");
+            std::uint64_t count=0;std::string tip="origin";
+            Statement rows(db_,"SELECT id,incident_id,npc_id,role,observation_id,generation,tick,digest "
+                "FROM incident_role_receipts ORDER BY id");
+            while(rows.row()){
+                const auto e=read_incident_role(rows.get());
+                if(e.id!=++count||e.generation>generation||e.tick>restored.tick()||
+                   (e.role!=VerifiedNpcRole::Victim&&e.role!=VerifiedNpcRole::FirsthandObserver))
+                    throw std::runtime_error("SQLite: invalid NPC responsibility role");
+                Statement fact(db_,"SELECT generation,tick,kind,destination FROM physical_incidents WHERE incident_id=?");
+                fact.text(1,e.incident_id);
+                if(!fact.row()||sqlite3_column_int64(fact.get(),0)!=static_cast<sqlite3_int64>(e.generation)||
+                   sqlite3_column_int64(fact.get(),1)!=static_cast<sqlite3_int64>(e.tick))
+                    throw std::runtime_error("SQLite: role lacks authentic physical incident");
+                if(e.role==VerifiedNpcRole::Victim){
+                    if(e.observation_id!=0||sqlite3_column_int(fact.get(),2)!=static_cast<int>(PhysicalKind::NpcLost)||
+                       sqlite_str(fact.get(),3)!=std::to_string(e.npc_id))
+                        throw std::runtime_error("SQLite: victim is not named by real casualty");
+                }else{
+                    if(e.observation_id==0)throw std::runtime_error("SQLite: missing firsthand source");
+                    Statement claim(db_,"SELECT incident_id,COALESCE(parent_id,0),recipient_id,fidelity,"
+                        "generation,tick FROM npc_knowledge WHERE id=?");
+                    claim.i64(1,e.observation_id);
+                    if(!claim.row()||sqlite_str(claim.get(),0)!=e.incident_id||
+                       sqlite3_column_int64(claim.get(),1)!=0||
+                       parse_u64(sqlite3_column_text(claim.get(),2))!=e.npc_id||
+                       sqlite3_column_int(claim.get(),3)!=static_cast<int>(ClaimFidelity::LocalObservation)||
+                       sqlite3_column_int64(claim.get(),4)!=static_cast<sqlite3_int64>(e.generation)||
+                       sqlite3_column_int64(claim.get(),5)!=static_cast<sqlite3_int64>(e.tick))
+                        throw std::runtime_error("SQLite: role lacks true firsthand observation");
+                }
+                tip=social_digest(tip,incident_role_body(e));
+                if(tip!=sqlite_str(rows.get(),7))
+                    throw std::runtime_error("SQLite: tampered NPC role digest");
+            }
+            if(count!=static_cast<std::uint64_t>(expected)||tip!=expected_tip)
+                throw std::runtime_error("SQLite: missing or altered NPC role receipts");
+        }
         out.swap(restored);
         return true;
     }
@@ -2989,6 +3079,83 @@ public:
             run(db_,"COMMIT");return true;
         }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
     }
+    std::vector<IncidentRoleReceipt> recent_incident_roles(std::size_t limit) const{
+        if(!limit||limit>256)throw std::invalid_argument("incident role limit 1..256");
+        Statement q(db_,"SELECT id,incident_id,npc_id,role,observation_id,generation,tick "
+            "FROM incident_role_receipts ORDER BY id DESC LIMIT ?");
+        q.i64(1,static_cast<sqlite3_int64>(limit));
+        std::vector<IncidentRoleReceipt> out;
+        while(q.row())out.push_back(read_incident_role(q.get()));
+        return out;
+    }
+    bool is_verified_incident_role(const std::string& incident_id,std::uint64_t npc,
+                                  VerifiedNpcRole role) const{
+        if(!npc||(role!=VerifiedNpcRole::Victim&&role!=VerifiedNpcRole::FirsthandObserver))return false;
+        Statement q(db_,"SELECT id FROM incident_role_receipts "
+            "WHERE incident_id=? AND npc_id=? AND role=?");
+        q.text(1,incident_id);q.text(2,std::to_string(npc));q.i64(3,static_cast<int>(role));
+        return q.row();
+    }
+    bool attest_incident_role(const Simulation& world,std::uint64_t gen,
+            const std::string& incident_id,std::uint64_t npc,
+            VerifiedNpcRole role,std::uint64_t observation_id){
+        if(incident_id.empty()||!npc||
+           (role!=VerifiedNpcRole::Victim&&role!=VerifiedNpcRole::FirsthandObserver)||
+           ((role==VerifiedNpcRole::Victim)!=(observation_id==0)))return false;
+        run(db_,"BEGIN IMMEDIATE");
+        try {
+            if(latest_generation(db_)!=gen)
+                throw std::runtime_error("stale NPC role generation");
+            Statement physical(db_,"SELECT generation,tick,kind,destination FROM physical_incidents WHERE incident_id=?");
+            physical.text(1,incident_id);
+            if(!physical.row()||
+               sqlite3_column_int64(physical.get(),0)!=static_cast<sqlite3_int64>(gen)||
+               sqlite3_column_int64(physical.get(),1)!=static_cast<sqlite3_int64>(world.tick())){
+                run(db_,"ROLLBACK");return false;
+            }
+            if(role==VerifiedNpcRole::Victim){
+                if(sqlite3_column_int(physical.get(),2)!=static_cast<int>(PhysicalKind::NpcLost)||
+                   sqlite_str(physical.get(),3)!=std::to_string(npc)){
+                    run(db_,"ROLLBACK");return false;
+                }
+            }else{
+                if(world.npc_records().find(npc)==world.npc_records().end()){
+                    run(db_,"ROLLBACK");return false;
+                }
+                Statement claim(db_,"SELECT incident_id,COALESCE(parent_id,0),recipient_id,"
+                    "fidelity,generation,tick FROM npc_knowledge WHERE id=?");
+                claim.i64(1,static_cast<sqlite3_int64>(observation_id));
+                if(!claim.row()||sqlite_str(claim.get(),0)!=incident_id||
+                   sqlite3_column_int64(claim.get(),1)!=0||
+                   parse_u64(sqlite3_column_text(claim.get(),2))!=npc||
+                   sqlite3_column_int(claim.get(),3)!=static_cast<int>(ClaimFidelity::LocalObservation)||
+                   sqlite3_column_int64(claim.get(),4)!=static_cast<sqlite3_int64>(gen)||
+                   sqlite3_column_int64(claim.get(),5)!=static_cast<sqlite3_int64>(world.tick())){
+                    run(db_,"ROLLBACK");return false;
+                }
+            }
+            if(is_verified_incident_role(incident_id,npc,role)){
+                run(db_,"ROLLBACK");return false;
+            }
+            Statement meta(db_,"SELECT event_count,tip FROM incident_role_meta WHERE singleton=1");
+            if(!meta.row())throw std::runtime_error("SQLite: missing role metadata");
+            const auto count=sqlite3_column_int64(meta.get(),0);
+            if(count<0||count==std::numeric_limits<sqlite3_int64>::max())
+                throw std::runtime_error("SQLite: incident role count overflow");
+            IncidentRoleReceipt e;
+            e.id=count+1;e.incident_id=incident_id;e.npc_id=npc;
+            e.role=role;e.observation_id=observation_id;e.generation=gen;e.tick=world.tick();
+            const auto tip=social_digest(sqlite_str(meta.get(),1),incident_role_body(e));
+            Statement ins(db_,"INSERT INTO incident_role_receipts VALUES(?,?,?,?,?,?,?,?)");
+            ins.i64(1,e.id);ins.text(2,incident_id);ins.text(3,std::to_string(npc));
+            ins.i64(4,static_cast<int>(role));ins.i64(5,observation_id);
+            ins.i64(6,gen);ins.i64(7,world.tick());ins.text(8,tip);ins.execute();
+            Statement update(db_,"UPDATE incident_role_meta SET event_count=?,tip=? WHERE singleton=1");
+            update.i64(1,e.id);update.text(2,tip);update.execute();
+            if(sqlite3_changes(db_)!=1)throw std::runtime_error("SQLite: missing role metadata update");
+            run(db_,"COMMIT");return true;
+        }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
+    }
     bool record_social_interaction(const Simulation& world,std::uint64_t gen,
             std::uint64_t encounter_id,std::uint64_t observer,std::uint64_t actor,
             SocialInteractionKind kind){
@@ -3627,6 +3794,17 @@ bool PersistentWorld::appraise_witnessed_incident(std::uint64_t observation_id,
 }
 std::vector<PhysicalAppraisalEvent> PersistentWorld::recent_physical_appraisals(std::size_t limit) const {
     return store_->recent_physical_appraisals(limit);
+}
+bool PersistentWorld::attest_incident_role(const std::string& incident_id,
+        std::uint64_t npc_id,VerifiedNpcRole role,std::uint64_t observation_id){
+    return store_->attest_incident_role(world_,generation_,incident_id,npc_id,role,observation_id);
+}
+bool PersistentWorld::is_verified_incident_role(const std::string& incident_id,
+        std::uint64_t npc_id,VerifiedNpcRole role) const{
+    return store_->is_verified_incident_role(incident_id,npc_id,role);
+}
+std::vector<IncidentRoleReceipt> PersistentWorld::recent_incident_roles(std::size_t limit) const{
+    return store_->recent_incident_roles(limit);
 }
 void PersistentWorld::steps(std::uint64_t n) { for (std::uint64_t i = 0; i < n; ++i) step(); }
 } // namespace galaxy

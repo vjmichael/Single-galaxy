@@ -471,3 +471,10 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_grsm03c2_encounter_tests PRIVATE galaxy_kernel)
   add_test(NAME galaxy_grsm03c2_encounter_tests COMMAND galaxy_grsm03c2_encounter_tests)
 endif()
+
+# GRSM-04b.A: backed NPC roles (victim / firsthand witness), no phantom actor.
+if(BUILD_TESTING)
+  add_executable(galaxy_grsm04b_responsibility_tests tests/GRSM04bResponsibilityTests.cpp)
+  target_link_libraries(galaxy_grsm04b_responsibility_tests PRIVATE galaxy_kernel SQLite::SQLite3)
+  add_test(NAME galaxy_grsm04b_responsibility_tests COMMAND galaxy_grsm04b_responsibility_tests)
+endif()

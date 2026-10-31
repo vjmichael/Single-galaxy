@@ -161,7 +161,7 @@ static void migration_boundary(const fs::path& root){
     }
     // Exact v5 downgrade simulation: remove ONLY the forward v6 tables/triggers;
     // retained older histories and snapshots remain intact.
-    sql(db,"DROP TABLE physical_appraisals; DROP TABLE physical_appraisal_meta; DROP TABLE group_attributions; DROP TABLE attribution_meta; DROP TABLE social_interactions; DROP TABLE interaction_meta; DROP TABLE social_encounters; DROP TABLE encounter_scans; DROP TABLE encounter_meta; DROP TABLE group_membership_events; DROP TABLE membership_meta; "
+    sql(db,"DROP TABLE incident_role_receipts; DROP TABLE incident_role_meta; DROP TABLE physical_appraisals; DROP TABLE physical_appraisal_meta; DROP TABLE group_attributions; DROP TABLE attribution_meta; DROP TABLE social_interactions; DROP TABLE interaction_meta; DROP TABLE social_encounters; DROP TABLE encounter_scans; DROP TABLE encounter_meta; DROP TABLE group_membership_events; DROP TABLE membership_meta; "
                        "DROP TABLE social_tie_events; DROP TABLE social_tie_meta; "
                        "DROP TABLE group_views; DROP TABLE group_relays; DROP TABLE social_groups; "
                        "DROP TABLE social_meta; "

@@ -1,0 +1,49 @@
+Test project /mnt/data/sg04b/build
+      Start 23: galaxy_b65_relay_qa_controls
+      Start 24: galaxy_b66_gate_operations_tests
+      Start 25: galaxy_b66_live_gate_telemetry
+      Start 26: galaxy_b70_colony_core_tests
+      Start 27: galaxy_b70_colony_cli_e2e
+      Start 28: galaxy_b70b_geology_tests
+ 1/22 Test #28: galaxy_b70b_geology_tests .................   Passed    0.12 sec
+      Start 29: galaxy_b70b_live_colony_e2e
+ 2/22 Test #26: galaxy_b70_colony_core_tests ..............   Passed    0.14 sec
+      Start 30: galaxy_b70c_mineral_industry_tests
+ 3/22 Test #24: galaxy_b66_gate_operations_tests ..........   Passed    0.31 sec
+      Start 31: galaxy_b70c_live_mineral_relay
+ 4/22 Test #30: galaxy_b70c_mineral_industry_tests ........   Passed    0.25 sec
+      Start 32: galaxy_b70d_life_support_tests
+ 5/22 Test #32: galaxy_b70d_life_support_tests ............   Passed    0.38 sec
+      Start 33: galaxy_b70d_live_agriculture_relay
+ 6/22 Test #27: galaxy_b70_colony_cli_e2e .................   Passed    2.37 sec
+      Start 34: galaxy_b70e_colony_farms_tests
+ 7/22 Test #34: galaxy_b70e_colony_farms_tests ............   Passed    0.43 sec
+      Start 35: galaxy_b70e_live_farm_relay
+ 8/22 Test #25: galaxy_b66_live_gate_telemetry ............   Passed    3.20 sec
+      Start 36: galaxy_b70f_habitation_tests
+ 9/22 Test #36: galaxy_b70f_habitation_tests ..............   Passed    0.32 sec
+      Start 37: galaxy_b70f_live_habitat_relay
+10/22 Test #29: galaxy_b70b_live_colony_e2e ...............   Passed    4.10 sec
+      Start 38: galaxy_b70g_utilities_tests
+11/22 Test #31: galaxy_b70c_live_mineral_relay ............   Passed    4.39 sec
+      Start 39: galaxy_b70g_live_utility_relay
+12/22 Test #38: galaxy_b70g_utilities_tests ...............   Passed    0.69 sec
+      Start 40: galaxy_b70h_delegated_maintenance_tests
+13/22 Test #40: galaxy_b70h_delegated_maintenance_tests ...   Passed    0.72 sec
+      Start 41: galaxy_b70h_live_maintenance_relay
+14/22 Test #33: galaxy_b70d_live_agriculture_relay ........   Passed    4.89 sec
+      Start 42: galaxy_b70i_resilience_tests
+15/22 Test #42: galaxy_b70i_resilience_tests ..............   Passed    0.19 sec
+      Start 43: galaxy_b70i_live_resilience_relay
+16/22 Test #35: galaxy_b70e_live_farm_relay ...............   Passed    4.49 sec
+      Start 44: galaxy_b70j_community_tests
+17/22 Test #44: galaxy_b70j_community_tests ...............   Passed    0.40 sec
+18/22 Test #39: galaxy_b70g_live_utility_relay ............   Passed    6.90 sec
+19/22 Test #41: galaxy_b70h_live_maintenance_relay ........   Passed    6.17 sec
+20/22 Test #37: galaxy_b70f_live_habitat_relay ............   Passed    8.35 sec
+21/22 Test #43: galaxy_b70i_live_resilience_relay .........   Passed    6.43 sec
+22/22 Test #23: galaxy_b65_relay_qa_controls ..............   Passed   12.63 sec
+
+100% tests passed, 0 tests failed out of 22
+
+Total Test time (real) =  12.63 sec
