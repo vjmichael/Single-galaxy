@@ -1,0 +1,90 @@
+Internal ctest changing into directory: /mnt/data/sg_econ/single-galaxy/build-econ
+Test project /mnt/data/sg_econ/single-galaxy/build-econ
+      Start 42: galaxy_econ02a_workshop_tests
+      Start  1: galaxy_kernel_tests
+      Start  2: galaxy_persistence_tests
+      Start  3: galaxy_client_contract_tests
+      Start  4: galaxy_mining_lifecycle_tests
+      Start  5: galaxy_station_lifecycle_tests
+ 1/42 Test #42: galaxy_econ02a_workshop_tests .............   Passed    0.00 sec
+ 2/42 Test  #1: galaxy_kernel_tests .......................   Passed    0.00 sec
+      Start  6: galaxy_b53_logistics_tests
+      Start  7: galaxy_b54_b60_geography_scanning_tests
+ 3/42 Test  #7: galaxy_b54_b60_geography_scanning_tests ...   Passed    0.02 sec
+      Start  8: galaxy_b54_navigation_tests
+ 4/42 Test  #3: galaxy_client_contract_tests ..............   Passed    0.12 sec
+      Start  9: galaxy_b62a_gate_transit_tests
+ 5/42 Test  #9: galaxy_b62a_gate_transit_tests ............   Passed    0.00 sec
+      Start 10: galaxy_b62b_durable_jumps_tests
+ 6/42 Test  #8: galaxy_b54_navigation_tests ...............   Passed    0.19 sec
+      Start 11: galaxy_b62c_projection_tests
+ 7/42 Test #11: galaxy_b62c_projection_tests ..............   Passed    0.05 sec
+      Start 12: galaxy_b64_region_tests
+ 8/42 Test #12: galaxy_b64_region_tests ...................   Passed    0.00 sec
+      Start 13: galaxy_b65_gate_disruption_tests
+ 9/42 Test  #6: galaxy_b53_logistics_tests ................   Passed    0.31 sec
+      Start 14: galaxy_b66_gate_operations_tests
+10/42 Test  #4: galaxy_mining_lifecycle_tests .............   Passed    0.32 sec
+      Start 15: galaxy_b70_colony_core_tests
+11/42 Test #13: galaxy_b65_gate_disruption_tests ..........   Passed    0.07 sec
+      Start 16: galaxy_b70b_geology_tests
+12/42 Test #10: galaxy_b62b_durable_jumps_tests ...........   Passed    0.23 sec
+      Start 17: galaxy_b70c_mineral_industry_tests
+13/42 Test  #5: galaxy_station_lifecycle_tests ............   Passed    0.36 sec
+      Start 18: galaxy_b70d_life_support_tests
+14/42 Test #15: galaxy_b70_colony_core_tests ..............   Passed    0.05 sec
+      Start 19: galaxy_b70e_colony_farms_tests
+15/42 Test #16: galaxy_b70b_geology_tests .................   Passed    0.05 sec
+      Start 20: galaxy_b70f_habitation_tests
+16/42 Test #17: galaxy_b70c_mineral_industry_tests ........   Passed    0.06 sec
+      Start 21: galaxy_b70g_utilities_tests
+17/42 Test #14: galaxy_b66_gate_operations_tests ..........   Passed    0.11 sec
+      Start 22: galaxy_b70h_delegated_maintenance_tests
+18/42 Test #18: galaxy_b70d_life_support_tests ............   Passed    0.09 sec
+      Start 23: galaxy_b70i_resilience_tests
+19/42 Test #20: galaxy_b70f_habitation_tests ..............   Passed    0.24 sec
+      Start 24: galaxy_b70j_community_tests
+20/42 Test #23: galaxy_b70i_resilience_tests ..............   Passed    0.18 sec
+      Start 25: galaxy_b70k_clinic_tests
+21/42 Test #19: galaxy_b70e_colony_farms_tests ............   Passed    0.27 sec
+      Start 26: galaxy_b70k_reclaimer_tests
+22/42 Test #24: galaxy_b70j_community_tests ...............   Passed    0.17 sec
+      Start 27: galaxy_b70l_waterworks_tests
+23/42 Test #21: galaxy_b70g_utilities_tests ...............   Passed    0.39 sec
+      Start 28: galaxy_b70m_policy_tests
+24/42 Test #25: galaxy_b70k_clinic_tests ..................   Passed    0.23 sec
+      Start 29: galaxy_b70n_workforce_tests
+25/42 Test #26: galaxy_b70k_reclaimer_tests ...............   Passed    0.31 sec
+      Start 30: galaxy_grsm01_history_tests
+26/42 Test #27: galaxy_b70l_waterworks_tests ..............   Passed    0.16 sec
+      Start 31: galaxy_grsm01b_physical_tests
+27/42 Test #28: galaxy_b70m_policy_tests ..................   Passed    0.16 sec
+      Start 32: galaxy_grsm02_knowledge_tests
+28/42 Test #22: galaxy_b70h_delegated_maintenance_tests ...   Passed    0.56 sec
+      Start 33: galaxy_grsm03_social_tests
+29/42 Test #29: galaxy_b70n_workforce_tests ...............   Passed    0.14 sec
+      Start 34: galaxy_grsm03b_trust_tests
+30/42 Test #30: galaxy_grsm01_history_tests ...............   Passed    0.12 sec
+      Start 35: galaxy_grsm03c_membership_tests
+31/42 Test  #2: galaxy_persistence_tests ..................   Passed    1.08 sec
+      Start 36: galaxy_grsm03c3_relationship_tests
+32/42 Test #32: galaxy_grsm02_knowledge_tests .............   Passed    0.15 sec
+      Start 37: galaxy_grsm03d_group_relations_tests
+33/42 Test #33: galaxy_grsm03_social_tests ................   Passed    0.14 sec
+      Start 38: galaxy_grsm04a_physical_appraisal_tests
+34/42 Test #34: galaxy_grsm03b_trust_tests ................   Passed    0.14 sec
+      Start 39: galaxy_grsm03c2_encounter_tests
+35/42 Test #31: galaxy_grsm01b_physical_tests .............   Passed    0.20 sec
+      Start 40: galaxy_grsm04b_responsibility_tests
+36/42 Test #36: galaxy_grsm03c3_relationship_tests ........   Passed    0.16 sec
+      Start 41: galaxy_grsm04b_named_job_tests
+37/42 Test #35: galaxy_grsm03c_membership_tests ...........   Passed    0.17 sec
+38/42 Test #37: galaxy_grsm03d_group_relations_tests ......   Passed    0.16 sec
+39/42 Test #38: galaxy_grsm04a_physical_appraisal_tests ...   Passed    0.16 sec
+40/42 Test #39: galaxy_grsm03c2_encounter_tests ...........   Passed    0.17 sec
+41/42 Test #40: galaxy_grsm04b_responsibility_tests .......   Passed    0.16 sec
+42/42 Test #41: galaxy_grsm04b_named_job_tests ............   Passed    0.11 sec
+
+100% tests passed, 0 tests failed out of 42
+
+Total Test time (real) =   1.35 sec

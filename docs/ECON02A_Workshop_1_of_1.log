@@ -1,0 +1,8 @@
+Internal ctest changing into directory: /mnt/data/sg_econ/single-galaxy/build-econ
+Test project /mnt/data/sg_econ/single-galaxy/build-econ
+    Start 67: galaxy_econ02a_workshop_tests
+1/1 Test #67: galaxy_econ02a_workshop_tests ....   Passed    0.00 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Total Test time (real) =   0.01 sec
