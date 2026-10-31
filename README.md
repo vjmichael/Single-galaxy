@@ -6,7 +6,7 @@ In the released game's intended opening, one player colony ship with finite NPC 
 
 ## Current prototype status
 
-The current engineering baseline is **GRSM-03c.3** (SQLite v12 directed rapport, October 31, 2026), descended from the **B7.0n** source/testing archive. The archived evidence records a Linux pass of 54/54 CTest native/integration suites and 84/84 Node tests. The opt-in individual workforce model persists up to 24 original NPC crew identities and farm work/mentoring; a separate statistical cohort prototype demonstrates bounded large-number accounting. **Those are not a live trillion-NPC universe.** The game remains a bounded 2D colony/space prototype, not a continuous 3D multiplayer galaxy. Native Windows and full interactive Chromium playthrough remain open gates.
+The current engineering baseline is **GRSM-03d** (SQLite v13 member-level intergroup perspectives, October 31, 2026), descended from the **B7.0n** source/testing archive. The archived evidence records a Linux pass of 54/54 CTest native/integration suites and 84/84 Node tests. The opt-in individual workforce model persists up to 24 original NPC crew identities and farm work/mentoring; a separate statistical cohort prototype demonstrates bounded large-number accounting. **Those are not a live trillion-NPC universe.** The game remains a bounded 2D colony/space prototype, not a continuous 3D multiplayer galaxy. Native Windows and full interactive Chromium playthrough remain open gates.
 
 ## Design documentation
 
@@ -77,3 +77,12 @@ SQLite schema v11 now supports **explicit host-invoked, bounded NPC encounter sc
 A new, **explicit host-attested** social-interaction API links each Assistance/Harm reaction to an actual same-tick GRSM-03c.2 encounter. The result is a durable **directional rapport** score, independent of GRSM-03b testimony trust, legal standing, group sentiment and world history. Encounter alone awards no rapport. SQLite v12 migration invents no historical interactions; maliciously edited ordinary social rows fail restore validation. This prototype does **not** independently infer whether an action was helpful/harmful from executed physical effects and does not generate autonomous NPC decisions. See [GRSM-03c.3 report](docs/GRSM03c3_Directional_Rapport_Report_2026-10-31.md).
 
 **Linux acceptance:** 62/62 CTest, 84/84 Node.js, 3/3 Python design, and 12/12 stressed legacy relay checks across three repetitions. Windows-native play and full independent physical-event attribution remain open gates.
+
+
+## GRSM-03d · Conflicting, overlapping individual views of other groups (2026-10-31)
+
+GRSM-03d adds durable, host-attested **individual evaluations of one group by members of another**, linked to actual same-tick social interaction records and immutable historical membership epochs. Different members can **agree, disagree, or remain uninformed**, one NPC can assess another group differently through two overlapping affiliations, and the reverse group's opinions need not match. The group relation summary is a **descriptive distribution among informed active members**, not a group vote, institutional charter, sovereign policy or collective mind. SQLite v13 migrations from older worlds invent no historic group positions.
+
+**Verified locally on Linux:** native/integration CTest **63/63**, Node **84/84**, Python design **3/3**. An initial 62/63 run exposed an outdated v1 migration fixture; the fixture was corrected and a new complete 63/63 run passed. Earlier failure logs remain archived. See [GRSM-03d engineering report](docs/GRSM03d_Intergroup_Perspectives_Report_2026-10-31.md) and the [nested loyalty / macro-group design](docs/engineering/GRSM03d_Group_Opinions_And_Nested_Loyalties_2026-10-31.md).
+
+**Not yet implemented:** automatic classification of real physical help/harm, NPC political choices, multiaxis loyalty, nested organization authority, voting, secession, federation-wide consensus, or remote knowledge delivery. The social prototype is host-invoked and small-roster. Windows-native/UI acceptance remains open.
