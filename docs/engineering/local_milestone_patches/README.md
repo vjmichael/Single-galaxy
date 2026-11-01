@@ -1,6 +1,6 @@
 # Local Source Milestone Archive — November 1, 2026
 
-This branch preserves all locally generated incremental source patches from d4c3 through ECON-03c2, plus selected engineering reports and the ECON-03c3 scheduler handoff. GitHub is a repository and development record, not the development hub.
+This branch preserves all locally generated incremental source patches from d4c3 through ECON-03c2, plus selected engineering reports and the ECON-03c3/03c4 scheduler handoffs. GitHub is a repository and development record, not the development hub.
 
 ## Archived patch milestones (chronological)
 
@@ -32,7 +32,7 @@ This branch preserves all locally generated incremental source patches from d4c3
 
 **Important:** This is an artifact archive, not a merge of the current code. GitHub `main` at `0b61dd1e20a2214d255763f5dfe4ac8a0c051293` diverges from the local baseline in its README and factory bridge. Attempts to replay the patches directly against `main` failed on verified context mismatches. For safety, the source tree on `main` was left unchanged.
 
-Locally verified latest whole-tree package: ECON-03c3 (scheduler prototype), 661 source files; full source ZIP and deterministic replay diff delivered in the conversation. The scheduler requires future integration into SQLite, production, ship movement and live UI.
+Locally verified latest whole-tree package: ECON-03c4 (durable opt-in regional scheduler checkpoint), 666 source files; source ZIP and deterministic replay diff delivered in the conversation. The SQLite store has focused persistence tests but still requires live colony-host integration. See [ECON-03c4 milestone record](../ECON03c4_DURABLE_REGIONAL_CHECKPOINTS_2026-11-01.md). Source code on GitHub main has NOT been updated.
 
 ## Project rules
 
