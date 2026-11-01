@@ -1,0 +1,1202 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 7ae80cf..b0145d2 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -846,3 +846,18 @@ if(BUILD_TESTING)
+   target_link_libraries(galaxy_econ02b2d18_factory_execution_tests PRIVATE galaxy_kernel)
+   add_test(NAME ECON02B2d18_GenericFactoryExecution COMMAND galaxy_econ02b2d18_factory_execution_tests)
+ endif()
++
++# ECON-02B2d18b1: sole-writer authoritative site integration smoke / persistence.
++if(BUILD_TESTING)
++  add_executable(galaxy_econ02b2d18b_site_factory_tests tests/ECON02B2d18bWorldFactoryTests.cpp)
++  target_link_libraries(galaxy_econ02b2d18b_site_factory_tests PRIVATE galaxy_kernel)
++  add_test(NAME ECON02B2d18b_AuthoritativeFactorySite COMMAND galaxy_econ02b2d18b_site_factory_tests)
++endif()
++if(BUILD_TESTING AND Python3_Interpreter_FOUND)
++  add_test(NAME ECON02B2d18b_GenericFactory_HTTP
++    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/ECON02B2d18bFactoryHostTests.py
++      --host $<TARGET_FILE:galaxy_colony_live_host>
++      --fixture $<TARGET_FILE:galaxy_econ02b2d18b_site_factory_tests>
++      --relay ${CMAKE_CURRENT_SOURCE_DIR}/live/interactive_relay.py)
++  set_tests_properties(ECON02B2d18b_GenericFactory_HTTP PROPERTIES TIMEOUT 90)
++endif()
+diff --git a/docs/engineering/ECON02B2d18b_Authoritative_Generic_Factory_Integration_2026-11-01.md b/docs/engineering/ECON02B2d18b_Authoritative_Generic_Factory_Integration_2026-11-01.md
+new file mode 100644
+index 0000000..65176fe
+--- /dev/null
++++ b/docs/engineering/ECON02B2d18b_Authoritative_Generic_Factory_Integration_2026-11-01.md
+@@ -0,0 +1,40 @@
++# ECON-02B2d18b — Authoritative site-local generic factory integration
++
++**Date:** 2026-11-01
++**Baseline:** `SingleGalaxy_ECON02B2d18a_Generic_Factory_Execution_Source_Tests_2026-11-01.zip` (verified)
++**Scope:** Integrate the reusable d18a execution engine into one real colony writer; approve **only** the fixed aluminum processor/finisher/conveyor template until arbitrary recipes, NPC transport, and placement authority are implemented.
++
++## Implementation
++
++1. The main `Simulation` now owns a `site_id -> FactoryExecution` map. Its step loop advances installed factories alongside other colony facilities; power/staffing/stock checks in the deterministic generic execution engine still apply. This is **not** a second database writer.
++2. Factory creation/installation/load/unload/operator/shutdown use six dedicated `Action` variants. The command's issuer, ship, site, tick, ID, parameters and outcome are journaled through `PersistentWorld`.
++3. Only owned and built sites are eligible. The first immutable configuration is an aluminum processor (#100), finisher (#200), and three-cell conveyor (#800). Machine/conveyor construction debits **real** staging-depot modules; aluminum/panel/frame/scrap transfers debit or credit **real** site warehouse goods in kilograms. Fabrication remains mass-balanced and capacity-bounded.
++4. Save format **v41** persists canonical, length-delimited hexadecimal configuration plus mutable checkpoint and operator assignments; older v39/v40 saves continue to load, as verified by the legacy regression group. Reconstructed checkpoints reject malformed configuration/state. The authoritative total-material check includes installed modules and the factory's internal inventory.
++5. A `generic_factory_transfer` SQLite receipt binds completed installation and inventory transfers to command IDs, ticks, quantities, and exact source/destination account names. Replay rejects missing, duplicated or forged transfer provenance; the negative test mutates an actual receipt in a copied database and confirms restore refusal.
++6. The trusted C++ colony `Control` and `construction::Plans` allocate durable command IDs and validate requested site and actions. The existing localhost relay applies token, same-origin and schema restrictions, never deriving issuer/ship identity from browser JSON. Colony UI includes an **experimental generic factory** panel; its initial API is bounded to the approved IDs and one recipe chain.
++
++## Verified local tests
++
++- Full Linux CMake/Ninja build: **passed**.
++- Native CTest standard group: **78/78 passed**.
++- Live/relay group: **33/34 passed in the initial parallel run** before the run was interrupted by a stuck pre-existing retirement HTTP test; that last test **passed in an isolated rerun (1/1)**. Each of **112 registered CTest cases** therefore has a passing run, but **not** as a single uninterrupted 112-test invocation.
++- JavaScript `node --test tests/*.js`: **93/93 passed**. The two `.cjs` programs require explicit executable arguments and are not part of that 93-test command.
++- Three offline Chromium controls smoke tests **passed**: original structures, existing crews and new experimental generic-factory controls. These browser runs use a mocked HTTP transport; native HTTP security and persistence are separately verified by `ECON02B2d18b_GenericFactory_HTTP`.
++- New site integration C++ test: material-conservation across batches, stable v41 snapshots, SQLite recovery, owner authorization, worker assignment, resource depletion and tamper detection.
++- New HTTP integration Python test: session/site/origin/payload rejection, real module debit, no free material transfer, server restart preserving operator and shutdown flags.
++
++## Mandatory remaining gates — NOT CLAIMED COMPLETE
++
++- This is one **fixed, authorized aluminum template** only; arbitrary player-authored generic factory layouts/recipes and new machine types are not admitted to the live world.
++- Generic warehouse-to-machine transfer currently changes two **site-local authoritative accounts**, but is **not** an NPC-carried spatial delivery; path/hauling, source selection and backpressure integration need a subsequent gate. Do not represent it as a physically simulated journey.
++- Operator identity is a real resident and cannot be doubly assigned in generic machines or the existing two-stage workshop; however, the other NPC construction-job scheduler is not yet fully coordinated. Automatic travel, work shifts, worker fatigue, full manufacturing job priorities, and generic NPC dismantling are not implemented.
++- The approved template's fixed world-grid placement does **not** yet validate collisions with all other colony fixture/building footprints. Do not enable unrestricted layout creation before that validation.
++- Generic machines use the execution engine's existing `Machine` power field; there is no complete site utility-grid authorization/consumption binding yet.
++- Windows native compilation and GUI tests, 3D pathfinding, generic warehouse evacuation and unrestricted graph retirement remain open.
++
++## Next integration gate
++
++1. Validate actual world-grid machine, link and NPC access, rejecting conflicts with buildings/fixtures.
++2. Replace direct warehouse-machine stock movement with named-worker/real conveyor custody and capacity-limited deliveries.
++3. Add proper worker schedules, shared reservation checks, power/maintenance accounting, and generic NPC shutdown/retirement.
++4. Provide a player-approved versioned catalog for arbitrary valid machinery and recipes before allowing general-purpose factory execution.
+diff --git a/include/galaxy/ColonyStructurePlans.hpp b/include/galaxy/ColonyStructurePlans.hpp
+index 14e0b2f..1f0f87e 100644
+--- a/include/galaxy/ColonyStructurePlans.hpp
++++ b/include/galaxy/ColonyStructurePlans.hpp
+@@ -34,6 +34,9 @@ public:
+     // One host-validated material custody operation, with an idempotent
+     // durable world command ID allocated in the structure namespace.
+     Event warehouse_action(Action action,std::uint32_t node,PlayerId owner,EntityId ship,EntityId site);
++    // One canonical, owner-authorized generic factory world command.
++    Event generic_factory_action(Action action,std::int64_t amount,int device,int item,
++                                 PlayerId owner,EntityId ship,EntityId site);
+     // Shutdown/restart is an authoritative, non-material world command.
+     // Operator release occurs only once current WIP has completed.
+     Event workshop_action(Action action,std::int64_t value,PlayerId owner,EntityId ship,EntityId site);
+diff --git a/include/galaxy/FactoryExecution.hpp b/include/galaxy/FactoryExecution.hpp
+index 4dd22fd..77fe8bb 100644
+--- a/include/galaxy/FactoryExecution.hpp
++++ b/include/galaxy/FactoryExecution.hpp
+@@ -52,6 +52,9 @@ public:
+     void dismantle_machine(DeviceId id,std::int64_t& worker_cargo);
+     std::int64_t internal_mass_grams()const;
+     std::int64_t embodied_modules()const;
++    // Canonical, restorable immutable blueprint+recipe descriptor for persistence.
++    std::string configuration()const;
++    static FactoryExecution from_configuration(const std::string& config,const std::string& checkpoint);
+     std::string checkpoint()const;
+     static FactoryExecution restore(FactoryLayout layout,std::map<DeviceId,Recipe> recipes,
+                                     const std::string& bytes);
+diff --git a/include/galaxy/FactoryRetirementPlanner.hpp b/include/galaxy/FactoryRetirementPlanner.hpp
+index 646a6d6..64436b7 100644
+--- a/include/galaxy/FactoryRetirementPlanner.hpp
++++ b/include/galaxy/FactoryRetirementPlanner.hpp
+@@ -1,5 +1,6 @@
+ #pragma once
+-#include "galaxy/Simulation.hpp"
++#include <cstdint>
++namespace galaxy {class Simulation;}
+ #include <cstdint>
+ #include <vector>
+ namespace galaxy::industry {
+@@ -30,5 +31,5 @@ std::vector<RetirementNode> plan_factory_retirement(
+ // machine types can use plan_factory_retirement, but do not yet have teardown
+ // actions in the world simulation.
+ std::vector<RetirementNode> installed_workshop_retirement(
+-    const Simulation& sim,EntityId site);
++    const Simulation& sim,std::uint64_t site);
+ } // namespace galaxy::industry
+diff --git a/include/galaxy/Simulation.hpp b/include/galaxy/Simulation.hpp
+index fcdf250..c9aac5f 100644
+--- a/include/galaxy/Simulation.hpp
++++ b/include/galaxy/Simulation.hpp
+@@ -1,6 +1,7 @@
+ #pragma once
+ 
+ #include "galaxy/Inventory.hpp"
++#include "galaxy/FactoryExecution.hpp"
+ #include <array>
+ #include <cstdint>
+ #include <limits>
+@@ -22,7 +23,7 @@ struct Vector2 {
+ };
+ 
+ enum class EntityType { Ship, Asteroid, Station, Stargate, Wreck };
+-enum class Action { Thrust, Mine, StartMining, StopMining, RequestUndock, RequestDock, UnloadOre, LoadOre, SellOre, RequestJump, SetGatePairOnline, SetGateStaff, DeliverGateSpares, RefineOre, FabricateModule, ConstructOutpost, RefineMineral, FabricateMaterialModule, PlantCrops, HarvestCrops, RecycleWater, RecycleCompost, ProduceOxygen, LoadLifeWater, ConstructFarm, TransferFarmStock, AssignFarmWorkers, ConstructHabitat, TransferHabitatStock, AssignHabitatResidents, ConstructUtility, RepairUtility, TransferUtilitySpares, AssignUtilityTechnicians, SetUtilityMaintenance, ConstructCommunity, TransferCommunityStock, AssignCommunityStaff, ConstructClinic, TransferClinicStock, AssignClinicStaff, ConstructReclaimer, ConstructWaterworks, TransferWaterworksFeed, SetPolicyAssurance, AssignPolicyInspectors, AssignFarmMentor, HostDestroyShip, HostCrewLoss, ConstructWorkshop, TransferWorkshopFeed, AssignWorkshopOperator, TransferWorkshopOutput, ConstructWorkshopFinisher, AssignWorkshopFinisher, TransferWorkshopFinalOutput, TransferWorkshopStack, ConstructStorage, TransferStorageStack, ConstructStorageNode, TransferStorageNodeStack, ConstructStorageLink, ConstructWorkshopLink, PlaceFactoryEquipment, PlaceConveyorCell, CompleteConveyorRoute, BuildColonyFixture, SetColonyDoor, StageConstructionModules, PickupConstructionModules, DeliverConstructionModules, ReturnConstructionModules, BuildColonyFixtureFromDelivery, DepositConstructionNodeModules, ReserveConstructionModules, PickupReservedConstructionModules, RecoverConstructionDelivery, SalvageConstructionNodeModules, MarkStorageNodeDecommission, CancelStorageNodeDecommission, DemolishStorageNode, DismantleConveyorCell, DismantleStorageLink, CrewDemolishStorageNode, CrewDismantleWorkshop, SetWorkshopShutdown, PickupWorkshopGoods, DepositWorkshopGoods, ReturnWorkshopGoods };
++enum class Action { Thrust, Mine, StartMining, StopMining, RequestUndock, RequestDock, UnloadOre, LoadOre, SellOre, RequestJump, SetGatePairOnline, SetGateStaff, DeliverGateSpares, RefineOre, FabricateModule, ConstructOutpost, RefineMineral, FabricateMaterialModule, PlantCrops, HarvestCrops, RecycleWater, RecycleCompost, ProduceOxygen, LoadLifeWater, ConstructFarm, TransferFarmStock, AssignFarmWorkers, ConstructHabitat, TransferHabitatStock, AssignHabitatResidents, ConstructUtility, RepairUtility, TransferUtilitySpares, AssignUtilityTechnicians, SetUtilityMaintenance, ConstructCommunity, TransferCommunityStock, AssignCommunityStaff, ConstructClinic, TransferClinicStock, AssignClinicStaff, ConstructReclaimer, ConstructWaterworks, TransferWaterworksFeed, SetPolicyAssurance, AssignPolicyInspectors, AssignFarmMentor, HostDestroyShip, HostCrewLoss, ConstructWorkshop, TransferWorkshopFeed, AssignWorkshopOperator, TransferWorkshopOutput, ConstructWorkshopFinisher, AssignWorkshopFinisher, TransferWorkshopFinalOutput, TransferWorkshopStack, ConstructStorage, TransferStorageStack, ConstructStorageNode, TransferStorageNodeStack, ConstructStorageLink, ConstructWorkshopLink, PlaceFactoryEquipment, PlaceConveyorCell, CompleteConveyorRoute, BuildColonyFixture, SetColonyDoor, StageConstructionModules, PickupConstructionModules, DeliverConstructionModules, ReturnConstructionModules, BuildColonyFixtureFromDelivery, DepositConstructionNodeModules, ReserveConstructionModules, PickupReservedConstructionModules, RecoverConstructionDelivery, SalvageConstructionNodeModules, MarkStorageNodeDecommission, CancelStorageNodeDecommission, DemolishStorageNode, DismantleConveyorCell, DismantleStorageLink, CrewDemolishStorageNode, CrewDismantleWorkshop, SetWorkshopShutdown, PickupWorkshopGoods, DepositWorkshopGoods, ReturnWorkshopGoods, InitializeGenericFactory, InstallGenericMachine, InstallGenericConveyor, TransferGenericMaterial, SetGenericOperator, SetGenericShutdown };
+ enum class Outcome { Applied, InvalidActor, Unauthorized, InvalidTarget, OutOfRange, InvalidArgument, NoResources, CargoFull, NotMining, NotInSpace, NotDocked, InTransition, ShipMoving, HangarFull, InsufficientFunds, WrongSystem, GateOffline, NotColonyShip, InsufficientCrew };
+ enum class ActivityKind { AsteroidDespawned, AutoMiningTransfer, MiningStopped, Undocked, Docked, JumpCompleted, ShipDestroyed, NpcLost, AutoStorageTransfer };
+ enum class DockState { InSpace, Docked, Undocking, Docking };
+@@ -536,6 +537,8 @@ public:
+     const std::map<EntityId,ClinicFacility>& clinics() const {return clinics_;}
+     const std::map<EntityId, ColonyShip>& colony_ships() const {return colony_ships_;}
+     const std::map<EntityId, BuiltOutpost>& built_outposts() const {return built_outposts_;}
++    // d18b1: site-specific factories are part of the sole authoritative world.
++    const industry::FactoryExecution* generic_factory(EntityId site) const;
+     const OutpostWorkshop* workshop(EntityId site) const;
+     const std::map<EntityId,OutpostWorkshop>& workshops() const {return workshops_;}
+     EntityId add_asteroid(Vector2 position, std::int64_t ore);
+@@ -658,6 +661,8 @@ private:
+     std::map<EntityId,std::uint64_t> farm_team_xp_;
+     std::map<EntityId,BuiltOutpost> built_outposts_;
+     std::map<EntityId,OutpostWorkshop> workshops_;
++    std::map<EntityId,industry::FactoryExecution> generic_factories_;
++    std::map<EntityId,std::map<industry::DeviceId,std::uint64_t>> generic_factory_operators_;
+     std::map<EntityId,OutpostStorage> storages_;
+     std::map<EntityId,std::map<FixtureKey,ColonyFixture>> colony_fixtures_;
+     std::map<EntityId,ConstructionSupplies> construction_supplies_;
+diff --git a/live/interactive_relay.py b/live/interactive_relay.py
+index b715149..980a380 100644
+--- a/live/interactive_relay.py
++++ b/live/interactive_relay.py
+@@ -141,7 +141,7 @@ class SharedRuntime:
+         # does not open SQLite and cannot mint ship/player/owner authority.
+         if op not in ('SITES','HELLO','LIST','REGISTER','STEP','STATUS','CANCEL',
+                       'STRUCT_LIST','STRUCT_REGISTER','STRUCT_STEP','STRUCT_STATUS','STRUCT_CANCEL','STRUCT_DOOR',
+-                      'CREW_LIST','CREW_ASSIGN','CREW_UNASSIGN','CREW_ACTIVE','CREW_POLICY','CREW_SUPPLY','CREW_ORDER','CREW_ORDER_CANCEL','CREW_RESTOCK','CREW_SALVAGE','CREW_RESTOCK_CANCEL','WAREHOUSE_MARK','WAREHOUSE_CANCEL','WAREHOUSE_DEMOLISH','CREW_DISMANTLE','CREW_DISMANTLE_CANCEL','CREW_MACHINE','CREW_MACHINE_CANCEL','LINE_SHUTDOWN','LINE_EVACUATE','LINE_EVACUATE_CANCEL','LINE_RETIRE_BEGIN','LINE_RETIRE_CANCEL'):
++                      'CREW_LIST','CREW_ASSIGN','CREW_UNASSIGN','CREW_ACTIVE','CREW_POLICY','CREW_SUPPLY','CREW_ORDER','CREW_ORDER_CANCEL','CREW_RESTOCK','CREW_SALVAGE','CREW_RESTOCK_CANCEL','WAREHOUSE_MARK','WAREHOUSE_CANCEL','WAREHOUSE_DEMOLISH','CREW_DISMANTLE','CREW_DISMANTLE_CANCEL','CREW_MACHINE','CREW_MACHINE_CANCEL','LINE_SHUTDOWN','LINE_EVACUATE','LINE_EVACUATE_CANCEL','LINE_RETIRE_BEGIN','LINE_RETIRE_CANCEL','GENERIC_STATUS','GENERIC_INIT','GENERIC_MACHINE','GENERIC_LINK','GENERIC_TRANSFER','GENERIC_OPERATOR','GENERIC_SHUTDOWN'):
+             raise ValueError('Unknown factory operation')
+         if type(site)!=int or not 0<=site<=100000000:
+             raise ValueError('Invalid factory site selector')
+@@ -209,9 +209,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
+             try:
+                 if route=='sites' and not url.query:
+                     result=self.server.runtime.factory('SITES')
+-                elif route in ('hello','plans','structures','crews') and set(query)=={'site'} and len(query['site'])==1:
++                elif route in ('hello','plans','structures','crews','generic_status') and set(query)=={'site'} and len(query['site'])==1:
+                     site=self._site(query['site'][0])
+-                    result=self.server.runtime.factory('HELLO' if route=='hello' else ('LIST' if route=='plans' else ('STRUCT_LIST' if route=='structures' else 'CREW_LIST')),site)
++                    result=self.server.runtime.factory('HELLO' if route=='hello' else ('LIST' if route=='plans' else ('STRUCT_LIST' if route=='structures' else ('GENERIC_STATUS' if route=='generic_status' else 'CREW_LIST'))),site)
+                 else:
+                     self._json(404,{'ok':False,'error':'Unknown factory endpoint'});return
+                 self._json(200 if result.get('ok') else 400,result)
+@@ -288,7 +288,33 @@ class Handler(http.server.BaseHTTPRequestHandler):
+             if not isinstance(doc,dict) or not isinstance(doc.get('token'),str) or not hmac.compare_digest(doc['token'],self.server.runtime.token):
+                 self._json(403,{'ok':False,'error':'Invalid session token'});return
+             op=self.path[len('/factory/api/'):]
+-            if op=='register' and set(doc)=={'token','site','layout'}:
++            if op=='generic_init' and set(doc)=={'token','site'}:
++                argument='';native='GENERIC_INIT'
++            elif op in ('generic_machine','generic_link') and set(doc)=={'token','site','id'}:
++                num=doc['id']
++                if type(num)!=int or num not in ((100,200) if op=='generic_machine' else (800,)):
++                    raise ValueError('Invalid approved generic machinery')
++                argument=str(num);native='GENERIC_MACHINE' if op=='generic_machine' else 'GENERIC_LINK'
++            elif op=='generic_transfer' and set(doc)=={'token','site','amount','device','item'}:
++                amount,device,item=doc['amount'],doc['device'],doc['item']
++                if type(amount)!=int or amount==0 or not -1000<=amount<=1000 or \
++                   type(device)!=int or device not in (100,200) or type(item)!=int or not 0<=item<=3:
++                    raise ValueError('Invalid physical generic transfer')
++                argument=base64.b64encode(f'{amount},{device},{item}'.encode('ascii')).decode('ascii')
++                native='GENERIC_TRANSFER'
++            elif op in ('generic_operator','generic_shutdown') and set(doc)==({'token','site','npc','device'} if op=='generic_operator' else {'token','site','shutdown','device'}):
++                device=doc['device']
++                if type(device)!=int or device not in (100,200):raise ValueError('Invalid generic device')
++                if op=='generic_operator':
++                    num=doc['npc']
++                    if type(num)!=int or not 0<=num<=2**29-1:raise ValueError('Invalid resident')
++                    native='GENERIC_OPERATOR'
++                else:
++                    num=doc['shutdown']
++                    if type(num)!=bool:raise ValueError('Invalid generic shutdown policy')
++                    num=int(num);native='GENERIC_SHUTDOWN'
++                argument=base64.b64encode(f'{num},{device}'.encode('ascii')).decode('ascii')
++            elif op=='register' and set(doc)=={'token','site','layout'}:
+                 layout=doc['layout']
+                 if not isinstance(layout,str) or not 0<len(layout.encode('utf-8'))<=1048576:
+                     raise ValueError('Invalid layout size')
+diff --git a/scripts/generic_factory_browser_smoke.py b/scripts/generic_factory_browser_smoke.py
+new file mode 100644
+index 0000000..d5d211c
+--- /dev/null
++++ b/scripts/generic_factory_browser_smoke.py
+@@ -0,0 +1,54 @@
++"""d18b offline Chromium UI interaction; real HTTP and SQLite tested independently."""
++from pathlib import Path
++from playwright.sync_api import sync_playwright
++import re
++root=Path(__file__).resolve().parents[1]
++html=re.sub(r'<script src="[^"]+"></script>','',(root/'viewer/interactive.html').read_text())
++with sync_playwright() as p:
++ browser=p.chromium.launch(headless=True,executable_path='/usr/bin/chromium',args=['--no-sandbox','--disable-dev-shm-usage'])
++ page=browser.new_page(viewport={'width':1250,'height':980});errors=[]
++ page.on('pageerror',lambda e:errors.append(str(e)))
++ page.set_content(html);page.locator('#colonyPanel').evaluate('e=>e.hidden=false')
++ page.add_script_tag(content=r'''
++ window.confirm=()=>true;
++ window.__generic={installed:false,modules:0,inventoryKg:0,machines:[],calls:[]};
++ window.fetch=async (path,init)=>{
++   let d={ok:true},q=init?.body?JSON.parse(init.body):{},g=window.__generic;
++   if(path==='/session')d={token:'SESSION',colony_mode:true};
++   else if(path==='/factory/api/sites')d={ok:true,sites:[42]};
++   else if(path.startsWith('/factory/api/structures?'))d={ok:true,structures:[],plans:[]};
++   else if(path.startsWith('/factory/api/crews?'))d={ok:true,residents:[101],jobs:[],supply:{sources:[],depot:9},links:[]};
++   else if(path.startsWith('/factory/api/generic_status?'))d={ok:true,installed:g.installed,modules:g.modules,inventoryKg:g.inventoryKg,machines:g.machines};
++   else if(path.startsWith('/factory/api/generic_')){
++     if(q.site!==42||q.token!=='SESSION')throw Error('invalid mock session');
++     g.calls.push({path,body:q});
++     if(path.endsWith('init'))g.installed=true;
++     if(path.endsWith('machine')){g.modules++;g.machines.push({id:q.id,staffed:false,shutdown:false,batches:0});}
++     if(path.endsWith('link'))g.modules+=4;
++     if(path.endsWith('operator'))g.machines.find(m=>m.id===q.device).staffed=!!q.npc;
++     if(path.endsWith('shutdown'))g.machines.find(m=>m.id===q.device).shutdown=q.shutdown;
++     if(path.endsWith('transfer'))g.inventoryKg+=q.amount;
++     d={ok:true,event:{applied:true}};
++   }
++   return {ok:true,status:200,json:async()=>d};
++ };''')
++ page.add_script_tag(content=(root/'viewer/structures.js').read_text())
++ page.wait_for_function("document.querySelector('#structureStatus').textContent.includes('Outpost #42')")
++ for id in ['genericInit','genericProcessor','genericFinisher','genericLink']:
++  page.locator('#'+id).click()
++  page.wait_for_function('window.__generic.calls.length >= '+str(['genericInit','genericProcessor','genericFinisher','genericLink'].index(id)+1))
++ page.locator('#genericAssign').click()
++ page.wait_for_function('window.__generic.calls.length >= 5')
++ page.locator('#genericStop').click()
++ page.wait_for_function('window.__generic.calls.length >= 6')
++ page.locator('#genericKg').fill('10')
++ page.locator('#genericTransfer').click()
++ page.wait_for_function('window.__generic.calls.length >= 7')
++ page.wait_for_function('document.querySelector("#genericStatus").textContent.includes("10 kg")')
++ g=page.evaluate('window.__generic')
++ assert [q['path'].rsplit('/',1)[-1] for q in g['calls']]==['generic_init','generic_machine','generic_machine','generic_link','generic_operator','generic_shutdown','generic_transfer']
++ assert g['calls'][-1]['body']['amount']==10
++ assert g['machines'][0]['staffed'] and g['machines'][0]['shutdown']
++ assert not errors,errors
++ browser.close()
++print('ECON-d18b Chromium PASS: authorize, material-backed installation buttons, operator, stop, transfer, live status')
+diff --git a/src/ColonyStructurePlans.cpp b/src/ColonyStructurePlans.cpp
+index 1a17168..73d373b 100644
+--- a/src/ColonyStructurePlans.cpp
++++ b/src/ColonyStructurePlans.cpp
+@@ -248,6 +248,29 @@ Event Plans::workshop_goods_action(Action action,std::uint64_t npc,int item,std:
+  return submit(id,owner,ship,site,action,kg,static_cast<int>(npc),
+                static_cast<int>(node*4+static_cast<std::uint32_t>(item)));
+ }
++Event Plans::generic_factory_action(Action action,std::int64_t amount,int device,int item,
++                                   PlayerId owner,EntityId ship,EntityId site){
++ if(action!=Action::InitializeGenericFactory && action!=Action::InstallGenericMachine &&
++    action!=Action::InstallGenericConveyor && action!=Action::TransferGenericMaterial &&
++    action!=Action::SetGenericOperator && action!=Action::SetGenericShutdown)
++    throw std::invalid_argument("Unsupported generic factory action");
++ if((action==Action::InitializeGenericFactory && (amount!=1||device||item)) ||
++    ((action==Action::InstallGenericMachine||action==Action::InstallGenericConveyor) &&
++       ((action==Action::InstallGenericMachine && amount!=100 && amount!=200) ||
++        (action==Action::InstallGenericConveyor && amount!=800) || device||item)) ||
++    (action==Action::TransferGenericMaterial && (!amount||amount < -1000||amount>1000 ||
++         (device!=100&&device!=200)||item<0||item>3)) ||
++    (action==Action::SetGenericOperator && (amount<0||amount>std::numeric_limits<int>::max()/4 ||
++         (device!=100&&device!=200)||item)) ||
++    (action==Action::SetGenericShutdown && ((amount!=0&&amount!=1)||
++         (device!=100&&device!=200)||item)))
++     throw std::invalid_argument("Invalid generic factory command");
++ std::lock_guard<std::mutex> guard(lifecycle);
++ authorize(owner,ship,site);
++ db_->begin();std::int64_t id=0;
++ try{id=fresh_id();db_->commit();}catch(...){db_->rollback();throw;}
++ return submit(id,owner,ship,site,action,amount,device,item);
++}
+ Event Plans::workshop_action(Action action,std::int64_t value,PlayerId owner,EntityId ship,EntityId site){
+  if(action!=Action::SetWorkshopShutdown && action!=Action::AssignWorkshopOperator &&
+     action!=Action::AssignWorkshopFinisher)throw std::invalid_argument("Not a workshop control action");
+diff --git a/src/FactoryExecution.cpp b/src/FactoryExecution.cpp
+index 082e174..b0f235d 100644
+--- a/src/FactoryExecution.cpp
++++ b/src/FactoryExecution.cpp
+@@ -205,6 +205,52 @@ std::string FactoryExecution::config_signature()const{
+  for(const auto& [id,r]:recipes_)s<<id<<'|'<<as_string(r)<<'\n';
+  return std::to_string(fingerprint(s.str()));
+ }
++std::string FactoryExecution::configuration()const{
++ std::ostringstream out;
++ out<<"sg-factory-configuration-v1\n";
++ const auto blueprint=layout_.canonical_blueprint();
++ out<<blueprint.size()<<'\n'<<blueprint;
++ for(const auto& [id,r]:recipes_)out<<"R|"<<id<<'|'<<as_string(r)<<'\n';
++ return out.str();
++}
++FactoryExecution FactoryExecution::from_configuration(const std::string& config,
++                                                      const std::string& checkpoint){
++ if(config.size()>1024*1024 || config.find('\r')!=std::string::npos ||
++    config.find('\0')!=std::string::npos ||
++    config.compare(0,28,"sg-factory-configuration-v1\n")!=0)
++    throw std::invalid_argument("factory configuration framing");
++ const auto newline=config.find('\n',28);
++ if(newline==std::string::npos)throw std::invalid_argument("factory configuration missing size");
++ const auto length=number(config.substr(28,newline-28));
++ if(length>512*1024 || newline+1+length>config.size())
++    throw std::invalid_argument("factory blueprint length invalid");
++ const auto layout_text=config.substr(newline+1,static_cast<std::size_t>(length));
++ auto layout=FactoryLayout::from_blueprint(layout_text);
++ std::map<DeviceId,Recipe> recipes;
++ std::istringstream lines(config.substr(newline+1+static_cast<std::size_t>(length)));
++ std::string record;
++ while(std::getline(lines,record)){
++  const auto f=split(record);
++  if(f.size()<7||f[0]!="R")throw std::invalid_argument("invalid factory recipe record");
++  const auto id=number(f[1]);
++  Recipe r;r.name=f[2];r.operation=f[3];
++  auto parse_material=[](const std::string& v){
++   const auto at=v.find(':');
++   if(at==std::string::npos||v.find(':',at+1)!=std::string::npos)
++    throw std::invalid_argument("invalid factory material");
++   const auto grams=number(v.substr(at+1));
++   if(grams>static_cast<std::uint64_t>(std::numeric_limits<I>::max()))
++    throw std::invalid_argument("invalid factory material amount");
++   return Material{v.substr(0,at),static_cast<I>(grams)};
++  };
++  r.product=parse_material(f[4]);r.scrap=parse_material(f[5]);
++  for(std::size_t i=6;i<f.size();++i)r.inputs.push_back(parse_material(f[i]));
++  if(!recipes.emplace(id,std::move(r)).second)throw std::invalid_argument("duplicate factory recipe");
++ }
++ FactoryExecution result=FactoryExecution::restore(std::move(layout),std::move(recipes),checkpoint);
++ if(result.configuration()!=config)throw std::invalid_argument("noncanonical factory configuration");
++ return result;
++}
+ std::string FactoryExecution::checkpoint()const{
+  std::ostringstream out;
+  out<<"sg-factory-execution-v1|"<<config_signature()<<'|'<<tick_<<'\n';
+diff --git a/src/FactoryRetirementPlanner.cpp b/src/FactoryRetirementPlanner.cpp
+index 45a3c90..703aba5 100644
+--- a/src/FactoryRetirementPlanner.cpp
++++ b/src/FactoryRetirementPlanner.cpp
+@@ -1,4 +1,5 @@
+ #include "galaxy/FactoryRetirementPlanner.hpp"
++#include "galaxy/Simulation.hpp"
+ #include <map>
+ #include <set>
+ #include <stdexcept>
+diff --git a/src/Persistence.cpp b/src/Persistence.cpp
+index ed550b4..31544c1 100644
+--- a/src/Persistence.cpp
++++ b/src/Persistence.cpp
+@@ -127,7 +127,7 @@ Command decode_command(const std::string& record) {
+           >> c.target >> action >> c.thrust_x >> c.thrust_y >> c.amount))
+         throw std::runtime_error("recovery: invalid command journal record");
+     std::string extra;
+-    if (in >> extra || action < 0 || action > static_cast<int>(Action::ReturnWorkshopGoods) || c.id == 0 || c.issuer == 0)
++    if (in >> extra || action < 0 || action > static_cast<int>(Action::SetGenericShutdown) || c.id == 0 || c.issuer == 0)
+         throw std::runtime_error("recovery: invalid command journal values");
+     c.action = static_cast<Action>(action);
+     if (command_record(c) != record) throw std::runtime_error("recovery: noncanonical command journal");
+@@ -1169,6 +1169,7 @@ public:
+         std::size_t refine_transfers=0, fabricate_transfers=0, build_transfers=0;
+         std::size_t mineral_refine_transfers=0,material_fabricate_transfers=0;
+         std::size_t life_transfers=0, farm_builds=0, farm_stock_transfers=0, habitat_builds=0, habitat_transfers=0,utility_builds=0,utility_repairs=0,utility_spare_transfers=0,community_builds=0,community_transfers=0,clinic_builds=0,clinic_transfers=0,reclaimer_builds=0,waterworks_builds=0,waterworks_transfers=0;
++        std::size_t generic_factory_transfers=0;
+         std::size_t workshop_builds=0,workshop_feeds=0,workshop_outputs=0,workshop_finisher_builds=0,workshop_final_outputs=0,workshop_stacks=0,storage_builds=0,storage_stacks=0,extra_storage_builds=0,extra_storage_stacks=0,npc_workshop_transfers=0;
+         std::size_t auto_transfers = 0, auto_storage_transfers=0, storage_link_builds=0, conveyor_cells=0, fixture_builds=0,construction_logistics=0;
+         std::vector<ActivityEvent> recorded_auto, recorded_storage_auto;
+@@ -1458,6 +1459,43 @@ public:
+                 if(source!=reinterpret_cast<const char*>(sqlite3_column_text(ledger.get(),4)) ||
+                    dest!=reinterpret_cast<const char*>(sqlite3_column_text(ledger.get(),5)))
+                     throw std::runtime_error("SQLite: workshop endpoints mismatch");
++            } else if(reason=="generic_factory_transfer"){
++                ++generic_factory_transfers;
++                const auto id=parse_u64(sqlite3_column_text(ledger.get(),0));
++                const auto ev=event_by_id.find(id);
++                const auto cmd=journal_commands.find(id);
++                if(ev==event_by_id.end() || cmd==journal_commands.end() ||
++                   ev->second.result!=Outcome::Applied || ev->second.transferred!=amount ||
++                   ev->second.tick!=static_cast<std::uint64_t>(sqlite3_column_int64(ledger.get(),1)) ||
++                   sqlite3_column_type(ledger.get(),4)!=SQLITE_TEXT ||
++                   sqlite3_column_type(ledger.get(),5)!=SQLITE_TEXT)
++                   throw std::runtime_error("SQLite: generic factory receipt mismatch");
++                const auto& c=cmd->second;
++                const auto install_machine=c.action==Action::InstallGenericMachine;
++                const auto install_link=c.action==Action::InstallGenericConveyor;
++                const auto movement=c.action==Action::TransferGenericMaterial;
++                if(!install_machine&&!install_link&&!movement)
++                   throw std::runtime_error("SQLite: unrelated factory transfer receipt");
++                // d18b1 template has precisely three spatial conveyor cells.
++                // Expansion to custom configs must replace this with an immutable
++                // command-bound configuration receipt, not an unverified length.
++                const auto expected=install_machine?2:install_link?8:std::llabs(c.amount);
++                if(amount!=expected || (install_machine && c.amount!=100 && c.amount!=200) ||
++                   (install_link && c.amount!=800) ||
++                   (movement && (c.thrust_y<0 || c.thrust_y>3 || c.thrust_x<1)))
++                   throw std::runtime_error("SQLite: invalid generic factory quantity");
++                static const char* names[]={"aluminum","aluminum_panels","aluminum_frames","aluminum_scrap"};
++                const auto suffix=movement?":"+std::string(names[c.thrust_y]):std::string{};
++                const auto depot="construction-depot:"+std::to_string(c.target);
++                const auto machine="generic-machine:"+std::to_string(c.target)+":"+
++                    std::to_string(movement?c.thrust_x:c.amount)+suffix;
++                const auto storage="storage:"+std::to_string(c.target)+suffix;
++                const auto source=movement?(c.amount>0?storage:machine):depot;
++                const auto dest=movement?(c.amount>0?machine:storage):
++                    install_machine?machine:"generic-conveyor:"+std::to_string(c.target)+":"+std::to_string(c.amount);
++                if(source!=reinterpret_cast<const char*>(sqlite3_column_text(ledger.get(),4)) ||
++                   dest!=reinterpret_cast<const char*>(sqlite3_column_text(ledger.get(),5)))
++                   throw std::runtime_error("SQLite: generic factory forged transfer endpoint");
+             } else if(reason=="storage_construction_t" || reason=="storage_stack_transfer_kg"){
+                 const bool build=reason=="storage_construction_t";
+                 if(build)++storage_builds;else ++storage_stacks;
+@@ -1771,6 +1809,7 @@ public:
+             throw std::runtime_error("SQLite: missing automated logistics transfers");
+         if (auto_transfers != recorded_auto.size())
+             throw std::runtime_error("SQLite: missing auto mining resource ledger rows");
++        std::size_t expected_generic_factory_transfers=0;
+         std::size_t expected_npc_workshop_transfers = 0;
+         std::size_t expected_transfers = 0;
+         std::size_t expected_hangar_transfers = 0;
+@@ -1817,6 +1856,9 @@ public:
+             else if (cmd->second.action==Action::ConstructWorkshopFinisher) ++expected_workshop_finisher_builds;
+             else if (cmd->second.action==Action::TransferWorkshopFinalOutput) ++expected_workshop_final_outputs;
+             else if (cmd->second.action==Action::TransferWorkshopStack) ++expected_workshop_stacks;
++            else if(cmd->second.action==Action::InstallGenericMachine ||
++                    cmd->second.action==Action::InstallGenericConveyor ||
++                    cmd->second.action==Action::TransferGenericMaterial) ++expected_generic_factory_transfers;
+             else if (cmd->second.action==Action::ConstructStorage) ++expected_storage_builds;
+             else if (cmd->second.action==Action::TransferStorageStack) ++expected_storage_stacks;
+             else if (cmd->second.action==Action::PickupWorkshopGoods ||
+@@ -1876,7 +1918,8 @@ public:
+             extra_storage_stacks!=expected_extra_storage_stacks ||
+             storage_link_builds!=expected_link_builds ||
+             conveyor_cells!=expected_conveyor_cells || fixture_builds!=expected_fixture_builds ||
+-            construction_logistics!=expected_construction_logistics)
++            construction_logistics!=expected_construction_logistics ||
++            generic_factory_transfers!=expected_generic_factory_transfers)
+             throw std::runtime_error("SQLite: ledger event count mismatch");
+         std::size_t credit_rows=0;
+         Statement cash(db_, "SELECT command_id,tick,station_id,owner_id,ore_units,unit_price,credit_amount FROM credit_ledger");
+@@ -3000,7 +3043,10 @@ public:
+                          cmd->second.action!=Action::CrewDismantleWorkshop &&
+                          cmd->second.action!=Action::PickupWorkshopGoods &&
+                          cmd->second.action!=Action::DepositWorkshopGoods &&
+-                         cmd->second.action!=Action::ReturnWorkshopGoods))
++                         cmd->second.action!=Action::ReturnWorkshopGoods &&
++                         cmd->second.action!=Action::InstallGenericMachine &&
++                         cmd->second.action!=Action::InstallGenericConveyor &&
++                         cmd->second.action!=Action::TransferGenericMaterial))
+                         throw std::runtime_error("unmatched resource transfer event");
+                     Statement ledger(db_, "INSERT INTO resource_ledger(generation,tick,command_id,source_id,destination_id,amount,reason) VALUES(?,?,?,?,?,?,?)");
+                     ledger.i64(1, static_cast<std::int64_t>(next));
+@@ -3037,6 +3083,31 @@ public:
+                                            "workshop:"+std::to_string(c.target))+suffix;
+                         ledger.text(4,src);ledger.text(5,dst);ledger.i64(6,ev.transferred);
+                         ledger.text(7,build?"storage_construction_t":"storage_stack_transfer_kg");
++                    } else if(cmd->second.action==Action::InstallGenericMachine ||
++                              cmd->second.action==Action::InstallGenericConveyor ||
++                              cmd->second.action==Action::TransferGenericMaterial){
++                        const auto& c=cmd->second;
++                        const bool machine_build=c.action==Action::InstallGenericMachine;
++                        const bool link_build=c.action==Action::InstallGenericConveyor;
++                        const auto expected=machine_build?2:link_build?8:std::llabs(c.amount);
++                        if(ev.transferred!=expected ||
++                           (machine_build && c.amount!=100 && c.amount!=200) ||
++                           (link_build && c.amount!=800) ||
++                           (!machine_build&&!link_build && (c.thrust_y<0 || c.thrust_y>3)))
++                           throw std::runtime_error("invalid generic factory material receipt");
++                        static const char* names[]={"aluminum","aluminum_panels","aluminum_frames","aluminum_scrap"};
++                        const auto suffix=machine_build||link_build?std::string{}:
++                            ":"+std::string(names[c.thrust_y]);
++                        const auto depot="construction-depot:"+std::to_string(c.target);
++                        const auto machine="generic-machine:"+std::to_string(c.target)+":"+
++                            std::to_string(machine_build||link_build?c.amount:c.thrust_x)+suffix;
++                        const auto storage="storage:"+std::to_string(c.target)+suffix;
++                        const auto source=machine_build||link_build?depot:c.amount>0?storage:machine;
++                        const auto dest=machine_build?machine:link_build?
++                            "generic-conveyor:"+std::to_string(c.target)+":"+std::to_string(c.amount):
++                            c.amount>0?machine:storage;
++                        ledger.text(4,source);ledger.text(5,dest);
++                        ledger.i64(6,ev.transferred);ledger.text(7,"generic_factory_transfer");
+                     } else if(cmd->second.action==Action::ConstructStorageNode ||
+                               cmd->second.action==Action::TransferStorageNodeStack){
+                         const auto& c=cmd->second;
+diff --git a/src/Simulation.cpp b/src/Simulation.cpp
+index 9efe7d3..1bca940 100644
+--- a/src/Simulation.cpp
++++ b/src/Simulation.cpp
+@@ -1,6 +1,7 @@
+ #include "galaxy/Simulation.hpp"
+ #include "galaxy/QuantifiedProduction.hpp"
+ #include "galaxy/FactoryLayout.hpp"
++#include <cctype>
+ 
+ #include <algorithm>
+ #include <cmath>
+@@ -11,6 +12,45 @@
+ namespace galaxy {
+ namespace {
+ constexpr int kPlacementBound=1000000; // coordinate safety, not room size
++// One record per immutable factory configuration and execution checkpoint.
++// Hex allows strict, single-line canonical world snapshots without ambiguous
++// nested newlines/pipe delimiters. These bytes are still audited by SQLite.
++std::string factory_hex(const std::string& bytes){
++ static constexpr char alphabet[]="0123456789abcdef";
++ std::string out;out.reserve(bytes.size()*2);
++ for(unsigned char ch:bytes){out.push_back(alphabet[ch>>4]);out.push_back(alphabet[ch&15]);}
++ return out;
++}
++std::string factory_unhex(const std::string& hex){
++ if(hex.size()%2 || hex.size()>4*1024*1024)throw std::runtime_error("snapshot: factory encoding size");
++ std::string bytes;bytes.reserve(hex.size()/2);
++ auto nibble=[](char x)->unsigned{
++  if(x>='0'&&x<='9')return static_cast<unsigned>(x-'0');
++  if(x>='a'&&x<='f')return static_cast<unsigned>(x-'a'+10);
++  throw std::runtime_error("snapshot: factory noncanonical hex");
++ };
++ for(std::size_t i=0;i<hex.size();i+=2)
++  bytes.push_back(static_cast<char>((nibble(hex[i])<<4)|nibble(hex[i+1])));
++ return bytes;
++}
++// The first authorized runtime template is deliberately fixed, so a command
++// cannot smuggle a new arbitrary recipe/configuration past the host policy.
++// The engine beneath this template is fully generic. Additional player-defined
++// recipe approvals and graphical edit transactions are the next integration gate.
++industry::FactoryExecution initial_generic_factory(){
++ industry::FactoryLayout layout;
++ layout.place_machine(100,{100,100},1,{"good/aluminum"},
++                      {"good/aluminum_panels","good/aluminum_scrap"});
++ layout.place_machine(200,{105,100},1,{"good/aluminum_panels"},
++                      {"good/aluminum_frames","good/aluminum_scrap"});
++ layout.add_conveyor(800,100,200,"good/aluminum_panels",1000,
++                     {{102,100},{103,100},{104,100}});
++ return industry::FactoryExecution(std::move(layout),{
++    {100,{"panel_cut","cut",{{"good/aluminum",20000}},
++          {"good/aluminum_panels",19000},{"good/aluminum_scrap",1000}}},
++    {200,{"frame_shape","shape",{{"good/aluminum_panels",20000}},
++          {"good/aluminum_frames",19000},{"good/aluminum_scrap",1000}}}});
++}
+ std::uint8_t fixture_layer(FixtureKind kind){
+     switch(kind){case FixtureKind::Floor:return 0;
+       case FixtureKind::WallEast:case FixtureKind::DoorEast:return 1;
+@@ -389,6 +429,10 @@ ColonyViability Simulation::assess_colony(EntityId ship) const {
+     return r;
+ }
+ 
++const industry::FactoryExecution* Simulation::generic_factory(EntityId site) const {
++ auto it=generic_factories_.find(site);
++ return it==generic_factories_.end()?nullptr:&it->second;
++}
+ const OutpostWorkshop* Simulation::workshop(EntityId site) const {
+     const auto it=workshops_.find(site);
+     return it==workshops_.end()?nullptr:&it->second;
+@@ -911,6 +955,21 @@ bool Simulation::submit(const Command& c) {
+         snapshot_version_=std::max(snapshot_version_,
+             c.action==Action::DepositWorkshopGoods && c.thrust_y>=4 ? 40 : 39);
+     }
++    if(c.action==Action::InitializeGenericFactory || c.action==Action::InstallGenericMachine ||
++       c.action==Action::InstallGenericConveyor || c.action==Action::TransferGenericMaterial ||
++       c.action==Action::SetGenericOperator || c.action==Action::SetGenericShutdown){
++       if(!c.target ||
++          (c.action==Action::InitializeGenericFactory && (c.amount!=1 || c.thrust_x || c.thrust_y)) ||
++          ((c.action==Action::InstallGenericMachine || c.action==Action::InstallGenericConveyor) &&
++           (c.amount<1 || c.thrust_x || c.thrust_y)) ||
++          (c.action==Action::TransferGenericMaterial &&
++           (!c.amount || c.amount<-1000 || c.amount>1000 ||
++            c.thrust_x<1 || c.thrust_y<0 || c.thrust_y>3)) ||
++          ((c.action==Action::SetGenericOperator || c.action==Action::SetGenericShutdown) &&
++           (c.thrust_x<1 || c.thrust_y || c.amount<0 || c.amount>std::numeric_limits<int>::max()/4)))
++            return false;
++       snapshot_version_=std::max(snapshot_version_,41);
++    }
+     if(c.action==Action::SetWorkshopShutdown){
+         if(!c.target || c.thrust_x || c.thrust_y || (c.amount!=0 && c.amount!=1))return false;
+         snapshot_version_=std::max(snapshot_version_,38);
+@@ -1411,6 +1470,12 @@ Event Simulation::execute(const Command& c) {
+         case Action::PickupWorkshopGoods:
+         case Action::DepositWorkshopGoods:
+         case Action::ReturnWorkshopGoods:
++        case Action::InitializeGenericFactory:
++        case Action::InstallGenericMachine:
++        case Action::InstallGenericConveyor:
++        case Action::TransferGenericMaterial:
++        case Action::SetGenericOperator:
++        case Action::SetGenericShutdown:
+         case Action::DismantleConveyorCell:
+         case Action::DismantleStorageLink:
+         case Action::ConstructStorageNode:
+@@ -1473,6 +1538,98 @@ Event Simulation::execute(const Command& c) {
+                dx*dx+dy*dy>kDockingRangeMm*kDockingRangeMm){
+                 result.result=Outcome::OutOfRange;return result;
+             }
++            if(c.action==Action::InitializeGenericFactory || c.action==Action::InstallGenericMachine ||
++               c.action==Action::InstallGenericConveyor || c.action==Action::TransferGenericMaterial ||
++               c.action==Action::SetGenericOperator || c.action==Action::SetGenericShutdown){
++                if(c.action==Action::InitializeGenericFactory){
++                    if(generic_factories_.count(c.target)){result.result=Outcome::InvalidTarget;return result;}
++                    generic_factories_.emplace(c.target,initial_generic_factory());
++                }else{
++                    const auto found=generic_factories_.find(c.target);
++                    if(found==generic_factories_.end()){
++                        result.result=Outcome::InvalidTarget;return result;
++                    }
++                    // Work against prospective copies. An invalid recipe, module
++                    // balance, or full storage cannot partially modify the world.
++                    auto candidate=found->second;
++                    const auto machine=static_cast<industry::DeviceId>(c.thrust_x);
++                    if(c.action==Action::InstallGenericMachine || c.action==Action::InstallGenericConveyor){
++                        const auto stock=construction_supplies_.find(c.target);
++                        if(stock==construction_supplies_.end()){
++                            result.result=Outcome::NoResources;return result;
++                        }
++                        auto depot=stock->second.depot;
++                        try{
++                            if(c.action==Action::InstallGenericMachine)
++                                candidate.install_machine(static_cast<std::uint64_t>(c.amount),depot,c.id);
++                            else candidate.install_conveyor(static_cast<std::uint64_t>(c.amount),depot,c.id);
++                        }catch(const std::invalid_argument&){result.result=Outcome::NoResources;return result;}
++                        result.transferred=2*(stock->second.depot-depot);
++                        stock->second.depot=depot;
++                    }else if(c.action==Action::SetGenericOperator){
++                        auto assignments=generic_factory_operators_[c.target];
++                        auto const npc=static_cast<std::uint64_t>(c.amount);
++                        if(!candidate.machines().count(machine)){
++                            result.result=Outcome::InvalidTarget;return result;
++                        }
++                        if(npc){
++                            const auto it=npcs_.find(npc);
++                            if(it==npcs_.end() || it->second.location!=c.target ||
++                               it->second.home_ship!=c.actor || it->second.role!=NpcRole::Habitat){
++                                result.result=Outcome::Unauthorized;return result;
++                            }
++                            const auto wi=workshops_.find(c.target);
++                            if(wi!=workshops_.end() &&
++                                (wi->second.operator_npc_id==npc || wi->second.finisher_npc_id==npc)){
++                                result.result=Outcome::Unauthorized;return result;
++                            }
++                            for(const auto& [site,machines]:generic_factory_operators_)
++                                for(const auto& [dev,assigned]:machines)if(assigned==npc &&
++                                  (site!=c.target || dev!=machine)){
++                                   result.result=Outcome::Unauthorized;return result;
++                                }
++                            assignments[machine]=npc;
++                        }else assignments.erase(machine);
++                        candidate.set_operator(machine,npc!=0);
++                        if(assignments.empty())generic_factory_operators_.erase(c.target);
++                        else generic_factory_operators_[c.target]=std::move(assignments);
++                    }else if(c.action==Action::SetGenericShutdown){
++                        if(!candidate.machines().count(machine) || c.amount>1){
++                            result.result=Outcome::InvalidTarget;return result;
++                        }
++                        candidate.set_shutdown(machine,c.amount==1);
++                    }else{
++                        if(!candidate.machines().count(machine)){
++                            result.result=Outcome::InvalidTarget;return result;
++                        }
++                        auto sit=storages_.find(c.target);
++                        if(sit==storages_.end()){
++                            result.result=Outcome::InvalidTarget;return result;
++                        }
++                        static const char* names[]={"aluminum","aluminum_panels","aluminum_frames","aluminum_scrap"};
++                        const auto index=static_cast<std::size_t>(c.thrust_y);
++                        const std::string item=std::string("good/")+names[index];
++                        industry::Store local{4000000,{}};
++                        for(const auto& [name,kg]:sit->second.goods_kg)
++                            if(kg>0)local.deposit(std::string("good/")+name,kg*1000);
++                        try{
++                            if(c.amount>0)candidate.load(machine,local,item,c.amount*1000);
++                            else candidate.unload(machine,local,item,-c.amount*1000);
++                        }catch(const std::invalid_argument&){result.result=Outcome::NoResources;return result;}
++                        std::map<std::string,std::int64_t> revised;
++                        for(const auto& [name,grams]:local.grams){
++                            if(grams%1000)throw std::logic_error("fractional storage cargo");
++                            if(grams>0)revised.emplace(name.substr(5),grams/1000);
++                        }
++                        sit->second.goods_kg=std::move(revised);
++                        result.transferred=std::llabs(c.amount);
++                    }
++                    found->second=std::move(candidate);
++                }
++                snapshot_version_=std::max(snapshot_version_,41);
++                result.result=Outcome::Applied;
++                return result;
++            }
+             auto& cship=colony_ships_.at(c.actor);
+             auto& onboard=life_support_.at(c.actor);
+             if(c.action==Action::StageConstructionModules || c.action==Action::PickupConstructionModules ||
+@@ -3326,6 +3483,8 @@ void Simulation::step() {
+     process_utilities();
+     process_storage_links();
+     process_workshops();
++    // Generic production advances only in the primary authoritative sim tick.
++    for(auto& [site,factory]:generic_factories_){(void)site;factory.step();}
+     process_waterworks();
+     process_colony_needs();
+     process_farms();
+@@ -3361,7 +3520,7 @@ void Simulation::steps(std::uint64_t count) {
+ 
+ std::string Simulation::canonical_state() const {
+     std::ostringstream out;
+-    out << (snapshot_version_ >= 40 ? "galaxy-kernel-v40|" : snapshot_version_ >= 39 ? "galaxy-kernel-v39|" : snapshot_version_ >= 38 ? "galaxy-kernel-v38|" : snapshot_version_ >= 37 ? "galaxy-kernel-v37|" : snapshot_version_ >= 36 ? "galaxy-kernel-v36|" : snapshot_version_ >= 35 ? "galaxy-kernel-v35|" : snapshot_version_ >= 34 ? "galaxy-kernel-v34|" : snapshot_version_ >= 33 ? "galaxy-kernel-v33|" : snapshot_version_ >= 32 ? "galaxy-kernel-v32|" : snapshot_version_ >= 31 ? "galaxy-kernel-v31|" : snapshot_version_ >= 30 ? "galaxy-kernel-v30|" : snapshot_version_ >= 29 ? "galaxy-kernel-v29|" : snapshot_version_ >= 28 ? "galaxy-kernel-v28|" : snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
++    out << (snapshot_version_ >= 41 ? "galaxy-kernel-v41|" : snapshot_version_ >= 40 ? "galaxy-kernel-v40|" : snapshot_version_ >= 39 ? "galaxy-kernel-v39|" : snapshot_version_ >= 38 ? "galaxy-kernel-v38|" : snapshot_version_ >= 37 ? "galaxy-kernel-v37|" : snapshot_version_ >= 36 ? "galaxy-kernel-v36|" : snapshot_version_ >= 35 ? "galaxy-kernel-v35|" : snapshot_version_ >= 34 ? "galaxy-kernel-v34|" : snapshot_version_ >= 33 ? "galaxy-kernel-v33|" : snapshot_version_ >= 32 ? "galaxy-kernel-v32|" : snapshot_version_ >= 31 ? "galaxy-kernel-v31|" : snapshot_version_ >= 30 ? "galaxy-kernel-v30|" : snapshot_version_ >= 29 ? "galaxy-kernel-v29|" : snapshot_version_ >= 28 ? "galaxy-kernel-v28|" : snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
+         << '|' << rng_state_ << '\n';
+     if (snapshot_version_>=5) for(const auto system:systems_)out<<"system|"<<system<<'\n';
+     for (const auto& entry : entities_) {
+@@ -3466,6 +3625,13 @@ std::string Simulation::canonical_state() const {
+                 out<<"construction_reservation|"<<site<<'|'<<plan<<'|'<<r.node<<'|'<<r.modules<<'\n';
+         }
+     }
++    if(snapshot_version_>=41)for(const auto& [site,factory]:generic_factories_){
++        out<<"generic_factory|"<<site<<'|'<<factory_hex(factory.configuration())<<'|'
++           <<factory_hex(factory.checkpoint())<<'\n';
++        const auto staff=generic_factory_operators_.find(site);
++        if(staff!=generic_factory_operators_.end())for(const auto& [machine,npc]:staff->second)
++            out<<"generic_factory_operator|"<<site<<'|'<<machine<<'|'<<npc<<'\n';
++    }
+     if (snapshot_version_>=8) {
+         for(const auto& [id,g]:geology_)
+             out<<"geology|"<<id<<'|'<<static_cast<int>(g.taxonomy)<<'|'<<g.radius_m
+@@ -3688,12 +3854,12 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
+     if (!std::getline(in, line)) throw std::runtime_error("snapshot: missing header");
+     auto h = fields(line);
+     require_fields(h, 5);
+-    if (h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27" && h[0] != "galaxy-kernel-v28" && h[0] != "galaxy-kernel-v29" && h[0] != "galaxy-kernel-v30" && h[0] != "galaxy-kernel-v31" && h[0] != "galaxy-kernel-v32" && h[0] != "galaxy-kernel-v33" && h[0] != "galaxy-kernel-v34" && h[0] != "galaxy-kernel-v35" && h[0] != "galaxy-kernel-v36" && h[0] != "galaxy-kernel-v37" && h[0] != "galaxy-kernel-v38" && h[0] != "galaxy-kernel-v39" && h[0] != "galaxy-kernel-v40") throw std::runtime_error("snapshot: unsupported version");
++    if (h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27" && h[0] != "galaxy-kernel-v28" && h[0] != "galaxy-kernel-v29" && h[0] != "galaxy-kernel-v30" && h[0] != "galaxy-kernel-v31" && h[0] != "galaxy-kernel-v32" && h[0] != "galaxy-kernel-v33" && h[0] != "galaxy-kernel-v34" && h[0] != "galaxy-kernel-v35" && h[0] != "galaxy-kernel-v36" && h[0] != "galaxy-kernel-v37" && h[0] != "galaxy-kernel-v38" && h[0] != "galaxy-kernel-v39" && h[0] != "galaxy-kernel-v40" && h[0] != "galaxy-kernel-v41") throw std::runtime_error("snapshot: unsupported version");
+     const auto sys = u64(h[1]);
+     if (sys == 0 || sys > std::numeric_limits<std::uint32_t>::max())
+         throw std::runtime_error("snapshot: invalid system");
+     Simulation result(u64(h[4]), static_cast<std::uint32_t>(sys));
+-    result.snapshot_version_ = h[0] == "galaxy-kernel-v40" ? 40 : h[0] == "galaxy-kernel-v39" ? 39 : h[0] == "galaxy-kernel-v38" ? 38 : h[0] == "galaxy-kernel-v37" ? 37 : h[0] == "galaxy-kernel-v36" ? 36 : h[0] == "galaxy-kernel-v35" ? 35 : h[0] == "galaxy-kernel-v34" ? 34 : h[0] == "galaxy-kernel-v33" ? 33 : h[0] == "galaxy-kernel-v32" ? 32 : h[0] == "galaxy-kernel-v31" ? 31 : h[0] == "galaxy-kernel-v30" ? 30 : h[0] == "galaxy-kernel-v29" ? 29 : h[0] == "galaxy-kernel-v28" ? 28 : h[0] == "galaxy-kernel-v27" ? 27 : h[0] == "galaxy-kernel-v26" ? 26 : h[0] == "galaxy-kernel-v25" ? 25 : h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
++    result.snapshot_version_ = h[0] == "galaxy-kernel-v41" ? 41 : h[0] == "galaxy-kernel-v40" ? 40 : h[0] == "galaxy-kernel-v39" ? 39 : h[0] == "galaxy-kernel-v38" ? 38 : h[0] == "galaxy-kernel-v37" ? 37 : h[0] == "galaxy-kernel-v36" ? 36 : h[0] == "galaxy-kernel-v35" ? 35 : h[0] == "galaxy-kernel-v34" ? 34 : h[0] == "galaxy-kernel-v33" ? 33 : h[0] == "galaxy-kernel-v32" ? 32 : h[0] == "galaxy-kernel-v31" ? 31 : h[0] == "galaxy-kernel-v30" ? 30 : h[0] == "galaxy-kernel-v29" ? 29 : h[0] == "galaxy-kernel-v28" ? 28 : h[0] == "galaxy-kernel-v27" ? 27 : h[0] == "galaxy-kernel-v26" ? 26 : h[0] == "galaxy-kernel-v25" ? 25 : h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
+     result.tick_ = u64(h[2]);
+     result.next_entity_id_ = u64(h[3]);
+     if (result.next_entity_id_ == 0) throw std::runtime_error("snapshot: invalid next entity ID");
+@@ -4018,6 +4184,25 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
+                          !storage->equipment_positions.count(static_cast<std::uint32_t>(node)))) ||
+                !it->second.reserved.emplace(plan,ConstructionReservation{static_cast<std::uint32_t>(node),qty}).second)
+                 throw std::runtime_error("snapshot: invalid construction reservation");
++        } else if(f[0]=="generic_factory" && result.snapshot_version_>=41){
++            require_fields(f,4);
++            const auto site=u64(f[1]);
++            if(!site || !result.built_outposts_.count(site))
++                throw std::runtime_error("snapshot: orphaned generic factory");
++            auto factory=industry::FactoryExecution::from_configuration(
++                factory_unhex(f[2]),factory_unhex(f[3]));
++            if(factory.tick_count()>result.tick_ ||
++               !result.generic_factories_.emplace(site,std::move(factory)).second)
++                throw std::runtime_error("snapshot: invalid generic factory state");
++        } else if(f[0]=="generic_factory_operator" && result.snapshot_version_>=41){
++            require_fields(f,4);
++            const auto site=u64(f[1]), machine=u64(f[2]), npc=u64(f[3]);
++            const auto it=result.generic_factories_.find(site);
++            if(it==result.generic_factories_.end() || !npc ||
++               !it->second.machines().count(machine) ||
++               !it->second.machines().at(machine).machine.staffed ||
++               !result.generic_factory_operators_[site].emplace(machine,npc).second)
++                throw std::runtime_error("snapshot: invalid generic factory operator");
+         } else if(f[0]=="geology" && result.snapshot_version_>=8){
+             require_fields(f,6);
+             const auto id=u64(f[1]),tax=u64(f[2]);
+@@ -4283,7 +4468,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
+             c.id = u64(f[1]); c.execute_tick = u64(f[2]); c.sequence = u64(f[3]);
+             c.issuer = u64(f[4]); c.actor = u64(f[5]); c.target = u64(f[6]);
+             auto action = u64(f[7]);
+-            if (action > (result.snapshot_version_ >= 39 ? static_cast<unsigned>(Action::ReturnWorkshopGoods) : result.snapshot_version_ >= 38 ? static_cast<unsigned>(Action::SetWorkshopShutdown) : result.snapshot_version_ >= 37 ? static_cast<unsigned>(Action::CrewDismantleWorkshop) : result.snapshot_version_ >= 36 ? static_cast<unsigned>(Action::CrewDemolishStorageNode) : result.snapshot_version_ >= 35 ? static_cast<unsigned>(Action::DemolishStorageNode) : result.snapshot_version_ >= 34 ? static_cast<unsigned>(Action::SalvageConstructionNodeModules) : result.snapshot_version_ >= 33 ? static_cast<unsigned>(Action::RecoverConstructionDelivery) : result.snapshot_version_ >= 32 ? static_cast<unsigned>(Action::BuildColonyFixtureFromDelivery) : result.snapshot_version_ >= 31 ? static_cast<unsigned>(Action::SetColonyDoor) : result.snapshot_version_ >= 30 ? static_cast<unsigned>(Action::CompleteConveyorRoute) : result.snapshot_version_ >= 29 ? static_cast<unsigned>(Action::PlaceFactoryEquipment) : result.snapshot_version_ >= 28 ? static_cast<unsigned>(Action::ConstructWorkshopLink) : result.snapshot_version_ >= 27 ? static_cast<unsigned>(Action::ConstructStorageLink) : result.snapshot_version_ >= 26 ? static_cast<unsigned>(Action::TransferStorageNodeStack) : result.snapshot_version_ >= 25 ? static_cast<unsigned>(Action::TransferStorageStack) : result.snapshot_version_ >= 24 ? static_cast<unsigned>(Action::TransferWorkshopStack) : result.snapshot_version_ >= 23 ? static_cast<unsigned>(Action::TransferWorkshopFinalOutput) : result.snapshot_version_ >= 22 ? static_cast<unsigned>(Action::TransferWorkshopOutput) : result.snapshot_version_ >= 21 ? static_cast<unsigned>(Action::HostCrewLoss) : result.snapshot_version_ >= 20 ? static_cast<unsigned>(Action::AssignFarmMentor) : result.snapshot_version_ >= 19 ? static_cast<unsigned>(Action::AssignPolicyInspectors) : result.snapshot_version_ >= 18 ? static_cast<unsigned>(Action::TransferWaterworksFeed) : result.snapshot_version_ >= 17 ? static_cast<unsigned>(Action::ConstructReclaimer) : result.snapshot_version_ >= 16 ? static_cast<unsigned>(Action::AssignClinicStaff) : result.snapshot_version_ >= 15 ? static_cast<unsigned>(Action::AssignCommunityStaff) : result.snapshot_version_ >= 14 ? static_cast<unsigned>(Action::SetUtilityMaintenance) : result.snapshot_version_ >= 13 ? static_cast<unsigned>(Action::RepairUtility) : result.snapshot_version_ >= 12 ? static_cast<unsigned>(Action::AssignHabitatResidents) : result.snapshot_version_ >= 11 ? static_cast<unsigned>(Action::AssignFarmWorkers) : result.snapshot_version_ >= 10 ? static_cast<unsigned>(Action::LoadLifeWater) : result.snapshot_version_ >= 9 ? static_cast<unsigned>(Action::FabricateMaterialModule) : result.snapshot_version_ >= 7 ? static_cast<unsigned>(Action::ConstructOutpost) : result.snapshot_version_ >= 6 ? static_cast<unsigned>(Action::DeliverGateSpares) : result.snapshot_version_ >= 5 ? static_cast<unsigned>(Action::SetGatePairOnline) : result.snapshot_version_ >= 4 ? static_cast<unsigned>(Action::SellOre) : static_cast<unsigned>(Action::UnloadOre))) throw std::runtime_error("snapshot: invalid action");
++            if (action > (result.snapshot_version_ >= 41 ? static_cast<unsigned>(Action::SetGenericShutdown) : result.snapshot_version_ >= 39 ? static_cast<unsigned>(Action::ReturnWorkshopGoods) : result.snapshot_version_ >= 38 ? static_cast<unsigned>(Action::SetWorkshopShutdown) : result.snapshot_version_ >= 37 ? static_cast<unsigned>(Action::CrewDismantleWorkshop) : result.snapshot_version_ >= 36 ? static_cast<unsigned>(Action::CrewDemolishStorageNode) : result.snapshot_version_ >= 35 ? static_cast<unsigned>(Action::DemolishStorageNode) : result.snapshot_version_ >= 34 ? static_cast<unsigned>(Action::SalvageConstructionNodeModules) : result.snapshot_version_ >= 33 ? static_cast<unsigned>(Action::RecoverConstructionDelivery) : result.snapshot_version_ >= 32 ? static_cast<unsigned>(Action::BuildColonyFixtureFromDelivery) : result.snapshot_version_ >= 31 ? static_cast<unsigned>(Action::SetColonyDoor) : result.snapshot_version_ >= 30 ? static_cast<unsigned>(Action::CompleteConveyorRoute) : result.snapshot_version_ >= 29 ? static_cast<unsigned>(Action::PlaceFactoryEquipment) : result.snapshot_version_ >= 28 ? static_cast<unsigned>(Action::ConstructWorkshopLink) : result.snapshot_version_ >= 27 ? static_cast<unsigned>(Action::ConstructStorageLink) : result.snapshot_version_ >= 26 ? static_cast<unsigned>(Action::TransferStorageNodeStack) : result.snapshot_version_ >= 25 ? static_cast<unsigned>(Action::TransferStorageStack) : result.snapshot_version_ >= 24 ? static_cast<unsigned>(Action::TransferWorkshopStack) : result.snapshot_version_ >= 23 ? static_cast<unsigned>(Action::TransferWorkshopFinalOutput) : result.snapshot_version_ >= 22 ? static_cast<unsigned>(Action::TransferWorkshopOutput) : result.snapshot_version_ >= 21 ? static_cast<unsigned>(Action::HostCrewLoss) : result.snapshot_version_ >= 20 ? static_cast<unsigned>(Action::AssignFarmMentor) : result.snapshot_version_ >= 19 ? static_cast<unsigned>(Action::AssignPolicyInspectors) : result.snapshot_version_ >= 18 ? static_cast<unsigned>(Action::TransferWaterworksFeed) : result.snapshot_version_ >= 17 ? static_cast<unsigned>(Action::ConstructReclaimer) : result.snapshot_version_ >= 16 ? static_cast<unsigned>(Action::AssignClinicStaff) : result.snapshot_version_ >= 15 ? static_cast<unsigned>(Action::AssignCommunityStaff) : result.snapshot_version_ >= 14 ? static_cast<unsigned>(Action::SetUtilityMaintenance) : result.snapshot_version_ >= 13 ? static_cast<unsigned>(Action::RepairUtility) : result.snapshot_version_ >= 12 ? static_cast<unsigned>(Action::AssignHabitatResidents) : result.snapshot_version_ >= 11 ? static_cast<unsigned>(Action::AssignFarmWorkers) : result.snapshot_version_ >= 10 ? static_cast<unsigned>(Action::LoadLifeWater) : result.snapshot_version_ >= 9 ? static_cast<unsigned>(Action::FabricateMaterialModule) : result.snapshot_version_ >= 7 ? static_cast<unsigned>(Action::ConstructOutpost) : result.snapshot_version_ >= 6 ? static_cast<unsigned>(Action::DeliverGateSpares) : result.snapshot_version_ >= 5 ? static_cast<unsigned>(Action::SetGatePairOnline) : result.snapshot_version_ >= 4 ? static_cast<unsigned>(Action::SellOre) : static_cast<unsigned>(Action::UnloadOre))) throw std::runtime_error("snapshot: invalid action");
+             c.action = static_cast<Action>(action);
+             auto tx = i64(f[8]), ty = i64(f[9]);
+             if (tx < std::numeric_limits<int>::min() || tx > std::numeric_limits<int>::max() ||
+@@ -4385,6 +4570,19 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
+                   c.thrust_x<1 || c.thrust_x>std::numeric_limits<int>::max()/4 ||
+                   c.thrust_y<0 || (c.action==Action::DepositWorkshopGoods &&
+                     result.snapshot_version_>=40 ? c.thrust_y>std::numeric_limits<int>::max()/4 : c.thrust_y>3))) ||
++                ((c.action==Action::InitializeGenericFactory || c.action==Action::InstallGenericMachine ||
++                  c.action==Action::InstallGenericConveyor || c.action==Action::TransferGenericMaterial ||
++                  c.action==Action::SetGenericOperator || c.action==Action::SetGenericShutdown) &&
++                 (result.snapshot_version_<41 || !c.target ||
++                   (c.action==Action::InitializeGenericFactory && (c.amount!=1 || c.thrust_x || c.thrust_y)) ||
++                   ((c.action==Action::InstallGenericMachine || c.action==Action::InstallGenericConveyor) &&
++                    (c.amount<1 || c.thrust_x || c.thrust_y)) ||
++                   (c.action==Action::TransferGenericMaterial &&
++                    (!c.amount || c.amount<-1000 || c.amount>1000 ||
++                     c.thrust_x<1 || c.thrust_y<0 || c.thrust_y>3)) ||
++                   ((c.action==Action::SetGenericOperator || c.action==Action::SetGenericShutdown) &&
++                    (c.thrust_x<1 || c.thrust_y || c.amount<0 ||
++                     c.amount>std::numeric_limits<int>::max()/4)))) ||
+                 ((c.action==Action::SetWorkshopShutdown) &&
+                  (result.snapshot_version_<38 || !c.target || c.thrust_x || c.thrust_y ||
+                   (c.amount!=0 && c.amount!=1))) ||
+@@ -4881,6 +5079,24 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
+         if (a.kind == ActivityKind::AsteroidDespawned && !result.depleted_.count(a.target))
+             throw std::runtime_error("snapshot: missing depleted tombstone");
+     }
++    for(const auto& [site,machines]:result.generic_factory_operators_){
++        for(const auto& [machine,npc]:machines){
++            const auto it=result.npcs_.find(npc);
++            if(it==result.npcs_.end() || it->second.location!=site ||
++               it->second.home_ship!=result.built_outposts_.at(site).source_colony_ship ||
++               it->second.role!=NpcRole::Habitat ||
++               !result.generic_factories_.at(site).machines().count(machine))
++                throw std::runtime_error("snapshot: orphaned factory staff");
++        }
++    }
++    for(const auto& [site,factory]:result.generic_factories_){
++        for(const auto& [device,machine]:factory.machines()){
++            const auto sit=result.generic_factory_operators_.find(site);
++            const bool assigned=sit!=result.generic_factory_operators_.end() && sit->second.count(device);
++            if(machine.machine.staffed!=assigned)
++                throw std::runtime_error("snapshot: phantom factory staff");
++        }
++    }
+     if (result.canonical_state() != bytes)
+         throw std::runtime_error("snapshot: noncanonical or out-of-order records");
+     return result;
+@@ -4916,6 +5132,8 @@ void Simulation::swap(Simulation& other) noexcept {
+     clinics_.swap(other.clinics_);
+     built_outposts_.swap(other.built_outposts_);
+     workshops_.swap(other.workshops_);
++    generic_factories_.swap(other.generic_factories_);
++    generic_factory_operators_.swap(other.generic_factory_operators_);
+     storages_.swap(other.storages_);
+     colony_fixtures_.swap(other.colony_fixtures_);
+     construction_supplies_.swap(other.construction_supplies_);
+@@ -5146,6 +5364,17 @@ std::int64_t Simulation::total_ore() const {
+             throw std::overflow_error("construction materials exceed world mass");
+         total+=2*modules;
+     }
++    for(const auto& [site,factory]:generic_factories_){
++        if(!built_outposts_.count(site))throw std::overflow_error("orphaned generic factory");
++        const auto modules=factory.embodied_modules();
++        const auto grams=factory.internal_mass_grams();
++        if(modules<0 || modules>1000000 || grams<0 || grams%1000 ||
++           modules>(std::numeric_limits<std::int64_t>::max()-total)/2 ||
++           grams/1000>std::numeric_limits<std::int64_t>::max()-life_mass_kg)
++            throw std::overflow_error("invalid generic factory material account");
++        total+=modules*2;
++        life_mass_kg+=grams/1000;
++    }
+     // Only the WHOLE world must conserve complete ore-equivalent mass;
+     // individual inventories can now hold a single kilogram stack.
+     if(colony_cargo_kg>std::numeric_limits<std::int64_t>::max()-life_mass_kg)
+diff --git a/src/factory_colony_protocol.hpp b/src/factory_colony_protocol.hpp
+index bdd6075..d6269b6 100644
+--- a/src/factory_colony_protocol.hpp
++++ b/src/factory_colony_protocol.hpp
+@@ -134,6 +134,40 @@ public:
+         if(requested_site==0||pos==sites.end()||pos->second.source_colony_ship!=ship_||
+            !world_.world().find(ship_)||world_.world().find(ship_)->owner_id!=owner_)
+             throw std::invalid_argument("Selected site is not owned by this colony session");
++        if(op=="GENERIC_STATUS"){
++            if(!arg.empty())throw std::invalid_argument("Unexpected generic factory status arguments");
++            const auto* factory=world_.world().generic_factory(requested_site);
++            if(!factory)return "{\"ok\":true,\"installed\":false,\"machines\":[]}";
++            std::string out="{\"ok\":true,\"installed\":true,\"modules\":"+
++                 std::to_string(factory->embodied_modules())+",\"inventoryKg\":"+
++                 std::to_string(factory->internal_mass_grams()/1000)+",\"machines\":[";
++            bool first=true;
++            for(const auto& [id,m]:factory->machines()){
++                if(!first)out+=',';first=false;
++                out+="{\"id\":"+std::to_string(id)+",\"shutdown\":"+(m.shutdown?"true":"false")+
++                    ",\"staffed\":"+(m.machine.staffed?"true":"false")+
++                    ",\"batches\":"+std::to_string(m.state.completed_batches)+"}";
++            }
++            return out+"]}";
++        }
++        if(op=="GENERIC_INIT" || op=="GENERIC_MACHINE" || op=="GENERIC_LINK" ||
++           op=="GENERIC_TRANSFER" || op=="GENERIC_OPERATOR" || op=="GENERIC_SHUTDOWN"){
++            Action action=Action::InitializeGenericFactory;std::int64_t amount=1;int device=0,item=0;
++            if(op=="GENERIC_INIT"){
++                if(!arg.empty())throw std::invalid_argument("Invalid generic initialization");
++            }else if(op=="GENERIC_MACHINE"||op=="GENERIC_LINK"){
++                amount=static_cast<std::int64_t>(unsigned_id(arg));
++                action=op=="GENERIC_MACHINE"?Action::InstallGenericMachine:Action::InstallGenericConveyor;
++            }else{
++                const auto vals=structural_args(arg,op=="GENERIC_TRANSFER"?3:2);
++                amount=vals[0];device=vals[1];
++                if(op=="GENERIC_TRANSFER"){action=Action::TransferGenericMaterial;item=vals[2];}
++                else action=op=="GENERIC_OPERATOR"?Action::SetGenericOperator:Action::SetGenericShutdown;
++            }
++            const auto event=structures_.generic_factory_action(action,amount,device,item,owner_,ship_,requested_site);
++            if(event.result!=Outcome::Applied)throw std::invalid_argument("Generic factory command refused by world");
++            return "{\"ok\":true,\"event\":"+event_json(event)+"}";
++        }
+         if(op=="LINE_RETIRE_BEGIN"){
+             crews_.begin_line_retirement(unsigned_id(arg),owner_,ship_,requested_site);
+             return "{\"ok\":true,\"authorized\":true}";
+diff --git a/tests/ECON02B2d18bFactoryHostTests.py b/tests/ECON02B2d18bFactoryHostTests.py
+new file mode 100644
+index 0000000..051bf68
+--- /dev/null
++++ b/tests/ECON02B2d18bFactoryHostTests.py
+@@ -0,0 +1,81 @@
++#!/usr/bin/env python3
++"""Real localhost colony API + SQLite persistence for approved generic factory."""
++import argparse, http.client, json, pathlib, socket, subprocess, sys, tempfile, time
++p=argparse.ArgumentParser()
++for name in ('host','fixture','relay'):p.add_argument('--'+name,required=True)
++a=p.parse_args()
++def port():
++ with socket.socket() as s:
++  s.bind(('127.0.0.1',0));return s.getsockname()[1]
++class Game:
++ def __init__(self,db):
++  self.port=port()
++  self.proc=subprocess.Popen([sys.executable,a.relay,'--colony','--host-exe',a.host,'--save',str(db),
++    '--port',str(self.port),'--tick-ms','75','--max-ticks','1200'],stdin=subprocess.DEVNULL,
++    stdout=subprocess.PIPE,stderr=subprocess.PIPE)
++  for _ in range(120):
++   if self.proc.poll() is not None:raise AssertionError('host exited unexpectedly')
++   try:
++    if self.get('/healthz')[0]==200:break
++   except (OSError,TimeoutError):pass
++   time.sleep(.05)
++  else:raise AssertionError('host start timeout')
++ def request(self,method,path,doc=None,origin=None):
++  c=http.client.HTTPConnection('127.0.0.1',self.port,timeout=12)
++  body=json.dumps(doc).encode('utf-8') if doc is not None else None
++  headers={'Host':f'127.0.0.1:{self.port}'}
++  if body is not None:
++   headers.update({'Content-Type':'application/json','Origin':origin or f'http://127.0.0.1:{self.port}'})
++  try:
++   c.request(method,path,body,headers)
++   resp=c.getresponse();raw=resp.read();ct=resp.getheader('Content-Type','')
++   return resp.status,json.loads(raw) if 'application/json' in ct else raw
++  finally:c.close()
++ def get(self,path):return self.request('GET',path)
++ def post(self,path,doc,origin=None):return self.request('POST',path,doc,origin)
++ def close(self):
++  self.proc.terminate()
++  try:self.proc.communicate(timeout=8)
++  except subprocess.TimeoutExpired:self.proc.kill();self.proc.communicate(timeout=5)
++with tempfile.TemporaryDirectory(prefix='sg-d18b-http-') as d:
++ db=pathlib.Path(d)/'factory.sqlite'
++ fixture=subprocess.run([a.fixture,str(db)],capture_output=True,text=True,timeout=20)
++ assert fixture.returncode==0,(fixture.stdout,fixture.stderr)
++ game=Game(db)
++ try:
++  status,s=game.get('/factory/api/sites');assert status==200 and len(s['sites'])==1,(status,s)
++  site=s['sites'][0]
++  token=game.get('/session')[1]['token']
++  post=lambda endpoint,doc:game.post('/factory/api/'+endpoint,{'token':token,'site':site,**doc})
++  status,state=game.get(f'/factory/api/generic_status?site={site}')
++  assert status==200 and state['installed'] is False,(status,state)
++  for bad in ({'token':'fake','site':site}, {'token':token,'site':site+123}, {'token':token,'site':str(site)}):
++   status,_=game.post('/factory/api/generic_init',bad);assert status in (400,403),(status,bad)
++  status,_=game.post('/factory/api/generic_init',{'token':token,'site':site},origin='http://evil.invalid')
++  assert status==403
++  status,_=post('generic_machine',{'id':True});assert status==400
++  status,_=post('generic_transfer',{'amount':True,'device':100,'item':0});assert status==400
++  status,_=post('generic_init',{});assert status==200
++  status,_=post('generic_init',{});assert status==400
++  status,_=post('generic_link',{'id':800});assert status==400 # cannot install link before machines
++  for device in (100,200):
++   status,r=post('generic_machine',{'id':device});assert status==200,(device,status,r)
++  status,r=post('generic_link',{'id':800});assert status==200,(status,r)
++  status,r=post('generic_transfer',{'amount':10,'device':100,'item':0})
++  assert status==400,(status,r) # empty local warehouse, never free material
++  status,state=game.get(f'/factory/api/generic_status?site={site}')
++  assert status==200 and state['installed'] and state['modules']==6 and len(state['machines'])==2,state
++  status,crews=game.get(f'/factory/api/crews?site={site}')
++  assert status==200 and crews['residents'],crews
++  worker=crews['residents'][0]
++  status,r=post('generic_operator',{'device':100,'npc':worker});assert status==200,(status,r)
++  status,r=post('generic_shutdown',{'device':100,'shutdown':True});assert status==200,(status,r)
++  status,state=game.get(f'/factory/api/generic_status?site={site}')
++  assert state['machines'][0]['staffed'] and state['machines'][0]['shutdown'],state
++ finally:game.close()
++ game=Game(db)
++ try:
++  status,state=game.get(f'/factory/api/generic_status?site={site}')
++  assert status==200 and state['modules']==6 and state['machines'][0]['shutdown'] and state['machines'][0]['staffed'],state+ finally:game.close()
++print('ECON-d18b host PASS: localhost auth, inventory denial, material-backed installation, operator/shutdown and restart')
+diff --git a/tests/ECON02B2d18bWorldFactoryTests.cpp b/tests/ECON02B2d18bWorldFactoryTests.cpp
+new file mode 100644
+index 0000000..5710fe4
+--- /dev/null
++++ b/tests/ECON02B2d18bWorldFactoryTests.cpp
+@@ -0,0 +1,112 @@
++#include "galaxy/Persistence.hpp"
++#include <chrono>
++#include <filesystem>
++#include <functional>
++#include <iostream>
++#include <sqlite3.h>
++#include <stdexcept>
++#include <string>
++
++using namespace galaxy;
++namespace fs=std::filesystem;
++#define CHECK(x) do{if(!(x))throw std::runtime_error("d18b line "+std::to_string(__LINE__)+": " #x);}while(0)
++static Event action(PersistentWorld& world,EntityId ship,std::uint64_t id,Action kind,
++                    EntityId site=0,std::int64_t amount=1,int x=0,int y=0,PlayerId issuer=7){
++ Command c{};c.id=id;c.sequence=id;c.issuer=issuer;c.actor=ship;c.target=site;
++ c.action=kind;c.amount=amount;c.thrust_x=x;c.thrust_y=y;c.execute_tick=world.world().tick()+1;
++ CHECK(world.submit(c));world.step();const auto result=world.world().events().back();
++ CHECK(result.command_id==id);return result;
++}
++static void ok(Event e){if(e.result!=Outcome::Applied)
++ throw std::runtime_error("d18b command "+std::to_string(e.command_id)+" outcome "+std::to_string(static_cast<int>(e.result)));}
++int main(int argc,char** argv){
++ auto path=fs::temp_directory_path()/("sg_d18b_"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
++ fs::create_directories(path);const auto db=argc==2?std::string(argv[1]):(path/"world.sqlite").string();
++ try{
++  Simulation seed(1818);const auto ship=seed.add_colony_ship(7,{0,0},400,10);
++  seed.provision_colony_genesis(ship,1000,3000,1000,1000,1000);
++  const auto rock=seed.add_asteroid({1000,0},200);
++  const auto mineral=seed.add_geological_asteroid({2000,0},AsteroidClass::Silicate,30,2500);
++  seed.enable_individual_workforce();const auto base_mass=seed.total_material_kg();EntityId site=0;
++  {
++   PersistentWorld w(db,std::move(seed));
++   ok(action(w,ship,1,Action::Mine,rock,120));
++   ok(action(w,ship,2,Action::RefineOre,0,120));
++   ok(action(w,ship,3,Action::FabricateModule,0,45));
++   ok(action(w,ship,4,Action::ConstructOutpost));site=w.world().built_outposts().begin()->first;
++   ok(action(w,ship,5,Action::ConstructStorage,site));
++   ok(action(w,ship,6,Action::ConstructHabitat,site));
++   for(int i=1;i<=3;++i)ok(action(w,ship,6+i,Action::TransferHabitatStock,site,100,i));
++   ok(action(w,ship,10,Action::AssignHabitatResidents,site,1));
++   ok(action(w,ship,11,Action::StageConstructionModules,site,8));
++   CHECK(w.world().total_material_kg()==base_mass);
++   if(argc==2)return 0; // World fixture for the real authenticated HTTP host test.
++   CHECK(action(w,ship,12,Action::InitializeGenericFactory,site,1,0,0,8).result==Outcome::Unauthorized);
++   ok(action(w,ship,13,Action::InitializeGenericFactory,site));
++   CHECK(w.world().generic_factory(site));
++   CHECK(w.world().generic_factory(site)->machines().empty());
++   CHECK(w.world().canonical_state().rfind("galaxy-kernel-v41|",0)==0);
++   const auto saved=w.world().canonical_state();
++   CHECK(Simulation::from_snapshot(saved).canonical_state()==saved);
++   CHECK(action(w,ship,14,Action::InitializeGenericFactory,site).result==Outcome::InvalidTarget);
++   CHECK(action(w,ship,15,Action::InstallGenericConveyor,site,800).result!=Outcome::Applied);
++   ok(action(w,ship,16,Action::InstallGenericMachine,site,100));
++   ok(action(w,ship,17,Action::InstallGenericMachine,site,200));
++   ok(action(w,ship,18,Action::InstallGenericConveyor,site,800));
++   CHECK(w.world().generic_factory(site)->embodied_modules()==6);
++   CHECK(w.world().construction_supplies(site)->depot==2);
++   CHECK(w.world().total_material_kg()==base_mass);
++   std::uint64_t worker=0;
++   for(const auto& [id,n]:w.world().npc_records())if(n.location==site&&n.role==NpcRole::Habitat)worker=id;
++   CHECK(worker);
++   CHECK(action(w,ship,19,Action::SetGenericOperator,site,worker,100,0,8).result==Outcome::Unauthorized);
++   ok(action(w,ship,20,Action::SetGenericOperator,site,worker,100));
++   CHECK(w.world().generic_factory(site)->machines().at(100).machine.staffed);
++   CHECK(action(w,ship,21,Action::SetGenericOperator,site,worker,200).result==Outcome::Unauthorized);
++   ok(action(w,ship,22,Action::Mine,mineral,45));
++   ok(action(w,ship,23,Action::RefineMineral,10,18000));
++   ok(action(w,ship,24,Action::TransferStorageStack,site,50,0,0));
++   CHECK(w.world().storage(site)->goods_kg.at("aluminum")>=50);
++   ok(action(w,ship,25,Action::TransferGenericMaterial,site,40,100,0));
++   CHECK(w.world().storage(site)->goods_kg.at("aluminum")>=10);
++   CHECK(w.world().generic_factory(site)->internal_mass_grams()==40000);
++   CHECK(w.world().total_material_kg()==base_mass);
++   const auto snapshot=w.world().canonical_state();
++   CHECK(Simulation::from_snapshot(snapshot).canonical_state()==snapshot);
++   for(int t=0;t<20;++t){w.step();CHECK(w.world().total_material_kg()==base_mass);}
++   CHECK(w.world().generic_factory(site)->machines().at(100).state.completed_batches>0);
++   CHECK(action(w,ship,26,Action::TransferGenericMaterial,site,10,200,2).result!=Outcome::Applied);
++   CHECK(w.world().total_material_kg()==base_mass);
++  }
++  {
++   PersistentWorld restored(db,Simulation(1));
++   const auto* f=restored.world().generic_factory(site);CHECK(f);
++   CHECK(f->machines().at(100).state.completed_batches>0);
++   CHECK(restored.world().total_material_kg()==base_mass);
++   const auto s=restored.world().canonical_state();
++   CHECK(Simulation::from_snapshot(s).canonical_state()==s);
++   ok(action(restored,ship,30,Action::SetGenericShutdown,site,1,100));
++   const auto old=restored.world().generic_factory(site)->machines().at(100).state.completed_batches;
++   for(int t=0;t<20;++t)restored.step();
++   CHECK(restored.world().generic_factory(site)->machines().at(100).state.completed_batches<=old+1);
++   CHECK(restored.world().total_material_kg()==base_mass);
++   CHECK(Simulation::from_snapshot(restored.world().canonical_state()).canonical_state()==restored.world().canonical_state());
++  }
++  // A forged custody endpoint must not survive SQLite replay validation.
++  const auto forged=(path/"forged.sqlite").string();
++  fs::copy_file(db,forged,fs::copy_options::overwrite_existing);
++  sqlite3* connection=nullptr;CHECK(sqlite3_open(forged.c_str(),&connection)==SQLITE_OK);
++  const int changed=sqlite3_exec(connection,
++      "UPDATE resource_ledger SET destination_id='forged-factory' WHERE rowid=(SELECT rowid FROM resource_ledger "
++      "WHERE reason='generic_factory_transfer' LIMIT 1)",nullptr,nullptr,nullptr);
++  CHECK(changed==SQLITE_OK);CHECK(sqlite3_changes(connection)==1);
++  CHECK(sqlite3_close(connection)==SQLITE_OK);
++  bool rejected=false;
++  try{PersistentWorld invalid(forged,Simulation(1));(void)invalid;}
++  catch(const std::exception&){rejected=true;}
++  CHECK(rejected);
++  fs::remove_all(path);
++  std::cout<<"ECON-d18b PASS: owner authorization, real site custody, install and production, v41 SQLite restart and conservation\n";
++  return 0;
++ }catch(const std::exception& e){std::cerr<<"ECON-d18b FAIL: "<<e.what()<<'\n';return 1;}
++}
+diff --git a/viewer/interactive.html b/viewer/interactive.html
+index 456f591..047bb38 100644
+--- a/viewer/interactive.html
++++ b/viewer/interactive.html
+@@ -77,6 +77,11 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
+ <div class="controls" style="padding:8px 0;gap:5px"><label>Authorized industrial line retirement</label><button id="lineRetireBegin">Retire line with NPC crew</button><button id="lineRetireCancel">Cancel pending retirement</button></div>
+ <div class="controls" style="padding:8px 0;gap:5px"><label>Production line</label><button id="lineShutdown">Drain and stop production</button><button id="lineResume">Resume production</button></div>
+ <div class="help">Shutting down prevents new batches or incoming feed. Already-started batches may finish if power and assigned operators remain available. Once both stages drain, the colony releases their operators. Workshop inventory remains physical: recover it through installed outward conveyors or an authorized transfer before requesting machine dismantling.</div>
++<div class="help">Generic machine runtime (experimental): one approved site-local aluminum recipe template only. Machines 100 and 200 and conveyor 800 require actual construction modules staged in this outpost depot. Feed and output transfers use actual local warehouse goods. This is not yet the unrestricted machine designer or NPC-operated generic retirement system.</div>
++<div class="controls" style="padding:8px 0;gap:5px"><button id="genericInit">Authorize factory template</button><button id="genericProcessor">Install processor 100</button><button id="genericFinisher">Install finisher 200</button><button id="genericLink">Install conveyor 800</button></div>
++<div class="controls" style="padding:8px 0;gap:5px"><label for="genericDevice">Generic machine</label><select id="genericDevice"><option value="100">Processor #100</option><option value="200">Finisher #200</option></select><button id="genericAssign">Assign selected resident</button><button id="genericUnassign">Release operator</button><button id="genericStop">Stop machine</button><button id="genericResume">Resume machine</button></div>
++<div class="controls" style="padding:8px 0;gap:5px"><label for="genericItem">Material</label><select id="genericItem"><option value="0">Aluminum</option><option value="1">Panels</option><option value="2">Frames</option><option value="3">Scrap</option></select><label for="genericKg">kg (negative = unload)</label><input id="genericKg" type="number" min="-1000" max="1000" value="10" step="1" style="width:90px"><button id="genericTransfer">Transfer physical goods</button></div>
++<div id="genericStatus" class="help" role="status" aria-live="polite">No generic factory has been authorized at this site.</div>
+ <div class="controls" style="padding:8px 0;gap:5px"><label for="crewMachineStage">Machine disassembly</label><select id="crewMachineStage"><option value="1">Finisher (first)</option><option value="2">Primary processor (last)</option></select><button id="crewMachine">Assign NPC machine teardown</button><button id="crewMachineCancel">Cancel machine teardown</button></div>
+ <div id="crewStatus" class="help" role="status" aria-live="polite" style="white-space:pre-wrap;max-height:180px;overflow:auto">No active construction crews.</div>
+ <div id="structureStatus" class="help" role="status" aria-live="polite" style="white-space:pre-wrap">Open a colony session to inspect physical structures.</div>
+diff --git a/viewer/structures.js b/viewer/structures.js
+index 5adbd7e..2dd086a 100644
+--- a/viewer/structures.js
++++ b/viewer/structures.js
+@@ -1,7 +1,7 @@
+ /* ECON-02B2d5 — colony-owned structural plans, not a second world writer. */
+ (function(){'use strict';
+ const $=id=>document.getElementById(id);
+-let site=null, token='', listing={structures:[],plans:[]}, crews={residents:[],jobs:[],supply:{}}, active=false;
++let site=null, token='', listing={structures:[],plans:[]}, crews={residents:[],jobs:[],supply:{}}, generic={installed:false,machines:[]}, active=false;
+ function feedback(text){$('structureStatus').textContent=text;}
+ async function json(path,body){
+  const response=await fetch(path,body===undefined?{cache:'no-store'}:{
+@@ -87,6 +87,9 @@ function renderCrews(){
+  const machines=(crews.machineDismantling||[]).map(j=>`NPC #${j.npc} · ${j.stage===1?'Finisher':'Processor'} · ${j.active?'Active':'Finished'} · ${j.reason}`);
+  const retirements=(crews.lineRetirement||[]).map(r=>`Line retirement NPC #${r.npc} · phase ${r.phase}/6 · ${r.active?(r.cancelling?'Safely cancelling':'Active'):'Closed'} · ${r.reason}`);
+  const workshop=crews.workshopState||{};
++ $('genericStatus').textContent=generic.installed?
++  `Installed machinery: ${generic.modules} construction modules embodied · ${generic.inventoryKg} kg inside · ${generic.machines.map(m=>`#${m.id} ${m.staffed?'staffed':'unstaffed'} ${m.shutdown?'stopped':'running'} ${m.batches} batches`).join('; ')||'awaiting installation'}`:
++  'No generic factory authorized for this outpost';
+  const workLine=workshop.installed?`Workshop: ${workshop.finisher?'processor + finisher':'processor'} · aluminum ${workshop.aluminum} kg · panels ${workshop.panels} kg · frames ${workshop.frames} kg · scrap ${workshop.scrap} kg · WIP ${workshop.wip} kg · assigned operators ${workshop.operators} · shutdown ${workshop.shutdown?"ON": "OFF"}${workshop.drained?" (drained)":""}`:'No installed workshop';
+  const activeRuns=(crews.restocking||[]).map(r=>`${r.salvage?'Salvage':'Supply'} NPC #${r.npc} ${r.salvage?'←':'→'} node #${r.node} · (${r.x},${r.y}) · ${r.active?(r.returning?'Returning':'Hauling'):'Complete'} · ${r.reason||'Ready'}`);
+  $('crewStatus').textContent=workLine+'\n'+stockLine+'\n'+(sourceLine?sourceLine+'\n':'')+(text.join('\n')||'No construction crew assignments yet. Build a habitat and assign residents first.')+
+@@ -128,6 +131,7 @@ async function refresh(){
+  if(!site){listing={structures:[],plans:[]};crews={residents:[],jobs:[]};render();feedback('Build your first colony outpost before constructing structures.');return;}
+  listing=await json('/factory/api/structures?site='+site);
+  try{crews=await json('/factory/api/crews?site='+site);}catch(_){crews={residents:[],jobs:[]};}
++ try{generic=await json('/factory/api/generic_status?site='+site);}catch(_){generic={installed:false,machines:[]};}
+  render();
+  const activePlan=listing.plans.find(p=>!p.cancelled&&!p.finished);
+  feedback(`Outpost #${site} · ${listing.structures.length} built pieces · ${listing.plans.length} plans`+
+@@ -160,6 +164,7 @@ $('structureSite').addEventListener('change',async()=>{
+   if(!site){listing={structures:[],plans:[]};crews={residents:[],jobs:[]};render();return;}
+   listing=await json('/factory/api/structures?site='+site);
+   try{crews=await json('/factory/api/crews?site='+site);}catch(_){crews={residents:[],jobs:[]};}
++ try{generic=await json('/factory/api/generic_status?site='+site);}catch(_){generic={installed:false,machines:[]};}
+   render();feedback('Selected outpost #'+site);
+  }catch(e){feedback('Site unavailable: '+e.message);}
+ });
+@@ -222,6 +227,27 @@ $('crewDismantle').addEventListener('click',()=>{
+  if(!/^[1-9][0-9]{0,18}$/.test(target)) {feedback('Invalid dismantling target.');return;}
+  submit('/factory/api/crew_dismantle',{npc,target,link:sel[0]==='l'});
+ });
++for(const [button,path,id] of [['genericInit','generic_init',null],['genericProcessor','generic_machine',100],['genericFinisher','generic_machine',200],['genericLink','generic_link',800]])
++ $(button).addEventListener('click',()=>{
++  if(!window.confirm('Commit this generic factory construction action using real outpost resources?'))return;
++  submit('/factory/api/'+path,id===null?{}:{id});
++ });
++function selectedGenericDevice(){return Number($('genericDevice').value);}
++$('genericAssign').addEventListener('click',()=>{
++ const npc=Number($('crewResident').value);
++ if(!Number.isSafeInteger(npc)||npc<1){feedback('Select an existing colony resident.');return;}
++ submit('/factory/api/generic_operator',{device:selectedGenericDevice(),npc});
++});
++$('genericUnassign').addEventListener('click',()=>submit('/factory/api/generic_operator',{device:selectedGenericDevice(),npc:0}));
++$('genericStop').addEventListener('click',()=>submit('/factory/api/generic_shutdown',{device:selectedGenericDevice(),shutdown:true}));
++$('genericResume').addEventListener('click',()=>submit('/factory/api/generic_shutdown',{device:selectedGenericDevice(),shutdown:false}));
++$('genericTransfer').addEventListener('click',()=>{
++ const amount=Number($('genericKg').value),item=Number($('genericItem').value);
++ if(!Number.isSafeInteger(amount)||amount===0||Math.abs(amount)>1000||!Number.isSafeInteger(item)||item<0||item>3){
++  feedback('Transfer requires a nonzero whole-kilogram amount, maximum 1000 kg.');return;
++ }
++ submit('/factory/api/generic_transfer',{device:selectedGenericDevice(),item,amount});
++});
+ $('crewDismantleCancel').addEventListener('click',()=>{
+  const npc=Number($('crewResident').value);
+  if(!Number.isSafeInteger(npc)||npc<=0){feedback('Select a resident.');return;}

@@ -1,0 +1,282 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index e472c62..00aeb8d 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -871,3 +871,13 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+       --relay ${CMAKE_CURRENT_SOURCE_DIR}/live/interactive_relay.py)
+   set_tests_properties(ECON02B2d18c_SpatialHost_HTTP PROPERTIES TIMEOUT 90)
+ endif()
++
++# ECON-02B2d18d: shared NPC staffing gate across host crew jobs and world machines.
++if(BUILD_TESTING AND Python3_Interpreter_FOUND)
++  add_test(NAME ECON02B2d18d_SharedStaffing_HTTP
++    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/ECON02B2d18dSharedStaffingHostTests.py
++      --host $<TARGET_FILE:galaxy_colony_live_host>
++      --fixture $<TARGET_FILE:galaxy_econ02b2d18b_site_factory_tests>
++      --relay ${CMAKE_CURRENT_SOURCE_DIR}/live/interactive_relay.py)
++  set_tests_properties(ECON02B2d18d_SharedStaffing_HTTP PROPERTIES TIMEOUT 90)
++endif()
+diff --git a/README.md b/README.md
+index 4243aed..f6e7ecb 100644
+--- a/README.md
++++ b/README.md
+@@ -291,3 +291,15 @@ is open. See `docs/engineering/ECON02B2d7_NPC_Material_Logistics_Engineering_Rep
+ ### ECON-02B2d15 (local prototype; 2026-11-01)
+ 
+ The colony controls support owner-authorized two-stage workshop shutdown and NPC-managed evacuation of real workshop goods into the original built storage bin. WIP drains before operator release; the worker carries at most 20 kg per trip; inventory custody, restart recovery and resource-ledger receipts are authoritative. CTest 105/105 and JavaScript 93/93 passed locally on Linux, plus two offline Chromium UI tests. See [`docs/engineering/ECON02B2d15_Production_Line_Shutdown_And_NPC_Evacuation_2026-11-01.md`](docs/engineering/ECON02B2d15_Production_Line_Shutdown_And_NPC_Evacuation_2026-11-01.md) for tests, limits and remaining Windows/3D gates.
++
++### ECON-02B2d18d — Shared NPC duties and visual vertical-slice gate (local increment)
++
++A named resident operating a generic machine cannot simultaneously be assigned to
++construction, restocking, evacuation or dismantling. The colony host consults its
++durable NPC job/cargo records before accepting a generic operator and the crew
++scheduler checks authoritative generic-machine assignments before taking a worker.
++This was verified through the real authenticated localhost + SQLite host, not just
++a browser mock. The current UI remains an engineering-grade **2D prototype**, not
++proof of the game's eventual 3D appearance or moment-to-moment playability.
++See `docs/engineering/ECON02B2d18d_Shared_NPC_Duties_And_Visual_Acceptance_2026-11-01.md`
++for precise tests and the proposed early playable/visual acceptance gate.
+diff --git a/docs/engineering/ECON02B2d18d_Shared_NPC_Duties_And_Visual_Acceptance_2026-11-01.md b/docs/engineering/ECON02B2d18d_Shared_NPC_Duties_And_Visual_Acceptance_2026-11-01.md
+new file mode 100644
+index 0000000..73d418f
+--- /dev/null
++++ b/docs/engineering/ECON02B2d18d_Shared_NPC_Duties_And_Visual_Acceptance_2026-11-01.md
+@@ -0,0 +1,46 @@
++# ECON-02B2d18d — Shared NPC duty boundary and visual acceptance strategy
++
++**Date:** 2026-11-01
++**Project:** Original Single Galaxy prototype, independent from EVEmu
++**Baseline:** `SingleGalaxy_ECON02B2d18c_Color_And_Spatial_Gates_2026-11-01_Source_Tests.zip` (636 entries)
++
++## What changed
++
++`Simulation::generic_operator_assigned(site,npc)` provides a read-only query of the authoritative, persisted generic-machine staff assignments. `NpcConstructionCrews::validate_worker()` rejects a resident who already operates a generic machine. This applies to construction, hauling, evacuation, dismantling and retirement uses of the existing worker validator.
++
++The single-threaded colony control host now checks `Crews::worker_has_duty()` before accepting a nonzero `GENERIC_OPERATOR` assignment. This method examines assigned construction workers, active restock/salvage jobs, dismantling, workshop evacuation and retirement assignments, as well as physical construction cargo owned by the worker. A paused crew assignment is still reserved, not free capacity. An authorized `GENERIC_OPERATOR ... npc=0` release is unaffected.
++
++No simulated resources or inventory receipts have been altered. This closes a **cross-subsystem double-staffing gap**, but does not turn the existing factory into a fully physical NPC-delivered factory.
++
++## Verified tests in this work session
++
++- Full native simulation library, colony host and existing d18b site factory test targets compiled on Linux with CMake/Ninja.
++- `ECON02B2d18d_SharedStaffing_HTTP`: real localhost relay + SQLite. Assignment to generic machinery blocks construction; releasing operator enables crew assignment; crew assignment blocks new machine operation; the conflict survives process restart; forged session rejected.
++- Earlier `ECON02B2d18b_GenericFactory_HTTP`, `ECON02B2d18b_AuthoritativeFactorySite` and `ECON02B2d18c_SpatialHost_HTTP` passed.
++- `node --test tests/*.js`: 93/93 passing.
++- Offline Chromium UI smoke: structure panel, generic factory controls and crew controls all passed (3 scripts). These browser tests validate interaction and layout, not full 3D gameplay or live browser-to-host acceptance.
++
++**Not verified here:** the full 114-test native CTest suite, native Windows build, Windows interactive GUI, NPC-supplied stock transfer to arbitrary generic-machine ports, or unified future job scheduler across every colony occupation.
++
++## Current visual reality (not a rendering-quality claim)
++
++The source's `viewer/interactive.html` contains a top-down HTML Canvas space viewer and a large engineering/colony control panel. The factory designer has a grid and clear interaction states. These are debug/prototype views; the source snapshot does not yet demonstrate a modern 3D flight and settlement presentation or enough original production assets to judge final art quality. A passing simulation test does not prove the game is fun, responsive, visually coherent, or accessible.
++
++### Proposed immediate visual/playability gate before additional large systems
++
++1. One original 3D colony ship with a readable silhouette, a clear forward direction, thruster cues, and free flight through a small playable region.
++2. A simple asteroid with scale, light/shadow, and a visible mining/salvage feedback loop, derived from real authoritative mining events.
++3. One buildable white colony structure plus selected player color accent; one actual construction animation and completion state, with existing server authority preserved.
++4. User experiences launch → undock → fly → mine → carry → return → dock/unload → save/relaunch. Record whether controls are understandable and enjoyable, independently of backend unit tests.
++5. Visual acceptance: comfortable camera, legible HUD at typical desktop resolutions, distinct silhouettes, stable frame pacing, coherent lighting and materials, predictable interaction feedback, and no misleading indications of physical resources.
++
++This is an **acceptance proposal**, not a claim these visuals exist or have been implemented. Avoid buying or generating a full library of art assets before the vertical slice proves that the original game interaction loop is worth expanding.
++
++## Remaining engineering gates
++
++- d18c: physical NPC deliveries to generic machines through built transport systems; remove remaining instantaneous warehouse↔machine transfers where physical custody is promised.
++- d18c: coordinate named jobs with aggregate colony staffing and production scheduling, without double allocation.
++- Resource-center service regions, utility layers and power/water/atmosphere are approved design directions, but not present in this patch.
++- Windows GUI native acceptance and interactive visual vertical-slice gate remain open.
++
++GitHub is the repository/documentation record, not the development hub. This patch was produced locally and has not been uploaded.
+diff --git a/include/galaxy/NpcConstructionCrews.hpp b/include/galaxy/NpcConstructionCrews.hpp
+index 1270662..3ff3378 100644
+--- a/include/galaxy/NpcConstructionCrews.hpp
++++ b/include/galaxy/NpcConstructionCrews.hpp
+@@ -65,6 +65,9 @@ public:
+     bool set_active(std::int64_t plan,bool active,PlayerId owner,EntityId ship,EntityId site);
+     void set_policy(std::int64_t plan,int priority,bool autonomy,PlayerId owner,EntityId ship,EntityId site);
+     std::vector<CrewJob> list(PlayerId owner,EntityId ship,EntityId site)const;
++    // Single authoritative host checks this before staffing a generic machine.
++    // Includes paused jobs and cargo: no simultaneous duties or teleporting loads.
++    bool worker_has_duty(std::uint64_t npc,PlayerId owner,EntityId ship,EntityId site)const;
+     // Blocks physical demolition while a named worker is assigned to this bin.
+     bool warehouse_job_dependency(std::uint32_t node,PlayerId owner,EntityId ship,EntityId site)const;
+     void queue_dismantle(std::uint64_t npc,std::uint64_t target,bool link,
+diff --git a/include/galaxy/Simulation.hpp b/include/galaxy/Simulation.hpp
+index c9aac5f..53b1578 100644
+--- a/include/galaxy/Simulation.hpp
++++ b/include/galaxy/Simulation.hpp
+@@ -539,6 +539,8 @@ public:
+     const std::map<EntityId, BuiltOutpost>& built_outposts() const {return built_outposts_;}
+     // d18b1: site-specific factories are part of the sole authoritative world.
+     const industry::FactoryExecution* generic_factory(EntityId site) const;
++    // Named resident must not also be assigned to any generic machine.
++    bool generic_operator_assigned(EntityId site,std::uint64_t npc) const;
+     const OutpostWorkshop* workshop(EntityId site) const;
+     const std::map<EntityId,OutpostWorkshop>& workshops() const {return workshops_;}
+     EntityId add_asteroid(Vector2 position, std::int64_t ore);
+diff --git a/src/NpcConstructionCrews.cpp b/src/NpcConstructionCrews.cpp
+index 08fed35..e94dfdf 100644
+--- a/src/NpcConstructionCrews.cpp
++++ b/src/NpcConstructionCrews.cpp
+@@ -221,11 +221,28 @@ void Crews::validate_site(PlayerId owner,EntityId ship,EntityId site)const{
+     !w.colony_ship(ship)||outpost==w.built_outposts().end()||outpost->second.source_colony_ship!=ship)
+   throw std::invalid_argument("Construction crew site not owned by this colony");
+ }
++bool Crews::worker_has_duty(std::uint64_t npc,PlayerId owner,EntityId ship,EntityId site)const{
++ validate_site(owner,ship,site);
++ if(!npc||npc>static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
++   throw std::invalid_argument("Invalid crew worker identifier");
++ for(const char* table:{"sg_construction_workers","sg_construction_restock",
++                        "sg_dismantle_jobs","sg_machine_dismantle_jobs",
++                        "sg_line_evacuation_jobs","sg_line_retirements"}){
++   const std::string query=std::string("SELECT 1 FROM ")+table+" WHERE npc_id=?"+
++       (std::string(table)=="sg_construction_workers"?"":" AND active=1")+" LIMIT 1";
++   Query q(db_->db,query.c_str());q.n(1,static_cast<std::int64_t>(npc));
++   if(q.row())return true;
++ }
++ const auto* stock=world_.world().construction_supplies(site);
++ return stock && (stock->carried.count(npc)||stock->evacuation_cargo.count(npc));
++}
+ void Crews::validate_worker(std::uint64_t npc,PlayerId owner,EntityId ship,EntityId site)const{
+  validate_site(owner,ship,site);
+  const auto& w=world_.world();const auto it=w.npc_records().find(npc);
+  if(it==w.npc_records().end()||it->second.home_ship!=ship||it->second.location!=site||it->second.role!=NpcRole::Habitat)
+   throw std::invalid_argument("NPC must be an existing on-site habitat resident");
++ if(w.generic_operator_assigned(site,npc))
++  throw std::invalid_argument("NPC is already operating generic factory equipment");
+  const auto* h=w.habitat(site);if(!h||h->residents<1)throw std::invalid_argument("No staffed local habitat");
+  // Aggregate roles already reserve residents; never count those as construction
+  // labor. Individual workshop operators have named reservations too.
+diff --git a/src/Simulation.cpp b/src/Simulation.cpp
+index 047fe85..2b1c064 100644
+--- a/src/Simulation.cpp
++++ b/src/Simulation.cpp
+@@ -506,6 +506,12 @@ ColonyViability Simulation::assess_colony(EntityId ship) const {
+     return r;
+ }
+ 
++bool Simulation::generic_operator_assigned(EntityId site,std::uint64_t npc) const {
++    const auto it=generic_factory_operators_.find(site);
++    if(it==generic_factory_operators_.end() || !npc)return false;
++    for(const auto& [machine,assigned]:it->second){(void)machine;if(assigned==npc)return true;}
++    return false;
++}
+ const industry::FactoryExecution* Simulation::generic_factory(EntityId site) const {
+  auto it=generic_factories_.find(site);
+  return it==generic_factories_.end()?nullptr:&it->second;
+diff --git a/src/factory_colony_protocol.hpp b/src/factory_colony_protocol.hpp
+index fa8b062..1ccf92f 100644
+--- a/src/factory_colony_protocol.hpp
++++ b/src/factory_colony_protocol.hpp
+@@ -173,6 +173,11 @@ public:
+                 if(op=="GENERIC_TRANSFER"){action=Action::TransferGenericMaterial;item=vals[2];}
+                 else action=op=="GENERIC_OPERATOR"?Action::SetGenericOperator:Action::SetGenericShutdown;
+             }
++            // The simulation owns machine staffing; durable crew assignments
++            // live in the host SQLite scheduler. Check both on the same thread.
++            if(action==Action::SetGenericOperator && amount>0 &&
++               crews_.worker_has_duty(static_cast<std::uint64_t>(amount),owner_,ship_,requested_site))
++                throw std::invalid_argument("Resident already assigned to colony work or carrying cargo");
+             const auto event=structures_.generic_factory_action(action,amount,device,item,owner_,ship_,requested_site);
+             if(event.result!=Outcome::Applied)throw std::invalid_argument("Generic factory command refused by world");
+             return "{\"ok\":true,\"event\":"+event_json(event)+"}";
+diff --git a/tests/ECON02B2d18dSharedStaffingHostTests.py b/tests/ECON02B2d18dSharedStaffingHostTests.py
+new file mode 100644
+index 0000000..c33a847
+--- /dev/null
++++ b/tests/ECON02B2d18dSharedStaffingHostTests.py
+@@ -0,0 +1,93 @@
++#!/usr/bin/env python3
++"""Real colony HTTP test: one named resident cannot hold generic + crew duties."""
++import argparse
++import http.client
++import json
++import pathlib
++import socket
++import subprocess
++import sys
++import tempfile
++import time
++
++args=argparse.ArgumentParser()
++for field in ('host','fixture','relay'):
++    args.add_argument('--'+field,required=True)
++a=args.parse_args()
++
++def free_port():
++    with socket.socket() as s:
++        s.bind(('127.0.0.1',0))
++        return s.getsockname()[1]
++
++class Game:
++    def __init__(self,save):
++        self.port=free_port()
++        self.proc=subprocess.Popen([sys.executable,a.relay,'--colony','--host-exe',a.host,
++             '--save',str(save),'--port',str(self.port),'--tick-ms','75','--max-ticks','1200'],
++             stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
++        for _ in range(100):
++            if self.proc.poll() is not None:
++                raise AssertionError('game host exited before health check')
++            try:
++                if self.get('/healthz')[0]==200:break
++            except OSError:pass
++            time.sleep(.05)
++        else:raise AssertionError('game host did not become healthy')
++    def request(self,verb,path,doc=None):
++        c=http.client.HTTPConnection('127.0.0.1',self.port,timeout=12)
++        body=json.dumps(doc).encode() if doc is not None else None
++        h={'Host':'127.0.0.1:'+str(self.port)}
++        if doc is not None:h.update({'Content-Type':'application/json','Origin':'http://127.0.0.1:'+str(self.port)})
++        try:
++            c.request(verb,path,body,headers=h)
++            r=c.getresponse();data=r.read()
++            return r.status,json.loads(data) if 'application/json' in r.getheader('Content-Type','') else data
++        finally:c.close()
++    def get(self,path):return self.request('GET',path)
++    def post(self,path,doc):return self.request('POST',path,doc)
++    def close(self):
++        self.proc.terminate()
++        try:self.proc.communicate(timeout=8)
++        except subprocess.TimeoutExpired:self.proc.kill();self.proc.communicate(timeout=5)
++
++with tempfile.TemporaryDirectory(prefix='sg-d18d-staff-') as temp:
++    save=pathlib.Path(temp)/'world.sqlite'
++    fixture=subprocess.run([a.fixture,str(save)],text=True,capture_output=True,timeout=30)
++    assert fixture.returncode==0,fixture.stderr
++    game=Game(save)
++    try:
++        site=game.get('/factory/api/sites')[1]['sites'][0]
++        token=game.get('/session')[1]['token']
++        def post(route,**fields):return game.post('/factory/api/'+route,{'token':token,'site':site,**fields})
++        worker=game.get(f'/factory/api/crews?site={site}')[1]['residents'][0]
++        assert post('generic_init')[0]==200
++        assert post('generic_machine',id=100)[0]==200
++        code,plan=post('structure_register',layout='sg-colony-structure-plan-v1\n1,70,70\n')
++        assert code==200,(code,plan)
++        planid=plan['plan']['id']
++        # A machine operator must not also be registered on a crew plan.
++        assert post('generic_operator',device=100,npc=worker)[0]==200
++        code,denied=post('crew_assign',plan=planid,npc=worker)
++        assert code==400,(code,denied)
++        assert post('generic_operator',device=100,npc=0)[0]==200
++        # Once released, the same named resident may take a construction job.
++        assert post('crew_assign',plan=planid,npc=worker)[0]==200
++        code,denied=post('generic_operator',device=100,npc=worker)
++        assert code==400,(code,denied)
++        assert not game.get(f'/factory/api/generic_status?site={site}')[1]['machines'][0]['staffed']
++        # Leave construction assignment intact to verify recovery after restart.
++        # A separate custody gate prevents removal while this worker carries modules.
++    finally:game.close()
++    # Crew reservations remain durable across restarts; not just RAM flags.
++    game=Game(save)
++    try:
++        token=game.get('/session')[1]['token']
++        code,denied=game.post('/factory/api/generic_operator',{'token':token,'site':site,'device':100,'npc':worker})
++        assert code==400,(code,denied)
++        # Assignment persists through restart; releasing real cargo requires
++        # completing or safely cancelling the underlying crew job first.
++        code,denied=game.post('/factory/api/generic_operator',{'token':'forged','site':site,'device':100,'npc':0})
++        assert code==403,(code,denied)
++    finally:game.close()
++print('ECON02B2d18d PASS: named NPC cannot serve two duties; released workers can switch; persists across restart')

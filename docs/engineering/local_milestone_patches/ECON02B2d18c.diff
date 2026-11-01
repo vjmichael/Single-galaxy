@@ -1,0 +1,542 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index b0145d2..e472c62 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -861,3 +861,13 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+       --relay ${CMAKE_CURRENT_SOURCE_DIR}/live/interactive_relay.py)
+   set_tests_properties(ECON02B2d18b_GenericFactory_HTTP PROPERTIES TIMEOUT 90)
+ endif()
++
++# ECON-02B2d18c: cross-system authoritative spatial placement checks.
++if(BUILD_TESTING AND Python3_Interpreter_FOUND)
++  add_test(NAME ECON02B2d18c_SpatialHost_HTTP
++    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/ECON02B2d18cSpatialHostTests.py
++      --host $<TARGET_FILE:galaxy_colony_live_host>
++      --fixture $<TARGET_FILE:galaxy_econ02b2d18b_site_factory_tests>
++      --relay ${CMAKE_CURRENT_SOURCE_DIR}/live/interactive_relay.py)
++  set_tests_properties(ECON02B2d18c_SpatialHost_HTTP PROPERTIES TIMEOUT 90)
++endif()
+diff --git a/docs/engineering/ECON02B2d18c_Color_And_Spatial_Gates_2026-11-01.md b/docs/engineering/ECON02B2d18c_Color_And_Spatial_Gates_2026-11-01.md
+new file mode 100644
+index 0000000..7198498
+--- /dev/null
++++ b/docs/engineering/ECON02B2d18c_Color_And_Spatial_Gates_2026-11-01.md
+@@ -0,0 +1,23 @@
++# ECON-02B2d18c — Cosmetic color and safe generic factory placement (partial d18c)
++
++Date: 2026-11-01. Exact baseline: ECON-02B2d18b source archive, SHA-256 `43eb0cf545ae2019403808ce26d6e4140da86fbe8cd4fd507a28639d028506d9`.
++
++## Shipped locally
++
++- **White-default, eight-color outpost paint:** `white`, `slate`, `sand`, `red`, `blue`, `green`, `yellow`, `violet`. Single color per existing outpost, shown in its colony construction plan map. The selected style is saved in a new `sg_site_appearance` SQLite table; no material debits, new resources, or changes to physics snapshots. This is cosmetic metadata: the colored map is real but a 3D building shader is NOT implemented. Per-building variation, patterns, decals, and material customization are deferred.
++- **Authorization:** GET `/factory/api/color?site=` and POST `/factory/api/site_color` use the existing localhost token/origin checks and are dispatched through the same C++ colony writer thread. The native controller binds site/ship/owner to the session and allows only the eight canonical palette identifiers. Cross-site, forged token, forged origin, invalid color and restart tests are included.
++- **Real grid placement safeguards for the existing approved generic factory:** Installing a generic machine is rejected if its footprint crosses installed legacy equipment or a built wall/door inside that footprint. A generic conveyor cannot overlap positioned existing equipment or cross a built structural edge. Building a new wall/door is rejected if it cuts through an installed generic machine or generic conveyor path. Placing legacy equipment atop installed generic infrastructure is also rejected. Rejection occurs before any module debit.
++- **No fabricated inventory:** Existing site ownership, module custody, production, and SQLite resource journaling remain unchanged. Existing two-machine template (100/200) and conveyor (800) still use the same canonical world writer.
++
++## Verified evidence
++
++- Complete Linux Ninja/CMake native build: **passed**.
++- CTest: **113/113 registered tests individually passed**, in disjoint runs: **78 standard tests**, **24 completed of 35 live/relay tests** before the execution window ended, then the **11 unfinished live/relay tests passed** in an isolated run. Do not describe the first live run as a successful 35-case invocation.
++- JavaScript suite: **93/93 passed**.
++- Offline Chromium colony structures, crew, and generic factory controls: **3/3 passed**. Mocked browser transport verifies UI behavior, not native HTTP authorization; dedicated native HTTP tests cover real protocol and SQLite behavior.
++- New d18c real-HTTP spatial test: verifies built wall prevents machine installation, installed machine prevents an interior wall, installed conveyor prevents a wall across its path, and denied installation does not consume modules.
++- Existing d18b generic factory real-HTTP and d5 structure authorization/SQLite restart HTTP tests pass.
++
++## Explicit non-completion
++
++This milestone closes only **color palette + bounded physical placement checks** of ECON-02B2d18c. It does NOT implement per-building painting, 3D materials, pattern editor, NPC-carried material transfer to generic machines, expanded machine catalogs, generic worker schedule integration, grid-based utility hookups, or Windows GUI acceptance. A future integration milestone must address remaining generic-factory custody and staffing gates. GitHub is a repository only; these changes were built/tested locally and are not pushed.
+diff --git a/include/galaxy/ColonyStructurePlans.hpp b/include/galaxy/ColonyStructurePlans.hpp
+index 1f0f87e..e661bbc 100644
+--- a/include/galaxy/ColonyStructurePlans.hpp
++++ b/include/galaxy/ColonyStructurePlans.hpp
+@@ -28,6 +28,11 @@ public:
+     Status status(std::int64_t id,PlayerId owner,EntityId ship,EntityId site)const;
+     std::vector<Status> list(PlayerId owner,EntityId ship,EntityId site)const;
+     bool cancel(std::int64_t id,PlayerId owner,EntityId ship,EntityId site);
++    // Cosmetic, site-scoped appearance data only. Missing records are WHITE.
++    // Does not alter world inventory, production or construction receipts.
++    std::string site_color(PlayerId owner,EntityId ship,EntityId site)const;
++    void set_site_color(const std::string& color,PlayerId owner,EntityId ship,EntityId site);
++
+     Event step(std::int64_t id,PlayerId owner,EntityId ship,EntityId site);
+     // Crew installation consumes modules already delivered to this fixture cell.
+     Event step_from_delivery(std::int64_t id,PlayerId owner,EntityId ship,EntityId site);
+diff --git a/live/interactive_relay.py b/live/interactive_relay.py
+index 980a380..3ab29ac 100644
+--- a/live/interactive_relay.py
++++ b/live/interactive_relay.py
+@@ -141,7 +141,7 @@ class SharedRuntime:
+         # does not open SQLite and cannot mint ship/player/owner authority.
+         if op not in ('SITES','HELLO','LIST','REGISTER','STEP','STATUS','CANCEL',
+                       'STRUCT_LIST','STRUCT_REGISTER','STRUCT_STEP','STRUCT_STATUS','STRUCT_CANCEL','STRUCT_DOOR',
+-                      'CREW_LIST','CREW_ASSIGN','CREW_UNASSIGN','CREW_ACTIVE','CREW_POLICY','CREW_SUPPLY','CREW_ORDER','CREW_ORDER_CANCEL','CREW_RESTOCK','CREW_SALVAGE','CREW_RESTOCK_CANCEL','WAREHOUSE_MARK','WAREHOUSE_CANCEL','WAREHOUSE_DEMOLISH','CREW_DISMANTLE','CREW_DISMANTLE_CANCEL','CREW_MACHINE','CREW_MACHINE_CANCEL','LINE_SHUTDOWN','LINE_EVACUATE','LINE_EVACUATE_CANCEL','LINE_RETIRE_BEGIN','LINE_RETIRE_CANCEL','GENERIC_STATUS','GENERIC_INIT','GENERIC_MACHINE','GENERIC_LINK','GENERIC_TRANSFER','GENERIC_OPERATOR','GENERIC_SHUTDOWN'):
++                      'CREW_LIST','CREW_ASSIGN','CREW_UNASSIGN','CREW_ACTIVE','CREW_POLICY','CREW_SUPPLY','CREW_ORDER','CREW_ORDER_CANCEL','CREW_RESTOCK','CREW_SALVAGE','CREW_RESTOCK_CANCEL','WAREHOUSE_MARK','WAREHOUSE_CANCEL','WAREHOUSE_DEMOLISH','CREW_DISMANTLE','CREW_DISMANTLE_CANCEL','CREW_MACHINE','CREW_MACHINE_CANCEL','LINE_SHUTDOWN','LINE_EVACUATE','LINE_EVACUATE_CANCEL','LINE_RETIRE_BEGIN','LINE_RETIRE_CANCEL','GENERIC_STATUS','GENERIC_INIT','GENERIC_MACHINE','GENERIC_LINK','GENERIC_TRANSFER','GENERIC_OPERATOR','GENERIC_SHUTDOWN','COLOR_GET','COLOR_SET'):
+             raise ValueError('Unknown factory operation')
+         if type(site)!=int or not 0<=site<=100000000:
+             raise ValueError('Invalid factory site selector')
+@@ -209,9 +209,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
+             try:
+                 if route=='sites' and not url.query:
+                     result=self.server.runtime.factory('SITES')
+-                elif route in ('hello','plans','structures','crews','generic_status') and set(query)=={'site'} and len(query['site'])==1:
++                elif route in ('hello','plans','structures','crews','generic_status','color') and set(query)=={'site'} and len(query['site'])==1:
+                     site=self._site(query['site'][0])
+-                    result=self.server.runtime.factory('HELLO' if route=='hello' else ('LIST' if route=='plans' else ('STRUCT_LIST' if route=='structures' else ('GENERIC_STATUS' if route=='generic_status' else 'CREW_LIST'))),site)
++                    result=self.server.runtime.factory('HELLO' if route=='hello' else ('LIST' if route=='plans' else ('STRUCT_LIST' if route=='structures' else ('GENERIC_STATUS' if route=='generic_status' else ('COLOR_GET' if route=='color' else 'CREW_LIST')))),site)
+                 else:
+                     self._json(404,{'ok':False,'error':'Unknown factory endpoint'});return
+                 self._json(200 if result.get('ok') else 400,result)
+@@ -288,7 +288,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
+             if not isinstance(doc,dict) or not isinstance(doc.get('token'),str) or not hmac.compare_digest(doc['token'],self.server.runtime.token):
+                 self._json(403,{'ok':False,'error':'Invalid session token'});return
+             op=self.path[len('/factory/api/'):]
+-            if op=='generic_init' and set(doc)=={'token','site'}:
++            if op=='site_color' and set(doc)=={'token','site','color'}:
++                color=doc['color']
++                if type(color)!=str or color not in ('white','slate','sand','red','blue','green','yellow','violet'):
++                    raise ValueError('Invalid building color')
++                argument=base64.b64encode(color.encode('ascii')).decode('ascii');native='COLOR_SET'
++            elif op=='generic_init' and set(doc)=={'token','site'}:
+                 argument='';native='GENERIC_INIT'
+             elif op in ('generic_machine','generic_link') and set(doc)=={'token','site','id'}:
+                 num=doc['id']
+diff --git a/scripts/colony_crew_browser_smoke.py b/scripts/colony_crew_browser_smoke.py
+index efb7606..5aa101a 100644
+--- a/scripts/colony_crew_browser_smoke.py
++++ b/scripts/colony_crew_browser_smoke.py
+@@ -20,6 +20,7 @@ with sync_playwright() as p:
+           let data={ok:true};
+           if(path==='/session')data={token:'TEST',colony_mode:true};
+           else if(path==='/factory/api/sites')data={ok:true,sites:[42]};
++          else if(path.startsWith('/factory/api/color?'))data={ok:true,color:'white'};
+           else if(path.startsWith('/factory/api/structures?site='))data={ok:true,structures:[],plans:s.plans};
+           else if(path.startsWith('/factory/api/crews?site='))data={ok:true,residents:s.residents,jobs:s.jobs,supply:s.supply,restocking:s.restocking,supplyOrders:s.supplyOrders,dismantling:s.dismantling,machineDismantling:s.machineDismantling,lineRetirement:s.lineRetirement,lineEvacuation:s.lineEvacuation,workshopState:s.workshopState,links:s.links};
+           else if(path==='/factory/api/structure_register'){
+diff --git a/scripts/colony_structures_browser_smoke.py b/scripts/colony_structures_browser_smoke.py
+index acce4d9..94535a4 100644
+--- a/scripts/colony_structures_browser_smoke.py
++++ b/scripts/colony_structures_browser_smoke.py
+@@ -25,6 +25,10 @@ with sync_playwright() as pw:
+       let data={ok:true};
+       if(path==='/session')data={token:'TEST_SESSION',colony_mode:true};
+       else if(path==='/factory/api/sites')data={ok:true,sites:[21]};
++      else if(path.startsWith('/factory/api/color?'))data={ok:true,color:state.paint||'white'};
++      else if(path==='/factory/api/site_color'){
++        const req=JSON.parse(request.body);state.paint=req.color;data={ok:true,color:state.paint};
++      }
+       else if(path.startsWith('/factory/api/structures?site='))
+         data={ok:true,structures:state.pieces,plans:state.plans};
+       else if(path==='/factory/api/structure_register'){
+@@ -50,6 +54,11 @@ with sync_playwright() as pw:
+     ''')
+     page.add_script_tag(content=(root/'viewer/structures.js').read_text())
+     page.wait_for_function("document.querySelector('#structureSite').value==='21'")
++    assert page.locator('#siteColor').input_value()=='white'
++    page.locator('#siteColor').select_option('red')
++    page.locator('#siteColorApply').click()
++    page.wait_for_function("window.__demo.paint==='red'")
++    assert page.locator('#siteColor').input_value()=='red'
+     assert 'No physical' in page.locator('#structureBuilt').inner_text()
+     page.locator('#structureAuthorize').click()
+     page.wait_for_function('window.__demo.plans.length===1')
+diff --git a/scripts/generic_factory_browser_smoke.py b/scripts/generic_factory_browser_smoke.py
+index d5d211c..3d69092 100644
+--- a/scripts/generic_factory_browser_smoke.py
++++ b/scripts/generic_factory_browser_smoke.py
+@@ -16,6 +16,7 @@ with sync_playwright() as p:
+    let d={ok:true},q=init?.body?JSON.parse(init.body):{},g=window.__generic;
+    if(path==='/session')d={token:'SESSION',colony_mode:true};
+    else if(path==='/factory/api/sites')d={ok:true,sites:[42]};
++   else if(path.startsWith('/factory/api/color?'))d={ok:true,color:'white'};
+    else if(path.startsWith('/factory/api/structures?'))d={ok:true,structures:[],plans:[]};
+    else if(path.startsWith('/factory/api/crews?'))d={ok:true,residents:[101],jobs:[],supply:{sources:[],depot:9},links:[]};
+    else if(path.startsWith('/factory/api/generic_status?'))d={ok:true,installed:g.installed,modules:g.modules,inventoryKg:g.inventoryKg,machines:g.machines};
+diff --git a/src/ColonyStructurePlans.cpp b/src/ColonyStructurePlans.cpp
+index 73d373b..3654b51 100644
+--- a/src/ColonyStructurePlans.cpp
++++ b/src/ColonyStructurePlans.cpp
+@@ -75,6 +75,10 @@ public:
+         exec(db_,"CREATE TABLE IF NOT EXISTS sg_structure_seq("
+                  "id INTEGER PRIMARY KEY CHECK(id=1),next INTEGER NOT NULL)");
+         exec(db_,"INSERT OR IGNORE INTO sg_structure_seq(id,next) VALUES(1,600000000000000000)");
++        // Optional cosmetic metadata: no materials, snapshots or resource receipts.
++        exec(db_,"CREATE TABLE IF NOT EXISTS sg_site_appearance("
++                 "site INTEGER PRIMARY KEY,owner INTEGER NOT NULL,ship INTEGER NOT NULL,"
++                 "color TEXT NOT NULL)");
+     }
+     ~Db(){sqlite3_close(db_);}
+     sqlite3* get()const{return db_;}
+@@ -130,6 +134,33 @@ void Plans::authorize(PlayerId owner,EntityId ship,EntityId site)const{
+        s->owner_id!=owner || !world_.world().colony_ship(ship))
+         throw std::invalid_argument("Invalid structure site or authenticated owner");
+ }
++namespace {
++bool valid_site_color(const std::string& color){
++    return color=="white" || color=="slate" || color=="sand" ||
++           color=="red" || color=="blue" || color=="green" ||
++           color=="yellow" || color=="violet";
++}
++}
++std::string Plans::site_color(PlayerId owner,EntityId ship,EntityId site)const{
++    std::lock_guard<std::mutex> guard(lifecycle);
++    authorize(owner,ship,site);
++    Stmt q(db_->get(),"SELECT color FROM sg_site_appearance WHERE site=? AND owner=? AND ship=?");
++    q.num(1,static_cast<std::int64_t>(site));q.num(2,static_cast<std::int64_t>(owner));
++    q.num(3,static_cast<std::int64_t>(ship));
++    if(!q.row())return "white";
++    auto color=q.str(0);
++    if(!valid_site_color(color))throw std::runtime_error("Invalid stored site color");
++    return color;
++}
++void Plans::set_site_color(const std::string& color,PlayerId owner,EntityId ship,EntityId site){
++    if(!valid_site_color(color))throw std::invalid_argument("Unsupported building color");
++    std::lock_guard<std::mutex> guard(lifecycle);
++    authorize(owner,ship,site);
++    Stmt q(db_->get(),"INSERT INTO sg_site_appearance(site,owner,ship,color) VALUES(?,?,?,?) "
++                      "ON CONFLICT(site) DO UPDATE SET owner=excluded.owner,ship=excluded.ship,color=excluded.color");
++    q.num(1,static_cast<std::int64_t>(site));q.num(2,static_cast<std::int64_t>(owner));
++    q.num(3,static_cast<std::int64_t>(ship));q.str(4,color);q.finish();
++}
+ std::int64_t Plans::create(const std::string& canonical,PlayerId owner,EntityId ship,EntityId site){
+     std::lock_guard<std::mutex> guard(lifecycle);
+     authorize(owner,ship,site);(void)parse(canonical);
+diff --git a/src/Simulation.cpp b/src/Simulation.cpp
+index 1bca940..047fe85 100644
+--- a/src/Simulation.cpp
++++ b/src/Simulation.cpp
+@@ -98,6 +98,83 @@ bool fixture_edge_conflicts(const OutpostStorage* storage,const FixtureKey& key)
+     return false;
+ }
+ 
++// ECON-d18c: generic machines/conveyors share the SAME grid as colony
++// structures and legacy positioned factory equipment. This is only a
++// placement constraint; it never allocates or creates construction materials.
++bool cell_in_device(std::int64_t x,std::int64_t y,const industry::Device& d){
++ return x>=d.origin.x && x<d.origin.x+d.width &&
++        y>=d.origin.y && y<d.origin.y+d.height;
++}
++bool old_equipment_at(const OutpostStorage* st,std::int64_t x,std::int64_t y){
++ if(!st)return false;
++ for(const auto& [node,position]:st->equipment_positions){
++  const int side=node==kWorkshopConveyorNode?2:1;
++  if(x>=position.x && x<position.x+side && y>=position.y && y<position.y+side)return true;
++ }
++ for(const auto& [id,link]:st->links){(void)id;
++  for(const auto& cell:link.route_cells)if(cell.x==x&&cell.y==y)return true;
++ }
++ return false;
++}
++bool installed_generic_at(const industry::FactoryExecution* f,std::int64_t x,std::int64_t y){
++ if(!f)return false;
++ for(const auto& [id,machine]:f->machines()){
++  (void)machine;
++  if(cell_in_device(x,y,f->layout().devices().at(id)))return true;
++ }
++ for(const auto& [id,link]:f->conveyors()){
++  (void)link;
++  for(const auto& cell:f->layout().conveyors().at(id).path)
++   if(cell.x==x&&cell.y==y)return true;
++ }
++ return false;
++}
++bool generic_edge_conflicts(const industry::FactoryExecution* f,const FixtureKey& key){
++ if(!f||key.layer==0)return false;
++ const auto nx=key.x+(key.layer==1),ny=key.y+(key.layer==2);
++ for(const auto& [id,machine]:f->machines()){
++  (void)machine;const auto& d=f->layout().devices().at(id);
++  if(cell_in_device(key.x,key.y,d)&&cell_in_device(nx,ny,d))return true;
++ }
++ for(const auto& [id,link]:f->conveyors()){
++  (void)link;const auto& path=f->layout().conveyors().at(id).path;
++  for(std::size_t i=1;i<path.size();++i){
++   const auto& a=path[i-1];const auto& b=path[i];
++   if((a.x==key.x&&a.y==key.y&&b.x==nx&&b.y==ny)||
++      (b.x==key.x&&b.y==key.y&&a.x==nx&&a.y==ny))return true;
++  }
++ }
++ return false;
++}
++bool generic_install_conflicts(const industry::FactoryExecution& f,
++                               std::uint64_t id,bool machine,
++                               const OutpostStorage* storage,
++                               const std::map<FixtureKey,ColonyFixture>& fixtures){
++ if(machine){
++  const auto found=f.layout().devices().find(id);
++  if(found==f.layout().devices().end())return true;
++  const auto& d=found->second;
++  for(std::int64_t x=d.origin.x;x<d.origin.x+d.width;++x)
++   for(std::int64_t y=d.origin.y;y<d.origin.y+d.height;++y)
++    if(old_equipment_at(storage,x,y))return true;
++  for(const auto& [key,piece]:fixtures){
++   (void)piece;
++   if(key.layer && cell_in_device(key.x,key.y,d) &&
++      cell_in_device(key.x+(key.layer==1),key.y+(key.layer==2),d))return true;
++  }
++ }else{
++  const auto found=f.layout().conveyors().find(id);
++  if(found==f.layout().conveyors().end())return true;
++  const auto& path=found->second.path;
++  for(const auto& cell:path)if(old_equipment_at(storage,cell.x,cell.y))return true;
++  for(std::size_t i=1;i<path.size();++i){
++   const auto& a=path[i-1];const auto& b=path[i];
++   if(edge_installed(fixtures,static_cast<int>(a.x),static_cast<int>(a.y),
++                             static_cast<int>(b.x),static_cast<int>(b.y)))return true;
++  }
++ }
++ return false;
++}
+ std::uint32_t placement_node(std::int64_t n){
+     return n==-1?kWorkshopConveyorNode:static_cast<std::uint32_t>(n);
+ }
+@@ -1554,6 +1631,11 @@ Event Simulation::execute(const Command& c) {
+                     auto candidate=found->second;
+                     const auto machine=static_cast<industry::DeviceId>(c.thrust_x);
+                     if(c.action==Action::InstallGenericMachine || c.action==Action::InstallGenericConveyor){
++                        if(generic_install_conflicts(candidate,static_cast<std::uint64_t>(c.amount),
++                            c.action==Action::InstallGenericMachine,storage(c.target),
++                            colony_fixtures(c.target))){
++                            result.result=Outcome::InvalidArgument;return result;
++                        }
+                         const auto stock=construction_supplies_.find(c.target);
+                         if(stock==construction_supplies_.end()){
+                             result.result=Outcome::NoResources;return result;
+@@ -1779,8 +1861,10 @@ Event Simulation::execute(const Command& c) {
+                 auto& fixtures=colony_fixtures_[c.target];
+                 const auto found=fixtures.find(key);
+                 if(build){
++                    const auto existing_factory=generic_factory(c.target);
+                     if(found!=fixtures.end() ||
+-                       fixture_edge_conflicts(storage(c.target),key)){
++                       fixture_edge_conflicts(storage(c.target),key) ||
++                       generic_edge_conflicts(existing_factory,key)){
+                         result.result=Outcome::InvalidArgument;return result;
+                     }
+                     const int cost=fixture_module_cost(kind);
+@@ -1862,6 +1946,12 @@ Event Simulation::execute(const Command& c) {
+                    st->second.equipment_positions.count(node)){
+                     result.result=Outcome::InvalidTarget;return result;
+                 }
++                const auto existing_factory=generic_factory(c.target);
++                const int side=node==kWorkshopConveyorNode?2:1;
++                for(int dx=0;dx<side;++dx)for(int dy=0;dy<side;++dy)
++                    if(installed_generic_at(existing_factory,c.thrust_x+dx,c.thrust_y+dy)){
++                        result.result=Outcome::InvalidArgument;return result;
++                    }
+                 auto proposed=st->second;
+                 proposed.equipment_positions.emplace(node,Vector2{c.thrust_x,c.thrust_y});
+                 for(const auto& [key,piece]:colony_fixtures(c.target)){
+diff --git a/src/factory_colony_protocol.hpp b/src/factory_colony_protocol.hpp
+index d6269b6..fa8b062 100644
+--- a/src/factory_colony_protocol.hpp
++++ b/src/factory_colony_protocol.hpp
+@@ -134,6 +134,15 @@ public:
+         if(requested_site==0||pos==sites.end()||pos->second.source_colony_ship!=ship_||
+            !world_.world().find(ship_)||world_.world().find(ship_)->owner_id!=owner_)
+             throw std::invalid_argument("Selected site is not owned by this colony session");
++        if(op=="COLOR_GET"){
++            if(!arg.empty())throw std::invalid_argument("Unexpected appearance arguments");
++            return "{\"ok\":true,\"color\":"+json_string(structures_.site_color(owner_,ship_,requested_site))+"}";
++        }
++        if(op=="COLOR_SET"){
++            const auto color=decode64(arg);
++            structures_.set_site_color(color,owner_,ship_,requested_site);
++            return "{\"ok\":true,\"color\":"+json_string(color)+"}";
++        }
+         if(op=="GENERIC_STATUS"){
+             if(!arg.empty())throw std::invalid_argument("Unexpected generic factory status arguments");
+             const auto* factory=world_.world().generic_factory(requested_site);
+diff --git a/tests/ECON02B2d18cSpatialHostTests.py b/tests/ECON02B2d18cSpatialHostTests.py
+new file mode 100644
+index 0000000..7e6ff29
+--- /dev/null
++++ b/tests/ECON02B2d18cSpatialHostTests.py
+@@ -0,0 +1,67 @@
++#!/usr/bin/env python3
++"""Real-site authorization and bidirectional generic machine/structure collision tests."""
++import argparse,http.client,json,pathlib,socket,subprocess,sys,tempfile,time
++p=argparse.ArgumentParser()
++for n in ('host','fixture','relay'):p.add_argument('--'+n,required=True)
++a=p.parse_args()
++def port():
++ with socket.socket() as s:
++  s.bind(('127.0.0.1',0));return s.getsockname()[1]
++class Game:
++ def __init__(self,db):
++  self.port=port()
++  self.proc=subprocess.Popen([sys.executable,a.relay,'--colony','--host-exe',a.host,'--save',str(db),
++    '--port',str(self.port),'--tick-ms','90','--max-ticks','1200'],stdin=subprocess.DEVNULL,
++    stdout=subprocess.PIPE,stderr=subprocess.PIPE)
++  for _ in range(120):
++   if self.proc.poll() is not None:raise AssertionError('host exited unexpectedly')
++   try:
++    if self.req('GET','/healthz')[0]==200:break
++   except (OSError,TimeoutError):pass
++   time.sleep(.05)
++  else:raise AssertionError('host failed to start')
++ def req(self,method,path,doc=None):
++  c=http.client.HTTPConnection('127.0.0.1',self.port,timeout=12)
++  body=json.dumps(doc).encode() if doc is not None else None
++  headers={'Host':f'127.0.0.1:{self.port}'}
++  if body is not None:headers.update({'Content-Type':'application/json','Origin':f'http://127.0.0.1:{self.port}'})
++  try:
++   c.request(method,path,body,headers);r=c.getresponse();data=r.read()
++   return r.status,json.loads(data) if r.getheader('Content-Type','').startswith('application/json') else data
++  finally:c.close()
++ def get(self,path):return self.req('GET',path)
++ def post(self,path,doc):return self.req('POST','/factory/api/'+path,doc)
++ def close(self):
++  self.proc.terminate()
++  try:self.proc.communicate(timeout=8)
++  except subprocess.TimeoutExpired:self.proc.kill();self.proc.communicate(timeout=5)
++with tempfile.TemporaryDirectory(prefix='sg-d18c-spatial-') as temp:
++ for phase in ('fixture-first','factory-first'):
++  db=pathlib.Path(temp)/(phase+'.sqlite')
++  f=subprocess.run([a.fixture,str(db)],capture_output=True,text=True,timeout=20)
++  assert f.returncode==0,(f.stdout,f.stderr)
++  game=Game(db)
++  try:
++   status,sites=game.get('/factory/api/sites');assert status==200 and len(sites['sites'])==1
++   site=sites['sites'][0];token=game.get('/session')[1]['token']
++   def send(op,**payload):return game.post(op,{'token':token,'site':site,**payload})
++   def wall(x,y):
++    status,p=send('structure_register',layout=f'sg-colony-structure-plan-v1\n2,{x},{y}\n')
++    assert status==200,(status,p)
++    return send('structure_step',id=p['plan']['id'])
++   if phase=='fixture-first':
++    status,r=wall(100,100);assert status==200,(status,r)
++    assert send('generic_init')[0]==200
++    status,r=send('generic_machine',id=100);assert status==400,(status,r)
++    status,g=game.get(f'/factory/api/generic_status?site={site}')
++    assert status==200 and g['modules']==0,(status,g)
++    status,r=send('generic_machine',id=200);assert status==200,(status,r)
++   else:
++    assert send('generic_init')[0]==200
++    assert send('generic_machine',id=100)[0]==200
++    status,r=wall(100,100);assert status==200 and not r['event']['applied'],(status,r)
++    assert send('generic_machine',id=200)[0]==200
++    assert send('generic_link',id=800)[0]==200
++    status,r=wall(102,100);assert status==200 and not r['event']['applied'],(status,r)
++  finally:game.close()
++print('ECON-d18c PASS: installed physical structures block generic equipment, installed machine/link block new walls; no phantom module charges')
+diff --git a/tests/ECON02B2d5StructureHostTests.py b/tests/ECON02B2d5StructureHostTests.py
+index 9a9a638..eca7c1c 100644
+--- a/tests/ECON02B2d5StructureHostTests.py
++++ b/tests/ECON02B2d5StructureHostTests.py
+@@ -51,6 +51,20 @@ with tempfile.TemporaryDirectory(prefix='sg-structure-live-') as tmp:
+         assert status==200 and 'structure_step' in js,(status,len(js))
+         token=session['token'];status,sites=game.get('/factory/api/sites');assert status==200 and len(sites['sites'])==1
+         site=sites['sites'][0]
++        # Cosmetic outpost paint is stored in this same durable SQLite world.
++        status,appearance=game.get(f'/factory/api/color?site={site}')
++        assert status==200 and appearance['color']=='white',(status,appearance)
++        payload={'token':token,'site':site,'color':'blue'}
++        status,denied=game.post('/factory/api/site_color',dict(payload,token='forged'))
++        assert status==403,(status,denied)
++        status,denied=game.post('/factory/api/site_color',dict(payload,site=999999))
++        assert status==400,(status,denied)
++        status,denied=game.post('/factory/api/site_color',dict(payload,color='#00ff00'))
++        assert status==400,(status,denied)
++        status,denied=game.post('/factory/api/site_color',payload,{'Origin':'https://evil.example'})
++        assert status==403,(status,denied)
++        status,appearance=game.post('/factory/api/site_color',payload)
++        assert status==200 and appearance['color']=='blue',(status,appearance)
+         layout='sg-colony-structure-plan-v1\n1,0,0\n2,0,0\n4,1,0\n'
+         doc={'token':token,'site':site,'layout':layout}
+         status,bad=game.post('/factory/api/structure_register',doc,{'Origin':'https://evil.example'})
+@@ -85,6 +99,10 @@ with tempfile.TemporaryDirectory(prefix='sg-structure-live-') as tmp:
+     finally:game.close()
+     game=Game(save)
+     try:
++        status,appearance=game.get(f'/factory/api/color?site={site}')
++        assert status==200 and appearance['color']=='blue',(status,appearance)
++        status,appearance=game.post('/factory/api/site_color',{'token':game.get('/session')[1]['token'],'site':site,'color':'white'})
++        assert status==200 and appearance['color']=='white',(status,appearance)
+         status,found=game.get('/factory/api/structures?site='+str(site))
+         assert status==200 and len(found['structures'])==3 and len(found['plans'])==2,(status,found)
+         assert found['plans'][0]['cancelled'] and found['plans'][0]['completed']==2
+diff --git a/viewer/interactive.html b/viewer/interactive.html
+index 047bb38..3d775fd 100644
+--- a/viewer/interactive.html
++++ b/viewer/interactive.html
+@@ -52,6 +52,8 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
+ <section id="colonyStructures" aria-label="Physical colony construction" style="border-top:1px solid var(--border);padding-top:14px;margin:8px 0 16px">
+ <h2>Colony structures · floors, walls and doors</h2>
+ <div class="help">Structures belong to an existing colony outpost and consume real ship modules: floor 1, wall or door 2. Plans are durable, built one piece at a time, and may be cancelled without refunding completed work. Coordinates identify cells, not a fixed-size factory tier.</div>
++<div class="controls" style="padding:8px 0;gap:6px"><label for="siteColor">Outpost building color</label><select id="siteColor" aria-label="Standard building paint"><option value="white">White (default)</option><option value="slate">Slate</option><option value="sand">Sand</option><option value="red">Red</option><option value="blue">Blue</option><option value="green">Green</option><option value="yellow">Yellow</option><option value="violet">Violet</option></select><button id="siteColorApply">Apply color</button></div>
++<div class="help">Optional cosmetic finish for this outpost's standard structures. All outposts default to white. Does not change building function, materials or utility access; patterns are deferred.</div>
+ <div class="controls" style="padding:8px 0;gap:6px"><label for="structureSite">Outpost</label><select id="structureSite" aria-label="Structure outpost"><option value="">No colony outpost yet</option></select><button id="structureRefresh">Refresh structures</button></div>
+ <label for="structureLayout" style="display:block;margin:5px 0">Build plan (one <code>kind,x,y</code> per line)</label>
+ <textarea id="structureLayout" rows="4" maxlength="16384" spellcheck="false" style="width:100%;background:#091629;color:var(--ink);border:1px solid var(--border);border-radius:7px;padding:10px;resize:vertical;font:12px/1.45 monospace" aria-describedby="structurePlanHelp">1,0,0
+diff --git a/viewer/structures.js b/viewer/structures.js
+index 2dd086a..7509483 100644
+--- a/viewer/structures.js
++++ b/viewer/structures.js
+@@ -1,7 +1,7 @@
+ /* ECON-02B2d5 — colony-owned structural plans, not a second world writer. */
+ (function(){'use strict';
+ const $=id=>document.getElementById(id);
+-let site=null, token='', listing={structures:[],plans:[]}, crews={residents:[],jobs:[],supply:{}}, generic={installed:false,machines:[]}, active=false;
++let site=null, token='', paint='white', listing={structures:[],plans:[]}, crews={residents:[],jobs:[],supply:{}}, generic={installed:false,machines:[]}, active=false;
+ function feedback(text){$('structureStatus').textContent=text;}
+ async function json(path,body){
+  const response=await fetch(path,body===undefined?{cache:'no-store'}:{
+@@ -12,6 +12,7 @@ async function json(path,body){
+  return result;
+ }
+ function option(value,label){const n=document.createElement('option');n.value=String(value);n.textContent=label;return n;}
++const PAINT=Object.freeze({white:'#f2f4f7',slate:'#98a8b8',sand:'#dbc59c',red:'#de7e7c',blue:'#7eb7ea',green:'#87c69d',yellow:'#eed784',violet:'#be9bdb'});
+ function structureName(kind){return ({1:'Floor',2:'East wall',3:'North wall',4:'East door',5:'North door'})[kind]||'Unknown';}
+ function draw(){
+  const canvas=$('structureMap');const ctx=canvas.getContext('2d');
+@@ -34,18 +35,18 @@ function draw(){
+   for(let y=yMin;y<=yMax;y++){ctx.beginPath();ctx.moveTo(0,py(y));ctx.lineTo(w,py(y));ctx.stroke();}
+  }
+  for(const s of structs.filter(s=>s.kind===1)){
+-  ctx.fillStyle='#22566b';ctx.fillRect(px(s.x)+2,py(s.y+1)+2,Math.max(0,pitch-4),Math.max(0,pitch-4));
++  ctx.fillStyle=PAINT[paint]||PAINT.white;ctx.fillRect(px(s.x)+2,py(s.y+1)+2,Math.max(0,pitch-4),Math.max(0,pitch-4));
+  }
+  ctx.lineCap='round';
+  for(const s of structs.filter(s=>s.kind!==1)){
+   ctx.beginPath();ctx.lineWidth=Math.max(2,Math.min(5,pitch/6));
+-  ctx.strokeStyle=s.kind>=4?(s.open?'#63e7a8':'#ffc16f'):'#b0c2df';
++  ctx.strokeStyle=s.kind>=4?(s.open?'#63e7a8':'#ffc16f'):(PAINT[paint]||PAINT.white);
+   if(s.kind===2||s.kind===4){ctx.moveTo(px(s.x+1),py(s.y));ctx.lineTo(px(s.x+1),py(s.y+1));}
+   else{ctx.moveTo(px(s.x),py(s.y+1));ctx.lineTo(px(s.x+1),py(s.y+1));}
+   ctx.stroke();
+  }
+  ctx.font='11px system-ui';ctx.fillStyle='#a9bdd6';
+- ctx.fillText('Blue: floor  ·  White: wall',9,h-24);
++ ctx.fillText('Paint: '+paint+' · floors and walls',9,h-24);
+  ctx.fillText('Amber: closed door  ·  Green: open',9,h-9);
+ }
+ function renderCrews(){
+@@ -128,7 +129,8 @@ async function refresh(){
+  for(const id of sites.sites)sel.append(option(id,`Outpost #${id}`));
+  sel.value=sites.sites.some(id=>String(id)===old)?old:sites.sites.length?String(sites.sites[0]):'';
+  site=sel.value?Number(sel.value):null;
+- if(!site){listing={structures:[],plans:[]};crews={residents:[],jobs:[]};render();feedback('Build your first colony outpost before constructing structures.');return;}
++ if(!site){paint='white';$('siteColor').value=paint;listing={structures:[],plans:[]};crews={residents:[],jobs:[]};render();feedback('Build your first colony outpost before constructing structures.');return;}
++ const appearance=await json('/factory/api/color?site='+site);paint=PAINT[appearance.color]?appearance.color:'white';$('siteColor').value=paint;
+  listing=await json('/factory/api/structures?site='+site);
+  try{crews=await json('/factory/api/crews?site='+site);}catch(_){crews={residents:[],jobs:[]};}
+  try{generic=await json('/factory/api/generic_status?site='+site);}catch(_){generic={installed:false,machines:[]};}
+@@ -146,6 +148,7 @@ async function submit(path,payload){
+   feedback(path.endsWith('register')?`Authorized plan #${r.plan.id} for outpost #${site}.`:
+    path.endsWith('step')?`Construction ${r.event.applied?'committed':'rejected'}; ${r.plan.completed}/${r.plan.total} steps complete.`:
+    path.endsWith('cancel')?'Remaining plan steps cancelled; completed structures remain.':
++   path.endsWith('site_color')?'Outpost color saved; standard structures updated.':
+    path.endsWith('crew_policy')?'Construction policy updated; only opted-in crews can be reassigned.':
+    path.endsWith('crew_supply')?`Construction depot transfer ${r.event.applied?'committed':'rejected'}.`:
+    path.endsWith('/crew_restock')?'NPC supply run assigned; the worker will move real depot cargo.':
+@@ -158,6 +161,11 @@ async function submit(path,payload){
+    'Door state committed in the colony simulation.');
+  }catch(err){feedback('Construction rejected: '+err.message);}
+ }
++$('siteColorApply').addEventListener('click',()=>{
++ const color=$('siteColor').value;
++ if(!Object.prototype.hasOwnProperty.call(PAINT,color)){feedback('Choose an approved color.');return;}
++ submit('/factory/api/site_color',{color});
++});
+ $('structureRefresh').addEventListener('click',()=>refresh().catch(e=>feedback('Refresh failed: '+e.message)));
+ $('structureSite').addEventListener('change',async()=>{
+  try{site=Number($('structureSite').value)||null;
