@@ -151,3 +151,9 @@ The persistent outpost workshop can now install a second, material-paid Tier 1 m
 
 
 **Final broader Linux acceptance (same source revision):** all **71/71** native CTest cases passed, including the previously intermittent legacy live/relay scenarios (parallel local run with per-test timeout). This is Linux evidence only; Windows-native and browser GUI acceptance remain open.
+
+## ECON-02B1c — Metric-volume cargo and independent item stacks (2026-10-31)
+
+Ships now enforce **m³ game-volume capacity only; no payload mass limit**. Versioned `TransferWorkshopStack` actions move exact material stack quantities individually (aluminum, panels, frames and scrap) between a player-owned outpost workshop and its nearby colony ship. The previous one-tonne mixed-output pallets remain supported solely for older saved commands, not as a requirement for new transfers. Stock, output-space, authority and conservation are still hard constraints, while current per-item volume coefficients are initial game-balancing values rather than real-world density. `galaxy-kernel-v24` remains backward-readable with earlier snapshots; committed stack transfer endpoints are independently verified on SQLite recovery.
+
+**Local Linux verification:** complete Debug build, full **72/72** native CTest, **84/84** Node, **3/3** Python design tests. This is a simulation and persistence milestone, **not** the cargo GUI or finished spatial factory logistics. See [ECON-02B1c report](docs/engineering/ECON02B1c_Metric_Stack_Cargo_Report_2026-10-31.md).

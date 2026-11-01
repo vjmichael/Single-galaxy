@@ -371,14 +371,31 @@ const ColonyShip* Simulation::colony_ship(EntityId id) const {
     const auto it=colony_ships_.find(id);
     return it==colony_ships_.end()?nullptr:&it->second;
 }
-std::int64_t Simulation::loaded_mass(const Entity& ship) const {
+std::int64_t Simulation::loaded_cargo_liters(const Entity& ship) const {
     const auto* c=colony_ship(ship.id);
-    if(!c)return ship.cargo;
-    std::int64_t kg=c->tailings_kg;
-    for(const auto& [name,mass]:c->minerals_kg){(void)name;kg+=mass;}
-    for(const auto& [name,mass]:c->goods_kg){(void)name;kg+=mass;}
-    if(kg%1000!=0)throw std::runtime_error("fractional cargo mass conservation violated");
-    return ship.cargo+c->refined+2*c->modules+kg/1000;
+    // Fixed gameplay volumes: each legacy ore/refined unit 1 m3, construction
+    // module 2 m3; current kilogram-quantity material stack 1 litre per unit.
+    // These are balancing coefficients, NOT density / payload calculations.
+    const std::int64_t bulk=ship.cargo+(c ? c->refined+2*c->modules : 0);
+    if(bulk<0 || bulk>1000000000000LL)throw std::overflow_error("cargo overflow");
+    std::int64_t volume=bulk*1000;
+    if(c){
+        const auto add=[&](std::int64_t v){
+            if(v<0 || v>std::numeric_limits<std::int64_t>::max()-volume)
+                throw std::overflow_error("invalid cargo stack volume");
+            volume+=v;
+        };
+        add(c->tailings_kg);
+        for(const auto& [name,units]:c->minerals_kg){(void)name;add(units);}
+        for(const auto& [name,units]:c->goods_kg){(void)name;add(units);}
+    }
+    return volume;
+}
+std::int64_t Simulation::ship_cargo_volume_liters(EntityId ship_id) const {
+    const auto* ship=find(ship_id);
+    if(!ship || ship->type!=EntityType::Ship)
+        throw std::invalid_argument("not a ship");
+    return loaded_cargo_liters(*ship);
 }
 void Simulation::transfer_geological_minerals(EntityId ship, EntityId rock, std::int64_t tonnes){
     auto c=colony_ships_.find(ship);
@@ -580,7 +597,8 @@ bool Simulation::submit(const Command& c) {
         c.action==Action::TransferWorkshopOutput ||
         c.action==Action::ConstructWorkshopFinisher ||
         c.action==Action::AssignWorkshopFinisher ||
-        c.action==Action::TransferWorkshopFinalOutput;
+        c.action==Action::TransferWorkshopFinalOutput ||
+        c.action==Action::TransferWorkshopStack;
     if(workshop_command){
         if(!c.target || c.thrust_y ||
            ((c.action==Action::ConstructWorkshop || c.action==Action::ConstructWorkshopFinisher) &&
@@ -590,9 +608,13 @@ bool Simulation::submit(const Command& c) {
            ((c.action==Action::AssignWorkshopOperator || c.action==Action::AssignWorkshopFinisher) &&
              (c.thrust_x || c.amount<0 || c.amount>1000000)) ||
            ((c.action==Action::TransferWorkshopOutput || c.action==Action::TransferWorkshopFinalOutput) &&
-             (c.thrust_x || c.amount<50 || c.amount>500 || c.amount%50)))
+             (c.thrust_x || c.amount<50 || c.amount>500 || c.amount%50)) ||
+           (c.action==Action::TransferWorkshopStack &&
+             (c.thrust_x<0 || c.thrust_x>3 || !c.amount ||
+              c.amount<-1000 || c.amount>1000)))
             return false;
         snapshot_version_=std::max(snapshot_version_,
+            c.action==Action::TransferWorkshopStack ? 24 :
             c.action==Action::ConstructWorkshopFinisher ||
             c.action==Action::AssignWorkshopFinisher ||
             c.action==Action::TransferWorkshopFinalOutput ? 23 : 22);
@@ -719,7 +741,7 @@ Outcome Simulation::mine_status(const Entity& actor, EntityId target) const {
     const std::int64_t access=kMiningRangeMm+(deposit ? deposit->radius_m*1000 : 0);
     if(dx < -access || dx > access || dy < -access || dy > access ||
        dx*dx + dy*dy > access*access) return Outcome::OutOfRange;
-    if (loaded_mass(actor) >= actor.cargo_capacity) return Outcome::CargoFull;
+    if (loaded_cargo_liters(actor) > actor.cargo_capacity*1000-1000) return Outcome::CargoFull;
     if (asteroid.ore <= 0) return Outcome::NoResources;
     return Outcome::Applied;
 }
@@ -743,7 +765,7 @@ void Simulation::despawn(EntityId asteroid, EntityId actor, std::uint64_t start_
     for (const auto ship_id : affected) {
         const auto ship_it = entities_.find(ship_id);
         const auto full = ship_it != entities_.end() &&
-            loaded_mass(ship_it->second) == ship_it->second.cargo_capacity;
+            loaded_cargo_liters(ship_it->second) > ship_it->second.cargo_capacity*1000-1000;
         stop_mining(ship_id, full ? Outcome::CargoFull : Outcome::NoResources);
     }
 }
@@ -868,14 +890,14 @@ Event Simulation::execute(const Command& c) {
             result.result = mine_status(actor, c.target);
             if (result.result != Outcome::Applied) return result;
             auto& rock = entities_.at(c.target);
-            const auto n = std::min({c.amount, rock.ore, actor.cargo_capacity - loaded_mass(actor)});
+            const auto n = std::min({c.amount, rock.ore, (actor.cargo_capacity*1000 - loaded_cargo_liters(actor))/1000});
             if(n>0 && colony_ships_.count(c.actor) && geology_.count(c.target))
                 transfer_geological_minerals(c.actor,c.target,n);
             else actor.cargo += n;
             rock.ore -= n;
             result.transferred = n;
             if (rock.ore == 0) despawn(c.target, c.actor, 0);
-            if (loaded_mass(actor) == actor.cargo_capacity) {
+            if (loaded_cargo_liters(actor) > actor.cargo_capacity*1000-1000) {
                 // A single-shot mine may also fill the hold: notify UI immediately.
                 snapshot_version_ = std::max(snapshot_version_, 2);
                 activity_events_.push_back({tick_, ActivityKind::MiningStopped, c.id,
@@ -993,10 +1015,10 @@ Event Simulation::execute(const Command& c) {
             if (h == hangars_.end()) {result.result = Outcome::Unauthorized; return result;}
             if (h->second.ore == 0) {result.result = Outcome::NoResources; return result;}
             if (c.action == Action::LoadOre) {
-                if (loaded_mass(actor) >= actor.cargo_capacity) {
+                if (loaded_cargo_liters(actor) > actor.cargo_capacity*1000-1000) {
                     result.result = Outcome::CargoFull; return result;
                 }
-                const auto moved = std::min({c.amount, h->second.ore, actor.cargo_capacity-loaded_mass(actor)});
+                const auto moved = std::min({c.amount, h->second.ore, (actor.cargo_capacity*1000-loaded_cargo_liters(actor))/1000});
                 actor.cargo += moved; h->second.ore -= moved;
                 result.transferred = moved;
             } else {
@@ -1049,6 +1071,7 @@ Event Simulation::execute(const Command& c) {
         case Action::ConstructWorkshopFinisher:
         case Action::AssignWorkshopFinisher:
         case Action::TransferWorkshopFinalOutput:
+        case Action::TransferWorkshopStack:
         case Action::AssignFarmMentor:
         case Action::SetPolicyAssurance:
         case Action::AssignPolicyInspectors:
@@ -1107,7 +1130,8 @@ Event Simulation::execute(const Command& c) {
                c.action==Action::TransferWorkshopOutput ||
                c.action==Action::ConstructWorkshopFinisher ||
                c.action==Action::AssignWorkshopFinisher ||
-               c.action==Action::TransferWorkshopFinalOutput){
+               c.action==Action::TransferWorkshopFinalOutput ||
+               c.action==Action::TransferWorkshopStack){
                 auto wi=workshops_.find(c.target);
                 if(wi==workshops_.end() || wi->second.source_ship!=c.actor){
                     result.result=Outcome::InvalidTarget;return result;
@@ -1146,6 +1170,38 @@ Event Simulation::execute(const Command& c) {
                     else w.operator_npc_id=static_cast<std::uint64_t>(c.amount);
                     result.result=Outcome::Applied;return result;
                 }
+                // ECON-02B1c: exact, independent item stacks. Signed quantity:
+                // positive ship -> site, negative site -> ship. Selector identifies
+                // the item, NOT an arbitrary server-side string supplied by caller.
+                if(c.action==Action::TransferWorkshopStack){
+                    if(c.thrust_x==2 && !w.finisher_installed){
+                        result.result=Outcome::InvalidTarget;return result;
+                    }
+                    const auto qty=std::abs(c.amount);
+                    const char* names[]={"aluminum","aluminum_panels","aluminum_frames","aluminum_scrap"};
+                    std::int64_t* stock[]={&w.aluminum_kg,&w.panels_kg,&w.frames_kg,&w.scrap_kg};
+                    auto& local=*stock[c.thrust_x];
+                    const std::string name=names[c.thrust_x];
+                    if(c.amount>0){
+                        auto it=cship.goods_kg.find(name);
+                        if(it==cship.goods_kg.end() || it->second<qty || local>1000-qty){
+                            result.result=Outcome::NoResources;return result;
+                        }
+                        it->second-=qty;
+                        if(it->second==0)cship.goods_kg.erase(it);
+                        local+=qty;
+                    }else{
+                        if(local<qty){result.result=Outcome::NoResources;return result;}
+                        if(loaded_cargo_liters(actor)>actor.cargo_capacity*1000-qty){
+                            result.result=Outcome::CargoFull;return result;
+                        }
+                        local-=qty;
+                        cship.goods_kg[name]+=qty;
+                    }
+                    result.transferred=qty;
+                    snapshot_version_=std::max(snapshot_version_,24);
+                    result.result=Outcome::Applied;return result;
+                }
                 if(c.action==Action::TransferWorkshopFeed){
                     const auto qty=std::abs(c.amount);
                     if(c.amount>0){
@@ -1156,7 +1212,7 @@ Event Simulation::execute(const Command& c) {
                         it->second-=qty;if(!it->second)cship.goods_kg.erase(it);
                         w.aluminum_kg+=qty;
                     }else{
-                        if(w.aluminum_kg<qty || loaded_mass(actor)>actor.cargo_capacity-qty/1000){
+                        if(w.aluminum_kg<qty || loaded_cargo_liters(actor)>actor.cargo_capacity*1000-qty){
                             result.result=Outcome::NoResources;return result;
                         }
                         w.aluminum_kg-=qty;cship.goods_kg["aluminum"]+=qty;
@@ -1172,7 +1228,7 @@ Event Simulation::execute(const Command& c) {
                     const auto batches=c.amount;
                     const auto frames=19*batches,scrap=batches;
                     if(w.frames_kg<frames || w.scrap_kg<scrap ||
-                       loaded_mass(actor)>actor.cargo_capacity-batches/50){
+                       loaded_cargo_liters(actor)>actor.cargo_capacity*1000-20*batches){
                         result.result=Outcome::NoResources;return result;
                     }
                     w.frames_kg-=frames;w.scrap_kg-=scrap;
@@ -1187,7 +1243,7 @@ Event Simulation::execute(const Command& c) {
                 const auto batches=c.amount;
                 const auto panels=19*batches, scrap=batches;
                 if(w.panels_kg<panels || w.scrap_kg<scrap ||
-                   loaded_mass(actor)>actor.cargo_capacity-batches/50){
+                   loaded_cargo_liters(actor)>actor.cargo_capacity*1000-20*batches){
                     result.result=Outcome::NoResources;return result;
                 }
                 w.panels_kg-=panels;w.scrap_kg-=scrap;
@@ -1273,7 +1329,7 @@ Event Simulation::execute(const Command& c) {
                 auto& src=c.amount>0?raw:local;
                 auto& dst=c.amount>0?local:raw;
                 if(src<qty || dst>100000000-qty ||
-                   (c.amount<0 && loaded_mass(actor)>actor.cargo_capacity-qty/1000)){
+                   (c.amount<0 && loaded_cargo_liters(actor)>actor.cargo_capacity*1000-qty)){
                     result.result=Outcome::NoResources;return result;
                 }
                 src-=qty;dst+=qty;
@@ -1713,7 +1769,7 @@ void Simulation::process_automatic_mining() {
         const auto status = mine_status(ship, job.target);
         if (status != Outcome::Applied) { stop_mining(actor_id, status); continue; }
         auto& rock = entities_.at(job.target);
-        const auto n = std::min({job.amount_per_tick, rock.ore, ship.cargo_capacity - loaded_mass(ship)});
+        const auto n = std::min({job.amount_per_tick, rock.ore, (ship.cargo_capacity*1000-loaded_cargo_liters(ship))/1000});
         if(n>0 && colony_ships_.count(actor_id) && geology_.count(job.target))
             transfer_geological_minerals(actor_id,job.target,n);
         else ship.cargo += n;
@@ -1723,7 +1779,7 @@ void Simulation::process_automatic_mining() {
                                     actor_id, job.target, Outcome::Applied, n});
         const bool depleted = rock.ore == 0;
         if (depleted) despawn(job.target, actor_id, job.start_command_id);
-        if (loaded_mass(ship) == ship.cargo_capacity) stop_mining(actor_id, Outcome::CargoFull);
+        if (loaded_cargo_liters(ship) > ship.cargo_capacity*1000-1000) stop_mining(actor_id, Outcome::CargoFull);
         else if (depleted) stop_mining(actor_id, Outcome::NoResources);
     }
 }
@@ -2205,7 +2261,7 @@ void Simulation::steps(std::uint64_t count) {
 
 std::string Simulation::canonical_state() const {
     std::ostringstream out;
-    out << (snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
+    out << (snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
         << '|' << rng_state_ << '\n';
     if (snapshot_version_>=5) for(const auto system:systems_)out<<"system|"<<system<<'\n';
     for (const auto& entry : entities_) {
@@ -2468,12 +2524,12 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
     if (!std::getline(in, line)) throw std::runtime_error("snapshot: missing header");
     auto h = fields(line);
     require_fields(h, 5);
-    if (h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23") throw std::runtime_error("snapshot: unsupported version");
+    if (h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24") throw std::runtime_error("snapshot: unsupported version");
     const auto sys = u64(h[1]);
     if (sys == 0 || sys > std::numeric_limits<std::uint32_t>::max())
         throw std::runtime_error("snapshot: invalid system");
     Simulation result(u64(h[4]), static_cast<std::uint32_t>(sys));
-    result.snapshot_version_ = h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
+    result.snapshot_version_ = h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
     result.tick_ = u64(h[2]);
     result.next_entity_id_ = u64(h[3]);
     if (result.next_entity_id_ == 0) throw std::runtime_error("snapshot: invalid next entity ID");
@@ -2875,7 +2931,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             c.id = u64(f[1]); c.execute_tick = u64(f[2]); c.sequence = u64(f[3]);
             c.issuer = u64(f[4]); c.actor = u64(f[5]); c.target = u64(f[6]);
             auto action = u64(f[7]);
-            if (action > (result.snapshot_version_ >= 23 ? static_cast<unsigned>(Action::TransferWorkshopFinalOutput) : result.snapshot_version_ >= 22 ? static_cast<unsigned>(Action::TransferWorkshopOutput) : result.snapshot_version_ >= 21 ? static_cast<unsigned>(Action::HostCrewLoss) : result.snapshot_version_ >= 20 ? static_cast<unsigned>(Action::AssignFarmMentor) : result.snapshot_version_ >= 19 ? static_cast<unsigned>(Action::AssignPolicyInspectors) : result.snapshot_version_ >= 18 ? static_cast<unsigned>(Action::TransferWaterworksFeed) : result.snapshot_version_ >= 17 ? static_cast<unsigned>(Action::ConstructReclaimer) : result.snapshot_version_ >= 16 ? static_cast<unsigned>(Action::AssignClinicStaff) : result.snapshot_version_ >= 15 ? static_cast<unsigned>(Action::AssignCommunityStaff) : result.snapshot_version_ >= 14 ? static_cast<unsigned>(Action::SetUtilityMaintenance) : result.snapshot_version_ >= 13 ? static_cast<unsigned>(Action::RepairUtility) : result.snapshot_version_ >= 12 ? static_cast<unsigned>(Action::AssignHabitatResidents) : result.snapshot_version_ >= 11 ? static_cast<unsigned>(Action::AssignFarmWorkers) : result.snapshot_version_ >= 10 ? static_cast<unsigned>(Action::LoadLifeWater) : result.snapshot_version_ >= 9 ? static_cast<unsigned>(Action::FabricateMaterialModule) : result.snapshot_version_ >= 7 ? static_cast<unsigned>(Action::ConstructOutpost) : result.snapshot_version_ >= 6 ? static_cast<unsigned>(Action::DeliverGateSpares) : result.snapshot_version_ >= 5 ? static_cast<unsigned>(Action::SetGatePairOnline) : result.snapshot_version_ >= 4 ? static_cast<unsigned>(Action::SellOre) : static_cast<unsigned>(Action::UnloadOre))) throw std::runtime_error("snapshot: invalid action");
+            if (action > (result.snapshot_version_ >= 24 ? static_cast<unsigned>(Action::TransferWorkshopStack) : result.snapshot_version_ >= 23 ? static_cast<unsigned>(Action::TransferWorkshopFinalOutput) : result.snapshot_version_ >= 22 ? static_cast<unsigned>(Action::TransferWorkshopOutput) : result.snapshot_version_ >= 21 ? static_cast<unsigned>(Action::HostCrewLoss) : result.snapshot_version_ >= 20 ? static_cast<unsigned>(Action::AssignFarmMentor) : result.snapshot_version_ >= 19 ? static_cast<unsigned>(Action::AssignPolicyInspectors) : result.snapshot_version_ >= 18 ? static_cast<unsigned>(Action::TransferWaterworksFeed) : result.snapshot_version_ >= 17 ? static_cast<unsigned>(Action::ConstructReclaimer) : result.snapshot_version_ >= 16 ? static_cast<unsigned>(Action::AssignClinicStaff) : result.snapshot_version_ >= 15 ? static_cast<unsigned>(Action::AssignCommunityStaff) : result.snapshot_version_ >= 14 ? static_cast<unsigned>(Action::SetUtilityMaintenance) : result.snapshot_version_ >= 13 ? static_cast<unsigned>(Action::RepairUtility) : result.snapshot_version_ >= 12 ? static_cast<unsigned>(Action::AssignHabitatResidents) : result.snapshot_version_ >= 11 ? static_cast<unsigned>(Action::AssignFarmWorkers) : result.snapshot_version_ >= 10 ? static_cast<unsigned>(Action::LoadLifeWater) : result.snapshot_version_ >= 9 ? static_cast<unsigned>(Action::FabricateMaterialModule) : result.snapshot_version_ >= 7 ? static_cast<unsigned>(Action::ConstructOutpost) : result.snapshot_version_ >= 6 ? static_cast<unsigned>(Action::DeliverGateSpares) : result.snapshot_version_ >= 5 ? static_cast<unsigned>(Action::SetGatePairOnline) : result.snapshot_version_ >= 4 ? static_cast<unsigned>(Action::SellOre) : static_cast<unsigned>(Action::UnloadOre))) throw std::runtime_error("snapshot: invalid action");
             c.action = static_cast<Action>(action);
             auto tx = i64(f[8]), ty = i64(f[9]);
             if (tx < std::numeric_limits<int>::min() || tx > std::numeric_limits<int>::max() ||
@@ -2957,8 +3013,12 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                   (c.action==Action::TransferUtilitySpares && (!c.amount || c.amount<-32 || c.amount>32)) ||
                   (c.action==Action::AssignUtilityTechnicians && (c.amount<0 || c.amount>8)) ||
                   (c.action==Action::SetUtilityMaintenance && (c.amount<0 || c.amount>1)))) ||
-                ((c.action>=Action::ConstructWorkshop && c.action<=Action::TransferWorkshopFinalOutput) &&
-                 (result.snapshot_version_<22 || !c.target || c.thrust_x || c.thrust_y ||
+                ((c.action>=Action::ConstructWorkshop && c.action<=Action::TransferWorkshopStack) &&
+                 (result.snapshot_version_<22 || !c.target || c.thrust_y ||
+                  (c.action!=Action::TransferWorkshopStack && c.thrust_x) ||
+                  (c.action==Action::TransferWorkshopStack &&
+                   (result.snapshot_version_<24 || c.thrust_x<0 || c.thrust_x>3 ||
+                    !c.amount || c.amount<-1000 || c.amount>1000)) ||
                   (c.action>=Action::ConstructWorkshopFinisher && result.snapshot_version_<23) ||
                   ((c.action==Action::ConstructWorkshop || c.action==Action::ConstructWorkshopFinisher) && c.amount!=1) ||
                   ((c.action==Action::TransferWorkshopFeed) &&
@@ -3095,7 +3155,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
     for(const auto& [id,c]:result.colony_ships_){
         const auto* ship=result.find(id);
         if(!ship || ship->type!=EntityType::Ship || !ship->owner_id ||
-           result.loaded_mass(*ship)>ship->cargo_capacity)
+           result.loaded_cargo_liters(*ship)>ship->cargo_capacity*1000)
             throw std::runtime_error("snapshot: invalid colony ship or overloaded inventory");
     }
     for(const auto& [id,site]:result.built_outposts_){
@@ -3357,13 +3417,16 @@ std::int64_t Simulation::total_ore() const {
             throw std::overflow_error("invalid cargo total");
         total += e.cargo;
     }
+    std::int64_t colony_cargo_kg=0;
     for(const auto& [id,c]:colony_ships_){
         (void)id;
         std::int64_t physical_kg=c.tailings_kg;
         for(const auto& [name,kg]:c.minerals_kg){(void)name;physical_kg+=kg;}
         for(const auto& [name,kg]:c.goods_kg){(void)name;physical_kg+=kg;}
-        if(physical_kg%1000)throw std::overflow_error("nonconserved fractional cargo mass");
-        const auto mass=c.refined+2*c.modules+physical_kg/1000;
+        if(physical_kg<0 || physical_kg>1000000000000LL-colony_cargo_kg)
+            throw std::overflow_error("invalid colony material stacks");
+        colony_cargo_kg+=physical_kg;
+        const auto mass=c.refined+2*c.modules;
         if(mass<0 || mass>std::numeric_limits<std::int64_t>::max()-total)
             throw std::overflow_error("invalid colony ore equivalent");
         total+=mass;
@@ -3446,9 +3509,14 @@ std::int64_t Simulation::total_ore() const {
             throw std::overflow_error("invalid workshop inventories");
         life_mass_kg+=kg;
     }
-    if(life_mass_kg%1000 || life_mass_kg/1000>std::numeric_limits<std::int64_t>::max()-total)
-        throw std::overflow_error("invalid combined life-support mass");
-    total+=life_mass_kg/1000;
+    // Only the WHOLE world must conserve complete ore-equivalent mass;
+    // individual inventories can now hold a single kilogram stack.
+    if(colony_cargo_kg>std::numeric_limits<std::int64_t>::max()-life_mass_kg)
+        throw std::overflow_error("invalid world material total");
+    const auto combined_kg=life_mass_kg+colony_cargo_kg;
+    if(combined_kg%1000 || combined_kg/1000>std::numeric_limits<std::int64_t>::max()-total)
+        throw std::overflow_error("invalid conserved material total");
+    total+=combined_kg/1000;
     for(const auto& [id,site]:built_outposts_){
         (void)id;
         if(site.embodied_ore<0 || site.embodied_ore>std::numeric_limits<std::int64_t>::max()-total)

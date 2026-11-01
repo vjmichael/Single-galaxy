@@ -523,3 +523,10 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_econ02b1b_connected_tests PRIVATE galaxy_kernel SQLite::SQLite3)
   add_test(NAME galaxy_econ02b1b_connected_tests COMMAND galaxy_econ02b1b_connected_tests)
 endif()
+
+# ECON-02B1c: authoritative cubic-metre cargo volume and exact factory item stacks.
+if(BUILD_TESTING)
+  add_executable(galaxy_econ02b1c_cargo_tests tests/ECON02B1cCargoVolumeTests.cpp)
+  target_link_libraries(galaxy_econ02b1c_cargo_tests PRIVATE galaxy_kernel SQLite::SQLite3)
+  add_test(NAME galaxy_econ02b1c_cargo_tests COMMAND galaxy_econ02b1c_cargo_tests)
+endif()

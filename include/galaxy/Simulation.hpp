@@ -21,7 +21,7 @@ struct Vector2 {
 };
 
 enum class EntityType { Ship, Asteroid, Station, Stargate, Wreck };
-enum class Action { Thrust, Mine, StartMining, StopMining, RequestUndock, RequestDock, UnloadOre, LoadOre, SellOre, RequestJump, SetGatePairOnline, SetGateStaff, DeliverGateSpares, RefineOre, FabricateModule, ConstructOutpost, RefineMineral, FabricateMaterialModule, PlantCrops, HarvestCrops, RecycleWater, RecycleCompost, ProduceOxygen, LoadLifeWater, ConstructFarm, TransferFarmStock, AssignFarmWorkers, ConstructHabitat, TransferHabitatStock, AssignHabitatResidents, ConstructUtility, RepairUtility, TransferUtilitySpares, AssignUtilityTechnicians, SetUtilityMaintenance, ConstructCommunity, TransferCommunityStock, AssignCommunityStaff, ConstructClinic, TransferClinicStock, AssignClinicStaff, ConstructReclaimer, ConstructWaterworks, TransferWaterworksFeed, SetPolicyAssurance, AssignPolicyInspectors, AssignFarmMentor, HostDestroyShip, HostCrewLoss, ConstructWorkshop, TransferWorkshopFeed, AssignWorkshopOperator, TransferWorkshopOutput, ConstructWorkshopFinisher, AssignWorkshopFinisher, TransferWorkshopFinalOutput };
+enum class Action { Thrust, Mine, StartMining, StopMining, RequestUndock, RequestDock, UnloadOre, LoadOre, SellOre, RequestJump, SetGatePairOnline, SetGateStaff, DeliverGateSpares, RefineOre, FabricateModule, ConstructOutpost, RefineMineral, FabricateMaterialModule, PlantCrops, HarvestCrops, RecycleWater, RecycleCompost, ProduceOxygen, LoadLifeWater, ConstructFarm, TransferFarmStock, AssignFarmWorkers, ConstructHabitat, TransferHabitatStock, AssignHabitatResidents, ConstructUtility, RepairUtility, TransferUtilitySpares, AssignUtilityTechnicians, SetUtilityMaintenance, ConstructCommunity, TransferCommunityStock, AssignCommunityStaff, ConstructClinic, TransferClinicStock, AssignClinicStaff, ConstructReclaimer, ConstructWaterworks, TransferWaterworksFeed, SetPolicyAssurance, AssignPolicyInspectors, AssignFarmMentor, HostDestroyShip, HostCrewLoss, ConstructWorkshop, TransferWorkshopFeed, AssignWorkshopOperator, TransferWorkshopOutput, ConstructWorkshopFinisher, AssignWorkshopFinisher, TransferWorkshopFinalOutput, TransferWorkshopStack };
 enum class Outcome { Applied, InvalidActor, Unauthorized, InvalidTarget, OutOfRange, InvalidArgument, NoResources, CargoFull, NotMining, NotInSpace, NotDocked, InTransition, ShipMoving, HangarFull, InsufficientFunds, WrongSystem, GateOffline, NotColonyShip, InsufficientCrew };
 enum class ActivityKind { AsteroidDespawned, AutoMiningTransfer, MiningStopped, Undocked, Docked, JumpCompleted, ShipDestroyed, NpcLost };
 enum class DockState { InSpace, Docked, Undocking, Docking };
@@ -329,7 +329,7 @@ struct Entity {
     Vector2 velocity{};
     std::int64_t ore = 0;
     std::int64_t cargo = 0;
-    std::int64_t cargo_capacity = 0;
+    std::int64_t cargo_capacity = 0; // m3; fixed gameplay item volumes, NO mass limit
     DockState dock_state = DockState::InSpace;
     EntityId dock_station = 0;
     std::uint32_t transition_ticks = 0;
@@ -409,6 +409,10 @@ public:
     const std::map<std::uint64_t,NpcRecord>& npc_records() const {return npcs_;}
     FarmWorkforceAssessment assess_farm_workforce(EntityId site) const;
     const ColonyShip* colony_ship(EntityId ship) const;
+    // Authoritative cargo capacity uses game volume, NOT payload mass.
+    // Milliscale: 1 m3 = 1000 litres; legacy ore units occupy 1 m3 each.
+    std::int64_t ship_cargo_volume_liters(EntityId ship) const;
+
     // Initial-world only: finite packaged food, water, oxygen and nutrient stocks.
     // No free resource regeneration; this explicitly adds starter mass at genesis.
     void provision_colony_genesis(EntityId ship, std::int64_t food_kg,
@@ -512,7 +516,7 @@ private:
     Event execute(const Command& command);
     bool valid_position(Vector2 position) const;
     Outcome mine_status(const Entity& actor, EntityId target) const;
-    std::int64_t loaded_mass(const Entity& ship) const;
+    std::int64_t loaded_cargo_liters(const Entity& ship) const;
     void transfer_geological_minerals(EntityId ship, EntityId rock, std::int64_t tonnes);
     void despawn(EntityId asteroid, EntityId actor, std::uint64_t start_command_id);
     void stop_mining(EntityId actor, Outcome reason);
@@ -562,7 +566,7 @@ private:
     std::map<EntityId,OutpostWorkshop> workshops_;
     std::map<EntityId, AsteroidGeology> geology_;
     std::vector<ActivityEvent> activity_events_;
-    int snapshot_version_ = 1; // v23 optional two-stage outpost line, older saves readable
+    int snapshot_version_ = 1; // v24 item-stack cargo and m3 volume, older saves readable
     std::map<std::uint64_t, std::vector<Command>> commands_;
     std::set<std::uint64_t> submitted_ids_;
     std::vector<Event> events_;
