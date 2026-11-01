@@ -1,0 +1,954 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index d9c5c2e..46395f8 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -623,6 +623,19 @@ endif()
+ add_executable(galaxy_factory_host_bridge src/factory_host_bridge.cpp)
+ target_link_libraries(galaxy_factory_host_bridge PRIVATE galaxy_kernel)
+ 
++# ECON-02B2d4c3: Node-free, native loopback factory UI host. Viewer packaged
++# beside executable; same-session native world authority, no relay process.
++add_executable(galaxy_factory_local_host src/factory_native_host.cpp)
++target_link_libraries(galaxy_factory_local_host PRIVATE galaxy_kernel)
++if(WIN32)
++  target_link_libraries(galaxy_factory_local_host PRIVATE ws2_32 bcrypt shell32 comdlg32)
++endif()
++add_custom_command(TARGET galaxy_factory_local_host POST_BUILD
++  COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/viewer"
++          "$<TARGET_FILE_DIR:galaxy_factory_local_host>/viewer")
++install(TARGETS galaxy_factory_local_host RUNTIME DESTINATION bin)
++install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/viewer/" DESTINATION "share/single-galaxy/viewer")
++
+ if(BUILD_TESTING)
+   add_executable(galaxy_econ02b2d4c2_world_fixture tests/ECON02B2d4c2WorldFixture.cpp)
+   target_link_libraries(galaxy_econ02b2d4c2_world_fixture PRIVATE galaxy_kernel)
+@@ -637,3 +650,14 @@ if(BUILD_TESTING AND SG_NODE_BINARY)
+     --layout ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/ECON02B2d4b_editor_blueprint.sglayout)
+   set_tests_properties(galaxy_econ02b2d4c2_live_editor_bridge PROPERTIES TIMEOUT 25)
+ endif()
++
++# ECON-02B2d4c3 native game factory runtime HTTP test. Node is a test
++# client only, not a player/runtime dependency.
++if(BUILD_TESTING AND SG_NODE_BINARY)
++  add_test(NAME galaxy_econ02b2d4c3_native_factory_host
++    COMMAND ${SG_NODE_BINARY} ${CMAKE_CURRENT_SOURCE_DIR}/tests/ECON02B2d4c3NativeHostTests.cjs
++    --host $<TARGET_FILE:galaxy_factory_local_host>
++    --fixture $<TARGET_FILE:galaxy_econ02b2d4c2_world_fixture>
++    --layout ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/ECON02B2d4b_editor_blueprint.sglayout)
++  set_tests_properties(galaxy_econ02b2d4c3_native_factory_host PROPERTIES TIMEOUT 30)
++endif()
+diff --git a/README.md b/README.md
+index 9d14c51..e6e46a5 100644
+--- a/README.md
++++ b/README.md
+@@ -6,7 +6,7 @@ In the released game's intended opening, one player colony ship with finite NPC
+ 
+ ## Current prototype status
+ 
+-The current source baseline is **GRSM-04b.A** (SQLite v15 verified victim/observer roles), descended from the **B7.0n** archive dated 2026-10-31. The archived evidence records a Linux pass of 54/54 CTest native/integration suites and 84/84 Node tests. The opt-in individual workforce model persists up to 24 original NPC crew identities and farm work/mentoring; a separate statistical cohort prototype demonstrates bounded large-number accounting. **Those are not a live trillion-NPC universe.** The game remains a bounded 2D colony/space prototype, not a continuous 3D multiplayer galaxy. Native Windows and full interactive Chromium playthrough remain open gates.
++The current source milestone is **ECON-02B2d4c3**, building on the original **GRSM-04b.A** and **B7.0n** colony/social prototype lines. The latest local verification has 86/86 native CTests across two runs, 93/93 JavaScript tests and 3/3 Python design tests; the earlier GRSM-04b.A archive recorded 54/54 CTests and 84/84 Node tests. The opt-in individual workforce model persists up to 24 original NPC crew identities and farm work/mentoring; a separate statistical cohort prototype demonstrates bounded large-number accounting. **Those are not a live trillion-NPC universe.** The game remains a bounded 2D colony/space prototype, not a continuous 3D multiplayer galaxy. Native Windows and full interactive Chromium playthrough remain open gates.
+ 
+ ## Design documentation
+ 
+@@ -170,3 +170,9 @@ The offline Factory Designer's canonical `.sglayout` can now be registered by a
+ The existing `viewer/factory.html` now supports a **separately launched trusted localhost host session**. A Linux developer can run `node scripts/factory_live_server.js --db /absolute/path/to/existing-world.sqlite --bridge /path/to/build/galaxy_factory_host_bridge` and open the session-specific URL printed in the terminal. The browser can review the actual ship/site and available construction modules, register the exact canonical `.sglayout` produced by the editor, inspect host-derived progress, request one authorized construction step, and cancel remaining jobs. Only the C++ host bridge loads `PersistentWorld` and `HostBlueprintRegistry`; the browser is never trusted to choose owner, ship, site, command IDs or physical material effects. The web process binds **127.0.0.1 only**, uses an unpredictable per-launch session path/header, rejects cross-origin writes and refuses missing/empty worlds. Construction actions still use the existing SQLite command journal and physical conservation.
+ 
+ **Development-host boundary:** this is a Linux/Node.js local integration prototype, not a packaged Windows installer or multiplayer production service; physical walls/doors/floors remain ghost design annotations. Direct Chromium-to-localhost visual acceptance is blocked in the test container, but the native+HTTP API E2E and offline Chromium editor interactions were independently verified. See [the B2d4c2 engineering report](docs/engineering/ECON02B2d4c2_Live_Factory_Construction_Controls_2026-10-31.md).
++
++## ECON-02B2d4c3 — Node-free native factory construction host (2026-10-31)
++
++The C++17 `galaxy_factory_local_host` executable now serves the existing Factory Designer and its trusted colony construction API **from one native process**. Players no longer need to launch the Node.js development server to make real, journaled factory construction steps. It opens only an existing SQLite world, binds a session-restricted **127.0.0.1** listener, and packs the viewer assets alongside its binary. The default browser opens automatically; Windows can use an OS save picker when no `--db` is supplied. Linux developer example: `./build/galaxy_factory_local_host --db /path/to/EXISTING.sqlite`. The original `galaxy_factory_host_bridge` and Node test server remain for compatibility.
++
++The new Linux code passes **60/60 non-live and 26/26 live/relay CTests**, **93/93 JavaScript tests**, **3/3 design tests**, and native HTTP/restart/cancellation checks; these are two disjoint native runs, not a single uninterrupted one. Offline Chromium UI passed, but direct native-browser localhost navigation is blocked by the container policy, and Windows compilation/interactive acceptance is not yet complete. **This is not yet integrated into the main space-game GUI, and walls/doors/floors and NPC construction crews remain future work.** See [the engineering report](docs/engineering/ECON02B2d4c3_Native_Factory_Runtime_2026-10-31.md).
+diff --git a/docs/engineering/ECON02B2d4c3_Native_Factory_Runtime_2026-10-31.md b/docs/engineering/ECON02B2d4c3_Native_Factory_Runtime_2026-10-31.md
+new file mode 100644
+index 0000000..5c8ff5e
+--- /dev/null
++++ b/docs/engineering/ECON02B2d4c3_Native_Factory_Runtime_2026-10-31.md
+@@ -0,0 +1,64 @@
++# ECON-02B2d4c3 — Native localhost factory construction runtime
++
++**Date:** 2026-10-31 (continuation of EvEmu Convo 06)
++**Project:** Single Galaxy, early Linux prototype
++**Exact source baseline:** `SingleGalaxy_ECON02B2d4c2_Live_Construction_Source_Tests_2026-10-31.zip` from `/Single Galaxy`; this report describes changes *on top of* that archive.
++**Engineering goal:** eliminate the Node.js runtime prerequisite for the trusted factory editor control path, without weakening host authority, construction/material accounting, or restart recovery.
++
++## Delivered code
++
++- `src/factory_native_host.cpp`: new C++17 local host executable `galaxy_factory_local_host`. It owns one actual `PersistentWorld` / `HostBlueprintRegistry` within its own process and serves the existing editor assets and the same narrow HTTP API, with **no Node.js process, subprocess relay, npm package, or external network service** at runtime.
++- `src/factory_host_protocol.hpp`: the original, unchanged native `HELLO`, `LIST`, `REGISTER`, `STATUS`, `STEP`, `CANCEL`/SQLite-authorized operation core factored from the old bridge. `galaxy_factory_host_bridge` remains available to exercise compatibility with the previous ECON-02B2d4c2 development server.
++- `viewer/factory-live.js`: after a real host connection, makes the status visibly identify the native colony and hides an unsupported return-to-viewer link; offline editing remains available.
++- CMake: builds the new native binary, packages the viewer assets beside the executable, provides an install rule for `bin` + `share/single-galaxy/viewer`, and links Windows SDK `ws2_32`, `bcrypt`, `shell32`, and `comdlg32`. On Windows, launching the native program without `--db` invokes an OS-owned **open-existing-save** dialog instead of creating a game state.
++- `tests/ECON02B2d4c3NativeHostTests.cjs`: HTTP/SQLite integration regression tests run **against the C++ native executable**, including portable-copy runtime asset lookup, nonexistent-world refusal, origin/host/session denial, invalid blueprints, 4 material-backed construction steps, persisted restart, a fifth step, durable cancellation, denial of cancelled plan execution, and continuation with a replacement plan.
++- `scripts/factory_native_browser_smoke.py`: optional real browser-to-native loopback acceptance script, kept as a test even though the present container prohibits Chromium loopback navigation.
++
++## Security and construction contract
++
++- Binds only `127.0.0.1` on a kernel-assigned ephemeral TCP port; Windows asks Winsock for exclusive address use. No remote interface and no CORS. A launch-specific 256-bit cryptographic session secret is produced using Linux `getrandom` or Windows `BCryptGenRandom`; no reliance on the standard C++ PRNG for authority.
++- Static assets are an exact four-file allowlist; routes are under `/session/<secret>/`. Responses prevent framing, referrer disclosure and caching and carry a restrictive Content-Security-Policy. The server checks exact `Host`, `Origin`, `X-SG-Session`, and, where present, same-origin Fetch Metadata on writes.
++- HTTP/1.1 headers, JSON bodies, length and command ID are strictly bounded and validated. It rejects transfer-encoded requests, duplicate headers, unexpected JSON keys, unknown routes, and invalid IDs. Only host-side code selects the world file, founding ship, outpost, owner, journal IDs and resource changes; browser-supplied `owner` or `site` are not accepted.
++- Host doesn't generate a world or silently seed NPCs. Existing non-empty SQLite save and constructed outpost are prerequisites, and multi-outpost worlds still require a trusted `--site` choice. A successful plan step uses existing durable construction and physical inventory receipts; cancelling a plan leaves installed equipment in the game and cannot fabricate a refund.
++- The session grants *local launch-operator authority*, not true remote player authentication, sandboxing, or robust production multiplayer identity. Keep the capability URL private; do not open the HTTP port to another network or use through a proxy. No browser is allowed to mint its own tools or authority.
++
++## Developer run instructions
++
++```sh
++cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
++cmake --build build --target galaxy_factory_local_host -j 4
++./build/galaxy_factory_local_host --db /path/to/EXISTING.sqlite
++```
++
++The host opens the session URL in the default browser, and prints `SG_FACTORY_URL=...` for a manually pasted address. `--no-browser` is intended for test automation; `--site N` selects the outpost only if more than one exists. The CMake build places `viewer/` beside `build/galaxy_factory_local_host`. For a Windows `galaxy_factory_local_host.exe` launched without `--db`, the native save picker requests an **existing** SQLite game world. Windows binary compilation/interactive acceptance has **not** yet been performed in this Linux environment.
++
++`node --test ...` remains used as a **developer test driver** only, not a runtime player dependency. The previous Node-based server remains in source for backwards compatibility and comparison, not part of this new startup path.
++
++## Tests and results — actual continuation execution
++
++| Gate | Result |
++|---|---|
++| Complete Linux Debug CMake build, all targets | PASS |
++| 60 non-live native CTest cases | **60/60 PASS** |
++| 26 live/relay native CTest cases | **26/26 PASS** |
++| Native factory subset (old and new) | **5/5 PASS** |
++| All JavaScript unit tests | **93/93 PASS** |
++| Python design tests | **3/3 PASS** |
++| Offline Chromium factory editor: save/restore, snapped walls, imports | PASS |
++| Native HTTP/SQLite session, packaging, authorization, recovery | PASS |
++| Direct Chromium **browser-to-native localhost** visual click path | **BLOCKED BY ENVIRONMENT**: `ERR_BLOCKED_BY_ADMINISTRATOR` on loopback URL |
++| Windows compiler + graphical acceptance | NOT RUN |
++
++The initial combined CTest run was interrupted by the execution limit after a partial pass. The full set was then run as **two exhaustive, disjoint selections** (60 non-live and 26 live/relay), both passing. Don't describe this as one uninterrupted 86/86 run. Browser restriction is separate from the native HTTP test, which truly exercises SQLite writes; it is **not** evidence of a full graphical localhost click-through.
++
++## Still open / scope control
++
++1. **Unified game UI integration**: this is a native *factory* host executable, not yet a menu inside the main ship/colony gameplay shell. The game should launch/switch to the editor from the established player session, choose among existing outposts, reconnect and close the host cleanly; never allow two competing writers on the same SQLite world. Resolve the single-writer problem before embedding this loopback service within the running colony host.
++2. **Graphical acceptance**: test with Windows 11/Edge/Chrome and a native runtime on a machine where browser loopback navigation is permitted. Test connect, authorize, build, refresh, cancellation, relaunch/recovery and no-world refusal without a shell prerequisite.
++3. **Physical walls / doors / floors**: still ghost overlays. New native commands should persist these as real collision-checked world fixtures, with construction material costs and journaled partial work; don't mistake floor paint or a snapped outline for completed construction.
++4. **NPC construction crews**: not implemented. Any later delegation must use job eligibility, workforce/time, resource conservation, host-side authorization, cancellation and offscreen deterministic batching. Never let a browser script become an autonomous tool authority.
++5. **Balancing / source routes**: construction-module-per-cell values are prototype placeholders. Integrate salvage, haulage, workforce staffing, power, and realistic material bills before wider gameplay acceptance.
++
++Existing project scope remains: one original fictional galaxy; unbounded freeform factory *design* subject to real geometry/resources rather than arbitrary factory-size caps; five physical machine tiers; deterministic conservative remote production; station-centric flight and finite starting NPC crew. This milestone changes only native factory control transport and asset packaging, not these game-design rules.
++
++**Repository policy:** engineering was performed and validated locally. GitHub remains a source repository/documentation archive, not an external build/test dependency or a separate development hub.
+diff --git a/scripts/factory_native_browser_smoke.py b/scripts/factory_native_browser_smoke.py
+new file mode 100644
+index 0000000..557386c
+--- /dev/null
++++ b/scripts/factory_native_browser_smoke.py
+@@ -0,0 +1,43 @@
++"""Optional Chromium acceptance of the *real* localhost factory construction UI.
++Creates an ephemeral world; never points at a player's real save.
++"""
++import os, subprocess, tempfile, time, pathlib, select
++from playwright.sync_api import sync_playwright
++ROOT = pathlib.Path(__file__).resolve().parents[1]
++BUILD = pathlib.Path(os.environ.get('SG_BUILD_DIR', ROOT.parent / 'build'))
++with tempfile.TemporaryDirectory(prefix='sg-factory-ui-') as d:
++    db = pathlib.Path(d) / 'world.sqlite'
++    fixture = subprocess.run([str(BUILD/'galaxy_econ02b2d4c2_world_fixture'),str(db)],capture_output=True,text=True,timeout=20)
++    assert fixture.returncode == 0, fixture.stderr
++    server=subprocess.Popen([str(BUILD/'galaxy_factory_local_host'),'--db',str(db),'--no-browser'],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,bufsize=1)
++    try:
++        readable, _, _ = select.select([server.stdout], [], [], 10)
++        assert readable,'Local server failed to start'
++        first=server.stdout.readline().strip()
++        assert first.startswith('SG_FACTORY_URL='),first
++        url=first.partition('=')[2]
++        with sync_playwright() as p:
++            browser=p.chromium.launch(headless=True,executable_path='/usr/bin/chromium',args=['--no-sandbox','--disable-dev-shm-usage'])
++            page=browser.new_page(viewport={'width':1460,'height':900})
++            errors=[]
++            page.on('pageerror', lambda e:errors.append(str(e)))
++            page.on('dialog', lambda dialog:dialog.accept())
++            page.goto(url,wait_until='networkidle')
++            page.locator('#liveStatus').get_by_text('Connected',exact=False).wait_for(timeout=5000)
++            page.locator('#example').click()
++            page.locator('#liveRegister').click()
++            page.wait_for_function("document.getElementById('livePlan').textContent.includes('0/16')")
++            page.locator('#liveStep').click()
++            page.wait_for_function("document.getElementById('livePlan').textContent.includes('1/16')")
++            page.locator('#liveRefresh').click()
++            page.wait_for_function("document.getElementById('livePlan').textContent.includes('1/16')")
++            page.screenshot(path=os.environ.get('SG_SCREENSHOT_OUT', str(ROOT / 'factory_native_preview.png')),full_page=True)
++            page.locator('#liveCancel').click()
++            page.wait_for_function("document.getElementById('livePlan').textContent.includes('cancelled')")
++            assert not errors,errors
++            print('Chromium REAL native factory UI: connect, authorize, execute, refresh, cancel PASS')
++            browser.close()
++    finally:
++        server.terminate()
++        try:server.wait(timeout=4)
++        except subprocess.TimeoutExpired:server.kill()
+diff --git a/src/factory_host_bridge.cpp b/src/factory_host_bridge.cpp
+index 8e6d2b3..7c09962 100644
+--- a/src/factory_host_bridge.cpp
++++ b/src/factory_host_bridge.cpp
+@@ -1,142 +1,4 @@
+-// ECON-02B2d4c2: localhost UI subprocess. This process is the ONLY bridge
+-// to PersistentWorld and HostBlueprintRegistry; browser input is always data.
+-// The launch operator selects the existing SQLite world and (optionally) site.
+-// A supervising localhost HTTP process provides the authenticated session.
+-#include "galaxy/HostBlueprintRegistry.hpp"
+-#include <algorithm>
+-#include <cctype>
+-#include <cstdint>
+-#include <filesystem>
+-#include <iostream>
+-#include <limits>
+-#include <memory>
+-#include <sstream>
+-#include <stdexcept>
+-#include <string>
+-#include <vector>
+-using namespace galaxy;
+-using namespace galaxy::industry;
+-namespace {
+-std::string quote(const std::string& s){
+-    std::string out="\"";
+-    constexpr const char* hex="0123456789abcdef";
+-    for(unsigned char c:s){
+-        if(c=='"'||c=='\\'){out+='\\';out+=static_cast<char>(c);}
+-        else if(c=='\n')out+="\\n";
+-        else if(c=='\r')out+="\\r";
+-        else if(c=='\t')out+="\\t";
+-        else if(c<32){out+="\\u00";out+=hex[c>>4];out+=hex[c&15];}
+-        else out+=static_cast<char>(c);
+-    }
+-    return out+'"';
+-}
+-std::uint64_t number(const std::string& text){
+-    if(text.empty()||text.size()>19)throw std::invalid_argument("invalid unsigned integer");
+-    std::uint64_t value=0;
+-    for(const char c:text){
+-        if(c<'0'||c>'9'||value>(std::numeric_limits<std::uint64_t>::max()-static_cast<unsigned>(c-'0'))/10)
+-            throw std::invalid_argument("invalid unsigned integer");
+-        value=value*10+static_cast<unsigned>(c-'0');
+-    }
+-    return value;
+-}
+-std::string base64(const std::string& encoded){
+-    if(encoded.empty()||encoded.size()>1400000 || encoded.size()%4)throw std::invalid_argument("invalid blueprint payload length");
+-    auto digit=[](char c)->int{
+-        if(c>='A'&&c<='Z')return c-'A';if(c>='a'&&c<='z')return c-'a'+26;
+-        if(c>='0'&&c<='9')return c-'0'+52;
+-        if(c=='+')return 62;if(c=='/')return 63;return -1;
+-    };
+-    std::string result;result.reserve(encoded.size()*3/4);
+-    for(std::size_t i=0;i<encoded.size();i+=4){
+-        const bool final=i+4==encoded.size();
+-        const int a=digit(encoded[i]),b=digit(encoded[i+1]);
+-        const int c=encoded[i+2]=='='?-2:digit(encoded[i+2]);
+-        const int d=encoded[i+3]=='='?-2:digit(encoded[i+3]);
+-        if(a<0||b<0||c==-1||d==-1 || (c==-2&&d!=-2) || (!final&&(c==-2||d==-2)) ||
+-           (c==-2&&(b&15)) || (d==-2&&c>=0&&(c&3)))throw std::invalid_argument("invalid blueprint encoding");
+-        const std::uint32_t bits=(static_cast<std::uint32_t>(a)<<18)|(static_cast<std::uint32_t>(b)<<12)|
+-          (static_cast<std::uint32_t>(std::max(c,0))<<6)|static_cast<std::uint32_t>(std::max(d,0));
+-        result+=static_cast<char>((bits>>16)&255);
+-        if(c>=0)result+=static_cast<char>((bits>>8)&255);
+-        if(d>=0)result+=static_cast<char>(bits&255);
+-    }
+-    if(result.size()>1048576)throw std::invalid_argument("blueprint exceeds host limit");
+-    return result;
+-}
+-std::string status(const HostedPlanStatus& p){
+-    const auto& a=p.progress;
+-    return "{\"id\":"+std::to_string(p.plan_id)+",\"site\":"+std::to_string(p.site)+
+-       ",\"completed\":"+std::to_string(a.completed)+",\"total\":"+std::to_string(a.total)+
+-       ",\"modulesRemaining\":"+std::to_string(a.modules_remaining)+
+-       ",\"cancelled\":"+(a.cancelled?"true":"false")+
+-       ",\"conflicting\":"+(a.conflicting?"true":"false")+
+-       ",\"finished\":"+(a.finished()?"true":"false")+
+-       ",\"reason\":"+quote(a.reason)+"}";
+-}
+-std::string event(const Event& e){
+-    return "{\"commandId\":"+std::to_string(e.command_id)+",\"tick\":"+std::to_string(e.tick)+
+-           ",\"applied\":"+(e.result==Outcome::Applied?"true":"false")+
+-           ",\"result\":"+std::to_string(static_cast<int>(e.result))+"}";
+-}
+-struct Server {
+-    explicit Server(const std::string& path,std::uint64_t requested_site):world(path,Simulation(1)),host(path,world){
+-        const auto& sites=world.world().built_outposts();
+-        if(sites.empty())throw std::runtime_error("World has no constructed outpost; no new colony will be fabricated");
+-        if(!requested_site){
+-            if(sites.size()!=1)throw std::runtime_error("More than one outpost; specify --site N in trusted launcher");
+-            site=sites.begin()->first;
+-        }else site=requested_site;
+-        auto it=sites.find(site);if(it==sites.end())throw std::runtime_error("Selected site does not exist");
+-        ship=it->second.source_colony_ship;
+-        const auto* actor=world.world().find(ship);
+-        if(!actor||!world.world().colony_ship(ship)||actor->owner_id==0)throw std::runtime_error("Invalid founding colony ship");
+-        owner=actor->owner_id;
+-    }
+-    std::string handle(const std::string& input){
+-        const auto sep=input.find('|');const std::string op=input.substr(0,sep);
+-        const std::string arg=sep==std::string::npos?"":input.substr(sep+1);
+-        if(op=="HELLO"){
+-            const auto* c=world.world().colony_ship(ship);
+-            return "{\"ok\":true,\"site\":"+std::to_string(site)+",\"ship\":"+std::to_string(ship)+
+-                   ",\"modulesAvailable\":"+std::to_string(c?c->modules:0)+",\"tick\":"+std::to_string(world.world().tick())+"}";
+-        }
+-        if(op=="LIST"){
+-            const auto plans=host.list(owner);std::string out="{\"ok\":true,\"plans\":[";
+-            for(std::size_t i=0;i<plans.size();++i){if(i)out+=',';out+=status(plans[i]);}
+-            return out+"]}";
+-        }
+-        if(op=="REGISTER"){
+-            const auto id=host.register_layout(base64(arg),owner,ship,site);
+-            return "{\"ok\":true,\"plan\":"+status(host.status(id,owner))+"}";
+-        }
+-        if(op=="STATUS"){
+-            const auto id=number(arg);
+-            if(id>static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))throw std::invalid_argument("invalid plan ID");
+-            return "{\"ok\":true,\"plan\":"+status(host.status(static_cast<std::int64_t>(id),owner))+"}";
+-        }
+-        if(op=="CANCEL"){
+-            const auto id=number(arg);
+-            if(id>static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))throw std::invalid_argument("invalid plan ID");
+-            const bool did=host.cancel(static_cast<std::int64_t>(id),owner);
+-            return std::string("{\"ok\":true,\"changed\":")+(did?"true":"false")+
+-                   ",\"plan\":"+status(host.status(static_cast<std::int64_t>(id),owner))+"}";
+-        }
+-        if(op=="STEP"){
+-            const auto id=number(arg);
+-            if(id>static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))throw std::invalid_argument("invalid plan ID");
+-            const auto e=host.execute_one(static_cast<std::int64_t>(id),owner);
+-            return "{\"ok\":true,\"event\":"+event(e)+
+-                   ",\"plan\":"+status(host.status(static_cast<std::int64_t>(id),owner))+"}";
+-        }
+-        throw std::invalid_argument("unknown host request");
+-    }
+-    PersistentWorld world;
+-    HostBlueprintRegistry host;
+-    PlayerId owner=0;
+-    EntityId ship=0,site=0;
+-};
+-}
++#include "factory_host_protocol.hpp"
+ int main(int argc,char** argv){
+     if(argc!=2 && argc!=4){std::cerr<<"Usage: galaxy_factory_host_bridge EXISTING-world.sqlite [--site outpost-ID]\n";return 2;}
+     try{
+diff --git a/src/factory_host_protocol.hpp b/src/factory_host_protocol.hpp
+new file mode 100644
+index 0000000..bcb84a0
+--- /dev/null
++++ b/src/factory_host_protocol.hpp
+@@ -0,0 +1,140 @@
++#pragma once
++// Shared ECON-02B2d4c2 native factory protocol. This session is the ONLY bridge
++// to PersistentWorld and HostBlueprintRegistry; browser input is always data.
++// The launch operator selects the existing SQLite world and (optionally) site.
++// A supervising localhost HTTP process provides the authenticated session.
++#include "galaxy/HostBlueprintRegistry.hpp"
++#include <algorithm>
++#include <cctype>
++#include <cstdint>
++#include <filesystem>
++#include <iostream>
++#include <limits>
++#include <memory>
++#include <sstream>
++#include <stdexcept>
++#include <string>
++#include <vector>
++using namespace galaxy;
++using namespace galaxy::industry;
++namespace {
++std::string quote(const std::string& s){
++    std::string out="\"";
++    constexpr const char* hex="0123456789abcdef";
++    for(unsigned char c:s){
++        if(c=='"'||c=='\\'){out+='\\';out+=static_cast<char>(c);}
++        else if(c=='\n')out+="\\n";
++        else if(c=='\r')out+="\\r";
++        else if(c=='\t')out+="\\t";
++        else if(c<32){out+="\\u00";out+=hex[c>>4];out+=hex[c&15];}
++        else out+=static_cast<char>(c);
++    }
++    return out+'"';
++}
++std::uint64_t number(const std::string& text){
++    if(text.empty()||text.size()>19)throw std::invalid_argument("invalid unsigned integer");
++    std::uint64_t value=0;
++    for(const char c:text){
++        if(c<'0'||c>'9'||value>(std::numeric_limits<std::uint64_t>::max()-static_cast<unsigned>(c-'0'))/10)
++            throw std::invalid_argument("invalid unsigned integer");
++        value=value*10+static_cast<unsigned>(c-'0');
++    }
++    return value;
++}
++std::string base64(const std::string& encoded){
++    if(encoded.empty()||encoded.size()>1400000 || encoded.size()%4)throw std::invalid_argument("invalid blueprint payload length");
++    auto digit=[](char c)->int{
++        if(c>='A'&&c<='Z')return c-'A';if(c>='a'&&c<='z')return c-'a'+26;
++        if(c>='0'&&c<='9')return c-'0'+52;
++        if(c=='+')return 62;if(c=='/')return 63;return -1;
++    };
++    std::string result;result.reserve(encoded.size()*3/4);
++    for(std::size_t i=0;i<encoded.size();i+=4){
++        const bool final=i+4==encoded.size();
++        const int a=digit(encoded[i]),b=digit(encoded[i+1]);
++        const int c=encoded[i+2]=='='?-2:digit(encoded[i+2]);
++        const int d=encoded[i+3]=='='?-2:digit(encoded[i+3]);
++        if(a<0||b<0||c==-1||d==-1 || (c==-2&&d!=-2) || (!final&&(c==-2||d==-2)) ||
++           (c==-2&&(b&15)) || (d==-2&&c>=0&&(c&3)))throw std::invalid_argument("invalid blueprint encoding");
++        const std::uint32_t bits=(static_cast<std::uint32_t>(a)<<18)|(static_cast<std::uint32_t>(b)<<12)|
++          (static_cast<std::uint32_t>(std::max(c,0))<<6)|static_cast<std::uint32_t>(std::max(d,0));
++        result+=static_cast<char>((bits>>16)&255);
++        if(c>=0)result+=static_cast<char>((bits>>8)&255);
++        if(d>=0)result+=static_cast<char>(bits&255);
++    }
++    if(result.size()>1048576)throw std::invalid_argument("blueprint exceeds host limit");
++    return result;
++}
++std::string status(const HostedPlanStatus& p){
++    const auto& a=p.progress;
++    return "{\"id\":"+std::to_string(p.plan_id)+",\"site\":"+std::to_string(p.site)+
++       ",\"completed\":"+std::to_string(a.completed)+",\"total\":"+std::to_string(a.total)+
++       ",\"modulesRemaining\":"+std::to_string(a.modules_remaining)+
++       ",\"cancelled\":"+(a.cancelled?"true":"false")+
++       ",\"conflicting\":"+(a.conflicting?"true":"false")+
++       ",\"finished\":"+(a.finished()?"true":"false")+
++       ",\"reason\":"+quote(a.reason)+"}";
++}
++std::string event(const Event& e){
++    return "{\"commandId\":"+std::to_string(e.command_id)+",\"tick\":"+std::to_string(e.tick)+
++           ",\"applied\":"+(e.result==Outcome::Applied?"true":"false")+
++           ",\"result\":"+std::to_string(static_cast<int>(e.result))+"}";
++}
++struct Server {
++    explicit Server(const std::string& path,std::uint64_t requested_site):world(path,Simulation(1)),host(path,world){
++        const auto& sites=world.world().built_outposts();
++        if(sites.empty())throw std::runtime_error("World has no constructed outpost; no new colony will be fabricated");
++        if(!requested_site){
++            if(sites.size()!=1)throw std::runtime_error("More than one outpost; specify --site N in trusted launcher");
++            site=sites.begin()->first;
++        }else site=requested_site;
++        auto it=sites.find(site);if(it==sites.end())throw std::runtime_error("Selected site does not exist");
++        ship=it->second.source_colony_ship;
++        const auto* actor=world.world().find(ship);
++        if(!actor||!world.world().colony_ship(ship)||actor->owner_id==0)throw std::runtime_error("Invalid founding colony ship");
++        owner=actor->owner_id;
++    }
++    std::string handle(const std::string& input){
++        const auto sep=input.find('|');const std::string op=input.substr(0,sep);
++        const std::string arg=sep==std::string::npos?"":input.substr(sep+1);
++        if(op=="HELLO"){
++            const auto* c=world.world().colony_ship(ship);
++            return "{\"ok\":true,\"site\":"+std::to_string(site)+",\"ship\":"+std::to_string(ship)+
++                   ",\"modulesAvailable\":"+std::to_string(c?c->modules:0)+",\"tick\":"+std::to_string(world.world().tick())+"}";
++        }
++        if(op=="LIST"){
++            const auto plans=host.list(owner);std::string out="{\"ok\":true,\"plans\":[";
++            for(std::size_t i=0;i<plans.size();++i){if(i)out+=',';out+=status(plans[i]);}
++            return out+"]}";
++        }
++        if(op=="REGISTER"){
++            const auto id=host.register_layout(base64(arg),owner,ship,site);
++            return "{\"ok\":true,\"plan\":"+status(host.status(id,owner))+"}";
++        }
++        if(op=="STATUS"){
++            const auto id=number(arg);
++            if(id>static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))throw std::invalid_argument("invalid plan ID");
++            return "{\"ok\":true,\"plan\":"+status(host.status(static_cast<std::int64_t>(id),owner))+"}";
++        }
++        if(op=="CANCEL"){
++            const auto id=number(arg);
++            if(id>static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))throw std::invalid_argument("invalid plan ID");
++            const bool did=host.cancel(static_cast<std::int64_t>(id),owner);
++            return std::string("{\"ok\":true,\"changed\":")+(did?"true":"false")+
++                   ",\"plan\":"+status(host.status(static_cast<std::int64_t>(id),owner))+"}";
++        }
++        if(op=="STEP"){
++            const auto id=number(arg);
++            if(id>static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))throw std::invalid_argument("invalid plan ID");
++            const auto e=host.execute_one(static_cast<std::int64_t>(id),owner);
++            return "{\"ok\":true,\"event\":"+event(e)+
++                   ",\"plan\":"+status(host.status(static_cast<std::int64_t>(id),owner))+"}";
++        }
++        throw std::invalid_argument("unknown host request");
++    }
++    PersistentWorld world;
++    HostBlueprintRegistry host;
++    PlayerId owner=0;
++    EntityId ship=0,site=0;
++};
++}
+diff --git a/src/factory_native_host.cpp b/src/factory_native_host.cpp
+new file mode 100644
+index 0000000..51f1d56
+--- /dev/null
++++ b/src/factory_native_host.cpp
+@@ -0,0 +1,367 @@
++// ECON-02B2d4c3: self-contained, localhost-only native factory UI host.
++// No Node runtime, browser authority, silent world creation, or external bind.
++#include "factory_host_protocol.hpp"
++#include <array>
++#include <chrono>
++#include <cstdlib>
++#include <fstream>
++#include <map>
++#include <optional>
++#include <system_error>
++#include <thread>
++#ifdef _WIN32
++#  define WIN32_LEAN_AND_MEAN
++#  define NOMINMAX
++#  include <winsock2.h>
++#  include <ws2tcpip.h>
++#  include <windows.h>
++#  include <bcrypt.h>
++#  include <shellapi.h>
++#  include <commdlg.h>
++#  pragma comment(lib, "ws2_32.lib")
++#  pragma comment(lib, "bcrypt.lib")
++#  pragma comment(lib, "shell32.lib")
++#  pragma comment(lib, "comdlg32.lib")
++using Socket = SOCKET;
++constexpr Socket invalid_socket = INVALID_SOCKET;
++void close_socket(Socket s) { closesocket(s); }
++#else
++#  include <arpa/inet.h>
++#  include <errno.h>
++#  include <fcntl.h>
++#  include <netinet/in.h>
++#  include <signal.h>
++#  include <sys/random.h>
++#  include <sys/socket.h>
++#  include <sys/time.h>
++#  include <unistd.h>
++#  include <sys/wait.h>
++using Socket = int;
++constexpr Socket invalid_socket = -1;
++void close_socket(Socket s) { ::close(s); }
++#endif
++namespace {
++constexpr std::size_t header_limit = 16384;
++constexpr std::size_t body_limit = 1100000;
++struct SocketGuard {
++    Socket value = invalid_socket;
++    explicit SocketGuard(Socket s):value(s){}
++    ~SocketGuard(){if(value!=invalid_socket)close_socket(value);}
++    SocketGuard(const SocketGuard&)=delete;
++    SocketGuard& operator=(const SocketGuard&)=delete;
++};
++std::string lower(std::string s){for(char& c:s)c=static_cast<char>(std::tolower(static_cast<unsigned char>(c)));return s;}
++std::string hex_secret(){
++    std::array<unsigned char,32> bits{};
++#ifdef _WIN32
++    if(BCryptGenRandom(nullptr,bits.data(),static_cast<ULONG>(bits.size()),BCRYPT_USE_SYSTEM_PREFERRED_RNG)!=0)
++        throw std::runtime_error("OS CSPRNG unavailable");
++#else
++    std::size_t done=0;
++    while(done<bits.size()){
++        const auto n=getrandom(bits.data()+done,bits.size()-done,0);
++        if(n<0 && errno==EINTR)continue;
++        if(n<=0)throw std::runtime_error("OS CSPRNG unavailable");
++        done+=static_cast<std::size_t>(n);
++    }
++#endif
++    constexpr char hex[]="0123456789abcdef";
++    std::string out;out.reserve(bits.size()*2);
++    for(auto b:bits){out+=hex[b>>4];out+=hex[b&15];}
++    return out;
++}
++void timeouts(Socket s){
++#ifdef _WIN32
++    DWORD timeout=5000;
++    setsockopt(s,SOL_SOCKET,SO_RCVTIMEO,reinterpret_cast<const char*>(&timeout),sizeof(timeout));
++    setsockopt(s,SOL_SOCKET,SO_SNDTIMEO,reinterpret_cast<const char*>(&timeout),sizeof(timeout));
++#else
++    timeval t{5,0};setsockopt(s,SOL_SOCKET,SO_RCVTIMEO,&t,sizeof(t));
++    setsockopt(s,SOL_SOCKET,SO_SNDTIMEO,&t,sizeof(t));
++#endif
++}
++void send_all(Socket s,const std::string& data){
++    std::size_t off=0;
++    while(off<data.size()){
++        const auto n=send(s,data.data()+off,static_cast<int>(std::min<std::size_t>(data.size()-off,32768)),0);
++        if(n<=0)throw std::runtime_error("socket send failed");
++        off+=static_cast<std::size_t>(n);
++    }
++}
++void reply(Socket s,int status,const std::string& mime,const std::string& payload){
++    const char* reason=status==200?"OK":status==400?"Bad Request":status==403?"Forbidden":status==404?"Not Found":status==405?"Method Not Allowed":status==413?"Payload Too Large":status==415?"Unsupported Media Type":"Service Unavailable";
++    std::string head="HTTP/1.1 "+std::to_string(status)+" "+reason+"\r\nConnection: close\r\nCache-Control: no-store\r\nReferrer-Policy: no-referrer\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nContent-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'\r\nContent-Type: "+mime+"\r\nContent-Length: "+std::to_string(payload.size())+"\r\n\r\n";
++    send_all(s,head);send_all(s,payload);
++}
++std::string error_json(const std::string& message){return "{\"ok\":false,\"error\":"+quote(message.substr(0,256))+"}";}
++using Headers = std::map<std::string,std::string>;
++struct Request {std::string method,uri,body;Headers headers;};
++std::string trim(std::string s){const auto a=s.find_first_not_of(" \t");if(a==std::string::npos)return "";const auto b=s.find_last_not_of(" \t");return s.substr(a,b-a+1);}
++std::string header(const Headers& h,const std::string& name){const auto it=h.find(name);return it==h.end()?"":it->second;}
++Request read_request(Socket s){
++    std::string all;
++    std::size_t boundary=std::string::npos;
++    std::array<char,8192> block{};
++    while((boundary=all.find("\r\n\r\n"))==std::string::npos){
++        if(all.size()>header_limit)throw std::invalid_argument("Headers too large");
++        const auto n=recv(s,block.data(),static_cast<int>(block.size()),0);
++        if(n<=0)throw std::invalid_argument("Request timed out or disconnected");
++        all.append(block.data(),static_cast<std::size_t>(n));
++        if(all.size()>header_limit+body_limit)throw std::invalid_argument("Request too large");
++    }
++    if(boundary>header_limit)throw std::invalid_argument("Headers too large");
++    std::istringstream hs(all.substr(0,boundary)+"\r\n");
++    Request req;std::string first,version,extra;
++    if(!std::getline(hs,first)||first.empty()||first.back()!='\r')throw std::invalid_argument("Invalid HTTP request line");
++    std::istringstream line(first.substr(0,first.size()-1));
++    if(!(line>>req.method>>req.uri>>version)||(line>>extra)||version!="HTTP/1.1")throw std::invalid_argument("HTTP/1.1 required");
++    std::string field;
++    while(std::getline(hs,field)){
++        if(field.empty()||field.back()!='\r')throw std::invalid_argument("Invalid header line");
++        field.pop_back();if(field.empty())continue;
++        const auto p=field.find(':');if(p==std::string::npos||p==0||field.front()==' '||field.front()=='\t')throw std::invalid_argument("Invalid header");
++        const std::string name=lower(field.substr(0,p));
++        if(name.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789!#$%&'*+-.^_`|~")!=std::string::npos)
++            throw std::invalid_argument("Invalid header name");
++        if(!req.headers.emplace(name,trim(field.substr(p+1))).second)throw std::invalid_argument("Duplicate header");
++    }
++    if(header(req.headers,"transfer-encoding")!="")throw std::invalid_argument("Chunked requests not accepted");
++    const std::string length=header(req.headers,"content-length");
++    std::size_t bytes=0;
++    if(!length.empty()){
++        bytes=number(length);
++        if(bytes>body_limit)throw std::length_error("Request too large");
++    }
++    req.body=all.substr(boundary+4);
++    if(req.body.size()>bytes)throw std::invalid_argument("Unexpected request bytes");
++    while(req.body.size()<bytes){
++        const auto n=recv(s,block.data(),static_cast<int>(std::min<std::size_t>(block.size(),bytes-req.body.size())),0);
++        if(n<=0)throw std::invalid_argument("Incomplete request body");
++        req.body.append(block.data(),static_cast<std::size_t>(n));
++    }
++    return req;
++}
++// Narrow JSON parser: exactly one key/value, object only, no duplicate keys,
++// no ambient owner/site parameter. Full decoding for the blueprint string.
++class JsonReader {
++public:
++    explicit JsonReader(const std::string& data):data_(data){}
++    std::pair<std::string,std::string> single_field(bool text_value){
++        ws();eat('{');ws();auto key=string();ws();eat(':');ws();
++        std::string value=text_value?string():unsigned_number();
++        ws();eat('}');ws();if(pos_!=data_.size())fail();
++        return {key,value};
++    }
++private:
++    void fail()const{throw std::invalid_argument("Invalid JSON request");}
++    void ws(){while(pos_<data_.size()&&(data_[pos_]==' '||data_[pos_]=='\n'||data_[pos_]=='\r'||data_[pos_]=='\t'))++pos_;}
++    void eat(char c){if(pos_>=data_.size()||data_[pos_++]!=c)fail();}
++    unsigned hex4(){unsigned x=0;for(int i=0;i<4;i++){
++        if(pos_>=data_.size())fail();const auto c=data_[pos_++];int a= c>='0'&&c<='9'?c-'0':c>='a'&&c<='f'?c-'a'+10:c>='A'&&c<='F'?c-'A'+10:-1;
++        if(a<0)fail();x=(x<<4)|static_cast<unsigned>(a);
++    }return x;}
++    void utf8(std::string& out,unsigned cp){
++        if(cp<=0x7F)out+=char(cp);
++        else if(cp<=0x7FF){out+=char(0xC0|(cp>>6));out+=char(0x80|(cp&63));}
++        else if(cp<=0xFFFF){out+=char(0xE0|(cp>>12));out+=char(0x80|((cp>>6)&63));out+=char(0x80|(cp&63));}
++        else{out+=char(0xF0|(cp>>18));out+=char(0x80|((cp>>12)&63));out+=char(0x80|((cp>>6)&63));out+=char(0x80|(cp&63));}
++    }
++    std::string string(){eat('"');std::string out;
++        while(pos_<data_.size()){
++            unsigned char c=data_[pos_++];if(c=='"')return out;
++            if(c<32)fail();
++            if(c!='\\'){out+=char(c);continue;}
++            if(pos_>=data_.size())fail();const char e=data_[pos_++];
++            switch(e){
++            case '"':out+='"';break;case '\\':out+='\\';break;case '/':out+='/';break;
++            case 'b':out+='\b';break;case 'f':out+='\f';break;case 'n':out+='\n';break;
++            case 'r':out+='\r';break;case 't':out+='\t';break;
++            case 'u':{
++                unsigned x=hex4();
++                if(x>=0xD800&&x<=0xDBFF){
++                    if(pos_+2>data_.size()||data_.substr(pos_,2)!="\\u")fail();pos_+=2;
++                    const auto lo=hex4();if(lo<0xDC00||lo>0xDFFF)fail();
++                    x=0x10000+(x-0xD800)*1024+(lo-0xDC00);
++                }else if(x>=0xDC00&&x<=0xDFFF)fail();
++                utf8(out,x);break;
++            }
++            default:fail();
++            }
++        }fail();return {};
++    }
++    std::string unsigned_number(){const auto begin=pos_;
++        while(pos_<data_.size() && data_[pos_]>='0'&&data_[pos_]<='9')++pos_;
++        if(pos_==begin)fail();return data_.substr(begin,pos_-begin);
++    }
++    const std::string& data_;std::size_t pos_=0;
++};
++std::string b64encode(const std::string& s){
++    constexpr char enc[]="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
++    std::string out;out.reserve((s.size()+2)/3*4);
++    for(std::size_t i=0;i<s.size();i+=3){
++        const auto a=static_cast<unsigned char>(s[i]);
++        const auto b=i+1<s.size()?static_cast<unsigned char>(s[i+1]):0;
++        const auto c=i+2<s.size()?static_cast<unsigned char>(s[i+2]):0;
++        out+=enc[a>>2];out+=enc[((a&3)<<4)|(b>>4)];
++        out+=i+1<s.size()?enc[((b&15)<<2)|(c>>6)]:'=';
++        out+=i+2<s.size()?enc[c&63]:'=';
++    }return out;
++}
++std::filesystem::path binary_path(const std::filesystem::path& fallback){
++#ifdef _WIN32
++    std::array<wchar_t,32768> buf{};
++    const auto n=GetModuleFileNameW(nullptr,buf.data(),static_cast<DWORD>(buf.size()));
++    if(n>0&&n<buf.size())return std::filesystem::path(std::wstring(buf.data(),n));
++#else
++    std::array<char,4096> buf{};
++    const auto n=readlink("/proc/self/exe",buf.data(),buf.size());
++    if(n>0&&static_cast<std::size_t>(n)<buf.size())return std::filesystem::path(std::string(buf.data(),n));
++#endif
++    return std::filesystem::absolute(fallback);
++}
++#ifdef _WIN32
++std::string choose_existing_world(){
++    std::array<wchar_t,32768> path{};
++    OPENFILENAMEW dialog{};
++    dialog.lStructSize=sizeof(dialog);
++    dialog.lpstrFile=path.data();
++    dialog.nMaxFile=static_cast<DWORD>(path.size());
++    dialog.lpstrFilter=L"Single Galaxy worlds (*.sqlite;*.db)\0*.sqlite;*.db\0All files (*.*)\0*.*\0\0";
++    dialog.lpstrTitle=L"Choose an existing Single Galaxy colony save";
++    dialog.Flags=OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST|OFN_NOCHANGEDIR;
++    if(!GetOpenFileNameW(&dialog))throw std::runtime_error("No existing colony save selected");
++    return std::filesystem::path(path.data()).u8string();
++}
++#endif
++std::filesystem::path viewer_root(const std::filesystem::path& exe,const std::string& override){
++    if(!override.empty())return std::filesystem::canonical(override);
++    const auto dir=binary_path(exe).parent_path();
++    for(const auto& folder:{dir/"viewer",dir/"../share/single-galaxy/viewer"}){
++        if(std::filesystem::is_regular_file(folder/"factory.html"))return std::filesystem::canonical(folder);
++    }
++    throw std::runtime_error("Factory viewer assets missing beside executable");
++}
++std::string asset(const std::filesystem::path& root,const std::string& name){
++    std::ifstream stream(root/name,std::ios::binary);
++    if(!stream)throw std::runtime_error("Missing packaged factory asset: "+name);
++    return {std::istreambuf_iterator<char>(stream),std::istreambuf_iterator<char>()};
++}
++void handle_connection(Socket s,Server& game,const std::string& secret,const std::string& origin,const std::filesystem::path& assets){
++    auto json=[&](int status,const std::string& content){reply(s,status,"application/json; charset=utf-8",content);};
++    try{
++        const auto req=read_request(s);
++        if(header(req.headers,"host")!=origin.substr(7))return json(403,error_json("Invalid host"));
++        const std::string prefix="/session/"+secret+"/";
++        if(req.uri.compare(0,prefix.size(),prefix)!=0)return json(404,error_json("Unknown session"));
++        const std::string endpoint=req.uri.substr(prefix.size());
++        const std::map<std::string,std::string> files={{"factory.html","text/html; charset=utf-8"},
++          {"factory.js","text/javascript; charset=utf-8"},{"factory-layout.js","text/javascript; charset=utf-8"},
++          {"factory-live.js","text/javascript; charset=utf-8"}};
++        if(req.method=="GET"&&req.body.empty()){
++            const auto it=files.find(endpoint);
++            if(it!=files.end())return reply(s,200,it->second,asset(assets,it->first));
++            if(endpoint=="api/hello")return json(200,game.handle("HELLO"));
++            if(endpoint=="api/plans")return json(200,game.handle("LIST"));
++        }
++        if(req.method!="POST" || req.uri.find('?')!=std::string::npos ||
++           (endpoint!="api/register"&&endpoint!="api/status"&&endpoint!="api/step"&&endpoint!="api/cancel"))
++            return json(404,error_json("Unknown route"));
++        if(header(req.headers,"origin")!=origin || header(req.headers,"x-sg-session")!=secret ||
++           (!header(req.headers,"sec-fetch-site").empty()&&header(req.headers,"sec-fetch-site")!="same-origin"))
++            return json(403,error_json("Session authorization denied"));
++        const std::string type=lower(header(req.headers,"content-type"));
++        if(type!="application/json"&&type!="application/json; charset=utf-8")return json(415,error_json("JSON required"));
++        if(req.headers.find("content-length")==req.headers.end())return json(400,error_json("Content-Length required"));
++        const std::string op=endpoint.substr(4);
++        if(op=="register"){
++            const auto input=JsonReader(req.body).single_field(true);
++            if(input.first!="layout"||input.second.size()>1048576)throw std::invalid_argument("Invalid blueprint");
++            const std::string response=game.handle("REGISTER|"+b64encode(input.second));
++            return json(response.find("\"ok\":true")==0||response.find("{\"ok\":true")==0?200:400,response);
++        }
++        const auto input=JsonReader(req.body).single_field(false);
++        if(input.first!="id")throw std::invalid_argument("Invalid plan ID");
++        const auto n=number(input.second);
++        if(n==0||n>static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())||
++           input.second.size()>1&&input.second[0]=='0')throw std::invalid_argument("Invalid plan ID");
++        const std::string command=op=="step"?"STEP":op=="status"?"STATUS":"CANCEL";
++        const std::string response=game.handle(command+"|"+std::to_string(n));
++        return json(response.find("{\"ok\":true")==0?200:400,response);
++    }catch(const std::length_error& e){json(413,error_json(e.what()));}
++    catch(const std::exception& e){json(400,error_json(e.what()));}
++}
++void launch_browser(const std::string& url){
++#ifdef _WIN32
++    ShellExecuteA(nullptr,"open",url.c_str(),nullptr,nullptr,SW_SHOWNORMAL);
++#else
++    const pid_t pid=fork();
++    if(pid==0){
++        const auto child=fork();
++        if(child!=0)_exit(child<0?127:0);
++        const auto devnull=open("/dev/null",O_WRONLY);
++        if(devnull>=0){dup2(devnull,1);dup2(devnull,2);close(devnull);}
++        execlp("xdg-open","xdg-open",url.c_str(),static_cast<char*>(nullptr));_exit(127);
++    }
++    if(pid>0){int result=0;waitpid(pid,&result,0);}
++#endif
++}
++}
++int main(int argc,char** argv){
++    try{
++        std::string db,assets,site;bool open_browser=true;
++        for(int i=1;i<argc;i++){
++            const std::string a=argv[i];
++            if(a=="--no-browser")open_browser=false;
++            else if((a=="--db"||a=="--site"||a=="--assets")&&i+1<argc){
++                const std::string v=argv[++i];if(a=="--db")db=v;else if(a=="--site")site=v;else assets=v;
++            }else throw std::invalid_argument("Usage: galaxy_factory_local_host --db EXISTING.sqlite [--site N] [--assets dir] [--no-browser]");
++        }
++#ifdef _WIN32
++        if(db.empty())db=choose_existing_world();
++#endif
++        if(db.empty() || !std::filesystem::is_regular_file(db) || std::filesystem::file_size(db)==0)
++            throw std::runtime_error("Existing nonempty SQLite world required; no new world is created");
++        const std::filesystem::path viewer=viewer_root(argv[0],assets);
++        for(const auto& f:{"factory.html","factory.js","factory-layout.js","factory-live.js"})
++            if(!std::filesystem::is_regular_file(viewer/f))throw std::runtime_error(std::string("Missing viewer asset: ")+f);
++        Server game(db,site.empty()?0:number(site));
++#ifdef _WIN32
++        WSADATA wsa{};if(WSAStartup(MAKEWORD(2,2),&wsa))throw std::runtime_error("Winsock startup failed");
++#else
++        signal(SIGPIPE,SIG_IGN);
++#endif
++        SocketGuard listener(socket(AF_INET,SOCK_STREAM,0));
++        if(listener.value==invalid_socket)throw std::runtime_error("Local socket create failed");
++#ifdef _WIN32
++        BOOL only_this_process=TRUE;
++        if(setsockopt(listener.value,SOL_SOCKET,SO_EXCLUSIVEADDRUSE,reinterpret_cast<const char*>(&only_this_process),sizeof(only_this_process))!=0)
++            throw std::runtime_error("Exclusive socket ownership unavailable");
++#else
++        fcntl(listener.value,F_SETFD,FD_CLOEXEC);
++#endif
++        sockaddr_in address{};address.sin_family=AF_INET;address.sin_port=0;address.sin_addr.s_addr=htonl(INADDR_LOOPBACK);
++        if(bind(listener.value,reinterpret_cast<const sockaddr*>(&address),sizeof(address))!=0||listen(listener.value,8)!=0)
++            throw std::runtime_error("Local socket bind/listen failed");
++#ifdef _WIN32
++        int n=sizeof(address);
++#else
++        socklen_t n=sizeof(address);
++#endif
++        if(getsockname(listener.value,reinterpret_cast<sockaddr*>(&address),&n)!=0)
++            throw std::runtime_error("Local socket name failed");
++        const std::string origin="http://127.0.0.1:"+std::to_string(ntohs(address.sin_port));
++        const std::string secret=hex_secret();
++        const std::string url=origin+"/session/"+secret+"/factory.html";
++        std::cout<<"SG_FACTORY_URL="<<url<<"\nFACTORY_WORLD="<<std::filesystem::absolute(db).string()<<"\n"<<std::flush;
++        if(open_browser)launch_browser(url);
++        while(true){
++            SocketGuard client(accept(listener.value,nullptr,nullptr));
++            if(client.value==invalid_socket)continue;
++            timeouts(client.value);
++            try{handle_connection(client.value,game,secret,origin,viewer);}catch(const std::exception& e){std::cerr<<"Local request error: "<<e.what()<<'\n';}
++        }
++#ifdef _WIN32
++        WSACleanup();
++#endif
++    }catch(const std::exception& e){std::cerr<<"Factory native host refused startup: "<<e.what()<<'\n';return 1;}
++}
+diff --git a/tests/ECON02B2d4c3NativeHostTests.cjs b/tests/ECON02B2d4c3NativeHostTests.cjs
+new file mode 100644
+index 0000000..306f691
+--- /dev/null
++++ b/tests/ECON02B2d4c3NativeHostTests.cjs
+@@ -0,0 +1,85 @@
++'use strict';
++const assert=require('node:assert/strict');
++const http=require('node:http');
++const fs=require('node:fs');
++const os=require('node:os');
++const path=require('node:path');
++const {spawn,spawnSync}=require('node:child_process');
++const args=process.argv.slice(2);
++const arg=n=>args[args.indexOf(n)+1];
++let root=fs.mkdtempSync(path.join(os.tmpdir(),'sg-native-factory-'));
++let server;
++async function launch(db,executable=arg('--host')){
++  server=spawn(executable,['--db',db,'--no-browser'],{stdio:['ignore','pipe','pipe']});
++  let output='',error='';server.stderr.on('data',x=>error+=x);
++  const url=await new Promise((resolve,reject)=>{
++    const timeout=setTimeout(()=>reject(Error('live server launch timeout: '+error)),8000);
++    server.once('exit',code=>{clearTimeout(timeout);reject(Error('server quit '+code+': '+error));});
++    server.stdout.on('data',c=>{output+=c;const m=output.match(/SG_FACTORY_URL=(https?:\/\/\S+)/);if(m){clearTimeout(timeout);resolve(m[1]);}});
++  });
++  return url;
++}
++async function stop(){if(!server)return;const prev=server;server=null;
++  if(prev.exitCode===null){prev.kill('SIGTERM');await new Promise(r=>{prev.once('exit',r);setTimeout(r,1000);});}}
++async function main(){
++  const db=path.join(root,'world.sqlite');
++  const fixture=spawnSync(arg('--fixture'),[db],{encoding:'utf8',timeout:10000});
++  assert.equal(fixture.status,0,fixture.stderr);
++  const nonexistent=path.join(root,'NEVER_CREATE.sqlite');
++  const denied=spawnSync(arg('--host'),['--db',nonexistent,'--no-browser'],{encoding:'utf8',timeout:5000});
++  assert.notEqual(denied.status,0);assert.equal(fs.existsSync(nonexistent),false);
++  const packageDir=path.join(root,'portable');
++  fs.mkdirSync(packageDir,{recursive:true});
++  const packaged=path.join(packageDir,path.basename(arg('--host')));
++  fs.copyFileSync(arg('--host'),packaged);fs.chmodSync(packaged,0o755);
++  fs.cpSync(path.join(path.dirname(arg('--host')),'viewer'),path.join(packageDir,'viewer'),{recursive:true});
++  const layout=fs.readFileSync(arg('--layout'),'utf8');
++  let url=await launch(db);
++  async function get(name){const r=await fetch(new URL('api/'+name,url));return [r,await r.json()];}
++  async function post(name,body,opts={}){
++    const dest=new URL('api/'+name,url);
++    const headers={'Content-Type':'application/json',Origin:dest.origin,'X-SG-Session':dest.pathname.match(/\/session\/([a-f0-9]{64})\//)[1],...opts.headers};
++    const response=await fetch(dest,{method:'POST',headers,body:JSON.stringify(body)});
++    return [response,await response.json()];
++  }
++  let [resp,hello]=await get('hello');assert.equal(resp.status,200);assert(hello.site>0);assert(hello.modulesAvailable>=12);
++  // No global path, no ambient browser authentication, no foreign origin.
++  resp=await fetch(new URL('/api/hello',url));assert.equal(resp.status,404);
++  resp=await fetch(new URL('factory.html',url));assert.equal(resp.status,200);assert((await resp.text()).includes('Authorize plan'));
++  const badHostStatus=await new Promise((resolve,reject)=>{const u=new URL('api/hello',url);const req=http.request(u,{headers:{Host:'evil.test'}},r=>{r.resume();r.on('end',()=>resolve(r.statusCode));});req.on('error',reject);req.end();});
++  assert.equal(badHostStatus,403);
++  resp=await fetch(new URL('api/hello',url),{method:'POST',headers:{Origin:new URL(url).origin,'X-SG-Session':url.match(/session\/([a-f0-9]{64})/)[1],'Content-Type':'application/json'},body:'{}'});assert.equal(resp.status,404);
++  resp=await fetch(new URL('../evil.txt',url));assert.equal(resp.status,404);
++  resp=await fetch(new URL('factory-live.js',url));assert.equal(resp.status,200);
++  assert((await resp.text()).includes('window.SingleGalaxyEditorInstance'));
++  [resp]=await post('register',{layout},{headers:{Origin:'https://evil.test'}});assert.equal(resp.status,403);
++  [resp]=await post('register',{layout},{headers:{'X-SG-Session':'wrong'}});assert.equal(resp.status,403);
++  [resp]=await post('register',{layout:'{"format":"single-galaxy-factory-design-v1"}'});assert.equal(resp.status,400);
++  [resp]=await post('register',{layout:layout+'extra'});assert.equal(resp.status,400);
++  [resp]=await post('register',{layout,owner:777});assert.equal(resp.status,400);
++  [resp]=await post('step',{id:1,site:999});assert.equal(resp.status,400);
++  [resp]=await post('step',{id:-1});assert.equal(resp.status,400);
++  let result;
++  [resp,result]=await post('register',{layout});assert.equal(resp.status,200);assert.equal(result.plan.total,16);
++  const id=result.plan.id;
++  [resp,result]=await post('register',{layout});assert.equal(resp.status,400);assert.match(result.error,/pending host-authorized/);
++  for(let i=1;i<=4;i++){
++    [resp,result]=await post('step',{id});assert.equal(resp.status,200);assert.equal(result.event.applied,true);
++    assert.equal(result.plan.completed,i);
++  }
++  [resp,result]=await get('plans');assert.equal(resp.status,200);assert.equal(result.plans[0].completed,4);
++  const before=(await get('hello'))[1].modulesAvailable;
++  assert(before<hello.modulesAvailable);
++  // Simulate service restart; native world+plan must survive in SQLite.
++  await stop();url=await launch(db,packaged);
++  [resp,result]=await get('plans');assert.equal(result.plans[0].completed,4);
++  [resp,result]=await post('step',{id});assert.equal(resp.status,200);assert.equal(result.plan.completed,5);
++  [resp,result]=await post('cancel',{id});assert.equal(resp.status,200);assert.equal(result.plan.cancelled,true);
++  [resp,result]=await post('step',{id});assert.equal(resp.status,400);assert.match(result.error,/cancelled/);
++  [resp,result]=await post('register',{layout});assert.equal(resp.status,200);
++  assert.equal(result.plan.completed,5);assert(result.plan.id>id);
++  console.log('ECON-02B2d4c3 Node-free native host, portable assets, deny-create, origin/session/host denial, durable SQLite recovery PASS');
++}
++main().then(async()=>{await stop();fs.rmSync(root,{recursive:true,force:true});},async e=>{
++  console.error(e);await stop();fs.rmSync(root,{recursive:true,force:true});process.exitCode=1;
++});
+diff --git a/viewer/factory-live.js b/viewer/factory-live.js
+index 5180725..01ce64d 100644
+--- a/viewer/factory-live.js
++++ b/viewer/factory-live.js
+@@ -27,6 +27,10 @@ async function api(endpoint,body){
+ async function load(){
+   const [intro,list]=await Promise.all([api('hello'),api('plans')]);
+   connected=true;
++  const label=document.querySelector('header .pill');
++  if(label)label.textContent='Native colony host · player-authorized construction';
++  const returnLink=document.querySelector('header a[href="index.html"]');
++  if(returnLink)returnLink.hidden=true;
+   setText('liveStatus',`Connected · Outpost ${intro.site} · Ship ${intro.ship} · ${intro.modulesAvailable} modules available`);
+   const plans=list.plans.filter(p=>p.site===intro.site);
+   updatePlan(plans.find(p=>!p.cancelled&&!p.finished)||plans.at(-1)||null);
