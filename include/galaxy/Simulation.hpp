@@ -21,7 +21,7 @@ struct Vector2 {
 };
 
 enum class EntityType { Ship, Asteroid, Station, Stargate, Wreck };
-enum class Action { Thrust, Mine, StartMining, StopMining, RequestUndock, RequestDock, UnloadOre, LoadOre, SellOre, RequestJump, SetGatePairOnline, SetGateStaff, DeliverGateSpares, RefineOre, FabricateModule, ConstructOutpost, RefineMineral, FabricateMaterialModule, PlantCrops, HarvestCrops, RecycleWater, RecycleCompost, ProduceOxygen, LoadLifeWater, ConstructFarm, TransferFarmStock, AssignFarmWorkers, ConstructHabitat, TransferHabitatStock, AssignHabitatResidents, ConstructUtility, RepairUtility, TransferUtilitySpares, AssignUtilityTechnicians, SetUtilityMaintenance, ConstructCommunity, TransferCommunityStock, AssignCommunityStaff, ConstructClinic, TransferClinicStock, AssignClinicStaff, ConstructReclaimer, ConstructWaterworks, TransferWaterworksFeed, SetPolicyAssurance, AssignPolicyInspectors, AssignFarmMentor, HostDestroyShip, HostCrewLoss, ConstructWorkshop, TransferWorkshopFeed, AssignWorkshopOperator, TransferWorkshopOutput };
+enum class Action { Thrust, Mine, StartMining, StopMining, RequestUndock, RequestDock, UnloadOre, LoadOre, SellOre, RequestJump, SetGatePairOnline, SetGateStaff, DeliverGateSpares, RefineOre, FabricateModule, ConstructOutpost, RefineMineral, FabricateMaterialModule, PlantCrops, HarvestCrops, RecycleWater, RecycleCompost, ProduceOxygen, LoadLifeWater, ConstructFarm, TransferFarmStock, AssignFarmWorkers, ConstructHabitat, TransferHabitatStock, AssignHabitatResidents, ConstructUtility, RepairUtility, TransferUtilitySpares, AssignUtilityTechnicians, SetUtilityMaintenance, ConstructCommunity, TransferCommunityStock, AssignCommunityStaff, ConstructClinic, TransferClinicStock, AssignClinicStaff, ConstructReclaimer, ConstructWaterworks, TransferWaterworksFeed, SetPolicyAssurance, AssignPolicyInspectors, AssignFarmMentor, HostDestroyShip, HostCrewLoss, ConstructWorkshop, TransferWorkshopFeed, AssignWorkshopOperator, TransferWorkshopOutput, ConstructWorkshopFinisher, AssignWorkshopFinisher, TransferWorkshopFinalOutput };
 enum class Outcome { Applied, InvalidActor, Unauthorized, InvalidTarget, OutOfRange, InvalidArgument, NoResources, CargoFull, NotMining, NotInSpace, NotDocked, InTransition, ShipMoving, HangarFull, InsufficientFunds, WrongSystem, GateOffline, NotColonyShip, InsufficientCrew };
 enum class ActivityKind { AsteroidDespawned, AutoMiningTransfer, MiningStopped, Undocked, Docked, JumpCompleted, ShipDestroyed, NpcLost };
 enum class DockState { InSpace, Docked, Undocking, Docking };
@@ -305,6 +305,15 @@ struct OutpostWorkshop {
     std::uint32_t ticks_remaining=0;
     std::uint64_t completed_batches=0, elapsed_ticks=0;
     std::uint64_t operator_npc_id=0; // real local habitat resident
+    // ECON-02B1b: second independently staffed processor consumes 20kg of
+    // site-local panel blanks -> 19kg shaped frames + 1kg physical scrap.
+    // Existing panel stock is the bounded (1000kg) intermediate buffer.
+    bool finisher_installed=false;
+    std::uint64_t finisher_npc_id=0;
+    std::int64_t reserved_panels_kg=0; // 20kg when finisher has WIP
+    std::uint32_t finisher_ticks_remaining=0;
+    std::int64_t frames_kg=0;         // finite 1000kg output stock
+    std::uint64_t finisher_batches=0, finisher_elapsed_ticks=0;
 };
 struct BuiltOutpost {
     EntityId source_colony_ship = 0;
@@ -553,7 +562,7 @@ private:
     std::map<EntityId,OutpostWorkshop> workshops_;
     std::map<EntityId, AsteroidGeology> geology_;
     std::vector<ActivityEvent> activity_events_;
-    int snapshot_version_ = 1; // v22 optional real outpost Tier 1 workshop, old saves readable
+    int snapshot_version_ = 1; // v23 optional two-stage outpost line, older saves readable
     std::map<std::uint64_t, std::vector<Command>> commands_;
     std::set<std::uint64_t> submitted_ids_;
     std::vector<Event> events_;

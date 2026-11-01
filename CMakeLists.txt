@@ -516,3 +516,10 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_econ02b1a_outpost_tests PRIVATE galaxy_kernel SQLite::SQLite3)
   add_test(NAME galaxy_econ02b1a_outpost_tests COMMAND galaxy_econ02b1a_outpost_tests)
 endif()
+
+# ECON-02B1b: independent outpost machine, bounded interstage stock, and backpressure.
+if(BUILD_TESTING)
+  add_executable(galaxy_econ02b1b_connected_tests tests/ECON02B1bConnectedLineTests.cpp)
+  target_link_libraries(galaxy_econ02b1b_connected_tests PRIVATE galaxy_kernel SQLite::SQLite3)
+  add_test(NAME galaxy_econ02b1b_connected_tests COMMAND galaxy_econ02b1b_connected_tests)
+endif()

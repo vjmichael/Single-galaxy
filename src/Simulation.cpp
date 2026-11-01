@@ -43,7 +43,7 @@ bool is_known_mineral(const std::string& name) {
     return false;
 }
 bool is_known_good(const std::string& name) {
-    return name=="structural_alloy" || name=="aluminum" || name=="aluminum_panels" || name=="aluminum_scrap" || name=="ceramic" ||
+    return name=="structural_alloy" || name=="aluminum" || name=="aluminum_panels" || name=="aluminum_scrap" || name=="aluminum_frames" || name=="ceramic" ||
            name=="glass" || name=="water" || name=="sulfur" || name=="carbon_feed";
 }
 // Physical prototype recipes. The yields are deliberately playable estimates,
@@ -316,8 +316,10 @@ void Simulation::move_npc_records(EntityId ship,EntityId site,NpcRole role,std::
         // machine operator. Reserved material remains owned by the workshop.
         if(source!=ship){
             auto wi=workshops_.find(source);
-            if(wi!=workshops_.end() && wi->second.operator_npc_id==id)
-                wi->second.operator_npc_id=0;
+            if(wi!=workshops_.end()){
+                if(wi->second.operator_npc_id==id)wi->second.operator_npc_id=0;
+                if(wi->second.finisher_npc_id==id)wi->second.finisher_npc_id=0;
+            }
         }
         n.location=target;n.role=target_role;
         // A departed mentor or apprentice must not leave phantom training.
@@ -575,18 +577,25 @@ bool Simulation::submit(const Command& c) {
     const bool workshop_command=c.action==Action::ConstructWorkshop ||
         c.action==Action::TransferWorkshopFeed ||
         c.action==Action::AssignWorkshopOperator ||
-        c.action==Action::TransferWorkshopOutput;
+        c.action==Action::TransferWorkshopOutput ||
+        c.action==Action::ConstructWorkshopFinisher ||
+        c.action==Action::AssignWorkshopFinisher ||
+        c.action==Action::TransferWorkshopFinalOutput;
     if(workshop_command){
         if(!c.target || c.thrust_y ||
-           (c.action==Action::ConstructWorkshop && (c.amount!=1 || c.thrust_x)) ||
+           ((c.action==Action::ConstructWorkshop || c.action==Action::ConstructWorkshopFinisher) &&
+             (c.amount!=1 || c.thrust_x)) ||
            (c.action==Action::TransferWorkshopFeed &&
              (c.thrust_x || !c.amount || c.amount%1000 || c.amount<-10000 || c.amount>10000)) ||
-           (c.action==Action::AssignWorkshopOperator &&
+           ((c.action==Action::AssignWorkshopOperator || c.action==Action::AssignWorkshopFinisher) &&
              (c.thrust_x || c.amount<0 || c.amount>1000000)) ||
-           (c.action==Action::TransferWorkshopOutput &&
+           ((c.action==Action::TransferWorkshopOutput || c.action==Action::TransferWorkshopFinalOutput) &&
              (c.thrust_x || c.amount<50 || c.amount>500 || c.amount%50)))
             return false;
-        snapshot_version_=std::max(snapshot_version_,22);
+        snapshot_version_=std::max(snapshot_version_,
+            c.action==Action::ConstructWorkshopFinisher ||
+            c.action==Action::AssignWorkshopFinisher ||
+            c.action==Action::TransferWorkshopFinalOutput ? 23 : 22);
     }
     const bool life_action=c.action==Action::PlantCrops || c.action==Action::HarvestCrops ||
       c.action==Action::RecycleWater || c.action==Action::RecycleCompost ||
@@ -1037,6 +1046,9 @@ Event Simulation::execute(const Command& c) {
         case Action::TransferWorkshopFeed:
         case Action::AssignWorkshopOperator:
         case Action::TransferWorkshopOutput:
+        case Action::ConstructWorkshopFinisher:
+        case Action::AssignWorkshopFinisher:
+        case Action::TransferWorkshopFinalOutput:
         case Action::AssignFarmMentor:
         case Action::SetPolicyAssurance:
         case Action::AssignPolicyInspectors:
@@ -1092,13 +1104,31 @@ Event Simulation::execute(const Command& c) {
             }
             if(c.action==Action::TransferWorkshopFeed ||
                c.action==Action::AssignWorkshopOperator ||
-               c.action==Action::TransferWorkshopOutput){
+               c.action==Action::TransferWorkshopOutput ||
+               c.action==Action::ConstructWorkshopFinisher ||
+               c.action==Action::AssignWorkshopFinisher ||
+               c.action==Action::TransferWorkshopFinalOutput){
                 auto wi=workshops_.find(c.target);
                 if(wi==workshops_.end() || wi->second.source_ship!=c.actor){
                     result.result=Outcome::InvalidTarget;return result;
                 }
                 auto& w=wi->second;
-                if(c.action==Action::AssignWorkshopOperator){
+                if(c.action==Action::ConstructWorkshopFinisher){
+                    if(w.finisher_installed){result.result=Outcome::InvalidTarget;return result;}
+                    if(cship.modules<1){result.result=Outcome::NoResources;return result;}
+                    --cship.modules;
+                    w.finisher_installed=true;
+                    w.embodied_ore+=2;
+                    snapshot_version_=std::max(snapshot_version_,23);
+                    result.transferred=2;
+                    result.result=Outcome::Applied;return result;
+                }
+                if(c.action==Action::AssignWorkshopOperator ||
+                   c.action==Action::AssignWorkshopFinisher){
+                    const bool second=c.action==Action::AssignWorkshopFinisher;
+                    if(second && !w.finisher_installed){
+                        result.result=Outcome::InvalidTarget;return result;
+                    }
                     if(c.amount){
                         auto npc=npcs_.find(static_cast<std::uint64_t>(c.amount));
                         if(npc==npcs_.end() || npc->second.home_ship!=c.actor ||
@@ -1107,7 +1137,13 @@ Event Simulation::execute(const Command& c) {
                             result.result=Outcome::InvalidTarget;return result;
                         }
                     }
-                    w.operator_npc_id=static_cast<std::uint64_t>(c.amount);
+                    // Tier 1 devices require exclusive hands-on NPC labor.
+                    if(c.amount && static_cast<std::uint64_t>(c.amount)==
+                       (second?w.operator_npc_id:w.finisher_npc_id)){
+                        result.result=Outcome::InvalidTarget;return result;
+                    }
+                    if(second)w.finisher_npc_id=static_cast<std::uint64_t>(c.amount);
+                    else w.operator_npc_id=static_cast<std::uint64_t>(c.amount);
                     result.result=Outcome::Applied;return result;
                 }
                 if(c.action==Action::TransferWorkshopFeed){
@@ -1126,6 +1162,23 @@ Event Simulation::execute(const Command& c) {
                         w.aluminum_kg-=qty;cship.goods_kg["aluminum"]+=qty;
                     }
                     result.transferred=qty;
+                    result.result=Outcome::Applied;return result;
+                }
+                if(c.action==Action::TransferWorkshopFinalOutput){
+                    if(!w.finisher_installed){result.result=Outcome::InvalidTarget;return result;}
+                    // 50 finisher batches = 950kg frames + 50kg scrap.
+                    // The shared scrap bin must contain all withdrawn scrap;
+                    // residual first-stage scrap remains at the outpost.
+                    const auto batches=c.amount;
+                    const auto frames=19*batches,scrap=batches;
+                    if(w.frames_kg<frames || w.scrap_kg<scrap ||
+                       loaded_mass(actor)>actor.cargo_capacity-batches/50){
+                        result.result=Outcome::NoResources;return result;
+                    }
+                    w.frames_kg-=frames;w.scrap_kg-=scrap;
+                    cship.goods_kg["aluminum_frames"]+=frames;
+                    cship.goods_kg["aluminum_scrap"]+=scrap;
+                    result.transferred=20*batches;
                     result.result=Outcome::Applied;return result;
                 }
                 // Palletized production lot: 50 * (19kg panels + 1kg scrap)
@@ -1809,7 +1862,10 @@ void Simulation::process_utilities(){
             ((residents||workers) && h!=habitats_.end()?2:0)+(community_active?1:0)+(clinic_active?1:0)+(reclaimers_.count(site) && (residents||workers)?1:0)
             +(waterworks_.count(site) && (residents||workers) && waterworks_.at(site).raw_feed_kg>=10?1:0)
             +(workshops_.count(site) && workshops_.at(site).operator_npc_id &&
-              (workshops_.at(site).aluminum_kg>=20 || workshops_.at(site).reserved_aluminum_kg)?1:0);
+              (workshops_.at(site).aluminum_kg>=20 || workshops_.at(site).reserved_aluminum_kg)?1:0)
+            +(workshops_.count(site) && workshops_.at(site).finisher_installed &&
+              workshops_.at(site).finisher_npc_id &&
+              (workshops_.at(site).panels_kg>=20 || workshops_.at(site).reserved_panels_kg)?1:0);
         if(u.condition>0){
             const auto solar=std::min<std::int64_t>(8,120-u.stored_energy);
             u.stored_energy+=solar;u.generated_energy+=solar;
@@ -2055,6 +2111,43 @@ void Simulation::process_workshops(){
         w.ticks_remaining=next.ticks_remaining;
         w.completed_batches=next.completed_batches;
         w.elapsed_ticks=next.elapsed_ticks;
+        if(w.finisher_installed){
+            // Shared finite panel buffer and scrap container create real
+            // downstream/upstream backpressure with no virtual delivery.
+            const auto fn=npcs_.find(w.finisher_npc_id);
+            const bool fn_staff=w.finisher_npc_id && fn!=npcs_.end() &&
+                fn->second.home_ship==w.source_ship && fn->second.location==site &&
+                fn->second.role==NpcRole::Habitat &&
+                habitats_.count(site) && habitats_.at(site).residents>0 &&
+                w.finisher_npc_id!=w.operator_npc_id;
+            industry::Recipe fr{"aluminum_frame","shape",{{"aluminum_panels",20000}},
+                {"aluminum_frames",19000},{"aluminum_scrap",1000}};
+            industry::Machine fm{1,"shape",power,fn_staff,working};
+            industry::State fs;
+            fs.feed.capacity_grams=1000000;
+            fs.finished.capacity_grams=1000000;
+            fs.scrap.capacity_grams=1000000;
+            if(w.panels_kg)fs.feed.grams.emplace("aluminum_panels",w.panels_kg*1000);
+            if(w.frames_kg)fs.finished.grams.emplace("aluminum_frames",w.frames_kg*1000);
+            if(w.scrap_kg)fs.scrap.grams.emplace("aluminum_scrap",w.scrap_kg*1000);
+            if(w.reserved_panels_kg){
+                fs.has_work_in_progress=true;
+                fs.reserved_inputs={{"aluminum_panels",w.reserved_panels_kg*1000}};
+                fs.ticks_remaining=w.finisher_ticks_remaining;
+            }
+            fs.elapsed_ticks=w.finisher_elapsed_ticks;
+            fs.completed_batches=w.finisher_batches;
+            industry::QuantifiedLine second(fr,fm,fs);
+            second.advance(1);
+            const auto& sn=second.state();
+            w.panels_kg=sn.feed.amount("aluminum_panels")/1000;
+            w.frames_kg=sn.finished.amount("aluminum_frames")/1000;
+            w.scrap_kg=sn.scrap.amount("aluminum_scrap")/1000;
+            w.reserved_panels_kg=sn.has_work_in_progress?20:0;
+            w.finisher_ticks_remaining=sn.ticks_remaining;
+            w.finisher_batches=sn.completed_batches;
+            w.finisher_elapsed_ticks=sn.elapsed_ticks;
+        }
     }
 }
 void Simulation::step() {
@@ -2112,7 +2205,7 @@ void Simulation::steps(std::uint64_t count) {
 
 std::string Simulation::canonical_state() const {
     std::ostringstream out;
-    out << (snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
+    out << (snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
         << '|' << rng_state_ << '\n';
     if (snapshot_version_>=5) for(const auto system:systems_)out<<"system|"<<system<<'\n';
     for (const auto& entry : entities_) {
@@ -2146,7 +2239,12 @@ std::string Simulation::canonical_state() const {
            <<'|'<<w.aluminum_kg<<'|'<<w.panels_kg<<'|'<<w.scrap_kg
            <<'|'<<w.reserved_aluminum_kg<<'|'<<w.ticks_remaining
            <<'|'<<w.completed_batches<<'|'<<w.elapsed_ticks
-           <<'|'<<w.operator_npc_id<<'\n';
+           <<'|'<<w.operator_npc_id;
+        if(snapshot_version_>=23)out<<'|'<<(w.finisher_installed?1:0)
+            <<'|'<<w.finisher_npc_id<<'|'<<w.reserved_panels_kg
+            <<'|'<<w.finisher_ticks_remaining<<'|'<<w.frames_kg
+            <<'|'<<w.finisher_batches<<'|'<<w.finisher_elapsed_ticks;
+        out<<'\n';
     }
     if (snapshot_version_>=8) {
         for(const auto& [id,g]:geology_)
@@ -2370,12 +2468,12 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
     if (!std::getline(in, line)) throw std::runtime_error("snapshot: missing header");
     auto h = fields(line);
     require_fields(h, 5);
-    if (h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22") throw std::runtime_error("snapshot: unsupported version");
+    if (h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23") throw std::runtime_error("snapshot: unsupported version");
     const auto sys = u64(h[1]);
     if (sys == 0 || sys > std::numeric_limits<std::uint32_t>::max())
         throw std::runtime_error("snapshot: invalid system");
     Simulation result(u64(h[4]), static_cast<std::uint32_t>(sys));
-    result.snapshot_version_ = h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
+    result.snapshot_version_ = h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
     result.tick_ = u64(h[2]);
     result.next_entity_id_ = u64(h[3]);
     if (result.next_entity_id_ == 0) throw std::runtime_error("snapshot: invalid next entity ID");
@@ -2478,19 +2576,38 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                !result.built_outposts_.emplace(id,BuiltOutpost{source,mass}).second)
                 throw std::runtime_error("snapshot: invalid outpost");
         } else if(f[0]=="workshop" && result.snapshot_version_>=22){
-            require_fields(f,12);
+            require_fields(f,result.snapshot_version_>=23?19:12);
             const auto id=u64(f[1]);OutpostWorkshop w{};
             w.source_ship=u64(f[2]);w.embodied_ore=i64(f[3]);
             w.aluminum_kg=i64(f[4]);w.panels_kg=i64(f[5]);w.scrap_kg=i64(f[6]);
             w.reserved_aluminum_kg=i64(f[7]);w.ticks_remaining=static_cast<std::uint32_t>(u64(f[8]));
             w.completed_batches=u64(f[9]);w.elapsed_ticks=u64(f[10]);w.operator_npc_id=u64(f[11]);
-            if(!id || !w.source_ship || w.embodied_ore!=2 ||
+            if(result.snapshot_version_>=23){
+                const auto installed=u64(f[12]);
+                if(installed>1)throw std::runtime_error("snapshot: invalid finisher installation");
+                w.finisher_installed=installed==1;
+                w.finisher_npc_id=u64(f[13]);w.reserved_panels_kg=i64(f[14]);
+                w.finisher_ticks_remaining=static_cast<std::uint32_t>(u64(f[15]));
+                w.frames_kg=i64(f[16]);w.finisher_batches=u64(f[17]);
+                w.finisher_elapsed_ticks=u64(f[18]);
+            }
+            if(!id || !w.source_ship || w.embodied_ore!=(w.finisher_installed?4:2) ||
                w.aluminum_kg<0 || w.aluminum_kg>1000 || w.panels_kg<0 || w.panels_kg>1000 ||
                w.scrap_kg<0 || w.scrap_kg>1000 ||
                (w.reserved_aluminum_kg!=0 && w.reserved_aluminum_kg!=20) ||
                (w.reserved_aluminum_kg==0 && w.ticks_remaining!=0) ||
                w.ticks_remaining>5 || w.elapsed_ticks>result.tick_ ||
                w.completed_batches>result.tick_/5 ||
+               w.frames_kg<0 || w.frames_kg>1000 ||
+               (w.reserved_panels_kg!=0 && w.reserved_panels_kg!=20) ||
+               (w.reserved_panels_kg==0 && w.finisher_ticks_remaining!=0) ||
+               w.finisher_ticks_remaining>5 ||
+               w.finisher_elapsed_ticks>result.tick_ ||
+               w.finisher_batches>w.finisher_elapsed_ticks/5 ||
+               (!w.finisher_installed && (w.finisher_npc_id || w.reserved_panels_kg ||
+                  w.finisher_ticks_remaining || w.frames_kg || w.finisher_batches ||
+                  w.finisher_elapsed_ticks)) ||
+               (w.finisher_npc_id && w.finisher_npc_id==w.operator_npc_id) ||
                !result.workshops_.emplace(id,w).second)
                 throw std::runtime_error("snapshot: invalid outpost workshop");
         } else if(f[0]=="geology" && result.snapshot_version_>=8){
@@ -2758,7 +2875,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             c.id = u64(f[1]); c.execute_tick = u64(f[2]); c.sequence = u64(f[3]);
             c.issuer = u64(f[4]); c.actor = u64(f[5]); c.target = u64(f[6]);
             auto action = u64(f[7]);
-            if (action > (result.snapshot_version_ >= 22 ? static_cast<unsigned>(Action::TransferWorkshopOutput) : result.snapshot_version_ >= 21 ? static_cast<unsigned>(Action::HostCrewLoss) : result.snapshot_version_ >= 20 ? static_cast<unsigned>(Action::AssignFarmMentor) : result.snapshot_version_ >= 19 ? static_cast<unsigned>(Action::AssignPolicyInspectors) : result.snapshot_version_ >= 18 ? static_cast<unsigned>(Action::TransferWaterworksFeed) : result.snapshot_version_ >= 17 ? static_cast<unsigned>(Action::ConstructReclaimer) : result.snapshot_version_ >= 16 ? static_cast<unsigned>(Action::AssignClinicStaff) : result.snapshot_version_ >= 15 ? static_cast<unsigned>(Action::AssignCommunityStaff) : result.snapshot_version_ >= 14 ? static_cast<unsigned>(Action::SetUtilityMaintenance) : result.snapshot_version_ >= 13 ? static_cast<unsigned>(Action::RepairUtility) : result.snapshot_version_ >= 12 ? static_cast<unsigned>(Action::AssignHabitatResidents) : result.snapshot_version_ >= 11 ? static_cast<unsigned>(Action::AssignFarmWorkers) : result.snapshot_version_ >= 10 ? static_cast<unsigned>(Action::LoadLifeWater) : result.snapshot_version_ >= 9 ? static_cast<unsigned>(Action::FabricateMaterialModule) : result.snapshot_version_ >= 7 ? static_cast<unsigned>(Action::ConstructOutpost) : result.snapshot_version_ >= 6 ? static_cast<unsigned>(Action::DeliverGateSpares) : result.snapshot_version_ >= 5 ? static_cast<unsigned>(Action::SetGatePairOnline) : result.snapshot_version_ >= 4 ? static_cast<unsigned>(Action::SellOre) : static_cast<unsigned>(Action::UnloadOre))) throw std::runtime_error("snapshot: invalid action");
+            if (action > (result.snapshot_version_ >= 23 ? static_cast<unsigned>(Action::TransferWorkshopFinalOutput) : result.snapshot_version_ >= 22 ? static_cast<unsigned>(Action::TransferWorkshopOutput) : result.snapshot_version_ >= 21 ? static_cast<unsigned>(Action::HostCrewLoss) : result.snapshot_version_ >= 20 ? static_cast<unsigned>(Action::AssignFarmMentor) : result.snapshot_version_ >= 19 ? static_cast<unsigned>(Action::AssignPolicyInspectors) : result.snapshot_version_ >= 18 ? static_cast<unsigned>(Action::TransferWaterworksFeed) : result.snapshot_version_ >= 17 ? static_cast<unsigned>(Action::ConstructReclaimer) : result.snapshot_version_ >= 16 ? static_cast<unsigned>(Action::AssignClinicStaff) : result.snapshot_version_ >= 15 ? static_cast<unsigned>(Action::AssignCommunityStaff) : result.snapshot_version_ >= 14 ? static_cast<unsigned>(Action::SetUtilityMaintenance) : result.snapshot_version_ >= 13 ? static_cast<unsigned>(Action::RepairUtility) : result.snapshot_version_ >= 12 ? static_cast<unsigned>(Action::AssignHabitatResidents) : result.snapshot_version_ >= 11 ? static_cast<unsigned>(Action::AssignFarmWorkers) : result.snapshot_version_ >= 10 ? static_cast<unsigned>(Action::LoadLifeWater) : result.snapshot_version_ >= 9 ? static_cast<unsigned>(Action::FabricateMaterialModule) : result.snapshot_version_ >= 7 ? static_cast<unsigned>(Action::ConstructOutpost) : result.snapshot_version_ >= 6 ? static_cast<unsigned>(Action::DeliverGateSpares) : result.snapshot_version_ >= 5 ? static_cast<unsigned>(Action::SetGatePairOnline) : result.snapshot_version_ >= 4 ? static_cast<unsigned>(Action::SellOre) : static_cast<unsigned>(Action::UnloadOre))) throw std::runtime_error("snapshot: invalid action");
             c.action = static_cast<Action>(action);
             auto tx = i64(f[8]), ty = i64(f[9]);
             if (tx < std::numeric_limits<int>::min() || tx > std::numeric_limits<int>::max() ||
@@ -2840,6 +2957,16 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                   (c.action==Action::TransferUtilitySpares && (!c.amount || c.amount<-32 || c.amount>32)) ||
                   (c.action==Action::AssignUtilityTechnicians && (c.amount<0 || c.amount>8)) ||
                   (c.action==Action::SetUtilityMaintenance && (c.amount<0 || c.amount>1)))) ||
+                ((c.action>=Action::ConstructWorkshop && c.action<=Action::TransferWorkshopFinalOutput) &&
+                 (result.snapshot_version_<22 || !c.target || c.thrust_x || c.thrust_y ||
+                  (c.action>=Action::ConstructWorkshopFinisher && result.snapshot_version_<23) ||
+                  ((c.action==Action::ConstructWorkshop || c.action==Action::ConstructWorkshopFinisher) && c.amount!=1) ||
+                  ((c.action==Action::TransferWorkshopFeed) &&
+                     (!c.amount || c.amount%1000 || c.amount<-10000 || c.amount>10000)) ||
+                  ((c.action==Action::AssignWorkshopOperator || c.action==Action::AssignWorkshopFinisher) &&
+                     (c.amount<0 || c.amount>1000000)) ||
+                  ((c.action==Action::TransferWorkshopOutput || c.action==Action::TransferWorkshopFinalOutput) &&
+                     (c.amount<50 || c.amount>500 || c.amount%50)))) ||
                 !pending_ids.insert(c.id).second)
                 throw std::runtime_error("snapshot: invalid pending command");
             result.commands_[c.execute_tick].push_back(c);
@@ -2984,6 +3111,12 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
         if(outpost==result.built_outposts_.end() ||
            outpost->second.source_colony_ship!=w.source_ship)
             throw std::runtime_error("snapshot: workshop lacks real outpost");
+        if(w.finisher_npc_id){
+            const auto n=result.npcs_.find(w.finisher_npc_id);
+            if(n==result.npcs_.end() || n->second.home_ship!=w.source_ship ||
+               n->second.location!=id || n->second.role!=NpcRole::Habitat)
+                throw std::runtime_error("snapshot: invalid finisher operator");
+        }
         if(w.operator_npc_id){
             const auto n=result.npcs_.find(w.operator_npc_id);
             if(n==result.npcs_.end() || n->second.home_ship!=w.source_ship ||
@@ -3303,11 +3436,13 @@ std::int64_t Simulation::total_ore() const {
         total+=h.embodied_ore;
     }
     for(const auto& [id,w]:workshops_){(void)id;
-        if(w.embodied_ore!=2 || total>std::numeric_limits<std::int64_t>::max()-2)
+        if(w.embodied_ore!=(w.finisher_installed?4:2) ||
+           total>std::numeric_limits<std::int64_t>::max()-w.embodied_ore)
             throw std::overflow_error("invalid workshop embodied mass");
-        total+=2;
-        const auto kg=w.aluminum_kg+w.panels_kg+w.scrap_kg+w.reserved_aluminum_kg;
-        if(kg<0 || kg>4000 || kg>std::numeric_limits<std::int64_t>::max()-life_mass_kg)
+        total+=w.embodied_ore;
+        const auto kg=w.aluminum_kg+w.panels_kg+w.scrap_kg+w.reserved_aluminum_kg+
+                      w.reserved_panels_kg+w.frames_kg;
+        if(kg<0 || kg>6000 || kg>std::numeric_limits<std::int64_t>::max()-life_mass_kg)
             throw std::overflow_error("invalid workshop inventories");
         life_mass_kg+=kg;
     }
