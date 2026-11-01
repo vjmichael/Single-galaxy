@@ -119,7 +119,7 @@ Command decode_command(const std::string& record) {
           >> c.target >> action >> c.thrust_x >> c.thrust_y >> c.amount))
         throw std::runtime_error("recovery: invalid command journal record");
     std::string extra;
-    if (in >> extra || action < 0 || action > static_cast<int>(Action::HostCrewLoss) || c.id == 0 || c.issuer == 0)
+    if (in >> extra || action < 0 || action > static_cast<int>(Action::TransferWorkshopOutput) || c.id == 0 || c.issuer == 0)
         throw std::runtime_error("recovery: invalid command journal values");
     c.action = static_cast<Action>(action);
     if (command_record(c) != record) throw std::runtime_error("recovery: noncanonical command journal");
@@ -1161,6 +1161,7 @@ public:
         std::size_t refine_transfers=0, fabricate_transfers=0, build_transfers=0;
         std::size_t mineral_refine_transfers=0,material_fabricate_transfers=0;
         std::size_t life_transfers=0, farm_builds=0, farm_stock_transfers=0, habitat_builds=0, habitat_transfers=0,utility_builds=0,utility_repairs=0,utility_spare_transfers=0,community_builds=0,community_transfers=0,clinic_builds=0,clinic_transfers=0,reclaimer_builds=0,waterworks_builds=0,waterworks_transfers=0;
+        std::size_t workshop_builds=0,workshop_feeds=0,workshop_outputs=0;
         std::size_t auto_transfers = 0;
         std::vector<ActivityEvent> recorded_auto;
         for (const auto& a : restored.activity_events()) {
@@ -1419,6 +1420,35 @@ public:
                 if(source!=reinterpret_cast<const char*>(sqlite3_column_text(ledger.get(),4)) ||
                    dest!=reinterpret_cast<const char*>(sqlite3_column_text(ledger.get(),5)))
                     throw std::runtime_error("SQLite: waterworks receipt endpoints mismatch");
+            } else if(reason=="workshop_construction_t" ||
+                      reason=="workshop_feed_transfer_kg" ||
+                      reason=="workshop_output_transfer_kg"){
+                const bool build=reason=="workshop_construction_t";
+                const bool feed=reason=="workshop_feed_transfer_kg";
+                if(build)++workshop_builds;else if(feed)++workshop_feeds;else ++workshop_outputs;
+                const auto id=parse_u64(sqlite3_column_text(ledger.get(),0));
+                const auto ev=event_by_id.find(id);const auto cmd=journal_commands.find(id);
+                if(ev==event_by_id.end() || cmd==journal_commands.end() ||
+                   cmd->second.action!=(build?Action::ConstructWorkshop:
+                     feed?Action::TransferWorkshopFeed:Action::TransferWorkshopOutput) ||
+                   ev->second.result!=Outcome::Applied || ev->second.transferred!=amount ||
+                   amount!=(build?2:feed?std::abs(cmd->second.amount):20*cmd->second.amount) ||
+                   ev->second.tick!=static_cast<std::uint64_t>(sqlite3_column_int64(ledger.get(),1)) ||
+                   sqlite3_column_type(ledger.get(),4)!=SQLITE_TEXT ||
+                   sqlite3_column_type(ledger.get(),5)!=SQLITE_TEXT)
+                    throw std::runtime_error("SQLite: workshop resource receipt mismatch");
+                const auto& c=cmd->second;
+                const auto source=build?"modules:"+std::to_string(c.actor):
+                    feed?(c.amount>0?"good-aluminum:"+std::to_string(c.actor):
+                        "workshop-feed:"+std::to_string(c.target)):
+                        "workshop-output:"+std::to_string(c.target);
+                const auto dest=build?"workshop:"+std::to_string(c.target):
+                    feed?(c.amount>0?"workshop-feed:"+std::to_string(c.target):
+                        "good-aluminum:"+std::to_string(c.actor)):
+                        "goods:"+std::to_string(c.actor);
+                if(source!=reinterpret_cast<const char*>(sqlite3_column_text(ledger.get(),4)) ||
+                   dest!=reinterpret_cast<const char*>(sqlite3_column_text(ledger.get(),5)))
+                    throw std::runtime_error("SQLite: workshop endpoints mismatch");
             } else if(reason=="reclaimer_construction_t"){
                 ++reclaimer_builds;
                 const auto id=parse_u64(sqlite3_column_text(ledger.get(),0));
@@ -1457,7 +1487,7 @@ public:
         std::size_t expected_mineral_refine=0,expected_material_fabricate=0;
         std::size_t expected_life_transfers=0,expected_farm_builds=0,expected_farm_stock_transfers=0;
         std::size_t expected_habitat_builds=0, expected_habitat_transfers=0;
-        std::size_t expected_utility_builds=0,expected_utility_repairs=0,expected_utility_spares=0,expected_community_builds=0,expected_community_transfers=0,expected_clinic_builds=0,expected_clinic_transfers=0,expected_reclaimer_builds=0,expected_waterworks_builds=0,expected_waterworks_transfers=0;
+        std::size_t expected_utility_builds=0,expected_utility_repairs=0,expected_utility_spares=0,expected_community_builds=0,expected_community_transfers=0,expected_clinic_builds=0,expected_clinic_transfers=0,expected_reclaimer_builds=0,expected_waterworks_builds=0,expected_waterworks_transfers=0,expected_workshop_builds=0,expected_workshop_feeds=0,expected_workshop_outputs=0;
 
         for (const auto& ev : restored.events()) {
             if (ev.result != Outcome::Applied || ev.transferred <= 0) continue;
@@ -1488,6 +1518,9 @@ public:
             else if (cmd->second.action==Action::ConstructReclaimer) ++expected_reclaimer_builds;
             else if (cmd->second.action==Action::ConstructWaterworks) ++expected_waterworks_builds;
             else if (cmd->second.action==Action::TransferWaterworksFeed) ++expected_waterworks_transfers;
+            else if (cmd->second.action==Action::ConstructWorkshop) ++expected_workshop_builds;
+            else if (cmd->second.action==Action::TransferWorkshopFeed) ++expected_workshop_feeds;
+            else if (cmd->second.action==Action::TransferWorkshopOutput) ++expected_workshop_outputs;
             else if (cmd->second.action==Action::ConstructClinic) ++expected_clinic_builds;
             else if (cmd->second.action==Action::TransferClinicStock) ++expected_clinic_transfers;
             else throw std::runtime_error("SQLite: resource transfer tied to non-transfer command");
@@ -1509,7 +1542,10 @@ public:
             clinic_builds!=expected_clinic_builds || clinic_transfers!=expected_clinic_transfers ||
             reclaimer_builds!=expected_reclaimer_builds ||
             waterworks_builds!=expected_waterworks_builds ||
-            waterworks_transfers!=expected_waterworks_transfers)
+            waterworks_transfers!=expected_waterworks_transfers ||
+            workshop_builds!=expected_workshop_builds ||
+            workshop_feeds!=expected_workshop_feeds ||
+            workshop_outputs!=expected_workshop_outputs)
             throw std::runtime_error("SQLite: ledger event count mismatch");
         std::size_t credit_rows=0;
         Statement cash(db_, "SELECT command_id,tick,station_id,owner_id,ore_units,unit_price,credit_amount FROM credit_ledger");
@@ -2601,7 +2637,10 @@ public:
                          cmd->second.action!=Action::TransferWaterworksFeed &&
                          cmd->second.action!=Action::ConstructReclaimer &&
                          cmd->second.action!=Action::ConstructClinic &&
-                         cmd->second.action!=Action::TransferClinicStock))
+                         cmd->second.action!=Action::TransferClinicStock &&
+                         cmd->second.action!=Action::ConstructWorkshop &&
+                         cmd->second.action!=Action::TransferWorkshopFeed &&
+                         cmd->second.action!=Action::TransferWorkshopOutput))
                         throw std::runtime_error("unmatched resource transfer event");
                     Statement ledger(db_, "INSERT INTO resource_ledger(generation,tick,command_id,source_id,destination_id,amount,reason) VALUES(?,?,?,?,?,?,?)");
                     ledger.i64(1, static_cast<std::int64_t>(next));
@@ -2618,6 +2657,25 @@ public:
                         ledger.text(5,(refine?"goods:":"modules:")+std::to_string(cmd->second.actor));
                         ledger.i64(6,ev.transferred);
                         ledger.text(7,refine?"mineral_refining_kg":"material_fabrication_t");
+                    } else if(cmd->second.action==Action::ConstructWorkshop ||
+                              cmd->second.action==Action::TransferWorkshopFeed ||
+                              cmd->second.action==Action::TransferWorkshopOutput){
+                        const auto& c=cmd->second;
+                        const bool build=c.action==Action::ConstructWorkshop;
+                        const bool feed=c.action==Action::TransferWorkshopFeed;
+                        if(ev.transferred!=(build?2:feed?std::abs(c.amount):20*c.amount))
+                            throw std::runtime_error("workshop transfer amount mismatch");
+                        ledger.text(4,build?"modules:"+std::to_string(c.actor):
+                            feed?(c.amount>0?"good-aluminum:"+std::to_string(c.actor):
+                                "workshop-feed:"+std::to_string(c.target)):
+                                "workshop-output:"+std::to_string(c.target));
+                        ledger.text(5,build?"workshop:"+std::to_string(c.target):
+                            feed?(c.amount>0?"workshop-feed:"+std::to_string(c.target):
+                                "good-aluminum:"+std::to_string(c.actor)):
+                                "goods:"+std::to_string(c.actor));
+                        ledger.i64(6,ev.transferred);
+                        ledger.text(7,build?"workshop_construction_t":
+                            feed?"workshop_feed_transfer_kg":"workshop_output_transfer_kg");
                     } else if(cmd->second.action==Action::ConstructFarm ||
                               cmd->second.action==Action::TransferFarmStock){
                         const bool build=cmd->second.action==Action::ConstructFarm;

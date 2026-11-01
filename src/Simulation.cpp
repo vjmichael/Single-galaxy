@@ -1,4 +1,5 @@
 #include "galaxy/Simulation.hpp"
+#include "galaxy/QuantifiedProduction.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -42,7 +43,7 @@ bool is_known_mineral(const std::string& name) {
     return false;
 }
 bool is_known_good(const std::string& name) {
-    return name=="structural_alloy" || name=="aluminum" || name=="ceramic" ||
+    return name=="structural_alloy" || name=="aluminum" || name=="aluminum_panels" || name=="aluminum_scrap" || name=="ceramic" ||
            name=="glass" || name=="water" || name=="sulfur" || name=="carbon_feed";
 }
 // Physical prototype recipes. The yields are deliberately playable estimates,
@@ -259,6 +260,10 @@ ColonyViability Simulation::assess_colony(EntityId ship) const {
     return r;
 }
 
+const OutpostWorkshop* Simulation::workshop(EntityId site) const {
+    const auto it=workshops_.find(site);
+    return it==workshops_.end()?nullptr:&it->second;
+}
 const UtilityFacility* Simulation::utility(EntityId site) const {
     const auto it=utilities_.find(site);
     return it==utilities_.end()?nullptr:&it->second;
@@ -307,6 +312,13 @@ void Simulation::move_npc_records(EntityId ship,EntityId site,NpcRole role,std::
     for(auto& [id,n]:npcs_){
         (void)id;
         if(n.home_ship!=ship || n.location!=source || n.role!=source_role)continue;
+        // A resident reassigned away from this outpost cannot remain its
+        // machine operator. Reserved material remains owned by the workshop.
+        if(source!=ship){
+            auto wi=workshops_.find(source);
+            if(wi!=workshops_.end() && wi->second.operator_npc_id==id)
+                wi->second.operator_npc_id=0;
+        }
         n.location=target;n.role=target_role;
         // A departed mentor or apprentice must not leave phantom training.
         for(auto& [other,trainee]:npcs_)if(trainee.mentor_id==n.id)trainee.mentor_id=0;
@@ -559,6 +571,22 @@ bool Simulation::submit(const Command& c) {
            (c.action==Action::RefineMineral ? mineral_name(c.target)==nullptr ||
                 c.target==9 : c.action==Action::FabricateMaterialModule ?
                 (c.target!=1 && c.target!=2) : c.target!=0)) return false;
+    }
+    const bool workshop_command=c.action==Action::ConstructWorkshop ||
+        c.action==Action::TransferWorkshopFeed ||
+        c.action==Action::AssignWorkshopOperator ||
+        c.action==Action::TransferWorkshopOutput;
+    if(workshop_command){
+        if(!c.target || c.thrust_y ||
+           (c.action==Action::ConstructWorkshop && (c.amount!=1 || c.thrust_x)) ||
+           (c.action==Action::TransferWorkshopFeed &&
+             (c.thrust_x || !c.amount || c.amount%1000 || c.amount<-10000 || c.amount>10000)) ||
+           (c.action==Action::AssignWorkshopOperator &&
+             (c.thrust_x || c.amount<0 || c.amount>1000000)) ||
+           (c.action==Action::TransferWorkshopOutput &&
+             (c.thrust_x || c.amount<50 || c.amount>500 || c.amount%50)))
+            return false;
+        snapshot_version_=std::max(snapshot_version_,22);
     }
     const bool life_action=c.action==Action::PlantCrops || c.action==Action::HarvestCrops ||
       c.action==Action::RecycleWater || c.action==Action::RecycleCompost ||
@@ -1005,6 +1033,10 @@ Event Simulation::execute(const Command& c) {
             actor.jump_ticks=kJumpTransitTicks;actor.pending_gate=c.target;
             snapshot_version_=std::max(snapshot_version_,5);result.result=Outcome::Applied;return result;
         }
+        case Action::ConstructWorkshop:
+        case Action::TransferWorkshopFeed:
+        case Action::AssignWorkshopOperator:
+        case Action::TransferWorkshopOutput:
         case Action::AssignFarmMentor:
         case Action::SetPolicyAssurance:
         case Action::AssignPolicyInspectors:
@@ -1048,6 +1080,69 @@ Event Simulation::execute(const Command& c) {
             }
             auto& cship=colony_ships_.at(c.actor);
             auto& onboard=life_support_.at(c.actor);
+            if(c.action==Action::ConstructWorkshop){
+                if(workshops_.count(c.target)){result.result=Outcome::InvalidTarget;return result;}
+                if(cship.modules<1){result.result=Outcome::NoResources;return result;}
+                --cship.modules;
+                OutpostWorkshop w{};w.source_ship=c.actor;
+                workshops_.emplace(c.target,w);
+                snapshot_version_=std::max(snapshot_version_,22);
+                result.transferred=2;
+                result.result=Outcome::Applied;return result;
+            }
+            if(c.action==Action::TransferWorkshopFeed ||
+               c.action==Action::AssignWorkshopOperator ||
+               c.action==Action::TransferWorkshopOutput){
+                auto wi=workshops_.find(c.target);
+                if(wi==workshops_.end() || wi->second.source_ship!=c.actor){
+                    result.result=Outcome::InvalidTarget;return result;
+                }
+                auto& w=wi->second;
+                if(c.action==Action::AssignWorkshopOperator){
+                    if(c.amount){
+                        auto npc=npcs_.find(static_cast<std::uint64_t>(c.amount));
+                        if(npc==npcs_.end() || npc->second.home_ship!=c.actor ||
+                           npc->second.location!=c.target || npc->second.role!=NpcRole::Habitat ||
+                           !habitats_.count(c.target)){
+                            result.result=Outcome::InvalidTarget;return result;
+                        }
+                    }
+                    w.operator_npc_id=static_cast<std::uint64_t>(c.amount);
+                    result.result=Outcome::Applied;return result;
+                }
+                if(c.action==Action::TransferWorkshopFeed){
+                    const auto qty=std::abs(c.amount);
+                    if(c.amount>0){
+                        auto it=cship.goods_kg.find("aluminum");
+                        if(it==cship.goods_kg.end() || it->second<qty || w.aluminum_kg>1000-qty){
+                            result.result=Outcome::NoResources;return result;
+                        }
+                        it->second-=qty;if(!it->second)cship.goods_kg.erase(it);
+                        w.aluminum_kg+=qty;
+                    }else{
+                        if(w.aluminum_kg<qty || loaded_mass(actor)>actor.cargo_capacity-qty/1000){
+                            result.result=Outcome::NoResources;return result;
+                        }
+                        w.aluminum_kg-=qty;cship.goods_kg["aluminum"]+=qty;
+                    }
+                    result.transferred=qty;
+                    result.result=Outcome::Applied;return result;
+                }
+                // Palletized production lot: 50 * (19kg panels + 1kg scrap)
+                // moves exactly 1t, preserving existing whole-tonne ship cargo.
+                // Later item-level logistics will support smaller split loads.
+                const auto batches=c.amount;
+                const auto panels=19*batches, scrap=batches;
+                if(w.panels_kg<panels || w.scrap_kg<scrap ||
+                   loaded_mass(actor)>actor.cargo_capacity-batches/50){
+                    result.result=Outcome::NoResources;return result;
+                }
+                w.panels_kg-=panels;w.scrap_kg-=scrap;
+                cship.goods_kg["aluminum_panels"]+=panels;
+                cship.goods_kg["aluminum_scrap"]+=scrap;
+                result.transferred=20*batches;
+                result.result=Outcome::Applied;return result;
+            }
             if(c.action==Action::AssignFarmMentor){
                 if(snapshot_version_<20 || !farms_.count(c.target)){
                     result.result=Outcome::InvalidTarget;return result;
@@ -1712,7 +1807,9 @@ void Simulation::process_utilities(){
         const bool clinic_active=cli!=clinics_.end() && cli->second.medics>0;
         const std::int64_t demand=(workers?3:0)+
             ((residents||workers) && h!=habitats_.end()?2:0)+(community_active?1:0)+(clinic_active?1:0)+(reclaimers_.count(site) && (residents||workers)?1:0)
-            +(waterworks_.count(site) && (residents||workers) && waterworks_.at(site).raw_feed_kg>=10?1:0);
+            +(waterworks_.count(site) && (residents||workers) && waterworks_.at(site).raw_feed_kg>=10?1:0)
+            +(workshops_.count(site) && workshops_.at(site).operator_npc_id &&
+              (workshops_.at(site).aluminum_kg>=20 || workshops_.at(site).reserved_aluminum_kg)?1:0);
         if(u.condition>0){
             const auto solar=std::min<std::int64_t>(8,120-u.stored_energy);
             u.stored_energy+=solar;u.generated_energy+=solar;
@@ -1919,6 +2016,47 @@ void Simulation::process_colony_needs(){
         else {l.consecutive_supplied_cycles=0;++l.shortages;}
     }
 }
+void Simulation::process_workshops(){
+    // The same QuantifiedLine kernel powers visible and remote work: we do
+    // not animate conveyor items when the colony owner is far away.
+    for(auto& [site,w]:workshops_){
+        const auto u=utilities_.find(site);
+        const auto n=npcs_.find(w.operator_npc_id);
+        const bool staff=w.operator_npc_id && n!=npcs_.end() &&
+            n->second.home_ship==w.source_ship &&
+            n->second.location==site && n->second.role==NpcRole::Habitat &&
+            habitats_.count(site) && habitats_.at(site).residents>0;
+        const bool power=u!=utilities_.end() && u->second.powered;
+        const bool working=u!=utilities_.end() && u->second.condition>0;
+        industry::Recipe recipe{"aluminum_panel","cut",{{"aluminum",20000}},
+            {"aluminum_panels",19000},{"aluminum_scrap",1000}};
+        industry::Machine machine{1,"cut",power,staff,working};
+        industry::State state;
+        state.feed.capacity_grams=1000000;
+        state.finished.capacity_grams=1000000;
+        state.scrap.capacity_grams=1000000;
+        if(w.aluminum_kg)state.feed.grams.emplace("aluminum",w.aluminum_kg*1000);
+        if(w.panels_kg)state.finished.grams.emplace("aluminum_panels",w.panels_kg*1000);
+        if(w.scrap_kg)state.scrap.grams.emplace("aluminum_scrap",w.scrap_kg*1000);
+        if(w.reserved_aluminum_kg){
+            state.has_work_in_progress=true;
+            state.reserved_inputs={{"aluminum",w.reserved_aluminum_kg*1000}};
+            state.ticks_remaining=w.ticks_remaining;
+        }
+        state.elapsed_ticks=w.elapsed_ticks;
+        state.completed_batches=w.completed_batches;
+        industry::QuantifiedLine line(recipe,machine,state);
+        line.advance(1);
+        const auto& next=line.state();
+        w.aluminum_kg=next.feed.amount("aluminum")/1000;
+        w.panels_kg=next.finished.amount("aluminum_panels")/1000;
+        w.scrap_kg=next.scrap.amount("aluminum_scrap")/1000;
+        w.reserved_aluminum_kg=next.has_work_in_progress?20:0;
+        w.ticks_remaining=next.ticks_remaining;
+        w.completed_batches=next.completed_batches;
+        w.elapsed_ticks=next.elapsed_ticks;
+    }
+}
 void Simulation::step() {
     if (tick_ == std::numeric_limits<std::uint64_t>::max()) throw std::overflow_error("tick counter exhausted");
     ++tick_;
@@ -1938,6 +2076,7 @@ void Simulation::step() {
     }
     process_gate_maintenance();
     process_utilities();
+    process_workshops();
     process_waterworks();
     process_colony_needs();
     process_farms();
@@ -1973,7 +2112,7 @@ void Simulation::steps(std::uint64_t count) {
 
 std::string Simulation::canonical_state() const {
     std::ostringstream out;
-    out << (snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
+    out << (snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
         << '|' << rng_state_ << '\n';
     if (snapshot_version_>=5) for(const auto system:systems_)out<<"system|"<<system<<'\n';
     for (const auto& entry : entities_) {
@@ -2002,7 +2141,14 @@ std::string Simulation::canonical_state() const {
         for(const auto& [id,site]:built_outposts_)
             out<<"outpost|"<<id<<'|'<<site.source_colony_ship<<'|'<<site.embodied_ore<<'\n';
     }
-    if(snapshot_version_>=8) {
+    if(snapshot_version_>=22)for(const auto& [id,w]:workshops_){
+        out<<"workshop|"<<id<<'|'<<w.source_ship<<'|'<<w.embodied_ore
+           <<'|'<<w.aluminum_kg<<'|'<<w.panels_kg<<'|'<<w.scrap_kg
+           <<'|'<<w.reserved_aluminum_kg<<'|'<<w.ticks_remaining
+           <<'|'<<w.completed_batches<<'|'<<w.elapsed_ticks
+           <<'|'<<w.operator_npc_id<<'\n';
+    }
+    if (snapshot_version_>=8) {
         for(const auto& [id,g]:geology_)
             out<<"geology|"<<id<<'|'<<static_cast<int>(g.taxonomy)<<'|'<<g.radius_m
                <<'|'<<g.density_kg_m3<<'|'<<g.original_tonnes<<'\n';
@@ -2224,12 +2370,12 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
     if (!std::getline(in, line)) throw std::runtime_error("snapshot: missing header");
     auto h = fields(line);
     require_fields(h, 5);
-    if (h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21") throw std::runtime_error("snapshot: unsupported version");
+    if (h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22") throw std::runtime_error("snapshot: unsupported version");
     const auto sys = u64(h[1]);
     if (sys == 0 || sys > std::numeric_limits<std::uint32_t>::max())
         throw std::runtime_error("snapshot: invalid system");
     Simulation result(u64(h[4]), static_cast<std::uint32_t>(sys));
-    result.snapshot_version_ = h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
+    result.snapshot_version_ = h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
     result.tick_ = u64(h[2]);
     result.next_entity_id_ = u64(h[3]);
     if (result.next_entity_id_ == 0) throw std::runtime_error("snapshot: invalid next entity ID");
@@ -2331,6 +2477,22 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             if(!id || !source || mass!=8 ||
                !result.built_outposts_.emplace(id,BuiltOutpost{source,mass}).second)
                 throw std::runtime_error("snapshot: invalid outpost");
+        } else if(f[0]=="workshop" && result.snapshot_version_>=22){
+            require_fields(f,12);
+            const auto id=u64(f[1]);OutpostWorkshop w{};
+            w.source_ship=u64(f[2]);w.embodied_ore=i64(f[3]);
+            w.aluminum_kg=i64(f[4]);w.panels_kg=i64(f[5]);w.scrap_kg=i64(f[6]);
+            w.reserved_aluminum_kg=i64(f[7]);w.ticks_remaining=static_cast<std::uint32_t>(u64(f[8]));
+            w.completed_batches=u64(f[9]);w.elapsed_ticks=u64(f[10]);w.operator_npc_id=u64(f[11]);
+            if(!id || !w.source_ship || w.embodied_ore!=2 ||
+               w.aluminum_kg<0 || w.aluminum_kg>1000 || w.panels_kg<0 || w.panels_kg>1000 ||
+               w.scrap_kg<0 || w.scrap_kg>1000 ||
+               (w.reserved_aluminum_kg!=0 && w.reserved_aluminum_kg!=20) ||
+               (w.reserved_aluminum_kg==0 && w.ticks_remaining!=0) ||
+               w.ticks_remaining>5 || w.elapsed_ticks>result.tick_ ||
+               w.completed_batches>result.tick_/5 ||
+               !result.workshops_.emplace(id,w).second)
+                throw std::runtime_error("snapshot: invalid outpost workshop");
         } else if(f[0]=="geology" && result.snapshot_version_>=8){
             require_fields(f,6);
             const auto id=u64(f[1]),tax=u64(f[2]);
@@ -2596,7 +2758,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             c.id = u64(f[1]); c.execute_tick = u64(f[2]); c.sequence = u64(f[3]);
             c.issuer = u64(f[4]); c.actor = u64(f[5]); c.target = u64(f[6]);
             auto action = u64(f[7]);
-            if (action > (result.snapshot_version_ >= 21 ? static_cast<unsigned>(Action::HostCrewLoss) : result.snapshot_version_ >= 20 ? static_cast<unsigned>(Action::AssignFarmMentor) : result.snapshot_version_ >= 19 ? static_cast<unsigned>(Action::AssignPolicyInspectors) : result.snapshot_version_ >= 18 ? static_cast<unsigned>(Action::TransferWaterworksFeed) : result.snapshot_version_ >= 17 ? static_cast<unsigned>(Action::ConstructReclaimer) : result.snapshot_version_ >= 16 ? static_cast<unsigned>(Action::AssignClinicStaff) : result.snapshot_version_ >= 15 ? static_cast<unsigned>(Action::AssignCommunityStaff) : result.snapshot_version_ >= 14 ? static_cast<unsigned>(Action::SetUtilityMaintenance) : result.snapshot_version_ >= 13 ? static_cast<unsigned>(Action::RepairUtility) : result.snapshot_version_ >= 12 ? static_cast<unsigned>(Action::AssignHabitatResidents) : result.snapshot_version_ >= 11 ? static_cast<unsigned>(Action::AssignFarmWorkers) : result.snapshot_version_ >= 10 ? static_cast<unsigned>(Action::LoadLifeWater) : result.snapshot_version_ >= 9 ? static_cast<unsigned>(Action::FabricateMaterialModule) : result.snapshot_version_ >= 7 ? static_cast<unsigned>(Action::ConstructOutpost) : result.snapshot_version_ >= 6 ? static_cast<unsigned>(Action::DeliverGateSpares) : result.snapshot_version_ >= 5 ? static_cast<unsigned>(Action::SetGatePairOnline) : result.snapshot_version_ >= 4 ? static_cast<unsigned>(Action::SellOre) : static_cast<unsigned>(Action::UnloadOre))) throw std::runtime_error("snapshot: invalid action");
+            if (action > (result.snapshot_version_ >= 22 ? static_cast<unsigned>(Action::TransferWorkshopOutput) : result.snapshot_version_ >= 21 ? static_cast<unsigned>(Action::HostCrewLoss) : result.snapshot_version_ >= 20 ? static_cast<unsigned>(Action::AssignFarmMentor) : result.snapshot_version_ >= 19 ? static_cast<unsigned>(Action::AssignPolicyInspectors) : result.snapshot_version_ >= 18 ? static_cast<unsigned>(Action::TransferWaterworksFeed) : result.snapshot_version_ >= 17 ? static_cast<unsigned>(Action::ConstructReclaimer) : result.snapshot_version_ >= 16 ? static_cast<unsigned>(Action::AssignClinicStaff) : result.snapshot_version_ >= 15 ? static_cast<unsigned>(Action::AssignCommunityStaff) : result.snapshot_version_ >= 14 ? static_cast<unsigned>(Action::SetUtilityMaintenance) : result.snapshot_version_ >= 13 ? static_cast<unsigned>(Action::RepairUtility) : result.snapshot_version_ >= 12 ? static_cast<unsigned>(Action::AssignHabitatResidents) : result.snapshot_version_ >= 11 ? static_cast<unsigned>(Action::AssignFarmWorkers) : result.snapshot_version_ >= 10 ? static_cast<unsigned>(Action::LoadLifeWater) : result.snapshot_version_ >= 9 ? static_cast<unsigned>(Action::FabricateMaterialModule) : result.snapshot_version_ >= 7 ? static_cast<unsigned>(Action::ConstructOutpost) : result.snapshot_version_ >= 6 ? static_cast<unsigned>(Action::DeliverGateSpares) : result.snapshot_version_ >= 5 ? static_cast<unsigned>(Action::SetGatePairOnline) : result.snapshot_version_ >= 4 ? static_cast<unsigned>(Action::SellOre) : static_cast<unsigned>(Action::UnloadOre))) throw std::runtime_error("snapshot: invalid action");
             c.action = static_cast<Action>(action);
             auto tx = i64(f[8]), ty = i64(f[9]);
             if (tx < std::numeric_limits<int>::min() || tx > std::numeric_limits<int>::max() ||
@@ -2817,6 +2979,18 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
            ship->owner_id!=station->owner_id || !result.hangar(id,station->owner_id))
             throw std::runtime_error("snapshot: invalid player-built outpost");
     }
+    for(const auto& [id,w]:result.workshops_){
+        const auto outpost=result.built_outposts_.find(id);
+        if(outpost==result.built_outposts_.end() ||
+           outpost->second.source_colony_ship!=w.source_ship)
+            throw std::runtime_error("snapshot: workshop lacks real outpost");
+        if(w.operator_npc_id){
+            const auto n=result.npcs_.find(w.operator_npc_id);
+            if(n==result.npcs_.end() || n->second.home_ship!=w.source_ship ||
+               n->second.location!=id || n->second.role!=NpcRole::Habitat)
+                throw std::runtime_error("snapshot: invalid workshop operator");
+        }
+    }
     for(const auto& [id,f]:result.farms_){
         const auto* site=result.find(id);const auto* ship=result.find(f.source_ship);
         if(!site || site->type!=EntityType::Station ||
@@ -3030,6 +3204,7 @@ void Simulation::swap(Simulation& other) noexcept {
     communities_.swap(other.communities_);
     clinics_.swap(other.clinics_);
     built_outposts_.swap(other.built_outposts_);
+    workshops_.swap(other.workshops_);
     geology_.swap(other.geology_);
     activity_events_.swap(other.activity_events_);
     swap(snapshot_version_, other.snapshot_version_);
@@ -3126,6 +3301,15 @@ std::int64_t Simulation::total_ore() const {
         if(h.embodied_ore!=4 || total>std::numeric_limits<std::int64_t>::max()-4)
             throw std::overflow_error("invalid embodied habitat mass");
         total+=h.embodied_ore;
+    }
+    for(const auto& [id,w]:workshops_){(void)id;
+        if(w.embodied_ore!=2 || total>std::numeric_limits<std::int64_t>::max()-2)
+            throw std::overflow_error("invalid workshop embodied mass");
+        total+=2;
+        const auto kg=w.aluminum_kg+w.panels_kg+w.scrap_kg+w.reserved_aluminum_kg;
+        if(kg<0 || kg>4000 || kg>std::numeric_limits<std::int64_t>::max()-life_mass_kg)
+            throw std::overflow_error("invalid workshop inventories");
+        life_mass_kg+=kg;
     }
     if(life_mass_kg%1000 || life_mass_kg/1000>std::numeric_limits<std::int64_t>::max()-total)
         throw std::overflow_error("invalid combined life-support mass");

@@ -508,3 +508,11 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_econ02b0_quantified_tests PRIVATE galaxy_kernel)
   add_test(NAME galaxy_econ02b0_quantified_tests COMMAND galaxy_econ02b0_quantified_tests)
 endif()
+
+# ECON-02B1a: a real player-built outpost's Tier 1 machine runs the
+# quantified factory kernel against physically delivered, durable stock.
+if(BUILD_TESTING)
+  add_executable(galaxy_econ02b1a_outpost_tests tests/ECON02B1aOutpostWorkshopTests.cpp)
+  target_link_libraries(galaxy_econ02b1a_outpost_tests PRIVATE galaxy_kernel SQLite::SQLite3)
+  add_test(NAME galaxy_econ02b1a_outpost_tests COMMAND galaxy_econ02b1a_outpost_tests)
+endif()

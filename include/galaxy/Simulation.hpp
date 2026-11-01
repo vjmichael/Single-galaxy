@@ -21,7 +21,7 @@ struct Vector2 {
 };
 
 enum class EntityType { Ship, Asteroid, Station, Stargate, Wreck };
-enum class Action { Thrust, Mine, StartMining, StopMining, RequestUndock, RequestDock, UnloadOre, LoadOre, SellOre, RequestJump, SetGatePairOnline, SetGateStaff, DeliverGateSpares, RefineOre, FabricateModule, ConstructOutpost, RefineMineral, FabricateMaterialModule, PlantCrops, HarvestCrops, RecycleWater, RecycleCompost, ProduceOxygen, LoadLifeWater, ConstructFarm, TransferFarmStock, AssignFarmWorkers, ConstructHabitat, TransferHabitatStock, AssignHabitatResidents, ConstructUtility, RepairUtility, TransferUtilitySpares, AssignUtilityTechnicians, SetUtilityMaintenance, ConstructCommunity, TransferCommunityStock, AssignCommunityStaff, ConstructClinic, TransferClinicStock, AssignClinicStaff, ConstructReclaimer, ConstructWaterworks, TransferWaterworksFeed, SetPolicyAssurance, AssignPolicyInspectors, AssignFarmMentor, HostDestroyShip, HostCrewLoss };
+enum class Action { Thrust, Mine, StartMining, StopMining, RequestUndock, RequestDock, UnloadOre, LoadOre, SellOre, RequestJump, SetGatePairOnline, SetGateStaff, DeliverGateSpares, RefineOre, FabricateModule, ConstructOutpost, RefineMineral, FabricateMaterialModule, PlantCrops, HarvestCrops, RecycleWater, RecycleCompost, ProduceOxygen, LoadLifeWater, ConstructFarm, TransferFarmStock, AssignFarmWorkers, ConstructHabitat, TransferHabitatStock, AssignHabitatResidents, ConstructUtility, RepairUtility, TransferUtilitySpares, AssignUtilityTechnicians, SetUtilityMaintenance, ConstructCommunity, TransferCommunityStock, AssignCommunityStaff, ConstructClinic, TransferClinicStock, AssignClinicStaff, ConstructReclaimer, ConstructWaterworks, TransferWaterworksFeed, SetPolicyAssurance, AssignPolicyInspectors, AssignFarmMentor, HostDestroyShip, HostCrewLoss, ConstructWorkshop, TransferWorkshopFeed, AssignWorkshopOperator, TransferWorkshopOutput };
 enum class Outcome { Applied, InvalidActor, Unauthorized, InvalidTarget, OutOfRange, InvalidArgument, NoResources, CargoFull, NotMining, NotInSpace, NotDocked, InTransition, ShipMoving, HangarFull, InsufficientFunds, WrongSystem, GateOffline, NotColonyShip, InsufficientCrew };
 enum class ActivityKind { AsteroidDespawned, AutoMiningTransfer, MiningStopped, Undocked, Docked, JumpCompleted, ShipDestroyed, NpcLost };
 enum class DockState { InSpace, Docked, Undocking, Docking };
@@ -294,6 +294,18 @@ bool is_known_good(const std::string& name);
 
 std::int64_t asteroid_mass_tonnes(std::int64_t radius_m, std::int64_t density_kg_m3);
 
+// ECON-02B1a: one installed Tier 1 processing machine at a player-built
+// outpost. Inventories are real site-local kilograms, not cloned ship stock.
+// 20kg aluminum -> 19kg panels + 1kg recoverable scrap in five working ticks.
+struct OutpostWorkshop {
+    EntityId source_ship=0;
+    std::int64_t embodied_ore=2; // consumes one real construction module
+    std::int64_t aluminum_kg=0, panels_kg=0, scrap_kg=0;
+    std::int64_t reserved_aluminum_kg=0; // WIP, always exactly 20kg or 0
+    std::uint32_t ticks_remaining=0;
+    std::uint64_t completed_batches=0, elapsed_ticks=0;
+    std::uint64_t operator_npc_id=0; // real local habitat resident
+};
 struct BuiltOutpost {
     EntityId source_colony_ship = 0;
     std::int64_t embodied_ore = 0; // four modules, eight ore-equivalent units
@@ -418,6 +430,8 @@ public:
     const std::map<EntityId,ClinicFacility>& clinics() const {return clinics_;}
     const std::map<EntityId, ColonyShip>& colony_ships() const {return colony_ships_;}
     const std::map<EntityId, BuiltOutpost>& built_outposts() const {return built_outposts_;}
+    const OutpostWorkshop* workshop(EntityId site) const;
+    const std::map<EntityId,OutpostWorkshop>& workshops() const {return workshops_;}
     EntityId add_asteroid(Vector2 position, std::int64_t ore);
     // Genesis-only, massive realistic-scale asteroid; respects world conservation.
     EntityId add_geological_asteroid(Vector2 position, AsteroidClass taxonomy,
@@ -502,6 +516,7 @@ private:
     void move_npc_records(EntityId ship, EntityId site, NpcRole role, std::int64_t delta);
     void award_farm_experience(EntityId site);
     void process_habitats();
+    void process_workshops();
     void process_utilities();
     void process_communities();
     void process_clinics();
@@ -535,9 +550,10 @@ private:
     bool npc_next_seen_=false;
     std::map<EntityId,std::uint64_t> farm_team_xp_;
     std::map<EntityId,BuiltOutpost> built_outposts_;
+    std::map<EntityId,OutpostWorkshop> workshops_;
     std::map<EntityId, AsteroidGeology> geology_;
     std::vector<ActivityEvent> activity_events_;
-    int snapshot_version_ = 1; // v20 optional individual NPC records, old saves readable
+    int snapshot_version_ = 1; // v22 optional real outpost Tier 1 workshop, old saves readable
     std::map<std::uint64_t, std::vector<Command>> commands_;
     std::set<std::uint64_t> submitted_ids_;
     std::vector<Event> events_;

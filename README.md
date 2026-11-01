@@ -135,3 +135,10 @@ The new **C++17 ECON-02A domain prototype** introduces one configurable workshop
 **ECON-02B0:** Added the standalone deterministic quantified production kernel. Every ingredient must meet the machine-tier minimum before a batch begins; below-minimum material generates **no output, no scrap, and no input consumption**. Whole valid batches reserve input, finite finished/scrap containers enforce backpressure, and in-progress batches can resume from validated state copies. Remote aggregated production matches tick-by-tick production in deterministic no-intervention tests. See [quantified production report](docs/ECON02B0_Quantified_Production_Engineering_Report_2026-10-31.md).
 
 **Local evidence:** ECON-02B0 all-target Linux build, 44/44 non-live native suites, 84/84 Node tests, 3/3 Python design checks. The entire live E2E suite, Windows-native integration, and a persistent outpost manufacturing pipeline remain open. See [factory design and gates](docs/engineering/ECON02B1_Factory_Design_And_Next_Gates_2026-10-31.md).
+
+
+## ECON-02B1a · Real outpost workshop integration (2026-10-31; Linux local tested)
+
+A **single installed Tier 1 outpost processor** now consumes an actual colony module for installation and uses physical on-site aluminum shipments, a named local NPC operator, real utility power, a five-tick reserved 20 kg batch, finite finished/scrap buffers, and durable SQLite recovery. Valid batches yield 19 kg aluminum panels and 1 kg conserved scrap; below-minimum inputs produce nothing. Completed products ship in conservative whole-tonne composite pallets until cargo precision is upgraded. This is **not yet** freeform machine placement, line networks, autonomous factory planning, or full-world aggregated fast-forward. See [ECON-02B1a engineering report](docs/engineering/ECON02B1a_Outpost_Workshop_Real_Inventory_2026-10-31.md).
+
+Local Linux evidence: 45/45 non-live native CTest suites, 84/84 Node tests, 3/3 Python design tests; full live E2E/Windows/GUI playthrough remains open. GitHub stores source and reports, not the development hub.
