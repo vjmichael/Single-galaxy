@@ -119,7 +119,7 @@ Command decode_command(const std::string& record) {
           >> c.target >> action >> c.thrust_x >> c.thrust_y >> c.amount))
         throw std::runtime_error("recovery: invalid command journal record");
     std::string extra;
-    if (in >> extra || action < 0 || action > static_cast<int>(Action::TransferStorageNodeStack) || c.id == 0 || c.issuer == 0)
+    if (in >> extra || action < 0 || action > static_cast<int>(Action::ConstructStorageLink) || c.id == 0 || c.issuer == 0)
         throw std::runtime_error("recovery: invalid command journal values");
     c.action = static_cast<Action>(action);
     if (command_record(c) != record) throw std::runtime_error("recovery: noncanonical command journal");
@@ -1162,10 +1162,11 @@ public:
         std::size_t mineral_refine_transfers=0,material_fabricate_transfers=0;
         std::size_t life_transfers=0, farm_builds=0, farm_stock_transfers=0, habitat_builds=0, habitat_transfers=0,utility_builds=0,utility_repairs=0,utility_spare_transfers=0,community_builds=0,community_transfers=0,clinic_builds=0,clinic_transfers=0,reclaimer_builds=0,waterworks_builds=0,waterworks_transfers=0;
         std::size_t workshop_builds=0,workshop_feeds=0,workshop_outputs=0,workshop_finisher_builds=0,workshop_final_outputs=0,workshop_stacks=0,storage_builds=0,storage_stacks=0,extra_storage_builds=0,extra_storage_stacks=0;
-        std::size_t auto_transfers = 0;
-        std::vector<ActivityEvent> recorded_auto;
+        std::size_t auto_transfers = 0, auto_storage_transfers=0, storage_link_builds=0;
+        std::vector<ActivityEvent> recorded_auto, recorded_storage_auto;
         for (const auto& a : restored.activity_events()) {
             if (a.kind == ActivityKind::AutoMiningTransfer) recorded_auto.push_back(a);
+            if (a.kind == ActivityKind::AutoStorageTransfer) recorded_storage_auto.push_back(a);
         }
         while (ledger.row()) {
             const auto reason_raw = sqlite3_column_text(ledger.get(), 3);
@@ -1512,6 +1513,19 @@ public:
                 if(src!=reinterpret_cast<const char*>(sqlite3_column_text(ledger.get(),4)) ||
                    dst!=reinterpret_cast<const char*>(sqlite3_column_text(ledger.get(),5)))
                     throw std::runtime_error("SQLite: forged extra storage endpoints");
+            } else if(reason=="storage_link_construction_t"){
+                ++storage_link_builds;
+                const auto id=parse_u64(sqlite3_column_text(ledger.get(),0));
+                const auto ev=event_by_id.find(id);const auto cmd=journal_commands.find(id);
+                if(ev==event_by_id.end() || cmd==journal_commands.end() ||
+                   cmd->second.action!=Action::ConstructStorageLink ||
+                   ev->second.result!=Outcome::Applied || ev->second.transferred!=2 ||
+                   amount!=2 || ev->second.tick!=static_cast<std::uint64_t>(sqlite3_column_int64(ledger.get(),1)) ||
+                   sqlite3_column_type(ledger.get(),4)!=SQLITE_TEXT ||
+                   sqlite3_column_type(ledger.get(),5)!=SQLITE_TEXT ||
+                   sqlite_str(ledger.get(),4)!="modules:"+std::to_string(cmd->second.actor) ||
+                   sqlite_str(ledger.get(),5)!="storage-link:"+std::to_string(cmd->second.target)+":"+std::to_string(id))
+                    throw std::runtime_error("SQLite: invalid transport-link construction receipt");
             } else if(reason=="workshop_stack_transfer_kg"){
                 ++workshop_stacks;
                 const auto id=parse_u64(sqlite3_column_text(ledger.get(),0));
@@ -1573,6 +1587,23 @@ public:
                    std::string(reinterpret_cast<const char*>(sqlite3_column_text(ledger.get(),5)))!=
                      "reclaimer:"+std::to_string(cmd->second.target))
                     throw std::runtime_error("SQLite: reclaimer resource receipt mismatch");
+            } else if (reason == "automated_storage_link_transfer") {
+                if(auto_storage_transfers>=recorded_storage_auto.size() ||
+                   sqlite3_column_type(ledger.get(),0)!=SQLITE_NULL ||
+                   sqlite3_column_type(ledger.get(),4)!=SQLITE_TEXT ||
+                   sqlite3_column_type(ledger.get(),5)!=SQLITE_TEXT)
+                    throw std::runtime_error("SQLite: unexpected automatic logistics transfer");
+                const auto& ev=recorded_storage_auto[auto_storage_transfers++];
+                const auto* route=restored.storage_link(ev.actor,ev.target);
+                static const char* names[]={"aluminum","aluminum_panels","aluminum_frames","aluminum_scrap"};
+                if(!route || route->id!=ev.start_command_id ||
+                   sqlite_str(ledger.get(),4)!="storage:"+std::to_string(ev.actor)+":"+
+                         std::to_string(route->source)+":"+names[route->item_index] ||
+                   sqlite_str(ledger.get(),5)!="storage:"+std::to_string(ev.actor)+":"+
+                         std::to_string(route->destination)+":"+names[route->item_index] ||
+                   amount!=ev.transferred ||
+                   sqlite3_column_int64(ledger.get(),1)!=static_cast<sqlite3_int64>(ev.tick))
+                    throw std::runtime_error("SQLite: automatic logistics effect disagrees with world");
             } else if (reason == "automated_mining_transfer") {
                 if (auto_transfers >= recorded_auto.size() ||
                     sqlite3_column_type(ledger.get(), 0) != SQLITE_NULL)
@@ -1585,6 +1616,8 @@ public:
                     throw std::runtime_error("SQLite: auto mining amount/tick mismatch");
             } else throw std::runtime_error("SQLite: unrecognized ledger reason");
         }
+        if (auto_storage_transfers!=recorded_storage_auto.size())
+            throw std::runtime_error("SQLite: missing automated logistics transfers");
         if (auto_transfers != recorded_auto.size())
             throw std::runtime_error("SQLite: missing auto mining resource ledger rows");
         std::size_t expected_transfers = 0;
@@ -1595,7 +1628,7 @@ public:
         std::size_t expected_mineral_refine=0,expected_material_fabricate=0;
         std::size_t expected_life_transfers=0,expected_farm_builds=0,expected_farm_stock_transfers=0;
         std::size_t expected_habitat_builds=0, expected_habitat_transfers=0;
-        std::size_t expected_utility_builds=0,expected_utility_repairs=0,expected_utility_spares=0,expected_community_builds=0,expected_community_transfers=0,expected_clinic_builds=0,expected_clinic_transfers=0,expected_reclaimer_builds=0,expected_waterworks_builds=0,expected_waterworks_transfers=0,expected_workshop_builds=0,expected_workshop_feeds=0,expected_workshop_outputs=0,expected_workshop_finisher_builds=0,expected_workshop_final_outputs=0,expected_workshop_stacks=0,expected_storage_builds=0,expected_storage_stacks=0,expected_extra_storage_builds=0,expected_extra_storage_stacks=0;
+        std::size_t expected_utility_builds=0,expected_utility_repairs=0,expected_utility_spares=0,expected_community_builds=0,expected_community_transfers=0,expected_clinic_builds=0,expected_clinic_transfers=0,expected_reclaimer_builds=0,expected_waterworks_builds=0,expected_waterworks_transfers=0,expected_workshop_builds=0,expected_workshop_feeds=0,expected_workshop_outputs=0,expected_workshop_finisher_builds=0,expected_workshop_final_outputs=0,expected_workshop_stacks=0,expected_storage_builds=0,expected_storage_stacks=0,expected_extra_storage_builds=0,expected_extra_storage_stacks=0,expected_link_builds=0;
 
         for (const auto& ev : restored.events()) {
             if (ev.result != Outcome::Applied || ev.transferred <= 0) continue;
@@ -1636,6 +1669,7 @@ public:
             else if (cmd->second.action==Action::TransferStorageStack) ++expected_storage_stacks;
             else if (cmd->second.action==Action::ConstructStorageNode) ++expected_extra_storage_builds;
             else if (cmd->second.action==Action::TransferStorageNodeStack) ++expected_extra_storage_stacks;
+            else if (cmd->second.action==Action::ConstructStorageLink) ++expected_link_builds;
             else if (cmd->second.action==Action::ConstructClinic) ++expected_clinic_builds;
             else if (cmd->second.action==Action::TransferClinicStock) ++expected_clinic_transfers;
             else throw std::runtime_error("SQLite: resource transfer tied to non-transfer command");
@@ -1666,7 +1700,8 @@ public:
             workshop_stacks!=expected_workshop_stacks ||
             storage_builds!=expected_storage_builds || storage_stacks!=expected_storage_stacks ||
             extra_storage_builds!=expected_extra_storage_builds ||
-            extra_storage_stacks!=expected_extra_storage_stacks)
+            extra_storage_stacks!=expected_extra_storage_stacks ||
+            storage_link_builds!=expected_link_builds)
             throw std::runtime_error("SQLite: ledger event count mismatch");
         std::size_t credit_rows=0;
         Statement cash(db_, "SELECT command_id,tick,station_id,owner_id,ore_units,unit_price,credit_amount FROM credit_ledger");
@@ -2768,7 +2803,8 @@ public:
                          cmd->second.action!=Action::ConstructStorage &&
                          cmd->second.action!=Action::TransferStorageStack &&
                          cmd->second.action!=Action::ConstructStorageNode &&
-                         cmd->second.action!=Action::TransferStorageNodeStack))
+                         cmd->second.action!=Action::TransferStorageNodeStack &&
+                         cmd->second.action!=Action::ConstructStorageLink))
                         throw std::runtime_error("unmatched resource transfer event");
                     Statement ledger(db_, "INSERT INTO resource_ledger(generation,tick,command_id,source_id,destination_id,amount,reason) VALUES(?,?,?,?,?,?,?)");
                     ledger.i64(1, static_cast<std::int64_t>(next));
@@ -2827,6 +2863,12 @@ public:
                              c.thrust_y==2?endpoint:"workshop:"+std::to_string(c.target))+suffix;
                         ledger.text(4,src);ledger.text(5,dst);ledger.i64(6,ev.transferred);
                         ledger.text(7,build?"storage_node_construction_t":"storage_node_stack_transfer_kg");
+                    } else if(cmd->second.action==Action::ConstructStorageLink){
+                        const auto& c=cmd->second;
+                        if(ev.transferred!=2)throw std::runtime_error("invalid link construction mass");
+                        ledger.text(4,"modules:"+std::to_string(c.actor));
+                        ledger.text(5,"storage-link:"+std::to_string(c.target)+":"+std::to_string(c.id));
+                        ledger.i64(6,2);ledger.text(7,"storage_link_construction_t");
                     } else if(cmd->second.action==Action::TransferWorkshopStack){
                         const auto& c=cmd->second;
                         if(c.thrust_x<0 || c.thrust_x>3 || ev.transferred!=std::abs(c.amount))
@@ -3044,6 +3086,22 @@ public:
                     complete.execute();
                     if(sqlite3_changes(db_)!=1)
                         throw std::runtime_error("missing or duplicate jump completion");
+                }
+                if(a.kind==ActivityKind::AutoStorageTransfer){
+                    const auto* route=state.storage_link(a.actor,a.target);
+                    if(!route || !state.has_command_id(route->id) ||
+                       route->id!=a.start_command_id || a.tick!=state.tick() ||
+                       a.transferred<1 || a.transferred>route->units_per_tick ||
+                       a.result!=Outcome::Applied)
+                        throw std::runtime_error("invalid committed auto-storage movement");
+                    static const char* names[]={"aluminum","aluminum_panels","aluminum_frames","aluminum_scrap"};
+                    Statement transfer(db_, "INSERT INTO resource_ledger(generation,tick,source_id,destination_id,amount,reason) VALUES(?,?,?,?,?,?)");
+                    transfer.i64(1,static_cast<std::int64_t>(next));
+                    transfer.i64(2,static_cast<std::int64_t>(a.tick));
+                    transfer.text(3,"storage:"+std::to_string(a.actor)+":"+std::to_string(route->source)+":"+names[route->item_index]);
+                    transfer.text(4,"storage:"+std::to_string(a.actor)+":"+std::to_string(route->destination)+":"+names[route->item_index]);
+                    transfer.i64(5,a.transferred);transfer.text(6,"automated_storage_link_transfer");transfer.execute();
+                    continue;
                 }
                 if (a.kind != ActivityKind::AutoMiningTransfer) continue;
                 if (a.result != Outcome::Applied || a.transferred <= 0 ||

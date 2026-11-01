@@ -22,9 +22,9 @@ struct Vector2 {
 };
 
 enum class EntityType { Ship, Asteroid, Station, Stargate, Wreck };
-enum class Action { Thrust, Mine, StartMining, StopMining, RequestUndock, RequestDock, UnloadOre, LoadOre, SellOre, RequestJump, SetGatePairOnline, SetGateStaff, DeliverGateSpares, RefineOre, FabricateModule, ConstructOutpost, RefineMineral, FabricateMaterialModule, PlantCrops, HarvestCrops, RecycleWater, RecycleCompost, ProduceOxygen, LoadLifeWater, ConstructFarm, TransferFarmStock, AssignFarmWorkers, ConstructHabitat, TransferHabitatStock, AssignHabitatResidents, ConstructUtility, RepairUtility, TransferUtilitySpares, AssignUtilityTechnicians, SetUtilityMaintenance, ConstructCommunity, TransferCommunityStock, AssignCommunityStaff, ConstructClinic, TransferClinicStock, AssignClinicStaff, ConstructReclaimer, ConstructWaterworks, TransferWaterworksFeed, SetPolicyAssurance, AssignPolicyInspectors, AssignFarmMentor, HostDestroyShip, HostCrewLoss, ConstructWorkshop, TransferWorkshopFeed, AssignWorkshopOperator, TransferWorkshopOutput, ConstructWorkshopFinisher, AssignWorkshopFinisher, TransferWorkshopFinalOutput, TransferWorkshopStack, ConstructStorage, TransferStorageStack, ConstructStorageNode, TransferStorageNodeStack };
+enum class Action { Thrust, Mine, StartMining, StopMining, RequestUndock, RequestDock, UnloadOre, LoadOre, SellOre, RequestJump, SetGatePairOnline, SetGateStaff, DeliverGateSpares, RefineOre, FabricateModule, ConstructOutpost, RefineMineral, FabricateMaterialModule, PlantCrops, HarvestCrops, RecycleWater, RecycleCompost, ProduceOxygen, LoadLifeWater, ConstructFarm, TransferFarmStock, AssignFarmWorkers, ConstructHabitat, TransferHabitatStock, AssignHabitatResidents, ConstructUtility, RepairUtility, TransferUtilitySpares, AssignUtilityTechnicians, SetUtilityMaintenance, ConstructCommunity, TransferCommunityStock, AssignCommunityStaff, ConstructClinic, TransferClinicStock, AssignClinicStaff, ConstructReclaimer, ConstructWaterworks, TransferWaterworksFeed, SetPolicyAssurance, AssignPolicyInspectors, AssignFarmMentor, HostDestroyShip, HostCrewLoss, ConstructWorkshop, TransferWorkshopFeed, AssignWorkshopOperator, TransferWorkshopOutput, ConstructWorkshopFinisher, AssignWorkshopFinisher, TransferWorkshopFinalOutput, TransferWorkshopStack, ConstructStorage, TransferStorageStack, ConstructStorageNode, TransferStorageNodeStack, ConstructStorageLink };
 enum class Outcome { Applied, InvalidActor, Unauthorized, InvalidTarget, OutOfRange, InvalidArgument, NoResources, CargoFull, NotMining, NotInSpace, NotDocked, InTransition, ShipMoving, HangarFull, InsufficientFunds, WrongSystem, GateOffline, NotColonyShip, InsufficientCrew };
-enum class ActivityKind { AsteroidDespawned, AutoMiningTransfer, MiningStopped, Undocked, Docked, JumpCompleted, ShipDestroyed, NpcLost };
+enum class ActivityKind { AsteroidDespawned, AutoMiningTransfer, MiningStopped, Undocked, Docked, JumpCompleted, ShipDestroyed, NpcLost, AutoStorageTransfer };
 enum class DockState { InSpace, Docked, Undocking, Docking };
 enum class ShipJumpState { Ready, Jumping, ArrivalCloak };
 struct StationHangar { std::int64_t ore = 0; std::int64_t capacity = 0; };
@@ -318,6 +318,15 @@ struct OutpostWorkshop {
 };
 // ECON-02B2b: player-built, site-bound 4 m3 mixed-stack container.
 // For this first real-world gate only one can be built at each outpost.
+// ECON-02B2c3: a module-backed, host-authorized one-way transport route.
+// item_index: aluminum=0, panels=1, frames=2, scrap=3.
+struct OutpostStorageLink {
+    std::uint64_t id=0;  // command ID of construction, durable and never reused
+    std::uint32_t source=0, destination=0;
+    std::uint8_t item_index=0;
+    std::int64_t units_per_tick=0;
+    std::uint64_t units_moved=0;
+};
 struct OutpostStorage {
     EntityId source_ship=0;
     std::int64_t embodied_ore=2; // one real module, no free storage
@@ -325,6 +334,7 @@ struct OutpostStorage {
     // ECON-02B2c2: additional real module-built 4m3 bins, keyed by positive site-local ID.
     // Legacy container remains node 0. All bins belong to the same constructed site.
     std::map<std::uint32_t,std::map<std::string,std::int64_t>> extra_bins;
+    std::map<std::uint64_t,OutpostStorageLink> links;
 };
 struct BuiltOutpost {
     EntityId source_colony_ship = 0;
@@ -429,6 +439,7 @@ public:
     inventory::StackStore storage_inventory_snapshot(EntityId site) const;
     inventory::StackStore storage_node_inventory_snapshot(EntityId site, std::uint32_t node) const;
     const OutpostStorage* storage(EntityId site) const;
+    const OutpostStorageLink* storage_link(EntityId site,std::uint64_t id) const;
 
     // Initial-world only: finite packaged food, water, oxygen and nutrient stocks.
     // No free resource regeneration; this explicitly adds starter mass at genesis.
@@ -546,6 +557,7 @@ private:
     void move_npc_records(EntityId ship, EntityId site, NpcRole role, std::int64_t delta);
     void award_farm_experience(EntityId site);
     void process_habitats();
+    void process_storage_links();
     void process_workshops();
     void process_utilities();
     void process_communities();
@@ -584,7 +596,7 @@ private:
     std::map<EntityId,OutpostStorage> storages_;
     std::map<EntityId, AsteroidGeology> geology_;
     std::vector<ActivityEvent> activity_events_;
-    int snapshot_version_ = 1; // v26 multiple constructed containers; old saves readable
+    int snapshot_version_ = 1; // v27 durable automatic transport links; old saves readable
     std::map<std::uint64_t, std::vector<Command>> commands_;
     std::set<std::uint64_t> submitted_ids_;
     std::vector<Event> events_;
