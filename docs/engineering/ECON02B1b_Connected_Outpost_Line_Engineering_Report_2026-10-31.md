@@ -41,3 +41,6 @@ Baseline: ECON-02B1a, persistent outpost Tier 1 workshop. This increment introdu
 4. Add a consistent event-driven distant-factory advance layer and comparative near/far/world replay tests before scaling factory counts.
 
 GitHub is a repository and evidence record, not the development hub. Source and validation were performed locally on Linux.
+
+
+**Final broader Linux acceptance (same source revision):** all **71/71** native CTest cases passed, including the previously intermittent legacy live/relay scenarios (parallel local run with per-test timeout). This is Linux evidence only; Windows-native and browser GUI acceptance remain open.
