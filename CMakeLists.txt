@@ -19,7 +19,7 @@ else()
 endif()
 add_library(galaxy_kernel STATIC src/Simulation.cpp src/ColonyResilience.cpp
   src/ColonyRecovery.cpp src/ColonyPolicy.cpp src/PopulationCohorts.cpp
-    src/ColonyWaterSupply.cpp src/Persistence.cpp src/EconomyPrototype.cpp src/QuantifiedProduction.cpp src/Inventory.cpp src/InventoryLogistics.cpp src/ClientContract.cpp src/Galaxy.cpp src/Navigation.cpp src/GateTransit.cpp src/Region.cpp)
+    src/ColonyWaterSupply.cpp src/Persistence.cpp src/EconomyPrototype.cpp src/QuantifiedProduction.cpp src/Inventory.cpp src/InventoryLogistics.cpp src/FactoryLayout.cpp src/ClientContract.cpp src/Galaxy.cpp src/Navigation.cpp src/GateTransit.cpp src/Region.cpp)
 target_include_directories(galaxy_kernel PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(galaxy_kernel PUBLIC SQLite::SQLite3)
 if(MSVC)
@@ -564,4 +564,11 @@ if(BUILD_TESTING)
   add_executable(galaxy_econ02b2c3_auto_links_tests tests/ECON02B2c3AutomaticLinksTests.cpp)
   target_link_libraries(galaxy_econ02b2c3_auto_links_tests PRIVATE galaxy_kernel SQLite::SQLite3)
   add_test(NAME galaxy_econ02b2c3_auto_links_tests COMMAND galaxy_econ02b2c3_auto_links_tests)
+endif()
+
+# ECON-02B2d1: player/NPC-authored spatial equipment/conveyor blueprints.
+if(BUILD_TESTING)
+  add_executable(galaxy_econ02b2d1_factory_layout_tests tests/ECON02B2d1FactoryLayoutTests.cpp)
+  target_link_libraries(galaxy_econ02b2d1_factory_layout_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_econ02b2d1_factory_layout_tests COMMAND galaxy_econ02b2d1_factory_layout_tests)
 endif()
