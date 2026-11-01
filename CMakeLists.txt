@@ -19,7 +19,7 @@ else()
 endif()
 add_library(galaxy_kernel STATIC src/Simulation.cpp src/ColonyResilience.cpp
   src/ColonyRecovery.cpp src/ColonyPolicy.cpp src/PopulationCohorts.cpp
-    src/ColonyWaterSupply.cpp src/Persistence.cpp src/EconomyPrototype.cpp src/QuantifiedProduction.cpp src/Inventory.cpp src/ClientContract.cpp src/Galaxy.cpp src/Navigation.cpp src/GateTransit.cpp src/Region.cpp)
+    src/ColonyWaterSupply.cpp src/Persistence.cpp src/EconomyPrototype.cpp src/QuantifiedProduction.cpp src/Inventory.cpp src/InventoryLogistics.cpp src/ClientContract.cpp src/Galaxy.cpp src/Navigation.cpp src/GateTransit.cpp src/Region.cpp)
 target_include_directories(galaxy_kernel PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(galaxy_kernel PUBLIC SQLite::SQLite3)
 if(MSVC)
@@ -543,4 +543,11 @@ if(BUILD_TESTING)
   add_executable(galaxy_econ02b2b_storage_tests tests/ECON02B2bStorageTests.cpp)
   target_link_libraries(galaxy_econ02b2b_storage_tests PRIVATE galaxy_kernel SQLite::SQLite3)
   add_test(NAME galaxy_econ02b2b_storage_tests COMMAND galaxy_econ02b2b_storage_tests)
+endif()
+
+# ECON-02B2c1: multi-container directed, finite-rate material logistics domain.
+if(BUILD_TESTING)
+  add_executable(galaxy_econ02b2c1_logistics_tests tests/ECON02B2c1LogisticsTests.cpp)
+  target_link_libraries(galaxy_econ02b2c1_logistics_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_econ02b2c1_logistics_tests COMMAND galaxy_econ02b2c1_logistics_tests)
 endif()
