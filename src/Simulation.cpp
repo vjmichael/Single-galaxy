@@ -1,5 +1,6 @@
 #include "galaxy/Simulation.hpp"
 #include "galaxy/QuantifiedProduction.hpp"
+#include "galaxy/FactoryLayout.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -8,6 +9,29 @@
 #include <stdexcept>
 
 namespace galaxy {
+namespace {
+constexpr int kPlacementBound=1000000; // coordinate safety, not room size
+std::uint32_t placement_node(std::int64_t n){
+    return n==-1?kWorkshopConveyorNode:static_cast<std::uint32_t>(n);
+}
+void validate_site_placements(const OutpostStorage& st){
+    industry::FactoryLayout blueprint;
+    for(const auto& [node,where]:st.equipment_positions){
+        if(where.x < -kPlacementBound || where.x > kPlacementBound ||
+           where.y < -kPlacementBound || where.y > kPlacementBound)
+            throw std::invalid_argument("factory coordinate outside safety range");
+        if(node==kWorkshopConveyorNode){
+            blueprint.place_machine(node,{where.x,where.y},1,
+                {"good/aluminum"},{"good/aluminum_panels","good/aluminum_frames","good/aluminum_scrap"});
+        }else{
+            if(node && !st.extra_bins.count(node))
+                throw std::invalid_argument("placement references unbuilt container");
+            blueprint.place_storage(static_cast<std::uint64_t>(node)+1,{where.x,where.y},1,1,4000);
+        }
+    }
+}
+} // namespace
+
 namespace {
 std::int64_t clamp_velocity(std::int64_t v) {
     return std::clamp(v, -Simulation::kMaxVelocityMmPerTick, Simulation::kMaxVelocityMmPerTick);
@@ -390,6 +414,12 @@ inventory::StackStore Simulation::ship_inventory_snapshot(EntityId ship_id) cons
     }
     return store;
 }
+const Vector2* Simulation::factory_equipment_position(EntityId site,std::uint32_t node) const {
+    const auto st=storages_.find(site);
+    if(st==storages_.end())return nullptr;
+    const auto it=st->second.equipment_positions.find(node);
+    return it==st->second.equipment_positions.end()?nullptr:&it->second;
+}
 const OutpostStorage* Simulation::storage(EntityId site) const {
     auto it=storages_.find(site);return it==storages_.end()?nullptr:&it->second;
 }
@@ -655,6 +685,15 @@ bool Simulation::submit(const Command& c) {
             (c.amount<1 || c.amount>1000 || c.thrust_x<0 || c.thrust_x>3 ||
              c.thrust_y<0 || c.thrust_y>3)))return false;
         snapshot_version_=std::max(snapshot_version_,25);
+    }
+    if(c.action==Action::PlaceFactoryEquipment){
+        // amount=-1: installed workshop; 0: original store; positive: installed extra store.
+        // thrust_x/y: grid placement, NOT movement. No extra module consumed.
+        if(!c.target || c.amount < -1 || c.amount > std::numeric_limits<int>::max()/4 ||
+           c.thrust_x < -kPlacementBound || c.thrust_x > kPlacementBound ||
+           c.thrust_y < -kPlacementBound || c.thrust_y > kPlacementBound)
+            return false;
+        snapshot_version_=std::max(snapshot_version_,29);
     }
     if(c.action==Action::ConstructWorkshopLink){
         // thrust_x = existing storage node (0 is base);
@@ -1144,6 +1183,7 @@ Event Simulation::execute(const Command& c) {
         case Action::TransferStorageNodeStack:
         case Action::ConstructStorageLink:
         case Action::ConstructWorkshopLink:
+        case Action::PlaceFactoryEquipment:
         case Action::AssignFarmMentor:
         case Action::SetPolicyAssurance:
         case Action::AssignPolicyInspectors:
@@ -1187,6 +1227,24 @@ Event Simulation::execute(const Command& c) {
             }
             auto& cship=colony_ships_.at(c.actor);
             auto& onboard=life_support_.at(c.actor);
+            if(c.action==Action::PlaceFactoryEquipment){
+                auto st=storages_.find(c.target);
+                const auto node=placement_node(c.amount);
+                if(st==storages_.end() || st->second.source_ship!=c.actor ||
+                   (node==kWorkshopConveyorNode ?
+                     (!workshops_.count(c.target) || workshops_.at(c.target).source_ship!=c.actor) :
+                     (node!=0 && !st->second.extra_bins.count(node))) ||
+                   st->second.equipment_positions.count(node)){
+                    result.result=Outcome::InvalidTarget;return result;
+                }
+                auto proposed=st->second;
+                proposed.equipment_positions.emplace(node,Vector2{c.thrust_x,c.thrust_y});
+                try{validate_site_placements(proposed);}
+                catch(const std::exception&){result.result=Outcome::InvalidArgument;return result;}
+                st->second.equipment_positions.emplace(node,Vector2{c.thrust_x,c.thrust_y});
+                snapshot_version_=std::max(snapshot_version_,29);
+                result.result=Outcome::Applied;return result;
+            }
             if(c.action==Action::ConstructStorage){
                 if(storages_.count(c.target)){result.result=Outcome::InvalidTarget;return result;}
                 if(cship.modules<1){result.result=Outcome::NoResources;return result;}
@@ -2555,7 +2613,7 @@ void Simulation::steps(std::uint64_t count) {
 
 std::string Simulation::canonical_state() const {
     std::ostringstream out;
-    out << (snapshot_version_ >= 28 ? "galaxy-kernel-v28|" : snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
+    out << (snapshot_version_ >= 29 ? "galaxy-kernel-v29|" : snapshot_version_ >= 28 ? "galaxy-kernel-v28|" : snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
         << '|' << rng_state_ << '\n';
     if (snapshot_version_>=5) for(const auto system:systems_)out<<"system|"<<system<<'\n';
     for (const auto& entry : entities_) {
@@ -2609,6 +2667,10 @@ std::string Simulation::canonical_state() const {
                     out<<'|'<<(i==stacks.end()?0:i->second);}
                 out<<'\n';
             }
+        }
+        if(snapshot_version_>=29){
+            for(const auto& [node,pos]:st.equipment_positions)
+                out<<"factory_placement|"<<site<<'|'<<node<<'|'<<pos.x<<'|'<<pos.y<<'\n';
         }
         if(snapshot_version_>=27){
             for(const auto& [id,link]:st.links){
@@ -2840,12 +2902,12 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
     if (!std::getline(in, line)) throw std::runtime_error("snapshot: missing header");
     auto h = fields(line);
     require_fields(h, 5);
-    if (h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27" && h[0] != "galaxy-kernel-v28") throw std::runtime_error("snapshot: unsupported version");
+    if (h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27" && h[0] != "galaxy-kernel-v28" && h[0] != "galaxy-kernel-v29") throw std::runtime_error("snapshot: unsupported version");
     const auto sys = u64(h[1]);
     if (sys == 0 || sys > std::numeric_limits<std::uint32_t>::max())
         throw std::runtime_error("snapshot: invalid system");
     Simulation result(u64(h[4]), static_cast<std::uint32_t>(sys));
-    result.snapshot_version_ = h[0] == "galaxy-kernel-v28" ? 28 : h[0] == "galaxy-kernel-v27" ? 27 : h[0] == "galaxy-kernel-v26" ? 26 : h[0] == "galaxy-kernel-v25" ? 25 : h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
+    result.snapshot_version_ = h[0] == "galaxy-kernel-v29" ? 29 : h[0] == "galaxy-kernel-v28" ? 28 : h[0] == "galaxy-kernel-v27" ? 27 : h[0] == "galaxy-kernel-v26" ? 26 : h[0] == "galaxy-kernel-v25" ? 25 : h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
     result.tick_ = u64(h[2]);
     result.next_entity_id_ = u64(h[3]);
     if (result.next_entity_id_ == 0) throw std::runtime_error("snapshot: invalid next entity ID");
@@ -3012,6 +3074,23 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             if(!result.storages_.at(site).extra_bins.emplace(static_cast<std::uint32_t>(node),
                                                              std::move(stacks)).second)
                 throw std::runtime_error("snapshot: duplicate storage node");
+        } else if(f[0]=="factory_placement" && result.snapshot_version_>=29){
+            require_fields(f,5);
+            const auto site=u64(f[1]),rawnode=u64(f[2]);
+            const auto x=i64(f[3]),y=i64(f[4]);
+            if(rawnode>kWorkshopConveyorNode || x < -kPlacementBound || x > kPlacementBound ||
+               y < -kPlacementBound || y > kPlacementBound || !result.storages_.count(site))
+                throw std::runtime_error("snapshot: invalid factory placement");
+            const auto node=static_cast<std::uint32_t>(rawnode);
+            auto& st=result.storages_.at(site);
+            if((node==kWorkshopConveyorNode ?
+                 (!result.workshops_.count(site) || result.workshops_.at(site).source_ship!=st.source_ship) :
+                 (node!=0 && !st.extra_bins.count(node))) ||
+               !st.equipment_positions.emplace(node,Vector2{x,y}).second)
+                throw std::runtime_error("snapshot: placement references unbuilt equipment");
+            try{validate_site_placements(st);}catch(const std::exception&){
+                throw std::runtime_error("snapshot: overlapping factory equipment");
+            }
         } else if(f[0]=="storage_link" && result.snapshot_version_>=27){
             require_fields(f,8);
             const auto site=u64(f[1]),id=u64(f[2]),src=u64(f[3]),dst=u64(f[4]);
@@ -3299,7 +3378,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             c.id = u64(f[1]); c.execute_tick = u64(f[2]); c.sequence = u64(f[3]);
             c.issuer = u64(f[4]); c.actor = u64(f[5]); c.target = u64(f[6]);
             auto action = u64(f[7]);
-            if (action > (result.snapshot_version_ >= 28 ? static_cast<unsigned>(Action::ConstructWorkshopLink) : result.snapshot_version_ >= 27 ? static_cast<unsigned>(Action::ConstructStorageLink) : result.snapshot_version_ >= 26 ? static_cast<unsigned>(Action::TransferStorageNodeStack) : result.snapshot_version_ >= 25 ? static_cast<unsigned>(Action::TransferStorageStack) : result.snapshot_version_ >= 24 ? static_cast<unsigned>(Action::TransferWorkshopStack) : result.snapshot_version_ >= 23 ? static_cast<unsigned>(Action::TransferWorkshopFinalOutput) : result.snapshot_version_ >= 22 ? static_cast<unsigned>(Action::TransferWorkshopOutput) : result.snapshot_version_ >= 21 ? static_cast<unsigned>(Action::HostCrewLoss) : result.snapshot_version_ >= 20 ? static_cast<unsigned>(Action::AssignFarmMentor) : result.snapshot_version_ >= 19 ? static_cast<unsigned>(Action::AssignPolicyInspectors) : result.snapshot_version_ >= 18 ? static_cast<unsigned>(Action::TransferWaterworksFeed) : result.snapshot_version_ >= 17 ? static_cast<unsigned>(Action::ConstructReclaimer) : result.snapshot_version_ >= 16 ? static_cast<unsigned>(Action::AssignClinicStaff) : result.snapshot_version_ >= 15 ? static_cast<unsigned>(Action::AssignCommunityStaff) : result.snapshot_version_ >= 14 ? static_cast<unsigned>(Action::SetUtilityMaintenance) : result.snapshot_version_ >= 13 ? static_cast<unsigned>(Action::RepairUtility) : result.snapshot_version_ >= 12 ? static_cast<unsigned>(Action::AssignHabitatResidents) : result.snapshot_version_ >= 11 ? static_cast<unsigned>(Action::AssignFarmWorkers) : result.snapshot_version_ >= 10 ? static_cast<unsigned>(Action::LoadLifeWater) : result.snapshot_version_ >= 9 ? static_cast<unsigned>(Action::FabricateMaterialModule) : result.snapshot_version_ >= 7 ? static_cast<unsigned>(Action::ConstructOutpost) : result.snapshot_version_ >= 6 ? static_cast<unsigned>(Action::DeliverGateSpares) : result.snapshot_version_ >= 5 ? static_cast<unsigned>(Action::SetGatePairOnline) : result.snapshot_version_ >= 4 ? static_cast<unsigned>(Action::SellOre) : static_cast<unsigned>(Action::UnloadOre))) throw std::runtime_error("snapshot: invalid action");
+            if (action > (result.snapshot_version_ >= 29 ? static_cast<unsigned>(Action::PlaceFactoryEquipment) : result.snapshot_version_ >= 28 ? static_cast<unsigned>(Action::ConstructWorkshopLink) : result.snapshot_version_ >= 27 ? static_cast<unsigned>(Action::ConstructStorageLink) : result.snapshot_version_ >= 26 ? static_cast<unsigned>(Action::TransferStorageNodeStack) : result.snapshot_version_ >= 25 ? static_cast<unsigned>(Action::TransferStorageStack) : result.snapshot_version_ >= 24 ? static_cast<unsigned>(Action::TransferWorkshopStack) : result.snapshot_version_ >= 23 ? static_cast<unsigned>(Action::TransferWorkshopFinalOutput) : result.snapshot_version_ >= 22 ? static_cast<unsigned>(Action::TransferWorkshopOutput) : result.snapshot_version_ >= 21 ? static_cast<unsigned>(Action::HostCrewLoss) : result.snapshot_version_ >= 20 ? static_cast<unsigned>(Action::AssignFarmMentor) : result.snapshot_version_ >= 19 ? static_cast<unsigned>(Action::AssignPolicyInspectors) : result.snapshot_version_ >= 18 ? static_cast<unsigned>(Action::TransferWaterworksFeed) : result.snapshot_version_ >= 17 ? static_cast<unsigned>(Action::ConstructReclaimer) : result.snapshot_version_ >= 16 ? static_cast<unsigned>(Action::AssignClinicStaff) : result.snapshot_version_ >= 15 ? static_cast<unsigned>(Action::AssignCommunityStaff) : result.snapshot_version_ >= 14 ? static_cast<unsigned>(Action::SetUtilityMaintenance) : result.snapshot_version_ >= 13 ? static_cast<unsigned>(Action::RepairUtility) : result.snapshot_version_ >= 12 ? static_cast<unsigned>(Action::AssignHabitatResidents) : result.snapshot_version_ >= 11 ? static_cast<unsigned>(Action::AssignFarmWorkers) : result.snapshot_version_ >= 10 ? static_cast<unsigned>(Action::LoadLifeWater) : result.snapshot_version_ >= 9 ? static_cast<unsigned>(Action::FabricateMaterialModule) : result.snapshot_version_ >= 7 ? static_cast<unsigned>(Action::ConstructOutpost) : result.snapshot_version_ >= 6 ? static_cast<unsigned>(Action::DeliverGateSpares) : result.snapshot_version_ >= 5 ? static_cast<unsigned>(Action::SetGatePairOnline) : result.snapshot_version_ >= 4 ? static_cast<unsigned>(Action::SellOre) : static_cast<unsigned>(Action::UnloadOre))) throw std::runtime_error("snapshot: invalid action");
             c.action = static_cast<Action>(action);
             auto tx = i64(f[8]), ty = i64(f[9]);
             if (tx < std::numeric_limits<int>::min() || tx > std::numeric_limits<int>::max() ||
@@ -3401,6 +3480,11 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                     (c.amount!=1 || c.thrust_x || c.thrust_y) :
                     (c.amount<1 || c.amount>1000 || c.thrust_x<0 || c.thrust_x>3 ||
                      c.thrust_y<0 || c.thrust_y>3)))) ||
+                ((c.action==Action::PlaceFactoryEquipment) &&
+                  (result.snapshot_version_<29 || !c.target || c.amount< -1 ||
+                   c.amount>std::numeric_limits<int>::max()/4 ||
+                   c.thrust_x< -kPlacementBound || c.thrust_x>kPlacementBound ||
+                   c.thrust_y< -kPlacementBound || c.thrust_y>kPlacementBound)) ||
                 ((c.action==Action::ConstructStorageLink) &&
                  (result.snapshot_version_<27 || !c.target || c.thrust_x<0 ||
                   c.thrust_y<0 ||

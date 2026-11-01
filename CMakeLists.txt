@@ -579,3 +579,10 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_econ02b2d2_workshop_links_tests PRIVATE galaxy_kernel SQLite::SQLite3)
   add_test(NAME galaxy_econ02b2d2_workshop_links_tests COMMAND galaxy_econ02b2d2_workshop_links_tests)
 endif()
+
+# ECON-02B2d3a: material-backed equipment placement in the persistent outpost.
+if(BUILD_TESTING)
+  add_executable(galaxy_econ02b2d3a_installed_placement_tests tests/ECON02B2d3aInstalledPlacementTests.cpp)
+  target_link_libraries(galaxy_econ02b2d3a_installed_placement_tests PRIVATE galaxy_kernel SQLite::SQLite3)
+  add_test(NAME galaxy_econ02b2d3a_installed_placement_tests COMMAND galaxy_econ02b2d3a_installed_placement_tests)
+endif()

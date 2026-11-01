@@ -127,7 +127,7 @@ Command decode_command(const std::string& record) {
           >> c.target >> action >> c.thrust_x >> c.thrust_y >> c.amount))
         throw std::runtime_error("recovery: invalid command journal record");
     std::string extra;
-    if (in >> extra || action < 0 || action > static_cast<int>(Action::ConstructWorkshopLink) || c.id == 0 || c.issuer == 0)
+    if (in >> extra || action < 0 || action > static_cast<int>(Action::PlaceFactoryEquipment) || c.id == 0 || c.issuer == 0)
         throw std::runtime_error("recovery: invalid command journal values");
     c.action = static_cast<Action>(action);
     if (command_record(c) != record) throw std::runtime_error("recovery: noncanonical command journal");
