@@ -1,0 +1,753 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index f44b54897327103f5f30760ce4e92bc2be347286..a7389bb05380ddb4e2c6ab004fec1cd81dc32917 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -807,3 +807,21 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+         --relay ${CMAKE_CURRENT_SOURCE_DIR}/live/interactive_relay.py)
+     set_tests_properties(ECON02B2d15_LineShutdown_HTTP PROPERTIES TIMEOUT 90)
+ endif()
++
++# ECON-02B2d16: authenticated, durable dependency-ordered line retirement.
++if(BUILD_TESTING)
++    add_executable(galaxy_econ02b2d16_retirement_fixture tests/ECON02B2d16RetirementFixture.cpp)
++    target_link_libraries(galaxy_econ02b2d16_retirement_fixture PRIVATE galaxy_kernel)
++    add_executable(galaxy_econ02b2d16_retirement_tests tests/ECON02B2d16RetirementTests.cpp)
++    target_link_libraries(galaxy_econ02b2d16_retirement_tests PRIVATE galaxy_kernel)
++    add_test(NAME ECON02B2d16_Retirement COMMAND galaxy_econ02b2d16_retirement_tests $<TARGET_FILE:galaxy_econ02b2d16_retirement_fixture>)
++    set_tests_properties(ECON02B2d16_Retirement PROPERTIES TIMEOUT 100)
++endif()
++if(BUILD_TESTING AND Python3_Interpreter_FOUND)
++    add_test(NAME ECON02B2d16_Retirement_HTTP
++      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/ECON02B2d16RetirementHostTests.py
++        --host $<TARGET_FILE:galaxy_colony_live_host>
++        --fixture $<TARGET_FILE:galaxy_econ02b2d16_retirement_fixture>
++        --relay ${CMAKE_CURRENT_SOURCE_DIR}/live/interactive_relay.py)
++    set_tests_properties(ECON02B2d16_Retirement_HTTP PROPERTIES TIMEOUT 95)
++endif()
+diff --git a/docs/engineering/ECON02B2d16_Dependency_Ordered_Line_Retirement_2026-11-01.md b/docs/engineering/ECON02B2d16_Dependency_Ordered_Line_Retirement_2026-11-01.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..e36ad265392625b8e6ab14f6a6712befc3f4f7ea
+--- /dev/null
++++ b/docs/engineering/ECON02B2d16_Dependency_Ordered_Line_Retirement_2026-11-01.md
+@@ -0,0 +1,62 @@
++# ECON-02B2d16 — Dependency-ordered NPC industrial-line retirement
++
++**Project:** Single Galaxy — original game, separate from EVEmu.  
++**Date:** 2026-11-01.  
++**Exact baseline:** `SingleGalaxy_ECON02B2d15_Production_Shutdown_Inventory_Evacuation_Source_Tests_2026-11-01.zip`.  
++**Status:** Linux implementation and complete native regression verified. Not committed to GitHub. Windows GUI acceptance still open.
++
++## Outcome
++
++The colony administration now exposes one explicit **Retire line with NPC crew** authorization and a **Cancel pending retirement** command. Once approved, one individually identified on-site resident coordinates existing authoritative shutdown, physical goods evacuation, workshop-connected conveyor removal and two-stage machine dismantling. The system uses the same native C++ `PersistentWorld`, physical module ledger, 20-kg NPC workshop-goods custody and SQLite NPC job tables introduced in d13–d15. No free inventory, instant demolition, or independent browser writer has been added.
++
++### Ordered lifecycle
++
++1. **Stop** new production with `SetWorkshopShutdown`. The command is committed by the authoritative simulation; the SQL stage advances by observing `shutdown_requested`, including after a crash between the world and SQL updates.
++2. **Drain** outstanding workshop work-in-progress and release named operators using the d15 scheduler. A missing or revoked shutdown blocks further work.
++3. **Evacuate** real workshop aluminum, panels, frames and scrap with the d15 bounded NPC cargo workflow. A worker physically walks from installed workshop to the **original built storage bin**, and each pickup/delivery has an audited authoritative world receipt. A full bin or blocked route leaves cargo in custody; the coordinator waits rather than teleporting it.
++4. **Unbuild conveyors** attached to `kWorkshopConveyorNode`, smallest link ID first. Each real segment and link requires a durable named-person d13 dismantling job and returns a module in worker cargo; the next step starts only after cargo reaches the depot. Unrelated colony links are untouched.
++5. **Remove the finisher**, after its WIP, operators and goods are cleared, through the d14 durable NPC machine job.
++6. **Remove the primary processor**, last. The job returns its recovered construction module via the same physical depot route. A completed line has no installed workshop or attached links, and its retirement record becomes inactive.
++
++SQLite table `sg_line_retirements` stores per-site authorization, resident identity, phase, active/cancellation flags, last processed world tick, and human-readable reason. It does **not** duplicate physical inventory. The simulation snapshot format and resource ledger remain unchanged in d16 because the coordinator introduces no new world action or physical asset class. The existing world evidence is authoritative across restarts.
++
++## Access and cancellation
++
++- Only the current owner/ship/site session can approve or cancel retirement. The relay enforces local origin, token, typed body, and site validation; the native `Control` validates ownership, location and resident identity.
++- The resident must not already be building, hauling, evacuating or dismantling, and must not carry other physical cargo when retirement is assigned. Duplicate active per-site retirement requests are rejected.
++- While retirement is active, the native control API rejects competing manual workshop resume, evacuation, conveyor teardown and machine teardown requests. The coordinator calls only the existing guarded native crew methods.
++- Cancellation stops scheduling further irreversible steps, marks in-flight child jobs for safe return, waits for carried cargo to be physically returned, and leaves already completed dismantling and shutdown unchanged. It **does not** restart production or rebuild destroyed components. A partially retired workshop can be expressly reauthorized if it still exists.
++- Errors/shortages are visible as reasons in the existing colony crew panel. In particular, no secondary warehouse or impossible path is silently substituted.
++
++## Local validation
++
++| Check | Verified result |
++| --- | --- |
++| Full native CMake/Ninja build | PASS |
++| CTest tests 1–72 | 72/72 PASS |
++| CTest tests 73–107 | 35/35 PASS |
++| Native d16 retirement simulation | PASS |
++| Authenticated d16 HTTP with mid-cargo process restart | PASS |
++| Authorization: forged token, foreign origin, wrong site, malformed NPC | REJECTED |
++| Repeat authorization; manual production resume during active retirement | REJECTED |
++| NPC cancellation during *actual cargo transit*, restart, physical cargo return | PASS |
++| World material conservation through evacuation, link removal and both machines | PASS |
++| JavaScript tests | 93/93 PASS |
++| Offline Chromium colony crew controls (including authorize/cancel) | PASS |
++| Offline Chromium structure controls | PASS |
++
++The native 107 tests were run in complementary groups after a clean full build, not one uninterrupted run. UI browser smoke uses a mocked browser transport; the separate Python HTTP case exercises the real relay, token controls, C++ game host and SQLite save.
++
++## Remaining boundaries
++
++1. **Current line scope is the original two-stage workshop**. An arbitrary multi-machine production graph, topological dependency planner for generic machines, and synchronized crews are not implemented. The finisher-before-primary order is explicit for the currently modeled line.
++2. **Inventory evacuation currently targets only the original built local bin.** Selecting among several extra storage nodes, outpost-scale inventory scheduling and distributed goods transport require additional authoritative custody commands, capacity checks and NPC delivery path tests. These are open gates, not implied by this d16 implementation.
++3. This is a *local 2D grid* NPC scheduler, not full 3D navigation or animated person/cargo transport.
++4. The retirement coordinator runs when the colony simulation runs; it does not promise asynchronous server execution while the game executable is closed. Existing persistent jobs resume when it starts again.
++5. The native `Control` prevents concurrent *API* modifications to the same line. Direct core commands outside this host boundary are not yet covered by a universal world-level retirement lock; a subsequent central authorization barrier should close that gap.
++6. Windows compilation, installer execution and independent graphical acceptance are not verified in this Linux milestone.
++7. GitHub is the source repository and milestone archive, not a development hub. This work has **not been pushed**.
++
++## Recommended next gate
++
++**ECON-02B2d17 — Generic factory retirement planning and multi-destination goods evacuation**, introducing a graph-derived teardown order, physical storage selection/capacity, per-leg NPC custody and a central world-level retirement lock. Test conflicting concurrent line requests, blocked routes, full bins, resumed NPC work and save schema compatibility before extending this beyond the existing two-stage workshop.
+diff --git a/include/galaxy/NpcConstructionCrews.hpp b/include/galaxy/NpcConstructionCrews.hpp
+index ac5599ce05658d38da49c9387e9f7e0498f59acc..faefabcf992056cb26b70a4533be1ee796006f5d 100644
+--- a/include/galaxy/NpcConstructionCrews.hpp
++++ b/include/galaxy/NpcConstructionCrews.hpp
+@@ -26,6 +26,12 @@ struct LineEvacuationJob {
+     bool active=false,cancelling=false;std::string reason;
+     std::array<std::int64_t,4> carrying{};
+ };
++struct LineRetirement {
++    std::uint64_t npc=0;
++    int phase=0; // shutdown, drain, evacuation, links, finisher, processor, complete/cancel
++    bool active=false,cancelling=false;
++    std::string reason;
++};
+ struct MachineDismantleJob {
+     std::uint64_t npc=0;int stage=0,x=0,y=0,labor=0;
+     bool active=false,cancelling=false;std::string reason;
+@@ -70,6 +76,12 @@ public:
+     bool cancel_machine_dismantle(std::uint64_t npc,PlayerId owner,EntityId ship,EntityId site);
+     std::vector<MachineDismantleJob> list_machine_dismantle(PlayerId owner,EntityId ship,EntityId site)const;
+     // One real worker carries at most 20 kg between placed workshop and bin 0.
++    // ECON-02B2d16: explicit per-site authorization to coordinate already
++    // journaled physical construction jobs. Never grants new raw material.
++    void begin_line_retirement(std::uint64_t npc,PlayerId owner,EntityId ship,EntityId site);
++    bool cancel_line_retirement(PlayerId owner,EntityId ship,EntityId site);
++    bool retirement_active(PlayerId owner,EntityId ship,EntityId site)const;
++    std::vector<LineRetirement> list_line_retirement(PlayerId owner,EntityId ship,EntityId site)const;
+     void queue_line_evacuation(std::uint64_t npc,PlayerId owner,EntityId ship,EntityId site);
+     bool cancel_line_evacuation(std::uint64_t npc,PlayerId owner,EntityId ship,EntityId site);
+     std::vector<LineEvacuationJob> list_line_evacuation(PlayerId owner,EntityId ship,EntityId site)const;
+@@ -90,6 +102,7 @@ public:
+ private:
+     class Db;std::unique_ptr<Db> db_;
+     PersistentWorld& world_;Plans& structures_;
++    bool advance_retirement(PlayerId owner,EntityId ship,std::uint64_t tick);
+     void validate_site(PlayerId owner,EntityId ship,EntityId site)const;
+     void validate_worker(std::uint64_t npc,PlayerId owner,EntityId ship,EntityId site)const;
+ };
+diff --git a/live/interactive_relay.py b/live/interactive_relay.py
+index 6469eb0f9e43f9c25844c35d76225c1510e040ca..b71514999c44e2cddf4d5c9e249c1cae83bddf8d 100644
+--- a/live/interactive_relay.py
++++ b/live/interactive_relay.py
+@@ -141,7 +141,7 @@ class SharedRuntime:
+         # does not open SQLite and cannot mint ship/player/owner authority.
+         if op not in ('SITES','HELLO','LIST','REGISTER','STEP','STATUS','CANCEL',
+                       'STRUCT_LIST','STRUCT_REGISTER','STRUCT_STEP','STRUCT_STATUS','STRUCT_CANCEL','STRUCT_DOOR',
+-                      'CREW_LIST','CREW_ASSIGN','CREW_UNASSIGN','CREW_ACTIVE','CREW_POLICY','CREW_SUPPLY','CREW_ORDER','CREW_ORDER_CANCEL','CREW_RESTOCK','CREW_SALVAGE','CREW_RESTOCK_CANCEL','WAREHOUSE_MARK','WAREHOUSE_CANCEL','WAREHOUSE_DEMOLISH','CREW_DISMANTLE','CREW_DISMANTLE_CANCEL','CREW_MACHINE','CREW_MACHINE_CANCEL','LINE_SHUTDOWN','LINE_EVACUATE','LINE_EVACUATE_CANCEL'):
++                      'CREW_LIST','CREW_ASSIGN','CREW_UNASSIGN','CREW_ACTIVE','CREW_POLICY','CREW_SUPPLY','CREW_ORDER','CREW_ORDER_CANCEL','CREW_RESTOCK','CREW_SALVAGE','CREW_RESTOCK_CANCEL','WAREHOUSE_MARK','WAREHOUSE_CANCEL','WAREHOUSE_DEMOLISH','CREW_DISMANTLE','CREW_DISMANTLE_CANCEL','CREW_MACHINE','CREW_MACHINE_CANCEL','LINE_SHUTDOWN','LINE_EVACUATE','LINE_EVACUATE_CANCEL','LINE_RETIRE_BEGIN','LINE_RETIRE_CANCEL'):
+             raise ValueError('Unknown factory operation')
+         if type(site)!=int or not 0<=site<=100000000:
+             raise ValueError('Invalid factory site selector')
+@@ -319,6 +319,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
+                     raise ValueError('Invalid dismantling worker, target or kind')
+                 argument=base64.b64encode(f"{doc['npc']},{target},{int(doc['link'])}".encode()).decode('ascii')
+                 native='CREW_DISMANTLE'
++            elif op=='line_retire_begin' and set(doc)=={'token','site','npc'}:
++                npc=doc['npc']
++                if type(npc)!=int or not 0<npc<=2**29-1:raise ValueError('Invalid line retirement worker')
++                argument=str(npc);native='LINE_RETIRE_BEGIN'
++            elif op=='line_retire_cancel' and set(doc)=={'token','site'}:
++                argument='';native='LINE_RETIRE_CANCEL'
+             elif op=='line_shutdown' and set(doc)=={'token','site','shutdown'}:
+                 if type(doc['shutdown'])!=bool:raise ValueError('Invalid workshop shutdown value')
+                 argument='1' if doc['shutdown'] else '0'
+diff --git a/scripts/colony_crew_browser_smoke.py b/scripts/colony_crew_browser_smoke.py
+index cda900ce64194ebe0a66a07212b7b4b81f4431c2..644630bd86468d24f66846b80e61c78e344d7868 100644
+--- a/scripts/colony_crew_browser_smoke.py
++++ b/scripts/colony_crew_browser_smoke.py
+@@ -14,14 +14,14 @@ with sync_playwright() as p:
+     errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
+     page.set_content(html);page.locator('#colonyPanel').evaluate('e=>e.hidden=false')
+     page.add_script_tag(content=r'''
+-        window.__crew={plans:[],next:1,residents:[101,102],jobs:[],supply:{depot:0,carried:0,delivered:0,nodeAvailable:0,reserved:0,sources:[{node:1,available:0,reserved:0,x:3,y:0,decommissioning:false}],moreSources:0},restocking:[],supplyOrders:[],dismantling:[],machineDismantling:[],lineEvacuation:[],workshopState:{shutdown:false,drained:true,installed:true,finisher:true,aluminum:0,panels:0,frames:0,scrap:0,wip:0,operators:0},links:[{id:'500000000000000123',source:1,destination:2,segments:3}]};
++        window.__crew={plans:[],next:1,residents:[101,102],jobs:[],supply:{depot:0,carried:0,delivered:0,nodeAvailable:0,reserved:0,sources:[{node:1,available:0,reserved:0,x:3,y:0,decommissioning:false}],moreSources:0},restocking:[],supplyOrders:[],dismantling:[],machineDismantling:[],lineRetirement:[],lineEvacuation:[],workshopState:{shutdown:false,drained:true,installed:true,finisher:true,aluminum:0,panels:0,frames:0,scrap:0,wip:0,operators:0},links:[{id:'500000000000000123',source:1,destination:2,segments:3}]};
+         window.fetch=async (path,request)=>{
+           const s=window.__crew;let doc=request&&request.body?JSON.parse(request.body):{};
+           let data={ok:true};
+           if(path==='/session')data={token:'TEST',colony_mode:true};
+           else if(path==='/factory/api/sites')data={ok:true,sites:[42]};
+           else if(path.startsWith('/factory/api/structures?site='))data={ok:true,structures:[],plans:s.plans};
+-          else if(path.startsWith('/factory/api/crews?site='))data={ok:true,residents:s.residents,jobs:s.jobs,supply:s.supply,restocking:s.restocking,supplyOrders:s.supplyOrders,dismantling:s.dismantling,machineDismantling:s.machineDismantling,lineEvacuation:s.lineEvacuation,workshopState:s.workshopState,links:s.links};
++          else if(path.startsWith('/factory/api/crews?site='))data={ok:true,residents:s.residents,jobs:s.jobs,supply:s.supply,restocking:s.restocking,supplyOrders:s.supplyOrders,dismantling:s.dismantling,machineDismantling:s.machineDismantling,lineRetirement:s.lineRetirement,lineEvacuation:s.lineEvacuation,workshopState:s.workshopState,links:s.links};
+           else if(path==='/factory/api/structure_register'){
+             const plan={id:s.next++,site:42,completed:0,total:1,modulesRemaining:1,cancelled:false,conflicting:false,finished:false,reason:''};
+             s.plans.push(plan);data={ok:true,plan};
+@@ -43,6 +43,14 @@ with sync_playwright() as p:
+             const d=s.dismantling.find(d=>d.npc===doc.npc&&d.active);
+             if(d){d.active=false;d.cancelling=true;}
+             data={ok:true,changed:!!d};
++          }else if(path==='/factory/api/line_retire_begin'){
++            if(s.lineRetirement.some(j=>j.active))throw Error('Retirement already active');
++            s.lineRetirement=[{npc:doc.npc,phase:0,active:true,cancelling:false,reason:'Authorized; beginning shutdown'}];
++            data={ok:true,authorized:true};
++          }else if(path==='/factory/api/line_retire_cancel'){
++            const job=s.lineRetirement.find(j=>j.active);
++            if(job)job.cancelling=true;
++            data={ok:true,changed:!!job};
+           }else if(path==='/factory/api/line_shutdown'){
+             s.workshopState.shutdown=doc.shutdown;
+             data={ok:true,shutdown:doc.shutdown};
+@@ -165,6 +173,11 @@ with sync_playwright() as p:
+     page.wait_for_function("document.querySelector('#crewStatus').textContent.includes('Finisher')")
+     page.locator('#crewMachineCancel').click()
+     page.wait_for_function('window.__crew.machineDismantling[0].cancelling===true')
++    page.locator('#lineRetireBegin').click()
++    page.wait_for_function('window.__crew.lineRetirement.length===1 && window.__crew.lineRetirement[0].active')
++    page.wait_for_function("document.querySelector('#crewStatus').textContent.includes('Line retirement')")
++    page.locator('#lineRetireCancel').click()
++    page.wait_for_function('window.__crew.lineRetirement[0].cancelling===true')
+     page.locator('#lineShutdown').click()
+     page.wait_for_function('window.__crew.workshopState.shutdown===true')
+     page.locator('#lineEvacuate').click()
+@@ -177,5 +190,5 @@ with sync_playwright() as p:
+     page.locator('#warehouseDemolish').click()
+     page.wait_for_function('window.__crew.supply.sources.length===0 && window.__crew.supply.depot===1')
+     assert not errors,errors
+-    print('ECON-02B2d15 PASS: colony UI shutdown, NPC evacuation/cancel and existing controls')
++    print('ECON-02B2d16 PASS: colony retirement authorization/cancel, shutdown, evacuation and existing controls')
+     browser.close()
+diff --git a/src/NpcConstructionCrews.cpp b/src/NpcConstructionCrews.cpp
+index 682bee7389e71096341c1b79d925f0fdcd07a765..4adde32bb3666f89eed588271733608d99044c40 100644
+--- a/src/NpcConstructionCrews.cpp
++++ b/src/NpcConstructionCrews.cpp
+@@ -179,6 +179,16 @@ public:
+          "CHECK(x BETWEEN -1000000 AND 1000000),CHECK(y BETWEEN -1000000 AND 1000000))");
+   sql(db,"CREATE UNIQUE INDEX IF NOT EXISTS sg_machine_one_live_site ON "
+          "sg_machine_dismantle_jobs(site) WHERE active=1");
++  // Site is the key: there can be at most one active retirement per outpost.
++  // Only intent, phase and NPC identity are stored in SQLite; all inventory,
++  // link and machine removal is still committed by the authoritative world.
++  sql(db,"CREATE TABLE IF NOT EXISTS sg_line_retirements("
++         "site INTEGER PRIMARY KEY,owner INTEGER NOT NULL,ship INTEGER NOT NULL,"
++         "npc_id INTEGER NOT NULL,phase INTEGER NOT NULL DEFAULT 0 CHECK(phase BETWEEN 0 AND 8),"
++         "active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),"
++         "cancelling INTEGER NOT NULL DEFAULT 0 CHECK(cancelling IN (0,1)),"
++         "last_tick INTEGER NOT NULL DEFAULT -1,reason TEXT NOT NULL DEFAULT '',"
++         "CHECK(npc_id>0))");
+   sql(db,"CREATE TABLE IF NOT EXISTS sg_construction_supply_orders("
+          "plan_id INTEGER PRIMARY KEY REFERENCES sg_structure_plans(id),"
+          "owner INTEGER NOT NULL,ship INTEGER NOT NULL,site INTEGER NOT NULL,"
+@@ -537,6 +547,154 @@ std::vector<MachineDismantleJob> Crews::list_machine_dismantle(PlayerId owner,En
+       q.v(5)!=0,q.v(6)!=0,q.t(7)});
+  return out;
+ }
++// ECON-02B2d16: one owner-authorized, named on-site resident coordinates
++// existing physical line jobs. The coordinator is durable intent, not a new
++// resource owner. World commits remain authoritative; SQL phases are replayable.
++void Crews::begin_line_retirement(std::uint64_t npc,PlayerId owner,EntityId ship,EntityId site){
++ validate_worker(npc,owner,ship,site);
++ const auto* w=world_.world().workshop(site);
++ const auto* st=world_.world().storage(site);
++ if(!w || !st || !st->equipment_positions.count(0) ||
++    !st->equipment_positions.count(kWorkshopConveyorNode))
++  throw std::invalid_argument("Line retirement requires installed workshop and storage");
++ Query existing(db_->db,"SELECT active FROM sg_line_retirements WHERE site=?");
++ existing.n(1,site);
++ if(existing.row() && existing.v(0))throw std::invalid_argument("Line retirement already active");
++ Query construction(db_->db,"SELECT 1 FROM sg_construction_workers WHERE npc_id=? LIMIT 1");
++ construction.n(1,npc);if(construction.row())throw std::invalid_argument("Selected NPC already building");
++ Query restock(db_->db,"SELECT 1 FROM sg_construction_restock WHERE npc_id=? AND active=1 LIMIT 1");
++ restock.n(1,npc);if(restock.row())throw std::invalid_argument("Selected NPC already hauling");
++ Query evac(db_->db,"SELECT 1 FROM sg_line_evacuation_jobs WHERE npc_id=? AND active=1 LIMIT 1");
++ evac.n(1,npc);if(evac.row())throw std::invalid_argument("Selected NPC already evacuating");
++ Query dismantle(db_->db,"SELECT 1 FROM sg_dismantle_jobs WHERE npc_id=? AND active=1 LIMIT 1");
++ dismantle.n(1,npc);if(dismantle.row())throw std::invalid_argument("Selected NPC already dismantling");
++ Query machine(db_->db,"SELECT 1 FROM sg_machine_dismantle_jobs WHERE npc_id=? AND active=1 LIMIT 1");
++ machine.n(1,npc);if(machine.row())throw std::invalid_argument("Selected NPC already dismantling machine");
++ const auto* supplies=world_.world().construction_supplies(site);
++ if(supplies && (supplies->carried.count(npc) || supplies->evacuation_cargo.count(npc)))
++  throw std::invalid_argument("Unload worker cargo before retirement assignment");
++ Query save(db_->db,"INSERT INTO sg_line_retirements(site,owner,ship,npc_id,phase,active,cancelling,last_tick,reason)"
++                     " VALUES(?,?,?,?,0,1,0,-1,'Authorized: stopping new production')"
++                     " ON CONFLICT(site) DO UPDATE SET owner=excluded.owner,ship=excluded.ship,"
++                     " npc_id=excluded.npc_id,phase=0,active=1,cancelling=0,last_tick=-1,reason=excluded.reason"
++                     " WHERE sg_line_retirements.active=0");
++ save.n(1,site);save.n(2,owner);save.n(3,ship);save.n(4,npc);save.done();
++ if(sqlite3_changes(db_->db)!=1)throw std::runtime_error("Failed to authorize retirement");
++}
++bool Crews::cancel_line_retirement(PlayerId owner,EntityId ship,EntityId site){
++ validate_site(owner,ship,site);
++ Query q(db_->db,"UPDATE sg_line_retirements SET cancelling=1,reason='Cancel requested: returning physical cargo'"
++                 " WHERE owner=? AND ship=? AND site=? AND active=1 AND cancelling=0");
++ q.n(1,owner);q.n(2,ship);q.n(3,site);q.done();return sqlite3_changes(db_->db)==1;
++}
++bool Crews::retirement_active(PlayerId owner,EntityId ship,EntityId site)const{
++ validate_site(owner,ship,site);
++ Query q(db_->db,"SELECT 1 FROM sg_line_retirements WHERE owner=? AND ship=? AND site=? AND active=1");
++ q.n(1,owner);q.n(2,ship);q.n(3,site);return q.row();
++}
++std::vector<LineRetirement> Crews::list_line_retirement(PlayerId owner,EntityId ship,EntityId site)const{
++ validate_site(owner,ship,site);
++ Query q(db_->db,"SELECT npc_id,phase,active,cancelling,reason FROM sg_line_retirements"
++                  " WHERE owner=? AND ship=? AND site=? LIMIT 1");
++ q.n(1,owner);q.n(2,ship);q.n(3,site);
++ std::vector<LineRetirement> out;
++ if(q.row())out.push_back({static_cast<std::uint64_t>(q.v(0)),static_cast<int>(q.v(1)),q.v(2)!=0,q.v(3)!=0,q.t(4)});
++ return out;
++}
++// Return true only when advancing the retirement commits a world action and
++// changes the authoritative tick. This prevents double-ticking other jobs.
++bool Crews::advance_retirement(PlayerId owner,EntityId ship,std::uint64_t tick){
++ struct R {EntityId site;std::uint64_t npc;int phase;bool cancelling;std::int64_t last;};
++ std::vector<R> records;
++ {
++  Query q(db_->db,"SELECT site,npc_id,phase,cancelling,last_tick FROM sg_line_retirements"
++                   " WHERE owner=? AND ship=? AND active=1 ORDER BY site LIMIT 64");
++  q.n(1,owner);q.n(2,ship);
++  while(q.row())records.push_back({static_cast<EntityId>(q.v(0)),static_cast<std::uint64_t>(q.v(1)),
++      static_cast<int>(q.v(2)),q.v(3)!=0,q.v(4)});
++ }
++ for(auto r:records){
++  if(r.last>=0 && static_cast<std::uint64_t>(r.last)>=tick)continue;
++  int phase=r.phase;bool active=true;std::string reason="Retirement pending";
++  try{
++   validate_site(owner,ship,r.site);
++   const auto* supplies=world_.world().construction_supplies(r.site);
++   const bool carrying=supplies && (supplies->carried.count(r.npc) ||
++                                    supplies->evacuation_cargo.count(r.npc));
++   Query e(db_->db,"SELECT 1 FROM sg_line_evacuation_jobs WHERE site=? AND active=1");
++   e.n(1,r.site);const bool evacuating=e.row();
++   Query d(db_->db,"SELECT 1 FROM sg_dismantle_jobs WHERE site=? AND active=1");
++   d.n(1,r.site);const bool dismantling=d.row();
++   Query m(db_->db,"SELECT 1 FROM sg_machine_dismantle_jobs WHERE site=? AND active=1");
++   m.n(1,r.site);const bool machines=m.row();
++   if(r.cancelling){
++    // A cancel never reverses a world transaction or erases cargo. It only
++    // marks in-flight physical jobs to return cargo and stops future tasks.
++    if(evacuating)cancel_line_evacuation(r.npc,owner,ship,r.site);
++    if(dismantling)cancel_dismantle(r.npc,owner,ship,r.site);
++    if(machines)cancel_machine_dismantle(r.npc,owner,ship,r.site);
++    if(evacuating||dismantling||machines||carrying)reason="Cancellation pending: crew returning actual cargo";
++    else {active=false;phase=8;reason="Cancelled: shutdown and completed physical work retained";}
++   }else{
++    const auto* w=world_.world().workshop(r.site);
++    const auto* st=world_.world().storage(r.site);
++    if(!st)throw std::runtime_error("RETIRE_STORAGE_UNAVAILABLE");
++    if(phase==0){
++     if(!w)throw std::runtime_error("RETIRE_WORKSHOP_MISSING");
++     if(!w->shutdown_requested){
++      const auto ev=structures_.workshop_action(Action::SetWorkshopShutdown,1,owner,ship,r.site);
++      if(ev.result!=Outcome::Applied)throw std::runtime_error("RETIRE_SHUTDOWN_REFUSED");
++      return true; // SQL phase reconstructed from the real world on restart.
++     }
++     phase=1;reason="Production stopped; draining WIP";
++    }else if(phase==1){
++     if(!w || !w->shutdown_requested)throw std::runtime_error("RETIRE_SHUTDOWN_REVOKED");
++     if(w->reserved_aluminum_kg || w->reserved_panels_kg || w->operator_npc_id || w->finisher_npc_id)
++      reason="Waiting for WIP drain and operator release";
++     else {phase=2;reason="Work drained; preparing physical goods evacuation";}
++    }else if(phase==2){
++     if(!w || !w->shutdown_requested)throw std::runtime_error("RETIRE_SHUTDOWN_REVOKED");
++     const auto qty=w->aluminum_kg+w->panels_kg+w->frames_kg+w->scrap_kg;
++     if(evacuating)reason="NPC transferring workshop stock to built warehouse";
++     else if(carrying)reason="RETIRE_CARGO_STRANDED: worker cargo must be recovered";
++     else if(qty>0){
++      queue_line_evacuation(r.npc,owner,ship,r.site);
++      reason="Assigned physical evacuation job";
++     }else {phase=3;reason="Inventory evacuated; dismantling connected conveyors";}
++    }else if(phase==3){
++     if(!w || !w->shutdown_requested)throw std::runtime_error("RETIRE_SHUTDOWN_REVOKED");
++     if(dismantling)reason="NPC dismantling connected link/segments";
++     else if(carrying)reason="Waiting for recovered link cargo to reach depot";
++     else {
++      std::uint64_t link=0;
++      for(const auto& [id,v]:st->links)
++       if(v.source==kWorkshopConveyorNode || v.destination==kWorkshopConveyorNode){link=id;break;}
++      if(link){queue_dismantle(r.npc,link,true,owner,ship,r.site);reason="Assigned NPC to connected conveyor";}
++      else {phase=4;reason="All connected conveyors removed; recovering finisher";}
++     }
++    }else if(phase==4){
++     if(machines)reason="NPC safely dismantling finisher";
++     else if(carrying)reason="Returning recovered machine module";
++     else if(w && w->finisher_installed){
++      queue_machine_dismantle(r.npc,1,owner,ship,r.site);reason="Assigned finisher teardown";
++     }else {phase=5;reason="Finisher removed; recovering primary machine";}
++    }else if(phase==5){
++     if(machines)reason="NPC safely dismantling processor";
++     else if(carrying)reason="Returning recovered processor module";
++     else if(w){
++      queue_machine_dismantle(r.npc,2,owner,ship,r.site);reason="Assigned processor teardown";
++     }else{phase=6;active=false;reason="Line retired; all physical modules accounted for";}
++    }else {active=false;reason="Retirement already terminal";}
++   }
++  }catch(const std::exception& ex){reason=std::string(ex.what()).substr(0,180);}
++  Query save(db_->db,"UPDATE sg_line_retirements SET phase=?,active=?,reason=?,last_tick=?"
++                     " WHERE site=? AND owner=? AND ship=? AND active=1");
++  save.n(1,phase);save.n(2,active?1:0);save.str(3,reason);save.n(4,static_cast<std::int64_t>(tick));
++  save.n(5,r.site);save.n(6,owner);save.n(7,ship);save.done();
++ }
++ return false;
++}
++
+ void Crews::queue_line_evacuation(std::uint64_t npc,PlayerId owner,EntityId ship,EntityId site){
+  validate_worker(npc,owner,ship,site);
+  if(npc<1 || npc>static_cast<std::uint64_t>(std::numeric_limits<int>::max()/4))
+@@ -700,6 +858,7 @@ std::vector<SupplyOrder> Crews::list_supply(PlayerId owner,EntityId ship,EntityI
+ }
+ void Crews::advance(PlayerId owner,EntityId ship){
+  const auto tick=world_.world().tick();
++ if(advance_retirement(owner,ship,tick))return;
+  // ECON-02B2d15: the world snapshot is the durable shutdown policy.
+  // Drain in-flight batches before releasing hands-on operators. Never erase
+  // WIP, stock, or inventory, and never unassign an operator to "finish" WIP.
+diff --git a/src/factory_colony_protocol.hpp b/src/factory_colony_protocol.hpp
+index e3263c41482356b991f0655dec589cd58cc1abf6..80bffcff13d50c61306bcb5eced7371deb1f26f5 100644
+--- a/src/factory_colony_protocol.hpp
++++ b/src/factory_colony_protocol.hpp
+@@ -134,6 +134,22 @@ public:
+         if(requested_site==0||pos==sites.end()||pos->second.source_colony_ship!=ship_||
+            !world_.world().find(ship_)||world_.world().find(ship_)->owner_id!=owner_)
+             throw std::invalid_argument("Selected site is not owned by this colony session");
++        if(op=="LINE_RETIRE_BEGIN"){
++            crews_.begin_line_retirement(unsigned_id(arg),owner_,ship_,requested_site);
++            return "{\"ok\":true,\"authorized\":true}";
++        }
++        if(op=="LINE_RETIRE_CANCEL"){
++            if(!arg.empty())throw std::invalid_argument("Unexpected line retirement cancel arguments");
++            return "{\"ok\":true,\"changed\":"+
++                std::string(crews_.cancel_line_retirement(owner_,ship_,requested_site)?"true":"false")+"}";
++        }
++        // All subordinate workshop, evacuation and dismantling actions are
++        // run by the retirement coordinator until it completes or cancels.
++        if((op=="LINE_SHUTDOWN" || op=="LINE_EVACUATE" || op=="LINE_EVACUATE_CANCEL" ||
++            op=="CREW_MACHINE" || op=="CREW_MACHINE_CANCEL" || op=="CREW_DISMANTLE" ||
++            op=="CREW_DISMANTLE_CANCEL") &&
++            crews_.retirement_active(owner_,ship_,requested_site))
++            throw std::invalid_argument("Active line retirement owns the teardown workflow");
+         if(op=="CREW_LIST"){
+             if(!arg.empty())throw std::invalid_argument("Unexpected crew listing arguments");
+             std::string out="{\"ok\":true,\"residents\":[";bool first=true;
+@@ -252,7 +268,15 @@ public:
+                      ",\"x\":"+std::to_string(job.x)+",\"y\":"+std::to_string(job.y)+
+                      ",\"labor\":"+std::to_string(job.labor)+",\"reason\":"+json_string(job.reason)+"}";
+             }
+-            out+="],\"lineEvacuation\":[";first=true;
++            out+= "],\"lineRetirement\":[";first=true;
++            for(const auto& r:crews_.list_line_retirement(owner_,ship_,requested_site)){
++                if(!first)out+=',';first=false;
++                out+="{\"npc\":"+std::to_string(r.npc)+",\"phase\":"+std::to_string(r.phase)+
++                     ",\"active\":"+(r.active?"true":"false")+
++                     ",\"cancelling\":"+(r.cancelling?"true":"false")+
++                     ",\"reason\":"+json_string(r.reason)+"}";
++            }
++            out+= "],\"lineEvacuation\":[";first=true;
+             for(const auto& job:crews_.list_line_evacuation(owner_,ship_,requested_site)){
+                 if(!first)out+=',';first=false;
+                 out+="{\"npc\":"+std::to_string(job.npc)+
+diff --git a/tests/ECON02B2d16RetirementFixture.cpp b/tests/ECON02B2d16RetirementFixture.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..ab90a42992c593647ca14bdac9efe5abb2fc9a42
+--- /dev/null
++++ b/tests/ECON02B2d16RetirementFixture.cpp
+@@ -0,0 +1,50 @@
++#include "galaxy/Persistence.hpp"
++#include "galaxy/Simulation.hpp"
++#include <iostream>
++#include <stdexcept>
++using namespace galaxy;
++static void action(PersistentWorld& w,EntityId ship,std::uint64_t id,Action kind,EntityId site=0,
++                   std::int64_t amount=1,int x=0,int y=0){
++ Command c{};c.id=id;c.sequence=id;c.issuer=7;c.actor=ship;c.target=site;c.action=kind;
++ c.amount=amount;c.thrust_x=x;c.thrust_y=y;c.execute_tick=w.world().tick()+1;
++ if(!w.submit(c))throw std::runtime_error("Failed fixture submit "+std::to_string(id));
++ w.step();
++ if(w.world().events().back().result!=Outcome::Applied)
++  throw std::runtime_error("Fixture command rejected "+std::to_string(id));
++}
++int main(int argc,char** argv){
++ if(argc!=2)return 2;
++ try{
++  Simulation seed(1216);
++  auto ship=seed.add_colony_ship(7,{0,0},500,8);
++  seed.provision_colony_genesis(ship,1000,3000,1000,1000,1000);
++  auto asteroid=seed.add_asteroid({1000,0},200);
++  const auto silicate=seed.add_geological_asteroid({2000,0},AsteroidClass::Silicate,30,2500);
++  seed.enable_individual_workforce();
++  PersistentWorld w(argv[1],std::move(seed));
++  action(w,ship,1,Action::Mine,asteroid,175);
++  action(w,ship,2,Action::RefineOre,0,175);
++  action(w,ship,3,Action::FabricateModule,0,75);
++  action(w,ship,4,Action::ConstructOutpost);
++  auto site=w.world().built_outposts().begin()->first;
++  action(w,ship,5,Action::ConstructHabitat,site);
++  for(int i=1;i<=3;++i)action(w,ship,5+i,Action::TransferHabitatStock,site,30,i);
++  action(w,ship,9,Action::AssignHabitatResidents,site,2);
++  action(w,ship,10,Action::ConstructStorage,site);
++  action(w,ship,11,Action::ConstructWorkshop,site);
++  action(w,ship,12,Action::ConstructWorkshopFinisher,site);
++  action(w,ship,13,Action::PlaceFactoryEquipment,site,-1,4,0);
++  action(w,ship,14,Action::PlaceFactoryEquipment,site,0,0,0);
++  action(w,ship,15,Action::Mine,silicate,45);
++  action(w,ship,16,Action::RefineMineral,10,18000);
++  action(w,ship,17,Action::TransferWorkshopStack,site,40,0);
++  // Attach a *real* workshop conveyor; retirement must remove every segment.
++  action(w,ship,18,Action::ConstructWorkshopLink,site,4,0,0);
++  action(w,ship,19,Action::PlaceConveyorCell,site,18,1,0);
++  action(w,ship,20,Action::PlaceConveyorCell,site,18,2,0);
++  action(w,ship,21,Action::PlaceConveyorCell,site,18,3,0);
++  action(w,ship,22,Action::CompleteConveyorRoute,site,18);
++  std::cout<<"ECON-02B2d16 linked workshop fixture prepared\n";
++  return 0;
++ }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}
++}
+diff --git a/tests/ECON02B2d16RetirementHostTests.py b/tests/ECON02B2d16RetirementHostTests.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..fdf866a18422990c151b64ced0f077a04419a6da
+--- /dev/null
++++ b/tests/ECON02B2d16RetirementHostTests.py
+@@ -0,0 +1,87 @@
++#!/usr/bin/env python3
++"""d16: owner-scoped HTTP retirement, mid-haul restart and no-op replay."""
++import argparse,http.client,json,pathlib,socket,subprocess,sys,tempfile,time
++p=argparse.ArgumentParser()
++for x in ('host','fixture','relay'):p.add_argument('--'+x,required=True)
++a=p.parse_args()
++def free_port():
++ with socket.socket() as s:s.bind(('127.0.0.1',0));return s.getsockname()[1]
++class Game:
++ def __init__(self,db):
++  self.port=free_port()
++  self.proc=subprocess.Popen([sys.executable,a.relay,'--colony','--host-exe',a.host,'--save',str(db),
++    '--port',str(self.port),'--tick-ms','65','--max-ticks','1200'],stdin=subprocess.DEVNULL,
++    stdout=subprocess.PIPE,stderr=subprocess.PIPE)
++  for i in range(120):
++   if self.proc.poll() is not None:raise AssertionError(self.proc.stderr.read().decode())
++   try:
++    if self.get('/healthz')[0]==200:break
++   except (OSError,TimeoutError):pass
++   time.sleep(.05)
++  else:raise AssertionError('Colony host never opened')
++ def request(self,method,path,doc=None,headers=None):
++  c=http.client.HTTPConnection('127.0.0.1',self.port,timeout=8)
++  raw=json.dumps(doc).encode() if doc is not None else None
++  h={'Host':f'127.0.0.1:{self.port}',**(headers or {})}
++  if raw is not None:
++   h.setdefault('Content-Type','application/json');h.setdefault('Origin',f'http://127.0.0.1:{self.port}')
++  try:
++   c.request(method,path,raw,headers=h);r=c.getresponse();content=r.read()
++   return r.status,json.loads(content) if r.getheader('Content-Type')=='application/json' else content.decode()
++  finally:c.close()
++ def get(self,path):return self.request('GET',path)
++ def post(self,path,data,headers=None):return self.request('POST',path,data,headers)
++ def close(self):
++  self.proc.terminate()
++  try:self.proc.communicate(timeout=8)
++  except subprocess.TimeoutExpired:self.proc.kill();self.proc.communicate(timeout=5)
++with tempfile.TemporaryDirectory(prefix='sg-d16-http-') as tmp:
++ db=pathlib.Path(tmp)/'world.sqlite'
++ r=subprocess.run([a.fixture,str(db)],capture_output=True,text=True,timeout=25)
++ assert r.returncode==0,r.stderr
++ game=Game(db)
++ try:
++  token=game.get('/session')[1]['token']
++  status,sites=game.get('/factory/api/sites');assert status==200 and len(sites['sites'])==1
++  site=sites['sites'][0]
++  status,crews=game.get(f'/factory/api/crews?site={site}')
++  assert status==200 and len(crews['residents'])>=1
++  npc=crews['residents'][0]
++  req={'token':token,'site':site,'npc':npc}
++  route='/factory/api/line_retire_begin'
++  for fake in ({**req,'token':'invalid'}, {**req,'site':1234567}, {**req,'npc':'5'}, {**req,'npc':True}):
++   status,_=game.post(route,fake);assert status in (400,403),(status,fake)
++  status,_=game.post(route,req,{'Origin':'https://forged.invalid'});assert status==403
++  status,ok=game.post(route,req);assert status==200 and ok['authorized'],(status,ok)
++  status,_=game.post(route,req);assert status==400
++  status,_=game.post('/factory/api/line_shutdown',{'token':token,'site':site,'shutdown':False});assert status==400
++  carrying=False
++  for _ in range(200):
++   status,crews=game.get(f'/factory/api/crews?site={site}')
++   assert status==200,(status,crews)
++   if crews['lineEvacuation'] and crews['lineEvacuation'][0]['carryingKg']>0:
++    carrying=True;break
++   time.sleep(.035)
++  assert carrying,crews
++ finally:game.close()
++ game=Game(db)
++ try:
++  status,crews=game.get(f'/factory/api/crews?site={site}')
++  assert status==200 and crews['lineRetirement'][0]['active'],crews
++  assert crews['lineEvacuation'][0]['carryingKg']>0,crews
++  terminal=False
++  for _ in range(850):
++   status,crews=game.get(f'/factory/api/crews?site={site}')
++   assert status==200,crews
++   if crews['lineRetirement'][0]['phase']==6 and not crews['lineRetirement'][0]['active']:
++    terminal=True;break
++   time.sleep(.04)
++  assert terminal,crews
++  assert not crews['workshopState']['installed'],crews
++  assert not any(l['id']=='18' for l in crews['links']),crews
++  assert crews['supply']['depot']>=6,crews
++  token=game.get('/session')[1]['token']
++  status,ok=game.post('/factory/api/line_retire_cancel',{'token':token,'site':site})
++  assert status==200 and not ok['changed'],(status,ok)
++ finally:game.close()
++ print('ECON-02B2d16 PASS: authenticated line retirement, in-transit restart, dependency order')
+diff --git a/tests/ECON02B2d16RetirementTests.cpp b/tests/ECON02B2d16RetirementTests.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..a217b74c2938e842ec451fde60af7a6b0edba50f
+--- /dev/null
++++ b/tests/ECON02B2d16RetirementTests.cpp
+@@ -0,0 +1,109 @@
++#include "galaxy/NpcConstructionCrews.hpp"
++#include "../src/factory_colony_protocol.hpp"
++#include <chrono>
++#include <filesystem>
++#include <iostream>
++#include <stdexcept>
++#include <string>
++using namespace galaxy;
++namespace fs=std::filesystem;
++#define CHECK(x) do{if(!(x))throw std::runtime_error("d16 line "+std::to_string(__LINE__)+": " #x);}while(0)
++static void tick(PersistentWorld& w,construction::Crews& c,EntityId ship,int count){
++ for(int i=0;i<count;++i){w.step();c.advance(7,ship);}
++}
++int main(int argc,char** argv){
++ if(argc!=2)return 2;
++ const auto folder=fs::temp_directory_path()/ ("sg_retire_d16_"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
++ fs::create_directories(folder);const auto db=(folder/"world.sqlite").string();
++ try{
++  const auto fixture=std::string("\"")+argv[1]+"\" \""+db+"\"";
++  CHECK(std::system(fixture.c_str())==0);
++  EntityId site=0,ship=0;std::uint64_t npc=0;std::int64_t mass=0;
++  {
++   PersistentWorld w(db,Simulation(1));const auto& sites=w.world().built_outposts();
++   CHECK(sites.size()==1);site=sites.begin()->first;ship=sites.begin()->second.source_colony_ship;
++   mass=w.world().total_material_kg();
++   for(const auto& [id,n]:w.world().npc_records())if(n.location==site && n.role==NpcRole::Habitat){npc=id;break;}
++   CHECK(npc!=0 && w.world().workshop(site) && w.world().workshop(site)->aluminum_kg==40);
++   CHECK(w.world().storage(site)->links.size()==1);
++   construction::Plans plans(db,w);construction::Crews crew(db,w,plans);
++   colony_factory::Control host(db,w,ship,7);
++   CHECK(host.handle("LINE_RETIRE_BEGIN",site,std::to_string(npc)).find("authorized")!=std::string::npos);
++   bool conflict=false;try{host.handle("LINE_RETIRE_BEGIN",site,std::to_string(npc));}
++   catch(const std::invalid_argument&){conflict=true;}CHECK(conflict);
++   CHECK(crew.retirement_active(7,ship,site));
++   bool blocked=false;try{host.handle("LINE_SHUTDOWN",site,"0");}
++   catch(const std::invalid_argument&){blocked=true;}CHECK(blocked);
++   for(int i=0;i<200;++i){
++    w.step();crew.advance(7,ship);
++    CHECK(w.world().total_material_kg()==mass);
++    const auto status=crew.list_line_retirement(7,ship,site);
++    if(!status.empty() && status[0].phase>=3)break;
++   }
++   CHECK(crew.list_line_retirement(7,ship,site)[0].phase>=3);
++   CHECK(w.world().workshop(site)->aluminum_kg==0);
++   CHECK(w.world().storage(site)->goods_kg.at("aluminum")==40);
++   CHECK(w.world().storage(site)->links.size()==1);
++  }
++  {
++   // Load the *real* SQLite world after both world and SQL crew writes.
++   PersistentWorld w(db,Simulation(1));construction::Plans plans(db,w);construction::Crews crew(db,w,plans);
++   CHECK(crew.retirement_active(7,ship,site));
++   bool got_link_cargo=false;
++   for(int i=0;i<350;++i){
++    w.step();crew.advance(7,ship);CHECK(w.world().total_material_kg()==mass);
++    if(const auto* stock=w.world().construction_supplies(site);
++       stock && stock->carried.count(npc))got_link_cargo=true;
++    const auto status=crew.list_line_retirement(7,ship,site);
++    if(!status[0].active)break;
++   }
++   const auto r=crew.list_line_retirement(7,ship,site)[0];
++   CHECK(!r.active && r.phase==6);
++   CHECK(got_link_cargo);
++   CHECK(!w.world().workshop(site));
++   CHECK(!w.world().storage(site)->links.count(18));
++   CHECK(!w.world().construction_supplies(site)->carried.count(npc));
++   CHECK(w.world().total_material_kg()==mass);
++   CHECK(!crew.retirement_active(7,ship,site));
++   colony_factory::Control host(db,w,ship,7);
++   CHECK(host.handle("CREW_LIST",site,"").find("\"phase\":6")!=std::string::npos);
++  }
++  // Explicit cancellation is non-destructive and does not automatically
++  // resume production. A subsequent approval can restart a partial teardown.
++  const auto cancel_db=(folder/"cancel.sqlite").string();
++  CHECK(std::system((std::string("\"")+argv[1]+"\" \""+cancel_db+"\"").c_str())==0);
++  {
++   PersistentWorld w(cancel_db,Simulation(1));construction::Plans plans(cancel_db,w);construction::Crews crew(cancel_db,w,plans);
++   colony_factory::Control host(cancel_db,w,ship,7);
++   CHECK(host.handle("LINE_RETIRE_BEGIN",site,std::to_string(npc)).find("authorized")!=std::string::npos);
++   bool mid_haul=false;
++   for(int i=0;i<45;++i){
++    w.step();crew.advance(7,ship);
++    CHECK(w.world().total_material_kg()==mass);
++    const auto* stock=w.world().construction_supplies(site);
++    if(stock && stock->evacuation_cargo.count(npc)){
++     mid_haul=true;break;
++    }
++   }
++   CHECK(mid_haul);
++   CHECK(host.handle("LINE_RETIRE_CANCEL",site,"").find("true")!=std::string::npos);
++  }
++  {
++   PersistentWorld w(cancel_db,Simulation(1));construction::Plans plans(cancel_db,w);construction::Crews crew(cancel_db,w,plans);
++   CHECK(crew.list_line_retirement(7,ship,site)[0].cancelling);
++   CHECK(w.world().construction_supplies(site)->evacuation_cargo.count(npc));
++   for(int i=0;i<100 && crew.retirement_active(7,ship,site);++i){
++    w.step();crew.advance(7,ship);CHECK(w.world().total_material_kg()==mass);
++   }
++   CHECK(!crew.retirement_active(7,ship,site));
++   CHECK(crew.list_line_retirement(7,ship,site)[0].phase==8);
++   CHECK(!w.world().construction_supplies(site)->evacuation_cargo.count(npc));
++   CHECK(w.world().workshop(site)!=nullptr);
++   CHECK(w.world().workshop(site)->aluminum_kg==40);
++   CHECK(w.world().workshop(site)->shutdown_requested);
++  }
++  fs::remove_all(folder);
++  std::cout<<"ECON-02B2d16 PASS: line retirement, real NPC work, conveyor teardown, restart, cancellation and conservation\n";
++  return 0;
++ }catch(const std::exception& e){std::cerr<<"ECON-02B2d16 FAIL: "<<e.what()<<'\n';fs::remove_all(folder);return 1;}
++}
+diff --git a/viewer/interactive.html b/viewer/interactive.html
+index cdb84616c38253faabe7a57f8e14ff476463871b..456f5918e6e66de8e8d90739f5cb38c7276a805a 100644
+--- a/viewer/interactive.html
++++ b/viewer/interactive.html
+@@ -74,6 +74,7 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
+ <div class="controls" style="padding:8px 0;gap:5px"><label for="crewDismantleTarget">Dismantling target</label><select id="crewDismantleTarget"><option value="">Choose installed warehouse or conveyor</option></select><button id="crewDismantle">Assign NPC dismantling</button><button id="crewDismantleCancel">Cancel worker teardown</button></div>
+ <div class="controls" style="padding:8px 0;gap:5px"><label>Inventory evacuation</label><button id="lineEvacuate">Assign NPC goods hauler</button><button id="lineEvacuateCancel">Cancel evacuation</button></div>
+ <div class="help">A named resident transports at most 20 kg per trip from a physically placed, stopped workshop to its physically placed original warehouse. Carried goods remain in the world across restarts. If warehouse capacity or the route is blocked, the NPC retains cargo; cancellation returns it to the workshop instead of creating a refund. Demolition still requires removal of attached conveyors and empty machinery.</div>
++<div class="controls" style="padding:8px 0;gap:5px"><label>Authorized industrial line retirement</label><button id="lineRetireBegin">Retire line with NPC crew</button><button id="lineRetireCancel">Cancel pending retirement</button></div>
+ <div class="controls" style="padding:8px 0;gap:5px"><label>Production line</label><button id="lineShutdown">Drain and stop production</button><button id="lineResume">Resume production</button></div>
+ <div class="help">Shutting down prevents new batches or incoming feed. Already-started batches may finish if power and assigned operators remain available. Once both stages drain, the colony releases their operators. Workshop inventory remains physical: recover it through installed outward conveyors or an authorized transfer before requesting machine dismantling.</div>
+ <div class="controls" style="padding:8px 0;gap:5px"><label for="crewMachineStage">Machine disassembly</label><select id="crewMachineStage"><option value="1">Finisher (first)</option><option value="2">Primary processor (last)</option></select><button id="crewMachine">Assign NPC machine teardown</button><button id="crewMachineCancel">Cancel machine teardown</button></div>
+diff --git a/viewer/structures.js b/viewer/structures.js
+index 6915f4886221679ad107d931c746360e6881e3d6..ad8c29e243707dc780c93fb07b64ad05ed37cb43 100644
+--- a/viewer/structures.js
++++ b/viewer/structures.js
+@@ -85,12 +85,13 @@ function renderCrews(){
+  const teardown=(crews.dismantling||[]).map(d=>`NPC #${d.npc} · ${d.link?'link':'warehouse'} #${d.target} · ${d.active?(d.cancelling?'Returning materials':'Dismantling'):'Finished'} · (${d.x},${d.y}) · ${d.reason||'Ready'}`);
+  const evacuations=(crews.lineEvacuation||[]).map(j=>`NPC #${j.npc} · goods evacuation · (${j.x},${j.y}) · carrying ${j.carryingKg||0} kg · ${j.active?(j.cancelling?'Returning cargo':'Moving materials'):'Complete'} · ${j.reason||'Ready'}`);
+  const machines=(crews.machineDismantling||[]).map(j=>`NPC #${j.npc} · ${j.stage===1?'Finisher':'Processor'} · ${j.active?'Active':'Finished'} · ${j.reason}`);
++ const retirements=(crews.lineRetirement||[]).map(r=>`Line retirement NPC #${r.npc} · phase ${r.phase}/6 · ${r.active?(r.cancelling?'Safely cancelling':'Active'):'Closed'} · ${r.reason}`);
+  const workshop=crews.workshopState||{};
+  const workLine=workshop.installed?`Workshop: ${workshop.finisher?'processor + finisher':'processor'} · aluminum ${workshop.aluminum} kg · panels ${workshop.panels} kg · frames ${workshop.frames} kg · scrap ${workshop.scrap} kg · WIP ${workshop.wip} kg · assigned operators ${workshop.operators} · shutdown ${workshop.shutdown?"ON": "OFF"}${workshop.drained?" (drained)":""}`:'No installed workshop';
+  const activeRuns=(crews.restocking||[]).map(r=>`${r.salvage?'Salvage':'Supply'} NPC #${r.npc} ${r.salvage?'←':'→'} node #${r.node} · (${r.x},${r.y}) · ${r.active?(r.returning?'Returning':'Hauling'):'Complete'} · ${r.reason||'Ready'}`);
+  $('crewStatus').textContent=workLine+'\n'+stockLine+'\n'+(sourceLine?sourceLine+'\n':'')+(text.join('\n')||'No construction crew assignments yet. Build a habitat and assign residents first.')+
+   (activeRuns.length?'\n'+activeRuns.join('\n'):'')+
+-  (teardown.length?'\n'+teardown.join('\n'):'')+(machines.length?'\n'+machines.join('\n'):'')+(evacuations.length?'\n'+evacuations.join('\n'):'')+(crews.moreLinks?'\n'+crews.moreLinks+' additional links (not shown)':'')+(orders.length?'\n'+orders.join('\n'):'');
++  (teardown.length?'\n'+teardown.join('\n'):'')+(machines.length?'\n'+machines.join('\n'):'')+(evacuations.length?'\n'+evacuations.join('\n'):'')+(retirements.length?'\n'+retirements.join('\n'):'')+(crews.moreLinks?'\n'+crews.moreLinks+' additional links (not shown)':'')+(orders.length?'\n'+orders.join('\n'):'');
+ }
+ function render(){
+  draw();renderCrews();
+@@ -226,6 +227,16 @@ $('crewDismantleCancel').addEventListener('click',()=>{
+  if(!Number.isSafeInteger(npc)||npc<=0){feedback('Select a resident.');return;}
+  submit('/factory/api/crew_dismantle_cancel',{npc});
+ });
++$('lineRetireBegin').addEventListener('click',()=>{
++ const npc=Number($('crewResident').value);
++ if(!Number.isSafeInteger(npc)||npc<=0){feedback('Choose a real available resident.');return;}
++ if(!confirm('Authorize this resident to shut down the workshop, evacuate its real stock, disconnect connected conveyors, and dismantle the finisher and processor? Completed work cannot be undone.'))return;
++ submit('/factory/api/line_retire_begin',{npc});
++});
++$('lineRetireCancel').addEventListener('click',()=>{
++ if(!confirm('Stop future retirement steps and return any carried cargo? Completed dismantling remains permanent.'))return;
++ submit('/factory/api/line_retire_cancel',{});
++});
+ $('lineEvacuate').addEventListener('click',()=>{
+  const npc=Number($('crewResident').value);
+  if(!Number.isSafeInteger(npc)||npc<=0){feedback('Select a real on-site resident.');return;}

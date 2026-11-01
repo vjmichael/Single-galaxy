@@ -1,0 +1,936 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 4eef0b3..8703c05 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -772,3 +772,21 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+         --relay ${CMAKE_CURRENT_SOURCE_DIR}/live/interactive_relay.py)
+     set_tests_properties(ECON02B2d13_NPCDismantle_HTTP PROPERTIES TIMEOUT 90)
+ endif()
++
++if(BUILD_TESTING)
++    add_executable(galaxy_econ02b2d14_machine_dismantle_tests tests/ECON02B2d14MachineDismantleTests.cpp)
++    target_link_libraries(galaxy_econ02b2d14_machine_dismantle_tests PRIVATE galaxy_kernel)
++    add_test(NAME ECON02B2d14_MachineDismantle COMMAND galaxy_econ02b2d14_machine_dismantle_tests)
++endif()
++if(BUILD_TESTING)
++    add_executable(galaxy_econ02b2d14_machine_fixture tests/ECON02B2d14MachineFixture.cpp)
++    target_link_libraries(galaxy_econ02b2d14_machine_fixture PRIVATE galaxy_kernel)
++endif()
++if(BUILD_TESTING AND Python3_Interpreter_FOUND)
++    add_test(NAME ECON02B2d14_MachineDismantle_HTTP
++      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/ECON02B2d14MachineHostTests.py
++        --host $<TARGET_FILE:galaxy_colony_live_host>
++        --fixture $<TARGET_FILE:galaxy_econ02b2d14_machine_fixture>
++        --relay ${CMAKE_CURRENT_SOURCE_DIR}/live/interactive_relay.py)
++    set_tests_properties(ECON02B2d14_MachineDismantle_HTTP PROPERTIES TIMEOUT 90)
++endif()
+diff --git a/include/galaxy/NpcConstructionCrews.hpp b/include/galaxy/NpcConstructionCrews.hpp
+index 7d39e41..9729c37 100644
+--- a/include/galaxy/NpcConstructionCrews.hpp
++++ b/include/galaxy/NpcConstructionCrews.hpp
+@@ -20,6 +20,10 @@ struct SupplyOrder {
+     bool active=false,manufacture=false;
+     std::string reason;
+ };
++struct MachineDismantleJob {
++    std::uint64_t npc=0;int stage=0,x=0,y=0,labor=0;
++    bool active=false,cancelling=false;std::string reason;
++};
+ struct DismantleJob {
+     std::uint64_t npc=0,target=0;bool link=false,active=false,cancelling=false;
+     int x=0,y=0,labor=0;std::string reason;
+@@ -55,6 +59,10 @@ public:
+                          PlayerId owner,EntityId ship,EntityId site);
+     bool cancel_dismantle(std::uint64_t npc,PlayerId owner,EntityId ship,EntityId site);
+     std::vector<DismantleJob> list_dismantle(PlayerId owner,EntityId ship,EntityId site)const;
++    // ECON-02B2d14: reverse-stage machine recovery, only after WIP/stock/links clear.
++    void queue_machine_dismantle(std::uint64_t npc,int stage,PlayerId owner,EntityId ship,EntityId site);
++    bool cancel_machine_dismantle(std::uint64_t npc,PlayerId owner,EntityId ship,EntityId site);
++    std::vector<MachineDismantleJob> list_machine_dismantle(PlayerId owner,EntityId ship,EntityId site)const;
+     void queue_restock(std::uint64_t npc,std::uint32_t node,PlayerId owner,EntityId ship,EntityId site);
+     // Salvage moves free stock from a real bin, via an actual NPC, to the depot.
+     // A queued salvage is not permission to demolish an occupied warehouse.
+diff --git a/include/galaxy/Simulation.hpp b/include/galaxy/Simulation.hpp
+index 5dd3ff1..9ac7761 100644
+--- a/include/galaxy/Simulation.hpp
++++ b/include/galaxy/Simulation.hpp
+@@ -22,7 +22,7 @@ struct Vector2 {
+ };
+ 
+ enum class EntityType { Ship, Asteroid, Station, Stargate, Wreck };
+-enum class Action { Thrust, Mine, StartMining, StopMining, RequestUndock, RequestDock, UnloadOre, LoadOre, SellOre, RequestJump, SetGatePairOnline, SetGateStaff, DeliverGateSpares, RefineOre, FabricateModule, ConstructOutpost, RefineMineral, FabricateMaterialModule, PlantCrops, HarvestCrops, RecycleWater, RecycleCompost, ProduceOxygen, LoadLifeWater, ConstructFarm, TransferFarmStock, AssignFarmWorkers, ConstructHabitat, TransferHabitatStock, AssignHabitatResidents, ConstructUtility, RepairUtility, TransferUtilitySpares, AssignUtilityTechnicians, SetUtilityMaintenance, ConstructCommunity, TransferCommunityStock, AssignCommunityStaff, ConstructClinic, TransferClinicStock, AssignClinicStaff, ConstructReclaimer, ConstructWaterworks, TransferWaterworksFeed, SetPolicyAssurance, AssignPolicyInspectors, AssignFarmMentor, HostDestroyShip, HostCrewLoss, ConstructWorkshop, TransferWorkshopFeed, AssignWorkshopOperator, TransferWorkshopOutput, ConstructWorkshopFinisher, AssignWorkshopFinisher, TransferWorkshopFinalOutput, TransferWorkshopStack, ConstructStorage, TransferStorageStack, ConstructStorageNode, TransferStorageNodeStack, ConstructStorageLink, ConstructWorkshopLink, PlaceFactoryEquipment, PlaceConveyorCell, CompleteConveyorRoute, BuildColonyFixture, SetColonyDoor, StageConstructionModules, PickupConstructionModules, DeliverConstructionModules, ReturnConstructionModules, BuildColonyFixtureFromDelivery, DepositConstructionNodeModules, ReserveConstructionModules, PickupReservedConstructionModules, RecoverConstructionDelivery, SalvageConstructionNodeModules, MarkStorageNodeDecommission, CancelStorageNodeDecommission, DemolishStorageNode, DismantleConveyorCell, DismantleStorageLink, CrewDemolishStorageNode };
++enum class Action { Thrust, Mine, StartMining, StopMining, RequestUndock, RequestDock, UnloadOre, LoadOre, SellOre, RequestJump, SetGatePairOnline, SetGateStaff, DeliverGateSpares, RefineOre, FabricateModule, ConstructOutpost, RefineMineral, FabricateMaterialModule, PlantCrops, HarvestCrops, RecycleWater, RecycleCompost, ProduceOxygen, LoadLifeWater, ConstructFarm, TransferFarmStock, AssignFarmWorkers, ConstructHabitat, TransferHabitatStock, AssignHabitatResidents, ConstructUtility, RepairUtility, TransferUtilitySpares, AssignUtilityTechnicians, SetUtilityMaintenance, ConstructCommunity, TransferCommunityStock, AssignCommunityStaff, ConstructClinic, TransferClinicStock, AssignClinicStaff, ConstructReclaimer, ConstructWaterworks, TransferWaterworksFeed, SetPolicyAssurance, AssignPolicyInspectors, AssignFarmMentor, HostDestroyShip, HostCrewLoss, ConstructWorkshop, TransferWorkshopFeed, AssignWorkshopOperator, TransferWorkshopOutput, ConstructWorkshopFinisher, AssignWorkshopFinisher, TransferWorkshopFinalOutput, TransferWorkshopStack, ConstructStorage, TransferStorageStack, ConstructStorageNode, TransferStorageNodeStack, ConstructStorageLink, ConstructWorkshopLink, PlaceFactoryEquipment, PlaceConveyorCell, CompleteConveyorRoute, BuildColonyFixture, SetColonyDoor, StageConstructionModules, PickupConstructionModules, DeliverConstructionModules, ReturnConstructionModules, BuildColonyFixtureFromDelivery, DepositConstructionNodeModules, ReserveConstructionModules, PickupReservedConstructionModules, RecoverConstructionDelivery, SalvageConstructionNodeModules, MarkStorageNodeDecommission, CancelStorageNodeDecommission, DemolishStorageNode, DismantleConveyorCell, DismantleStorageLink, CrewDemolishStorageNode, CrewDismantleWorkshop };
+ enum class Outcome { Applied, InvalidActor, Unauthorized, InvalidTarget, OutOfRange, InvalidArgument, NoResources, CargoFull, NotMining, NotInSpace, NotDocked, InTransition, ShipMoving, HangarFull, InsufficientFunds, WrongSystem, GateOffline, NotColonyShip, InsufficientCrew };
+ enum class ActivityKind { AsteroidDespawned, AutoMiningTransfer, MiningStopped, Undocked, Docked, JumpCompleted, ShipDestroyed, NpcLost, AutoStorageTransfer };
+ enum class DockState { InSpace, Docked, Undocking, Docking };
+diff --git a/live/interactive_relay.py b/live/interactive_relay.py
+index 147320e..433e826 100644
+--- a/live/interactive_relay.py
++++ b/live/interactive_relay.py
+@@ -141,7 +141,7 @@ class SharedRuntime:
+         # does not open SQLite and cannot mint ship/player/owner authority.
+         if op not in ('SITES','HELLO','LIST','REGISTER','STEP','STATUS','CANCEL',
+                       'STRUCT_LIST','STRUCT_REGISTER','STRUCT_STEP','STRUCT_STATUS','STRUCT_CANCEL','STRUCT_DOOR',
+-                      'CREW_LIST','CREW_ASSIGN','CREW_UNASSIGN','CREW_ACTIVE','CREW_POLICY','CREW_SUPPLY','CREW_ORDER','CREW_ORDER_CANCEL','CREW_RESTOCK','CREW_SALVAGE','CREW_RESTOCK_CANCEL','WAREHOUSE_MARK','WAREHOUSE_CANCEL','WAREHOUSE_DEMOLISH','CREW_DISMANTLE','CREW_DISMANTLE_CANCEL'):
++                      'CREW_LIST','CREW_ASSIGN','CREW_UNASSIGN','CREW_ACTIVE','CREW_POLICY','CREW_SUPPLY','CREW_ORDER','CREW_ORDER_CANCEL','CREW_RESTOCK','CREW_SALVAGE','CREW_RESTOCK_CANCEL','WAREHOUSE_MARK','WAREHOUSE_CANCEL','WAREHOUSE_DEMOLISH','CREW_DISMANTLE','CREW_DISMANTLE_CANCEL','CREW_MACHINE','CREW_MACHINE_CANCEL'):
+             raise ValueError('Unknown factory operation')
+         if type(site)!=int or not 0<=site<=100000000:
+             raise ValueError('Invalid factory site selector')
+@@ -319,6 +319,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
+                     raise ValueError('Invalid dismantling worker, target or kind')
+                 argument=base64.b64encode(f"{doc['npc']},{target},{int(doc['link'])}".encode()).decode('ascii')
+                 native='CREW_DISMANTLE'
++            elif op=='crew_machine' and set(doc)=={'token','site','npc','stage'}:
++                npc,stage=doc['npc'],doc['stage']
++                if type(npc)!=int or not 0<npc<=2**29-1 or type(stage)!=int or stage not in (1,2):
++                    raise ValueError('Invalid worker or machine stage')
++                argument=base64.b64encode(f'{npc},{stage}'.encode('ascii')).decode('ascii')
++                native='CREW_MACHINE'
++            elif op=='crew_machine_cancel' and set(doc)=={'token','site','npc'}:
++                npc=doc['npc']
++                if type(npc)!=int or not 0<npc<=2**29-1:raise ValueError('Invalid worker')
++                argument=str(npc);native='CREW_MACHINE_CANCEL'
+             elif op=='crew_dismantle_cancel' and set(doc)=={'token','site','npc'}:
+                 if type(doc['npc'])!=int or not 0<doc['npc']<=2**29-1:
+                     raise ValueError('Invalid dismantling worker')
+diff --git a/scripts/colony_crew_browser_smoke.py b/scripts/colony_crew_browser_smoke.py
+index fc8c707..d33a8e2 100644
+--- a/scripts/colony_crew_browser_smoke.py
++++ b/scripts/colony_crew_browser_smoke.py
+@@ -14,14 +14,14 @@ with sync_playwright() as p:
+     errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
+     page.set_content(html);page.locator('#colonyPanel').evaluate('e=>e.hidden=false')
+     page.add_script_tag(content=r'''
+-        window.__crew={plans:[],next:1,residents:[101,102],jobs:[],supply:{depot:0,carried:0,delivered:0,nodeAvailable:0,reserved:0,sources:[{node:1,available:0,reserved:0,x:3,y:0,decommissioning:false}],moreSources:0},restocking:[],supplyOrders:[],dismantling:[],links:[{id:'500000000000000123',source:1,destination:2,segments:3}]};
++        window.__crew={plans:[],next:1,residents:[101,102],jobs:[],supply:{depot:0,carried:0,delivered:0,nodeAvailable:0,reserved:0,sources:[{node:1,available:0,reserved:0,x:3,y:0,decommissioning:false}],moreSources:0},restocking:[],supplyOrders:[],dismantling:[],machineDismantling:[],workshopState:{installed:true,finisher:true,aluminum:0,panels:0,frames:0,scrap:0,wip:0,operators:0},links:[{id:'500000000000000123',source:1,destination:2,segments:3}]};
+         window.fetch=async (path,request)=>{
+           const s=window.__crew;let doc=request&&request.body?JSON.parse(request.body):{};
+           let data={ok:true};
+           if(path==='/session')data={token:'TEST',colony_mode:true};
+           else if(path==='/factory/api/sites')data={ok:true,sites:[42]};
+           else if(path.startsWith('/factory/api/structures?site='))data={ok:true,structures:[],plans:s.plans};
+-          else if(path.startsWith('/factory/api/crews?site='))data={ok:true,residents:s.residents,jobs:s.jobs,supply:s.supply,restocking:s.restocking,supplyOrders:s.supplyOrders,dismantling:s.dismantling,links:s.links};
++          else if(path.startsWith('/factory/api/crews?site='))data={ok:true,residents:s.residents,jobs:s.jobs,supply:s.supply,restocking:s.restocking,supplyOrders:s.supplyOrders,dismantling:s.dismantling,machineDismantling:s.machineDismantling,workshopState:s.workshopState,links:s.links};
+           else if(path==='/factory/api/structure_register'){
+             const plan={id:s.next++,site:42,completed:0,total:1,modulesRemaining:1,cancelled:false,conflicting:false,finished:false,reason:''};
+             s.plans.push(plan);data={ok:true,plan};
+@@ -43,6 +43,14 @@ with sync_playwright() as p:
+             const d=s.dismantling.find(d=>d.npc===doc.npc&&d.active);
+             if(d){d.active=false;d.cancelling=true;}
+             data={ok:true,changed:!!d};
++          }else if(path==='/factory/api/crew_machine'){
++            if(s.machineDismantling.some(m=>m.active))throw Error('Machine already has dismantling worker');
++            s.machineDismantling.push({npc:doc.npc,stage:doc.stage,active:true,cancelling:false,x:0,y:0,labor:0,reason:'Isolating workshop'});
++            data={ok:true,assigned:true};
++          }else if(path==='/factory/api/crew_machine_cancel'){
++            const job=s.machineDismantling.find(m=>m.npc===doc.npc&&m.active);
++            if(job){job.active=false;job.cancelling=true;}
++            data={ok:true,changed:!!job};
+           }else if(path==='/factory/api/crew_policy'){
+             const j=s.jobs.find(x=>x.plan===doc.plan);
+             if(!j)throw Error('Missing authorized crew plan');
+@@ -140,8 +148,14 @@ with sync_playwright() as p:
+     page.wait_for_function('window.__crew.dismantling.length===2 && window.__crew.dismantling[1].link===false')
+     page.locator('#crewDismantleCancel').click()
+     page.wait_for_function('window.__crew.dismantling[1].active===false')
++    page.locator('#crewMachineStage').select_option('1')
++    page.locator('#crewMachine').click()
++    page.wait_for_function('window.__crew.machineDismantling.length===1 && window.__crew.machineDismantling[0].stage===1')
++    page.wait_for_function("document.querySelector('#crewStatus').textContent.includes('Finisher')")
++    page.locator('#crewMachineCancel').click()
++    page.wait_for_function('window.__crew.machineDismantling[0].cancelling===true')
+     page.locator('#warehouseDemolish').click()
+     page.wait_for_function('window.__crew.supply.sources.length===0 && window.__crew.supply.depot===1')
+     assert not errors,errors
+-    print('ECON-02B2d13 PASS: colony UI depot, crews, warehouse lifecycle, and NPC dismantle/cancel controls')
++    print('ECON-02B2d14 PASS: colony UI depot, crews, NPC machine/dismantle/cancel controls')
+     browser.close()
+diff --git a/src/ColonyStructurePlans.cpp b/src/ColonyStructurePlans.cpp
+index 7b0657d..05cc416 100644
+--- a/src/ColonyStructurePlans.cpp
++++ b/src/ColonyStructurePlans.cpp
+@@ -248,8 +248,9 @@ Event Plans::warehouse_action(Action action,std::uint32_t node,PlayerId owner,En
+ Event Plans::dismantle_action(Action action,std::int64_t target_id,std::uint64_t npc,
+                                PlayerId owner,EntityId ship,EntityId site,int expected_cells){
+  if(action!=Action::DismantleConveyorCell && action!=Action::DismantleStorageLink &&
+-    action!=Action::CrewDemolishStorageNode)throw std::invalid_argument("Not a dismantling action");
+- if(target_id<1 || (action==Action::CrewDemolishStorageNode && target_id>std::numeric_limits<int>::max()/4) ||
++    action!=Action::CrewDemolishStorageNode && action!=Action::CrewDismantleWorkshop)throw std::invalid_argument("Not a dismantling action");
++ if(target_id<1 || ((action==Action::CrewDemolishStorageNode || action==Action::CrewDismantleWorkshop) &&
++                      target_id>std::numeric_limits<int>::max()/4) ||
+     npc<1 || npc>static_cast<std::uint64_t>(std::numeric_limits<int>::max()/4) ||
+     (action==Action::DismantleConveyorCell ? expected_cells<1 || expected_cells>4096 : expected_cells!=0))
+     throw std::invalid_argument("Invalid dismantle target, worker or segment index");
+diff --git a/src/NpcConstructionCrews.cpp b/src/NpcConstructionCrews.cpp
+index 234829b..f9dcbed 100644
+--- a/src/NpcConstructionCrews.cpp
++++ b/src/NpcConstructionCrews.cpp
+@@ -155,6 +155,17 @@ public:
+          "CHECK(x BETWEEN -1000000 AND 1000000),CHECK(y BETWEEN -1000000 AND 1000000))");
+   sql(db,"CREATE UNIQUE INDEX IF NOT EXISTS sg_dismantle_live_target ON "
+          "sg_dismantle_jobs(site,kind,target) WHERE active=1");
++  sql(db,"CREATE TABLE IF NOT EXISTS sg_machine_dismantle_jobs("
++         "npc_id INTEGER PRIMARY KEY,owner INTEGER NOT NULL,ship INTEGER NOT NULL,site INTEGER NOT NULL,"
++         "stage INTEGER NOT NULL CHECK(stage IN (1,2)),"
++         "x INTEGER NOT NULL DEFAULT 0,y INTEGER NOT NULL DEFAULT 0,"
++         "labor INTEGER NOT NULL DEFAULT 0 CHECK(labor>=0),"
++         "active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),"
++         "cancelling INTEGER NOT NULL DEFAULT 0 CHECK(cancelling IN (0,1)),"
++         "last_tick INTEGER NOT NULL DEFAULT -1,reason TEXT NOT NULL DEFAULT '',"
++         "CHECK(x BETWEEN -1000000 AND 1000000),CHECK(y BETWEEN -1000000 AND 1000000))");
++  sql(db,"CREATE UNIQUE INDEX IF NOT EXISTS sg_machine_one_live_site ON "
++         "sg_machine_dismantle_jobs(site) WHERE active=1");
+   sql(db,"CREATE TABLE IF NOT EXISTS sg_construction_supply_orders("
+          "plan_id INTEGER PRIMARY KEY REFERENCES sg_structure_plans(id),"
+          "owner INTEGER NOT NULL,ship INTEGER NOT NULL,site INTEGER NOT NULL,"
+@@ -201,6 +212,8 @@ void Crews::validate_worker(std::uint64_t npc,PlayerId owner,EntityId ship,Entit
+   throw std::invalid_argument("NPC already reserved for another colony job");
+ }
+ void Crews::assign(std::int64_t plan,std::uint64_t npc,PlayerId owner,EntityId ship,EntityId site){
++ Query machine(db_->db,"SELECT 1 FROM sg_machine_dismantle_jobs WHERE npc_id=? AND active=1");
++ machine.n(1,npc);if(machine.row())throw std::invalid_argument("Resident assigned to machine dismantling");
+  const auto state=structures_.status(plan,owner,ship,site);
+  if(state.cancelled||state.conflicting||state.finished())throw std::invalid_argument("Plan not available for crew work");
+  validate_worker(npc,owner,ship,site);
+@@ -374,6 +387,8 @@ bool Crews::warehouse_job_dependency(std::uint32_t node,PlayerId owner,EntityId
+ }
+ void Crews::queue_dismantle(std::uint64_t npc,std::uint64_t target,bool link,
+                               PlayerId owner,EntityId ship,EntityId site){
++ Query machine(db_->db,"SELECT 1 FROM sg_machine_dismantle_jobs WHERE npc_id=? AND active=1");
++ machine.n(1,npc);if(machine.row())throw std::invalid_argument("Resident assigned to machine dismantling");
+  validate_worker(npc,owner,ship,site);
+  if(npc>static_cast<std::uint64_t>(std::numeric_limits<int>::max()/4) ||
+     !target || target>static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
+@@ -453,7 +468,61 @@ std::vector<DismantleJob> Crews::list_dismantle(PlayerId owner,EntityId ship,Ent
+      static_cast<int>(q.v(5)),q.t(8)});
+  return out;
+ }
++void Crews::queue_machine_dismantle(std::uint64_t npc,int stage,PlayerId owner,EntityId ship,EntityId site){
++ validate_worker(npc,owner,ship,site);
++ if(stage!=1 && stage!=2)throw std::invalid_argument("Unknown machine stage");
++ const auto* workshop=world_.world().workshop(site);
++ const auto* store=world_.world().storage(site);
++ if(!workshop || !store || !store->equipment_positions.count(kWorkshopConveyorNode))
++  throw std::invalid_argument("No physically placed workshop machine");
++ for(const auto& [id,link]:store->links){(void)id;
++  if(link.source==kWorkshopConveyorNode || link.destination==kWorkshopConveyorNode)
++   throw std::invalid_argument("Disconnect workshop production-line conveyors first");
++ }
++ const bool unsafe=stage==1 ?
++   (!workshop->finisher_installed || workshop->finisher_npc_id || workshop->reserved_panels_kg ||
++    workshop->finisher_ticks_remaining || workshop->frames_kg || workshop->reserved_aluminum_kg ||
++    workshop->ticks_remaining) :
++   (workshop->finisher_installed || workshop->operator_npc_id || workshop->reserved_aluminum_kg ||
++    workshop->ticks_remaining || workshop->aluminum_kg || workshop->panels_kg ||
++    workshop->scrap_kg || workshop->frames_kg || workshop->reserved_panels_kg);
++ if(unsafe)throw std::invalid_argument("Unstaff machine and empty its inventories and WIP first");
++ Query occupied(db_->db,"SELECT 1 FROM sg_machine_dismantle_jobs WHERE site=? AND active=1 LIMIT 1");
++ occupied.n(1,site);if(occupied.row())throw std::invalid_argument("Machine removal already scheduled at site");
++ Query construct(db_->db,"SELECT 1 FROM sg_construction_workers WHERE npc_id=? LIMIT 1");
++ construct.n(1,npc);if(construct.row())throw std::invalid_argument("NPC assigned to construction");
++ Query teardown(db_->db,"SELECT 1 FROM sg_dismantle_jobs WHERE npc_id=? AND active=1 LIMIT 1");
++ teardown.n(1,npc);if(teardown.row())throw std::invalid_argument("NPC assigned to another dismantling job");
++ Query hauling(db_->db,"SELECT 1 FROM sg_construction_restock WHERE npc_id=? AND active=1 LIMIT 1");
++ hauling.n(1,npc);if(hauling.row())throw std::invalid_argument("NPC assigned to hauling");
++ const auto* stock=world_.world().construction_supplies(site);
++ if(stock && stock->carried.count(npc))throw std::invalid_argument("NPC must unload physical cargo first");
++ Query save(db_->db,"INSERT OR REPLACE INTO sg_machine_dismantle_jobs"
++    "(npc_id,owner,ship,site,stage,active,cancelling,last_tick,reason)"
++    " VALUES(?,?,?,?,?,1,0,-1,'Assigned to safely isolate workshop machine')");
++ save.n(1,npc);save.n(2,owner);save.n(3,ship);save.n(4,site);save.n(5,stage);save.done();
++}
++bool Crews::cancel_machine_dismantle(std::uint64_t npc,PlayerId owner,EntityId ship,EntityId site){
++ validate_site(owner,ship,site);
++ Query q(db_->db,"UPDATE sg_machine_dismantle_jobs SET cancelling=1,reason='Cancelled; worker returning cargo'"
++    " WHERE npc_id=? AND owner=? AND ship=? AND site=? AND active=1 AND cancelling=0");
++ q.n(1,npc);q.n(2,owner);q.n(3,ship);q.n(4,site);q.done();
++ return sqlite3_changes(db_->db)==1;
++}
++std::vector<MachineDismantleJob> Crews::list_machine_dismantle(PlayerId owner,EntityId ship,EntityId site)const{
++ validate_site(owner,ship,site);
++ Query q(db_->db,"SELECT npc_id,stage,x,y,labor,active,cancelling,reason FROM sg_machine_dismantle_jobs"
++    " WHERE owner=? AND ship=? AND site=? ORDER BY npc_id LIMIT 200");
++ q.n(1,owner);q.n(2,ship);q.n(3,site);
++ std::vector<MachineDismantleJob> out;
++ while(q.row())out.push_back({static_cast<std::uint64_t>(q.v(0)),static_cast<int>(q.v(1)),
++      static_cast<int>(q.v(2)),static_cast<int>(q.v(3)),static_cast<int>(q.v(4)),
++      q.v(5)!=0,q.v(6)!=0,q.t(7)});
++ return out;
++}
+ void Crews::queue_restock(std::uint64_t npc,std::uint32_t node,PlayerId owner,EntityId ship,EntityId site){
++ Query machine(db_->db,"SELECT 1 FROM sg_machine_dismantle_jobs WHERE npc_id=? AND active=1");
++ machine.n(1,npc);if(machine.row())throw std::invalid_argument("Resident assigned to machine dismantling");
+  if(const auto* st=world_.world().storage(site);st && st->decommissioned_nodes.count(node))
+   throw std::invalid_argument("Warehouse is being decommissioned");
+  validate_worker(npc,owner,ship,site);
+@@ -478,6 +547,8 @@ void Crews::queue_restock(std::uint64_t npc,std::uint32_t node,PlayerId owner,En
+  put.n(1,static_cast<std::int64_t>(npc));put.n(2,owner);put.n(3,ship);put.n(4,site);put.n(5,node);put.done();
+ }
+ void Crews::queue_salvage(std::uint64_t npc,std::uint32_t node,PlayerId owner,EntityId ship,EntityId site){
++ Query machine(db_->db,"SELECT 1 FROM sg_machine_dismantle_jobs WHERE npc_id=? AND active=1");
++ machine.n(1,npc);if(machine.row())throw std::invalid_argument("Resident assigned to machine dismantling");
+  validate_worker(npc,owner,ship,site);
+  const auto* storage=world_.world().storage(site);
+  if(!node||node>static_cast<std::uint32_t>(std::numeric_limits<int>::max()/4)||
+@@ -586,6 +657,8 @@ void Crews::advance(PlayerId owner,EntityId ship){
+    Query teardown(db_->db,"SELECT active FROM sg_dismantle_jobs WHERE npc_id=?");
+    teardown.n(1,static_cast<std::int64_t>(npc));
+    if(teardown.row() && teardown.v(0))continue;
++   Query machine_job(db_->db,"SELECT 1 FROM sg_machine_dismantle_jobs WHERE npc_id=? AND active=1");
++   machine_job.n(1,static_cast<std::int64_t>(npc));if(machine_job.row())continue;
+    Query supply_job(db_->db,"SELECT active FROM sg_construction_restock WHERE npc_id=?");supply_job.n(1,static_cast<std::int64_t>(npc));
+    if(supply_job.row()&&supply_job.v(0))continue;
+    assign(target.id,npc,owner,ship,target.site);staffed=true;break;
+@@ -1066,6 +1139,70 @@ void Crews::advance(PlayerId owner,EntityId ship){
+   if(world_.world().tick()!=tick)break;
+  }
+  if(world_.world().tick()!=tick)return;
++ // ECON-02B2d14: machine removal is a durable named-person job, never a
++ // free admin click. World action is authoritative, and after a crash the
++ // missing stage (or carried cargo) is observed before another action.
++ struct MachineJob{std::uint64_t npc;EntityId site;int stage,x,y,labor;bool cancelling;std::int64_t last_tick;};
++ std::vector<MachineJob> machines;
++ {
++  Query q(db_->db,"SELECT npc_id,site,stage,x,y,labor,cancelling,last_tick FROM sg_machine_dismantle_jobs"
++      " WHERE owner=? AND ship=? AND active=1 ORDER BY npc_id LIMIT 200");
++  q.n(1,owner);q.n(2,ship);
++  while(q.row())machines.push_back({static_cast<std::uint64_t>(q.v(0)),static_cast<EntityId>(q.v(1)),
++      static_cast<int>(q.v(2)),static_cast<int>(q.v(3)),static_cast<int>(q.v(4)),
++      static_cast<int>(q.v(5)),q.v(6)!=0,q.v(7)});
++ }
++ for(auto m:machines){
++  if(m.last_tick>=0 && static_cast<std::uint64_t>(m.last_tick)>=tick)continue;
++  bool active=true;int labor=m.labor;std::string reason;
++  try{
++   validate_worker(m.npc,owner,ship,m.site);
++   const auto* stock=world_.world().construction_supplies(m.site);
++   const bool carrying=stock && stock->carried.count(m.npc);
++   const auto* w=world_.world().workshop(m.site);
++   const bool installed=w && (m.stage==1?w->finisher_installed:true);
++   if(carrying || m.cancelling || !installed){
++    if(Pos{m.x,m.y}!=Pos{0,0}){
++     Pos next{};
++     if(reachable(world_.world(),m.site,{m.x,m.y},{0,0})==Route::Yes &&
++        next_cell(world_.world(),m.site,{m.x,m.y},{0,0},next)){
++      m.x=next.first;m.y=next.second;reason="Returning recovered machine module";
++     }else reason="MACHINE_RETURN_ROUTE_BLOCKED";
++    }else if(carrying){
++     const auto ev=structures_.supply_action(Action::ReturnConstructionModules,
++               static_cast<std::int64_t>(m.npc),0,0,owner,ship,m.site);
++     if(ev.result!=Outcome::Applied)throw std::runtime_error("Machine cargo return rejected");
++     labor=0;reason="Recovered machine module deposited";
++    }else{active=false;labor=0;reason=m.cancelling?"Machine removal cancelled":"Machine dismantling complete";}
++   }else{
++    const auto* st=world_.world().storage(m.site);
++    if(!st || !st->equipment_positions.count(kWorkshopConveyorNode))
++     throw std::runtime_error("Workshop has no physical placement");
++    const auto& point=st->equipment_positions.at(kWorkshopConveyorNode);
++    const Pos goal{static_cast<int>(point.x),static_cast<int>(point.y)};
++    const auto status=reachable(world_.world(),m.site,{m.x,m.y},goal);
++    if(status!=Route::Yes)reason=status==Route::No?"MACHINE_ROUTE_BLOCKED":"MACHINE_ROUTE_UNVERIFIED";
++    else if(Pos{m.x,m.y}!=goal){
++     Pos next{};if(next_cell(world_.world(),m.site,{m.x,m.y},goal,next)){
++      m.x=next.first;m.y=next.second;labor=0;reason="Walking to isolated machine";
++     }
++    }else{
++     labor=std::min(4,labor+1);reason="Unbolting isolated machine";
++     if(labor>=4){
++      const auto ev=structures_.dismantle_action(Action::CrewDismantleWorkshop,m.stage,m.npc,
++                                               owner,ship,m.site);
++      if(ev.result!=Outcome::Applied)throw std::runtime_error("Workshop not safe to dismantle");
++      labor=0;reason="Module recovered, returning to depot";
++     }
++    }
++   }
++  }catch(const std::exception& e){reason=std::string(e.what()).substr(0,180);}
++  Query save(db_->db,"UPDATE sg_machine_dismantle_jobs SET x=?,y=?,labor=?,active=?,last_tick=?,reason=? WHERE npc_id=?");
++  save.n(1,m.x);save.n(2,m.y);save.n(3,labor);save.n(4,active?1:0);save.n(5,tick);
++  save.str(6,reason);save.n(7,m.npc);save.done();
++  if(world_.world().tick()!=tick)break;
++ }
++ if(world_.world().tick()!=tick)return;
+  // A persistent outbox binds each approved order unit to one and only one
+  // unique world command. If a crash occurs between the authoritative world
+  // commit and the SQL counter update, the immutable world receipt reconciles
+diff --git a/src/Persistence.cpp b/src/Persistence.cpp
+index 74c4ff6..dcdc9b0 100644
+--- a/src/Persistence.cpp
++++ b/src/Persistence.cpp
+@@ -127,7 +127,7 @@ Command decode_command(const std::string& record) {
+           >> c.target >> action >> c.thrust_x >> c.thrust_y >> c.amount))
+         throw std::runtime_error("recovery: invalid command journal record");
+     std::string extra;
+-    if (in >> extra || action < 0 || action > static_cast<int>(Action::CrewDemolishStorageNode) || c.id == 0 || c.issuer == 0)
++    if (in >> extra || action < 0 || action > static_cast<int>(Action::CrewDismantleWorkshop) || c.id == 0 || c.issuer == 0)
+         throw std::runtime_error("recovery: invalid command journal values");
+     c.action = static_cast<Action>(action);
+     if (command_record(c) != record) throw std::runtime_error("recovery: noncanonical command journal");
+@@ -1594,6 +1594,11 @@ public:
+                     src="warehouse-structure:"+std::to_string(c.target)+":"+std::to_string(c.amount);
+                     dst=c.action==Action::CrewDemolishStorageNode?
+                          "construction-worker:"+std::to_string(c.target)+":"+std::to_string(c.thrust_x):depot;
++                }else if(c.action==Action::CrewDismantleWorkshop){
++                    if(amount!=2 || (c.amount!=1 && c.amount!=2) || c.thrust_x<1 || c.thrust_y)
++                        throw std::runtime_error("SQLite: invalid machine dismantling receipt");
++                    src="workshop-machine:"+std::to_string(c.target)+":"+std::to_string(c.amount);
++                    dst="construction-worker:"+std::to_string(c.target)+":"+std::to_string(c.thrust_x);
+                 }else if(c.action==Action::DismantleStorageLink || c.action==Action::DismantleConveyorCell){
+                     if(amount!=2 || c.amount<1 || c.thrust_x<1 ||
+                        (c.action==Action::DismantleConveyorCell ? c.thrust_y<1 || c.thrust_y>4096 : c.thrust_y!=0))
+@@ -1802,7 +1807,8 @@ public:
+                      cmd->second.action==Action::DemolishStorageNode ||
+                      cmd->second.action==Action::CrewDemolishStorageNode ||
+                      cmd->second.action==Action::DismantleConveyorCell ||
+-                     cmd->second.action==Action::DismantleStorageLink) ++expected_construction_logistics;
++                     cmd->second.action==Action::DismantleStorageLink ||
++                     cmd->second.action==Action::CrewDismantleWorkshop) ++expected_construction_logistics;
+             else if (cmd->second.action==Action::ConstructClinic) ++expected_clinic_builds;
+             else if (cmd->second.action==Action::TransferClinicStock) ++expected_clinic_transfers;
+             else throw std::runtime_error("SQLite: resource transfer tied to non-transfer command");
+@@ -2956,7 +2962,8 @@ public:
+                          cmd->second.action!=Action::DemolishStorageNode &&
+                          cmd->second.action!=Action::CrewDemolishStorageNode &&
+                          cmd->second.action!=Action::DismantleConveyorCell &&
+-                         cmd->second.action!=Action::DismantleStorageLink))
++                         cmd->second.action!=Action::DismantleStorageLink &&
++                         cmd->second.action!=Action::CrewDismantleWorkshop))
+                         throw std::runtime_error("unmatched resource transfer event");
+                     Statement ledger(db_, "INSERT INTO resource_ledger(generation,tick,command_id,source_id,destination_id,amount,reason) VALUES(?,?,?,?,?,?,?)");
+                     ledger.i64(1, static_cast<std::int64_t>(next));
+@@ -3046,7 +3053,8 @@ public:
+                               cmd->second.action==Action::DemolishStorageNode ||
+                               cmd->second.action==Action::CrewDemolishStorageNode ||
+                               cmd->second.action==Action::DismantleConveyorCell ||
+-                              cmd->second.action==Action::DismantleStorageLink){
++                              cmd->second.action==Action::DismantleStorageLink ||
++                              cmd->second.action==Action::CrewDismantleWorkshop){
+                         const auto& c=cmd->second;
+                         const auto depot="construction-depot:"+std::to_string(c.target);
+                         const auto worker="construction-worker:"+std::to_string(c.target)+":"+std::to_string(c.amount);
+@@ -3084,6 +3092,11 @@ public:
+                                 source="warehouse-structure:"+std::to_string(c.target)+":"+std::to_string(c.amount);
+                                 destination=c.action==Action::CrewDemolishStorageNode?
+                                     "construction-worker:"+std::to_string(c.target)+":"+std::to_string(c.thrust_x):depot;break;
++                            case Action::CrewDismantleWorkshop:
++                                if(ev.transferred!=2 || (c.amount!=1 && c.amount!=2) || c.thrust_x<1 || c.thrust_y)
++                                    throw std::runtime_error("invalid workshop salvage mass");
++                                source="workshop-machine:"+std::to_string(c.target)+":"+std::to_string(c.amount);
++                                destination="construction-worker:"+std::to_string(c.target)+":"+std::to_string(c.thrust_x);break;
+                             case Action::DismantleStorageLink:
+                             case Action::DismantleConveyorCell:
+                                 if(ev.transferred!=2 || c.amount<1 || c.thrust_x<1 ||
+diff --git a/src/Simulation.cpp b/src/Simulation.cpp
+index d54adf1..bfe5481 100644
+--- a/src/Simulation.cpp
++++ b/src/Simulation.cpp
+@@ -902,6 +902,11 @@ bool Simulation::submit(const Command& c) {
+             return false;
+         snapshot_version_=std::max(snapshot_version_,27);
+     }
++    if(c.action==Action::CrewDismantleWorkshop){
++        if(!c.target || (c.amount!=1 && c.amount!=2) || c.thrust_x<1 ||
++           c.thrust_x>std::numeric_limits<int>::max()/4 || c.thrust_y) return false;
++        snapshot_version_=std::max(snapshot_version_,37);
++    }
+     if(c.action==Action::DismantleConveyorCell || c.action==Action::DismantleStorageLink){
+         // amount=installed link ID, thrust_x=existing resident NPC ID.
+         // One physical module fits in one of the worker's two cargo slots.
+@@ -1388,6 +1393,7 @@ Event Simulation::execute(const Command& c) {
+         case Action::CancelStorageNodeDecommission:
+         case Action::DemolishStorageNode:
+         case Action::CrewDemolishStorageNode:
++        case Action::CrewDismantleWorkshop:
+         case Action::DismantleConveyorCell:
+         case Action::DismantleStorageLink:
+         case Action::ConstructStorageNode:
+@@ -1783,6 +1789,58 @@ Event Simulation::execute(const Command& c) {
+                 snapshot_version_=std::max(snapshot_version_,needs_route?30:27);
+                 result.transferred=2;result.result=Outcome::Applied;return result;
+             }
++            if(c.action==Action::CrewDismantleWorkshop){
++                const auto wi=workshops_.find(c.target);
++                const auto st=storages_.find(c.target);
++                if(wi==workshops_.end() || wi->second.source_ship!=c.actor ||
++                   st==storages_.end() || !st->second.equipment_positions.count(kWorkshopConveyorNode)){
++                    result.result=Outcome::InvalidTarget;return result;
++                }
++                const auto worker=static_cast<std::uint64_t>(c.thrust_x);
++                const auto person=npcs_.find(worker);
++                if(person==npcs_.end() || person->second.home_ship!=c.actor ||
++                   person->second.location!=c.target || person->second.role!=NpcRole::Habitat){
++                    result.result=Outcome::Unauthorized;return result;
++                }
++                const auto& w=wi->second;
++                // Removal is impossible while a production-line conveyor still
++                // depends on the workshop endpoint, even when its route is incomplete.
++                for(const auto& [id,link]:st->second.links){(void)id;
++                    if(link.source==kWorkshopConveyorNode || link.destination==kWorkshopConveyorNode){
++                        result.result=Outcome::InvalidTarget;return result;
++                    }
++                }
++                // Keep all physical stocks in their original inventories. The
++                // crew cannot dismantle a processor with active WIP or output.
++                const bool blocked=c.amount==1 ?
++                    (!w.finisher_installed || w.finisher_npc_id || w.reserved_panels_kg ||
++                     w.finisher_ticks_remaining || w.frames_kg || w.reserved_aluminum_kg ||
++                     w.ticks_remaining) :
++                    (w.finisher_installed || w.operator_npc_id || w.reserved_aluminum_kg ||
++                     w.ticks_remaining || w.aluminum_kg || w.panels_kg || w.scrap_kg ||
++                     w.frames_kg || w.reserved_panels_kg);
++                if(blocked){result.result=Outcome::InvalidTarget;return result;}
++                auto& stock=construction_supplies_[c.target];
++                if(stock.carried.count(worker) && stock.carried.at(worker)>=2){
++                    result.result=Outcome::CargoFull;return result;
++                }
++                if(c.amount==1){
++                    // Reverse-stage teardown: finisher precedes base processor.
++                    wi->second.finisher_installed=false;
++                    wi->second.embodied_ore-=2;
++                    wi->second.finisher_npc_id=0;
++                    wi->second.reserved_panels_kg=0;
++                    wi->second.finisher_ticks_remaining=0;
++                    wi->second.frames_kg=0;
++                    wi->second.finisher_batches=0;
++                    wi->second.finisher_elapsed_ticks=0;
++                }else{
++                    workshops_.erase(wi);
++                    st->second.equipment_positions.erase(kWorkshopConveyorNode);
++                }
++                ++stock.carried[worker];
++                result.transferred=2;result.result=Outcome::Applied;return result;
++            }
+             if(c.action==Action::DismantleConveyorCell || c.action==Action::DismantleStorageLink){
+                 auto st=storages_.find(c.target);
+                 if(st==storages_.end() || st->second.source_ship!=c.actor ||
+@@ -4093,7 +4151,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
+             c.id = u64(f[1]); c.execute_tick = u64(f[2]); c.sequence = u64(f[3]);
+             c.issuer = u64(f[4]); c.actor = u64(f[5]); c.target = u64(f[6]);
+             auto action = u64(f[7]);
+-            if (action > (result.snapshot_version_ >= 36 ? static_cast<unsigned>(Action::CrewDemolishStorageNode) : result.snapshot_version_ >= 35 ? static_cast<unsigned>(Action::DemolishStorageNode) : result.snapshot_version_ >= 34 ? static_cast<unsigned>(Action::SalvageConstructionNodeModules) : result.snapshot_version_ >= 33 ? static_cast<unsigned>(Action::RecoverConstructionDelivery) : result.snapshot_version_ >= 32 ? static_cast<unsigned>(Action::BuildColonyFixtureFromDelivery) : result.snapshot_version_ >= 31 ? static_cast<unsigned>(Action::SetColonyDoor) : result.snapshot_version_ >= 30 ? static_cast<unsigned>(Action::CompleteConveyorRoute) : result.snapshot_version_ >= 29 ? static_cast<unsigned>(Action::PlaceFactoryEquipment) : result.snapshot_version_ >= 28 ? static_cast<unsigned>(Action::ConstructWorkshopLink) : result.snapshot_version_ >= 27 ? static_cast<unsigned>(Action::ConstructStorageLink) : result.snapshot_version_ >= 26 ? static_cast<unsigned>(Action::TransferStorageNodeStack) : result.snapshot_version_ >= 25 ? static_cast<unsigned>(Action::TransferStorageStack) : result.snapshot_version_ >= 24 ? static_cast<unsigned>(Action::TransferWorkshopStack) : result.snapshot_version_ >= 23 ? static_cast<unsigned>(Action::TransferWorkshopFinalOutput) : result.snapshot_version_ >= 22 ? static_cast<unsigned>(Action::TransferWorkshopOutput) : result.snapshot_version_ >= 21 ? static_cast<unsigned>(Action::HostCrewLoss) : result.snapshot_version_ >= 20 ? static_cast<unsigned>(Action::AssignFarmMentor) : result.snapshot_version_ >= 19 ? static_cast<unsigned>(Action::AssignPolicyInspectors) : result.snapshot_version_ >= 18 ? static_cast<unsigned>(Action::TransferWaterworksFeed) : result.snapshot_version_ >= 17 ? static_cast<unsigned>(Action::ConstructReclaimer) : result.snapshot_version_ >= 16 ? static_cast<unsigned>(Action::AssignClinicStaff) : result.snapshot_version_ >= 15 ? static_cast<unsigned>(Action::AssignCommunityStaff) : result.snapshot_version_ >= 14 ? static_cast<unsigned>(Action::SetUtilityMaintenance) : result.snapshot_version_ >= 13 ? static_cast<unsigned>(Action::RepairUtility) : result.snapshot_version_ >= 12 ? static_cast<unsigned>(Action::AssignHabitatResidents) : result.snapshot_version_ >= 11 ? static_cast<unsigned>(Action::AssignFarmWorkers) : result.snapshot_version_ >= 10 ? static_cast<unsigned>(Action::LoadLifeWater) : result.snapshot_version_ >= 9 ? static_cast<unsigned>(Action::FabricateMaterialModule) : result.snapshot_version_ >= 7 ? static_cast<unsigned>(Action::ConstructOutpost) : result.snapshot_version_ >= 6 ? static_cast<unsigned>(Action::DeliverGateSpares) : result.snapshot_version_ >= 5 ? static_cast<unsigned>(Action::SetGatePairOnline) : result.snapshot_version_ >= 4 ? static_cast<unsigned>(Action::SellOre) : static_cast<unsigned>(Action::UnloadOre))) throw std::runtime_error("snapshot: invalid action");
++            if (action > (result.snapshot_version_ >= 37 ? static_cast<unsigned>(Action::CrewDismantleWorkshop) : result.snapshot_version_ >= 36 ? static_cast<unsigned>(Action::CrewDemolishStorageNode) : result.snapshot_version_ >= 35 ? static_cast<unsigned>(Action::DemolishStorageNode) : result.snapshot_version_ >= 34 ? static_cast<unsigned>(Action::SalvageConstructionNodeModules) : result.snapshot_version_ >= 33 ? static_cast<unsigned>(Action::RecoverConstructionDelivery) : result.snapshot_version_ >= 32 ? static_cast<unsigned>(Action::BuildColonyFixtureFromDelivery) : result.snapshot_version_ >= 31 ? static_cast<unsigned>(Action::SetColonyDoor) : result.snapshot_version_ >= 30 ? static_cast<unsigned>(Action::CompleteConveyorRoute) : result.snapshot_version_ >= 29 ? static_cast<unsigned>(Action::PlaceFactoryEquipment) : result.snapshot_version_ >= 28 ? static_cast<unsigned>(Action::ConstructWorkshopLink) : result.snapshot_version_ >= 27 ? static_cast<unsigned>(Action::ConstructStorageLink) : result.snapshot_version_ >= 26 ? static_cast<unsigned>(Action::TransferStorageNodeStack) : result.snapshot_version_ >= 25 ? static_cast<unsigned>(Action::TransferStorageStack) : result.snapshot_version_ >= 24 ? static_cast<unsigned>(Action::TransferWorkshopStack) : result.snapshot_version_ >= 23 ? static_cast<unsigned>(Action::TransferWorkshopFinalOutput) : result.snapshot_version_ >= 22 ? static_cast<unsigned>(Action::TransferWorkshopOutput) : result.snapshot_version_ >= 21 ? static_cast<unsigned>(Action::HostCrewLoss) : result.snapshot_version_ >= 20 ? static_cast<unsigned>(Action::AssignFarmMentor) : result.snapshot_version_ >= 19 ? static_cast<unsigned>(Action::AssignPolicyInspectors) : result.snapshot_version_ >= 18 ? static_cast<unsigned>(Action::TransferWaterworksFeed) : result.snapshot_version_ >= 17 ? static_cast<unsigned>(Action::ConstructReclaimer) : result.snapshot_version_ >= 16 ? static_cast<unsigned>(Action::AssignClinicStaff) : result.snapshot_version_ >= 15 ? static_cast<unsigned>(Action::AssignCommunityStaff) : result.snapshot_version_ >= 14 ? static_cast<unsigned>(Action::SetUtilityMaintenance) : result.snapshot_version_ >= 13 ? static_cast<unsigned>(Action::RepairUtility) : result.snapshot_version_ >= 12 ? static_cast<unsigned>(Action::AssignHabitatResidents) : result.snapshot_version_ >= 11 ? static_cast<unsigned>(Action::AssignFarmWorkers) : result.snapshot_version_ >= 10 ? static_cast<unsigned>(Action::LoadLifeWater) : result.snapshot_version_ >= 9 ? static_cast<unsigned>(Action::FabricateMaterialModule) : result.snapshot_version_ >= 7 ? static_cast<unsigned>(Action::ConstructOutpost) : result.snapshot_version_ >= 6 ? static_cast<unsigned>(Action::DeliverGateSpares) : result.snapshot_version_ >= 5 ? static_cast<unsigned>(Action::SetGatePairOnline) : result.snapshot_version_ >= 4 ? static_cast<unsigned>(Action::SellOre) : static_cast<unsigned>(Action::UnloadOre))) throw std::runtime_error("snapshot: invalid action");
+             c.action = static_cast<Action>(action);
+             auto tx = i64(f[8]), ty = i64(f[9]);
+             if (tx < std::numeric_limits<int>::min() || tx > std::numeric_limits<int>::max() ||
+@@ -4189,6 +4247,9 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
+                      (c.amount<0 || c.amount>1000000)) ||
+                   ((c.action==Action::TransferWorkshopOutput || c.action==Action::TransferWorkshopFinalOutput) &&
+                      (c.amount<50 || c.amount>500 || c.amount%50)))) ||
++                ((c.action==Action::CrewDismantleWorkshop) &&
++                 (result.snapshot_version_<37 || !c.target || (c.amount!=1 && c.amount!=2) ||
++                  c.thrust_x<1 || c.thrust_x>std::numeric_limits<int>::max()/4 || c.thrust_y)) ||
+                 ((c.action==Action::DismantleConveyorCell || c.action==Action::DismantleStorageLink ||
+                    c.action==Action::CrewDemolishStorageNode) &&
+                  (result.snapshot_version_<36 || !c.target || c.amount<1 ||
+diff --git a/src/factory_colony_protocol.hpp b/src/factory_colony_protocol.hpp
+index a354ee2..4631b58 100644
+--- a/src/factory_colony_protocol.hpp
++++ b/src/factory_colony_protocol.hpp
+@@ -243,7 +243,26 @@ public:
+                     ",\"x\":"+std::to_string(job.x)+",\"y\":"+std::to_string(job.y)+
+                     ",\"labor\":"+std::to_string(job.labor)+",\"reason\":"+json_string(job.reason)+"}";
+             }
+-            out+="],\"links\":[";first=true;
++            out+="],\"machineDismantling\":[";first=true;
++            for(const auto& job:crews_.list_machine_dismantle(owner_,ship_,requested_site)){
++                if(!first)out+=',';first=false;
++                out+="{\"npc\":"+std::to_string(job.npc)+",\"stage\":"+std::to_string(job.stage)+
++                     ",\"active\":"+(job.active?"true":"false")+
++                     ",\"cancelling\":"+(job.cancelling?"true":"false")+
++                     ",\"x\":"+std::to_string(job.x)+",\"y\":"+std::to_string(job.y)+
++                     ",\"labor\":"+std::to_string(job.labor)+",\"reason\":"+json_string(job.reason)+"}";
++            }
++            out+="],\"workshopState\":{";
++            if(const auto* w=world_.world().workshop(requested_site)){
++                out+=std::string("\"installed\":true,\"finisher\":")+(w->finisher_installed?"true":"false")+
++                     ",\"aluminum\":"+std::to_string(w->aluminum_kg)+
++                     ",\"panels\":"+std::to_string(w->panels_kg)+
++                     ",\"frames\":"+std::to_string(w->frames_kg)+
++                     ",\"scrap\":"+std::to_string(w->scrap_kg)+
++                     ",\"wip\":"+std::to_string(w->reserved_aluminum_kg+w->reserved_panels_kg)+
++                     ",\"operators\":"+std::to_string((w->operator_npc_id?1:0)+(w->finisher_npc_id?1:0));
++            }else out+="\"installed\":false,\"finisher\":false";
++            out+="},\"links\":[";first=true;
+             std::size_t all_links=0;
+             if(const auto* storage=world_.world().storage(requested_site)){
+                 for(const auto& [id,link]:storage->links){
+@@ -305,6 +324,22 @@ public:
+             crews_.queue_dismantle(npc,target,decoded.back()=='1',owner_,ship_,requested_site);
+             return "{\"ok\":true,\"assigned\":true}";
+         }
++        if(op=="CREW_MACHINE"){
++            const auto decoded=decode64(arg);
++            const auto sep=decoded.find(',');
++            if(sep==std::string::npos || decoded.find(',',sep+1)!=std::string::npos)
++                throw std::invalid_argument("Invalid machine dismantling request");
++            const auto npc=unsigned_id(decoded.substr(0,sep));
++            const auto stage=unsigned_id(decoded.substr(sep+1));
++            if(stage!=1 && stage!=2)throw std::invalid_argument("Invalid machine stage");
++            crews_.queue_machine_dismantle(npc,static_cast<int>(stage),owner_,ship_,requested_site);
++            return "{\"ok\":true,\"assigned\":true}";
++        }
++        if(op=="CREW_MACHINE_CANCEL"){
++            const auto npc=unsigned_id(arg);
++            return "{\"ok\":true,\"changed\":"+
++                std::string(crews_.cancel_machine_dismantle(npc,owner_,ship_,requested_site)?"true":"false")+"}";
++        }
+         if(op=="CREW_DISMANTLE_CANCEL"){
+             const auto npc=unsigned_id(arg);
+             return "{\"ok\":true,\"changed\":"+
+diff --git a/tests/ECON02B2d14MachineDismantleTests.cpp b/tests/ECON02B2d14MachineDismantleTests.cpp
+new file mode 100644
+index 0000000..bfac97e
+--- /dev/null
++++ b/tests/ECON02B2d14MachineDismantleTests.cpp
+@@ -0,0 +1,146 @@
++#include "galaxy/NpcConstructionCrews.hpp"
++#include "../src/factory_colony_protocol.hpp"
++#include <chrono>
++#include <filesystem>
++#include <iostream>
++#include <stdexcept>
++#include <sqlite3.h>
++using namespace galaxy;
++namespace fs=std::filesystem;
++#define CHECK(x) do{if(!(x))throw std::runtime_error("d14 line "+std::to_string(__LINE__)+": " #x);}while(0)
++static Event action(PersistentWorld& w,EntityId ship,std::uint64_t id,Action kind,EntityId target=0,
++                    std::int64_t amt=1,int x=0,int y=0,PlayerId owner=7){
++ Command c{};c.id=id;c.sequence=id;c.issuer=owner;c.actor=ship;c.target=target;
++ c.amount=amt;c.thrust_x=x;c.thrust_y=y;c.action=kind;c.execute_tick=w.world().tick()+1;
++ if(!w.submit(c))throw std::runtime_error("submit rejected id "+std::to_string(id)+" action "+std::to_string(static_cast<int>(kind)));w.step();CHECK(w.world().events().back().command_id==id);
++ return w.world().events().back();
++}
++static void okay(const Event& e){
++ if(e.result!=Outcome::Applied)throw std::runtime_error("command "+std::to_string(e.command_id)+" rejected ("+
++                                      std::to_string(static_cast<int>(e.result))+")");
++}
++int main(){
++ auto folder=fs::temp_directory_path()/("sg_d14_"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
++ fs::create_directories(folder);
++ try{
++  auto db=(folder/"world.sqlite").string();EntityId ship=0,site=0,silicate=0;std::uint64_t npc=0;
++  std::int64_t total=0;
++  {
++   Simulation seed(1214);ship=seed.add_colony_ship(7,{0,0},500,8);
++   seed.provision_colony_genesis(ship,1000,3000,1000,1000,1000);
++   const auto asteroid=seed.add_asteroid({1000,0},200);
++   silicate=seed.add_geological_asteroid({1000,0},AsteroidClass::Silicate,30,2500);
++   seed.enable_individual_workforce();total=seed.total_material_kg();
++   PersistentWorld w(db,std::move(seed));
++   okay(action(w,ship,1,Action::Mine,asteroid,175));
++   okay(action(w,ship,2,Action::RefineOre,0,175));
++   okay(action(w,ship,3,Action::FabricateModule,0,75));
++   okay(action(w,ship,4,Action::ConstructOutpost));site=w.world().built_outposts().begin()->first;
++   okay(action(w,ship,5,Action::ConstructHabitat,site));
++   for(int i=1;i<=3;++i)okay(action(w,ship,5+i,Action::TransferHabitatStock,site,30,i));
++   okay(action(w,ship,9,Action::AssignHabitatResidents,site,1));
++   for(const auto& [id,n]:w.world().npc_records())if(n.location==site&&n.role==NpcRole::Habitat)npc=id;
++   CHECK(npc!=0);
++   okay(action(w,ship,10,Action::ConstructStorage,site));
++   okay(action(w,ship,11,Action::ConstructWorkshop,site));
++   okay(action(w,ship,12,Action::ConstructWorkshopFinisher,site));
++   okay(action(w,ship,13,Action::PlaceFactoryEquipment,site,-1,4,0));
++   CHECK(w.world().workshop(site)->finisher_installed);
++   CHECK(w.world().total_material_kg()==total);
++   construction::Plans plans(db,w);construction::Crews crew(db,w,plans);
++   // A live line cannot be dismantled, even with no route cells.
++   okay(action(w,ship,14,Action::ConstructWorkshopLink,site,5,0,1));
++   bool refused=false;try{crew.queue_machine_dismantle(npc,1,7,ship,site);}catch(const std::invalid_argument&){refused=true;}
++   CHECK(refused);
++   okay(action(w,ship,15,Action::DismantleStorageLink,site,14,static_cast<int>(npc)));
++   okay(action(w,ship,16,Action::ReturnConstructionModules,site,static_cast<std::int64_t>(npc)));
++   // Real assigned operator blocks a teardown.
++   okay(action(w,ship,17,Action::AssignWorkshopFinisher,site,static_cast<std::int64_t>(npc)));
++   refused=false;try{crew.queue_machine_dismantle(npc,1,7,ship,site);}catch(const std::invalid_argument&){refused=true;}
++   CHECK(refused);
++   okay(action(w,ship,18,Action::AssignWorkshopFinisher,site,0));
++   // Primary cannot be removed while finisher exists.
++   CHECK(action(w,ship,19,Action::CrewDismantleWorkshop,site,2,static_cast<int>(npc)).result!=Outcome::Applied);
++   CHECK(action(w,ship,20,Action::CrewDismantleWorkshop,site,1,static_cast<int>(npc+100)).result==Outcome::Unauthorized);
++   // Explicit host assignment, job persistence, and cancellation.
++   colony_factory::Control control(db,w,ship,7);
++   CHECK(control.handle("CREW_MACHINE",site,colony_factory::encode64(std::to_string(npc)+",1")).find("assigned")!=std::string::npos);
++   bool conflict=false;try{crew.queue_machine_dismantle(npc,2,7,ship,site);}catch(const std::invalid_argument&){conflict=true;}
++   CHECK(conflict);
++   for(int i=0;i<2;++i){w.step();crew.advance(7,ship);}
++   CHECK(w.world().workshop(site)->finisher_installed);
++   CHECK(w.world().total_material_kg()==total);
++  }
++  {
++   PersistentWorld w(db,Simulation(1));construction::Plans plans(db,w);construction::Crews crew(db,w,plans);
++   CHECK(w.world().workshop(site)->finisher_installed);
++   bool got_cargo=false;
++   for(int i=0;i<80 && w.world().workshop(site)->finisher_installed;++i){
++    w.step();crew.advance(7,ship);
++    if(const auto* s=w.world().construction_supplies(site);s && s->carried.count(npc))got_cargo=true;
++    CHECK(w.world().total_material_kg()==total);
++   }
++   CHECK(got_cargo && !w.world().workshop(site)->finisher_installed);
++   CHECK(w.world().workshop(site)->embodied_ore==2);
++   for(int i=0;i<30;++i){w.step();crew.advance(7,ship);CHECK(w.world().total_material_kg()==total);}
++   CHECK(!w.world().construction_supplies(site)->carried.count(npc));
++   CHECK(!crew.list_machine_dismantle(7,ship,site)[0].active);
++   // A real site-local aluminum stock blocks primary recovery. The player
++   // must physically transfer it back to ship inventory, not erase it.
++   okay(action(w,ship,900,Action::Mine,silicate,30));
++   okay(action(w,ship,901,Action::RefineMineral,10,12000));
++   okay(action(w,ship,902,Action::TransferWorkshopFeed,site,1000));
++   CHECK(w.world().workshop(site)->aluminum_kg==1000);
++   bool stocked_block=false;
++   try{crew.queue_machine_dismantle(npc,2,7,ship,site);}
++   catch(const std::invalid_argument&){stocked_block=true;}
++   CHECK(stocked_block);
++   CHECK(action(w,ship,903,Action::CrewDismantleWorkshop,site,2,static_cast<int>(npc)).result!=Outcome::Applied);
++   okay(action(w,ship,904,Action::TransferWorkshopFeed,site,-1000));
++   CHECK(w.world().workshop(site)->aluminum_kg==0);
++   CHECK(w.world().total_material_kg()==total);
++   crew.queue_machine_dismantle(npc,2,7,ship,site);
++   // Cancellation cannot delete a machine or create a refund.
++   CHECK(crew.cancel_machine_dismantle(npc,7,ship,site));
++   for(int i=0;i<35;++i){w.step();crew.advance(7,ship);}
++   CHECK(w.world().workshop(site));
++   CHECK(w.world().total_material_kg()==total);
++   crew.queue_machine_dismantle(npc,2,7,ship,site);
++   for(int i=0;i<100 && w.world().workshop(site);++i){
++    w.step();crew.advance(7,ship);CHECK(w.world().total_material_kg()==total);
++   }
++   CHECK(!w.world().workshop(site));
++   CHECK(!w.world().storage(site)->equipment_positions.count(kWorkshopConveyorNode));
++   CHECK(w.world().construction_supplies(site)->carried.count(npc));
++  }
++  {
++   PersistentWorld w(db,Simulation(1));construction::Plans plans(db,w);construction::Crews crew(db,w,plans);
++   CHECK(!w.world().workshop(site));
++   for(int i=0;i<100 && w.world().construction_supplies(site)->carried.count(npc);++i){
++    w.step();crew.advance(7,ship);CHECK(w.world().total_material_kg()==total);
++   }
++   CHECK(!w.world().construction_supplies(site)->carried.count(npc));
++   CHECK(w.world().total_material_kg()==total);
++  }
++  // Forge a construction-material receipt in an isolated copy.
++  {
++   const auto forged=(folder/"forged.sqlite").string();
++   fs::copy_file(db,forged,fs::copy_options::overwrite_existing);
++   sqlite3* conn=nullptr;CHECK(sqlite3_open(forged.c_str(),&conn)==SQLITE_OK);
++   char* err=nullptr;
++   const auto code=sqlite3_exec(conn,
++       "UPDATE resource_ledger SET source_id='invented-machine' WHERE rowid=(SELECT rowid FROM resource_ledger "
++       "WHERE reason='construction_logistics_t' AND source_id LIKE 'workshop-machine:%' LIMIT 1)",
++       nullptr,nullptr,&err);
++   if(err)sqlite3_free(err);
++   CHECK(code==SQLITE_OK && sqlite3_changes(conn)==1);
++   sqlite3_close(conn);
++   bool detected=false;try{PersistentWorld bad(forged,Simulation(1));(void)bad;}
++   catch(const std::exception&){detected=true;}
++   CHECK(detected);
++  }
++  fs::remove_all(folder);
++  std::cout<<"ECON-02B2d14 PASS: isolated two-stage machine teardown, durable NPC labor, material recovery and forged-ledger rejection\n";
++  return 0;
++ }catch(const std::exception& e){std::cerr<<"ECON-02B2d14 FAIL: "<<e.what()<<'\n';fs::remove_all(folder);return 1;}
++}
+diff --git a/tests/ECON02B2d14MachineFixture.cpp b/tests/ECON02B2d14MachineFixture.cpp
+new file mode 100644
+index 0000000..b5524ba
+--- /dev/null
++++ b/tests/ECON02B2d14MachineFixture.cpp
+@@ -0,0 +1,39 @@
++#include "galaxy/Persistence.hpp"
++#include "galaxy/Simulation.hpp"
++#include <iostream>
++#include <stdexcept>
++using namespace galaxy;
++static void action(PersistentWorld& w,EntityId ship,std::uint64_t id,Action kind,EntityId site=0,
++                   std::int64_t amount=1,int x=0,int y=0){
++ Command c{};c.id=id;c.sequence=id;c.issuer=7;c.actor=ship;c.target=site;c.action=kind;
++ c.amount=amount;c.thrust_x=x;c.thrust_y=y;c.execute_tick=w.world().tick()+1;
++ if(!w.submit(c))throw std::runtime_error("Failed fixture submit "+std::to_string(id));
++ w.step();
++ if(w.world().events().back().result!=Outcome::Applied)
++  throw std::runtime_error("Fixture command rejected "+std::to_string(id));
++}
++int main(int argc,char** argv){
++ if(argc!=2)return 2;
++ try{
++  Simulation seed(1215);
++  auto ship=seed.add_colony_ship(7,{0,0},500,8);
++  seed.provision_colony_genesis(ship,1000,3000,1000,1000,1000);
++  auto asteroid=seed.add_asteroid({1000,0},200);
++  seed.enable_individual_workforce();
++  PersistentWorld w(argv[1],std::move(seed));
++  action(w,ship,1,Action::Mine,asteroid,175);
++  action(w,ship,2,Action::RefineOre,0,175);
++  action(w,ship,3,Action::FabricateModule,0,75);
++  action(w,ship,4,Action::ConstructOutpost);
++  auto site=w.world().built_outposts().begin()->first;
++  action(w,ship,5,Action::ConstructHabitat,site);
++  for(int i=1;i<=3;++i)action(w,ship,5+i,Action::TransferHabitatStock,site,30,i);
++  action(w,ship,9,Action::AssignHabitatResidents,site,2);
++  action(w,ship,10,Action::ConstructStorage,site);
++  action(w,ship,11,Action::ConstructWorkshop,site);
++  action(w,ship,12,Action::ConstructWorkshopFinisher,site);
++  action(w,ship,13,Action::PlaceFactoryEquipment,site,-1,4,0);
++  std::cout<<"ECON-02B2d14 fixture prepared\n";
++  return 0;
++ }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}
++}
+diff --git a/tests/ECON02B2d14MachineHostTests.py b/tests/ECON02B2d14MachineHostTests.py
+new file mode 100644
+index 0000000..219ce1e
+--- /dev/null
++++ b/tests/ECON02B2d14MachineHostTests.py
+@@ -0,0 +1,103 @@
++#!/usr/bin/env python3
++"""d14: authenticated real colony HTTP, staged removal, custody, restarts."""
++import argparse, http.client, json, pathlib, socket, subprocess, sys, tempfile, time
++p=argparse.ArgumentParser()
++for n in ('host','fixture','relay'):p.add_argument('--'+n,required=True)
++a=p.parse_args()
++def port():
++    with socket.socket() as s:s.bind(('127.0.0.1',0));return s.getsockname()[1]
++class Game:
++    def __init__(self,db):
++        self.port=port()
++        self.proc=subprocess.Popen([sys.executable,a.relay,'--colony','--host-exe',a.host,'--save',str(db),
++                  '--port',str(self.port),'--tick-ms','75','--max-ticks','1200'],
++                  stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
++        for _ in range(100):
++            if self.proc.poll() is not None:raise AssertionError('Colony game exited early')
++            try:
++                if self.get('/healthz')[0]==200:break
++            except (OSError,TimeoutError):pass
++            time.sleep(.05)
++        else:raise AssertionError('Colony game did not start')
++    def request(self,method,path,doc=None,headers=None):
++        c=http.client.HTTPConnection('127.0.0.1',self.port,timeout=10)
++        body=json.dumps(doc).encode() if doc is not None else None
++        h={'Host':f'127.0.0.1:{self.port}',**(headers or {})}
++        if body is not None:
++            h.setdefault('Content-Type','application/json');h.setdefault('Origin',f'http://127.0.0.1:{self.port}')
++        try:
++            c.request(method,path,body,headers=h)
++            r=c.getresponse();raw=r.read()
++            return r.status,json.loads(raw) if r.getheader('Content-Type')=='application/json' else raw.decode()
++        finally:c.close()
++    def get(self,path):return self.request('GET',path)
++    def post(self,path,doc,headers=None):return self.request('POST',path,doc,headers)
++    def close(self):
++        self.proc.terminate()
++        try:self.proc.communicate(timeout=8)
++        except subprocess.TimeoutExpired:self.proc.kill();self.proc.communicate(timeout=5)
++with tempfile.TemporaryDirectory(prefix='sg-d14-http-') as tmp:
++    db=pathlib.Path(tmp)/'world.sqlite'
++    r=subprocess.run([a.fixture,str(db)],capture_output=True,text=True,timeout=20)
++    assert r.returncode==0,r.stderr
++    game=Game(db)
++    try:
++        status,session=game.get('/session');assert status==200,(status,session)
++        token=session['token']
++        status,sites=game.get('/factory/api/sites');assert status==200 and len(sites['sites'])==1
++        site=sites['sites'][0]
++        url=f'/factory/api/crews?site={site}'
++        status,listing=game.get(url);assert status==200,(status,listing)
++        assert listing['workshopState']['installed'] and listing['workshopState']['finisher'],listing
++        npc=listing['residents'][0]
++        req={'token':token,'site':site,'npc':npc,'stage':1}
++        for fake in ({**req,'token':'forged'}, {**req,'site':999999}):
++            status,_=game.post('/factory/api/crew_machine',fake)
++            assert status in (400,403)
++        status,_=game.post('/factory/api/crew_machine',{**req,'stage':4});assert status==400
++        status,_=game.post('/factory/api/crew_machine',req,{'Origin':'https://evil.invalid'});assert status==403
++        status,_=game.post('/factory/api/crew_machine',{**req,'stage':2});assert status==400
++        status,assigned=game.post('/factory/api/crew_machine',req)
++        assert status==200 and assigned['assigned'],(status,assigned)
++        status,_=game.post('/factory/api/crew_machine',req);assert status==400
++        status,listing=game.get(url)
++        assert status==200 and listing['machineDismantling'][0]['active'],listing
++    finally:game.close()
++    game=Game(db)
++    try:
++        url=f'/factory/api/crews?site={site}'
++        done=False
++        for _ in range(140):
++            status,listing=game.get(url)
++            if status==200 and not listing['workshopState']['finisher'] and not listing['machineDismantling'][0]['active']:
++                done=True;break
++            time.sleep(.08)
++        assert done,listing
++        assert listing['workshopState']['installed'],listing
++        assert listing['supply']['depot']==1,listing
++        token=game.get('/session')[1]['token']
++        req={'token':token,'site':site,'npc':npc,'stage':2}
++        status,assigned=game.post('/factory/api/crew_machine',req)
++        assert status==200 and assigned['assigned'],(status,assigned)
++    finally:game.close()
++    game=Game(db)
++    try:
++        url=f'/factory/api/crews?site={site}'
++        done=False
++        for _ in range(160):
++            status,listing=game.get(url)
++            if status==200 and not listing['workshopState']['installed'] and not listing['machineDismantling'][0]['active']:
++                done=True;break
++            time.sleep(.08)
++        assert done,listing
++        assert listing['supply']['depot']==2,listing
++        status,_=game.post('/factory/api/crew_machine',{'token':game.get('/session')[1]['token'],
++             'site':site,'npc':npc,'stage':2})
++        assert status==400
++    finally:game.close()
++    game=Game(db)
++    try:
++        status,listing=game.get(f'/factory/api/crews?site={site}')
++        assert status==200 and listing['supply']['depot']==2 and not listing['workshopState']['installed']
++    finally:game.close()
++    print('ECON-02B2d14 PASS: real HTTP token/origin/site control, stage-order, durable NPC machine teardown')
+diff --git a/viewer/interactive.html b/viewer/interactive.html
+index b564ca5..f0f8877 100644
+--- a/viewer/interactive.html
++++ b/viewer/interactive.html
+@@ -72,6 +72,7 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
+ <div class="controls" style="padding:8px 0;gap:5px"><label for="warehouseLifecycleNode">Warehouse lifecycle</label><select id="warehouseLifecycleNode"><option value="">Select storage node</option></select><button id="warehouseMark">Decommission</button><button id="warehouseCancel">Recommission</button><button id="warehouseDemolish">Demolish empty node</button></div>
+ <div class="help">Decommissioning stops new inbound stock and project allocations; existing goods and construction modules must be hauled away physically. Demolition requires an empty bin, no reservations, links, or active NPC dependencies. The intact bin yields one recoverable module into local depot stock. No automatic demolition is authorized.</div>
+ <div class="controls" style="padding:8px 0;gap:5px"><label for="crewDismantleTarget">Dismantling target</label><select id="crewDismantleTarget"><option value="">Choose installed warehouse or conveyor</option></select><button id="crewDismantle">Assign NPC dismantling</button><button id="crewDismantleCancel">Cancel worker teardown</button></div>
++<div class="controls" style="padding:8px 0;gap:5px"><label for="crewMachineStage">Machine disassembly</label><select id="crewMachineStage"><option value="1">Finisher (first)</option><option value="2">Primary processor (last)</option></select><button id="crewMachine">Assign NPC machine teardown</button><button id="crewMachineCancel">Cancel machine teardown</button></div>
+ <div id="crewStatus" class="help" role="status" aria-live="polite" style="white-space:pre-wrap;max-height:180px;overflow:auto">No active construction crews.</div>
+ <div id="structureStatus" class="help" role="status" aria-live="polite" style="white-space:pre-wrap">Open a colony session to inspect physical structures.</div>
+ <canvas id="structureMap" width="280" height="205" aria-label="Plan view of built floors, walls and doors" style="margin-top:8px;border:1px solid var(--border);background:#07131f;border-radius:8px;width:100%;height:auto"></canvas>
+diff --git a/viewer/structures.js b/viewer/structures.js
+index 3599a69..0031cbd 100644
+--- a/viewer/structures.js
++++ b/viewer/structures.js
+@@ -83,10 +83,13 @@ function renderCrews(){
+  });
+  const orders=(crews.supplyOrders||[]).map(o=>`Supply order plan #${o.plan}: ${o.staged}/${o.approved} staged, ${o.fabricated} fabricated · ${o.active?'Active':'Closed'} · ${o.reason||'Ready'}`);
+  const teardown=(crews.dismantling||[]).map(d=>`NPC #${d.npc} · ${d.link?'link':'warehouse'} #${d.target} · ${d.active?(d.cancelling?'Returning materials':'Dismantling'):'Finished'} · (${d.x},${d.y}) · ${d.reason||'Ready'}`);
++ const machines=(crews.machineDismantling||[]).map(j=>`NPC #${j.npc} · ${j.stage===1?'Finisher':'Processor'} · ${j.active?'Active':'Finished'} · ${j.reason}`);
++ const workshop=crews.workshopState||{};
++ const workLine=workshop.installed?`Workshop: ${workshop.finisher?'processor + finisher':'processor'} · aluminum ${workshop.aluminum} kg · panels ${workshop.panels} kg · frames ${workshop.frames} kg · scrap ${workshop.scrap} kg · WIP ${workshop.wip} kg · assigned operators ${workshop.operators}`:'No installed workshop';
+  const activeRuns=(crews.restocking||[]).map(r=>`${r.salvage?'Salvage':'Supply'} NPC #${r.npc} ${r.salvage?'←':'→'} node #${r.node} · (${r.x},${r.y}) · ${r.active?(r.returning?'Returning':'Hauling'):'Complete'} · ${r.reason||'Ready'}`);
+- $('crewStatus').textContent=stockLine+'\n'+(sourceLine?sourceLine+'\n':'')+(text.join('\n')||'No construction crew assignments yet. Build a habitat and assign residents first.')+
++ $('crewStatus').textContent=workLine+'\n'+stockLine+'\n'+(sourceLine?sourceLine+'\n':'')+(text.join('\n')||'No construction crew assignments yet. Build a habitat and assign residents first.')+
+   (activeRuns.length?'\n'+activeRuns.join('\n'):'')+
+-  (teardown.length?'\n'+teardown.join('\n'):'')+(crews.moreLinks?'\n'+crews.moreLinks+' additional links (not shown)':'')+(orders.length?'\n'+orders.join('\n'):'');
++  (teardown.length?'\n'+teardown.join('\n'):'')+(machines.length?'\n'+machines.join('\n'):'')+(crews.moreLinks?'\n'+crews.moreLinks+' additional links (not shown)':'')+(orders.length?'\n'+orders.join('\n'):'');
+ }
+ function render(){
+  draw();renderCrews();
+@@ -222,6 +225,19 @@ $('crewDismantleCancel').addEventListener('click',()=>{
+  if(!Number.isSafeInteger(npc)||npc<=0){feedback('Select a resident.');return;}
+  submit('/factory/api/crew_dismantle_cancel',{npc});
+ });
++$('crewMachine').addEventListener('click',()=>{
++ const npc=Number($('crewResident').value),stage=Number($('crewMachineStage').value);
++ if(!Number.isSafeInteger(npc)||npc<=0||![1,2].includes(stage)){
++  feedback('Choose a resident and machine stage.');return;
++ }
++ if(!confirm('Recover this machine only after emptying all inventories, clearing WIP, unassigning its operators, and removing connected conveyor links?'))return;
++ submit('/factory/api/crew_machine',{npc,stage});
++});
++$('crewMachineCancel').addEventListener('click',()=>{
++ const npc=Number($('crewResident').value);
++ if(!Number.isSafeInteger(npc)||npc<=0){feedback('Choose a resident.');return;}
++ submit('/factory/api/crew_machine_cancel',{npc});
++});
+ $('crewRestock').addEventListener('click',()=>{
+  const npc=Number($('crewResident').value),node=Number($('crewRestockNode').value);
+  if(!Number.isSafeInteger(npc)||npc<=0||!Number.isSafeInteger(node)||node<=0){feedback('Select an existing resident and a built storage destination.');return;}

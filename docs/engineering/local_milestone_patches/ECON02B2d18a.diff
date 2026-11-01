@@ -1,0 +1,601 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+old mode 100644
+new mode 100755
+index 1487a4a..7ae80cf
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -19,7 +19,7 @@ else()
+ endif()
+ add_library(galaxy_kernel STATIC src/Simulation.cpp src/ColonyResilience.cpp
+   src/ColonyRecovery.cpp src/ColonyPolicy.cpp src/PopulationCohorts.cpp
+-    src/ColonyWaterSupply.cpp src/Persistence.cpp src/EconomyPrototype.cpp src/QuantifiedProduction.cpp src/Inventory.cpp src/InventoryLogistics.cpp src/FactoryLayout.cpp src/FactoryRetirementPlanner.cpp src/BlueprintConstruction.cpp src/HostBlueprintRegistry.cpp src/ColonyStructurePlans.cpp src/NpcConstructionCrews.cpp src/ClientContract.cpp src/Galaxy.cpp src/Navigation.cpp src/GateTransit.cpp src/Region.cpp)
++    src/ColonyWaterSupply.cpp src/Persistence.cpp src/EconomyPrototype.cpp src/QuantifiedProduction.cpp src/Inventory.cpp src/InventoryLogistics.cpp src/FactoryLayout.cpp src/FactoryRetirementPlanner.cpp src/FactoryExecution.cpp src/BlueprintConstruction.cpp src/HostBlueprintRegistry.cpp src/ColonyStructurePlans.cpp src/NpcConstructionCrews.cpp src/ClientContract.cpp src/Galaxy.cpp src/Navigation.cpp src/GateTransit.cpp src/Region.cpp)
+ target_include_directories(galaxy_kernel PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+ target_link_libraries(galaxy_kernel PUBLIC SQLite::SQLite3)
+ if(MSVC)
+@@ -839,3 +839,10 @@ if(BUILD_TESTING)
+     target_link_libraries(galaxy_econ02b2d17_graph_planner_tests PRIVATE galaxy_kernel)
+     add_test(NAME ECON02B2d17_GraphPlanner COMMAND galaxy_econ02b2d17_graph_planner_tests)
+ endif()
++
++# ECON-02B2d18a — generic, spatial, recipe-driven machine execution gate.
++if(BUILD_TESTING)
++  add_executable(galaxy_econ02b2d18_factory_execution_tests tests/ECON02B2d18FactoryExecutionTests.cpp)
++  target_link_libraries(galaxy_econ02b2d18_factory_execution_tests PRIVATE galaxy_kernel)
++  add_test(NAME ECON02B2d18_GenericFactoryExecution COMMAND galaxy_econ02b2d18_factory_execution_tests)
++endif()
+diff --git a/docs/engineering/ECON02B2d18a_Generic_Machine_Execution_2026-11-01.md b/docs/engineering/ECON02B2d18a_Generic_Machine_Execution_2026-11-01.md
+new file mode 100755
+index 0000000..95f56d2
+--- /dev/null
++++ b/docs/engineering/ECON02B2d18a_Generic_Machine_Execution_2026-11-01.md
+@@ -0,0 +1,40 @@
++# ECON-02B2d18a — Generic machine execution foundation (local prototype gate)
++
++**Project:** Single Galaxy original game (not the separate EVEmu audit).
++**Date:** November 1, 2026.
++**Exact source baseline:** `SingleGalaxy_ECON02B2d17_Generic_Retirement_Multi_Destination_Source_Tests_2026-11-01.zip`.
++**Status:** New deterministic C++17 runtime component and regression tests; **NOT YET integrated into the authoritative colony PersistentWorld, relay, NPC scheduler or graphical runtime**. Existing d17 player-facing behavior is unchanged. GitHub remains a source repository, not a development hub.
++
++## Implementation
++
++1. `FactoryExecution.hpp/.cpp` introduces data-driven installed machine instances. Equipment blueprints are authored through the existing physically validated `FactoryLayout`; recipes and five-tier production are executed by the existing `QuantifiedLine` engine. No per-product machine whitelist is introduced.
++2. Blueprint placement is **not** installation. `install_machine` debits one existing manufactured construction module from an external module account. `install_conveyor` requires installed endpoints and debits one module for its link plus one for each spatial route cell. Receipt identifiers are unique and serialized. Existing material custody must be supplied by an authorized caller; this component does not issue inventory or construct NPCs.
++3. Each installed machine has separate, finite input, product, scrap and reserved-WIP quantities. Production conserves material grams, including scrap. A machine's total internal mass cannot exceed its tier-scaled buffer. A shutdown allows reserved WIP to complete but forbids new batches and inbound material.
++4. Installed directed conveyor links carry only their declared material at their installed, per-tick rate. Staged/partially dismantled links do not transfer. Uninstalled blueprints do not carry stock. Transfers are validated for source inventory, target capacity, and defined ports.
++5. Retirement order reuses `FactoryRetirementPlanner`: conveyor links must come down before their source/destination machines, and consumers precede their suppliers. Removing one link cell or machine returns its intact construction module into an existing bounded NPC-cargo counter. Real colony NPC identity, route and depot ownership checks are intentionally left to the authoritative host adapter, **not asserted here**.
++6. `checkpoint()`/`restore()` provide a canonical deterministic v1 runtime serialization. They bind to the exact layout-and-recipe configuration, preserve WIP, link removal progress, unique installation receipts, counters, and inventories, and reject noncanonical or malformed restore inputs. This is *structural* validation, not a replacement for the cryptographic hashes or SQLite event/receipt audit of the live game.
++7. New `ECON02B2d18FactoryExecutionTests.cpp` exercises installation refusal without stock, installed-link-only transfers, two different production recipes, mid-cycle restore, shutdown, invalid inventory, material conservation through dismantling, malformed receipts, Tier 5 scaling, and config mismatch. All material movement in this prototype remains explicit and bounded.
++
++## Boundaries retained
++
++- The preexisting primary processor and finisher continue operating exactly as before, through the main `Simulation` and its SQLite journal. This code introduces **no competing world writer**.
++- The `FactoryExecution` stores are local, deterministic domain objects: their external source/destination `Store` references must be mapped to real ship/warehouse/NPC custody by the host before calling from gameplay. Passing a fabricated account to this library is not a game permission.
++- The runtime doesn't create population, power, maintenance, workforce, transport vehicles, or space/distant routes; it calls the quantified machine's existing power/staff/maintenance gates and respects spatially authored conveyor paths.
++- One manufactured construction module per newly installed machine is a provisional machine-cost rule. Tiers currently scale recipe batch size and internal capacity; tier-dependent multi-module dismantling needs an authoritative progressive salvage model.
++- Synchronous per-tick routing in this prototype is not yet a production-ready massively parallel/offline scheduling implementation. Very large graphs need a partitioned, bounded batch scheduler.
++- `FactoryLayout` already prevents cyclic conveyor networks. The independent retirement planner also rejects invalid dependency DAGs. General world command and lifecycle barriers remain future integration gates.
++
++## To close ECON-02B2d18 fully
++
++Integrate `FactoryExecution` into `Simulation` with unique site-local machine IDs and versioned canonical snapshots; implement server-authorized commands for installation, material pickup/delivery, machine processing, shutdown and dismantling; record all transfers in the existing SQLite generation and resource ledgers with replay validation; add NPC crew schedule and spatial route verification; test crash timing between world commit and scheduler intent update, retained inventories, competing crews, and the authenticated colony GUI on both Linux and Windows.
++
++**No claims of complete d18 world integration, Windows validation, or NPC autonomous operation are made in this subgate.**
++
++## Actual verification of this deliverable
++
++- Full Linux CMake/Ninja build (all configured targets): **PASS**.
++- CTest cases 1–75: **75/75 PASS**.
++- CTest cases 76–110: **35/35 PASS**. Total **110/110** across two runs, including the new `ECON02B2d18_GenericFactoryExecution` test and existing Node HTTP tests with their required CLI arguments.
++- Existing offline Chromium colony crew smoke and structures smoke: **2/2 PASS**. They test unchanged old UI, not a new generic-machine panel.
++- New C++ test: installation receipts, tier-five recipe scaling, shutdown with reserved WIP, correct physical link transfers, transfer refusal, exact checkpoint restore, config mismatch, separate scrap inventories and mass conservation through dismantling: **PASS**.
++- Windows and an end-to-end generic-machine SQLite/HTTP command test: **NOT RUN** (not yet implemented).
+diff --git a/include/galaxy/FactoryExecution.hpp b/include/galaxy/FactoryExecution.hpp
+new file mode 100755
+index 0000000..4dd22fd
+--- /dev/null
++++ b/include/galaxy/FactoryExecution.hpp
+@@ -0,0 +1,71 @@
++#pragma once
++// ECON-02B2d18a: deterministic, material-accounted generic factory execution.
++// NOT a second world writer: the colony host must provide authorized stocks,
++// named-worker identity, and durable commit/journal before using this at runtime.
++#include "galaxy/FactoryLayout.hpp"
++#include "galaxy/FactoryRetirementPlanner.hpp"
++#include "galaxy/QuantifiedProduction.hpp"
++#include <map>
++#include <set>
++#include <string>
++#include <vector>
++
++namespace galaxy::industry {
++struct RuntimeMachine {
++    Recipe recipe;
++    Machine machine;
++    State state;
++    std::uint64_t installation_receipt=0;
++    bool shutdown=false;
++};
++struct RuntimeConveyor {
++    std::uint64_t installation_receipt=0;
++    // Tail-first removal. No transfers once dismantling has started.
++    std::size_t remaining_cells=0;
++};
++class FactoryExecution {
++public:
++    FactoryExecution(FactoryLayout layout,std::map<DeviceId,Recipe> recipes);
++    const FactoryLayout& layout()const noexcept{return layout_;}
++    const std::map<DeviceId,RuntimeMachine>& machines()const noexcept{return machines_;}
++    const std::map<ConveyorId,RuntimeConveyor>& conveyors()const noexcept{return conveyors_;}
++    std::uint64_t tick_count()const noexcept{return tick_;}
++    // The caller supplies actual module custody; it is debited only on success.
++    // Receipt IDs are unique and durable, never silently reused.
++    void install_machine(DeviceId id,std::int64_t& modules,std::uint64_t receipt);
++    void install_conveyor(ConveyorId id,std::int64_t& modules,std::uint64_t receipt);
++    // Both accounts must be site-local, physically accessible and authorized
++    // by the primary colony host; no nonlocal or automatic teleport is implied.
++    void load(DeviceId id,Store& source,const std::string& item,std::int64_t grams);
++    void unload(DeviceId id,Store& destination,const std::string& item,std::int64_t grams);
++    void set_operator(DeviceId id,bool present);
++    void set_shutdown(DeviceId id,bool requested);
++    // One tick moves through explicitly installed links and advances recipes.
++    // Even offline/background execution obeys all inventory limits.
++    void step();
++    void steps(std::uint64_t n);
++    std::vector<RetirementNode> retirement_order()const;
++    // Dismantling is a worker-action adapter target: the world must separately
++    // verify a named NPC and its position before calling either operation.
++    // An NPC has at most two module cargo slots; rejects full cargo atomically.
++    bool remove_conveyor_piece(ConveyorId id,std::int64_t& worker_cargo);
++    void dismantle_machine(DeviceId id,std::int64_t& worker_cargo);
++    std::int64_t internal_mass_grams()const;
++    std::int64_t embodied_modules()const;
++    std::string checkpoint()const;
++    static FactoryExecution restore(FactoryLayout layout,std::map<DeviceId,Recipe> recipes,
++                                    const std::string& bytes);
++private:
++    void check_recipe_catalog()const;
++    RuntimeMachine& machine_at(DeviceId id);
++    const RuntimeMachine& machine_at(DeviceId id)const;
++    void transfer_link(ConveyorId id);
++    std::string config_signature()const;
++    FactoryLayout layout_;
++    std::map<DeviceId,Recipe> recipes_;
++    std::map<DeviceId,RuntimeMachine> machines_;
++    std::map<ConveyorId,RuntimeConveyor> conveyors_;
++    std::set<std::uint64_t> receipts_;
++    std::uint64_t tick_=0;
++};
++} // namespace galaxy::industry
+diff --git a/src/FactoryExecution.cpp b/src/FactoryExecution.cpp
+new file mode 100755
+index 0000000..082e174
+--- /dev/null
++++ b/src/FactoryExecution.cpp
+@@ -0,0 +1,294 @@
++#include "galaxy/FactoryExecution.hpp"
++#include <algorithm>
++#include <cctype>
++#include <limits>
++#include <sstream>
++#include <stdexcept>
++#include <utility>
++
++namespace galaxy::industry {
++namespace {
++using I=std::int64_t;
++I sum(I a,I b){if(a<0||b<0||a>std::numeric_limits<I>::max()-b)throw std::overflow_error("factory inventory overflow");return a+b;}
++void valid_code(const std::string& x){
++ if(x.empty()||x.size()>80||!std::all_of(x.begin(),x.end(),[](unsigned char c){return std::isalnum(c)||c=='_'||c=='-'||c=='/';}))
++  throw std::invalid_argument("invalid factory material code");
++}
++void transfer(Store& from,Store& to,const std::string& code,I grams){
++ valid_code(code);
++ if(grams<=0||from.amount(code)<grams||to.free_space()<grams)
++  throw std::invalid_argument("factory transfer lacks real source or capacity");
++ // Deposit first: if map allocation throws, the physical source remains intact.
++ to.deposit(code,grams);from.withdraw(code,grams);
++}
++std::string as_string(const Recipe& r){
++ std::ostringstream s;s<<r.name<<'|'<<r.operation<<'|'<<r.product.code<<':'<<r.product.grams
++ <<'|'<<r.scrap.code<<':'<<r.scrap.grams;
++ for(const auto& x:r.inputs)s<<'|'<<x.code<<':'<<x.grams;
++ return s.str();
++}
++std::vector<std::string> split(const std::string& in,char separator='|'){
++ std::vector<std::string> p;std::size_t from=0;
++ for(std::size_t i=0;i<=in.size();++i)if(i==in.size()||in[i]==separator){p.push_back(in.substr(from,i-from));from=i+1;}
++ return p;
++}
++std::uint64_t number(const std::string& s){
++ if(s.empty()||s[0]=='+'||s[0]=='-'||s.find_first_not_of("0123456789")!=std::string::npos)
++  throw std::invalid_argument("invalid factory checkpoint number");
++ std::size_t used=0;auto x=std::stoull(s,&used);if(used!=s.size())throw std::invalid_argument("factory checkpoint integer suffix");return x;
++}
++I signed_number(const std::string& s){
++ if(s.empty()||s[0]=='+')throw std::invalid_argument("invalid checkpoint integer");
++ std::size_t used=0;auto x=std::stoll(s,&used);if(used!=s.size())throw std::invalid_argument("checkpoint integer suffix");return x;
++}
++// v1 is bound to the caller's immutable configuration. Not cryptographic;
++// the host's durable journal must additionally establish authorization.
++std::uint64_t fingerprint(const std::string& data){
++ std::uint64_t h=14695981039346656037ull;
++ for(unsigned char c:data){h^=c;h*=1099511628211ull;}return h;
++}
++I buffer_capacity(std::uint8_t tier){
++ if(tier<1||tier>5)throw std::invalid_argument("invalid machinery tier");
++ return static_cast<I>(1000000) << (tier-1); // each tier has a physically larger buffer
++}
++void store_out(std::ostringstream& out,const char* label,DeviceId id,const Store& s){
++ for(const auto& [name,grams]:s.grams)if(grams>0)out<<label<<'|'<<id<<'|'<<name<<'|'<<grams<<'\n';
++}
++}
++FactoryExecution::FactoryExecution(FactoryLayout layout,std::map<DeviceId,Recipe> recipes)
++ :layout_(std::move(layout)),recipes_(std::move(recipes)){check_recipe_catalog();}
++void FactoryExecution::check_recipe_catalog()const{
++ for(const auto& [id,recipe]:recipes_){
++  const auto it=layout_.devices().find(id);
++  if(it==layout_.devices().end()||it->second.kind!=DeviceKind::Machine)
++   throw std::invalid_argument("recipe has no corresponding machine blueprint");
++  valid_code(recipe.name);valid_code(recipe.operation);
++  Machine m{it->second.tier,recipe.operation,true,true,true};
++  State state;state.feed.capacity_grams=buffer_capacity(it->second.tier);state.finished.capacity_grams=buffer_capacity(it->second.tier);state.scrap.capacity_grams=buffer_capacity(it->second.tier);
++  (void)QuantifiedLine(recipe,m,state); // checks balanced recipe and all tier multipliers
++  for(const auto& input:recipe.inputs){valid_code(input.code);
++   if(std::find(it->second.inputs.begin(),it->second.inputs.end(),input.code)==it->second.inputs.end())
++    throw std::invalid_argument("recipe input absent from machine port");
++  }
++  valid_code(recipe.product.code);valid_code(recipe.scrap.code);
++  if(std::find(it->second.outputs.begin(),it->second.outputs.end(),recipe.product.code)==it->second.outputs.end()||
++     std::find(it->second.outputs.begin(),it->second.outputs.end(),recipe.scrap.code)==it->second.outputs.end())
++   throw std::invalid_argument("recipe output absent from machine port");
++ }
++ for(const auto& [id,d]:layout_.devices())if(d.kind==DeviceKind::Machine&&!recipes_.count(id))
++  throw std::invalid_argument("machine blueprint lacks declared recipe");
++}
++RuntimeMachine& FactoryExecution::machine_at(DeviceId id){
++ auto it=machines_.find(id);if(it==machines_.end())throw std::invalid_argument("factory machine is not installed");return it->second;
++}
++const RuntimeMachine& FactoryExecution::machine_at(DeviceId id)const{
++ auto it=machines_.find(id);if(it==machines_.end())throw std::invalid_argument("factory machine is not installed");return it->second;
++}
++void FactoryExecution::install_machine(DeviceId id,I& modules,std::uint64_t receipt){
++ const auto d=layout_.devices().find(id);
++ if(d==layout_.devices().end()||d->second.kind!=DeviceKind::Machine||!recipes_.count(id)||machines_.count(id)||!receipt||receipts_.count(receipt)||modules<1)
++  throw std::invalid_argument("invalid material-backed machine installation");
++ RuntimeMachine machine;machine.recipe=recipes_.at(id);
++ machine.machine={d->second.tier,machine.recipe.operation,true,false,true};
++ machine.state.feed.capacity_grams=buffer_capacity(d->second.tier);machine.state.finished.capacity_grams=buffer_capacity(d->second.tier);machine.state.scrap.capacity_grams=buffer_capacity(d->second.tier);
++ machine.installation_receipt=receipt;
++// Install atomically with respect to a failed container allocation.
++ receipts_.insert(receipt);
++ try{machines_.emplace(id,std::move(machine));}
++ catch(...){receipts_.erase(receipt);throw;}
++ --modules;
++}
++void FactoryExecution::install_conveyor(ConveyorId id,I& modules,std::uint64_t receipt){
++ const auto it=layout_.conveyors().find(id);
++ if(it==layout_.conveyors().end()||conveyors_.count(id)||!receipt||receipts_.count(receipt)||
++    !machines_.count(it->second.from)||!machines_.count(it->second.to))
++  throw std::invalid_argument("conveyor endpoints not physically installed");
++ const auto cells=it->second.path.size();
++ if(cells>=static_cast<std::size_t>(std::numeric_limits<I>::max())||modules<static_cast<I>(cells+1))
++  throw std::invalid_argument("insufficient modules to build real conveyor route");
++ receipts_.insert(receipt);
++ try{conveyors_.emplace(id,RuntimeConveyor{receipt,cells});}
++ catch(...){receipts_.erase(receipt);throw;}
++ modules-=static_cast<I>(cells+1);
++}
++void FactoryExecution::load(DeviceId id,Store& source,const std::string& item,I grams){
++ auto& m=machine_at(id);
++ if(m.shutdown)throw std::invalid_argument("factory intake shut down");
++ if(std::find_if(m.recipe.inputs.begin(),m.recipe.inputs.end(),[&](const Material& x){return x.code==item;})==m.recipe.inputs.end())
++  throw std::invalid_argument("item not a declared input");
++ if(QuantifiedLine(m.recipe,m.machine,m.state).total_mass_grams()>buffer_capacity(m.machine.tier)-grams)
++  throw std::invalid_argument("physical machine buffer is full");
++ transfer(source,m.state.feed,item,grams);
++}
++void FactoryExecution::unload(DeviceId id,Store& dest,const std::string& item,I grams){
++ auto& m=machine_at(id);
++ if(m.recipe.product.code==item)transfer(m.state.finished,dest,item,grams);
++ else if(m.recipe.scrap.code==item)transfer(m.state.scrap,dest,item,grams);
++ else if(m.shutdown)transfer(m.state.feed,dest,item,grams);
++ else throw std::invalid_argument("cannot evacuate operating machine input");
++}
++void FactoryExecution::set_operator(DeviceId id,bool present){machine_at(id).machine.staffed=present;}
++void FactoryExecution::set_shutdown(DeviceId id,bool requested){machine_at(id).shutdown=requested;}
++void FactoryExecution::transfer_link(ConveyorId id){
++ const auto link=conveyors_.find(id);if(link==conveyors_.end())return;
++ const auto& spec=layout_.conveyors().at(id);
++ if(link->second.remaining_cells!=spec.path.size())return;
++ auto& src=machine_at(spec.from);auto& dst=machine_at(spec.to);
++ if(src.shutdown||dst.shutdown)return;
++ const auto goods=src.state.finished.amount(spec.item_code);
++ if(goods<=0)return;
++ // Site goods use the v1 industrial game abstraction: 1 volume unit = 1000g.
++ // Installed conveyor throughput is specified in volume units per tick.
++ const auto available=buffer_capacity(dst.machine.tier)-QuantifiedLine(dst.recipe,dst.machine,dst.state).total_mass_grams();
++ auto count=std::min({goods,dst.state.feed.free_space(),spec.units_per_tick*1000,available});
++ if(count<=0)return;
++ transfer(src.state.finished,dst.state.feed,spec.item_code,count);
++}
++void FactoryExecution::step(){
++ if(tick_==std::numeric_limits<std::uint64_t>::max())throw std::overflow_error("factory tick overflow");
++ // Stable one-tick order; material travels only through installed physical links.
++ for(const auto& [id,link]:conveyors_){(void)link;transfer_link(id);}
++ for(auto& [id,m]:machines_){(void)id;
++  if(m.shutdown&&!m.state.has_work_in_progress)continue;
++  QuantifiedLine q(m.recipe,m.machine,m.state);
++  q.advance(1);m.state=q.state();
++ }
++ ++tick_;
++}
++void FactoryExecution::steps(std::uint64_t n){for(std::uint64_t i=0;i<n;++i)step();}
++std::vector<RetirementNode> FactoryExecution::retirement_order()const{
++ std::vector<RetirementNode> nodes;std::vector<RetirementDependency> edges;
++ for(const auto& [id,m]:machines_){(void)m;nodes.push_back({RetirementKind::Machine,id});}
++ for(const auto& [id,conveyor]:conveyors_){(void)conveyor;
++  const auto& route=layout_.conveyors().at(id);
++  const RetirementNode l{RetirementKind::Conveyor,id},src{RetirementKind::Machine,route.from},dst{RetirementKind::Machine,route.to};
++  nodes.push_back(l);edges.push_back({l,src});edges.push_back({l,dst});
++  // Downstream machines retire before their suppliers.
++  edges.push_back({dst,src});
++ }
++ return plan_factory_retirement(nodes,edges);
++}
++bool FactoryExecution::remove_conveyor_piece(ConveyorId id,I& cargo){
++ const auto it=conveyors_.find(id);if(it==conveyors_.end()||cargo<0||cargo>=2)
++  throw std::invalid_argument("invalid conveyor dismantling cargo");
++ const auto& route=layout_.conveyors().at(id);
++ const auto& src=machine_at(route.from);const auto& dst=machine_at(route.to);
++ if(!src.shutdown||!dst.shutdown||src.state.has_work_in_progress||dst.state.has_work_in_progress)
++  throw std::invalid_argument("production must drain before conveyor demolition");
++ ++cargo;
++ if(it->second.remaining_cells){--it->second.remaining_cells;return false;}
++ conveyors_.erase(it);return true;
++}
++void FactoryExecution::dismantle_machine(DeviceId id,I& cargo){
++ const auto& m=machine_at(id);
++ if(cargo<0||cargo>=2||!m.shutdown||m.machine.staffed||m.state.has_work_in_progress||
++    m.state.feed.used()||m.state.finished.used()||m.state.scrap.used())
++  throw std::invalid_argument("machine still occupied, working or stocked");
++ for(const auto& [link_id,route]:conveyors_){(void)route;
++  const auto& spec=layout_.conveyors().at(link_id);
++  if(spec.from==id||spec.to==id)throw std::invalid_argument("machine has installed conveyor dependencies");
++ }
++ ++cargo;machines_.erase(id);
++}
++I FactoryExecution::internal_mass_grams()const{
++ I mass=0;
++ for(const auto& [id,m]:machines_){(void)id;mass=sum(mass,QuantifiedLine(m.recipe,m.machine,m.state).total_mass_grams());}
++ return mass;
++}
++I FactoryExecution::embodied_modules()const{
++ I qty=static_cast<I>(machines_.size());
++ for(const auto& [id,r]:conveyors_){(void)id;qty=sum(qty,static_cast<I>(r.remaining_cells+1));}
++ return qty;
++}
++std::string FactoryExecution::config_signature()const{
++ std::ostringstream s;s<<layout_.canonical_blueprint();
++ for(const auto& [id,r]:recipes_)s<<id<<'|'<<as_string(r)<<'\n';
++ return std::to_string(fingerprint(s.str()));
++}
++std::string FactoryExecution::checkpoint()const{
++ std::ostringstream out;
++ out<<"sg-factory-execution-v1|"<<config_signature()<<'|'<<tick_<<'\n';
++ for(const auto& [id,m]:machines_){
++  out<<"M|"<<id<<'|'<<m.installation_receipt<<'|'<<(m.shutdown?1:0)<<'|'
++    <<(m.machine.powered?1:0)<<'|'<<(m.machine.staffed?1:0)<<'|'
++    <<(m.machine.maintained?1:0)<<'|'<<(m.state.has_work_in_progress?1:0)<<'|'
++    <<m.state.ticks_remaining<<'|'<<m.state.elapsed_ticks<<'|'<<m.state.completed_batches<<'\n';
++  store_out(out,"F",id,m.state.feed);store_out(out,"O",id,m.state.finished);
++  store_out(out,"S",id,m.state.scrap);
++  for(const auto& r:m.state.reserved_inputs)out<<"W|"<<id<<'|'<<r.code<<'|'<<r.grams<<'\n';
++ }
++ for(const auto& [id,link]:conveyors_)
++  out<<"C|"<<id<<'|'<<link.installation_receipt<<'|'<<link.remaining_cells<<'\n';
++ for(const auto receipt:receipts_)out<<"R|"<<receipt<<'\n';
++ return out.str();
++}
++FactoryExecution FactoryExecution::restore(FactoryLayout layout,std::map<DeviceId,Recipe> recipes,const std::string& bytes){
++ if(bytes.empty()||bytes.size()>8*1024*1024||bytes.back()!='\n'||bytes.find('\r')!=std::string::npos||bytes.find('\0')!=std::string::npos)
++  throw std::invalid_argument("invalid factory checkpoint framing");
++ FactoryExecution result(std::move(layout),std::move(recipes));
++ std::istringstream input(bytes);std::string line;
++ std::getline(input,line);auto head=split(line);
++ if(head.size()!=3||head[0]!="sg-factory-execution-v1"||head[1]!=result.config_signature())
++  throw std::invalid_argument("factory checkpoint configuration mismatch");
++ result.tick_=number(head[2]);
++ std::set<std::uint64_t> instances;
++ while(std::getline(input,line)){
++  const auto p=split(line);
++  if(p.empty())throw std::invalid_argument("empty checkpoint row");
++  if(p[0]=="M"&&p.size()==11){
++   const auto id=number(p[1]),receipt=number(p[2]);
++   if(!id||!receipt||result.machines_.count(id)||!result.recipes_.count(id))throw std::invalid_argument("invalid machine record");
++   const auto& d=result.layout_.devices().at(id);
++   RuntimeMachine m;m.recipe=result.recipes_.at(id);
++   m.machine={d.tier,m.recipe.operation,number(p[4])==1,number(p[5])==1,number(p[6])==1};
++   if(number(p[4])>1||number(p[5])>1||number(p[6])>1||number(p[3])>1||number(p[7])>1)throw std::invalid_argument("invalid machine flag");
++   m.shutdown=number(p[3])==1;m.installation_receipt=receipt;
++   m.state.feed.capacity_grams=buffer_capacity(d.tier);m.state.finished.capacity_grams=buffer_capacity(d.tier);m.state.scrap.capacity_grams=buffer_capacity(d.tier);
++   m.state.has_work_in_progress=number(p[7])==1;
++   const auto remain=number(p[8]);if(remain>6)throw std::invalid_argument("invalid unfinished cycle");
++   m.state.ticks_remaining=static_cast<std::uint32_t>(remain);
++   m.state.elapsed_ticks=number(p[9]);m.state.completed_batches=number(p[10]);
++   result.machines_.emplace(id,std::move(m));
++   if(!instances.insert(receipt).second)throw std::invalid_argument("duplicate installation receipt");
++  }else if((p[0]=="F"||p[0]=="O"||p[0]=="S"||p[0]=="W")&&p.size()==4){
++   const auto id=number(p[1]);auto& m=result.machine_at(id);valid_code(p[2]);
++   const auto amount=signed_number(p[3]);if(amount<=0)throw std::invalid_argument("invalid inventory mass");
++   if(p[0]=="W")m.state.reserved_inputs.push_back({p[2],amount});
++   else {
++    auto& store=p[0]=="F"?m.state.feed:p[0]=="O"?m.state.finished:m.state.scrap;
++    if(store.amount(p[2]))throw std::invalid_argument("duplicate material stock");
++    store.deposit(p[2],amount);
++   }
++  }else if(p[0]=="C"&&p.size()==4){
++   const auto id=number(p[1]),receipt=number(p[2]),remaining=number(p[3]);
++   const auto it=result.layout_.conveyors().find(id);
++   if(!id||!receipt||it==result.layout_.conveyors().end()||result.conveyors_.count(id)||
++      remaining>it->second.path.size()||!result.machines_.count(it->second.from)||!result.machines_.count(it->second.to))
++    throw std::invalid_argument("invalid installed conveyor");
++   if(!instances.insert(receipt).second)throw std::invalid_argument("duplicate installation receipt");
++   result.conveyors_.emplace(id,RuntimeConveyor{receipt,static_cast<std::size_t>(remaining)});
++  }else if(p[0]=="R"&&p.size()==2){
++   auto receipt=number(p[1]);if(!receipt||!result.receipts_.insert(receipt).second)
++    throw std::invalid_argument("invalid receipt history");
++  }else throw std::invalid_argument("unsupported factory checkpoint row");
++ }
++ for(const auto receipt:instances)if(!result.receipts_.count(receipt))
++  throw std::invalid_argument("installed machinery lacks durable purchase receipt");
++ for(const auto& [id,m]:result.machines_){(void)id;
++  const auto mass=QuantifiedLine(m.recipe,m.machine,m.state).total_mass_grams();
++  if(mass>buffer_capacity(m.machine.tier))throw std::invalid_argument("factory machine exceeds physical buffer");
++  for(const auto& [item,grams]:m.state.feed.grams){(void)grams;
++   if(std::none_of(m.recipe.inputs.begin(),m.recipe.inputs.end(),[&](const Material& r){return r.code==item;}))
++    throw std::invalid_argument("undeclared feed inventory");
++  }
++  for(const auto& [name,grams]:m.state.finished.grams){(void)grams;
++   if(name!=m.recipe.product.code)throw std::invalid_argument("undeclared output inventory");
++  }
++  for(const auto& [name,grams]:m.state.scrap.grams){(void)grams;
++   if(name!=m.recipe.scrap.code)throw std::invalid_argument("undeclared scrap inventory");
++  }
++ }
++ if(result.checkpoint()!=bytes)throw std::invalid_argument("noncanonical factory checkpoint");
++ return result;
++}
++} // namespace galaxy::industry
+diff --git a/tests/ECON02B2d18FactoryExecutionTests.cpp b/tests/ECON02B2d18FactoryExecutionTests.cpp
+new file mode 100755
+index 0000000..1e00771
+--- /dev/null
++++ b/tests/ECON02B2d18FactoryExecutionTests.cpp
+@@ -0,0 +1,146 @@
++#include "galaxy/FactoryExecution.hpp"
++#include <functional>
++#include <iostream>
++#include <stdexcept>
++#include <string>
++using namespace galaxy::industry;
++#define CHECK(x) do{if(!(x))throw std::runtime_error("ECON-d18a line "+std::to_string(__LINE__)+": " #x);}while(0)
++static void rejects(const std::function<void()>& fn){bool threw=false;try{fn();}catch(const std::exception&){threw=true;}CHECK(threw);}
++static FactoryLayout blueprint(){
++ FactoryLayout b;
++ b.place_machine(100,{0,0},1,{"good/aluminum"},{"good/aluminum_panels","good/aluminum_scrap"});
++ b.place_machine(200,{5,0},1,{"good/aluminum_panels"},{"good/aluminum_frames","good/aluminum_scrap"});
++ b.add_conveyor(800,100,200,"good/aluminum_panels",1000,{{2,0},{3,0},{4,0}});
++ return b;
++}
++static std::map<DeviceId,Recipe> recipes(){return {
++ {100,{"panel_cut","cut",{{"good/aluminum",20000}},
++     {"good/aluminum_panels",19000},{"good/aluminum_scrap",1000}}},
++ {200,{"frame_shape","shape",{{"good/aluminum_panels",20000}},
++     {"good/aluminum_frames",19000},{"good/aluminum_scrap",1000}}}
++};}
++static std::int64_t tally(const FactoryExecution& factory,const Store& ship,
++                          const Store& depot,std::int64_t available_modules,
++                          std::int64_t worker_modules){
++ return ship.used()+depot.used()+factory.internal_mass_grams()+
++        (available_modules+worker_modules+factory.embodied_modules())*2000000;
++}
++static void evacuate(FactoryExecution& f,DeviceId id,Store& warehouse){
++ f.set_shutdown(id,true);
++ const auto m=f.machines().at(id);
++ for(const auto& [code,qty]:m.state.feed.grams)f.unload(id,warehouse,code,qty);
++ for(const auto& [code,qty]:m.state.finished.grams)f.unload(id,warehouse,code,qty);
++ for(const auto& [code,qty]:m.state.scrap.grams)f.unload(id,warehouse,code,qty);
++}
++int main(){try{
++ // A ghost layout cannot perform production without real installation.
++ FactoryExecution f(blueprint(),recipes());
++ Store ship{2000000,{}},warehouse{2000000,{}};
++ ship.deposit("good/aluminum",60000);
++ std::int64_t modules=8,carrier=0;
++ auto conserved=tally(f,ship,warehouse,modules,carrier);
++ rejects([&]{f.load(100,ship,"good/aluminum",20000);});
++ rejects([&]{f.install_conveyor(800,modules,9);});
++ rejects([&]{f.install_machine(100,modules,0);});
++ f.install_machine(100,modules,1);f.install_machine(200,modules,2);
++ CHECK(modules==6 && f.embodied_modules()==2);
++ rejects([&]{f.install_machine(100,modules,3);});
++ rejects([&]{f.install_machine(200,modules,1);});
++ f.install_conveyor(800,modules,3);
++ CHECK(modules==2 && f.embodied_modules()==6);
++ CHECK(tally(f,ship,warehouse,modules,carrier)==conserved);
++ rejects([&]{f.install_conveyor(800,modules,4);});
++ const auto retire=f.retirement_order();
++ CHECK(retire.size()==3);
++ CHECK((retire.at(0)==RetirementNode{RetirementKind::Conveyor,800}));
++ CHECK((retire.at(1)==RetirementNode{RetirementKind::Machine,200}));
++ CHECK((retire.at(2)==RetirementNode{RetirementKind::Machine,100}));
++ rejects([&]{f.load(100,ship,"good/aluminum",70000);});
++ f.load(100,ship,"good/aluminum",40000);
++ CHECK(ship.amount("good/aluminum")==20000);
++ rejects([&]{f.load(200,ship,"good/aluminum",100);});
++ f.set_operator(100,true);f.set_operator(200,true);
++ f.steps(2);
++ CHECK(f.machines().at(100).state.has_work_in_progress);
++ CHECK(tally(f,ship,warehouse,modules,carrier)==conserved);
++ const auto mid=f.checkpoint();
++ auto recovered=FactoryExecution::restore(blueprint(),recipes(),mid);
++ CHECK(recovered.checkpoint()==mid);
++ CHECK(recovered.tick_count()==2);
++ rejects([&]{auto changed=mid;changed[0]='X';(void)FactoryExecution::restore(blueprint(),recipes(),changed);});
++ rejects([&]{auto changed=mid;changed.insert(changed.find("M|"),"F|100|phantom|1000\n");
++         (void)FactoryExecution::restore(blueprint(),recipes(),changed);});
++ rejects([&]{auto changed=mid;changed+="R|3\n";(void)FactoryExecution::restore(blueprint(),recipes(),changed);});
++ // Real production and directed link transfer, driven by fixed simulation ticks.
++ recovered.steps(75);
++ CHECK(tally(recovered,ship,warehouse,modules,carrier)==conserved);
++ CHECK(recovered.machines().at(100).state.completed_batches>=1);
++ CHECK(recovered.machines().at(200).state.completed_batches>=1);
++ // Shutdown drains a started batch but cannot start another or invent stock.
++ recovered.set_shutdown(100,true);recovered.set_shutdown(200,true);
++ recovered.steps(10);
++ CHECK(!recovered.machines().at(100).state.has_work_in_progress);
++ CHECK(!recovered.machines().at(200).state.has_work_in_progress);
++ CHECK(tally(recovered,ship,warehouse,modules,carrier)==conserved);
++ rejects([&]{recovered.load(100,ship,"good/aluminum",100);});
++ rejects([&]{recovered.dismantle_machine(100,carrier);});
++ // Inventory belongs to the machines until a physically backed output account
++ // receives it. No automatic deletion of WIP, scrap or intermediate goods.
++ evacuate(recovered,100,warehouse);evacuate(recovered,200,warehouse);
++ recovered.set_operator(100,false);recovered.set_operator(200,false);
++ CHECK(recovered.internal_mass_grams()==0);
++ CHECK(tally(recovered,ship,warehouse,modules,carrier)==conserved);
++ rejects([&]{recovered.dismantle_machine(200,carrier);});
++ // Tail-first, worker-carried module recovery. Two cargo slots per worker.
++ CHECK(!recovered.remove_conveyor_piece(800,carrier));
++ CHECK(!recovered.remove_conveyor_piece(800,carrier));
++ CHECK(carrier==2);
++ rejects([&]{recovered.remove_conveyor_piece(800,carrier);});
++ modules+=carrier;carrier=0; // authenticated host's separate depot-delivery step
++ CHECK(!recovered.remove_conveyor_piece(800,carrier));
++ CHECK(recovered.remove_conveyor_piece(800,carrier));
++ CHECK(recovered.conveyors().empty());
++ modules+=carrier;carrier=0;
++ recovered.dismantle_machine(200,carrier);
++ CHECK(carrier==1 && recovered.machines().count(200)==0);
++ const auto after_first=recovered.checkpoint();
++ recovered=FactoryExecution::restore(blueprint(),recipes(),after_first);
++ rejects([&]{recovered.dismantle_machine(200,carrier);});
++ recovered.dismantle_machine(100,carrier);
++ CHECK(recovered.machines().empty());
++ modules+=carrier;carrier=0;
++ CHECK(modules==8);
++ CHECK(tally(recovered,ship,warehouse,modules,carrier)==conserved);
++ // Production and dismantling leave a fully reproducible checkpoint.
++ CHECK(FactoryExecution::restore(blueprint(),recipes(),recovered.checkpoint()).checkpoint()==recovered.checkpoint());
++ // Tier 5 remains executable: batch size scales 256x, with the larger
++ // physical machine buffer, without any artificial floor-size limit.
++ {
++  FactoryLayout t5;
++  t5.place_machine(300,{100,100},5,{"good/aluminum"},
++                     {"good/aluminum_panels","good/aluminum_scrap"});
++  auto configs=recipes();configs.erase(200);
++  configs[300]=configs.at(100);configs.erase(100);
++  FactoryExecution big(std::move(t5),configs);
++  Store raw{20000000,{}},done{20000000,{}};
++  raw.deposit("good/aluminum",5120000);
++  std::int64_t physical=1;
++  big.install_machine(300,physical,999);
++  CHECK(physical==0);
++  big.load(300,raw,"good/aluminum",5120000);
++  big.set_operator(300,true);big.steps(8);
++  CHECK(big.machines().at(300).state.completed_batches==1);
++  CHECK(big.machines().at(300).state.finished.amount("good/aluminum_panels")==4864000);
++  CHECK(big.machines().at(300).state.scrap.amount("good/aluminum_scrap")==256000);
++  CHECK(big.internal_mass_grams()+raw.used()==5120000);
++  CHECK(FactoryExecution::restore([&]{FactoryLayout l;l.place_machine(300,{100,100},5,
++    {"good/aluminum"},{"good/aluminum_panels","good/aluminum_scrap"});return l;}(),
++    configs,big.checkpoint()).checkpoint()==big.checkpoint());
++ }
++ // Conflicting recipe or layout may not load a save against another blueprint.
++ auto bad=recipes();bad.at(100).name="changed_recipe";
++ rejects([&]{(void)FactoryExecution::restore(blueprint(),bad,mid);});
++ std::cout<<"ECON-02B2d18a PASS: physical generic machines, recipe execution, custody, "
++           <<"DAG retirement, shutdown, WIP restart, malformed receipts, conservation\n";
++ return 0;
++}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
