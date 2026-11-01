@@ -1,0 +1,927 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index ba10c7a..9fc90a7 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -19,7 +19,7 @@ else()
+ endif()
+ add_library(galaxy_kernel STATIC src/Simulation.cpp src/ColonyResilience.cpp
+   src/ColonyRecovery.cpp src/ColonyPolicy.cpp src/PopulationCohorts.cpp
+-    src/ColonyWaterSupply.cpp src/Persistence.cpp src/EconomyPrototype.cpp src/QuantifiedProduction.cpp src/Inventory.cpp src/InventoryLogistics.cpp src/FactoryLayout.cpp src/BlueprintConstruction.cpp src/HostBlueprintRegistry.cpp src/ColonyStructurePlans.cpp src/ClientContract.cpp src/Galaxy.cpp src/Navigation.cpp src/GateTransit.cpp src/Region.cpp)
++    src/ColonyWaterSupply.cpp src/Persistence.cpp src/EconomyPrototype.cpp src/QuantifiedProduction.cpp src/Inventory.cpp src/InventoryLogistics.cpp src/FactoryLayout.cpp src/BlueprintConstruction.cpp src/HostBlueprintRegistry.cpp src/ColonyStructurePlans.cpp src/NpcConstructionCrews.cpp src/ClientContract.cpp src/Galaxy.cpp src/Navigation.cpp src/GateTransit.cpp src/Region.cpp)
+ target_include_directories(galaxy_kernel PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+ target_link_libraries(galaxy_kernel PUBLIC SQLite::SQLite3)
+ if(MSVC)
+@@ -689,3 +689,21 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+       --relay ${CMAKE_CURRENT_SOURCE_DIR}/live/interactive_relay.py)
+   set_tests_properties(galaxy_econ02b2d5_structure_host_http PROPERTIES TIMEOUT 50)
+ endif()
++
++# ECON-02B2d6: existing named colonists perform persistent construction jobs.
++if(BUILD_TESTING)
++  add_executable(galaxy_econ02b2d6_crew_tests tests/ECON02B2d6ConstructionCrewTests.cpp)
++  target_link_libraries(galaxy_econ02b2d6_crew_tests PRIVATE galaxy_kernel)
++  add_test(NAME ECON02B2d6_NPCConstructionCrews COMMAND galaxy_econ02b2d6_crew_tests)
++endif()
++
++if(BUILD_TESTING AND Python3_Interpreter_FOUND)
++  add_executable(galaxy_econ02b2d6_world_fixture tests/ECON02B2d6WorldFixture.cpp)
++  target_link_libraries(galaxy_econ02b2d6_world_fixture PRIVATE galaxy_kernel)
++  add_test(NAME ECON02B2d6_NPCConstruction_HTTP
++    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/ECON02B2d6ConstructionCrewHostTests.py
++      --host $<TARGET_FILE:galaxy_colony_live_host>
++      --fixture $<TARGET_FILE:galaxy_econ02b2d6_world_fixture>
++      --relay ${CMAKE_CURRENT_SOURCE_DIR}/live/interactive_relay.py)
++  set_tests_properties(ECON02B2d6_NPCConstruction_HTTP PROPERTIES TIMEOUT 75)
++endif()
+diff --git a/README.md b/README.md
+index 4e0894d..9c18242 100644
+--- a/README.md
++++ b/README.md
+@@ -255,3 +255,20 @@ The browser smoke injects a mock transport and exercises the real DOM controls;
+ localhost server, simulation commands and persistent world. A real Chromium
+ localhost interaction remains an acceptance gate when the browser permits it.
+ Windows GUI/native verification remains outstanding.
++
++### ECON-02B2d6 — NPC construction crews (Linux local prototype)
++
++The colony interface can now assign named resident NPCs to authorized structural plans.
++The main C++ colony process advances workers over a persistent local grid,
++respects installed walls/doors, accumulates labor and consumes real manufactured
++modules through the existing structural construction command. Crew assignments,
++positions, pause/resume state and progress survive SQLite restart. This is
++site-local work, **not yet material hauling, 3D agent movement, or cross-site
++NPC travel**. See `docs/engineering/ECON02B2d6_NPC_Construction_Crews_2026-11-01.md`.
++
++Verify the new milestone with:
++
++```sh
++ctest --test-dir build -R 'ECON02B2d6_' --output-on-failure
++python3 scripts/colony_crew_browser_smoke.py
++```
+diff --git a/docs/engineering/ECON02B2d6_NPC_Construction_Crews_2026-11-01.md b/docs/engineering/ECON02B2d6_NPC_Construction_Crews_2026-11-01.md
+new file mode 100644
+index 0000000..9a223cc
+--- /dev/null
++++ b/docs/engineering/ECON02B2d6_NPC_Construction_Crews_2026-11-01.md
+@@ -0,0 +1,39 @@
++# ECON-02B2d6 — Native NPC construction crews
++
++**Date:** 2026-11-01  
++**Source baseline:** ECON-02B2d5 physical structures ZIP  
++**Ownership:** Single Galaxy colony session; **GitHub is storage, not the development/test hub**.
++
++## Implemented
++
++- Add `construction::Crews` with two durable SQLite tables in the **same world database**: construction jobs and NPC worker assignments. The world is still held under the existing exclusive writer lease.
++- The server allocates jobs to real `Simulation::npc_records()` identities. For this vertical slice, eligible workers must be **named, living residents in a built, stocked habitat at the selected outpost**. Existing policy inspectors, community attendants, clinic medics, utility technicians and individually registered workshop operators reserve their resident headcount first. The same NPC cannot be assigned to two jobs (`npc_id` primary key).
++- At most eight resident NPCs share a structural plan. Multiple plans can progress in one colony world. Their individual **site-local grid positions** and collective labor points persist through SQLite restart. Each assigned NPC takes no more than one adjacent walk step per logical tick; route checks call the existing authoritative `Simulation::structure_edge_passable`, including closed doors and walls. CPU-bounded detouring is not an arbitrary factory size limit.
++- Construction begins only after a worker reaches the requested cell, enough actual modules exist, and the plan remains authorized and incomplete. The sole installation path is the established `Plans::step` -> `PersistentWorld::submit/step` command journal. This debits the ship's real modules and produces the same physical fixture, event and mass-conservation receipts as manual building. Two worker-ticks for a floor and four for a wall or door are provisional gameplay pacing values.
++- The NPC scheduler executes on the **colony C++ host's main simulation thread**, not a separate writer. It may produce a committed tick while working; the SGVIEW stream publishes that frame before the ordinary game tick to preserve frame sequence. Finished or cancelled plans stop automatically. Pause, resume and remove-worker controls are available.
++- Same-origin, session-token protected localhost API (`/factory/api/crews`, `crew_assign`, `crew_unassign`, `crew_active`) delegates to host-side owner/ship/site authorization. The UI controls live inside the **existing colony panel** with other structures, as requested.
++
++## Safety and persistence boundaries
++
++- The browser never supplies a trusted player identity, world path, or worker authority. A requested plan and NPC ID are validated against the host's authoritative colony and resident roster.
++- Real NPCs remain accountable to existing habitat needs, work reservations and population counts. The scheduler does not create residents, structures, food, power or modules.
++- Crew routes and work progress are SQLite operational records beside the canonical simulation snapshot, **not yet simulated 3D NPC agents**. Positions begin at the site's local `(0,0)` staging cell and cannot be interpreted as interplanetary transport or actual carried cargo.
++- Materials are debited at the successful build command, not reserved in a hauling inventory. The ship still must satisfy the existing physical construction range checks. A future delivery/warehouse milestone must provide actual NPC load, carry, drop, reserve and reconciliation mechanics.
++- The engine's `structure_edge_passable` pathfinding operates on an abstract 2D site grid. It is not a complete walkability system, and the detour search has a bounded per-tick node budget. No 3D collision, oxygen/pressure isolation, vertical floor transitions or multi-site pathfinding is claimed.
++- The world may advance one additional tick when a worker completes a structural step. The authoritative frame is emitted before continuing the host's normal loop. Durable plan receipts are the recovery source of truth if a crash occurs between a committed world step and worker bookkeeping.
++- OS ownership lease remains the single-world-writer safeguard. Windows native compilation and installer acceptance were **not executed** in this Linux environment.
++
++## Verified testing
++
++1. Dedicated native test `ECON02B2d6_NPCConstructionCrews`: named residents, two-worker plan, invalid worker/owner, true module consumption and mass conservation, wall detour, persistence, cancellation and no further module debit.
++2. Real localhost test `ECON02B2d6_NPCConstruction_HTTP`: genuine Python relay -> C++ game process -> SQLite, forbidden origin, forged token, wrong site, assignment, work completion, double-assignment refusal, pause and restart/resume.
++3. Offline Chromium `scripts/colony_crew_browser_smoke.py`: colony-owned UI buttons for assignment, pause, resume and removal. This test mocks transport; host effects are separately tested under point 2.
++4. Existing offline Chromium `scripts/colony_structures_browser_smoke.py`: passed. Existing JavaScript suite `node --test tests/*.js`: **93/93 passed**.
++5. Full CMake native build: **completed**. CTest non-live/non-relay: **66/66 passed**. CTest live/relay: **24/25 passed in one parallel run**; the one preexisting `galaxy_b70b_live_colony_e2e` failed with an intermittent `no such table: snapshots` during its relay startup, and **passed when rerun alone**. A subsequent all-serial live batch exceeded the execution window and is not represented as a full green run. Together, each of 91 CTest cases has a recorded pass, but not within one uninterrupted all-green run.
++
++## Next milestones
++
++- Move building supplies into **physically local** storage; assign NPC haulers with explicit pickup, carriage, delivery, and failure-safe material reservation without double debits.
++- Carry per-NPC construction duty in the canonical or journaled workforce authority so a worker cannot be reallocated concurrently to another aggregate site job.
++- Integrate real navmeshes/floor access, doors and physical LOS; introduce blocked-site re-routing and job priorities, fatigue, time budgets and crew experience.
++- Add 3D fixture meshes and scene interactions inside the main client, then validate Linux GUI and Windows GUI acceptance on native hosts.
+diff --git a/include/galaxy/NpcConstructionCrews.hpp b/include/galaxy/NpcConstructionCrews.hpp
+new file mode 100644
+index 0000000..0d7ee01
+--- /dev/null
++++ b/include/galaxy/NpcConstructionCrews.hpp
+@@ -0,0 +1,39 @@
++#pragma once
++// ECON-02B2d6: existing, named resident NPCs take durable site-local jobs.
++// This host-side scheduler never writes a Simulation snapshot or fabricates a
++// resource. The existing authorized structural plan command is the only way
++// a fixture is installed and its modules consumed.
++#include "galaxy/ColonyStructurePlans.hpp"
++#include <cstdint>
++#include <memory>
++#include <string>
++#include <vector>
++namespace galaxy::construction {
++struct CrewWorker {std::uint64_t npc=0;int x=0,y=0;};
++struct CrewJob {
++    std::int64_t plan=0;EntityId site=0;
++    std::size_t completed=0,total=0;
++    std::int64_t labor=0,required=0;
++    bool active=false;
++    std::string reason;
++    std::vector<CrewWorker> workers;
++};
++class Crews {
++public:
++    Crews(const std::string& database,PersistentWorld& world,Plans& structures);
++    ~Crews();
++    Crews(const Crews&)=delete;Crews& operator=(const Crews&)=delete;
++    void assign(std::int64_t plan,std::uint64_t npc,PlayerId owner,EntityId ship,EntityId site);
++    bool unassign(std::uint64_t npc,PlayerId owner,EntityId ship,EntityId site);
++    bool set_active(std::int64_t plan,bool active,PlayerId owner,EntityId ship,EntityId site);
++    std::vector<CrewJob> list(PlayerId owner,EntityId ship,EntityId site)const;
++    // Called on the one authoritative colony simulation thread, at most once
++    // per world tick. May commit a structural step, advancing world one tick.
++    void advance(PlayerId owner,EntityId ship);
++private:
++    class Db;std::unique_ptr<Db> db_;
++    PersistentWorld& world_;Plans& structures_;
++    void validate_site(PlayerId owner,EntityId ship,EntityId site)const;
++    void validate_worker(std::uint64_t npc,PlayerId owner,EntityId ship,EntityId site)const;
++};
++} // namespace galaxy::construction
+diff --git a/live/interactive_relay.py b/live/interactive_relay.py
+index 4f986e5..73680f6 100644
+--- a/live/interactive_relay.py
++++ b/live/interactive_relay.py
+@@ -140,7 +140,8 @@ class SharedRuntime:
+         # sole owner of PersistentWorld and HostBlueprintRegistry. The relay
+         # does not open SQLite and cannot mint ship/player/owner authority.
+         if op not in ('SITES','HELLO','LIST','REGISTER','STEP','STATUS','CANCEL',
+-                      'STRUCT_LIST','STRUCT_REGISTER','STRUCT_STEP','STRUCT_STATUS','STRUCT_CANCEL','STRUCT_DOOR'):
++                      'STRUCT_LIST','STRUCT_REGISTER','STRUCT_STEP','STRUCT_STATUS','STRUCT_CANCEL','STRUCT_DOOR',
++                      'CREW_LIST','CREW_ASSIGN','CREW_UNASSIGN','CREW_ACTIVE'):
+             raise ValueError('Unknown factory operation')
+         if type(site)!=int or not 0<=site<=100000000:
+             raise ValueError('Invalid factory site selector')
+@@ -208,9 +209,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
+             try:
+                 if route=='sites' and not url.query:
+                     result=self.server.runtime.factory('SITES')
+-                elif route in ('hello','plans','structures') and set(query)=={'site'} and len(query['site'])==1:
++                elif route in ('hello','plans','structures','crews') and set(query)=={'site'} and len(query['site'])==1:
+                     site=self._site(query['site'][0])
+-                    result=self.server.runtime.factory('HELLO' if route=='hello' else ('LIST' if route=='plans' else 'STRUCT_LIST'),site)
++                    result=self.server.runtime.factory('HELLO' if route=='hello' else ('LIST' if route=='plans' else ('STRUCT_LIST' if route=='structures' else 'CREW_LIST')),site)
+                 else:
+                     self._json(404,{'ok':False,'error':'Unknown factory endpoint'});return
+                 self._json(200 if result.get('ok') else 400,result)
+@@ -305,6 +306,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
+                     raise ValueError('Invalid door request')
+                 argument=base64.b64encode(f'{kind},{x},{y},{int(opened)}'.encode()).decode('ascii')
+                 native='STRUCT_DOOR'
++            elif op=='crew_assign' and set(doc)=={'token','site','plan','npc'}:
++                if type(doc['plan'])!=int or type(doc['npc'])!=int or not 0<doc['plan']<2**63 or not 0<doc['npc']<2**63:
++                    raise ValueError('Invalid crew assignment')
++                argument=base64.b64encode(f"{doc['plan']},{doc['npc']}".encode()).decode('ascii');native='CREW_ASSIGN'
++            elif op=='crew_unassign' and set(doc)=={'token','site','npc'}:
++                if type(doc['npc'])!=int or not 0<doc['npc']<2**63:raise ValueError('Invalid NPC identifier')
++                argument=str(doc['npc']);native='CREW_UNASSIGN'
++            elif op=='crew_active' and set(doc)=={'token','site','plan','active'}:
++                if type(doc['plan'])!=int or not 0<doc['plan']<2**63 or type(doc['active'])!=bool:
++                    raise ValueError('Invalid crew duty request')
++                argument=base64.b64encode(f"{doc['plan']},{int(doc['active'])}".encode()).decode('ascii');native='CREW_ACTIVE'
+             elif op in ('structure_step','structure_cancel','structure_status') and set(doc)=={'token','site','id'}:
+                 if type(doc['id'])!=int or not 0<doc['id']<2**63:
+                     raise ValueError('Invalid structural plan ID')
+diff --git a/scripts/colony_crew_browser_smoke.py b/scripts/colony_crew_browser_smoke.py
+new file mode 100644
+index 0000000..3636a94
+--- /dev/null
++++ b/scripts/colony_crew_browser_smoke.py
+@@ -0,0 +1,52 @@
++"""ECON-02B2d6 offline Chromium DOM test, with mocked API transport.
++The real transport is separately verified by ECON02B2d6ConstructionCrewHostTests.py.
++"""
++from pathlib import Path
++from playwright.sync_api import sync_playwright
++import re
++root=Path(__file__).resolve().parents[1]
++html=(root/'viewer/interactive.html').read_text()
++html=re.sub(r'<script src="[^"]+"></script>', '', html)
++with sync_playwright() as p:
++    browser=p.chromium.launch(headless=True,executable_path='/usr/bin/chromium',args=['--no-sandbox','--disable-dev-shm-usage'])
++    page=browser.new_page(viewport={'width':1150,'height':900})
++    errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
++    page.set_content(html);page.locator('#colonyPanel').evaluate('e=>e.hidden=false')
++    page.add_script_tag(content=r'''
++        window.__crew={plans:[],next:1,residents:[101,102],jobs:[]};
++        window.fetch=async (path,request)=>{
++          const s=window.__crew;let doc=request&&request.body?JSON.parse(request.body):{};
++          let data={ok:true};
++          if(path==='/session')data={token:'TEST',colony_mode:true};
++          else if(path==='/factory/api/sites')data={ok:true,sites:[42]};
++          else if(path.startsWith('/factory/api/structures?site='))data={ok:true,structures:[],plans:s.plans};
++          else if(path.startsWith('/factory/api/crews?site='))data={ok:true,residents:s.residents,jobs:s.jobs};
++          else if(path==='/factory/api/structure_register'){
++            const plan={id:s.next++,site:42,completed:0,total:1,modulesRemaining:1,cancelled:false,conflicting:false,finished:false,reason:''};
++            s.plans.push(plan);data={ok:true,plan};
++          }else if(path==='/factory/api/crew_assign'){
++            let job=s.jobs.find(j=>j.plan===doc.plan);
++            if(!job){job={plan:doc.plan,completed:0,total:1,labor:0,required:2,active:true,reason:'Ready',workers:[]};s.jobs.push(job);}
++            job.workers.push({npc:doc.npc,x:0,y:0});data={ok:true,assigned:true};
++          }else if(path==='/factory/api/crew_unassign'){
++            s.jobs.forEach(j=>j.workers=j.workers.filter(w=>w.npc!==doc.npc));data={ok:true,changed:true};
++          }else if(path==='/factory/api/crew_active'){
++            s.jobs.find(j=>j.plan===doc.plan).active=doc.active;data={ok:true,changed:true};
++          }else throw Error('Unexpected route '+path);
++          return {ok:true,json:async()=>data};
++        };
++    ''')
++    page.add_script_tag(content=(root/'viewer/structures.js').read_text())
++    page.wait_for_function("document.querySelector('#structureSite').value==='42'")
++    assert page.locator('#colonyStructures').evaluate("n=>!!n.closest('#colonyPanel')")
++    page.locator('#structureAuthorize').click();page.wait_for_function('window.__crew.plans.length===1')
++    page.locator('#crewAssign').click()
++    page.wait_for_function('window.__crew.jobs.length===1 && window.__crew.jobs[0].workers.length===1')
++    page.wait_for_function("document.querySelector('#crewStatus').textContent.includes('#101')")
++    assert '#101' in page.locator('#crewStatus').inner_text()
++    page.locator('#crewPause').click();page.wait_for_function('window.__crew.jobs[0].active===false')
++    page.locator('#crewResume').click();page.wait_for_function('window.__crew.jobs[0].active===true')
++    page.locator('#crewUnassign').click();page.wait_for_function('window.__crew.jobs[0].workers.length===0')
++    assert not errors,errors
++    print('ECON-02B2d6 PASS: colony UI crew assignment, pause, resume, removal and live status')
++    browser.close()
+diff --git a/src/NpcConstructionCrews.cpp b/src/NpcConstructionCrews.cpp
+new file mode 100644
+index 0000000..70c3f9e
+--- /dev/null
++++ b/src/NpcConstructionCrews.cpp
+@@ -0,0 +1,217 @@
++#include "galaxy/NpcConstructionCrews.hpp"
++#include <sqlite3.h>
++#include <algorithm>
++#include <array>
++#include <cmath>
++#include <cstdlib>
++#include <limits>
++#include <map>
++#include <queue>
++#include <stdexcept>
++#include <string>
++#include <tuple>
++namespace galaxy::construction {
++namespace {
++void sql(sqlite3* db,const char* text){char* err=nullptr;if(sqlite3_exec(db,text,nullptr,nullptr,&err)!=SQLITE_OK){std::string msg=err?err:"SQLite failure";sqlite3_free(err);throw std::runtime_error(msg);}}
++class Query {
++public:
++ Query(sqlite3* db,const char* text):db_(db){if(sqlite3_prepare_v2(db,text,-1,&s_,nullptr)!=SQLITE_OK)throw std::runtime_error(sqlite3_errmsg(db));}
++ ~Query(){sqlite3_finalize(s_);}void n(int i,std::int64_t v){if(sqlite3_bind_int64(s_,i,v)!=SQLITE_OK)throw std::runtime_error("bind failed");}
++ void str(int i,const std::string& v){if(sqlite3_bind_text(s_,i,v.c_str(),static_cast<int>(v.size()),SQLITE_TRANSIENT)!=SQLITE_OK)throw std::runtime_error("text bind failed");}
++ bool row(){const int r=sqlite3_step(s_);if(r==SQLITE_ROW)return true;if(r==SQLITE_DONE)return false;throw std::runtime_error(sqlite3_errmsg(db_));}
++ void done(){if(row())throw std::runtime_error("unexpected SQL row");}
++ std::int64_t v(int i)const{return sqlite3_column_int64(s_,i);}std::string t(int i)const{const auto* p=sqlite3_column_text(s_,i);return p?reinterpret_cast<const char*>(p):"";}
++private:sqlite3* db_;sqlite3_stmt* s_=nullptr;
++};
++using Pos=std::pair<int,int>;
++// An 8K-node bounded search is a navigation CPU budget, not a world/factory
++// area boundary. For distant destinations use a one-cell greedy step first.
++bool next_cell(const Simulation& sim,EntityId site,Pos current,Pos dest,Pos& next){
++ if(current==dest)return false;
++ const auto dist=[&](Pos p){return std::llabs(static_cast<long long>(p.first)-dest.first)+std::llabs(static_cast<long long>(p.second)-dest.second);};
++ const std::array<Pos,4> directions{{{1,0},{0,1},{-1,0},{0,-1}}};
++ std::vector<Pos> choices;
++ for(const auto& d:directions){
++  const Pos other{current.first+d.first,current.second+d.second};
++  if(std::abs(static_cast<long long>(other.first))>1000000||std::abs(static_cast<long long>(other.second))>1000000)continue;
++  if(sim.structure_edge_passable(site,current.first,current.second,other.first,other.second))choices.push_back(other);
++ }
++ std::stable_sort(choices.begin(),choices.end(),[&](Pos a,Pos b){return dist(a)<dist(b);});
++ if(choices.empty())return false;
++ if(dist(choices.front())<dist(current)){next=choices.front();return true;}
++ // Local obstacle avoidance: BFS to the nearest strictly closer reachable cell.
++ std::queue<Pos> q;std::map<Pos,Pos> parent;q.push(current);parent[current]=current;
++ for(std::size_t searched=0;!q.empty()&&searched<2048;++searched){
++  const auto pos=q.front();q.pop();
++  for(const auto& d:directions){
++   const Pos at{pos.first+d.first,pos.second+d.second};
++   if(std::abs(static_cast<long long>(at.first))>1000000||std::abs(static_cast<long long>(at.second))>1000000 || parent.count(at) ||
++      std::abs(static_cast<long long>(at.first)-current.first)>32 || std::abs(static_cast<long long>(at.second)-current.second)>32 ||
++      !sim.structure_edge_passable(site,pos.first,pos.second,at.first,at.second))continue;
++   parent.emplace(at,pos);
++   if(dist(at)<dist(current)){
++    auto p=at;while(parent.at(p)!=current)p=parent.at(p);
++    next=p;return true;
++   }
++   q.push(at);
++  }
++ }
++ return false;
++}
++std::int64_t cost(const Step& s){return s.kind==FixtureKind::Floor?1:2;}
++std::int64_t work(const Step& s){return s.kind==FixtureKind::Floor?2:4;}
++}
++class Crews::Db {
++public:
++ explicit Db(const std::string& path){
++  if(sqlite3_open_v2(path.c_str(),&db,SQLITE_OPEN_READWRITE,nullptr)!=SQLITE_OK){auto m=std::string(db?sqlite3_errmsg(db):"SQLite open failed");if(db)sqlite3_close(db);throw std::runtime_error(m);}
++  sqlite3_busy_timeout(db,5000);
++  sql(db,"PRAGMA foreign_keys=ON");
++  sql(db,"CREATE TABLE IF NOT EXISTS sg_construction_jobs("
++         "plan_id INTEGER PRIMARY KEY REFERENCES sg_structure_plans(id),"
++         "owner INTEGER NOT NULL,ship INTEGER NOT NULL,site INTEGER NOT NULL,"
++         "active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),"
++         "completed INTEGER NOT NULL DEFAULT 0 CHECK(completed>=0),"
++         "labor INTEGER NOT NULL DEFAULT 0 CHECK(labor>=0),"
++         "last_tick INTEGER NOT NULL DEFAULT -1,reason TEXT NOT NULL DEFAULT '')");
++  sql(db,"CREATE TABLE IF NOT EXISTS sg_construction_workers("
++         "npc_id INTEGER PRIMARY KEY,plan_id INTEGER NOT NULL REFERENCES sg_construction_jobs(plan_id),"
++         "x INTEGER NOT NULL DEFAULT 0,y INTEGER NOT NULL DEFAULT 0,"
++         "CHECK(x BETWEEN -1000000 AND 1000000),CHECK(y BETWEEN -1000000 AND 1000000))");
++ }
++ ~Db(){sqlite3_close(db);}sqlite3* db=nullptr;
++};
++Crews::Crews(const std::string& file,PersistentWorld& world,Plans& structures)
++ :db_(std::make_unique<Db>(file)),world_(world),structures_(structures){}
++Crews::~Crews()=default;
++void Crews::validate_site(PlayerId owner,EntityId ship,EntityId site)const{
++ const auto& w=world_.world();const auto* actor=w.find(ship);const auto* place=w.find(site);
++ const auto outpost=w.built_outposts().find(site);
++ if(!owner||!ship||!site||!actor||!place||actor->owner_id!=owner||place->owner_id!=owner||
++    !w.colony_ship(ship)||outpost==w.built_outposts().end()||outpost->second.source_colony_ship!=ship)
++  throw std::invalid_argument("Construction crew site not owned by this colony");
++}
++void Crews::validate_worker(std::uint64_t npc,PlayerId owner,EntityId ship,EntityId site)const{
++ validate_site(owner,ship,site);
++ const auto& w=world_.world();const auto it=w.npc_records().find(npc);
++ if(it==w.npc_records().end()||it->second.home_ship!=ship||it->second.location!=site||it->second.role!=NpcRole::Habitat)
++  throw std::invalid_argument("NPC must be an existing on-site habitat resident");
++ const auto* h=w.habitat(site);if(!h||h->residents<1)throw std::invalid_argument("No staffed local habitat");
++ // Aggregate roles already reserve residents; never count those as construction
++ // labor. Individual workshop operators have named reservations too.
++ std::int64_t reserved=w.assigned_policy_inspectors(site);
++ if(const auto* u=w.utility(site))reserved+=u->technicians;
++ if(const auto* c=w.clinic(site))reserved+=c->medics;
++ if(auto itc=w.communities().find(site);itc!=w.communities().end())reserved+=itc->second.attendants;
++ std::vector<std::uint64_t> eligible;
++ const auto* workshop=w.workshop(site);
++ for(const auto& [id,n]:w.npc_records())if(n.home_ship==ship&&n.location==site&&n.role==NpcRole::Habitat &&
++   (!workshop||(id!=workshop->operator_npc_id && id!=workshop->finisher_npc_id)))eligible.push_back(id);
++ if(reserved<0 || reserved>static_cast<std::int64_t>(eligible.size()))throw std::invalid_argument("No unassigned residents");
++ if(std::find(eligible.begin()+reserved,eligible.end(),npc)==eligible.end())
++  throw std::invalid_argument("NPC already reserved for another colony job");
++}
++void Crews::assign(std::int64_t plan,std::uint64_t npc,PlayerId owner,EntityId ship,EntityId site){
++ const auto state=structures_.status(plan,owner,ship,site);
++ if(state.cancelled||state.conflicting||state.finished())throw std::invalid_argument("Plan not available for crew work");
++ validate_worker(npc,owner,ship,site);
++ Query count(db_->db,"SELECT count(*) FROM sg_construction_workers WHERE plan_id=?");count.n(1,plan);
++ if(!count.row()||count.v(0)>=8)throw std::invalid_argument("Crew already has eight workers");
++ Query job(db_->db,"INSERT OR IGNORE INTO sg_construction_jobs(plan_id,owner,ship,site,completed) VALUES(?,?,?,?,?)");
++ job.n(1,plan);job.n(2,owner);job.n(3,ship);job.n(4,site);job.n(5,static_cast<std::int64_t>(state.completed));job.done();
++ Query check(db_->db,"SELECT owner,ship,site FROM sg_construction_jobs WHERE plan_id=?");check.n(1,plan);
++ if(!check.row()||check.v(0)!=static_cast<std::int64_t>(owner)||check.v(1)!=static_cast<std::int64_t>(ship)||check.v(2)!=static_cast<std::int64_t>(site))
++  throw std::invalid_argument("Construction job owned by another session");
++ Query insert(db_->db,"INSERT INTO sg_construction_workers(npc_id,plan_id) VALUES(?,?)");
++ insert.n(1,static_cast<std::int64_t>(npc));insert.n(2,plan);insert.done();
++}
++bool Crews::unassign(std::uint64_t npc,PlayerId owner,EntityId ship,EntityId site){
++ validate_site(owner,ship,site);
++ Query q(db_->db,"DELETE FROM sg_construction_workers WHERE npc_id=? AND plan_id IN (SELECT plan_id FROM sg_construction_jobs WHERE owner=? AND ship=? AND site=?)");
++ q.n(1,static_cast<std::int64_t>(npc));q.n(2,owner);q.n(3,ship);q.n(4,site);q.done();return sqlite3_changes(db_->db)==1;
++}
++bool Crews::set_active(std::int64_t plan,bool active,PlayerId owner,EntityId ship,EntityId site){
++ (void)structures_.status(plan,owner,ship,site);
++ Query q(db_->db,"UPDATE sg_construction_jobs SET active=? WHERE plan_id=? AND owner=? AND ship=? AND site=?");
++ q.n(1,active?1:0);q.n(2,plan);q.n(3,owner);q.n(4,ship);q.n(5,site);q.done();return sqlite3_changes(db_->db)==1;
++}
++std::vector<CrewJob> Crews::list(PlayerId owner,EntityId ship,EntityId site)const{
++ validate_site(owner,ship,site);std::vector<CrewJob> result;
++ Query q(db_->db,"SELECT plan_id,active,completed,labor,reason FROM sg_construction_jobs WHERE owner=? AND ship=? AND site=? ORDER BY plan_id LIMIT 200");
++ q.n(1,owner);q.n(2,ship);q.n(3,site);
++ while(q.row()){
++  CrewJob job;job.plan=q.v(0);job.site=site;job.active=q.v(1)!=0;job.completed=q.v(2);job.labor=q.v(3);job.reason=q.t(4);
++  const auto s=structures_.status(job.plan,owner,ship,site);job.completed=s.completed;job.total=s.total;
++  if(!s.finished()&&!s.cancelled&&!s.conflicting)job.required=work(Plans::parse([&](){
++   Query text(db_->db,"SELECT steps FROM sg_structure_plans WHERE id=?");text.n(1,job.plan);if(!text.row())throw std::runtime_error("Missing plan");return text.t(0);
++  }()).at(s.completed));
++  Query workers(db_->db,"SELECT npc_id,x,y FROM sg_construction_workers WHERE plan_id=? ORDER BY npc_id");workers.n(1,job.plan);
++  while(workers.row())job.workers.push_back({static_cast<std::uint64_t>(workers.v(0)),static_cast<int>(workers.v(1)),static_cast<int>(workers.v(2))});
++  result.push_back(std::move(job));
++ }
++ return result;
++}
++void Crews::advance(PlayerId owner,EntityId ship){
++ const auto tick=world_.world().tick();
++ Query jobs(db_->db,"SELECT plan_id,site,completed,labor,last_tick,active FROM sg_construction_jobs WHERE owner=? AND ship=? ORDER BY plan_id LIMIT 200");
++ jobs.n(1,owner);jobs.n(2,ship);
++ struct J{std::int64_t id;EntityId site;std::int64_t completed,labor,last_tick;bool active;};std::vector<J> pending;
++ while(jobs.row())pending.push_back({jobs.v(0),static_cast<EntityId>(jobs.v(1)),jobs.v(2),jobs.v(3),jobs.v(4),jobs.v(5)!=0});
++ for(const auto& j:pending){
++  if(!j.active||(j.last_tick>=0&&static_cast<std::uint64_t>(j.last_tick)>=tick))continue;
++  std::string reason;std::int64_t labor=j.labor;
++  try{
++   const auto status=structures_.status(j.id,owner,ship,j.site);
++   if(status.cancelled||status.conflicting||status.finished()){
++    Query stop(db_->db,"UPDATE sg_construction_jobs SET active=0,completed=?,labor=0,reason=?,last_tick=? WHERE plan_id=?");
++    stop.n(1,static_cast<std::int64_t>(status.completed));stop.str(2,status.cancelled?"Plan cancelled":status.conflicting?status.reason:"Complete");stop.n(3,tick);stop.n(4,j.id);stop.done();continue;
++   }
++   // Crash recovery: plan receipts are canonical; stale work is never reused
++   // when a structure finished before the worker-progress update committed.
++   if(status.completed!=static_cast<std::size_t>(j.completed))labor=0;
++   Query text(db_->db,"SELECT steps FROM sg_structure_plans WHERE id=?");text.n(1,j.id);
++   if(!text.row())throw std::runtime_error("Missing construction blueprint");
++   const auto task=Plans::parse(text.t(0)).at(status.completed);
++   const Pos goal{task.x,task.y};int ready=0;
++   Query workers(db_->db,"SELECT npc_id,x,y FROM sg_construction_workers WHERE plan_id=? ORDER BY npc_id");workers.n(1,j.id);
++   std::vector<CrewWorker> roster;
++   while(workers.row())roster.push_back({static_cast<std::uint64_t>(workers.v(0)),static_cast<int>(workers.v(1)),static_cast<int>(workers.v(2))});
++   if(roster.empty())reason="No assigned residents";
++   for(auto& n:roster){
++    try{validate_worker(n.npc,owner,ship,j.site);}catch(const std::exception&){reason="Crew member no longer available";continue;}
++    const Pos here{n.x,n.y};
++    if(here!=goal){Pos next{};if(next_cell(world_.world(),j.site,here,goal,next)){
++      Query move(db_->db,"UPDATE sg_construction_workers SET x=?,y=? WHERE npc_id=? AND plan_id=?");
++      move.n(1,next.first);move.n(2,next.second);move.n(3,static_cast<std::int64_t>(n.npc));move.n(4,j.id);move.done();
++      n.x=next.first;n.y=next.second;
++     }else reason="No passable route to construction site";
++    }
++    if(Pos{n.x,n.y}==goal)++ready;
++   }
++   const auto* c=world_.world().colony_ship(ship);
++   if(!c||c->modules<cost(task))reason="Insufficient construction modules";
++   if(ready==0 && reason.empty())reason="Crew travelling";
++   if(ready>0 && reason.empty()){
++    labor=std::min<std::int64_t>(work(task),labor+ready);
++    if(labor>=work(task)){
++     // Advance persisted tick BEFORE the operation. On restart, a successful
++     // world receipt is detected by status(), even if job bookkeeping was lost.
++     Query checkpoint(db_->db,"UPDATE sg_construction_jobs SET completed=?,labor=?,last_tick=?,reason='Committing structure' WHERE plan_id=?");
++     checkpoint.n(1,static_cast<std::int64_t>(status.completed));checkpoint.n(2,labor);checkpoint.n(3,tick);checkpoint.n(4,j.id);checkpoint.done();
++     const auto event=structures_.step(j.id,owner,ship,j.site);
++     if(event.result==Outcome::Applied){labor=0;reason="Built structure";}
++     else {labor=0;reason="Build command rejected: "+std::to_string(static_cast<int>(event.result));}
++    }
++   }
++   Query save(db_->db,"UPDATE sg_construction_jobs SET completed=?,labor=?,reason=?,last_tick=? WHERE plan_id=?");
++   save.n(1,static_cast<std::int64_t>(structures_.status(j.id,owner,ship,j.site).completed));save.n(2,labor);
++   save.str(3,reason);save.n(4,tick);save.n(5,j.id);save.done();
++  }catch(const std::exception& e){
++   Query save(db_->db,"UPDATE sg_construction_jobs SET reason=?,last_tick=? WHERE plan_id=?");
++   save.str(1,std::string(e.what()).substr(0,180));save.n(2,tick);save.n(3,j.id);save.done();
++  }
++  // A step may have advanced the world; one structure per logical tick max.
++  if(world_.world().tick()!=tick)break;
++ }
++}
++} // namespace galaxy::construction
+diff --git a/src/colony_live_host.cpp b/src/colony_live_host.cpp
+index 4c4bb1a..0c11069 100644
+--- a/src/colony_live_host.cpp
++++ b/src/colony_live_host.cpp
+@@ -502,6 +502,15 @@ int main(int argc,char** argv){
+                     }
+                 }else apply(world,ship,line,nonce);
+             }
++            // ECON-02B2d6: advance resident construction crews on the SAME
++            // simulation thread. A completed job may itself commit one tick.
++            const auto before_crew=world.world().tick();
++            factory.advance_crews();
++            if(world.world().tick()!=before_crew){
++                if(world.world().tick()!=before_crew+1)
++                    throw std::runtime_error("Crew command advanced multiple world ticks");
++                std::cout<<encode_frame(bridge.after_committed_step(world.world()))<<std::flush;
++            }
+             world.step();
+             for(std::size_t ix=old;ix<world.world().events().size();++ix){
+                 const auto& ev=world.world().events()[ix];
+diff --git a/src/factory_colony_protocol.hpp b/src/factory_colony_protocol.hpp
+index ff92e73..96ea396 100644
+--- a/src/factory_colony_protocol.hpp
++++ b/src/factory_colony_protocol.hpp
+@@ -4,6 +4,7 @@
+ // Browser-provided site is a requested selector, NEVER owner authority.
+ #include "galaxy/HostBlueprintRegistry.hpp"
+ #include "galaxy/ColonyStructurePlans.hpp"
++#include "galaxy/NpcConstructionCrews.hpp"
+ #include <algorithm>
+ #include <cstdint>
+ #include <limits>
+@@ -115,7 +116,8 @@ inline std::vector<int> structural_args(const std::string& payload,std::size_t c
+ class Control {
+ public:
+     Control(const std::string& db,PersistentWorld& world,EntityId ship,PlayerId owner)
+-        :host_(db,world),structures_(db,world),world_(world),ship_(ship),owner_(owner){}
++        :host_(db,world),structures_(db,world),crews_(db,world,structures_),world_(world),ship_(ship),owner_(owner){}
++    void advance_crews(){crews_.advance(owner_,ship_);}
+     std::string handle(const std::string& op,std::uint64_t requested_site,const std::string& arg){
+         const auto& sites=world_.world().built_outposts();
+         if(op=="SITES"){
+@@ -132,6 +134,54 @@ public:
+         if(requested_site==0||pos==sites.end()||pos->second.source_colony_ship!=ship_||
+            !world_.world().find(ship_)||world_.world().find(ship_)->owner_id!=owner_)
+             throw std::invalid_argument("Selected site is not owned by this colony session");
++        if(op=="CREW_LIST"){
++            if(!arg.empty())throw std::invalid_argument("Unexpected crew listing arguments");
++            std::string out="{\"ok\":true,\"residents\":[";bool first=true;
++            for(const auto& [id,n]:world_.world().npc_records()){
++                if(n.home_ship!=ship_||n.location!=requested_site||n.role!=NpcRole::Habitat)continue;
++                if(!first)out+=',';first=false;out+=std::to_string(id);
++            }
++            out+="],\"jobs\":[";first=true;
++            for(const auto& job:crews_.list(owner_,ship_,requested_site)){
++                if(!first)out+=',';first=false;
++                out+="{\"plan\":"+std::to_string(job.plan)+",\"completed\":"+std::to_string(job.completed)+
++                     ",\"total\":"+std::to_string(job.total)+",\"labor\":"+std::to_string(job.labor)+
++                     ",\"required\":"+std::to_string(job.required)+",\"active\":"+(job.active?"true":"false")+
++                     ",\"reason\":"+json_string(job.reason)+",\"workers\":[";
++                bool first_worker=true;
++                for(const auto& worker:job.workers){
++                    if(!first_worker)out+=',';first_worker=false;
++                    out+="{\"npc\":"+std::to_string(worker.npc)+",\"x\":"+std::to_string(worker.x)+
++                         ",\"y\":"+std::to_string(worker.y)+"}";
++                }
++                out+="]}";
++                if(out.size()>100000)throw std::length_error("Crew list too large");
++            }
++            return out+"]}";
++        }
++        if(op=="CREW_ASSIGN"){
++            const auto decoded=decode64(arg);const auto delimiter=decoded.find(',');
++            if(delimiter==std::string::npos||decoded.find(',',delimiter+1)!=std::string::npos)
++                throw std::invalid_argument("Invalid NPC crew assignment");
++            const auto plan=unsigned_id(decoded.substr(0,delimiter));
++            const auto npc=unsigned_id(decoded.substr(delimiter+1));
++            crews_.assign(static_cast<std::int64_t>(plan),npc,owner_,ship_,requested_site);
++            return "{\"ok\":true,\"assigned\":true}";
++        }
++        if(op=="CREW_UNASSIGN"){
++            const auto npc=unsigned_id(arg);
++            return "{\"ok\":true,\"changed\":"+
++                std::string(crews_.unassign(npc,owner_,ship_,requested_site)?"true":"false")+"}";
++        }
++        if(op=="CREW_ACTIVE"){
++            const auto decoded=decode64(arg);const auto delimiter=decoded.find(',');
++            if(delimiter==std::string::npos||decoded.find(',',delimiter+1)!=std::string::npos ||
++               (decoded.substr(delimiter+1)!="0"&&decoded.substr(delimiter+1)!="1"))
++                throw std::invalid_argument("Invalid NPC crew duty state");
++            const auto plan=unsigned_id(decoded.substr(0,delimiter));
++            const bool changed=crews_.set_active(static_cast<std::int64_t>(plan),decoded.back()=='1',owner_,ship_,requested_site);
++            return "{\"ok\":true,\"changed\":"+std::string(changed?"true":"false")+"}";
++        }
+         if(op=="STRUCT_LIST"){
+             if(!arg.empty())throw std::invalid_argument("Unexpected structure listing arguments");
+             std::string result="{\"ok\":true,\"structures\":[";bool first=true;
+@@ -219,6 +269,7 @@ public:
+ private:
+     industry::HostBlueprintRegistry host_;
+     construction::Plans structures_;
++    construction::Crews crews_;
+     PersistentWorld& world_;
+     EntityId ship_;
+     PlayerId owner_;
+diff --git a/tests/ECON02B2d6ConstructionCrewHostTests.py b/tests/ECON02B2d6ConstructionCrewHostTests.py
+new file mode 100644
+index 0000000..dbe6927
+--- /dev/null
++++ b/tests/ECON02B2d6ConstructionCrewHostTests.py
+@@ -0,0 +1,110 @@
++#!/usr/bin/env python3
++"""Real localhost -> colony C++ -> NPC crew scheduler -> SQLite -> restart.
++Transport never supplies a trusted worker identity or site ownership.
++"""
++import argparse, http.client, json, pathlib, socket, subprocess, sys, tempfile, time
++p=argparse.ArgumentParser()
++for n in ('host','fixture','relay'):p.add_argument('--'+n,required=True)
++a=p.parse_args()
++def random_port():
++    with socket.socket() as s:s.bind(('127.0.0.1',0));return s.getsockname()[1]
++class Game:
++    def __init__(self,save):
++        self.port=random_port()
++        self.child=subprocess.Popen([sys.executable,a.relay,'--colony','--host-exe',a.host,'--save',str(save),
++            '--port',str(self.port),'--tick-ms','100','--max-ticks','1200'],stdin=subprocess.DEVNULL,
++            stdout=subprocess.PIPE,stderr=subprocess.PIPE)
++        for i in range(100):
++            if self.child.poll() is not None:raise AssertionError('Relay stopped early')
++            try:
++                if self.get('/healthz')[0]==200:break
++            except (OSError,TimeoutError):pass
++            time.sleep(.05)
++        else:raise AssertionError('No health response')
++    def request(self,method,path,data=None,headers=None):
++        c=http.client.HTTPConnection('127.0.0.1',self.port,timeout=10)
++        body=json.dumps(data,separators=(',',':')).encode() if data is not None else None
++        h={'Host':'127.0.0.1:'+str(self.port),**(headers or {})}
++        if body is not None:
++            h.setdefault('Content-Type','application/json');h.setdefault('Origin','http://127.0.0.1:'+str(self.port))
++        try:
++            c.request(method,path,body,headers=h)
++            response=c.getresponse();raw=response.read()
++            return response.status,json.loads(raw) if response.getheader('Content-Type')=='application/json' else raw.decode()
++        finally:c.close()
++    def get(self,path):return self.request('GET',path)
++    def post(self,path,data,headers=None):return self.request('POST',path,data,headers)
++    def close(self):
++        self.child.terminate()
++        try:self.child.communicate(timeout=8)
++        except subprocess.TimeoutExpired:self.child.kill();self.child.communicate(timeout=5)
++with tempfile.TemporaryDirectory(prefix='sg-npc-crew-live-') as temp:
++    save=pathlib.Path(temp)/'w.sqlite'
++    r=subprocess.run([a.fixture,str(save)],capture_output=True,text=True,timeout=15)
++    assert r.returncode==0,r.stderr
++    game=Game(save)
++    try:
++        status,session=game.get('/session');assert status==200
++        token=session['token'];status,sites=game.get('/factory/api/sites');assert status==200 and len(sites['sites'])==1,sites
++        site=sites['sites'][0]
++        status,crew=game.get('/factory/api/crews?site='+str(site))
++        assert status==200 and len(crew['residents'])==2 and crew['jobs']==[],(status,crew)
++        status,denied=game.post('/factory/api/crew_assign',{'site':site,'token':'forged','plan':1,'npc':crew['residents'][0]})
++        assert status==403,(status,denied)
++        status,denied=game.post('/factory/api/crew_assign',{'site':site,'token':token,'plan':1,'npc':crew['residents'][0]},
++                                {'Origin':'https://evil.example'})
++        assert status==403,(status,denied)
++        status,denied=game.post('/factory/api/crew_assign',{'site':999999,'token':token,'plan':1,'npc':crew['residents'][0]})
++        assert status==400,(status,denied)
++        status,new=game.post('/factory/api/structure_register',{'token':token,'site':site,
++            'layout':'sg-colony-structure-plan-v1\n1,1,0\n2,0,0\n4,1,0\n'})
++        assert status==200,(status,new)
++        plan=new['plan']['id']
++        for npc in crew['residents']:
++            status,assigned=game.post('/factory/api/crew_assign',{'token':token,'site':site,'plan':plan,'npc':npc})
++            assert status==200,(status,assigned)
++        deadline=time.monotonic()+12
++        while time.monotonic()<deadline:
++            status,current=game.get('/factory/api/structures?site='+str(site))
++            assert status==200,(status,current)
++            if current['plans'][0]['finished']:break
++            time.sleep(.15)
++        else:raise AssertionError('NPC plan did not complete')
++        assert len(current['structures'])==3,current
++        status,info=game.get('/factory/api/crews?site='+str(site))
++        assert status==200 and len(info['jobs'])==1 and len(info['jobs'][0]['workers'])==2,(status,info)
++        status,more=game.post('/factory/api/structure_register',{'token':token,'site':site,
++             'layout':'sg-colony-structure-plan-v1\n1,5,0\n'})
++        assert status==200,(status,more)
++        next_plan=more['plan']['id']
++        # The original workers must be explicitly reassigned, never cloned.
++        status,bad=game.post('/factory/api/crew_assign',{'token':token,'site':site,'plan':next_plan,'npc':crew['residents'][0]})
++        assert status==400,(status,bad)
++        status,removed=game.post('/factory/api/crew_unassign',{'token':token,'site':site,'npc':crew['residents'][0]})
++        assert status==200 and removed['changed'],(status,removed)
++        status,assigned=game.post('/factory/api/crew_assign',{'token':token,'site':site,'plan':next_plan,'npc':crew['residents'][0]})
++        assert status==200,(status,assigned)
++        status,paused=game.post('/factory/api/crew_active',{'token':token,'site':site,'plan':next_plan,'active':False})
++        assert status==200 and paused['changed'],(status,paused)
++        time.sleep(.55)
++        status,current=game.get('/factory/api/structures?site='+str(site))
++        assert next(x for x in current['plans'] if x['id']==next_plan)['completed']==0,current
++    finally:game.close()
++    game=Game(save)
++    try:
++        status,info=game.get('/factory/api/crews?site='+str(site))
++        assert status==200 and len(info['jobs'])==2 and info['jobs'][1]['active']==False,(status,info)
++        status,current=game.get('/factory/api/structures?site='+str(site))
++        assert status==200 and len(current['structures'])==3 and current['plans'][0]['finished'],current
++        status,token_new=game.get('/session');token=token_new['token']
++        status,resumed=game.post('/factory/api/crew_active',{'token':token,'site':site,'plan':next_plan,'active':True})
++        assert status==200 and resumed['changed'],(status,resumed)
++        deadline=time.monotonic()+12
++        while time.monotonic()<deadline:
++            status,current=game.get('/factory/api/structures?site='+str(site))
++            if next(x for x in current['plans'] if x['id']==next_plan)['finished']:break
++            time.sleep(.15)
++        else:raise AssertionError('Restarted NPC crew did not finish')
++        assert len(current['structures'])==4,current
++    finally:game.close()
++    print('ECON-02B2d6 PASS: real HTTP -> named resident crew -> path/work/material receipt -> restart')
+diff --git a/tests/ECON02B2d6ConstructionCrewTests.cpp b/tests/ECON02B2d6ConstructionCrewTests.cpp
+new file mode 100644
+index 0000000..617b6f3
+--- /dev/null
++++ b/tests/ECON02B2d6ConstructionCrewTests.cpp
+@@ -0,0 +1,76 @@
++#include "galaxy/NpcConstructionCrews.hpp"
++#include <chrono>
++#include <filesystem>
++#include <iostream>
++#include <stdexcept>
++#include <vector>
++using namespace galaxy;
++namespace fs=std::filesystem;
++#define CHECK(x) do{if(!(x))throw std::runtime_error(std::string("b2d6 line ")+std::to_string(__LINE__)+": " #x);}while(0)
++static Event command(PersistentWorld& w,EntityId ship,std::uint64_t id,Action action,EntityId target=0,std::int64_t amount=1,int x=0,int y=0){
++ Command c{};c.id=id;c.sequence=id;c.issuer=7;c.actor=ship;c.target=target;c.action=action;c.amount=amount;c.thrust_x=x;c.thrust_y=y;c.execute_tick=w.world().tick()+1;
++ CHECK(w.submit(c));w.step();CHECK(w.world().events().back().command_id==id);return w.world().events().back();
++}
++static void ok(PersistentWorld& w,EntityId ship,std::uint64_t id,Action action,EntityId target=0,std::int64_t amount=1,int x=0,int y=0){const auto event=command(w,ship,id,action,target,amount,x,y); if(event.result!=Outcome::Applied)throw std::runtime_error("Command "+std::to_string(id)+" failed result "+std::to_string(static_cast<int>(event.result)));}
++int main(){
++ const auto path=fs::temp_directory_path()/("npc_crew_"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));fs::create_directories(path);
++ try{
++  const auto save=(path/"world.sqlite").string();Simulation sim(102);
++  const auto ship=sim.add_colony_ship(7,{0,0},500,8);sim.provision_colony_genesis(ship,1000,3000,1000,1000,1000);
++  const auto rock=sim.add_asteroid({1000,0},180);sim.enable_individual_workforce();
++  const auto original_mass=sim.total_material_kg();EntityId site=0;std::int64_t plan=0;std::vector<std::uint64_t> residents;
++  {
++   PersistentWorld w(save,std::move(sim));
++   ok(w,ship,1,Action::Mine,rock,80);ok(w,ship,2,Action::RefineOre,0,80);ok(w,ship,3,Action::FabricateModule,0,30);ok(w,ship,4,Action::ConstructOutpost);
++   site=w.world().built_outposts().begin()->first;
++   ok(w,ship,5,Action::ConstructHabitat,site);
++   ok(w,ship,6,Action::TransferHabitatStock,site,20,1);
++   ok(w,ship,7,Action::TransferHabitatStock,site,20,2);
++   ok(w,ship,8,Action::TransferHabitatStock,site,20,3);
++   ok(w,ship,9,Action::AssignHabitatResidents,site,2);
++   for(const auto& [id,n]:w.world().npc_records())if(n.location==site&&n.role==NpcRole::Habitat)residents.push_back(id);
++   CHECK(residents.size()==2);
++   construction::Plans structures(save,w);construction::Crews crews(save,w,structures);
++   const auto modules=w.world().colony_ship(ship)->modules;
++   plan=structures.create("sg-colony-structure-plan-v1\n1,1,0\n2,0,0\n4,1,0\n",7,ship,site);
++   CHECK(structures.status(plan,7,ship,site).total==3);
++   bool denied=false;try{crews.assign(plan,999999,7,ship,site);}catch(const std::invalid_argument&){denied=true;}CHECK(denied);
++   denied=false;try{crews.assign(plan,residents[0],8,ship,site);}catch(const std::invalid_argument&){denied=true;}CHECK(denied);
++   crews.assign(plan,residents[0],7,ship,site);crews.assign(plan,residents[1],7,ship,site);
++   denied=false;try{crews.assign(plan,residents[0],7,ship,site);}catch(const std::exception&){denied=true;}CHECK(denied);
++   for(int i=0;i<16 && !structures.status(plan,7,ship,site).finished();++i){crews.advance(7,ship);w.step();}
++   auto s=structures.status(plan,7,ship,site);CHECK(s.finished());CHECK(s.completed==3);
++   CHECK(w.world().colony_ship(ship)->modules==modules-5);
++   CHECK(w.world().total_material_kg()==original_mass);
++   CHECK(!w.world().structure_edge_passable(site,0,0,1,0));
++   CHECK(!w.world().structure_edge_passable(site,1,0,2,0));
++   auto jobs=crews.list(7,ship,site);CHECK(jobs.size()==1);CHECK(jobs[0].workers.size()==2);
++   CHECK(jobs[0].completed==3);
++  }
++  {
++   PersistentWorld w(save,Simulation(999));construction::Plans structures(save,w);construction::Crews crews(save,w,structures);
++   CHECK(structures.status(plan,7,ship,site).finished());
++   auto jobs=crews.list(7,ship,site);CHECK(jobs.size()==1&&jobs[0].completed==3);
++   // Create another plan behind the wall, then navigate around the wall.
++   auto second=structures.create("sg-colony-structure-plan-v1\n1,2,0\n",7,ship,site);
++   CHECK(crews.unassign(residents[0],7,ship,site));CHECK(crews.unassign(residents[1],7,ship,site));
++   crews.assign(second,residents[0],7,ship,site);
++   bool took_detour=false;
++   for(int i=0;i<16 && !structures.status(second,7,ship,site).finished();++i){
++    crews.advance(7,ship);const auto before=crews.list(7,ship,site).back();
++    if(before.workers[0].y!=0)took_detour=true;
++    w.step();
++   }
++   CHECK(took_detour);CHECK(structures.status(second,7,ship,site).finished());
++   CHECK(w.world().total_material_kg()==original_mass);
++   auto cancelled=structures.create("sg-colony-structure-plan-v1\n1,9,0\n",7,ship,site);
++   CHECK(crews.unassign(residents[0],7,ship,site));crews.assign(cancelled,residents[0],7,ship,site);
++   crews.advance(7,ship);w.step();
++   const auto before=w.world().colony_ship(ship)->modules;
++   CHECK(structures.cancel(cancelled,7,ship,site));
++   for(int i=0;i<6;++i){crews.advance(7,ship);w.step();}
++   CHECK(w.world().colony_ship(ship)->modules==before);CHECK(crews.list(7,ship,site).back().active==false);
++  }
++  fs::remove_all(path);std::cout<<"ECON-02B2d6 PASS: named local resident crew, route, work, material debit, cancel, restart\n";return 0;
++ }catch(const std::exception& e){std::cerr<<"ECON-02B2d6 FAIL: "<<e.what()<<'\n';fs::remove_all(path);return 1;}
++}
+diff --git a/tests/ECON02B2d6WorldFixture.cpp b/tests/ECON02B2d6WorldFixture.cpp
+new file mode 100644
+index 0000000..231402a
+--- /dev/null
++++ b/tests/ECON02B2d6WorldFixture.cpp
+@@ -0,0 +1,41 @@
++// Creates a genuine persistent colony outpost for local HTTP construction E2E.
++#include "galaxy/Persistence.hpp"
++#include <filesystem>
++#include <iostream>
++#include <stdexcept>
++using namespace galaxy;
++void build(PersistentWorld& world,EntityId ship,std::uint64_t id,Action action,EntityId target=0,std::int64_t amount=1){
++    Command c{};c.id=id;c.sequence=id;c.issuer=7;c.actor=ship;c.target=target;
++    c.action=action;c.amount=amount;c.execute_tick=world.world().tick()+1;
++    if(!world.submit(c))throw std::runtime_error("fixture failed to submit");
++    world.step();
++    if(world.world().events().back().result!=Outcome::Applied)throw std::runtime_error("fixture action failed");
++}
++int main(int argc,char** argv){
++    try{
++        if(argc!=2)throw std::invalid_argument("fixture expects path to NEW database");
++        if(std::filesystem::exists(argv[1]))throw std::invalid_argument("fixture refuses existing database");
++        Simulation simulation(40042);
++        const auto ship=simulation.add_colony_ship(7,{0,0},400,8);
++        simulation.provision_colony_genesis(ship,1000,3000,1000,1000,1000);
++        const auto asteroid=simulation.add_asteroid({1000,0},180);
++        simulation.enable_individual_workforce();
++        PersistentWorld w(argv[1],std::move(simulation));
++        build(w,ship,1,Action::Mine,asteroid,80);
++        build(w,ship,2,Action::RefineOre,0,80);
++        build(w,ship,3,Action::FabricateModule,0,30);
++        build(w,ship,4,Action::ConstructOutpost);
++        const auto site=w.world().built_outposts().begin()->first;
++        build(w,ship,5,Action::ConstructHabitat,site);
++        for(int n=1;n<=3;++n){
++            Command c{};c.id=static_cast<std::uint64_t>(5+n);c.sequence=c.id;
++            c.issuer=7;c.actor=ship;c.target=site;c.action=Action::TransferHabitatStock;
++            c.amount=20;c.thrust_x=n;c.execute_tick=w.world().tick()+1;
++            if(!w.submit(c))throw std::runtime_error("fixture habitat supply rejected");
++            w.step();if(w.world().events().back().result!=Outcome::Applied)throw std::runtime_error("habitat supply failed");
++        }
++        build(w,ship,9,Action::AssignHabitatResidents,site,2);
++        std::cout<<"SHIP="<<ship<<" SITE="<<site<<"\n";
++        return 0;
++    }catch(const std::exception& e){std::cerr<<"fixture failed: "<<e.what()<<'\n';return 1;}
++}
+diff --git a/viewer/interactive.html b/viewer/interactive.html
+index ec47bd9..35613ce 100644
+--- a/viewer/interactive.html
++++ b/viewer/interactive.html
+@@ -60,6 +60,10 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
+ <div id="structurePlanHelp" class="help">Kinds: 1 floor; 2 east wall; 3 north wall; 4 east door; 5 north door. A door begins closed.</div>
+ <div class="controls" style="padding:8px 0;gap:5px"><button id="structureAuthorize" class="primary">Authorize plan</button><label for="structurePlan">Plan</label><select id="structurePlan"><option value="">None</option></select><button id="structureBuildNext">Construct next</button><button id="structureCancel">Cancel plan</button></div>
+ <div class="controls" style="padding:8px 0;gap:5px"><label for="structureDoor">Built door</label><select id="structureDoor"><option value="">None</option></select><button id="structureOpenDoor">Open</button><button id="structureCloseDoor">Close</button></div>
++<h3 style="margin:9px 0 5px">NPC construction crews</h3>
++<div class="help">Assign existing on-site habitat residents. Workers move around installed walls and doors, contribute labor over simulation ticks, and consume actual construction modules when a step finishes. Assigning workers does not create or transfer materials.</div>
++<div class="controls" style="padding:8px 0;gap:5px"><label for="crewResident">Resident NPC</label><select id="crewResident"><option value="">No local residents</option></select><button id="crewAssign">Assign to selected plan</button><button id="crewUnassign">Remove from duty</button><button id="crewPause">Pause crew</button><button id="crewResume">Resume crew</button></div>
++<div id="crewStatus" class="help" role="status" aria-live="polite" style="white-space:pre-wrap;max-height:180px;overflow:auto">No active construction crews.</div>
+ <div id="structureStatus" class="help" role="status" aria-live="polite" style="white-space:pre-wrap">Open a colony session to inspect physical structures.</div>
+ <canvas id="structureMap" width="280" height="205" aria-label="Plan view of built floors, walls and doors" style="margin-top:8px;border:1px solid var(--border);background:#07131f;border-radius:8px;width:100%;height:auto"></canvas>
+ <div id="structureBuilt" class="help" style="white-space:pre-wrap;max-height:150px;overflow:auto" aria-live="polite"></div>
+diff --git a/viewer/structures.js b/viewer/structures.js
+index 7474af8..2b5882d 100644
+--- a/viewer/structures.js
++++ b/viewer/structures.js
+@@ -1,7 +1,7 @@
+ /* ECON-02B2d5 — colony-owned structural plans, not a second world writer. */
+ (function(){'use strict';
+ const $=id=>document.getElementById(id);
+-let site=null, token='', listing={structures:[],plans:[]}, active=false;
++let site=null, token='', listing={structures:[],plans:[]}, crews={residents:[],jobs:[]}, active=false;
+ function feedback(text){$('structureStatus').textContent=text;}
+ async function json(path,body){
+  const response=await fetch(path,body===undefined?{cache:'no-store'}:{
+@@ -48,8 +48,20 @@ function draw(){
+  ctx.fillText('Blue: floor  ·  White: wall',9,h-24);
+  ctx.fillText('Amber: closed door  ·  Green: open',9,h-9);
+ }
++function renderCrews(){
++ const select=$('crewResident'),old=select.value;
++ select.replaceChildren(option('','Select existing resident'));
++ const assigned=new Set(crews.jobs.flatMap(j=>j.workers.map(w=>String(w.npc))));
++ for(const id of crews.residents)select.append(option(id,`NPC #${id}${assigned.has(String(id))?' · assigned':''}`));
++ select.value=crews.residents.some(id=>String(id)===old)?old:crews.residents.length?String(crews.residents[0]):'';
++ const text=crews.jobs.map(j=>{
++  const people=j.workers.map(w=>`#${w.npc} at (${w.x},${w.y})`).join(', ')||'No assigned workers';
++  return `Plan #${j.plan} · ${j.active?'Working':'Paused/complete'} · ${j.completed}/${j.total} · labor ${j.labor}/${j.required}\n  ${people}\n  ${j.reason||'Ready'}`;
++ });
++ $('crewStatus').textContent=text.join('\n')||'No construction crew assignments yet. Build a habitat and assign residents first.';
++}
+ function render(){
+- draw();
++ draw();renderCrews();
+  const plans=$('structurePlan');const oldPlan=plans.value;
+  plans.replaceChildren(option('','Select plan'));
+  for(const p of listing.plans){
+@@ -78,8 +90,9 @@ async function refresh(){
+  for(const id of sites.sites)sel.append(option(id,`Outpost #${id}`));
+  sel.value=sites.sites.some(id=>String(id)===old)?old:sites.sites.length?String(sites.sites[0]):'';
+  site=sel.value?Number(sel.value):null;
+- if(!site){listing={structures:[],plans:[]};render();feedback('Build your first colony outpost before constructing structures.');return;}
++ if(!site){listing={structures:[],plans:[]};crews={residents:[],jobs:[]};render();feedback('Build your first colony outpost before constructing structures.');return;}
+  listing=await json('/factory/api/structures?site='+site);
++ try{crews=await json('/factory/api/crews?site='+site);}catch(_){crews={residents:[],jobs:[]};}
+  render();
+  const activePlan=listing.plans.find(p=>!p.cancelled&&!p.finished);
+  feedback(`Outpost #${site} · ${listing.structures.length} built pieces · ${listing.plans.length} plans`+
+@@ -94,14 +107,17 @@ async function submit(path,payload){
+   feedback(path.endsWith('register')?`Authorized plan #${r.plan.id} for outpost #${site}.`:
+    path.endsWith('step')?`Construction ${r.event.applied?'committed':'rejected'}; ${r.plan.completed}/${r.plan.total} steps complete.`:
+    path.endsWith('cancel')?'Remaining plan steps cancelled; completed structures remain.':
++   path.includes('/crew_')?'NPC construction-duty assignment updated.':
+    'Door state committed in the colony simulation.');
+  }catch(err){feedback('Construction rejected: '+err.message);}
+ }
+ $('structureRefresh').addEventListener('click',()=>refresh().catch(e=>feedback('Refresh failed: '+e.message)));
+ $('structureSite').addEventListener('change',async()=>{
+  try{site=Number($('structureSite').value)||null;
+-  if(!site){listing={structures:[],plans:[]};render();return;}
+-  listing=await json('/factory/api/structures?site='+site);render();feedback('Selected outpost #'+site);
++  if(!site){listing={structures:[],plans:[]};crews={residents:[],jobs:[]};render();return;}
++  listing=await json('/factory/api/structures?site='+site);
++  try{crews=await json('/factory/api/crews?site='+site);}catch(_){crews={residents:[],jobs:[]};}
++  render();feedback('Selected outpost #'+site);
+  }catch(e){feedback('Site unavailable: '+e.message);}
+ });
+ $('structureAuthorize').addEventListener('click',()=>{
+@@ -122,6 +138,20 @@ for(const [button,open] of [['structureOpenDoor',true],['structureCloseDoor',fal
+   const [kind,x,y]=selected.split(',').map(Number);
+   submit('/factory/api/structure_door',{kind,x,y,open});
+  });
++$('crewAssign').addEventListener('click',()=>{
++ const plan=Number($('structurePlan').value),npc=Number($('crewResident').value);
++ if(!Number.isSafeInteger(plan)||plan<=0||!Number.isSafeInteger(npc)||npc<=0){feedback('Choose a plan and existing resident.');return;}
++ submit('/factory/api/crew_assign',{plan,npc});
++});
++$('crewUnassign').addEventListener('click',()=>{
++ const npc=Number($('crewResident').value);if(!Number.isSafeInteger(npc)||npc<=0){feedback('Select a resident.');return;}
++ submit('/factory/api/crew_unassign',{npc});
++});
++for(const [button,enabled] of [['crewPause',false],['crewResume',true]])
++ $(button).addEventListener('click',()=>{
++  const plan=Number($('structurePlan').value);if(!Number.isSafeInteger(plan)||plan<=0){feedback('Select a plan.');return;}
++  submit('/factory/api/crew_active',{plan,active:enabled});
++ });
+ window.GalaxyColonyStructures={refresh};
+ refresh().catch(e=>feedback('Structure controls unavailable: '+e.message));
+ })();

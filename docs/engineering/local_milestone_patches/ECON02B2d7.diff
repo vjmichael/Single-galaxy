@@ -1,0 +1,1220 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 9fc90a7..f1042cf 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -692,6 +692,10 @@ endif()
+ 
+ # ECON-02B2d6: existing named colonists perform persistent construction jobs.
+ if(BUILD_TESTING)
++  # ECON-02B2d7: physical module custody/hauler restart and cancellation.
++  add_executable(galaxy_econ02b2d7_haul_tests tests/ECON02B2d7MaterialHaulingTests.cpp)
++  target_link_libraries(galaxy_econ02b2d7_haul_tests PRIVATE galaxy_kernel)
++  add_test(NAME ECON02B2d7_NPCMaterialHauling COMMAND galaxy_econ02b2d7_haul_tests)
+   add_executable(galaxy_econ02b2d6_crew_tests tests/ECON02B2d6ConstructionCrewTests.cpp)
+   target_link_libraries(galaxy_econ02b2d6_crew_tests PRIVATE galaxy_kernel)
+   add_test(NAME ECON02B2d6_NPCConstructionCrews COMMAND galaxy_econ02b2d6_crew_tests)
+diff --git a/README.md b/README.md
+index 9c18242..d6ad353 100644
+--- a/README.md
++++ b/README.md
+@@ -272,3 +272,17 @@ Verify the new milestone with:
+ ctest --test-dir build -R 'ECON02B2d6_' --output-on-failure
+ python3 scripts/colony_crew_browser_smoke.py
+ ```
++
++### ECON-02B2d7 — NPC construction material logistics (Linux local prototype)
++
++Construction modules now move through an authoritative, persisted supply chain:
++**colony ship -> site depot -> named worker cargo -> construction-cell delivery -> installed fixture**.
++Crews pick up and carry real modules, navigate around installed walls and doors,
++wait for deliveries before working, and return unused carried cargo after a plan
++is canceled. The colony GUI shows local stock and allows manual depot transfers.
++World snapshots track these custody transfers; work orders and NPC positions remain
++in SQLite. Tests cover cargo survival across restart and module/mass conservation.
++
++Verification: 65/65 non-live and 27/27 complementary live/relay native tests;
++93/93 JS tests; two offline Chromium colony browser tests. Windows GUI acceptance
++is open. See `docs/engineering/ECON02B2d7_NPC_Material_Logistics_Engineering_Report_2026-11-01.md`.
+diff --git a/docs/engineering/ECON02B2d7_NPC_Material_Logistics_Engineering_Report_2026-11-01.md b/docs/engineering/ECON02B2d7_NPC_Material_Logistics_Engineering_Report_2026-11-01.md
+new file mode 100644
+index 0000000..d3d444e
+--- /dev/null
++++ b/docs/engineering/ECON02B2d7_NPC_Material_Logistics_Engineering_Report_2026-11-01.md
+@@ -0,0 +1,66 @@
++# ECON-02B2d7 — Physical NPC construction material logistics
++
++**Date:** 2026-11-01
++**Project:** Single Galaxy (the original space-colony game; not the EvEmu educational audit)
++**Baseline:** `SingleGalaxy_ECON02B2d6_NPC_Construction_Crews_Source_Tests_2026-11-01.zip`
++**Status:** Locally implemented on Linux; regression-tested; not yet published to the GitHub source tree or accepted on Windows.
++
++## Purpose
++
++Make construction supplies physical and conserved across the colony ship, an outpost's site depot, an identified worker's carried cargo, a construction-cell delivery cache, and the installed structure. Existing NPCs, rather than generated labor tokens, perform the pickup, travel, delivery, and construction steps. Preserve the one-authoritative-writer design of ECON-02B2d4c4, physical construction rules from d5, and persisted worker identities from d6.
++
++## Implemented system
++
++1. **Canonical supply ledger in the authoritative simulation.** `ConstructionSupplies` is keyed by outpost entity ID and contains depot stock, `carried` modules keyed by actual NPC identity, and `delivered` modules keyed by construction cell. The resource is the manufactured construction module already supported by the world, not a newly minted currency. The world snapshot advances to format v32 to preserve these balances; load validation rejects malformed amounts and actions.
++2. **Four custody-transfer actions.** `StageConstructionModules` moves real modules between the colony ship and owned outpost depot, supporting positive staging and negative withdrawal. `PickupConstructionModules` transfers depot stock into eligible named NPC custody (nominal carrying limit: 2). `DeliverConstructionModules` moves the NPC's cargo into the targeted site cell. `ReturnConstructionModules` returns unspent cargo to the depot. Each goes through the simulation command/receipt path and persistence ledger.
++3. **Delivery-backed construction action.** `BuildColonyFixtureFromDelivery` uses delivered site-cell stock for an authorized existing structural plan. It does not double-charge the ship or allow construction when deliveries are absent. Existing manual building remains available as a separate, explicit action.
++4. **NPC route and work orchestration.** A worker must reach the depot (local grid origin), pick up the required quantity, walk through passable cell edges toward the plan's next fixture, deliver modules, and contribute work. The path respects installed walls and door state and uses bounded local search. The crew scheduler executes inside the primary colony simulation's command loop.
++5. **Restocking and interfaces.** The crew can stage a bounded amount from its valid source colony ship when site stock is empty; players can also stage/withdraw modules using the colony interface's depot controls. The site-specific `/factory/api/crew_supply` request uses the established token, ownership, same-origin and input-validation path; `CREW_SUPPLY` is handled by the existing native colony process, not a second world writer. The colony screen shows available depot stock, in-transit cargo, delivered stock, and per-NPC custody.
++6. **Pause, cancellation, and restart.** Crew assignment/position/labor state remains in SQLite, while physical custody is saved in the canonical world snapshot. Worker cargo survives a shutdown/restart. A canceled plan does not construct additional fixtures and worker-held unspent modules return via an explicit transfer action. A carrying worker cannot be silently unassigned and drop their cargo into a void.
++
++## Resource invariants / tests
++
++The native `ECON02B2d7_NPCMaterialHauling` test provisions a real outpost and resident NPC; creates an authorized structural plan; stages and picks up manufactured modules; verifies total world material mass; closes the world while a worker is carrying cargo; reopens SQLite; confirms the same NPC owns the module; rejects a forged pickup; completes construction from delivered stock; verifies one module moved out of active custody and into the installed structure; cancels another plan in transit; returns unspent cargo; and verifies post-cancellation and post-restart conservation. The test explicitly counts ship modules + depot + carried + delivered; it never treats the ship inventory as the entire universe's supply.
++
++The existing live colony HTTP test now exercises ship/depot transfers, ownership/session checks, malformed quantities and restart, through the real native colony process. Chromium's offline UI smoke tests exercise the new depot controls; these are mocked DOM interactions and are **not** evidence of live browser-to-localhost access. That distinction is covered independently by the host test.
++
++### Final local verification (2026-11-01)
++
++| Verification | Observed outcome |
++|---|---|
++| Full CMake native build, incremental completion | Pass |
++| CTest excluding live/relay/HTTP (`-E '(live|relay|_HTTP|_http)'`) | **65 / 65 passed** |
++| Complementary live/relay/HTTP CTest (`-R '(live|relay|_HTTP|_http)'`) | **27 / 27 passed** |
++| Combined coverage of those disjoint CTest groups | **92 / 92 passed**, not one uninterrupted run |
++| JavaScript `node --test tests/*.js` | **93 / 93 passed** |
++| `scripts/colony_crew_browser_smoke.py` | Pass (offline Chromium DOM test) |
++| `scripts/colony_structures_browser_smoke.py` | Pass (offline Chromium DOM test) |
++| Dedicated material-hauling native test | Pass (included in 65) |
++| Live colony host HTTP test | Pass (included in 27) |
++| Windows native build and GUI acceptance | **Not run / still open** |
++| Direct Chromium-to-localhost click-through in this environment | **Not established**; previously blocked by browser policy |
++
++Logs retained in the development working directory under `/mnt/data/work_b2d7/` during this task; build outputs and SQLite fixtures are intentionally excluded from the source distribution.
++
++## Security and failure model
++
++- New transfers require a legitimate owner, ship, outpost and eligible NPC. The HTTP surface uses the same authenticated, site-scoped relay as existing construction actions and checks strict numeric request shape.
++- Stock transfers are committed as authoritative commands and receipts so snapshot/restart consistency remains testable. Invalid transfer attempts must not remove ship, depot, or worker inventory.
++- A site-local outpost depot does not represent magical cross-system inventory. The colony ship source and the worker must already be eligible at that site.
++- Existing world-writer containment applies: the colony host holds the world write lease; the standalone factory runtime must not write the same SQLite world concurrently.
++- A canceled plan retains installed fixtures, and unbuilt modules stay within physical custody. The system does not reverse already completed buildings without a later dismantling feature.
++
++## Explicitly deferred
++
++- **Physical cross-colony freight**, storage-node pickup selection and vehicle-based supply runs (current material depot stages from the valid colony ship at the same site).
++- **Full 3D navigation** and rich movement around arbitrary factory geometry (this is grid/edge navigation with bounded search).
++- **NPC needs, shifts, injury and multi-step role proficiency** beyond the existing resident eligibility model.
++- **Material varieties** (current implementation uses manufactured construction modules rather than configurable per-material bill-of-materials).
++- **Delivered-stock salvage/reallocation** and priority reservations among competing plans; must design explicit accounting before automating transfers out of completed/canceled site-cell caches.
++- **Windows desktop installer/GUI acceptance** and real Chromium-to-localhost end-to-end click test in a browser environment that permits local navigation.
++
++## Next engineering gate
++
++**ECON-02B2d8 — Multi-source site logistics and allocation:** authorize supply pickup from actual storage nodes, implement demand reservations and route selection across distinct local supply locations, reconcile stale/canceled cell deliveries, and test contention between simultaneous construction plans. Preserve deterministic material custody and existing player-versus-NPC equality. The larger NPC labor/society model remains independent of this bounded logistics milestone.
++
++GitHub remains a source repository and documentation/milestone archive, not a development hub; no remote push was made as part of this local implementation.
+diff --git a/include/galaxy/ColonyStructurePlans.hpp b/include/galaxy/ColonyStructurePlans.hpp
+index 798254d..c91b601 100644
+--- a/include/galaxy/ColonyStructurePlans.hpp
++++ b/include/galaxy/ColonyStructurePlans.hpp
+@@ -29,6 +29,12 @@ public:
+     std::vector<Status> list(PlayerId owner,EntityId ship,EntityId site)const;
+     bool cancel(std::int64_t id,PlayerId owner,EntityId ship,EntityId site);
+     Event step(std::int64_t id,PlayerId owner,EntityId ship,EntityId site);
++    // Crew installation consumes modules already delivered to this fixture cell.
++    Event step_from_delivery(std::int64_t id,PlayerId owner,EntityId ship,EntityId site);
++    // One host-validated material custody operation, with an idempotent
++    // durable world command ID allocated in the structure namespace.
++    Event supply_action(Action action,std::int64_t amount,int x,int y,
++                        PlayerId owner,EntityId ship,EntityId site);
+     // Host-only door actuator, same authenticated identity and durable receipt.
+     Event set_door(PlayerId owner,EntityId ship,EntityId site,
+                    FixtureKind door,int x,int y,bool opened);
+@@ -37,6 +43,7 @@ private:
+     std::unique_ptr<Db> db_;
+     PersistentWorld& world_;
+     std::int64_t fresh_id();
++    Event step_source(std::int64_t id,PlayerId owner,EntityId ship,EntityId site,bool delivered);
+     void authorize(PlayerId owner,EntityId ship,EntityId site)const;
+     Event submit(std::int64_t command_id,PlayerId owner,EntityId ship,EntityId site,
+                  Action action,std::int64_t amount,int x,int y);
+diff --git a/include/galaxy/NpcConstructionCrews.hpp b/include/galaxy/NpcConstructionCrews.hpp
+index 0d7ee01..2890c32 100644
+--- a/include/galaxy/NpcConstructionCrews.hpp
++++ b/include/galaxy/NpcConstructionCrews.hpp
+@@ -9,12 +9,13 @@
+ #include <string>
+ #include <vector>
+ namespace galaxy::construction {
+-struct CrewWorker {std::uint64_t npc=0;int x=0,y=0;};
++struct CrewWorker {std::uint64_t npc=0;int x=0,y=0;std::int64_t carrying=0;};
+ struct CrewJob {
+     std::int64_t plan=0;EntityId site=0;
+     std::size_t completed=0,total=0;
+     std::int64_t labor=0,required=0;
+     bool active=false;
++    std::int64_t depot_modules=0,delivered_modules=0;
+     std::string reason;
+     std::vector<CrewWorker> workers;
+ };
+diff --git a/include/galaxy/Simulation.hpp b/include/galaxy/Simulation.hpp
+index cfdac46..544d5ac 100644
+--- a/include/galaxy/Simulation.hpp
++++ b/include/galaxy/Simulation.hpp
+@@ -22,7 +22,7 @@ struct Vector2 {
+ };
+ 
+ enum class EntityType { Ship, Asteroid, Station, Stargate, Wreck };
+-enum class Action { Thrust, Mine, StartMining, StopMining, RequestUndock, RequestDock, UnloadOre, LoadOre, SellOre, RequestJump, SetGatePairOnline, SetGateStaff, DeliverGateSpares, RefineOre, FabricateModule, ConstructOutpost, RefineMineral, FabricateMaterialModule, PlantCrops, HarvestCrops, RecycleWater, RecycleCompost, ProduceOxygen, LoadLifeWater, ConstructFarm, TransferFarmStock, AssignFarmWorkers, ConstructHabitat, TransferHabitatStock, AssignHabitatResidents, ConstructUtility, RepairUtility, TransferUtilitySpares, AssignUtilityTechnicians, SetUtilityMaintenance, ConstructCommunity, TransferCommunityStock, AssignCommunityStaff, ConstructClinic, TransferClinicStock, AssignClinicStaff, ConstructReclaimer, ConstructWaterworks, TransferWaterworksFeed, SetPolicyAssurance, AssignPolicyInspectors, AssignFarmMentor, HostDestroyShip, HostCrewLoss, ConstructWorkshop, TransferWorkshopFeed, AssignWorkshopOperator, TransferWorkshopOutput, ConstructWorkshopFinisher, AssignWorkshopFinisher, TransferWorkshopFinalOutput, TransferWorkshopStack, ConstructStorage, TransferStorageStack, ConstructStorageNode, TransferStorageNodeStack, ConstructStorageLink, ConstructWorkshopLink, PlaceFactoryEquipment, PlaceConveyorCell, CompleteConveyorRoute, BuildColonyFixture, SetColonyDoor };
++enum class Action { Thrust, Mine, StartMining, StopMining, RequestUndock, RequestDock, UnloadOre, LoadOre, SellOre, RequestJump, SetGatePairOnline, SetGateStaff, DeliverGateSpares, RefineOre, FabricateModule, ConstructOutpost, RefineMineral, FabricateMaterialModule, PlantCrops, HarvestCrops, RecycleWater, RecycleCompost, ProduceOxygen, LoadLifeWater, ConstructFarm, TransferFarmStock, AssignFarmWorkers, ConstructHabitat, TransferHabitatStock, AssignHabitatResidents, ConstructUtility, RepairUtility, TransferUtilitySpares, AssignUtilityTechnicians, SetUtilityMaintenance, ConstructCommunity, TransferCommunityStock, AssignCommunityStaff, ConstructClinic, TransferClinicStock, AssignClinicStaff, ConstructReclaimer, ConstructWaterworks, TransferWaterworksFeed, SetPolicyAssurance, AssignPolicyInspectors, AssignFarmMentor, HostDestroyShip, HostCrewLoss, ConstructWorkshop, TransferWorkshopFeed, AssignWorkshopOperator, TransferWorkshopOutput, ConstructWorkshopFinisher, AssignWorkshopFinisher, TransferWorkshopFinalOutput, TransferWorkshopStack, ConstructStorage, TransferStorageStack, ConstructStorageNode, TransferStorageNodeStack, ConstructStorageLink, ConstructWorkshopLink, PlaceFactoryEquipment, PlaceConveyorCell, CompleteConveyorRoute, BuildColonyFixture, SetColonyDoor, StageConstructionModules, PickupConstructionModules, DeliverConstructionModules, ReturnConstructionModules, BuildColonyFixtureFromDelivery };
+ enum class Outcome { Applied, InvalidActor, Unauthorized, InvalidTarget, OutOfRange, InvalidArgument, NoResources, CargoFull, NotMining, NotInSpace, NotDocked, InTransition, ShipMoving, HangarFull, InsufficientFunds, WrongSystem, GateOffline, NotColonyShip, InsufficientCrew };
+ enum class ActivityKind { AsteroidDespawned, AutoMiningTransfer, MiningStopped, Undocked, Docked, JumpCompleted, ShipDestroyed, NpcLost, AutoStorageTransfer };
+ enum class DockState { InSpace, Docked, Undocking, Docking };
+@@ -369,6 +369,14 @@ struct ColonyFixture {
+     bool door_open=false;
+     std::int64_t embodied_ore=0; // 2t per real consumed construction module
+ };
++// ECON-02B2d7: physical module custody. All quantities represent genuine
++// factory-built modules (two ore-equivalent units each). Workers carry at most
++// two modules, and delivered stock is tied to an actual target grid cell.
++struct ConstructionSupplies {
++    std::int64_t depot=0;
++    std::map<std::uint64_t,std::int64_t> carried;
++    std::map<std::pair<int,int>,std::int64_t> delivered;
++};
+ struct BuiltOutpost {
+     EntityId source_colony_ship = 0;
+     std::int64_t embodied_ore = 0; // four modules, eight ore-equivalent units
+@@ -473,6 +481,8 @@ public:
+     inventory::StackStore storage_node_inventory_snapshot(EntityId site, std::uint32_t node) const;
+     const OutpostStorage* storage(EntityId site) const;
+     const std::map<FixtureKey,ColonyFixture>& colony_fixtures(EntityId site) const;
++    const ConstructionSupplies* construction_supplies(EntityId site) const;
++    std::int64_t construction_delivered(EntityId site,int x,int y) const;
+     // Grid-adjacent movement query; closed doors/walls obstruct, floors do not.
+     // This is a collision primitive, not a claim that NPC/pathfinding uses it yet.
+     bool structure_edge_passable(EntityId site,int from_x,int from_y,int to_x,int to_y) const;
+@@ -634,10 +644,11 @@ private:
+     std::map<EntityId,OutpostWorkshop> workshops_;
+     std::map<EntityId,OutpostStorage> storages_;
+     std::map<EntityId,std::map<FixtureKey,ColonyFixture>> colony_fixtures_;
++    std::map<EntityId,ConstructionSupplies> construction_supplies_;
+ 
+     std::map<EntityId, AsteroidGeology> geology_;
+     std::vector<ActivityEvent> activity_events_;
+-    int snapshot_version_ = 1; // v31 adds durable, material-backed colony fixtures
++    int snapshot_version_ = 1; // v32 adds durable construction module custody
+     std::map<std::uint64_t, std::vector<Command>> commands_;
+     std::set<std::uint64_t> submitted_ids_;
+     std::vector<Event> events_;
+diff --git a/live/interactive_relay.py b/live/interactive_relay.py
+index 73680f6..6f11dab 100644
+--- a/live/interactive_relay.py
++++ b/live/interactive_relay.py
+@@ -141,7 +141,7 @@ class SharedRuntime:
+         # does not open SQLite and cannot mint ship/player/owner authority.
+         if op not in ('SITES','HELLO','LIST','REGISTER','STEP','STATUS','CANCEL',
+                       'STRUCT_LIST','STRUCT_REGISTER','STRUCT_STEP','STRUCT_STATUS','STRUCT_CANCEL','STRUCT_DOOR',
+-                      'CREW_LIST','CREW_ASSIGN','CREW_UNASSIGN','CREW_ACTIVE'):
++                      'CREW_LIST','CREW_ASSIGN','CREW_UNASSIGN','CREW_ACTIVE','CREW_SUPPLY'):
+             raise ValueError('Unknown factory operation')
+         if type(site)!=int or not 0<=site<=100000000:
+             raise ValueError('Invalid factory site selector')
+@@ -306,6 +306,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
+                     raise ValueError('Invalid door request')
+                 argument=base64.b64encode(f'{kind},{x},{y},{int(opened)}'.encode()).decode('ascii')
+                 native='STRUCT_DOOR'
++            elif op=='crew_supply' and set(doc)=={'token','site','amount'}:
++                qty=doc['amount']
++                if type(qty)!=int or qty==0 or not -1000<=qty<=1000:
++                    raise ValueError('Invalid depot transfer quantity')
++                argument=base64.b64encode(str(qty).encode('ascii')).decode('ascii');native='CREW_SUPPLY'
+             elif op=='crew_assign' and set(doc)=={'token','site','plan','npc'}:
+                 if type(doc['plan'])!=int or type(doc['npc'])!=int or not 0<doc['plan']<2**63 or not 0<doc['npc']<2**63:
+                     raise ValueError('Invalid crew assignment')
+diff --git a/scripts/colony_crew_browser_smoke.py b/scripts/colony_crew_browser_smoke.py
+index 3636a94..8af4f64 100644
+--- a/scripts/colony_crew_browser_smoke.py
++++ b/scripts/colony_crew_browser_smoke.py
+@@ -13,17 +13,20 @@ with sync_playwright() as p:
+     errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
+     page.set_content(html);page.locator('#colonyPanel').evaluate('e=>e.hidden=false')
+     page.add_script_tag(content=r'''
+-        window.__crew={plans:[],next:1,residents:[101,102],jobs:[]};
++        window.__crew={plans:[],next:1,residents:[101,102],jobs:[],supply:{depot:0,carried:0,delivered:0}};
+         window.fetch=async (path,request)=>{
+           const s=window.__crew;let doc=request&&request.body?JSON.parse(request.body):{};
+           let data={ok:true};
+           if(path==='/session')data={token:'TEST',colony_mode:true};
+           else if(path==='/factory/api/sites')data={ok:true,sites:[42]};
+           else if(path.startsWith('/factory/api/structures?site='))data={ok:true,structures:[],plans:s.plans};
+-          else if(path.startsWith('/factory/api/crews?site='))data={ok:true,residents:s.residents,jobs:s.jobs};
++          else if(path.startsWith('/factory/api/crews?site='))data={ok:true,residents:s.residents,jobs:s.jobs,supply:s.supply};
+           else if(path==='/factory/api/structure_register'){
+             const plan={id:s.next++,site:42,completed:0,total:1,modulesRemaining:1,cancelled:false,conflicting:false,finished:false,reason:''};
+             s.plans.push(plan);data={ok:true,plan};
++          }else if(path==='/factory/api/crew_supply'){
++            if(s.supply.depot+doc.amount<0)throw Error('Insufficient depot stock');
++            s.supply.depot+=doc.amount;data={ok:true,event:{applied:true}};
+           }else if(path==='/factory/api/crew_assign'){
+             let job=s.jobs.find(j=>j.plan===doc.plan);
+             if(!job){job={plan:doc.plan,completed:0,total:1,labor:0,required:2,active:true,reason:'Ready',workers:[]};s.jobs.push(job);}
+@@ -39,6 +42,12 @@ with sync_playwright() as p:
+     page.add_script_tag(content=(root/'viewer/structures.js').read_text())
+     page.wait_for_function("document.querySelector('#structureSite').value==='42'")
+     assert page.locator('#colonyStructures').evaluate("n=>!!n.closest('#colonyPanel')")
++    page.locator('#crewSupplyAmount').fill('3')
++    page.locator('#crewSupplyDeposit').click()
++    page.wait_for_function('window.__crew.supply.depot===3')
++    page.wait_for_function("document.querySelector('#crewStatus').textContent.includes('depot 3')")
++    page.locator('#crewSupplyWithdraw').click()
++    page.wait_for_function('window.__crew.supply.depot===0')
+     page.locator('#structureAuthorize').click();page.wait_for_function('window.__crew.plans.length===1')
+     page.locator('#crewAssign').click()
+     page.wait_for_function('window.__crew.jobs.length===1 && window.__crew.jobs[0].workers.length===1')
+@@ -48,5 +57,5 @@ with sync_playwright() as p:
+     page.locator('#crewResume').click();page.wait_for_function('window.__crew.jobs[0].active===true')
+     page.locator('#crewUnassign').click();page.wait_for_function('window.__crew.jobs[0].workers.length===0')
+     assert not errors,errors
+-    print('ECON-02B2d6 PASS: colony UI crew assignment, pause, resume, removal and live status')
++    print('ECON-02B2d7 PASS: colony UI depot staging/withdrawal, crew assignment, pause, resume, removal and live status')
+     browser.close()
+diff --git a/src/ColonyStructurePlans.cpp b/src/ColonyStructurePlans.cpp
+index 7905936..4fe773f 100644
+--- a/src/ColonyStructurePlans.cpp
++++ b/src/ColonyStructurePlans.cpp
+@@ -212,6 +212,12 @@ Event Plans::submit(std::int64_t command_id,PlayerId owner,EntityId ship,EntityI
+     return world_.world().events().back();
+ }
+ Event Plans::step(std::int64_t id,PlayerId owner,EntityId ship,EntityId site){
++    return step_source(id,owner,ship,site,false);
++}
++Event Plans::step_from_delivery(std::int64_t id,PlayerId owner,EntityId ship,EntityId site){
++    return step_source(id,owner,ship,site,true);
++}
++Event Plans::step_source(std::int64_t id,PlayerId owner,EntityId ship,EntityId site,bool delivered){
+     std::lock_guard<std::mutex> guard(lifecycle);
+     const auto state=status(id,owner,ship,site);
+     if(state.cancelled || state.conflicting || state.finished())
+@@ -224,9 +230,21 @@ Event Plans::step(std::int64_t id,PlayerId owner,EntityId ship,EntityId site){
+         j.num(1,next);j.num(2,id);j.num(3,static_cast<std::int64_t>(state.completed));j.finish();
+         db_->commit();
+     }catch(...){db_->rollback();throw;}
+-    return submit(next,owner,ship,site,Action::BuildColonyFixture,
++    return submit(next,owner,ship,site,
++                  delivered?Action::BuildColonyFixtureFromDelivery:Action::BuildColonyFixture,
+                   static_cast<std::int64_t>(job.kind),job.x,job.y);
+ }
++Event Plans::supply_action(Action action,std::int64_t amount,int x,int y,
++                           PlayerId owner,EntityId ship,EntityId site){
++    if(action!=Action::StageConstructionModules && action!=Action::PickupConstructionModules &&
++       action!=Action::DeliverConstructionModules && action!=Action::ReturnConstructionModules)
++        throw std::invalid_argument("Not a construction inventory transfer");
++    std::lock_guard<std::mutex> guard(lifecycle);
++    authorize(owner,ship,site);
++    db_->begin();std::int64_t id=0;
++    try{id=fresh_id();db_->commit();}catch(...){db_->rollback();throw;}
++    return submit(id,owner,ship,site,action,amount,x,y);
++}
+ Event Plans::set_door(PlayerId owner,EntityId ship,EntityId site,
+                       FixtureKind kind,int x,int y,bool opened){
+     std::lock_guard<std::mutex> guard(lifecycle);
+diff --git a/src/NpcConstructionCrews.cpp b/src/NpcConstructionCrews.cpp
+index 70c3f9e..525cd99 100644
+--- a/src/NpcConstructionCrews.cpp
++++ b/src/NpcConstructionCrews.cpp
+@@ -127,6 +127,9 @@ void Crews::assign(std::int64_t plan,std::uint64_t npc,PlayerId owner,EntityId s
+ }
+ bool Crews::unassign(std::uint64_t npc,PlayerId owner,EntityId ship,EntityId site){
+  validate_site(owner,ship,site);
++ const auto* stock=world_.world().construction_supplies(site);
++ if(stock && stock->carried.count(npc))
++  throw std::invalid_argument("NPC is carrying physical modules; return to depot before unassignment");
+  Query q(db_->db,"DELETE FROM sg_construction_workers WHERE npc_id=? AND plan_id IN (SELECT plan_id FROM sg_construction_jobs WHERE owner=? AND ship=? AND site=?)");
+  q.n(1,static_cast<std::int64_t>(npc));q.n(2,owner);q.n(3,ship);q.n(4,site);q.done();return sqlite3_changes(db_->db)==1;
+ }
+@@ -142,11 +145,27 @@ std::vector<CrewJob> Crews::list(PlayerId owner,EntityId ship,EntityId site)cons
+  while(q.row()){
+   CrewJob job;job.plan=q.v(0);job.site=site;job.active=q.v(1)!=0;job.completed=q.v(2);job.labor=q.v(3);job.reason=q.t(4);
+   const auto s=structures_.status(job.plan,owner,ship,site);job.completed=s.completed;job.total=s.total;
++  if(const auto* supply=world_.world().construction_supplies(site)){
++   job.depot_modules=supply->depot;
++   if(!s.finished()&&!s.cancelled&&!s.conflicting){
++    Query text(db_->db,"SELECT steps FROM sg_structure_plans WHERE id=?");text.n(1,job.plan);
++    if(text.row()){
++     const auto task=Plans::parse(text.t(0)).at(s.completed);
++     job.delivered_modules=world_.world().construction_delivered(site,task.x,task.y);
++    }
++   }
++  }
+   if(!s.finished()&&!s.cancelled&&!s.conflicting)job.required=work(Plans::parse([&](){
+    Query text(db_->db,"SELECT steps FROM sg_structure_plans WHERE id=?");text.n(1,job.plan);if(!text.row())throw std::runtime_error("Missing plan");return text.t(0);
+   }()).at(s.completed));
+   Query workers(db_->db,"SELECT npc_id,x,y FROM sg_construction_workers WHERE plan_id=? ORDER BY npc_id");workers.n(1,job.plan);
+-  while(workers.row())job.workers.push_back({static_cast<std::uint64_t>(workers.v(0)),static_cast<int>(workers.v(1)),static_cast<int>(workers.v(2))});
++  while(workers.row()){
++   CrewWorker worker{static_cast<std::uint64_t>(workers.v(0)),static_cast<int>(workers.v(1)),static_cast<int>(workers.v(2))};
++   if(const auto* supply=world_.world().construction_supplies(site)){
++    if(auto found=supply->carried.find(worker.npc);found!=supply->carried.end())worker.carrying=found->second;
++   }
++   job.workers.push_back(worker);
++  }
+   result.push_back(std::move(job));
+  }
+  return result;
+@@ -158,13 +177,40 @@ void Crews::advance(PlayerId owner,EntityId ship){
+  struct J{std::int64_t id;EntityId site;std::int64_t completed,labor,last_tick;bool active;};std::vector<J> pending;
+  while(jobs.row())pending.push_back({jobs.v(0),static_cast<EntityId>(jobs.v(1)),jobs.v(2),jobs.v(3),jobs.v(4),jobs.v(5)!=0});
+  for(const auto& j:pending){
+-  if(!j.active||(j.last_tick>=0&&static_cast<std::uint64_t>(j.last_tick)>=tick))continue;
++  if(j.last_tick>=0&&static_cast<std::uint64_t>(j.last_tick)>=tick)continue;
+   std::string reason;std::int64_t labor=j.labor;
+   try{
+    const auto status=structures_.status(j.id,owner,ship,j.site);
+-   if(status.cancelled||status.conflicting||status.finished()){
++   if(status.cancelled||status.conflicting||status.finished() || !j.active){
++    // A worker's unspent cargo is NOT refunded on cancellation. It exists in
++    // the canonical world until returned through a real material receipt.
++    Query returned(db_->db,"SELECT npc_id,x,y FROM sg_construction_workers WHERE plan_id=? ORDER BY npc_id");returned.n(1,j.id);
++    struct R{std::uint64_t npc;int x,y;};std::vector<R> carrying;
++    while(returned.row())carrying.push_back({static_cast<std::uint64_t>(returned.v(0)),static_cast<int>(returned.v(1)),static_cast<int>(returned.v(2))});
++    bool pending_return=false;
++    for(const auto& n:carrying){
++     const auto* supplies=world_.world().construction_supplies(j.site);
++     if(!supplies||!supplies->carried.count(n.npc))continue;
++     if(!status.cancelled && !status.conflicting && !status.finished())break; // pause does not move cargo
++     pending_return=true;
++     if(Pos{n.x,n.y}!=Pos{0,0}){
++      Pos next{};
++      if(next_cell(world_.world(),j.site,{n.x,n.y},{0,0},next)){
++       Query walk(db_->db,"UPDATE sg_construction_workers SET x=?,y=? WHERE npc_id=? AND plan_id=?");
++       walk.n(1,next.first);walk.n(2,next.second);walk.n(3,static_cast<std::int64_t>(n.npc));walk.n(4,j.id);walk.done();
++      }
++     }else{
++      auto e=structures_.supply_action(Action::ReturnConstructionModules,static_cast<std::int64_t>(n.npc),0,0,owner,ship,j.site);
++      if(e.result!=Outcome::Applied)throw std::runtime_error("Failed to return worker construction cargo");
++     }
++     break;
++    }
+     Query stop(db_->db,"UPDATE sg_construction_jobs SET active=0,completed=?,labor=0,reason=?,last_tick=? WHERE plan_id=?");
+-    stop.n(1,static_cast<std::int64_t>(status.completed));stop.str(2,status.cancelled?"Plan cancelled":status.conflicting?status.reason:"Complete");stop.n(3,tick);stop.n(4,j.id);stop.done();continue;
++    stop.n(1,static_cast<std::int64_t>(status.completed));
++    stop.str(2,pending_return?"Returning unspent cargo":status.cancelled?"Plan cancelled":status.conflicting?status.reason:status.finished()?"Complete":"Paused");
++    stop.n(3,tick);stop.n(4,j.id);stop.done();
++    if(world_.world().tick()!=tick)break;
++    continue;
+    }
+    // Crash recovery: plan receipts are canonical; stale work is never reused
+    // when a structure finished before the worker-progress update committed.
+@@ -177,30 +223,66 @@ void Crews::advance(PlayerId owner,EntityId ship){
+    std::vector<CrewWorker> roster;
+    while(workers.row())roster.push_back({static_cast<std::uint64_t>(workers.v(0)),static_cast<int>(workers.v(1)),static_cast<int>(workers.v(2))});
+    if(roster.empty())reason="No assigned residents";
++   const auto needed=cost(task);
++   auto supply=world_.world().construction_supplies(j.site);
++   auto staged=world_.world().construction_delivered(j.site,task.x,task.y);
+    for(auto& n:roster){
+     try{validate_worker(n.npc,owner,ship,j.site);}catch(const std::exception&){reason="Crew member no longer available";continue;}
++    supply=world_.world().construction_supplies(j.site);
++    std::int64_t carrying=0;
++    if(supply){if(auto it=supply->carried.find(n.npc);it!=supply->carried.end())carrying=it->second;}
++    const bool supplies_ready=staged>=needed;
++    // A worker carrying modules must first physically deliver them, even if
++    // another worker already delivered enough for the current build step.
++    const Pos destination=carrying>0?goal:(supplies_ready?goal:Pos{0,0});
+     const Pos here{n.x,n.y};
+-    if(here!=goal){Pos next{};if(next_cell(world_.world(),j.site,here,goal,next)){
++    if(here!=destination){Pos next{};if(next_cell(world_.world(),j.site,here,destination,next)){
+       Query move(db_->db,"UPDATE sg_construction_workers SET x=?,y=? WHERE npc_id=? AND plan_id=?");
+       move.n(1,next.first);move.n(2,next.second);move.n(3,static_cast<std::int64_t>(n.npc));move.n(4,j.id);move.done();
+       n.x=next.first;n.y=next.second;
+-     }else reason="No passable route to construction site";
++     }else reason="No passable route for construction supplies";
++    }
++    if(Pos{n.x,n.y}!=destination)continue;
++    if(carrying>0){
++     auto event=structures_.supply_action(Action::DeliverConstructionModules,static_cast<std::int64_t>(n.npc),goal.first,goal.second,owner,ship,j.site);
++     if(event.result==Outcome::Applied)reason="NPC delivered physical construction modules";
++     else reason="NPC delivery refused: "+std::to_string(static_cast<int>(event.result));
++     break;
+     }
+-    if(Pos{n.x,n.y}==goal)++ready;
++    if(!supplies_ready){
++     if(!supply || supply->depot<1){
++      // Ship -> outpost is a separate journaled transaction, never a free
++      // mutation. The ship must be at this outpost and have actual modules.
++      const auto* shipstock=world_.world().colony_ship(ship);
++      const auto load=shipstock?std::min<std::int64_t>(8,shipstock->modules):0;
++      if(load>0){
++       auto event=structures_.supply_action(Action::StageConstructionModules,load,0,0,owner,ship,j.site);
++       reason=event.result==Outcome::Applied?"Restocked site depot from colony ship":"Depot resupply refused";
++      }else reason="No real construction modules available for depot";
++      break;
++     }
++     const auto count=std::min<std::int64_t>(2,std::min(supply->depot,needed-staged));
++     if(count>0){
++      auto event=structures_.supply_action(Action::PickupConstructionModules,static_cast<std::int64_t>(n.npc),static_cast<int>(count),0,owner,ship,j.site);
++      reason=event.result==Outcome::Applied?"NPC picked up physical construction modules":"NPC pickup refused";
++      break;
++     }
++    }else if(Pos{n.x,n.y}==goal)++ready;
+    }
+-   const auto* c=world_.world().colony_ship(ship);
+-   if(!c||c->modules<cost(task))reason="Insufficient construction modules";
+-   if(ready==0 && reason.empty())reason="Crew travelling";
+-   if(ready>0 && reason.empty()){
+-    labor=std::min<std::int64_t>(work(task),labor+ready);
+-    if(labor>=work(task)){
+-     // Advance persisted tick BEFORE the operation. On restart, a successful
+-     // world receipt is detected by status(), even if job bookkeeping was lost.
+-     Query checkpoint(db_->db,"UPDATE sg_construction_jobs SET completed=?,labor=?,last_tick=?,reason='Committing structure' WHERE plan_id=?");
+-     checkpoint.n(1,static_cast<std::int64_t>(status.completed));checkpoint.n(2,labor);checkpoint.n(3,tick);checkpoint.n(4,j.id);checkpoint.done();
+-     const auto event=structures_.step(j.id,owner,ship,j.site);
+-     if(event.result==Outcome::Applied){labor=0;reason="Built structure";}
+-     else {labor=0;reason="Build command rejected: "+std::to_string(static_cast<int>(event.result));}
++   // Any stock move above already advanced world one tick. Defer labor until
++   // next call so the new authoritative world frame is published first.
++   if(world_.world().tick()==tick){
++    if(staged<needed && reason.empty())reason="Awaiting local material delivery";
++    if(ready==0 && reason.empty())reason="Crew travelling";
++    if(staged>=needed && ready>0 && reason.empty()){
++     labor=std::min<std::int64_t>(work(task),labor+ready);
++     if(labor>=work(task)){
++      Query checkpoint(db_->db,"UPDATE sg_construction_jobs SET completed=?,labor=?,last_tick=?,reason='Committing structure' WHERE plan_id=?");
++      checkpoint.n(1,static_cast<std::int64_t>(status.completed));checkpoint.n(2,labor);checkpoint.n(3,tick);checkpoint.n(4,j.id);checkpoint.done();
++      const auto event=structures_.step_from_delivery(j.id,owner,ship,j.site);
++      if(event.result==Outcome::Applied){labor=0;reason="Built from delivered modules";}
++      else {labor=0;reason="Build command rejected: "+std::to_string(static_cast<int>(event.result));}
++     }
+     }
+    }
+    Query save(db_->db,"UPDATE sg_construction_jobs SET completed=?,labor=?,reason=?,last_tick=? WHERE plan_id=?");
+diff --git a/src/Persistence.cpp b/src/Persistence.cpp
+index e2f8341..e091cb7 100644
+--- a/src/Persistence.cpp
++++ b/src/Persistence.cpp
+@@ -127,7 +127,7 @@ Command decode_command(const std::string& record) {
+           >> c.target >> action >> c.thrust_x >> c.thrust_y >> c.amount))
+         throw std::runtime_error("recovery: invalid command journal record");
+     std::string extra;
+-    if (in >> extra || action < 0 || action > static_cast<int>(Action::SetColonyDoor) || c.id == 0 || c.issuer == 0)
++    if (in >> extra || action < 0 || action > static_cast<int>(Action::BuildColonyFixtureFromDelivery) || c.id == 0 || c.issuer == 0)
+         throw std::runtime_error("recovery: invalid command journal values");
+     c.action = static_cast<Action>(action);
+     if (command_record(c) != record) throw std::runtime_error("recovery: noncanonical command journal");
+@@ -1170,7 +1170,7 @@ public:
+         std::size_t mineral_refine_transfers=0,material_fabricate_transfers=0;
+         std::size_t life_transfers=0, farm_builds=0, farm_stock_transfers=0, habitat_builds=0, habitat_transfers=0,utility_builds=0,utility_repairs=0,utility_spare_transfers=0,community_builds=0,community_transfers=0,clinic_builds=0,clinic_transfers=0,reclaimer_builds=0,waterworks_builds=0,waterworks_transfers=0;
+         std::size_t workshop_builds=0,workshop_feeds=0,workshop_outputs=0,workshop_finisher_builds=0,workshop_final_outputs=0,workshop_stacks=0,storage_builds=0,storage_stacks=0,extra_storage_builds=0,extra_storage_stacks=0;
+-        std::size_t auto_transfers = 0, auto_storage_transfers=0, storage_link_builds=0, conveyor_cells=0, fixture_builds=0;
++        std::size_t auto_transfers = 0, auto_storage_transfers=0, storage_link_builds=0, conveyor_cells=0, fixture_builds=0,construction_logistics=0;
+         std::vector<ActivityEvent> recorded_auto, recorded_storage_auto;
+         for (const auto& a : restored.activity_events()) {
+             if (a.kind == ActivityKind::AutoMiningTransfer) recorded_auto.push_back(a);
+@@ -1526,17 +1526,53 @@ public:
+                 const auto id=parse_u64(sqlite3_column_text(ledger.get(),0));
+                 const auto ev=event_by_id.find(id);const auto cmd=journal_commands.find(id);
+                 if(ev==event_by_id.end() || cmd==journal_commands.end() ||
+-                   cmd->second.action!=Action::BuildColonyFixture ||
++                   (cmd->second.action!=Action::BuildColonyFixture &&
++                    cmd->second.action!=Action::BuildColonyFixtureFromDelivery) ||
+                    ev->second.result!=Outcome::Applied ||
+                    amount!=(cmd->second.amount==1?2:4) ||
+                    ev->second.transferred!=amount ||
+                    ev->second.tick!=static_cast<std::uint64_t>(sqlite3_column_int64(ledger.get(),1)) ||
+-                   sqlite_str(ledger.get(),4)!="modules:"+std::to_string(cmd->second.actor) ||
++                   sqlite_str(ledger.get(),4)!=(cmd->second.action==Action::BuildColonyFixture?
++                       "modules:"+std::to_string(cmd->second.actor):
++                       "construction-delivered:"+std::to_string(cmd->second.target)+":"+
++                       std::to_string(cmd->second.thrust_x)+":"+
++                       std::to_string(cmd->second.thrust_y)) ||
+                    sqlite_str(ledger.get(),5)!="fixture:"+std::to_string(cmd->second.target)+":"+
+                    std::to_string(cmd->second.thrust_x)+":"+
+                    std::to_string(cmd->second.thrust_y)+":"+
+                    std::to_string(cmd->second.amount))
+                     throw std::runtime_error("SQLite: invalid physical fixture construction receipt");
++            } else if(reason=="construction_logistics_t"){
++                ++construction_logistics;
++                const auto id=parse_u64(sqlite3_column_text(ledger.get(),0));
++                const auto ev=event_by_id.find(id);const auto cmd=journal_commands.find(id);
++                if(ev==event_by_id.end()||cmd==journal_commands.end()||
++                   ev->second.result!=Outcome::Applied || ev->second.transferred!=amount ||
++                   amount<2||amount>2000||amount%2 ||
++                   ev->second.tick!=static_cast<std::uint64_t>(sqlite3_column_int64(ledger.get(),1)))
++                    throw std::runtime_error("SQLite: invalid construction logistics receipt");
++                const auto& c=cmd->second;
++                const auto depot="construction-depot:"+std::to_string(c.target);
++                const auto worker="construction-worker:"+std::to_string(c.target)+":"+std::to_string(c.amount);
++                const auto delivered="construction-delivered:"+std::to_string(c.target)+":"+
++                    std::to_string(c.thrust_x)+":"+std::to_string(c.thrust_y);
++                std::string src,dst;
++                if(c.action==Action::StageConstructionModules){
++                    if(amount!=2*std::llabs(c.amount))throw std::runtime_error("SQLite: depot transfer amount mismatch");
++                    src=c.amount>0?"modules:"+std::to_string(c.actor):depot;
++                    dst=c.amount>0?depot:"modules:"+std::to_string(c.actor);
++                }else if(c.action==Action::PickupConstructionModules){
++                    if(amount!=2*c.thrust_x)throw std::runtime_error("SQLite: pickup amount mismatch");
++                    src=depot;dst=worker;
++                }else if(c.action==Action::DeliverConstructionModules){
++                    if(amount>4)throw std::runtime_error("SQLite: worker over-capacity delivery");
++                    src=worker;dst=delivered;
++                }else if(c.action==Action::ReturnConstructionModules){
++                    if(amount>4)throw std::runtime_error("SQLite: worker over-capacity return");
++                    src=worker;dst=depot;
++                }else throw std::runtime_error("SQLite: invalid construction logistics command");
++                if(sqlite_str(ledger.get(),4)!=src||sqlite_str(ledger.get(),5)!=dst)
++                    throw std::runtime_error("SQLite: construction logistics endpoints mismatch");
+             } else if(reason=="conveyor_cell_construction_t"){
+                 ++conveyor_cells;
+                 const auto id=parse_u64(sqlite3_column_text(ledger.get(),0));
+@@ -1667,7 +1703,7 @@ public:
+         std::size_t expected_mineral_refine=0,expected_material_fabricate=0;
+         std::size_t expected_life_transfers=0,expected_farm_builds=0,expected_farm_stock_transfers=0;
+         std::size_t expected_habitat_builds=0, expected_habitat_transfers=0;
+-        std::size_t expected_utility_builds=0,expected_utility_repairs=0,expected_utility_spares=0,expected_community_builds=0,expected_community_transfers=0,expected_clinic_builds=0,expected_clinic_transfers=0,expected_reclaimer_builds=0,expected_waterworks_builds=0,expected_waterworks_transfers=0,expected_workshop_builds=0,expected_workshop_feeds=0,expected_workshop_outputs=0,expected_workshop_finisher_builds=0,expected_workshop_final_outputs=0,expected_workshop_stacks=0,expected_storage_builds=0,expected_storage_stacks=0,expected_extra_storage_builds=0,expected_extra_storage_stacks=0,expected_link_builds=0,expected_conveyor_cells=0,expected_fixture_builds=0;
++        std::size_t expected_utility_builds=0,expected_utility_repairs=0,expected_utility_spares=0,expected_community_builds=0,expected_community_transfers=0,expected_clinic_builds=0,expected_clinic_transfers=0,expected_reclaimer_builds=0,expected_waterworks_builds=0,expected_waterworks_transfers=0,expected_workshop_builds=0,expected_workshop_feeds=0,expected_workshop_outputs=0,expected_workshop_finisher_builds=0,expected_workshop_final_outputs=0,expected_workshop_stacks=0,expected_storage_builds=0,expected_storage_stacks=0,expected_extra_storage_builds=0,expected_extra_storage_stacks=0,expected_link_builds=0,expected_conveyor_cells=0,expected_fixture_builds=0,expected_construction_logistics=0;
+ 
+         for (const auto& ev : restored.events()) {
+             if (ev.result != Outcome::Applied || ev.transferred <= 0) continue;
+@@ -1710,7 +1746,12 @@ public:
+             else if (cmd->second.action==Action::TransferStorageNodeStack) ++expected_extra_storage_stacks;
+             else if (cmd->second.action==Action::ConstructStorageLink || cmd->second.action==Action::ConstructWorkshopLink) ++expected_link_builds;
+             else if (cmd->second.action==Action::PlaceConveyorCell) ++expected_conveyor_cells;
+-            else if (cmd->second.action==Action::BuildColonyFixture) ++expected_fixture_builds;
++            else if (cmd->second.action==Action::BuildColonyFixture ||
++                     cmd->second.action==Action::BuildColonyFixtureFromDelivery) ++expected_fixture_builds;
++            else if (cmd->second.action==Action::StageConstructionModules ||
++                     cmd->second.action==Action::PickupConstructionModules ||
++                     cmd->second.action==Action::DeliverConstructionModules ||
++                     cmd->second.action==Action::ReturnConstructionModules) ++expected_construction_logistics;
+             else if (cmd->second.action==Action::ConstructClinic) ++expected_clinic_builds;
+             else if (cmd->second.action==Action::TransferClinicStock) ++expected_clinic_transfers;
+             else throw std::runtime_error("SQLite: resource transfer tied to non-transfer command");
+@@ -1743,7 +1784,8 @@ public:
+             extra_storage_builds!=expected_extra_storage_builds ||
+             extra_storage_stacks!=expected_extra_storage_stacks ||
+             storage_link_builds!=expected_link_builds ||
+-            conveyor_cells!=expected_conveyor_cells || fixture_builds!=expected_fixture_builds)
++            conveyor_cells!=expected_conveyor_cells || fixture_builds!=expected_fixture_builds ||
++            construction_logistics!=expected_construction_logistics)
+             throw std::runtime_error("SQLite: ledger event count mismatch");
+         std::size_t credit_rows=0;
+         Statement cash(db_, "SELECT command_id,tick,station_id,owner_id,ore_units,unit_price,credit_amount FROM credit_ledger");
+@@ -2849,7 +2891,12 @@ public:
+                          cmd->second.action!=Action::ConstructStorageLink &&
+                          cmd->second.action!=Action::ConstructWorkshopLink &&
+                          cmd->second.action!=Action::PlaceConveyorCell &&
+-                         cmd->second.action!=Action::BuildColonyFixture))
++                         cmd->second.action!=Action::BuildColonyFixture &&
++                         cmd->second.action!=Action::BuildColonyFixtureFromDelivery &&
++                         cmd->second.action!=Action::StageConstructionModules &&
++                         cmd->second.action!=Action::PickupConstructionModules &&
++                         cmd->second.action!=Action::DeliverConstructionModules &&
++                         cmd->second.action!=Action::ReturnConstructionModules))
+                         throw std::runtime_error("unmatched resource transfer event");
+                     Statement ledger(db_, "INSERT INTO resource_ledger(generation,tick,command_id,source_id,destination_id,amount,reason) VALUES(?,?,?,?,?,?,?)");
+                     ledger.i64(1, static_cast<std::int64_t>(next));
+@@ -2914,15 +2961,40 @@ public:
+                         ledger.text(4,"modules:"+std::to_string(c.actor));
+                         ledger.text(5,"storage-link:"+std::to_string(c.target)+":"+std::to_string(c.id));
+                         ledger.i64(6,2);ledger.text(7,"storage_link_construction_t");
+-                    } else if(cmd->second.action==Action::BuildColonyFixture){
++                    } else if(cmd->second.action==Action::BuildColonyFixture ||
++                              cmd->second.action==Action::BuildColonyFixtureFromDelivery){
+                         const auto& c=cmd->second;
+                         if(ev.transferred!=(c.amount==1?2:4))
+                             throw std::runtime_error("physical fixture transfer amount mismatch");
+-                        ledger.text(4,"modules:"+std::to_string(c.actor));
++                        ledger.text(4,c.action==Action::BuildColonyFixture?
++                            "modules:"+std::to_string(c.actor):
++                            "construction-delivered:"+std::to_string(c.target)+":"+
++                            std::to_string(c.thrust_x)+":"+std::to_string(c.thrust_y));
+                         ledger.text(5,"fixture:"+std::to_string(c.target)+":"+
+                                 std::to_string(c.thrust_x)+":"+std::to_string(c.thrust_y)+":"+
+                                 std::to_string(c.amount));
+                         ledger.i64(6,ev.transferred);ledger.text(7,"colony_fixture_construction_t");
++                    } else if(cmd->second.action==Action::StageConstructionModules ||
++                              cmd->second.action==Action::PickupConstructionModules ||
++                              cmd->second.action==Action::DeliverConstructionModules ||
++                              cmd->second.action==Action::ReturnConstructionModules){
++                        const auto& c=cmd->second;
++                        const auto depot="construction-depot:"+std::to_string(c.target);
++                        const auto worker="construction-worker:"+std::to_string(c.target)+":"+std::to_string(c.amount);
++                        const auto delivered="construction-delivered:"+std::to_string(c.target)+":"+
++                            std::to_string(c.thrust_x)+":"+std::to_string(c.thrust_y);
++                        std::string source,destination;
++                        switch(c.action){
++                            case Action::StageConstructionModules:
++                                source=c.amount>0?"modules:"+std::to_string(c.actor):depot;
++                                destination=c.amount>0?depot:"modules:"+std::to_string(c.actor);break;
++                            case Action::PickupConstructionModules:source=depot;destination=worker;break;
++                            case Action::DeliverConstructionModules:source=worker;destination=delivered;break;
++                            case Action::ReturnConstructionModules:source=worker;destination=depot;break;
++                            default:break;
++                        }
++                        ledger.text(4,source);ledger.text(5,destination);
++                        ledger.i64(6,ev.transferred);ledger.text(7,"construction_logistics_t");
+                     } else if(cmd->second.action==Action::PlaceConveyorCell){
+                         const auto& c=cmd->second;
+                         if(ev.transferred!=2)throw std::runtime_error("invalid conveyor cell mass");
+diff --git a/src/Simulation.cpp b/src/Simulation.cpp
+index 6662467..05de6e8 100644
+--- a/src/Simulation.cpp
++++ b/src/Simulation.cpp
+@@ -530,6 +530,16 @@ const std::map<FixtureKey,ColonyFixture>& Simulation::colony_fixtures(EntityId s
+     const auto p=colony_fixtures_.find(site);
+     return p==colony_fixtures_.end()?empty:p->second;
+ }
++const ConstructionSupplies* Simulation::construction_supplies(EntityId site) const {
++    const auto it=construction_supplies_.find(site);
++    return it==construction_supplies_.end()?nullptr:&it->second;
++}
++std::int64_t Simulation::construction_delivered(EntityId site,int x,int y)const{
++    const auto* c=construction_supplies(site);
++    if(!c)return 0;
++    const auto it=c->delivered.find({x,y});
++    return it==c->delivered.end()?0:it->second;
++}
+ bool Simulation::structure_edge_passable(EntityId site,int ax,int ay,int bx,int by) const {
+     if(!built_outposts_.count(site))return false;
+     return !edge_blocked(colony_fixtures(site),ax,ay,bx,by);
+@@ -800,14 +810,30 @@ bool Simulation::submit(const Command& c) {
+              c.thrust_y<0 || c.thrust_y>3)))return false;
+         snapshot_version_=std::max(snapshot_version_,25);
+     }
+-    if(c.action==Action::BuildColonyFixture || c.action==Action::SetColonyDoor){
+-        const bool build=c.action==Action::BuildColonyFixture;
++    if(c.action==Action::BuildColonyFixture || c.action==Action::BuildColonyFixtureFromDelivery || c.action==Action::SetColonyDoor){
++        const bool build=c.action!=Action::SetColonyDoor;
+         const bool valid_type=build ? c.amount>=1 && c.amount<=5 :
+             (c.amount==4 || c.amount==5 || c.amount==14 || c.amount==15);
+         if(!c.target || !valid_type ||
+            c.thrust_x<-kPlacementBound || c.thrust_x>kPlacementBound ||
+            c.thrust_y<-kPlacementBound || c.thrust_y>kPlacementBound)return false;
+-        snapshot_version_=std::max(snapshot_version_,31);
++        snapshot_version_=std::max(snapshot_version_,c.action==Action::BuildColonyFixtureFromDelivery?32:31);
++    }
++    if(c.action==Action::StageConstructionModules || c.action==Action::PickupConstructionModules ||
++       c.action==Action::DeliverConstructionModules || c.action==Action::ReturnConstructionModules){
++        if(!c.target)return false;
++        if(c.action==Action::StageConstructionModules){
++            if(c.amount==0 || c.amount<-1000 || c.amount>1000 || c.thrust_x || c.thrust_y)return false;
++        }else{
++            if(c.amount<=0 || c.amount>std::numeric_limits<std::int64_t>::max()/2)return false;
++            if(c.action==Action::PickupConstructionModules){
++                if(c.thrust_x<1 || c.thrust_x>2 || c.thrust_y)return false;
++            }else if(c.action==Action::ReturnConstructionModules){
++                if(c.thrust_x || c.thrust_y)return false;
++            }else if(c.thrust_x<-kPlacementBound || c.thrust_x>kPlacementBound ||
++                     c.thrust_y<-kPlacementBound || c.thrust_y>kPlacementBound)return false;
++        }
++        snapshot_version_=std::max(snapshot_version_,32);
+     }
+     if(c.action==Action::PlaceConveyorCell || c.action==Action::CompleteConveyorRoute){
+         // amount: real module-built link command ID; x/y: one grid cell,
+@@ -1320,6 +1346,11 @@ Event Simulation::execute(const Command& c) {
+         case Action::PlaceConveyorCell:
+         case Action::CompleteConveyorRoute:
+         case Action::BuildColonyFixture:
++        case Action::BuildColonyFixtureFromDelivery:
++        case Action::StageConstructionModules:
++        case Action::PickupConstructionModules:
++        case Action::DeliverConstructionModules:
++        case Action::ReturnConstructionModules:
+         case Action::SetColonyDoor:
+         case Action::AssignFarmMentor:
+         case Action::SetPolicyAssurance:
+@@ -1364,8 +1395,53 @@ Event Simulation::execute(const Command& c) {
+             }
+             auto& cship=colony_ships_.at(c.actor);
+             auto& onboard=life_support_.at(c.actor);
+-            if(c.action==Action::BuildColonyFixture || c.action==Action::SetColonyDoor){
+-                const bool build=c.action==Action::BuildColonyFixture;
++            if(c.action==Action::StageConstructionModules || c.action==Action::PickupConstructionModules ||
++               c.action==Action::DeliverConstructionModules || c.action==Action::ReturnConstructionModules){
++                // Validate transfers against an isolated prospective inventory.
++                // Rejected commands must never create empty depots or alter cargo.
++                const auto existing=construction_supplies_.find(c.target);
++                ConstructionSupplies candidate=existing==construction_supplies_.end()?
++                    ConstructionSupplies{}:existing->second;
++                auto& supplies=candidate;
++                if(c.action==Action::StageConstructionModules){
++                    const auto n=c.amount;
++                    if(n>0){
++                        if(cship.modules<n || supplies.depot>1000000-n){result.result=Outcome::NoResources;return result;}
++                        cship.modules-=n;supplies.depot+=n;
++                    }else{
++                        if(supplies.depot< -n || cship.modules>500000000+n){result.result=Outcome::NoResources;return result;}
++                        supplies.depot+=n;cship.modules-=n;
++                    }
++                    result.transferred=2*std::llabs(n);
++                }else{
++                    const auto npc=static_cast<std::uint64_t>(c.amount);
++                    const auto it=npcs_.find(npc);
++                    if(it==npcs_.end() || it->second.home_ship!=c.actor ||
++                       it->second.location!=c.target || it->second.role!=NpcRole::Habitat){
++                        result.result=Outcome::InvalidTarget;return result;
++                    }
++                    const auto have=supplies.carried[npc];
++                    if(c.action==Action::PickupConstructionModules){
++                        const auto n=c.thrust_x;
++                        if(have>2-n || supplies.depot<n){result.result=Outcome::NoResources;return result;}
++                        supplies.depot-=n;supplies.carried[npc]+=n;result.transferred=2*n;
++                    }else if(c.action==Action::ReturnConstructionModules){
++                        if(have<1 || supplies.depot>1000000-have){result.result=Outcome::NoResources;return result;}
++                        supplies.depot+=have;supplies.carried.erase(npc);result.transferred=2*have;
++                    }else{
++                        if(have<1 || construction_delivered(c.target,c.thrust_x,c.thrust_y)>1000000-have){
++                            result.result=Outcome::NoResources;return result;
++                        }
++                        supplies.delivered[{c.thrust_x,c.thrust_y}]+=have;
++                        supplies.carried.erase(npc);result.transferred=2*have;
++                    }
++                }
++                construction_supplies_[c.target]=std::move(candidate);
++                snapshot_version_=std::max(snapshot_version_,32);
++                result.result=Outcome::Applied;return result;
++            }
++            if(c.action==Action::BuildColonyFixture || c.action==Action::BuildColonyFixtureFromDelivery || c.action==Action::SetColonyDoor){
++                const bool build=c.action!=Action::SetColonyDoor;
+                 const auto kind=static_cast<FixtureKind>(build?c.amount:c.amount%10);
+                 const FixtureKey key{c.thrust_x,c.thrust_y,fixture_layer(kind)};
+                 auto& fixtures=colony_fixtures_[c.target];
+@@ -1376,9 +1452,17 @@ Event Simulation::execute(const Command& c) {
+                         result.result=Outcome::InvalidArgument;return result;
+                     }
+                     const int cost=fixture_module_cost(kind);
+-                    if(cship.modules<cost){result.result=Outcome::NoResources;return result;}
++                    if(c.action==Action::BuildColonyFixtureFromDelivery){
++                        if(construction_delivered(c.target,c.thrust_x,c.thrust_y)<cost){
++                            result.result=Outcome::NoResources;return result;
++                        }
++                    }else if(cship.modules<cost){result.result=Outcome::NoResources;return result;}
+                     fixtures.emplace(key,ColonyFixture{kind,c.id,false,2*cost});
+-                    cship.modules-=cost;
++                    if(c.action==Action::BuildColonyFixtureFromDelivery){
++                        auto& stock=construction_supplies_.at(c.target).delivered.at({c.thrust_x,c.thrust_y});
++                        stock-=cost;
++                        if(stock==0)construction_supplies_.at(c.target).delivered.erase({c.thrust_x,c.thrust_y});
++                    }else cship.modules-=cost;
+                     result.transferred=2*cost;
+                 }else{
+                     if(found==fixtures.end() || found->second.kind!=kind ||
+@@ -1387,7 +1471,7 @@ Event Simulation::execute(const Command& c) {
+                     }
+                     found->second.door_open=c.amount>=10;
+                 }
+-                snapshot_version_=std::max(snapshot_version_,31);
++                snapshot_version_=std::max(snapshot_version_,c.action==Action::BuildColonyFixtureFromDelivery?32:31);
+                 result.result=Outcome::Applied;return result;
+             }
+             if(c.action==Action::PlaceConveyorCell || c.action==Action::CompleteConveyorRoute){
+@@ -2836,7 +2920,7 @@ void Simulation::steps(std::uint64_t count) {
+ 
+ std::string Simulation::canonical_state() const {
+     std::ostringstream out;
+-    out << (snapshot_version_ >= 31 ? "galaxy-kernel-v31|" : snapshot_version_ >= 30 ? "galaxy-kernel-v30|" : snapshot_version_ >= 29 ? "galaxy-kernel-v29|" : snapshot_version_ >= 28 ? "galaxy-kernel-v28|" : snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
++    out << (snapshot_version_ >= 32 ? "galaxy-kernel-v32|" : snapshot_version_ >= 31 ? "galaxy-kernel-v31|" : snapshot_version_ >= 30 ? "galaxy-kernel-v30|" : snapshot_version_ >= 29 ? "galaxy-kernel-v29|" : snapshot_version_ >= 28 ? "galaxy-kernel-v28|" : snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
+         << '|' << rng_state_ << '\n';
+     if (snapshot_version_>=5) for(const auto system:systems_)out<<"system|"<<system<<'\n';
+     for (const auto& entry : entities_) {
+@@ -2920,6 +3004,13 @@ std::string Simulation::canonical_state() const {
+                <<fixture.construction_command_id<<'|'<<(fixture.door_open?1:0)<<'|'
+                <<fixture.embodied_ore<<"|0\n";
+     }
++    if(snapshot_version_>=32)for(const auto& [site,stock]:construction_supplies_){
++        out<<"construction_depot|"<<site<<'|'<<stock.depot<<'\n';
++        for(const auto& [npc,qty]:stock.carried)if(qty>0)
++            out<<"construction_carry|"<<site<<'|'<<npc<<'|'<<qty<<'\n';
++        for(const auto& [cell,qty]:stock.delivered)if(qty>0)
++            out<<"construction_delivery|"<<site<<'|'<<cell.first<<'|'<<cell.second<<'|'<<qty<<'\n';
++    }
+     if (snapshot_version_>=8) {
+         for(const auto& [id,g]:geology_)
+             out<<"geology|"<<id<<'|'<<static_cast<int>(g.taxonomy)<<'|'<<g.radius_m
+@@ -3142,12 +3233,12 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
+     if (!std::getline(in, line)) throw std::runtime_error("snapshot: missing header");
+     auto h = fields(line);
+     require_fields(h, 5);
+-    if (h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27" && h[0] != "galaxy-kernel-v28" && h[0] != "galaxy-kernel-v29" && h[0] != "galaxy-kernel-v30" && h[0] != "galaxy-kernel-v31") throw std::runtime_error("snapshot: unsupported version");
++    if (h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27" && h[0] != "galaxy-kernel-v28" && h[0] != "galaxy-kernel-v29" && h[0] != "galaxy-kernel-v30" && h[0] != "galaxy-kernel-v31" && h[0] != "galaxy-kernel-v32") throw std::runtime_error("snapshot: unsupported version");
+     const auto sys = u64(h[1]);
+     if (sys == 0 || sys > std::numeric_limits<std::uint32_t>::max())
+         throw std::runtime_error("snapshot: invalid system");
+     Simulation result(u64(h[4]), static_cast<std::uint32_t>(sys));
+-    result.snapshot_version_ = h[0] == "galaxy-kernel-v31" ? 31 : h[0] == "galaxy-kernel-v30" ? 30 : h[0] == "galaxy-kernel-v29" ? 29 : h[0] == "galaxy-kernel-v28" ? 28 : h[0] == "galaxy-kernel-v27" ? 27 : h[0] == "galaxy-kernel-v26" ? 26 : h[0] == "galaxy-kernel-v25" ? 25 : h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
++    result.snapshot_version_ = h[0] == "galaxy-kernel-v32" ? 32 : h[0] == "galaxy-kernel-v31" ? 31 : h[0] == "galaxy-kernel-v30" ? 30 : h[0] == "galaxy-kernel-v29" ? 29 : h[0] == "galaxy-kernel-v28" ? 28 : h[0] == "galaxy-kernel-v27" ? 27 : h[0] == "galaxy-kernel-v26" ? 26 : h[0] == "galaxy-kernel-v25" ? 25 : h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
+     result.tick_ = u64(h[2]);
+     result.next_entity_id_ = u64(h[3]);
+     if (result.next_entity_id_ == 0) throw std::runtime_error("snapshot: invalid next entity ID");
+@@ -3397,6 +3488,31 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
+             if(pieces.count(key) || fixture_edge_conflicts(result.storage(site),key))
+                 throw std::runtime_error("snapshot: duplicate or intersecting fixture");
+             pieces.emplace(key,ColonyFixture{kind,source,opened==1,mass});
++        } else if(f[0]=="construction_depot" && result.snapshot_version_>=32){
++            require_fields(f,3);
++            const auto site=u64(f[1]);const auto amount=i64(f[2]);
++            if(!site||!result.built_outposts_.count(site)||amount<0||amount>1000000||
++               !result.construction_supplies_.emplace(site,ConstructionSupplies{amount,{},{}}).second)
++                throw std::runtime_error("snapshot: invalid construction depot");
++        } else if(f[0]=="construction_carry" && result.snapshot_version_>=32){
++            require_fields(f,4);
++            const auto site=u64(f[1]),npc=u64(f[2]);const auto qty=i64(f[3]);
++            const auto it=result.construction_supplies_.find(site);
++            const auto worker=result.npcs_.find(npc);
++            // NPC records may occur later in the stream. Identity is checked
++            // after all records have been parsed.
++            (void)worker;
++            if(!npc||it==result.construction_supplies_.end()||qty<1||qty>2||
++               !it->second.carried.emplace(npc,qty).second)
++                throw std::runtime_error("snapshot: invalid carried construction modules");
++        } else if(f[0]=="construction_delivery" && result.snapshot_version_>=32){
++            require_fields(f,5);
++            const auto site=u64(f[1]);const auto x=i64(f[2]),y=i64(f[3]),qty=i64(f[4]);
++            const auto it=result.construction_supplies_.find(site);
++            if(it==result.construction_supplies_.end() || x<-kPlacementBound || x>kPlacementBound ||
++               y<-kPlacementBound || y>kPlacementBound || qty<1 || qty>1000000 ||
++               !it->second.delivered.emplace(std::make_pair(static_cast<int>(x),static_cast<int>(y)),qty).second)
++                throw std::runtime_error("snapshot: invalid delivered construction modules");
+         } else if(f[0]=="geology" && result.snapshot_version_>=8){
+             require_fields(f,6);
+             const auto id=u64(f[1]),tax=u64(f[2]);
+@@ -3662,7 +3778,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
+             c.id = u64(f[1]); c.execute_tick = u64(f[2]); c.sequence = u64(f[3]);
+             c.issuer = u64(f[4]); c.actor = u64(f[5]); c.target = u64(f[6]);
+             auto action = u64(f[7]);
+-            if (action > (result.snapshot_version_ >= 31 ? static_cast<unsigned>(Action::SetColonyDoor) : result.snapshot_version_ >= 30 ? static_cast<unsigned>(Action::CompleteConveyorRoute) : result.snapshot_version_ >= 29 ? static_cast<unsigned>(Action::PlaceFactoryEquipment) : result.snapshot_version_ >= 28 ? static_cast<unsigned>(Action::ConstructWorkshopLink) : result.snapshot_version_ >= 27 ? static_cast<unsigned>(Action::ConstructStorageLink) : result.snapshot_version_ >= 26 ? static_cast<unsigned>(Action::TransferStorageNodeStack) : result.snapshot_version_ >= 25 ? static_cast<unsigned>(Action::TransferStorageStack) : result.snapshot_version_ >= 24 ? static_cast<unsigned>(Action::TransferWorkshopStack) : result.snapshot_version_ >= 23 ? static_cast<unsigned>(Action::TransferWorkshopFinalOutput) : result.snapshot_version_ >= 22 ? static_cast<unsigned>(Action::TransferWorkshopOutput) : result.snapshot_version_ >= 21 ? static_cast<unsigned>(Action::HostCrewLoss) : result.snapshot_version_ >= 20 ? static_cast<unsigned>(Action::AssignFarmMentor) : result.snapshot_version_ >= 19 ? static_cast<unsigned>(Action::AssignPolicyInspectors) : result.snapshot_version_ >= 18 ? static_cast<unsigned>(Action::TransferWaterworksFeed) : result.snapshot_version_ >= 17 ? static_cast<unsigned>(Action::ConstructReclaimer) : result.snapshot_version_ >= 16 ? static_cast<unsigned>(Action::AssignClinicStaff) : result.snapshot_version_ >= 15 ? static_cast<unsigned>(Action::AssignCommunityStaff) : result.snapshot_version_ >= 14 ? static_cast<unsigned>(Action::SetUtilityMaintenance) : result.snapshot_version_ >= 13 ? static_cast<unsigned>(Action::RepairUtility) : result.snapshot_version_ >= 12 ? static_cast<unsigned>(Action::AssignHabitatResidents) : result.snapshot_version_ >= 11 ? static_cast<unsigned>(Action::AssignFarmWorkers) : result.snapshot_version_ >= 10 ? static_cast<unsigned>(Action::LoadLifeWater) : result.snapshot_version_ >= 9 ? static_cast<unsigned>(Action::FabricateMaterialModule) : result.snapshot_version_ >= 7 ? static_cast<unsigned>(Action::ConstructOutpost) : result.snapshot_version_ >= 6 ? static_cast<unsigned>(Action::DeliverGateSpares) : result.snapshot_version_ >= 5 ? static_cast<unsigned>(Action::SetGatePairOnline) : result.snapshot_version_ >= 4 ? static_cast<unsigned>(Action::SellOre) : static_cast<unsigned>(Action::UnloadOre))) throw std::runtime_error("snapshot: invalid action");
++            if (action > (result.snapshot_version_ >= 32 ? static_cast<unsigned>(Action::BuildColonyFixtureFromDelivery) : result.snapshot_version_ >= 31 ? static_cast<unsigned>(Action::SetColonyDoor) : result.snapshot_version_ >= 30 ? static_cast<unsigned>(Action::CompleteConveyorRoute) : result.snapshot_version_ >= 29 ? static_cast<unsigned>(Action::PlaceFactoryEquipment) : result.snapshot_version_ >= 28 ? static_cast<unsigned>(Action::ConstructWorkshopLink) : result.snapshot_version_ >= 27 ? static_cast<unsigned>(Action::ConstructStorageLink) : result.snapshot_version_ >= 26 ? static_cast<unsigned>(Action::TransferStorageNodeStack) : result.snapshot_version_ >= 25 ? static_cast<unsigned>(Action::TransferStorageStack) : result.snapshot_version_ >= 24 ? static_cast<unsigned>(Action::TransferWorkshopStack) : result.snapshot_version_ >= 23 ? static_cast<unsigned>(Action::TransferWorkshopFinalOutput) : result.snapshot_version_ >= 22 ? static_cast<unsigned>(Action::TransferWorkshopOutput) : result.snapshot_version_ >= 21 ? static_cast<unsigned>(Action::HostCrewLoss) : result.snapshot_version_ >= 20 ? static_cast<unsigned>(Action::AssignFarmMentor) : result.snapshot_version_ >= 19 ? static_cast<unsigned>(Action::AssignPolicyInspectors) : result.snapshot_version_ >= 18 ? static_cast<unsigned>(Action::TransferWaterworksFeed) : result.snapshot_version_ >= 17 ? static_cast<unsigned>(Action::ConstructReclaimer) : result.snapshot_version_ >= 16 ? static_cast<unsigned>(Action::AssignClinicStaff) : result.snapshot_version_ >= 15 ? static_cast<unsigned>(Action::AssignCommunityStaff) : result.snapshot_version_ >= 14 ? static_cast<unsigned>(Action::SetUtilityMaintenance) : result.snapshot_version_ >= 13 ? static_cast<unsigned>(Action::RepairUtility) : result.snapshot_version_ >= 12 ? static_cast<unsigned>(Action::AssignHabitatResidents) : result.snapshot_version_ >= 11 ? static_cast<unsigned>(Action::AssignFarmWorkers) : result.snapshot_version_ >= 10 ? static_cast<unsigned>(Action::LoadLifeWater) : result.snapshot_version_ >= 9 ? static_cast<unsigned>(Action::FabricateMaterialModule) : result.snapshot_version_ >= 7 ? static_cast<unsigned>(Action::ConstructOutpost) : result.snapshot_version_ >= 6 ? static_cast<unsigned>(Action::DeliverGateSpares) : result.snapshot_version_ >= 5 ? static_cast<unsigned>(Action::SetGatePairOnline) : result.snapshot_version_ >= 4 ? static_cast<unsigned>(Action::SellOre) : static_cast<unsigned>(Action::UnloadOre))) throw std::runtime_error("snapshot: invalid action");
+             c.action = static_cast<Action>(action);
+             auto tx = i64(f[8]), ty = i64(f[9]);
+             if (tx < std::numeric_limits<int>::min() || tx > std::numeric_limits<int>::max() ||
+@@ -3884,6 +4000,16 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
+         throw std::runtime_error("snapshot: pending command receipt missing");
+     for (const auto id : event_ids) if (!result.submitted_ids_.count(id))
+         throw std::runtime_error("snapshot: event receipt missing");
++    if(result.snapshot_version_>=32)for(const auto& [site,stock]:result.construction_supplies_){
++        const auto op=result.built_outposts_.find(site);
++        if(op==result.built_outposts_.end())throw std::runtime_error("snapshot: construction depot has no site");
++        for(const auto& [npc,qty]:stock.carried){(void)qty;
++            const auto id=result.npcs_.find(npc);
++            if(id==result.npcs_.end() || id->second.home_ship!=op->second.source_colony_ship ||
++               id->second.location!=site || id->second.role!=NpcRole::Habitat)
++                throw std::runtime_error("snapshot: construction cargo assigned to wrong worker");
++        }
++    }
+     if(result.snapshot_version_>=31){
+         std::map<std::uint64_t,std::pair<Outcome,std::int64_t>> applied;
+         for(const auto& e:result.events_)
+@@ -4241,6 +4367,7 @@ void Simulation::swap(Simulation& other) noexcept {
+     workshops_.swap(other.workshops_);
+     storages_.swap(other.storages_);
+     colony_fixtures_.swap(other.colony_fixtures_);
++    construction_supplies_.swap(other.construction_supplies_);
+     geology_.swap(other.geology_);
+     activity_events_.swap(other.activity_events_);
+     swap(snapshot_version_, other.snapshot_version_);
+@@ -4401,6 +4528,29 @@ std::int64_t Simulation::total_ore() const {
+             total+=cost;
+         }
+     }
++    for(const auto& [site,stock]:construction_supplies_){
++        if(!built_outposts_.count(site) || stock.depot<0 || stock.depot>1000000)
++            throw std::overflow_error("invalid construction depot");
++        std::int64_t modules=stock.depot;
++        for(const auto& [npc,qty]:stock.carried){
++            const auto id=npcs_.find(npc);
++            if(id==npcs_.end() || id->second.location!=site ||
++               id->second.home_ship!=built_outposts_.at(site).source_colony_ship ||
++               qty<1 || qty>2 || modules>1000000000-qty)
++                throw std::overflow_error("invalid NPC module cargo");
++            modules+=qty;
++        }
++        for(const auto& [cell,qty]:stock.delivered){
++            if(cell.first<-kPlacementBound || cell.first>kPlacementBound ||
++               cell.second<-kPlacementBound || cell.second>kPlacementBound ||
++               qty<1 || qty>1000000 || modules>1000000000-qty)
++                throw std::overflow_error("invalid delivered construction stock");
++            modules+=qty;
++        }
++        if(total>std::numeric_limits<std::int64_t>::max()-2*modules)
++            throw std::overflow_error("construction materials exceed world mass");
++        total+=2*modules;
++    }
+     // Only the WHOLE world must conserve complete ore-equivalent mass;
+     // individual inventories can now hold a single kilogram stack.
+     if(colony_cargo_kg>std::numeric_limits<std::int64_t>::max()-life_mass_kg)
+diff --git a/src/factory_colony_protocol.hpp b/src/factory_colony_protocol.hpp
+index 96ea396..90f75a1 100644
+--- a/src/factory_colony_protocol.hpp
++++ b/src/factory_colony_protocol.hpp
+@@ -141,24 +141,49 @@ public:
+                 if(n.home_ship!=ship_||n.location!=requested_site||n.role!=NpcRole::Habitat)continue;
+                 if(!first)out+=',';first=false;out+=std::to_string(id);
+             }
+-            out+="],\"jobs\":[";first=true;
++            std::int64_t depot=0,in_transit=0,delivered=0;
++            if(const auto* stocks=world_.world().construction_supplies(requested_site)){
++                depot=stocks->depot;
++                for(const auto& [id,qty]:stocks->carried){(void)id;in_transit+=qty;}
++                for(const auto& [key,qty]:stocks->delivered){(void)key;delivered+=qty;}
++            }
++            out+="],\"supply\":{\"depot\":"+std::to_string(depot)+
++                 ",\"carried\":"+std::to_string(in_transit)+
++                 ",\"delivered\":"+std::to_string(delivered)+"},\"jobs\":[";first=true;
+             for(const auto& job:crews_.list(owner_,ship_,requested_site)){
+                 if(!first)out+=',';first=false;
+                 out+="{\"plan\":"+std::to_string(job.plan)+",\"completed\":"+std::to_string(job.completed)+
+                      ",\"total\":"+std::to_string(job.total)+",\"labor\":"+std::to_string(job.labor)+
+-                     ",\"required\":"+std::to_string(job.required)+",\"active\":"+(job.active?"true":"false")+
++                     ",\"required\":"+std::to_string(job.required)+
++                     ",\"deliveredModules\":"+std::to_string(job.delivered_modules)+
++                     ",\"active\":"+(job.active?"true":"false")+
+                      ",\"reason\":"+json_string(job.reason)+",\"workers\":[";
+                 bool first_worker=true;
+                 for(const auto& worker:job.workers){
+                     if(!first_worker)out+=',';first_worker=false;
+                     out+="{\"npc\":"+std::to_string(worker.npc)+",\"x\":"+std::to_string(worker.x)+
+-                         ",\"y\":"+std::to_string(worker.y)+"}";
++                         ",\"y\":"+std::to_string(worker.y)+
++                         ",\"carrying\":"+std::to_string(worker.carrying)+"}";
+                 }
+                 out+="]}";
+                 if(out.size()>100000)throw std::length_error("Crew list too large");
+             }
+             return out+"]}";
+         }
++        if(op=="CREW_SUPPLY"){
++            const auto decoded=decode64(arg);
++            if(decoded.empty() || decoded.size()>5 || decoded[0]=='+' ||
++               (decoded.size()>1 && decoded[0]=='0') ||
++               (decoded.size()>2 && decoded[0]=='-' && decoded[1]=='0'))
++                throw std::invalid_argument("Invalid construction depot transfer quantity");
++            std::size_t consumed=0;
++            const auto qty=std::stoll(decoded,&consumed);
++            if(consumed!=decoded.size() || qty==0 || qty< -1000 || qty>1000 ||
++               std::to_string(qty)!=decoded)
++                throw std::invalid_argument("Invalid construction depot transfer quantity");
++            const auto event=structures_.supply_action(Action::StageConstructionModules,qty,0,0,owner_,ship_,requested_site);
++            return "{\"ok\":true,\"event\":"+event_json(event)+"}";
++        }
+         if(op=="CREW_ASSIGN"){
+             const auto decoded=decode64(arg);const auto delimiter=decoded.find(',');
+             if(delimiter==std::string::npos||decoded.find(',',delimiter+1)!=std::string::npos)
+diff --git a/tests/ECON02B2d6ConstructionCrewHostTests.py b/tests/ECON02B2d6ConstructionCrewHostTests.py
+index dbe6927..57001ff 100644
+--- a/tests/ECON02B2d6ConstructionCrewHostTests.py
++++ b/tests/ECON02B2d6ConstructionCrewHostTests.py@@ -49,6 +49,19 @@ with tempfile.TemporaryDirectory(prefix='sg-npc-crew-live-') as temp:
+         site=sites['sites'][0]
+         status,crew=game.get('/factory/api/crews?site='+str(site))
+         assert status==200 and len(crew['residents'])==2 and crew['jobs']==[],(status,crew)
++        assert crew['supply']=={'depot':0,'carried':0,'delivered':0},crew
++        status,denied=game.post('/factory/api/crew_supply',{'site':site,'token':'forged','amount':2})
++        assert status==403,(status,denied)
++        status,denied=game.post('/factory/api/crew_supply',{'site':site,'token':token,'amount':1001})
++        assert status==400,(status,denied)
++        status,staged=game.post('/factory/api/crew_supply',{'site':site,'token':token,'amount':2})
++        assert status==200 and staged['event']['applied'],(status,staged)
++        status,stocked=game.get('/factory/api/crews?site='+str(site))
++        assert status==200 and stocked['supply']['depot']==2,(status,stocked)
++        status,unloaded=game.post('/factory/api/crew_supply',{'site':site,'token':token,'amount':-2})
++        assert status==200 and unloaded['event']['applied'],(status,unloaded)
++        status,empty=game.get('/factory/api/crews?site='+str(site))
++        assert status==200 and empty['supply']['depot']==0,(status,empty)
+         status,denied=game.post('/factory/api/crew_assign',{'site':site,'token':'forged','plan':1,'npc':crew['residents'][0]})
+         assert status==403,(status,denied)
+         status,denied=game.post('/factory/api/crew_assign',{'site':site,'token':token,'plan':1,'npc':crew['residents'][0]},
+diff --git a/tests/ECON02B2d6ConstructionCrewTests.cpp b/tests/ECON02B2d6ConstructionCrewTests.cpp
+index 617b6f3..1c26f31 100644
+--- a/tests/ECON02B2d6ConstructionCrewTests.cpp
++++ b/tests/ECON02B2d6ConstructionCrewTests.cpp
+@@ -38,9 +38,14 @@ int main(){
+    denied=false;try{crews.assign(plan,residents[0],8,ship,site);}catch(const std::invalid_argument&){denied=true;}CHECK(denied);
+    crews.assign(plan,residents[0],7,ship,site);crews.assign(plan,residents[1],7,ship,site);
+    denied=false;try{crews.assign(plan,residents[0],7,ship,site);}catch(const std::exception&){denied=true;}CHECK(denied);
+-   for(int i=0;i<16 && !structures.status(plan,7,ship,site).finished();++i){crews.advance(7,ship);w.step();}
++   for(int i=0;i<80 && !structures.status(plan,7,ship,site).finished();++i){crews.advance(7,ship);w.step();}
+    auto s=structures.status(plan,7,ship,site);CHECK(s.finished());CHECK(s.completed==3);
+-   CHECK(w.world().colony_ship(ship)->modules==modules-5);
++   const auto* stock=w.world().construction_supplies(site);
++   CHECK(stock!=nullptr);
++   auto loose=stock->depot;
++   for(const auto& [npc,qty]:stock->carried){(void)npc;loose+=qty;}
++   for(const auto& [cell,qty]:stock->delivered){(void)cell;loose+=qty;}
++   CHECK(w.world().colony_ship(ship)->modules+loose==modules-5);
+    CHECK(w.world().total_material_kg()==original_mass);
+    CHECK(!w.world().structure_edge_passable(site,0,0,1,0));
+    CHECK(!w.world().structure_edge_passable(site,1,0,2,0));
+@@ -56,7 +61,7 @@ int main(){
+    CHECK(crews.unassign(residents[0],7,ship,site));CHECK(crews.unassign(residents[1],7,ship,site));
+    crews.assign(second,residents[0],7,ship,site);
+    bool took_detour=false;
+-   for(int i=0;i<16 && !structures.status(second,7,ship,site).finished();++i){
++   for(int i=0;i<80 && !structures.status(second,7,ship,site).finished();++i){
+     crews.advance(7,ship);const auto before=crews.list(7,ship,site).back();
+     if(before.workers[0].y!=0)took_detour=true;
+     w.step();
+diff --git a/tests/ECON02B2d7MaterialHaulingTests.cpp b/tests/ECON02B2d7MaterialHaulingTests.cpp
+new file mode 100644
+index 0000000..1cadec3
+--- /dev/null
++++ b/tests/ECON02B2d7MaterialHaulingTests.cpp
+@@ -0,0 +1,100 @@
++#include "galaxy/NpcConstructionCrews.hpp"
++#include <chrono>
++#include <filesystem>
++#include <iostream>
++#include <stdexcept>
++#include <string>
++using namespace galaxy;
++namespace fs=std::filesystem;
++#define REQUIRE(x) do{if(!(x))throw std::runtime_error(std::string("B2d7 line ")+std::to_string(__LINE__)+": " #x);}while(0)
++static Event action(PersistentWorld& w,EntityId ship,std::uint64_t id,Action a,EntityId target=0,std::int64_t amount=1,int x=0,int y=0){
++    Command c{};c.id=id;c.sequence=id;c.issuer=7;c.actor=ship;c.target=target;c.amount=amount;c.thrust_x=x;c.thrust_y=y;c.action=a;c.execute_tick=w.world().tick()+1;
++    REQUIRE(w.submit(c));w.step();REQUIRE(w.world().events().back().command_id==id);return w.world().events().back();
++}
++static void good(PersistentWorld& w,EntityId ship,std::uint64_t id,Action a,EntityId target=0,std::int64_t amount=1,int x=0,int y=0){REQUIRE(action(w,ship,id,a,target,amount,x,y).result==Outcome::Applied);}
++static std::int64_t in_custody(const Simulation& sim,EntityId site){
++    const auto* c=sim.construction_supplies(site);if(!c)return 0;
++    auto n=c->depot;for(const auto& [id,qty]:c->carried){(void)id;n+=qty;}
++    for(const auto& [key,qty]:c->delivered){(void)key;n+=qty;}return n;
++}
++int main(){
++ const auto root=fs::temp_directory_path()/("sg_b2d7_"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));fs::create_directories(root);
++ try{
++  const auto path=(root/"world.sqlite").string();
++  Simulation initial(850);const auto ship=initial.add_colony_ship(7,{0,0},500,8);
++  initial.provision_colony_genesis(ship,1000,3000,1000,1000,1000);
++  const auto rock=initial.add_asteroid({1000,0},180);initial.enable_individual_workforce();
++  const auto expected_mass=initial.total_material_kg();
++  EntityId site=0;std::uint64_t npc=0;std::int64_t first=0,second=0,starting_modules=0;
++  {
++   PersistentWorld w(path,std::move(initial));
++   good(w,ship,1,Action::Mine,rock,80);good(w,ship,2,Action::RefineOre,0,80);
++   good(w,ship,3,Action::FabricateModule,0,30);good(w,ship,4,Action::ConstructOutpost);
++   site=w.world().built_outposts().begin()->first;
++   good(w,ship,5,Action::ConstructHabitat,site);
++   good(w,ship,6,Action::TransferHabitatStock,site,20,1);
++   good(w,ship,7,Action::TransferHabitatStock,site,20,2);
++   good(w,ship,8,Action::TransferHabitatStock,site,20,3);
++   good(w,ship,9,Action::AssignHabitatResidents,site,1);
++   for(const auto& [id,r]:w.world().npc_records())if(r.location==site && r.role==NpcRole::Habitat)npc=id;
++   REQUIRE(npc!=0);starting_modules=w.world().colony_ship(ship)->modules;
++   construction::Plans plans(path,w);construction::Crews crews(path,w,plans);
++   first=plans.create("sg-colony-structure-plan-v1\n1,7,0\n",7,ship,site);
++   crews.assign(first,npc,7,ship,site);
++   bool picked=false;
++   for(int i=0;i<20&&!picked;++i){crews.advance(7,ship);w.step();
++    const auto* supplies=w.world().construction_supplies(site);
++    picked=supplies && supplies->carried.count(npc)>0;
++   }
++   REQUIRE(picked);
++   REQUIRE(plans.status(first,7,ship,site).completed==0);
++   REQUIRE(w.world().total_material_kg()==expected_mass);
++   REQUIRE(w.world().colony_ship(ship)->modules+in_custody(w.world(),site)==starting_modules);
++   // An unassigned worker cannot magically destroy their carried cargo.
++   bool refused=false;try{crews.unassign(npc,7,ship,site);}catch(const std::invalid_argument&){refused=true;}REQUIRE(refused);
++  }
++  {
++   PersistentWorld w(path,Simulation(1));construction::Plans plans(path,w);construction::Crews crews(path,w,plans);
++   const auto* supplies=w.world().construction_supplies(site);
++   REQUIRE(supplies && supplies->carried.at(npc)==1);
++   REQUIRE(w.world().total_material_kg()==expected_mass);
++   // No forged worker can claim cargo; this is checked by authoritative world.
++   REQUIRE(plans.supply_action(Action::PickupConstructionModules,999999,1,0,7,ship,site).result==Outcome::InvalidTarget);
++   REQUIRE(w.world().total_material_kg()==expected_mass);
++   for(int i=0;i<100&&!plans.status(first,7,ship,site).finished();++i){crews.advance(7,ship);w.step();}
++   REQUIRE(plans.status(first,7,ship,site).finished());
++   REQUIRE(w.world().colony_fixtures(site).size()==1);
++   REQUIRE(w.world().colony_ship(ship)->modules+in_custody(w.world(),site)==starting_modules-1);
++   REQUIRE(w.world().total_material_kg()==expected_mass);
++   REQUIRE(w.world().construction_supplies(site)->carried.count(npc)==0);
++   REQUIRE(crews.unassign(npc,7,ship,site));
++   second=plans.create("sg-colony-structure-plan-v1\n2,9,0\n",7,ship,site);
++   crews.assign(second,npc,7,ship,site);
++   bool carrying=false;
++   for(int i=0;i<60&&!carrying;++i){crews.advance(7,ship);w.step();
++    const auto* s=w.world().construction_supplies(site);carrying=s&&s->carried.count(npc)>0;
++   }
++   REQUIRE(carrying);
++   REQUIRE(plans.cancel(second,7,ship,site));
++   const auto before=w.world().colony_ship(ship)->modules+in_custody(w.world(),site);
++   // No construction step can be committed after plan cancellation.
++   for(int i=0;i<65;++i){crews.advance(7,ship);w.step();}
++   REQUIRE(plans.status(second,7,ship,site).cancelled);
++   REQUIRE(w.world().colony_fixtures(site).size()==1);
++   REQUIRE(w.world().construction_supplies(site)->carried.count(npc)==0);
++   REQUIRE(w.world().colony_ship(ship)->modules+in_custody(w.world(),site)==before);
++   REQUIRE(w.world().total_material_kg()==expected_mass);
++  }
++  {
++   PersistentWorld w(path,Simulation(2));construction::Plans plans(path,w);construction::Crews crews(path,w,plans);
++   REQUIRE(plans.status(first,7,ship,site).finished());
++   REQUIRE(plans.status(second,7,ship,site).cancelled);
++   REQUIRE(w.world().total_material_kg()==expected_mass);
++   REQUIRE(w.world().construction_supplies(site)->carried.count(npc)==0);
++   REQUIRE(crews.unassign(npc,7,ship,site));
++  }
++  fs::remove_all(root);
++  std::cout<<"ECON-02B2d7 PASS: depot -> named NPC cargo -> delivery -> build; crash recovery; cancelled cargo return; no creation of modules\n";
++  return 0;
++ }catch(const std::exception& e){std::cerr<<"ECON-02B2d7 FAIL: "<<e.what()<<'\n';fs::remove_all(root);return 1;}
++}
+diff --git a/viewer/interactive.html b/viewer/interactive.html
+index 35613ce..c4e9d6a 100644
+--- a/viewer/interactive.html
++++ b/viewer/interactive.html
+@@ -61,7 +61,8 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
+ <div class="controls" style="padding:8px 0;gap:5px"><button id="structureAuthorize" class="primary">Authorize plan</button><label for="structurePlan">Plan</label><select id="structurePlan"><option value="">None</option></select><button id="structureBuildNext">Construct next</button><button id="structureCancel">Cancel plan</button></div>
+ <div class="controls" style="padding:8px 0;gap:5px"><label for="structureDoor">Built door</label><select id="structureDoor"><option value="">None</option></select><button id="structureOpenDoor">Open</button><button id="structureCloseDoor">Close</button></div>
+ <h3 style="margin:9px 0 5px">NPC construction crews</h3>
+-<div class="help">Assign existing on-site habitat residents. Workers move around installed walls and doors, contribute labor over simulation ticks, and consume actual construction modules when a step finishes. Assigning workers does not create or transfer materials.</div>
++<div class="help">Construction materials are real: colony ship → site depot → NPC carried cargo (two modules maximum) → delivered at the build cell → finished structure. Crew logistics run on the colony simulation; the ship must be in construction range to restock the depot. Paused cargo remains with the worker; cancelled jobs return cargo through a real depot receipt.</div>
++<div class="controls" style="padding:8px 0;gap:5px"><label for="crewSupplyAmount">Depot modules</label><input id="crewSupplyAmount" type="number" min="1" max="1000" step="1" value="8" style="width:80px"><button id="crewSupplyDeposit">Move from ship</button><button id="crewSupplyWithdraw">Return to ship</button></div>
+ <div class="controls" style="padding:8px 0;gap:5px"><label for="crewResident">Resident NPC</label><select id="crewResident"><option value="">No local residents</option></select><button id="crewAssign">Assign to selected plan</button><button id="crewUnassign">Remove from duty</button><button id="crewPause">Pause crew</button><button id="crewResume">Resume crew</button></div>
+ <div id="crewStatus" class="help" role="status" aria-live="polite" style="white-space:pre-wrap;max-height:180px;overflow:auto">No active construction crews.</div>
+ <div id="structureStatus" class="help" role="status" aria-live="polite" style="white-space:pre-wrap">Open a colony session to inspect physical structures.</div>
+diff --git a/viewer/structures.js b/viewer/structures.js
+index 2b5882d..7ec22a4 100644
+--- a/viewer/structures.js
++++ b/viewer/structures.js
+@@ -1,7 +1,7 @@
+ /* ECON-02B2d5 — colony-owned structural plans, not a second world writer. */
+ (function(){'use strict';
+ const $=id=>document.getElementById(id);
+-let site=null, token='', listing={structures:[],plans:[]}, crews={residents:[],jobs:[]}, active=false;
++let site=null, token='', listing={structures:[],plans:[]}, crews={residents:[],jobs:[],supply:{}}, active=false;
+ function feedback(text){$('structureStatus').textContent=text;}
+ async function json(path,body){
+  const response=await fetch(path,body===undefined?{cache:'no-store'}:{
+@@ -54,11 +54,13 @@ function renderCrews(){
+  const assigned=new Set(crews.jobs.flatMap(j=>j.workers.map(w=>String(w.npc))));
+  for(const id of crews.residents)select.append(option(id,`NPC #${id}${assigned.has(String(id))?' · assigned':''}`));
+  select.value=crews.residents.some(id=>String(id)===old)?old:crews.residents.length?String(crews.residents[0]):'';
++ const supply=crews.supply||{};
++ const stockLine=`Site modules: depot ${supply.depot||0} · carried ${supply.carried||0} · delivered ${supply.delivered||0}`;
+  const text=crews.jobs.map(j=>{
+-  const people=j.workers.map(w=>`#${w.npc} at (${w.x},${w.y})`).join(', ')||'No assigned workers';
+-  return `Plan #${j.plan} · ${j.active?'Working':'Paused/complete'} · ${j.completed}/${j.total} · labor ${j.labor}/${j.required}\n  ${people}\n  ${j.reason||'Ready'}`;
++  const people=j.workers.map(w=>`#${w.npc} at (${w.x},${w.y}) · carrying ${w.carrying||0}`).join(', ')||'No assigned workers';
++  return `Plan #${j.plan} · ${j.active?'Working':'Paused/complete'} · ${j.completed}/${j.total} · labor ${j.labor}/${j.required} · delivered to site ${j.deliveredModules||0}\n  ${people}\n  ${j.reason||'Ready'}`;
+  });
+- $('crewStatus').textContent=text.join('\n')||'No construction crew assignments yet. Build a habitat and assign residents first.';
++ $('crewStatus').textContent=stockLine+'\n'+(text.join('\n')||'No construction crew assignments yet. Build a habitat and assign residents first.');
+ }
+ function render(){
+  draw();renderCrews();
+@@ -107,6 +109,7 @@ async function submit(path,payload){
+   feedback(path.endsWith('register')?`Authorized plan #${r.plan.id} for outpost #${site}.`:
+    path.endsWith('step')?`Construction ${r.event.applied?'committed':'rejected'}; ${r.plan.completed}/${r.plan.total} steps complete.`:
+    path.endsWith('cancel')?'Remaining plan steps cancelled; completed structures remain.':
++   path.endsWith('crew_supply')?`Construction depot transfer ${r.event.applied?'committed':'rejected'}.`:
+    path.includes('/crew_')?'NPC construction-duty assignment updated.':
+    'Door state committed in the colony simulation.');
+  }catch(err){feedback('Construction rejected: '+err.message);}
+@@ -138,6 +141,12 @@ for(const [button,open] of [['structureOpenDoor',true],['structureCloseDoor',fal
+   const [kind,x,y]=selected.split(',').map(Number);
+   submit('/factory/api/structure_door',{kind,x,y,open});
+  });
++for(const [button,direction] of [['crewSupplyDeposit',1],['crewSupplyWithdraw',-1]])
++ $(button).addEventListener('click',()=>{
++  const amount=Number($('crewSupplyAmount').value);
++  if(!Number.isSafeInteger(amount)||amount<1||amount>1000){feedback('Depot transfer must be 1 to 1000 modules.');return;}
++  submit('/factory/api/crew_supply',{amount:direction*amount});
++ });
+ $('crewAssign').addEventListener('click',()=>{
+  const plan=Number($('structurePlan').value),npc=Number($('crewResident').value);
+  if(!Number.isSafeInteger(plan)||plan<=0||!Number.isSafeInteger(npc)||npc<=0){feedback('Choose a plan and existing resident.');return;}

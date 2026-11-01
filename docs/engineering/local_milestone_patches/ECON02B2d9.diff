@@ -1,0 +1,576 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 8599cb7..9a4fd18 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -714,3 +714,10 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+       --relay ${CMAKE_CURRENT_SOURCE_DIR}/live/interactive_relay.py)
+   set_tests_properties(ECON02B2d6_NPCConstruction_HTTP PROPERTIES TIMEOUT 75)
+ endif()
++
++# ECON-02B2d9: prioritized, opt-in autonomous construction allocation.
++if(BUILD_TESTING)
++  add_executable(galaxy_econ02b2d9_priority_tests tests/ECON02B2d9PriorityAllocatorTests.cpp)
++  target_link_libraries(galaxy_econ02b2d9_priority_tests PRIVATE galaxy_kernel SQLite::SQLite3)
++  add_test(NAME ECON02B2d9_PriorityAllocator COMMAND galaxy_econ02b2d9_priority_tests)
++endif()
+diff --git a/docs/engineering/ECON02B2d9_Priority_Autonomy_Engineering_Report_2026-11-01.md b/docs/engineering/ECON02B2d9_Priority_Autonomy_Engineering_Report_2026-11-01.md
+new file mode 100644
+index 0000000..65609f3
+--- /dev/null
++++ b/docs/engineering/ECON02B2d9_Priority_Autonomy_Engineering_Report_2026-11-01.md
+@@ -0,0 +1,58 @@
++# ECON-02B2d9 — Construction priorities and autonomous colony allocation
++
++**Date:** November 1, 2026
++**Project:** Single Galaxy (original space-colony game)
++**Source baseline:** `SingleGalaxy_ECON02B2d8_Multi_Source_Allocations_Source_Tests_2026-11-01.zip`
++**Development environment:** Local Linux C++/SQLite; GitHub is the repository, not the primary development hub.
++
++## Objective and boundary
++
++Allow colony administration to prioritize authorized construction plans, reuse *uncommitted* stock across competing projects, and opt into NPC worker reassignment while retaining the single simulation writer, durable inventory conservation, and individual NPC identities.
++
++**This milestone does not create NPCs, materialize inventory, grant AI authorization, or make inter-colony shipments instantaneous.** The interface remains part of the colony gameplay session. Only the host-controlled `PersistentWorld` may transfer modules through `Simulation` Actions.
++
++## Implemented
++
++1. **Persistent plan priority:** Each `sg_construction_jobs` row now has a bounded priority (`0` backlog, `1` normal, `2` high, `3` critical), defaulting to normal for all old and new plans. Scheduling is deterministic: descending priority, then ascending durable plan ID. Plan priority is authoritative administrative policy, not a measure of stock in the simulation ledger.
++2. **Opt-in autonomous staffing:** The new per-plan `autonomy` flag defaults OFF. When enabled, an active, unfinished project with no assigned NPC may acquire one existing idle, eligible habitat resident or borrow one unladen, otherwise eligible NPC from an autonomous donor plan. An active donor is eligible only if it has strictly lower priority; a paused, completed, cancelled, or blocked donor can also yield an unladen worker when its policy opted into autonomy. Existing aggregate non-construction role reservations, workshop staff and active restock assignments remain exclusions. Neither NPC cargo nor material custody moves with a reassignment.
++3. **Return to lower-priority work:** Workers can be returned to a resumed lower-priority autonomous plan after their higher-priority project completes, without forcing a manual unassignment. Reassignment operates on a durable `sg_construction_workers` identity record and preserves the worker's grid coordinates.
++4. **Reservation preemption:** If an active higher-priority crew needs material, has no unreserved reachable local source, and a lower-priority plan has an uncollected reservation at a reachable source, the scheduler releases only the needed quantity through the **journaled** `ReserveConstructionModules` Action. The higher-priority plan makes its own normal reserve/pickup on a later tick. There is deliberately no raw SQL transfer of physical modules, and no theft of NPC-carried, site-delivered, or already-built materials. Each intermediate tick remains mass-conserving and durable.
++5. **SQLite migration:** On first open of a d8 save, missing `priority` and `autonomy` columns are added without deleting jobs, NPC assignments, or world state. Reopening is idempotent. New databases use the complete checked schema. A dedicated test starts with an actual legacy d8-format construction-job table and verifies migration through restart.
++6. **Colony UI and native policy endpoint:** The existing colony construction panel now offers priority selection and an autonomous-staffing checkbox for the selected plan. The validated HTTP route `POST /factory/api/crew_policy` maps to the native `CREW_POLICY` operation. Owner, ship, and site are derived from the host-controlled session; the relay validates token and origin as before and strictly checks integer priority and Boolean autonomy. `CREW_LIST` includes policy status for each visible plan.
++
++## Local verification
++
++| Check | Result |
++| --- | --- |
++| CMake/Ninja full native project build | **Passed** |
++| Native CTest non-live group | **66/66 passed** |
++| Native live/relay/HTTP group excluding two older tests | **26/26 passed** |
++| Two separately isolated older live/relay tests | **2/2 passed** |
++| Total disjoint native CTest selection | **94/94 passed**, across three runs; not one all-tests invocation |
++| `node --test tests/*.js` | **93/93 passed** |
++| Offline Chromium crew and supply controls | **Passed** (mocked browser data, not a conservation test) |
++| Real authenticated HTTP crew test | **Passed** including priority 3 save/restart and forged-token, malformed-priority, and Boolean-as-integer rejection |
++| Dedicated d9 native test | **Passed** for plan preemption, autonomous borrow/return, idle assignment, legacy schema, carried-cargo exclusion, restart and conservation |
++| Patch applied against exact d8 archive | Verified by source-content comparison during packaging |
++
++The 28-test live group was originally interrupted by the execution time limit with 26 tests reported passed; both unfinished tests passed in their own run. Subsequently the suite was rerun as a 26-test group plus the independent 2-test group, all passing.
++
++## Test significance and limitations
++
++- **What is proven:** A lower-priority plan's exclusive, unpicked depot reservation can be safely released and appropriated by the higher-priority scheduler with no duplication. A worker cannot be reassigned while carrying physical modules; the cargo remains in the canonical world and survives SQLite restart. When cargo is returned via an authoritative Action, the resident may be assigned to the higher-priority job. After high-priority completion, a lower-priority autonomous job may reclaim the resident. Idleness is not treated as consent unless the *target* project explicitly opted into autonomous staffing.
++- **What is not proven:** Global factory prioritization across all colonies; preempting cross-site transport contracts; predictive material procurement; fairness guarantees if critical jobs are permanently backlogged; congestion, vehicle transport or true 3D NPC navigation. Reservations held at an inaccessible or demolished storage node still require a separate consistency/recovery mechanism; no remote movement of inventory was introduced.
++- **Policy intentionally narrow:** Priority preemption only operates when stock would otherwise block a higher-priority crew. Already staged NPC or cell stock is never moved by SQL. Multiple autonomous workers per project, strategic population management and independent colony leadership are not part of this gate.
++- **Windows:** Native Windows installer and GUI acceptance remain open. This milestone was compiled/tested on Linux.
++
++## Changed source files
++
++- `src/NpcConstructionCrews.cpp`, `include/galaxy/NpcConstructionCrews.hpp`: durable job priority and autonomy, migration, deterministic scheduling and physical reservation reallocation.
++- `src/factory_colony_protocol.hpp`, `live/interactive_relay.py`: typed, session-bound `CREW_POLICY` operation and policy state on crew listings.
++- `viewer/interactive.html`, `viewer/structures.js`: policy selection inside colony construction UI, no separate competing world writer.
++- `tests/ECON02B2d9PriorityAllocatorTests.cpp`: new host-level conservation, worker/cargo and persistence coverage.
++- `tests/ECON02B2d6ConstructionCrewHostTests.py`, `scripts/colony_crew_browser_smoke.py`: authenticated HTTP / Chromium controls regression tests.
++- `CMakeLists.txt`: new native CTest target.
++
++## Recommended next gate — ECON-02B2d10
++
++Implement safe **depleted / unavailable source recovery and material-demand planning**: detect reservations stranded at no-longer-serviceable nodes, validate physically reachable alternative sources, and surface blocked dependencies before a job is repeatedly retried. Do not auto-refund delivered cargo, bypass non-resident job restrictions, or add arbitrary factory-floor size caps. Address congestion and player-away colony scheduling in later bounded, deterministic simulation tiers.
+diff --git a/include/galaxy/NpcConstructionCrews.hpp b/include/galaxy/NpcConstructionCrews.hpp
+index 5628495..b0256d3 100644
+--- a/include/galaxy/NpcConstructionCrews.hpp
++++ b/include/galaxy/NpcConstructionCrews.hpp
+@@ -20,6 +20,7 @@ struct CrewJob {
+     std::size_t completed=0,total=0;
+     std::int64_t labor=0,required=0;
+     bool active=false;
++    int priority=1;bool autonomy=false;
+     std::int64_t depot_modules=0,delivered_modules=0;
+     std::int64_t reserved_modules=0;std::uint32_t reserved_source_node=0;
+     std::string reason;
+@@ -33,6 +34,7 @@ public:
+     void assign(std::int64_t plan,std::uint64_t npc,PlayerId owner,EntityId ship,EntityId site);
+     bool unassign(std::uint64_t npc,PlayerId owner,EntityId ship,EntityId site);
+     bool set_active(std::int64_t plan,bool active,PlayerId owner,EntityId ship,EntityId site);
++    void set_policy(std::int64_t plan,int priority,bool autonomy,PlayerId owner,EntityId ship,EntityId site);
+     std::vector<CrewJob> list(PlayerId owner,EntityId ship,EntityId site)const;
+     void queue_restock(std::uint64_t npc,std::uint32_t node,PlayerId owner,EntityId ship,EntityId site);
+     bool cancel_restock(std::uint64_t npc,PlayerId owner,EntityId ship,EntityId site);
+diff --git a/live/interactive_relay.py b/live/interactive_relay.py
+index ed315e5..4ed0330 100644
+--- a/live/interactive_relay.py
++++ b/live/interactive_relay.py
+@@ -141,7 +141,7 @@ class SharedRuntime:
+         # does not open SQLite and cannot mint ship/player/owner authority.
+         if op not in ('SITES','HELLO','LIST','REGISTER','STEP','STATUS','CANCEL',
+                       'STRUCT_LIST','STRUCT_REGISTER','STRUCT_STEP','STRUCT_STATUS','STRUCT_CANCEL','STRUCT_DOOR',
+-                      'CREW_LIST','CREW_ASSIGN','CREW_UNASSIGN','CREW_ACTIVE','CREW_SUPPLY','CREW_RESTOCK','CREW_RESTOCK_CANCEL'):
++                      'CREW_LIST','CREW_ASSIGN','CREW_UNASSIGN','CREW_ACTIVE','CREW_POLICY','CREW_SUPPLY','CREW_RESTOCK','CREW_RESTOCK_CANCEL'):
+             raise ValueError('Unknown factory operation')
+         if type(site)!=int or not 0<=site<=100000000:
+             raise ValueError('Invalid factory site selector')
+@@ -327,6 +327,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
+             elif op=='crew_unassign' and set(doc)=={'token','site','npc'}:
+                 if type(doc['npc'])!=int or not 0<doc['npc']<2**63:raise ValueError('Invalid NPC identifier')
+                 argument=str(doc['npc']);native='CREW_UNASSIGN'
++            elif op=='crew_policy' and set(doc)=={'token','site','plan','priority','autonomy'}:
++                if type(doc['plan'])!=int or not 0<doc['plan']<2**63 or \
++                   type(doc['priority'])!=int or not 0<=doc['priority']<=3 or type(doc['autonomy'])!=bool:
++                    raise ValueError('Invalid crew priority/autonomy policy')
++                argument=base64.b64encode(f"{doc['plan']},{doc['priority']},{int(doc['autonomy'])}".encode('ascii')).decode('ascii')
++                native='CREW_POLICY'
+             elif op=='crew_active' and set(doc)=={'token','site','plan','active'}:
+                 if type(doc['plan'])!=int or not 0<doc['plan']<2**63 or type(doc['active'])!=bool:
+                     raise ValueError('Invalid crew duty request')
+diff --git a/scripts/colony_crew_browser_smoke.py b/scripts/colony_crew_browser_smoke.py
+index b5c7c4a..80ea8c9 100644
+--- a/scripts/colony_crew_browser_smoke.py
++++ b/scripts/colony_crew_browser_smoke.py
+@@ -24,6 +24,10 @@ with sync_playwright() as p:
+           else if(path==='/factory/api/structure_register'){
+             const plan={id:s.next++,site:42,completed:0,total:1,modulesRemaining:1,cancelled:false,conflicting:false,finished:false,reason:''};
+             s.plans.push(plan);data={ok:true,plan};
++          }else if(path==='/factory/api/crew_policy'){
++            const j=s.jobs.find(x=>x.plan===doc.plan);
++            if(!j)throw Error('Missing authorized crew plan');
++            j.priority=doc.priority;j.autonomy=doc.autonomy;data={ok:true,policyUpdated:true};
+           }else if(path==='/factory/api/crew_supply'){
+             if(s.supply.depot+doc.amount<0)throw Error('Insufficient depot stock');
+             s.supply.depot+=doc.amount;data={ok:true,event:{applied:true}};
+@@ -60,6 +64,11 @@ with sync_playwright() as p:
+     page.wait_for_function('window.__crew.jobs.length===1 && window.__crew.jobs[0].workers.length===1')
+     page.wait_for_function("document.querySelector('#crewStatus').textContent.includes('#101')")
+     assert '#101' in page.locator('#crewStatus').inner_text()
++    page.locator('#crewPriority').select_option('3')
++    page.locator('#crewAutonomy').check()
++    page.locator('#crewPolicy').click()
++    page.wait_for_function('window.__crew.jobs[0].priority===3 && window.__crew.jobs[0].autonomy===true')
++    page.wait_for_function("document.querySelector('#crewStatus').textContent.includes('priority 3')")
+     page.locator('#crewPause').click();page.wait_for_function('window.__crew.jobs[0].active===false')
+     page.locator('#crewResume').click();page.wait_for_function('window.__crew.jobs[0].active===true')
+     page.locator('#crewUnassign').click();page.wait_for_function('window.__crew.jobs[0].workers.length===0')
+diff --git a/src/NpcConstructionCrews.cpp b/src/NpcConstructionCrews.cpp
+index 3aa37f6..4c60abf 100644
+--- a/src/NpcConstructionCrews.cpp
++++ b/src/NpcConstructionCrews.cpp
+@@ -73,7 +73,17 @@ public:
+          "active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),"
+          "completed INTEGER NOT NULL DEFAULT 0 CHECK(completed>=0),"
+          "labor INTEGER NOT NULL DEFAULT 0 CHECK(labor>=0),"
+-         "last_tick INTEGER NOT NULL DEFAULT -1,reason TEXT NOT NULL DEFAULT '')");
++         "last_tick INTEGER NOT NULL DEFAULT -1,reason TEXT NOT NULL DEFAULT '',"
++         "priority INTEGER NOT NULL DEFAULT 1 CHECK(priority BETWEEN 0 AND 3),"
++         "autonomy INTEGER NOT NULL DEFAULT 0 CHECK(autonomy IN (0,1)))");
++  // Existing d8 worlds retain their jobs and worker positions on migration.
++  bool has_priority=false,has_autonomy=false;
++  {Query columns(db,"PRAGMA table_info(sg_construction_jobs)");while(columns.row()){
++    if(columns.t(1)=="priority")has_priority=true;
++    if(columns.t(1)=="autonomy")has_autonomy=true;
++  }}
++  if(!has_priority)sql(db,"ALTER TABLE sg_construction_jobs ADD COLUMN priority INTEGER NOT NULL DEFAULT 1 CHECK(priority BETWEEN 0 AND 3)");
++  if(!has_autonomy)sql(db,"ALTER TABLE sg_construction_jobs ADD COLUMN autonomy INTEGER NOT NULL DEFAULT 0 CHECK(autonomy IN (0,1))");
+   sql(db,"CREATE TABLE IF NOT EXISTS sg_construction_workers("
+          "npc_id INTEGER PRIMARY KEY,plan_id INTEGER NOT NULL REFERENCES sg_construction_jobs(plan_id),"
+          "x INTEGER NOT NULL DEFAULT 0,y INTEGER NOT NULL DEFAULT 0,"
+@@ -147,12 +157,25 @@ bool Crews::set_active(std::int64_t plan,bool active,PlayerId owner,EntityId shi
+  Query q(db_->db,"UPDATE sg_construction_jobs SET active=? WHERE plan_id=? AND owner=? AND ship=? AND site=?");
+  q.n(1,active?1:0);q.n(2,plan);q.n(3,owner);q.n(4,ship);q.n(5,site);q.done();return sqlite3_changes(db_->db)==1;
+ }
++// Priority is an administrative policy on an already authorized plan, not a
++// resource transfer. The actual preemption is a separate journaled world event.
++void Crews::set_policy(std::int64_t plan,int priority,bool autonomy,PlayerId owner,EntityId ship,EntityId site){
++ if(priority<0||priority>3)throw std::invalid_argument("Construction priority must be 0..3");
++ const auto state=structures_.status(plan,owner,ship,site);
++ if(state.cancelled||state.conflicting||state.finished())throw std::invalid_argument("Construction plan is not active");
++ validate_site(owner,ship,site);
++ Query put(db_->db,"INSERT OR IGNORE INTO sg_construction_jobs(plan_id,owner,ship,site,completed) VALUES(?,?,?,?,?)");
++ put.n(1,plan);put.n(2,owner);put.n(3,ship);put.n(4,site);put.n(5,static_cast<std::int64_t>(state.completed));put.done();
++ Query update(db_->db,"UPDATE sg_construction_jobs SET priority=?,autonomy=? WHERE plan_id=? AND owner=? AND ship=? AND site=?");
++ update.n(1,priority);update.n(2,autonomy?1:0);update.n(3,plan);update.n(4,owner);update.n(5,ship);update.n(6,site);update.done();
++ if(sqlite3_changes(db_->db)!=1)throw std::invalid_argument("Construction plan not owned by this colony");
++}
+ std::vector<CrewJob> Crews::list(PlayerId owner,EntityId ship,EntityId site)const{
+  validate_site(owner,ship,site);std::vector<CrewJob> result;
+- Query q(db_->db,"SELECT plan_id,active,completed,labor,reason FROM sg_construction_jobs WHERE owner=? AND ship=? AND site=? ORDER BY plan_id LIMIT 200");
++ Query q(db_->db,"SELECT plan_id,active,completed,labor,reason,priority,autonomy FROM sg_construction_jobs WHERE owner=? AND ship=? AND site=? ORDER BY plan_id LIMIT 200");
+  q.n(1,owner);q.n(2,ship);q.n(3,site);
+  while(q.row()){
+-  CrewJob job;job.plan=q.v(0);job.site=site;job.active=q.v(1)!=0;job.completed=q.v(2);job.labor=q.v(3);job.reason=q.t(4);
++  CrewJob job;job.plan=q.v(0);job.site=site;job.active=q.v(1)!=0;job.completed=q.v(2);job.labor=q.v(3);job.reason=q.t(4);job.priority=static_cast<int>(q.v(5));job.autonomy=q.v(6)!=0;
+   const auto s=structures_.status(job.plan,owner,ship,site);job.completed=s.completed;job.total=s.total;
+   if(const auto* supply=world_.world().construction_supplies(site)){
+    job.depot_modules=supply->depot;
+@@ -229,10 +252,53 @@ std::vector<SupplyRun> Crews::list_restock(PlayerId owner,EntityId ship,EntityId
+ }
+ void Crews::advance(PlayerId owner,EntityId ship){
+  const auto tick=world_.world().tick();
+- Query jobs(db_->db,"SELECT plan_id,site,completed,labor,last_tick,active FROM sg_construction_jobs WHERE owner=? AND ship=? ORDER BY plan_id LIMIT 200");
++ Query jobs(db_->db,"SELECT plan_id,site,completed,labor,last_tick,active,priority,autonomy FROM sg_construction_jobs WHERE owner=? AND ship=?");
+  jobs.n(1,owner);jobs.n(2,ship);
+- struct J{std::int64_t id;EntityId site;std::int64_t completed,labor,last_tick;bool active;};std::vector<J> pending;
+- while(jobs.row())pending.push_back({jobs.v(0),static_cast<EntityId>(jobs.v(1)),jobs.v(2),jobs.v(3),jobs.v(4),jobs.v(5)!=0});
++ struct J{std::int64_t id;EntityId site;std::int64_t completed,labor,last_tick;bool active;int priority;bool autonomy;};
++ std::vector<J> pending;
++ while(jobs.row())pending.push_back({jobs.v(0),static_cast<EntityId>(jobs.v(1)),jobs.v(2),jobs.v(3),jobs.v(4),jobs.v(5)!=0,static_cast<int>(jobs.v(6)),jobs.v(7)!=0});
++ std::stable_sort(pending.begin(),pending.end(),[](const J& a,const J& b){
++  if(a.priority!=b.priority)return a.priority>b.priority;
++  return a.id<b.id;
++ });
++ // Explicitly opted-in projects can recruit one idle, eligible resident or
++ // reassign an unladen worker from a lower-priority autonomous project.
++ // Do not alter NPC roles, spawn labor, or interrupt carried material custody.
++ for(const auto& target:pending){
++  if(!target.active||!target.autonomy)continue;
++  const auto status=structures_.status(target.id,owner,ship,target.site);
++  if(status.cancelled||status.conflicting||status.finished())continue;
++  Query workers(db_->db,"SELECT count(*) FROM sg_construction_workers WHERE plan_id=?");workers.n(1,target.id);
++  if(!workers.row()||workers.v(0)>0)continue;
++  bool staffed=false;
++  for(const auto& [npc,record]:world_.world().npc_records()){
++   if(record.home_ship!=ship||record.location!=target.site||record.role!=NpcRole::Habitat)continue;
++   try{validate_worker(npc,owner,ship,target.site);}catch(const std::exception&){continue;}
++   Query occupied(db_->db,"SELECT plan_id FROM sg_construction_workers WHERE npc_id=?");occupied.n(1,static_cast<std::int64_t>(npc));
++   if(occupied.row())continue;
++   Query supply_job(db_->db,"SELECT active FROM sg_construction_restock WHERE npc_id=?");supply_job.n(1,static_cast<std::int64_t>(npc));
++   if(supply_job.row()&&supply_job.v(0))continue;
++   assign(target.id,npc,owner,ship,target.site);staffed=true;break;
++  }
++  if(staffed)continue;
++  for(const auto& donor:pending){
++   if(donor.id==target.id||donor.site!=target.site||!donor.autonomy)continue;
++   const auto donor_status=structures_.status(donor.id,owner,ship,donor.site);
++   const bool released_duty=!donor.active||donor_status.finished()||donor_status.cancelled||donor_status.conflicting;
++   if(!released_duty && donor.priority>=target.priority)continue;
++   Query candidates(db_->db,"SELECT npc_id FROM sg_construction_workers WHERE plan_id=? ORDER BY npc_id");candidates.n(1,donor.id);
++   while(candidates.row()){
++    const auto npc=static_cast<std::uint64_t>(candidates.v(0));
++    const auto* cargo=world_.world().construction_supplies(target.site);
++    if(cargo&&cargo->carried.count(npc))continue;
++    try{validate_worker(npc,owner,ship,target.site);}catch(const std::exception&){continue;}
++    Query move(db_->db,"UPDATE sg_construction_workers SET plan_id=? WHERE npc_id=? AND plan_id=?");
++    move.n(1,target.id);move.n(2,static_cast<std::int64_t>(npc));move.n(3,donor.id);move.done();
++    staffed=sqlite3_changes(db_->db)==1;if(staffed)break;
++   }
++   if(staffed)break;
++  }
++ }
+  for(const auto& j:pending){
+   if(j.last_tick>=0&&static_cast<std::uint64_t>(j.last_tick)>=tick)continue;
+   std::string reason;std::int64_t labor=j.labor;
+@@ -392,6 +458,34 @@ void Crews::advance(PlayerId owner,EntityId ship){
+        reason=event.result==Outcome::Applied?"Reserved real modules at selected source":"Allocation refused";
+        break;
+       }
++      // Higher-priority plans may reclaim ONLY unpicked reservations from
++      // lower priorities. The release is an authoritative journaled Action;
++      // the higher-priority plan makes its own reservation next tick. Never
++      // steal delivered material or cargo carried by another NPC.
++      for(const auto& donor:pending){
++       if(donor.id==j.id||donor.site!=j.site||donor.priority>=j.priority)continue;
++       if(!supply)continue;
++       const auto hold=supply->reserved.find(donor.id);
++       if(hold==supply->reserved.end()||hold->second.modules<=0)continue;
++       Pos where{0,0};const auto node=hold->second.node;
++       if(node){
++        const auto* store=world_.world().storage(j.site);
++        if(!store||!store->equipment_positions.count(node))continue;
++        const auto& point=store->equipment_positions.at(node);
++        where={static_cast<int>(point.x),static_cast<int>(point.y)};
++       }
++       Pos next{};
++       if(where!=Pos{n.x,n.y}&&!next_cell(world_.world(),j.site,{n.x,n.y},where,next))continue;
++       if(where!=goal&&!next_cell(world_.world(),j.site,where,goal,next))continue;
++       const auto amount=std::min<std::int64_t>(hold->second.modules,needed-staged-in_transit-held);
++       if(amount<=0)continue;
++       const auto event=structures_.supply_action(Action::ReserveConstructionModules,donor.id,
++                         static_cast<int>(node),-static_cast<int>(amount),owner,ship,j.site);
++       if(event.result!=Outcome::Applied)throw std::runtime_error("Priority allocation release rejected");
++       reason="Released uncollected lower-priority reservation for reallocation";
++       break;
++      }
++      if(world_.world().tick()!=tick)break;
+       // Ship stock can enter only via the physical depot transfer, and never
+       // if any unclaimed modules are already at a reachable source.
+       const auto* shipstock=world_.world().colony_ship(ship);
+diff --git a/src/factory_colony_protocol.hpp b/src/factory_colony_protocol.hpp
+index bf18312..ed2aed2 100644
+--- a/src/factory_colony_protocol.hpp
++++ b/src/factory_colony_protocol.hpp
+@@ -188,6 +188,8 @@ public:
+                      ",\"reservedModules\":"+std::to_string(job.reserved_modules)+
+                      ",\"reservedNode\":"+std::to_string(job.reserved_source_node)+
+                      ",\"active\":"+(job.active?"true":"false")+
++                     ",\"priority\":"+std::to_string(job.priority)+
++                     ",\"autonomy\":"+(job.autonomy?"true":"false")+
+                      ",\"reason\":"+json_string(job.reason)+",\"workers\":[";
+                 bool first_worker=true;
+                 for(const auto& worker:job.workers){
+@@ -255,6 +257,17 @@ public:
+             return "{\"ok\":true,\"changed\":"+
+                 std::string(crews_.unassign(npc,owner_,ship_,requested_site)?"true":"false")+"}";
+         }
++        if(op=="CREW_POLICY"){
++            const auto decoded=decode64(arg);
++            const auto a=decoded.find(','),b=decoded.find(',',a==std::string::npos?0:a+1);
++            if(a==std::string::npos||b==std::string::npos||decoded.find(',',b+1)!=std::string::npos ||
++               b!=a+2||decoded[a+1]<'0'||decoded[a+1]>'3'||
++               (decoded.substr(b+1)!="0" && decoded.substr(b+1)!="1"))
++                throw std::invalid_argument("Invalid construction priority policy");
++            const auto plan=unsigned_id(decoded.substr(0,a));
++            crews_.set_policy(static_cast<std::int64_t>(plan),decoded[a+1]-'0',decoded.back()=='1',owner_,ship_,requested_site);
++            return "{\"ok\":true,\"policyUpdated\":true}";
++        }
+         if(op=="CREW_ACTIVE"){
+             const auto decoded=decode64(arg);const auto delimiter=decoded.find(',');
+             if(delimiter==std::string::npos||decoded.find(',',delimiter+1)!=std::string::npos ||
+diff --git a/tests/ECON02B2d6ConstructionCrewHostTests.py b/tests/ECON02B2d6ConstructionCrewHostTests.py
+index f5aed2e..a89ddfd 100644
+--- a/tests/ECON02B2d6ConstructionCrewHostTests.py
++++ b/tests/ECON02B2d6ConstructionCrewHostTests.py
+@@ -120,6 +120,18 @@ with tempfile.TemporaryDirectory(prefix='sg-npc-crew-live-') as temp:
+              'layout':'sg-colony-structure-plan-v1\n1,5,0\n'})
+         assert status==200,(status,more)
+         next_plan=more['plan']['id']
++        status,denied=game.post('/factory/api/crew_policy',{'site':site,'token':'forged',
++           'plan':next_plan,'priority':3,'autonomy':False})
++        assert status==403,(status,denied)
++        status,denied=game.post('/factory/api/crew_policy',{'site':site,'token':token,
++           'plan':next_plan,'priority':True,'autonomy':False})
++        assert status==400,(status,denied)
++        status,denied=game.post('/factory/api/crew_policy',{'site':site,'token':token,
++           'plan':next_plan,'priority':4,'autonomy':False})
++        assert status==400,(status,denied)
++        status,policy=game.post('/factory/api/crew_policy',{'site':site,'token':token,
++           'plan':next_plan,'priority':3,'autonomy':False})
++        assert status==200 and policy['policyUpdated'],(status,policy)
+         # The original workers must be explicitly reassigned, never cloned.
+         status,bad=game.post('/factory/api/crew_assign',{'token':token,'site':site,'plan':next_plan,'npc':crew['residents'][0]})
+         assert status==400,(status,bad)
+@@ -137,6 +149,7 @@ with tempfile.TemporaryDirectory(prefix='sg-npc-crew-live-') as temp:
+     try:
+         status,info=game.get('/factory/api/crews?site='+str(site))
+         assert status==200 and len(info['jobs'])==2 and info['jobs'][1]['active']==False,(status,info)
++        assert info['jobs'][1]['priority']==3 and info['jobs'][1]['autonomy'] is False,(status,info)
+         status,current=game.get('/factory/api/structures?site='+str(site))
+         assert status==200 and len(current['structures'])==3 and current['plans'][0]['finished'],current
+         status,token_new=game.get('/session');token=token_new['token']
+diff --git a/tests/ECON02B2d9PriorityAllocatorTests.cpp b/tests/ECON02B2d9PriorityAllocatorTests.cpp
+new file mode 100644
+index 0000000..388c8d5
+--- /dev/null
++++ b/tests/ECON02B2d9PriorityAllocatorTests.cpp
+@@ -0,0 +1,148 @@
++#include "galaxy/NpcConstructionCrews.hpp"
++#include <algorithm>
++#include <sqlite3.h>
++#include <chrono>
++#include <filesystem>
++#include <iostream>
++#include <stdexcept>
++#include <vector>
++using namespace galaxy;
++namespace fs=std::filesystem;
++#define CHECK(x) do{if(!(x))throw std::runtime_error(std::string("d9 line ")+std::to_string(__LINE__)+": " #x);}while(0)
++static void ok(PersistentWorld& w,EntityId ship,std::uint64_t id,Action a,EntityId target=0,std::int64_t n=1,int x=0,int y=0){
++ Command c{};c.id=id;c.sequence=id;c.issuer=7;c.actor=ship;c.target=target;c.amount=n;
++ c.thrust_x=x;c.thrust_y=y;c.action=a;c.execute_tick=w.world().tick()+1;
++ CHECK(w.submit(c));w.step();CHECK(w.world().events().back().result==Outcome::Applied);
++}
++static std::int64_t loose(const Simulation& w,EntityId site){
++ const auto* s=w.construction_supplies(site);if(!s)return 0;
++ std::int64_t n=s->depot;
++ for(const auto& [k,v]:s->node_modules){(void)k;n+=v;}
++ for(const auto& [k,v]:s->carried){(void)k;n+=v;}
++ for(const auto& [k,v]:s->delivered){(void)k;n+=v;}
++ for(const auto& [k,v]:s->reserved){(void)k;n+=v.modules;}
++ return n;
++}
++int main(){
++ const auto folder=fs::temp_directory_path()/("sg_d9_"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
++ fs::create_directories(folder);
++ try{
++  const auto db=(folder/"world.sqlite").string();
++  Simulation sim(900);const auto ship=sim.add_colony_ship(7,{0,0},500,8);
++  sim.provision_colony_genesis(ship,1000,3000,1000,1000,1000);
++  const auto rock=sim.add_asteroid({1000,0},180);sim.enable_individual_workforce();
++  const auto original=sim.total_material_kg();EntityId site=0;std::uint64_t npc=0;
++  std::int64_t low=0,high=0,low2=0,high2=0;
++  {
++   PersistentWorld w(db,std::move(sim));
++   ok(w,ship,1,Action::Mine,rock,100);ok(w,ship,2,Action::RefineOre,0,100);
++   ok(w,ship,3,Action::FabricateModule,0,35);ok(w,ship,4,Action::ConstructOutpost);
++   site=w.world().built_outposts().begin()->first;
++   ok(w,ship,5,Action::ConstructHabitat,site);
++   for(int i=1;i<=3;++i)ok(w,ship,5+i,Action::TransferHabitatStock,site,30,i);
++   ok(w,ship,9,Action::AssignHabitatResidents,site,1);
++   for(const auto& [id,n]:w.world().npc_records())if(n.location==site&&n.role==NpcRole::Habitat)npc=id;
++   CHECK(npc!=0);
++   construction::Plans plans(db,w);
++   // Migrate a real pre-d9 jobs table rather than only a fresh database.
++   {sqlite3* legacy=nullptr;CHECK(sqlite3_open(db.c_str(),&legacy)==SQLITE_OK);
++    const char* ddl="CREATE TABLE sg_construction_jobs(plan_id INTEGER PRIMARY KEY REFERENCES sg_structure_plans(id),"
++        "owner INTEGER NOT NULL,ship INTEGER NOT NULL,site INTEGER NOT NULL,active INTEGER NOT NULL DEFAULT 1,"
++        "completed INTEGER NOT NULL DEFAULT 0,labor INTEGER NOT NULL DEFAULT 0,last_tick INTEGER NOT NULL DEFAULT -1,"
++        "reason TEXT NOT NULL DEFAULT '')";
++    CHECK(sqlite3_exec(legacy,ddl,nullptr,nullptr,nullptr)==SQLITE_OK);sqlite3_close(legacy);
++   }
++   construction::Crews crews(db,w,plans);
++   low=plans.create("sg-colony-structure-plan-v1\n2,9,0\n",7,ship,site);
++   high=plans.create("sg-colony-structure-plan-v1\n2,2,0\n",7,ship,site);
++   crews.assign(low,npc,7,ship,site);
++   crews.set_policy(low,0,true,7,ship,site);
++   crews.set_policy(high,3,true,7,ship,site);
++   crews.set_active(low,false,7,ship,site);
++   bool rejected=false;
++   try{crews.set_policy(high,4,true,7,ship,site);}catch(const std::invalid_argument&){rejected=true;}
++   CHECK(rejected);
++   rejected=false;
++   try{crews.set_policy(high,2,true,8,ship,site);}catch(const std::invalid_argument&){rejected=true;}
++   CHECK(rejected);
++   const auto stage=plans.supply_action(Action::StageConstructionModules,2,0,0,7,ship,site);
++   CHECK(stage.result==Outcome::Applied);
++   const auto held=plans.supply_action(Action::ReserveConstructionModules,low,0,2,7,ship,site);
++   CHECK(held.result==Outcome::Applied);
++   CHECK(w.world().construction_supplies(site)->depot==0);
++   CHECK(w.world().construction_supplies(site)->reserved.at(low).modules==2);
++   const auto baseline=w.world().colony_ship(ship)->modules+loose(w.world(),site);
++   crews.advance(7,ship);
++   auto jobs=crews.list(7,ship,site);
++   CHECK(jobs.size()==2);
++   CHECK(jobs[0].plan==low&&jobs[0].workers.empty());
++   CHECK(jobs[1].plan==high&&jobs[1].workers.size()==1&&jobs[1].workers.front().npc==npc);
++   CHECK(!w.world().construction_supplies(site)->reserved.count(low));
++   CHECK(w.world().construction_supplies(site)->depot==2);
++   CHECK(w.world().colony_ship(ship)->modules+loose(w.world(),site)==baseline);
++   CHECK(w.world().total_material_kg()==original);
++  }
++  {
++   PersistentWorld w(db,Simulation(1));construction::Plans plans(db,w);construction::Crews crews(db,w,plans);
++   auto jobs=crews.list(7,ship,site);
++   CHECK(jobs.size()==2&&jobs[0].priority==0&&jobs[0].autonomy&&jobs[1].priority==3&&jobs[1].autonomy);
++   CHECK(jobs[1].workers.size()==1);
++   CHECK(w.world().construction_supplies(site)->depot==2);
++   bool high_done=false;
++   for(int i=0;i<130&&!high_done;++i){crews.advance(7,ship);w.step();high_done=plans.status(high,7,ship,site).finished();}
++   CHECK(high_done);
++   CHECK(!plans.status(low,7,ship,site).finished());
++   CHECK(w.world().total_material_kg()==original);
++   // Once critical work completes, the borrowed worker becomes available
++   // again for the lower-priority autonomous project without player clicks.
++   CHECK(crews.set_active(low,true,7,ship,site));
++   crews.advance(7,ship);
++   auto handed_back=crews.list(7,ship,site);
++   CHECK(handed_back[0].workers.size()==1&&handed_back[0].workers[0].npc==npc);
++   CHECK(handed_back[1].workers.empty());
++   CHECK(crews.set_active(low,false,7,ship,site));
++   CHECK(crews.unassign(npc,7,ship,site));
++   low2=plans.create("sg-colony-structure-plan-v1\n2,11,0\n",7,ship,site);
++   high2=plans.create("sg-colony-structure-plan-v1\n1,12,0\n",7,ship,site);
++   crews.assign(low2,npc,7,ship,site);
++   crews.set_policy(low2,0,true,7,ship,site);
++   crews.set_policy(high2,3,true,7,ship,site);
++   CHECK(crews.set_active(low2,false,7,ship,site));
++   CHECK(plans.supply_action(Action::StageConstructionModules,1,0,0,7,ship,site).result==Outcome::Applied);
++   const auto pickup=plans.supply_action(Action::PickupConstructionModules,npc,1,0,7,ship,site);
++   CHECK(pickup.result==Outcome::Applied);
++   crews.advance(7,ship);
++   jobs=crews.list(7,ship,site);
++   const auto find=[&](std::int64_t id){return std::find_if(jobs.begin(),jobs.end(),[&](const auto& j){return j.plan==id;});};
++   CHECK(find(low2)!=jobs.end()&&find(low2)->workers.size()==1);
++   CHECK(find(high2)!=jobs.end()&&find(high2)->workers.empty());
++   CHECK(w.world().construction_supplies(site)->carried.at(npc)==1);
++   CHECK(w.world().total_material_kg()==original);
++  }
++  {
++   PersistentWorld w(db,Simulation(2));construction::Plans plans(db,w);construction::Crews crews(db,w,plans);
++   const auto before=w.world().colony_ship(ship)->modules+loose(w.world(),site);
++   CHECK(w.world().construction_supplies(site)->carried.at(npc)==1);
++   const auto returned=plans.supply_action(Action::ReturnConstructionModules,npc,0,0,7,ship,site);
++   CHECK(returned.result==Outcome::Applied);
++   crews.advance(7,ship);
++   auto jobs=crews.list(7,ship,site);
++   bool reassigned=false;
++   for(const auto& j:jobs)if(j.plan==high2)reassigned=j.workers.size()==1&&j.workers.front().npc==npc;
++   CHECK(reassigned);
++   // Free, eligible idle residents can also self-assign, but only because
++   // this target plan explicitly opted into autonomous staffing.
++   CHECK(crews.unassign(npc,7,ship,site));
++   crews.advance(7,ship);
++   jobs=crews.list(7,ship,site);
++   reassigned=false;
++   for(const auto& j:jobs)if(j.plan==high2)reassigned=j.workers.size()==1&&j.workers.front().npc==npc;
++   CHECK(reassigned);
++   CHECK(w.world().colony_ship(ship)->modules+loose(w.world(),site)==before);
++   CHECK(w.world().total_material_kg()==original);
++  }
++  fs::remove_all(folder);
++  std::cout<<"ECON-02B2d9 PASS: administrative priority, durable migration, exclusive preemption, opt-in staffing, carried cargo guard and conservation\n";
++  return 0;
++ }catch(const std::exception& e){std::cerr<<"ECON-02B2d9 FAIL: "<<e.what()<<'\n';fs::remove_all(folder);return 1;}
++}
+diff --git a/viewer/interactive.html b/viewer/interactive.html
+index e1bae1c..0d0ac81 100644
+--- a/viewer/interactive.html
++++ b/viewer/interactive.html
+@@ -64,6 +64,8 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
+ <div class="help">Construction materials are real: colony ship → site depot or built storage nodes → plan reservation → NPC carried cargo (two modules maximum) → delivered at the build cell → finished structure. Crew logistics run on the colony simulation; the ship must be in construction range to restock the depot. Paused cargo remains with the worker; cancelled jobs return cargo through a real depot receipt.</div>
+ <div class="controls" style="padding:8px 0;gap:5px"><label for="crewSupplyAmount">Depot modules</label><input id="crewSupplyAmount" type="number" min="1" max="1000" step="1" value="8" style="width:80px"><button id="crewSupplyDeposit">Move from ship</button><button id="crewSupplyWithdraw">Return to ship</button></div>
+ <div class="controls" style="padding:8px 0;gap:5px"><label for="crewResident">Resident NPC</label><select id="crewResident"><option value="">No local residents</option></select><button id="crewAssign">Assign to selected plan</button><button id="crewUnassign">Remove from duty</button><button id="crewPause">Pause crew</button><button id="crewResume">Resume crew</button></div>
++<div class="controls" style="padding:8px 0;gap:5px"><label for="crewPriority">Selected plan priority</label><select id="crewPriority"><option value="0">Backlog</option><option value="1" selected>Normal</option><option value="2">High</option><option value="3">Critical</option></select><label for="crewAutonomy">Autonomous staffing</label><input type="checkbox" id="crewAutonomy"><button id="crewPolicy">Save policy</button></div>
++<div class="help">Autonomous staffing is OFF by default. When enabled, this plan may recruit an otherwise idle eligible resident or receive an unladen worker from a lower-priority autonomous plan. Only unpicked lower-priority reservations can be reallocated; carried and delivered materials remain physical.</div>
+ <div class="controls" style="padding:8px 0;gap:5px"><label for="crewRestockNode">Built storage destination</label><select id="crewRestockNode"><option value="">No installed storage nodes</option></select><button id="crewRestock">Assign NPC supply run</button><button id="crewRestockCancel">Cancel NPC supply run</button></div>
+ <div id="crewStatus" class="help" role="status" aria-live="polite" style="white-space:pre-wrap;max-height:180px;overflow:auto">No active construction crews.</div>
+ <div id="structureStatus" class="help" role="status" aria-live="polite" style="white-space:pre-wrap">Open a colony session to inspect physical structures.</div>
+diff --git a/viewer/structures.js b/viewer/structures.js
+index 9530935..57d65e2 100644
+--- a/viewer/structures.js
++++ b/viewer/structures.js
+@@ -63,9 +63,11 @@ function renderCrews(){
+  const stockLine=`Site modules: depot ${supply.depot||0} · node stock ${supply.nodeAvailable||0} · allocated ${supply.reserved||0} · carried ${supply.carried||0} · delivered ${supply.delivered||0}`;
+  const sources=(supply.sources||[]).map(s=>`Node #${s.node} (${s.x},${s.y}): free ${s.available}, allocated ${s.reserved}`).join('\n');
+  const sourceLine=sources?`Storage sources:\n${sources}${supply.moreSources?`\n... ${supply.moreSources} additional nodes`:''}`:'';
++ const selectedJob=crews.jobs.find(j=>String(j.plan)===$('structurePlan').value);
++ if(selectedJob){$('crewPriority').value=String(selectedJob.priority??1);$('crewAutonomy').checked=!!selectedJob.autonomy;}
+  const text=crews.jobs.map(j=>{
+   const people=j.workers.map(w=>`#${w.npc} at (${w.x},${w.y}) · carrying ${w.carrying||0}`).join(', ')||'No assigned workers';
+-  return `Plan #${j.plan} · ${j.active?'Working':'Paused/complete'} · ${j.completed}/${j.total} · labor ${j.labor}/${j.required} · delivered ${j.deliveredModules||0} · allocated ${j.reservedModules||0} at source #${j.reservedNode||0}\n  ${people}\n  ${j.reason||'Ready'}`;
++  return `Plan #${j.plan} · priority ${j.priority??1} · autonomy ${j.autonomy?'on':'off'} · ${j.active?'Working':'Paused/complete'} · ${j.completed}/${j.total} · labor ${j.labor}/${j.required} · delivered ${j.deliveredModules||0} · allocated ${j.reservedModules||0} at source #${j.reservedNode||0}\n  ${people}\n  ${j.reason||'Ready'}`;
+  });
+  const activeRuns=(crews.restocking||[]).map(r=>`Supply NPC #${r.npc} → node #${r.node} · (${r.x},${r.y}) · ${r.active?(r.returning?'Returning':'Hauling'):'Complete'} · ${r.reason||'Ready'}`);
+  $('crewStatus').textContent=stockLine+'\n'+(sourceLine?sourceLine+'\n':'')+(text.join('\n')||'No construction crew assignments yet. Build a habitat and assign residents first.')+
+@@ -81,6 +83,8 @@ function render(){
+  }
+  plans.value=listing.plans.some(p=>String(p.id)===oldPlan)?oldPlan:
+   String((listing.plans.find(p=>!p.cancelled&&!p.finished&&!p.conflicting)||listing.plans.at(-1)||{}).id||'');
++ const activeJob=crews.jobs.find(j=>String(j.plan)===plans.value);
++ if(activeJob){$('crewPriority').value=String(activeJob.priority??1);$('crewAutonomy').checked=!!activeJob.autonomy;}
+  const doors=$('structureDoor');const selected=doors.value;
+  doors.replaceChildren(option('','Select built door'));
+  for(const s of listing.structures.filter(s=>s.kind===4||s.kind===5))
+@@ -118,6 +122,7 @@ async function submit(path,payload){
+   feedback(path.endsWith('register')?`Authorized plan #${r.plan.id} for outpost #${site}.`:
+    path.endsWith('step')?`Construction ${r.event.applied?'committed':'rejected'}; ${r.plan.completed}/${r.plan.total} steps complete.`:
+    path.endsWith('cancel')?'Remaining plan steps cancelled; completed structures remain.':
++   path.endsWith('crew_policy')?'Construction policy updated; only opted-in crews can be reassigned.':
+    path.endsWith('crew_supply')?`Construction depot transfer ${r.event.applied?'committed':'rejected'}.`:
+    path.endsWith('/crew_restock')?'NPC supply run assigned; the worker will move real depot cargo.':
+    path.endsWith('/crew_restock_cancel')?'NPC supply run cancelled; carried cargo remains subject to return handling.':
+@@ -172,6 +177,17 @@ for(const [button,enabled] of [['crewPause',false],['crewResume',true]])
+   const plan=Number($('structurePlan').value);if(!Number.isSafeInteger(plan)||plan<=0){feedback('Select a plan.');return;}
+   submit('/factory/api/crew_active',{plan,active:enabled});
+  });
++$('structurePlan').addEventListener('change',()=>{
++ const job=crews.jobs.find(j=>String(j.plan)===$('structurePlan').value);
++ $('crewPriority').value=String(job?.priority??1);$('crewAutonomy').checked=!!job?.autonomy;
++});
++$('crewPolicy').addEventListener('click',()=>{
++ const plan=Number($('structurePlan').value),priority=Number($('crewPriority').value);
++ if(!Number.isSafeInteger(plan)||plan<=0||![0,1,2,3].includes(priority)){
++  feedback('Select a plan and valid construction priority.');return;
++ }
++ submit('/factory/api/crew_policy',{plan,priority,autonomy:$('crewAutonomy').checked});
++});
+ $('crewRestock').addEventListener('click',()=>{
+  const npc=Number($('crewResident').value),node=Number($('crewRestockNode').value);
+  if(!Number.isSafeInteger(npc)||npc<=0||!Number.isSafeInteger(node)||node<=0){feedback('Select an existing resident and a built storage destination.');return;}

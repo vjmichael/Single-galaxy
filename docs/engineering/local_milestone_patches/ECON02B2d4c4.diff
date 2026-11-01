@@ -1,0 +1,1131 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 46395f87ccce1ccf0b7df85f34180e58e1ed2b00..ca9c44eadb714a6c9e91f6e02798f7758fc1a4aa 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -661,3 +661,16 @@ if(BUILD_TESTING AND SG_NODE_BINARY)
+     --layout ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/ECON02B2d4b_editor_blueprint.sglayout)
+   set_tests_properties(galaxy_econ02b2d4c3_native_factory_host PROPERTIES TIMEOUT 30)
+ endif()
++
++# ECON-02B2d4c4: live colony menu -> authenticated relay -> SAME native
++# PersistentWorld factory control, single OS writer lease, durable restart.
++if(BUILD_TESTING AND Python3_Interpreter_FOUND)
++  add_test(NAME galaxy_econ02b2d4c4_integrated_colony_factory
++    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/ECON02B2d4c4ColonyFactoryTests.py
++      --host $<TARGET_FILE:galaxy_colony_live_host>
++      --factory $<TARGET_FILE:galaxy_factory_local_host>
++      --fixture $<TARGET_FILE:galaxy_econ02b2d4c2_world_fixture>
++      --relay ${CMAKE_CURRENT_SOURCE_DIR}/live/interactive_relay.py
++      --layout ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/ECON02B2d4b_editor_blueprint.sglayout)
++  set_tests_properties(galaxy_econ02b2d4c4_integrated_colony_factory PROPERTIES TIMEOUT 40)
++endif()
+diff --git a/README.md b/README.md
+index e6e46a556128312ce1ad18410288c544c546a6bf..edeeac9d397d305c6cfef43ed850b2a037154d48 100644
+--- a/README.md
++++ b/README.md
+@@ -176,3 +176,32 @@ The existing `viewer/factory.html` now supports a **separately launched trusted
+ The C++17 `galaxy_factory_local_host` executable now serves the existing Factory Designer and its trusted colony construction API **from one native process**. Players no longer need to launch the Node.js development server to make real, journaled factory construction steps. It opens only an existing SQLite world, binds a session-restricted **127.0.0.1** listener, and packs the viewer assets alongside its binary. The default browser opens automatically; Windows can use an OS save picker when no `--db` is supplied. Linux developer example: `./build/galaxy_factory_local_host --db /path/to/EXISTING.sqlite`. The original `galaxy_factory_host_bridge` and Node test server remain for compatibility.
+ 
+ The new Linux code passes **60/60 non-live and 26/26 live/relay CTests**, **93/93 JavaScript tests**, **3/3 design tests**, and native HTTP/restart/cancellation checks; these are two disjoint native runs, not a single uninterrupted one. Offline Chromium UI passed, but direct native-browser localhost navigation is blocked by the container policy, and Windows compilation/interactive acceptance is not yet complete. **This is not yet integrated into the main space-game GUI, and walls/doors/floors and NPC construction crews remain future work.** See [the engineering report](docs/engineering/ECON02B2d4c3_Native_Factory_Runtime_2026-10-31.md).
++
++### ECON-02B2d4c4 — Factory construction inside the live colony session
++
++`./scripts/run_colony_linux.sh` launches the colony-first development GUI. Once a
++colony outpost has been constructed and material modules exist, select **Open
++Factory Designer** from the colony panel. The factory page selects an outpost
++belonging to the currently running local player session; imports and explicit
++construction steps execute on **that same C++ PersistentWorld** via the
++allowlisted Python localhost relay. Return to the colony page without launching
++a competing database writer. No Node.js is needed for this gameplay path.
++The relay is still a development dependency for the colony GUI, not a final
++one-click installer or authenticated multiplayer server.
++
++The live colony host, standalone native factory host, and legacy factory bridge
++now cooperate through a per-world OS writer lease (`.sgwriter.lock`). Only one of
++these participating hosts can mutate a given SQLite world at a time; the host
++releases its lease on process exit or relay shutdown. A factory `STEP` advances
++one authoritative committed tick and publishes its corresponding SGVIEW frame
++before the regular colony tick. The editor continues to treat walls, doors, and
++floors as **design-only overlays**; physical fixture construction is a later
++milestone. For an HTTP/SQLite integrated acceptance test run:
++
++```sh
++ctest --test-dir build -R galaxy_econ02b2d4c4_integrated_colony_factory --output-on-failure
++```
++
++An additional `scripts/factory_integrated_browser_smoke.py` performs actual
++Chromium clicks where localhost browsing is permitted. Existing saves are not
++created or modified by either acceptance harness (they use temporary fixtures).
+diff --git a/docs/engineering/ECON02B2d4c4_Integrated_Colony_Factory_2026-10-31.md b/docs/engineering/ECON02B2d4c4_Integrated_Colony_Factory_2026-10-31.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..fb995f22ce5dc1da80427b082386c5c38ad89c13
+--- /dev/null
++++ b/docs/engineering/ECON02B2d4c4_Integrated_Colony_Factory_2026-10-31.md
+@@ -0,0 +1,67 @@
++# Single Galaxy — ECON-02B2d4c4 Integrated Colony Factory
++
++**Date:** October 31, 2026 (continuation of EvEmu Convo 06 / 07)
++**Project:** Single Galaxy (independent original game; not EVEmu server code)
++**Source baseline:** `SingleGalaxy_ECON02B2d4c3_Native_Factory_Source_Tests_2026-10-31.zip`
++**Scope:** Connect player-visible factory planning with the *same running* colony simulation and SQLite save, without competing authors, phantom materials, or local-browser privilege escalation.
++
++## Implemented
++
++1. **One authoritative world.** `galaxy_colony_live_host` owns the only `PersistentWorld` and associated `HostBlueprintRegistry` during colony gameplay. The existing Python localhost relay passes allowlisted, session-authenticated requests to that same C++ host using framed stdin commands and framed stderr responses. The Python relay **never opens SQLite**. No second native factory game instance is launched from the colony UI.
++2. **One OS-backed writer lease.** `src/world_owner_lock.hpp` applies an exclusive lock to a per-world `.sgwriter.lock` file before world open. The colony host, standalone native factory host, and legacy factory bridge cooperate in this lease. Linux uses `flock(LOCK_EX|LOCK_NB)`; Windows uses `LockFileEx(LOCKFILE_FAIL_IMMEDIATELY)` with an overlapped byte-range lock. The lock is released on process exit and is independent of SQLite's own transaction locks. **This protects only entry points that actually participate in the lease**; arbitrary external SQLite writers must still be excluded by deployment policy.
++3. **Bounded and authorized factory IPC.** `src/factory_colony_protocol.hpp` implements `SITES`, `HELLO`, `LIST`, `REGISTER`, `STATUS`, `STEP`, `CANCEL`. The *native host* derives the player, founding ship and ownership from its own colony session. A browser-selected outpost is only an input selector, checked against outposts owned by the active colony ship. Plan IDs are checked against the selected site before use. Layouts are canonical-decoded and validated by the original native registry, not the relay or browser. IDs cannot mint arbitrary host actions.
++4. **No tick/frame desynchronization.** The registry's `STEP` invokes one authoritative `PersistentWorld.step()`. The colony host immediately emits that committed tick's `SGVIEW` frame before continuing with the ordinary simulation step. This fixes a real initial failure (`observation must follow one committed tick`) found during live testing. Existing world events and real material consumption remain authoritative.
++5. **Main gameplay navigation.** `viewer/interactive.html` adds **Open Factory Designer** within colony mode. The factory editor page uses `/factory/api/*` on the same relay, offers selection of genuine outpost IDs, and provides **Return to live colony**. When no outpost exists, explicit construction controls are disabled and the player is instructed to first build an outpost. The standalone Node-free native factory server and offline editor keep their existing paths.
++6. **Clean process lifetime.** The Python relay now unwinds through child cleanup on SIGTERM; the C++ colony host's relay-owned mode exits when its stdin owner disappears, including abrupt process termination, releasing the SQLite world writer lease. This repairs a second real failure found during testing, where an orphaned colony child retained the writer lease.
++7. **Cross-platform compile consideration.** The new writer-lock header includes Winsock2 before Windows.h to avoid the old `winsock.h`/`winsock2.h` conflict in the existing native HTTP host. Windows build and interactive acceptance remain **unverified**, however.
++
++## Verification results (actual tests)
++
++| Gate | Result |
++|---|---|
++| Complete Linux CMake build of all targets | PASS |
++| CTest indices 1–25 | **25/25 PASS** |
++| All B70 colony and all ECON-02B2d4 factory tests (26–54, 82–87) | **35/35 PASS** |
++| CTest indices 55–81 | **27/27 PASS** |
++| Native CTest aggregate, three disjoint selections | **87/87 PASS** (not a single uninterrupted invocation) |
++| JavaScript `node --test` tests excluding two argument-requiring standalone integration drivers | **93/93 PASS** |
++| Both argument-requiring Node integration drivers, via registered CTest | PASS |
++| Offline real Chromium factory editor design / export / import / restore | PASS |
++| Real HTTP to same living C++ world: site listing, hello, plans, plan register, step, cancel, restart | PASS |
++| Forged Origin, incorrect session token, forged owner, foreign site, duplicate IDs, malformed layout | DENIED |
++| Large 300 KB malformed layout spanning the child pipe | DENIED; colony stays running |
++| Concurrent standalone factory host while colony active | DENIED by OS writer lease |
++| Concurrent colony host while standalone factory active | DENIED by OS writer lease |
++| Relay SIGTERM and colony restart | PASS; no stale process-held lease |
++| Chromium **real loopback GUI integration** | **BLOCKED by environment**: `net::ERR_BLOCKED_BY_ADMINISTRATOR` at `http://127.0.0.1:.../viewer/interactive.html`; not a verified GUI success |
++| Windows native compilation and click-through | NOT RUN |
++
++The **live browser acceptance script** is `scripts/factory_integrated_browser_smoke.py`. It builds a disposable fixture, navigates the actual colony page, enters the factory, authorizes a blueprint, constructs one step, cancels and returns to the colony. Run on a system with local Chromium navigation enabled; the container's browser sandbox disallows this step. The HTTP/SQLite path is separately verified without a browser.
++
++## Run locally (development GUI)
++
++```sh
++cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
++cmake --build build -j 4
++./scripts/run_colony_linux.sh build/galaxy_colony_live_host /path/to/colony.sqlite
++# Open http://127.0.0.1:8766/viewer/interactive.html
++# In colony UI: build an outpost, then Open Factory Designer
++ctest --test-dir build -R galaxy_econ02b2d4c4_integrated_colony_factory --output-on-failure
++```
++
++The current colony GUI still uses the existing Python development relay. It is not yet a single-click native desktop shell or an Internet/multiplayer server. Node is used as a developer test harness only; no Node.js process is involved in the integrated gameplay runtime.
++
++## Safety and design boundaries
++
++- Browser and editor do not supply the player, ship ID, owner, world filename, SQL, trusted command ID, or materials. A site selector cannot grant site ownership.
++- Existing outpost and finite manufactured modules are required before equipment construction; partial work and cancellation are durable. Cancellation never refunds already-installed machines.
++- The OS writer lease is cooperative among the integrated native entry points, not a global solution against arbitrary third-party database clients or malicious processes with filesystem access.
++- The persistent colony simulation keeps operating as the user switches pages. Factory construction does not cause a new world, new founding ship or duplicate NPCs.
++- Wall, door and floor primitives are still **blueprint/design overlays**. No claim of installed collidable structures, sealed compartments or material-costed structural construction is made in this milestone.
++- NPC construction labor, wall/floor collision and logistics accounting, power and crew scheduling remain open design/development gates. Unbounded factory layout design, five physical machinery tiers and remote deterministic quantitative production remain unchanged.
++
++## Next milestone
++
++**ECON-02B2d5 — physical construction fixtures**: introduce persistent wall, door and floor world objects through authoritative native recipes, placement collision checks, material reservations, one-step construction journal, replay-safe cancellation, load/restart and off-screen visibility tests. Only afterward delegate legitimate construction to NPC crews with finite staffing, resources, time and labor proficiency.
++
++**Repository discipline:** GitHub is a repository and milestone archive only, not a developer run environment. All changes and tests were performed locally. The Windows-specific compilation and GUI acceptance gates remain open until a real Windows run produces evidence.
+diff --git a/live/interactive_relay.py b/live/interactive_relay.py
+index 317e47e5c885769690e805901e24871711286762..5849e87fac03cd54817be65a53eaab9c3485b467 100644
+--- a/live/interactive_relay.py
++++ b/live/interactive_relay.py
+@@ -13,6 +13,7 @@ import os
+ import re
+ import pathlib
+ import secrets
++import signal
+ import subprocess
+ import tempfile
+ import threading
+@@ -28,13 +29,17 @@ STATIC={
+     '/viewer/recordings.js':'viewer/recordings.js',
+     '/viewer/viewer.js':'viewer/viewer.js',
+     '/viewer/colony.js':'viewer/colony.js',
++    '/viewer/factory.html':'viewer/factory.html',
++    '/viewer/factory.js':'viewer/factory.js',
++    '/viewer/factory-layout.js':'viewer/factory-layout.js',
++    '/viewer/factory-live.js':'viewer/factory-live.js',
+ }
+ MIME={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8'}
+ MAX_FRAME=4*1024*1024
+-MAX_FRAMES=1202
++MAX_FRAMES=4096
+ 
+ class SharedRuntime:
+-    def __init__(self,exe,db,tick_ms,max_ticks,qa_mode=False):
++    def __init__(self,exe,db,tick_ms,max_ticks,qa_mode=False,colony_mode=False):
+         self.cv=threading.Condition()
+         self.frames=[]
+         self.survey_events=[]
+@@ -43,12 +48,16 @@ class SharedRuntime:
+         self.error=None
+         self.stderr=[]
+         self.cmd_lock=threading.Lock()
++        self.factory_lock=threading.Lock()
++        self.factory_cv=threading.Condition()
++        self.factory_results={}
++        self.factory_seq=0
+         self.token=secrets.token_urlsafe(32)
+         env=os.environ.copy()
+         # The relay is local-only and QA commands are disabled unless the
+         # explicit developer CLI switch is present. Not a multiplayer authority.
+         env['SINGLE_GALAXY_QA_MODE']='1' if qa_mode else '0'
+-        self.proc=subprocess.Popen([str(exe),str(db),str(tick_ms),str(max_ticks)],
++        self.proc=subprocess.Popen([str(exe),str(db),str(tick_ms),str(max_ticks)]+(['--relay-owned'] if colony_mode else []),
+             env=env,
+             stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0)
+         threading.Thread(target=self._read,daemon=True).start()
+@@ -57,6 +66,19 @@ class SharedRuntime:
+     def _read_stderr(self):
+         for raw in self.proc.stderr:
+             line=raw.decode('ascii',errors='replace').rstrip('\n')
++            if line.startswith('FACTORY_REPLY|'):
++                # Trusted child -> relay only; never expose arbitrary child stderr.
++                m=re.fullmatch(r'FACTORY_REPLY\|([0-9]{1,15})\|([A-Za-z0-9+/=]{1,150000})',line)
++                if m:
++                    try:
++                        data=json.loads(base64.b64decode(m.group(2),validate=True))
++                        if not isinstance(data,dict) or type(data.get('ok')) is not bool:
++                            raise ValueError('invalid native factory response')
++                        with self.factory_cv:
++                            self.factory_results[int(m.group(1))]=data
++                            self.factory_cv.notify_all()
++                    except (ValueError,UnicodeDecodeError,json.JSONDecodeError):pass
++                continue
+             if line.startswith('COLONY|1|'):
+                 if len(line)<=180 and re.fullmatch(r'[a-zA-Z0-9_|-]+',line):
+                     with self.cv:
+@@ -101,6 +123,7 @@ class SharedRuntime:
+             with self.cv:
+                 self.finished=True
+                 self.cv.notify_all()
++            with self.factory_cv:self.factory_cv.notify_all()
+ 
+     def send(self,command):
+         with self.cmd_lock:
+@@ -111,6 +134,39 @@ class SharedRuntime:
+             self.proc.stdin.write((command+'\n').encode('ascii'))
+             self.proc.stdin.flush()
+ 
++    def factory(self,op,site=0,argument=''):
++        # One request outstanding at a time. The *C++ colony game loop* is the
++        # sole owner of PersistentWorld and HostBlueprintRegistry. The relay
++        # does not open SQLite and cannot mint ship/player/owner authority.
++        if op not in ('SITES','HELLO','LIST','REGISTER','STEP','STATUS','CANCEL'):
++            raise ValueError('Unknown factory operation')
++        if type(site)!=int or not 0<=site<=100000000:
++            raise ValueError('Invalid factory site selector')
++        if not isinstance(argument,str) or len(argument)>1398104 or not re.fullmatch(r'[A-Za-z0-9+/=]*',argument):
++            raise ValueError('Invalid factory argument')
++        with self.factory_lock:
++            with self.factory_cv:
++                self.factory_seq+=1
++                request_id=self.factory_seq
++            command=f'FACTORY|{request_id}|{op}|{site}|{argument}\n'.encode('ascii')
++            if len(command)>1400000:raise ValueError('Factory message too long')
++            with self.cmd_lock:
++                if self.finished or self.proc.poll() is not None:
++                    raise RuntimeError('Colony session is no longer running')
++                # FileIO on a pipe may perform a partial write for large layouts.
++                # Loop until all bytes enter the trusted child's stdin.
++                view=memoryview(command)
++                while view:
++                    n=self.proc.stdin.write(view)
++                    if not n:raise RuntimeError('Colony factory pipe closed')
++                    view=view[n:]
++            with self.factory_cv:
++                ready=self.factory_cv.wait_for(
++                    lambda:request_id in self.factory_results or self.finished,timeout=20)
++                if not ready or request_id not in self.factory_results:
++                    raise RuntimeError('Colony factory response unavailable')
++                return self.factory_results.pop(request_id)
++
+     def stop(self):
+         if self.proc.poll() is None:
+             self.proc.terminate()
+@@ -142,6 +198,23 @@ class Handler(http.server.BaseHTTPRequestHandler):
+         if not self._host_ok():
+             self._json(403,{'error':'Local host required'});return
+         url=urllib.parse.urlsplit(self.path)
++        if url.path.startswith('/factory/api/'):
++            if not self.server.colony_mode:
++                self._json(403,{'ok':False,'error':'Colony game mode required'});return
++            route=url.path[len('/factory/api/'):]
++            query=urllib.parse.parse_qs(url.query,strict_parsing=True)
++            try:
++                if route=='sites' and not url.query:
++                    result=self.server.runtime.factory('SITES')
++                elif route in ('hello','plans') and set(query)=={'site'} and len(query['site'])==1:
++                    site=self._site(query['site'][0])
++                    result=self.server.runtime.factory('HELLO' if route=='hello' else 'LIST',site)
++                else:
++                    self._json(404,{'ok':False,'error':'Unknown factory endpoint'});return
++                self._json(200 if result.get('ok') else 400,result)
++            except (ValueError,RuntimeError) as exc:
++                self._json(400,{'ok':False,'error':str(exc)[:120]})
++            return
+         if url.path=='/healthz':
+             self._send(200,b'B4 interactive relay alive\n','text/plain');return
+         if url.path=='/session':
+@@ -189,9 +262,55 @@ class Handler(http.server.BaseHTTPRequestHandler):
+         except (BrokenPipeError,ConnectionResetError,TimeoutError,OSError):pass
+         finally:self.close_connection=True
+ 
++    @staticmethod
++    def _site(value):
++        # Do not let strings, booleans, negative or noncanonical decimal
++        # representations bypass native site ownership validation.
++        if not isinstance(value,str) or not re.fullmatch(r'[1-9][0-9]{0,8}',value):
++            raise ValueError('Invalid site selector')
++        return int(value)
++
++    def _factory_post(self):
++        if not self.server.colony_mode:
++            self._json(403,{'ok':False,'error':'Colony game mode required'});return
++        origin='http://127.0.0.1:'+str(self.server.server_port)
++        if (self.headers.get('Origin')!=origin or
++            self.headers.get('Content-Type')!='application/json' or
++            self.headers.get('Sec-Fetch-Site','same-origin')!='same-origin'):
++            self._json(403,{'ok':False,'error':'Same-origin JSON required'});return
++        try:
++            length=int(self.headers.get('Content-Length','-1'))
++            if length<2 or length>1100000:raise ValueError('Invalid factory request length')
++            doc=json.loads(self.rfile.read(length).decode('utf-8'))
++            if not isinstance(doc,dict) or not isinstance(doc.get('token'),str) or not hmac.compare_digest(doc['token'],self.server.runtime.token):
++                self._json(403,{'ok':False,'error':'Invalid session token'});return
++            op=self.path[len('/factory/api/'):]
++            if op=='register' and set(doc)=={'token','site','layout'}:
++                layout=doc['layout']
++                if not isinstance(layout,str) or not 0<len(layout.encode('utf-8'))<=1048576:
++                    raise ValueError('Invalid layout size')
++                argument=base64.b64encode(layout.encode('utf-8')).decode('ascii')
++                native='REGISTER'
++            elif op in ('step','cancel','status') and set(doc)=={'token','site','id'}:
++                if type(doc['id'])!=int or not 0<doc['id']<2**63:
++                    raise ValueError('Invalid construction plan ID')
++                argument=str(doc['id']);native=op.upper()
++            else:
++                self._json(404,{'ok':False,'error':'Invalid factory operation or schema'});return
++            if type(doc['site'])!=int:raise ValueError('Invalid factory site selector')
++            site=self._site(str(doc['site']))
++            result=self.server.runtime.factory(native,site,argument)
++            self._json(200 if result.get('ok') else 400,result)
++        except (ValueError,UnicodeDecodeError,json.JSONDecodeError) as exc:
++            self._json(400,{'ok':False,'error':str(exc)[:120]})
++        except (BrokenPipeError,RuntimeError,OSError) as exc:
++            self._json(409,{'ok':False,'error':str(exc)[:120]})
++
+     def do_POST(self):
+         if not self._host_ok():
+             self._json(403,{'error':'Local host required'});return
++        if self.path.startswith('/factory/api/'):
++            self._factory_post();return
+         if self.path!='/command':
+             self._json(404,{'error':'Not found'});return
+         origin='http://127.0.0.1:'+str(self.server.server_port)
+@@ -408,13 +527,21 @@ def run(args=None):
+     with tempfile.TemporaryDirectory(prefix='galaxy-interactive-') as tmp:
+         save=opt.save.resolve() if opt.save else pathlib.Path(tmp)/'world.sqlite'
+         save.parent.mkdir(parents=True,exist_ok=True)
+-        rt=SharedRuntime(opt.host_exe.resolve(),save,opt.tick_ms,opt.max_ticks,opt.qa_test)
++        rt=SharedRuntime(opt.host_exe.resolve(),save,opt.tick_ms,opt.max_ticks,opt.qa_test,opt.colony)
++        previous_sigterm=signal.getsignal(signal.SIGTERM)
++        def terminate(signum,frame):
++            # Unlike the default SIGTERM action, unwinding through finally
++            # shuts the C++ child down and closes its writer lease.
++            raise KeyboardInterrupt
++        signal.signal(signal.SIGTERM,terminate)
+         try:
+             with Server(('127.0.0.1',opt.port),Handler) as server:
+                 server.runtime=rt;server.tick_ms=opt.tick_ms;server.max_ticks=opt.max_ticks;server.qa_mode=opt.qa_test;server.colony_mode=opt.colony
+                 print('Interactive demo: http://127.0.0.1:%d/viewer/interactive.html'%opt.port,flush=True)
+                 server.serve_forever(poll_interval=.1)
+         except KeyboardInterrupt:pass
+-        finally:rt.stop()
++        finally:
++            rt.stop()
++            signal.signal(signal.SIGTERM,previous_sigterm)
+ 
+ if __name__=='__main__':run()
+diff --git a/scripts/factory_integrated_browser_smoke.py b/scripts/factory_integrated_browser_smoke.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..a5b5ca19edf02601df4f83fb8f667ff7d1c3e03e
+--- /dev/null
++++ b/scripts/factory_integrated_browser_smoke.py
+@@ -0,0 +1,62 @@
++"""Optional ECON-02B2d4c4 *real GUI* loopback gate; run on a machine whose
++browser permits navigating to 127.0.0.1. Never uses a user-owned save.
++
++SG_BUILD_DIR=/path/to/build python scripts/factory_integrated_browser_smoke.py
++Requires Playwright and a Chromium executable; NOT a game runtime dependency.
++"""
++import os
++import pathlib
++import socket
++import subprocess
++import sys
++import tempfile
++import time
++import urllib.request
++from playwright.sync_api import sync_playwright
++
++ROOT=pathlib.Path(__file__).resolve().parents[1]
++BUILD=pathlib.Path(os.environ.get('SG_BUILD_DIR',ROOT/'build'))
++with tempfile.TemporaryDirectory(prefix='sg-colony-factory-ui-') as tmp:
++    save=pathlib.Path(tmp)/'world.sqlite'
++    fixture=subprocess.run([str(BUILD/'galaxy_econ02b2d4c2_world_fixture'),str(save)],
++        capture_output=True,text=True,timeout=10)
++    assert fixture.returncode==0,fixture.stderr
++    with socket.socket() as sock:
++        sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
++    root=f'http://127.0.0.1:{port}'
++    relay=subprocess.Popen([sys.executable,str(ROOT/'live/interactive_relay.py'),
++        '--host-exe',str(BUILD/'galaxy_colony_live_host'),'--colony','--save',str(save),
++        '--port',str(port),'--tick-ms','100','--max-ticks','1200'],
++        stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
++    try:
++        for i in range(100):
++            try:
++                if urllib.request.urlopen(root+'/healthz',timeout=.5).status==200:break
++            except Exception:time.sleep(.05)
++        else:raise RuntimeError('Colony live relay unavailable')
++        with sync_playwright() as pw:
++            browser=pw.chromium.launch(headless=True,executable_path=os.environ.get('CHROMIUM','/usr/bin/chromium'),
++                args=['--no-sandbox','--disable-dev-shm-usage'])
++            page=browser.new_page(viewport={'width':1460,'height':920},accept_downloads=True)
++            problems=[];page.on('pageerror',lambda exc:problems.append(str(exc)))
++            page.on('dialog',lambda dialog:dialog.accept())
++            page.goto(root+'/viewer/interactive.html',wait_until='domcontentloaded',timeout=8000)
++            page.locator('#colonyFactoryLink').wait_for(state='visible',timeout=8000)
++            page.locator('#colonyFactoryLink').click()
++            page.locator('#liveStatus').get_by_text('Connected',exact=False).wait_for(timeout=10000)
++            page.locator('#example').click()
++            page.locator('#liveRegister').click()
++            page.wait_for_function("document.getElementById('livePlan').textContent.includes('0/16')",timeout=10000)
++            page.locator('#liveStep').click()
++            page.wait_for_function("document.getElementById('livePlan').textContent.includes('1/16')",timeout=10000)
++            page.locator('#liveCancel').click()
++            page.wait_for_function("document.getElementById('livePlan').textContent.includes('cancelled')",timeout=10000)
++            page.locator('#factoryReturn').click()
++            page.locator('#colonyFactoryLink').wait_for(state='visible',timeout=10000)
++            assert not problems,problems
++            print('ECON-02B2d4c4 real graphical loopback, authorize/step/cancel/return PASS')
++            browser.close()
++    finally:
++        relay.terminate()
++        try:relay.communicate(timeout=4)
++        except subprocess.TimeoutExpired:relay.kill();relay.communicate(timeout=4)
+diff --git a/src/colony_live_host.cpp b/src/colony_live_host.cpp
+index aa6eea652f2cb867aeafddb8be0e99f08180989f..4c4bb1ae6f3a382744b31d75181cdc90b7c5befa 100644
+--- a/src/colony_live_host.cpp
++++ b/src/colony_live_host.cpp
+@@ -4,6 +4,8 @@
+ #include "galaxy/Simulation.hpp"
+ #include "galaxy/Persistence.hpp"
+ #include "galaxy/ClientContract.hpp"
++#include "factory_colony_protocol.hpp"
++#include "world_owner_lock.hpp"
+ #include <algorithm>
+ #include <chrono>
+ #include <cstdint>
+@@ -30,28 +32,42 @@ constexpr PlayerId owner=7;
+ constexpr std::int64_t sensor_mm=500000;
+ std::string pending;
+ std::vector<std::string> commands;
++bool relay_stdin_closed=false;
+ void poll_input(){
+-    char data[1024];
+-    for(int n=0;n<4;++n){
++    char data[8192];
++    // A canonical 1 MiB blueprint arrives over the same pre-existing pipe.
++    // Drain up to 2 MiB of complete input per tick without blocking on stdin.
++    for(int n=0;n<256;++n){
+         int size=0;
+ #ifdef _WIN32
+         HANDLE h=GetStdHandle(STD_INPUT_HANDLE);DWORD avail=0,got=0;
+-        if(h==INVALID_HANDLE_VALUE || GetFileType(h)!=FILE_TYPE_PIPE ||
+-           !PeekNamedPipe(h,nullptr,0,nullptr,&avail,nullptr) || !avail)break;
++        if(h==INVALID_HANDLE_VALUE || GetFileType(h)!=FILE_TYPE_PIPE){
++            relay_stdin_closed=true;break;
++        }
++        if(!PeekNamedPipe(h,nullptr,0,nullptr,&avail,nullptr)){
++            relay_stdin_closed=true;break;
++        }
++        if(!avail)break;
+         if(!ReadFile(h,data,static_cast<DWORD>(std::min<std::size_t>(sizeof(data),avail)),&got,nullptr))break;
+         size=static_cast<int>(got);
+ #else
+         struct pollfd p{STDIN_FILENO,POLLIN,0};
+-        if(::poll(&p,1,0)!=1 || !(p.revents&POLLIN))break;
++        if(::poll(&p,1,0)!=1)break;
++        if(p.revents&(POLLHUP|POLLERR|POLLNVAL) && !(p.revents&POLLIN)){
++            relay_stdin_closed=true;break;
++        }
++        if(!(p.revents&POLLIN))break;
+         size=static_cast<int>(::read(STDIN_FILENO,data,sizeof(data)));
+ #endif
+-        if(size<=0)break;
++        if(size<=0){relay_stdin_closed=true;break;}
+         for(int k=0;k<size;++k){
+             if(data[k]=='\n'){
+-                if(!pending.empty() && pending.size()<=64 && commands.size()<32)
++                if(!pending.empty() && (pending.size()<=64 ||
++                    (pending.rfind("FACTORY|",0)==0 && pending.size()<=1400000)) && commands.size()<32)
+                     commands.push_back(pending);
+                 pending.clear();
+-            }else if(data[k]>=32 && data[k]<=126 && pending.size()<65)pending+=data[k];
++            }else if(data[k]>=32 && data[k]<=126 && pending.size()<1400000 &&
++                     (pending.size()<65 || pending.rfind("FACTORY|",0)==0))pending+=data[k];
+             else pending.clear();
+         }
+     }
+@@ -430,7 +446,10 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
+ }
+ }
+ int main(int argc,char** argv){
+-    if(argc!=4){std::cerr<<"usage: galaxy_colony_live_host SAVE.sqlite TICK_MS MAX_TICKS\n";return 2;}
++    if((argc!=4&&argc!=5)||(argc==5&&std::string(argv[4])!="--relay-owned")){
++        std::cerr<<"usage: galaxy_colony_live_host SAVE.sqlite TICK_MS MAX_TICKS [--relay-owned]\n";return 2;
++    }
++    const bool relay_owned=argc==5;
+     try{
+ #ifdef _WIN32
+         if(_setmode(_fileno(stdout),_O_BINARY)==-1)throw std::runtime_error("binary stdout failed");
+@@ -447,6 +466,7 @@ int main(int argc,char** argv){
+         genesis.add_geological_asteroid({-220000,-90000},AsteroidClass::Metallic,55,5700);
+         // No stations, other ships, markets, factions or gates at start.
+         const bool was_saved=fs::exists(argv[1]);
++        WorldOwnerLock exclusive_world(argv[1]);
+         PersistentWorld world(argv[1],std::move(genesis));
+         if(!world.world().colony_ship(ship)||world.world().find(ship)->owner_id!=owner)
+             throw std::runtime_error("not a colony start save");
+@@ -456,13 +476,32 @@ int main(int argc,char** argv){
+         announce(world.world(),was_saved?"RESUMED":"NEW_COLONY");
+         status(world.world(),ship);scan(world.world(),ship);
+         std::uint64_t nonce=900000000000ULL+world.generation();
++        colony_factory::Control factory(argv[1],world,ship,owner);
+         const auto period=std::chrono::milliseconds(ms);
+         for(int i=0;i<max_ticks;++i){
+             const auto start=Clock::now();
+             poll_input();
++            if(relay_owned && relay_stdin_closed){
++                std::cerr<<"COLONY: relay disconnected; releasing world lease\n";
++                break;
++            }
+             const auto to_apply=std::move(commands);commands.clear();
+-            for(const auto& line:to_apply)apply(world,ship,line,nonce);
+             const auto old=world.world().events().size();
++            for(const auto& line:to_apply){
++                if(line.rfind("FACTORY|",0)==0){
++                    // A material-backed factory STEP commits one full world tick
++                    // inside HostBlueprintRegistry. Publish its frame BEFORE the
++                    // ordinary simulation tick, preserving exactly-one-tick
++                    // frame ordering and never creating a second world writer.
++                    const auto before=world.world().tick();
++                    colony_factory::dispatch(factory,line,std::cerr);
++                    if(world.world().tick()!=before){
++                        if(world.world().tick()!=before+1)
++                            throw std::runtime_error("Factory command advanced multiple world ticks");
++                        std::cout<<encode_frame(bridge.after_committed_step(world.world()))<<std::flush;
++                    }
++                }else apply(world,ship,line,nonce);
++            }
+             world.step();
+             for(std::size_t ix=old;ix<world.world().events().size();++ix){
+                 const auto& ev=world.world().events()[ix];
+diff --git a/src/factory_colony_protocol.hpp b/src/factory_colony_protocol.hpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..bfc36ade561473f22f6489deeb267e2b584cd205
+--- /dev/null
++++ b/src/factory_colony_protocol.hpp
+@@ -0,0 +1,177 @@
++#pragma once
++// ECON-02B2d4c4: exclusive in-process factory command routing.
++// Invoked only from the colony simulation loop, never from a browser thread.
++// Browser-provided site is a requested selector, NEVER owner authority.
++#include "galaxy/HostBlueprintRegistry.hpp"
++#include <algorithm>
++#include <cstdint>
++#include <limits>
++#include <sstream>
++#include <stdexcept>
++#include <string>
++#include <vector>
++
++namespace galaxy::colony_factory {
++inline std::string json_string(const std::string& s){
++    std::string out="\"";constexpr char hex[]="0123456789abcdef";
++    for(unsigned char c:s){
++        if(c=='"'||c=='\\'){out+='\\';out+=static_cast<char>(c);}
++        else if(c=='\n')out+="\\n";
++        else if(c=='\r')out+="\\r";
++        else if(c=='\t')out+="\\t";
++        else if(c<32){out+="\\u00";out+=hex[c>>4];out+=hex[c&15];}
++        else out+=static_cast<char>(c);
++    }
++    return out+'"';
++}
++inline std::uint64_t unsigned_id(const std::string& s){
++    if(s.empty()||s.size()>19||(s.size()>1&&s[0]=='0'))throw std::invalid_argument("Invalid positive identifier");
++    std::uint64_t n=0;
++    for(char c:s){
++        if(c<'0'||c>'9'||n>(static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())-(c-'0'))/10)
++            throw std::invalid_argument("Invalid positive identifier");
++        n=n*10+static_cast<unsigned>(c-'0');
++    }
++    if(!n)throw std::invalid_argument("Invalid positive identifier");
++    return n;
++}
++inline std::string encode64(const std::string& s){
++    constexpr char enc[]="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
++    std::string out;out.reserve((s.size()+2)/3*4);
++    for(std::size_t i=0;i<s.size();i+=3){
++        const auto a=static_cast<unsigned char>(s[i]);
++        const auto b=i+1<s.size()?static_cast<unsigned char>(s[i+1]):0;
++        const auto c=i+2<s.size()?static_cast<unsigned char>(s[i+2]):0;
++        out+=enc[a>>2];out+=enc[((a&3)<<4)|(b>>4)];
++        out+=i+1<s.size()?enc[((b&15)<<2)|(c>>6)]:'=';
++        out+=i+2<s.size()?enc[c&63]:'=';
++    }
++    return out;
++}
++inline std::string decode64(const std::string& encoded){
++    if(encoded.empty()||encoded.size()>1398104||encoded.size()%4)
++        throw std::invalid_argument("Invalid blueprint payload length");
++    const auto digit=[](char c)->int{
++        if(c>='A'&&c<='Z')return c-'A';if(c>='a'&&c<='z')return c-'a'+26;
++        if(c>='0'&&c<='9')return c-'0'+52;if(c=='+')return 62;if(c=='/')return 63;return -1;
++    };
++    std::string out;out.reserve(encoded.size()/4*3);
++    for(std::size_t i=0;i<encoded.size();i+=4){
++        const bool last=i+4==encoded.size();
++        const int a=digit(encoded[i]),b=digit(encoded[i+1]);
++        const int c=encoded[i+2]=='='?-2:digit(encoded[i+2]);
++        const int d=encoded[i+3]=='='?-2:digit(encoded[i+3]);
++        if(a<0||b<0||c==-1||d==-1||(c==-2&&d!=-2)||(!last&&(c==-2||d==-2))||
++           (c==-2&&(b&15))||(d==-2&&c>=0&&(c&3)))throw std::invalid_argument("Invalid blueprint encoding");
++        const auto bits=(static_cast<unsigned>(a)<<18)|(static_cast<unsigned>(b)<<12)|
++                        (static_cast<unsigned>(std::max(c,0))<<6)|static_cast<unsigned>(std::max(d,0));
++        out+=static_cast<char>((bits>>16)&255);
++        if(c>=0)out+=static_cast<char>((bits>>8)&255);
++        if(d>=0)out+=static_cast<char>(bits&255);
++    }
++    if(out.size()>1048576)throw std::invalid_argument("Blueprint exceeds host limit");
++    return out;
++}
++inline std::string plan_json(const industry::HostedPlanStatus& p){
++    const auto& a=p.progress;
++    return "{\"id\":"+std::to_string(p.plan_id)+",\"site\":"+std::to_string(p.site)+
++           ",\"completed\":"+std::to_string(a.completed)+",\"total\":"+std::to_string(a.total)+
++           ",\"modulesRemaining\":"+std::to_string(a.modules_remaining)+
++           ",\"cancelled\":"+(a.cancelled?"true":"false")+
++           ",\"conflicting\":"+(a.conflicting?"true":"false")+
++           ",\"finished\":"+(a.finished()?"true":"false")+
++           ",\"reason\":"+json_string(a.reason)+"}";
++}
++inline std::string event_json(const Event& e){
++    return "{\"commandId\":"+std::to_string(e.command_id)+",\"tick\":"+std::to_string(e.tick)+
++           ",\"applied\":"+(e.result==Outcome::Applied?"true":"false")+
++           ",\"result\":"+std::to_string(static_cast<int>(e.result))+"}";
++}
++class Control {
++public:
++    Control(const std::string& db,PersistentWorld& world,EntityId ship,PlayerId owner)
++        :host_(db,world),world_(world),ship_(ship),owner_(owner){}
++    std::string handle(const std::string& op,std::uint64_t requested_site,const std::string& arg){
++        const auto& sites=world_.world().built_outposts();
++        if(op=="SITES"){
++            if(requested_site||!arg.empty())throw std::invalid_argument("Invalid site list command");
++            std::string out="{\"ok\":true,\"sites\":[";
++            bool first=true;
++            for(const auto& [id,p]:sites){
++                if(p.source_colony_ship!=ship_)continue;
++                if(!first)out+=',';first=false;out+=std::to_string(id);
++            }
++            return out+"]}";
++        }
++        const auto pos=sites.find(requested_site);
++        if(requested_site==0||pos==sites.end()||pos->second.source_colony_ship!=ship_||
++           !world_.world().find(ship_)||world_.world().find(ship_)->owner_id!=owner_)
++            throw std::invalid_argument("Selected site is not owned by this colony session");
++        if(op=="HELLO"){
++            if(!arg.empty())throw std::invalid_argument("Unexpected HELLO argument");
++            const auto* c=world_.world().colony_ship(ship_);
++            return "{\"ok\":true,\"site\":"+std::to_string(requested_site)+
++                   ",\"ship\":"+std::to_string(ship_)+
++                   ",\"modulesAvailable\":"+std::to_string(c?c->modules:0)+
++                   ",\"tick\":"+std::to_string(world_.world().tick())+"}";
++        }
++        if(op=="LIST"){
++            if(!arg.empty())throw std::invalid_argument("Unexpected LIST argument");
++            const auto list=host_.list(owner_);
++            std::string out="{\"ok\":true,\"plans\":[";bool first=true;
++            for(const auto& p:list)if(p.site==requested_site){
++                if(!first)out+=',';first=false;out+=plan_json(p);
++                if(out.size()>64000)throw std::length_error("Too many plans for local session");
++            }
++            return out+"]}";
++        }
++        if(op=="REGISTER"){
++            return "{\"ok\":true,\"plan\":"+
++              plan_json(host_.status(host_.register_layout(decode64(arg),owner_,ship_,requested_site),owner_))+"}";
++        }
++        const auto plan_id=static_cast<std::int64_t>(unsigned_id(arg));
++        const auto p=host_.status(plan_id,owner_);
++        if(p.site!=requested_site||p.ship!=ship_)
++            throw std::invalid_argument("Plan does not belong to selected colony site");
++        if(op=="STATUS")return "{\"ok\":true,\"plan\":"+plan_json(p)+"}";
++        if(op=="CANCEL"){
++            const bool changed=host_.cancel(plan_id,owner_);
++            return std::string("{\"ok\":true,\"changed\":")+(changed?"true":"false")+
++                   ",\"plan\":"+plan_json(host_.status(plan_id,owner_))+"}";
++        }
++        if(op=="STEP"){
++            const auto event=host_.execute_one(plan_id,owner_);
++            return "{\"ok\":true,\"event\":"+event_json(event)+
++                   ",\"plan\":"+plan_json(host_.status(plan_id,owner_))+"}";
++        }
++        throw std::invalid_argument("Invalid factory operation");
++    }
++private:
++    industry::HostBlueprintRegistry host_;
++    PersistentWorld& world_;
++    EntityId ship_;
++    PlayerId owner_;
++};
++
++// Framed ASCII result is transmitted only across the existing trusted child
++// stderr pipe, never written as colony telemetry or a playable SGVIEW frame.
++inline void dispatch(Control& control,const std::string& line,std::ostream& out){
++    const auto a=line.find('|',8),b=a==std::string::npos?a:line.find('|',a+1),
++               c=b==std::string::npos?b:line.find('|',b+1);
++    if(a==std::string::npos||b==std::string::npos||c==std::string::npos)return;
++    const auto id=line.substr(8,a-8);
++    if(id.size()>15||id.empty()||id.find_first_not_of("0123456789")!=std::string::npos)return;
++    std::string response;
++    try{
++        const std::string op=line.substr(a+1,b-a-1);
++        const auto site_text=line.substr(b+1,c-b-1);
++        std::uint64_t site=0;
++        if(site_text!="0")site=unsigned_id(site_text);
++        response=control.handle(op,site,line.substr(c+1));
++        if(response.size()>100000)throw std::length_error("Factory response too large");
++    }catch(const std::exception& e){
++        response="{\"ok\":false,\"error\":"+json_string(std::string(e.what()).substr(0,250))+"}";
++    }
++    out<<"FACTORY_REPLY|"<<id<<'|'<<encode64(response)<<'\n'<<std::flush;
++}
++} // namespace galaxy::colony_factory
+diff --git a/src/factory_host_bridge.cpp b/src/factory_host_bridge.cpp
+index 7c09962f49358996452bf9cfeafe673335f44611..4a75364e859d723e861e413eb56b1d0fd01ec735 100644
+--- a/src/factory_host_bridge.cpp
++++ b/src/factory_host_bridge.cpp
+@@ -1,4 +1,5 @@
+ #include "factory_host_protocol.hpp"
++#include "world_owner_lock.hpp"
+ int main(int argc,char** argv){
+     if(argc!=2 && argc!=4){std::cerr<<"Usage: galaxy_factory_host_bridge EXISTING-world.sqlite [--site outpost-ID]\n";return 2;}
+     try{
+@@ -6,6 +7,7 @@ int main(int argc,char** argv){
+         if(!std::filesystem::is_regular_file(path) || std::filesystem::file_size(path)==0)
+             throw std::runtime_error("Host requires an existing nonempty world database");
+         if(argc==4&&std::string(argv[2])!="--site")throw std::invalid_argument("expected --site argument");
++        galaxy::WorldOwnerLock exclusive_world(path);
+         Server server(path.string(),argc==4?number(argv[3]):0);
+         std::string line;
+         while(std::getline(std::cin,line)){
+diff --git a/src/factory_native_host.cpp b/src/factory_native_host.cpp
+index 51f1d562f0375e70124e3a4755bb98854dd244af..dfb94e47aef82b9d3c233662e680c12458482f9d 100644
+--- a/src/factory_native_host.cpp
++++ b/src/factory_native_host.cpp
+@@ -1,6 +1,7 @@
+ // ECON-02B2d4c3: self-contained, localhost-only native factory UI host.
+ // No Node runtime, browser authority, silent world creation, or external bind.
+ #include "factory_host_protocol.hpp"
++#include "world_owner_lock.hpp"
+ #include <array>
+ #include <chrono>
+ #include <cstdlib>
+@@ -324,6 +325,7 @@ int main(int argc,char** argv){
+         const std::filesystem::path viewer=viewer_root(argv[0],assets);
+         for(const auto& f:{"factory.html","factory.js","factory-layout.js","factory-live.js"})
+             if(!std::filesystem::is_regular_file(viewer/f))throw std::runtime_error(std::string("Missing viewer asset: ")+f);
++        WorldOwnerLock exclusive_world(db);
+         Server game(db,site.empty()?0:number(site));
+ #ifdef _WIN32
+         WSADATA wsa{};if(WSAStartup(MAKEWORD(2,2),&wsa))throw std::runtime_error("Winsock startup failed");
+diff --git a/src/world_owner_lock.hpp b/src/world_owner_lock.hpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..ef1495f5c247dbefeb2c8f04456b7b270a5fc7fa
+--- /dev/null
++++ b/src/world_owner_lock.hpp
+@@ -0,0 +1,73 @@
++#pragma once
++// ECON-02B2d4c4: OS-scoped single-authority lease for a local persistent world.
++// Both native factory and colony entry points must hold this before opening
++// SQLite for mutation. This lock is NOT multiplayer identity/authentication.
++#include <filesystem>
++#include <stdexcept>
++#include <string>
++#ifdef _WIN32
++#  define WIN32_LEAN_AND_MEAN
++#  define NOMINMAX
++#  include <winsock2.h>  // must precede windows.h in the native HTTP host
++#  include <windows.h>
++#else
++#  include <cerrno>
++#  include <fcntl.h>
++#  include <sys/file.h>
++#  include <sys/stat.h>
++#  include <unistd.h>
++#endif
++
++namespace galaxy {
++class WorldOwnerLock {
++public:
++    explicit WorldOwnerLock(const std::filesystem::path& db) {
++        // Canonicalize the existing parent, not the DB (new colony saves do not
++        // exist yet). Resolve an existing DB to avoid pathname aliases.
++        const auto file=std::filesystem::absolute(db);
++        const auto parent=std::filesystem::canonical(file.parent_path());
++        const auto world=std::filesystem::exists(file)?std::filesystem::canonical(file):parent/file.filename();
++        lock_path_=world;
++        lock_path_ += ".sgwriter.lock";
++#ifdef _WIN32
++        handle_=CreateFileW(lock_path_.wstring().c_str(),GENERIC_READ|GENERIC_WRITE,
++            FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,nullptr,OPEN_ALWAYS,
++            FILE_ATTRIBUTE_NORMAL,nullptr);
++        if(handle_==INVALID_HANDLE_VALUE)throw std::runtime_error("World lease file could not be opened");
++        OVERLAPPED overlap{};
++        if(!LockFileEx(handle_,LOCKFILE_EXCLUSIVE_LOCK|LOCKFILE_FAIL_IMMEDIATELY,
++                       0,1,0,&overlap)) {
++            CloseHandle(handle_);handle_=INVALID_HANDLE_VALUE;
++            throw std::runtime_error("World already owned by another live game/factory host");
++        }
++#else
++        int flags=O_CREAT|O_RDWR|O_CLOEXEC;
++#ifdef O_NOFOLLOW
++        flags|=O_NOFOLLOW;
++#endif
++        fd_=::open(lock_path_.c_str(),flags,0600);
++        if(fd_<0)throw std::runtime_error("World lease file could not be opened");
++        if(::flock(fd_,LOCK_EX|LOCK_NB)!=0){
++            ::close(fd_);fd_=-1;
++            throw std::runtime_error("World already owned by another live game/factory host");
++        }
++#endif
++    }
++    WorldOwnerLock(const WorldOwnerLock&)=delete;
++    WorldOwnerLock& operator=(const WorldOwnerLock&)=delete;
++    ~WorldOwnerLock() {
++#ifdef _WIN32
++        if(handle_!=INVALID_HANDLE_VALUE){OVERLAPPED overlap{};UnlockFileEx(handle_,0,1,0,&overlap);CloseHandle(handle_);}
++#else
++        if(fd_>=0){::flock(fd_,LOCK_UN);::close(fd_);}
++#endif
++    }
++private:
++    std::filesystem::path lock_path_;
++#ifdef _WIN32
++    HANDLE handle_=INVALID_HANDLE_VALUE;
++#else
++    int fd_=-1;
++#endif
++};
++} // namespace galaxy
+diff --git a/tests/ECON02B2d4c4ColonyFactoryTests.py b/tests/ECON02B2d4c4ColonyFactoryTests.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..8523d4da2d89f150cd5fa55b3ed15012d6a8835c
+--- /dev/null
++++ b/tests/ECON02B2d4c4ColonyFactoryTests.py
+@@ -0,0 +1,148 @@
++#!/usr/bin/env python3
++"""ECON-02B2d4c4: real HTTP -> relay -> living colony -> SQLite path.
++
++No second world writer, no privileged browser identity, no Node requirement.
++"""
++import argparse
++import http.client
++import json
++import pathlib
++import socket
++import sys
++import subprocess
++import tempfile
++import time
++import urllib.parse
++
++p=argparse.ArgumentParser()
++p.add_argument('--host',required=True)
++p.add_argument('--factory',required=True)
++p.add_argument('--fixture',required=True)
++p.add_argument('--relay',required=True)
++p.add_argument('--layout',required=True)
++a=p.parse_args()
++
++def free_port():
++    with socket.socket() as sock:
++        sock.bind(('127.0.0.1',0))
++        return sock.getsockname()[1]
++
++class Game:
++    def __init__(self,save,port):
++        self.port=port
++        self.proc=subprocess.Popen([sys.executable,a.relay,'--colony','--host-exe',a.host,'--save',str(save),
++             '--port',str(port),'--tick-ms','100','--max-ticks','1200'],
++             stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
++        for _ in range(80):
++            if self.proc.poll() is not None:
++                raise RuntimeError('Relay quit during startup')
++            try:
++                status,_,text=self.request('GET','/healthz')
++                if status==200:break
++            except (OSError,http.client.HTTPException):pass
++            time.sleep(.05)
++        else:raise RuntimeError('Relay startup timed out')
++    def request(self,method,path,doc=None,headers=None):
++        conn=http.client.HTTPConnection('127.0.0.1',self.port,timeout=6)
++        content=json.dumps(doc,separators=(',',':')).encode() if doc is not None else None
++        h={'Host':f'127.0.0.1:{self.port}',**(headers or {})}
++        if doc is not None:
++            h.setdefault('Content-Type','application/json')
++            h.setdefault('Origin',f'http://127.0.0.1:{self.port}')
++        try:
++            conn.request(method,path,body=content,headers=h)
++            r=conn.getresponse();status=r.status;body=r.read();ctype=r.getheader('Content-Type')
++            return status,json.loads(body) if ctype=='application/json' else body.decode(),body
++        finally:conn.close()
++    def close(self):
++        self.proc.terminate()
++        try:self.proc.communicate(timeout=5)
++        except subprocess.TimeoutExpired:self.proc.kill();self.proc.communicate(timeout=5)
++
++with tempfile.TemporaryDirectory(prefix='sg-colony-integrated-') as temp:
++    temp=pathlib.Path(temp);save=temp/'world.sqlite'
++    created=subprocess.run([a.fixture,str(save)],capture_output=True,text=True,timeout=10)
++    assert created.returncode==0,created.stderr
++    layout=pathlib.Path(a.layout).read_text()
++    game=Game(save,free_port())
++    try:
++        status,session,_=game.request('GET','/session');assert status==200 and session['colony_mode']
++        token=session['token']
++        status,static,_=game.request('GET','/viewer/factory.html')
++        assert status==200 and 'factorySite' in static and 'Authorize plan' in static
++        status,js,_=game.request('GET','/viewer/factory-live.js')
++        assert status==200 and '/factory/api/' in js
++        status,sites,_=game.request('GET','/factory/api/sites')
++        assert status==200 and sites['ok'] and len(sites['sites'])==1
++        site=sites['sites'][0]
++        status,hello,_=game.request('GET',f'/factory/api/hello?site={site}')
++        assert status==200 and hello['site']==site and hello['modulesAvailable']>=12
++        status,plans,_=game.request('GET',f'/factory/api/plans?site={site}')
++        assert status==200 and plans['plans']==[]
++        status,foreign,_=game.request('GET','/factory/api/hello?site=999999')
++        assert status==400 and not foreign['ok']
++        status,dup,_=game.request('GET',f'/factory/api/hello?site={site}&site={site}')
++        assert status==404
++        old=subprocess.run([a.factory,'--db',str(save),'--no-browser'],capture_output=True,text=True,timeout=5)
++        assert old.returncode!=0 and 'already owned' in old.stderr
++        # Requests have the same token/Origin requirement as ordinary colony commands.
++        doc={'token':token,'site':site,'layout':layout}
++        status,wrong_origin,_=game.request('POST','/factory/api/register',doc,
++            {'Origin':'https://evil.example'})
++        assert status==403 and not wrong_origin['ok']
++        status,wrong_token,_=game.request('POST','/factory/api/register',dict(doc,token='stolen'))
++        assert status==403 and not wrong_token['ok']
++        status,wrong_owner,_=game.request('POST','/factory/api/register',dict(doc,owner=9))
++        assert status==404 and not wrong_owner['ok']
++        status,wrong_site,_=game.request('POST','/factory/api/register',dict(doc,site=999999))
++        assert status==400 and not wrong_site['ok']
++        # Exercise a large write across the OS pipe; malformed blueprint must
++        # fail safely without stalling simulation or granting any new authority.
++        status,large,_=game.request('POST','/factory/api/register',dict(doc,layout='X'*300000))
++        assert status==400 and not large['ok']
++        assert game.proc.poll() is None
++        status,reg,_=game.request('POST','/factory/api/register',doc)
++        assert status==200 and reg['ok'] and reg['plan']['total']==16,reg
++        plan=reg['plan']['id']
++        status,duplicate,_=game.request('POST','/factory/api/register',doc)
++        assert status==400 and not duplicate['ok']
++        status,wrong_plan_site,_=game.request('POST','/factory/api/status',{'token':token,'site':999999,'id':plan})
++        assert status==400 and not wrong_plan_site['ok']
++        status,step,_=game.request('POST','/factory/api/step',{'token':token,'site':site,'id':plan})
++        assert status==200 and step['event']['applied'] and step['plan']['completed']==1,step
++        status,still,_=game.request('GET','/factory/api/plans?site='+str(site))
++        assert status==200 and still['plans'][0]['completed']==1
++        status,live,_=game.request('GET','/factory/api/hello?site='+str(site))
++        assert live['modulesAvailable']<hello['modulesAvailable'] and live['tick']>hello['tick']
++        assert game.proc.poll() is None,'Colony viewer must remain running after factory tick'
++        status,cancel,_=game.request('POST','/factory/api/cancel',{'token':token,'site':site,'id':plan})
++        assert status==200 and cancel['plan']['cancelled']
++        status,denied,_=game.request('POST','/factory/api/step',{'token':token,'site':site,'id':plan})
++        assert status==400 and not denied['ok']
++        status,replacement,_=game.request('POST','/factory/api/register',doc)
++        assert status==200 and replacement['plan']['completed']==1 and replacement['plan']['id']>plan
++    finally:game.close()
++    # A second colony session resumes the SAME saved world and plan journal.
++    game=Game(save,free_port())
++    try:
++        status,sites,_=game.request('GET','/factory/api/sites');assert sites['sites']==[site]
++        status,plans,_=game.request('GET',f'/factory/api/plans?site={site}')
++        assert status==200 and len(plans['plans'])==2 and plans['plans'][0]['cancelled']
++        assert plans['plans'][1]['completed']==1
++        # Post-shutdown standalone host can acquire the released OS writer lease.
++    finally:game.close()
++    # Inverse lock direction: standalone host owns the same save, so a second
++    # native colony process must refuse it without starting a competing world.
++    standalone=subprocess.Popen([a.factory,'--db',str(save),'--no-browser'],
++        stdout=subprocess.PIPE,stderr=subprocess.PIPE)
++    try:
++        line=standalone.stdout.readline().decode()
++        assert line.startswith('SG_FACTORY_URL='),line
++        denied=subprocess.run([a.host,str(save),'100','5'],
++            capture_output=True,text=True,timeout=5)
++        assert denied.returncode!=0 and 'already owned' in denied.stderr,denied.stderr
++    finally:
++        standalone.terminate()
++        try:standalone.communicate(timeout=4)
++        except subprocess.TimeoutExpired:standalone.kill();standalone.communicate(timeout=4)
++    print('ECON-02B2d4c4 PASS: same-world live factory, two-way OS lease, Origin/token/site denial, large request, physical modules, cancellation, restart')
+diff --git a/viewer/colony.js b/viewer/colony.js
+index c1559c83eb8c258a5ccde6350e324c5bedac57e4..314fd3e784c49d273f202c8e8600b58e5a41b86e 100644
+--- a/viewer/colony.js
++++ b/viewer/colony.js
+@@ -7,7 +7,7 @@
+   function numeric(x,max=1e12){if(!/^(0|[1-9][0-9]*)$/.test(x))throw Error('Noncanonical number');const n=Number(x);if(!Number.isSafeInteger(n)||n>max)throw Error('Numeric overflow');return n;}
+   function decode(raw){     if(typeof raw!=='string'||raw.length>180||!/^COLONY\|1\|/.test(raw)||!/^[A-Za-z0-9_|-]+$/.test(raw))throw Error('Invalid colony telemetry');
+-    const v=raw.split('|'),tick=numeric(v[2],1200),t=v[3];let e={tick,type:t};
++    const v=raw.split('|'),tick=numeric(v[2],1000000),t=v[3];let e={tick,type:t};
+     if(t==='NEW_COLONY'||t==='RESUMED'){if(v.length!==4)throw Error('Malformed colony mode');}
+     else if(t==='STATUS'){
+       if(v.length!==10)throw Error('Bad status');
+diff --git a/viewer/factory-live.js b/viewer/factory-live.js
+index 01ce64dcbe13ba573b645a711f0af89f46a22533..59ef78a77a4a93c30e926b08ffe6126db1626c92 100644
+--- a/viewer/factory-live.js
++++ b/viewer/factory-live.js
+@@ -7,8 +7,14 @@ const root=location.pathname.slice(0,location.pathname.lastIndexOf('/')+1);
+ // Offline file:// use is still fully supported without native controls.
+ function offline(text){ui('liveStatus').textContent=text;for(const id of ['liveRegister','liveStep','liveCancel','liveRefresh'])ui(id).disabled=true;}
+ if(location.protocol==='file:'){offline('Offline design mode — no colony connected');return;}
++const colonyMode=root==='/viewer/';
+ const secret=root.match(/^\/session\/([0-9a-f]{64})\/$/)?.[1];
+-if(!secret){offline('No trusted host session');return;}
++if(!secret&&!colonyMode){offline('No trusted host session');return;}
++let token=null, site=0;
++if(colonyMode){
++  ui('factorySiteField').hidden=false;
++  const back=ui('factoryReturn');back.href='/viewer/interactive.html';back.textContent='Return to live colony';
++}
+ let active=null, connected=false, busy=false;
+ const setText=(id,text)=>ui(id).textContent=text;
+ function feedback(text,problem=false){setText('liveNotice',text);ui('liveNotice').style.color=problem?'#ffafa8':'#9bdccf';}
+@@ -19,18 +25,32 @@ function updatePlan(p){
+   ui('liveRegister').disabled=!!p&&!p.cancelled&&!p.finished;
+ }
+ async function api(endpoint,body){
+-  const opts=body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json','X-SG-Session':secret},body:JSON.stringify(body)};
+-  const response=await fetch(root+'api/'+endpoint,{cache:'no-store',...opts});
++  const opts=body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json',...(colonyMode?{}:{'X-SG-Session':secret})},body:JSON.stringify(colonyMode?{token,site,...body}:body)};
++  const url=colonyMode?('/factory/api/'+endpoint+(body===undefined&&endpoint!=='sites'?'?site='+site:'')):(root+'api/'+endpoint);
++  const response=await fetch(url,{cache:'no-store',...opts});
+   const data=await response.json();if(!response.ok||!data.ok)throw Error(data.error||`HTTP ${response.status}`);
+   return data;
+ }
+ async function load(){
++  if(colonyMode){
++    const sites=(await api('sites')).sites;
++    if(!Array.isArray(sites))throw Error('Invalid colony outpost list');
++    const select=ui('factorySite');
++    if(!sites.includes(site))site=sites[0]||0;
++    select.replaceChildren();
++    for(const n of sites){const opt=document.createElement('option');opt.value=String(n);opt.textContent='Outpost '+n;select.appendChild(opt);}
++    if(site)select.value=String(site);
++    if(!site){
++      connected=false;updatePlan(null);ui('liveRegister').disabled=true;
++      setText('liveStatus','No outpost built. Return to colony gameplay, mine, fabricate, and build an outpost first.');
++      return;
++    }
++  }
+   const [intro,list]=await Promise.all([api('hello'),api('plans')]);
+   connected=true;
+   const label=document.querySelector('header .pill');
+-  if(label)label.textContent='Native colony host · player-authorized construction';
+-  const returnLink=document.querySelector('header a[href="index.html"]');
+-  if(returnLink)returnLink.hidden=true;
++  if(label)label.textContent=colonyMode?'Running colony session · one authoritative world':'Native colony host · player-authorized construction';
++  if(!colonyMode)ui('factoryReturn').hidden=true;
+   setText('liveStatus',`Connected · Outpost ${intro.site} · Ship ${intro.ship} · ${intro.modulesAvailable} modules available`);
+   const plans=list.plans.filter(p=>p.site===intro.site);
+   updatePlan(plans.find(p=>!p.cancelled&&!p.finished)||plans.at(-1)||null);
+@@ -38,9 +58,10 @@ async function load(){
+ async function action(fn){if(busy)return;busy=true;
+   for(const b of [ui('liveStep'),ui('liveRegister'),ui('liveCancel'),ui('liveRefresh')])b.disabled=true;
+   try{await fn();await load();}catch(e){feedback(e.message,true);}
+-  finally{busy=false;if(active)updatePlan(active);else ui('liveRegister').disabled=false;ui('liveRefresh').disabled=false;}
++  finally{busy=false;if(active)updatePlan(active);else ui('liveRegister').disabled=colonyMode&&!site;ui('liveRefresh').disabled=false;}
+ }
+ ui('liveRefresh').onclick=()=>action(async()=>{feedback('World state refreshed.');});
++if(colonyMode)ui('factorySite').addEventListener('change',()=>{site=Number(ui('factorySite').value);active=null;load().catch(e=>feedback(e.message,true));});
+ ui('liveRegister').onclick=()=>action(async()=>{
+   const editor=window.SingleGalaxyEditorInstance?.();
+   if(!editor)throw Error('Editor not ready');
+@@ -59,5 +80,15 @@ ui('liveCancel').onclick=()=>action(async()=>{
+   if(!window.confirm('Cancel unfinished construction? Already-built equipment remains in the colony and will not be refunded.'))return;
+   const result=await api('cancel',{id:active.id});updatePlan(result.plan);feedback('Unfinished construction cancelled durably.');
+ });
+-load().catch(e=>{feedback(e.message,true);setText('liveStatus','Native host unavailable');});
++async function start(){
++  if(colonyMode){
++    const r=await fetch('/session',{cache:'no-store'});
++    if(!r.ok)throw Error('Live colony session unavailable');
++    const session=await r.json();
++    if(!session.colony_mode||typeof session.token!=='string')throw Error('This viewer is not connected to a colony game');
++    token=session.token;
++  }
++  await load();
++}
++start().catch(e=>{feedback(e.message,true);offline('Authoritative colony host unavailable');});
+ })();
+diff --git a/viewer/factory.html b/viewer/factory.html
+index 86fb9a6f99a9d18d35e2bb31a72ab4611beef08b..71ebd65a24c62b57f04a0222aa4e7456fa1745b4 100644
+--- a/viewer/factory.html
++++ b/viewer/factory.html
+@@ -4,10 +4,10 @@
+ :root{color-scheme:dark;--bg:#080e18;--surface:#121d2d;--surface2:#18283d;--line:#31435b;--cyan:#7ae2ee;--text:#edf5ff;--muted:#9eafc5;--warm:#ebbd79;--ok:#81e9b0;--bad:#f4a3a3}*{box-sizing:border-box}
+ body{margin:0;background:radial-gradient(circle at 70% 0%,#1c3041 0,transparent 38%),#080e18;color:var(--text);font:14px/1.5 system-ui,-apple-system,Segoe UI,Arial,sans-serif}button,input,select{font:inherit}button,select,input[type=number]{background:var(--surface2);border:1px solid #415a75;border-radius:9px;color:var(--text);padding:9px 11px}button{cursor:pointer}button:hover{border-color:#8bd8ed}button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}button.active{border-color:#5ad5de;background:#17475c;box-shadow:inset 0 0 0 1px #49b4c2}button.primary{background:#1d6271;border-color:#3897a3;font-weight:700}button:disabled{opacity:.5;cursor:not-allowed}a{color:var(--cyan)}
+ header{display:flex;justify-content:space-between;align-items:center;gap:14px;padding:15px 24px;border-bottom:1px solid var(--line);flex-wrap:wrap}h1{font-size:24px;line-height:1.3;margin:1px 0 2px;letter-spacing:-.02em}h2{font-size:14px;margin:0 0 10px}h3{font-size:13px;margin:16px 0 8px}.eyebrow{text-transform:uppercase;letter-spacing:.16em;font-size:11px;font-weight:700;color:var(--cyan)}.muted,.small{color:var(--muted)}.small{font-size:12px}.pill{border-radius:28px;border:1px solid #366277;background:#112b3b;padding:6px 12px;font-size:12px;color:#a8effb}
+-.page{max-width:1660px;margin:0 auto;padding:16px;display:grid;grid-template-columns:230px minmax(300px,1fr) 310px;gap:13px;min-height:calc(100vh - 91px)}.panel,.workspace{border:1px solid var(--line);border-radius:15px;background:rgba(17,29,45,.96);overflow:hidden}.panel{padding:16px}.tools{display:grid;gap:8px}.tools button{text-align:left;display:flex;justify-content:space-between;align-items:center;gap:4px;padding:10px}.tools button span:first-child{font-size:17px}.toolname{flex:1;font-size:13px}.toolgroup{padding:8px 0;border-top:1px solid var(--line);margin-top:6px}.toolgroup:first-child{border:0;margin-top:0}.workspace{min-width:0;display:flex;flex-direction:column}.workspace-head{padding:12px 15px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}.canvas-holder{height:clamp(430px,70vh,920px);position:relative;background:#07111f;overflow:hidden;touch-action:none}canvas{display:block;width:100%;height:100%;cursor:crosshair;touch-action:none}.overlay{position:absolute;left:15px;bottom:13px;border:1px solid #3d586f;border-radius:9px;background:#0c1c2cdb;padding:7px 11px;font-size:12px;color:#b8d6e7;pointer-events:none;max-width:calc(100% - 30px)}.status{padding:12px 15px;border-top:1px solid var(--line);font-size:13px;min-height:48px;color:#9ddde7}.status.error{color:#ffb9ae}.field{display:grid;gap:5px;margin:10px 0}.field label{font-size:12px;color:var(--muted)}.field select,.field input{width:100%}.metrics{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:14px 0}.metric{border:1px solid #2b415a;border-radius:10px;background:#0d1928;padding:11px}.metric strong{display:block;font-size:23px;font-variant-numeric:tabular-nums}.metric small{color:var(--muted)}.actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}.actions button{padding:9px 6px;font-size:12px}.spacer{height:10px}.divider{border-top:1px solid var(--line);margin:14px 0}.audit{border-radius:9px;background:#0a1928;padding:11px;border-left:3px solid var(--ok);font-size:12px}.audit.warn{border-left-color:var(--warm)}.legend{display:flex;gap:12px;flex-wrap:wrap;padding:9px 14px;color:var(--muted);font-size:12px;border-top:1px solid var(--line)}.legend i{display:inline-block;vertical-align:middle;width:9px;height:9px;border-radius:2px;margin-right:5px}.foot{font-size:12px;color:var(--muted);line-height:1.65}.tag{display:inline-block;color:#92e7dc;padding:3px 7px;background:#18404a;border-radius:5px;font-size:11px;font-weight:700}.linkhelp{line-height:1.55;margin-top:12px}.hidden{display:none}#planDetails{font-size:12px;color:#b6c9dc;white-space:pre-line;line-height:1.6;min-height:38px}@media(max-width:1100px){.page{grid-template-columns:205px 1fr}.right{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:16px}.right .panel{min-width:0}}@media(max-width:720px){.page{display:flex;flex-direction:column}.left .tools{display:flex;flex-wrap:wrap}.tools button{width:auto}.toolgroup{width:100%}.right{display:flex;flex-direction:column}.canvas-holder{height:58vh;min-height:400px}header{padding:14px}}
++.page{max-width:1660px;margin:0 auto;padding:16px;display:grid;grid-template-columns:230px minmax(300px,1fr) 310px;gap:13px;min-height:calc(100vh - 91px)}.panel,.workspace{border:1px solid var(--line);border-radius:15px;background:rgba(17,29,45,.96);overflow:hidden}.panel{padding:16px}.tools{display:grid;gap:8px}.tools button{text-align:left;display:flex;justify-content:space-between;align-items:center;gap:4px;padding:10px}.tools button span:first-child{font-size:17px}.toolname{flex:1;font-size:13px}.toolgroup{padding:8px 0;border-top:1px solid var(--line);margin-top:6px}.toolgroup:first-child{border:0;margin-top:0}.workspace{min-width:0;display:flex;flex-direction:column}.workspace-head{padding:12px 15px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}.canvas-holder{height:clamp(430px,70vh,920px);position:relative;background:#07111f;overflow:hidden;touch-action:none}canvas{display:block;width:100%;height:100%;cursor:crosshair;touch-action:none}.overlay{position:absolute;left:15px;bottom:13px;border:1px solid #3d586f;border-radius:9px;background:#0c1c2cdb;padding:7px 11px;font-size:12px;color:#b8d6e7;pointer-events:none;max-width:calc(100% - 30px)}.status{padding:12px 15px;border-top:1px solid var(--line);font-size:13px;min-height:48px;color:#9ddde7}.status.error{color:#ffb9ae}.field{display:grid;gap:5px;margin:10px 0}.field label{font-size:12px;color:var(--muted)}.field select,.field input{width:100%}.metrics{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:14px 0}.metric{border:1px solid #2b415a;border-radius:10px;background:#0d1928;padding:11px}.metric strong{display:block;font-size:23px;font-variant-numeric:tabular-nums}.metric small{color:var(--muted)}.actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}.actions button{padding:9px 6px;font-size:12px}.spacer{height:10px}.divider{border-top:1px solid var(--line);margin:14px 0}.audit{border-radius:9px;background:#0a1928;padding:11px;border-left:3px solid var(--ok);font-size:12px}.audit.warn{border-left-color:var(--warm)}.legend{display:flex;gap:12px;flex-wrap:wrap;padding:9px 14px;color:var(--muted);font-size:12px;border-top:1px solid var(--line)}.legend i{display:inline-block;vertical-align:middle;width:9px;height:9px;border-radius:2px;margin-right:5px}.foot{font-size:12px;color:var(--muted);line-height:1.65}.tag{display:inline-block;color:#92e7dc;padding:3px 7px;background:#18404a;border-radius:5px;font-size:11px;font-weight:700}.linkhelp{line-height:1.55;margin-top:12px}.hidden{display:none}#factorySiteField[hidden]{display:none}#planDetails{font-size:12px;color:#b6c9dc;white-space:pre-line;line-height:1.6;min-height:38px}@media(max-width:1100px){.page{grid-template-columns:205px 1fr}.right{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:16px}.right .panel{min-width:0}}@media(max-width:720px){.page{display:flex;flex-direction:column}.left .tools{display:flex;flex-wrap:wrap}.tools button{width:auto}.toolgroup{width:100%}.right{display:flex;flex-direction:column}.canvas-holder{height:58vh;min-height:400px}header{padding:14px}}
+ </style></head>
+ <body>
+-<header><div><div class="eyebrow">Single Galaxy / Engineering · ECON-02B2d4b</div><h1>Factory Designer</h1><div class="small">Freeform layout · Snap-to-grid walls · Native blueprint export</div></div><div><span class="pill">Local design preview — not connected to live colony</span> <a href="index.html" class="small">Return to space viewer</a></div></header>
++<header><div><div class="eyebrow">Single Galaxy / Engineering · ECON-02B2d4b</div><h1>Factory Designer</h1><div class="small">Freeform layout · Snap-to-grid walls · Native blueprint export</div></div><div><span class="pill">Local design preview — not connected to live colony</span> <a href="index.html" class="small" id="factoryReturn">Return to space viewer</a></div></header>
+ <main class="page">
+ <aside class="left panel"><h2>Construction tools</h2>
+ <div class="toolgroup tools">
+@@ -34,7 +34,7 @@ header{display:flex;justify-content:space-between;align-items:center;gap:14px;pa
+ <div class="status" id="message" role="status" aria-live="polite">Design a factory. Place base storage to start, or load the example plan.</div></section>
+ <aside class="right"><div class="panel"><h2>Conveyor settings</h2><div class="field"><label for="routeItem">Items carried</label><select id="routeItem"><option value="good/aluminum">Aluminum</option><option value="good/aluminum_panels">Panels</option><option value="good/aluminum_frames">Frames</option><option value="good/aluminum_scrap">Scrap</option></select></div><div class="field"><label for="routeRate">Maximum units / simulation tick</label><input id="routeRate" type="number" min="1" max="1000" value="7"></div><div class="small linkhelp">Select <strong>Auto-route conveyor</strong>, click its source, then its destination. The editor calculates an orthogonal route around placed machines, conveyors, and solid walls. Doors allow crossings.</div><div class="divider"></div><h2>Selected equipment</h2><div id="selectionDetails" class="small">No equipment selected</div></div>
+ <div class="panel"><h2>Blueprint audit</h2><div class="metrics"><div class="metric"><small>Devices</small><strong id="metricDevices">0</strong></div><div class="metric"><small>Links</small><strong id="metricLinks">0</strong></div><div class="metric"><small>Construction steps</small><strong id="metricSteps">0</strong></div><div class="metric"><small>Module cost*</small><strong id="metricModules">0</strong></div></div><div class="audit" id="auditResult">Place base storage to create a buildable blueprint.</div><div class="small" style="margin:10px 0">*Uses the current provisional world construction rules. No materials are spent inside this editor.</div><div id="planDetails"></div></div>
+-<div class="panel" id="liveConstruction"><h2>Live colony construction</h2><div class="small" id="liveStatus">Checking host connection…</div><div class="divider"></div><div class="small" id="livePlan">No registered plan</div><div class="actions"><button class="primary" id="liveRegister">Authorize plan</button><button id="liveRefresh">Refresh world</button><button id="liveStep">Build next step</button><button id="liveCancel">Cancel remaining</button></div><div id="liveNotice" class="small" role="status" aria-live="polite" style="margin-top:10px">The native host owns construction authority. Every build step is explicit.</div></div>
++<div class="panel" id="liveConstruction"><h2>Live colony construction</h2><div class="small" id="liveStatus">Checking host connection…</div><label class="field" id="factorySiteField" hidden><span>Authorized construction outpost</span><select id="factorySite"><option value="">No outpost yet</option></select></label><div class="divider"></div><div class="small" id="livePlan">No registered plan</div><div class="actions"><button class="primary" id="liveRegister">Authorize plan</button><button id="liveRefresh">Refresh world</button><button id="liveStep">Build next step</button><button id="liveCancel">Cancel remaining</button></div><div id="liveNotice" class="small" role="status" aria-live="polite" style="margin-top:10px">The native host owns construction authority. Every build step is explicit.</div></div>
+ <div class="panel"><h2>Design & export</h2><div class="actions"><button id="undo">↶ Undo</button><button id="redo">↷ Redo</button><button id="example">Load example</button><button id="clear">Clear plan</button><button class="primary" id="saveDesign">Save design</button><button id="openDesign">Open design</button><button class="primary" id="exportNative">Export .sglayout</button><button id="auditButton">Check plan</button></div><input type="file" id="loadFile" accept=".sgfactory,.json,.sglayout,.txt" hidden><div class="divider"></div><div class="foot"><span class="tag">Authoritative boundary</span> Native .sglayout files can be consumed by the existing C++ construction planner. Wall, door, and floor overlays are saved in the <strong>.sgfactory</strong> design, but are <strong>not yet buildable world objects</strong>. This browser cannot issue construction commands or spend resources.</div></div>
+ </aside></main>
+ <script src="factory-layout.js"></script><script src="factory.js"></script><script src="factory-live.js"></script>
+diff --git a/viewer/interactive.html b/viewer/interactive.html
+index 400f4e1b7d4cd55f5898acdf7209c706e8b2b85d..3bf3bd8c46b9f41abfd984675c2cae40a4f47688 100644
+--- a/viewer/interactive.html
++++ b/viewer/interactive.html
+@@ -48,7 +48,7 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
+ </section>
+ <aside class="side">
+ <div class="card pad" id="interactiveControls"><h2>Live ship controls</h2><div class="controls" style="padding:0;margin-bottom:8px"><button id="undock" class="primary">Undock</button><button id="dock">Request dock</button><button id="unload">Unload ore</button><button id="load">Load ore</button><button id="sell">Sell local ore</button></div><div class="controls" style="padding:0;margin-bottom:8px"><button id="mine4" class="primary">⛏ Mine 4/tick</button><button id="stopMine">Stop mining</button></div><div class="controls" style="padding:0;gap:5px"><button id="left">← Thrust</button><button id="right">→ Thrust</button><button id="up">↑ Thrust</button><button id="down">↓ Thrust</button><button id="drift">Drift</button></div><div class="controls" style="padding:0;gap:5px;margin-top:8px"><button id="travelA">Assist to Station A</button><button id="travelGate">Assist to Gate</button><button id="jump" class="primary">Jump Gate</button><button id="travelB">Assist to Station B</button></div><button style="margin-top:12px" id="reconnect">Reconnect viewer</button><div class="help" id="commandMessage" aria-live="polite">Opening the local session…</div></div><div class="card pad" style="display:none"><h2>Scenario</h2><select id="scenario" style="width:100%"><option value="ten">10 asteroids · 10 ore each</option><option value="hold">Automatic mining · hold 10</option><option value="motion">Ship movement · inertia</option></select><div class="help" id="description">Ten finite asteroids are removed as they are mined.</div><label class="filebutton" for="import" style="display:block;text-align:center;margin-top:15px">Open other .sgview recording</label><input id="import" type="file" accept=".sgview,.txt,text/plain"></div>
+-<div class="card pad" id="colonyPanel" hidden><h2>Colony ship · first settlement</h2>
++<div class="card pad" id="colonyPanel" hidden><h2>Colony ship · first settlement</h2><div style="margin:10px 0 16px"><a href="/viewer/factory.html" id="colonyFactoryLink" class="primary" style="display:inline-block;padding:9px 13px;border:1px solid #3897a3;border-radius:9px;background:#1d6271;text-decoration:none;color:white">Open Factory Designer</a><div class="help">Factory edits use this same running colony world. A built outpost and real construction modules are required before authorizing a plan.</div></div>
+ <div class="help">One ship · finite crew · no starting stations or gates. Every resource action is executed and saved by the C++ simulation. The mineral distributions below are illustrative based on real mineral classes.</div>
+ <div class="metric"><span class="muted">Colonists</span><strong id="colonyCrew">—</strong></div>
+ <div class="metric"><span class="muted">Raw ore (t)</span><strong id="colonyRaw">—</strong></div>

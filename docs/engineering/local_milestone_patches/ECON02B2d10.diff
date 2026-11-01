@@ -1,0 +1,601 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 9a4fd18..d33db51 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -721,3 +721,10 @@ if(BUILD_TESTING)
+   target_link_libraries(galaxy_econ02b2d9_priority_tests PRIVATE galaxy_kernel SQLite::SQLite3)
+   add_test(NAME ECON02B2d9_PriorityAllocator COMMAND galaxy_econ02b2d9_priority_tests)
+ endif()
++
++# ECON-02B2d10: blocked route recovery and demand visibility without teleporting stock.
++if(BUILD_TESTING)
++  add_executable(galaxy_econ02b2d10_source_recovery_tests tests/ECON02B2d10SourceRecoveryTests.cpp)
++  target_link_libraries(galaxy_econ02b2d10_source_recovery_tests PRIVATE galaxy_kernel)
++  add_test(NAME ECON02B2d10_SourceRecovery COMMAND galaxy_econ02b2d10_source_recovery_tests)
++endif()
+diff --git a/docs/engineering/ECON02B2d10_Source_Recovery_Demand_Engineering_Report_2026-11-01.md b/docs/engineering/ECON02B2d10_Source_Recovery_Demand_Engineering_Report_2026-11-01.md
+new file mode 100644
+index 0000000..ba453cb
+--- /dev/null
++++ b/docs/engineering/ECON02B2d10_Source_Recovery_Demand_Engineering_Report_2026-11-01.md
+@@ -0,0 +1,59 @@
++# ECON-02B2d10 — Depleted-source recovery and construction-demand planning
++
++**Date:** November 1, 2026
++**Project:** Single Galaxy original colony game
++**Exact predecessor:** `SingleGalaxy_ECON02B2d9_Priority_Autonomy_Source_Tests_2026-11-01.zip`
++**Development:** Local Linux/C++/SQLite; GitHub remains repository storage, not a development hub.
++
++## Objective and architecture
++
++Continue ECON-02B2d9 by detecting when a reserved warehouse or a new stock source cannot serve an NPC construction site, making a physically legitimate recovery decision, and presenting bounded, priority-aware demand forecasts to the colony player. Continue to enforce one authoritative simulation writer and never mint, teleport, or double-allocate resources.
++
++The construction scheduler runs on the existing colony simulation thread. `Simulation` owns all material custody (ship, site depot, installed storage nodes, reserved stock, workers' cargo, construction deliveries and completed physical structures), while `NpcConstructionCrews` owns durable assignments and scheduling. Changing actual stock still requires the existing journaled `Action::ReserveConstructionModules`, pickup, delivery, return and build commands; forecast data is read-only.
++
++## Changes
++
++1. **Route-proof distinction.** A route check returns `Yes`, `No`, or `Unknown` rather than conflating a failed bounded search with a blocked route. Straight two-leg Manhattan paths are checked first; a bounded breadth-first search then attempts local detours. `No` is returned only when a connected component is exhausted or a coordinate is invalid. When the 4,096-node CPU budget is exhausted, the result is `Unknown` and inventory is not moved on the basis of an unproven route. The CPU budget is not a factory size limit.
++2. **Stranded reservation recovery.** Before an NPC travels to a reserved node, the scheduler checks the worker-to-source and source-to-build-site routes. On a proven disconnection, it releases only the uncollected reservation back to the **same physical source** via a journaled, authoritative reserve/release action. Already carried modules, installed structures and delivered stock are never reassigned. A reachable alternative source can then be selected on a later simulation tick.
++3. **Uninstalled source handling.** A missing/de-installed reserved node is reported as `RESERVED_SOURCE_UNAVAILABLE` and its physical custody is left in the world ledger. It is **not** magically transferred to the depot: a physical salvage/removal workflow is a future dependency. API reports stranded unreserved and stranded reserved quantities separately.
++4. **Reachability before allocating.** The scheduler only reserves reachable, installed node stock whose source can reach the actual current construction cell. It also validates the depot path before staging ship modules, avoiding fruitless resupply when no route can serve the site. It reports distinct reasons for `SOURCE_ROUTE_BLOCKED`, `SOURCE_ROUTE_UNVERIFIED`, `SUPPLY_ROUTE_BLOCKED`, `SUPPLY_ROUTE_UNVERIFIED`, `DEPOT_ROUTE_BLOCKED`, and `SUPPLY_SHORTAGE`.
++5. **Deterministic read-only demand forecast.** Every visible plan exposes its remaining embodied module demand and module quantity not already committed via a reservation, named NPC cargo or the current construction-cell delivery. Free depot and installed-node inventory is projected against active plans in descending priority, then ascending plan ID order. Each individual free module is counted at most once in this forecast; routes must be proven reachable to count it. `projectedLocalFunding` and `projectedLocalGap` are expressly estimates, not reservations, procurement authorizations, or promises that staff will be assigned. The forecast does not count physically stranded nodes as available sources.
++6. **SQLite read-cursor lifecycle repair.** Closed the active `sg_structure_plans` read cursor before performing the authoritative world resource action. A real regression test exposed `database is locked` from attempting to update a crew job after a world write while the crew connection retained its previous read snapshot. The repaired sequencing persists the expected reason and allows restarts.
++7. **Colony UI and protocol.** Factory/crew listing adds demand, projected local funding/gap, stranded stock, and stranded reservations. The colony construction panel shows them alongside existing warehouse and crew positions. No new public write capability, no competing world writer, and no separate UI/application were introduced.
++
++## Tests performed
++
++| Test | Outcome |
++| --- | --- |
++| Dedicated `ECON02B2d10_SourceRecovery` native test | PASS |
++| Existing `ECON02B2d9_PriorityAllocator` | PASS |
++| Existing `ECON02B2d8_MultiSourceAllocations` | PASS |
++| Existing authenticated `ECON02B2d6_NPCConstruction_HTTP` | PASS (real colony process, 10.35 s) |
++| JavaScript `node --test tests/*.js` | 93/93 PASS |
++| Offline Chromium crew, stock and control test | PASS |
++| Offline Chromium colony structure editing test | PASS |
++| Affected Linux native kernel, source tests, and colony HTTP host | Compiled successfully |
++| Entire native project / all CTest targets | NOT VERIFIED in this milestone: the attempted full build was interrupted by the execution limit during older targets |
++| Native Windows executable / actual Windows GUI | NOT VERIFIED |
++
++The new native test exercises an actual built storage node surrounded on all four sides by physical walls, after a reservation was already made. It proves the reservation moves back into the same enclosed warehouse, that the alternate storage node is then chosen and used to complete the structure, that no modules are teleported or duplicated, and that SQLite restart preserves the finished fixture and the trapped physical inventory. A separate newly enclosed work cell confirms that no amount of available ship stock can silently cross a wall and that an actionable `SUPPLY_ROUTE_BLOCKED` reason is emitted. It also tests a two-project, single-stock budget: the higher priority plan gets the only two modules in the non-mutating forecast, while the lower plan has a two-module projected local gap. The forecast is proven to leave the world snapshot unchanged.
++
++## Limitations / follow-on gates
++
++- `Route::Unknown` is an explicit limitation of bounded CPU effort and does **not** establish that the path is blocked. Long or maze-heavy routes need future hierarchical 3D navigation and an incremental route validation worker. No arbitrary floor-size or factory-tier area caps were added.
++- Inaccessible material remains at its source; abandoned/destroyed warehouse salvage and actual inventory removal are not implemented here. Construction projects may need player intervention to open doors, demolish barriers or clear a route.
++- No new automatic ore mining, goods procurement, NPC vehicle transport, or inter-colony material shipping was added. Demand forecasts currently cover local construction modules and current priority/active policy, not a galaxy-wide industrial material requirements planning (MRP) solver.
++- Demand projections are site-local and non-binding. They exclude NPC position congestion, fatigue, future production and inventory promised to unrelated subsystems. They cannot replace authoritative reservations.
++- Full rebuild and full native regression remain a follow-on verification gate. Windows GUI acceptance and 3D NPC movement remain open.
++
++## Changed source surfaces
++
++- `src/NpcConstructionCrews.cpp` — route certification, safe release and source selection, reservation/restart cursor fix, demand projections
++- `include/galaxy/NpcConstructionCrews.hpp` — typed projected demand fields
++- `src/factory_colony_protocol.hpp` — demand and stranded-stock JSON
++- `viewer/structures.js` — colony construction supply/demand diagnostics
++- `tests/ECON02B2d10SourceRecoveryTests.cpp` — physical route, conservation, restart and forecast test
++- `CMakeLists.txt` — native CTest registration
++- This engineering report
++
++**Next:** Warehouse decommissioning, physical salvage of stranded material, and supply-demand fulfillment with NPC-authorized restocking/production orders, retaining the same simulation authority and per-site inventory ledger.
+diff --git a/include/galaxy/NpcConstructionCrews.hpp b/include/galaxy/NpcConstructionCrews.hpp
+index b0256d3..80ec207 100644
+--- a/include/galaxy/NpcConstructionCrews.hpp
++++ b/include/galaxy/NpcConstructionCrews.hpp
+@@ -23,6 +23,10 @@ struct CrewJob {
+     int priority=1;bool autonomy=false;
+     std::int64_t depot_modules=0,delivered_modules=0;
+     std::int64_t reserved_modules=0;std::uint32_t reserved_source_node=0;
++    // Informational demand only; no second copy of material is reserved.
++    std::int64_t remaining_modules=0,unallocated_modules=0,local_free_modules=0;
++    // Projections are prioritized estimates, NOT stock reservations.
++    std::int64_t projected_local_funding=0,projected_local_gap=0;
+     std::string reason;
+     std::vector<CrewWorker> workers;
+ };
+diff --git a/src/NpcConstructionCrews.cpp b/src/NpcConstructionCrews.cpp
+index 4c60abf..f185d6e 100644
+--- a/src/NpcConstructionCrews.cpp
++++ b/src/NpcConstructionCrews.cpp
+@@ -58,6 +58,48 @@ bool next_cell(const Simulation& sim,EntityId site,Pos current,Pos dest,Pos& nex
+  }
+  return false;
+ }
++// A route is certified blocked only if the explored connected component is
++// exhausted. Exhausting the CPU budget yields Unknown, not a false No.
++// This work budget never limits where players may construct buildings.
++enum class Route { Yes, No, Unknown };
++Route reachable(const Simulation& sim,EntityId site,Pos start,Pos target){
++ if(start==target)return Route::Yes;
++ const auto valid=[](Pos p){return std::abs(static_cast<long long>(p.first))<=1000000 &&
++                                   std::abs(static_cast<long long>(p.second))<=1000000;};
++ if(!valid(start)||!valid(target))return Route::No;
++ const auto straight=[&](bool horizontal_first){
++  Pos at=start;
++  for(int axis=0;axis<2;++axis){
++   const bool horizontal=(axis==0)==horizontal_first;
++   const int dest=horizontal?target.first:target.second;
++   while((horizontal?at.first:at.second)!=dest){
++    Pos next=at;
++    if(horizontal)next.first+=(dest>at.first?1:-1);
++    else next.second+=(dest>at.second?1:-1);
++    if(!sim.structure_edge_passable(site,at.first,at.second,next.first,next.second))return false;
++    at=next;
++   }
++  }
++  return true;
++ };
++ const auto distance=std::llabs(static_cast<long long>(start.first)-target.first)+
++                     std::llabs(static_cast<long long>(start.second)-target.second);
++ if(distance<=512 && (straight(true)||straight(false)))return Route::Yes;
++ const std::array<Pos,4> directions{{{1,0},{0,1},{-1,0},{0,-1}}};
++ std::queue<Pos> q;std::map<Pos,bool> seen;q.push(start);seen[start]=true;
++ std::size_t visited=0;
++ while(!q.empty() && visited<4096){
++  const auto at=q.front();q.pop();++visited;
++  for(const auto& d:directions){
++   Pos other{at.first+d.first,at.second+d.second};
++   if(!valid(other)||seen.count(other)||
++      !sim.structure_edge_passable(site,at.first,at.second,other.first,other.second))continue;
++   if(other==target)return Route::Yes;
++   seen[other]=true;q.push(other);
++  }
++ }
++ return q.empty()?Route::No:Route::Unknown;
++}
+ std::int64_t cost(const Step& s){return s.kind==FixtureKind::Floor?1:2;}
+ std::int64_t work(const Step& s){return s.kind==FixtureKind::Floor?2:4;}
+ }
+@@ -172,6 +214,7 @@ void Crews::set_policy(std::int64_t plan,int priority,bool autonomy,PlayerId own
+ }
+ std::vector<CrewJob> Crews::list(PlayerId owner,EntityId ship,EntityId site)const{
+  validate_site(owner,ship,site);std::vector<CrewJob> result;
++ std::map<std::int64_t,Pos> next_work;
+  Query q(db_->db,"SELECT plan_id,active,completed,labor,reason,priority,autonomy FROM sg_construction_jobs WHERE owner=? AND ship=? AND site=? ORDER BY plan_id LIMIT 200");
+  q.n(1,owner);q.n(2,ship);q.n(3,site);
+  while(q.row()){
+@@ -191,9 +234,15 @@ std::vector<CrewJob> Crews::list(PlayerId owner,EntityId ship,EntityId site)cons
+     }
+    }
+   }
+-  if(!s.finished()&&!s.cancelled&&!s.conflicting)job.required=work(Plans::parse([&](){
+-   Query text(db_->db,"SELECT steps FROM sg_structure_plans WHERE id=?");text.n(1,job.plan);if(!text.row())throw std::runtime_error("Missing plan");return text.t(0);
+-  }()).at(s.completed));
++  if(!s.finished()&&!s.cancelled&&!s.conflicting){
++   Query text(db_->db,"SELECT steps FROM sg_structure_plans WHERE id=?");
++   text.n(1,job.plan);if(!text.row())throw std::runtime_error("Missing plan");
++   const auto steps=Plans::parse(text.t(0));
++   const auto step=steps.at(s.completed);
++   job.required=work(step);
++   next_work.emplace(job.plan,Pos{step.x,step.y});
++   for(std::size_t index=s.completed;index<steps.size();++index)job.remaining_modules+=cost(steps[index]);
++  }
+   Query workers(db_->db,"SELECT npc_id,x,y FROM sg_construction_workers WHERE plan_id=? ORDER BY npc_id");workers.n(1,job.plan);
+   while(workers.row()){
+    CrewWorker worker{static_cast<std::uint64_t>(workers.v(0)),static_cast<int>(workers.v(1)),static_cast<int>(workers.v(2))};
+@@ -202,8 +251,73 @@ std::vector<CrewJob> Crews::list(PlayerId owner,EntityId ship,EntityId site)cons
+    }
+    job.workers.push_back(worker);
+   }
++  // Demand is informational, never an extra reservation or permission to
++  // spend the same warehouse stock in two concurrent plans.
++  std::int64_t committed=job.reserved_modules+job.delivered_modules;
++  for(const auto& worker:job.workers)committed+=worker.carrying;
++  job.unallocated_modules=std::max<std::int64_t>(0,job.remaining_modules-committed);
++  if(const auto* supply=world_.world().construction_supplies(site)){
++   job.local_free_modules=supply->depot;
++   if(const auto* store=world_.world().storage(site))for(const auto& [node,qty]:supply->node_modules){
++    if(store->extra_bins.count(node)&&store->equipment_positions.count(node))job.local_free_modules+=qty;
++   }
++  }
+   result.push_back(std::move(job));
+  }
++ // Non-mutating demand forecast. Available inventory is allocated at most
++ // once to currently active plans, in the same priority / plan-ID order as
++ // the scheduler. This is NOT a reservation: actual inventory custody still
++ // changes only through journaled world Actions after crew pickup.
++ std::map<std::uint32_t,std::int64_t> forecast_stock;
++ if(const auto* supplies=world_.world().construction_supplies(site)){
++  forecast_stock[0]=supplies->depot;
++  if(const auto* storage=world_.world().storage(site))for(const auto& [node,qty]:supplies->node_modules){
++   if(qty>0 && storage->extra_bins.count(node) && storage->equipment_positions.count(node))
++    forecast_stock[node]=qty;
++  }
++ }
++ std::vector<std::size_t> order;
++ for(std::size_t i=0;i<result.size();++i)order.push_back(i);
++ std::stable_sort(order.begin(),order.end(),[&](std::size_t a,std::size_t b){
++  if(result[a].priority!=result[b].priority)return result[a].priority>result[b].priority;
++  return result[a].plan<result[b].plan;
++ });
++ for(const auto index:order){
++  auto& job=result[index];
++  job.projected_local_gap=job.unallocated_modules;
++  if(!job.active || job.unallocated_modules==0 || !next_work.count(job.plan))continue;
++  const Pos goal=next_work.at(job.plan);
++  const Pos worker=job.workers.empty()?Pos{0,0}:Pos{job.workers.front().x,job.workers.front().y};
++  struct Candidate {std::int64_t distance;std::uint32_t node;};
++  std::vector<Candidate> sources;
++  for(const auto& [node,qty]:forecast_stock){
++   if(qty<=0)continue;
++   Pos location{0,0};
++   if(node){
++    const auto* store=world_.world().storage(site);
++    if(!store||!store->equipment_positions.count(node))continue;
++    const auto& point=store->equipment_positions.at(node);
++    location={static_cast<int>(point.x),static_cast<int>(point.y)};
++   }
++   if(reachable(world_.world(),site,worker,location)!=Route::Yes ||
++      reachable(world_.world(),site,location,goal)!=Route::Yes)continue;
++   const auto dist=std::llabs(static_cast<long long>(worker.first)-location.first)+
++                   std::llabs(static_cast<long long>(worker.second)-location.second)+
++                   std::llabs(static_cast<long long>(location.first)-goal.first)+
++                   std::llabs(static_cast<long long>(location.second)-goal.second);
++   sources.push_back({dist,node});
++  }
++  std::sort(sources.begin(),sources.end(),[](const Candidate& a,const Candidate& b){
++   return std::tie(a.distance,a.node)<std::tie(b.distance,b.node);
++  });
++  for(const auto& source:sources){
++   const auto amount=std::min(job.projected_local_gap,forecast_stock[source.node]);
++   job.projected_local_funding+=amount;
++   job.projected_local_gap-=amount;
++   forecast_stock[source.node]-=amount;
++   if(!job.projected_local_gap)break;
++  }
++ }
+  return result;
+ }
+ void Crews::queue_restock(std::uint64_t npc,std::uint32_t node,PlayerId owner,EntityId ship,EntityId site){
+@@ -351,9 +465,15 @@ void Crews::advance(PlayerId owner,EntityId ship){
+    // Crash recovery: plan receipts are canonical; stale work is never reused
+    // when a structure finished before the worker-progress update committed.
+    if(status.completed!=static_cast<std::size_t>(j.completed))labor=0;
+-   Query text(db_->db,"SELECT steps FROM sg_structure_plans WHERE id=?");text.n(1,j.id);
+-   if(!text.row())throw std::runtime_error("Missing construction blueprint");
+-   const auto task=Plans::parse(text.t(0)).at(status.completed);
++   Step task{};
++   {
++    // Close the SQLite read cursor BEFORE the authoritative world writer
++    // commits a resource action, otherwise a stale read snapshot can cause
++    // SQLITE_BUSY_SNAPSHOT when persisting this job's reason/checkpoint.
++    Query text(db_->db,"SELECT steps FROM sg_structure_plans WHERE id=?");text.n(1,j.id);
++    if(!text.row())throw std::runtime_error("Missing construction blueprint");
++    task=Plans::parse(text.t(0)).at(status.completed);
++   }
+    const Pos goal{task.x,task.y};int ready=0;
+    Query workers(db_->db,"SELECT npc_id,x,y FROM sg_construction_workers WHERE plan_id=? ORDER BY npc_id");workers.n(1,j.id);
+    std::vector<CrewWorker> roster;
+@@ -388,12 +508,30 @@ void Crews::advance(PlayerId owner,EntityId ship){
+      if(hold!=supply->reserved.end())source_node=hold->second.node;
+      if(source_node){
+       const auto* store=world_.world().storage(j.site);
+-      if(!store || !store->equipment_positions.count(source_node)){
+-       reason="Reserved storage source is not installed";continue;
++      if(!store || !store->extra_bins.count(source_node) || !store->equipment_positions.count(source_node)){
++       // Do not relocate a stranded reservation to a fictional depot. Keep
++       // its physical custody recorded until a real recovery route exists.
++       reason="RESERVED_SOURCE_UNAVAILABLE: physical stock held at missing node";continue;
+       }
+       const auto& where=store->equipment_positions.at(source_node);
+       source={static_cast<int>(where.x),static_cast<int>(where.y)};
+      }
++     if(supply->reserved.count(j.id)){
++      const auto from_worker=reachable(world_.world(),j.site,{n.x,n.y},source);
++      const auto to_site=reachable(world_.world(),j.site,source,goal);
++      if(from_worker==Route::No || to_site==Route::No){
++       const auto count=supply->reserved.at(j.id).modules;
++       const auto event=structures_.supply_action(Action::ReserveConstructionModules,j.id,
++            static_cast<int>(source_node),-static_cast<int>(count),owner,ship,j.site);
++       reason=event.result==Outcome::Applied?
++           "SOURCE_ROUTE_BLOCKED: released uncollected reservation at original source":
++           "SOURCE_ROUTE_BLOCKED: release refused; inventory retained";
++       break;
++      }
++      if(from_worker==Route::Unknown||to_site==Route::Unknown){
++       reason="SOURCE_ROUTE_UNVERIFIED: reservation retained without moving cargo";continue;
++      }
++     }
+     }
+     const Pos destination=carrying>0?goal:(supplies_ready?goal:source);
+     const Pos here{n.x,n.y};
+@@ -426,19 +564,29 @@ void Crews::advance(PlayerId owner,EntityId ship){
+       // Unavailable/reserved inventory is excluded from these balances.
+       struct Candidate{std::int64_t score;std::uint32_t node;std::int64_t stock;};
+       std::vector<Candidate> sources;
++      std::size_t blocked_sources=0,unverified_sources=0;
+       if(supply && supply->depot>0){
+-       const auto score=std::llabs(static_cast<long long>(n.x))+std::llabs(static_cast<long long>(n.y))+
+-         std::llabs(static_cast<long long>(goal.first))+std::llabs(static_cast<long long>(goal.second));
+-       sources.push_back({score,0,supply->depot});
++       const auto approach=reachable(world_.world(),j.site,{n.x,n.y},{0,0});
++       const auto depart=reachable(world_.world(),j.site,{0,0},goal);
++       if(approach==Route::Yes&&depart==Route::Yes){
++        const auto score=std::llabs(static_cast<long long>(n.x))+std::llabs(static_cast<long long>(n.y))+
++          std::llabs(static_cast<long long>(goal.first))+std::llabs(static_cast<long long>(goal.second));
++        sources.push_back({score,0,supply->depot});
++       }else if(approach==Route::No||depart==Route::No)++blocked_sources;
++       else ++unverified_sources;
+       }
+       if(supply)if(const auto* store=world_.world().storage(j.site)){
+        for(const auto& [node,quantity]:supply->node_modules){
+         auto found=store->equipment_positions.find(node);
+         if(quantity<=0 || found==store->equipment_positions.end())continue;
+         const Pos where{static_cast<int>(found->second.x),static_cast<int>(found->second.y)};
+-        Pos toward{};
+-        if(where!=Pos{n.x,n.y} && !next_cell(world_.world(),j.site,{n.x,n.y},where,toward))continue;
+-        if(where!=goal && !next_cell(world_.world(),j.site,where,goal,toward))continue;
++        const auto approach=reachable(world_.world(),j.site,{n.x,n.y},where);
++        const auto depart=reachable(world_.world(),j.site,where,goal);
++        if(approach!=Route::Yes||depart!=Route::Yes){
++         if(approach==Route::No||depart==Route::No)++blocked_sources;
++         else ++unverified_sources;
++         continue;
++        }
+         const auto score=std::llabs(static_cast<long long>(n.x)-where.first)+
+           std::llabs(static_cast<long long>(n.y)-where.second)+
+           std::llabs(static_cast<long long>(goal.first)-where.first)+
+@@ -474,9 +622,8 @@ void Crews::advance(PlayerId owner,EntityId ship){
+         const auto& point=store->equipment_positions.at(node);
+         where={static_cast<int>(point.x),static_cast<int>(point.y)};
+        }
+-       Pos next{};
+-       if(where!=Pos{n.x,n.y}&&!next_cell(world_.world(),j.site,{n.x,n.y},where,next))continue;
+-       if(where!=goal&&!next_cell(world_.world(),j.site,where,goal,next))continue;
++       if(reachable(world_.world(),j.site,{n.x,n.y},where)!=Route::Yes ||
++          reachable(world_.world(),j.site,where,goal)!=Route::Yes)continue;
+        const auto amount=std::min<std::int64_t>(hold->second.modules,needed-staged-in_transit-held);
+        if(amount<=0)continue;
+        const auto event=structures_.supply_action(Action::ReserveConstructionModules,donor.id,
+@@ -490,10 +637,14 @@ void Crews::advance(PlayerId owner,EntityId ship){
+       // if any unclaimed modules are already at a reachable source.
+       const auto* shipstock=world_.world().colony_ship(ship);
+       const auto load=shipstock?std::min<std::int64_t>(8,shipstock->modules):0;
+-      if(load>0){
++      if(load>0 && reachable(world_.world(),j.site,{n.x,n.y},{0,0})==Route::Yes &&
++         reachable(world_.world(),j.site,{0,0},goal)==Route::Yes){
+        const auto event=structures_.supply_action(Action::StageConstructionModules,load,0,0,owner,ship,j.site);
+        reason=event.result==Outcome::Applied?"Restocked site depot from colony ship":"Depot resupply refused";
+-      }else reason="No unreserved modules at reachable storage nodes";
++      }else if(unverified_sources)reason="SUPPLY_ROUTE_UNVERIFIED: no certified material route";
++      else if(blocked_sources)reason="SUPPLY_ROUTE_BLOCKED: unreserved stock exists behind impassable structures";
++      else if(load>0)reason="DEPOT_ROUTE_BLOCKED: ship stock cannot reach construction site";
++      else reason="SUPPLY_SHORTAGE: no unreserved modules at reachable storage nodes";
+       break;
+      }
+     }else if(Pos{n.x,n.y}==goal)++ready;
+diff --git a/src/factory_colony_protocol.hpp b/src/factory_colony_protocol.hpp
+index ed2aed2..e97afcc 100644
+--- a/src/factory_colony_protocol.hpp
++++ b/src/factory_colony_protocol.hpp
+@@ -141,19 +141,25 @@ public:
+                 if(n.home_ship!=ship_||n.location!=requested_site||n.role!=NpcRole::Habitat)continue;
+                 if(!first)out+=',';first=false;out+=std::to_string(id);
+             }
+-            std::int64_t depot=0,in_transit=0,delivered=0,node_available=0,reserved_total=0;
++            std::int64_t depot=0,in_transit=0,delivered=0,node_available=0,reserved_total=0,stranded=0,stranded_reservations=0;
+             std::string nodes="[";std::size_t visible_sources=0;
+             if(const auto* stocks=world_.world().construction_supplies(requested_site)){
+                 depot=stocks->depot;
+                 for(const auto& [id,qty]:stocks->carried){(void)id;in_transit+=qty;}
+                 for(const auto& [key,qty]:stocks->delivered){(void)key;delivered+=qty;}
+-                for(const auto& [key,qty]:stocks->node_modules){(void)key;node_available+=qty;}
+-                for(const auto& [key,hold]:stocks->reserved){(void)key;reserved_total+=hold.modules;}
++                const auto* installed=world_.world().storage(requested_site);
++                const auto valid_node=[&](std::uint32_t id){return id==0 || (installed &&
++                    installed->extra_bins.count(id) && installed->equipment_positions.count(id));};
++                for(const auto& [key,qty]:stocks->node_modules){
++                    if(valid_node(key))node_available+=qty;else stranded+=qty;
++                }
++                for(const auto& [key,hold]:stocks->reserved){(void)key;reserved_total+=hold.modules;
++                    if(!valid_node(hold.node))stranded_reservations+=hold.modules;
++                }
+                 // A UI page limit does not constrain how many physical storage
+                 // nodes can be constructed; all inventory remains authoritative.
+                 std::map<std::uint32_t,std::int64_t> source_stock=stocks->node_modules;
+                 for(const auto& [plan,hold]:stocks->reserved){(void)plan;source_stock.try_emplace(hold.node,0);}
+-                const auto* installed=world_.world().storage(requested_site);
+                 if(installed)for(const auto& [node,place]:installed->equipment_positions){(void)place;
+                     if(node && installed->extra_bins.count(node))source_stock.try_emplace(node,0);
+                 }
+@@ -176,6 +182,8 @@ public:
+                  ",\"carried\":"+std::to_string(in_transit)+
+                  ",\"delivered\":"+std::to_string(delivered)+
+                  ",\"nodeAvailable\":"+std::to_string(node_available)+
++                 ",\"stranded\":"+std::to_string(stranded)+
++                 ",\"strandedReservations\":"+std::to_string(stranded_reservations)+
+                  ",\"reserved\":"+std::to_string(reserved_total)+
+                  ",\"sources\":"+nodes+
+                  ",\"moreSources\":"+std::to_string(visible_sources>32?visible_sources-32:0)+"},\"jobs\":[";first=true;
+@@ -187,6 +195,11 @@ public:
+                      ",\"deliveredModules\":"+std::to_string(job.delivered_modules)+
+                      ",\"reservedModules\":"+std::to_string(job.reserved_modules)+
+                      ",\"reservedNode\":"+std::to_string(job.reserved_source_node)+
++                     ",\"remainingModules\":"+std::to_string(job.remaining_modules)+
++                     ",\"unallocatedModules\":"+std::to_string(job.unallocated_modules)+
++                     ",\"localFreeModules\":"+std::to_string(job.local_free_modules)+
++                     ",\"projectedLocalFunding\":"+std::to_string(job.projected_local_funding)+
++                     ",\"projectedLocalGap\":"+std::to_string(job.projected_local_gap)+
+                      ",\"active\":"+(job.active?"true":"false")+
+                      ",\"priority\":"+std::to_string(job.priority)+
+                      ",\"autonomy\":"+(job.autonomy?"true":"false")+
+diff --git a/tests/ECON02B2d10SourceRecoveryTests.cpp b/tests/ECON02B2d10SourceRecoveryTests.cpp
+new file mode 100644
+index 0000000..1cf6664
+--- /dev/null
++++ b/tests/ECON02B2d10SourceRecoveryTests.cpp
+@@ -0,0 +1,153 @@
++#include "galaxy/NpcConstructionCrews.hpp"
++#include <algorithm>
++#include <chrono>
++#include <filesystem>
++#include <iostream>
++#include <stdexcept>
++using namespace galaxy;
++namespace fs=std::filesystem;
++#define CHECK(condition) do{if(!(condition))throw std::runtime_error(std::string("d10 line ")+std::to_string(__LINE__)+": " #condition);}while(0)
++static void action(PersistentWorld& w,EntityId ship,std::uint64_t id,Action kind,EntityId site=0,
++                   std::int64_t amount=1,int x=0,int y=0){
++ Command c{};c.id=id;c.sequence=id;c.issuer=7;c.actor=ship;c.target=site;c.amount=amount;
++ c.action=kind;c.thrust_x=x;c.thrust_y=y;c.execute_tick=w.world().tick()+1;
++ CHECK(w.submit(c));w.step();CHECK(w.world().events().back().result==Outcome::Applied);
++}
++static std::int64_t source_modules(const Simulation& sim,EntityId site){
++ const auto* stock=sim.construction_supplies(site);if(!stock)return 0;
++ std::int64_t total=stock->depot;
++ for(const auto& [n,v]:stock->node_modules){(void)n;total+=v;}
++ for(const auto& [n,v]:stock->reserved){(void)n;total+=v.modules;}
++ for(const auto& [n,v]:stock->carried){(void)n;total+=v;}
++ for(const auto& [n,v]:stock->delivered){(void)n;total+=v;}
++ return total;
++}
++int main(){
++ const auto folder=fs::temp_directory_path()/("sg_d10_"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
++ fs::create_directories(folder);
++ try{
++  const auto db=(folder/"world.sqlite").string();
++  Simulation initial(1010);const auto ship=initial.add_colony_ship(7,{0,0},500,8);
++  initial.provision_colony_genesis(ship,1000,3000,1000,1000,1000);
++  const auto rock=initial.add_asteroid({1000,0},180);initial.enable_individual_workforce();
++  const auto mass=initial.total_material_kg();EntityId site=0;std::uint64_t npc=0;std::int64_t plan=0;
++  std::int64_t custody_before=0;
++  {
++   PersistentWorld w(db,std::move(initial));
++   action(w,ship,1,Action::Mine,rock,150);action(w,ship,2,Action::RefineOre,0,150);
++   action(w,ship,3,Action::FabricateModule,0,60);action(w,ship,4,Action::ConstructOutpost);
++   site=w.world().built_outposts().begin()->first;
++   action(w,ship,5,Action::ConstructHabitat,site);
++   for(int i=1;i<=3;++i)action(w,ship,5+i,Action::TransferHabitatStock,site,30,i);
++   action(w,ship,9,Action::AssignHabitatResidents,site,1);
++   for(const auto& [id,n]:w.world().npc_records())if(n.location==site&&n.role==NpcRole::Habitat)npc=id;
++   CHECK(npc!=0);
++   action(w,ship,10,Action::ConstructStorage,site);
++   action(w,ship,11,Action::ConstructStorageNode,site,1);
++   action(w,ship,12,Action::ConstructStorageNode,site,2);
++   action(w,ship,13,Action::PlaceFactoryEquipment,site,1,4,0);
++   action(w,ship,14,Action::PlaceFactoryEquipment,site,2,8,0);
++   construction::Plans plans(db,w);construction::Crews crews(db,w,plans);
++   plan=plans.create("sg-colony-structure-plan-v1\n2,10,0\n",7,ship,site);
++   crews.assign(plan,npc,7,ship,site);
++   const auto transfer=[&](Action kind,std::int64_t n,int x=0,int y=0){
++    CHECK(plans.supply_action(kind,n,x,y,7,ship,site).result==Outcome::Applied);
++   };
++   transfer(Action::StageConstructionModules,4);
++   transfer(Action::PickupConstructionModules,npc,2);
++   transfer(Action::DepositConstructionNodeModules,npc,1);
++   transfer(Action::PickupConstructionModules,npc,2);
++   transfer(Action::DepositConstructionNodeModules,npc,2);
++   transfer(Action::ReserveConstructionModules,plan,1,2);
++   auto job=crews.list(7,ship,site).at(0);
++   CHECK(job.remaining_modules==2&&job.unallocated_modules==0);
++   custody_before=w.world().colony_ship(ship)->modules+source_modules(w.world(),site);
++   // A physically closed enclosure isolates source #1. The source is still
++   // installed: its stock must remain at that source after recovery.
++   action(w,ship,15,Action::BuildColonyFixture,site,2,3,0); // west
++   action(w,ship,16,Action::BuildColonyFixture,site,2,4,0); // east
++   action(w,ship,17,Action::BuildColonyFixture,site,3,4,-1);// south
++   action(w,ship,18,Action::BuildColonyFixture,site,3,4,0); // north
++   CHECK(!w.world().structure_edge_passable(site,3,0,4,0));
++   CHECK(!w.world().structure_edge_passable(site,4,0,5,0));
++   crews.advance(7,ship);
++   const auto* stock=w.world().construction_supplies(site);
++   CHECK(!stock->reserved.count(plan));
++   CHECK(stock->node_modules.at(1)==2);
++   job=crews.list(7,ship,site).at(0);
++   CHECK(job.reason.find("SOURCE_ROUTE_BLOCKED")!=std::string::npos);
++   CHECK(job.unallocated_modules==2);
++   CHECK(w.world().total_material_kg()==mass);
++   // Custody change is exclusively four physical walls (8 modules).
++   CHECK(w.world().colony_ship(ship)->modules+source_modules(w.world(),site)==custody_before-8);
++  }
++  {
++   PersistentWorld w(db,Simulation(1));construction::Plans plans(db,w);construction::Crews crews(db,w,plans);
++   CHECK(w.world().construction_supplies(site)->node_modules.at(1)==2);
++   CHECK(!w.world().construction_supplies(site)->reserved.count(plan));
++   CHECK(w.world().total_material_kg()==mass);
++   bool success=false,alternative=false;
++   for(int i=0;i<160;++i){
++    crews.advance(7,ship);
++    const auto* stock=w.world().construction_supplies(site);
++    if(stock && stock->reserved.count(plan) && stock->reserved.at(plan).node==2)alternative=true;
++    if(plans.status(plan,7,ship,site).finished()){success=true;break;}
++    w.step();
++   }
++   CHECK(alternative);
++   CHECK(success);
++   CHECK(w.world().construction_supplies(site)->node_modules.at(1)==2);
++   CHECK(!w.world().construction_supplies(site)->reserved.count(plan));
++   CHECK(crews.list(7,ship,site).at(0).remaining_modules==0);
++   // The second work site is enclosed with new physical walls. The worker
++   // must report a blocked dependency rather than repeatedly staging ship
++   // cargo at a depot that cannot reach the site.
++   CHECK(crews.unassign(npc,7,ship,site));
++   action(w,ship,31,Action::BuildColonyFixture,site,2,14,0);
++   action(w,ship,32,Action::BuildColonyFixture,site,2,15,0);
++   action(w,ship,33,Action::BuildColonyFixture,site,3,15,-1);
++   action(w,ship,34,Action::BuildColonyFixture,site,3,15,0);
++   const auto blocked=plans.create("sg-colony-structure-plan-v1\n1,15,0\n",7,ship,site);
++   crews.assign(blocked,npc,7,ship,site);
++   const auto before_blocked=w.world().colony_ship(ship)->modules+source_modules(w.world(),site);
++   crews.advance(7,ship);
++   const auto trouble=crews.list(7,ship,site).back();
++   CHECK(trouble.plan==blocked);
++   CHECK(trouble.remaining_modules==1&&trouble.unallocated_modules==1);
++   CHECK(trouble.reason.find("SUPPLY_ROUTE_BLOCKED")!=std::string::npos);
++   CHECK(!w.world().construction_supplies(site)->reserved.count(blocked));
++   CHECK(w.world().colony_ship(ship)->modules+source_modules(w.world(),site)==before_blocked);
++   // Priority-aware planning spends each free module at most once in its
++   // forecast, but neither moves nor actually reserves anything.
++   const auto low=plans.create("sg-colony-structure-plan-v1\n2,8,3\n",7,ship,site);
++   const auto high=plans.create("sg-colony-structure-plan-v1\n2,9,3\n",7,ship,site);
++   crews.set_policy(low,0,false,7,ship,site);
++   crews.set_policy(high,3,false,7,ship,site);
++   CHECK(plans.supply_action(Action::StageConstructionModules,2,0,0,7,ship,site).result==Outcome::Applied);
++   const auto state_before=w.world().canonical_state();
++   const auto forecast=crews.list(7,ship,site);
++   auto get=[&](std::int64_t id)->const construction::CrewJob&{
++    const auto it=std::find_if(forecast.begin(),forecast.end(),[&](const auto& j){return j.plan==id;});
++    CHECK(it!=forecast.end());return *it;
++   };
++   CHECK(get(high).projected_local_funding==2&&get(high).projected_local_gap==0);
++   CHECK(get(low).projected_local_funding==0&&get(low).projected_local_gap==2);
++   CHECK(get(blocked).projected_local_funding==0&&get(blocked).projected_local_gap==1);
++   CHECK(w.world().canonical_state()==state_before);
++   CHECK(w.world().total_material_kg()==mass);
++  }
++  {
++   PersistentWorld w(db,Simulation(2));construction::Plans plans(db,w);construction::Crews crews(db,w,plans);
++   CHECK(plans.status(plan,7,ship,site).finished());
++   const auto rows=crews.list(7,ship,site);
++   CHECK(rows.size()==4);
++   CHECK(std::any_of(rows.begin(),rows.end(),[](const auto& j){return j.reason.find("SUPPLY_ROUTE_BLOCKED")!=std::string::npos;}));
++   CHECK(std::any_of(rows.begin(),rows.end(),[](const auto& j){return j.priority==3 && j.projected_local_funding==2;}));
++   CHECK(w.world().construction_supplies(site)->node_modules.at(1)==2);
++   CHECK(w.world().total_material_kg()==mass);
++  }
++  fs::remove_all(folder);
++  std::cout << "ECON-02B2d10 PASS: closed source, physical release, alternate-source build, demand and restart\n";
++  return 0;
++ }catch(const std::exception& e){std::cerr<<"ECON-02B2d10 FAIL: "<<e.what()<<'\n';fs::remove_all(folder);return 1;}
++}
+diff --git a/viewer/structures.js b/viewer/structures.js
+index 57d65e2..6709907 100644
+--- a/viewer/structures.js
++++ b/viewer/structures.js
+@@ -60,14 +60,14 @@ function renderCrews(){
+  for(const source of supply.sources||[])destinations.append(option(source.node,`Node #${source.node} (${source.x},${source.y}) · ${source.available} free`));
+  destinations.value=(supply.sources||[]).some(s=>String(s.node)===chosen)?chosen:
+   (destinations.options.length>1?destinations.options[1].value:'');
+- const stockLine=`Site modules: depot ${supply.depot||0} · node stock ${supply.nodeAvailable||0} · allocated ${supply.reserved||0} · carried ${supply.carried||0} · delivered ${supply.delivered||0}`;
++ const stockLine=`Site modules: depot ${supply.depot||0} · node stock ${supply.nodeAvailable||0} · allocated ${supply.reserved||0} · carried ${supply.carried||0} · delivered ${supply.delivered||0} · stranded ${supply.stranded||0} · inaccessible reservations ${supply.strandedReservations||0}`;
+  const sources=(supply.sources||[]).map(s=>`Node #${s.node} (${s.x},${s.y}): free ${s.available}, allocated ${s.reserved}`).join('\n');
+  const sourceLine=sources?`Storage sources:\n${sources}${supply.moreSources?`\n... ${supply.moreSources} additional nodes`:''}`:'';
+  const selectedJob=crews.jobs.find(j=>String(j.plan)===$('structurePlan').value);
+  if(selectedJob){$('crewPriority').value=String(selectedJob.priority??1);$('crewAutonomy').checked=!!selectedJob.autonomy;}
+  const text=crews.jobs.map(j=>{
+   const people=j.workers.map(w=>`#${w.npc} at (${w.x},${w.y}) · carrying ${w.carrying||0}`).join(', ')||'No assigned workers';
+-  return `Plan #${j.plan} · priority ${j.priority??1} · autonomy ${j.autonomy?'on':'off'} · ${j.active?'Working':'Paused/complete'} · ${j.completed}/${j.total} · labor ${j.labor}/${j.required} · delivered ${j.deliveredModules||0} · allocated ${j.reservedModules||0} at source #${j.reservedNode||0}\n  ${people}\n  ${j.reason||'Ready'}`;
++  return `Plan #${j.plan} · priority ${j.priority??1} · autonomy ${j.autonomy?'on':'off'} · ${j.active?'Working':'Paused/complete'} · ${j.completed}/${j.total} · labor ${j.labor}/${j.required} · delivered ${j.deliveredModules||0} · allocated ${j.reservedModules||0} at source #${j.reservedNode||0} · remaining demand ${j.remainingModules||0} · unallocated ${j.unallocatedModules||0} · free local stock ${j.localFreeModules||0} · priority forecast: ${j.projectedLocalFunding||0} covered / ${j.projectedLocalGap||0} local shortfall\n  ${people}\n  ${j.reason||'Ready'}`;
+  });
+  const activeRuns=(crews.restocking||[]).map(r=>`Supply NPC #${r.npc} → node #${r.node} · (${r.x},${r.y}) · ${r.active?(r.returning?'Returning':'Hauling'):'Complete'} · ${r.reason||'Ready'}`);
+  $('crewStatus').textContent=stockLine+'\n'+(sourceLine?sourceLine+'\n':'')+(text.join('\n')||'No construction crew assignments yet. Build a habitat and assign residents first.')+

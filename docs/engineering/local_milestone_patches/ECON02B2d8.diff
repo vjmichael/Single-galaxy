@@ -1,0 +1,1397 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index f1042cf..8599cb7 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -693,6 +693,9 @@ endif()
+ # ECON-02B2d6: existing named colonists perform persistent construction jobs.
+ if(BUILD_TESTING)
+   # ECON-02B2d7: physical module custody/hauler restart and cancellation.
++  add_executable(galaxy_econ02b2d8_source_tests tests/ECON02B2d8MultiSourceAllocationsTests.cpp)
++  target_link_libraries(galaxy_econ02b2d8_source_tests PRIVATE galaxy_kernel)
++  add_test(NAME ECON02B2d8_MultiSourceAllocations COMMAND galaxy_econ02b2d8_source_tests)
+   add_executable(galaxy_econ02b2d7_haul_tests tests/ECON02B2d7MaterialHaulingTests.cpp)
+   target_link_libraries(galaxy_econ02b2d7_haul_tests PRIVATE galaxy_kernel)
+   add_test(NAME ECON02B2d7_NPCMaterialHauling COMMAND galaxy_econ02b2d7_haul_tests)
+diff --git a/docs/engineering/ECON02B2d8_Multi_Source_Allocations_2026-11-01.md b/docs/engineering/ECON02B2d8_Multi_Source_Allocations_2026-11-01.md
+new file mode 100644
+index 0000000..78fe437
+--- /dev/null
++++ b/docs/engineering/ECON02B2d8_Multi_Source_Allocations_2026-11-01.md
+@@ -0,0 +1,61 @@
++# ECON-02B2d8 — Multi-source NPC construction logistics and allocations
++
++**Date:** November 1, 2026
++**Project:** Single Galaxy (original colony space game)
++**Baseline:** `SingleGalaxy_ECON02B2d7_NPC_Material_Logistics_Source_Tests_2026-11-01.zip`.
++**Development:** Local Linux; GitHub remains a repository, not the development hub. No repository upload in this milestone.
++
++## Completed scope
++
++ECON-02B2d8 extends previously authoritative colony construction supply custody into multiple **actually constructed and placed storage bins** in the same colony outpost. Crew scheduling, factory hardware, structures and inventory remain part of **one persistent `PersistentWorld`**, not a competing world writer.
++
++- Construction resources are tracked separately as unallocated local depot stock, available physical per-node stock, per-plan node reservations, named NPC carried cargo, delivered site-cell stock, and incorporated finished structures. Each transfer uses a `Simulation` Action with a persistent command/resource ledger receipt. A reservation removes physical stock from the free-node balance; it is not a virtual duplication. Each plan's allocation has a specific `node` and quantity.
++- Worker scheduler selects a reachable supply source deterministically using Manhattan transit score, choosing the lowest node ID as a tie-break. Physical walls and closed doors are respected by the grid route validator. This is deliberately local construction-grid navigation, **not** a 3D planetary/navmesh or inter-colony hauling system.
++- Real installed storage bins constrain construction-module occupancy: each existing storage node has 4 m³ nominal bin capacity and each construction module occupies 2 m³, so it can hold two modules at most. Existing stack and automated storage-link transfers also account for this occupied volume.
++- Two competing plans cannot reserve the same units twice. Reservations and node stock survive SQLite restart; cancellation releases unpicked reservations at the source. Already delivered materials are not silently refunded. A host-controlled `RecoverConstructionDelivery` action salvages unspent delivered modules into an actual named NPC's carrying inventory, after which they must be returned via a transfer.
++- Added `sg_construction_restock` assignments for existing, eligible colony residents. Supply jobs walk from the depot to the selected installed node, carry a bounded real cargo load, deposit modules, and persist location and task phase through shutdown/restart. Crew assignment checks prevent a resident from being assigned to construction and restocking concurrently. Cancellation while carrying schedules a physical return trip to the depot.
++- Added token/site-validated native `CREW_RESTOCK` / `CREW_RESTOCK_CANCEL` commands and relay endpoints `/factory/api/crew_restock` and `/factory/api/crew_restock_cancel`. `CREW_LIST` now reports aggregate depot/node/reserved/carried/delivered balances, up to 32 visible installed source nodes and active/historical restocking jobs. **The 32-row display limit is UI pagination only, not a cap on how many nodes can exist.** The colony GUI can assign/cancel resident restock jobs and inspect node stock and reservations.
++
++## Files changed
++
++- `include/galaxy/Simulation.hpp`, `src/Simulation.cpp`, `src/Persistence.cpp`: authoritative custody, reservation, snapshot, ledger and capacity validation.
++- `include/galaxy/NpcConstructionCrews.hpp`, `src/NpcConstructionCrews.cpp`: worker reservations, deterministic supply sources, durable restocking assignments and movement.
++- `src/ColonyStructurePlans.cpp`: permissioned internal supply actions.
++- `src/factory_colony_protocol.hpp`, `live/interactive_relay.py`: host-side REST/RPC validation and visible supply status.
++- `viewer/interactive.html`, `viewer/structures.js`: colony-owned storage-source and crew supply controls.
++- `tests/ECON02B2d8MultiSourceAllocationsTests.cpp`: new test of multi-source competition, restart, capacity, cancellation, salvage and persisted worker cargo.
++- `tests/ECON02B2d6WorldFixture.cpp`, `tests/ECON02B2d6ConstructionCrewHostTests.py`: real localhost restock transfer, hostile token rejection, malformed destination rejection, legacy crew continuation.
++- `scripts/colony_crew_browser_smoke.py`: mocked-browser control behavior (not counted as actual resource validation); additional tests remain in existing source.
++- `CMakeLists.txt`: new native test target and CTest registration.
++
++## Verification completed in local Linux environment
++
++| Check | Verified outcome |
++| --- | --- |
++| Entire native CMake build | **Pass**, completed after incremental rebuild; initial long build was stopped by tool execution limit, not a compiler diagnostic |
++| CTest excluding `live`, `relay`, `_e2e`, `_HTTP` and `_http` | **65 / 65 passed** |
++| Complementary CTest live, relay, E2E and HTTP group | **28 / 28 passed** |
++| Overall CTest count across two disjoint groups | **93 / 93 passed** |
++| JavaScript `node --test tests/*.js` | **93 / 93 passed** |
++| Offline Chromium colony structure UI | **Passed** |
++| Offline Chromium crew/stock/restock UI | **Passed** |
++| New multi-source allocation native test | **Passed** |
++| Existing d7 material hauling and d6 crew native tests | **Passed** |
++| Real localhost HTTP crew test | **Passed**; token validation and actual NPC depot-to-node delivery, original construction and restart |
++| Patch / archive integrity | Verified during package generation with clean `git apply` and manifest hashes |
++
++`tests/*.cjs` are standalone scripts that require executable command-line parameters supplied by their specific CTest targets; blindly invoking `node --test tests/*.cjs` **without** arguments produces a harness error and is not the correct JavaScript suite. The supported JavaScript regression command is `node --test tests/*.js`.
++
++## Engineering boundaries and follow-up work
++
++1. **Not yet 3D NPC navigation:** the physical route is an outpost cell grid. Obstacles and door states influence local paths but there is no planetary navmesh, loading/unloading dock animation, vehicle route, or long-haul cargo ship execution.
++2. **No free cross-site transfer:** these storage nodes belong to the same currently owned constructed outpost. No same-world inter-colony logistics or trade contracts yet.
++3. **Reservations are physical and exclusive** but this is the first deterministic allocator. It is not yet a predictive, multi-factory global planner; reservation expiry, priority preemption and transport congestion require separate policy decisions.
++4. **Manual salvage remains explicit:** unfinished delivered modules can be recovered into a worker's real cargo, but automated cleanup of all orphaned deliveries is not included. No instant refund or mass creation is permitted.
++5. **Host security boundary:** low-level stock transfer Actions are intended for the trusted native simulation and its validated scheduling path. The user-facing HTTP relay offers constrained queue/cancel operations, not arbitrary transfer Actions.
++6. **Windows graphical execution not verified.** Linux native, relay and Chromium tests passed. Do not treat these as evidence that a Windows installer or complete 3D game is ready.
++7. **Next milestone recommendation:** robust allocation policies for prioritized construction queues and source depletion/reassignment, with capacity-aware transport/workforce scheduling and no arbitrary factory-size caps. Keep factory tasks under the colony session and resident job system.
++
++## Reproducibility
++
++Apply the accompanying `.diff` to the exact baseline d7 source snapshot. The generated ZIP includes complete source, new test and this engineering report. Use `cmake -S . -B build -DBUILD_TESTING=ON`, `cmake --build build`, and `ctest --test-dir build --output-on-failure`. JavaScript: `node --test tests/*.js`. The original zip baseline and output patch are byte-to-byte source reproducible apart from ZIP container metadata.
+diff --git a/include/galaxy/NpcConstructionCrews.hpp b/include/galaxy/NpcConstructionCrews.hpp
+index 2890c32..5628495 100644
+--- a/include/galaxy/NpcConstructionCrews.hpp
++++ b/include/galaxy/NpcConstructionCrews.hpp
+@@ -10,12 +10,18 @@
+ #include <vector>
+ namespace galaxy::construction {
+ struct CrewWorker {std::uint64_t npc=0;int x=0,y=0;std::int64_t carrying=0;};
++struct SupplyRun {
++    std::uint64_t npc=0;std::uint32_t node=0;
++    int x=0,y=0;bool active=false,returning=false;
++    std::string reason;
++};
+ struct CrewJob {
+     std::int64_t plan=0;EntityId site=0;
+     std::size_t completed=0,total=0;
+     std::int64_t labor=0,required=0;
+     bool active=false;
+     std::int64_t depot_modules=0,delivered_modules=0;
++    std::int64_t reserved_modules=0;std::uint32_t reserved_source_node=0;
+     std::string reason;
+     std::vector<CrewWorker> workers;
+ };
+@@ -28,6 +34,9 @@ public:
+     bool unassign(std::uint64_t npc,PlayerId owner,EntityId ship,EntityId site);
+     bool set_active(std::int64_t plan,bool active,PlayerId owner,EntityId ship,EntityId site);
+     std::vector<CrewJob> list(PlayerId owner,EntityId ship,EntityId site)const;
++    void queue_restock(std::uint64_t npc,std::uint32_t node,PlayerId owner,EntityId ship,EntityId site);
++    bool cancel_restock(std::uint64_t npc,PlayerId owner,EntityId ship,EntityId site);
++    std::vector<SupplyRun> list_restock(PlayerId owner,EntityId ship,EntityId site)const;
+     // Called on the one authoritative colony simulation thread, at most once
+     // per world tick. May commit a structural step, advancing world one tick.
+     void advance(PlayerId owner,EntityId ship);
+diff --git a/include/galaxy/Simulation.hpp b/include/galaxy/Simulation.hpp
+index 544d5ac..d3e0bb9 100644
+--- a/include/galaxy/Simulation.hpp
++++ b/include/galaxy/Simulation.hpp
+@@ -22,7 +22,7 @@ struct Vector2 {
+ };
+ 
+ enum class EntityType { Ship, Asteroid, Station, Stargate, Wreck };
+-enum class Action { Thrust, Mine, StartMining, StopMining, RequestUndock, RequestDock, UnloadOre, LoadOre, SellOre, RequestJump, SetGatePairOnline, SetGateStaff, DeliverGateSpares, RefineOre, FabricateModule, ConstructOutpost, RefineMineral, FabricateMaterialModule, PlantCrops, HarvestCrops, RecycleWater, RecycleCompost, ProduceOxygen, LoadLifeWater, ConstructFarm, TransferFarmStock, AssignFarmWorkers, ConstructHabitat, TransferHabitatStock, AssignHabitatResidents, ConstructUtility, RepairUtility, TransferUtilitySpares, AssignUtilityTechnicians, SetUtilityMaintenance, ConstructCommunity, TransferCommunityStock, AssignCommunityStaff, ConstructClinic, TransferClinicStock, AssignClinicStaff, ConstructReclaimer, ConstructWaterworks, TransferWaterworksFeed, SetPolicyAssurance, AssignPolicyInspectors, AssignFarmMentor, HostDestroyShip, HostCrewLoss, ConstructWorkshop, TransferWorkshopFeed, AssignWorkshopOperator, TransferWorkshopOutput, ConstructWorkshopFinisher, AssignWorkshopFinisher, TransferWorkshopFinalOutput, TransferWorkshopStack, ConstructStorage, TransferStorageStack, ConstructStorageNode, TransferStorageNodeStack, ConstructStorageLink, ConstructWorkshopLink, PlaceFactoryEquipment, PlaceConveyorCell, CompleteConveyorRoute, BuildColonyFixture, SetColonyDoor, StageConstructionModules, PickupConstructionModules, DeliverConstructionModules, ReturnConstructionModules, BuildColonyFixtureFromDelivery };
++enum class Action { Thrust, Mine, StartMining, StopMining, RequestUndock, RequestDock, UnloadOre, LoadOre, SellOre, RequestJump, SetGatePairOnline, SetGateStaff, DeliverGateSpares, RefineOre, FabricateModule, ConstructOutpost, RefineMineral, FabricateMaterialModule, PlantCrops, HarvestCrops, RecycleWater, RecycleCompost, ProduceOxygen, LoadLifeWater, ConstructFarm, TransferFarmStock, AssignFarmWorkers, ConstructHabitat, TransferHabitatStock, AssignHabitatResidents, ConstructUtility, RepairUtility, TransferUtilitySpares, AssignUtilityTechnicians, SetUtilityMaintenance, ConstructCommunity, TransferCommunityStock, AssignCommunityStaff, ConstructClinic, TransferClinicStock, AssignClinicStaff, ConstructReclaimer, ConstructWaterworks, TransferWaterworksFeed, SetPolicyAssurance, AssignPolicyInspectors, AssignFarmMentor, HostDestroyShip, HostCrewLoss, ConstructWorkshop, TransferWorkshopFeed, AssignWorkshopOperator, TransferWorkshopOutput, ConstructWorkshopFinisher, AssignWorkshopFinisher, TransferWorkshopFinalOutput, TransferWorkshopStack, ConstructStorage, TransferStorageStack, ConstructStorageNode, TransferStorageNodeStack, ConstructStorageLink, ConstructWorkshopLink, PlaceFactoryEquipment, PlaceConveyorCell, CompleteConveyorRoute, BuildColonyFixture, SetColonyDoor, StageConstructionModules, PickupConstructionModules, DeliverConstructionModules, ReturnConstructionModules, BuildColonyFixtureFromDelivery, DepositConstructionNodeModules, ReserveConstructionModules, PickupReservedConstructionModules, RecoverConstructionDelivery };
+ enum class Outcome { Applied, InvalidActor, Unauthorized, InvalidTarget, OutOfRange, InvalidArgument, NoResources, CargoFull, NotMining, NotInSpace, NotDocked, InTransition, ShipMoving, HangarFull, InsufficientFunds, WrongSystem, GateOffline, NotColonyShip, InsufficientCrew };
+ enum class ActivityKind { AsteroidDespawned, AutoMiningTransfer, MiningStopped, Undocked, Docked, JumpCompleted, ShipDestroyed, NpcLost, AutoStorageTransfer };
+ enum class DockState { InSpace, Docked, Undocking, Docking };
+@@ -372,10 +372,19 @@ struct ColonyFixture {
+ // ECON-02B2d7: physical module custody. All quantities represent genuine
+ // factory-built modules (two ore-equivalent units each). Workers carry at most
+ // two modules, and delivered stock is tied to an actual target grid cell.
++struct ConstructionReservation {
++    std::uint32_t node=0; // 0 = built outpost's central depot; otherwise an installed bin
++    std::int64_t modules=0;
++};
+ struct ConstructionSupplies {
+     std::int64_t depot=0;
+     std::map<std::uint64_t,std::int64_t> carried;
+     std::map<std::pair<int,int>,std::int64_t> delivered;
++    // v33: node modules are physically held in previously built/placed storage
++    // bins. Reservations transfer modules out of available stock, without
++    // changing their physical source node until collected by a named NPC.
++    std::map<std::uint32_t,std::int64_t> node_modules;
++    std::map<std::int64_t,ConstructionReservation> reserved;
+ };
+ struct BuiltOutpost {
+     EntityId source_colony_ship = 0;
+@@ -483,6 +492,7 @@ public:
+     const std::map<FixtureKey,ColonyFixture>& colony_fixtures(EntityId site) const;
+     const ConstructionSupplies* construction_supplies(EntityId site) const;
+     std::int64_t construction_delivered(EntityId site,int x,int y) const;
++    std::int64_t construction_node_module_liters(EntityId site,std::uint32_t node)const;
+     // Grid-adjacent movement query; closed doors/walls obstruct, floors do not.
+     // This is a collision primitive, not a claim that NPC/pathfinding uses it yet.
+     bool structure_edge_passable(EntityId site,int from_x,int from_y,int to_x,int to_y) const;
+@@ -648,7 +658,7 @@ private:
+ 
+     std::map<EntityId, AsteroidGeology> geology_;
+     std::vector<ActivityEvent> activity_events_;
+-    int snapshot_version_ = 1; // v32 adds durable construction module custody
++    int snapshot_version_ = 1; // v33 adds physical node stock and plan allocations
+     std::map<std::uint64_t, std::vector<Command>> commands_;
+     std::set<std::uint64_t> submitted_ids_;
+     std::vector<Event> events_;
+diff --git a/live/interactive_relay.py b/live/interactive_relay.py
+index 6f11dab..ed315e5 100644
+--- a/live/interactive_relay.py
++++ b/live/interactive_relay.py
+@@ -141,7 +141,7 @@ class SharedRuntime:
+         # does not open SQLite and cannot mint ship/player/owner authority.
+         if op not in ('SITES','HELLO','LIST','REGISTER','STEP','STATUS','CANCEL',
+                       'STRUCT_LIST','STRUCT_REGISTER','STRUCT_STEP','STRUCT_STATUS','STRUCT_CANCEL','STRUCT_DOOR',
+-                      'CREW_LIST','CREW_ASSIGN','CREW_UNASSIGN','CREW_ACTIVE','CREW_SUPPLY'):
++                      'CREW_LIST','CREW_ASSIGN','CREW_UNASSIGN','CREW_ACTIVE','CREW_SUPPLY','CREW_RESTOCK','CREW_RESTOCK_CANCEL'):
+             raise ValueError('Unknown factory operation')
+         if type(site)!=int or not 0<=site<=100000000:
+             raise ValueError('Invalid factory site selector')
+@@ -311,6 +311,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
+                 if type(qty)!=int or qty==0 or not -1000<=qty<=1000:
+                     raise ValueError('Invalid depot transfer quantity')
+                 argument=base64.b64encode(str(qty).encode('ascii')).decode('ascii');native='CREW_SUPPLY'
++            elif op=='crew_restock' and set(doc)=={'token','site','npc','node'}:
++                if type(doc['npc'])!=int or not 0<doc['npc']<2**63 or \
++                   type(doc['node'])!=int or not 0<doc['node']<=2**29-1:
++                    raise ValueError('Invalid NPC supply run destination')
++                argument=base64.b64encode(f"{doc['npc']},{doc['node']}".encode()).decode('ascii');native='CREW_RESTOCK'
++            elif op=='crew_restock_cancel' and set(doc)=={'token','site','npc'}:
++                if type(doc['npc'])!=int or not 0<doc['npc']<2**63:
++                    raise ValueError('Invalid supply run worker')
++                argument=str(doc['npc']);native='CREW_RESTOCK_CANCEL'
+             elif op=='crew_assign' and set(doc)=={'token','site','plan','npc'}:
+                 if type(doc['plan'])!=int or type(doc['npc'])!=int or not 0<doc['plan']<2**63 or not 0<doc['npc']<2**63:
+                     raise ValueError('Invalid crew assignment')
+diff --git a/scripts/colony_crew_browser_smoke.py b/scripts/colony_crew_browser_smoke.py
+index 8af4f64..b5c7c4a 100644
+--- a/scripts/colony_crew_browser_smoke.py
++++ b/scripts/colony_crew_browser_smoke.py
+@@ -13,20 +13,27 @@ with sync_playwright() as p:
+     errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
+     page.set_content(html);page.locator('#colonyPanel').evaluate('e=>e.hidden=false')
+     page.add_script_tag(content=r'''
+-        window.__crew={plans:[],next:1,residents:[101,102],jobs:[],supply:{depot:0,carried:0,delivered:0}};
++        window.__crew={plans:[],next:1,residents:[101,102],jobs:[],supply:{depot:0,carried:0,delivered:0,nodeAvailable:0,reserved:0,sources:[{node:1,available:0,reserved:0,x:3,y:0}],moreSources:0},restocking:[]};
+         window.fetch=async (path,request)=>{
+           const s=window.__crew;let doc=request&&request.body?JSON.parse(request.body):{};
+           let data={ok:true};
+           if(path==='/session')data={token:'TEST',colony_mode:true};
+           else if(path==='/factory/api/sites')data={ok:true,sites:[42]};
+           else if(path.startsWith('/factory/api/structures?site='))data={ok:true,structures:[],plans:s.plans};
+-          else if(path.startsWith('/factory/api/crews?site='))data={ok:true,residents:s.residents,jobs:s.jobs,supply:s.supply};
++          else if(path.startsWith('/factory/api/crews?site='))data={ok:true,residents:s.residents,jobs:s.jobs,supply:s.supply,restocking:s.restocking};
+           else if(path==='/factory/api/structure_register'){
+             const plan={id:s.next++,site:42,completed:0,total:1,modulesRemaining:1,cancelled:false,conflicting:false,finished:false,reason:''};
+             s.plans.push(plan);data={ok:true,plan};
+           }else if(path==='/factory/api/crew_supply'){
+             if(s.supply.depot+doc.amount<0)throw Error('Insufficient depot stock');
+             s.supply.depot+=doc.amount;data={ok:true,event:{applied:true}};
++          }else if(path==='/factory/api/crew_restock'){
++            if(s.restocking.some(r=>r.npc===doc.npc&&r.active))throw Error('Already restocking');
++            s.restocking.push({npc:doc.npc,node:doc.node,x:0,y:0,active:true,returning:false,reason:'Traveling to depot'});
++            data={ok:true,assigned:true};
++          }else if(path==='/factory/api/crew_restock_cancel'){
++            let job=s.restocking.find(r=>r.npc===doc.npc&&r.active);if(job)job.active=false;
++            data={ok:true,changed:!!job};
+           }else if(path==='/factory/api/crew_assign'){
+             let job=s.jobs.find(j=>j.plan===doc.plan);
+             if(!job){job={plan:doc.plan,completed:0,total:1,labor:0,required:2,active:true,reason:'Ready',workers:[]};s.jobs.push(job);}
+@@ -56,6 +63,12 @@ with sync_playwright() as p:
+     page.locator('#crewPause').click();page.wait_for_function('window.__crew.jobs[0].active===false')
+     page.locator('#crewResume').click();page.wait_for_function('window.__crew.jobs[0].active===true')
+     page.locator('#crewUnassign').click();page.wait_for_function('window.__crew.jobs[0].workers.length===0')
++    page.wait_for_function("document.querySelector('#crewRestockNode').value==='1'")
++    page.locator('#crewRestock').click()
++    page.wait_for_function('window.__crew.restocking.length===1 && window.__crew.restocking[0].active')
++    page.wait_for_function("document.querySelector('#crewStatus').textContent.includes('Supply NPC #101')")
++    page.locator('#crewRestockCancel').click()
++    page.wait_for_function('window.__crew.restocking[0].active===false')
+     assert not errors,errors
+-    print('ECON-02B2d7 PASS: colony UI depot staging/withdrawal, crew assignment, pause, resume, removal and live status')
++    print('ECON-02B2d8 PASS: colony UI depot staging, crew duties, multi-node stock, NPC restock and cancellation controls')
+     browser.close()
+diff --git a/src/ColonyStructurePlans.cpp b/src/ColonyStructurePlans.cpp
+index 4fe773f..9afe3d1 100644
+--- a/src/ColonyStructurePlans.cpp
++++ b/src/ColonyStructurePlans.cpp
+@@ -237,7 +237,9 @@ Event Plans::step_source(std::int64_t id,PlayerId owner,EntityId ship,EntityId s
+ Event Plans::supply_action(Action action,std::int64_t amount,int x,int y,
+                            PlayerId owner,EntityId ship,EntityId site){
+     if(action!=Action::StageConstructionModules && action!=Action::PickupConstructionModules &&
+-       action!=Action::DeliverConstructionModules && action!=Action::ReturnConstructionModules)
++       action!=Action::DeliverConstructionModules && action!=Action::ReturnConstructionModules &&
++       action!=Action::DepositConstructionNodeModules && action!=Action::ReserveConstructionModules &&
++       action!=Action::PickupReservedConstructionModules && action!=Action::RecoverConstructionDelivery)
+         throw std::invalid_argument("Not a construction inventory transfer");
+     std::lock_guard<std::mutex> guard(lifecycle);
+     authorize(owner,ship,site);
+diff --git a/src/NpcConstructionCrews.cpp b/src/NpcConstructionCrews.cpp
+index 525cd99..3aa37f6 100644
+--- a/src/NpcConstructionCrews.cpp
++++ b/src/NpcConstructionCrews.cpp
+@@ -78,6 +78,13 @@ public:
+          "npc_id INTEGER PRIMARY KEY,plan_id INTEGER NOT NULL REFERENCES sg_construction_jobs(plan_id),"
+          "x INTEGER NOT NULL DEFAULT 0,y INTEGER NOT NULL DEFAULT 0,"
+          "CHECK(x BETWEEN -1000000 AND 1000000),CHECK(y BETWEEN -1000000 AND 1000000))");
++  sql(db,"CREATE TABLE IF NOT EXISTS sg_construction_restock("
++         "npc_id INTEGER PRIMARY KEY,owner INTEGER NOT NULL,ship INTEGER NOT NULL,site INTEGER NOT NULL,"
++         "node INTEGER NOT NULL CHECK(node>0),x INTEGER NOT NULL DEFAULT 0,y INTEGER NOT NULL DEFAULT 0,"
++         "phase INTEGER NOT NULL DEFAULT 0 CHECK(phase IN (0,1,2)),"
++         "active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),"
++         "last_tick INTEGER NOT NULL DEFAULT -1,reason TEXT NOT NULL DEFAULT '',"
++         "CHECK(x BETWEEN -1000000 AND 1000000),CHECK(y BETWEEN -1000000 AND 1000000))");
+  }
+  ~Db(){sqlite3_close(db);}sqlite3* db=nullptr;
+ };
+@@ -115,6 +122,8 @@ void Crews::assign(std::int64_t plan,std::uint64_t npc,PlayerId owner,EntityId s
+  const auto state=structures_.status(plan,owner,ship,site);
+  if(state.cancelled||state.conflicting||state.finished())throw std::invalid_argument("Plan not available for crew work");
+  validate_worker(npc,owner,ship,site);
++ Query supply_job(db_->db,"SELECT active FROM sg_construction_restock WHERE npc_id=?");supply_job.n(1,static_cast<std::int64_t>(npc));
++ if(supply_job.row()&&supply_job.v(0))throw std::invalid_argument("Worker is assigned to a physical restocking run");
+  Query count(db_->db,"SELECT count(*) FROM sg_construction_workers WHERE plan_id=?");count.n(1,plan);
+  if(!count.row()||count.v(0)>=8)throw std::invalid_argument("Crew already has eight workers");
+  Query job(db_->db,"INSERT OR IGNORE INTO sg_construction_jobs(plan_id,owner,ship,site,completed) VALUES(?,?,?,?,?)");
+@@ -147,6 +156,10 @@ std::vector<CrewJob> Crews::list(PlayerId owner,EntityId ship,EntityId site)cons
+   const auto s=structures_.status(job.plan,owner,ship,site);job.completed=s.completed;job.total=s.total;
+   if(const auto* supply=world_.world().construction_supplies(site)){
+    job.depot_modules=supply->depot;
++   if(auto reserved=supply->reserved.find(job.plan);reserved!=supply->reserved.end()){
++    job.reserved_modules=reserved->second.modules;
++    job.reserved_source_node=reserved->second.node;
++   }
+    if(!s.finished()&&!s.cancelled&&!s.conflicting){
+     Query text(db_->db,"SELECT steps FROM sg_structure_plans WHERE id=?");text.n(1,job.plan);
+     if(text.row()){
+@@ -170,6 +183,50 @@ std::vector<CrewJob> Crews::list(PlayerId owner,EntityId ship,EntityId site)cons
+  }
+  return result;
+ }
++void Crews::queue_restock(std::uint64_t npc,std::uint32_t node,PlayerId owner,EntityId ship,EntityId site){
++ validate_worker(npc,owner,ship,site);
++ const auto* st=world_.world().storage(site);
++ if(!node||node>static_cast<std::uint32_t>(std::numeric_limits<int>::max()/4) ||
++    !st||!st->extra_bins.count(node)||!st->equipment_positions.count(node))
++  throw std::invalid_argument("Restocking destination must be a built, placed storage bin");
++ Query assignment(db_->db,"SELECT 1 FROM sg_construction_workers WHERE npc_id=?");
++ assignment.n(1,static_cast<std::int64_t>(npc));
++ if(assignment.row())throw std::invalid_argument("Worker is already assigned to construction");
++ const auto* supplies=world_.world().construction_supplies(site);
++ if(supplies&&supplies->carried.count(npc))
++  throw std::invalid_argument("Worker already carries modules from another assignment");
++ Query occupied(db_->db,"SELECT active FROM sg_construction_restock WHERE npc_id=?");
++ occupied.n(1,static_cast<std::int64_t>(npc));
++ if(occupied.row()&&occupied.v(0))throw std::invalid_argument("Restock assignment already active");
++ Query put(db_->db,"INSERT OR REPLACE INTO sg_construction_restock(npc_id,owner,ship,site,node,x,y,phase,active,last_tick,reason)"
++     " VALUES(?,?,?,?,?,0,0,0,1,-1,'Awaiting depot pickup')");
++ put.n(1,static_cast<std::int64_t>(npc));put.n(2,owner);put.n(3,ship);put.n(4,site);put.n(5,node);put.done();
++}
++bool Crews::cancel_restock(std::uint64_t npc,PlayerId owner,EntityId ship,EntityId site){
++ validate_site(owner,ship,site);
++ Query find(db_->db,"SELECT owner,ship,site,active FROM sg_construction_restock WHERE npc_id=?");
++ find.n(1,static_cast<std::int64_t>(npc));
++ if(!find.row())return false;
++ if(find.v(0)!=static_cast<std::int64_t>(owner)||find.v(1)!=static_cast<std::int64_t>(ship)||
++    find.v(2)!=static_cast<std::int64_t>(site))throw std::invalid_argument("Restock job owned by another session");
++ if(!find.v(3))return false;
++ const auto* supplies=world_.world().construction_supplies(site);
++ const bool carrying=supplies&&supplies->carried.count(npc);
++ Query stop(db_->db,"UPDATE sg_construction_restock SET phase=2,active=?,reason=? WHERE npc_id=?");
++ stop.n(1,carrying?1:0);stop.str(2,carrying?"Returning physical cargo after cancellation":"Cancelled before pickup");
++ stop.n(3,static_cast<std::int64_t>(npc));stop.done();
++ return true;
++}
++std::vector<SupplyRun> Crews::list_restock(PlayerId owner,EntityId ship,EntityId site)const{
++ validate_site(owner,ship,site);
++ Query q(db_->db,"SELECT npc_id,node,x,y,active,phase,reason FROM sg_construction_restock"
++                  " WHERE owner=? AND ship=? AND site=? ORDER BY npc_id LIMIT 200");
++ q.n(1,owner);q.n(2,ship);q.n(3,site);
++ std::vector<SupplyRun> result;
++ while(q.row())result.push_back({static_cast<std::uint64_t>(q.v(0)),static_cast<std::uint32_t>(q.v(1)),
++     static_cast<int>(q.v(2)),static_cast<int>(q.v(3)),q.v(4)!=0,q.v(5)==2,q.t(6)});
++ return result;
++}
+ void Crews::advance(PlayerId owner,EntityId ship){
+  const auto tick=world_.world().tick();
+  Query jobs(db_->db,"SELECT plan_id,site,completed,labor,last_tick,active FROM sg_construction_jobs WHERE owner=? AND ship=? ORDER BY plan_id LIMIT 200");
+@@ -182,6 +239,19 @@ void Crews::advance(PlayerId owner,EntityId ship){
+   try{
+    const auto status=structures_.status(j.id,owner,ship,j.site);
+    if(status.cancelled||status.conflicting||status.finished() || !j.active){
++    // Release uncollected allocations through a real, journaled command.
++    // A paused plan retains its reservation so other projects cannot steal it.
++    if(status.cancelled||status.conflicting||status.finished()){
++     const auto* supply=world_.world().construction_supplies(j.site);
++     if(supply){auto it=supply->reserved.find(j.id);
++      if(it!=supply->reserved.end()){
++       const auto event=structures_.supply_action(Action::ReserveConstructionModules,j.id,
++            static_cast<int>(it->second.node),-static_cast<int>(it->second.modules),owner,ship,j.site);
++       if(event.result!=Outcome::Applied)throw std::runtime_error("Failed to release cancelled allocation");
++       break;
++      }
++     }
++    }
+     // A worker's unspent cargo is NOT refunded on cancellation. It exists in
+     // the canonical world until returned through a real material receipt.
+     Query returned(db_->db,"SELECT npc_id,x,y FROM sg_construction_workers WHERE plan_id=? ORDER BY npc_id");returned.n(1,j.id);
+@@ -226,15 +296,40 @@ void Crews::advance(PlayerId owner,EntityId ship){
+    const auto needed=cost(task);
+    auto supply=world_.world().construction_supplies(j.site);
+    auto staged=world_.world().construction_delivered(j.site,task.x,task.y);
++   std::int64_t in_transit=0;
++   if(supply)for(const auto& worker:roster){
++    auto it=supply->carried.find(worker.npc);
++    if(it!=supply->carried.end())in_transit+=it->second;
++   }
++   // A reservation is not counted as available stock for another plan. Its
++   // source remains physically identified by the installed storage node.
++   std::int64_t held=0;
++   if(supply){auto it=supply->reserved.find(j.id);
++    if(it!=supply->reserved.end())held=it->second.modules;
++   }
+    for(auto& n:roster){
+     try{validate_worker(n.npc,owner,ship,j.site);}catch(const std::exception&){reason="Crew member no longer available";continue;}
+     supply=world_.world().construction_supplies(j.site);
+     std::int64_t carrying=0;
+     if(supply){if(auto it=supply->carried.find(n.npc);it!=supply->carried.end())carrying=it->second;}
+     const bool supplies_ready=staged>=needed;
+-    // A worker carrying modules must first physically deliver them, even if
+-    // another worker already delivered enough for the current build step.
+-    const Pos destination=carrying>0?goal:(supplies_ready?goal:Pos{0,0});
++    // Reservations select a real installed source; free stock is never
++    // materialized at the worker's position. Node zero is the old depot.
++    Pos source{0,0};
++    std::uint32_t source_node=0;
++    if(!carrying && !supplies_ready && supply){
++     auto hold=supply->reserved.find(j.id);
++     if(hold!=supply->reserved.end())source_node=hold->second.node;
++     if(source_node){
++      const auto* store=world_.world().storage(j.site);
++      if(!store || !store->equipment_positions.count(source_node)){
++       reason="Reserved storage source is not installed";continue;
++      }
++      const auto& where=store->equipment_positions.at(source_node);
++      source={static_cast<int>(where.x),static_cast<int>(where.y)};
++     }
++    }
++    const Pos destination=carrying>0?goal:(supplies_ready?goal:source);
+     const Pos here{n.x,n.y};
+     if(here!=destination){Pos next{};if(next_cell(world_.world(),j.site,here,destination,next)){
+       Query move(db_->db,"UPDATE sg_construction_workers SET x=?,y=? WHERE npc_id=? AND plan_id=?");
+@@ -250,21 +345,61 @@ void Crews::advance(PlayerId owner,EntityId ship){
+      break;
+     }
+     if(!supplies_ready){
+-     if(!supply || supply->depot<1){
+-      // Ship -> outpost is a separate journaled transaction, never a free
+-      // mutation. The ship must be at this outpost and have actual modules.
++     if(supply){
++      const auto it=supply->reserved.find(j.id);
++      if(it!=supply->reserved.end()){
++       const auto count=std::min<std::int64_t>(2,it->second.modules);
++       const auto event=structures_.supply_action(Action::PickupReservedConstructionModules,
++                 static_cast<std::int64_t>(n.npc),static_cast<int>(j.id),static_cast<int>(count),owner,ship,j.site);
++       reason=event.result==Outcome::Applied?"NPC collected plan-reserved modules":"Reserved pickup refused";
++       break;
++      }
++     }
++     if(staged+in_transit+held<needed){
++      // Deterministically choose the cheapest reachable installed source.
++      // Unavailable/reserved inventory is excluded from these balances.
++      struct Candidate{std::int64_t score;std::uint32_t node;std::int64_t stock;};
++      std::vector<Candidate> sources;
++      if(supply && supply->depot>0){
++       const auto score=std::llabs(static_cast<long long>(n.x))+std::llabs(static_cast<long long>(n.y))+
++         std::llabs(static_cast<long long>(goal.first))+std::llabs(static_cast<long long>(goal.second));
++       sources.push_back({score,0,supply->depot});
++      }
++      if(supply)if(const auto* store=world_.world().storage(j.site)){
++       for(const auto& [node,quantity]:supply->node_modules){
++        auto found=store->equipment_positions.find(node);
++        if(quantity<=0 || found==store->equipment_positions.end())continue;
++        const Pos where{static_cast<int>(found->second.x),static_cast<int>(found->second.y)};
++        Pos toward{};
++        if(where!=Pos{n.x,n.y} && !next_cell(world_.world(),j.site,{n.x,n.y},where,toward))continue;
++        if(where!=goal && !next_cell(world_.world(),j.site,where,goal,toward))continue;
++        const auto score=std::llabs(static_cast<long long>(n.x)-where.first)+
++          std::llabs(static_cast<long long>(n.y)-where.second)+
++          std::llabs(static_cast<long long>(goal.first)-where.first)+
++          std::llabs(static_cast<long long>(goal.second)-where.second);
++        sources.push_back({score,node,quantity});
++       }
++      }
++      std::sort(sources.begin(),sources.end(),[](const Candidate& a,const Candidate& b){
++       if(a.score!=b.score)return a.score<b.score;
++       return a.node<b.node;
++      });
++      if(!sources.empty()){
++       const auto& nearest=sources.front();
++       const auto count=std::min<std::int64_t>(2,std::min(nearest.stock,needed-staged-in_transit-held));
++       const auto event=structures_.supply_action(Action::ReserveConstructionModules,j.id,
++                   static_cast<int>(nearest.node),static_cast<int>(count),owner,ship,j.site);
++       reason=event.result==Outcome::Applied?"Reserved real modules at selected source":"Allocation refused";
++       break;
++      }
++      // Ship stock can enter only via the physical depot transfer, and never
++      // if any unclaimed modules are already at a reachable source.
+       const auto* shipstock=world_.world().colony_ship(ship);
+       const auto load=shipstock?std::min<std::int64_t>(8,shipstock->modules):0;
+       if(load>0){
+-       auto event=structures_.supply_action(Action::StageConstructionModules,load,0,0,owner,ship,j.site);
++       const auto event=structures_.supply_action(Action::StageConstructionModules,load,0,0,owner,ship,j.site);
+        reason=event.result==Outcome::Applied?"Restocked site depot from colony ship":"Depot resupply refused";
+-      }else reason="No real construction modules available for depot";
+-      break;
+-     }
+-     const auto count=std::min<std::int64_t>(2,std::min(supply->depot,needed-staged));
+-     if(count>0){
+-      auto event=structures_.supply_action(Action::PickupConstructionModules,static_cast<std::int64_t>(n.npc),static_cast<int>(count),0,owner,ship,j.site);
+-      reason=event.result==Outcome::Applied?"NPC picked up physical construction modules":"NPC pickup refused";
++      }else reason="No unreserved modules at reachable storage nodes";
+       break;
+      }
+     }else if(Pos{n.x,n.y}==goal)++ready;
+@@ -295,5 +430,78 @@ void Crews::advance(PlayerId owner,EntityId ship){
+   // A step may have advanced the world; one structure per logical tick max.
+   if(world_.world().tick()!=tick)break;
+  }
++ if(world_.world().tick()!=tick)return;
++ // Dedicated one-trip NPC supply runs share the same worker identities and
++ // single-writer simulation. SQLite stores route progress, while carried and
++ // stored cargo remain in the authoritative world and journal.
++ Query runs(db_->db,"SELECT npc_id,site,node,x,y,phase,last_tick FROM sg_construction_restock"
++                    " WHERE owner=? AND ship=? AND active=1 ORDER BY npc_id LIMIT 200");
++ runs.n(1,owner);runs.n(2,ship);
++ struct Run{std::uint64_t npc;EntityId site;std::uint32_t node;int x,y,phase;std::int64_t last_tick;};
++ std::vector<Run> queue;
++ while(runs.row())queue.push_back({static_cast<std::uint64_t>(runs.v(0)),
++     static_cast<EntityId>(runs.v(1)),static_cast<std::uint32_t>(runs.v(2)),
++     static_cast<int>(runs.v(3)),static_cast<int>(runs.v(4)),static_cast<int>(runs.v(5)),runs.v(6)});
++ for(auto run:queue){
++  if(run.last_tick>=0 && static_cast<std::uint64_t>(run.last_tick)>=tick)continue;
++  bool active=true;std::string reason="Supply run travelling";
++  try{
++   validate_worker(run.npc,owner,ship,run.site);
++   const auto* storage=world_.world().storage(run.site);
++   if(!storage || !storage->extra_bins.count(run.node) || !storage->equipment_positions.count(run.node))
++    throw std::runtime_error("Supply destination no longer installed");
++   const auto origin=storage->equipment_positions.at(run.node);
++   const Pos source{0,0};const Pos destination{static_cast<int>(origin.x),static_cast<int>(origin.y)};
++   const auto* supplies=world_.world().construction_supplies(run.site);
++   const auto carry=supplies && supplies->carried.count(run.npc)?supplies->carried.at(run.npc):0;
++   if(run.phase==1 && !carry){active=false;reason="Modules placed in real storage";}
++   else{
++    const Pos target=(run.phase==2 || (!carry && run.phase==0))?source:destination;
++    if(Pos{run.x,run.y}!=target){
++     Pos next{};
++     if(next_cell(world_.world(),run.site,{run.x,run.y},target,next)){
++      run.x=next.first;run.y=next.second;
++     }else reason="Supply route blocked by installed structures";
++    }else if(run.phase==2){
++     if(carry){
++      const auto e=structures_.supply_action(Action::ReturnConstructionModules,
++                     static_cast<std::int64_t>(run.npc),0,0,owner,ship,run.site);
++      if(e.result!=Outcome::Applied)throw std::runtime_error("Supply return rejected");
++     }
++     active=false;reason="Supply run cancelled and cargo returned";
++    }else if(carry){
++     const auto e=structures_.supply_action(Action::DepositConstructionNodeModules,
++                   static_cast<std::int64_t>(run.npc),static_cast<int>(run.node),0,owner,ship,run.site);
++     if(e.result==Outcome::Applied){active=false;reason="Modules placed in real storage";}
++     else if(e.result==Outcome::CargoFull){run.phase=2;reason="Storage full; returning carried modules";}
++     else throw std::runtime_error("NPC storage deposit rejected");
++    }else{
++     const auto goods=world_.world().storage_node_inventory_snapshot(run.site,run.node).used_liters();
++     const auto reserved_liters=world_.world().construction_node_module_liters(run.site,run.node);
++     const auto room=std::max<std::int64_t>(0,(4000-goods-reserved_liters)/2000);
++     if(room==0){active=false;reason="Installed storage bin is full";}
++     else if(supplies && supplies->depot>0){
++      const auto count=std::min<std::int64_t>(2,std::min(room,supplies->depot));
++      const auto e=structures_.supply_action(Action::PickupConstructionModules,
++                      static_cast<std::int64_t>(run.npc),static_cast<int>(count),0,owner,ship,run.site);
++      if(e.result!=Outcome::Applied)throw std::runtime_error("NPC supply pickup rejected");
++      run.phase=1;reason="Carrying real modules to installed storage";
++     }else{
++      const auto* shipstock=world_.world().colony_ship(ship);
++      const auto count=shipstock?std::min<std::int64_t>(8,shipstock->modules):0;
++      if(count>0){
++       const auto e=structures_.supply_action(Action::StageConstructionModules,count,0,0,owner,ship,run.site);
++       reason=e.result==Outcome::Applied?"Restocked depot from real colony ship":"Depot staging refused";
++      }else reason="No modules available for supply run";
++     }
++    }
++   }
++  }catch(const std::exception& e){reason=std::string(e.what()).substr(0,180);}
++  Query save(db_->db,"UPDATE sg_construction_restock SET x=?,y=?,phase=?,active=?,reason=?,last_tick=? WHERE npc_id=?");
++  save.n(1,run.x);save.n(2,run.y);save.n(3,run.phase);save.n(4,active?1:0);
++  save.str(5,reason);save.n(6,static_cast<std::int64_t>(tick));
++  save.n(7,static_cast<std::int64_t>(run.npc));save.done();
++  if(world_.world().tick()!=tick)break;
++ }
+ }
+ } // namespace galaxy::construction
+diff --git a/src/Persistence.cpp b/src/Persistence.cpp
+index e091cb7..3fd21a1 100644
+--- a/src/Persistence.cpp
++++ b/src/Persistence.cpp
+@@ -127,7 +127,7 @@ Command decode_command(const std::string& record) {
+           >> c.target >> action >> c.thrust_x >> c.thrust_y >> c.amount))
+         throw std::runtime_error("recovery: invalid command journal record");
+     std::string extra;
+-    if (in >> extra || action < 0 || action > static_cast<int>(Action::BuildColonyFixtureFromDelivery) || c.id == 0 || c.issuer == 0)
++    if (in >> extra || action < 0 || action > static_cast<int>(Action::RecoverConstructionDelivery) || c.id == 0 || c.issuer == 0)
+         throw std::runtime_error("recovery: invalid command journal values");
+     c.action = static_cast<Action>(action);
+     if (command_record(c) != record) throw std::runtime_error("recovery: noncanonical command journal");
+@@ -1570,6 +1570,23 @@ public:
+                 }else if(c.action==Action::ReturnConstructionModules){
+                     if(amount>4)throw std::runtime_error("SQLite: worker over-capacity return");
+                     src=worker;dst=depot;
++                }else if(c.action==Action::DepositConstructionNodeModules){
++                    if(amount>4)throw std::runtime_error("SQLite: invalid worker storage deposit");
++                    src=worker;dst="construction-node:"+std::to_string(c.target)+":"+std::to_string(c.thrust_x);
++                }else if(c.action==Action::ReserveConstructionModules){
++                    if(amount!=2*std::llabs(static_cast<long long>(c.thrust_y)))
++                        throw std::runtime_error("SQLite: invalid construction reservation amount");
++                    const auto node=c.thrust_x==0?depot:
++                        "construction-node:"+std::to_string(c.target)+":"+std::to_string(c.thrust_x);
++                    const auto reserved="construction-reserved:"+std::to_string(c.target)+":"+std::to_string(c.amount);
++                    src=c.thrust_y>0?node:reserved;dst=c.thrust_y>0?reserved:node;
++                }else if(c.action==Action::PickupReservedConstructionModules){
++                    if(amount!=2*c.thrust_y)throw std::runtime_error("SQLite: invalid reserved pickup quantity");
++                    src="construction-reserved:"+std::to_string(c.target)+":"+std::to_string(c.thrust_x);
++                    dst=worker;
++                }else if(c.action==Action::RecoverConstructionDelivery){
++                    if(amount>4)throw std::runtime_error("SQLite: invalid recovered delivery quantity");
++                    src=delivered;dst=worker;
+                 }else throw std::runtime_error("SQLite: invalid construction logistics command");
+                 if(sqlite_str(ledger.get(),4)!=src||sqlite_str(ledger.get(),5)!=dst)
+                     throw std::runtime_error("SQLite: construction logistics endpoints mismatch");
+@@ -1751,7 +1768,11 @@ public:
+             else if (cmd->second.action==Action::StageConstructionModules ||
+                      cmd->second.action==Action::PickupConstructionModules ||
+                      cmd->second.action==Action::DeliverConstructionModules ||
+-                     cmd->second.action==Action::ReturnConstructionModules) ++expected_construction_logistics;
++                     cmd->second.action==Action::ReturnConstructionModules ||
++                     cmd->second.action==Action::DepositConstructionNodeModules ||
++                     cmd->second.action==Action::ReserveConstructionModules ||
++                     cmd->second.action==Action::PickupReservedConstructionModules ||
++                     cmd->second.action==Action::RecoverConstructionDelivery) ++expected_construction_logistics;
+             else if (cmd->second.action==Action::ConstructClinic) ++expected_clinic_builds;
+             else if (cmd->second.action==Action::TransferClinicStock) ++expected_clinic_transfers;
+             else throw std::runtime_error("SQLite: resource transfer tied to non-transfer command");
+@@ -2896,7 +2917,11 @@ public:
+                          cmd->second.action!=Action::StageConstructionModules &&
+                          cmd->second.action!=Action::PickupConstructionModules &&
+                          cmd->second.action!=Action::DeliverConstructionModules &&
+-                         cmd->second.action!=Action::ReturnConstructionModules))
++                         cmd->second.action!=Action::ReturnConstructionModules &&
++                         cmd->second.action!=Action::DepositConstructionNodeModules &&
++                         cmd->second.action!=Action::ReserveConstructionModules &&
++                         cmd->second.action!=Action::PickupReservedConstructionModules &&
++                         cmd->second.action!=Action::RecoverConstructionDelivery))
+                         throw std::runtime_error("unmatched resource transfer event");
+                     Statement ledger(db_, "INSERT INTO resource_ledger(generation,tick,command_id,source_id,destination_id,amount,reason) VALUES(?,?,?,?,?,?,?)");
+                     ledger.i64(1, static_cast<std::int64_t>(next));
+@@ -2977,7 +3002,11 @@ public:
+                     } else if(cmd->second.action==Action::StageConstructionModules ||
+                               cmd->second.action==Action::PickupConstructionModules ||
+                               cmd->second.action==Action::DeliverConstructionModules ||
+-                              cmd->second.action==Action::ReturnConstructionModules){
++                              cmd->second.action==Action::ReturnConstructionModules ||
++                              cmd->second.action==Action::DepositConstructionNodeModules ||
++                              cmd->second.action==Action::ReserveConstructionModules ||
++                              cmd->second.action==Action::PickupReservedConstructionModules ||
++                              cmd->second.action==Action::RecoverConstructionDelivery){
+                         const auto& c=cmd->second;
+                         const auto depot="construction-depot:"+std::to_string(c.target);
+                         const auto worker="construction-worker:"+std::to_string(c.target)+":"+std::to_string(c.amount);
+@@ -2991,6 +3020,19 @@ public:
+                             case Action::PickupConstructionModules:source=depot;destination=worker;break;
+                             case Action::DeliverConstructionModules:source=worker;destination=delivered;break;
+                             case Action::ReturnConstructionModules:source=worker;destination=depot;break;
++                            case Action::DepositConstructionNodeModules:
++                                source=worker;destination="construction-node:"+std::to_string(c.target)+":"+std::to_string(c.thrust_x);break;
++                            case Action::ReserveConstructionModules: {
++                                const auto node=c.thrust_x==0?depot:
++                                    "construction-node:"+std::to_string(c.target)+":"+std::to_string(c.thrust_x);
++                                const auto reservation="construction-reserved:"+std::to_string(c.target)+":"+std::to_string(c.amount);
++                                source=c.thrust_y>0?node:reservation;
++                                destination=c.thrust_y>0?reservation:node;break;
++                            }
++                            case Action::PickupReservedConstructionModules:
++                                source="construction-reserved:"+std::to_string(c.target)+":"+std::to_string(c.thrust_x);
++                                destination=worker;break;
++                            case Action::RecoverConstructionDelivery:source=delivered;destination=worker;break;
+                             default:break;
+                         }
+                         ledger.text(4,source);ledger.text(5,destination);
+diff --git a/src/Simulation.cpp b/src/Simulation.cpp
+index 05de6e8..f2d189c 100644
+--- a/src/Simulation.cpp
++++ b/src/Simulation.cpp
+@@ -534,6 +534,17 @@ const ConstructionSupplies* Simulation::construction_supplies(EntityId site) con
+     const auto it=construction_supplies_.find(site);
+     return it==construction_supplies_.end()?nullptr:&it->second;
+ }
++std::int64_t Simulation::construction_node_module_liters(EntityId site,std::uint32_t node)const{
++    const auto* s=construction_supplies(site);
++    if(!s || !node)return 0;
++    std::int64_t modules=0;
++    if(auto it=s->node_modules.find(node);it!=s->node_modules.end())modules+=it->second;
++    for(const auto& [plan,hold]:s->reserved){(void)plan;
++        if(hold.node==node)modules+=hold.modules;
++    }
++    if(modules<0 || modules>2)throw std::overflow_error("construction stock exceeds 4m3 installed bin");
++    return modules*2000;
++}
+ std::int64_t Simulation::construction_delivered(EntityId site,int x,int y)const{
+     const auto* c=construction_supplies(site);
+     if(!c)return 0;
+@@ -820,7 +831,9 @@ bool Simulation::submit(const Command& c) {
+         snapshot_version_=std::max(snapshot_version_,c.action==Action::BuildColonyFixtureFromDelivery?32:31);
+     }
+     if(c.action==Action::StageConstructionModules || c.action==Action::PickupConstructionModules ||
+-       c.action==Action::DeliverConstructionModules || c.action==Action::ReturnConstructionModules){
++       c.action==Action::DeliverConstructionModules || c.action==Action::ReturnConstructionModules ||
++       c.action==Action::DepositConstructionNodeModules || c.action==Action::ReserveConstructionModules ||
++       c.action==Action::PickupReservedConstructionModules || c.action==Action::RecoverConstructionDelivery){
+         if(!c.target)return false;
+         if(c.action==Action::StageConstructionModules){
+             if(c.amount==0 || c.amount<-1000 || c.amount>1000 || c.thrust_x || c.thrust_y)return false;
+@@ -833,7 +846,16 @@ bool Simulation::submit(const Command& c) {
+             }else if(c.thrust_x<-kPlacementBound || c.thrust_x>kPlacementBound ||
+                      c.thrust_y<-kPlacementBound || c.thrust_y>kPlacementBound)return false;
+         }
+-        snapshot_version_=std::max(snapshot_version_,32);
++        if(c.action==Action::DepositConstructionNodeModules &&
++           (c.amount<=0 || c.thrust_x<=0 || c.thrust_y))return false;
++        if(c.action==Action::ReserveConstructionModules &&
++           (c.amount<=0 || c.amount>std::numeric_limits<int>::max() ||
++            c.thrust_x<0 || c.thrust_y==0 || c.thrust_y<-1000 || c.thrust_y>1000))return false;
++        if(c.action==Action::PickupReservedConstructionModules &&
++           (c.thrust_x<=0 || c.thrust_y<1 || c.thrust_y>2))return false;
++        snapshot_version_=std::max(snapshot_version_,
++            c.action==Action::DepositConstructionNodeModules || c.action==Action::ReserveConstructionModules ||
++            c.action==Action::PickupReservedConstructionModules || c.action==Action::RecoverConstructionDelivery ?33:32);
+     }
+     if(c.action==Action::PlaceConveyorCell || c.action==Action::CompleteConveyorRoute){
+         // amount: real module-built link command ID; x/y: one grid cell,
+@@ -1351,6 +1373,10 @@ Event Simulation::execute(const Command& c) {
+         case Action::PickupConstructionModules:
+         case Action::DeliverConstructionModules:
+         case Action::ReturnConstructionModules:
++        case Action::DepositConstructionNodeModules:
++        case Action::ReserveConstructionModules:
++        case Action::PickupReservedConstructionModules:
++        case Action::RecoverConstructionDelivery:
+         case Action::SetColonyDoor:
+         case Action::AssignFarmMentor:
+         case Action::SetPolicyAssurance:
+@@ -1396,7 +1422,9 @@ Event Simulation::execute(const Command& c) {
+             auto& cship=colony_ships_.at(c.actor);
+             auto& onboard=life_support_.at(c.actor);
+             if(c.action==Action::StageConstructionModules || c.action==Action::PickupConstructionModules ||
+-               c.action==Action::DeliverConstructionModules || c.action==Action::ReturnConstructionModules){
++               c.action==Action::DeliverConstructionModules || c.action==Action::ReturnConstructionModules ||
++               c.action==Action::DepositConstructionNodeModules || c.action==Action::ReserveConstructionModules ||
++               c.action==Action::PickupReservedConstructionModules || c.action==Action::RecoverConstructionDelivery){
+                 // Validate transfers against an isolated prospective inventory.
+                 // Rejected commands must never create empty depots or alter cargo.
+                 const auto existing=construction_supplies_.find(c.target);
+@@ -1413,6 +1441,36 @@ Event Simulation::execute(const Command& c) {
+                         supplies.depot+=n;cship.modules-=n;
+                     }
+                     result.transferred=2*std::llabs(n);
++                }else if(c.action==Action::ReserveConstructionModules){
++                    const auto plan=c.amount;
++                    const auto node=static_cast<std::uint32_t>(c.thrust_x);
++                    const auto* storage= this->storage(c.target);
++                    if(node && (!storage || !storage->extra_bins.count(node) ||
++                                !storage->equipment_positions.count(node))){
++                        result.result=Outcome::InvalidTarget;return result;
++                    }
++                    auto& balance=node?supplies.node_modules[node]:supplies.depot;
++                    const auto found=supplies.reserved.find(plan);
++                    if(c.thrust_y>0){
++                        const auto n=c.thrust_y;
++                        if((found!=supplies.reserved.end() && found->second.node!=node) ||
++                           balance<n || n>1000 ||
++                           (found!=supplies.reserved.end() && found->second.modules>1000-n)){
++                            result.result=Outcome::NoResources;return result;
++                        }
++                        balance-=n;
++                        if(node && balance==0)supplies.node_modules.erase(node);
++                        auto& hold=supplies.reserved[plan];hold.node=node;hold.modules+=n;
++                    }else{
++                        const auto n=-c.thrust_y;
++                        if(found==supplies.reserved.end() || found->second.node!=node ||
++                           found->second.modules<n || balance>1000000-n){
++                            result.result=Outcome::NoResources;return result;
++                        }
++                        balance+=n;auto& hold=supplies.reserved.at(plan);hold.modules-=n;
++                        if(!hold.modules)supplies.reserved.erase(plan);
++                    }
++                    result.transferred=2*std::llabs(static_cast<long long>(c.thrust_y));
+                 }else{
+                     const auto npc=static_cast<std::uint64_t>(c.amount);
+                     const auto it=npcs_.find(npc);
+@@ -1428,6 +1486,39 @@ Event Simulation::execute(const Command& c) {
+                     }else if(c.action==Action::ReturnConstructionModules){
+                         if(have<1 || supplies.depot>1000000-have){result.result=Outcome::NoResources;return result;}
+                         supplies.depot+=have;supplies.carried.erase(npc);result.transferred=2*have;
++                    }else if(c.action==Action::DepositConstructionNodeModules){
++                        const auto node=static_cast<std::uint32_t>(c.thrust_x);
++                        const auto* storage=this->storage(c.target);
++                        if(!node || !storage || !storage->extra_bins.count(node) ||
++                           !storage->equipment_positions.count(node)){
++                            result.result=Outcome::InvalidTarget;return result;
++                        }
++                        const auto old=supplies.node_modules[node];
++                        const auto occupied=storage_node_inventory_snapshot(c.target,node).used_liters()+
++                                            construction_node_module_liters(c.target,node);
++                        if(have<1 || old>1000000-have || occupied>4000-2000*have){
++                            result.result=Outcome::CargoFull;return result;
++                        }
++                        supplies.node_modules[node]=old+have;supplies.carried.erase(npc);
++                        result.transferred=2*have;
++                    }else if(c.action==Action::PickupReservedConstructionModules){
++                        const auto plan=c.thrust_x,n=c.thrust_y;
++                        auto found=supplies.reserved.find(plan);
++                        if(found==supplies.reserved.end() || found->second.modules<n || have>2-n){
++                            result.result=Outcome::NoResources;return result;
++                        }
++                        supplies.carried[npc]+=n;found->second.modules-=n;
++                        if(!found->second.modules)supplies.reserved.erase(found);
++                        result.transferred=2*n;
++                    }else if(c.action==Action::RecoverConstructionDelivery){
++                        auto found=supplies.delivered.find({c.thrust_x,c.thrust_y});
++                        if(found==supplies.delivered.end() || have>=2){
++                            result.result=Outcome::NoResources;return result;
++                        }
++                        const auto qty=std::min<std::int64_t>(2-have,found->second);
++                        supplies.carried[npc]+=qty;found->second-=qty;
++                        if(!found->second)supplies.delivered.erase(found);
++                        result.transferred=2*qty;
+                     }else{
+                         if(have<1 || construction_delivered(c.target,c.thrust_x,c.thrust_y)>1000000-have){
+                             result.result=Outcome::NoResources;return result;
+@@ -1437,7 +1528,9 @@ Event Simulation::execute(const Command& c) {
+                     }
+                 }
+                 construction_supplies_[c.target]=std::move(candidate);
+-                snapshot_version_=std::max(snapshot_version_,32);
++                snapshot_version_=std::max(snapshot_version_,
++                    c.action==Action::DepositConstructionNodeModules || c.action==Action::ReserveConstructionModules ||
++                    c.action==Action::PickupReservedConstructionModules || c.action==Action::RecoverConstructionDelivery ?33:32);
+                 result.result=Outcome::Applied;return result;
+             }
+             if(c.action==Action::BuildColonyFixture || c.action==Action::BuildColonyFixtureFromDelivery || c.action==Action::SetColonyDoor){
+@@ -1661,8 +1754,10 @@ Event Simulation::execute(const Command& c) {
+                 const bool inbound=(c.thrust_y==0 || c.thrust_y==2);
+                 const auto status=inbound ? other.transfer_to(bin,code,c.amount) :
+                                             bin.transfer_to(other,code,c.amount);
+-                if(status!=inventory::TransferStatus::Applied){
+-                    result.result=status==inventory::TransferStatus::DestinationFull ?
++                if(status!=inventory::TransferStatus::Applied ||
++                   bin.used_liters()+construction_node_module_liters(c.target,node)>4000){
++                    result.result=status==inventory::TransferStatus::DestinationFull ||
++                        bin.used_liters()+construction_node_module_liters(c.target,node)>4000 ?
+                         Outcome::CargoFull:Outcome::NoResources;return result;
+                 }
+                 auto& stacks=it->second.extra_bins.at(node);
+@@ -2836,8 +2931,10 @@ void Simulation::process_storage_links() {
+             auto to=to_workshop ? workshop_bin_inventory_snapshot(site,link.item_index) :
+                 storage_node_inventory_snapshot(site,link.destination);
+             const std::string code=std::string("good/")+name;
++            const auto reserved_liters=to_workshop?0:construction_node_module_liters(site,link.destination);
++            const auto free_liters=std::max<std::int64_t>(0,to.free_liters()-reserved_liters);
+             const auto rate=std::min({link.units_per_tick,from.amount(code),
+-                                     to.free_liters()/inventory::Catalogue::standard().liters_per_unit(code)});
++                                     free_liters/inventory::Catalogue::standard().liters_per_unit(code)});
+             if(rate<=0)continue;
+             if(link.units_moved>std::numeric_limits<std::uint64_t>::max()-static_cast<std::uint64_t>(rate))
+                 throw std::overflow_error("storage link movement overflow");
+@@ -2920,7 +3017,7 @@ void Simulation::steps(std::uint64_t count) {
+ 
+ std::string Simulation::canonical_state() const {
+     std::ostringstream out;
+-    out << (snapshot_version_ >= 32 ? "galaxy-kernel-v32|" : snapshot_version_ >= 31 ? "galaxy-kernel-v31|" : snapshot_version_ >= 30 ? "galaxy-kernel-v30|" : snapshot_version_ >= 29 ? "galaxy-kernel-v29|" : snapshot_version_ >= 28 ? "galaxy-kernel-v28|" : snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
++    out << (snapshot_version_ >= 33 ? "galaxy-kernel-v33|" : snapshot_version_ >= 32 ? "galaxy-kernel-v32|" : snapshot_version_ >= 31 ? "galaxy-kernel-v31|" : snapshot_version_ >= 30 ? "galaxy-kernel-v30|" : snapshot_version_ >= 29 ? "galaxy-kernel-v29|" : snapshot_version_ >= 28 ? "galaxy-kernel-v28|" : snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
+         << '|' << rng_state_ << '\n';
+     if (snapshot_version_>=5) for(const auto system:systems_)out<<"system|"<<system<<'\n';
+     for (const auto& entry : entities_) {
+@@ -3010,6 +3107,12 @@ std::string Simulation::canonical_state() const {
+             out<<"construction_carry|"<<site<<'|'<<npc<<'|'<<qty<<'\n';
+         for(const auto& [cell,qty]:stock.delivered)if(qty>0)
+             out<<"construction_delivery|"<<site<<'|'<<cell.first<<'|'<<cell.second<<'|'<<qty<<'\n';
++        if(snapshot_version_>=33){
++            for(const auto& [node,qty]:stock.node_modules)if(qty>0)
++                out<<"construction_node|"<<site<<'|'<<node<<'|'<<qty<<'\n';
++            for(const auto& [plan,r]:stock.reserved)if(r.modules>0)
++                out<<"construction_reservation|"<<site<<'|'<<plan<<'|'<<r.node<<'|'<<r.modules<<'\n';
++        }
+     }
+     if (snapshot_version_>=8) {
+         for(const auto& [id,g]:geology_)
+@@ -3233,12 +3336,12 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
+     if (!std::getline(in, line)) throw std::runtime_error("snapshot: missing header");
+     auto h = fields(line);
+     require_fields(h, 5);
+-    if (h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27" && h[0] != "galaxy-kernel-v28" && h[0] != "galaxy-kernel-v29" && h[0] != "galaxy-kernel-v30" && h[0] != "galaxy-kernel-v31" && h[0] != "galaxy-kernel-v32") throw std::runtime_error("snapshot: unsupported version");
++    if (h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27" && h[0] != "galaxy-kernel-v28" && h[0] != "galaxy-kernel-v29" && h[0] != "galaxy-kernel-v30" && h[0] != "galaxy-kernel-v31" && h[0] != "galaxy-kernel-v32" && h[0] != "galaxy-kernel-v33") throw std::runtime_error("snapshot: unsupported version");
+     const auto sys = u64(h[1]);
+     if (sys == 0 || sys > std::numeric_limits<std::uint32_t>::max())
+         throw std::runtime_error("snapshot: invalid system");
+     Simulation result(u64(h[4]), static_cast<std::uint32_t>(sys));
+-    result.snapshot_version_ = h[0] == "galaxy-kernel-v32" ? 32 : h[0] == "galaxy-kernel-v31" ? 31 : h[0] == "galaxy-kernel-v30" ? 30 : h[0] == "galaxy-kernel-v29" ? 29 : h[0] == "galaxy-kernel-v28" ? 28 : h[0] == "galaxy-kernel-v27" ? 27 : h[0] == "galaxy-kernel-v26" ? 26 : h[0] == "galaxy-kernel-v25" ? 25 : h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
++    result.snapshot_version_ = h[0] == "galaxy-kernel-v33" ? 33 : h[0] == "galaxy-kernel-v32" ? 32 : h[0] == "galaxy-kernel-v31" ? 31 : h[0] == "galaxy-kernel-v30" ? 30 : h[0] == "galaxy-kernel-v29" ? 29 : h[0] == "galaxy-kernel-v28" ? 28 : h[0] == "galaxy-kernel-v27" ? 27 : h[0] == "galaxy-kernel-v26" ? 26 : h[0] == "galaxy-kernel-v25" ? 25 : h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
+     result.tick_ = u64(h[2]);
+     result.next_entity_id_ = u64(h[3]);
+     if (result.next_entity_id_ == 0) throw std::runtime_error("snapshot: invalid next entity ID");
+@@ -3492,7 +3595,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
+             require_fields(f,3);
+             const auto site=u64(f[1]);const auto amount=i64(f[2]);
+             if(!site||!result.built_outposts_.count(site)||amount<0||amount>1000000||
+-               !result.construction_supplies_.emplace(site,ConstructionSupplies{amount,{},{}}).second)
++               !result.construction_supplies_.emplace(site,ConstructionSupplies{amount,{},{},{},{}}).second)
+                 throw std::runtime_error("snapshot: invalid construction depot");
+         } else if(f[0]=="construction_carry" && result.snapshot_version_>=32){
+             require_fields(f,4);
+@@ -3513,6 +3616,28 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
+                y<-kPlacementBound || y>kPlacementBound || qty<1 || qty>1000000 ||
+                !it->second.delivered.emplace(std::make_pair(static_cast<int>(x),static_cast<int>(y)),qty).second)
+                 throw std::runtime_error("snapshot: invalid delivered construction modules");
++        } else if(f[0]=="construction_node" && result.snapshot_version_>=33){
++            require_fields(f,4);
++            const auto site=u64(f[1]),node=u64(f[2]);const auto qty=i64(f[3]);
++            const auto it=result.construction_supplies_.find(site);
++            const auto* storage=result.storage(site);
++            if(it==result.construction_supplies_.end() || !node || node>std::numeric_limits<int>::max()/4 ||
++               !storage || !storage->extra_bins.count(static_cast<std::uint32_t>(node)) ||
++               !storage->equipment_positions.count(static_cast<std::uint32_t>(node)) ||
++               qty<1 || qty>1000000 ||
++               !it->second.node_modules.emplace(static_cast<std::uint32_t>(node),qty).second)
++                throw std::runtime_error("snapshot: invalid construction storage node");
++        } else if(f[0]=="construction_reservation" && result.snapshot_version_>=33){
++            require_fields(f,5);
++            const auto site=u64(f[1]);const auto plan=i64(f[2]);const auto node=u64(f[3]);const auto qty=i64(f[4]);
++            const auto it=result.construction_supplies_.find(site);
++            const auto* storage=result.storage(site);
++            if(it==result.construction_supplies_.end() || plan<=0 || plan>std::numeric_limits<int>::max() ||
++               node>std::numeric_limits<int>::max()/4 || qty<1 || qty>1000 ||
++               (node && (!storage || !storage->extra_bins.count(static_cast<std::uint32_t>(node)) ||
++                         !storage->equipment_positions.count(static_cast<std::uint32_t>(node)))) ||
++               !it->second.reserved.emplace(plan,ConstructionReservation{static_cast<std::uint32_t>(node),qty}).second)
++                throw std::runtime_error("snapshot: invalid construction reservation");
+         } else if(f[0]=="geology" && result.snapshot_version_>=8){
+             require_fields(f,6);
+             const auto id=u64(f[1]),tax=u64(f[2]);
+@@ -3778,7 +3903,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
+             c.id = u64(f[1]); c.execute_tick = u64(f[2]); c.sequence = u64(f[3]);
+             c.issuer = u64(f[4]); c.actor = u64(f[5]); c.target = u64(f[6]);
+             auto action = u64(f[7]);
+-            if (action > (result.snapshot_version_ >= 32 ? static_cast<unsigned>(Action::BuildColonyFixtureFromDelivery) : result.snapshot_version_ >= 31 ? static_cast<unsigned>(Action::SetColonyDoor) : result.snapshot_version_ >= 30 ? static_cast<unsigned>(Action::CompleteConveyorRoute) : result.snapshot_version_ >= 29 ? static_cast<unsigned>(Action::PlaceFactoryEquipment) : result.snapshot_version_ >= 28 ? static_cast<unsigned>(Action::ConstructWorkshopLink) : result.snapshot_version_ >= 27 ? static_cast<unsigned>(Action::ConstructStorageLink) : result.snapshot_version_ >= 26 ? static_cast<unsigned>(Action::TransferStorageNodeStack) : result.snapshot_version_ >= 25 ? static_cast<unsigned>(Action::TransferStorageStack) : result.snapshot_version_ >= 24 ? static_cast<unsigned>(Action::TransferWorkshopStack) : result.snapshot_version_ >= 23 ? static_cast<unsigned>(Action::TransferWorkshopFinalOutput) : result.snapshot_version_ >= 22 ? static_cast<unsigned>(Action::TransferWorkshopOutput) : result.snapshot_version_ >= 21 ? static_cast<unsigned>(Action::HostCrewLoss) : result.snapshot_version_ >= 20 ? static_cast<unsigned>(Action::AssignFarmMentor) : result.snapshot_version_ >= 19 ? static_cast<unsigned>(Action::AssignPolicyInspectors) : result.snapshot_version_ >= 18 ? static_cast<unsigned>(Action::TransferWaterworksFeed) : result.snapshot_version_ >= 17 ? static_cast<unsigned>(Action::ConstructReclaimer) : result.snapshot_version_ >= 16 ? static_cast<unsigned>(Action::AssignClinicStaff) : result.snapshot_version_ >= 15 ? static_cast<unsigned>(Action::AssignCommunityStaff) : result.snapshot_version_ >= 14 ? static_cast<unsigned>(Action::SetUtilityMaintenance) : result.snapshot_version_ >= 13 ? static_cast<unsigned>(Action::RepairUtility) : result.snapshot_version_ >= 12 ? static_cast<unsigned>(Action::AssignHabitatResidents) : result.snapshot_version_ >= 11 ? static_cast<unsigned>(Action::AssignFarmWorkers) : result.snapshot_version_ >= 10 ? static_cast<unsigned>(Action::LoadLifeWater) : result.snapshot_version_ >= 9 ? static_cast<unsigned>(Action::FabricateMaterialModule) : result.snapshot_version_ >= 7 ? static_cast<unsigned>(Action::ConstructOutpost) : result.snapshot_version_ >= 6 ? static_cast<unsigned>(Action::DeliverGateSpares) : result.snapshot_version_ >= 5 ? static_cast<unsigned>(Action::SetGatePairOnline) : result.snapshot_version_ >= 4 ? static_cast<unsigned>(Action::SellOre) : static_cast<unsigned>(Action::UnloadOre))) throw std::runtime_error("snapshot: invalid action");
++            if (action > (result.snapshot_version_ >= 33 ? static_cast<unsigned>(Action::RecoverConstructionDelivery) : result.snapshot_version_ >= 32 ? static_cast<unsigned>(Action::BuildColonyFixtureFromDelivery) : result.snapshot_version_ >= 31 ? static_cast<unsigned>(Action::SetColonyDoor) : result.snapshot_version_ >= 30 ? static_cast<unsigned>(Action::CompleteConveyorRoute) : result.snapshot_version_ >= 29 ? static_cast<unsigned>(Action::PlaceFactoryEquipment) : result.snapshot_version_ >= 28 ? static_cast<unsigned>(Action::ConstructWorkshopLink) : result.snapshot_version_ >= 27 ? static_cast<unsigned>(Action::ConstructStorageLink) : result.snapshot_version_ >= 26 ? static_cast<unsigned>(Action::TransferStorageNodeStack) : result.snapshot_version_ >= 25 ? static_cast<unsigned>(Action::TransferStorageStack) : result.snapshot_version_ >= 24 ? static_cast<unsigned>(Action::TransferWorkshopStack) : result.snapshot_version_ >= 23 ? static_cast<unsigned>(Action::TransferWorkshopFinalOutput) : result.snapshot_version_ >= 22 ? static_cast<unsigned>(Action::TransferWorkshopOutput) : result.snapshot_version_ >= 21 ? static_cast<unsigned>(Action::HostCrewLoss) : result.snapshot_version_ >= 20 ? static_cast<unsigned>(Action::AssignFarmMentor) : result.snapshot_version_ >= 19 ? static_cast<unsigned>(Action::AssignPolicyInspectors) : result.snapshot_version_ >= 18 ? static_cast<unsigned>(Action::TransferWaterworksFeed) : result.snapshot_version_ >= 17 ? static_cast<unsigned>(Action::ConstructReclaimer) : result.snapshot_version_ >= 16 ? static_cast<unsigned>(Action::AssignClinicStaff) : result.snapshot_version_ >= 15 ? static_cast<unsigned>(Action::AssignCommunityStaff) : result.snapshot_version_ >= 14 ? static_cast<unsigned>(Action::SetUtilityMaintenance) : result.snapshot_version_ >= 13 ? static_cast<unsigned>(Action::RepairUtility) : result.snapshot_version_ >= 12 ? static_cast<unsigned>(Action::AssignHabitatResidents) : result.snapshot_version_ >= 11 ? static_cast<unsigned>(Action::AssignFarmWorkers) : result.snapshot_version_ >= 10 ? static_cast<unsigned>(Action::LoadLifeWater) : result.snapshot_version_ >= 9 ? static_cast<unsigned>(Action::FabricateMaterialModule) : result.snapshot_version_ >= 7 ? static_cast<unsigned>(Action::ConstructOutpost) : result.snapshot_version_ >= 6 ? static_cast<unsigned>(Action::DeliverGateSpares) : result.snapshot_version_ >= 5 ? static_cast<unsigned>(Action::SetGatePairOnline) : result.snapshot_version_ >= 4 ? static_cast<unsigned>(Action::SellOre) : static_cast<unsigned>(Action::UnloadOre))) throw std::runtime_error("snapshot: invalid action");
+             c.action = static_cast<Action>(action);
+             auto tx = i64(f[8]), ty = i64(f[9]);
+             if (tx < std::numeric_limits<int>::min() || tx > std::numeric_limits<int>::max() ||
+@@ -3885,6 +4010,21 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
+                    c.thrust_x< -kPlacementBound || c.thrust_x>kPlacementBound ||
+                    c.thrust_y< -kPlacementBound || c.thrust_y>kPlacementBound ||
+                    (c.action==Action::CompleteConveyorRoute && (c.thrust_x || c.thrust_y)))) ||
++                ((c.action==Action::DepositConstructionNodeModules ||
++                  c.action==Action::ReserveConstructionModules ||
++                  c.action==Action::PickupReservedConstructionModules ||
++                  c.action==Action::RecoverConstructionDelivery) &&
++                 (result.snapshot_version_<33 || !c.target || c.amount<1 ||
++                  (c.action==Action::DepositConstructionNodeModules &&
++                   (c.thrust_x<1 || c.thrust_y)) ||
++                  (c.action==Action::ReserveConstructionModules &&
++                   (c.amount>std::numeric_limits<int>::max() || c.thrust_x<0 ||
++                    !c.thrust_y || c.thrust_y<-1000 || c.thrust_y>1000)) ||
++                  (c.action==Action::PickupReservedConstructionModules &&
++                   (c.thrust_x<1 || c.thrust_y<1 || c.thrust_y>2)) ||
++                  (c.action==Action::RecoverConstructionDelivery &&
++                   (c.thrust_x<-kPlacementBound || c.thrust_x>kPlacementBound ||
++                    c.thrust_y<-kPlacementBound || c.thrust_y>kPlacementBound)))) ||
+                 ((c.action==Action::BuildColonyFixture || c.action==Action::SetColonyDoor) &&
+                    (result.snapshot_version_<31 || !c.target ||
+                     c.thrust_x< -kPlacementBound || c.thrust_x>kPlacementBound ||
+@@ -4547,6 +4687,29 @@ std::int64_t Simulation::total_ore() const {
+                 throw std::overflow_error("invalid delivered construction stock");
+             modules+=qty;
+         }
++        const auto* st=storage(site);
++        for(const auto& [node,qty]:stock.node_modules){
++            if(!node || !st || !st->extra_bins.count(node) || !st->equipment_positions.count(node) ||
++               qty<1 || qty>1000000 || modules>1000000000-qty)
++                throw std::overflow_error("invalid node construction stock");
++            modules+=qty;
++            const auto goods=storage_node_inventory_snapshot(site,node).used_liters();
++            if(goods+construction_node_module_liters(site,node)>4000)
++                throw std::overflow_error("construction modules overfill installed storage bin");
++        }
++        for(const auto& [plan,hold]:stock.reserved){
++            if(plan<=0 || plan>std::numeric_limits<int>::max() ||
++               (hold.node && (!st || !st->extra_bins.count(hold.node) ||
++                              !st->equipment_positions.count(hold.node))) ||
++               hold.modules<1 || hold.modules>1000 || modules>1000000000-hold.modules)
++                throw std::overflow_error("invalid plan-reserved construction stock");
++            modules+=hold.modules;
++            if(hold.node){
++                const auto goods=storage_node_inventory_snapshot(site,hold.node).used_liters();
++                if(goods+construction_node_module_liters(site,hold.node)>4000)
++                    throw std::overflow_error("reserved modules overfill installed storage bin");
++            }
++        }
+         if(total>std::numeric_limits<std::int64_t>::max()-2*modules)
+             throw std::overflow_error("construction materials exceed world mass");
+         total+=2*modules;
+diff --git a/src/factory_colony_protocol.hpp b/src/factory_colony_protocol.hpp
+index 90f75a1..bf18312 100644
+--- a/src/factory_colony_protocol.hpp
++++ b/src/factory_colony_protocol.hpp
+@@ -141,21 +141,52 @@ public:
+                 if(n.home_ship!=ship_||n.location!=requested_site||n.role!=NpcRole::Habitat)continue;
+                 if(!first)out+=',';first=false;out+=std::to_string(id);
+             }
+-            std::int64_t depot=0,in_transit=0,delivered=0;
++            std::int64_t depot=0,in_transit=0,delivered=0,node_available=0,reserved_total=0;
++            std::string nodes="[";std::size_t visible_sources=0;
+             if(const auto* stocks=world_.world().construction_supplies(requested_site)){
+                 depot=stocks->depot;
+                 for(const auto& [id,qty]:stocks->carried){(void)id;in_transit+=qty;}
+                 for(const auto& [key,qty]:stocks->delivered){(void)key;delivered+=qty;}
++                for(const auto& [key,qty]:stocks->node_modules){(void)key;node_available+=qty;}
++                for(const auto& [key,hold]:stocks->reserved){(void)key;reserved_total+=hold.modules;}
++                // A UI page limit does not constrain how many physical storage
++                // nodes can be constructed; all inventory remains authoritative.
++                std::map<std::uint32_t,std::int64_t> source_stock=stocks->node_modules;
++                for(const auto& [plan,hold]:stocks->reserved){(void)plan;source_stock.try_emplace(hold.node,0);}+                const auto* installed=world_.world().storage(requested_site);
++                if(installed)for(const auto& [node,place]:installed->equipment_positions){(void)place;
++                    if(node && installed->extra_bins.count(node))source_stock.try_emplace(node,0);
++                }
++                for(const auto& [node,qty]:source_stock){
++                    if(!node || !installed || !installed->equipment_positions.count(node))continue;
++                    if(visible_sources++>=32)continue;
++                    std::int64_t allocated=0;
++                    for(const auto& [plan,hold]:stocks->reserved){(void)plan;
++                        if(hold.node==node)allocated+=hold.modules;
++                    }
++                    const auto& place=installed->equipment_positions.at(node);
++                    if(nodes.size()>1)nodes+=',';
++                    nodes+="{\"node\":"+std::to_string(node)+",\"available\":"+
++                        std::to_string(qty)+",\"reserved\":"+std::to_string(allocated)+
++                        ",\"x\":"+std::to_string(place.x)+",\"y\":"+std::to_string(place.y)+"}";
++                }
+             }
++            nodes+="]";
+             out+="],\"supply\":{\"depot\":"+std::to_string(depot)+
+                  ",\"carried\":"+std::to_string(in_transit)+
+-                 ",\"delivered\":"+std::to_string(delivered)+"},\"jobs\":[";first=true;
++                 ",\"delivered\":"+std::to_string(delivered)+
++                 ",\"nodeAvailable\":"+std::to_string(node_available)+
++                 ",\"reserved\":"+std::to_string(reserved_total)+
++                 ",\"sources\":"+nodes+
++                 ",\"moreSources\":"+std::to_string(visible_sources>32?visible_sources-32:0)+"},\"jobs\":[";first=true;
+             for(const auto& job:crews_.list(owner_,ship_,requested_site)){
+                 if(!first)out+=',';first=false;
+                 out+="{\"plan\":"+std::to_string(job.plan)+",\"completed\":"+std::to_string(job.completed)+
+                      ",\"total\":"+std::to_string(job.total)+",\"labor\":"+std::to_string(job.labor)+
+                      ",\"required\":"+std::to_string(job.required)+
+                      ",\"deliveredModules\":"+std::to_string(job.delivered_modules)+
++                     ",\"reservedModules\":"+std::to_string(job.reserved_modules)+
++                     ",\"reservedNode\":"+std::to_string(job.reserved_source_node)+
+                      ",\"active\":"+(job.active?"true":"false")+
+                      ",\"reason\":"+json_string(job.reason)+",\"workers\":[";
+                 bool first_worker=true;
+@@ -168,6 +199,16 @@ public:
+                 out+="]}";
+                 if(out.size()>100000)throw std::length_error("Crew list too large");
+             }
++            out+="],\"restocking\":[";first=true;
++            for(const auto& run:crews_.list_restock(owner_,ship_,requested_site)){
++                if(!first)out+=',';first=false;
++                out+="{\"npc\":"+std::to_string(run.npc)+",\"node\":"+std::to_string(run.node)+
++                    ",\"x\":"+std::to_string(run.x)+",\"y\":"+std::to_string(run.y)+
++                    ",\"active\":"+(run.active?"true":"false")+
++                    ",\"returning\":"+(run.returning?"true":"false")+
++                    ",\"reason\":"+json_string(run.reason)+"}";
++                if(out.size()>100000)throw std::length_error("Crew list too large");
++            }
+             return out+"]}";
+         }
+         if(op=="CREW_SUPPLY"){
+@@ -184,6 +225,22 @@ public:
+             const auto event=structures_.supply_action(Action::StageConstructionModules,qty,0,0,owner_,ship_,requested_site);
+             return "{\"ok\":true,\"event\":"+event_json(event)+"}";
+         }
++        if(op=="CREW_RESTOCK"){
++            const auto decoded=decode64(arg);const auto delimiter=decoded.find(',');
++            if(delimiter==std::string::npos || decoded.find(',',delimiter+1)!=std::string::npos)
++                throw std::invalid_argument("Invalid NPC restocking assignment");
++            const auto npc=unsigned_id(decoded.substr(0,delimiter));
++            const auto node=unsigned_id(decoded.substr(delimiter+1));
++            if(node>static_cast<std::uint64_t>(std::numeric_limits<int>::max()/4))
++                throw std::invalid_argument("Restock storage node outside supported range");
++            crews_.queue_restock(npc,static_cast<std::uint32_t>(node),owner_,ship_,requested_site);
++            return "{\"ok\":true,\"assigned\":true}";
++        }
++        if(op=="CREW_RESTOCK_CANCEL"){
++            const auto npc=unsigned_id(arg);
++            return "{\"ok\":true,\"changed\":"+
++                std::string(crews_.cancel_restock(npc,owner_,ship_,requested_site)?"true":"false")+"}";
++        }
+         if(op=="CREW_ASSIGN"){
+             const auto decoded=decode64(arg);const auto delimiter=decoded.find(',');
+             if(delimiter==std::string::npos||decoded.find(',',delimiter+1)!=std::string::npos)
+diff --git a/tests/ECON02B2d6ConstructionCrewHostTests.py b/tests/ECON02B2d6ConstructionCrewHostTests.py
+index 57001ff..f5aed2e 100644
+--- a/tests/ECON02B2d6ConstructionCrewHostTests.py
++++ b/tests/ECON02B2d6ConstructionCrewHostTests.py
+@@ -49,7 +49,16 @@ with tempfile.TemporaryDirectory(prefix='sg-npc-crew-live-') as temp:
+         site=sites['sites'][0]
+         status,crew=game.get('/factory/api/crews?site='+str(site))
+         assert status==200 and len(crew['residents'])==2 and crew['jobs']==[],(status,crew)
+-        assert crew['supply']=={'depot':0,'carried':0,'delivered':0},crew
++        assert all(crew['supply'][k]==0 for k in ('depot','carried','delivered','nodeAvailable','reserved')),crew
++        assert crew['restocking']==[],crew
++        status,denied=game.post('/factory/api/crew_restock',{'site':site,'token':'forged','npc':crew['residents'][0],'node':1})
++        assert status==403,(status,denied)
++        status,denied=game.post('/factory/api/crew_restock',{'site':site,'token':token,'npc':crew['residents'][0],'node':0})
++        assert status==400,(status,denied)
++        status,denied=game.post('/factory/api/crew_restock',{'site':site,'token':token,'npc':crew['residents'][0],'node':999999})
++        assert status==400,(status,denied)
++        status,denied=game.post('/factory/api/crew_restock_cancel',{'site':site,'token':'forged','npc':crew['residents'][0]})
++        assert status==403,(status,denied)
+         status,denied=game.post('/factory/api/crew_supply',{'site':site,'token':'forged','amount':2})
+         assert status==403,(status,denied)
+         status,denied=game.post('/factory/api/crew_supply',{'site':site,'token':token,'amount':1001})
+@@ -62,6 +71,27 @@ with tempfile.TemporaryDirectory(prefix='sg-npc-crew-live-') as temp:
+         assert status==200 and unloaded['event']['applied'],(status,unloaded)
+         status,empty=game.get('/factory/api/crews?site='+str(site))
+         assert status==200 and empty['supply']['depot']==0,(status,empty)
++        # Real HTTP -> C++ simulation: use a named resident to physically
++        # move a depot module to a built 4m3 storage node.
++        status,staged=game.post('/factory/api/crew_supply',{'site':site,'token':token,'amount':2})
++        assert status==200 and staged['event']['applied'],(status,staged)
++        status,assigned=game.post('/factory/api/crew_restock',{'site':site,'token':token,
++             'npc':crew['residents'][0],'node':1})
++        assert status==200 and assigned['assigned'],(status,assigned)
++        deadline=time.monotonic()+12
++        while time.monotonic()<deadline:
++            status,running=game.get('/factory/api/crews?site='+str(site))
++            assert status==200,(status,running)
++            if running['supply']['nodeAvailable']>=2 and running['restocking'] and not running['restocking'][0]['active']:
++                break
++            time.sleep(.1)
++        else:raise AssertionError('Real HTTP NPC supply run did not deliver two depot modules')
++        assert running['supply']['depot']==0,(status,running)
++        assert running['supply']['sources'][0]['node']==1,(status,running)
++        assert running['supply']['sources'][0]['available']==2,(status,running)
++        status,changed=game.post('/factory/api/crew_restock_cancel',{'site':site,'token':token,
++             'npc':crew['residents'][0]})
++        assert status==200 and not changed['changed'],(status,changed)
+         status,denied=game.post('/factory/api/crew_assign',{'site':site,'token':'forged','plan':1,'npc':crew['residents'][0]})
+         assert status==403,(status,denied)
+         status,denied=game.post('/factory/api/crew_assign',{'site':site,'token':token,'plan':1,'npc':crew['residents'][0]},
+diff --git a/tests/ECON02B2d6WorldFixture.cpp b/tests/ECON02B2d6WorldFixture.cpp
+index 231402a..61d0d71 100644
+--- a/tests/ECON02B2d6WorldFixture.cpp
++++ b/tests/ECON02B2d6WorldFixture.cpp
+@@ -35,6 +35,17 @@ int main(int argc,char** argv){
+             w.step();if(w.world().events().back().result!=Outcome::Applied)throw std::runtime_error("habitat supply failed");
+         }
+         build(w,ship,9,Action::AssignHabitatResidents,site,2);
++        // ECON-02B2d8: an actual constructed, placed storage destination
++        // for localhost NPC supply-run integration tests.
++        build(w,ship,10,Action::ConstructStorage,site);
++        build(w,ship,11,Action::ConstructStorageNode,site,1);
++        Command place{};place.id=12;place.sequence=12;place.issuer=7;place.actor=ship;
++        place.target=site;place.action=Action::PlaceFactoryEquipment;
++        place.amount=1;place.thrust_x=4;place.thrust_y=0;
++        place.execute_tick=w.world().tick()+1;
++        if(!w.submit(place))throw std::runtime_error("Fixture storage placement rejected");
++        w.step();if(w.world().events().back().result!=Outcome::Applied)
++            throw std::runtime_error("Fixture storage placement failed");
+         std::cout<<"SHIP="<<ship<<" SITE="<<site<<"\n";
+         return 0;
+     }catch(const std::exception& e){std::cerr<<"fixture failed: "<<e.what()<<'\n';return 1;}
+diff --git a/tests/ECON02B2d8MultiSourceAllocationsTests.cpp b/tests/ECON02B2d8MultiSourceAllocationsTests.cpp
+new file mode 100644
+index 0000000..b72b126
+--- /dev/null
++++ b/tests/ECON02B2d8MultiSourceAllocationsTests.cpp
+@@ -0,0 +1,171 @@
++#include "galaxy/NpcConstructionCrews.hpp"
++#include <chrono>
++#include <filesystem>
++#include <iostream>
++#include <stdexcept>
++#include <vector>
++using namespace galaxy;
++namespace fs=std::filesystem;
++#define CHECK(x) do{if(!(x))throw std::runtime_error(std::string("d8 line ")+std::to_string(__LINE__)+": " #x);}while(0)
++static Event cmd(PersistentWorld& w,EntityId ship,std::uint64_t id,Action a,
++                 EntityId target=0,std::int64_t n=1,int x=0,int y=0){
++    Command c{};c.id=id;c.sequence=id;c.issuer=7;c.actor=ship;c.target=target;
++    c.amount=n;c.thrust_x=x;c.thrust_y=y;c.action=a;c.execute_tick=w.world().tick()+1;
++    CHECK(w.submit(c));w.step();CHECK(w.world().events().back().command_id==id);
++    return w.world().events().back();
++}
++static void ok(PersistentWorld& w,EntityId ship,std::uint64_t id,Action a,
++               EntityId target=0,std::int64_t n=1,int x=0,int y=0){
++    CHECK(cmd(w,ship,id,a,target,n,x,y).result==Outcome::Applied);
++}
++static std::int64_t custody(const Simulation& w,EntityId site){
++    auto* stock=w.construction_supplies(site);if(!stock)return 0;
++    auto sum=stock->depot;
++    for(const auto& [id,n]:stock->node_modules){(void)id;sum+=n;}
++    for(const auto& [id,n]:stock->carried){(void)id;sum+=n;}
++    for(const auto& [id,n]:stock->delivered){(void)id;sum+=n;}
++    for(const auto& [id,r]:stock->reserved){(void)id;sum+=r.modules;}
++    return sum;
++}
++int main(){
++ const auto temp=fs::temp_directory_path()/("sg_b2d8_"+
++    std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
++ fs::create_directories(temp);
++ try{
++  const auto db=(temp/"world.sqlite").string();
++  Simulation genesis(850);const auto ship=genesis.add_colony_ship(7,{0,0},500,8);
++  genesis.provision_colony_genesis(ship,1000,3000,1000,1000,1000);
++  const auto rock=genesis.add_asteroid({1000,0},180);
++  genesis.enable_individual_workforce();
++  const auto mass=genesis.total_material_kg();
++  EntityId site=0;std::int64_t p1=0,p2=0,p3=0;
++  std::vector<std::uint64_t> npc;
++  std::int64_t before=0;
++  {
++   PersistentWorld w(db,std::move(genesis));
++   ok(w,ship,1,Action::Mine,rock,120);ok(w,ship,2,Action::RefineOre,0,120);
++   ok(w,ship,3,Action::FabricateModule,0,40);ok(w,ship,4,Action::ConstructOutpost);
++   site=w.world().built_outposts().begin()->first;
++   ok(w,ship,5,Action::ConstructHabitat,site);
++   for(int i=1;i<=3;++i)ok(w,ship,5+i,Action::TransferHabitatStock,site,30,i);
++   ok(w,ship,9,Action::AssignHabitatResidents,site,2);
++   for(const auto& [id,r]:w.world().npc_records())if(r.location==site&&r.role==NpcRole::Habitat)npc.push_back(id);
++   CHECK(npc.size()>=2);
++   ok(w,ship,10,Action::ConstructStorage,site);
++   ok(w,ship,11,Action::ConstructStorageNode,site,1);
++   ok(w,ship,12,Action::ConstructStorageNode,site,2);
++   ok(w,ship,13,Action::PlaceFactoryEquipment,site,1,4,0);
++   ok(w,ship,14,Action::PlaceFactoryEquipment,site,2,8,0);
++   construction::Plans plans(db,w);construction::Crews crews(db,w,plans);
++   p1=plans.create("sg-colony-structure-plan-v1\n2,6,0\n",7,ship,site);
++   p2=plans.create("sg-colony-structure-plan-v1\n2,10,0\n",7,ship,site);
++   crews.assign(p1,npc[0],7,ship,site);
++   crews.assign(p2,npc[1],7,ship,site);
++   auto send=[&](Action a,std::int64_t n,int x=0,int y=0){
++       const auto e=plans.supply_action(a,n,x,y,7,ship,site);
++       CHECK(e.result==Outcome::Applied);
++   };
++   send(Action::StageConstructionModules,6);
++   send(Action::PickupConstructionModules,npc[0],2);
++   send(Action::DepositConstructionNodeModules,npc[0],1);
++   send(Action::PickupConstructionModules,npc[1],2);
++   send(Action::DepositConstructionNodeModules,npc[1],2);
++   CHECK(w.world().construction_supplies(site)->node_modules.at(1)==2);
++   CHECK(w.world().construction_supplies(site)->node_modules.at(2)==2);
++   // Each physical bin holds 4m3; these construction modules occupy 2m3 each.
++   send(Action::PickupConstructionModules,npc[0],1);
++   CHECK(plans.supply_action(Action::DepositConstructionNodeModules,npc[0],1,0,7,ship,site).result==Outcome::CargoFull);
++   CHECK(w.world().construction_supplies(site)->carried.at(npc[0])==1);
++   send(Action::ReturnConstructionModules,npc[0]);
++   CHECK(plans.supply_action(Action::DepositConstructionNodeModules,999999,1,0,7,ship,site).result==Outcome::InvalidTarget);
++   send(Action::ReserveConstructionModules,p1,1,2);
++   send(Action::ReserveConstructionModules,p2,2,2);
++   CHECK(w.world().construction_supplies(site)->reserved.at(p1).node==1);
++   CHECK(w.world().construction_supplies(site)->reserved.at(p2).node==2);
++   // One plan cannot claim resources already reserved by another.
++   const auto rejected=plans.supply_action(Action::ReserveConstructionModules,p2,1,2,7,ship,site);
++   CHECK(rejected.result!=Outcome::Applied);
++   CHECK(w.world().construction_supplies(site)->reserved.at(p1).modules==2);
++   CHECK(w.world().construction_supplies(site)->reserved.at(p2).modules==2);
++   CHECK(w.world().total_material_kg()==mass);
++   before=w.world().colony_ship(ship)->modules+custody(w.world(),site);
++  }
++  {
++   PersistentWorld w(db,Simulation(1));construction::Plans plans(db,w);construction::Crews crews(db,w,plans);
++   CHECK(w.world().construction_supplies(site)->reserved.at(p1).node==1);
++   CHECK(w.world().construction_supplies(site)->reserved.at(p2).node==2);
++   CHECK(w.world().total_material_kg()==mass);
++   bool completed=false;
++   for(int i=0;i<260;++i){
++    crews.advance(7,ship);w.step();
++    if(plans.status(p1,7,ship,site).finished() && plans.status(p2,7,ship,site).finished()){
++     completed=true;break;
++    }
++   }
++   CHECK(completed);
++   CHECK(w.world().colony_fixtures(site).size()==2);
++   CHECK(w.world().construction_supplies(site)->reserved.empty());
++   CHECK(w.world().colony_ship(ship)->modules+custody(w.world(),site)==before-4);
++   CHECK(w.world().total_material_kg()==mass);
++   CHECK(crews.unassign(npc[0],7,ship,site));
++   p3=plans.create("sg-colony-structure-plan-v1\n1,12,0\n",7,ship,site);
++   crews.assign(p3,npc[0],7,ship,site);
++   const auto e=plans.supply_action(Action::ReserveConstructionModules,p3,0,1,7,ship,site);
++   CHECK(e.result==Outcome::Applied);
++   const auto depot_before=w.world().construction_supplies(site)->depot;
++   CHECK(plans.cancel(p3,7,ship,site));
++   for(int i=0;i<10 && w.world().construction_supplies(site)->reserved.count(p3);++i){crews.advance(7,ship);w.step();}
++   CHECK(!w.world().construction_supplies(site)->reserved.count(p3));
++   CHECK(w.world().construction_supplies(site)->depot==depot_before+1);
++   // An abandoned delivery can be salvaged into real named-NPC cargo and
++   // returned, never materialized directly into depot stock.
++   const auto s=plans.supply_action(Action::PickupConstructionModules,npc[0],1,0,7,ship,site);
++   CHECK(s.result==Outcome::Applied);
++   CHECK(plans.supply_action(Action::DeliverConstructionModules,npc[0],12,0,7,ship,site).result==Outcome::Applied);
++   CHECK(w.world().construction_delivered(site,12,0)==1);
++   CHECK(plans.supply_action(Action::RecoverConstructionDelivery,npc[0],12,0,7,ship,site).result==Outcome::Applied);
++   CHECK(w.world().construction_delivered(site,12,0)==0);
++   CHECK(w.world().construction_supplies(site)->carried.at(npc[0])==1);
++   CHECK(plans.supply_action(Action::ReturnConstructionModules,npc[0],0,0,7,ship,site).result==Outcome::Applied);
++   CHECK(crews.unassign(npc[1],7,ship,site));
++   bool rejected=false;
++   try{crews.queue_restock(npc[1],1234,7,ship,site);}catch(const std::invalid_argument&){rejected=true;}
++   CHECK(rejected);
++   crews.queue_restock(npc[1],1,7,ship,site);
++   rejected=false;
++   try{crews.queue_restock(npc[1],1,7,ship,site);}catch(const std::invalid_argument&){rejected=true;}
++   CHECK(rejected);
++   bool picked=false;
++   for(int i=0;i<80&&!picked;++i){
++    crews.advance(7,ship);w.step();
++    const auto* stock=w.world().construction_supplies(site);
++    picked=stock&&stock->carried.count(npc[1]);
++   }
++   CHECK(picked);
++   CHECK(crews.list_restock(7,ship,site).size()==1);
++   CHECK(crews.list_restock(7,ship,site).at(0).active);
++   CHECK(w.world().total_material_kg()==mass);
++  }
++  {
++   PersistentWorld w(db,Simulation(2));construction::Plans plans(db,w);construction::Crews crews(db,w,plans);
++   CHECK(w.world().total_material_kg()==mass);
++   CHECK(w.world().construction_supplies(site)->carried.count(npc[1])>0);
++   for(int i=0;i<150&&crews.list_restock(7,ship,site).at(0).active;++i){crews.advance(7,ship);w.step();}
++   const auto runs=crews.list_restock(7,ship,site);
++   CHECK(!runs.at(0).active);
++   CHECK(runs.at(0).x==4&&runs.at(0).y==0);
++   CHECK(w.world().construction_supplies(site)->node_modules.at(1)==2);
++   CHECK(!w.world().construction_supplies(site)->carried.count(npc[1]));
++   CHECK(w.world().total_material_kg()==mass);
++   CHECK(plans.status(p1,7,ship,site).finished());
++   CHECK(plans.status(p2,7,ship,site).finished());
++   CHECK(plans.status(p3,7,ship,site).cancelled);
++   CHECK(w.world().construction_supplies(site)->reserved.empty());
++  }
++  fs::remove_all(temp);
++  std::cout<<"ECON-02B2d8 PASS: competing physical sources, reserved builds, restart, cancellation, salvage and NPC supply run\n";
++  return 0;
++ }catch(const std::exception& e){
++  std::cerr<<"ECON-02B2d8 FAIL: "<<e.what()<<'\n';fs::remove_all(temp);return 1;
++ }
++}
+diff --git a/viewer/interactive.html b/viewer/interactive.html
+index c4e9d6a..e1bae1c 100644
+--- a/viewer/interactive.html
++++ b/viewer/interactive.html
+@@ -61,9 +61,10 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
+ <div class="controls" style="padding:8px 0;gap:5px"><button id="structureAuthorize" class="primary">Authorize plan</button><label for="structurePlan">Plan</label><select id="structurePlan"><option value="">None</option></select><button id="structureBuildNext">Construct next</button><button id="structureCancel">Cancel plan</button></div>
+ <div class="controls" style="padding:8px 0;gap:5px"><label for="structureDoor">Built door</label><select id="structureDoor"><option value="">None</option></select><button id="structureOpenDoor">Open</button><button id="structureCloseDoor">Close</button></div>
+ <h3 style="margin:9px 0 5px">NPC construction crews</h3>
+-<div class="help">Construction materials are real: colony ship → site depot → NPC carried cargo (two modules maximum) → delivered at the build cell → finished structure. Crew logistics run on the colony simulation; the ship must be in construction range to restock the depot. Paused cargo remains with the worker; cancelled jobs return cargo through a real depot receipt.</div>
++<div class="help">Construction materials are real: colony ship → site depot or built storage nodes → plan reservation → NPC carried cargo (two modules maximum) → delivered at the build cell → finished structure. Crew logistics run on the colony simulation; the ship must be in construction range to restock the depot. Paused cargo remains with the worker; cancelled jobs return cargo through a real depot receipt.</div>
+ <div class="controls" style="padding:8px 0;gap:5px"><label for="crewSupplyAmount">Depot modules</label><input id="crewSupplyAmount" type="number" min="1" max="1000" step="1" value="8" style="width:80px"><button id="crewSupplyDeposit">Move from ship</button><button id="crewSupplyWithdraw">Return to ship</button></div>
+ <div class="controls" style="padding:8px 0;gap:5px"><label for="crewResident">Resident NPC</label><select id="crewResident"><option value="">No local residents</option></select><button id="crewAssign">Assign to selected plan</button><button id="crewUnassign">Remove from duty</button><button id="crewPause">Pause crew</button><button id="crewResume">Resume crew</button></div>
++<div class="controls" style="padding:8px 0;gap:5px"><label for="crewRestockNode">Built storage destination</label><select id="crewRestockNode"><option value="">No installed storage nodes</option></select><button id="crewRestock">Assign NPC supply run</button><button id="crewRestockCancel">Cancel NPC supply run</button></div>
+ <div id="crewStatus" class="help" role="status" aria-live="polite" style="white-space:pre-wrap;max-height:180px;overflow:auto">No active construction crews.</div>
+ <div id="structureStatus" class="help" role="status" aria-live="polite" style="white-space:pre-wrap">Open a colony session to inspect physical structures.</div>
+ <canvas id="structureMap" width="280" height="205" aria-label="Plan view of built floors, walls and doors" style="margin-top:8px;border:1px solid var(--border);background:#07131f;border-radius:8px;width:100%;height:auto"></canvas>
+diff --git a/viewer/structures.js b/viewer/structures.js
+index 7ec22a4..9530935 100644
+--- a/viewer/structures.js
++++ b/viewer/structures.js
+@@ -55,12 +55,21 @@ function renderCrews(){
+  for(const id of crews.residents)select.append(option(id,`NPC #${id}${assigned.has(String(id))?' · assigned':''}`));
+  select.value=crews.residents.some(id=>String(id)===old)?old:crews.residents.length?String(crews.residents[0]):'';
+  const supply=crews.supply||{};
+- const stockLine=`Site modules: depot ${supply.depot||0} · carried ${supply.carried||0} · delivered ${supply.delivered||0}`;
++ const destinations=$('crewRestockNode'),chosen=destinations.value;
++ destinations.replaceChildren(option('','Select built storage node'));
++ for(const source of supply.sources||[])destinations.append(option(source.node,`Node #${source.node} (${source.x},${source.y}) · ${source.available} free`));
++ destinations.value=(supply.sources||[]).some(s=>String(s.node)===chosen)?chosen:
++  (destinations.options.length>1?destinations.options[1].value:'');
++ const stockLine=`Site modules: depot ${supply.depot||0} · node stock ${supply.nodeAvailable||0} · allocated ${supply.reserved||0} · carried ${supply.carried||0} · delivered ${supply.delivered||0}`;
++ const sources=(supply.sources||[]).map(s=>`Node #${s.node} (${s.x},${s.y}): free ${s.available}, allocated ${s.reserved}`).join('\n');
++ const sourceLine=sources?`Storage sources:\n${sources}${supply.moreSources?`\n... ${supply.moreSources} additional nodes`:''}`:'';
+  const text=crews.jobs.map(j=>{
+   const people=j.workers.map(w=>`#${w.npc} at (${w.x},${w.y}) · carrying ${w.carrying||0}`).join(', ')||'No assigned workers';
+-  return `Plan #${j.plan} · ${j.active?'Working':'Paused/complete'} · ${j.completed}/${j.total} · labor ${j.labor}/${j.required} · delivered to site ${j.deliveredModules||0}\n  ${people}\n  ${j.reason||'Ready'}`;
++  return `Plan #${j.plan} · ${j.active?'Working':'Paused/complete'} · ${j.completed}/${j.total} · labor ${j.labor}/${j.required} · delivered ${j.deliveredModules||0} · allocated ${j.reservedModules||0} at source #${j.reservedNode||0}\n  ${people}\n  ${j.reason||'Ready'}`;
+  });
+- $('crewStatus').textContent=stockLine+'\n'+(text.join('\n')||'No construction crew assignments yet. Build a habitat and assign residents first.');
++ const activeRuns=(crews.restocking||[]).map(r=>`Supply NPC #${r.npc} → node #${r.node} · (${r.x},${r.y}) · ${r.active?(r.returning?'Returning':'Hauling'):'Complete'} · ${r.reason||'Ready'}`);
++ $('crewStatus').textContent=stockLine+'\n'+(sourceLine?sourceLine+'\n':'')+(text.join('\n')||'No construction crew assignments yet. Build a habitat and assign residents first.')+
++  (activeRuns.length?'\n'+activeRuns.join('\n'):'');
+ }
+ function render(){
+  draw();renderCrews();
+@@ -110,6 +119,8 @@ async function submit(path,payload){
+    path.endsWith('step')?`Construction ${r.event.applied?'committed':'rejected'}; ${r.plan.completed}/${r.plan.total} steps complete.`:
+    path.endsWith('cancel')?'Remaining plan steps cancelled; completed structures remain.':
+    path.endsWith('crew_supply')?`Construction depot transfer ${r.event.applied?'committed':'rejected'}.`:
++   path.endsWith('/crew_restock')?'NPC supply run assigned; the worker will move real depot cargo.':
++   path.endsWith('/crew_restock_cancel')?'NPC supply run cancelled; carried cargo remains subject to return handling.':
+    path.includes('/crew_')?'NPC construction-duty assignment updated.':
+    'Door state committed in the colony simulation.');
+  }catch(err){feedback('Construction rejected: '+err.message);}
+@@ -161,6 +172,16 @@ for(const [button,enabled] of [['crewPause',false],['crewResume',true]])
+   const plan=Number($('structurePlan').value);if(!Number.isSafeInteger(plan)||plan<=0){feedback('Select a plan.');return;}
+   submit('/factory/api/crew_active',{plan,active:enabled});
+  });
++$('crewRestock').addEventListener('click',()=>{
++ const npc=Number($('crewResident').value),node=Number($('crewRestockNode').value);
++ if(!Number.isSafeInteger(npc)||npc<=0||!Number.isSafeInteger(node)||node<=0){feedback('Select an existing resident and a built storage destination.');return;}
++ submit('/factory/api/crew_restock',{npc,node});
++});
++$('crewRestockCancel').addEventListener('click',()=>{
++ const npc=Number($('crewResident').value);
++ if(!Number.isSafeInteger(npc)||npc<=0){feedback('Select an existing resident.');return;}
++ submit('/factory/api/crew_restock_cancel',{npc});
++});
+ window.GalaxyColonyStructures={refresh};
+ refresh().catch(e=>feedback('Structure controls unavailable: '+e.message));
+ })();

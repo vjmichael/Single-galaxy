@@ -1,0 +1,1518 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index ca9c44e..ba10c7a 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -19,7 +19,7 @@ else()
+ endif()
+ add_library(galaxy_kernel STATIC src/Simulation.cpp src/ColonyResilience.cpp
+   src/ColonyRecovery.cpp src/ColonyPolicy.cpp src/PopulationCohorts.cpp
+-    src/ColonyWaterSupply.cpp src/Persistence.cpp src/EconomyPrototype.cpp src/QuantifiedProduction.cpp src/Inventory.cpp src/InventoryLogistics.cpp src/FactoryLayout.cpp src/BlueprintConstruction.cpp src/HostBlueprintRegistry.cpp src/ClientContract.cpp src/Galaxy.cpp src/Navigation.cpp src/GateTransit.cpp src/Region.cpp)
++    src/ColonyWaterSupply.cpp src/Persistence.cpp src/EconomyPrototype.cpp src/QuantifiedProduction.cpp src/Inventory.cpp src/InventoryLogistics.cpp src/FactoryLayout.cpp src/BlueprintConstruction.cpp src/HostBlueprintRegistry.cpp src/ColonyStructurePlans.cpp src/ClientContract.cpp src/Galaxy.cpp src/Navigation.cpp src/GateTransit.cpp src/Region.cpp)
+ target_include_directories(galaxy_kernel PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+ target_link_libraries(galaxy_kernel PUBLIC SQLite::SQLite3)
+ if(MSVC)
+@@ -674,3 +674,18 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+       --layout ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/ECON02B2d4b_editor_blueprint.sglayout)
+   set_tests_properties(galaxy_econ02b2d4c4_integrated_colony_factory PROPERTIES TIMEOUT 40)
+ endif()
++
++# ECON-02B2d5: physical, mass-conserving colony structures and durable doors.
++if(BUILD_TESTING)
++  add_executable(galaxy_econ02b2d5_structure_tests tests/ECON02B2d5StructureTests.cpp)
++  target_link_libraries(galaxy_econ02b2d5_structure_tests PRIVATE galaxy_kernel SQLite::SQLite3)
++  add_test(NAME galaxy_econ02b2d5_structure_tests COMMAND galaxy_econ02b2d5_structure_tests)
++endif()
++if(BUILD_TESTING AND Python3_Interpreter_FOUND)
++  add_test(NAME galaxy_econ02b2d5_structure_host_http
++    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/ECON02B2d5StructureHostTests.py
++      --host $<TARGET_FILE:galaxy_colony_live_host>
++      --fixture $<TARGET_FILE:galaxy_econ02b2d4c2_world_fixture>
++      --relay ${CMAKE_CURRENT_SOURCE_DIR}/live/interactive_relay.py)
++  set_tests_properties(galaxy_econ02b2d5_structure_host_http PROPERTIES TIMEOUT 50)
++endif()
+diff --git a/README.md b/README.md
+index edeeac9..4e0894d 100644
+--- a/README.md
++++ b/README.md
+@@ -205,3 +205,53 @@ ctest --test-dir build -R galaxy_econ02b2d4c4_integrated_colony_factory --output
+ An additional `scripts/factory_integrated_browser_smoke.py` performs actual
+ Chromium clicks where localhost browsing is permitted. Existing saves are not
+ created or modified by either acceptance harness (they use temporary fixtures).
++
++### ECON-02B2d5 — Built colony floors, walls and doors (2026-11-01)
++
++Physical structure construction is **inside the colony UI**, not a second application
++or a second writer. Start the same colony host and Python relay documented under
++ECON-02B2d4c4, create a colony outpost and manufacture real modules, then open
++`/viewer/interactive.html` and find **Colony structures** in the colony panel.
++
++A structural plan is a versioned plain-text batch. Example:
++
++```text
++sg-colony-structure-plan-v1
++1,0,0
++2,0,0
++4,1,0
++```
++
++`kind,x,y` uses `1` = floor cell, `2/3` = east/north wall edge, and
++`4/5` = east/north door edge. Floors require one real module; each wall and
++door requires two. Doors are initially shut and can be opened/closed via the
++colony panel. A plan is authorized first; each **Construct next** issues exactly
++one host-controlled, material-conserving simulation command. Partial progress,
++completed structure geometry, cancelled plans and door state survive a restart.
++Cancelling does not refund already built structures. Construction in one world
++cannot be concurrent with a standalone factory writer; the world writer lease
++rejects the other process.
++
++There are no factory-tier floor-plan area caps. Each plan is a bounded **batch**
++(maximum 512 steps), and players can submit further plans to extend the same
++site. The current safe coordinate encoding has an internal ±1,000,000 cell
++limit per axis; this is not a claimed unlimited-coordinate engine. Collision
++checks reject same-edge wall/door replacement, crossing installed conveyors
++and machines, and new equipment or conveyor routes obstructing structures.
++`structure_edge_passable(...)` is authoritative geometry logic for later NPC
++movement integration, **not yet an operational NPC pathfinder**.
++
++Native tests and actual HTTP/SQLite recovery:
++
++```sh
++cmake --build build -j4
++ctest --test-dir build -j4 --output-on-failure
++node --test tests/*.js
++python scripts/colony_structures_browser_smoke.py  # optional Playwright + Chromium
++```
++
++The browser smoke injects a mock transport and exercises the real DOM controls;
++`galaxy_econ02b2d5_structure_host_http` independently tests the actual
++localhost server, simulation commands and persistent world. A real Chromium
++localhost interaction remains an acceptance gate when the browser permits it.
++Windows GUI/native verification remains outstanding.
+diff --git a/docs/engineering/ECON02B2d5_Physical_Colony_Structures_2026-11-01.md b/docs/engineering/ECON02B2d5_Physical_Colony_Structures_2026-11-01.md
+new file mode 100644
+index 0000000..009bc60
+--- /dev/null
++++ b/docs/engineering/ECON02B2d5_Physical_Colony_Structures_2026-11-01.md
+@@ -0,0 +1,36 @@
++# ECON-02B2d5 — Physical colony structures in the colony interface
++
++Date: 2026-11-01. Baseline: ECON-02B2d4c4 integrated colony–factory source.
++
++## Scope
++
++- Colony structural fixture types: floor, east/north walls, east/north doors.
++- Cell and edge addressing in authoritative C++ simulation; no tier-dependent room/factory bounds.
++- Per-piece resource consumption, embodied material accounting, durable construction receipts.
++- Durable SQLite plan registry, reserved command IDs, partial progress, cancellation, restart.
++- Physical door open/closed state and bidirectional edge passability query.
++- Collision validation in both directions: structures vs equipment/route and equipment/route vs installed structures.
++- Single colony world writer; existing localhost origin/token validation retained.
++- Colony UI contains controls and plan-view canvas; no separate structural editor app needed.
++
++## Construction protocol
++
++Plain-text version `sg-colony-structure-plan-v1` followed by one `kind,x,y` tuple per line, ending in newline. Kind 1 is a floor at the cell, 2/3 east/north walls, 4/5 east/north doors. Costs: 1 module (2 tons embodied ore) for floor; 2 modules (4 tons) for wall or door. Doors begin closed and can be actuated without generating resources. Batch limit 512 steps; more batches extend the same site. Technical coordinate bounds ±1e6 are fixed safety bounds, not machinery-tier limits. Completed steps are immutable in this milestone; demolition/recycling is future work.
++
++## Authorization and persistence
++
++The relay requires same-origin JSON and the existing random session token. The factory control dispatcher obtains owner, colony ship and authoritative built-outpost list from the running host, not user-supplied authority. Durable SQLite attempts reserve command IDs *before* submission. Construction steps are applied by `PersistentWorld` exactly once and retained in version 31 canonical snapshots. Each fixture references a distinct successful event matching the embodied mass. The OS save writer lock prevents the standalone host and colony host from modifying the same save concurrently. No automatic free resources and no automatic NPC staffing.
++
++## Test evidence
++
++- Full CMake native build succeeds in this Linux development environment.
++- Native CTest: 89/89 total, tested as complementary disjoint subsets: 64/64 non-live and 25/25 live/relay.
++- Node test suite: 93/93.
++- New native structural simulation fixture test: passes, including authorization, module debit, walls and doors, mass conservation, restart and snapshot corruption rejection.
++- New HTTP localhost test: passes, including CSRF, invalid site, plan syntax, manual steps, cancellation, door state and restart.
++- Offline headless Chromium DOM test: passes, including colony structure controls, plan view, three construction steps, opening and closing the door, new-plan selection and cancellation. It uses a mocked transport; actual HTTP/SQLite behavior is independently tested at the host level.
++- Existing factory editor offline headless Chromium smoke passes.
++
++## Remaining scope and known limits
++
++The current design renders an interactive plan/list in the colony GUI, but does not yet place 3D meshes inside the player's flight view. `structure_edge_passable` is a simulation query; NPC navigation and actual NPC construction crews are not yet integrated. Doors are manually actuated; automatic policy/permissions, demolition, repairs, sophisticated pathfinding and room/atmosphere simulation are future milestones. Windows native build, installer and GUI acceptance remain unverified. Browser-to-localhost graphical acceptance is restricted by this execution environment's browser policy, not characterized as passed. No GitHub source commit or Library upload has been made for this milestone.
+diff --git a/include/galaxy/ColonyStructurePlans.hpp b/include/galaxy/ColonyStructurePlans.hpp
+new file mode 100644
+index 0000000..798254d
+--- /dev/null
++++ b/include/galaxy/ColonyStructurePlans.hpp
+@@ -0,0 +1,44 @@
++#pragma once
++// ECON-02B2d5: durable, host-authorized one-piece-at-a-time structural plans.
++// Untrusted plan text never supplies session owner, ship identity, command ID,
++// world path, materials or authority. Each successful step is a real World action.
++#include "galaxy/Persistence.hpp"
++#include <cstdint>
++#include <memory>
++#include <string>
++#include <vector>
++namespace galaxy::construction {
++struct Step { FixtureKind kind=FixtureKind::Floor;int x=0,y=0; };
++struct Status {
++    std::int64_t id=0;
++    EntityId site=0;
++    std::size_t completed=0,total=0;
++    std::int64_t modules_remaining=0;
++    bool cancelled=false,conflicting=false;
++    std::string reason;
++    bool finished()const{return !cancelled && !conflicting && completed==total;}
++};
++class Plans {
++public:
++    Plans(const std::string& database,PersistentWorld& world);
++    ~Plans();
++    Plans(const Plans&)=delete;Plans& operator=(const Plans&)=delete;
++    static std::vector<Step> parse(const std::string& canonical);
++    std::int64_t create(const std::string& canonical,PlayerId owner,EntityId ship,EntityId site);
++    Status status(std::int64_t id,PlayerId owner,EntityId ship,EntityId site)const;
++    std::vector<Status> list(PlayerId owner,EntityId ship,EntityId site)const;
++    bool cancel(std::int64_t id,PlayerId owner,EntityId ship,EntityId site);
++    Event step(std::int64_t id,PlayerId owner,EntityId ship,EntityId site);
++    // Host-only door actuator, same authenticated identity and durable receipt.
++    Event set_door(PlayerId owner,EntityId ship,EntityId site,
++                   FixtureKind door,int x,int y,bool opened);
++private:
++    class Db;
++    std::unique_ptr<Db> db_;
++    PersistentWorld& world_;
++    std::int64_t fresh_id();
++    void authorize(PlayerId owner,EntityId ship,EntityId site)const;
++    Event submit(std::int64_t command_id,PlayerId owner,EntityId ship,EntityId site,
++                 Action action,std::int64_t amount,int x,int y);
++};
++} // namespace galaxy::construction
+diff --git a/include/galaxy/Simulation.hpp b/include/galaxy/Simulation.hpp
+index 8a3e72c..cfdac46 100644
+--- a/include/galaxy/Simulation.hpp
++++ b/include/galaxy/Simulation.hpp
+@@ -22,7 +22,7 @@ struct Vector2 {
+ };
+ 
+ enum class EntityType { Ship, Asteroid, Station, Stargate, Wreck };
+-enum class Action { Thrust, Mine, StartMining, StopMining, RequestUndock, RequestDock, UnloadOre, LoadOre, SellOre, RequestJump, SetGatePairOnline, SetGateStaff, DeliverGateSpares, RefineOre, FabricateModule, ConstructOutpost, RefineMineral, FabricateMaterialModule, PlantCrops, HarvestCrops, RecycleWater, RecycleCompost, ProduceOxygen, LoadLifeWater, ConstructFarm, TransferFarmStock, AssignFarmWorkers, ConstructHabitat, TransferHabitatStock, AssignHabitatResidents, ConstructUtility, RepairUtility, TransferUtilitySpares, AssignUtilityTechnicians, SetUtilityMaintenance, ConstructCommunity, TransferCommunityStock, AssignCommunityStaff, ConstructClinic, TransferClinicStock, AssignClinicStaff, ConstructReclaimer, ConstructWaterworks, TransferWaterworksFeed, SetPolicyAssurance, AssignPolicyInspectors, AssignFarmMentor, HostDestroyShip, HostCrewLoss, ConstructWorkshop, TransferWorkshopFeed, AssignWorkshopOperator, TransferWorkshopOutput, ConstructWorkshopFinisher, AssignWorkshopFinisher, TransferWorkshopFinalOutput, TransferWorkshopStack, ConstructStorage, TransferStorageStack, ConstructStorageNode, TransferStorageNodeStack, ConstructStorageLink, ConstructWorkshopLink, PlaceFactoryEquipment, PlaceConveyorCell, CompleteConveyorRoute };
++enum class Action { Thrust, Mine, StartMining, StopMining, RequestUndock, RequestDock, UnloadOre, LoadOre, SellOre, RequestJump, SetGatePairOnline, SetGateStaff, DeliverGateSpares, RefineOre, FabricateModule, ConstructOutpost, RefineMineral, FabricateMaterialModule, PlantCrops, HarvestCrops, RecycleWater, RecycleCompost, ProduceOxygen, LoadLifeWater, ConstructFarm, TransferFarmStock, AssignFarmWorkers, ConstructHabitat, TransferHabitatStock, AssignHabitatResidents, ConstructUtility, RepairUtility, TransferUtilitySpares, AssignUtilityTechnicians, SetUtilityMaintenance, ConstructCommunity, TransferCommunityStock, AssignCommunityStaff, ConstructClinic, TransferClinicStock, AssignClinicStaff, ConstructReclaimer, ConstructWaterworks, TransferWaterworksFeed, SetPolicyAssurance, AssignPolicyInspectors, AssignFarmMentor, HostDestroyShip, HostCrewLoss, ConstructWorkshop, TransferWorkshopFeed, AssignWorkshopOperator, TransferWorkshopOutput, ConstructWorkshopFinisher, AssignWorkshopFinisher, TransferWorkshopFinalOutput, TransferWorkshopStack, ConstructStorage, TransferStorageStack, ConstructStorageNode, TransferStorageNodeStack, ConstructStorageLink, ConstructWorkshopLink, PlaceFactoryEquipment, PlaceConveyorCell, CompleteConveyorRoute, BuildColonyFixture, SetColonyDoor };
+ enum class Outcome { Applied, InvalidActor, Unauthorized, InvalidTarget, OutOfRange, InvalidArgument, NoResources, CargoFull, NotMining, NotInSpace, NotDocked, InTransition, ShipMoving, HangarFull, InsufficientFunds, WrongSystem, GateOffline, NotColonyShip, InsufficientCrew };
+ enum class ActivityKind { AsteroidDespawned, AutoMiningTransfer, MiningStopped, Undocked, Docked, JumpCompleted, ShipDestroyed, NpcLost, AutoStorageTransfer };
+ enum class DockState { InSpace, Docked, Undocking, Docking };
+@@ -347,6 +347,28 @@ struct OutpostStorage {
+     // A position alone never creates an inventory or machine.
+     std::map<std::uint32_t,Vector2> equipment_positions;
+ };
++// ECON-02B2d5: one actual structural tile or boundary. A floor occupies a
++// cell; an east/north wall or door occupies the edge shared by two cells.
++// Door open/closed state is authoritative and affects edge traversal queries.
++// Multiple distinct structures may touch one tile, but walls and doors can
++// never share one edge. Each piece embeds purchased physical modules.
++enum class FixtureKind : std::uint8_t { Floor=1, WallEast=2, WallNorth=3,
++                                        DoorEast=4, DoorNorth=5 };
++struct FixtureKey {
++    int x=0,y=0;
++    std::uint8_t layer=0; // 0 floor, 1 east boundary, 2 north boundary
++    bool operator<(const FixtureKey& b) const noexcept {
++        if(x!=b.x)return x<b.x;
++        if(y!=b.y)return y<b.y;
++        return layer<b.layer;
++    }
++};
++struct ColonyFixture {
++    FixtureKind kind=FixtureKind::Floor;
++    std::uint64_t construction_command_id=0;
++    bool door_open=false;
++    std::int64_t embodied_ore=0; // 2t per real consumed construction module
++};
+ struct BuiltOutpost {
+     EntityId source_colony_ship = 0;
+     std::int64_t embodied_ore = 0; // four modules, eight ore-equivalent units
+@@ -450,6 +472,11 @@ public:
+     inventory::StackStore storage_inventory_snapshot(EntityId site) const;
+     inventory::StackStore storage_node_inventory_snapshot(EntityId site, std::uint32_t node) const;
+     const OutpostStorage* storage(EntityId site) const;
++    const std::map<FixtureKey,ColonyFixture>& colony_fixtures(EntityId site) const;
++    // Grid-adjacent movement query; closed doors/walls obstruct, floors do not.
++    // This is a collision primitive, not a claim that NPC/pathfinding uses it yet.
++    bool structure_edge_passable(EntityId site,int from_x,int from_y,int to_x,int to_y) const;
++
+     const Vector2* factory_equipment_position(EntityId site,std::uint32_t node) const;
+     const OutpostStorageLink* storage_link(EntityId site,std::uint64_t id) const;
+ 
+@@ -606,9 +633,11 @@ private:
+     std::map<EntityId,BuiltOutpost> built_outposts_;
+     std::map<EntityId,OutpostWorkshop> workshops_;
+     std::map<EntityId,OutpostStorage> storages_;
++    std::map<EntityId,std::map<FixtureKey,ColonyFixture>> colony_fixtures_;
++
+     std::map<EntityId, AsteroidGeology> geology_;
+     std::vector<ActivityEvent> activity_events_;
+-    int snapshot_version_ = 1; // v30 adds durable route cells; v1-v29 remain readable
++    int snapshot_version_ = 1; // v31 adds durable, material-backed colony fixtures
+     std::map<std::uint64_t, std::vector<Command>> commands_;
+     std::set<std::uint64_t> submitted_ids_;
+     std::vector<Event> events_;
+diff --git a/live/interactive_relay.py b/live/interactive_relay.py
+index 5849e87..4f986e5 100644
+--- a/live/interactive_relay.py
++++ b/live/interactive_relay.py
+@@ -29,6 +29,7 @@ STATIC={
+     '/viewer/recordings.js':'viewer/recordings.js',
+     '/viewer/viewer.js':'viewer/viewer.js',
+     '/viewer/colony.js':'viewer/colony.js',
++    '/viewer/structures.js':'viewer/structures.js',
+     '/viewer/factory.html':'viewer/factory.html',
+     '/viewer/factory.js':'viewer/factory.js',
+     '/viewer/factory-layout.js':'viewer/factory-layout.js',
+@@ -138,7 +139,8 @@ class SharedRuntime:
+         # One request outstanding at a time. The *C++ colony game loop* is the
+         # sole owner of PersistentWorld and HostBlueprintRegistry. The relay
+         # does not open SQLite and cannot mint ship/player/owner authority.
+-        if op not in ('SITES','HELLO','LIST','REGISTER','STEP','STATUS','CANCEL'):
++        if op not in ('SITES','HELLO','LIST','REGISTER','STEP','STATUS','CANCEL',
++                      'STRUCT_LIST','STRUCT_REGISTER','STRUCT_STEP','STRUCT_STATUS','STRUCT_CANCEL','STRUCT_DOOR'):
+             raise ValueError('Unknown factory operation')
+         if type(site)!=int or not 0<=site<=100000000:
+             raise ValueError('Invalid factory site selector')
+@@ -206,9 +208,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
+             try:
+                 if route=='sites' and not url.query:
+                     result=self.server.runtime.factory('SITES')
+-                elif route in ('hello','plans') and set(query)=={'site'} and len(query['site'])==1:
++                elif route in ('hello','plans','structures') and set(query)=={'site'} and len(query['site'])==1:
+                     site=self._site(query['site'][0])
+-                    result=self.server.runtime.factory('HELLO' if route=='hello' else 'LIST',site)
++                    result=self.server.runtime.factory('HELLO' if route=='hello' else ('LIST' if route=='plans' else 'STRUCT_LIST'),site)
+                 else:
+                     self._json(404,{'ok':False,'error':'Unknown factory endpoint'});return
+                 self._json(200 if result.get('ok') else 400,result)
+@@ -291,6 +293,22 @@ class Handler(http.server.BaseHTTPRequestHandler):
+                     raise ValueError('Invalid layout size')
+                 argument=base64.b64encode(layout.encode('utf-8')).decode('ascii')
+                 native='REGISTER'
++            elif op=='structure_register' and set(doc)=={'token','site','layout'}:
++                layout=doc['layout']
++                if not isinstance(layout,str) or not 0<len(layout.encode('utf-8'))<=16384:
++                    raise ValueError('Invalid structure plan size')
++                argument=base64.b64encode(layout.encode('utf-8')).decode('ascii');native='STRUCT_REGISTER'
++            elif op=='structure_door' and set(doc)=={'token','site','kind','x','y','open'}:
++                kind,x,y,opened=doc['kind'],doc['x'],doc['y'],doc['open']
++                if type(kind)!=int or kind not in (4,5) or type(x)!=int or type(y)!=int or \
++                   not -1000000<=x<=1000000 or not -1000000<=y<=1000000 or type(opened)!=bool:
++                    raise ValueError('Invalid door request')
++                argument=base64.b64encode(f'{kind},{x},{y},{int(opened)}'.encode()).decode('ascii')
++                native='STRUCT_DOOR'
++            elif op in ('structure_step','structure_cancel','structure_status') and set(doc)=={'token','site','id'}:
++                if type(doc['id'])!=int or not 0<doc['id']<2**63:
++                    raise ValueError('Invalid structural plan ID')
++                argument=str(doc['id']);native='STRUCT_'+op[10:].upper()
+             elif op in ('step','cancel','status') and set(doc)=={'token','site','id'}:
+                 if type(doc['id'])!=int or not 0<doc['id']<2**63:
+                     raise ValueError('Invalid construction plan ID')
+diff --git a/scripts/colony_structures_browser_smoke.py b/scripts/colony_structures_browser_smoke.py
+new file mode 100644
+index 0000000..acce4d9
+--- /dev/null
++++ b/scripts/colony_structures_browser_smoke.py
+@@ -0,0 +1,79 @@
++"""ECON-02B2d5 offline Chromium DOM acceptance (transport API mocked).
++A separate Python HTTP-to-native test verifies real authorization, SQLite and effects.
++"""
++from pathlib import Path
++from playwright.sync_api import sync_playwright
++
++root=Path(__file__).resolve().parents[1]
++html=(root/'viewer/interactive.html').read_text()
++# Only load physical structure UI; the full replay handlers are independently
++# tested, and the native control path is exercised in StructureHostTests.py.
++import re
++html=re.sub(r'<script src="[^\"]+"></script>', '', html)
++with sync_playwright() as pw:
++    browser=pw.chromium.launch(headless=True, executable_path='/usr/bin/chromium',
++        args=['--no-sandbox','--disable-dev-shm-usage'])
++    page=browser.new_page(viewport={'width':1120,'height':900})
++    problems=[]
++    page.on('pageerror',lambda error:problems.append(str(error)))
++    page.set_content(html)
++    page.locator('#colonyPanel').evaluate('n=>n.hidden=false')
++    page.add_script_tag(content=r'''
++    window.__demo={plans:[],pieces:[],next:1};
++    window.fetch=async (path,request)=>{
++      const state=window.__demo;
++      let data={ok:true};
++      if(path==='/session')data={token:'TEST_SESSION',colony_mode:true};
++      else if(path==='/factory/api/sites')data={ok:true,sites:[21]};
++      else if(path.startsWith('/factory/api/structures?site='))
++        data={ok:true,structures:state.pieces,plans:state.plans};
++      else if(path==='/factory/api/structure_register'){
++        const req=JSON.parse(request.body),steps=req.layout.trim().split('\n').slice(1).map(s=>s.split(',').map(Number));
++        const p={id:state.next++,site:req.site,completed:0,total:steps.length,
++          modulesRemaining:steps.reduce((n,s)=>n+(s[0]===1?1:2),0),cancelled:false,conflicting:false,finished:false,reason:'',steps};
++        state.plans.push(p);data={ok:true,plan:p};
++      }else if(path==='/factory/api/structure_step'){
++        const req=JSON.parse(request.body),p=state.plans.find(x=>x.id===req.id);
++        const [kind,x,y]=p.steps[p.completed++];
++        state.pieces.push({kind,x,y,open:false,commandId:p.completed});
++        p.modulesRemaining-=kind===1?1:2;p.finished=p.completed===p.total;
++        data={ok:true,event:{applied:true},plan:p};
++      }else if(path==='/factory/api/structure_cancel'){
++        const req=JSON.parse(request.body),p=state.plans.find(x=>x.id===req.id);
++        p.cancelled=true;data={ok:true,plan:p};
++      }else if(path==='/factory/api/structure_door'){
++        const req=JSON.parse(request.body),piece=state.pieces.find(x=>x.kind===req.kind&&x.x===req.x&&x.y===req.y);
++        piece.open=req.open;data={ok:true,event:{applied:true}};
++      }else throw Error('Unexpected mock route: '+path);
++      return {ok:true,json:async()=>data};
++    };
++    ''')
++    page.add_script_tag(content=(root/'viewer/structures.js').read_text())
++    page.wait_for_function("document.querySelector('#structureSite').value==='21'")
++    assert 'No physical' in page.locator('#structureBuilt').inner_text()
++    page.locator('#structureAuthorize').click()
++    page.wait_for_function('window.__demo.plans.length===1')
++    for num in (1,2,3):
++        page.locator('#structureBuildNext').click()
++        page.wait_for_function(f'window.__demo.plans[0].completed==={num}')
++    assert 'East door (1,0)' in page.locator('#structureBuilt').inner_text()
++    page.locator('#structureOpenDoor').click()
++    page.wait_for_function('window.__demo.pieces[2].open===true')
++    page.locator('#structureCloseDoor').click()
++    page.wait_for_function('window.__demo.pieces[2].open===false')
++    page.locator('#structureLayout').fill('1,7,0\n2,7,0')
++    page.locator('#structureAuthorize').click()
++    page.wait_for_function('window.__demo.plans.length===2')
++    page.locator('#structureBuildNext').click()
++    page.wait_for_function('window.__demo.plans[1].completed===1')
++    page.locator('#structureCancel').click()
++    page.wait_for_function('window.__demo.plans[1].cancelled===true')
++    assert page.locator('#structureMap').evaluate('n=>n.getContext("2d").getImageData(4,4,1,1).data[3]')==255
++    assert not problems,problems
++    # Same graphical controls remain within the colony panel.
++    assert page.locator('#colonyStructures').evaluate("n=>!!n.closest('#colonyPanel')")
++    page.locator('#colonyPanel').evaluate('n=>n.hidden=false')
++    page.locator('#colonyStructures').scroll_into_view_if_needed()
++    page.screenshot(path='/mnt/data/work_b2d5/colony_structures_preview.png')
++    print('ECON02B2d5 PASS: Chromium colony UI render, authorize, three build steps, door open/close, partial cancellation and plan rendering')
++    browser.close()
+diff --git a/src/ColonyStructurePlans.cpp b/src/ColonyStructurePlans.cpp
+new file mode 100644
+index 0000000..7905936
+--- /dev/null
++++ b/src/ColonyStructurePlans.cpp
+@@ -0,0 +1,242 @@
++#include "galaxy/ColonyStructurePlans.hpp"
++#include <sqlite3.h>
++#include <algorithm>
++#include <limits>
++#include <map>
++#include <mutex>
++#include <sstream>
++#include <stdexcept>
++#include <tuple>
++
++namespace galaxy::construction {
++namespace {
++constexpr std::int64_t kStructureCmdBase=600000000000000000LL;
++std::mutex lifecycle;
++void exec(sqlite3* db,const char* sql){
++    char* error=nullptr;
++    if(sqlite3_exec(db,sql,nullptr,nullptr,&error)!=SQLITE_OK){
++        std::string what=error?error:"SQLite error";sqlite3_free(error);throw std::runtime_error(what);
++    }
++}
++class Stmt {
++public:
++    Stmt(sqlite3* db,const char* sql):db_(db){
++        if(sqlite3_prepare_v2(db,sql,-1,&stmt_,nullptr)!=SQLITE_OK)throw std::runtime_error(sqlite3_errmsg(db));
++    }
++    ~Stmt(){sqlite3_finalize(stmt_);}
++    void num(int n,std::int64_t v){if(sqlite3_bind_int64(stmt_,n,v)!=SQLITE_OK)throw std::runtime_error("SQL bind failed");}
++    void str(int n,const std::string& s){if(sqlite3_bind_text(stmt_,n,s.data(),static_cast<int>(s.size()),SQLITE_TRANSIENT)!=SQLITE_OK)throw std::runtime_error("SQL text bind failed");}
++    bool row(){int r=sqlite3_step(stmt_);if(r==SQLITE_ROW)return true;if(r==SQLITE_DONE)return false;throw std::runtime_error(sqlite3_errmsg(db_));}
++    void finish(){if(row())throw std::runtime_error("Unexpected SQL result");}
++    std::int64_t num(int n)const{return sqlite3_column_int64(stmt_,n);}
++    std::string str(int n)const {const auto* p=sqlite3_column_text(stmt_,n);return p?reinterpret_cast<const char*>(p):"";}
++private:sqlite3* db_;sqlite3_stmt* stmt_=nullptr;
++};
++int signed_int(const std::string& s,int min,int max){
++    if(s.empty() || s[0]=='+')throw std::invalid_argument("Noncanonical coordinate");
++    std::size_t pos=0;auto n=std::stoll(s,&pos);
++    if(pos!=s.size() || n<min || n>max || std::to_string(n)!=s)
++        throw std::invalid_argument("Invalid construction coordinate/kind");
++    return static_cast<int>(n);
++}
++std::uint8_t layer(FixtureKind kind){
++    switch(kind){case FixtureKind::Floor:return 0;
++      case FixtureKind::WallEast:case FixtureKind::DoorEast:return 1;
++      case FixtureKind::WallNorth:case FixtureKind::DoorNorth:return 2;}
++    throw std::invalid_argument("Invalid structure kind");
++}
++std::string signature(PlayerId owner,EntityId ship,EntityId site,const std::string& text){
++    // Corruption detection; the trusted SQLite file/OS writer lease are the
++    // authority boundary. This checksum is not cryptographic authentication.
++    const auto data="sg-structure-plan-v1|"+std::to_string(owner)+"|"+
++        std::to_string(ship)+"|"+std::to_string(site)+"|"+text;
++    std::uint64_t hash=14695981039346656037ULL;
++    for(unsigned char c:data){hash^=c;hash*=1099511628211ULL;}
++    return std::to_string(hash);
++}
++struct Record {std::int64_t id=0;PlayerId owner=0;EntityId ship=0,site=0;std::string text;bool cancelled=false;};
++}
++class Plans::Db {
++public:
++    explicit Db(const std::string& path){
++        if(sqlite3_open_v2(path.c_str(),&db_,SQLITE_OPEN_READWRITE,nullptr)!=SQLITE_OK){
++            const auto why=db_?sqlite3_errmsg(db_):"Cannot open SQLite";
++            const std::string error(why);sqlite3_close(db_);db_=nullptr;throw std::runtime_error(error);
++        }
++        sqlite3_busy_timeout(db_,5000);
++        exec(db_,"PRAGMA foreign_keys=ON");
++        exec(db_,"CREATE TABLE IF NOT EXISTS sg_structure_plans("
++                 "id INTEGER PRIMARY KEY AUTOINCREMENT,owner INTEGER NOT NULL,"
++                 "ship INTEGER NOT NULL,site INTEGER NOT NULL,steps TEXT NOT NULL,"
++                 "checksum TEXT NOT NULL,cancelled INTEGER NOT NULL DEFAULT 0 CHECK(cancelled IN (0,1)))");
++        exec(db_,"CREATE TABLE IF NOT EXISTS sg_structure_attempts("
++                 "command_id INTEGER PRIMARY KEY,plan_id INTEGER NOT NULL REFERENCES sg_structure_plans(id),"
++                 "step_index INTEGER NOT NULL CHECK(step_index>=0))");
++        exec(db_,"CREATE TABLE IF NOT EXISTS sg_structure_seq("
++                 "id INTEGER PRIMARY KEY CHECK(id=1),next INTEGER NOT NULL)");
++        exec(db_,"INSERT OR IGNORE INTO sg_structure_seq(id,next) VALUES(1,600000000000000000)");
++    }
++    ~Db(){sqlite3_close(db_);}
++    sqlite3* get()const{return db_;}
++    void begin(){exec(db_,"BEGIN IMMEDIATE");}
++    void commit(){exec(db_,"COMMIT");}
++    void rollback()noexcept{sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);}
++    Record get(std::int64_t id)const {
++        Stmt q(db_,"SELECT owner,ship,site,steps,checksum,cancelled FROM sg_structure_plans WHERE id=?");q.num(1,id);
++        if(!q.row())throw std::invalid_argument("Unknown structural plan");
++        if(q.num(0)<=0 || q.num(1)<=0 || q.num(2)<=0 || (q.num(5)!=0 && q.num(5)!=1))
++            throw std::runtime_error("Corrupt structure plan identity");
++        Record p{id,static_cast<PlayerId>(q.num(0)),static_cast<EntityId>(q.num(1)),
++                 static_cast<EntityId>(q.num(2)),q.str(3),q.num(5)==1};
++        if(q.str(4)!=signature(p.owner,p.ship,p.site,p.text))
++            throw std::runtime_error("Structure plan integrity mismatch");
++        (void)Plans::parse(p.text);
++        return p;
++    }
++private:sqlite3* db_=nullptr;
++};
++Plans::Plans(const std::string& filename,PersistentWorld& world):db_(std::make_unique<Db>(filename)),world_(world){}
++Plans::~Plans()=default;
++std::vector<Step> Plans::parse(const std::string& text){
++    constexpr const char* header="sg-colony-structure-plan-v1\n";
++    if(text.size()<std::char_traits<char>::length(header)+6 || text.size()>16384 ||
++       text.compare(0,std::char_traits<char>::length(header),header)!=0 || text.back()!='\n' ||
++       text.find('\r')!=std::string::npos || text.find('\0')!=std::string::npos)
++        throw std::invalid_argument("Invalid structural blueprint format");
++    std::istringstream in(text.substr(std::char_traits<char>::length(header)));
++    std::vector<Step> result;std::set<FixtureKey> keys;std::string line;
++    while(std::getline(in,line)){
++        if(line.empty() || result.size()>=512)throw std::invalid_argument("Invalid structure build batch");
++        const auto a=line.find(','),b=line.find(',',a==std::string::npos?a:a+1);
++        if(a==std::string::npos||b==std::string::npos||line.find(',',b+1)!=std::string::npos)
++            throw std::invalid_argument("Invalid structure step");
++        auto type=signed_int(line.substr(0,a),1,5);
++        auto x=signed_int(line.substr(a+1,b-a-1),-1000000,1000000);
++        auto y=signed_int(line.substr(b+1),-1000000,1000000);
++        const auto kind=static_cast<FixtureKind>(type);
++        if(!keys.insert({x,y,layer(kind)}).second)
++            throw std::invalid_argument("Two blueprint pieces share one physical cell/edge");
++        result.push_back({kind,x,y});
++    }
++    if(result.empty())throw std::invalid_argument("Empty structure plan");
++    return result;
++}
++void Plans::authorize(PlayerId owner,EntityId ship,EntityId site)const{
++    const auto* e=world_.world().find(ship);
++    const auto* s=world_.world().find(site);
++    const auto i=world_.world().built_outposts().find(site);
++    if(!owner || !ship || !site || !e || !s || e->owner_id!=owner ||
++       i==world_.world().built_outposts().end() || i->second.source_colony_ship!=ship ||
++       s->owner_id!=owner || !world_.world().colony_ship(ship))
++        throw std::invalid_argument("Invalid structure site or authenticated owner");
++}
++std::int64_t Plans::create(const std::string& canonical,PlayerId owner,EntityId ship,EntityId site){
++    std::lock_guard<std::mutex> guard(lifecycle);
++    authorize(owner,ship,site);(void)parse(canonical);
++    Stmt q(db_->get(),"INSERT INTO sg_structure_plans(owner,ship,site,steps,checksum) VALUES(?,?,?,?,?)");
++    q.num(1,static_cast<std::int64_t>(owner));q.num(2,static_cast<std::int64_t>(ship));
++    q.num(3,static_cast<std::int64_t>(site));q.str(4,canonical);
++    q.str(5,signature(owner,ship,site,canonical));q.finish();
++    return sqlite3_last_insert_rowid(db_->get());
++}
++Status Plans::status(std::int64_t id,PlayerId owner,EntityId ship,EntityId site)const{
++    authorize(owner,ship,site);
++    const auto p=db_->get(id);
++    if(p.owner!=owner || p.ship!=ship || p.site!=site)
++        throw std::invalid_argument("Structure plan belongs to another colony session/site");
++    Status result{};result.id=id;result.site=site;result.cancelled=p.cancelled;
++    const auto steps=parse(p.text);result.total=steps.size();
++    const auto& worldpieces=world_.world().colony_fixtures(site);
++    bool gap=false;
++    Stmt attempts(db_->get(),"SELECT step_index,command_id FROM sg_structure_attempts WHERE plan_id=?");
++    attempts.num(1,id);
++    std::map<std::size_t,std::vector<std::uint64_t>> ids;
++    while(attempts.row()){
++        auto index=attempts.num(0),cmd=attempts.num(1);
++        if(index<0 || static_cast<std::size_t>(index)>=steps.size() || cmd<kStructureCmdBase)
++            throw std::runtime_error("Corrupt plan attempt journal");
++        ids[static_cast<std::size_t>(index)].push_back(static_cast<std::uint64_t>(cmd));
++    }
++    for(std::size_t i=0;i<steps.size();++i){
++        const auto& s=steps[i];const auto key=FixtureKey{s.x,s.y,layer(s.kind)};
++        const auto it=worldpieces.find(key);
++        if(it==worldpieces.end()){
++            gap=true;result.modules_remaining+=s.kind==FixtureKind::Floor?1:2;
++            continue;
++        }
++        const auto& attempts_for_step=ids[i];
++        if(it->second.kind!=s.kind || std::find(attempts_for_step.begin(),attempts_for_step.end(),
++                                                it->second.construction_command_id)==attempts_for_step.end()){
++            result.conflicting=true;result.reason="Another command owns an installed structure at this position";
++            break;
++        }
++        if(gap){result.conflicting=true;result.reason="Out-of-order structural construction";break;}
++        ++result.completed;
++    }
++    return result;
++}
++std::vector<Status> Plans::list(PlayerId owner,EntityId ship,EntityId site)const{
++    authorize(owner,ship,site);
++    Stmt q(db_->get(),"SELECT id FROM sg_structure_plans WHERE owner=? AND ship=? AND site=? ORDER BY id LIMIT 200");
++    q.num(1,static_cast<std::int64_t>(owner));q.num(2,static_cast<std::int64_t>(ship));
++    q.num(3,static_cast<std::int64_t>(site));
++    std::vector<Status> result;
++    while(q.row())result.push_back(status(q.num(0),owner,ship,site));
++    return result;
++}
++bool Plans::cancel(std::int64_t id,PlayerId owner,EntityId ship,EntityId site){
++    std::lock_guard<std::mutex> guard(lifecycle);
++    const auto s=status(id,owner,ship,site);
++    if(s.cancelled)return false;
++    Stmt q(db_->get(),"UPDATE sg_structure_plans SET cancelled=1 WHERE id=? AND cancelled=0");
++    q.num(1,id);q.finish();return sqlite3_changes(db_->get())==1;
++}
++std::int64_t Plans::fresh_id(){
++    Stmt q(db_->get(),"SELECT next FROM sg_structure_seq WHERE id=1");
++    if(!q.row())throw std::runtime_error("Missing structure command counter");
++    const auto last=q.num(0);
++    if(last<kStructureCmdBase || last>=std::numeric_limits<std::int64_t>::max()-1)
++        throw std::overflow_error("Structure command namespace exhausted");
++    Stmt update(db_->get(),"UPDATE sg_structure_seq SET next=? WHERE id=1");
++    update.num(1,last+1);update.finish();return last+1;
++}
++Event Plans::submit(std::int64_t command_id,PlayerId owner,EntityId ship,EntityId site,
++        Action action,std::int64_t amount,int x,int y){
++    Command c{};c.id=static_cast<std::uint64_t>(command_id);c.sequence=c.id;
++    c.issuer=owner;c.actor=ship;c.target=site;c.action=action;
++    c.amount=amount;c.thrust_x=x;c.thrust_y=y;c.execute_tick=world_.world().tick()+1;
++    if(!world_.submit(c))throw std::runtime_error("Host refused new structural construction command");
++    world_.step();
++    if(world_.world().events().empty() || world_.world().events().back().command_id!=c.id)
++        throw std::runtime_error("Missing committed structural event receipt");
++    return world_.world().events().back();
++}
++Event Plans::step(std::int64_t id,PlayerId owner,EntityId ship,EntityId site){
++    std::lock_guard<std::mutex> guard(lifecycle);
++    const auto state=status(id,owner,ship,site);
++    if(state.cancelled || state.conflicting || state.finished())
++        throw std::runtime_error("Structural plan cancelled, conflicting or complete: "+state.reason);
++    const auto p=db_->get(id);const auto job=parse(p.text).at(state.completed);
++    db_->begin();std::int64_t next=0;
++    try{
++        next=fresh_id();
++        Stmt j(db_->get(),"INSERT INTO sg_structure_attempts(command_id,plan_id,step_index) VALUES(?,?,?)");
++        j.num(1,next);j.num(2,id);j.num(3,static_cast<std::int64_t>(state.completed));j.finish();
++        db_->commit();
++    }catch(...){db_->rollback();throw;}
++    return submit(next,owner,ship,site,Action::BuildColonyFixture,
++                  static_cast<std::int64_t>(job.kind),job.x,job.y);
++}
++Event Plans::set_door(PlayerId owner,EntityId ship,EntityId site,
++                      FixtureKind kind,int x,int y,bool opened){
++    std::lock_guard<std::mutex> guard(lifecycle);
++    authorize(owner,ship,site);
++    if((kind!=FixtureKind::DoorEast && kind!=FixtureKind::DoorNorth) ||
++       x< -1000000 || x>1000000 || y< -1000000 || y>1000000)
++        throw std::invalid_argument("Invalid door control");
++    db_->begin();std::int64_t id=0;
++    try{id=fresh_id();db_->commit();}catch(...){db_->rollback();throw;}
++    return submit(id,owner,ship,site,Action::SetColonyDoor,
++                  static_cast<std::int64_t>(kind)+(opened?10:0),x,y);
++}
++} // namespace galaxy::construction
+diff --git a/src/Persistence.cpp b/src/Persistence.cpp
+index 0b5280d..e2f8341 100644
+--- a/src/Persistence.cpp
++++ b/src/Persistence.cpp
+@@ -127,7 +127,7 @@ Command decode_command(const std::string& record) {
+           >> c.target >> action >> c.thrust_x >> c.thrust_y >> c.amount))
+         throw std::runtime_error("recovery: invalid command journal record");
+     std::string extra;
+-    if (in >> extra || action < 0 || action > static_cast<int>(Action::CompleteConveyorRoute) || c.id == 0 || c.issuer == 0)
++    if (in >> extra || action < 0 || action > static_cast<int>(Action::SetColonyDoor) || c.id == 0 || c.issuer == 0)
+         throw std::runtime_error("recovery: invalid command journal values");
+     c.action = static_cast<Action>(action);
+     if (command_record(c) != record) throw std::runtime_error("recovery: noncanonical command journal");
+@@ -1170,7 +1170,7 @@ public:
+         std::size_t mineral_refine_transfers=0,material_fabricate_transfers=0;
+         std::size_t life_transfers=0, farm_builds=0, farm_stock_transfers=0, habitat_builds=0, habitat_transfers=0,utility_builds=0,utility_repairs=0,utility_spare_transfers=0,community_builds=0,community_transfers=0,clinic_builds=0,clinic_transfers=0,reclaimer_builds=0,waterworks_builds=0,waterworks_transfers=0;
+         std::size_t workshop_builds=0,workshop_feeds=0,workshop_outputs=0,workshop_finisher_builds=0,workshop_final_outputs=0,workshop_stacks=0,storage_builds=0,storage_stacks=0,extra_storage_builds=0,extra_storage_stacks=0;
+-        std::size_t auto_transfers = 0, auto_storage_transfers=0, storage_link_builds=0, conveyor_cells=0;
++        std::size_t auto_transfers = 0, auto_storage_transfers=0, storage_link_builds=0, conveyor_cells=0, fixture_builds=0;
+         std::vector<ActivityEvent> recorded_auto, recorded_storage_auto;
+         for (const auto& a : restored.activity_events()) {
+             if (a.kind == ActivityKind::AutoMiningTransfer) recorded_auto.push_back(a);
+@@ -1521,6 +1521,22 @@ public:
+                 if(src!=reinterpret_cast<const char*>(sqlite3_column_text(ledger.get(),4)) ||
+                    dst!=reinterpret_cast<const char*>(sqlite3_column_text(ledger.get(),5)))
+                     throw std::runtime_error("SQLite: forged extra storage endpoints");
++            } else if(reason=="colony_fixture_construction_t"){
++                ++fixture_builds;
++                const auto id=parse_u64(sqlite3_column_text(ledger.get(),0));
++                const auto ev=event_by_id.find(id);const auto cmd=journal_commands.find(id);
++                if(ev==event_by_id.end() || cmd==journal_commands.end() ||
++                   cmd->second.action!=Action::BuildColonyFixture ||
++                   ev->second.result!=Outcome::Applied ||
++                   amount!=(cmd->second.amount==1?2:4) ||
++                   ev->second.transferred!=amount ||
++                   ev->second.tick!=static_cast<std::uint64_t>(sqlite3_column_int64(ledger.get(),1)) ||
++                   sqlite_str(ledger.get(),4)!="modules:"+std::to_string(cmd->second.actor) ||
++                   sqlite_str(ledger.get(),5)!="fixture:"+std::to_string(cmd->second.target)+":"+
++                   std::to_string(cmd->second.thrust_x)+":"+
++                   std::to_string(cmd->second.thrust_y)+":"+
++                   std::to_string(cmd->second.amount))
++                    throw std::runtime_error("SQLite: invalid physical fixture construction receipt");
+             } else if(reason=="conveyor_cell_construction_t"){
+                 ++conveyor_cells;
+                 const auto id=parse_u64(sqlite3_column_text(ledger.get(),0));
+@@ -1651,7 +1667,7 @@ public:
+         std::size_t expected_mineral_refine=0,expected_material_fabricate=0;
+         std::size_t expected_life_transfers=0,expected_farm_builds=0,expected_farm_stock_transfers=0;
+         std::size_t expected_habitat_builds=0, expected_habitat_transfers=0;
+-        std::size_t expected_utility_builds=0,expected_utility_repairs=0,expected_utility_spares=0,expected_community_builds=0,expected_community_transfers=0,expected_clinic_builds=0,expected_clinic_transfers=0,expected_reclaimer_builds=0,expected_waterworks_builds=0,expected_waterworks_transfers=0,expected_workshop_builds=0,expected_workshop_feeds=0,expected_workshop_outputs=0,expected_workshop_finisher_builds=0,expected_workshop_final_outputs=0,expected_workshop_stacks=0,expected_storage_builds=0,expected_storage_stacks=0,expected_extra_storage_builds=0,expected_extra_storage_stacks=0,expected_link_builds=0,expected_conveyor_cells=0;
++        std::size_t expected_utility_builds=0,expected_utility_repairs=0,expected_utility_spares=0,expected_community_builds=0,expected_community_transfers=0,expected_clinic_builds=0,expected_clinic_transfers=0,expected_reclaimer_builds=0,expected_waterworks_builds=0,expected_waterworks_transfers=0,expected_workshop_builds=0,expected_workshop_feeds=0,expected_workshop_outputs=0,expected_workshop_finisher_builds=0,expected_workshop_final_outputs=0,expected_workshop_stacks=0,expected_storage_builds=0,expected_storage_stacks=0,expected_extra_storage_builds=0,expected_extra_storage_stacks=0,expected_link_builds=0,expected_conveyor_cells=0,expected_fixture_builds=0;
+ 
+         for (const auto& ev : restored.events()) {
+             if (ev.result != Outcome::Applied || ev.transferred <= 0) continue;
+@@ -1694,6 +1710,7 @@ public:
+             else if (cmd->second.action==Action::TransferStorageNodeStack) ++expected_extra_storage_stacks;
+             else if (cmd->second.action==Action::ConstructStorageLink || cmd->second.action==Action::ConstructWorkshopLink) ++expected_link_builds;
+             else if (cmd->second.action==Action::PlaceConveyorCell) ++expected_conveyor_cells;
++            else if (cmd->second.action==Action::BuildColonyFixture) ++expected_fixture_builds;
+             else if (cmd->second.action==Action::ConstructClinic) ++expected_clinic_builds;
+             else if (cmd->second.action==Action::TransferClinicStock) ++expected_clinic_transfers;
+             else throw std::runtime_error("SQLite: resource transfer tied to non-transfer command");
+@@ -1726,7 +1743,7 @@ public:
+             extra_storage_builds!=expected_extra_storage_builds ||
+             extra_storage_stacks!=expected_extra_storage_stacks ||
+             storage_link_builds!=expected_link_builds ||
+-            conveyor_cells!=expected_conveyor_cells)
++            conveyor_cells!=expected_conveyor_cells || fixture_builds!=expected_fixture_builds)
+             throw std::runtime_error("SQLite: ledger event count mismatch");
+         std::size_t credit_rows=0;
+         Statement cash(db_, "SELECT command_id,tick,station_id,owner_id,ore_units,unit_price,credit_amount FROM credit_ledger");
+@@ -2831,7 +2848,8 @@ public:
+                          cmd->second.action!=Action::TransferStorageNodeStack &&
+                          cmd->second.action!=Action::ConstructStorageLink &&
+                          cmd->second.action!=Action::ConstructWorkshopLink &&
+-                         cmd->second.action!=Action::PlaceConveyorCell))
++                         cmd->second.action!=Action::PlaceConveyorCell &&
++                         cmd->second.action!=Action::BuildColonyFixture))
+                         throw std::runtime_error("unmatched resource transfer event");
+                     Statement ledger(db_, "INSERT INTO resource_ledger(generation,tick,command_id,source_id,destination_id,amount,reason) VALUES(?,?,?,?,?,?,?)");
+                     ledger.i64(1, static_cast<std::int64_t>(next));
+@@ -2896,6 +2914,15 @@ public:
+                         ledger.text(4,"modules:"+std::to_string(c.actor));
+                         ledger.text(5,"storage-link:"+std::to_string(c.target)+":"+std::to_string(c.id));
+                         ledger.i64(6,2);ledger.text(7,"storage_link_construction_t");
++                    } else if(cmd->second.action==Action::BuildColonyFixture){
++                        const auto& c=cmd->second;
++                        if(ev.transferred!=(c.amount==1?2:4))
++                            throw std::runtime_error("physical fixture transfer amount mismatch");
++                        ledger.text(4,"modules:"+std::to_string(c.actor));
++                        ledger.text(5,"fixture:"+std::to_string(c.target)+":"+
++                                std::to_string(c.thrust_x)+":"+std::to_string(c.thrust_y)+":"+
++                                std::to_string(c.amount));
++                        ledger.i64(6,ev.transferred);ledger.text(7,"colony_fixture_construction_t");
+                     } else if(cmd->second.action==Action::PlaceConveyorCell){
+                         const auto& c=cmd->second;
+                         if(ev.transferred!=2)throw std::runtime_error("invalid conveyor cell mass");
+diff --git a/src/Simulation.cpp b/src/Simulation.cpp
+index e981156..6662467 100644
+--- a/src/Simulation.cpp
++++ b/src/Simulation.cpp
+@@ -11,6 +11,53 @@
+ namespace galaxy {
+ namespace {
+ constexpr int kPlacementBound=1000000; // coordinate safety, not room size
++std::uint8_t fixture_layer(FixtureKind kind){
++    switch(kind){case FixtureKind::Floor:return 0;
++      case FixtureKind::WallEast:case FixtureKind::DoorEast:return 1;
++      case FixtureKind::WallNorth:case FixtureKind::DoorNorth:return 2;}
++    throw std::invalid_argument("invalid fixture kind");
++}
++int fixture_module_cost(FixtureKind kind){return kind==FixtureKind::Floor?1:2;}
++FixtureKey fixture_edge_key(int ax,int ay,int bx,int by){
++    if(std::abs(ax-bx)+std::abs(ay-by)!=1)
++        throw std::invalid_argument("structure edge query is not adjacent");
++    return ax!=bx?FixtureKey{std::min(ax,bx),ay,1}:
++                  FixtureKey{ax,std::min(ay,by),2};
++}
++bool edge_installed(const std::map<FixtureKey,ColonyFixture>& fixtures,
++                    int ax,int ay,int bx,int by){
++    return fixtures.count(fixture_edge_key(ax,ay,bx,by))!=0;
++}
++bool edge_blocked(const std::map<FixtureKey,ColonyFixture>& fixtures,
++                  int ax,int ay,int bx,int by){
++    auto it=fixtures.find(fixture_edge_key(ax,ay,bx,by));
++    if(it==fixtures.end())return false;
++    return it->second.kind==FixtureKind::WallEast ||
++           it->second.kind==FixtureKind::WallNorth || !it->second.door_open;
++}
++// The physical structure edge cannot cut through an installed machine or
++// installed conveyor; unplaced editor ghost overlays are non-authoritative.
++bool fixture_edge_conflicts(const OutpostStorage* storage,const FixtureKey& key){
++    if(!storage || key.layer==0)return false;
++    for(const auto& [node,origin]:storage->equipment_positions){
++        const auto size=node==kWorkshopConveyorNode?2:1;
++        const auto inside=[&](int x,int y){return x>=origin.x && x<origin.x+size &&
++                                               y>=origin.y && y<origin.y+size;};
++        if(inside(key.x,key.y)&&inside(key.x+(key.layer==1),key.y+(key.layer==2)))return true;
++    }
++    for(const auto& [id,link]:storage->links){(void)id;
++        const auto& path=link.route_cells;
++        for(std::size_t i=1;i<path.size();++i){
++            const auto& a=path[i-1];const auto& b=path[i];
++            if((a.x==key.x && a.y==key.y &&
++                b.x==key.x+(key.layer==1) && b.y==key.y+(key.layer==2)) ||
++               (b.x==key.x && b.y==key.y &&
++                a.x==key.x+(key.layer==1) && a.y==key.y+(key.layer==2)))return true;
++        }
++    }
++    return false;
++}
++
+ std::uint32_t placement_node(std::int64_t n){
+     return n==-1?kWorkshopConveyorNode:static_cast<std::uint32_t>(n);
+ }
+@@ -478,6 +525,15 @@ const Vector2* Simulation::factory_equipment_position(EntityId site,std::uint32_
+     const auto it=st->second.equipment_positions.find(node);
+     return it==st->second.equipment_positions.end()?nullptr:&it->second;
+ }
++const std::map<FixtureKey,ColonyFixture>& Simulation::colony_fixtures(EntityId site) const {
++    static const std::map<FixtureKey,ColonyFixture> empty;
++    const auto p=colony_fixtures_.find(site);
++    return p==colony_fixtures_.end()?empty:p->second;
++}
++bool Simulation::structure_edge_passable(EntityId site,int ax,int ay,int bx,int by) const {
++    if(!built_outposts_.count(site))return false;
++    return !edge_blocked(colony_fixtures(site),ax,ay,bx,by);
++}
+ const OutpostStorage* Simulation::storage(EntityId site) const {
+     auto it=storages_.find(site);return it==storages_.end()?nullptr:&it->second;
+ }
+@@ -744,6 +800,15 @@ bool Simulation::submit(const Command& c) {
+              c.thrust_y<0 || c.thrust_y>3)))return false;
+         snapshot_version_=std::max(snapshot_version_,25);
+     }
++    if(c.action==Action::BuildColonyFixture || c.action==Action::SetColonyDoor){
++        const bool build=c.action==Action::BuildColonyFixture;
++        const bool valid_type=build ? c.amount>=1 && c.amount<=5 :
++            (c.amount==4 || c.amount==5 || c.amount==14 || c.amount==15);
++        if(!c.target || !valid_type ||
++           c.thrust_x<-kPlacementBound || c.thrust_x>kPlacementBound ||
++           c.thrust_y<-kPlacementBound || c.thrust_y>kPlacementBound)return false;
++        snapshot_version_=std::max(snapshot_version_,31);
++    }
+     if(c.action==Action::PlaceConveyorCell || c.action==Action::CompleteConveyorRoute){
+         // amount: real module-built link command ID; x/y: one grid cell,
+         // or zero when activating. No free conveyor segments are granted.
+@@ -1254,6 +1319,8 @@ Event Simulation::execute(const Command& c) {
+         case Action::PlaceFactoryEquipment:
+         case Action::PlaceConveyorCell:
+         case Action::CompleteConveyorRoute:
++        case Action::BuildColonyFixture:
++        case Action::SetColonyDoor:
+         case Action::AssignFarmMentor:
+         case Action::SetPolicyAssurance:
+         case Action::AssignPolicyInspectors:
+@@ -1297,6 +1364,32 @@ Event Simulation::execute(const Command& c) {
+             }
+             auto& cship=colony_ships_.at(c.actor);
+             auto& onboard=life_support_.at(c.actor);
++            if(c.action==Action::BuildColonyFixture || c.action==Action::SetColonyDoor){
++                const bool build=c.action==Action::BuildColonyFixture;
++                const auto kind=static_cast<FixtureKind>(build?c.amount:c.amount%10);
++                const FixtureKey key{c.thrust_x,c.thrust_y,fixture_layer(kind)};
++                auto& fixtures=colony_fixtures_[c.target];
++                const auto found=fixtures.find(key);
++                if(build){
++                    if(found!=fixtures.end() ||
++                       fixture_edge_conflicts(storage(c.target),key)){
++                        result.result=Outcome::InvalidArgument;return result;
++                    }
++                    const int cost=fixture_module_cost(kind);
++                    if(cship.modules<cost){result.result=Outcome::NoResources;return result;}
++                    fixtures.emplace(key,ColonyFixture{kind,c.id,false,2*cost});
++                    cship.modules-=cost;
++                    result.transferred=2*cost;
++                }else{
++                    if(found==fixtures.end() || found->second.kind!=kind ||
++                       (kind!=FixtureKind::DoorEast && kind!=FixtureKind::DoorNorth)){
++                        result.result=Outcome::InvalidTarget;return result;
++                    }
++                    found->second.door_open=c.amount>=10;
++                }
++                snapshot_version_=std::max(snapshot_version_,31);
++                result.result=Outcome::Applied;return result;
++            }
+             if(c.action==Action::PlaceConveyorCell || c.action==Action::CompleteConveyorRoute){
+                 auto it=storages_.find(c.target);
+                 if(it==storages_.end() || it->second.source_ship!=c.actor ||
+@@ -1322,8 +1415,17 @@ Event Simulation::execute(const Command& c) {
+                     link.route_required=true;
+                     link.route_ready=true;
+                 }
+-                try{validate_site_conveyors(proposed);}
+-                catch(const std::exception&){result.result=Outcome::InvalidArgument;return result;}
++                try{
++                    validate_site_conveyors(proposed);
++                    for(const auto& [lid,route]:proposed.links){(void)lid;
++                      for(std::size_t i=1;i<route.route_cells.size();++i){
++                        const auto& a=route.route_cells[i-1];const auto& b=route.route_cells[i];
++                        if(edge_installed(colony_fixtures(c.target),static_cast<int>(a.x),
++                             static_cast<int>(a.y),static_cast<int>(b.x),static_cast<int>(b.y)))
++                            throw std::invalid_argument("conveyor crosses installed physical structure");
++                      }
++                    }
++                }catch(const std::exception&){result.result=Outcome::InvalidArgument;return result;}
+                 auto& original=it->second.links.at(id);
+                 original.route_required=link.route_required;
+                 original.route_ready=link.route_ready;
+@@ -1346,6 +1448,13 @@ Event Simulation::execute(const Command& c) {
+                 }
+                 auto proposed=st->second;
+                 proposed.equipment_positions.emplace(node,Vector2{c.thrust_x,c.thrust_y});
++                for(const auto& [key,piece]:colony_fixtures(c.target)){
++                    (void)piece;
++                    if(fixture_edge_conflicts(&proposed,key) &&
++                       !fixture_edge_conflicts(&st->second,key)){
++                        result.result=Outcome::InvalidArgument;return result;
++                    }
++                }
+                 try{validate_site_conveyors(proposed);}
+                 catch(const std::exception&){result.result=Outcome::InvalidArgument;return result;}
+                 st->second.equipment_positions.emplace(node,Vector2{c.thrust_x,c.thrust_y});
+@@ -2727,7 +2836,7 @@ void Simulation::steps(std::uint64_t count) {
+ 
+ std::string Simulation::canonical_state() const {
+     std::ostringstream out;
+-    out << (snapshot_version_ >= 30 ? "galaxy-kernel-v30|" : snapshot_version_ >= 29 ? "galaxy-kernel-v29|" : snapshot_version_ >= 28 ? "galaxy-kernel-v28|" : snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
++    out << (snapshot_version_ >= 31 ? "galaxy-kernel-v31|" : snapshot_version_ >= 30 ? "galaxy-kernel-v30|" : snapshot_version_ >= 29 ? "galaxy-kernel-v29|" : snapshot_version_ >= 28 ? "galaxy-kernel-v28|" : snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
+         << '|' << rng_state_ << '\n';
+     if (snapshot_version_>=5) for(const auto system:systems_)out<<"system|"<<system<<'\n';
+     for (const auto& entry : entities_) {
+@@ -2804,6 +2913,13 @@ std::string Simulation::canonical_state() const {
+             }
+         }
+     }
++    if(snapshot_version_>=31)for(const auto& [site,fixtures]:colony_fixtures_){
++        for(const auto& [key,fixture]:fixtures)
++            out<<"colony_fixture|"<<site<<'|'<<key.x<<'|'<<key.y<<'|'
++               <<static_cast<unsigned>(fixture.kind)<<'|'
++               <<fixture.construction_command_id<<'|'<<(fixture.door_open?1:0)<<'|'
++               <<fixture.embodied_ore<<"|0\n";
++    }
+     if (snapshot_version_>=8) {
+         for(const auto& [id,g]:geology_)
+             out<<"geology|"<<id<<'|'<<static_cast<int>(g.taxonomy)<<'|'<<g.radius_m
+@@ -3026,12 +3142,12 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
+     if (!std::getline(in, line)) throw std::runtime_error("snapshot: missing header");
+     auto h = fields(line);
+     require_fields(h, 5);
+-    if (h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27" && h[0] != "galaxy-kernel-v28" && h[0] != "galaxy-kernel-v29" && h[0] != "galaxy-kernel-v30") throw std::runtime_error("snapshot: unsupported version");
++    if (h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27" && h[0] != "galaxy-kernel-v28" && h[0] != "galaxy-kernel-v29" && h[0] != "galaxy-kernel-v30" && h[0] != "galaxy-kernel-v31") throw std::runtime_error("snapshot: unsupported version");
+     const auto sys = u64(h[1]);
+     if (sys == 0 || sys > std::numeric_limits<std::uint32_t>::max())
+         throw std::runtime_error("snapshot: invalid system");
+     Simulation result(u64(h[4]), static_cast<std::uint32_t>(sys));
+-    result.snapshot_version_ = h[0] == "galaxy-kernel-v30" ? 30 : h[0] == "galaxy-kernel-v29" ? 29 : h[0] == "galaxy-kernel-v28" ? 28 : h[0] == "galaxy-kernel-v27" ? 27 : h[0] == "galaxy-kernel-v26" ? 26 : h[0] == "galaxy-kernel-v25" ? 25 : h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
++    result.snapshot_version_ = h[0] == "galaxy-kernel-v31" ? 31 : h[0] == "galaxy-kernel-v30" ? 30 : h[0] == "galaxy-kernel-v29" ? 29 : h[0] == "galaxy-kernel-v28" ? 28 : h[0] == "galaxy-kernel-v27" ? 27 : h[0] == "galaxy-kernel-v26" ? 26 : h[0] == "galaxy-kernel-v25" ? 25 : h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
+     result.tick_ = u64(h[2]);
+     result.next_entity_id_ = u64(h[3]);
+     if (result.next_entity_id_ == 0) throw std::runtime_error("snapshot: invalid next entity ID");
+@@ -3261,6 +3377,26 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
+             }
+             try{validate_site_conveyors(st->second);}
+             catch(const std::exception&){throw std::runtime_error("snapshot: invalid conveyor geometry");}
++        } else if(f[0]=="colony_fixture" && result.snapshot_version_>=31){
++            require_fields(f,9);
++            const auto site=u64(f[1]),rawkind=u64(f[4]);
++            const auto x=i64(f[2]),y=i64(f[3]);
++            const auto source=u64(f[5]),opened=u64(f[6]);const auto mass=i64(f[7]);
++            // The final field is a reserved must-be-zero marker so future
++            // versions can extend fixtures without ambiguity.
++            if(f[8]!="0" || !site || !source || rawkind<1 || rawkind>5 || opened>1 ||
++               x< -kPlacementBound || x>kPlacementBound ||
++               y< -kPlacementBound || y>kPlacementBound ||
++               ((rawkind<4) && opened) ||
++               mass!=2*fixture_module_cost(static_cast<FixtureKind>(rawkind)) ||
++               !result.built_outposts_.count(site))
++                throw std::runtime_error("snapshot: invalid colony fixture");
++            const auto kind=static_cast<FixtureKind>(rawkind);
++            const FixtureKey key{static_cast<int>(x),static_cast<int>(y),fixture_layer(kind)};
++            auto& pieces=result.colony_fixtures_[site];
++            if(pieces.count(key) || fixture_edge_conflicts(result.storage(site),key))
++                throw std::runtime_error("snapshot: duplicate or intersecting fixture");
++            pieces.emplace(key,ColonyFixture{kind,source,opened==1,mass});
+         } else if(f[0]=="geology" && result.snapshot_version_>=8){
+             require_fields(f,6);
+             const auto id=u64(f[1]),tax=u64(f[2]);
+@@ -3526,7 +3662,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
+             c.id = u64(f[1]); c.execute_tick = u64(f[2]); c.sequence = u64(f[3]);
+             c.issuer = u64(f[4]); c.actor = u64(f[5]); c.target = u64(f[6]);
+             auto action = u64(f[7]);
+-            if (action > (result.snapshot_version_ >= 30 ? static_cast<unsigned>(Action::CompleteConveyorRoute) : result.snapshot_version_ >= 29 ? static_cast<unsigned>(Action::PlaceFactoryEquipment) : result.snapshot_version_ >= 28 ? static_cast<unsigned>(Action::ConstructWorkshopLink) : result.snapshot_version_ >= 27 ? static_cast<unsigned>(Action::ConstructStorageLink) : result.snapshot_version_ >= 26 ? static_cast<unsigned>(Action::TransferStorageNodeStack) : result.snapshot_version_ >= 25 ? static_cast<unsigned>(Action::TransferStorageStack) : result.snapshot_version_ >= 24 ? static_cast<unsigned>(Action::TransferWorkshopStack) : result.snapshot_version_ >= 23 ? static_cast<unsigned>(Action::TransferWorkshopFinalOutput) : result.snapshot_version_ >= 22 ? static_cast<unsigned>(Action::TransferWorkshopOutput) : result.snapshot_version_ >= 21 ? static_cast<unsigned>(Action::HostCrewLoss) : result.snapshot_version_ >= 20 ? static_cast<unsigned>(Action::AssignFarmMentor) : result.snapshot_version_ >= 19 ? static_cast<unsigned>(Action::AssignPolicyInspectors) : result.snapshot_version_ >= 18 ? static_cast<unsigned>(Action::TransferWaterworksFeed) : result.snapshot_version_ >= 17 ? static_cast<unsigned>(Action::ConstructReclaimer) : result.snapshot_version_ >= 16 ? static_cast<unsigned>(Action::AssignClinicStaff) : result.snapshot_version_ >= 15 ? static_cast<unsigned>(Action::AssignCommunityStaff) : result.snapshot_version_ >= 14 ? static_cast<unsigned>(Action::SetUtilityMaintenance) : result.snapshot_version_ >= 13 ? static_cast<unsigned>(Action::RepairUtility) : result.snapshot_version_ >= 12 ? static_cast<unsigned>(Action::AssignHabitatResidents) : result.snapshot_version_ >= 11 ? static_cast<unsigned>(Action::AssignFarmWorkers) : result.snapshot_version_ >= 10 ? static_cast<unsigned>(Action::LoadLifeWater) : result.snapshot_version_ >= 9 ? static_cast<unsigned>(Action::FabricateMaterialModule) : result.snapshot_version_ >= 7 ? static_cast<unsigned>(Action::ConstructOutpost) : result.snapshot_version_ >= 6 ? static_cast<unsigned>(Action::DeliverGateSpares) : result.snapshot_version_ >= 5 ? static_cast<unsigned>(Action::SetGatePairOnline) : result.snapshot_version_ >= 4 ? static_cast<unsigned>(Action::SellOre) : static_cast<unsigned>(Action::UnloadOre))) throw std::runtime_error("snapshot: invalid action");
++            if (action > (result.snapshot_version_ >= 31 ? static_cast<unsigned>(Action::SetColonyDoor) : result.snapshot_version_ >= 30 ? static_cast<unsigned>(Action::CompleteConveyorRoute) : result.snapshot_version_ >= 29 ? static_cast<unsigned>(Action::PlaceFactoryEquipment) : result.snapshot_version_ >= 28 ? static_cast<unsigned>(Action::ConstructWorkshopLink) : result.snapshot_version_ >= 27 ? static_cast<unsigned>(Action::ConstructStorageLink) : result.snapshot_version_ >= 26 ? static_cast<unsigned>(Action::TransferStorageNodeStack) : result.snapshot_version_ >= 25 ? static_cast<unsigned>(Action::TransferStorageStack) : result.snapshot_version_ >= 24 ? static_cast<unsigned>(Action::TransferWorkshopStack) : result.snapshot_version_ >= 23 ? static_cast<unsigned>(Action::TransferWorkshopFinalOutput) : result.snapshot_version_ >= 22 ? static_cast<unsigned>(Action::TransferWorkshopOutput) : result.snapshot_version_ >= 21 ? static_cast<unsigned>(Action::HostCrewLoss) : result.snapshot_version_ >= 20 ? static_cast<unsigned>(Action::AssignFarmMentor) : result.snapshot_version_ >= 19 ? static_cast<unsigned>(Action::AssignPolicyInspectors) : result.snapshot_version_ >= 18 ? static_cast<unsigned>(Action::TransferWaterworksFeed) : result.snapshot_version_ >= 17 ? static_cast<unsigned>(Action::ConstructReclaimer) : result.snapshot_version_ >= 16 ? static_cast<unsigned>(Action::AssignClinicStaff) : result.snapshot_version_ >= 15 ? static_cast<unsigned>(Action::AssignCommunityStaff) : result.snapshot_version_ >= 14 ? static_cast<unsigned>(Action::SetUtilityMaintenance) : result.snapshot_version_ >= 13 ? static_cast<unsigned>(Action::RepairUtility) : result.snapshot_version_ >= 12 ? static_cast<unsigned>(Action::AssignHabitatResidents) : result.snapshot_version_ >= 11 ? static_cast<unsigned>(Action::AssignFarmWorkers) : result.snapshot_version_ >= 10 ? static_cast<unsigned>(Action::LoadLifeWater) : result.snapshot_version_ >= 9 ? static_cast<unsigned>(Action::FabricateMaterialModule) : result.snapshot_version_ >= 7 ? static_cast<unsigned>(Action::ConstructOutpost) : result.snapshot_version_ >= 6 ? static_cast<unsigned>(Action::DeliverGateSpares) : result.snapshot_version_ >= 5 ? static_cast<unsigned>(Action::SetGatePairOnline) : result.snapshot_version_ >= 4 ? static_cast<unsigned>(Action::SellOre) : static_cast<unsigned>(Action::UnloadOre))) throw std::runtime_error("snapshot: invalid action");
+             c.action = static_cast<Action>(action);
+             auto tx = i64(f[8]), ty = i64(f[9]);
+             if (tx < std::numeric_limits<int>::min() || tx > std::numeric_limits<int>::max() ||
+@@ -3633,6 +3769,13 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
+                    c.thrust_x< -kPlacementBound || c.thrust_x>kPlacementBound ||
+                    c.thrust_y< -kPlacementBound || c.thrust_y>kPlacementBound ||
+                    (c.action==Action::CompleteConveyorRoute && (c.thrust_x || c.thrust_y)))) ||
++                ((c.action==Action::BuildColonyFixture || c.action==Action::SetColonyDoor) &&
++                   (result.snapshot_version_<31 || !c.target ||
++                    c.thrust_x< -kPlacementBound || c.thrust_x>kPlacementBound ||
++                    c.thrust_y< -kPlacementBound || c.thrust_y>kPlacementBound ||
++                    (c.action==Action::BuildColonyFixture ?
++                      (c.amount<1 || c.amount>5) :
++                      (c.amount!=4 && c.amount!=5 && c.amount!=14 && c.amount!=15)))) ||
+                 ((c.action==Action::PlaceFactoryEquipment) &&
+                   (result.snapshot_version_<29 || !c.target || c.amount< -1 ||
+                    c.amount>std::numeric_limits<int>::max()/4 ||
+@@ -3741,6 +3884,23 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
+         throw std::runtime_error("snapshot: pending command receipt missing");
+     for (const auto id : event_ids) if (!result.submitted_ids_.count(id))
+         throw std::runtime_error("snapshot: event receipt missing");
++    if(result.snapshot_version_>=31){
++        std::map<std::uint64_t,std::pair<Outcome,std::int64_t>> applied;
++        for(const auto& e:result.events_)
++            applied.emplace(e.command_id,std::make_pair(e.result,e.transferred));
++        std::set<std::uint64_t> construction_sources;
++        for(const auto& [site,pieces]:result.colony_fixtures_){(void)site;+            for(const auto& [key,piece]:pieces){(void)key;
++                const auto source=piece.construction_command_id;
++                const auto it=applied.find(source);
++                if(it==applied.end() || it->second.first!=Outcome::Applied ||
++                   it->second.second!=piece.embodied_ore ||
++                   !construction_sources.insert(source).second)
++                    throw std::runtime_error("snapshot: missing or duplicate physical construction receipt");
++            }
++        }
++    }
++
+     if(result.snapshot_version_>=5){
+         if(parsed_systems!=result.systems_)
+             throw std::runtime_error("snapshot: missing registered system");
+@@ -4080,6 +4240,7 @@ void Simulation::swap(Simulation& other) noexcept {
+     built_outposts_.swap(other.built_outposts_);
+     workshops_.swap(other.workshops_);
+     storages_.swap(other.storages_);
++    colony_fixtures_.swap(other.colony_fixtures_);
+     geology_.swap(other.geology_);
+     activity_events_.swap(other.activity_events_);
+     swap(snapshot_version_, other.snapshot_version_);
+@@ -4230,6 +4391,16 @@ std::int64_t Simulation::total_ore() const {
+             throw std::overflow_error("invalid storage material total");
+         life_mass_kg+=qty;
+     }
++    for(const auto& [site,fixtures]:colony_fixtures_){
++        if(!built_outposts_.count(site))throw std::overflow_error("orphaned colony structure");
++        for(const auto& [key,piece]:fixtures){(void)key;
++            const auto cost=2*fixture_module_cost(piece.kind);
++            if(!piece.construction_command_id || piece.embodied_ore!=cost ||
++               total>std::numeric_limits<std::int64_t>::max()-cost)
++                throw std::overflow_error("invalid colony fixture embodied mass");
++            total+=cost;
++        }
++    }
+     // Only the WHOLE world must conserve complete ore-equivalent mass;
+     // individual inventories can now hold a single kilogram stack.
+     if(colony_cargo_kg>std::numeric_limits<std::int64_t>::max()-life_mass_kg)
+diff --git a/src/factory_colony_protocol.hpp b/src/factory_colony_protocol.hpp
+index bfc36ad..ff92e73 100644
+--- a/src/factory_colony_protocol.hpp
++++ b/src/factory_colony_protocol.hpp
+@@ -3,6 +3,7 @@
+ // Invoked only from the colony simulation loop, never from a browser thread.
+ // Browser-provided site is a requested selector, NEVER owner authority.
+ #include "galaxy/HostBlueprintRegistry.hpp"
++#include "galaxy/ColonyStructurePlans.hpp"
+ #include <algorithm>
+ #include <cstdint>
+ #include <limits>
+@@ -87,10 +88,34 @@ inline std::string event_json(const Event& e){
+            ",\"applied\":"+(e.result==Outcome::Applied?"true":"false")+
+            ",\"result\":"+std::to_string(static_cast<int>(e.result))+"}";
+ }
++inline std::string structural_status_json(const construction::Status& s){
++    return "{\"id\":"+std::to_string(s.id)+",\"site\":"+std::to_string(s.site)+
++        ",\"completed\":"+std::to_string(s.completed)+",\"total\":"+std::to_string(s.total)+
++        ",\"modulesRemaining\":"+std::to_string(s.modules_remaining)+
++        ",\"cancelled\":"+(s.cancelled?"true":"false")+
++        ",\"conflicting\":"+(s.conflicting?"true":"false")+
++        ",\"finished\":"+(s.finished()?"true":"false")+
++        ",\"reason\":"+json_string(s.reason)+"}";
++}
++inline std::vector<int> structural_args(const std::string& payload,std::size_t count){
++    const auto decoded=decode64(payload);
++    std::vector<int> values;std::istringstream in(decoded);std::string x;
++    while(std::getline(in,x,',')){
++        if(values.size()>=count || x.empty() || x.size()>9 || x[0]=='+')
++            throw std::invalid_argument("Invalid structure action argument");
++        std::size_t n=0;auto v=std::stoll(x,&n);
++        if(n!=x.size() || v< -1000000 || v>1000000 || std::to_string(v)!=x)
++            throw std::invalid_argument("Invalid structural coordinate");
++        values.push_back(static_cast<int>(v));
++    }
++    if(values.size()!=count || decoded.back()==',')
++        throw std::invalid_argument("Incorrect structural operation arguments");
++    return values;
++}
+ class Control {
+ public:
+     Control(const std::string& db,PersistentWorld& world,EntityId ship,PlayerId owner)
+-        :host_(db,world),world_(world),ship_(ship),owner_(owner){}
++        :host_(db,world),structures_(db,world),world_(world),ship_(ship),owner_(owner){}
+     std::string handle(const std::string& op,std::uint64_t requested_site,const std::string& arg){
+         const auto& sites=world_.world().built_outposts();
+         if(op=="SITES"){
+@@ -107,6 +132,51 @@ public:
+         if(requested_site==0||pos==sites.end()||pos->second.source_colony_ship!=ship_||
+            !world_.world().find(ship_)||world_.world().find(ship_)->owner_id!=owner_)
+             throw std::invalid_argument("Selected site is not owned by this colony session");
++        if(op=="STRUCT_LIST"){
++            if(!arg.empty())throw std::invalid_argument("Unexpected structure listing arguments");
++            std::string result="{\"ok\":true,\"structures\":[";bool first=true;
++            for(const auto& [key,piece]:world_.world().colony_fixtures(requested_site)){
++                if(!first)result+=',';first=false;
++                result+="{\"x\":"+std::to_string(key.x)+",\"y\":"+std::to_string(key.y)+
++                   ",\"kind\":"+std::to_string(static_cast<int>(piece.kind))+
++                   ",\"open\":"+(piece.door_open?"true":"false")+
++                   ",\"commandId\":"+std::to_string(piece.construction_command_id)+"}";
++                if(result.size()>65000)throw std::length_error("Structure list too large");
++            }
++            result+="],\"plans\":[";first=true;
++            for(const auto& status:structures_.list(owner_,ship_,requested_site)){
++                if(!first)result+=',';first=false;
++                result+=structural_status_json(status);
++                if(result.size()>95000)throw std::length_error("Structure plan list too large");
++            }
++            return result+"]}";
++        }
++        if(op=="STRUCT_REGISTER"){
++            auto id=structures_.create(decode64(arg),owner_,ship_,requested_site);
++            return "{\"ok\":true,\"plan\":"+
++               structural_status_json(structures_.status(id,owner_,ship_,requested_site))+"}";
++        }
++        if(op=="STRUCT_STEP" || op=="STRUCT_CANCEL" || op=="STRUCT_STATUS"){
++            const auto id=static_cast<std::int64_t>(unsigned_id(arg));
++            if(op=="STRUCT_STATUS")return "{\"ok\":true,\"plan\":"+
++                structural_status_json(structures_.status(id,owner_,ship_,requested_site))+"}";
++            if(op=="STRUCT_CANCEL"){
++                const auto changed=structures_.cancel(id,owner_,ship_,requested_site);
++                return "{\"ok\":true,\"changed\":"+std::string(changed?"true":"false")+
++                    ",\"plan\":"+structural_status_json(structures_.status(id,owner_,ship_,requested_site))+"}";
++            }
++            const auto event=structures_.step(id,owner_,ship_,requested_site);
++            return "{\"ok\":true,\"event\":"+event_json(event)+
++                ",\"plan\":"+structural_status_json(structures_.status(id,owner_,ship_,requested_site))+"}";
++        }
++        if(op=="STRUCT_DOOR"){
++            const auto values=structural_args(arg,4);
++            if((values[0]!=4 && values[0]!=5) || (values[3]!=0 && values[3]!=1))
++                throw std::invalid_argument("Invalid structural door control");
++            const auto event=structures_.set_door(owner_,ship_,requested_site,
++                 static_cast<FixtureKind>(values[0]),values[1],values[2],values[3]==1);
++            return "{\"ok\":true,\"event\":"+event_json(event)+"}";
++        }
+         if(op=="HELLO"){
+             if(!arg.empty())throw std::invalid_argument("Unexpected HELLO argument");
+             const auto* c=world_.world().colony_ship(ship_);
+@@ -148,6 +218,7 @@ public:
+     }
+ private:
+     industry::HostBlueprintRegistry host_;
++    construction::Plans structures_;
+     PersistentWorld& world_;
+     EntityId ship_;
+     PlayerId owner_;
+diff --git a/tests/ECON02B2d5StructureHostTests.py b/tests/ECON02B2d5StructureHostTests.py
+new file mode 100644
+index 0000000..9a9a638
+--- /dev/null
++++ b/tests/ECON02B2d5StructureHostTests.py
+@@ -0,0 +1,97 @@
++#!/usr/bin/env python3
++"""Host-authorized structural plan, step, cancel, door and restart via real HTTP."""
++import argparse, http.client, json, pathlib, socket, subprocess, sys, tempfile, time
++p=argparse.ArgumentParser()
++for x in ('host','fixture','relay'):p.add_argument('--'+x,required=True)
++a=p.parse_args()
++def port():
++    with socket.socket() as sock:
++        sock.bind(('127.0.0.1',0));return sock.getsockname()[1]
++class Game:
++    def __init__(self,world):
++        self.port=port()
++        self.p=subprocess.Popen([sys.executable,a.relay,'--colony','--host-exe',a.host,'--save',str(world),
++          '--port',str(self.port),'--tick-ms','100','--max-ticks','1200'],stdin=subprocess.DEVNULL,
++          stdout=subprocess.PIPE,stderr=subprocess.PIPE)
++        for i in range(90):
++            if self.p.poll() is not None:raise AssertionError('Host quit early')
++            try:
++                if self.get('/healthz')[0]==200:break
++            except OSError:pass
++            time.sleep(.05)
++        else:raise AssertionError('Relay failed to start')
++    def req(self,method,path,doc=None,headers=None):
++        c=http.client.HTTPConnection('127.0.0.1',self.port,timeout=10)
++        body=json.dumps(doc,separators=(',',':')).encode() if doc is not None else None
++        h={'Host':'127.0.0.1:'+str(self.port),**(headers or {})}
++        if body is not None:
++            h.setdefault('Content-Type','application/json')
++            h.setdefault('Origin','http://127.0.0.1:'+str(self.port))
++        try:
++            c.request(method,path,body,headers=h);r=c.getresponse();data=r.read()
++            if r.getheader('Content-Type')=='application/json':return r.status,json.loads(data)
++            return r.status,data.decode('utf-8')
++        finally:c.close()
++    def get(self,path):return self.req('GET',path)
++    def post(self,path,doc,headers=None):return self.req('POST',path,doc,headers)
++    def close(self):
++        self.p.terminate()
++        try:self.p.communicate(timeout=6)
++        except subprocess.TimeoutExpired:self.p.kill();self.p.communicate(timeout=6)
++with tempfile.TemporaryDirectory(prefix='sg-structure-live-') as tmp:
++    save=pathlib.Path(tmp)/'w.sqlite'
++    r=subprocess.run([a.fixture,str(save)],capture_output=True,text=True,timeout=10)
++    assert r.returncode==0,r.stderr
++    game=Game(save)
++    try:
++        status,session=game.get('/session');assert status==200
++        status,html=game.get('/viewer/interactive.html')
++        assert status==200 and 'Colony structures' in html and 'structures.js' in html,(status,len(html))
++        status,js=game.get('/viewer/structures.js')
++        assert status==200 and 'structure_step' in js,(status,len(js))
++        token=session['token'];status,sites=game.get('/factory/api/sites');assert status==200 and len(sites['sites'])==1
++        site=sites['sites'][0]
++        layout='sg-colony-structure-plan-v1\n1,0,0\n2,0,0\n4,1,0\n'
++        doc={'token':token,'site':site,'layout':layout}
++        status,bad=game.post('/factory/api/structure_register',doc,{'Origin':'https://evil.example'})
++        assert status==403 and not bad['ok'],(status,bad)
++        status,bad=game.post('/factory/api/structure_register',dict(doc,token='forged'))
++        assert status==403,(status,bad)
++        status,bad=game.post('/factory/api/structure_register',dict(doc,site=999999))
++        assert status==400,(status,bad)
++        status,bad=game.post('/factory/api/structure_register',dict(doc,layout=layout+'2,0,0\n'))
++        assert status==400,(status,bad)
++        status,reg=game.post('/factory/api/structure_register',doc)
++        assert status==200 and reg['plan']['total']==3,(status,reg)
++        pid=reg['plan']['id']
++        for i in range(2):
++            status,ev=game.post('/factory/api/structure_step',{'token':token,'site':site,'id':pid})
++            assert status==200 and ev['event']['applied'] and ev['plan']['completed']==i+1,(status,ev)
++        status,listing=game.get('/factory/api/structures?site='+str(site))
++        assert status==200 and len(listing['structures'])==2,(status,listing)
++        assert listing['plans'][0]['completed']==2
++        status,cancel=game.post('/factory/api/structure_cancel',{'token':token,'site':site,'id':pid})
++        assert status==200 and cancel['plan']['cancelled']
++        status,denied=game.post('/factory/api/structure_step',{'token':token,'site':site,'id':pid})
++        assert status==400 and not denied['ok']
++        status,new=game.post('/factory/api/structure_register',{'token':token,'site':site,
++           'layout':'sg-colony-structure-plan-v1\n4,1,0\n'})
++        assert status==200,(status,new)
++        newpid=new['plan']['id']
++        status,last=game.post('/factory/api/structure_step',{'token':token,'site':site,'id':newpid})
++        assert status==200 and last['plan']['finished'],(status,last)
++        status,door=game.post('/factory/api/structure_door',{'token':token,'site':site,'kind':4,'x':1,'y':0,'open':True})
++        assert status==200 and door['event']['applied'],(status,door)
++    finally:game.close()
++    game=Game(save)
++    try:
++        status,found=game.get('/factory/api/structures?site='+str(site))
++        assert status==200 and len(found['structures'])==3 and len(found['plans'])==2,(status,found)
++        assert found['plans'][0]['cancelled'] and found['plans'][0]['completed']==2
++        assert found['plans'][1]['finished']
++        assert next(x for x in found['structures'] if x['kind']==4)['open']
++        status,door=game.post('/factory/api/structure_door',{'token':game.get('/session')[1]['token'],
++          'site':site,'kind':4,'x':1,'y':0,'open':False})
++        assert status==200 and door['event']['applied'],(status,door)
++    finally:game.close()
++    print('ECON02B2d5 PASS: real localhost, host identity, durable partial/cancel, door toggle and recovery')
+diff --git a/tests/ECON02B2d5StructureTests.cpp b/tests/ECON02B2d5StructureTests.cpp
+new file mode 100644
+index 0000000..48551ed
+--- /dev/null
++++ b/tests/ECON02B2d5StructureTests.cpp
+@@ -0,0 +1,97 @@
++#include "galaxy/Persistence.hpp"
++#include <sqlite3.h>
++#include <chrono>
++#include <filesystem>
++#include <iostream>
++#include <stdexcept>
++using namespace galaxy;
++namespace fs=std::filesystem;
++#define CHECK(x) do { if(!(x)) throw std::runtime_error(std::string("b2d5 line ")+std::to_string(__LINE__)+": " #x); } while(0)
++static Event cmd(PersistentWorld& w,EntityId ship,std::uint64_t id,Action action,
++                 EntityId target=0,std::int64_t amount=1,int x=0,int y=0,PlayerId owner=7){
++  Command c{};c.id=id;c.sequence=id;c.execute_tick=w.world().tick()+1;
++  c.issuer=owner;c.actor=ship;c.target=target;c.action=action;
++  c.amount=amount;c.thrust_x=x;c.thrust_y=y;
++  CHECK(w.submit(c));w.step();CHECK(w.world().events().back().command_id==id);
++  return w.world().events().back();
++}
++static void ok(PersistentWorld& w,EntityId ship,std::uint64_t id,Action action,
++             EntityId target=0,std::int64_t amount=1,int x=0,int y=0){
++  CHECK(cmd(w,ship,id,action,target,amount,x,y).result==Outcome::Applied);
++}
++int main(){
++  const auto dir=fs::temp_directory_path()/("econ02b2d5_"+
++    std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
++  fs::create_directories(dir);const auto db=(dir/"world.sqlite").string();
++  try{
++    Simulation sim(40042);
++    const auto ship=sim.add_colony_ship(7,{0,0},400,8);
++    const auto rogue=sim.add_colony_ship(8,{0,0},200,4);
++    sim.provision_colony_genesis(ship,1000,3000,1000,1000,1000);
++    const auto rock=sim.add_asteroid({1000,0},180);
++    sim.enable_individual_workforce();
++    const auto mass=sim.total_material_kg();
++    EntityId site=0;std::string snapshot;
++    {
++      PersistentWorld w(db,std::move(sim));
++      ok(w,ship,1,Action::Mine,rock,80);
++      ok(w,ship,2,Action::RefineOre,0,80);
++      ok(w,ship,3,Action::FabricateModule,0,30);
++      ok(w,ship,4,Action::ConstructOutpost);
++      site=w.world().built_outposts().begin()->first;
++      CHECK(w.world().colony_ship(ship)->modules==26);
++      CHECK(cmd(w,rogue,5,Action::BuildColonyFixture,site,1,0,0,8).result!=Outcome::Applied);
++      const auto before=w.world().colony_ship(ship)->modules;
++      ok(w,ship,6,Action::BuildColonyFixture,site,1,0,0);  // Floor, 1 module
++      ok(w,ship,7,Action::BuildColonyFixture,site,2,0,0);  // East wall, 2 modules
++      CHECK(w.world().colony_ship(ship)->modules==before-3);
++      CHECK(!w.world().structure_edge_passable(site,0,0,1,0));
++      CHECK(!w.world().structure_edge_passable(site,1,0,0,0));
++      CHECK(w.world().structure_edge_passable(site,0,0,0,1));
++      CHECK(cmd(w,ship,8,Action::BuildColonyFixture,site,4,0,0).result==Outcome::InvalidArgument); // edge conflict
++      ok(w,ship,9,Action::BuildColonyFixture,site,4,1,0); // Door east, 2 modules
++      CHECK(!w.world().structure_edge_passable(site,1,0,2,0));
++      ok(w,ship,10,Action::SetColonyDoor,site,14,1,0); // open
++      CHECK(w.world().structure_edge_passable(site,1,0,2,0));
++      ok(w,ship,11,Action::SetColonyDoor,site,4,1,0); // close
++      CHECK(!w.world().structure_edge_passable(site,1,0,2,0));
++      CHECK(cmd(w,ship,12,Action::SetColonyDoor,site,5,1,0).result==Outcome::InvalidTarget);
++      CHECK(w.world().colony_fixtures(site).size()==3);
++      CHECK(w.world().total_material_kg()==mass);
++      snapshot=w.world().canonical_state();
++      CHECK(snapshot.rfind("galaxy-kernel-v31|",0)==0);
++      CHECK(Simulation::from_snapshot(snapshot).canonical_state()==snapshot);
++      // Tampering fixture mass without a corresponding resource transfer is rejected.
++      auto altered=snapshot;
++      auto first=altered.find("colony_fixture|");CHECK(first!=std::string::npos);
++      auto end=altered.find('\n',first);CHECK(end!=std::string::npos);
++      auto line=altered.substr(first,end-first);
++      auto last=line.rfind("|0");CHECK(last!=std::string::npos);
++      auto mass_pos=line.rfind('|',last-1);CHECK(mass_pos!=std::string::npos);
++      line.replace(mass_pos+1,last-mass_pos-1,"999");
++      altered.replace(first,end-first,line);
++      bool rejected=false;try{(void)Simulation::from_snapshot(altered);}catch(const std::exception&){rejected=true;}
++      CHECK(rejected);
++    }
++    {
++      PersistentWorld w(db,Simulation(999));
++      CHECK(w.world().canonical_state()==snapshot);
++      CHECK(w.world().colony_fixtures(site).size()==3);
++      CHECK(!w.world().structure_edge_passable(site,1,0,2,0));
++      CHECK(w.world().total_material_kg()==mass);
++      ok(w,ship,13,Action::SetColonyDoor,site,14,1,0);
++      CHECK(w.world().structure_edge_passable(site,1,0,2,0));
++      CHECK(w.world().total_material_kg()==mass);
++    }
++    {
++      PersistentWorld w(db,Simulation(999));
++      CHECK(w.world().structure_edge_passable(site,1,0,2,0));
++      CHECK(w.world().total_material_kg()==mass);
++    }
++    fs::remove_all(dir);
++    std::cout<<"ECON-02B2d5 PASS: physical floor/wall/door module costs, collision, receipts, restart\n";
++    return 0;
++  }catch(const std::exception& e){
++    std::cerr<<"ECON-02B2d5 FAIL: "<<e.what()<<'\n';fs::remove_all(dir);return 1;
++  }
++}
+diff --git a/viewer/interactive.html b/viewer/interactive.html
+index 3bf3bd8..ec47bd9 100644
+--- a/viewer/interactive.html
++++ b/viewer/interactive.html
+@@ -49,6 +49,21 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
+ <aside class="side">
+ <div class="card pad" id="interactiveControls"><h2>Live ship controls</h2><div class="controls" style="padding:0;margin-bottom:8px"><button id="undock" class="primary">Undock</button><button id="dock">Request dock</button><button id="unload">Unload ore</button><button id="load">Load ore</button><button id="sell">Sell local ore</button></div><div class="controls" style="padding:0;margin-bottom:8px"><button id="mine4" class="primary">⛏ Mine 4/tick</button><button id="stopMine">Stop mining</button></div><div class="controls" style="padding:0;gap:5px"><button id="left">← Thrust</button><button id="right">→ Thrust</button><button id="up">↑ Thrust</button><button id="down">↓ Thrust</button><button id="drift">Drift</button></div><div class="controls" style="padding:0;gap:5px;margin-top:8px"><button id="travelA">Assist to Station A</button><button id="travelGate">Assist to Gate</button><button id="jump" class="primary">Jump Gate</button><button id="travelB">Assist to Station B</button></div><button style="margin-top:12px" id="reconnect">Reconnect viewer</button><div class="help" id="commandMessage" aria-live="polite">Opening the local session…</div></div><div class="card pad" style="display:none"><h2>Scenario</h2><select id="scenario" style="width:100%"><option value="ten">10 asteroids · 10 ore each</option><option value="hold">Automatic mining · hold 10</option><option value="motion">Ship movement · inertia</option></select><div class="help" id="description">Ten finite asteroids are removed as they are mined.</div><label class="filebutton" for="import" style="display:block;text-align:center;margin-top:15px">Open other .sgview recording</label><input id="import" type="file" accept=".sgview,.txt,text/plain"></div>
+ <div class="card pad" id="colonyPanel" hidden><h2>Colony ship · first settlement</h2><div style="margin:10px 0 16px"><a href="/viewer/factory.html" id="colonyFactoryLink" class="primary" style="display:inline-block;padding:9px 13px;border:1px solid #3897a3;border-radius:9px;background:#1d6271;text-decoration:none;color:white">Open Factory Designer</a><div class="help">Factory edits use this same running colony world. A built outpost and real construction modules are required before authorizing a plan.</div></div>
++<section id="colonyStructures" aria-label="Physical colony construction" style="border-top:1px solid var(--border);padding-top:14px;margin:8px 0 16px">
++<h2>Colony structures · floors, walls and doors</h2>
++<div class="help">Structures belong to an existing colony outpost and consume real ship modules: floor 1, wall or door 2. Plans are durable, built one piece at a time, and may be cancelled without refunding completed work. Coordinates identify cells, not a fixed-size factory tier.</div>
++<div class="controls" style="padding:8px 0;gap:6px"><label for="structureSite">Outpost</label><select id="structureSite" aria-label="Structure outpost"><option value="">No colony outpost yet</option></select><button id="structureRefresh">Refresh structures</button></div>
++<label for="structureLayout" style="display:block;margin:5px 0">Build plan (one <code>kind,x,y</code> per line)</label>
++<textarea id="structureLayout" rows="4" maxlength="16384" spellcheck="false" style="width:100%;background:#091629;color:var(--ink);border:1px solid var(--border);border-radius:7px;padding:10px;resize:vertical;font:12px/1.45 monospace" aria-describedby="structurePlanHelp">1,0,0
++2,0,0
++4,1,0</textarea>
++<div id="structurePlanHelp" class="help">Kinds: 1 floor; 2 east wall; 3 north wall; 4 east door; 5 north door. A door begins closed.</div>
++<div class="controls" style="padding:8px 0;gap:5px"><button id="structureAuthorize" class="primary">Authorize plan</button><label for="structurePlan">Plan</label><select id="structurePlan"><option value="">None</option></select><button id="structureBuildNext">Construct next</button><button id="structureCancel">Cancel plan</button></div>
++<div class="controls" style="padding:8px 0;gap:5px"><label for="structureDoor">Built door</label><select id="structureDoor"><option value="">None</option></select><button id="structureOpenDoor">Open</button><button id="structureCloseDoor">Close</button></div>
++<div id="structureStatus" class="help" role="status" aria-live="polite" style="white-space:pre-wrap">Open a colony session to inspect physical structures.</div>
++<canvas id="structureMap" width="280" height="205" aria-label="Plan view of built floors, walls and doors" style="margin-top:8px;border:1px solid var(--border);background:#07131f;border-radius:8px;width:100%;height:auto"></canvas>
++<div id="structureBuilt" class="help" style="white-space:pre-wrap;max-height:150px;overflow:auto" aria-live="polite"></div>
++</section>
+ <div class="help">One ship · finite crew · no starting stations or gates. Every resource action is executed and saved by the C++ simulation. The mineral distributions below are illustrative based on real mineral classes.</div>
+ <div class="metric"><span class="muted">Colonists</span><strong id="colonyCrew">—</strong></div>
+ <div class="metric"><span class="muted">Raw ore (t)</span><strong id="colonyRaw">—</strong></div>
+@@ -168,5 +183,6 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
+ <script src="survey.js"></script>
+ <script src="colony.js"></script>
+ <script src="interactive.js"></script>
++<script src="structures.js"></script>
+ </body>
+ </html>
+diff --git a/viewer/structures.js b/viewer/structures.js
+new file mode 100644
+index 0000000..7474af8
+--- /dev/null
++++ b/viewer/structures.js
+@@ -0,0 +1,127 @@
++/* ECON-02B2d5 — colony-owned structural plans, not a second world writer. */
++(function(){'use strict';
++const $=id=>document.getElementById(id);
++let site=null, token='', listing={structures:[],plans:[]}, active=false;
++function feedback(text){$('structureStatus').textContent=text;}
++async function json(path,body){
++ const response=await fetch(path,body===undefined?{cache:'no-store'}:{
++  method:'POST',headers:{'Content-Type':'application/json'},
++  body:JSON.stringify({...body,token})});
++ const result=await response.json();
++ if(!response.ok || !result.ok && path!=='/session')throw Error(result.error||'Action was not accepted');
++ return result;
++}
++function option(value,label){const n=document.createElement('option');n.value=String(value);n.textContent=label;return n;}
++function structureName(kind){return ({1:'Floor',2:'East wall',3:'North wall',4:'East door',5:'North door'})[kind]||'Unknown';}
++function draw(){
++ const canvas=$('structureMap');const ctx=canvas.getContext('2d');
++ if(!ctx)return;
++ const w=canvas.width,h=canvas.height;
++ ctx.clearRect(0,0,w,h);ctx.fillStyle='#091b2d';ctx.fillRect(0,0,w,h);
++ const structs=listing.structures;
++ // The camera is a viewport, NOT a fixed boundary on allowed construction.
++ const xs=structs.flatMap(s=>[s.x,s.x+1]);
++ const ys=structs.flatMap(s=>[s.y,s.y+1]);
++ const xMin=Math.min(0,...xs),xMax=Math.max(1,...xs);
++ const yMin=Math.min(0,...ys),yMax=Math.max(1,...ys);
++ const span=Math.max(xMax-xMin,yMax-yMin,1);
++ const pitch=Math.max(0.001,Math.min(30,(Math.min(w,h)-38)/(span+1)));
++ const ox=(w-(xMax-xMin)*pitch)/2,oy=(h-(yMax-yMin)*pitch)/2;
++ const px=x=>ox+(x-xMin)*pitch,py=y=>oy+(yMax-y)*pitch;
++ if(span<=24){
++  ctx.strokeStyle='#20334a';ctx.lineWidth=.8;
++  for(let x=xMin;x<=xMax;x++){ctx.beginPath();ctx.moveTo(px(x),0);ctx.lineTo(px(x),h);ctx.stroke();}
++  for(let y=yMin;y<=yMax;y++){ctx.beginPath();ctx.moveTo(0,py(y));ctx.lineTo(w,py(y));ctx.stroke();}
++ }
++ for(const s of structs.filter(s=>s.kind===1)){
++  ctx.fillStyle='#22566b';ctx.fillRect(px(s.x)+2,py(s.y+1)+2,Math.max(0,pitch-4),Math.max(0,pitch-4));
++ }
++ ctx.lineCap='round';
++ for(const s of structs.filter(s=>s.kind!==1)){
++  ctx.beginPath();ctx.lineWidth=Math.max(2,Math.min(5,pitch/6));
++  ctx.strokeStyle=s.kind>=4?(s.open?'#63e7a8':'#ffc16f'):'#b0c2df';
++  if(s.kind===2||s.kind===4){ctx.moveTo(px(s.x+1),py(s.y));ctx.lineTo(px(s.x+1),py(s.y+1));}
++  else{ctx.moveTo(px(s.x),py(s.y+1));ctx.lineTo(px(s.x+1),py(s.y+1));}
++  ctx.stroke();
++ }
++ ctx.font='11px system-ui';ctx.fillStyle='#a9bdd6';
++ ctx.fillText('Blue: floor  ·  White: wall',9,h-24);
++ ctx.fillText('Amber: closed door  ·  Green: open',9,h-9);
++}
++function render(){
++ draw();
++ const plans=$('structurePlan');const oldPlan=plans.value;
++ plans.replaceChildren(option('','Select plan'));
++ for(const p of listing.plans){
++  const state=p.cancelled?'cancelled':p.finished?'complete':p.conflicting?'blocked':'active';
++  plans.append(option(p.id,`#${p.id} · ${p.completed}/${p.total} · ${state}`));
++ }
++ plans.value=listing.plans.some(p=>String(p.id)===oldPlan)?oldPlan:
++  String((listing.plans.find(p=>!p.cancelled&&!p.finished&&!p.conflicting)||listing.plans.at(-1)||{}).id||'');
++ const doors=$('structureDoor');const selected=doors.value;
++ doors.replaceChildren(option('','Select built door'));
++ for(const s of listing.structures.filter(s=>s.kind===4||s.kind===5))
++  doors.append(option(`${s.kind},${s.x},${s.y}`,`${structureName(s.kind)} (${s.x},${s.y}) · ${s.open?'open':'closed'}`));
++ doors.value=listing.structures.some(s=>[4,5].includes(s.kind)&&`${s.kind},${s.x},${s.y}`===selected)?selected:
++  (doors.options.length>1?doors.options[1].value:'');
++ $('structureBuilt').textContent=listing.structures.length?
++  `Built (${listing.structures.length}):\n`+listing.structures.map(s=>
++   `${structureName(s.kind)} (${s.x},${s.y})${[4,5].includes(s.kind)?s.open?' · open':' · closed':''}`).join('\n'):
++  'No physical floors, walls or doors at this outpost.';
++}
++async function refresh(){
++ const session=await json('/session');active=!!session.colony_mode;
++ if(!active){feedback('Physical construction is only available in colony mode.');return;}
++ token=session.token;
++ const sites=await json('/factory/api/sites');const sel=$('structureSite'),old=sel.value;
++ sel.replaceChildren(option('','Select a built outpost'));
++ for(const id of sites.sites)sel.append(option(id,`Outpost #${id}`));
++ sel.value=sites.sites.some(id=>String(id)===old)?old:sites.sites.length?String(sites.sites[0]):'';
++ site=sel.value?Number(sel.value):null;
++ if(!site){listing={structures:[],plans:[]};render();feedback('Build your first colony outpost before constructing structures.');return;}
++ listing=await json('/factory/api/structures?site='+site);
++ render();
++ const activePlan=listing.plans.find(p=>!p.cancelled&&!p.finished);
++ feedback(`Outpost #${site} · ${listing.structures.length} built pieces · ${listing.plans.length} plans`+
++  (activePlan?`\nPlan #${activePlan.id}: ${activePlan.completed}/${activePlan.total}, ${activePlan.modulesRemaining} modules remaining${activePlan.conflicting?' · placement conflict':''}`:''));
++}
++async function submit(path,payload){
++ try{if(!site)throw Error('Build an outpost and select it first');
++  feedback('Submitting to authoritative colony simulation…');
++  const r=await json(path,{site,...payload});
++  await refresh();
++  if(path.endsWith('register'))$('structurePlan').value=String(r.plan.id);
++  feedback(path.endsWith('register')?`Authorized plan #${r.plan.id} for outpost #${site}.`:
++   path.endsWith('step')?`Construction ${r.event.applied?'committed':'rejected'}; ${r.plan.completed}/${r.plan.total} steps complete.`:
++   path.endsWith('cancel')?'Remaining plan steps cancelled; completed structures remain.':
++   'Door state committed in the colony simulation.');
++ }catch(err){feedback('Construction rejected: '+err.message);}
++}
++$('structureRefresh').addEventListener('click',()=>refresh().catch(e=>feedback('Refresh failed: '+e.message)));
++$('structureSite').addEventListener('change',async()=>{
++ try{site=Number($('structureSite').value)||null;
++  if(!site){listing={structures:[],plans:[]};render();return;}
++  listing=await json('/factory/api/structures?site='+site);render();feedback('Selected outpost #'+site);
++ }catch(e){feedback('Site unavailable: '+e.message);}
++});
++$('structureAuthorize').addEventListener('click',()=>{
++ const body=$('structureLayout').value.trim();
++ if(!body){feedback('Enter at least one kind,x,y line.');return;}
++ submit('/factory/api/structure_register',{layout:'sg-colony-structure-plan-v1\n'+body+'\n'});
++});
++for(const [button,path] of [['structureBuildNext','structure_step'],['structureCancel','structure_cancel']])
++ $(button).addEventListener('click',()=>{
++  const id=Number($('structurePlan').value);
++  if(!Number.isSafeInteger(id)||id<=0){feedback('Select a construction plan.');return;}
++  submit('/factory/api/'+path,{id});
++ });
++for(const [button,open] of [['structureOpenDoor',true],['structureCloseDoor',false]])
++ $(button).addEventListener('click',()=>{
++  const selected=$('structureDoor').value;
++  if(!selected){feedback('Select a built door.');return;}
++  const [kind,x,y]=selected.split(',').map(Number);
++  submit('/factory/api/structure_door',{kind,x,y,open});
++ });
++window.GalaxyColonyStructures={refresh};
++refresh().catch(e=>feedback('Structure controls unavailable: '+e.message));
++})();
