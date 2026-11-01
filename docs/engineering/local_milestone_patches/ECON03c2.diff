@@ -1,0 +1,389 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -18,7 +18,7 @@
+     message(STATUS "Using OS SQLite SDK (amalgamation not present)")
+ endif()
+ add_library(galaxy_kernel STATIC src/Simulation.cpp src/ColonyResilience.cpp
+-  src/ColonyRecovery.cpp src/ColonyPolicy.cpp src/PopulationCohorts.cpp src/MacroNeeds.cpp
++  src/ColonyRecovery.cpp src/ColonyPolicy.cpp src/PopulationCohorts.cpp src/MacroNeeds.cpp src/ColdColonyNeeds.cpp
+     src/ColonyWaterSupply.cpp src/ResourceMarket.cpp src/Persistence.cpp src/EconomyPrototype.cpp src/QuantifiedProduction.cpp src/Inventory.cpp src/InventoryLogistics.cpp src/FactoryLayout.cpp src/FactoryRetirementPlanner.cpp src/FactoryExecution.cpp src/BlueprintConstruction.cpp src/HostBlueprintRegistry.cpp src/ColonyStructurePlans.cpp src/NpcConstructionCrews.cpp src/ClientContract.cpp src/Galaxy.cpp src/Navigation.cpp src/GateTransit.cpp src/Region.cpp)
+ target_include_directories(galaxy_kernel PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+ target_link_libraries(galaxy_kernel PUBLIC SQLite::SQLite3)
+@@ -903,3 +903,10 @@
+   target_link_libraries(galaxy_econ03c1_macro_needs_tests PRIVATE galaxy_kernel)
+   add_test(NAME galaxy_econ03c1_macro_needs_tests COMMAND galaxy_econ03c1_macro_needs_tests)
+ endif()
++
++# ECON-03c2: distant-colony needs/event batching (NOT yet active-world scheduler).
++if(BUILD_TESTING)
++  add_executable(galaxy_econ03c2_cold_colony_tests tests/ECON03c2ColdColonyTests.cpp)
++  target_link_libraries(galaxy_econ03c2_cold_colony_tests PRIVATE galaxy_kernel)
++  add_test(NAME galaxy_econ03c2_cold_colony_tests COMMAND galaxy_econ03c2_cold_colony_tests)
++endif()
+--- a/docs/design/ECON03c2_TIERED_COLONY_SIMULATION_2026-11-01.md
++++ b/docs/design/ECON03c2_TIERED_COLONY_SIMULATION_2026-11-01.md
+@@ -0,0 +1,54 @@
++# Single Galaxy: Tiered Colony Simulation / Distant Event Batching
++Date: 2026-11-01; gate ECON-03c2
++
++## Player-facing rule
++Distant colonies do not pause and do not run physically detailed NPC loops. Their
++consumption, output and movements remain ledgered against world time. The detail
++budget is *not* a change to the passage of game time.
++
++## Proposed level-of-detail bands (heuristic, not a final tuning)
++- **Focused:** player's immediate site/ship. Full relevant local agent, spatial,
++  physics, construction, hazards and tools. Preserve authoritative mutations.
++- **Nearby:** visible systems and imminent player contacts. Limited full agents;
++  abstract repeated routine tasks; synchronize authoritative cross-boundary actions.
++- **Remote:** non-visible colonies. Aggregate by resource compartment, population
++  cohort, jobs, supply routes, utilities and event deadlines. No object-by-object
++  render/transport loop. Event-driven output using shared deterministic kernels.
++- **Dormant:** far away, stable districts with no active interaction. Apply exact
++  bulk transformations between hard event boundaries, instead of calling
++  Simulation::step() for every missed tick. Only activate fine detail when needed.
++
++Suggested scheduler wake-up reasons: earliest food/water/oxygen deadline where a
++shortfall or policy consequence can occur, ship arrival, cargo receipt, scheduled
++production finish, power/fuel exhaustion, construction completion, migration,
++attack, player command, or forced reconciliation. Quiet stretches can be very long;
++the world clock remains common.
++
++## Exactness boundary
++- Any component eligible for batching must have a validated aggregate formula
++  identical to the detailed update over the skipped interval.
++- At a change in input, population, fuel, power or threat, split the time interval
++  and evaluate the event in strict, persistent world order.
++- Never simulate deliveries as simply positive inventory: all real material
++  transfers must debit an authorized source and credit one destination exactly once.
++- Missed supplies are shortages, not invisible debt; refuse impossible outputs.
++- For named NPCs, maintain durable life histories and persistent records. Macro
++  cohorts are the economical default, not a reason to destroy existing identities.
++- Enforce checked integer bounds, resumable checkpoints, and split vs continuous
++  update equivalence. If any component is not proven safe for batching, keep it
++  detailed until its aggregate transition is implemented and tested.
++- Approaching player views must hydrate detailed agents and equipment from the
++  authoritative macro state; never regenerate arbitrary wealth or duplicate NPCs.
++
++## ECON-03c2 implemented scope
++`ColdColonyNeeds` models one remote population, a local habitat life-support
++compartment, and a physically distinct depot. It algebraically advances any number
++of due ration windows in O(event count + 1), with same-tick arrival/population
++changes before the needs deadline, bounded source-to-consumer deliveries,
++shortage counts and a copy/commit transaction boundary for failed inputs.
++
++This kernel is intentionally NOT connected to the normal `Simulation::step()`
++because that live world includes mining, factories, utility power, and other
++side effects that cannot yet be safely skipped. Whole-colony event queue,
++production/utility/transport integration, durable SQL event checkpoints,
++workload benchmarks and wake-up promotion/demotion remain follow-up gates.
+--- a/docs/engineering/ECON03c2_COLD_COLONY_NEEDS_2026-11-01.md
++++ b/docs/engineering/ECON03c2_COLD_COLONY_NEEDS_2026-11-01.md
+@@ -0,0 +1,30 @@
++# ECON-03c2 Cold Colony Needs — Engineering Notes
++
++## Baseline
++`SingleGalaxy_ECON03c1_Macro_NPC_Needs_2026-11-01_Source_Tests.zip`
++
++## Delivered code
++- `include/galaxy/ColdColonyNeeds.hpp`
++- `src/ColdColonyNeeds.cpp`
++- `tests/ECON03c2ColdColonyTests.cpp`
++- `docs/design/ECON03c2_TIERED_COLONY_SIMULATION_2026-11-01.md`
++- `CMakeLists.txt`
++
++## Invariants and tests
++- Logical world time is unchanged while consumption deadlines are batched.
++- Existing `macro_needs::consume` is reused; food, water and oxygen become
++  waste streams at exactly the amount physically consumed.
++- Source depot is debited on each delivery; housing is credited. Insufficient
++  depot supply or a stock overflow fails the entire advance atomically.
++- Multiple events at one deadline apply before that deadline's consumption.
++- Full and partial ration periods are counted as correctly supplied or shortage.
++- Split/resume through an in-memory checkpoint matches one-shot advancement.
++- An independent tickwise reference calculation matches batched results.
++- A 1.3-trillion-person cohort advanced 1 trillion ticks algebraically.
++
++## Not claimed
++No new persistent SQLite schema or integrated galaxy LOD scheduler. It is a
++self-contained remote-needs execution kernel, not proof that every distant
++factory, transport, migration, utility or combat event can be skipped. Whole
++galaxy performance on consumer hardware is not yet measured. It does not change
++live gameplay cadence, consumption rates or any active-world save format.
+--- a/include/galaxy/ColdColonyNeeds.hpp
++++ b/include/galaxy/ColdColonyNeeds.hpp
+@@ -0,0 +1,41 @@
++#pragma once
++// ECON-03c2 — event-driven population-needs accounting for distant colonies.
++// This is a separate, opt-in kernel; do not skip active Simulation::step() with
++// it until every other relevant event (factory, attack, power, etc.) is routed.
++#include "galaxy/MacroNeeds.hpp"
++#include "galaxy/Simulation.hpp"
++#include <cstdint>
++#include <vector>
++
++namespace galaxy::cold_colony {
++struct State {
++    std::uint64_t processed_tick=0;
++    std::uint64_t population=0;
++    ColonyLifeSupport habitat{}; // consumer's REAL local stock
++    ColonyLifeSupport depot{};   // separately stored, REAL stock
++};
++struct Event {
++    enum class Kind { DeliveredFromDepot, PopulationChanged };
++    std::uint64_t tick=0;
++    Kind kind=Kind::DeliveredFromDepot;
++    // For deliveries, all non-negative quantities move out of this cohort's
++    // existing depot; upstream NPC-haul authorization remains the host's job.
++    std::int64_t food_kg=0, water_kg=0, oxygen_kg=0;
++    // Used ONLY by PopulationChanged; never creates an individual NPC record.
++    std::uint64_t new_population=0;
++};
++struct AdvanceResult {
++    std::uint64_t periods=0;
++    std::uint64_t shortage_periods=0;
++    std::uint64_t events=0;
++};
++// Advance arbitrary numbers of logical ticks without a tick/person loop.
++// Events must be in nondecreasing tick order and strictly after processed_tick.
++// All events at a given tick execute BEFORE that tick's needs deadline.
++// Atomic: on any invalid/overflowing event, state remains unchanged.
++// Supports pause/resume: the State fields are the exact checkpoint boundary.
++AdvanceResult advance(State& state, std::uint64_t target_tick,
++                      const std::vector<Event>& events={},
++                      std::uint64_t cooldown_ticks=macro_needs::default_cooldown_ticks,
++                      macro_needs::Ration ration={});
++} // namespace galaxy::cold_colony
+--- a/src/ColdColonyNeeds.cpp
++++ b/src/ColdColonyNeeds.cpp
+@@ -0,0 +1,93 @@
++#include "galaxy/ColdColonyNeeds.hpp"
++#include <algorithm>
++#include <limits>
++#include <stdexcept>
++#include <utility>
++
++namespace galaxy::cold_colony {
++namespace {
++constexpr auto u64max=std::numeric_limits<std::uint64_t>::max();
++constexpr auto i64max=std::numeric_limits<std::int64_t>::max();
++void accumulate(std::uint64_t& count,std::uint64_t delta){
++    if(count>u64max-delta)throw std::overflow_error("cold-colony cycle counter overflow");
++    count+=delta;
++}
++std::uint64_t full_periods(std::int64_t stock,std::uint64_t population,std::uint64_t ration){
++    if(stock<0)throw std::invalid_argument("negative colony stock");
++    if(!population || !ration)return u64max;
++    const auto available=static_cast<std::uint64_t>(stock);
++    if(population>available/ration)return 0;
++    return available/(population*ration);
++}
++void process_window(State& state,std::uint64_t until,
++                    std::uint64_t cooldown,macro_needs::Ration ration,
++                    AdvanceResult& result){
++    const auto due=macro_needs::periods_due(state.processed_tick,until,cooldown);
++    if(due){
++        const auto possible=std::min({
++            full_periods(state.habitat.food_kg,state.population,ration.food_kg),
++            full_periods(state.habitat.water_kg,state.population,ration.water_kg),
++            full_periods(state.habitat.oxygen_kg,state.population,ration.oxygen_kg)});
++        const auto served=std::min(due,possible);
++        const auto shortages=due-served;
++        macro_needs::consume(state.habitat,state.population,due,ration);
++        accumulate(state.habitat.cycles,due);
++        accumulate(state.habitat.shortages,shortages);
++        if(shortages)state.habitat.consecutive_supplied_cycles=0;
++        else accumulate(state.habitat.consecutive_supplied_cycles,due);
++        accumulate(result.periods,due);
++        accumulate(result.shortage_periods,shortages);
++    }
++    state.processed_tick=until;
++}
++void move(std::int64_t& from,std::int64_t& to,std::int64_t amount){
++    if(amount<0 || from<0 || to<0)throw std::invalid_argument("invalid resource delivery");
++    if(from<amount)throw std::invalid_argument("unfunded resource delivery");
++    if(to>i64max-amount)throw std::overflow_error("resource destination overflow");
++    from-=amount;to+=amount;
++}
++void apply_event(State& state,const Event& event){
++    if(event.kind==Event::Kind::DeliveredFromDepot){
++        move(state.depot.food_kg,state.habitat.food_kg,event.food_kg);
++        move(state.depot.water_kg,state.habitat.water_kg,event.water_kg);
++        move(state.depot.oxygen_kg,state.habitat.oxygen_kg,event.oxygen_kg);
++    }else if(event.kind==Event::Kind::PopulationChanged){
++        if(event.food_kg || event.water_kg || event.oxygen_kg)
++            throw std::invalid_argument("population change cannot transfer material");
++        state.population=event.new_population;
++    }else{
++        throw std::invalid_argument("unknown cold colony event");
++    }
++}
++}
++AdvanceResult advance(State& state,std::uint64_t target_tick,
++                      const std::vector<Event>& events,std::uint64_t cooldown,
++                      macro_needs::Ration ration){
++    if(!cooldown || target_tick<state.processed_tick)
++        throw std::invalid_argument("invalid cold-colony time interval");
++    auto previous=state.processed_tick;
++    for(const auto& event:events){
++        if(event.tick<previous || event.tick<=state.processed_tick || event.tick>target_tick)
++            throw std::invalid_argument("cold-colony event outside advancement window or out of order");
++        previous=event.tick;
++    }
++    State next=state; // transactional: no partial mutation on an invalid event
++    AdvanceResult result;
++    std::size_t i=0;
++    while(i<events.size()){
++        const auto at=events[i].tick;
++        // Every incoming event at 'at' occurs before the consumption deadline
++        // at that tick. Process earlier periods as a single mathematical batch.
++        process_window(next,at-1,cooldown,ration,result);
++        do{
++            apply_event(next,events[i]);
++            accumulate(result.events,1);
++            ++i;
++        }while(i<events.size() && events[i].tick==at);
++        process_window(next,at,cooldown,ration,result);
++    }
++    process_window(next,target_tick,cooldown,ration,result);
++    state=std::move(next);
++    return result;
++}
++} // namespace galaxy::cold_colony
+--- a/tests/ECON03c2ColdColonyTests.cpp
++++ b/tests/ECON03c2ColdColonyTests.cpp
+@@ -0,0 +1,134 @@
++#include "galaxy/ColdColonyNeeds.hpp"
++#include <cstdint>
++#include <iostream>
++#include <limits>
++#include <stdexcept>
++#include <string>
++using namespace galaxy;
++using namespace galaxy::cold_colony;
++using ColdEvent=galaxy::cold_colony::Event;
++#define CHECK(expr) do { if(!(expr)) throw std::runtime_error(std::string("ECON03c2 CHECK failed: ")+ #expr+" at "+std::to_string(__LINE__)); }while(0)
++static std::int64_t mass(const ColonyLifeSupport& l){
++    return l.food_kg+l.water_kg+l.oxygen_kg+l.organic_waste_kg+l.wastewater_kg+l.co2_kg;
++}
++static void equal(const State& a,const State& b){
++    CHECK(a.processed_tick==b.processed_tick);
++    CHECK(a.population==b.population);
++    CHECK(a.habitat.food_kg==b.habitat.food_kg);
++    CHECK(a.habitat.water_kg==b.habitat.water_kg);
++    CHECK(a.habitat.oxygen_kg==b.habitat.oxygen_kg);
++    CHECK(a.habitat.organic_waste_kg==b.habitat.organic_waste_kg);
++    CHECK(a.habitat.wastewater_kg==b.habitat.wastewater_kg);
++    CHECK(a.habitat.co2_kg==b.habitat.co2_kg);
++    CHECK(a.habitat.cycles==b.habitat.cycles);
++    CHECK(a.habitat.shortages==b.habitat.shortages);
++    CHECK(a.habitat.consecutive_supplied_cycles==b.habitat.consecutive_supplied_cycles);
++    CHECK(a.depot.food_kg==b.depot.food_kg);
++    CHECK(a.depot.water_kg==b.depot.water_kg);
++    CHECK(a.depot.oxygen_kg==b.depot.oxygen_kg);
++}
++int main(){
++ try {
++    State base;
++    base.population=2;
++    base.depot.food_kg=20; base.depot.water_kg=20; base.depot.oxygen_kg=20;
++    const auto original_mass=mass(base.habitat)+mass(base.depot);
++    const std::vector<ColdEvent> events{
++        {20, ColdEvent::Kind::DeliveredFromDepot, 4, 0, 0},
++        {20, ColdEvent::Kind::DeliveredFromDepot, 0, 4, 4},
++        {40, ColdEvent::Kind::PopulationChanged, 0, 0, 0, 3},
++        {60, ColdEvent::Kind::DeliveredFromDepot, 9, 9, 9}
++    };
++    State one=base;
++    const auto summary=advance(one,100,events);
++    CHECK(summary.events==4 && summary.periods==5 && summary.shortage_periods==1);
++    CHECK(one.habitat.cycles==5 && one.habitat.shortages==1);
++    CHECK(one.habitat.consecutive_supplied_cycles==3);
++    CHECK(one.habitat.food_kg==0 && one.habitat.water_kg==0 && one.habitat.oxygen_kg==0);
++    CHECK(one.habitat.organic_waste_kg==13 && one.habitat.wastewater_kg==13 && one.habitat.co2_kg==13);
++    CHECK(mass(one.habitat)+mass(one.depot)==original_mass);
++    // Independent small-scale oracle: process every tick and compare final
++    // inventory, shortage count, and consecutive-supply statistics exactly.
++    State tickwise=base;
++    std::size_t event_index=0;
++    for(std::uint64_t t=1;t<=100;++t){
++        while(event_index<events.size() && events[event_index].tick==t){
++            const auto& e=events[event_index++];
++            if(e.kind==ColdEvent::Kind::PopulationChanged){
++                tickwise.population=e.new_population;
++            }else{
++                tickwise.depot.food_kg-=e.food_kg;
++                tickwise.depot.water_kg-=e.water_kg;
++                tickwise.depot.oxygen_kg-=e.oxygen_kg;
++                tickwise.habitat.food_kg+=e.food_kg;
++                tickwise.habitat.water_kg+=e.water_kg;
++                tickwise.habitat.oxygen_kg+=e.oxygen_kg;
++            }
++        }
++        if(t%20==0){
++            const auto supplied=macro_needs::consume(tickwise.habitat,tickwise.population).fully_supplied();
++            ++tickwise.habitat.cycles;
++            if(supplied)++tickwise.habitat.consecutive_supplied_cycles;
++            else {tickwise.habitat.consecutive_supplied_cycles=0;++tickwise.habitat.shortages;}
++        }
++        tickwise.processed_tick=t;
++    }
++    equal(one,tickwise);
++
++    // Checkpoint/restart equivalence: an arbitrary split cannot alter results.
++    State split=base;
++    CHECK(advance(split,40,{events.begin(),events.begin()+3}).periods==2);
++    const State checkpoint=split;
++    CHECK(advance(split,100,{events.begin()+3,events.end()}).periods==3);
++    equal(one,split);
++    State resumed=checkpoint;
++    advance(resumed,100,{events.begin()+3,events.end()});
++    equal(one,resumed);
++    CHECK(advance(one,100).periods==0); // idempotent at same tick
++
++    // Large numbers: 1.3T people, a trillion ticks, zero individual timers.
++    State huge;
++    huge.population=1300000000000ULL;
++    huge.habitat.food_kg=5200000000000LL;
++    huge.habitat.water_kg=5200000000000LL;
++    huge.habitat.oxygen_kg=5200000000000LL;
++    const auto massive_mass=mass(huge.habitat);
++    const auto vast=advance(huge,1000000000000ULL);
++    CHECK(vast.periods==50000000000ULL);
++    CHECK(vast.shortage_periods==49999999996ULL);
++    CHECK(huge.habitat.cycles==50000000000ULL);
++    CHECK(huge.habitat.food_kg==0 && huge.habitat.organic_waste_kg==5200000000000LL);
++    CHECK(mass(huge.habitat)==massive_mass);
++
++    // Invalid partial/mixed deliveries must roll back the WHOLE advancement.
++    const State pristine=checkpoint;
++    bool rejected=false;
++    try{(void)advance(split,120,{{120,ColdEvent::Kind::DeliveredFromDepot,1,999,1}});}
++    catch(const std::invalid_argument&){rejected=true;}
++    CHECK(rejected);equal(split,one); // current split already at tick 100
++    State before_failure=pristine;
++    rejected=false;
++    try{(void)advance(before_failure,120,{{60,ColdEvent::Kind::DeliveredFromDepot,1,999,1}});}
++    catch(const std::invalid_argument&){rejected=true;}
++    CHECK(rejected);equal(before_failure,pristine);
++    rejected=false;
++    try{(void)advance(before_failure,120,{{80,ColdEvent::Kind::PopulationChanged,1,0,0,7}});}
++    catch(const std::invalid_argument&){rejected=true;}
++    CHECK(rejected);equal(before_failure,pristine);
++    rejected=false;
++    try{(void)advance(before_failure,120,{{80,ColdEvent::Kind::PopulationChanged},{70,ColdEvent::Kind::PopulationChanged}});}
++    catch(const std::invalid_argument&){rejected=true;}
++    CHECK(rejected);equal(before_failure,pristine);
++
++    // Deadline coinciding with population change uses new population.
++    State changed; changed.population=1;
++    changed.habitat.food_kg=2;changed.habitat.water_kg=2;changed.habitat.oxygen_kg=2;
++    auto change=advance(changed,20,{{20,ColdEvent::Kind::PopulationChanged,0,0,0,3}});
++    CHECK(change.periods==1 && change.shortage_periods==1);
++    CHECK(changed.habitat.food_kg==0 && changed.habitat.shortages==1);
++
++    std::cout << "PASS ECON03c2 cold-colony time batching; same-tick deadlines; "
++                 "depot conservation; 1.3T cohort; 1T ticks; restart-equivalence; rollback\n";
++    return 0;
++ } catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}
++}

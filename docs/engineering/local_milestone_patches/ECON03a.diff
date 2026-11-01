@@ -1,0 +1,528 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -103,6 +103,14 @@
+         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/B53InteractiveEndToEndTests.py
+         --executable $<TARGET_FILE:galaxy_interactive_host>
+         --relay ${CMAKE_CURRENT_SOURCE_DIR}/live/interactive_relay.py)
++endif()
++
++# ECON-03a resource-only default; market code remains opt-in historical fixture.
++if(BUILD_TESTING AND Python3_Interpreter_FOUND)
++    add_test(NAME galaxy_econ03a_resource_only_host
++      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/ECON03aResourceOnlyHostTests.py
++      --executable $<TARGET_FILE:galaxy_interactive_host>
++      --relay ${CMAKE_CURRENT_SOURCE_DIR}/live/interactive_relay.py)
+ endif()
+ 
+ # B5.4/B6.0 connected geography, route policy, directional/probe scan and archive.
+--- /dev/null
++++ b/docs/design/RESOURCE_ECONOMY_INVITE_ONLY_AND_FUTURE_MMO_2026-11-01.md
+@@ -0,0 +1,32 @@
++# Single Galaxy: resource economy, private worlds, and optional future MMO foundations
++
++**Decision date:** 2026-11-01  
++**Status:** approved game direction. Implementation maturity is tracked separately.
++
++## Product rules
++
++1. **No currency.** The original "chits" / "guys" terminology and any proposed premium token, wages, market bids, or wallet balance are retired from the playable game economy. Legacy test fixtures are not game rules.
++2. **Finite physical resources.** Mining, manufacturing, life support, utilities, repairs, and construction use real inventories, throughput, available NPC labor, and explicit conversion recipes. Material does not materialize because somebody worked a shift.
++3. **NPCs contribute without salaries.** NPCs still consume food, water, oxygen, housing, healthcare, rest, and other supplies. Labor capacity, proficiency, morale, trust, migration, and staffing determine effectiveness. There are no salaries or payroll accounts.
++4. **Solo-first, invite-only multiplayer.** A player does not have strangers placed into their world. No public matchmaking or random seamless encounters. Invitations/acceptance are explicit, and the host controls guest permissions.
++5. **No automatic shared market.** Resource exchange in a *future invited cooperative session* is a separate, explicitly authorized inventory transfer, not a globally tradeable currency or auction house. No global player resource marketplace is assumed.
++6. **No gameplay cash payout.** The proposed investment-funded player cash/prize scheme is not part of the game roadmap. Do not add monetary reward hooks into core simulation.
++7. **Existing colonies remain persistent while a player leaves them**, subject to their actual resources, viability and delegated NPC administration; absence alone must not mint free resources or punish the owner.
++
++## Implementation boundaries
++
++- **Simulation kernel:** authoritative physical inventory, NPC labor, construction, and events, independent of browser or transport. Determinism and persistence must survive replay and process restart.
++- **Storage boundary:** SQLite snapshot, effect/receipt journal, and consistency checks define authoritative state. No browser projection or editable local save earns additional resources simply by claiming it did.
++- **Single-player / co-op host:** the currently planned runtime owns the world. Guests submit bounded commands with explicit host-scoped permissions. Disconnecting a guest cannot roll back the owner's legitimate progression or multiply output.
++- **Client/view boundary:** rendering and networking are adapters. They must not directly edit committed world state. The current Canvas/debug UI is not proof of polished 3D play.
++- **Future shared-world server (optional, not approved for implementation):** would need world partitioning, cross-region consistency, authoritative identity/session management, durable trade/transfer semantics, operations at scale, and substantially different abuse controls. The game kernel should not assume "one browser equals the only possible client," but we must not pre-build full MMO infrastructure for the alpha.
++
++## Development sequence
++
++1. Migrate active game paths to a resource-only economy; retain old money formats *read-only or in test fixtures* while compatibility is assessed.
++2. Make colony production, NPC logistics, life support, storage, and shortages comprehensible and testable. Existing d18c/d18d factory delivery/staff coordination remains open.
++3. Build the small fly/mine/haul/dock/construct/save visual vertical slice, independently of the simulation test suite.
++4. Add host-owned invitations, guest actions and permission tests only after solo persistence is reliable. No uninvited joins.
++5. Reassess MMO scale only if a working game and community justify it.
++
++No wages, no chits, no random multiplayer. These are product rules, not a poll on future monetization.
+--- /dev/null
++++ b/docs/engineering/ECON03a_RESOURCE_ONLY_HOST_2026-11-01.md
+@@ -0,0 +1,35 @@
++# ECON-03a — Resource-only interactive world boundary
++
++**Baseline:** ECON-02B2d18d Shared NPC Duties source archive.  
++**Scope:** remove active station-market issuance/trading and visible financial controls from normal game host while retaining archived pre-change fixture tests.
++
++## Code
++
++- `Simulation::spawn_ship_docked(..., legacy_wallet)` allows an explicitly resource-only initial-world spawn without an even-zero wallet entry. Existing B5/B6 test callers remain backward compatible.
++- `build_lumen_reach(..., legacy_station_markets)` makes the old seed-market setup opt-in to this caller; extra systems remain discoverable without minted currency reserves.
++- `galaxy_interactive_host` defaults to no markets and no wallet. It declines `SELL` even from stdin. `--legacy-market-fixture` only works in builds that compile `SG_QA_AUTOMATION`, preserving historical regression worlds without silently reviving the commercial market in production.
++- The local relay exposes the legacy fixture flag only for explicit developer tests. Default `/session` omits `sell` capabilities, rejects `sell` requests, and preserves token/origin checks and resource movement commands.
++- The browser hides market/sale widgets unless `/session` identifies a historical testing fixture. The old wire frame parser and archived recordings can still be inspected.
++- Existing archived B5/B6 trading regression scripts explicitly select the legacy fixture. The player-facing resource-only rules are documented in `docs/design/RESOURCE_ECONOMY_INVITE_ONLY_AND_FUTURE_MMO_2026-11-01.md`.
++
++## Important limitations
++
++- `SellOre`, `StationMarket`, `wallets_`, credit-journal readers, and old wire records remain in the kernel/persistence layer for archived compatibility and historical tests. Do **not** interpret this milestone as a whole-kernel financial-code deletion.
++- The established `galaxy_colony_live_host` was already resource-driven with no seeded stations/markets; this milestone primarily removes the old station-demo defaults.
++- A new invite-only multiplayer transport, invitation UI, 3D engine, and fully integrated NPC deliveries are **not** implemented here.
++- No production Windows build or full historical CTest suite acceptance is claimed.
++
++## Verification evidence
++
++- CMake/Ninja built `galaxy_interactive_host`, `galaxy_colony_live_host`, and four relevant native regression executables.
++- `ECON03aResourceOnlyHostTests.py`: direct default game and archived fixture, authenticated HTTP, forged token rejection, default no-sell API and hidden UI.
++- CTest focused run: 7/7 passed: kernel, B5.2 station, B5.3 logistics and live, resource-only, B6.2c projection and B6.4 region.
++- Node suite `node --test tests/*.js`: 93/93 passed.
++- `B53InteractiveEndToEndTests.py` archived fixture 2/2 passes.
++- Full all-target build attempt was interrupted by its execution window during compilation (52/188 build steps logged); this is **not** a full build success claim.
++
++## Next
++
++1. Isolate old market schema/credit journal in historical adapters without corrupting legacy saves. Define an explicit migration path rather than erasing users' data.
++2. Finish physical NPC delivery to generic factory machine ports and reconcile aggregate labor accounting.
++3. Continue visual/playability vertical-slice acceptance; do not substitute protocol or backend tests for actual game feel.
+--- a/include/galaxy/Region.hpp
++++ b/include/galaxy/Region.hpp
+@@ -20,5 +20,6 @@
+ // the B6.3 home/frontier gate and initial trade journey.
+ RegionState build_lumen_reach(Simulation& world,EntityId station_home,
+     EntityId station_frontier,EntityId rock_home,EntityId rock_frontier,
+-    EntityId gate_home_to_frontier,EntityId gate_frontier_to_home);
++    EntityId gate_home_to_frontier,EntityId gate_frontier_to_home,
++    bool legacy_station_markets=true);
+ } // namespace galaxy
+--- a/include/galaxy/Simulation.hpp
++++ b/include/galaxy/Simulation.hpp
+@@ -568,7 +568,8 @@
+     // Explicit game-start factory. Owner receives a bay ONLY at this specific station.
+     // World setup must finish before a PersistentWorld is created.
+     EntityId spawn_ship_docked(PlayerId owner, EntityId station_id,
+-                               std::int64_t ship_capacity, std::int64_t hangar_capacity);
++                               std::int64_t ship_capacity, std::int64_t hangar_capacity,
++                               bool legacy_wallet=true);
+     // Initial-world only; station purchases ore at a fixed bid from finite reserves.
+     void configure_market(EntityId station_id, std::int64_t bid, std::int64_t reserve);
+     const StationHangar* hangar(EntityId station_id, PlayerId owner) const;
+--- a/live/interactive_relay.py
++++ b/live/interactive_relay.py
+@@ -40,7 +40,7 @@
+ MAX_FRAMES=4096
+ 
+ class SharedRuntime:
+-    def __init__(self,exe,db,tick_ms,max_ticks,qa_mode=False,colony_mode=False):
++    def __init__(self,exe,db,tick_ms,max_ticks,qa_mode=False,colony_mode=False,legacy_market_fixture=False):
+         self.cv=threading.Condition()
+         self.frames=[]
+         self.survey_events=[]
+@@ -58,7 +58,7 @@
+         # The relay is local-only and QA commands are disabled unless the
+         # explicit developer CLI switch is present. Not a multiplayer authority.
+         env['SINGLE_GALAXY_QA_MODE']='1' if qa_mode else '0'
+-        self.proc=subprocess.Popen([str(exe),str(db),str(tick_ms),str(max_ticks)]+(['--relay-owned'] if colony_mode else []),
++        self.proc=subprocess.Popen([str(exe),str(db),str(tick_ms),str(max_ticks)]+(['--relay-owned'] if colony_mode else ['--legacy-market-fixture'] if legacy_market_fixture else []),
+             env=env,
+             stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0)
+         threading.Thread(target=self._read,daemon=True).start()
+@@ -222,7 +222,7 @@
+             self._send(200,b'B4 interactive relay alive\n','text/plain');return
+         if url.path=='/session':
+             self._json(200,{'token':self.server.runtime.token,'qa_mode':self.server.qa_mode,'colony_mode':self.server.colony_mode,'tick_ms':self.server.tick_ms,
+-                'max_ticks':self.server.max_ticks,'commands':(['thrust','colonyScan','colonyMine','colonyRefine','colonyFabricate','colonyBuild','colonyMineTarget','colonyProcess','colonyFabricateMaterial','colonyPlant','colonyHarvest','colonyRecycleWater','colonyRecycleCompost','colonyOxygen','colonyLifeWater','colonyFarmBuild','colonyFarmStaff','colonyFarmStock','colonyHabBuild','colonyHabResidents','colonyHabStock','colonyUtilityBuild','colonyUtilityRepair','colonyUtilitySpares','colonyUtilityStaff','colonyUtilityAuto','colonyCommunityBuild','colonyCommunityStaff','colonyCommunityStock','colonyClinicBuild','colonyClinicStaff','colonyClinicStock','colonyReclaimerBuild','colonyWaterworksBuild','colonyWaterworksFeed','colonyPolicySet','colonyPolicyStaff'] if self.server.colony_mode else ['thrust','mine','stop','undock','dock','unload','load','sell','travelA','travelB','travelGate','travelHop','jump','jumpHop','directional','probeDeploy','probeScan','probeRecover','surveyArchive','surveyHistory','surveyPublish','planRoute'])});return
++                'max_ticks':self.server.max_ticks,'legacy_market_fixture':self.server.legacy_market_fixture,'commands':(['thrust','colonyScan','colonyMine','colonyRefine','colonyFabricate','colonyBuild','colonyMineTarget','colonyProcess','colonyFabricateMaterial','colonyPlant','colonyHarvest','colonyRecycleWater','colonyRecycleCompost','colonyOxygen','colonyLifeWater','colonyFarmBuild','colonyFarmStaff','colonyFarmStock','colonyHabBuild','colonyHabResidents','colonyHabStock','colonyUtilityBuild','colonyUtilityRepair','colonyUtilitySpares','colonyUtilityStaff','colonyUtilityAuto','colonyCommunityBuild','colonyCommunityStaff','colonyCommunityStock','colonyClinicBuild','colonyClinicStaff','colonyClinicStock','colonyReclaimerBuild','colonyWaterworksBuild','colonyWaterworksFeed','colonyPolicySet','colonyPolicyStaff'] if self.server.colony_mode else ['thrust','mine','stop','undock','dock','unload','load','travelA','travelB','travelGate','travelHop','jump','jumpHop','directional','probeDeploy','probeScan','probeRecover','surveyArchive','surveyHistory','surveyPublish','planRoute']+(['sell'] if self.server.legacy_market_fixture else []))});return
+         if url.path in STATIC:
+             file=ROOT/STATIC[url.path]
+             self._send(200,file.read_bytes(),MIME[file.suffix]);return
+@@ -617,7 +617,8 @@
+             elif action=='unload' and set(doc)=={'token','action'}:
+                 command='UNLOAD|1000000000'
+             elif action in ('load','sell','travelA','travelB','travelGate','travelHop','jump','jumpHop','probeDeploy','probeScan',
+-                            'probeRecover','surveyArchive','surveyHistory','surveyPublish') and set(doc)=={'token','action'}:
++                            'probeRecover','surveyArchive','surveyHistory','surveyPublish') and set(doc)=={'token','action'} and \
++                    (action!='sell' or self.server.legacy_market_fixture):
+                 command={'load':'LOAD','sell':'SELL','travelA':'TRAVEL_A','travelB':'TRAVEL_B','travelGate':'TRAVEL_GATE','travelHop':'TRAVEL_HOP','jump':'JUMP','jumpHop':'JUMP_HOP',
+                          'probeDeploy':'PROBE_DEPLOY','probeScan':'PROBE_SCAN',
+                          'probeRecover':'PROBE_RECOVER','surveyArchive':'SURVEY_ARCHIVE','surveyHistory':'SURVEY_HISTORY',
+@@ -653,6 +654,7 @@
+     p.add_argument('--colony',action='store_true',help='Colony-first local client mode, no seeded infrastructure')
+     p.add_argument('--save',type=pathlib.Path,help='Optional persistent SQLite save for colony mode; developer-controlled path')
+     p.add_argument('--qa-test',action='store_true',help='EXPLICIT local testing mode for QA route automation and gate outage injection; never for production')
++    p.add_argument('--legacy-market-fixture',action='store_true',help='Archived B5/B6 market regression ONLY; not a game option')
+     opt=p.parse_args(args)
+     if not opt.host_exe.is_file():p.error('Host binary does not exist')
+     if opt.qa_test and opt.colony:p.error('QA legacy-gate test mode and colony game mode are separate')
+@@ -663,7 +665,8 @@
+     with tempfile.TemporaryDirectory(prefix='galaxy-interactive-') as tmp:
+         save=opt.save.resolve() if opt.save else pathlib.Path(tmp)/'world.sqlite'
+         save.parent.mkdir(parents=True,exist_ok=True)
+-        rt=SharedRuntime(opt.host_exe.resolve(),save,opt.tick_ms,opt.max_ticks,opt.qa_test,opt.colony)
++        legacy_fixture=bool(opt.legacy_market_fixture or opt.qa_test) and not opt.colony
++        rt=SharedRuntime(opt.host_exe.resolve(),save,opt.tick_ms,opt.max_ticks,opt.qa_test,opt.colony,legacy_fixture)
+         previous_sigterm=signal.getsignal(signal.SIGTERM)
+         def terminate(signum,frame):
+             # Unlike the default SIGTERM action, unwinding through finally
+@@ -672,7 +675,7 @@
+         signal.signal(signal.SIGTERM,terminate)
+         try:
+             with Server(('127.0.0.1',opt.port),Handler) as server:
+-                server.runtime=rt;server.tick_ms=opt.tick_ms;server.max_ticks=opt.max_ticks;server.qa_mode=opt.qa_test;server.colony_mode=opt.colony
++                server.runtime=rt;server.tick_ms=opt.tick_ms;server.max_ticks=opt.max_ticks;server.qa_mode=opt.qa_test;server.colony_mode=opt.colony;server.legacy_market_fixture=legacy_fixture
+                 print('Interactive demo: http://127.0.0.1:%d/viewer/interactive.html'%opt.port,flush=True)
+                 server.serve_forever(poll_interval=.1)
+         except KeyboardInterrupt:pass
+--- a/src/Region.cpp
++++ b/src/Region.cpp
+@@ -24,7 +24,8 @@
+     return routing;
+ }
+ RegionState build_lumen_reach(Simulation& world,EntityId home,EntityId frontier,
+-    EntityId rock_home,EntityId rock_frontier,EntityId gate12,EntityId gate21) {
++    EntityId rock_home,EntityId rock_frontier,EntityId gate12,EntityId gate21,
++    bool legacy_station_markets) {
+     RegionState result;
+     for(auto sys:std::array<SystemDescriptor,7>{{
+         {1,"Haven",85,Sovereignty::NPC},
+@@ -41,7 +42,10 @@
+         world.add_system(sys);
+         result.stations[sys]=world.add_station_in_system(sys,{24000,-12000});
+         result.asteroids[sys]=world.add_asteroid_in_system(sys,{25500,-11200},90+int(sys)*20);
+-        world.configure_market(result.stations[sys],int(sys)+3,1200);
++        // Historical station-trading fixtures retain their archived markets.
++        // Current resource-only worlds do not mint a financial reserve.
++        if(legacy_station_markets)
++            world.configure_market(result.stations[sys],int(sys)+3,1200);
+     }
+     // Existing B6.3 first two survey catalogs are stable for regression.
+     result.map.add_site(1,{101,SiteKind::Star,{30000,30000},"Haven primary",true,false,0});
+--- a/src/Simulation.cpp
++++ b/src/Simulation.cpp
+@@ -817,7 +817,8 @@
+ }
+ 
+ EntityId Simulation::spawn_ship_docked(PlayerId owner, EntityId station_id,
+-                                       std::int64_t ship_capacity, std::int64_t hangar_capacity) {
++                                       std::int64_t ship_capacity, std::int64_t hangar_capacity,
++                                       bool legacy_wallet) {
+     if (tick_ != 0 || !submitted_ids_.empty())
+         throw std::invalid_argument("docked spawning is initial-world setup only");
+     const auto* station = find(station_id);
+@@ -838,7 +839,7 @@
+     entity.dock_station = station_id;
+     const auto ship = add_entity(entity);
+     if (existing == hangars_.end()) hangars_.emplace(key, StationHangar{0, hangar_capacity});
+-    wallets_.emplace(owner,0);
++    if(legacy_wallet) wallets_.emplace(owner,0); // old wire/save fixture only
+     snapshot_version_ = std::max(snapshot_version_, 3);
+     return ship;
+ }
+--- a/src/interactive_host.cpp
++++ b/src/interactive_host.cpp
+@@ -151,8 +151,8 @@
+     if(!std::cout) throw std::runtime_error("stream is no longer writable");
+ }
+ int main(int argc,char** argv) {
+-    if(argc<3||argc>4) {
+-        std::cerr<<"Usage: galaxy_interactive_host FRESH_SAVE_PATH TICK_MS [MAX_TICKS]\n";
++    if(argc<3||argc>5) {
++        std::cerr<<"Usage: galaxy_interactive_host FRESH_SAVE_PATH TICK_MS [MAX_TICKS] [--legacy-market-fixture]\n";
+         return 2;
+     }
+     try {
+@@ -164,13 +164,24 @@
+         const auto ms=std::stoul(ms_s);
+         if(ms<20||ms>5000) throw std::invalid_argument("period must be 20..5000 ms");
+         std::uint64_t limit=600;
+-        if(argc==4) {
++        if(argc>=4) {
+             const std::string ticks_s=argv[3];
+             if(ticks_s.empty()||ticks_s.find_first_not_of("0123456789")!=std::string::npos)
+                 throw std::invalid_argument("invalid max ticks");
+             limit=std::stoull(ticks_s);
+             if(limit<5||limit>1200) throw std::invalid_argument("max ticks must be 5..1200");
+         }
++        // Opt-in only for archived B5/B6 trading test fixtures.
++        // This flag is compiled out for production releases. It exists only
++        // to verify archived pre-resource-economy worlds and wire recordings.
++#ifdef SG_QA_AUTOMATION
++        const bool legacy_market_fixture=argc==5 &&
++            std::string(argv[4])=="--legacy-market-fixture";
++#else
++        const bool legacy_market_fixture=false;
++#endif
++        if(argc==5 && !legacy_market_fixture)
++            throw std::invalid_argument("unknown demo mode");
+         const bool qa_mode=[] {
+ #ifdef SG_QA_AUTOMATION
+             const auto* env=std::getenv("SINGLE_GALAXY_QA_MODE");
+@@ -185,19 +196,22 @@
+         Simulation initial(0xB44);
+         initial.add_system(2);
+         const EntityId station=initial.add_station({0,0});
+-        const EntityId ship=initial.spawn_ship_docked(7,station,20,100);
++        const EntityId ship=initial.spawn_ship_docked(7,station,20,100,legacy_market_fixture);
+         const EntityId rock=initial.add_asteroid({2500,700},40);
+         const EntityId station_b=initial.add_station({12000,7000});
+         const EntityId gate_a=initial.add_gate(1,{1500,0},2,{5000,0});
+         const EntityId station_c=initial.add_station_in_system(2,{17000,0});
+         const EntityId gate_b=initial.add_gate(2,{17000,0},1,{-12000,0});
+         const EntityId rock_b=initial.add_asteroid_in_system(2,{18000,800},25);
+-        initial.configure_market(station,2,1000);
+-        initial.configure_market(station_b,5,1000);
+-        initial.configure_market(station_c,7,1000);
++        if(legacy_market_fixture) {
++            initial.configure_market(station,2,1000);
++            initial.configure_market(station_b,5,1000);
++            initial.configure_market(station_c,7,1000);
++        }
+         // This catalog registers real stations, asteroids, sensor sites and 18
+         // directed gate entities spanning 7 small original systems.
+-        RegionState region=build_lumen_reach(initial,station,station_c,rock,rock_b,gate_a,gate_b);
++        RegionState region=build_lumen_reach(initial,station,station_c,rock,rock_b,gate_a,gate_b,
++            legacy_market_fixture);
+         // Starter NPC-controlled / established gates are staffed and stocked at
+         // world creation. These are explicit demo fixtures, not free recurring
+         // resources or autonomous NPC workers.
+@@ -372,14 +386,20 @@
+                         std::llabs(self->position.x-a->position.x))?station_b:station;
+                     (void)remote;
+                 }
+-                else if(in.kind==Input::Kind::Unload || in.kind==Input::Kind::Load || in.kind==Input::Kind::Sell){
++                else if(in.kind==Input::Kind::Unload || in.kind==Input::Kind::Load ||
++                        (legacy_market_fixture && in.kind==Input::Kind::Sell)){
+                     c.action=in.kind==Input::Kind::Unload ? Action::UnloadOre :
+                         in.kind==Input::Kind::Load ? Action::LoadOre : Action::SellOre;
+                     const auto* self=world.world().find(ship);
+                     c.target=self?self->dock_station:station;
+                     c.amount=in.kind==Input::Kind::Unload?in.amount:1000000000LL;
+                 }
+-                else {c.action=Action::StopMining;c.target=0;}
++                else if(in.kind==Input::Kind::Sell) {
++                    // Defense in depth: resource-only worlds never turn a cargo
++                    // transfer into currency, even if raw stdin sends SELL.
++                    std::cerr<<"ECON03A REJECT: trading disabled in resource-only game\n";
++                    continue;
++                } else {c.action=Action::StopMining;c.target=0;}
+                 if(!world.submit(c)) throw std::runtime_error("host-generated command rejected");
+             }
+             // QA automation still uses the same server-authorized undock,
+--- a/tests/B53InteractiveEndToEndTests.py
++++ b/tests/B53InteractiveEndToEndTests.py
+@@ -71,7 +71,7 @@
+ def direct(exe,save_recording=None):
+     with tempfile.TemporaryDirectory(prefix='b53-e2e-') as tmp:
+         db=pathlib.Path(tmp)/'world.sqlite'
+-        proc=subprocess.Popen([str(exe),str(db),'40','125'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0)
++        proc=subprocess.Popen([str(exe),str(db),'40','125','--legacy-market-fixture'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0)
+         frames=Frames(proc)
+         def entity():return frames.entities.get(2,[])
+         def dock(id,state):return frames.docks.get(2,[])[:4]==['Q','2',str(state),str(id)]
+@@ -106,7 +106,7 @@
+     with closing(socket.socket()) as sock:
+         sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
+     base=f'http://127.0.0.1:{port}'
+-    proc=subprocess.Popen([sys.executable,str(relay_path),'--host-exe',str(exe),'--port',str(port),'--tick-ms','40','--max-ticks','70'],stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
++    proc=subprocess.Popen([sys.executable,str(relay_path),'--host-exe',str(exe),'--port',str(port),'--tick-ms','40','--max-ticks','70','--legacy-market-fixture'],stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+     try:
+         for _ in range(90):
+             try:
+--- a/tests/B62cLiveJumpTests.py
++++ b/tests/B62cLiveJumpTests.py
+@@ -24,7 +24,7 @@
+                   18:'SURVEY_ARCHIVE',19:'PROBE_RECOVER',
+                   21:'DOCK',25:'UNLOAD|20',27:'SELL',30:'UNDOCK',34:'JUMP'}
+         with open(log,'wb') as outf,open(errors,'wb') as errf:
+-            p=subprocess.Popen([str(executable),str(db),'50','115'],
++            p=subprocess.Popen([str(executable),str(db),'50','115','--legacy-market-fixture'],
+                                stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=errf,bufsize=0)
+             current_header=None
+             try:
+--- /dev/null
++++ b/tests/ECON03aResourceOnlyHostTests.py
+@@ -0,0 +1,102 @@
++#!/usr/bin/env python3
++"""ECON-03a: resource-only game startup has no currency or sell capability.
++
++These tests deliberately preserve the archived opt-in financial fixture for
++old save/wire compatibility; that fixture is not the current game economy.
++"""
++import argparse
++import json
++import pathlib
++import socket
++import subprocess
++import sys
++import tempfile
++import time
++import urllib.error
++import urllib.request
++
++
++def check(ok, why):
++    if not ok:
++        raise AssertionError(why)
++
++
++def direct(exe, legacy=False):
++    with tempfile.TemporaryDirectory(prefix='sg-econ03a-') as folder:
++        db=pathlib.Path(folder)/'world.sqlite'
++        command=[str(exe),str(db),'25','8']
++        if legacy:
++            command+=['--legacy-market-fixture']
++        result=subprocess.run(command,input=b'SELL\n',stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=12)
++        check(result.returncode==0,'host failed '+result.stderr.decode(errors='replace'))
++        frame=result.stdout.decode('ascii')
++        check(frame.startswith('SGVIEW|1|') and '\nEND\n' in frame,'missing canonical saved world')
++        if legacy:
++            check('M|1|0|1000|2' in frame,'archived market fixture missing')
++        else:
++            check(not any(line.startswith(('W|','M|')) for line in frame.splitlines()),
++                  'resource-only host sent financial accounts or markets')
++            check(b'ECON03A REJECT' in result.stderr,'raw sell command was not rejected')
++        check(db.stat().st_size>1024,'authoritative SQLite save not created')
++
++
++def get(base,path):
++    with urllib.request.urlopen(base+path,timeout=3) as response:
++        return response.read()
++
++
++def post(base,doc):
++    req=urllib.request.Request(base+'/command',data=json.dumps(doc).encode('utf8'),
++        headers={'Origin':base,'Content-Type':'application/json'},method='POST')
++    try:
++        with urllib.request.urlopen(req,timeout=3) as response:
++            return response.status
++    except urllib.error.HTTPError as ex:
++        ex.read()
++        return ex.code
++
++
++def relay(exe,relay_path):
++    with socket.socket() as sock:
++        sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
++    base=f'http://127.0.0.1:{port}'
++    process=subprocess.Popen([sys.executable,str(relay_path),'--host-exe',str(exe),
++        '--port',str(port),'--tick-ms','30','--max-ticks','55'],
++        stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
++    try:
++        for _ in range(80):
++            try:
++                if b'alive' in get(base,'/healthz'):
++                    break
++            except (urllib.error.URLError,ConnectionError):
++                time.sleep(.04)
++        else:
++            raise AssertionError('relay did not start')
++        session=json.loads(get(base,'/session'))
++        check(session['legacy_market_fixture'] is False,'legacy fixture enabled by default')
++        check('sell' not in session['commands'],'sell capability advertised')
++        check({'load','unload','mine'}.issubset(session['commands']),'physical resources disabled')
++        html=get(base,'/viewer/interactive.html')
++        check(b'id="legacyEconomy" hidden' in html and b'id="legacySell" hidden' in html,
++              'money UI not hidden by default')
++        check(post(base,{'token':session['token'],'action':'sell'})==400,'sell allowed in resource-only game')
++        check(post(base,{'token':'invalid','action':'load'})==403,'forged token accepted')
++        check(post(base,{'token':session['token'],'action':'load'})==202,'legitimate cargo request rejected')
++        check(post(base,{'token':session['token'],'action':'unload'})==202,'legitimate cargo request rejected')
++        print('PASS ECON03a: default resource-only world, sell disabled, physical transfers and auth intact')
++    finally:
++        process.terminate()
++        try:
++            process.communicate(timeout=5)
++        except subprocess.TimeoutExpired:
++            process.kill();process.communicate()
++
++
++if __name__=='__main__':
++    parser=argparse.ArgumentParser()
++    parser.add_argument('--executable',required=True,type=pathlib.Path)
++    parser.add_argument('--relay',required=True,type=pathlib.Path)
++    args=parser.parse_args()
++    direct(args.executable)
++    direct(args.executable,True)
++    relay(args.executable,args.relay)
+--- a/viewer/interactive.html
++++ b/viewer/interactive.html
+@@ -44,10 +44,10 @@
+ <div class="legend"><span><i class="dot ship"></i>Ship</span><span><i class="dot rock"></i>Asteroid</span><span><i class="dot station"></i>Station</span><span style="margin-left:auto">Position unit: mm · Debug scale</span></div>
+ <div class="controls"><div class="controller"><button class="primary" id="play">▶ Play</button><button id="back" title="Previous tick">◀</button><button id="next" title="Next tick">▶|</button></div><input type="range" id="progress" min="0" max="10" step="1" value="0" aria-label="Simulation tick"><span id="indexText" class="muted" style="white-space:nowrap">0 / 0</span><select id="speed" aria-label="Replay speed"><option value="0.5">0.5×</option><option selected value="1">1×</option><option value="2">2×</option><option value="4">4×</option></select></div>
+ </div>
+-<div class="help">Begin docked at Station A. Undock, mine, dock and unload; load the ore back into your hold, undock and select Travel to Station B. Wait until stopped within docking range, dock and unload or sell. Station B has a different ore bid. All transfers and credits are committed in C++/SQLite.</div>
++<div class="help">Begin docked at Station A. Undock, mine, dock and unload; load the ore back into your hold, undock and select Travel to Station B. Wait until stopped within docking range, dock and unload. Resources stay in local inventories and transfers are committed in C++/SQLite. There is no player currency.</div>
+ </section>
+ <aside class="side">
+-<div class="card pad" id="interactiveControls"><h2>Live ship controls</h2><div class="controls" style="padding:0;margin-bottom:8px"><button id="undock" class="primary">Undock</button><button id="dock">Request dock</button><button id="unload">Unload ore</button><button id="load">Load ore</button><button id="sell">Sell local ore</button></div><div class="controls" style="padding:0;margin-bottom:8px"><button id="mine4" class="primary">⛏ Mine 4/tick</button><button id="stopMine">Stop mining</button></div><div class="controls" style="padding:0;gap:5px"><button id="left">← Thrust</button><button id="right">→ Thrust</button><button id="up">↑ Thrust</button><button id="down">↓ Thrust</button><button id="drift">Drift</button></div><div class="controls" style="padding:0;gap:5px;margin-top:8px"><button id="travelA">Assist to Station A</button><button id="travelGate">Assist to Gate</button><button id="jump" class="primary">Jump Gate</button><button id="travelB">Assist to Station B</button></div><button style="margin-top:12px" id="reconnect">Reconnect viewer</button><div class="help" id="commandMessage" aria-live="polite">Opening the local session…</div></div><div class="card pad" style="display:none"><h2>Scenario</h2><select id="scenario" style="width:100%"><option value="ten">10 asteroids · 10 ore each</option><option value="hold">Automatic mining · hold 10</option><option value="motion">Ship movement · inertia</option></select><div class="help" id="description">Ten finite asteroids are removed as they are mined.</div><label class="filebutton" for="import" style="display:block;text-align:center;margin-top:15px">Open other .sgview recording</label><input id="import" type="file" accept=".sgview,.txt,text/plain"></div>
++<div class="card pad" id="interactiveControls"><h2>Live ship controls</h2><div class="controls" style="padding:0;margin-bottom:8px"><button id="undock" class="primary">Undock</button><button id="dock">Request dock</button><button id="unload">Unload ore</button><button id="load">Load ore</button><span id="legacySell" hidden><button id="sell">Sell local ore (legacy fixture)</button></span></div><div class="controls" style="padding:0;margin-bottom:8px"><button id="mine4" class="primary">⛏ Mine 4/tick</button><button id="stopMine">Stop mining</button></div><div class="controls" style="padding:0;gap:5px"><button id="left">← Thrust</button><button id="right">→ Thrust</button><button id="up">↑ Thrust</button><button id="down">↓ Thrust</button><button id="drift">Drift</button></div><div class="controls" style="padding:0;gap:5px;margin-top:8px"><button id="travelA">Assist to Station A</button><button id="travelGate">Assist to Gate</button><button id="jump" class="primary">Jump Gate</button><button id="travelB">Assist to Station B</button></div><button style="margin-top:12px" id="reconnect">Reconnect viewer</button><div class="help" id="commandMessage" aria-live="polite">Opening the local session…</div></div><div class="card pad" style="display:none"><h2>Scenario</h2><select id="scenario" style="width:100%"><option value="ten">10 asteroids · 10 ore each</option><option value="hold">Automatic mining · hold 10</option><option value="motion">Ship movement · inertia</option></select><div class="help" id="description">Ten finite asteroids are removed as they are mined.</div><label class="filebutton" for="import" style="display:block;text-align:center;margin-top:15px">Open other .sgview recording</label><input id="import" type="file" accept=".sgview,.txt,text/plain"></div>
+ <div class="card pad" id="colonyPanel" hidden><h2>Colony ship · first settlement</h2><div style="margin:10px 0 16px"><a href="/viewer/factory.html" id="colonyFactoryLink" class="primary" style="display:inline-block;padding:9px 13px;border:1px solid #3897a3;border-radius:9px;background:#1d6271;text-decoration:none;color:white">Open Factory Designer</a><div class="help">Factory edits use this same running colony world. A built outpost and real construction modules are required before authorizing a plan.</div></div>
+ <section id="colonyStructures" aria-label="Physical colony construction" style="border-top:1px solid var(--border);padding-top:14px;margin:8px 0 16px">
+ <h2>Colony structures · floors, walls and doors</h2>
+@@ -196,7 +196,7 @@
+ </div>
+ <div class="card pad"><h2>Ship telemetry</h2><div class="metric"><span class="muted">Cargo hold</span><strong id="cargo">0 / 100</strong></div><div class="meter"><div id="cargoBar"></div></div><div class="metric"><span class="muted">Status</span><span id="status">IDLE</span></div>
+ <div class="metric"><span class="muted">Current system</span><strong id="currentSystem">—</strong></div><div class="metric"><span class="muted">Jump state</span><strong id="jumpState">READY</strong></div><div class="metric"><span class="muted">Docking</span><strong id="dockState">UNKNOWN</strong></div>
+-<div class="metric"><span class="muted">Local hangar ore</span><strong id="hangarOre">—</strong></div><div class="metric"><span class="muted">Player credits</span><strong id="walletCredits">0</strong></div><div class="metric"><span class="muted">Station ore bid</span><strong id="marketPrice">—</strong></div><div class="metric"><span class="muted">Station market stock</span><strong id="marketStock">—</strong></div><div class="metric"><span class="muted">Position</span><span id="position">0, 0</span></div><div class="metric"><span class="muted">Velocity / tick</span><span id="velocity">0, 0</span></div><div class="metric"><span class="muted">Asteroids active</span><strong id="asteroids">10</strong></div><div class="metric"><span class="muted">Ore remaining</span><strong id="ore">100</strong></div></div>
++<div class="metric"><span class="muted">Local hangar ore</span><strong id="hangarOre">—</strong></div><div id="legacyEconomy" hidden><div class="metric"><span class="muted">Player credits</span><strong id="walletCredits">0</strong></div><div class="metric"><span class="muted">Station ore bid</span><strong id="marketPrice">—</strong></div><div class="metric"><span class="muted">Station market stock</span><strong id="marketStock">—</strong></div></div><div class="metric"><span class="muted">Position</span><span id="position">0, 0</span></div><div class="metric"><span class="muted">Velocity / tick</span><span id="velocity">0, 0</span></div><div class="metric"><span class="muted">Asteroids active</span><strong id="asteroids">10</strong></div><div class="metric"><span class="muted">Ore remaining</span><strong id="ore">100</strong></div></div>
+ <div class="card pad"><h2>Simulation events</h2><div id="log" role="log" aria-live="polite"></div></div>
+ </aside>
+ <footer>Local development only: commands are brokered to one SQLite-backed simulation, with a per-session anti-CSRF token. Not secure multiplayer authentication. Windows runtime testing remains outstanding.</footer>
+--- a/viewer/interactive.js
++++ b/viewer/interactive.js
+@@ -1,6 +1,6 @@
+ /* B4.3 live browser: no player IDs, target IDs or authority supplied by UI. */
+ (function(){'use strict';
+-let source=null,token=null, colonyMode=false;
++let source=null,token=null, colonyMode=false,legacyMarketFixture=false;
+ const el=id=>document.getElementById(id);
+ const message=text=>{el('commandMessage').textContent=text;};
+ async function command(action,extra={}){
+@@ -20,7 +20,9 @@
+    const response=await fetch('/session',{cache:'no-store'});
+    if(!response.ok)throw new Error('Session unavailable');
+    const data=await response.json();token=data.token;window.GalaxyTickMs=data.tick_ms;
+-   colonyMode=!!data.colony_mode;
++   colonyMode=!!data.colony_mode;legacyMarketFixture=!!data.legacy_market_fixture;
++   el('legacySell').hidden=!legacyMarketFixture;
++   el('legacyEconomy').hidden=!legacyMarketFixture;
+    el('qaPanel').hidden=!data.qa_mode;
+    el('interactiveControls').hidden=colonyMode;
+    el('surveyPanel').hidden=colonyMode;
+@@ -76,7 +78,7 @@
+  const local=state.hangars.get((state.docks.get(ship.id)?.station||0)+':7');
+  el('unload').disabled=docking!==1||ship.cargo===0;
+  el('load').disabled=docking!==1||!local?.ore||ship.cargo>=ship.capacity;
+- el('sell').disabled=docking!==1||!local?.ore;
++ el('sell').disabled=!legacyMarketFixture||docking!==1||!local?.ore;
+  el('travelA').disabled=docking!==0;
+  el('travelB').disabled=docking!==0;
+  el('travelGate').disabled=docking!==0 || !!state.jumps?.get(ship.id);
+--- a/viewer/viewer.js
++++ b/viewer/viewer.js
+@@ -55,12 +55,16 @@
+   const ownedHangar=dock&&ship ? f.hangars.get(dock.station+':'+ship.owner) : null;
+   if (el('dockState')) el('dockState').textContent=dockStatus+(dock?.remaining?` (${dock.remaining} ticks)`: '');
+   if (el('hangarOre')) el('hangarOre').textContent=ownedHangar?`${ownedHangar.ore} / ${ownedHangar.capacity}`:'—';
+-  const nearestStation = ship ? entities.filter(e=>e.entityType===2).sort((a,b)=>
+-    (a.x-ship.x)**2+(a.y-ship.y)**2-(b.x-ship.x)**2-(b.y-ship.y)**2)[0]?.id : undefined;
+-  const market=f.markets?.get(dock?.station||nearestStation);
+-  if(el('walletCredits')) el('walletCredits').textContent=String(f.wallets?.get(ship?.owner)||0);
+-  if(el('marketPrice')) el('marketPrice').textContent=market?market.price+' credits / ore':'—';
+-  if(el('marketStock')) el('marketStock').textContent=market?market.ore+' ore · '+market.credits+' credits':'—';
++  // Archived financial telemetry is decoded solely for replay compatibility.
++  // New resource-only game worlds never create or display it.
++  if(el('legacyEconomy') && !el('legacyEconomy').hidden) {
++    const nearestStation = ship ? entities.filter(e=>e.entityType===2).sort((a,b)=>
++      (a.x-ship.x)**2+(a.y-ship.y)**2-(b.x-ship.x)**2-(b.y-ship.y)**2)[0]?.id : undefined;
++    const market=f.markets?.get(dock?.station||nearestStation);
++    el('walletCredits').textContent=String(f.wallets?.get(ship?.owner)||0);
++    el('marketPrice').textContent=market?market.price+' credits / ore':'—';
++    el('marketStock').textContent=market?market.ore+' ore · '+market.credits+' credits':'—';
++  }
+   const full=ship&&ship.cargo===ship.capacity;
+   el('status').textContent=jump?jumpText:dock?dockStatus:full?'HOLD FULL':f.mining.size?'MINING':'IDLE';
+   el('status').style.color=full?'#ffc773':f.mining.size?'#70e9fc':'#96acc5';

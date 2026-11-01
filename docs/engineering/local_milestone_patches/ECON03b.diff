@@ -1,0 +1,465 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -19,7 +19,7 @@
+ endif()
+ add_library(galaxy_kernel STATIC src/Simulation.cpp src/ColonyResilience.cpp
+   src/ColonyRecovery.cpp src/ColonyPolicy.cpp src/PopulationCohorts.cpp
+-    src/ColonyWaterSupply.cpp src/Persistence.cpp src/EconomyPrototype.cpp src/QuantifiedProduction.cpp src/Inventory.cpp src/InventoryLogistics.cpp src/FactoryLayout.cpp src/FactoryRetirementPlanner.cpp src/FactoryExecution.cpp src/BlueprintConstruction.cpp src/HostBlueprintRegistry.cpp src/ColonyStructurePlans.cpp src/NpcConstructionCrews.cpp src/ClientContract.cpp src/Galaxy.cpp src/Navigation.cpp src/GateTransit.cpp src/Region.cpp)
++    src/ColonyWaterSupply.cpp src/ResourceMarket.cpp src/Persistence.cpp src/EconomyPrototype.cpp src/QuantifiedProduction.cpp src/Inventory.cpp src/InventoryLogistics.cpp src/FactoryLayout.cpp src/FactoryRetirementPlanner.cpp src/FactoryExecution.cpp src/BlueprintConstruction.cpp src/HostBlueprintRegistry.cpp src/ColonyStructurePlans.cpp src/NpcConstructionCrews.cpp src/ClientContract.cpp src/Galaxy.cpp src/Navigation.cpp src/GateTransit.cpp src/Region.cpp)
+ target_include_directories(galaxy_kernel PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+ target_link_libraries(galaxy_kernel PUBLIC SQLite::SQLite3)
+ if(MSVC)
+@@ -395,6 +395,13 @@
+     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/B70kLiveReclaimerTests.py
+       --host $<TARGET_FILE:galaxy_colony_live_host>
+       --relay ${CMAKE_CURRENT_SOURCE_DIR}/live/interactive_relay.py)
++endif()
++
++# ECON-03b: read-only resource-market discovery and powered organic reclamation.
++if(BUILD_TESTING)
++  add_executable(galaxy_econ03b_market_recovery_tests tests/ECON03bMarketRecoveryTests.cpp)
++  target_link_libraries(galaxy_econ03b_market_recovery_tests PRIVATE galaxy_kernel)
++  add_test(NAME galaxy_econ03b_market_recovery_tests COMMAND galaxy_econ03b_market_recovery_tests)
+ endif()
+ 
+ # B7.0l — mined water cargo, physically delivered local waterworks, persistence.
+--- /dev/null
++++ b/docs/design/ECON03b_RESOURCE_MARKET_WASTE_RECOVERY_2026-11-01.md
+@@ -0,0 +1,31 @@
++# Single Galaxy — Resource markets, settlement consumption and waste recovery
++**Decision:** 2026-11-01. **Code gate:** ECON-03b. **Multiplayer:** solo-first, invite-only.
++
++## Economy: markets without money
++- Local markets represent resource access inside a settlement/resource-center service area; they do **not** imply magically unlimited resources. At early game-start most markets have few offers and very limited surplus.
++- System markets connect settlements within the same star system; regional markets describe settlements in multiple systems sharing an authoritative region; inter-regional markets describe larger exchanges. All levels use the same material quantities and conservation rules, so viewing higher aggregates does not duplicate stock.
++- Colonists consume food, water, oxygen, medical support and eventually diverse household goods and services; industries consume feedstock, utilities, spares, fuel and machinery. Physical consumption creates recurring demand independent of ship destruction, combat and manufacturing activity.
++- No wages, chits, guys, premium currency or cash-out. Resource exchange can involve transfers, supply agreements, barter, shared storage or a colony's standing aid policy. The game does not require numerical prices to plan actual logistical quantities.
++- Every surplus must subtract reserves and commitments. The current survey uses **3 needs cycles** (60 game ticks) of food, water and oxygen as an *indicative* reserve. It does not certify adequacy: the underlying stocks are in distinct compartments and may require water pipes or worker hauling.
++- Market discovery is read-only. A potential opportunity is not a reserved contract, a transport route, proof of permission or an executed sale. No resource moves between stations simply because they appear on a common screen.
++- Geographic identifiers must come from an authoritative server/map, not a player's message. Current colony host only runs its local system; future actual regional route maps, transport capacity, schedules, ownership, demand forecasting, NPC standing orders and conservation-backed settlement receipts require separate gates.
++
++## Waste: optionally recoverable, never mandatory micromanagement
++- **Wastewater**: the existing powered site reclaimer processes 10 kg into 9 kg recovered water and 1 kg sludge; the onboard recycler and farm process water under their own existing rules. This is game-balanced mass flow, not an assertion of potable wastewater without treatment equipment.
++- **Residential biological waste**: a constructed, powered site reclaimer additionally converts up to 10 kg of its source-separated organic-waste stream per compartment per needs cycle: 8 kg compost + 2 kg local residual sludge. The output remains in the original compartment. There is no invented pipe or free cross-site delivery. Reclamation does not run without the installed powered machine.
++- **Blackwater and medical waste**: visually abstractable in normal play, but physically distinct from clean source-separated compost. Medical waste remains isolated. Unprocessed residues do not simply become safe fertilizer.
++- **Steam**: once we have real boiler/condenser/thermal loops, condensers can return some water to their actual reservoirs. Steam is a working fluid, not a consumable fuel. Heat and power must be tracked separately from mass.
++- **Ordinary solid trash**: future sorted reclaimers can convert appropriate components into secondary feedstock plus unrecoverable residuals; there is no universal 100% trash-to-material machine.
++- **Player experience**: resource centers can abstract within-area connections; a utility overlay allows deliberate detail. NPCs can operate waste collection and treatment. Automatic waste disappearance is a visual convenience, not a resource-spawning process. When a future discard sink removes mass from play, it should be separately accounted rather than silently violating the physical ledger.
++
++## ECON-03b implementation boundary
++`galaxy::resource_market::survey` reads the authoritative simulation for built sites only. It reports stocks, NPC food/water/oxygen consumption, three-period reserve targets, shortages, potential surplus, waste streams, geographic aggregates and potential source-to-destination opportunities. The scan is deterministic and does not mutate world state. It does **not** yet execute shipments or contracts, and indicative totals can include tanks/storage that are not connected for transport.
++
++The colony host emits bounded `RESOURCE_MARKET` read-only telemetry per built outpost every 20 ticks, initially for food, water, oxygen and compost. Geographic data beyond the local host's single system is implemented as a generic survey classification, not an online galaxy service.
++
++## Acceptance after this gate
++1. Transactional, permissioned, conservation-safe NPC hauling and storage transfer between actual source and destination inventory compartments.
++2. Transport-capable market offers with physical reservations, expiry, receipt journal, no duplicated commitments across competing markets, and local-to-system scopes.
++3. Real regional geography and route availability, hazards and throughput; inter-regional contracts only when physical logistics exist.
++4. Waste collection jobs, compost pickup and farm fertilizer replenishment; recoverable scrap/trash handling with losses; future condenser steam recirculation.
++5. User-facing market board and shortage indicators, plus early-game experience that remains playable without an active public market.
+--- a/docs/design/RESOURCE_ECONOMY_INVITE_ONLY_AND_FUTURE_MMO_2026-11-01.md
++++ b/docs/design/RESOURCE_ECONOMY_INVITE_ONLY_AND_FUTURE_MMO_2026-11-01.md
+@@ -9,7 +9,7 @@
+ 2. **Finite physical resources.** Mining, manufacturing, life support, utilities, repairs, and construction use real inventories, throughput, available NPC labor, and explicit conversion recipes. Material does not materialize because somebody worked a shift.
+ 3. **NPCs contribute without salaries.** NPCs still consume food, water, oxygen, housing, healthcare, rest, and other supplies. Labor capacity, proficiency, morale, trust, migration, and staffing determine effectiveness. There are no salaries or payroll accounts.
+ 4. **Solo-first, invite-only multiplayer.** A player does not have strangers placed into their world. No public matchmaking or random seamless encounters. Invitations/acceptance are explicit, and the host controls guest permissions.
+-5. **No automatic shared market.** Resource exchange in a *future invited cooperative session* is a separate, explicitly authorized inventory transfer, not a globally tradeable currency or auction house. No global player resource marketplace is assumed.
++5. **Resource-only geographic markets (ECON-03b revision).** NPC colonies can publish supply, shortages, reserve targets and potential resource exchanges at local, system, regional and inter-regional scales. A market does not require wages, wallets, chits or auction pricing. The initial market is a read-only demand/supply view; later transfers require valid physical routes and authorized, journaled movement. Invite-only co-op remains the only approved multiplayer mode; this does not create a public player marketplace.
+ 6. **No gameplay cash payout.** The proposed investment-funded player cash/prize scheme is not part of the game roadmap. Do not add monetary reward hooks into core simulation.
+ 7. **Existing colonies remain persistent while a player leaves them**, subject to their actual resources, viability and delegated NPC administration; absence alone must not mint free resources or punish the owner.
+ 
+--- /dev/null
++++ b/docs/engineering/ECON03b_RESOURCE_MARKET_RECYCLING_2026-11-01.md
+@@ -0,0 +1,11 @@
++# ECON-03b — Native market discovery and residential compost reclamation
++**Baseline:** ECON-03a ZIP, not an independent divergent application.
++**Files:** `include/galaxy/ResourceMarket.hpp`, `src/ResourceMarket.cpp`, `src/Simulation.cpp`, `src/colony_live_host.cpp`, `tests/ECON03bMarketRecoveryTests.cpp`, `tests/B70kLiveReclaimerTests.py`, `CMakeLists.txt`, design docs.
++
++The market module is deliberately read-only. It takes trusted outpost geography, validates real built sites, reads already-durable inventories and known resident needs, and builds nonmonetary geographic summaries/opportunities. It never posts a new item, authorizes an order or writes SQLite. Potential offers across sites are bounded against one site's aggregate potential surplus, but no inventory is reserved and multiple repeated scans must not be interpreted as multiple executable promises.
++
++The site-local powered reclaimer also transforms residential organic waste into local compost and residual sludge using a fixed 80/20 game recipe. Source balances remain local and included in existing persisted `ColonyLifeSupport` fields; existing wastewater/CO2 historical counters and snapshot formats remain intact. Distinct medical streams remain excluded. Storage-bound checks avoid invalid persisted quantities.
++
++The one-system colony host emits a four-resource `RESOURCE_MARKET` status line every 20 simulation ticks; relay's existing bounded allowlist transports the telemetry. This is not yet a visible market UI or a true cross-system execution engine.
++
++**Limits:** Only food, water and oxygen currently have first-class recurring NPC demand targets. No household consumption catalog, steam cycle, waste sorting plant, completed contract, cross-world trading, money, public player market or fully operational multi-region interstellar marketplace is claimed. Built production and factory delivery work remains separate.
+--- /dev/null
++++ b/include/galaxy/ResourceMarket.hpp
+@@ -0,0 +1,54 @@
++#pragma once
++// ECON-03b: read-only, resource-only colony market discovery. All quantities
++// come from the authoritative Simulation, never from a UI-supplied market bid.
++// A listing or opportunity is NOT a transfer, a reservation or a promise of
++// cargo delivery. Only a future journaled, authorized transport can do that.
++#include "galaxy/Simulation.hpp"
++#include <cstdint>
++#include <map>
++#include <string>
++#include <vector>
++
++namespace galaxy::resource_market {
++enum class Scope { Local, System, Regional, Interregional };
++struct Geography {
++    EntityId site=0;
++    std::uint32_t region=0; // server-trusted region identifier, not client input
++};
++struct Balance {
++    std::int64_t stock_kg=0;
++    std::int64_t demand_per_20_ticks_kg=0;
++    std::int64_t reserve_target_kg=0;
++    std::int64_t unmet_reserve_kg=0;
++    std::int64_t potential_surplus_kg=0;
++};
++struct SiteView {
++    EntityId site=0;
++    std::uint32_t system=0,region=0;
++    std::map<std::string,Balance> resources;
++    // Potentially reclaimable local waste, not a guaranteed output or offer.
++    std::map<std::string,std::int64_t> waste_kg;
++};
++struct Opportunity {
++    EntityId from_site=0,to_site=0;
++    std::string resource;
++    Scope scope=Scope::Local;
++    std::int64_t potential_kg=0;
++    bool transport_required=true;
++};
++struct Summary {
++    Scope scope=Scope::Local;
++    std::uint32_t region=0,system=0;
++    EntityId site=0;
++    std::map<std::string,Balance> resources;
++};
++struct Snapshot {
++    std::vector<SiteView> sites;
++    std::vector<Summary> summaries;
++    std::vector<Opportunity> opportunities;
++};
++Scope classify(const SiteView& source,const SiteView& destination);
++// Validates site ownership and geography; 3 needs periods of food, water and
++// oxygen are kept as indicative reserve targets. No local stock is teleported.
++Snapshot survey(const Simulation& world,const std::vector<Geography>& locations);
++} // namespace galaxy::resource_market
+--- /dev/null
++++ b/src/ResourceMarket.cpp
+@@ -0,0 +1,160 @@
++#include "galaxy/ResourceMarket.hpp"
++#include <algorithm>
++#include <limits>
++#include <set>
++#include <stdexcept>
++#include <tuple>
++
++namespace galaxy::resource_market {
++namespace {
++constexpr std::int64_t max_kg=1000000000000LL;
++void add(std::int64_t& stock,std::int64_t quantity){
++    if(quantity<0 || quantity>max_kg || stock>max_kg-quantity)
++        throw std::overflow_error("invalid or oversized resource market quantity");
++    stock+=quantity;
++}
++void stock(SiteView& s,const std::string& name,std::int64_t quantity){
++    if(quantity) add(s.resources[name].stock_kg,quantity);
++}
++void waste(SiteView& s,const std::string& name,std::int64_t quantity){
++    if(quantity)add(s.waste_kg[name],quantity);
++}
++void needs(SiteView& s,const std::string& name,std::int64_t quantity){
++    add(s.resources[name].demand_per_20_ticks_kg,quantity);
++}
++void life(SiteView& s,const ColonyLifeSupport& l){
++    stock(s,"food",l.food_kg);stock(s,"water",l.water_kg);stock(s,"oxygen",l.oxygen_kg);
++    stock(s,"nutrients",l.nutrients_kg);stock(s,"compost",l.compost_kg);
++    waste(s,"wastewater",l.wastewater_kg);waste(s,"organic",l.organic_waste_kg);
++    waste(s,"sludge",l.sludge_kg);
++    waste(s,"co2",l.co2_kg);
++}
++void merge(Summary& t,const SiteView& s){
++    for(const auto& [commodity,b]:s.resources){
++        auto& dst=t.resources[commodity];
++        add(dst.stock_kg,b.stock_kg);
++        add(dst.demand_per_20_ticks_kg,b.demand_per_20_ticks_kg);
++        add(dst.reserve_target_kg,b.reserve_target_kg);
++        add(dst.unmet_reserve_kg,b.unmet_reserve_kg);
++        add(dst.potential_surplus_kg,b.potential_surplus_kg);
++    }
++}
++} // namespace
++Scope classify(const SiteView& a,const SiteView& b){
++    if(a.site==b.site)return Scope::Local;
++    if(a.system==b.system)return Scope::System;
++    if(a.region==b.region)return Scope::Regional;
++    return Scope::Interregional;
++}
++Snapshot survey(const Simulation& w,const std::vector<Geography>& locations){
++    Snapshot out;
++    std::set<EntityId> seen;
++    for(const auto& g:locations){
++        if(!g.site || !g.region || !seen.insert(g.site).second ||
++           !w.built_outposts().count(g.site))
++            throw std::invalid_argument("market geography must name distinct built outposts");
++        const auto* entity=w.find(g.site);
++        if(!entity)throw std::invalid_argument("market outpost has no authoritative system");
++        SiteView s; s.site=g.site;s.system=entity->system_id;s.region=g.region;
++        const auto* hi=w.habitat(g.site);
++        const auto* fi=w.farm(g.site);
++        const auto residents=hi?hi->residents:0;
++        const auto workers=fi?fi->workers:0;
++        if(hi)life(s,hi->life);
++        if(fi)life(s,fi->life);
++        // Utility and clinic stock remain at their respective facilities, not
++        // pooled for free resident consumption. No fabricated availability.
++        if(const auto ci=w.communities().find(g.site);ci!=w.communities().end()){
++            stock(s,"food",ci->second.food_kg);stock(s,"water",ci->second.water_kg);
++            waste(s,"wastewater",ci->second.wastewater_kg);
++            waste(s,"organic",ci->second.organic_waste_kg);
++        }
++        if(const auto cl=w.clinic(g.site)){
++            stock(s,"water",cl->water_kg);stock(s,"medical_substrate",cl->substrate_kg);
++            waste(s,"medical_waste",cl->medical_waste_kg);
++            waste(s,"medical_wastewater",cl->wastewater_kg);
++        }
++        if(const auto st=w.storage(g.site)){
++            for(const auto& [n,q]:st->goods_kg)stock(s,n,q);
++            for(const auto& [node,goods]:st->extra_bins){
++                (void)node;for(const auto& [n,q]:goods)stock(s,n,q);
++            }
++        }
++        if(const auto shop=w.workshop(g.site)){
++            stock(s,"aluminum",shop->aluminum_kg);
++            stock(s,"aluminum_panels",shop->panels_kg);
++            stock(s,"aluminum_frames",shop->frames_kg);
++            stock(s,"aluminum_scrap",shop->scrap_kg);
++        }
++        if(const auto re=w.reclaimer(g.site)){
++            waste(s,"sludge",re->sludge_kg);
++            waste(s,"carbon_residue",re->carbon_residue_kg);
++        }
++        if(const auto plant=w.waterworks(g.site)){
++            stock(s,"raw_water_feed",plant->raw_feed_kg);
++            waste(s,"brine",plant->brine_kg);
++        }
++        // NPC consumption creates ongoing demand, not just ship/factory demand.
++        // This is a site-level estimate, NOT a claim that stores are plumbed together.
++        for(const auto* name:{"food","water","oxygen"})needs(s,name,residents+workers);
++        for(auto& [name,b]:s.resources){
++            (void)name;
++            if(b.demand_per_20_ticks_kg>max_kg/3)
++                throw std::overflow_error("market reserve overflow");
++            b.reserve_target_kg=3*b.demand_per_20_ticks_kg;
++            b.unmet_reserve_kg=std::max<std::int64_t>(0,b.reserve_target_kg-b.stock_kg);
++            b.potential_surplus_kg=std::max<std::int64_t>(0,b.stock_kg-b.reserve_target_kg);
++        }
++        out.sites.push_back(std::move(s));
++    }
++    std::sort(out.sites.begin(),out.sites.end(),[](const auto& a,const auto& b){return a.site<b.site;});
++    // Aggregates share the same underlying stock. Never sum the levels together.
++    using Key=std::tuple<int,std::uint32_t,std::uint32_t,EntityId>;
++    std::map<Key,Summary> aggregates;
++    for(const auto& s:out.sites){
++        const Key keys[]={
++            {0,s.region,s.system,s.site}, // local
++            {1,s.region,s.system,0},      // per system (unique within region)
++            {2,s.region,0,0},             // per region
++            {3,0,0,0}                    // cross-region overall view
++        };
++        for(const auto& key:keys){
++            auto& a=aggregates[key];
++            a.scope=static_cast<Scope>(std::get<0>(key));
++            a.region=std::get<1>(key);a.system=std::get<2>(key);
++            a.site=std::get<3>(key);
++            merge(a,s);
++        }
++    }
++    for(auto& [key,val]:aggregates){(void)key;out.summaries.push_back(std::move(val));}
++    // Opportunities describe a possible resource deficit/surplus pairing.
++    // Do not mutate stocks, infer cargo routes or complete transactions.
++    std::map<std::pair<EntityId,std::string>,std::int64_t> uncommitted;
++    for(const auto& source:out.sites)
++        for(const auto& [name,b]:source.resources)
++            uncommitted[{source.site,name}]=b.potential_surplus_kg;
++    for(const auto& dest:out.sites){
++        for(const auto& [commodity,need]:dest.resources){
++            std::int64_t remaining=need.unmet_reserve_kg;
++            if(!remaining)continue;
++            for(const auto& source:out.sites){
++                if(source.site==dest.site || !remaining)continue;
++                const auto it=source.resources.find(commodity);
++                if(it==source.resources.end())continue;
++                auto& available=uncommitted.at({source.site,commodity});
++                const auto candidate=std::min(remaining,available);
++                if(!candidate)continue;
++                out.opportunities.push_back({source.site,dest.site,commodity,
++                    classify(source,dest),candidate,true});
++                remaining-=candidate;
++                available-=candidate;
++            }
++        }
++    }
++    std::sort(out.opportunities.begin(),out.opportunities.end(),[](const auto& a,const auto& b){
++        return std::tie(a.scope,a.to_site,a.resource,a.from_site)<
++               std::tie(b.scope,b.to_site,b.resource,b.from_site);
++    });
++    return out;
++}
++} // namespace galaxy::resource_market
+--- a/src/Simulation.cpp
++++ b/src/Simulation.cpp
+@@ -3398,6 +3398,17 @@
+             r.carbon_residue_kg+=carbon*3/10;
+             r.water_recent[slot]+=wastewater*9/10;
+             r.oxygen_recent[slot]+=carbon*7/10;
++            // ECON-03b: optional installed, powered local reclaimer converts
++            // source-separated organic refuse to compost and residual sludge.
++            // Medical and blackwater streams are NOT silently certified safe
++            // fertilizer. No mass is deleted, no compost is transported.
++            const auto organics=std::min<std::int64_t>(10,l.organic_waste_kg/10*10);
++            if(l.compost_kg<=100000000-organics*8/10 &&
++               l.sludge_kg<=100000000-organics*2/10){
++                l.organic_waste_kg-=organics;
++                l.compost_kg+=organics*8/10;
++                l.sludge_kg+=organics*2/10;
++            }
+         };
+         if(hi!=habitats_.end())convert(hi->second.life);
+         if(fi!=farms_.end())convert(fi->second.life);
+--- a/src/colony_live_host.cpp
++++ b/src/colony_live_host.cpp
+@@ -4,6 +4,7 @@
+ #include "galaxy/Simulation.hpp"
+ #include "galaxy/Persistence.hpp"
+ #include "galaxy/ClientContract.hpp"
++#include "galaxy/ResourceMarket.hpp"
+ #include "factory_colony_protocol.hpp"
+ #include "world_owner_lock.hpp"
+ #include <algorithm>
+@@ -106,6 +107,26 @@
+     for(const auto& [id,outpost]:w.built_outposts()){
+         if(outpost.source_colony_ship!=ship)continue;
+         announce(w,"OUTPOST|"+std::to_string(id)+"|"+std::to_string(w.farm(id)?1:0));
++    }
++    // ECON-03b read-only supply / NPC demand listings; no transaction command.
++    // Aggregate once per needs period so large colonies do not flood SSE.
++    if(w.tick()%20==0){
++        std::vector<resource_market::Geography> local_sites;
++        for(const auto& [id,outpost]:w.built_outposts())
++            if(outpost.source_colony_ship==ship)local_sites.push_back({id,1});
++        const auto listing=resource_market::survey(w,local_sites);
++        for(const auto& site:listing.sites){
++            for(const auto* commodity:{"food","water","oxygen","compost"}){
++                const auto it=site.resources.find(commodity);
++                if(it==site.resources.end())continue;
++                const auto& b=it->second;
++                announce(w,"RESOURCE_MARKET|"+std::to_string(site.site)+"|"+
++                    commodity+"|"+std::to_string(b.stock_kg)+"|"+
++                    std::to_string(b.demand_per_20_ticks_kg)+"|"+
++                    std::to_string(b.unmet_reserve_kg)+"|"+
++                    std::to_string(b.potential_surplus_kg));
++            }
++        }
+     }
+     for(const auto& [id,f]:w.farms()){
+         if(f.source_ship!=ship)continue;
+--- a/tests/B70kLiveReclaimerTests.py
++++ b/tests/B70kLiveReclaimerTests.py
+@@ -30,6 +30,8 @@
+         frames=run.stderr.decode('ascii')
+         assert '|RECLAIMER|7|' in frames,frames[-2400:]
+         assert '|LIFE_RECOVERY|1|1|' in frames,frames[-2400:]
++        assert '|RESOURCE_MARKET|7|food|' in frames,frames[-2400:]
++        assert '|RESOURCE_MARKET|7|water|' in frames,frames[-2400:]
+         assert '|RESILIENCE|' in frames
+         assert 'SELF_SUFFICIENT' not in frames
+         restored=subprocess.run([str(host),str(db),'20','5'],capture_output=True,timeout=8)
+--- /dev/null
++++ b/tests/ECON03bMarketRecoveryTests.cpp
+@@ -0,0 +1,90 @@
++#include "galaxy/ResourceMarket.hpp"
++#include "galaxy/Persistence.hpp"
++#include <chrono>
++#include <filesystem>
++#include <iostream>
++#include <stdexcept>
++using namespace galaxy;
++namespace fs=std::filesystem;
++#define CHECK(x) do{if(!(x))throw std::runtime_error(std::string("ECON03b ")+ #x +" @"+std::to_string(__LINE__));}while(0)
++static Event send(PersistentWorld& w,EntityId ship,std::uint64_t id,Action action,
++ EntityId target=0,std::int64_t amount=1,int selector=0,PlayerId issuer=7){
++ Command c{};c.id=id;c.sequence=id;c.issuer=issuer;c.actor=ship;c.target=target;
++ c.action=action;c.amount=amount;c.thrust_x=selector;c.execute_tick=w.world().tick()+1;
++ CHECK(w.submit(c));w.step();return w.world().events().back();
++}
++int main(){
++ const auto dir=fs::temp_directory_path()/("sg_econ03b_"+
++    std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
++ fs::create_directories(dir);
++ try{
++  EntityId site=0;std::int64_t original_mass=0;
++  {
++   Simulation s(707);const auto ship=s.add_colony_ship(7,{0,0},100,24);
++   s.provision_colony_genesis(ship,1000,3000,1000,1000,1000);
++   const auto rock=s.add_asteroid({2000,0},90);
++   original_mass=s.total_material_kg();
++   PersistentWorld p((dir/"live.sqlite").string(),std::move(s));
++   CHECK(send(p,ship,1,Action::Mine,rock,80).result==Outcome::Applied);
++   CHECK(send(p,ship,2,Action::RefineOre,0,80).result==Outcome::Applied);
++   CHECK(send(p,ship,3,Action::FabricateModule,0,30).result==Outcome::Applied);
++   CHECK(send(p,ship,4,Action::ConstructOutpost).result==Outcome::Applied);
++   site=p.world().built_outposts().begin()->first;
++   CHECK(send(p,ship,6,Action::ConstructUtility,site).result==Outcome::Applied);
++   CHECK(send(p,ship,8,Action::ConstructFarm,site).result==Outcome::Applied);
++   CHECK(send(p,ship,9,Action::ConstructHabitat,site).result==Outcome::Applied);
++   CHECK(send(p,ship,10,Action::ConstructReclaimer,site).result==Outcome::Applied);
++   for(int i=1;i<=3;++i){
++    CHECK(send(p,ship,13+i,Action::TransferHabitatStock,site,140,i).result==Outcome::Applied);
++    CHECK(send(p,ship,16+i,Action::TransferFarmStock,site,140,i).result==Outcome::Applied);
++   }
++   CHECK(send(p,ship,20,Action::TransferFarmStock,site,140,4).result==Outcome::Applied);
++   CHECK(send(p,ship,21,Action::TransferFarmStock,site,140,5).result==Outcome::Applied);
++   CHECK(send(p,ship,22,Action::AssignHabitatResidents,site,4).result==Outcome::Applied);
++   CHECK(send(p,ship,23,Action::AssignFarmWorkers,site,2).result==Outcome::Applied);
++   // No outpost is magically on a market before its physical construction.
++   bool rejected=false;
++   try{(void)resource_market::survey(p.world(),{{9999,1}});}catch(const std::invalid_argument&){rejected=true;}
++   CHECK(rejected);
++   auto before=p.world().canonical_state();
++   auto market=resource_market::survey(p.world(),{{site,11}});
++   CHECK(market.sites.size()==1 && market.summaries.size()==4);
++   const auto& b=market.sites[0].resources;
++   CHECK(b.at("food").demand_per_20_ticks_kg==6);
++   CHECK(b.at("water").reserve_target_kg==18);
++   CHECK(b.at("oxygen").reserve_target_kg==18);
++   CHECK(market.sites[0].system==p.world().find(site)->system_id);
++   CHECK(market.opportunities.empty());
++   CHECK(before==p.world().canonical_state()); // reading cannot move goods
++   p.steps(87);
++   CHECK(p.world().reclaimer(site)->water_recovered_total_kg>0);
++   // Habitat waste is reclaimed only with a powered constructed machine.
++   const auto& l=p.world().habitat(site)->life;
++   CHECK(l.compost_kg>=8);
++   CHECK(l.sludge_kg>=2);
++   CHECK(p.world().total_material_kg()==original_mass);
++   market=resource_market::survey(p.world(),{{site,11}});
++   CHECK(market.sites[0].resources.at("compost").stock_kg>=8);
++   CHECK(market.sites[0].waste_kg.at("sludge")>=2);
++   CHECK(p.world().canonical_state()==Simulation::from_snapshot(p.world().canonical_state()).canonical_state());
++   PersistentWorld::recover_copy((dir/"live.sqlite").string(),(dir/"copy.sqlite").string());
++  }
++  {
++   PersistentWorld p((dir/"copy.sqlite").string(),Simulation(123));
++   const auto snap=p.world().canonical_state();
++   CHECK(p.world().total_material_kg()==original_mass);
++   const auto m=resource_market::survey(p.world(),{{site,11}});
++   CHECK(m.sites[0].resources.at("compost").stock_kg>=8);
++   CHECK(snap==p.world().canonical_state());
++  }
++  // Independent geography tests: these categories do not imply free access.
++  using resource_market::SiteView;using resource_market::Scope;
++  SiteView a,b;a.site=1;a.system=1;a.region=8;b.site=1;b.system=1;b.region=8;
++  CHECK(resource_market::classify(a,b)==Scope::Local);
++  b.site=2;CHECK(resource_market::classify(a,b)==Scope::System);
++  b.system=2;CHECK(resource_market::classify(a,b)==Scope::Regional);
++  b.region=9;CHECK(resource_market::classify(a,b)==Scope::Interregional);
++  std::cout<<"PASS ECON03b resource market scope, NPC demand, read-only, powered compost, restart, mass\n";
++ }catch(const std::exception& e){fs::remove_all(dir);std::cerr<<e.what()<<'\n';return 1;}
++ fs::remove_all(dir);return 0;
++}

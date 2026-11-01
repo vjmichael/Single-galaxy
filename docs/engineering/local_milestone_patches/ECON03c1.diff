@@ -1,0 +1,554 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -18,7 +18,7 @@
+     message(STATUS "Using OS SQLite SDK (amalgamation not present)")
+ endif()
+ add_library(galaxy_kernel STATIC src/Simulation.cpp src/ColonyResilience.cpp
+-  src/ColonyRecovery.cpp src/ColonyPolicy.cpp src/PopulationCohorts.cpp
++  src/ColonyRecovery.cpp src/ColonyPolicy.cpp src/PopulationCohorts.cpp src/MacroNeeds.cpp
+     src/ColonyWaterSupply.cpp src/ResourceMarket.cpp src/Persistence.cpp src/EconomyPrototype.cpp src/QuantifiedProduction.cpp src/Inventory.cpp src/InventoryLogistics.cpp src/FactoryLayout.cpp src/FactoryRetirementPlanner.cpp src/FactoryExecution.cpp src/BlueprintConstruction.cpp src/HostBlueprintRegistry.cpp src/ColonyStructurePlans.cpp src/NpcConstructionCrews.cpp src/ClientContract.cpp src/Galaxy.cpp src/Navigation.cpp src/GateTransit.cpp src/Region.cpp)
+ target_include_directories(galaxy_kernel PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+ target_link_libraries(galaxy_kernel PUBLIC SQLite::SQLite3)
+@@ -896,3 +896,10 @@
+       --relay ${CMAKE_CURRENT_SOURCE_DIR}/live/interactive_relay.py)
+   set_tests_properties(ECON02B2d18d_SharedStaffing_HTTP PROPERTIES TIMEOUT 90)
+ endif()
++
++# ECON-03c1: macro cohort consumption; no NPC-by-NPC timer or wage path.
++if(BUILD_TESTING)
++  add_executable(galaxy_econ03c1_macro_needs_tests tests/ECON03c1MacroNeedsTests.cpp)
++  target_link_libraries(galaxy_econ03c1_macro_needs_tests PRIVATE galaxy_kernel)
++  add_test(NAME galaxy_econ03c1_macro_needs_tests COMMAND galaxy_econ03c1_macro_needs_tests)
++endif()
+--- /dev/null
++++ b/docs/design/ECON03c1_MACRO_NPC_CONSUMPTION_2026-11-01.md
+@@ -0,0 +1,69 @@
++# ECON-03c1 — Macro NPC consumption and shortage horizon
++
++## Decision
++
++Population needs are settled **immediately at a scheduled consumption boundary**,
++not continuously and not by running one cooldown timer per NPC. A 20-tick needs
++period is the current compatibility default; it is a *game-time abstraction*,
++not a claim that humans eat or breathe every 20 real-world seconds.
++
++Each active physical supply compartment has an aggregate consumer count and
++amounts of food, water, oxygen, wastewater, organic waste, and CO2. At a due
++boundary, a single deterministic batch deducts actual resources up to available
++stock and credits equal mass to the corresponding waste streams. Supplies
++that are missing stay missing: no fabricated food, water, oxygen, or waste.
++The shortage changes viability/comfort and can generate supply demand.
++
++## Scale and cooldown
++
++- A cohort is a count of residents sharing materially relevant attributes, NOT
++  one fake NPC whose personality stands in for everyone.
++- Consumption cost is proportional to cohort size, but computation is
++  proportional to **number of material compartments/cohorts**, not headcount.
++- A due-window count for an unchanged time span is
++  `floor(target_tick / cooldown) - floor(previous_tick / cooldown)`. It can be
++  computed in constant time even after a very long offline interval.
++- The prototype's ration is 1 game-kg each of food, water and oxygen per NPC
++  per 20 ticks, preserving the earlier game balancing. Rations and distinct
++  food/water/air cadences can become policy/biome dependent later.
++- Time-skipping *only consumption* is valid while population, production,
++  stock transfers, waste processing, utilities and policies remain unchanged.
++  A full cold-region skip must process other scheduled events in causal order
++  or use an exactly equivalent aggregate solver. Do not jump ahead through
++  unprocessed production or shipments.
++- The scheduler avoids integer multiplication overflow. Supplies and waste
++  bins use signed 64-bit kg counters. Thus, trillions of simulated residents
++  are feasible per cohort, but galaxy-wide simulation is not yet proved
++  scalable end-to-end: locality, active-agent promotion, memory and persistent
++  storage still require separate scale tests.
++
++## Runway and market integration
++
++A `ResourceMarket::SiteView` now reports each staffed farm and occupied habitat
++**separately**, with its physically present supplies:
++
++- next consumption boundary tick
++- whole rations available for food, water and oxygen
++- first boundary when at least one requirement cannot be fully satisfied
++
++This is a no-production/no-resupply estimate, **not a prediction that nobody
++will produce goods or repair the situation**. Site-level market summaries may
++also count stored warehouse goods, but do not pretend that they have already
++been physically delivered or plumbed to a habitat.
++
++`RESOURCE_RUNWAY` telemetry carries one record per service compartment every
++20 ticks alongside the existing read-only `RESOURCE_MARKET` feed.
++
++## Non-goals and next gates
++
++- No per-NPC timer or trillions of physical NPC objects are allocated.
++- No real-time physiology, population growth, individual deaths, or involuntary
++  full-auto offline colony growth is introduced.
++- No wages, monetary economy or player trading are reinstated.
++- The current native Simulation still steps its active world once per tick;
++  cold-region event queues and catch-up for all production/transport workflows
++  are a **separate performance milestone**.
++- Existing explicit residents, NPC relationships and job assignments remain
++  important near the player; only macro needs should be aggregated.
++- Next: use forecasted shortage deadlines to prioritize authorized physical
++  shipments, then implement trustworthy reservation/hauling receipts.
+--- /dev/null
++++ b/docs/engineering/ECON03c1_MACRO_NEEDS_2026-11-01.md
+@@ -0,0 +1,70 @@
++# ECON-03c1 — Cohort consumption and resource runway (2026-11-01)
++
++## Baseline and scope
++
++Local successor to `ECON-03b_Resource_Markets_Recovery` source archive. This is
++an intentionally bounded scheduling / demand-forecast increment within the
++larger, still-open ECON-03c logistics milestone.
++
++## Implemented
++
++- `MacroNeeds.hpp/.cpp` provides an integer, deterministic, physical-mass-safe
++  bulk ration operation. It replaces the three duplicated farm, habitat and
++  colony-ship life-support ration implementations. The existing 20-tick cadence
++  and canonical snapshot schema are unchanged.
++- `periods_due(previous,target,cooldown)` counts missed consumption boundaries
++  in O(1) operations independent of elapsed time or population.
++- `consume(stock,population,periods,ration)` deducts only actual physical kg,
++  adds corresponding mass to organic waste, wastewater and CO2, reports full
++  versus partial supply and preflights waste overflow atomically.
++- `runway` computes per-need whole periods of available supplies, next due
++  tick and first potential unmet deadline without per-person polling.
++- `ResourceMarket::SiteView` includes separate habitat/farm compartment
++  forecasts rather than misrepresenting inaccessible warehouse goods as
++  immediately available for consumption. The local colony host emits bounded
++  read-only `RESOURCE_RUNWAY` telemetry every 20 ticks.
++- Market quantity arithmetic now uses checked signed 64-bit bounds instead of
++  a fixed 1e12-kg ceiling, retaining three-period reserve overflow checks.
++
++## Validated
++
++- Linux Release CMake/Ninja build: native kernel, current colony host, macro
++  needs test, existing market, life-support, habitation, utilities, workforce,
++  reclaimer and waterworks test binaries built.
++- 8 distinct native tests passed across focused runs:
++  `galaxy_econ03c1_macro_needs_tests`, `galaxy_econ03b_market_recovery_tests`,
++  `galaxy_b70d_life_support_tests`, `galaxy_b70f_habitation_tests`,
++  `galaxy_b70g_utilities_tests`, `galaxy_b70k_reclaimer_tests`,
++  `galaxy_b70l_waterworks_tests`, `galaxy_b70n_workforce_tests`.
++- 3 live Python/relay tests passed: habitation, utilities, reclamation.
++- 93/93 JavaScript tests passed.
++- New native test: 1.3-trillion-person cohort and 4 elapsed windows produce
++  exactly 5.2 trillion kg consumption for each provisioned resource, with
++  equal physical waste; long-window integer arithmetic, shortage behavior,
++  timer boundaries, zero-work cases, atomic overflow refusal, canonical
++  state round-trip, SQLite reopen and material conservation are verified.
++
++## Limits not addressed
++
++- The 1.3T fixture tests **one aggregate resource cohort**, not 1.3T
++  individually simulated inhabitants. It is not a galaxy-wide frame-rate or
++  memory benchmark. Existing resident placement capacities and persisted
++  habitat stock bounds still need an independently designed tiered model.
++- Production, building power and ship movement still use active-world ticks.
++  Full cold-region analytical catch-up is not implemented.
++- Runway is an *unreplenished local stock* forecast, not a prediction of
++  future harvests, scheduled deliveries or supply-chain reliability.
++- There are no NPC logistics reservations, pickup/delivery transactions,
++  completed trades, player-visible market UI or Windows acceptance in this
++  increment. ECON-03c transport gates remain open.
++- The 20-tick ration is a game-balance placeholder. Later, cohorts may have
++  different rates per need, age, work, environment, fitness and conditions.
++
++## Design safety
++
++The meaning of “consume immediately” is: when an eligible cooldown expires,
++commit the due *ration* immediately, not consume the entire stockpile. The
++macro recorder uses actual supply compartments, never magical pooled inventory.
++Shortage must be derived from actual consumed versus requested amounts. NPC
++health, migration and well-being can later consume those outcomes without
++backfilling an invented food supply.
+--- /dev/null
++++ b/include/galaxy/MacroNeeds.hpp
+@@ -0,0 +1,41 @@
++#pragma once
++// ECON-03c1: deterministic population-scale consumption and shortage horizon.
++// One operation per resource compartment/cohort, NOT per NPC. Units are game kg
++// and committed simulation ticks. The scheduler can collapse unchanged periods;
++// callers must process intervening production, transfers and policy events.
++#include <cstdint>
++
++namespace galaxy {
++struct ColonyLifeSupport;
++namespace macro_needs {
++constexpr std::uint64_t default_cooldown_ticks=20;
++struct Ration {
++    std::uint64_t food_kg=1, water_kg=1, oxygen_kg=1;
++};
++struct Result {
++    std::int64_t food_kg=0, water_kg=0, oxygen_kg=0;
++    bool food_supplied=true, water_supplied=true, oxygen_supplied=true;
++    bool fully_supplied() const noexcept {
++        return food_supplied && water_supplied && oxygen_supplied;
++    }
++};
++struct Runway {
++    std::uint64_t food_periods=0,water_periods=0,oxygen_periods=0;
++    std::uint64_t next_due_tick=0,first_unserved_tick=0;
++};
++// Count boundaries in (previous_tick, target_tick] without ticking each person
++// or each missed interval. Both ticks are in the same persistent world clock.
++std::uint64_t periods_due(std::uint64_t previous_tick,std::uint64_t target_tick,
++                          std::uint64_t cooldown_ticks=default_cooldown_ticks);
++std::uint64_t next_due(std::uint64_t now,
++                       std::uint64_t cooldown_ticks=default_cooldown_ticks);
++// Deduct actual supplies immediately for the due windows; return corresponding
++// waste to their originating compartment. A shortage never fabricates matter.
++// Inputs can represent trillions of residents, but each stock must fit int64.
++Result consume(ColonyLifeSupport& stock,std::uint64_t population,
++               std::uint64_t due_periods=1,Ration ration={});
++Runway runway(const ColonyLifeSupport& stock,std::uint64_t population,
++              std::uint64_t now,std::uint64_t cooldown_ticks=default_cooldown_ticks,
++              Ration ration={});
++} // namespace macro_needs
++} // namespace galaxy
+--- a/include/galaxy/ResourceMarket.hpp
++++ b/include/galaxy/ResourceMarket.hpp
+@@ -4,6 +4,7 @@
+ // A listing or opportunity is NOT a transfer, a reservation or a promise of
+ // cargo delivery. Only a future journaled, authorized transport can do that.
+ #include "galaxy/Simulation.hpp"
++#include "galaxy/MacroNeeds.hpp"
+ #include <cstdint>
+ #include <map>
+ #include <string>
+@@ -22,10 +23,18 @@
+     std::int64_t unmet_reserve_kg=0;
+     std::int64_t potential_surplus_kg=0;
+ };
++// Runway is measured from *physically resident supply compartments*, not from
++// aggregate warehouse stock that may require delivery or utility connection.
++struct NeedsPool {
++    std::string compartment;
++    std::uint64_t consumers=0;
++    macro_needs::Runway runway;
++};
+ struct SiteView {
+     EntityId site=0;
+     std::uint32_t system=0,region=0;
+     std::map<std::string,Balance> resources;
++    std::vector<NeedsPool> needs_pools;
+     // Potentially reclaimable local waste, not a guaranteed output or offer.
+     std::map<std::string,std::int64_t> waste_kg;
+ };
+--- /dev/null
++++ b/src/MacroNeeds.cpp
+@@ -0,0 +1,80 @@
++#include "galaxy/MacroNeeds.hpp"
++#include "galaxy/Simulation.hpp"
++#include <algorithm>
++#include <limits>
++#include <stdexcept>
++
++namespace galaxy::macro_needs {
++namespace {
++constexpr auto u64max=std::numeric_limits<std::uint64_t>::max();
++constexpr auto i64max=std::numeric_limits<std::int64_t>::max();
++std::uint64_t saturating_add(std::uint64_t a,std::uint64_t b){
++    return a>u64max-b?u64max:a+b;
++}
++std::uint64_t saturating_multiply(std::uint64_t a,std::uint64_t b){
++    return b && a>u64max/b?u64max:a*b;
++}
++std::int64_t checked_stock(std::int64_t stock,std::int64_t waste){
++    if(stock<0 || waste<0)throw std::invalid_argument("negative population resource compartment");
++    return stock;
++}
++struct Portion {std::int64_t consumed;bool supplied;};
++Portion take(std::int64_t available,std::uint64_t population,
++             std::uint64_t periods,std::uint64_t kg_each){
++    if(!population || !periods || !kg_each)return {0,true};
++    // Compare via division FIRST; never overflow population*periods*kg_each.
++    const auto a=static_cast<std::uint64_t>(available);
++    if(population>a/kg_each/periods)return {available,false};
++    return {static_cast<std::int64_t>(population*kg_each*periods),true};
++}
++std::uint64_t possible(std::int64_t amount,std::uint64_t population,std::uint64_t ration){
++    if(!population || !ration)return u64max;
++    const auto available=static_cast<std::uint64_t>(amount);
++    if(population>available/ration)return 0;
++    return available/(population*ration);
++}
++}
++std::uint64_t periods_due(std::uint64_t before,std::uint64_t now,std::uint64_t cooldown){
++    if(!cooldown || now<before)throw std::invalid_argument("invalid consumption interval");
++    return now/cooldown-before/cooldown;
++}
++std::uint64_t next_due(std::uint64_t now,std::uint64_t cooldown){
++    if(!cooldown)throw std::invalid_argument("zero consumption cooldown");
++    const auto delta=cooldown-now%cooldown;
++    if(now>u64max-delta)throw std::overflow_error("next consumption tick overflow");
++    return now+delta;
++}
++Result consume(ColonyLifeSupport& stock,std::uint64_t population,
++               std::uint64_t due_periods,Ration ration){
++    checked_stock(stock.food_kg,stock.organic_waste_kg);
++    checked_stock(stock.water_kg,stock.wastewater_kg);
++    checked_stock(stock.oxygen_kg,stock.co2_kg);
++    const auto f=take(stock.food_kg,population,due_periods,ration.food_kg);
++    const auto w=take(stock.water_kg,population,due_periods,ration.water_kg);
++    const auto o=take(stock.oxygen_kg,population,due_periods,ration.oxygen_kg);
++    // Preflight all writes: a failed conversion must not partly mutate stocks.
++    if(stock.organic_waste_kg>i64max-f.consumed ||
++       stock.wastewater_kg>i64max-w.consumed ||
++       stock.co2_kg>i64max-o.consumed)
++        throw std::overflow_error("population waste bin capacity overflow");
++    stock.food_kg-=f.consumed;stock.organic_waste_kg+=f.consumed;
++    stock.water_kg-=w.consumed;stock.wastewater_kg+=w.consumed;
++    stock.oxygen_kg-=o.consumed;stock.co2_kg+=o.consumed;
++    return {f.consumed,w.consumed,o.consumed,f.supplied,w.supplied,o.supplied};
++}
++Runway runway(const ColonyLifeSupport& stock,std::uint64_t population,
++              std::uint64_t now,std::uint64_t cooldown,Ration ration){
++    checked_stock(stock.food_kg,stock.organic_waste_kg);
++    checked_stock(stock.water_kg,stock.wastewater_kg);
++    checked_stock(stock.oxygen_kg,stock.co2_kg);
++    Runway out;
++    out.next_due_tick=next_due(now,cooldown);
++    out.food_periods=possible(stock.food_kg,population,ration.food_kg);
++    out.water_periods=possible(stock.water_kg,population,ration.water_kg);
++    out.oxygen_periods=possible(stock.oxygen_kg,population,ration.oxygen_kg);
++    const auto periods=std::min({out.food_periods,out.water_periods,out.oxygen_periods});
++    out.first_unserved_tick=saturating_add(out.next_due_tick,
++                                            saturating_multiply(periods,cooldown));
++    return out;
++}
++} // namespace galaxy::macro_needs
+--- a/src/ResourceMarket.cpp
++++ b/src/ResourceMarket.cpp
+@@ -7,7 +7,7 @@
+ 
+ namespace galaxy::resource_market {
+ namespace {
+-constexpr std::int64_t max_kg=1000000000000LL;
++constexpr std::int64_t max_kg=std::numeric_limits<std::int64_t>::max();
+ void add(std::int64_t& stock,std::int64_t quantity){
+     if(quantity<0 || quantity>max_kg || stock>max_kg-quantity)
+         throw std::overflow_error("invalid or oversized resource market quantity");
+@@ -60,8 +60,18 @@
+         const auto* fi=w.farm(g.site);
+         const auto residents=hi?hi->residents:0;
+         const auto workers=fi?fi->workers:0;
+-        if(hi)life(s,hi->life);
+-        if(fi)life(s,fi->life);
++        if(hi){
++            life(s,hi->life);
++            if(residents>0)s.needs_pools.push_back({"habitat",
++                static_cast<std::uint64_t>(residents),
++                macro_needs::runway(hi->life,static_cast<std::uint64_t>(residents),w.tick())});
++        }
++        if(fi){
++            life(s,fi->life);
++            if(workers>0)s.needs_pools.push_back({"farm",
++                static_cast<std::uint64_t>(workers),
++                macro_needs::runway(fi->life,static_cast<std::uint64_t>(workers),w.tick())});
++        }
+         // Utility and clinic stock remain at their respective facilities, not
+         // pooled for free resident consumption. No fabricated availability.
+         if(const auto ci=w.communities().find(g.site);ci!=w.communities().end()){
+--- a/src/Simulation.cpp
++++ b/src/Simulation.cpp
+@@ -1,5 +1,6 @@
+ #include "galaxy/Simulation.hpp"
+ #include "galaxy/QuantifiedProduction.hpp"
++#include "galaxy/MacroNeeds.hpp"
+ #include "galaxy/FactoryLayout.hpp"
+ #include <cctype>
+ 
+@@ -3158,12 +3159,7 @@
+             f.pending_food_kg=0;
+             const auto staff=f.workers;
+             if(staff){
+-                const auto fed=std::min(staff,l.food_kg),
+-                    watered=std::min(staff,l.water_kg),
+-                    breathed=std::min(staff,l.oxygen_kg);
+-                const bool supplied=fed==staff && watered==staff && breathed==staff;
+-                l.food_kg-=fed;l.water_kg-=watered;l.oxygen_kg-=breathed;
+-                l.organic_waste_kg+=fed;l.wastewater_kg+=watered;l.co2_kg+=breathed;
++                const auto supplied=macro_needs::consume(l,static_cast<std::uint64_t>(staff)).fully_supplied();
+                 ++l.cycles;
+                 if(supplied)++l.consecutive_supplied_cycles;
+                 else{l.consecutive_supplied_cycles=0;++l.shortages;}
+@@ -3255,11 +3251,8 @@
+         if(!total)continue;
+         auto& l=h.life;
+         const auto n=h.residents;
+-        const auto f=std::min(n,l.food_kg),w=std::min(n,l.water_kg),o=std::min(n,l.oxygen_kg);
+-        l.food_kg-=f;l.water_kg-=w;l.oxygen_kg-=o;
+-        l.organic_waste_kg+=f;l.wastewater_kg+=w;l.co2_kg+=o;
++        const auto local_ok=macro_needs::consume(l,static_cast<std::uint64_t>(n)).fully_supplied();
+         ++l.cycles;++h.cycles;
+-        const auto local_ok=(f==n && w==n && o==n);
+         const auto farm_ok=(!staff || (fit!=farms_.end() &&
+             fit->second.life.consecutive_supplied_cycles>0));
+         if(local_ok){++l.consecutive_supplied_cycles;}
+@@ -3420,13 +3413,8 @@
+     if(tick_%20) return;
+     for(auto& [id,l]:life_support_){
+         const auto crew=colony_ships_.at(id).crew;
+-        const auto food=std::min(crew,l.food_kg);
+-        const auto water=std::min(crew,l.water_kg);
+-        const auto oxygen=std::min(crew,l.oxygen_kg);
+-        const bool supplied=food==crew && water==crew && oxygen==crew;
+-        l.food_kg-=food;l.water_kg-=water;l.oxygen_kg-=oxygen;
+-        // Aggregate conserved material streams; detailed physiology comes later.
+-        l.organic_waste_kg+=food;l.wastewater_kg+=water;l.co2_kg+=oxygen;
++        // One authoritative consumption window for this whole crew.
++        const auto supplied=macro_needs::consume(l,static_cast<std::uint64_t>(crew)).fully_supplied();
+         ++l.cycles;
+         if(supplied)++l.consecutive_supplied_cycles;
+         else {l.consecutive_supplied_cycles=0;++l.shortages;}
+--- a/src/colony_live_host.cpp
++++ b/src/colony_live_host.cpp
+@@ -116,6 +116,18 @@
+             if(outpost.source_colony_ship==ship)local_sites.push_back({id,1});
+         const auto listing=resource_market::survey(w,local_sites);
+         for(const auto& site:listing.sites){
++            // ECON-03c1: report actual compartment runway; market stock elsewhere
++            // may not be connected or deliverable before the next ration window.
++            for(const auto& pool:site.needs_pools){
++                const auto& r=pool.runway;
++                announce(w,"RESOURCE_RUNWAY|"+std::to_string(site.site)+"|"+
++                    pool.compartment+"|"+std::to_string(pool.consumers)+"|"+
++                    std::to_string(r.next_due_tick)+"|"+
++                    std::to_string(r.food_periods)+"|"+
++                    std::to_string(r.water_periods)+"|"+
++                    std::to_string(r.oxygen_periods)+"|"+
++                    std::to_string(r.first_unserved_tick));
++            }
+             for(const auto* commodity:{"food","water","oxygen","compost"}){
+                 const auto it=site.resources.find(commodity);
+                 if(it==site.resources.end())continue;
+--- a/tests/ECON03bMarketRecoveryTests.cpp
++++ b/tests/ECON03bMarketRecoveryTests.cpp
+@@ -53,6 +53,12 @@
+    CHECK(b.at("food").demand_per_20_ticks_kg==6);
+    CHECK(b.at("water").reserve_target_kg==18);
+    CHECK(b.at("oxygen").reserve_target_kg==18);
++   CHECK(market.sites[0].needs_pools.size()==2);
++   CHECK(market.sites[0].needs_pools[0].compartment=="habitat");
++   CHECK(market.sites[0].needs_pools[0].consumers==4);
++   CHECK(market.sites[0].needs_pools[0].runway.next_due_tick>p.world().tick());
++   CHECK(market.sites[0].needs_pools[1].compartment=="farm");
++   CHECK(market.sites[0].needs_pools[1].consumers==2);
+    CHECK(market.sites[0].system==p.world().find(site)->system_id);
+    CHECK(market.opportunities.empty());
+    CHECK(before==p.world().canonical_state()); // reading cannot move goods
+--- /dev/null
++++ b/tests/ECON03c1MacroNeedsTests.cpp
+@@ -0,0 +1,108 @@
++#include "galaxy/MacroNeeds.hpp"
++#include "galaxy/PopulationCohorts.hpp"
++#include "galaxy/Simulation.hpp"
++#include "galaxy/Persistence.hpp"
++#include <chrono>
++#include <filesystem>
++#include <iostream>
++#include <limits>
++#include <stdexcept>
++#include <string>
++using namespace galaxy;
++namespace fs=std::filesystem;
++#define CHECK(x) do{if(!(x))throw std::runtime_error(std::string("ECON03c1 CHECK ")+ #x+" line "+std::to_string(__LINE__));}while(0)
++static std::int64_t tracked_mass(const ColonyLifeSupport& l){
++ return l.food_kg+l.water_kg+l.oxygen_kg+l.organic_waste_kg+l.wastewater_kg+l.co2_kg;
++}
++int main(){
++ const auto dir=fs::temp_directory_path()/("sg_macro_needs_"+
++   std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
++ fs::create_directories(dir);
++ try{
++  using namespace macro_needs;
++  CHECK(periods_due(0,19)==0);
++  CHECK(periods_due(19,20)==1);
++  CHECK(periods_due(21,100)==4);
++  CHECK(periods_due(0,2000000000000ULL,20)==100000000000ULL);
++  CHECK(next_due(19)==20 && next_due(20)==40 && next_due(41)==60);
++  bool rejected=false;
++  try{(void)periods_due(25,24);}catch(const std::invalid_argument&){rejected=true;}
++  CHECK(rejected);
++  rejected=false;try{(void)periods_due(0,1,0);}catch(const std::invalid_argument&){rejected=true;}
++  CHECK(rejected);
++  ColonyLifeSupport supply;
++  supply.food_kg=5;supply.water_kg=2;supply.oxygen_kg=9;
++  const auto initial=tracked_mass(supply);
++  const auto r=runway(supply,3,19);
++  CHECK(r.next_due_tick==20 && r.food_periods==1 && r.water_periods==0 &&
++        r.oxygen_periods==3 && r.first_unserved_tick==20);
++  const auto used=consume(supply,3,1);
++  CHECK(used.food_kg==3 && used.water_kg==2 && used.oxygen_kg==3);
++  CHECK(!used.fully_supplied() && used.food_supplied && !used.water_supplied && used.oxygen_supplied);
++  CHECK(supply.food_kg==2 && supply.water_kg==0 && supply.oxygen_kg==6);
++  CHECK(supply.organic_waste_kg==3 && supply.wastewater_kg==2 && supply.co2_kg==3);
++  CHECK(tracked_mass(supply)==initial);
++  const auto snapshot=supply;
++  CHECK(consume(supply,3000000000000ULL,0).fully_supplied());
++  CHECK(tracked_mass(supply)==tracked_mass(snapshot));
++  // Time and population both scale through multiplication, not person-ticking.
++  PopulationCohorts cohorts;
++  cohorts.add({11,1,2,2},1300000000000ULL);
++  CHECK(cohorts.cohort_count()==1 && cohorts.population()==1300000000000ULL);
++  ColonyLifeSupport huge;
++  huge.food_kg=6000000000000LL;huge.water_kg=6000000000000LL;
++  huge.oxygen_kg=6000000000000LL;
++  const auto massive_start=tracked_mass(huge);
++  const auto missed=periods_due(20,100); // four complete windows
++  const auto result=consume(huge,cohorts.population(),missed);
++  CHECK(missed==4 && result.fully_supplied());
++  CHECK(result.food_kg==5200000000000LL && result.water_kg==5200000000000LL);
++  CHECK(huge.food_kg==800000000000LL && huge.organic_waste_kg==5200000000000LL);
++  CHECK(tracked_mass(huge)==massive_start);
++  // Arithmetic overload is treated as a shortage without overflow or minting.
++  const auto exhausted=consume(huge,cohorts.population(),std::numeric_limits<std::uint64_t>::max());
++  CHECK(!exhausted.fully_supplied() && huge.food_kg==0);
++  CHECK(tracked_mass(huge)==massive_start);
++  // Overflow must be checked *before* deducting any resource.
++  ColonyLifeSupport at_limit;at_limit.food_kg=3;
++  at_limit.organic_waste_kg=std::numeric_limits<std::int64_t>::max();
++  rejected=false;try{(void)consume(at_limit,2);}catch(const std::overflow_error&){rejected=true;}
++  CHECK(rejected && at_limit.food_kg==3 &&
++        at_limit.organic_waste_kg==std::numeric_limits<std::int64_t>::max());
++  // Existing 20-tick live-world timing and saved ticks remain authoritative.
++  Simulation s(707);const auto ship=s.add_colony_ship(7,{0,0},60,24);
++  s.provision_colony_genesis(ship,1000,3000,1000,1000,1000);
++  const auto mass=s.total_material_kg();
++  s.steps(39);
++  CHECK(s.life_support(ship)->cycles==1);
++  CHECK(next_due(s.tick())==40);
++  const auto state=s.canonical_state();
++  auto resumed=Simulation::from_snapshot(state);
++  CHECK(resumed.canonical_state()==state);
++  s.step();resumed.step();
++  CHECK(s.canonical_state()==resumed.canonical_state());
++  CHECK(s.life_support(ship)->cycles==2);
++  CHECK(s.total_material_kg()==mass);
++  {
++   Simulation fresh(707);
++   const auto fresh_ship=fresh.add_colony_ship(7,{0,0},60,24);
++   CHECK(fresh_ship==ship);
++   fresh.provision_colony_genesis(fresh_ship,1000,3000,1000,1000,1000);
++   PersistentWorld persisted((dir/"world.sqlite").string(),std::move(fresh));
++   persisted.steps(60);
++   CHECK(persisted.world().life_support(ship)->cycles==3);
++   CHECK(persisted.world().total_material_kg()==mass);
++  }
++  {
++   PersistentWorld reopened((dir/"world.sqlite").string(),Simulation(777));
++   CHECK(reopened.world().life_support(ship)->cycles==3);
++   CHECK(reopened.world().tick()==60);
++   CHECK(next_due(reopened.world().tick())==80);
++   CHECK(reopened.world().total_material_kg()==mass);
++  }
++  fs::remove_all(dir);
++  std::cout<<"PASS ECON03c1 deterministic cohort cooldown, 1.3T population, long catch-up, "
++           <<"shortages, conservation, source compartments, save/restart\n";
++  return 0;
++ }catch(const std::exception& e){fs::remove_all(dir);std::cerr<<e.what()<<'\n';return 1;}
++}
