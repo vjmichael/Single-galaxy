@@ -14,19 +14,77 @@ constexpr int kPlacementBound=1000000; // coordinate safety, not room size
 std::uint32_t placement_node(std::int64_t n){
     return n==-1?kWorkshopConveyorNode:static_cast<std::uint32_t>(n);
 }
-void validate_site_placements(const OutpostStorage& st){
-    industry::FactoryLayout blueprint;
+industry::FactoryLayout factory_devices(const OutpostStorage& st){
+    industry::FactoryLayout layout;
     for(const auto& [node,where]:st.equipment_positions){
         if(where.x < -kPlacementBound || where.x > kPlacementBound ||
            where.y < -kPlacementBound || where.y > kPlacementBound)
             throw std::invalid_argument("factory coordinate outside safety range");
         if(node==kWorkshopConveyorNode){
-            blueprint.place_machine(node,{where.x,where.y},1,
+            layout.place_machine(node,{where.x,where.y},1,
                 {"good/aluminum"},{"good/aluminum_panels","good/aluminum_frames","good/aluminum_scrap"});
         }else{
             if(node && !st.extra_bins.count(node))
                 throw std::invalid_argument("placement references unbuilt container");
-            blueprint.place_storage(static_cast<std::uint64_t>(node)+1,{where.x,where.y},1,1,4000);
+            layout.place_storage(static_cast<std::uint64_t>(node)+1,{where.x,where.y},1,1,4000);
+        }
+    }
+    return layout;
+}
+void validate_site_placements(const OutpostStorage& st){(void)factory_devices(st);}
+// A route cell is real built infrastructure; path plans may be incomplete but
+// may never cross equipment, another installed/pending conveyor, or themselves.
+// The FactoryLayout domain validates the complete endpoint/port topology.
+void validate_site_conveyors(const OutpostStorage& st){
+    auto layout=factory_devices(st);
+    std::set<industry::GridCell> occupied;
+    for(const auto& [id,link]:st.links){
+        if(!link.route_required){
+            if(link.route_ready || !link.route_cells.empty())
+                throw std::invalid_argument("unowned conveyor route cells");
+            continue; // v27-v29 legacy logical links remain functional
+        }
+        const auto a=st.equipment_positions.find(link.source);
+        const auto b=st.equipment_positions.find(link.destination);
+        if(a==st.equipment_positions.end() || b==st.equipment_positions.end() ||
+           link.route_cells.size()>4096 || (link.route_ready && link.route_cells.empty()))
+            throw std::invalid_argument("conveyor endpoints missing installed equipment");
+        std::vector<industry::GridCell> path;
+        for(const auto& cell:link.route_cells){
+            if(cell.x<-kPlacementBound || cell.x>kPlacementBound ||
+               cell.y<-kPlacementBound || cell.y>kPlacementBound)
+                throw std::invalid_argument("conveyor cell out of coordinate bounds");
+            industry::GridCell pos{cell.x,cell.y};
+            if(!occupied.insert(pos).second)
+                throw std::invalid_argument("conveyors overlap or intersect themselves");
+            for(const auto& [node,d]:layout.devices()){
+                (void)node;
+                if(pos.x>=d.origin.x && pos.x<d.origin.x+d.width &&
+                   pos.y>=d.origin.y && pos.y<d.origin.y+d.height)
+                    throw std::invalid_argument("conveyor crosses installed machine");
+            }
+            if(!path.empty()){
+                const auto prev=path.back();
+                if(std::abs(pos.x-prev.x)+std::abs(pos.y-prev.y)!=1)
+                    throw std::invalid_argument("conveyor path is not orthogonally continuous");
+            }
+            path.push_back(pos);
+        }
+        if(!path.empty()){
+            const auto& device=layout.devices().at(link.source==kWorkshopConveyorNode?
+                                                     link.source:static_cast<std::uint64_t>(link.source)+1);
+            const auto& p=path.front();
+            const bool adjacent=((p.x==device.origin.x-1 || p.x==device.origin.x+device.width) &&
+                   p.y>=device.origin.y && p.y<device.origin.y+device.height) ||
+                   ((p.y==device.origin.y-1 || p.y==device.origin.y+device.height) &&
+                   p.x>=device.origin.x && p.x<device.origin.x+device.width);
+            if(!adjacent)throw std::invalid_argument("conveyor does not start at output port");
+        }
+        if(link.route_ready){
+            static const char* goods[]={"good/aluminum","good/aluminum_panels","good/aluminum_frames","good/aluminum_scrap"};
+            layout.add_conveyor(id,link.source==kWorkshopConveyorNode?link.source:static_cast<std::uint64_t>(link.source)+1,
+                link.destination==kWorkshopConveyorNode?link.destination:static_cast<std::uint64_t>(link.destination)+1,
+                goods[link.item_index],link.units_per_tick,std::move(path));
         }
     }
 }
@@ -686,6 +744,16 @@ bool Simulation::submit(const Command& c) {
              c.thrust_y<0 || c.thrust_y>3)))return false;
         snapshot_version_=std::max(snapshot_version_,25);
     }
+    if(c.action==Action::PlaceConveyorCell || c.action==Action::CompleteConveyorRoute){
+        // amount: real module-built link command ID; x/y: one grid cell,
+        // or zero when activating. No free conveyor segments are granted.
+        if(!c.target || c.amount<1 ||
+           (c.action==Action::CompleteConveyorRoute && (c.thrust_x || c.thrust_y)) ||
+           c.thrust_x<-kPlacementBound || c.thrust_x>kPlacementBound ||
+           c.thrust_y<-kPlacementBound || c.thrust_y>kPlacementBound)
+            return false;
+        snapshot_version_=std::max(snapshot_version_,30);
+    }
     if(c.action==Action::PlaceFactoryEquipment){
         // amount=-1: installed workshop; 0: original store; positive: installed extra store.
         // thrust_x/y: grid placement, NOT movement. No extra module consumed.
@@ -1184,6 +1252,8 @@ Event Simulation::execute(const Command& c) {
         case Action::ConstructStorageLink:
         case Action::ConstructWorkshopLink:
         case Action::PlaceFactoryEquipment:
+        case Action::PlaceConveyorCell:
+        case Action::CompleteConveyorRoute:
         case Action::AssignFarmMentor:
         case Action::SetPolicyAssurance:
         case Action::AssignPolicyInspectors:
@@ -1227,6 +1297,43 @@ Event Simulation::execute(const Command& c) {
             }
             auto& cship=colony_ships_.at(c.actor);
             auto& onboard=life_support_.at(c.actor);
+            if(c.action==Action::PlaceConveyorCell || c.action==Action::CompleteConveyorRoute){
+                auto it=storages_.find(c.target);
+                if(it==storages_.end() || it->second.source_ship!=c.actor ||
+                   !it->second.links.count(static_cast<std::uint64_t>(c.amount))){
+                    result.result=Outcome::InvalidTarget;return result;
+                }
+                const auto id=static_cast<std::uint64_t>(c.amount);
+                auto proposed=it->second;
+                auto& link=proposed.links.at(id);
+                if(link.route_ready || !proposed.equipment_positions.count(link.source) ||
+                   !proposed.equipment_positions.count(link.destination)){
+                    result.result=Outcome::InvalidTarget;return result;
+                }
+                if(c.action==Action::PlaceConveyorCell){
+                    if(link.route_cells.size()>=4096){result.result=Outcome::InvalidArgument;return result;}
+                    if(cship.modules<1){result.result=Outcome::NoResources;return result;}
+                    link.route_required=true;
+                    link.route_cells.push_back({c.thrust_x,c.thrust_y});
+                }else{
+                    if(link.route_cells.empty()){
+                        result.result=Outcome::InvalidArgument;return result;
+                    }
+                    link.route_required=true;
+                    link.route_ready=true;
+                }
+                try{validate_site_conveyors(proposed);}
+                catch(const std::exception&){result.result=Outcome::InvalidArgument;return result;}
+                auto& original=it->second.links.at(id);
+                original.route_required=link.route_required;
+                original.route_ready=link.route_ready;
+                original.route_cells=std::move(link.route_cells);
+                if(c.action==Action::PlaceConveyorCell){
+                    --cship.modules;result.transferred=2;
+                }
+                snapshot_version_=std::max(snapshot_version_,30);
+                result.result=Outcome::Applied;return result;
+            }
             if(c.action==Action::PlaceFactoryEquipment){
                 auto st=storages_.find(c.target);
                 const auto node=placement_node(c.amount);
@@ -1239,7 +1346,7 @@ Event Simulation::execute(const Command& c) {
                 }
                 auto proposed=st->second;
                 proposed.equipment_positions.emplace(node,Vector2{c.thrust_x,c.thrust_y});
-                try{validate_site_placements(proposed);}
+                try{validate_site_conveyors(proposed);}
                 catch(const std::exception&){result.result=Outcome::InvalidArgument;return result;}
                 st->second.equipment_positions.emplace(node,Vector2{c.thrust_x,c.thrust_y});
                 snapshot_version_=std::max(snapshot_version_,29);
@@ -1275,10 +1382,13 @@ Event Simulation::execute(const Command& c) {
                     }
                 }
                 if(cship.modules<1){result.result=Outcome::NoResources;return result;}
-                si->second.links.emplace(c.id,OutpostStorageLink{
-                    c.id,from,to,item,c.amount/4,0});
+                const bool needs_route=si->second.equipment_positions.count(from) &&
+                                       si->second.equipment_positions.count(to);
+                OutpostStorageLink route{c.id,from,to,item,c.amount/4,0,false,false,{}};
+                route.route_required=needs_route;
+                si->second.links.emplace(c.id,std::move(route));
                 --cship.modules;
-                snapshot_version_=std::max(snapshot_version_,28);
+                snapshot_version_=std::max(snapshot_version_,needs_route?30:28);
                 result.transferred=2;result.result=Outcome::Applied;return result;
             }
             if(c.action==Action::ConstructStorageLink){
@@ -1313,10 +1423,13 @@ Event Simulation::execute(const Command& c) {
                     result.result=Outcome::InvalidArgument;return result;
                 }
                 if(cship.modules<1){result.result=Outcome::NoResources;return result;}
-                it->second.links.emplace(c.id,OutpostStorageLink{
-                    c.id,src,dst,static_cast<std::uint8_t>(c.amount%4),c.amount/4,0});
+                const bool needs_route=it->second.equipment_positions.count(src) &&
+                                       it->second.equipment_positions.count(dst);
+                OutpostStorageLink route{c.id,src,dst,static_cast<std::uint8_t>(c.amount%4),c.amount/4,0,false,false,{}};
+                route.route_required=needs_route;
+                it->second.links.emplace(c.id,std::move(route));
                 --cship.modules;
-                snapshot_version_=std::max(snapshot_version_,27);
+                snapshot_version_=std::max(snapshot_version_,needs_route?30:27);
                 result.transferred=2;result.result=Outcome::Applied;return result;
             }
             if(c.action==Action::ConstructStorageNode){
@@ -2514,6 +2627,7 @@ void Simulation::process_storage_links() {
     for(auto& [site,storage]:storages_) {
         for(auto& [id,link]:storage.links){
             (void)id;
+            if(link.route_required && !link.route_ready)continue;
             const auto name=names[link.item_index];
             const bool from_workshop=link.source==kWorkshopConveyorNode;
             const bool to_workshop=link.destination==kWorkshopConveyorNode;
@@ -2613,7 +2727,7 @@ void Simulation::steps(std::uint64_t count) {
 
 std::string Simulation::canonical_state() const {
     std::ostringstream out;
-    out << (snapshot_version_ >= 29 ? "galaxy-kernel-v29|" : snapshot_version_ >= 28 ? "galaxy-kernel-v28|" : snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
+    out << (snapshot_version_ >= 30 ? "galaxy-kernel-v30|" : snapshot_version_ >= 29 ? "galaxy-kernel-v29|" : snapshot_version_ >= 28 ? "galaxy-kernel-v28|" : snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
         << '|' << rng_state_ << '\n';
     if (snapshot_version_>=5) for(const auto system:systems_)out<<"system|"<<system<<'\n';
     for (const auto& entry : entities_) {
@@ -2677,6 +2791,16 @@ std::string Simulation::canonical_state() const {
                 out<<"storage_link|"<<site<<'|'<<id<<'|'<<link.source<<'|'
                    <<link.destination<<'|'<<static_cast<unsigned>(link.item_index)
                    <<'|'<<link.units_per_tick<<'|'<<link.units_moved<<'\n';
+                if(snapshot_version_>=30 && link.route_required){
+                    out<<"factory_conveyor|"<<site<<'|'<<id<<'|'<<(link.route_ready?1:0)<<'|';
+                    bool first=true;
+                    for(const auto& cell:link.route_cells){
+                        if(!first)out<<';';
+                        first=false;
+                        out<<cell.x<<':'<<cell.y;
+                    }
+                    out<<'\n';
+                }
             }
         }
     }
@@ -2902,12 +3026,12 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
     if (!std::getline(in, line)) throw std::runtime_error("snapshot: missing header");
     auto h = fields(line);
     require_fields(h, 5);
-    if (h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27" && h[0] != "galaxy-kernel-v28" && h[0] != "galaxy-kernel-v29") throw std::runtime_error("snapshot: unsupported version");
+    if (h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27" && h[0] != "galaxy-kernel-v28" && h[0] != "galaxy-kernel-v29" && h[0] != "galaxy-kernel-v30") throw std::runtime_error("snapshot: unsupported version");
     const auto sys = u64(h[1]);
     if (sys == 0 || sys > std::numeric_limits<std::uint32_t>::max())
         throw std::runtime_error("snapshot: invalid system");
     Simulation result(u64(h[4]), static_cast<std::uint32_t>(sys));
-    result.snapshot_version_ = h[0] == "galaxy-kernel-v29" ? 29 : h[0] == "galaxy-kernel-v28" ? 28 : h[0] == "galaxy-kernel-v27" ? 27 : h[0] == "galaxy-kernel-v26" ? 26 : h[0] == "galaxy-kernel-v25" ? 25 : h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
+    result.snapshot_version_ = h[0] == "galaxy-kernel-v30" ? 30 : h[0] == "galaxy-kernel-v29" ? 29 : h[0] == "galaxy-kernel-v28" ? 28 : h[0] == "galaxy-kernel-v27" ? 27 : h[0] == "galaxy-kernel-v26" ? 26 : h[0] == "galaxy-kernel-v25" ? 25 : h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
     result.tick_ = u64(h[2]);
     result.next_entity_id_ = u64(h[3]);
     if (result.next_entity_id_ == 0) throw std::runtime_error("snapshot: invalid next entity ID");
@@ -3111,8 +3235,32 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                item>3 || rate<1 || rate>1000 || moved/static_cast<std::uint64_t>(rate)>result.tick_ ||
                !it->second.links.emplace(id,OutpostStorageLink{id,
                      static_cast<std::uint32_t>(src),static_cast<std::uint32_t>(dst),
-                     static_cast<std::uint8_t>(item),rate,moved}).second)
+                     static_cast<std::uint8_t>(item),rate,moved,false,false,{}}).second)
                 throw std::runtime_error("snapshot: invalid storage link");
+        } else if(f[0]=="factory_conveyor" && result.snapshot_version_>=30){
+            require_fields(f,5);
+            const auto site=u64(f[1]),id=u64(f[2]);
+            const auto active=u64(f[3]);
+            auto st=result.storages_.find(site);
+            if(st==result.storages_.end() || !id || !st->second.links.count(id) || active>1 ||
+               st->second.links.at(id).route_required ||
+               (active && f[4].empty()))
+                throw std::runtime_error("snapshot: invalid installed conveyor receipt");
+            auto& link=st->second.links.at(id);
+            link.route_required=true;
+            link.route_ready=active==1;
+            if(!f[4].empty()){
+                std::istringstream cells(f[4]);std::string cell;
+                while(std::getline(cells,cell,';')){
+                    const auto colon=cell.find(':');
+                    if(colon==std::string::npos || cell.find(':',colon+1)!=std::string::npos ||
+                       link.route_cells.size()>=4096)
+                        throw std::runtime_error("snapshot: malformed conveyor route");
+                    link.route_cells.push_back({i64(cell.substr(0,colon)),i64(cell.substr(colon+1))});
+                }
+            }
+            try{validate_site_conveyors(st->second);}
+            catch(const std::exception&){throw std::runtime_error("snapshot: invalid conveyor geometry");}
         } else if(f[0]=="geology" && result.snapshot_version_>=8){
             require_fields(f,6);
             const auto id=u64(f[1]),tax=u64(f[2]);
@@ -3378,7 +3526,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             c.id = u64(f[1]); c.execute_tick = u64(f[2]); c.sequence = u64(f[3]);
             c.issuer = u64(f[4]); c.actor = u64(f[5]); c.target = u64(f[6]);
             auto action = u64(f[7]);
-            if (action > (result.snapshot_version_ >= 29 ? static_cast<unsigned>(Action::PlaceFactoryEquipment) : result.snapshot_version_ >= 28 ? static_cast<unsigned>(Action::ConstructWorkshopLink) : result.snapshot_version_ >= 27 ? static_cast<unsigned>(Action::ConstructStorageLink) : result.snapshot_version_ >= 26 ? static_cast<unsigned>(Action::TransferStorageNodeStack) : result.snapshot_version_ >= 25 ? static_cast<unsigned>(Action::TransferStorageStack) : result.snapshot_version_ >= 24 ? static_cast<unsigned>(Action::TransferWorkshopStack) : result.snapshot_version_ >= 23 ? static_cast<unsigned>(Action::TransferWorkshopFinalOutput) : result.snapshot_version_ >= 22 ? static_cast<unsigned>(Action::TransferWorkshopOutput) : result.snapshot_version_ >= 21 ? static_cast<unsigned>(Action::HostCrewLoss) : result.snapshot_version_ >= 20 ? static_cast<unsigned>(Action::AssignFarmMentor) : result.snapshot_version_ >= 19 ? static_cast<unsigned>(Action::AssignPolicyInspectors) : result.snapshot_version_ >= 18 ? static_cast<unsigned>(Action::TransferWaterworksFeed) : result.snapshot_version_ >= 17 ? static_cast<unsigned>(Action::ConstructReclaimer) : result.snapshot_version_ >= 16 ? static_cast<unsigned>(Action::AssignClinicStaff) : result.snapshot_version_ >= 15 ? static_cast<unsigned>(Action::AssignCommunityStaff) : result.snapshot_version_ >= 14 ? static_cast<unsigned>(Action::SetUtilityMaintenance) : result.snapshot_version_ >= 13 ? static_cast<unsigned>(Action::RepairUtility) : result.snapshot_version_ >= 12 ? static_cast<unsigned>(Action::AssignHabitatResidents) : result.snapshot_version_ >= 11 ? static_cast<unsigned>(Action::AssignFarmWorkers) : result.snapshot_version_ >= 10 ? static_cast<unsigned>(Action::LoadLifeWater) : result.snapshot_version_ >= 9 ? static_cast<unsigned>(Action::FabricateMaterialModule) : result.snapshot_version_ >= 7 ? static_cast<unsigned>(Action::ConstructOutpost) : result.snapshot_version_ >= 6 ? static_cast<unsigned>(Action::DeliverGateSpares) : result.snapshot_version_ >= 5 ? static_cast<unsigned>(Action::SetGatePairOnline) : result.snapshot_version_ >= 4 ? static_cast<unsigned>(Action::SellOre) : static_cast<unsigned>(Action::UnloadOre))) throw std::runtime_error("snapshot: invalid action");
+            if (action > (result.snapshot_version_ >= 30 ? static_cast<unsigned>(Action::CompleteConveyorRoute) : result.snapshot_version_ >= 29 ? static_cast<unsigned>(Action::PlaceFactoryEquipment) : result.snapshot_version_ >= 28 ? static_cast<unsigned>(Action::ConstructWorkshopLink) : result.snapshot_version_ >= 27 ? static_cast<unsigned>(Action::ConstructStorageLink) : result.snapshot_version_ >= 26 ? static_cast<unsigned>(Action::TransferStorageNodeStack) : result.snapshot_version_ >= 25 ? static_cast<unsigned>(Action::TransferStorageStack) : result.snapshot_version_ >= 24 ? static_cast<unsigned>(Action::TransferWorkshopStack) : result.snapshot_version_ >= 23 ? static_cast<unsigned>(Action::TransferWorkshopFinalOutput) : result.snapshot_version_ >= 22 ? static_cast<unsigned>(Action::TransferWorkshopOutput) : result.snapshot_version_ >= 21 ? static_cast<unsigned>(Action::HostCrewLoss) : result.snapshot_version_ >= 20 ? static_cast<unsigned>(Action::AssignFarmMentor) : result.snapshot_version_ >= 19 ? static_cast<unsigned>(Action::AssignPolicyInspectors) : result.snapshot_version_ >= 18 ? static_cast<unsigned>(Action::TransferWaterworksFeed) : result.snapshot_version_ >= 17 ? static_cast<unsigned>(Action::ConstructReclaimer) : result.snapshot_version_ >= 16 ? static_cast<unsigned>(Action::AssignClinicStaff) : result.snapshot_version_ >= 15 ? static_cast<unsigned>(Action::AssignCommunityStaff) : result.snapshot_version_ >= 14 ? static_cast<unsigned>(Action::SetUtilityMaintenance) : result.snapshot_version_ >= 13 ? static_cast<unsigned>(Action::RepairUtility) : result.snapshot_version_ >= 12 ? static_cast<unsigned>(Action::AssignHabitatResidents) : result.snapshot_version_ >= 11 ? static_cast<unsigned>(Action::AssignFarmWorkers) : result.snapshot_version_ >= 10 ? static_cast<unsigned>(Action::LoadLifeWater) : result.snapshot_version_ >= 9 ? static_cast<unsigned>(Action::FabricateMaterialModule) : result.snapshot_version_ >= 7 ? static_cast<unsigned>(Action::ConstructOutpost) : result.snapshot_version_ >= 6 ? static_cast<unsigned>(Action::DeliverGateSpares) : result.snapshot_version_ >= 5 ? static_cast<unsigned>(Action::SetGatePairOnline) : result.snapshot_version_ >= 4 ? static_cast<unsigned>(Action::SellOre) : static_cast<unsigned>(Action::UnloadOre))) throw std::runtime_error("snapshot: invalid action");
             c.action = static_cast<Action>(action);
             auto tx = i64(f[8]), ty = i64(f[9]);
             if (tx < std::numeric_limits<int>::min() || tx > std::numeric_limits<int>::max() ||
@@ -3480,6 +3628,11 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                     (c.amount!=1 || c.thrust_x || c.thrust_y) :
                     (c.amount<1 || c.amount>1000 || c.thrust_x<0 || c.thrust_x>3 ||
                      c.thrust_y<0 || c.thrust_y>3)))) ||
+                ((c.action==Action::PlaceConveyorCell || c.action==Action::CompleteConveyorRoute) &&
+                  (result.snapshot_version_<30 || !c.target || c.amount<1 ||
+                   c.thrust_x< -kPlacementBound || c.thrust_x>kPlacementBound ||
+                   c.thrust_y< -kPlacementBound || c.thrust_y>kPlacementBound ||
+                   (c.action==Action::CompleteConveyorRoute && (c.thrust_x || c.thrust_y)))) ||
                 ((c.action==Action::PlaceFactoryEquipment) &&
                   (result.snapshot_version_<29 || !c.target || c.amount< -1 ||
                    c.amount>std::numeric_limits<int>::max()/4 ||
@@ -3649,6 +3802,11 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             throw std::runtime_error("snapshot: invalid player-built outpost");
     }
     for(const auto& [id,st]:result.storages_){
+        if(result.snapshot_version_>=30){
+            try{validate_site_conveyors(st);}catch(const std::exception&){
+                throw std::runtime_error("snapshot: invalid installed conveyor route");
+            }
+        }
         auto i=result.built_outposts_.find(id);
         if(i==result.built_outposts_.end() || i->second.source_colony_ship!=st.source_ship)
             throw std::runtime_error("snapshot: orphaned storage");
@@ -4043,6 +4201,11 @@ std::int64_t Simulation::total_ore() const {
         if(st.links.size()>static_cast<std::size_t>((std::numeric_limits<std::int64_t>::max()-total)/2))
             throw std::overflow_error("invalid storage links");
         total+=static_cast<std::int64_t>(2*st.links.size());
+        for(const auto& [linkid,link]:st.links){(void)linkid;
+            if(link.route_cells.size()>static_cast<std::size_t>((std::numeric_limits<std::int64_t>::max()-total)/2))
+                throw std::overflow_error("invalid conveyor construction mass");
+            total+=static_cast<std::int64_t>(2*link.route_cells.size());
+        }
         std::int64_t qty=0;
         auto cap=storage_inventory_snapshot(site);
         for(const auto& [name,value]:st.goods_kg){(void)name;

@@ -586,3 +586,10 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_econ02b2d3a_installed_placement_tests PRIVATE galaxy_kernel SQLite::SQLite3)
   add_test(NAME galaxy_econ02b2d3a_installed_placement_tests COMMAND galaxy_econ02b2d3a_installed_placement_tests)
 endif()
+
+# ECON-02B2d3b: spatial, module-backed directed conveyor cells and durable installation.
+if(BUILD_TESTING)
+  add_executable(galaxy_econ02b2d3b_spatial_conveyor_tests tests/ECON02B2d3bSpatialConveyorTests.cpp)
+  target_link_libraries(galaxy_econ02b2d3b_spatial_conveyor_tests PRIVATE galaxy_kernel SQLite::SQLite3)
+  add_test(NAME galaxy_econ02b2d3b_spatial_conveyor_tests COMMAND galaxy_econ02b2d3b_spatial_conveyor_tests)
+endif()
