@@ -23,6 +23,13 @@ public:
     // Detailed->Cold: safe only if the actual persisted game snapshot has not
     // changed at all since promotion. Otherwise refuse, preserving detailed.
     RegionalAuthorityState demote_if_unchanged(const std::string& handoff_id);
+    // ECON-03c8b: seal actual persisted detailed mining/refining/basic
+    // fabrication effects into a unique, crash-safe physical receipt manifest,
+    // without duplicating physical inventory into regional resource fields.
+    // Unimplemented ship routes, destruction and unproven transfers are rejected.
+    // The cold owner *parks* physical state: it does not yet advance real NPC/
+    // factory production. Re-promotion validates and consumes parked manifest.
+    RegionalAuthorityState demote_preserving_effects(const std::string& handoff_id);
     // Explicit host recovery after a process crash between prepare and commit.
     // Aborting revokes the pending generation and never changes game inventory.
     RegionalAuthorityState abort_pending(const std::string& handoff_id,

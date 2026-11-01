@@ -674,3 +674,10 @@ if(BUILD_SOAK_TESTS)
   add_executable(galaxy_econ03c8a_soak_runner tests/ECON03c8aSoakRunner.cpp)
   target_link_libraries(galaxy_econ03c8a_soak_runner PRIVATE galaxy_regional)
 endif()
+
+# ECON-03c8b: full PersistentWorld detail-effect seal, no physical duplication.
+if(BUILD_TESTING)
+  add_executable(galaxy_econ03c8b_world_reconciliation_tests tests/ECON03c8bWorldReconciliationTests.cpp)
+  target_link_libraries(galaxy_econ03c8b_world_reconciliation_tests PRIVATE galaxy_regional)
+  add_test(NAME galaxy_econ03c8b_world_reconciliation_tests COMMAND galaxy_econ03c8b_world_reconciliation_tests)
+endif()
