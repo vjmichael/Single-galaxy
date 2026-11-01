@@ -390,6 +390,16 @@ inventory::StackStore Simulation::ship_inventory_snapshot(EntityId ship_id) cons
     }
     return store;
 }
+const OutpostStorage* Simulation::storage(EntityId site) const {
+    auto it=storages_.find(site);return it==storages_.end()?nullptr:&it->second;
+}
+inventory::StackStore Simulation::storage_inventory_snapshot(EntityId site) const {
+    auto it=storages_.find(site);
+    if(it==storages_.end())throw std::invalid_argument("storage not built");
+    inventory::StackStore out(inventory::Catalogue::standard(),4000);
+    for(const auto& [name,qty]:it->second.goods_kg)out.load("good/"+name,qty);
+    return out;
+}
 inventory::StackStore Simulation::workshop_bin_inventory_snapshot(EntityId site, int item) const {
     const auto it=workshops_.find(site);
     if(it==workshops_.end() || item<0 || item>3)
@@ -629,6 +639,13 @@ bool Simulation::submit(const Command& c) {
             c.action==Action::ConstructWorkshopFinisher ||
             c.action==Action::AssignWorkshopFinisher ||
             c.action==Action::TransferWorkshopFinalOutput ? 23 : 22);
+    }
+    if(c.action==Action::ConstructStorage || c.action==Action::TransferStorageStack){
+        if(!c.target || (c.action==Action::ConstructStorage ?
+            (c.amount!=1 || c.thrust_x || c.thrust_y) :
+            (c.amount<1 || c.amount>1000 || c.thrust_x<0 || c.thrust_x>3 ||
+             c.thrust_y<0 || c.thrust_y>3)))return false;
+        snapshot_version_=std::max(snapshot_version_,25);
     }
     const bool life_action=c.action==Action::PlantCrops || c.action==Action::HarvestCrops ||
       c.action==Action::RecycleWater || c.action==Action::RecycleCompost ||
@@ -1083,6 +1100,8 @@ Event Simulation::execute(const Command& c) {
         case Action::AssignWorkshopFinisher:
         case Action::TransferWorkshopFinalOutput:
         case Action::TransferWorkshopStack:
+        case Action::ConstructStorage:
+        case Action::TransferStorageStack:
         case Action::AssignFarmMentor:
         case Action::SetPolicyAssurance:
         case Action::AssignPolicyInspectors:
@@ -1126,6 +1145,56 @@ Event Simulation::execute(const Command& c) {
             }
             auto& cship=colony_ships_.at(c.actor);
             auto& onboard=life_support_.at(c.actor);
+            if(c.action==Action::ConstructStorage){
+                if(storages_.count(c.target)){result.result=Outcome::InvalidTarget;return result;}
+                if(cship.modules<1){result.result=Outcome::NoResources;return result;}
+                OutpostStorage bin{};bin.source_ship=c.actor;
+                storages_.emplace(c.target,std::move(bin));
+                --cship.modules;
+                snapshot_version_=std::max(snapshot_version_,25);
+                result.transferred=2;
+                result.result=Outcome::Applied;return result;
+            }
+            if(c.action==Action::TransferStorageStack){
+                auto it=storages_.find(c.target);
+                if(it==storages_.end() || it->second.source_ship!=c.actor){
+                    result.result=Outcome::InvalidTarget;return result;
+                }
+                static const char* names[]={"aluminum","aluminum_panels","aluminum_frames","aluminum_scrap"};
+                const std::string name=names[c.thrust_x],code="good/"+name;
+                auto bin=storage_inventory_snapshot(c.target);
+                const bool use_workshop=c.thrust_y>=2;
+                auto wi=workshops_.find(c.target);
+                if(use_workshop && (wi==workshops_.end() || wi->second.source_ship!=c.actor ||
+                                    (c.thrust_x==2 && !wi->second.finisher_installed))){
+                    result.result=Outcome::InvalidTarget;return result;
+                }
+                auto other=use_workshop ? workshop_bin_inventory_snapshot(c.target,c.thrust_x) :
+                    ship_inventory_snapshot(c.actor);
+                const bool inbound=(c.thrust_y==0 || c.thrust_y==2);
+                auto status=inbound ? other.transfer_to(bin,code,c.amount) :
+                                      bin.transfer_to(other,code,c.amount);
+                if(status!=inventory::TransferStatus::Applied){
+                    result.result=status==inventory::TransferStatus::DestinationFull ? Outcome::CargoFull : Outcome::NoResources;
+                    return result;
+                }
+                // Commit the validated value-copy amounts. Preserve every other item stack.
+                const auto binQty=bin.amount(code);
+                if(binQty)it->second.goods_kg[name]=binQty;
+                else it->second.goods_kg.erase(name);
+                if(use_workshop){
+                    auto& w=wi->second;
+                    std::int64_t* slots[]={&w.aluminum_kg,&w.panels_kg,&w.frames_kg,&w.scrap_kg};
+                    *slots[c.thrust_x]=other.amount(code);
+                }else{
+                    const auto qty=other.amount(code);
+                    if(qty)cship.goods_kg[name]=qty;
+                    else cship.goods_kg.erase(name);
+                }
+                snapshot_version_=std::max(snapshot_version_,25);
+                result.transferred=c.amount;
+                result.result=Outcome::Applied;return result;
+            }
             if(c.action==Action::ConstructWorkshop){
                 if(workshops_.count(c.target)){result.result=Outcome::InvalidTarget;return result;}
                 if(cship.modules<1){result.result=Outcome::NoResources;return result;}
@@ -2270,7 +2339,7 @@ void Simulation::steps(std::uint64_t count) {
 
 std::string Simulation::canonical_state() const {
     std::ostringstream out;
-    out << (snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
+    out << (snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
         << '|' << rng_state_ << '\n';
     if (snapshot_version_>=5) for(const auto system:systems_)out<<"system|"<<system<<'\n';
     for (const auto& entry : entities_) {
@@ -2309,6 +2378,13 @@ std::string Simulation::canonical_state() const {
             <<'|'<<w.finisher_npc_id<<'|'<<w.reserved_panels_kg
             <<'|'<<w.finisher_ticks_remaining<<'|'<<w.frames_kg
             <<'|'<<w.finisher_batches<<'|'<<w.finisher_elapsed_ticks;
+        out<<'\n';
+    }
+    if(snapshot_version_>=25)for(const auto& [site,st]:storages_){
+        out<<"storage|"<<site<<'|'<<st.source_ship<<'|'<<st.embodied_ore;
+        static const char* names[]={"aluminum","aluminum_panels","aluminum_frames","aluminum_scrap"};
+        for(const auto* name:names){const auto i=st.goods_kg.find(name);
+            out<<'|'<<(i==st.goods_kg.end()?0:i->second);}
         out<<'\n';
     }
     if (snapshot_version_>=8) {
@@ -2533,12 +2609,12 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
     if (!std::getline(in, line)) throw std::runtime_error("snapshot: missing header");
     auto h = fields(line);
     require_fields(h, 5);
-    if (h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24") throw std::runtime_error("snapshot: unsupported version");
+    if (h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25") throw std::runtime_error("snapshot: unsupported version");
     const auto sys = u64(h[1]);
     if (sys == 0 || sys > std::numeric_limits<std::uint32_t>::max())
         throw std::runtime_error("snapshot: invalid system");
     Simulation result(u64(h[4]), static_cast<std::uint32_t>(sys));
-    result.snapshot_version_ = h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
+    result.snapshot_version_ = h[0] == "galaxy-kernel-v25" ? 25 : h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
     result.tick_ = u64(h[2]);
     result.next_entity_id_ = u64(h[3]);
     if (result.next_entity_id_ == 0) throw std::runtime_error("snapshot: invalid next entity ID");
@@ -2675,6 +2751,20 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                (w.finisher_npc_id && w.finisher_npc_id==w.operator_npc_id) ||
                !result.workshops_.emplace(id,w).second)
                 throw std::runtime_error("snapshot: invalid outpost workshop");
+        } else if(f[0]=="storage" && result.snapshot_version_>=25){
+            require_fields(f,8);
+            const auto site=u64(f[1]);OutpostStorage st{};
+            st.source_ship=u64(f[2]);st.embodied_ore=i64(f[3]);
+            static const char* names[]={"aluminum","aluminum_panels","aluminum_frames","aluminum_scrap"};
+            for(int i=0;i<4;++i){auto qty=i64(f[4+i]);
+                if(qty<0 || qty>4000)throw std::runtime_error("snapshot: invalid storage quantity");
+                if(qty)st.goods_kg.emplace(names[i],qty);
+            }
+            inventory::StackStore cap(inventory::Catalogue::standard(),4000);
+            for(const auto& [name,qty]:st.goods_kg)cap.load("good/"+name,qty);
+            if(!site || !st.source_ship || st.embodied_ore!=2 ||
+               !result.storages_.emplace(site,std::move(st)).second)
+                throw std::runtime_error("snapshot: invalid storage facility");
         } else if(f[0]=="geology" && result.snapshot_version_>=8){
             require_fields(f,6);
             const auto id=u64(f[1]),tax=u64(f[2]);
@@ -2940,7 +3030,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             c.id = u64(f[1]); c.execute_tick = u64(f[2]); c.sequence = u64(f[3]);
             c.issuer = u64(f[4]); c.actor = u64(f[5]); c.target = u64(f[6]);
             auto action = u64(f[7]);
-            if (action > (result.snapshot_version_ >= 24 ? static_cast<unsigned>(Action::TransferWorkshopStack) : result.snapshot_version_ >= 23 ? static_cast<unsigned>(Action::TransferWorkshopFinalOutput) : result.snapshot_version_ >= 22 ? static_cast<unsigned>(Action::TransferWorkshopOutput) : result.snapshot_version_ >= 21 ? static_cast<unsigned>(Action::HostCrewLoss) : result.snapshot_version_ >= 20 ? static_cast<unsigned>(Action::AssignFarmMentor) : result.snapshot_version_ >= 19 ? static_cast<unsigned>(Action::AssignPolicyInspectors) : result.snapshot_version_ >= 18 ? static_cast<unsigned>(Action::TransferWaterworksFeed) : result.snapshot_version_ >= 17 ? static_cast<unsigned>(Action::ConstructReclaimer) : result.snapshot_version_ >= 16 ? static_cast<unsigned>(Action::AssignClinicStaff) : result.snapshot_version_ >= 15 ? static_cast<unsigned>(Action::AssignCommunityStaff) : result.snapshot_version_ >= 14 ? static_cast<unsigned>(Action::SetUtilityMaintenance) : result.snapshot_version_ >= 13 ? static_cast<unsigned>(Action::RepairUtility) : result.snapshot_version_ >= 12 ? static_cast<unsigned>(Action::AssignHabitatResidents) : result.snapshot_version_ >= 11 ? static_cast<unsigned>(Action::AssignFarmWorkers) : result.snapshot_version_ >= 10 ? static_cast<unsigned>(Action::LoadLifeWater) : result.snapshot_version_ >= 9 ? static_cast<unsigned>(Action::FabricateMaterialModule) : result.snapshot_version_ >= 7 ? static_cast<unsigned>(Action::ConstructOutpost) : result.snapshot_version_ >= 6 ? static_cast<unsigned>(Action::DeliverGateSpares) : result.snapshot_version_ >= 5 ? static_cast<unsigned>(Action::SetGatePairOnline) : result.snapshot_version_ >= 4 ? static_cast<unsigned>(Action::SellOre) : static_cast<unsigned>(Action::UnloadOre))) throw std::runtime_error("snapshot: invalid action");
+            if (action > (result.snapshot_version_ >= 25 ? static_cast<unsigned>(Action::TransferStorageStack) : result.snapshot_version_ >= 24 ? static_cast<unsigned>(Action::TransferWorkshopStack) : result.snapshot_version_ >= 23 ? static_cast<unsigned>(Action::TransferWorkshopFinalOutput) : result.snapshot_version_ >= 22 ? static_cast<unsigned>(Action::TransferWorkshopOutput) : result.snapshot_version_ >= 21 ? static_cast<unsigned>(Action::HostCrewLoss) : result.snapshot_version_ >= 20 ? static_cast<unsigned>(Action::AssignFarmMentor) : result.snapshot_version_ >= 19 ? static_cast<unsigned>(Action::AssignPolicyInspectors) : result.snapshot_version_ >= 18 ? static_cast<unsigned>(Action::TransferWaterworksFeed) : result.snapshot_version_ >= 17 ? static_cast<unsigned>(Action::ConstructReclaimer) : result.snapshot_version_ >= 16 ? static_cast<unsigned>(Action::AssignClinicStaff) : result.snapshot_version_ >= 15 ? static_cast<unsigned>(Action::AssignCommunityStaff) : result.snapshot_version_ >= 14 ? static_cast<unsigned>(Action::SetUtilityMaintenance) : result.snapshot_version_ >= 13 ? static_cast<unsigned>(Action::RepairUtility) : result.snapshot_version_ >= 12 ? static_cast<unsigned>(Action::AssignHabitatResidents) : result.snapshot_version_ >= 11 ? static_cast<unsigned>(Action::AssignFarmWorkers) : result.snapshot_version_ >= 10 ? static_cast<unsigned>(Action::LoadLifeWater) : result.snapshot_version_ >= 9 ? static_cast<unsigned>(Action::FabricateMaterialModule) : result.snapshot_version_ >= 7 ? static_cast<unsigned>(Action::ConstructOutpost) : result.snapshot_version_ >= 6 ? static_cast<unsigned>(Action::DeliverGateSpares) : result.snapshot_version_ >= 5 ? static_cast<unsigned>(Action::SetGatePairOnline) : result.snapshot_version_ >= 4 ? static_cast<unsigned>(Action::SellOre) : static_cast<unsigned>(Action::UnloadOre))) throw std::runtime_error("snapshot: invalid action");
             c.action = static_cast<Action>(action);
             auto tx = i64(f[8]), ty = i64(f[9]);
             if (tx < std::numeric_limits<int>::min() || tx > std::numeric_limits<int>::max() ||
@@ -3036,6 +3126,12 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                      (c.amount<0 || c.amount>1000000)) ||
                   ((c.action==Action::TransferWorkshopOutput || c.action==Action::TransferWorkshopFinalOutput) &&
                      (c.amount<50 || c.amount>500 || c.amount%50)))) ||
+                ((c.action==Action::ConstructStorage || c.action==Action::TransferStorageStack) &&
+                 (result.snapshot_version_<25 || !c.target ||
+                  (c.action==Action::ConstructStorage ?
+                    (c.amount!=1 || c.thrust_x || c.thrust_y) :
+                    (c.amount<1 || c.amount>1000 || c.thrust_x<0 || c.thrust_x>3 ||
+                     c.thrust_y<0 || c.thrust_y>3)))) ||
                 !pending_ids.insert(c.id).second)
                 throw std::runtime_error("snapshot: invalid pending command");
             result.commands_[c.execute_tick].push_back(c);
@@ -3174,6 +3270,11 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
            !ship || ship->type!=EntityType::Ship || !result.colony_ships_.count(ship->id) ||
            ship->owner_id!=station->owner_id || !result.hangar(id,station->owner_id))
             throw std::runtime_error("snapshot: invalid player-built outpost");
+    }
+    for(const auto& [id,st]:result.storages_){
+        auto i=result.built_outposts_.find(id);
+        if(i==result.built_outposts_.end() || i->second.source_colony_ship!=st.source_ship)
+            throw std::runtime_error("snapshot: orphaned storage");
     }
     for(const auto& [id,w]:result.workshops_){
         const auto outpost=result.built_outposts_.find(id);
@@ -3407,6 +3508,7 @@ void Simulation::swap(Simulation& other) noexcept {
     clinics_.swap(other.clinics_);
     built_outposts_.swap(other.built_outposts_);
     workshops_.swap(other.workshops_);
+    storages_.swap(other.storages_);
     geology_.swap(other.geology_);
     activity_events_.swap(other.activity_events_);
     swap(snapshot_version_, other.snapshot_version_);
@@ -3517,6 +3619,20 @@ std::int64_t Simulation::total_ore() const {
         if(kg<0 || kg>6000 || kg>std::numeric_limits<std::int64_t>::max()-life_mass_kg)
             throw std::overflow_error("invalid workshop inventories");
         life_mass_kg+=kg;
+    }
+    for(const auto& [site,st]:storages_){(void)site;
+        if(st.embodied_ore!=2 || total>std::numeric_limits<std::int64_t>::max()-2)
+            throw std::overflow_error("invalid storage construction");
+        total+=2;
+        std::int64_t qty=0;
+        auto cap=storage_inventory_snapshot(site);
+        for(const auto& [name,value]:st.goods_kg){(void)name;
+            if(value<0 || value>4000-qty)throw std::overflow_error("invalid storage stack");
+            qty+=value;
+        }
+        if(qty>std::numeric_limits<std::int64_t>::max()-life_mass_kg)
+            throw std::overflow_error("invalid storage material total");
+        life_mass_kg+=qty;
     }
     // Only the WHOLE world must conserve complete ore-equivalent mass;
     // individual inventories can now hold a single kilogram stack.

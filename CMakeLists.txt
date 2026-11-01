@@ -537,3 +537,10 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_econ02b2_inventory_tests PRIVATE galaxy_kernel SQLite::SQLite3)
   add_test(NAME galaxy_econ02b2_inventory_tests COMMAND galaxy_econ02b2_inventory_tests)
 endif()
+
+# ECON-02B2b: physically constructed mixed-volume outpost storage.
+if(BUILD_TESTING)
+  add_executable(galaxy_econ02b2b_storage_tests tests/ECON02B2bStorageTests.cpp)
+  target_link_libraries(galaxy_econ02b2b_storage_tests PRIVATE galaxy_kernel SQLite::SQLite3)
+  add_test(NAME galaxy_econ02b2b_storage_tests COMMAND galaxy_econ02b2b_storage_tests)
+endif()
