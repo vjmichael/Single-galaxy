@@ -666,3 +666,11 @@ if(BUILD_TESTING)
     add_test(NAME galaxy_${regression} COMMAND galaxy_${regression})
   endforeach()
 endif()
+
+# ECON-03c8a: optional local soak harness. Do not enroll as a timed CTest:
+# a 30-minute wall-clock endurance test is a deliberate developer action.
+option(BUILD_SOAK_TESTS "Build the optional regional / PersistentWorld endurance harness" OFF)
+if(BUILD_SOAK_TESTS)
+  add_executable(galaxy_econ03c8a_soak_runner tests/ECON03c8aSoakRunner.cpp)
+  target_link_libraries(galaxy_econ03c8a_soak_runner PRIVATE galaxy_regional)
+endif()
