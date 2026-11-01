@@ -1,0 +1,6 @@
+single-galaxy-factory-layout-v1
+D|1|0|0|0|0|1|1|4000|||
+D|2|0|0|4|0|1|1|4000|||
+D|4294967295|1|1|8|0|2|2|1000|good/aluminum|good/aluminum_frames,good/aluminum_panels,good/aluminum_scrap|
+C|101|1|2|good/aluminum|7|1:0;2:0;3:0
+C|102|2|4294967295|good/aluminum|5|5:0;6:0;7:0

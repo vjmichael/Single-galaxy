@@ -600,3 +600,12 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_econ02b2d4a_blueprint_build_tests PRIVATE galaxy_kernel SQLite::SQLite3)
   add_test(NAME galaxy_econ02b2d4a_blueprint_build_tests COMMAND galaxy_econ02b2d4a_blueprint_build_tests)
 endif()
+
+# ECON-02B2d4b: browser ghost factory editor exports the exact native format.
+if(BUILD_TESTING)
+  add_executable(galaxy_econ02b2d4b_editor_contract_tests tests/ECON02B2d4bEditorContractTests.cpp)
+  target_link_libraries(galaxy_econ02b2d4b_editor_contract_tests PRIVATE galaxy_kernel)
+  target_compile_definitions(galaxy_econ02b2d4b_editor_contract_tests PRIVATE
+    SG_EDITOR_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/ECON02B2d4b_editor_blueprint.sglayout")
+  add_test(NAME galaxy_econ02b2d4b_editor_contract_tests COMMAND galaxy_econ02b2d4b_editor_contract_tests)
+endif()
