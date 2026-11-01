@@ -413,6 +413,53 @@ std::string npc_mining_execution_body(const NpcMiningExecution& e){
         std::to_string(e.tick)+"|"+std::to_string(e.amount);
 }
 
+NpcFabricationAssignment read_npc_fabrication_assignment(sqlite3_stmt* q){
+    NpcFabricationAssignment e;
+    const auto v=[&](int i)->std::uint64_t {
+        const auto n=sqlite3_column_int64(q,i);
+        if(n<0)throw std::runtime_error("SQLite: negative fabrication assignment field");
+        return static_cast<std::uint64_t>(n);
+    };
+    e.id=v(0);e.command_id=v(1);e.npc_id=v(2);e.ship_id=v(3);e.issuer=v(4);
+    e.action=static_cast<Action>(sqlite3_column_int(q,5));e.material_code=v(6);
+    e.quantity=sqlite3_column_int64(q,7);e.generation=v(8);e.tick=v(9);
+    if(!e.id||!e.command_id||!e.npc_id||!e.ship_id||!e.issuer||
+       (e.action!=Action::FabricateModule&&e.action!=Action::FabricateMaterialModule)||
+       ((e.action==Action::FabricateModule&&e.material_code!=0)||
+        (e.action==Action::FabricateMaterialModule&&e.material_code!=1&&e.material_code!=2))||
+       e.quantity<1||e.quantity>1000||!e.generation)
+        throw std::runtime_error("SQLite: invalid fabrication assignment");
+    return e;
+}
+std::string npc_fabrication_assignment_body(const NpcFabricationAssignment& e){
+    return std::to_string(e.id)+"|"+std::to_string(e.command_id)+"|"+
+        std::to_string(e.npc_id)+"|"+std::to_string(e.ship_id)+"|"+
+        std::to_string(e.issuer)+"|"+std::to_string(static_cast<int>(e.action))+"|"+
+        std::to_string(e.material_code)+"|"+std::to_string(e.quantity)+"|"+
+        std::to_string(e.generation)+"|"+std::to_string(e.tick);
+}
+NpcFabricationExecution read_npc_fabrication_execution(sqlite3_stmt* q){
+    NpcFabricationExecution e;
+    const auto v=[&](int i)->std::uint64_t {
+        const auto n=sqlite3_column_int64(q,i);
+        if(n<0)throw std::runtime_error("SQLite: negative fabrication execution field");
+        return static_cast<std::uint64_t>(n);
+    };
+    e.id=v(0);e.assignment_id=v(1);e.command_id=v(2);e.npc_id=v(3);
+    e.incident_id=sqlite_str(q,4);e.generation=v(5);e.tick=v(6);
+    e.transferred=sqlite3_column_int64(q,7);
+    if(!e.id||!e.assignment_id||!e.command_id||!e.npc_id||
+       e.incident_id.empty()||!e.generation||e.transferred<=0)
+        throw std::runtime_error("SQLite: invalid fabrication execution");
+    return e;
+}
+std::string npc_fabrication_execution_body(const NpcFabricationExecution& e){
+    return std::to_string(e.id)+"|"+std::to_string(e.assignment_id)+"|"+
+        std::to_string(e.command_id)+"|"+std::to_string(e.npc_id)+"|"+
+        e.incident_id+"|"+std::to_string(e.generation)+"|"+
+        std::to_string(e.tick)+"|"+std::to_string(e.transferred);
+}
+
 struct EncounterCycle {
     std::uint64_t id=0,generation=0,tick=0,population=0,pairs=0,start=0,
                   scanned=0,end=0,contacts=0;
@@ -505,7 +552,7 @@ public:
         Statement version(db_, "PRAGMA user_version");
         if (!version.row()) throw std::runtime_error("SQLite: no schema version");
         const int v = sqlite3_column_int(version.get(), 0);
-        if (v < 0 || v > 16) throw std::runtime_error("SQLite: incompatible schema version");
+        if (v < 0 || v > 17) throw std::runtime_error("SQLite: incompatible schema version");
         if (v == 0) {
             run(db_, "BEGIN IMMEDIATE");
             try {
@@ -922,6 +969,40 @@ public:
                 run(db_,"CREATE TRIGGER npc_mining_execution_no_delete BEFORE DELETE ON npc_mining_executions "
                     "BEGIN SELECT RAISE(ABORT,'NPC mining execution immutable'); END");
                 run(db_,"PRAGMA user_version=16");run(db_,"COMMIT");
+            }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
+        }
+        if(v<=16){
+            // B2a extends named execution without touching the meaning of old
+            // mining receipts. Migration never assigns a worker retroactively.
+            run(db_,"BEGIN IMMEDIATE");
+            try {
+                run(db_,"CREATE TABLE npc_fabrication_assignment_meta(singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
+                    "event_count INTEGER NOT NULL CHECK(event_count>=0),tip TEXT NOT NULL)");
+                run(db_,"INSERT INTO npc_fabrication_assignment_meta VALUES(1,0,'origin')");
+                run(db_,"CREATE TABLE npc_fabrication_assignments(id INTEGER PRIMARY KEY,"
+                    "command_id TEXT NOT NULL UNIQUE REFERENCES receipts(id),"
+                    "npc_id TEXT NOT NULL,ship_id TEXT NOT NULL,issuer TEXT NOT NULL,"
+                    "action INTEGER NOT NULL,material_code INTEGER NOT NULL,quantity INTEGER NOT NULL CHECK(quantity>0),"
+                    "generation INTEGER NOT NULL CHECK(generation>0),tick INTEGER NOT NULL CHECK(tick>=0),digest TEXT NOT NULL)");
+                run(db_,"CREATE TRIGGER npc_fabrication_assignment_no_update BEFORE UPDATE ON npc_fabrication_assignments "
+                    "BEGIN SELECT RAISE(ABORT,'fabrication assignment immutable'); END");
+                run(db_,"CREATE TRIGGER npc_fabrication_assignment_no_delete BEFORE DELETE ON npc_fabrication_assignments "
+                    "BEGIN SELECT RAISE(ABORT,'fabrication assignment immutable'); END");
+                run(db_,"CREATE TABLE npc_fabrication_execution_meta(singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
+                    "event_count INTEGER NOT NULL CHECK(event_count>=0),tip TEXT NOT NULL)");
+                run(db_,"INSERT INTO npc_fabrication_execution_meta VALUES(1,0,'origin')");
+                run(db_,"CREATE TABLE npc_fabrication_executions(id INTEGER PRIMARY KEY,"
+                    "assignment_id INTEGER NOT NULL UNIQUE REFERENCES npc_fabrication_assignments(id),"
+                    "command_id TEXT NOT NULL UNIQUE REFERENCES receipts(id),"
+                    "npc_id TEXT NOT NULL,"
+                    "incident_id TEXT NOT NULL UNIQUE REFERENCES physical_incidents(incident_id),"
+                    "generation INTEGER NOT NULL CHECK(generation>0),tick INTEGER NOT NULL CHECK(tick>=0),"
+                    "transferred INTEGER NOT NULL CHECK(transferred>0),digest TEXT NOT NULL)");
+                run(db_,"CREATE TRIGGER npc_fabrication_execution_no_update BEFORE UPDATE ON npc_fabrication_executions "
+                    "BEGIN SELECT RAISE(ABORT,'fabrication execution immutable'); END");
+                run(db_,"CREATE TRIGGER npc_fabrication_execution_no_delete BEFORE DELETE ON npc_fabrication_executions "
+                    "BEGIN SELECT RAISE(ABORT,'fabrication execution immutable'); END");
+                run(db_,"PRAGMA user_version=17");run(db_,"COMMIT");
             }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
         }
         } catch (...) { sqlite3_close_v2(db_); db_ = nullptr; throw; }
@@ -2295,6 +2376,92 @@ public:
             if(count!=static_cast<std::uint64_t>(expected)||tip!=tip_end)
                 throw std::runtime_error("SQLite: deleted NPC execution history");
         }
+        // Migration does not manufacture executor identities for older work.
+        // Validate both append-only fabrication chains against the original
+        // accepted command, applied receipt, and committed cargo movement.
+        {
+            Statement meta(db_,"SELECT event_count,tip FROM npc_fabrication_assignment_meta WHERE singleton=1");
+            if(!meta.row())throw std::runtime_error("SQLite: missing fabrication assignment metadata");
+            const auto expected=sqlite3_column_int64(meta.get(),0);
+            const auto tip_end=sqlite_str(meta.get(),1);
+            if(expected<0||meta.row())throw std::runtime_error("SQLite: invalid fabrication assignment metadata");
+            std::uint64_t count=0;std::string tip="origin";
+            Statement q(db_,"SELECT id,command_id,npc_id,ship_id,issuer,action,material_code,quantity,generation,tick,digest "
+                "FROM npc_fabrication_assignments ORDER BY id");
+            while(q.row()){
+                const auto e=read_npc_fabrication_assignment(q.get());
+                if(e.id!=++count||e.generation>generation||e.tick>restored.tick())
+                    throw std::runtime_error("SQLite: invalid fabrication assignment sequence");
+                Statement cmd(db_,"SELECT command FROM operation_log WHERE kind=1 AND generation=?");
+                cmd.i64(1,e.generation);
+                if(!cmd.row())throw std::runtime_error("SQLite: orphaned fabrication assignment");
+                const auto parsed=decode_command(sqlite_str(cmd.get(),0));
+                if(parsed.id!=e.command_id||parsed.action!=e.action||
+                   parsed.actor!=e.ship_id||parsed.target!=e.material_code||
+                   parsed.issuer!=e.issuer||parsed.amount!=e.quantity||
+                   parsed.execute_tick!=e.tick+1||cmd.row())
+                    throw std::runtime_error("SQLite: fabrication assignment contradicts command");
+                Statement receipt(db_,"SELECT accepted_generation FROM receipts WHERE id=?");
+                receipt.text(1,std::to_string(e.command_id));
+                if(!receipt.row()||sqlite3_column_int64(receipt.get(),0)!=static_cast<sqlite3_int64>(e.generation))
+                    throw std::runtime_error("SQLite: fabrication assignment lacks accepted receipt");
+                tip=social_digest(tip,npc_fabrication_assignment_body(e));
+                if(tip!=sqlite_str(q.get(),10))throw std::runtime_error("SQLite: altered fabrication assignment");
+            }
+            if(count!=static_cast<std::uint64_t>(expected)||tip!=tip_end)
+                throw std::runtime_error("SQLite: deleted fabrication assignment");
+        }
+        {
+            Statement meta(db_,"SELECT event_count,tip FROM npc_fabrication_execution_meta WHERE singleton=1");
+            if(!meta.row())throw std::runtime_error("SQLite: missing fabrication execution metadata");
+            const auto expected=sqlite3_column_int64(meta.get(),0);
+            const auto tip_end=sqlite_str(meta.get(),1);
+            if(expected<0||meta.row())throw std::runtime_error("SQLite: invalid fabrication execution metadata");
+            std::uint64_t count=0;std::string tip="origin";
+            Statement q(db_,"SELECT id,assignment_id,command_id,npc_id,incident_id,generation,tick,transferred,digest "
+                "FROM npc_fabrication_executions ORDER BY id");
+            while(q.row()){
+                const auto e=read_npc_fabrication_execution(q.get());
+                if(e.id!=++count||e.generation>generation||e.tick>restored.tick())
+                    throw std::runtime_error("SQLite: invalid fabrication executor sequence");
+                Statement assignment(db_,"SELECT command_id,npc_id,ship_id,issuer,action,material_code,quantity,generation,tick "
+                    "FROM npc_fabrication_assignments WHERE id=?");
+                assignment.i64(1,e.assignment_id);
+                if(!assignment.row()||
+                   parse_u64(sqlite3_column_text(assignment.get(),0))!=e.command_id||
+                   parse_u64(sqlite3_column_text(assignment.get(),1))!=e.npc_id||
+                   sqlite3_column_int64(assignment.get(),7)>=static_cast<sqlite3_int64>(e.generation)||
+                   sqlite3_column_int64(assignment.get(),8)+1!=static_cast<sqlite3_int64>(e.tick)||
+                   2*sqlite3_column_int64(assignment.get(),6)!=e.transferred)
+                    throw std::runtime_error("SQLite: fabrication execution lacks named assignment");
+                const auto ship=sqlite_str(assignment.get(),2);
+                const auto action=static_cast<Action>(sqlite3_column_int(assignment.get(),4));
+                const auto material=sqlite3_column_int64(assignment.get(),5);
+                const auto source=action==Action::FabricateModule?ship:
+                    "good:"+ship+":"+std::to_string(material);
+                const auto destination="modules:"+ship;
+                Statement physical(db_,"SELECT kind,source,destination,generation,tick,amount,command_id "
+                    "FROM physical_incidents WHERE incident_id=?");
+                physical.text(1,e.incident_id);
+                if(!physical.row()||sqlite3_column_int(physical.get(),0)!=static_cast<int>(PhysicalKind::CargoMovement)||
+                   sqlite_str(physical.get(),1)!=source||sqlite_str(physical.get(),2)!=destination||
+                   sqlite3_column_int64(physical.get(),3)!=static_cast<sqlite3_int64>(e.generation)||
+                   sqlite3_column_int64(physical.get(),4)!=static_cast<sqlite3_int64>(e.tick)||
+                   sqlite3_column_int64(physical.get(),5)!=e.transferred||
+                   parse_u64(sqlite3_column_text(physical.get(),6))!=e.command_id)
+                    throw std::runtime_error("SQLite: fabrication executor missing real cargo movement");
+                Statement result(db_,"SELECT execution_tick,result,transferred FROM receipts WHERE id=?");
+                result.text(1,std::to_string(e.command_id));
+                if(!result.row()||sqlite3_column_int64(result.get(),0)!=static_cast<sqlite3_int64>(e.tick)||
+                   sqlite3_column_int(result.get(),1)!=static_cast<int>(Outcome::Applied)||
+                   sqlite3_column_int64(result.get(),2)!=e.transferred)
+                    throw std::runtime_error("SQLite: fabrication executor contradicts command result");
+                tip=social_digest(tip,npc_fabrication_execution_body(e));
+                if(tip!=sqlite_str(q.get(),8))throw std::runtime_error("SQLite: altered fabrication execution");
+            }
+            if(count!=static_cast<std::uint64_t>(expected)||tip!=tip_end)
+                throw std::runtime_error("SQLite: deleted fabrication execution");
+        }
         out.swap(restored);
         return true;
     }
@@ -2303,7 +2470,8 @@ public:
                 const Command* accepted, const std::vector<Event>& new_events,
                 const std::map<std::uint64_t, Command>& due_commands,
                 const std::vector<ActivityEvent>& activity_delta, FailPoint fail,
-                const NpcMiningAssignment* npc_mining_assignment=nullptr) {
+                const NpcMiningAssignment* npc_mining_assignment=nullptr,
+                const NpcFabricationAssignment* npc_fabrication_assignment=nullptr) {
         if (state.total_ore() != origin || state.total_credits() != credit_origin)
             throw std::runtime_error("resource or credit conservation violation");
         const auto bytes = state.canonical_state();
@@ -2351,6 +2519,31 @@ public:
                 Statement update(db_,"UPDATE npc_mining_assignment_meta SET event_count=?,tip=? WHERE singleton=1");
                 update.i64(1,e.id);update.text(2,tip);update.execute();
                 if(sqlite3_changes(db_)!=1)throw std::runtime_error("missing NPC assignment metadata update");
+            }
+            if(npc_fabrication_assignment){
+                const auto& e=*npc_fabrication_assignment;
+                if(!accepted||e.command_id!=accepted->id||e.ship_id!=accepted->actor||
+                   e.issuer!=accepted->issuer||e.action!=accepted->action||
+                   e.material_code!=accepted->target||e.quantity!=accepted->amount||
+                   e.generation!=next||e.tick+1!=accepted->execute_tick||!e.npc_id||
+                   (e.action!=Action::FabricateModule && e.action!=Action::FabricateMaterialModule))
+                    throw std::runtime_error("invalid accepted NPC fabrication job");
+                Statement meta(db_,"SELECT event_count,tip FROM npc_fabrication_assignment_meta WHERE singleton=1");
+                if(!meta.row())throw std::runtime_error("missing fabrication assignment sequence");
+                const auto count=sqlite3_column_int64(meta.get(),0);
+                if(count<0||count==std::numeric_limits<sqlite3_int64>::max()||
+                   e.id!=static_cast<std::uint64_t>(count+1))
+                    throw std::runtime_error("fabrication assignment sequence mismatch");
+                const auto tip=social_digest(sqlite_str(meta.get(),1),npc_fabrication_assignment_body(e));
+                Statement add(db_,"INSERT INTO npc_fabrication_assignments VALUES(?,?,?,?,?,?,?,?,?,?,?)");
+                add.i64(1,e.id);add.text(2,std::to_string(e.command_id));
+                add.text(3,std::to_string(e.npc_id));add.text(4,std::to_string(e.ship_id));
+                add.text(5,std::to_string(e.issuer));add.i64(6,static_cast<int>(e.action));
+                add.i64(7,e.material_code);add.i64(8,e.quantity);add.i64(9,e.generation);
+                add.i64(10,e.tick);add.text(11,tip);add.execute();
+                Statement update(db_,"UPDATE npc_fabrication_assignment_meta SET event_count=?,tip=? WHERE singleton=1");
+                update.i64(1,e.id);update.text(2,tip);update.execute();
+                if(sqlite3_changes(db_)!=1)throw std::runtime_error("missing fabrication assignment metadata update");
             }
             for (const auto& ev : new_events) {
                 Statement update(db_, "UPDATE receipts SET execution_tick=?,result=?,transferred=? WHERE id=? AND execution_tick IS NULL");
@@ -2728,6 +2921,61 @@ public:
                 Statement update(db_,"UPDATE npc_mining_execution_meta SET event_count=?,tip=? WHERE singleton=1");
                 update.i64(1,e.id);update.text(2,tip);update.execute();
                 if(sqlite3_changes(db_)!=1)throw std::runtime_error("missing NPC execution metadata update");
+            }
+            // B2a: named fabrication uses the already-applied ship command,
+            // committed mass transfer, and physical incident as source facts.
+            // There is no inferred credit from a submitted but failed job.
+            for(const auto& ev:new_events){
+                Statement assigned(db_,"SELECT id,npc_id,ship_id,issuer,action,material_code,quantity "
+                    "FROM npc_fabrication_assignments WHERE command_id=?");
+                assigned.text(1,std::to_string(ev.command_id));
+                if(!assigned.row())continue;
+                if(ev.result!=Outcome::Applied||ev.transferred<=0)continue;
+                const auto npc=parse_u64(sqlite3_column_text(assigned.get(),1));
+                const auto ship=parse_u64(sqlite3_column_text(assigned.get(),2));
+                const auto issuer=parse_u64(sqlite3_column_text(assigned.get(),3));
+                const auto action=static_cast<Action>(sqlite3_column_int(assigned.get(),4));
+                const auto material=static_cast<EntityId>(sqlite3_column_int64(assigned.get(),5));
+                const auto amount=sqlite3_column_int64(assigned.get(),6);
+                const auto n=state.npc_records().find(npc);
+                if(n==state.npc_records().end()||n->second.home_ship!=ship||
+                   n->second.location!=ship||n->second.role!=NpcRole::Ship)continue;
+                const auto cmd=due_commands.find(ev.command_id);
+                if(cmd==due_commands.end()||cmd->second.action!=action||
+                   cmd->second.actor!=ship||cmd->second.target!=material||
+                   cmd->second.issuer!=issuer||cmd->second.amount!=amount||
+                   ev.transferred!=2*amount)
+                    throw std::runtime_error("named fabrication command provenance invalid");
+                const auto source=action==Action::FabricateModule ? std::to_string(ship) :
+                    "good:"+std::to_string(ship)+":"+std::to_string(material);
+                const auto destination="modules:"+std::to_string(ship);
+                Statement physical(db_,"SELECT incident_id,amount FROM physical_incidents "
+                    "WHERE command_id=? AND generation=? AND tick=? AND kind=? AND source=? AND destination=?");
+                physical.text(1,std::to_string(ev.command_id));physical.i64(2,next);
+                physical.i64(3,ev.tick);physical.i64(4,static_cast<int>(PhysicalKind::CargoMovement));
+                physical.text(5,source);physical.text(6,destination);
+                if(!physical.row()||sqlite3_column_int64(physical.get(),1)!=ev.transferred)
+                    throw std::runtime_error("named fabrication missing real movement");
+                const auto incident=sqlite_str(physical.get(),0);
+                if(physical.row())throw std::runtime_error("multiple movements for fabrication command");
+                Statement meta(db_,"SELECT event_count,tip FROM npc_fabrication_execution_meta WHERE singleton=1");
+                if(!meta.row())throw std::runtime_error("missing fabrication execution metadata");
+                const auto count=sqlite3_column_int64(meta.get(),0);
+                if(count<0||count==std::numeric_limits<sqlite3_int64>::max())
+                    throw std::runtime_error("fabrication executor sequence exhausted");
+                NpcFabricationExecution e;
+                e.id=count+1;e.assignment_id=sqlite3_column_int64(assigned.get(),0);
+                e.command_id=ev.command_id;e.npc_id=npc;e.incident_id=incident;
+                e.generation=next;e.tick=ev.tick;e.transferred=ev.transferred;
+                const auto tip=social_digest(sqlite_str(meta.get(),1),npc_fabrication_execution_body(e));
+                Statement ins(db_,"INSERT INTO npc_fabrication_executions VALUES(?,?,?,?,?,?,?,?,?)");
+                ins.i64(1,e.id);ins.i64(2,e.assignment_id);ins.text(3,std::to_string(e.command_id));
+                ins.text(4,std::to_string(e.npc_id));ins.text(5,e.incident_id);
+                ins.i64(6,e.generation);ins.i64(7,e.tick);ins.i64(8,e.transferred);
+                ins.text(9,tip);ins.execute();
+                Statement update(db_,"UPDATE npc_fabrication_execution_meta SET event_count=?,tip=? WHERE singleton=1");
+                update.i64(1,e.id);update.text(2,tip);update.execute();
+                if(sqlite3_changes(db_)!=1)throw std::runtime_error("missing fabrication executor metadata update");
             }
             if (fail == FailPoint::AfterReceiptWrite)
                 throw std::runtime_error("injected failure after receipt changes");
@@ -3305,6 +3553,45 @@ public:
             if(sqlite3_changes(db_)!=1)throw std::runtime_error("missing appraisal metadata update");
             run(db_,"COMMIT");return true;
         }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
+    }
+    bool npc_busy_this_tick(std::uint64_t npc_id,std::uint64_t tick) const {
+        for(const auto* table:{"npc_mining_assignments","npc_fabrication_assignments"}){
+            Statement q(db_,(std::string("SELECT id FROM ")+table+" WHERE npc_id=? AND tick=?").c_str());
+            q.text(1,std::to_string(npc_id));q.i64(2,static_cast<sqlite3_int64>(tick));
+            if(q.row())return true;
+        }
+        return false;
+    }
+    std::uint64_t next_npc_fabrication_assignment_id() const {
+        Statement m(db_,"SELECT event_count FROM npc_fabrication_assignment_meta WHERE singleton=1");
+        if(!m.row())throw std::runtime_error("missing NPC fabrication assignment sequence");
+        const auto n=sqlite3_column_int64(m.get(),0);
+        if(n<0||n==std::numeric_limits<sqlite3_int64>::max())
+            throw std::runtime_error("fabrication assignment sequence exhausted");
+        return static_cast<std::uint64_t>(n+1);
+    }
+    std::vector<NpcFabricationAssignment> recent_npc_fabrication_assignments(std::size_t limit) const {
+        if(!limit||limit>256)throw std::invalid_argument("fabrication assignment limit 1..256");
+        Statement q(db_,"SELECT id,command_id,npc_id,ship_id,issuer,action,material_code,quantity,generation,tick "
+            "FROM npc_fabrication_assignments ORDER BY id DESC LIMIT ?");
+        q.i64(1,static_cast<sqlite3_int64>(limit));
+        std::vector<NpcFabricationAssignment> out;
+        while(q.row())out.push_back(read_npc_fabrication_assignment(q.get()));
+        return out;
+    }
+    std::vector<NpcFabricationExecution> recent_npc_fabrication_executions(std::size_t limit) const {
+        if(!limit||limit>256)throw std::invalid_argument("fabrication execution limit 1..256");
+        Statement q(db_,"SELECT id,assignment_id,command_id,npc_id,incident_id,generation,tick,transferred "
+            "FROM npc_fabrication_executions ORDER BY id DESC LIMIT ?");
+        q.i64(1,static_cast<sqlite3_int64>(limit));
+        std::vector<NpcFabricationExecution> out;
+        while(q.row())out.push_back(read_npc_fabrication_execution(q.get()));
+        return out;
+    }
+    bool verified_npc_fabrication_execution(std::uint64_t command_id,std::uint64_t npc_id) const {
+        if(!command_id||!npc_id)return false;
+        Statement q(db_,"SELECT id FROM npc_fabrication_executions WHERE command_id=? AND npc_id=?");
+        q.text(1,std::to_string(command_id));q.text(2,std::to_string(npc_id));return q.row();
     }
     std::uint64_t next_npc_mining_assignment_id() const {
         Statement m(db_,"SELECT event_count FROM npc_mining_assignment_meta WHERE singleton=1");
@@ -3912,6 +4199,7 @@ bool PersistentWorld::submit_testing_gate_operations(EntityId forward,EntityId r
 bool PersistentWorld::submit_npc_mining_work(std::uint64_t npc_id,EntityId ship,EntityId rock,
         std::int64_t amount,std::uint64_t command_id,FailPoint fail){
     if(!npc_id||!ship||!rock||!command_id||amount<1||amount>1000)return false;
+    if(store_->npc_busy_this_tick(npc_id,world_.tick()))return false;
     const auto it=world_.npc_records().find(npc_id);
     const auto* entity=world_.find(ship);
     if(it==world_.npc_records().end()||!entity||entity->type!=EntityType::Ship||
@@ -3938,6 +4226,42 @@ std::vector<NpcMiningAssignment> PersistentWorld::recent_npc_mining_assignments(
 }
 std::vector<NpcMiningExecution> PersistentWorld::recent_npc_mining_executions(std::size_t limit) const{
     return store_->recent_npc_mining_executions(limit);
+}
+bool PersistentWorld::submit_npc_fabrication_work(std::uint64_t npc_id,EntityId ship,
+        Action action,EntityId material_code,std::int64_t quantity,
+        std::uint64_t command_id,FailPoint fail){
+    if(!npc_id||!ship||!command_id||quantity<1||quantity>1000||
+       (action!=Action::FabricateModule && action!=Action::FabricateMaterialModule)||
+       (action==Action::FabricateModule && material_code!=0)||
+       (action==Action::FabricateMaterialModule && material_code!=1 && material_code!=2)||
+       store_->npc_busy_this_tick(npc_id,world_.tick()))return false;
+    const auto it=world_.npc_records().find(npc_id);
+    const auto* entity=world_.find(ship);
+    if(it==world_.npc_records().end()||!entity||entity->type!=EntityType::Ship||
+       !entity->owner_id||entity->owner_id==Simulation::kServerAuthority||
+       it->second.home_ship!=ship||it->second.location!=ship||
+       it->second.role!=NpcRole::Ship)return false;
+    Command c{};c.id=command_id;c.sequence=command_id;c.execute_tick=world_.tick()+1;
+    c.issuer=entity->owner_id;c.actor=ship;c.target=material_code;
+    c.action=action;c.amount=quantity;
+    auto next=world_;
+    if(!next.submit(c))return false;
+    NpcFabricationAssignment e;
+    e.id=store_->next_npc_fabrication_assignment_id();
+    e.command_id=command_id;e.npc_id=npc_id;e.ship_id=ship;
+    e.issuer=entity->owner_id;e.action=action;e.material_code=material_code;
+    e.quantity=quantity;e.generation=generation_+1;e.tick=world_.tick();
+    store_->commit(next,generation_,resource_origin_,credit_origin_,&c,{},{},{},fail,nullptr,&e);
+    world_.swap(next);++generation_;return true;
+}
+bool PersistentWorld::verified_npc_fabrication_execution(std::uint64_t command_id,std::uint64_t npc_id)const{
+    return store_->verified_npc_fabrication_execution(command_id,npc_id);
+}
+std::vector<NpcFabricationAssignment> PersistentWorld::recent_npc_fabrication_assignments(std::size_t limit)const{
+    return store_->recent_npc_fabrication_assignments(limit);
+}
+std::vector<NpcFabricationExecution> PersistentWorld::recent_npc_fabrication_executions(std::size_t limit)const{
+    return store_->recent_npc_fabrication_executions(limit);
 }
 bool PersistentWorld::submit_testing_destroy_ship(EntityId attacker, EntityId victim,
         std::uint64_t command_id,FailPoint fail) {

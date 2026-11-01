@@ -108,7 +108,7 @@ void clean_v15_migration(const fs::path& folder){
         CHECK(w.submit(mine));w.step();
         CHECK(w.recent_npc_mining_executions().empty());
     }
-    sql(file,"DROP TABLE npc_mining_executions; DROP TABLE npc_mining_execution_meta; "
+    sql(file,"DROP TABLE npc_fabrication_executions; DROP TABLE npc_fabrication_execution_meta; DROP TABLE npc_fabrication_assignments; DROP TABLE npc_fabrication_assignment_meta; DROP TABLE npc_mining_executions; DROP TABLE npc_mining_execution_meta; "
              "DROP TABLE npc_mining_assignments; DROP TABLE npc_mining_assignment_meta; PRAGMA user_version=15;");
     {
         PersistentWorld w(file.string(),Simulation(2));

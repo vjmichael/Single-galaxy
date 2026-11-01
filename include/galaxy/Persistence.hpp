@@ -157,6 +157,23 @@ struct NpcMiningExecution {
     std::string incident_id;
 };
 
+// GRSM-04b.B2a: explicitly assigned basic fabrication, distinct from
+// simply being aboard the ship, and bound to a real committed material effect.
+// 'issuer' is the owner who authorized the job, never an inferred worker.
+struct NpcFabricationAssignment {
+    std::uint64_t id=0, command_id=0, npc_id=0, ship_id=0, issuer=0;
+    Action action=Action::FabricateModule;
+    EntityId material_code=0;
+    std::int64_t quantity=0;
+    std::uint64_t generation=0, tick=0;
+};
+struct NpcFabricationExecution {
+    std::uint64_t id=0, assignment_id=0, command_id=0, npc_id=0;
+    std::uint64_t generation=0, tick=0;
+    std::int64_t transferred=0;
+    std::string incident_id;
+};
+
 // GRSM-03b: directional, evidence-linked interpersonal trust. Each event is
 // an immutable record of a witnessed contact or a character's reassessment;
 // it is neither historical truth nor proof of the accuracy of the allegation.
@@ -300,6 +317,14 @@ public:
     // Merely sharing a ship or witnessing a mine is never execution proof.
     bool submit_npc_mining_work(std::uint64_t npc_id, EntityId ship,EntityId rock,
           std::int64_t amount,std::uint64_t command_id,FailPoint fail=FailPoint::None);
+    // Named, host-attested fabrication using existing real ship machinery,
+    // not a synthetic warehouse or free-standing workbench inventory.
+    bool submit_npc_fabrication_work(std::uint64_t npc_id,EntityId ship,
+        Action action,EntityId material_code,std::int64_t quantity,
+        std::uint64_t command_id,FailPoint fail=FailPoint::None);
+    bool verified_npc_fabrication_execution(std::uint64_t command_id,std::uint64_t npc_id) const;
+    std::vector<NpcFabricationAssignment> recent_npc_fabrication_assignments(std::size_t limit=50) const;
+    std::vector<NpcFabricationExecution> recent_npc_fabrication_executions(std::size_t limit=50) const;
     bool verified_npc_mining_execution(std::uint64_t command_id,std::uint64_t npc_id) const;
     std::vector<NpcMiningAssignment> recent_npc_mining_assignments(std::size_t limit=50) const;
     std::vector<NpcMiningExecution> recent_npc_mining_executions(std::size_t limit=50) const;

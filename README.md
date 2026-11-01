@@ -6,7 +6,7 @@ In the released game's intended opening, one player colony ship with finite NPC 
 
 ## Current prototype status
 
-The current engineering baseline is **GRSM-04b.B1** (SQLite v16 named mining assignments and effect-linked execution, October 31, 2026), descended from the **B7.0n** source/testing archive. The archived evidence records a Linux pass of 54/54 CTest native/integration suites and 84/84 Node tests. The opt-in individual workforce model persists up to 24 original NPC crew identities and farm work/mentoring; a separate statistical cohort prototype demonstrates bounded large-number accounting. **Those are not a live trillion-NPC universe.** The game remains a bounded 2D colony/space prototype, not a continuous 3D multiplayer galaxy. Native Windows and full interactive Chromium playthrough remain open gates.
+The latest committed engineering integration is **GRSM-04b.B2a** (SQLite v17 named shipboard fabrication, October 31, 2026); **ECON-02B0** adds a separately tested quantified production domain kernel that is **not yet wired into PersistentWorld**. The original historical baseline descends from the **B7.0n** source/testing archive. The archived evidence records a Linux pass of 54/54 CTest native/integration suites and 84/84 Node tests. The opt-in individual workforce model persists up to 24 original NPC crew identities and farm work/mentoring; a separate statistical cohort prototype demonstrates bounded large-number accounting. **Those are not a live trillion-NPC universe.** The game remains a bounded 2D colony/space prototype, not a continuous 3D multiplayer galaxy. Native Windows and full interactive Chromium playthrough remain open gates.
 
 ## Design documentation
 
@@ -126,3 +126,12 @@ The new **C++17 ECON-02A domain prototype** introduces one configurable workshop
 **Verification:** Linux all-target build passed; dedicated test **1/1**, non-live CTest **42/42**, Node **84/84**, design **3/3**. An attempted complete CTest **did not finish** in legacy live-relay scenarios and remains open; do not count that as 67/67. See [ECON-02A engineering report](docs/engineering/ECON02A_Universal_Workshop_Labor_Board_and_Skill_Convergence_2026-10-31.md) and [global money-slang/name research](docs/engineering/ECON02A_Global_Money_Slang_Currency_Name_Research_2026-10-31.md).
 
 **Development order:** retain GRSM-04b.B1 / SQLite v16 as the *latest verified durable game integration*, with ECON-02A as the latest *standalone economy domain*. Next join the two by binding the workshop's actual inputs/outputs and named labor completion to transaction-safe simulation receipts. Defer universal multiplayer transport and launcher UI as specified in NET-01.
+
+
+## 2026-10-31 · GRSM-04b.B2a + ECON-02B0 engineering convergence
+
+**B2a:** Real shipboard module fabrication can be assigned to a named, living onboard NPC, with assignment distinguished from successfully committed execution proof. Failed commands do not award execution credit. See [named fabrication report](docs/engineering/GRSM04bB2a_Named_Fabrication_Report_2026-10-31.md).
+
+**ECON-02B0:** Added the standalone deterministic quantified production kernel. Every ingredient must meet the machine-tier minimum before a batch begins; below-minimum material generates **no output, no scrap, and no input consumption**. Whole valid batches reserve input, finite finished/scrap containers enforce backpressure, and in-progress batches can resume from validated state copies. Remote aggregated production matches tick-by-tick production in deterministic no-intervention tests. See [quantified production report](docs/ECON02B0_Quantified_Production_Engineering_Report_2026-10-31.md).
+
+**Local evidence:** ECON-02B0 all-target Linux build, 44/44 non-live native suites, 84/84 Node tests, 3/3 Python design checks. The entire live E2E suite, Windows-native integration, and a persistent outpost manufacturing pipeline remain open. See [factory design and gates](docs/engineering/ECON02B1_Factory_Design_And_Next_Gates_2026-10-31.md).

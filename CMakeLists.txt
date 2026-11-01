@@ -19,7 +19,7 @@ else()
 endif()
 add_library(galaxy_kernel STATIC src/Simulation.cpp src/ColonyResilience.cpp
   src/ColonyRecovery.cpp src/ColonyPolicy.cpp src/PopulationCohorts.cpp
-    src/ColonyWaterSupply.cpp src/Persistence.cpp src/EconomyPrototype.cpp src/ClientContract.cpp src/Galaxy.cpp src/Navigation.cpp src/GateTransit.cpp src/Region.cpp)
+    src/ColonyWaterSupply.cpp src/Persistence.cpp src/EconomyPrototype.cpp src/QuantifiedProduction.cpp src/ClientContract.cpp src/Galaxy.cpp src/Navigation.cpp src/GateTransit.cpp src/Region.cpp)
 target_include_directories(galaxy_kernel PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(galaxy_kernel PUBLIC SQLite::SQLite3)
 if(MSVC)
@@ -492,4 +492,19 @@ if(BUILD_TESTING)
   add_executable(galaxy_econ02a_workshop_tests tests/ECON02AWorkshopTests.cpp)
   target_link_libraries(galaxy_econ02a_workshop_tests PRIVATE galaxy_kernel)
   add_test(NAME galaxy_econ02a_workshop_tests COMMAND galaxy_econ02a_workshop_tests)
+endif()
+
+# GRSM-04b.B2a: named ship-fabrication assignment and committed effect receipt.
+if(BUILD_TESTING)
+  add_executable(galaxy_grsm04b_fabrication_tests tests/GRSM04bFabricationTests.cpp)
+  target_link_libraries(galaxy_grsm04b_fabrication_tests PRIVATE galaxy_kernel SQLite::SQLite3)
+  add_test(NAME galaxy_grsm04b_fabrication_tests COMMAND galaxy_grsm04b_fabrication_tests)
+endif()
+
+# ECON-02B0: prototype deterministic off-screen manufacturing kernel.
+# No connection to the persistent world/material ledger yet.
+if(BUILD_TESTING)
+  add_executable(galaxy_econ02b0_quantified_tests tests/ECON02B0QuantifiedTests.cpp)
+  target_link_libraries(galaxy_econ02b0_quantified_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_econ02b0_quantified_tests COMMAND galaxy_econ02b0_quantified_tests)
 endif()
