@@ -21,9 +21,9 @@ with sync_playwright() as pw:
     problems = []
     page.on('pageerror',lambda error: problems.append(str(error)))
     html = (VIEWER / 'factory.html').read_text(encoding='utf8').replace(
-        '<script src="factory-layout.js"></script><script src="factory.js"></script>', '')
+        '<script src="factory-layout.js"></script><script src="factory.js"></script><script src="factory-live.js"></script>', '')
     page.set_content(html)
-    for filename in ['factory-layout.js','factory.js']:
+    for filename in ['factory-layout.js','factory.js','factory-live.js']:
         page.add_script_tag(content=(VIEWER/filename).read_text(encoding='utf8'))
     page.locator('#example').click()
     for elem, expected in [('#metricDevices','3'),('#metricLinks','2'),('#metricSteps','16'),('#metricModules','11')]:
@@ -38,7 +38,7 @@ with sync_playwright() as pw:
     # Sample camera center is (5,1), zoom 42px per grid cell.
     def px(x,y):return (box['x']+box['width']/2+(x-5)*42,
                         box['y']+box['height']/2+(y-1)*42)
-    a=px(1,3);b=px(3,3)
+    a=px(1,7);b=px(3,7)
     page.mouse.move(*a);page.mouse.down();page.mouse.move(*b,steps=7);page.mouse.up()
     assert 'Walls: 46' in page.locator('#planDetails').inner_text(), page.locator('#planDetails').inner_text()
     with page.expect_download() as design_evt:

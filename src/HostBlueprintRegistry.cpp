@@ -158,6 +158,21 @@ HostedPlanStatus HostBlueprintRegistry::status(std::int64_t id,PlayerId owner)co
     auto progress=plan.inspect(world_.world());progress.cancelled=p.cancelled;
     return HostedPlanStatus{id,p.owner,p.ship,p.site,progress};
 }
+std::vector<HostedPlanStatus> HostBlueprintRegistry::list(PlayerId owner)const{
+    std::lock_guard<std::mutex> host_guard(gHostConstructionLifecycle);
+    signed_id(owner);
+    Statement query(db_->get(),"SELECT id FROM sg_host_plans WHERE owner=? ORDER BY id");
+    query.number(1,signed_id(owner));
+    std::vector<HostedPlanStatus> result;
+    while(query.row()){
+        const auto p=db_->get(query.number(0));
+        if(p.owner!=owner)throw std::runtime_error("plan owner isolation violation");
+        auto bp=BlueprintConstruction::from_manifest(p.manifest);
+        auto progress=bp.inspect(world_.world());progress.cancelled=p.cancelled;
+        result.push_back(HostedPlanStatus{p.id,p.owner,p.ship,p.site,progress});
+    }
+    return result;
+}
 bool HostBlueprintRegistry::cancel(std::int64_t id,PlayerId owner){
     std::lock_guard<std::mutex> host_guard(gHostConstructionLifecycle);
     db_->begin();try{

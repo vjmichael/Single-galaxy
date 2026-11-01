@@ -6,6 +6,7 @@ const ui=id=>document.getElementById(id);
 const canvas=ui('factoryCanvas'),holder=ui('canvasHolder'),ctx=canvas.getContext('2d');
 const toolTitles={select:'Select / move',pan:'Pan view',base:'Base storage',storage:'Storage container',workshop:'Tier 1 workshop',route:'Automatic conveyor route',wall:'Snapping walls',door:'Door opening',floor:'Floor tiles',erase:'Erase design element'};
 const descriptions={select:'Click equipment and drag to another free grid cell.',pan:'Drag to navigate; scroll to zoom.',base:'Click a grid cell to place base outpost storage.',storage:'Click to place a 4 m³ storage container.',workshop:'Click to place one 2 × 2 Tier 1 workshop.',route:'Click source equipment, then destination equipment.',wall:'Click or drag from one snapped grid vertex to another; corners connect automatically.',door:'Click a wall edge to create a snapped doorway.',floor:'Click to paint planning-floor tiles.',erase:'Click a device, conveyor, floor, or wall edge to remove it.'};
+window.SingleGalaxyEditorInstance=()=>editor;
 let editor=new Editor(),tool='select',hover=null,routeFrom=null,selected=null,drag=null,lastDraw=0;
 const cam={x:5,y:3,zoom:42};
 function resize(){const bounds=holder.getBoundingClientRect(),dpr=Math.max(1,Math.min(window.devicePixelRatio||1,2));canvas.width=Math.round(bounds.width*dpr);canvas.height=Math.round(bounds.height*dpr);ctx.setTransform(dpr,0,0,dpr,0,0);draw();}

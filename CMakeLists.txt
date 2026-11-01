@@ -618,3 +618,22 @@ if(BUILD_TESTING)
     SG_EDITOR_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/ECON02B2d4b_editor_blueprint.sglayout")
   add_test(NAME galaxy_econ02b2d4c1_host_plan_tests COMMAND galaxy_econ02b2d4c1_host_plan_tests)
 endif()
+
+# ECON-02B2d4c2: true-world native bridge for same-origin localhost UI.
+add_executable(galaxy_factory_host_bridge src/factory_host_bridge.cpp)
+target_link_libraries(galaxy_factory_host_bridge PRIVATE galaxy_kernel)
+
+if(BUILD_TESTING)
+  add_executable(galaxy_econ02b2d4c2_world_fixture tests/ECON02B2d4c2WorldFixture.cpp)
+  target_link_libraries(galaxy_econ02b2d4c2_world_fixture PRIVATE galaxy_kernel)
+endif()
+find_program(SG_NODE_BINARY node)
+if(BUILD_TESTING AND SG_NODE_BINARY)
+  add_test(NAME galaxy_econ02b2d4c2_live_editor_bridge
+    COMMAND ${SG_NODE_BINARY} ${CMAKE_CURRENT_SOURCE_DIR}/tests/ECON02B2d4c2LiveEditorTests.cjs
+    --server ${CMAKE_CURRENT_SOURCE_DIR}/scripts/factory_live_server.js
+    --bridge $<TARGET_FILE:galaxy_factory_host_bridge>
+    --fixture $<TARGET_FILE:galaxy_econ02b2d4c2_world_fixture>
+    --layout ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/ECON02B2d4b_editor_blueprint.sglayout)
+  set_tests_properties(galaxy_econ02b2d4c2_live_editor_bridge PROPERTIES TIMEOUT 25)
+endif()

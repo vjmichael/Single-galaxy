@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace galaxy::industry {
 struct HostedPlanStatus {
@@ -27,6 +28,8 @@ public:
     std::int64_t register_layout(const std::string& canonical_layout,
                   PlayerId authenticated_owner,EntityId authenticated_ship,EntityId site);
     HostedPlanStatus status(std::int64_t plan_id,PlayerId authenticated_owner) const;
+    // Enumerates only plans owned by this already-authenticated host session.
+    std::vector<HostedPlanStatus> list(PlayerId authenticated_owner) const;
     // Cancellation is durable and irreversible. It does not refund constructed
     // equipment or overwrite world construction effects.
     bool cancel(std::int64_t plan_id,PlayerId authenticated_owner);
