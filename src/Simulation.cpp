@@ -656,11 +656,25 @@ bool Simulation::submit(const Command& c) {
              c.thrust_y<0 || c.thrust_y>3)))return false;
         snapshot_version_=std::max(snapshot_version_,25);
     }
+    if(c.action==Action::ConstructWorkshopLink){
+        // thrust_x = existing storage node (0 is base);
+        // thrust_y: 0 = storage -> workshop feed, 1 = workshop -> storage.
+        // amount = 4 * whole-item transfer rate + item index.
+        if(!c.target || c.thrust_x<0 ||
+           c.thrust_x>std::numeric_limits<int>::max()/4 ||
+           (c.thrust_y!=0 && c.thrust_y!=1) ||
+           c.amount<4 || c.amount>4003 || c.amount/4<1 || c.amount/4>1000 ||
+           (c.thrust_y==0 && c.amount%4!=0) ||
+           (c.thrust_y==1 && c.amount%4==0))return false;
+        snapshot_version_=std::max(snapshot_version_,28);
+    }
     if(c.action==Action::ConstructStorageLink){
         // source and destination are site-local constructed node IDs (0 is base).
         // amount encodes [rate * 4 + item], rate in 1..1000 whole units/tick.
-        if(!c.target || c.thrust_x<0 || c.thrust_y<0 || c.thrust_x==c.thrust_y ||
-           c.amount<4 || c.amount>4003 || c.amount/4<1 || c.amount/4>1000)
+        if(!c.target || c.thrust_x<0 || c.thrust_y<0 ||
+           c.thrust_x>std::numeric_limits<int>::max()/4 ||
+           c.thrust_y>std::numeric_limits<int>::max()/4 ||
+           c.thrust_x==c.thrust_y || c.amount<4 || c.amount>4003 || c.amount/4<1 || c.amount/4>1000)
             return false;
         snapshot_version_=std::max(snapshot_version_,27);
     }
@@ -1129,6 +1143,7 @@ Event Simulation::execute(const Command& c) {
         case Action::ConstructStorageNode:
         case Action::TransferStorageNodeStack:
         case Action::ConstructStorageLink:
+        case Action::ConstructWorkshopLink:
         case Action::AssignFarmMentor:
         case Action::SetPolicyAssurance:
         case Action::AssignPolicyInspectors:
@@ -1181,6 +1196,32 @@ Event Simulation::execute(const Command& c) {
                 snapshot_version_=std::max(snapshot_version_,25);
                 result.transferred=2;
                 result.result=Outcome::Applied;return result;
+            }
+            if(c.action==Action::ConstructWorkshopLink){
+                const auto si=storages_.find(c.target);
+                const auto wi=workshops_.find(c.target);
+                const auto node=static_cast<std::uint32_t>(c.thrust_x);
+                const bool input=c.thrust_y==0;
+                const auto item=static_cast<std::uint8_t>(c.amount%4);
+                if(si==storages_.end() || wi==workshops_.end() ||
+                   si->second.source_ship!=c.actor || wi->second.source_ship!=c.actor ||
+                   (node && !si->second.extra_bins.count(node)) ||
+                   (!input && item==2 && !wi->second.finisher_installed)){
+                    result.result=Outcome::InvalidTarget;return result;
+                }
+                const auto from=input?node:kWorkshopConveyorNode;
+                const auto to=input?kWorkshopConveyorNode:node;
+                for(const auto& [id,link]:si->second.links){(void)id;
+                    if(link.source==from && link.destination==to && link.item_index==item){
+                        result.result=Outcome::InvalidTarget;return result;
+                    }
+                }
+                if(cship.modules<1){result.result=Outcome::NoResources;return result;}
+                si->second.links.emplace(c.id,OutpostStorageLink{
+                    c.id,from,to,item,c.amount/4,0});
+                --cship.modules;
+                snapshot_version_=std::max(snapshot_version_,28);
+                result.transferred=2;result.result=Outcome::Applied;return result;
             }
             if(c.action==Action::ConstructStorageLink){
                 auto it=storages_.find(c.target);
@@ -2416,12 +2457,19 @@ void Simulation::process_storage_links() {
         for(auto& [id,link]:storage.links){
             (void)id;
             const auto name=names[link.item_index];
-            auto& src=link.source?storage.extra_bins.at(link.source):storage.goods_kg;
-            auto& dst=link.destination?storage.extra_bins.at(link.destination):storage.goods_kg;
-            const auto it=src.find(name);
-            if(it==src.end() || it->second<=0)continue;
-            auto from=storage_node_inventory_snapshot(site,link.source);
-            auto to=storage_node_inventory_snapshot(site,link.destination);
+            const bool from_workshop=link.source==kWorkshopConveyorNode;
+            const bool to_workshop=link.destination==kWorkshopConveyorNode;
+            const auto stock=[&](std::uint32_t node)->std::map<std::string,std::int64_t>&{
+                return node?storage.extra_bins.at(node):storage.goods_kg;
+            };
+            if(from_workshop && to_workshop)
+                throw std::logic_error("factory link connected to itself");
+            if((from_workshop || to_workshop) && !workshops_.count(site))
+                throw std::logic_error("orphaned factory logistics endpoint");
+            auto from=from_workshop ? workshop_bin_inventory_snapshot(site,link.item_index) :
+                storage_node_inventory_snapshot(site,link.source);
+            auto to=to_workshop ? workshop_bin_inventory_snapshot(site,link.item_index) :
+                storage_node_inventory_snapshot(site,link.destination);
             const std::string code=std::string("good/")+name;
             const auto rate=std::min({link.units_per_tick,from.amount(code),
                                      to.free_liters()/inventory::Catalogue::standard().liters_per_unit(code)});
@@ -2431,8 +2479,19 @@ void Simulation::process_storage_links() {
             if(from.transfer_to(to,code,rate)!=inventory::TransferStatus::Applied)
                 throw std::logic_error("storage link accounting contradiction");
             const auto new_source=from.amount(code),new_dest=to.amount(code);
-            if(new_source)src[name]=new_source;else src.erase(name);
-            if(new_dest)dst[name]=new_dest;else dst.erase(name);
+            const auto commit=[&](std::uint32_t node,std::int64_t qty){
+                if(node==kWorkshopConveyorNode){
+                    auto& w=workshops_.at(site);
+                    std::int64_t* slots[]={&w.aluminum_kg,&w.panels_kg,&w.frames_kg,&w.scrap_kg};
+                    *slots[link.item_index]=qty;
+                }else{
+                    auto& stacks=stock(node);
+                    if(qty)stacks[name]=qty;
+                    else stacks.erase(name);
+                }
+            };
+            commit(link.source,new_source);
+            commit(link.destination,new_dest);
             link.units_moved+=static_cast<std::uint64_t>(rate);
             activity_events_.push_back({tick_,ActivityKind::AutoStorageTransfer,link.id,
                                         site,link.id,Outcome::Applied,rate});
@@ -2496,7 +2555,7 @@ void Simulation::steps(std::uint64_t count) {
 
 std::string Simulation::canonical_state() const {
     std::ostringstream out;
-    out << (snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
+    out << (snapshot_version_ >= 28 ? "galaxy-kernel-v28|" : snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
         << '|' << rng_state_ << '\n';
     if (snapshot_version_>=5) for(const auto system:systems_)out<<"system|"<<system<<'\n';
     for (const auto& entry : entities_) {
@@ -2781,12 +2840,12 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
     if (!std::getline(in, line)) throw std::runtime_error("snapshot: missing header");
     auto h = fields(line);
     require_fields(h, 5);
-    if (h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27") throw std::runtime_error("snapshot: unsupported version");
+    if (h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27" && h[0] != "galaxy-kernel-v28") throw std::runtime_error("snapshot: unsupported version");
     const auto sys = u64(h[1]);
     if (sys == 0 || sys > std::numeric_limits<std::uint32_t>::max())
         throw std::runtime_error("snapshot: invalid system");
     Simulation result(u64(h[4]), static_cast<std::uint32_t>(sys));
-    result.snapshot_version_ = h[0] == "galaxy-kernel-v27" ? 27 : h[0] == "galaxy-kernel-v26" ? 26 : h[0] == "galaxy-kernel-v25" ? 25 : h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
+    result.snapshot_version_ = h[0] == "galaxy-kernel-v28" ? 28 : h[0] == "galaxy-kernel-v27" ? 27 : h[0] == "galaxy-kernel-v26" ? 26 : h[0] == "galaxy-kernel-v25" ? 25 : h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
     result.tick_ = u64(h[2]);
     result.next_entity_id_ = u64(h[3]);
     if (result.next_entity_id_ == 0) throw std::runtime_error("snapshot: invalid next entity ID");
@@ -2958,11 +3017,18 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             const auto site=u64(f[1]),id=u64(f[2]),src=u64(f[3]),dst=u64(f[4]);
             const auto item=u64(f[5]),moved=u64(f[7]);const auto rate=i64(f[6]);
             const auto it=result.storages_.find(site);
+            const bool sw=src==kWorkshopConveyorNode,dw=dst==kWorkshopConveyorNode;
+            const bool wm=sw||dw;
+            const auto wi=result.workshops_.find(site);
             if(!site || !id || it==result.storages_.end() || src==dst ||
-               src>static_cast<std::uint64_t>(std::numeric_limits<int>::max()/4) ||
-               dst>static_cast<std::uint64_t>(std::numeric_limits<int>::max()/4) ||
-               (src && !it->second.extra_bins.count(static_cast<std::uint32_t>(src))) ||
-               (dst && !it->second.extra_bins.count(static_cast<std::uint32_t>(dst))) ||
+               (wm && (result.snapshot_version_<28 || sw==dw ||
+                        wi==result.workshops_.end() ||
+                        wi->second.source_ship!=it->second.source_ship ||
+                        (sw ? (item==0 || (item==2 && !wi->second.finisher_installed)) : item!=0))) ||
+               (!sw && src>static_cast<std::uint64_t>(std::numeric_limits<int>::max()/4)) ||
+               (!dw && dst>static_cast<std::uint64_t>(std::numeric_limits<int>::max()/4)) ||
+               (!sw && src && !it->second.extra_bins.count(static_cast<std::uint32_t>(src))) ||
+               (!dw && dst && !it->second.extra_bins.count(static_cast<std::uint32_t>(dst))) ||
                item>3 || rate<1 || rate>1000 || moved/static_cast<std::uint64_t>(rate)>result.tick_ ||
                !it->second.links.emplace(id,OutpostStorageLink{id,
                      static_cast<std::uint32_t>(src),static_cast<std::uint32_t>(dst),
@@ -3233,7 +3299,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             c.id = u64(f[1]); c.execute_tick = u64(f[2]); c.sequence = u64(f[3]);
             c.issuer = u64(f[4]); c.actor = u64(f[5]); c.target = u64(f[6]);
             auto action = u64(f[7]);
-            if (action > (result.snapshot_version_ >= 27 ? static_cast<unsigned>(Action::ConstructStorageLink) : result.snapshot_version_ >= 26 ? static_cast<unsigned>(Action::TransferStorageNodeStack) : result.snapshot_version_ >= 25 ? static_cast<unsigned>(Action::TransferStorageStack) : result.snapshot_version_ >= 24 ? static_cast<unsigned>(Action::TransferWorkshopStack) : result.snapshot_version_ >= 23 ? static_cast<unsigned>(Action::TransferWorkshopFinalOutput) : result.snapshot_version_ >= 22 ? static_cast<unsigned>(Action::TransferWorkshopOutput) : result.snapshot_version_ >= 21 ? static_cast<unsigned>(Action::HostCrewLoss) : result.snapshot_version_ >= 20 ? static_cast<unsigned>(Action::AssignFarmMentor) : result.snapshot_version_ >= 19 ? static_cast<unsigned>(Action::AssignPolicyInspectors) : result.snapshot_version_ >= 18 ? static_cast<unsigned>(Action::TransferWaterworksFeed) : result.snapshot_version_ >= 17 ? static_cast<unsigned>(Action::ConstructReclaimer) : result.snapshot_version_ >= 16 ? static_cast<unsigned>(Action::AssignClinicStaff) : result.snapshot_version_ >= 15 ? static_cast<unsigned>(Action::AssignCommunityStaff) : result.snapshot_version_ >= 14 ? static_cast<unsigned>(Action::SetUtilityMaintenance) : result.snapshot_version_ >= 13 ? static_cast<unsigned>(Action::RepairUtility) : result.snapshot_version_ >= 12 ? static_cast<unsigned>(Action::AssignHabitatResidents) : result.snapshot_version_ >= 11 ? static_cast<unsigned>(Action::AssignFarmWorkers) : result.snapshot_version_ >= 10 ? static_cast<unsigned>(Action::LoadLifeWater) : result.snapshot_version_ >= 9 ? static_cast<unsigned>(Action::FabricateMaterialModule) : result.snapshot_version_ >= 7 ? static_cast<unsigned>(Action::ConstructOutpost) : result.snapshot_version_ >= 6 ? static_cast<unsigned>(Action::DeliverGateSpares) : result.snapshot_version_ >= 5 ? static_cast<unsigned>(Action::SetGatePairOnline) : result.snapshot_version_ >= 4 ? static_cast<unsigned>(Action::SellOre) : static_cast<unsigned>(Action::UnloadOre))) throw std::runtime_error("snapshot: invalid action");
+            if (action > (result.snapshot_version_ >= 28 ? static_cast<unsigned>(Action::ConstructWorkshopLink) : result.snapshot_version_ >= 27 ? static_cast<unsigned>(Action::ConstructStorageLink) : result.snapshot_version_ >= 26 ? static_cast<unsigned>(Action::TransferStorageNodeStack) : result.snapshot_version_ >= 25 ? static_cast<unsigned>(Action::TransferStorageStack) : result.snapshot_version_ >= 24 ? static_cast<unsigned>(Action::TransferWorkshopStack) : result.snapshot_version_ >= 23 ? static_cast<unsigned>(Action::TransferWorkshopFinalOutput) : result.snapshot_version_ >= 22 ? static_cast<unsigned>(Action::TransferWorkshopOutput) : result.snapshot_version_ >= 21 ? static_cast<unsigned>(Action::HostCrewLoss) : result.snapshot_version_ >= 20 ? static_cast<unsigned>(Action::AssignFarmMentor) : result.snapshot_version_ >= 19 ? static_cast<unsigned>(Action::AssignPolicyInspectors) : result.snapshot_version_ >= 18 ? static_cast<unsigned>(Action::TransferWaterworksFeed) : result.snapshot_version_ >= 17 ? static_cast<unsigned>(Action::ConstructReclaimer) : result.snapshot_version_ >= 16 ? static_cast<unsigned>(Action::AssignClinicStaff) : result.snapshot_version_ >= 15 ? static_cast<unsigned>(Action::AssignCommunityStaff) : result.snapshot_version_ >= 14 ? static_cast<unsigned>(Action::SetUtilityMaintenance) : result.snapshot_version_ >= 13 ? static_cast<unsigned>(Action::RepairUtility) : result.snapshot_version_ >= 12 ? static_cast<unsigned>(Action::AssignHabitatResidents) : result.snapshot_version_ >= 11 ? static_cast<unsigned>(Action::AssignFarmWorkers) : result.snapshot_version_ >= 10 ? static_cast<unsigned>(Action::LoadLifeWater) : result.snapshot_version_ >= 9 ? static_cast<unsigned>(Action::FabricateMaterialModule) : result.snapshot_version_ >= 7 ? static_cast<unsigned>(Action::ConstructOutpost) : result.snapshot_version_ >= 6 ? static_cast<unsigned>(Action::DeliverGateSpares) : result.snapshot_version_ >= 5 ? static_cast<unsigned>(Action::SetGatePairOnline) : result.snapshot_version_ >= 4 ? static_cast<unsigned>(Action::SellOre) : static_cast<unsigned>(Action::UnloadOre))) throw std::runtime_error("snapshot: invalid action");
             c.action = static_cast<Action>(action);
             auto tx = i64(f[8]), ty = i64(f[9]);
             if (tx < std::numeric_limits<int>::min() || tx > std::numeric_limits<int>::max() ||
@@ -3337,8 +3403,18 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                      c.thrust_y<0 || c.thrust_y>3)))) ||
                 ((c.action==Action::ConstructStorageLink) &&
                  (result.snapshot_version_<27 || !c.target || c.thrust_x<0 ||
-                  c.thrust_y<0 || c.thrust_x==c.thrust_y || c.amount<4 ||
+                  c.thrust_y<0 ||
+                  c.thrust_x>std::numeric_limits<int>::max()/4 ||
+                  c.thrust_y>std::numeric_limits<int>::max()/4 ||
+                  c.thrust_x==c.thrust_y || c.amount<4 ||
                   c.amount>4003 || c.amount/4<1 || c.amount/4>1000)) ||
+                ((c.action==Action::ConstructWorkshopLink) &&
+                 (result.snapshot_version_<28 || !c.target || c.thrust_x<0 ||
+                  c.thrust_x>std::numeric_limits<int>::max()/4 ||
+                  (c.thrust_y!=0 && c.thrust_y!=1) || c.amount<4 || c.amount>4003 ||
+                  c.amount/4<1 || c.amount/4>1000 ||
+                  (c.thrust_y==0 && c.amount%4!=0) ||
+                  (c.thrust_y==1 && c.amount%4==0))) ||
                 ((c.action==Action::ConstructStorageNode || c.action==Action::TransferStorageNodeStack) &&
                  (result.snapshot_version_<26 || !c.target ||
                   (c.action==Action::ConstructStorageNode ?
@@ -3610,10 +3686,12 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 if(moved_totals[id]!=link.units_moved ||
                    !result.submitted_ids_.count(id))
                     throw std::runtime_error("snapshot: incomplete storage transfer history");
-                routes[link.source].push_back(link.destination);
+                if(link.source!=kWorkshopConveyorNode && link.destination!=kWorkshopConveyorNode)
+                    routes[link.source].push_back(link.destination);
             }
             // Defensive cycle check even for malformed manually edited saves.
             for(const auto& [id,link]:st.links){(void)id;
+                if(link.source==kWorkshopConveyorNode || link.destination==kWorkshopConveyorNode)continue;
                 std::set<std::uint32_t> seen;std::vector<std::uint32_t> todo{link.destination};
                 while(!todo.empty()){
                     auto node=todo.back();todo.pop_back();

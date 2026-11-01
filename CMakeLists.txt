@@ -572,3 +572,10 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_econ02b2d1_factory_layout_tests PRIVATE galaxy_kernel)
   add_test(NAME galaxy_econ02b2d1_factory_layout_tests COMMAND galaxy_econ02b2d1_factory_layout_tests)
 endif()
+
+# ECON-02B2d2: real module-backed workshop input/output conveyor connections.
+if(BUILD_TESTING)
+  add_executable(galaxy_econ02b2d2_workshop_links_tests tests/ECON02B2d2WorkshopLinksTests.cpp)
+  target_link_libraries(galaxy_econ02b2d2_workshop_links_tests PRIVATE galaxy_kernel SQLite::SQLite3)
+  add_test(NAME galaxy_econ02b2d2_workshop_links_tests COMMAND galaxy_econ02b2d2_workshop_links_tests)
+endif()

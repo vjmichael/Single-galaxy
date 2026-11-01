@@ -23,6 +23,14 @@
 #include <vector>
 
 namespace galaxy {
+// Canonical legacy storage ledger labels remain unchanged; v28 adds a
+// distinct source/destination class for actual machine material buffers.
+static std::string storage_endpoint_label(EntityId site,std::uint32_t node,const char* item){
+    if(node==kWorkshopConveyorNode)
+        return "workshop:"+std::to_string(site)+":"+item;
+    return "storage:"+std::to_string(site)+":"+std::to_string(node)+":"+item;
+}
+
 namespace {
 [[noreturn]] void db_error(sqlite3* db, const std::string& why) {
     throw std::runtime_error("SQLite " + why + ": " + sqlite3_errmsg(db));
@@ -119,7 +127,7 @@ Command decode_command(const std::string& record) {
           >> c.target >> action >> c.thrust_x >> c.thrust_y >> c.amount))
         throw std::runtime_error("recovery: invalid command journal record");
     std::string extra;
-    if (in >> extra || action < 0 || action > static_cast<int>(Action::ConstructStorageLink) || c.id == 0 || c.issuer == 0)
+    if (in >> extra || action < 0 || action > static_cast<int>(Action::ConstructWorkshopLink) || c.id == 0 || c.issuer == 0)
         throw std::runtime_error("recovery: invalid command journal values");
     c.action = static_cast<Action>(action);
     if (command_record(c) != record) throw std::runtime_error("recovery: noncanonical command journal");
@@ -1518,7 +1526,8 @@ public:
                 const auto id=parse_u64(sqlite3_column_text(ledger.get(),0));
                 const auto ev=event_by_id.find(id);const auto cmd=journal_commands.find(id);
                 if(ev==event_by_id.end() || cmd==journal_commands.end() ||
-                   cmd->second.action!=Action::ConstructStorageLink ||
+                   (cmd->second.action!=Action::ConstructStorageLink &&
+                    cmd->second.action!=Action::ConstructWorkshopLink) ||
                    ev->second.result!=Outcome::Applied || ev->second.transferred!=2 ||
                    amount!=2 || ev->second.tick!=static_cast<std::uint64_t>(sqlite3_column_int64(ledger.get(),1)) ||
                    sqlite3_column_type(ledger.get(),4)!=SQLITE_TEXT ||
@@ -1597,10 +1606,8 @@ public:
                 const auto* route=restored.storage_link(ev.actor,ev.target);
                 static const char* names[]={"aluminum","aluminum_panels","aluminum_frames","aluminum_scrap"};
                 if(!route || route->id!=ev.start_command_id ||
-                   sqlite_str(ledger.get(),4)!="storage:"+std::to_string(ev.actor)+":"+
-                         std::to_string(route->source)+":"+names[route->item_index] ||
-                   sqlite_str(ledger.get(),5)!="storage:"+std::to_string(ev.actor)+":"+
-                         std::to_string(route->destination)+":"+names[route->item_index] ||
+                   sqlite_str(ledger.get(),4)!=storage_endpoint_label(ev.actor,route->source,names[route->item_index]) ||
+                   sqlite_str(ledger.get(),5)!=storage_endpoint_label(ev.actor,route->destination,names[route->item_index]) ||
                    amount!=ev.transferred ||
                    sqlite3_column_int64(ledger.get(),1)!=static_cast<sqlite3_int64>(ev.tick))
                     throw std::runtime_error("SQLite: automatic logistics effect disagrees with world");
@@ -1669,7 +1676,7 @@ public:
             else if (cmd->second.action==Action::TransferStorageStack) ++expected_storage_stacks;
             else if (cmd->second.action==Action::ConstructStorageNode) ++expected_extra_storage_builds;
             else if (cmd->second.action==Action::TransferStorageNodeStack) ++expected_extra_storage_stacks;
-            else if (cmd->second.action==Action::ConstructStorageLink) ++expected_link_builds;
+            else if (cmd->second.action==Action::ConstructStorageLink || cmd->second.action==Action::ConstructWorkshopLink) ++expected_link_builds;
             else if (cmd->second.action==Action::ConstructClinic) ++expected_clinic_builds;
             else if (cmd->second.action==Action::TransferClinicStock) ++expected_clinic_transfers;
             else throw std::runtime_error("SQLite: resource transfer tied to non-transfer command");
@@ -2804,7 +2811,8 @@ public:
                          cmd->second.action!=Action::TransferStorageStack &&
                          cmd->second.action!=Action::ConstructStorageNode &&
                          cmd->second.action!=Action::TransferStorageNodeStack &&
-                         cmd->second.action!=Action::ConstructStorageLink))
+                         cmd->second.action!=Action::ConstructStorageLink &&
+                         cmd->second.action!=Action::ConstructWorkshopLink))
                         throw std::runtime_error("unmatched resource transfer event");
                     Statement ledger(db_, "INSERT INTO resource_ledger(generation,tick,command_id,source_id,destination_id,amount,reason) VALUES(?,?,?,?,?,?,?)");
                     ledger.i64(1, static_cast<std::int64_t>(next));
@@ -2863,7 +2871,7 @@ public:
                              c.thrust_y==2?endpoint:"workshop:"+std::to_string(c.target))+suffix;
                         ledger.text(4,src);ledger.text(5,dst);ledger.i64(6,ev.transferred);
                         ledger.text(7,build?"storage_node_construction_t":"storage_node_stack_transfer_kg");
-                    } else if(cmd->second.action==Action::ConstructStorageLink){
+                    } else if(cmd->second.action==Action::ConstructStorageLink || cmd->second.action==Action::ConstructWorkshopLink){
                         const auto& c=cmd->second;
                         if(ev.transferred!=2)throw std::runtime_error("invalid link construction mass");
                         ledger.text(4,"modules:"+std::to_string(c.actor));
@@ -3098,8 +3106,8 @@ public:
                     Statement transfer(db_, "INSERT INTO resource_ledger(generation,tick,source_id,destination_id,amount,reason) VALUES(?,?,?,?,?,?)");
                     transfer.i64(1,static_cast<std::int64_t>(next));
                     transfer.i64(2,static_cast<std::int64_t>(a.tick));
-                    transfer.text(3,"storage:"+std::to_string(a.actor)+":"+std::to_string(route->source)+":"+names[route->item_index]);
-                    transfer.text(4,"storage:"+std::to_string(a.actor)+":"+std::to_string(route->destination)+":"+names[route->item_index]);
+                    transfer.text(3,storage_endpoint_label(a.actor,route->source,names[route->item_index]));
+                    transfer.text(4,storage_endpoint_label(a.actor,route->destination,names[route->item_index]));
                     transfer.i64(5,a.transferred);transfer.text(6,"automated_storage_link_transfer");transfer.execute();
                     continue;
                 }
