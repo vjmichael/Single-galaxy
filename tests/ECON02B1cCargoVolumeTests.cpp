@@ -55,6 +55,8 @@ int main(){
             ok(w,ship,20,Action::TransferWorkshopStack,site,37,0);
             CHECK(w.world().ship_cargo_volume_liters(ship)==shipBefore-37);
             CHECK(w.world().workshop(site)->aluminum_kg==37);
+            CHECK(w.world().workshop_bin_inventory_snapshot(site,0).amount("good/aluminum")==37);
+            CHECK(w.world().ship_inventory_snapshot(ship).amount("good/aluminum")==3563);
             CHECK(send(w,ship,21,Action::TransferWorkshopStack,site,-50,0).result==Outcome::NoResources);
             CHECK(w.world().workshop(site)->aluminum_kg==37);
             ok(w,ship,22,Action::TransferWorkshopStack,site,-37,0);
@@ -69,6 +71,7 @@ int main(){
             ok(w,ship,24,Action::TransferWorkshopStack,site,-1,1); // just one panel
             CHECK(w.world().ship_cargo_volume_liters(ship)==starting+1);
             CHECK(w.world().colony_ship(ship)->goods_kg.at("aluminum_panels")==1);
+            CHECK(w.world().ship_inventory_snapshot(ship).amount("good/aluminum_panels")==1);
             ok(w,ship,25,Action::TransferWorkshopStack,site,-1,3); // scrap separately
             CHECK(w.world().colony_ship(ship)->goods_kg.at("aluminum_scrap")==1);
             CHECK(w.world().total_material_kg()==conserved);

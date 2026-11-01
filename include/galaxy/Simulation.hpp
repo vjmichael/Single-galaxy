@@ -1,5 +1,6 @@
 #pragma once
 
+#include "galaxy/Inventory.hpp"
 #include <array>
 #include <cstdint>
 #include <limits>
@@ -412,6 +413,9 @@ public:
     // Authoritative cargo capacity uses game volume, NOT payload mass.
     // Milliscale: 1 m3 = 1000 litres; legacy ore units occupy 1 m3 each.
     std::int64_t ship_cargo_volume_liters(EntityId ship) const;
+    // Read-only copies of authoritative per-item inventories for cargo UI/logistics.
+    inventory::StackStore ship_inventory_snapshot(EntityId ship) const;
+    inventory::StackStore workshop_bin_inventory_snapshot(EntityId site, int item) const;
 
     // Initial-world only: finite packaged food, water, oxygen and nutrient stocks.
     // No free resource regeneration; this explicitly adds starter mass at genesis.

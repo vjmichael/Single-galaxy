@@ -371,31 +371,42 @@ const ColonyShip* Simulation::colony_ship(EntityId id) const {
     const auto it=colony_ships_.find(id);
     return it==colony_ships_.end()?nullptr:&it->second;
 }
-std::int64_t Simulation::loaded_cargo_liters(const Entity& ship) const {
-    const auto* c=colony_ship(ship.id);
-    // Fixed gameplay volumes: each legacy ore/refined unit 1 m3, construction
-    // module 2 m3; current kilogram-quantity material stack 1 litre per unit.
-    // These are balancing coefficients, NOT density / payload calculations.
-    const std::int64_t bulk=ship.cargo+(c ? c->refined+2*c->modules : 0);
-    if(bulk<0 || bulk>1000000000000LL)throw std::overflow_error("cargo overflow");
-    std::int64_t volume=bulk*1000;
-    if(c){
-        const auto add=[&](std::int64_t v){
-            if(v<0 || v>std::numeric_limits<std::int64_t>::max()-volume)
-                throw std::overflow_error("invalid cargo stack volume");
-            volume+=v;
-        };
-        add(c->tailings_kg);
-        for(const auto& [name,units]:c->minerals_kg){(void)name;add(units);}
-        for(const auto& [name,units]:c->goods_kg){(void)name;add(units);}
-    }
-    return volume;
-}
-std::int64_t Simulation::ship_cargo_volume_liters(EntityId ship_id) const {
+inventory::StackStore Simulation::ship_inventory_snapshot(EntityId ship_id) const {
     const auto* ship=find(ship_id);
     if(!ship || ship->type!=EntityType::Ship)
         throw std::invalid_argument("not a ship");
-    return loaded_cargo_liters(*ship);
+    if(ship->cargo_capacity<0 || ship->cargo_capacity>1000000000000LL)
+        throw std::overflow_error("invalid ship cargo capacity");
+    inventory::StackStore store(inventory::Catalogue::standard(),ship->cargo_capacity*1000);
+    store.load("ore",ship->cargo);
+    if(const auto* c=colony_ship(ship_id)) {
+        store.load("refined",c->refined);
+        store.load("construction_module",c->modules);
+        store.load("tailings",c->tailings_kg);
+        for(const auto& [code,units]:c->minerals_kg)
+            store.load("mineral/"+code,units);
+        for(const auto& [code,units]:c->goods_kg)
+            store.load("good/"+code,units);
+    }
+    return store;
+}
+inventory::StackStore Simulation::workshop_bin_inventory_snapshot(EntityId site, int item) const {
+    const auto it=workshops_.find(site);
+    if(it==workshops_.end() || item<0 || item>3)
+        throw std::invalid_argument("invalid workshop bin");
+    const char* names[]={"aluminum","aluminum_panels","aluminum_frames","aluminum_scrap"};
+    const auto& w=it->second;
+    const std::int64_t amounts[]={w.aluminum_kg,w.panels_kg,w.frames_kg,w.scrap_kg};
+    // Existing site-local production buffers remain 1000 units each.
+    inventory::StackStore bin(inventory::Catalogue::standard(),1000);
+    bin.load(std::string("good/")+names[item],amounts[item]);
+    return bin;
+}
+std::int64_t Simulation::loaded_cargo_liters(const Entity& ship) const {
+    return ship_inventory_snapshot(ship.id).used_liters();
+}
+std::int64_t Simulation::ship_cargo_volume_liters(EntityId ship_id) const {
+    return ship_inventory_snapshot(ship_id).used_liters();
 }
 void Simulation::transfer_geological_minerals(EntityId ship, EntityId rock, std::int64_t tonnes){
     auto c=colony_ships_.find(ship);
@@ -1170,34 +1181,32 @@ Event Simulation::execute(const Command& c) {
                     else w.operator_npc_id=static_cast<std::uint64_t>(c.amount);
                     result.result=Outcome::Applied;return result;
                 }
-                // ECON-02B1c: exact, independent item stacks. Signed quantity:
-                // positive ship -> site, negative site -> ship. Selector identifies
-                // the item, NOT an arbitrary server-side string supplied by caller.
+                // ECON-02B2a: catalogue-validated, volume-bounded transfers.
+                // First operate on value-copy inventory views. Only commit to
+                // PersistentWorld's authoritative fields if both sides accept.
                 if(c.action==Action::TransferWorkshopStack){
                     if(c.thrust_x==2 && !w.finisher_installed){
                         result.result=Outcome::InvalidTarget;return result;
                     }
                     const auto qty=std::abs(c.amount);
                     const char* names[]={"aluminum","aluminum_panels","aluminum_frames","aluminum_scrap"};
-                    std::int64_t* stock[]={&w.aluminum_kg,&w.panels_kg,&w.frames_kg,&w.scrap_kg};
-                    auto& local=*stock[c.thrust_x];
+                    std::int64_t* local[]={&w.aluminum_kg,&w.panels_kg,&w.frames_kg,&w.scrap_kg};
                     const std::string name=names[c.thrust_x];
-                    if(c.amount>0){
-                        auto it=cship.goods_kg.find(name);
-                        if(it==cship.goods_kg.end() || it->second<qty || local>1000-qty){
-                            result.result=Outcome::NoResources;return result;
-                        }
-                        it->second-=qty;
-                        if(it->second==0)cship.goods_kg.erase(it);
-                        local+=qty;
-                    }else{
-                        if(local<qty){result.result=Outcome::NoResources;return result;}
-                        if(loaded_cargo_liters(actor)>actor.cargo_capacity*1000-qty){
-                            result.result=Outcome::CargoFull;return result;
-                        }
-                        local-=qty;
-                        cship.goods_kg[name]+=qty;
+                    const std::string code="good/"+name;
+                    auto shipstore=ship_inventory_snapshot(actor.id);
+                    auto bin=workshop_bin_inventory_snapshot(c.target,c.thrust_x);
+                    const bool inbound=c.amount>0;
+                    const auto status=inbound ? shipstore.transfer_to(bin,code,qty) :
+                                               bin.transfer_to(shipstore,code,qty);
+                    if(status!=inventory::TransferStatus::Applied){
+                        result.result=(!inbound && status==inventory::TransferStatus::DestinationFull) ?
+                                      Outcome::CargoFull : Outcome::NoResources;
+                        return result;
                     }
+                    const auto remaining=shipstore.amount(code);
+                    if(remaining)cship.goods_kg[name]=remaining;
+                    else cship.goods_kg.erase(name);
+                    *local[c.thrust_x]=bin.amount(code);
                     result.transferred=qty;
                     snapshot_version_=std::max(snapshot_version_,24);
                     result.result=Outcome::Applied;return result;
