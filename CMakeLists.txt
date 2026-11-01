@@ -637,3 +637,32 @@ if(BUILD_TESTING AND SG_NODE_BINARY)
     --layout ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/ECON02B2d4b_editor_blueprint.sglayout)
   set_tests_properties(galaxy_econ02b2d4c2_live_editor_bridge PROPERTIES TIMEOUT 25)
 endif()
+
+# ECON-03c8a: opt-in bridge from actual PersistentWorld snapshots into regional authority.
+# The bridge does not yet reconcile modified detailed-world inventories.
+add_library(galaxy_regional STATIC
+  src/MacroNeeds.cpp src/ColdColonyNeeds.cpp src/RegionalEventScheduler.cpp
+  src/RegionalCheckpointStore.cpp src/RegionalHostCommands.cpp
+  src/RegionalInterestManager.cpp src/RegionalCustodyLedger.cpp
+  src/RegionalModeAuthority.cpp src/RegionalPersistentWorldBridge.cpp)
+target_include_directories(galaxy_regional PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(galaxy_regional PUBLIC galaxy_kernel SQLite::SQLite3)
+if(MSVC)
+  target_compile_options(galaxy_regional PRIVATE /W4 /permissive-)
+else()
+  target_compile_options(galaxy_regional PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+if(BUILD_TESTING)
+  add_executable(galaxy_econ03c8_real_world_bridge_tests tests/ECON03c8RealWorldBridgeTests.cpp)
+  target_link_libraries(galaxy_econ03c8_real_world_bridge_tests PRIVATE galaxy_regional)
+  add_test(NAME galaxy_econ03c8_real_world_bridge_tests COMMAND galaxy_econ03c8_real_world_bridge_tests)
+endif()
+
+# Verify all six predecessor regional contracts against the real game build.
+if(BUILD_TESTING)
+  foreach(regression ECON03c2ColdColonyTests ECON03c3RegionalSchedulerTests ECON03c4RegionalDurabilityTests ECON03c5HostCommandsTests ECON03c6InterestCustodyTests ECON03c7ModeAuthorityTests)
+    add_executable(galaxy_${regression} tests/${regression}.cpp)
+    target_link_libraries(galaxy_${regression} PRIVATE galaxy_regional)
+    add_test(NAME galaxy_${regression} COMMAND galaxy_${regression})
+  endforeach()
+endif()
