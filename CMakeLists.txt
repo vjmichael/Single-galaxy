@@ -551,3 +551,10 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_econ02b2c1_logistics_tests PRIVATE galaxy_kernel)
   add_test(NAME galaxy_econ02b2c1_logistics_tests COMMAND galaxy_econ02b2c1_logistics_tests)
 endif()
+
+# ECON-02B2c2: extra real storage bins at a constructed site with SQLite receipts.
+if(BUILD_TESTING)
+  add_executable(galaxy_econ02b2c2_persistent_nodes_tests tests/ECON02B2c2PersistentNodesTests.cpp)
+  target_link_libraries(galaxy_econ02b2c2_persistent_nodes_tests PRIVATE galaxy_kernel SQLite::SQLite3)
+  add_test(NAME galaxy_econ02b2c2_persistent_nodes_tests COMMAND galaxy_econ02b2c2_persistent_nodes_tests)
+endif()

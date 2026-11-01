@@ -119,7 +119,7 @@ Command decode_command(const std::string& record) {
           >> c.target >> action >> c.thrust_x >> c.thrust_y >> c.amount))
         throw std::runtime_error("recovery: invalid command journal record");
     std::string extra;
-    if (in >> extra || action < 0 || action > static_cast<int>(Action::TransferStorageStack) || c.id == 0 || c.issuer == 0)
+    if (in >> extra || action < 0 || action > static_cast<int>(Action::TransferStorageNodeStack) || c.id == 0 || c.issuer == 0)
         throw std::runtime_error("recovery: invalid command journal values");
     c.action = static_cast<Action>(action);
     if (command_record(c) != record) throw std::runtime_error("recovery: noncanonical command journal");
@@ -1161,7 +1161,7 @@ public:
         std::size_t refine_transfers=0, fabricate_transfers=0, build_transfers=0;
         std::size_t mineral_refine_transfers=0,material_fabricate_transfers=0;
         std::size_t life_transfers=0, farm_builds=0, farm_stock_transfers=0, habitat_builds=0, habitat_transfers=0,utility_builds=0,utility_repairs=0,utility_spare_transfers=0,community_builds=0,community_transfers=0,clinic_builds=0,clinic_transfers=0,reclaimer_builds=0,waterworks_builds=0,waterworks_transfers=0;
-        std::size_t workshop_builds=0,workshop_feeds=0,workshop_outputs=0,workshop_finisher_builds=0,workshop_final_outputs=0,workshop_stacks=0,storage_builds=0,storage_stacks=0;
+        std::size_t workshop_builds=0,workshop_feeds=0,workshop_outputs=0,workshop_finisher_builds=0,workshop_final_outputs=0,workshop_stacks=0,storage_builds=0,storage_stacks=0,extra_storage_builds=0,extra_storage_stacks=0;
         std::size_t auto_transfers = 0;
         std::vector<ActivityEvent> recorded_auto;
         for (const auto& a : restored.activity_events()) {
@@ -1480,6 +1480,38 @@ public:
                 if(base!=reinterpret_cast<const char*>(sqlite3_column_text(ledger.get(),4)) ||
                    dest!=reinterpret_cast<const char*>(sqlite3_column_text(ledger.get(),5)))
                     throw std::runtime_error("SQLite: storage endpoints mismatch");
+            } else if(reason=="storage_node_construction_t" || reason=="storage_node_stack_transfer_kg"){
+                const bool build=reason=="storage_node_construction_t";
+                if(build)++extra_storage_builds;else ++extra_storage_stacks;
+                const auto id=parse_u64(sqlite3_column_text(ledger.get(),0));
+                const auto ev=event_by_id.find(id);const auto cmd=journal_commands.find(id);
+                if(ev==event_by_id.end() || cmd==journal_commands.end() ||
+                   cmd->second.action!=(build?Action::ConstructStorageNode:Action::TransferStorageNodeStack) ||
+                   ev->second.result!=Outcome::Applied || ev->second.transferred!=amount ||
+                   amount!=(build?2:cmd->second.amount) ||
+                   ev->second.tick!=static_cast<std::uint64_t>(sqlite3_column_int64(ledger.get(),1)) ||
+                   sqlite3_column_type(ledger.get(),4)!=SQLITE_TEXT ||
+                   sqlite3_column_type(ledger.get(),5)!=SQLITE_TEXT)
+                    throw std::runtime_error("SQLite: extra storage receipt mismatch");
+                const auto& c=cmd->second;
+                const auto node=build?c.amount:c.thrust_x/4;
+                const auto item=build?0:c.thrust_x%4;
+                if(node<1 || node>std::numeric_limits<int>::max()/4 || (!build && (c.thrust_y<0 || c.thrust_y>3 || item<0 || item>3)))
+                    throw std::runtime_error("SQLite: invalid extra storage routing");
+                static const char* names[]={"aluminum","aluminum_panels","aluminum_frames","aluminum_scrap"};
+                const std::string endpoint="storage:"+std::to_string(c.target)+":"+std::to_string(node);
+                const std::string suffix=build?std::string{}:":"+std::string(names[item]);
+                const std::string src=build?"modules:"+std::to_string(c.actor):
+                    (c.thrust_y==0?"goods:"+std::to_string(c.actor):
+                     c.thrust_y==1?endpoint:
+                     c.thrust_y==2?"workshop:"+std::to_string(c.target):endpoint)+suffix;
+                const std::string dst=build?endpoint:
+                    (c.thrust_y==0?endpoint:
+                     c.thrust_y==1?"goods:"+std::to_string(c.actor):
+                     c.thrust_y==2?endpoint:"workshop:"+std::to_string(c.target))+suffix;
+                if(src!=reinterpret_cast<const char*>(sqlite3_column_text(ledger.get(),4)) ||
+                   dst!=reinterpret_cast<const char*>(sqlite3_column_text(ledger.get(),5)))
+                    throw std::runtime_error("SQLite: forged extra storage endpoints");
             } else if(reason=="workshop_stack_transfer_kg"){
                 ++workshop_stacks;
                 const auto id=parse_u64(sqlite3_column_text(ledger.get(),0));
@@ -1563,7 +1595,7 @@ public:
         std::size_t expected_mineral_refine=0,expected_material_fabricate=0;
         std::size_t expected_life_transfers=0,expected_farm_builds=0,expected_farm_stock_transfers=0;
         std::size_t expected_habitat_builds=0, expected_habitat_transfers=0;
-        std::size_t expected_utility_builds=0,expected_utility_repairs=0,expected_utility_spares=0,expected_community_builds=0,expected_community_transfers=0,expected_clinic_builds=0,expected_clinic_transfers=0,expected_reclaimer_builds=0,expected_waterworks_builds=0,expected_waterworks_transfers=0,expected_workshop_builds=0,expected_workshop_feeds=0,expected_workshop_outputs=0,expected_workshop_finisher_builds=0,expected_workshop_final_outputs=0,expected_workshop_stacks=0,expected_storage_builds=0,expected_storage_stacks=0;
+        std::size_t expected_utility_builds=0,expected_utility_repairs=0,expected_utility_spares=0,expected_community_builds=0,expected_community_transfers=0,expected_clinic_builds=0,expected_clinic_transfers=0,expected_reclaimer_builds=0,expected_waterworks_builds=0,expected_waterworks_transfers=0,expected_workshop_builds=0,expected_workshop_feeds=0,expected_workshop_outputs=0,expected_workshop_finisher_builds=0,expected_workshop_final_outputs=0,expected_workshop_stacks=0,expected_storage_builds=0,expected_storage_stacks=0,expected_extra_storage_builds=0,expected_extra_storage_stacks=0;
 
         for (const auto& ev : restored.events()) {
             if (ev.result != Outcome::Applied || ev.transferred <= 0) continue;
@@ -1602,6 +1634,8 @@ public:
             else if (cmd->second.action==Action::TransferWorkshopStack) ++expected_workshop_stacks;
             else if (cmd->second.action==Action::ConstructStorage) ++expected_storage_builds;
             else if (cmd->second.action==Action::TransferStorageStack) ++expected_storage_stacks;
+            else if (cmd->second.action==Action::ConstructStorageNode) ++expected_extra_storage_builds;
+            else if (cmd->second.action==Action::TransferStorageNodeStack) ++expected_extra_storage_stacks;
             else if (cmd->second.action==Action::ConstructClinic) ++expected_clinic_builds;
             else if (cmd->second.action==Action::TransferClinicStock) ++expected_clinic_transfers;
             else throw std::runtime_error("SQLite: resource transfer tied to non-transfer command");
@@ -1630,7 +1664,9 @@ public:
             workshop_finisher_builds!=expected_workshop_finisher_builds ||
             workshop_final_outputs!=expected_workshop_final_outputs ||
             workshop_stacks!=expected_workshop_stacks ||
-            storage_builds!=expected_storage_builds || storage_stacks!=expected_storage_stacks)
+            storage_builds!=expected_storage_builds || storage_stacks!=expected_storage_stacks ||
+            extra_storage_builds!=expected_extra_storage_builds ||
+            extra_storage_stacks!=expected_extra_storage_stacks)
             throw std::runtime_error("SQLite: ledger event count mismatch");
         std::size_t credit_rows=0;
         Statement cash(db_, "SELECT command_id,tick,station_id,owner_id,ore_units,unit_price,credit_amount FROM credit_ledger");
@@ -2730,7 +2766,9 @@ public:
                          cmd->second.action!=Action::TransferWorkshopFinalOutput &&
                          cmd->second.action!=Action::TransferWorkshopStack &&
                          cmd->second.action!=Action::ConstructStorage &&
-                         cmd->second.action!=Action::TransferStorageStack))
+                         cmd->second.action!=Action::TransferStorageStack &&
+                         cmd->second.action!=Action::ConstructStorageNode &&
+                         cmd->second.action!=Action::TransferStorageNodeStack))
                         throw std::runtime_error("unmatched resource transfer event");
                     Statement ledger(db_, "INSERT INTO resource_ledger(generation,tick,command_id,source_id,destination_id,amount,reason) VALUES(?,?,?,?,?,?,?)");
                     ledger.i64(1, static_cast<std::int64_t>(next));
@@ -2767,6 +2805,28 @@ public:
                                            "workshop:"+std::to_string(c.target))+suffix;
                         ledger.text(4,src);ledger.text(5,dst);ledger.i64(6,ev.transferred);
                         ledger.text(7,build?"storage_construction_t":"storage_stack_transfer_kg");
+                    } else if(cmd->second.action==Action::ConstructStorageNode ||
+                              cmd->second.action==Action::TransferStorageNodeStack){
+                        const auto& c=cmd->second;
+                        const bool build=c.action==Action::ConstructStorageNode;
+                        const auto node=build?c.amount:c.thrust_x/4;
+                        const auto item=build?0:c.thrust_x%4;
+                        if(node<1 || node>std::numeric_limits<int>::max()/4 || (!build && (item<0 || item>3 || c.thrust_y<0 || c.thrust_y>3)) ||
+                           ev.transferred!=(build?2:c.amount))
+                            throw std::runtime_error("invalid extra storage transfer event");
+                        static const char* names[]={"aluminum","aluminum_panels","aluminum_frames","aluminum_scrap"};
+                        const auto endpoint="storage:"+std::to_string(c.target)+":"+std::to_string(node);
+                        const auto suffix=build?std::string{}:":"+std::string(names[item]);
+                        const auto src=build?"modules:"+std::to_string(c.actor):
+                            (c.thrust_y==0?"goods:"+std::to_string(c.actor):
+                             c.thrust_y==1?endpoint:
+                             c.thrust_y==2?"workshop:"+std::to_string(c.target):endpoint)+suffix;
+                        const auto dst=build?endpoint:
+                            (c.thrust_y==0?endpoint:
+                             c.thrust_y==1?"goods:"+std::to_string(c.actor):
+                             c.thrust_y==2?endpoint:"workshop:"+std::to_string(c.target))+suffix;
+                        ledger.text(4,src);ledger.text(5,dst);ledger.i64(6,ev.transferred);
+                        ledger.text(7,build?"storage_node_construction_t":"storage_node_stack_transfer_kg");
                     } else if(cmd->second.action==Action::TransferWorkshopStack){
                         const auto& c=cmd->second;
                         if(c.thrust_x<0 || c.thrust_x>3 || ev.transferred!=std::abs(c.amount))
