@@ -682,8 +682,8 @@ if(BUILD_TESTING)
   add_test(NAME galaxy_econ03c8b_world_reconciliation_tests COMMAND galaxy_econ03c8b_world_reconciliation_tests)
 endif()
 
-# ECON-03c8c opt-in four-colony accelerated-time scenario runner.
-# Fixture is synthetic detailed regional scheduler, not detailed PersistentWorld.
+# Optional two six-hour accelerated-time four-colony scenarios.
+# Synthetic detailed regional fixture: NOT full PersistentWorld production.
 option(BUILD_FOUR_COLONY_SCENARIOS "Build paired four-colony warm/cold handoff scenario harness" OFF)
 if(BUILD_FOUR_COLONY_SCENARIOS)
   add_executable(galaxy_four_colony_6hour_scenarios tests/FourColonySixHourHarness.cpp)
