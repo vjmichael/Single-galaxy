@@ -1,4 +1,5 @@
 #include "galaxy/Persistence.hpp"
+#include <functional>
 #include <algorithm>
 #include <sqlite3.h>
 
@@ -127,7 +128,7 @@ Command decode_command(const std::string& record) {
           >> c.target >> action >> c.thrust_x >> c.thrust_y >> c.amount))
         throw std::runtime_error("recovery: invalid command journal record");
     std::string extra;
-    if (in >> extra || action < 0 || action > static_cast<int>(Action::CompleteConveyorRoute) || c.id == 0 || c.issuer == 0)
+    if (in >> extra || action < 0 || action > static_cast<int>(Action::HostDependentDeath) || c.id == 0 || c.issuer == 0)
         throw std::runtime_error("recovery: invalid command journal values");
     c.action = static_cast<Action>(action);
     if (command_record(c) != record) throw std::runtime_error("recovery: noncanonical command journal");
@@ -1872,7 +1873,8 @@ public:
             const auto cmd=journal_commands.find(a.start_command_id);
             if(h==expected_event_generation.end() || cmd==journal_commands.end() ||
                ((a.kind==ActivityKind::ShipDestroyed && cmd->second.action!=Action::HostDestroyShip) ||
-                (a.kind==ActivityKind::NpcLost && cmd->second.action!=Action::HostCrewLoss)) ||
+                (a.kind==ActivityKind::NpcLost && cmd->second.action!=Action::HostCrewLoss &&
+                 cmd->second.action!=Action::HostDependentDeath)) ||
                a.tick!=event_by_id.at(a.start_command_id).tick ||
                event_by_id.at(a.start_command_id).result!=Outcome::Applied)
                 throw std::runtime_error("SQLite: physical loss lacks executed host action");
@@ -2679,6 +2681,46 @@ public:
             if(count!=static_cast<std::uint64_t>(expected)||tip!=tip_end)
                 throw std::runtime_error("SQLite: deleted fabrication execution");
         }
+        for(const auto& ev:restored.activity_events()){
+            if(ev.kind!=ActivityKind::NpcLost)continue;
+            Statement cmd(db_,"SELECT action,actor_id FROM historical_events WHERE command_id=?");
+            cmd.text(1,std::to_string(ev.start_command_id));
+            if(!cmd.row()||sqlite3_column_int(cmd.get(),0)!=static_cast<int>(Action::HostDependentDeath))
+                continue;
+            // The normal physical casualty receipt is checked elsewhere.
+            Statement deceased(db_,"SELECT d.npc_id,d.settlement,d.tick FROM npc_family_deaths d "
+               "JOIN npc_family_births b ON b.scope=d.scope AND b.child_id=d.npc_id "
+               "WHERE d.event_id=? AND d.npc_id=?");
+            deceased.text(1,std::to_string(ev.start_command_id));
+            deceased.text(2,std::to_string(ev.target));
+            if(!deceased.row()||parse_u64(sqlite3_column_text(deceased.get(),0))!=ev.target||
+               parse_u64(sqlite3_column_text(deceased.get(),1))!=parse_u64(sqlite3_column_text(cmd.get(),1))||
+               sqlite3_column_int64(deceased.get(),2)!=static_cast<sqlite3_int64>(ev.tick)||
+               deceased.row())
+                throw std::runtime_error("SQLite: dependent physical death lacks matching family death");
+        }
+        // ART-02b: a physical, living Dependent in a restored snapshot MUST
+        // have exactly one matching named birth and inherited face on this
+        // SAME SQLite database. Refuse a world with ghost children.
+        for(const auto& [npc_id,n]:restored.npc_records()){
+            if(n.role!=NpcRole::Dependent)continue;
+            Statement receipt(db_,"SELECT b.event_id,b.parent_a,b.parent_b,b.settlement,b.tick,"
+                "b.appearance_digest,p.digest,p.parent_a,p.parent_b FROM npc_family_births b "
+                "JOIN npc_appearance_profiles p ON p.scope=b.scope AND p.npc_id=b.child_id "
+                "JOIN npc_family_people f ON f.scope=b.scope AND f.npc_id=b.child_id "
+                "WHERE b.child_id=? AND f.settlement=b.settlement");
+            receipt.text(1,std::to_string(npc_id));
+            if(!receipt.row()||parse_u64(sqlite3_column_text(receipt.get(),0))!=n.birth_event||
+               parse_u64(sqlite3_column_text(receipt.get(),1))!=n.parent_a||
+               parse_u64(sqlite3_column_text(receipt.get(),2))!=n.parent_b||
+               parse_u64(sqlite3_column_text(receipt.get(),3))!=n.location||
+               sqlite3_column_int64(receipt.get(),4)<=0||
+               static_cast<std::uint64_t>(sqlite3_column_int64(receipt.get(),4))>restored.tick()||
+               sqlite_str(receipt.get(),5)!=sqlite_str(receipt.get(),6)||
+               parse_u64(sqlite3_column_text(receipt.get(),7))!=n.parent_a||
+               parse_u64(sqlite3_column_text(receipt.get(),8))!=n.parent_b||receipt.row())
+                throw std::runtime_error("SQLite: living dependent lacks unique matching genetic birth receipt");
+        }
         out.swap(restored);
         return true;
     }
@@ -2688,7 +2730,8 @@ public:
                 const std::map<std::uint64_t, Command>& due_commands,
                 const std::vector<ActivityEvent>& activity_delta, FailPoint fail,
                 const NpcMiningAssignment* npc_mining_assignment=nullptr,
-                const NpcFabricationAssignment* npc_fabrication_assignment=nullptr) {
+                const NpcFabricationAssignment* npc_fabrication_assignment=nullptr,
+                const std::function<void(sqlite3*)>& family_effect={}) {
         if (state.total_ore() != origin || state.total_credits() != credit_origin)
             throw std::runtime_error("resource or credit conservation violation");
         const auto bytes = state.canonical_state();
@@ -3342,6 +3385,7 @@ public:
             Statement prune(db_, "DELETE FROM snapshots WHERE generation < ?");
             prune.i64(1, static_cast<std::int64_t>(next > 2 ? next - 2 : 1));
             prune.execute();
+            if(family_effect)family_effect(db_); // still inside exact world snapshot transaction
             if (fail == FailPoint::AfterSnapshotWrite)
                 throw std::runtime_error("injected failure after snapshot write");
             run(db_, "COMMIT");
@@ -4493,7 +4537,8 @@ PersistentWorld::PersistentWorld(const std::string& path, Simulation initial_wor
 PersistentWorld::~PersistentWorld() = default;
 
 bool PersistentWorld::submit(const Command& command, FailPoint fail) {
-    if (command.action == Action::HostDestroyShip || command.action == Action::HostCrewLoss ||
+    if (command.action == Action::HostBirth || command.action == Action::HostDependentDeath ||
+        command.action == Action::HostDestroyShip || command.action == Action::HostCrewLoss ||
         command.action == Action::SetGatePairOnline ||
         command.action == Action::SetGateStaff ||
         command.action == Action::DeliverGateSpares ||
@@ -4629,6 +4674,35 @@ bool PersistentWorld::submit_testing_crew_loss(EntityId ship,std::int64_t count,
     store_->commit(next,generation_,resource_origin_,credit_origin_,&c,{},{},{},fail);
     world_.swap(next);++generation_;return true;
 }
+void PersistentWorld::enable_live_family_births(std::string scope,std::uint64_t seed,
+                    NpcAppearanceStore::AuthorizeBirth policy,
+                    NpcAppearanceStore::AuthorizeDeath death_policy){
+    if(scope.empty()||!policy)throw std::invalid_argument("host family scope and policy required");
+    family_scope_=std::move(scope);family_seed_=seed;family_policy_=std::move(policy);
+    family_death_policy_=std::move(death_policy);
+}
+bool PersistentWorld::submit_host_birth(EntityId habitat,std::uint64_t a,std::uint64_t b,
+                                       std::uint64_t command_id,FailPoint fail){
+    if(!family_policy_||!habitat||!a||!b||a==b||b>100000000||a>100000000)return false;
+    Command c{};c.id=command_id;c.sequence=command_id;c.execute_tick=world_.tick()+1;
+    c.issuer=Simulation::kServerAuthority;c.actor=habitat;c.target=a;
+    c.amount=static_cast<std::int64_t>(b);c.action=Action::HostBirth;
+    auto next=world_;
+    if(!next.submit(c))return false;
+    store_->commit(next,generation_,resource_origin_,credit_origin_,&c,{},{},{},fail);
+    world_.swap(next);++generation_;return true;
+}
+bool PersistentWorld::submit_host_dependent_death(EntityId habitat,std::uint64_t child,
+                                       std::uint64_t command_id,FailPoint fail){
+    if(!family_death_policy_||!habitat||!child)return false;
+    Command c{};c.id=command_id;c.sequence=command_id;c.execute_tick=world_.tick()+1;
+    c.issuer=Simulation::kServerAuthority;c.actor=habitat;c.target=child;
+    c.action=Action::HostDependentDeath;
+    auto next=world_;
+    if(!next.submit(c))return false;
+    store_->commit(next,generation_,resource_origin_,credit_origin_,&c,{},{},{},fail);
+    world_.swap(next);++generation_;return true;
+}
 void PersistentWorld::step(FailPoint fail) {
     auto next = world_;
     const auto before = next.events().size();
@@ -4642,7 +4716,55 @@ void PersistentWorld::step(FailPoint fail) {
     const std::vector<Event> new_events(next.events().begin() + static_cast<std::ptrdiff_t>(before), next.events().end());
     const std::vector<ActivityEvent> new_activity(
         next.activity_events().begin() + static_cast<std::ptrdiff_t>(before_activity), next.activity_events().end());
-    store_->commit(next, generation_, resource_origin_, credit_origin_, nullptr, new_events, due, new_activity, fail);
+    std::function<void(sqlite3*)> live_births;
+    for(const auto& [command_id,c]:due)
+        if(c.action==Action::HostBirth || c.action==Action::HostDependentDeath){
+        if(!family_policy_ || (c.action==Action::HostDependentDeath && !family_death_policy_))
+            throw std::runtime_error("pending birth/death requires host family authority after restart");
+        live_births=[&,this](sqlite3* db){
+            NpcAppearanceStore faces(db,family_scope_,family_seed_,
+                [&](std::uint64_t id){return next.npc_records().count(id)!=0;});
+            for(const auto& [id,cmd]:due){
+                if(cmd.action!=Action::HostBirth && cmd.action!=Action::HostDependentDeath)continue;
+                auto result=std::find_if(new_events.begin(),new_events.end(),
+                         [&](const Event& e){return e.command_id==id;});
+                if(result==new_events.end())throw std::runtime_error("missing host family execution result");
+                if(result->result!=Outcome::Applied)continue;
+                if(cmd.action==Action::HostDependentDeath){
+                    const auto previous=world_.npc_records().find(cmd.target);
+                    const auto after=next.npc_records().find(cmd.target);
+                    if(previous==world_.npc_records().end()||
+                       previous->second.role!=NpcRole::Dependent||
+                       previous->second.location!=cmd.actor||
+                       after!=next.npc_records().end())
+                        throw std::runtime_error("family death not reflected in world roster");
+                    const auto census=faces.family_census(cmd.actor);
+                    faces.record_death(id,cmd.target,cmd.actor,next.tick(),census.revision,
+                                       family_death_policy_);
+                    continue;
+                }
+                const NpcRecord* child=nullptr;
+                for(const auto& [npc_id,n]:next.npc_records())if(n.birth_event==id){
+                    if(child)throw std::runtime_error("duplicate newborn event");
+                    child=&n;
+                }
+                if(!child||child->location!=cmd.actor||child->parent_a!=std::min(cmd.target,static_cast<std::uint64_t>(cmd.amount))||
+                   child->parent_b!=std::max(cmd.target,static_cast<std::uint64_t>(cmd.amount)))
+                    throw std::runtime_error("host birth not present in authoritative world snapshot");
+                const auto census=faces.family_census(cmd.actor);
+                // Existing adult residents + dependents are the exact physical
+                // settlement population; do not copy a remote macro cohort.
+                const auto* h=next.habitat(cmd.actor);
+                if(!h || census.current_population>=static_cast<std::uint64_t>(h->residents+h->dependents))
+                    throw std::runtime_error("family/world population census drift");
+                faces.record_live_birth(id,child->id,child->parent_a,child->parent_b,
+                    cmd.actor,next.tick(),census.revision,family_policy_);
+            }
+        };
+        break;
+    }
+    store_->commit(next, generation_, resource_origin_, credit_origin_, nullptr, new_events, due, new_activity, fail,
+                   nullptr,nullptr,live_births);
     world_.swap(next);
     ++generation_;
 }

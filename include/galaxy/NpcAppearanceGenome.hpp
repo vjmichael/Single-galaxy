@@ -64,6 +64,10 @@ public:
 
     NpcAppearanceStore(const std::string& sqlite_path, std::string scope,
                        std::uint64_t world_seed, AdmitExistingNpc admit);
+    // Trusted PersistentWorld::Store::commit use ONLY. Does not own the db handle
+    // or open/commit/rollback transactions; validates pre-existing metadata.
+    NpcAppearanceStore(sqlite3* active_world_transaction, std::string scope,
+                       std::uint64_t world_seed, AdmitExistingNpc admit);
     ~NpcAppearanceStore();
     NpcAppearanceStore(const NpcAppearanceStore&) = delete;
     NpcAppearanceStore& operator=(const NpcAppearanceStore&) = delete;
@@ -96,6 +100,12 @@ public:
                                 std::uint64_t expected_census_revision,
                                 AuthorizeBirth authorize_birth);
     NpcBirthRecord get_birth(std::uint64_t event_id) const;
+    // Only legal when born low-ID is already in an authoritative cloned
+    // Simulation and the world snapshot and this receipt commit together.
+    NpcBirthRecord record_live_birth(std::uint64_t event_id,std::uint64_t child_id,
+                                std::uint64_t parent_a,std::uint64_t parent_b,
+                                std::uint64_t settlement,std::uint64_t tick,
+                                std::uint64_t expected_revision,AuthorizeBirth authorize_birth);
     using AuthorizeDeath = std::function<bool(std::uint64_t settlement,
                                               std::uint64_t npc_id,
                                               std::uint64_t tick)>;
@@ -106,6 +116,11 @@ public:
     NpcDeathRecord get_death(std::uint64_t event_id) const;
 
 private:
+    NpcBirthRecord record_birth_impl(std::uint64_t event_id,std::uint64_t child_id,
+                        std::uint64_t parent_a,std::uint64_t parent_b,
+                        std::uint64_t settlement,std::uint64_t tick,
+                        std::uint64_t expected_revision,AuthorizeBirth authorize_birth,
+                        bool world_live_identity);
     NpcAppearanceProfile lookup(std::uint64_t id, bool& found) const;
     void insert(const NpcAppearanceProfile& profile);
     void begin();
@@ -114,6 +129,7 @@ private:
     void require_existing_npc(std::uint64_t id) const;
     bool is_born_npc(std::uint64_t id) const;
     sqlite3* db_=nullptr;
+    bool borrowed_transaction_=false;
     std::string scope_;
     std::uint64_t seed_=0;
     AdmitExistingNpc admit_;

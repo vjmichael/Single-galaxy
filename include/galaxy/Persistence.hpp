@@ -1,5 +1,6 @@
 #pragma once
 #include "galaxy/Simulation.hpp"
+#include "galaxy/NpcAppearanceGenome.hpp"
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -215,6 +216,15 @@ public:
                                      std::uint64_t command_id, FailPoint fail = FailPoint::None);
     bool submit_testing_crew_loss(EntityId colony_ship, std::int64_t count,
                                   std::uint64_t command_id, FailPoint fail = FailPoint::None);
+    // Host-only ART-02b: must first enroll living parents into an appearance
+    // family settlement whose census matches the actual habitat population.
+    void enable_live_family_births(std::string scope,std::uint64_t seed,
+                                    NpcAppearanceStore::AuthorizeBirth policy,
+                                    NpcAppearanceStore::AuthorizeDeath death_policy={});
+    bool submit_host_birth(EntityId habitat,std::uint64_t parent_a,std::uint64_t parent_b,
+                           std::uint64_t command_id,FailPoint fail=FailPoint::None);
+    bool submit_host_dependent_death(EntityId habitat,std::uint64_t child_id,
+                           std::uint64_t command_id,FailPoint fail=FailPoint::None);
     void step(FailPoint fail = FailPoint::None);
     void steps(std::uint64_t n);
     const Simulation& world() const noexcept { return world_; }
@@ -342,5 +352,9 @@ private:
     std::int64_t resource_origin_ = 0;
     std::int64_t credit_origin_ = 0;
     std::uint64_t generation_ = 0;
+    std::string family_scope_;
+    std::uint64_t family_seed_=0;
+    NpcAppearanceStore::AuthorizeBirth family_policy_;
+    NpcAppearanceStore::AuthorizeDeath family_death_policy_;
 };
 } // namespace galaxy

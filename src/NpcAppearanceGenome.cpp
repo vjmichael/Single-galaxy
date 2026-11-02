@@ -211,10 +211,21 @@ NpcAppearanceStore::NpcAppearanceStore(const std::string& path,std::string scope
         }catch(...){rollback();throw;}
     }catch(...){sqlite3_close(db_);db_=nullptr;throw;}
 }
-NpcAppearanceStore::~NpcAppearanceStore(){if(db_)sqlite3_close(db_);}
-void NpcAppearanceStore::begin(){sql_exec(db_,"BEGIN IMMEDIATE");}
-void NpcAppearanceStore::commit(){sql_exec(db_,"COMMIT");}
-void NpcAppearanceStore::rollback() noexcept {sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);}
+NpcAppearanceStore::NpcAppearanceStore(sqlite3* db,std::string scope,std::uint64_t seed,
+                                      AdmitExistingNpc admit)
+    :db_(db),borrowed_transaction_(true),scope_(std::move(scope)),seed_(seed),admit_(std::move(admit)) {
+    if(!db_||sqlite3_get_autocommit(db_)!=0||scope_.empty()||!admit_)
+        throw std::invalid_argument("appearance borrowed connection requires active world transaction");
+    Statement meta(db_,"SELECT schema_version,world_seed FROM npc_appearance_meta WHERE scope=?");
+    meta.text(1,scope_);
+    if(meta.step()!=SQLITE_ROW || sqlite3_column_int(meta.s,0)!=static_cast<int>(kFaceGenomeVersion) ||
+       parse_u64(sqlite3_column_text(meta.s,1))!=seed_)
+        throw std::runtime_error("appearance world scope/seed not initialized");
+}
+NpcAppearanceStore::~NpcAppearanceStore(){if(db_ && !borrowed_transaction_)sqlite3_close(db_);}
+void NpcAppearanceStore::begin(){if(!borrowed_transaction_)sql_exec(db_,"BEGIN IMMEDIATE");}
+void NpcAppearanceStore::commit(){if(!borrowed_transaction_)sql_exec(db_,"COMMIT");}
+void NpcAppearanceStore::rollback() noexcept {if(!borrowed_transaction_)sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);}
 bool NpcAppearanceStore::is_born_npc(std::uint64_t id) const {
     Statement q(db_,"SELECT born_tick FROM npc_family_people WHERE scope=? AND npc_id=?");
     q.text(1,scope_);q.text(2,decimal(id));
@@ -404,12 +415,29 @@ NpcBirthRecord NpcAppearanceStore::record_birth(
     std::uint64_t event_id,std::uint64_t child_id,std::uint64_t pa,std::uint64_t pb,
     std::uint64_t settlement,std::uint64_t tick,std::uint64_t expected_revision,
     AuthorizeBirth authorize){
-    if(!event_id||child_id<kMinFamilyChildId||!settlement||!tick||
+    return record_birth_impl(event_id,child_id,pa,pb,settlement,tick,expected_revision,
+                             std::move(authorize),false);
+}
+NpcBirthRecord NpcAppearanceStore::record_live_birth(
+    std::uint64_t event_id,std::uint64_t child_id,std::uint64_t pa,std::uint64_t pb,
+    std::uint64_t settlement,std::uint64_t tick,std::uint64_t expected_revision,
+    AuthorizeBirth authorize){
+    if(!borrowed_transaction_)throw std::logic_error("live birth requires world transaction");
+    return record_birth_impl(event_id,child_id,pa,pb,settlement,tick,expected_revision,
+                             std::move(authorize),true);
+}
+NpcBirthRecord NpcAppearanceStore::record_birth_impl(
+    std::uint64_t event_id,std::uint64_t child_id,std::uint64_t pa,std::uint64_t pb,
+    std::uint64_t settlement,std::uint64_t tick,std::uint64_t expected_revision,
+    AuthorizeBirth authorize,bool live){
+    if(!event_id||(!live && child_id<kMinFamilyChildId)||
+       (live && (child_id>=kMinFamilyChildId || !admit_(child_id)))||
+       !settlement||!tick||
        !pa||!pb||pa==pb||child_id==pa||child_id==pb||!authorize)
         throw std::invalid_argument("invalid named family birth parameters");
     if(pa>pb)std::swap(pa,pb);
     // Do not allocate an identity already present in the playable simulation.
-    if(admit_(child_id))throw std::invalid_argument("family child ID collides with live NPC");
+    if(!live && admit_(child_id))throw std::invalid_argument("family child ID collides with live NPC");
     begin();
     try {
         Statement prior(db_,"SELECT 1 FROM npc_family_births WHERE scope=? AND event_id=?");

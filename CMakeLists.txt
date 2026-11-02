@@ -19,7 +19,7 @@ else()
 endif()
 add_library(galaxy_kernel STATIC src/Simulation.cpp src/ColonyResilience.cpp
   src/ColonyRecovery.cpp src/ColonyPolicy.cpp src/PopulationCohorts.cpp
-    src/ColonyWaterSupply.cpp src/Persistence.cpp src/EconomyPrototype.cpp src/QuantifiedProduction.cpp src/Inventory.cpp src/InventoryLogistics.cpp src/FactoryLayout.cpp src/BlueprintConstruction.cpp src/HostBlueprintRegistry.cpp src/ClientContract.cpp src/Galaxy.cpp src/Navigation.cpp src/GateTransit.cpp src/Region.cpp)
+    src/ColonyWaterSupply.cpp src/Persistence.cpp src/NpcAppearanceGenome.cpp src/EconomyPrototype.cpp src/QuantifiedProduction.cpp src/Inventory.cpp src/InventoryLogistics.cpp src/FactoryLayout.cpp src/BlueprintConstruction.cpp src/HostBlueprintRegistry.cpp src/ClientContract.cpp src/Galaxy.cpp src/Navigation.cpp src/GateTransit.cpp src/Region.cpp)
 target_include_directories(galaxy_kernel PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(galaxy_kernel PUBLIC SQLite::SQLite3)
 if(MSVC)
@@ -692,14 +692,10 @@ endif()
 
 # ART-01: compact appearance-only inherited facial traits for existing named NPCs.
 # No runtime AI textures, births or 3D mesh/rig renderer are implied.
-add_library(galaxy_npc_appearance STATIC src/NpcAppearanceGenome.cpp)
-target_include_directories(galaxy_npc_appearance PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(galaxy_npc_appearance PUBLIC SQLite::SQLite3)
-if(MSVC)
-  target_compile_options(galaxy_npc_appearance PRIVATE /W4 /permissive-)
-else()
-  target_compile_options(galaxy_npc_appearance PRIVATE -Wall -Wextra -Wpedantic)
-endif()
+add_library(galaxy_npc_appearance INTERFACE)
+target_include_directories(galaxy_npc_appearance INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(galaxy_npc_appearance INTERFACE galaxy_kernel)
+
 if(BUILD_TESTING)
   add_executable(galaxy_npc_appearance_tests tests/NpcAppearanceGenomeTests.cpp)
   target_link_libraries(galaxy_npc_appearance_tests PRIVATE galaxy_npc_appearance galaxy_kernel)
@@ -712,4 +708,11 @@ if(BUILD_TESTING)
   add_executable(galaxy_npc_family_birth_tests tests/NpcFamilyBirthTests.cpp)
   target_link_libraries(galaxy_npc_family_birth_tests PRIVATE galaxy_npc_appearance galaxy_kernel)
   add_test(NAME galaxy_npc_family_birth_tests COMMAND galaxy_npc_family_birth_tests)
+endif()
+
+# ART-02b: actual host-journaled newborns in the playable world and genome ledger.
+if(BUILD_TESTING)
+  add_executable(galaxy_art02b_live_family_tests tests/ART02bLiveFamilyIntegrationTests.cpp)
+  target_link_libraries(galaxy_art02b_live_family_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_art02b_live_family_tests COMMAND galaxy_art02b_live_family_tests)
 endif()
