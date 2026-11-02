@@ -681,3 +681,11 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_econ03c8b_world_reconciliation_tests PRIVATE galaxy_regional)
   add_test(NAME galaxy_econ03c8b_world_reconciliation_tests COMMAND galaxy_econ03c8b_world_reconciliation_tests)
 endif()
+
+# ECON-03c8c opt-in four-colony accelerated-time scenario runner.
+# Fixture is synthetic detailed regional scheduler, not detailed PersistentWorld.
+option(BUILD_FOUR_COLONY_SCENARIOS "Build paired four-colony warm/cold handoff scenario harness" OFF)
+if(BUILD_FOUR_COLONY_SCENARIOS)
+  add_executable(galaxy_four_colony_6hour_scenarios tests/FourColonySixHourHarness.cpp)
+  target_link_libraries(galaxy_four_colony_6hour_scenarios PRIVATE galaxy_regional)
+endif()
