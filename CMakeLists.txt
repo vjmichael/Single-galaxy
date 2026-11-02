@@ -705,3 +705,11 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_npc_appearance_tests PRIVATE galaxy_npc_appearance galaxy_kernel)
   add_test(NAME galaxy_npc_appearance_tests COMMAND galaxy_npc_appearance_tests)
 endif()
+
+# ART-02: host-authorized family births/deaths + appearance on one SQLite.
+# This test does not spawn live PersistentWorld NPCs (migration pending).
+if(BUILD_TESTING)
+  add_executable(galaxy_npc_family_birth_tests tests/NpcFamilyBirthTests.cpp)
+  target_link_libraries(galaxy_npc_family_birth_tests PRIVATE galaxy_npc_appearance galaxy_kernel)
+  add_test(NAME galaxy_npc_family_birth_tests COMMAND galaxy_npc_family_birth_tests)
+endif()

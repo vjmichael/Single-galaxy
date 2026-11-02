@@ -158,6 +158,43 @@ NpcAppearanceStore::NpcAppearanceStore(const std::string& path,std::string scope
                      "generation INTEGER NOT NULL CHECK(generation>=0),"
                      "alleles BLOB NOT NULL CHECK(length(alleles)=160),"
                      "digest TEXT NOT NULL, PRIMARY KEY(scope,npc_id))");
+        // All family state is on the exact same SQLite connection as appearance
+        // inserts; a committed birth cannot lack its inherited face or census.
+        sql_exec(db_,"CREATE TABLE IF NOT EXISTS npc_family_census("
+            "scope TEXT NOT NULL, settlement TEXT NOT NULL,"
+            "initial_population INTEGER NOT NULL CHECK(initial_population>=1),"
+            "current_population INTEGER NOT NULL CHECK(current_population>=1),"
+            "revision INTEGER NOT NULL CHECK(revision>=0),"
+            "last_tick INTEGER NOT NULL CHECK(last_tick>=0),"
+            "PRIMARY KEY(scope,settlement))");
+        sql_exec(db_,"CREATE TABLE IF NOT EXISTS npc_family_people("
+            "scope TEXT NOT NULL,npc_id TEXT NOT NULL,settlement TEXT NOT NULL,"
+            "born_tick INTEGER NOT NULL CHECK(born_tick>=0),"
+            "parent_a TEXT NOT NULL,parent_b TEXT NOT NULL,"
+            "PRIMARY KEY(scope,npc_id))");
+        sql_exec(db_,"CREATE TABLE IF NOT EXISTS npc_family_births("
+            "scope TEXT NOT NULL,event_id TEXT NOT NULL,child_id TEXT NOT NULL,"
+            "settlement TEXT NOT NULL,parent_a TEXT NOT NULL,parent_b TEXT NOT NULL,"
+            "tick INTEGER NOT NULL CHECK(tick>0),census_revision INTEGER NOT NULL,"
+            "appearance_digest TEXT NOT NULL,"
+            "PRIMARY KEY(scope,event_id), UNIQUE(scope,child_id))");
+        sql_exec(db_,"CREATE TABLE IF NOT EXISTS npc_family_deaths("
+            "scope TEXT NOT NULL,event_id TEXT NOT NULL,npc_id TEXT NOT NULL,"
+            "settlement TEXT NOT NULL,tick INTEGER NOT NULL CHECK(tick>0),"
+            "census_revision INTEGER NOT NULL,PRIMARY KEY(scope,event_id),"
+            "UNIQUE(scope,npc_id))");
+        sql_exec(db_,"CREATE TRIGGER IF NOT EXISTS npc_family_death_no_update "
+            "BEFORE UPDATE ON npc_family_deaths BEGIN SELECT RAISE(ABORT,'death immutable'); END");
+        sql_exec(db_,"CREATE TRIGGER IF NOT EXISTS npc_family_death_no_delete "
+            "BEFORE DELETE ON npc_family_deaths BEGIN SELECT RAISE(ABORT,'death immutable'); END");
+        sql_exec(db_,"CREATE TRIGGER IF NOT EXISTS npc_family_birth_no_update "
+            "BEFORE UPDATE ON npc_family_births BEGIN SELECT RAISE(ABORT,'birth immutable'); END");
+        sql_exec(db_,"CREATE TRIGGER IF NOT EXISTS npc_family_birth_no_delete "
+            "BEFORE DELETE ON npc_family_births BEGIN SELECT RAISE(ABORT,'birth immutable'); END");
+        sql_exec(db_,"CREATE TRIGGER IF NOT EXISTS npc_family_people_no_update "
+            "BEFORE UPDATE ON npc_family_people BEGIN SELECT RAISE(ABORT,'family person immutable'); END");
+        sql_exec(db_,"CREATE TRIGGER IF NOT EXISTS npc_family_people_no_delete "
+            "BEFORE DELETE ON npc_family_people BEGIN SELECT RAISE(ABORT,'family person immutable'); END");
         begin();
         try {
             Statement q(db_,"SELECT schema_version,world_seed FROM npc_appearance_meta WHERE scope=?");q.text(1,scope_);
@@ -178,8 +215,14 @@ NpcAppearanceStore::~NpcAppearanceStore(){if(db_)sqlite3_close(db_);}
 void NpcAppearanceStore::begin(){sql_exec(db_,"BEGIN IMMEDIATE");}
 void NpcAppearanceStore::commit(){sql_exec(db_,"COMMIT");}
 void NpcAppearanceStore::rollback() noexcept {sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);}
+bool NpcAppearanceStore::is_born_npc(std::uint64_t id) const {
+    Statement q(db_,"SELECT born_tick FROM npc_family_people WHERE scope=? AND npc_id=?");
+    q.text(1,scope_);q.text(2,decimal(id));
+    return q.step()==SQLITE_ROW && sqlite3_column_int64(q.s,0)>0;
+}
 void NpcAppearanceStore::require_existing_npc(std::uint64_t id) const {
-    if(!id||!admit_(id))throw std::invalid_argument("NPC identity is not admitted by authoritative simulation");
+    if(!id||(!admit_(id)&&!is_born_npc(id)))
+        throw std::invalid_argument("NPC identity lacks authoritative founder or journaled family birth");
 }
 NpcAppearanceProfile NpcAppearanceStore::lookup(std::uint64_t id,bool& found) const {
     Statement q(db_,"SELECT parent_a,parent_b,generation,alleles,digest FROM npc_appearance_profiles WHERE scope=? AND npc_id=?");
@@ -253,4 +296,247 @@ std::uint64_t NpcAppearanceStore::named_profile_count() const {
     return static_cast<std::uint64_t>(sqlite3_column_int64(q.s,0));
 }
 
+} // namespace galaxy
+
+namespace galaxy {
+namespace {
+constexpr std::uint64_t kMinFamilyChildId = 1ULL<<62; // separate from playable NPC IDs
+constexpr std::uint64_t kMaxCensus = 1000000000000ULL;
+NpcFamilyCensus read_census(sqlite3* db, const std::string& scope,std::uint64_t settlement){
+    Statement q(db,"SELECT initial_population,current_population,revision,last_tick "
+        "FROM npc_family_census WHERE scope=? AND settlement=?");
+    q.text(1,scope);q.text(2,decimal(settlement));
+    if(q.step()!=SQLITE_ROW)throw std::out_of_range("family settlement not enrolled");
+    NpcFamilyCensus r;r.settlement=settlement;
+    r.initial_population=static_cast<std::uint64_t>(sqlite3_column_int64(q.s,0));
+    r.current_population=static_cast<std::uint64_t>(sqlite3_column_int64(q.s,1));
+    r.revision=static_cast<std::uint64_t>(sqlite3_column_int64(q.s,2));
+    r.last_tick=static_cast<std::uint64_t>(sqlite3_column_int64(q.s,3));
+    if(!r.initial_population||r.initial_population>kMaxCensus||
+       r.current_population>kMaxCensus)
+        throw std::runtime_error("family census corrupt");
+    return r;
+}
+} // namespace
+
+void NpcAppearanceStore::register_settlement(std::uint64_t settlement, std::uint64_t population){
+    if(!settlement||!population||population>kMaxCensus)
+        throw std::invalid_argument("invalid family settlement baseline");
+    begin();
+    try {
+        Statement q(db_,"SELECT initial_population FROM npc_family_census WHERE scope=? AND settlement=?");
+        q.text(1,scope_);q.text(2,decimal(settlement));
+        if(q.step()==SQLITE_ROW){
+            if(static_cast<std::uint64_t>(sqlite3_column_int64(q.s,0))!=population)
+                throw std::invalid_argument("immutable settlement census baseline changed");
+        }else{
+            Statement ins(db_,"INSERT INTO npc_family_census "
+                "(scope,settlement,initial_population,current_population,revision,last_tick) "
+                "VALUES(?,?,?,?,0,0)");
+            ins.text(1,scope_);ins.text(2,decimal(settlement));
+            ins.number(3,static_cast<int>(0)); // overwritten below by safe i64 bind
+            // Population may exceed the signed 32-bit integer range.
+            if(sqlite3_bind_int64(ins.s,3,static_cast<sqlite3_int64>(population))!=SQLITE_OK ||
+               sqlite3_bind_int64(ins.s,4,static_cast<sqlite3_int64>(population))!=SQLITE_OK)
+                throw std::runtime_error("family census bind failed");
+            ins.step();
+        }
+        commit();
+    }catch(...){rollback();throw;}
+}
+
+NpcFamilyCensus NpcAppearanceStore::family_census(std::uint64_t settlement) const {
+    if(!settlement)throw std::invalid_argument("settlement ID required");
+    return read_census(db_,scope_,settlement);
+}
+
+NpcAppearanceProfile NpcAppearanceStore::enroll_family_founder(std::uint64_t npc_id,
+                                                                 std::uint64_t settlement){
+    // A founder must already be a named live NPC in the authoritative world.
+    if(!npc_id||npc_id>=kMinFamilyChildId||!admit_(npc_id))
+        throw std::invalid_argument("founder identity is not admitted by live world");
+    begin();
+    try {
+        const auto census=read_census(db_,scope_,settlement);
+        Statement q(db_,"SELECT settlement,born_tick FROM npc_family_people WHERE scope=? AND npc_id=?");
+        q.text(1,scope_);q.text(2,decimal(npc_id));
+        const bool existing=q.step()==SQLITE_ROW;
+        if(existing && (parse_u64(sqlite3_column_text(q.s,0))!=settlement ||
+                         sqlite3_column_int64(q.s,1)!=0))
+            throw std::invalid_argument("founder already attached to different family settlement");
+        bool found=false;auto face=lookup(npc_id,found);
+        if(found && (face.parent_a||face.parent_b))
+            throw std::invalid_argument("child cannot be enrolled as a founder");
+        if(!found){face=founder(npc_id,mix(seed_,stable_scope_hash(scope_)));insert(face);}
+        if(!existing){
+            Statement n(db_,"SELECT COUNT(*) FROM npc_family_people WHERE scope=? AND settlement=?");
+            n.text(1,scope_);n.text(2,decimal(settlement));
+            if(n.step()!=SQLITE_ROW||sqlite3_column_int64(n.s,0)>=static_cast<sqlite3_int64>(census.current_population))
+                throw std::invalid_argument("named family records exceed settlement population");
+            Statement ins(db_,"INSERT INTO npc_family_people "
+                "(scope,npc_id,settlement,born_tick,parent_a,parent_b) VALUES(?,?,?,0,'0','0')");
+            ins.text(1,scope_);ins.text(2,decimal(npc_id));ins.text(3,decimal(settlement));ins.step();
+        }
+        commit();return face;
+    }catch(...){rollback();throw;}
+}
+
+NpcBirthRecord NpcAppearanceStore::get_birth(std::uint64_t event_id) const {
+    Statement q(db_,"SELECT child_id,settlement,parent_a,parent_b,tick,census_revision,appearance_digest "
+        "FROM npc_family_births WHERE scope=? AND event_id=?");
+    q.text(1,scope_);q.text(2,decimal(event_id));
+    if(q.step()!=SQLITE_ROW)throw std::out_of_range("birth event not found");
+    NpcBirthRecord r;r.event_id=event_id;
+    r.child_id=parse_u64(sqlite3_column_text(q.s,0));
+    r.settlement=parse_u64(sqlite3_column_text(q.s,1));
+    r.parent_a=parse_u64(sqlite3_column_text(q.s,2));
+    r.parent_b=parse_u64(sqlite3_column_text(q.s,3));
+    r.tick=static_cast<std::uint64_t>(sqlite3_column_int64(q.s,4));
+    r.census_revision=static_cast<std::uint64_t>(sqlite3_column_int64(q.s,5));
+    r.appearance_digest=parse_u64(sqlite3_column_text(q.s,6));
+    bool found=false;const auto child=lookup(r.child_id,found);
+    if(!found||child.digest!=r.appearance_digest||child.parent_a!=r.parent_a||
+       child.parent_b!=r.parent_b)throw std::runtime_error("family birth/face contradiction");
+    return r;
+}
+
+NpcBirthRecord NpcAppearanceStore::record_birth(
+    std::uint64_t event_id,std::uint64_t child_id,std::uint64_t pa,std::uint64_t pb,
+    std::uint64_t settlement,std::uint64_t tick,std::uint64_t expected_revision,
+    AuthorizeBirth authorize){
+    if(!event_id||child_id<kMinFamilyChildId||!settlement||!tick||
+       !pa||!pb||pa==pb||child_id==pa||child_id==pb||!authorize)
+        throw std::invalid_argument("invalid named family birth parameters");
+    if(pa>pb)std::swap(pa,pb);
+    // Do not allocate an identity already present in the playable simulation.
+    if(admit_(child_id))throw std::invalid_argument("family child ID collides with live NPC");
+    begin();
+    try {
+        Statement prior(db_,"SELECT 1 FROM npc_family_births WHERE scope=? AND event_id=?");
+        prior.text(1,scope_);prior.text(2,decimal(event_id));
+        if(prior.step()==SQLITE_ROW){
+            const auto r=get_birth(event_id);
+            if(r.child_id!=child_id||r.settlement!=settlement||r.parent_a!=pa||
+               r.parent_b!=pb||r.tick!=tick)
+                throw std::invalid_argument("birth event replay parameters changed");
+            commit();return r;
+        }
+        auto census=read_census(db_,scope_,settlement);
+        if(census.revision!=expected_revision||tick<census.last_tick)
+            throw std::invalid_argument("stale family census revision or time");
+        if(census.current_population>=kMaxCensus || census.revision>=kMaxCensus)
+            throw std::overflow_error("family population/revision capacity exhausted");
+        if(!authorize(settlement,pa,pb,tick))
+            throw std::invalid_argument("host denied birth (housing, food, population policy)");
+        // Both parents must be real persistent members of the same settlement.
+        for(auto parent:{pa,pb}){
+            Statement member(db_,"SELECT settlement,born_tick FROM npc_family_people WHERE scope=? AND npc_id=?");
+            member.text(1,scope_);member.text(2,decimal(parent));
+            if(member.step()!=SQLITE_ROW || parse_u64(sqlite3_column_text(member.s,0))!=settlement)
+                throw std::invalid_argument("birth parent not in settlement family registry");
+            const auto parent_born_tick=static_cast<std::uint64_t>(sqlite3_column_int64(member.s,1));
+            if(parent_born_tick>=tick)
+                throw std::invalid_argument("a newborn cannot immediately become a parent");
+            Statement dead(db_,"SELECT 1 FROM npc_family_deaths WHERE scope=? AND npc_id=?");
+            dead.text(1,scope_);dead.text(2,decimal(parent));
+            if(dead.step()==SQLITE_ROW)
+                throw std::invalid_argument("a deceased NPC cannot parent a new birth");
+        }
+        bool af=false,bf=false,cf=false;
+        auto a=lookup(pa,af),b=lookup(pb,bf);
+        lookup(child_id,cf);
+        if(!af||!bf||cf || std::max(a.generation,b.generation)>=static_cast<std::uint32_t>(std::numeric_limits<int>::max()))
+            throw std::invalid_argument("invalid family lineage or occupied child ID");
+        auto child=offspring(child_id,a,b,mix(seed_,stable_scope_hash(scope_)));
+        // All three writes are one SQLite transaction: physical population
+        // census, child identity/lineage and appearance profile.
+        insert(child);
+        Statement person(db_,"INSERT INTO npc_family_people "
+            "(scope,npc_id,settlement,born_tick,parent_a,parent_b) VALUES(?,?,?,?,?,?)");
+        person.text(1,scope_);person.text(2,decimal(child_id));
+        person.text(3,decimal(settlement));
+        if(sqlite3_bind_int64(person.s,4,static_cast<sqlite3_int64>(tick))!=SQLITE_OK)
+            throw std::runtime_error("birth tick bind failed");
+        person.text(5,decimal(pa));person.text(6,decimal(pb));person.step();
+        Statement ledger(db_,"INSERT INTO npc_family_births "
+            "(scope,event_id,child_id,settlement,parent_a,parent_b,tick,census_revision,appearance_digest) "
+            "VALUES(?,?,?,?,?,?,?,?,?)");
+        ledger.text(1,scope_);ledger.text(2,decimal(event_id));ledger.text(3,decimal(child_id));
+        ledger.text(4,decimal(settlement));ledger.text(5,decimal(pa));ledger.text(6,decimal(pb));
+        if(sqlite3_bind_int64(ledger.s,7,static_cast<sqlite3_int64>(tick))!=SQLITE_OK ||
+           sqlite3_bind_int64(ledger.s,8,static_cast<sqlite3_int64>(census.revision+1))!=SQLITE_OK)
+            throw std::runtime_error("birth ledger bind failed");
+        ledger.text(9,decimal(child.digest));ledger.step();
+        Statement count(db_,"UPDATE npc_family_census SET current_population=current_population+1,"
+            "revision=revision+1,last_tick=? WHERE scope=? AND settlement=? AND revision=?");
+        if(sqlite3_bind_int64(count.s,1,static_cast<sqlite3_int64>(tick))!=SQLITE_OK ||
+           sqlite3_bind_int64(count.s,4,static_cast<sqlite3_int64>(expected_revision))!=SQLITE_OK)
+            throw std::runtime_error("birth revision bind failed");
+        count.text(2,scope_);count.text(3,decimal(settlement));count.step();
+        if(sqlite3_changes(db_)!=1)throw std::runtime_error("concurrent birth census revision");
+        commit();
+        return {event_id,child_id,pa,pb,settlement,tick,census.revision+1,child.digest};
+    }catch(...){rollback();throw;}
+}
+} // namespace galaxy
+
+namespace galaxy {
+NpcDeathRecord NpcAppearanceStore::get_death(std::uint64_t event_id) const {
+    Statement q(db_,"SELECT npc_id,settlement,tick,census_revision "
+        "FROM npc_family_deaths WHERE scope=? AND event_id=?");
+    q.text(1,scope_);q.text(2,decimal(event_id));
+    if(q.step()!=SQLITE_ROW)throw std::out_of_range("death event not found");
+    NpcDeathRecord r;r.event_id=event_id;
+    r.npc_id=parse_u64(sqlite3_column_text(q.s,0));
+    r.settlement=parse_u64(sqlite3_column_text(q.s,1));
+    r.tick=static_cast<std::uint64_t>(sqlite3_column_int64(q.s,2));
+    r.census_revision=static_cast<std::uint64_t>(sqlite3_column_int64(q.s,3));
+    return r;
+}
+NpcDeathRecord NpcAppearanceStore::record_death(
+    std::uint64_t event_id,std::uint64_t npc_id,std::uint64_t settlement,
+    std::uint64_t tick,std::uint64_t expected_revision,AuthorizeDeath authorize){
+    if(!event_id||!npc_id||!settlement||!tick||!authorize)
+        throw std::invalid_argument("invalid family death request");
+    begin();
+    try {
+        Statement prior(db_,"SELECT 1 FROM npc_family_deaths WHERE scope=? AND event_id=?");
+        prior.text(1,scope_);prior.text(2,decimal(event_id));
+        if(prior.step()==SQLITE_ROW){
+            const auto r=get_death(event_id);
+            if(r.npc_id!=npc_id||r.settlement!=settlement||r.tick!=tick)
+                throw std::invalid_argument("death replay parameters changed");
+            commit();return r;
+        }
+        auto census=read_census(db_,scope_,settlement);
+        if(census.revision!=expected_revision||tick<census.last_tick||!census.current_population)
+            throw std::invalid_argument("stale family death revision, time, or population");
+        if(!authorize(settlement,npc_id,tick))
+            throw std::invalid_argument("host denied family death event");
+        Statement member(db_,"SELECT settlement,born_tick FROM npc_family_people WHERE scope=? AND npc_id=?");
+        member.text(1,scope_);member.text(2,decimal(npc_id));
+        if(member.step()!=SQLITE_ROW||parse_u64(sqlite3_column_text(member.s,0))!=settlement ||
+           static_cast<std::uint64_t>(sqlite3_column_int64(member.s,1))>=tick)
+            throw std::invalid_argument("family death requires living member at later tick");
+        Statement dead(db_,"SELECT 1 FROM npc_family_deaths WHERE scope=? AND npc_id=?");
+        dead.text(1,scope_);dead.text(2,decimal(npc_id));
+        if(dead.step()==SQLITE_ROW)throw std::invalid_argument("NPC already deceased");
+        Statement ins(db_,"INSERT INTO npc_family_deaths "
+            "(scope,event_id,npc_id,settlement,tick,census_revision) VALUES(?,?,?,?,?,?)");
+        ins.text(1,scope_);ins.text(2,decimal(event_id));ins.text(3,decimal(npc_id));
+        ins.text(4,decimal(settlement));
+        if(sqlite3_bind_int64(ins.s,5,static_cast<sqlite3_int64>(tick))!=SQLITE_OK||
+           sqlite3_bind_int64(ins.s,6,static_cast<sqlite3_int64>(census.revision+1))!=SQLITE_OK)
+            throw std::runtime_error("family death bind failed");
+        ins.step();
+        Statement upd(db_,"UPDATE npc_family_census SET current_population=current_population-1,"
+            "revision=revision+1,last_tick=? WHERE scope=? AND settlement=? AND revision=?");
+        if(sqlite3_bind_int64(upd.s,1,static_cast<sqlite3_int64>(tick))!=SQLITE_OK||
+           sqlite3_bind_int64(upd.s,4,static_cast<sqlite3_int64>(expected_revision))!=SQLITE_OK)
+            throw std::runtime_error("family death revision bind failed");
+        upd.text(2,scope_);upd.text(3,decimal(settlement));upd.step();
+        if(sqlite3_changes(db_)!=1)throw std::runtime_error("concurrent family death revision");
+        commit();return {event_id,npc_id,settlement,tick,census.revision+1};
+    }catch(...){rollback();throw;}
+}
 } // namespace galaxy
