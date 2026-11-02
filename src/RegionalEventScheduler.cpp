@@ -53,6 +53,36 @@ const cold_colony::State& Scheduler::colony(const std::string& id) const{
 const Shipment& Scheduler::shipment(std::uint64_t id) const{
     return shipments_.at(id);
 }
+void Scheduler::debit_depot(const std::string& name,Cargo c){
+    validate(c);
+    take(c,colonies_.at(name).depot);
+}
+void Scheduler::credit_depot(const std::string& name,Cargo c){
+    validate(c);
+    put(c,colonies_.at(name).depot);
+}
+void Scheduler::cold_life_work(const std::string& name,std::int64_t harvest,
+                               Cargo reclaimed){
+    if(harvest<0 || reclaimed.food_kg<0 || reclaimed.water_kg<0 ||
+       reclaimed.oxygen_kg<0)
+        throw std::invalid_argument("negative cold-colony work amount");
+    auto c=colonies_.at(name); // whole operation commits or rolls back
+    auto transfer=[](std::int64_t& from,std::int64_t& to,std::int64_t amount){
+        if(from<0 || to<0 || amount<0 || from<amount ||
+           to>std::numeric_limits<std::int64_t>::max()-amount)
+            throw std::runtime_error("unfunded cold conversion or overflow");
+        from-=amount;to+=amount;
+    };
+    // Reclamation turns actual household waste into new usable farm nutrients,
+    // water and breathing gas. Conversion is 1:1 mass in this game prototype;
+    // no resources are conjured and energy is charged by the industry ledger.
+    transfer(c.habitat.organic_waste_kg,c.depot.nutrients_kg,reclaimed.food_kg);
+    transfer(c.habitat.wastewater_kg,c.depot.water_kg,reclaimed.water_kg);
+    transfer(c.habitat.co2_kg,c.depot.oxygen_kg,reclaimed.oxygen_kg);
+    // Solar-grown hydroponic crops consume actual recovered or seeded nutrients.
+    transfer(c.depot.nutrients_kg,c.depot.food_kg,harvest);
+    colonies_.at(name)=c;
+}
 void Scheduler::queue(Scheduled event){
     if(event.tick<=tick_)throw std::invalid_argument("event must be in future");
     event.sequence=next_sequence_++;

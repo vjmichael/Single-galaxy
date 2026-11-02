@@ -644,7 +644,8 @@ add_library(galaxy_regional STATIC
   src/MacroNeeds.cpp src/ColdColonyNeeds.cpp src/RegionalEventScheduler.cpp
   src/RegionalCheckpointStore.cpp src/RegionalHostCommands.cpp
   src/RegionalInterestManager.cpp src/RegionalCustodyLedger.cpp
-  src/RegionalModeAuthority.cpp src/RegionalPersistentWorldBridge.cpp)
+  src/RegionalModeAuthority.cpp src/RegionalPersistentWorldBridge.cpp
+  src/RegionalColdIndustry.cpp)
 target_include_directories(galaxy_regional PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(galaxy_regional PUBLIC galaxy_kernel SQLite::SQLite3)
 if(MSVC)
@@ -688,4 +689,11 @@ option(BUILD_FOUR_COLONY_SCENARIOS "Build paired four-colony warm/cold handoff s
 if(BUILD_FOUR_COLONY_SCENARIOS)
   add_executable(galaxy_four_colony_6hour_scenarios tests/FourColonySixHourHarness.cpp)
   target_link_libraries(galaxy_four_colony_6hour_scenarios PRIVATE galaxy_regional)
+endif()
+
+# ECON-03c9: live finite-stock regional economy and eight-colony scenarios.
+option(BUILD_EIGHT_COLONY_SCENARIOS "Build extended 8h native colony economy scenarios" OFF)
+if(BUILD_EIGHT_COLONY_SCENARIOS)
+  add_executable(galaxy_econ03c9_eight_colony_scenarios tests/ECON03c9EightColonyScenarios.cpp)
+  target_link_libraries(galaxy_econ03c9_eight_colony_scenarios PRIVATE galaxy_regional)
 endif()

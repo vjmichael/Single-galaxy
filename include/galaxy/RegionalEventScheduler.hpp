@@ -50,6 +50,14 @@ public:
     const cold_colony::State& colony(const std::string& id) const;
     const Shipment& shipment(std::uint64_t id) const;
     const std::map<std::uint64_t,Shipment>& shipments() const noexcept {return shipments_;}
+    // ECON-03c9: host-owned physical stock operations. These mutate the
+    // candidate scheduler only; commit_command persists them atomically with
+    // industry/cargo receipts. No remote caller may access these directly.
+    void debit_depot(const std::string& colony, Cargo cargo);
+    void credit_depot(const std::string& colony, Cargo cargo);
+    void cold_life_work(const std::string& colony,
+                        std::int64_t farm_food_kg,
+                        Cargo reclaimed_waste);
     std::uint64_t schedule_shipment(const std::string& origin,
                                     const std::string& destination, Cargo cargo,
                                     std::uint64_t departure_tick,
