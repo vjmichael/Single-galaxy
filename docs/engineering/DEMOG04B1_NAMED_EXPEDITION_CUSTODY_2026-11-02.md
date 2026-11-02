@@ -15,7 +15,7 @@ Named passenger states: at source, reserved, traveling, at destination, or perma
 - Four selected native CTests passed: kernel, persistence, DEMOG-03 planner, DEMOG-04 pilot + named custody.
 - ASan + UBSan native direct build with leak checking passed.
 - Minimal 3-file source patch dry-run passed against the exact previous DEMOG-04a source.
-- Conversation deliverable: `SingleGalaxy_DEMOG04b1_Named_Pioneer_Custody_Source_Tests_2026-11-02.zip`, SHA-256 `f154a1cd7f307b8fcae64128533f68682e4988a5c487ad89d412e40c6be90564`.
+- Conversation deliverable: `SingleGalaxy_DEMOG04b1_Named_Pioneer_Custody_Source_Tests_2026-11-02.zip`, SHA-256 `d0e625fd3a14f1aa371af6041cf8be65f2cd9a3195bdc7e54dbd2923bda38626`.
 
 ## Explicit limitations
 
