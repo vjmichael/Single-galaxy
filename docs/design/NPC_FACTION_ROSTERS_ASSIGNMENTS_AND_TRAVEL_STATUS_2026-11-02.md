@@ -35,3 +35,16 @@ Enforce uniqueness of an NPC's active custody and exclusive voyage assignment; p
 4. Test concurrent roster selection, mixed named/cohort residents, household travel, cold/warm regional transitions, save/restart, ship loss and multi-faction memberships.
 
 **Current reality:** DEMOG-04b1 has named custody inside an isolated SQLite expedition prototype. There is no verified native faction roster implementation or gameplay UI from this document alone.
+
+
+## Canonical state fan-out and cross-faction consistency (approved November 2, 2026)
+
+**One NPC ID has exactly one authoritative mutable character/custody state, regardless of how many faction rosters reference that NPC.** Roster rows are projections/references keyed by NPC ID, never independently writable physical-status records.
+
+When the host authorizes a state transition (reserved, boarded, in transit, arrived, returned, deceased, etc.), it atomically commits the canonical NPC custody/assignment change, a monotonically increasing NPC state revision, and a durable outbox event `NpcStateChanged(npc_id, revision, custody_owner, travel_id, status)`. The outbox delivers fan-out notifications to all faction memberships and any interested UI/read-model projections. Duplicate delivery is idempotent; a roster only applies an event when its revision exceeds the locally observed revision. Missing events are detected through version gaps or periodic reconciliation; on restart/subscribe, refresh directly from canonical state. A stale cache must **never** authorize another voyage, staffing commitment, or any custody change.
+
+Faction rosters can store membership-specific roles, ranks, standing, and local availability policy. They may *display* cached global status for performance, but cannot set or independently own global location/custody. Multi-faction NPCs are therefore visible everywhere with the same current travel state. Any expedition command revalidates the latest authoritative state and uses an atomic exclusivity constraint / compare-and-swap revision before boarding.
+
+Tests required: Bob is in three faction rosters; one departure produces one canonical transition and three updated projections; delayed, duplicate, reordered and dropped notifications; restart after commit before notification; simultaneous competing recruit/board attempts; leave/join faction during travel; cold/warm region transfers; death/loss and cancellation. Verify exactly one active custody owner at every committed revision.
+
+**Design rule:** Push for responsiveness; canonical state for correctness. Never depend on the push notification to prevent cloning.
