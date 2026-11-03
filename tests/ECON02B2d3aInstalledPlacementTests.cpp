@@ -63,7 +63,7 @@ int main(){
             CHECK(!w.world().factory_equipment_position(site,99));
             CHECK(w.world().total_material_kg()==mass);
             checkpoint=w.world().canonical_state();
-            CHECK(checkpoint.rfind("galaxy-kernel-v29|",0)==0);
+            CHECK(checkpoint.rfind("galaxy-kernel-v31|",0)==0);
             CHECK(Simulation::from_snapshot(checkpoint).canonical_state()==checkpoint);
             // Removing one device record must not cause the others to move or create inventory.
             auto independent=Simulation::from_snapshot(checkpoint);

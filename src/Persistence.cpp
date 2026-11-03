@@ -1,4 +1,10 @@
 #include "galaxy/Persistence.hpp"
+#include "galaxy/ShipmentManifest.hpp"
+#include "galaxy/SplitRescueIntent.hpp"
+#include "galaxy/RegionalModeAuthority.hpp"
+#include "galaxy/NpcAppearanceGenome.hpp"
+#include "galaxy/MedicalSocietyBridge.hpp"
+#include "galaxy/RegionalCheckpointStore.hpp"
 #include <algorithm>
 #include <sqlite3.h>
 
@@ -17,12 +23,14 @@
 #include <sstream>
 #include <map>
 #include <set>
+#include <tuple>
 #include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
 
 namespace galaxy {
+void enforce_physical_guardianship_at_commit(sqlite3*,std::uint64_t);
 // Canonical legacy storage ledger labels remain unchanged; v28 adds a
 // distinct source/destination class for actual machine material buffers.
 static std::string storage_endpoint_label(EntityId site,std::uint32_t node,const char* item){
@@ -97,7 +105,27 @@ std::string command_record(const Command& c) {
     out << c.id << ' ' << c.execute_tick << ' ' << c.sequence << ' ' << c.issuer << ' '
         << c.actor << ' ' << c.target << ' ' << static_cast<int>(c.action) << ' '
         << c.thrust_x << ' ' << c.thrust_y << ' ' << c.amount;
+    if (c.transport_id || !c.passenger_ids.empty()) {
+        out << " T31 " << c.transport_id << ' ' << c.passenger_ids.size();
+        for (auto npc : c.passenger_ids) out << ' ' << npc;
+        if(c.action==Action::HostSplitEvacuatePassengers)
+            out << " S48 " << c.secondary_receiver << ' ' << c.secondary_transport;
+    }
     return out.str();
+}
+bool split_receiver_matches(const Command& c,std::uint64_t ferry,
+        std::uint64_t voyage,std::uint64_t guardian,std::uint64_t co_guardian){
+    if(c.action!=Action::HostSplitEvacuatePassengers||c.amount<=0||
+       c.thrust_x<=0||static_cast<std::size_t>(c.thrust_x)>=c.passenger_ids.size())
+        return false;
+    const auto first=static_cast<std::size_t>(c.thrust_x);
+    const bool primary=c.target==ferry&&static_cast<std::uint64_t>(c.amount)==voyage;
+    const bool secondary=c.secondary_receiver==ferry&&c.secondary_transport==voyage;
+    if(primary==secondary)return false;
+    const auto begin=c.passenger_ids.begin()+(primary?0:first);
+    const auto end=c.passenger_ids.begin()+(primary?first:c.passenger_ids.size());
+    return std::find(begin,end,guardian)!=end &&
+        (!co_guardian||std::find(begin,end,co_guardian)!=end);
 }
 bool is_life_action(Action a) {
     return a>=Action::PlantCrops && a<=Action::LoadLifeWater;
@@ -127,7 +155,26 @@ Command decode_command(const std::string& record) {
           >> c.target >> action >> c.thrust_x >> c.thrust_y >> c.amount))
         throw std::runtime_error("recovery: invalid command journal record");
     std::string extra;
-    if (in >> extra || action < 0 || action > static_cast<int>(Action::CompleteConveyorRoute) || c.id == 0 || c.issuer == 0)
+    if (in >> extra) {
+        if (extra != "T31" || !(in >> c.transport_id))
+            throw std::runtime_error("recovery: invalid transport envelope");
+        std::size_t count=0;
+        if (!(in >> count) || !c.transport_id || count==0 || count>10000)
+            throw std::runtime_error("recovery: invalid transport manifest size");
+        std::set<std::uint64_t> unique;
+        for (std::size_t i=0;i<count;++i) {
+            std::uint64_t npc=0;
+            if (!(in >> npc) || !npc || !unique.insert(npc).second)
+                throw std::runtime_error("recovery: invalid transport passenger");
+            c.passenger_ids.push_back(npc);
+        }
+        if(action==static_cast<int>(Action::HostSplitEvacuatePassengers)){
+            if(!(in>>extra)||extra!="S48"||!(in>>c.secondary_receiver>>c.secondary_transport)||
+               !c.secondary_receiver||!c.secondary_transport)
+                throw std::runtime_error("recovery: malformed split rescue envelope");
+        }
+    }
+    if (in >> extra || action < 0 || action > static_cast<int>(Action::HostTransferConsignedStock) || c.id == 0 || c.issuer == 0)
         throw std::runtime_error("recovery: invalid command journal values");
     c.action = static_cast<Action>(action);
     if (command_record(c) != record) throw std::runtime_error("recovery: noncanonical command journal");
@@ -545,6 +592,12 @@ std::uint64_t latest_generation(sqlite3* db) {
 
 class PersistentWorld::Store {
 public:
+    bool manifest_transfer_allowed(const Command& c) const {return shipping::manifest_transfer_authorized(db_,c) && shipping::third_party_transfer_authorized(db_,c);}
+    std::string sqlite_path() const {
+        const char* path=sqlite3_db_filename(db_,"main");
+        if(!path)throw std::runtime_error("world SQLite file path unavailable");
+        return path;
+    }
     explicit Store(const std::string& path) {
         if (path.empty()) throw std::invalid_argument("SQLite filename required");
         if (sqlite3_open_v2(path.c_str(), &db_, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nullptr) != SQLITE_OK) {
@@ -1019,6 +1072,57 @@ public:
     Store(const Store&) = delete;
     Store& operator=(const Store&) = delete;
 
+    bool has_dependent_table() const {
+        Statement t(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                        "AND name='sg_dependent_travel'");
+        return t.row();
+    }
+    std::int64_t active_dependent_berths(EntityId ferry) const {
+        if(!has_dependent_table())return 0;
+        Statement q(db_,"SELECT COUNT(*) FROM sg_dependent_travel WHERE ferry=? AND status=1");
+        q.text(1,std::to_string(ferry));
+        if(!q.row())throw std::runtime_error("missing dependent berth count");
+        return sqlite3_column_int64(q.get(),0);
+    }
+    std::vector<DependentTravelRecord> dependent_travel(const std::string& scope) const {
+        std::vector<DependentTravelRecord> out;
+        if(!has_dependent_table())return out;
+        bool paired=false;
+        {Statement columns(db_,"PRAGMA table_info(sg_dependent_travel)");
+         while(columns.row())if(sqlite_str(columns.get(),1)=="co_guardian_id")paired=true;}
+        bool has_transfer=false;
+        {Statement columns(db_,"PRAGMA table_info(sg_dependent_travel)");
+         while(columns.row())if(sqlite_str(columns.get(),1)=="transfer_from_transport")has_transfer=true;}
+        const std::string sql=std::string("SELECT child_id,transport_id,guardian_id,ferry,origin,destination,")+
+            "board_command,arrival_command,board_generation,arrival_generation,status,"+
+            (paired?"co_guardian_id":"'0'")+","+
+            (has_transfer?"transfer_from_transport":"'0'")+","+
+            (has_transfer?"termination_kind":"0")+
+            " FROM sg_dependent_travel WHERE family_scope=? ORDER BY child_id,transport_id";
+        Statement q(db_,sql.c_str());
+        q.text(1,scope);
+        while(q.row()){
+            DependentTravelRecord r;
+            r.child_id=parse_u64(sqlite3_column_text(q.get(),0));
+            r.transport_id=parse_u64(sqlite3_column_text(q.get(),1));
+            r.guardian_id=parse_u64(sqlite3_column_text(q.get(),2));
+            r.co_guardian_id=parse_u64(sqlite3_column_text(q.get(),11));
+            r.transfer_from_transport=parse_u64(sqlite3_column_text(q.get(),12));
+            r.termination_kind=static_cast<unsigned>(sqlite3_column_int(q.get(),13));
+            r.ferry=parse_u64(sqlite3_column_text(q.get(),3));
+            r.origin=parse_u64(sqlite3_column_text(q.get(),4));
+            r.destination=parse_u64(sqlite3_column_text(q.get(),5));
+            r.board_command=parse_u64(sqlite3_column_text(q.get(),6));
+            if(sqlite3_column_type(q.get(),7)!=SQLITE_NULL)
+                r.arrival_command=parse_u64(sqlite3_column_text(q.get(),7));
+            r.board_generation=static_cast<std::uint64_t>(sqlite3_column_int64(q.get(),8));
+            if(sqlite3_column_type(q.get(),9)!=SQLITE_NULL)
+                r.arrival_generation=static_cast<std::uint64_t>(sqlite3_column_int64(q.get(),9));
+            r.status=static_cast<unsigned>(sqlite3_column_int(q.get(),10));
+            out.push_back(r);
+        }
+        return out;
+    }
     bool restore(Simulation& out, std::uint64_t& generation, std::int64_t& origin, std::int64_t& credit_origin) {
         Statement q(db_, "SELECT generation,format,state,checksum,ore_total,credit_total FROM snapshots ORDER BY generation DESC LIMIT 1");
         if (!q.row()) {
@@ -1103,12 +1207,23 @@ public:
         }
         std::map<std::uint64_t, std::uint64_t> expected_event_generation;
         {
-            Statement steps(db_, "SELECT generation,tick FROM operation_log WHERE kind=2 AND generation>? ORDER BY generation");
+            Statement steps(db_, "SELECT generation,tick,kind,command FROM operation_log WHERE generation>? AND kind IN (1,2) ORDER BY generation");
             steps.i64(1, static_cast<std::int64_t>(history_start));
             std::map<std::uint64_t,std::uint64_t> tick_generation;
             while (steps.row()) {
                 const auto g = sqlite3_column_int64(steps.get(), 0);
                 const auto tick = sqlite3_column_int64(steps.get(), 1);
+                const auto kind = sqlite3_column_int(steps.get(), 2);
+                // The v52 privileged warehouse action is one atomic submit+execute
+                // entry, stored as kind=1 for legacy operation_log compatibility.
+                // Its command is replayed through a tick in the same transaction.
+                if (kind == 1) {
+                    const auto* raw = sqlite3_column_text(steps.get(), 3);
+                    if (!raw) continue;
+                    const auto type=decode_command(reinterpret_cast<const char*>(raw)).action;
+                    if(type!=Action::HostEscrowConstructedStock &&
+                       type!=Action::HostReturnConstructedStock)continue;
+                }
                 if (g <= 0 || tick <= 0 || !tick_generation.emplace(static_cast<std::uint64_t>(tick),
                     static_cast<std::uint64_t>(g)).second)
                     throw std::runtime_error("SQLite: duplicate historical step generation");
@@ -1170,7 +1285,7 @@ public:
         std::size_t mineral_refine_transfers=0,material_fabricate_transfers=0;
         std::size_t life_transfers=0, farm_builds=0, farm_stock_transfers=0, habitat_builds=0, habitat_transfers=0,utility_builds=0,utility_repairs=0,utility_spare_transfers=0,community_builds=0,community_transfers=0,clinic_builds=0,clinic_transfers=0,reclaimer_builds=0,waterworks_builds=0,waterworks_transfers=0;
         std::size_t workshop_builds=0,workshop_feeds=0,workshop_outputs=0,workshop_finisher_builds=0,workshop_final_outputs=0,workshop_stacks=0,storage_builds=0,storage_stacks=0,extra_storage_builds=0,extra_storage_stacks=0;
-        std::size_t auto_transfers = 0, auto_storage_transfers=0, storage_link_builds=0, conveyor_cells=0;
+        std::size_t auto_transfers = 0, auto_storage_transfers=0, storage_link_builds=0, conveyor_cells=0, world_escrows=0, world_returns=0;
         std::vector<ActivityEvent> recorded_auto, recorded_storage_auto;
         for (const auto& a : restored.activity_events()) {
             if (a.kind == ActivityKind::AutoMiningTransfer) recorded_auto.push_back(a);
@@ -1464,7 +1579,9 @@ public:
                 const auto id=parse_u64(sqlite3_column_text(ledger.get(),0));
                 const auto ev=event_by_id.find(id);const auto cmd=journal_commands.find(id);
                 if(ev==event_by_id.end() || cmd==journal_commands.end() ||
-                   cmd->second.action!=(build?Action::ConstructStorage:Action::TransferStorageStack) ||
+                   (build ? cmd->second.action!=Action::ConstructStorage :
+                    (cmd->second.action!=Action::TransferStorageStack &&
+                     cmd->second.action!=Action::HostTransferConsignedStock)) ||
                    ev->second.result!=Outcome::Applied || ev->second.transferred!=amount ||
                    amount!=(build?2:cmd->second.amount) ||
                    ev->second.tick!=static_cast<std::uint64_t>(sqlite3_column_int64(ledger.get(),1)) ||
@@ -1612,6 +1729,40 @@ public:
                    std::string(reinterpret_cast<const char*>(sqlite3_column_text(ledger.get(),5)))!=
                      "reclaimer:"+std::to_string(cmd->second.target))
                     throw std::runtime_error("SQLite: reclaimer resource receipt mismatch");
+            } else if(reason=="constructed_network_stock_kg"){
+                ++world_escrows;
+                const auto id=parse_u64(sqlite3_column_text(ledger.get(),0));
+                const auto ev=event_by_id.find(id);const auto cmd=journal_commands.find(id);
+                if(ev==event_by_id.end()||cmd==journal_commands.end()||
+                   cmd->second.action!=Action::HostEscrowConstructedStock||
+                   cmd->second.issuer!=Simulation::kServerAuthority||
+                   ev->second.result!=Outcome::Applied||
+                   ev->second.transferred!=amount||amount<=0||
+                   cmd->second.amount!=amount||
+                   ev->second.tick!=static_cast<std::uint64_t>(sqlite3_column_int64(ledger.get(),1))||
+                   sqlite3_column_type(ledger.get(),4)!=SQLITE_TEXT||
+                   sqlite3_column_type(ledger.get(),5)!=SQLITE_TEXT||
+                   sqlite_str(ledger.get(),4)!="storage:"+std::to_string(cmd->second.target)+":aluminum"||
+                   sqlite_str(ledger.get(),5)!="network-escrow:"+std::to_string(cmd->second.target))
+                    throw std::runtime_error("SQLite: world inventory escrow source/quantity mismatch");
+            } else if(reason=="constructed_network_return_kg"){
+                ++world_returns;
+                const auto id=parse_u64(sqlite3_column_text(ledger.get(),0));
+                const auto ev=event_by_id.find(id);const auto cmd=journal_commands.find(id);
+                if(ev==event_by_id.end()||cmd==journal_commands.end()||
+                   cmd->second.action!=Action::HostReturnConstructedStock||
+                   cmd->second.issuer!=Simulation::kServerAuthority||
+                   ev->second.result!=Outcome::Applied||
+                   ev->second.transferred!=amount||amount<=0||
+                   cmd->second.amount!=amount||
+                   (cmd->second.thrust_x!=1&&cmd->second.thrust_x!=2)||
+                   ev->second.tick!=static_cast<std::uint64_t>(sqlite3_column_int64(ledger.get(),1))||
+                   sqlite3_column_type(ledger.get(),4)!=SQLITE_TEXT||
+                   sqlite3_column_type(ledger.get(),5)!=SQLITE_TEXT||
+                   sqlite_str(ledger.get(),4)!="network-escrow:"+std::to_string(cmd->second.target)||
+                   sqlite_str(ledger.get(),5)!="storage:"+std::to_string(cmd->second.target)+":"+
+                     (cmd->second.thrust_x==1?"aluminum_panels":"aluminum_frames"))
+                    throw std::runtime_error("SQLite: finished goods return endpoint mismatch");
             } else if (reason == "automated_storage_link_transfer") {
                 if(auto_storage_transfers>=recorded_storage_auto.size() ||
                    sqlite3_column_type(ledger.get(),0)!=SQLITE_NULL ||
@@ -1651,7 +1802,7 @@ public:
         std::size_t expected_mineral_refine=0,expected_material_fabricate=0;
         std::size_t expected_life_transfers=0,expected_farm_builds=0,expected_farm_stock_transfers=0;
         std::size_t expected_habitat_builds=0, expected_habitat_transfers=0;
-        std::size_t expected_utility_builds=0,expected_utility_repairs=0,expected_utility_spares=0,expected_community_builds=0,expected_community_transfers=0,expected_clinic_builds=0,expected_clinic_transfers=0,expected_reclaimer_builds=0,expected_waterworks_builds=0,expected_waterworks_transfers=0,expected_workshop_builds=0,expected_workshop_feeds=0,expected_workshop_outputs=0,expected_workshop_finisher_builds=0,expected_workshop_final_outputs=0,expected_workshop_stacks=0,expected_storage_builds=0,expected_storage_stacks=0,expected_extra_storage_builds=0,expected_extra_storage_stacks=0,expected_link_builds=0,expected_conveyor_cells=0;
+        std::size_t expected_utility_builds=0,expected_utility_repairs=0,expected_utility_spares=0,expected_community_builds=0,expected_community_transfers=0,expected_clinic_builds=0,expected_clinic_transfers=0,expected_reclaimer_builds=0,expected_waterworks_builds=0,expected_waterworks_transfers=0,expected_workshop_builds=0,expected_workshop_feeds=0,expected_workshop_outputs=0,expected_workshop_finisher_builds=0,expected_workshop_final_outputs=0,expected_workshop_stacks=0,expected_storage_builds=0,expected_storage_stacks=0,expected_extra_storage_builds=0,expected_extra_storage_stacks=0,expected_link_builds=0,expected_conveyor_cells=0, expected_world_escrows=0,expected_world_returns=0;
 
         for (const auto& ev : restored.events()) {
             if (ev.result != Outcome::Applied || ev.transferred <= 0) continue;
@@ -1688,8 +1839,10 @@ public:
             else if (cmd->second.action==Action::ConstructWorkshopFinisher) ++expected_workshop_finisher_builds;
             else if (cmd->second.action==Action::TransferWorkshopFinalOutput) ++expected_workshop_final_outputs;
             else if (cmd->second.action==Action::TransferWorkshopStack) ++expected_workshop_stacks;
+            else if (cmd->second.action==Action::HostEscrowConstructedStock) ++expected_world_escrows;
+            else if (cmd->second.action==Action::HostReturnConstructedStock) ++expected_world_returns;
             else if (cmd->second.action==Action::ConstructStorage) ++expected_storage_builds;
-            else if (cmd->second.action==Action::TransferStorageStack) ++expected_storage_stacks;
+            else if (cmd->second.action==Action::TransferStorageStack || cmd->second.action==Action::HostTransferConsignedStock) ++expected_storage_stacks;
             else if (cmd->second.action==Action::ConstructStorageNode) ++expected_extra_storage_builds;
             else if (cmd->second.action==Action::TransferStorageNodeStack) ++expected_extra_storage_stacks;
             else if (cmd->second.action==Action::ConstructStorageLink || cmd->second.action==Action::ConstructWorkshopLink) ++expected_link_builds;
@@ -1697,6 +1850,16 @@ public:
             else if (cmd->second.action==Action::ConstructClinic) ++expected_clinic_builds;
             else if (cmd->second.action==Action::TransferClinicStock) ++expected_clinic_transfers;
             else throw std::runtime_error("SQLite: resource transfer tied to non-transfer command");
+        }
+        // World return commands must have matching immutable network-effect
+        // receipts even if the production adapter has not yet been opened.
+        if(expected_world_returns){
+            Statement matching(db_,"SELECT COUNT(*) FROM sg_v53_world_return r "
+                "JOIN sg_v51_event e ON e.scope=r.scope AND e.event_id=r.event_id "
+                "AND e.kind='world-return' AND e.world_generation=r.world_generation");
+            if(!matching.row()||sqlite3_column_int64(matching.get(),0)!=
+               static_cast<sqlite3_int64>(expected_world_returns))
+                throw std::runtime_error("SQLite: returned stock lacks factory custody proof");
         }
         if (!saw_genesis || transfers != expected_transfers || hangar_transfers != expected_hangar_transfers ||
             load_transfers != expected_load_transfers || sale_transfers != expected_sale_transfers ||
@@ -1726,7 +1889,7 @@ public:
             extra_storage_builds!=expected_extra_storage_builds ||
             extra_storage_stacks!=expected_extra_storage_stacks ||
             storage_link_builds!=expected_link_builds ||
-            conveyor_cells!=expected_conveyor_cells)
+            conveyor_cells!=expected_conveyor_cells || world_escrows!=expected_world_escrows || world_returns!=expected_world_returns)
             throw std::runtime_error("SQLite: ledger event count mismatch");
         std::size_t credit_rows=0;
         Statement cash(db_, "SELECT command_id,tick,station_id,owner_id,ore_units,unit_price,credit_amount FROM credit_ledger");
@@ -1871,8 +2034,14 @@ public:
             const auto h=expected_event_generation.find(a.start_command_id);
             const auto cmd=journal_commands.find(a.start_command_id);
             if(h==expected_event_generation.end() || cmd==journal_commands.end() ||
-               ((a.kind==ActivityKind::ShipDestroyed && cmd->second.action!=Action::HostDestroyShip) ||
-                (a.kind==ActivityKind::NpcLost && cmd->second.action!=Action::HostCrewLoss)) ||
+               ((a.kind==ActivityKind::ShipDestroyed &&
+                    cmd->second.action!=Action::HostDestroyShip &&
+                    cmd->second.action!=Action::HostDestroyPassengerFerry &&
+                    cmd->second.action!=Action::HostResolveMixedFerryLoss) ||
+                (a.kind==ActivityKind::NpcLost &&
+                    cmd->second.action!=Action::HostCrewLoss &&
+                    cmd->second.action!=Action::HostDestroyPassengerFerry &&
+                    cmd->second.action!=Action::HostResolveMixedFerryLoss)) ||
                a.tick!=event_by_id.at(a.start_command_id).tick ||
                event_by_id.at(a.start_command_id).result!=Outcome::Applied)
                 throw std::runtime_error("SQLite: physical loss lacks executed host action");
@@ -2679,6 +2848,746 @@ public:
             if(count!=static_cast<std::uint64_t>(expected)||tip!=tip_end)
                 throw std::runtime_error("SQLite: deleted fabrication execution");
         }
+        // DEMOG-05q6b: recoverable cross-store effect receipt. Never trust a
+        // surviving medical/family receipt without its committed world step,
+        // physical casualty tombstones, and regional receipt counterpart.
+        {
+            Statement table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                                "AND name='sg_med_society_effect'");
+            const bool has_effect=table.row();
+            Statement regional_table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                                         "AND name='sg_regional_command_receipt'");
+            const bool has_regional=regional_table.row();
+            if(has_regional){
+                Statement names(db_,"SELECT command_id FROM sg_regional_command_receipt "
+                                    "WHERE actor='society-host'");
+                while(names.row()){
+                    if(!has_effect)throw std::runtime_error("SQLite: society effect table missing");
+                    Statement count(db_,"SELECT 1 FROM sg_med_society_effect WHERE command_id=?");
+                    count.text(1,sqlite_str(names.get(),0));
+                    if(!count.row() || count.row())
+                        throw std::runtime_error("SQLite: society regional receipt without world effect");
+                }
+            }
+            if(has_effect){
+                Statement rows(db_,"SELECT command_id,world_generation,tick,family_scope,region_scope,"
+                                   "region_revision,owner_generation,casualty_count "
+                                   "FROM sg_med_society_effect");
+                while(rows.row()){
+                    const auto id=parse_u64(sqlite3_column_text(rows.get(),0));
+                    const auto gen=sqlite3_column_int64(rows.get(),1);
+                    const auto tick=sqlite3_column_int64(rows.get(),2);
+                    const auto fam=sqlite_str(rows.get(),3), reg=sqlite_str(rows.get(),4);
+                    const auto rev=sqlite3_column_int64(rows.get(),5);
+                    const auto owner=sqlite3_column_int64(rows.get(),6);
+                    const auto casualty_count=sqlite3_column_int64(rows.get(),7);
+                    const auto ev=event_by_id.find(id);
+                    if(!id || gen<=1 || static_cast<std::uint64_t>(gen)>generation ||
+                       tick<=0 || fam.empty() || reg.empty() || rev<=1 || owner<1 ||
+                       casualty_count<=0 || ev==event_by_id.end() ||
+                       ev->second.result!=Outcome::Applied ||
+                       ev->second.tick!=static_cast<std::uint64_t>(tick))
+                        throw std::runtime_error("SQLite: malformed society effect or world event");
+                    Statement op(db_,"SELECT kind,tick FROM operation_log WHERE generation=?");
+                    op.i64(1,gen);
+                    if(!op.row() || sqlite3_column_int(op.get(),0)!=2 ||
+                       sqlite3_column_int64(op.get(),1)!=tick || op.row())
+                        throw std::runtime_error("SQLite: society effect lacks exact historical step");
+                    Statement receipt(db_,"SELECT revision,actor,request FROM "
+                                          "sg_regional_command_receipt WHERE scope=? AND command_id=?");
+                    receipt.text(1,reg);receipt.text(2,std::to_string(id));
+                    if(!receipt.row() || sqlite3_column_int64(receipt.get(),0)!=rev ||
+                       sqlite_str(receipt.get(),1)!="society-host" ||
+                       sqlite_str(receipt.get(),2)!="society-deaths-generation:"+std::to_string(tick) ||
+                       receipt.row())
+                        throw std::runtime_error("SQLite: society effect regional receipt mismatch");
+                    std::int64_t matched=0;
+                    for(const auto& [npc,dead]:restored.npc_casualties()){
+                        if(dead.command_id!=id)continue;
+                        if(dead.death_tick!=static_cast<std::uint64_t>(tick))
+                            throw std::runtime_error("SQLite: society death tick altered");
+                        Statement family(db_,"SELECT 1 FROM npc_family_deaths WHERE scope=? "
+                                             "AND npc_id=? AND settlement=? AND tick=?");
+                        family.text(1,fam);family.text(2,std::to_string(npc));
+                        family.text(3,std::to_string(dead.identity.home_ship));
+                        family.i64(4,tick);
+                        if(!family.row() || family.row())
+                            throw std::runtime_error("SQLite: society death lacks family tombstone");
+                        ++matched;
+                    }
+                    if(matched!=casualty_count)
+                        throw std::runtime_error("SQLite: society casualty count contradiction");
+                }
+            }
+        }
+        // DEMOG-05q6c: independent recovery proof for each atomically admitted
+        // ART02 reserved birth. The child is a family cohort, never a fake NPC.
+        {
+            Statement table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                                "AND name='sg_med_society_birth'");
+            const bool has_births=table.row();
+            Statement regional_table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='sg_regional_command_receipt'");
+            if(regional_table.row()){
+                Statement ids(db_,"SELECT command_id FROM sg_regional_command_receipt "
+                    "WHERE actor='society-birth-host'");
+                while(ids.row()){
+                    if(!has_births)throw std::runtime_error("SQLite: birth effect table missing");
+                    Statement effect(db_,"SELECT 1 FROM sg_med_society_birth WHERE event_id=?");
+                    effect.text(1,sqlite_str(ids.get(),0));
+                    if(!effect.row() || effect.row())
+                        throw std::runtime_error("SQLite: regional birth receipt missing world effect");
+                }
+            }
+            if(has_births){
+                Statement rows(db_,"SELECT event_id,world_generation,tick,family_scope,region_scope,"
+                    "region_revision,owner_generation,home_ship,regional_colony,"
+                    "child_id,parent_a,parent_b,family_revision FROM sg_med_society_birth");
+                while(rows.row()){
+                    const auto event_id=parse_u64(sqlite3_column_text(rows.get(),0));
+                    const auto gen=sqlite3_column_int64(rows.get(),1);
+                    const auto tick=sqlite3_column_int64(rows.get(),2);
+                    const auto fam=sqlite_str(rows.get(),3), reg=sqlite_str(rows.get(),4);
+                    const auto revision=sqlite3_column_int64(rows.get(),5);
+                    const auto owner=sqlite3_column_int64(rows.get(),6);
+                    const auto home=parse_u64(sqlite3_column_text(rows.get(),7));
+                    const auto colony=sqlite_str(rows.get(),8);
+                    const auto child=parse_u64(sqlite3_column_text(rows.get(),9));
+                    const auto a=parse_u64(sqlite3_column_text(rows.get(),10));
+                    const auto b=parse_u64(sqlite3_column_text(rows.get(),11));
+                    const auto family_rev=sqlite3_column_int64(rows.get(),12);
+                    if(!event_id || gen<=1 || static_cast<std::uint64_t>(gen)>generation ||
+                       tick<=0 || fam.empty() || reg.empty() || colony.empty() ||
+                       revision<=1 || owner<1 || !home || child<(1ULL<<62) ||
+                       !a || !b || a>=b || family_rev<1 ||
+                       restored.npc_records().count(child)!=0 ||
+                       restored.npc_casualties().count(child)!=0)
+                        throw std::runtime_error("SQLite: malformed atomic dependent birth receipt");
+                    Statement op(db_,"SELECT kind,tick FROM operation_log WHERE generation=?");
+                    op.i64(1,gen);
+                    if(!op.row() || sqlite3_column_int(op.get(),0)!=2 ||
+                       sqlite3_column_int64(op.get(),1)!=tick || op.row())
+                        throw std::runtime_error("SQLite: dependent birth lacks world step");
+                    Statement regional(db_,"SELECT revision,actor,request,outcome "
+                        "FROM sg_regional_command_receipt WHERE scope=? AND command_id=?");
+                    regional.text(1,reg);regional.text(2,std::to_string(event_id));
+                    if(!regional.row() || sqlite3_column_int64(regional.get(),0)!=revision ||
+                       sqlite_str(regional.get(),1)!="society-birth-host" ||
+                       sqlite_str(regional.get(),2)!="society-birth-generation:"+
+                            std::to_string(tick)+":"+colony ||
+                       sqlite3_column_int64(regional.get(),3)!=1 || regional.row())
+                        throw std::runtime_error("SQLite: dependent birth regional receipt disagrees");
+                    Statement family(db_,"SELECT settlement,child_id,parent_a,parent_b,tick,"
+                        "census_revision FROM npc_family_births WHERE scope=? AND event_id=?");
+                    family.text(1,fam);family.text(2,std::to_string(event_id));
+                    if(!family.row() ||
+                       parse_u64(sqlite3_column_text(family.get(),0))!=home ||
+                       parse_u64(sqlite3_column_text(family.get(),1))!=child ||
+                       parse_u64(sqlite3_column_text(family.get(),2))!=a ||
+                       parse_u64(sqlite3_column_text(family.get(),3))!=b ||
+                       sqlite3_column_int64(family.get(),4)!=tick ||
+                       sqlite3_column_int64(family.get(),5)!=family_rev ||
+                       family.row())
+                        throw std::runtime_error("SQLite: dependent birth family receipt disagrees");
+                    Statement member(db_,"SELECT settlement,parent_a,parent_b FROM npc_family_people "
+                        "WHERE scope=? AND npc_id=?");
+                    member.text(1,fam);member.text(2,std::to_string(child));
+                    if(!member.row() ||
+                       parse_u64(sqlite3_column_text(member.get(),0))!=home ||
+                       parse_u64(sqlite3_column_text(member.get(),1))!=a ||
+                       parse_u64(sqlite3_column_text(member.get(),2))!=b || member.row())
+                        throw std::runtime_error("SQLite: dependent child identity/lineage absent");
+                }
+            }
+        }
+        // DEMOG-05q6d: an executed residence-transfer command MUST have
+        // exactly one cross-store receipt. Verify both sides of its physical
+        // world step, the immutable ART02 move and the regional owner receipt.
+        {
+            Statement table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                                "AND name='sg_society_migration'");
+            const bool has_migration=table.row();
+            for(const auto& [id,c]:journal_commands){
+                if(c.action!=Action::HostSettleMigrant)continue;
+                const auto ev=event_by_id.find(id);
+                if(ev==event_by_id.end() || ev->second.result!=Outcome::Applied)continue;
+                if(!has_migration)
+                    throw std::runtime_error("SQLite: applied migrant missing society migration table");
+                Statement row(db_,"SELECT 1 FROM sg_society_migration WHERE command_id=?");
+                row.text(1,std::to_string(id));
+                if(!row.row() || row.row())
+                    throw std::runtime_error("SQLite: applied migrant missing cross-store receipt");
+            }
+            Statement region_table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                                         "AND name='sg_regional_command_receipt'");
+            if(region_table.row()){
+                Statement receipt(db_,"SELECT command_id FROM sg_regional_command_receipt "
+                    "WHERE actor='society-migration-host'");
+                while(receipt.row()){
+                    if(!has_migration)throw std::runtime_error("SQLite: orphaned regional migration");
+                    Statement q(db_,"SELECT 1 FROM sg_society_migration WHERE command_id=?");
+                    q.text(1,sqlite_str(receipt.get(),0));
+                    if(!q.row() || q.row())throw std::runtime_error("SQLite: regional migration unlinked");
+                }
+            }
+            Statement family_table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                                         "AND name='npc_family_moves'");
+            if(family_table.row()){
+                Statement q(db_,"SELECT scope,event_id FROM npc_family_moves");
+                while(q.row()){
+                    if(!has_migration)throw std::runtime_error("SQLite: family move without world effect");
+                    Statement effect(db_,"SELECT 1 FROM sg_society_migration WHERE command_id=?");
+                    effect.text(1,sqlite_str(q.get(),1));
+                    if(!effect.row()){
+                        Statement co_table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                            "AND name='sg_society_migration'");
+                        if(co_table.row()){
+                            bool co_column=false;
+                            {Statement cols(db_,"PRAGMA table_info(sg_society_migration)");
+                             while(cols.row())if(sqlite_str(cols.get(),1)=="co_parent_event")co_column=true;}
+                            if(co_column){
+                                Statement co(db_,"SELECT 1 FROM sg_society_migration "
+                                    "WHERE family_scope=? AND co_parent_event=?");
+                                co.text(1,sqlite_str(q.get(),0));
+                                co.text(2,sqlite_str(q.get(),1));
+                                if(co.row())continue;
+                            }
+                        }
+                        Statement member(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                            "AND name='sg_society_household_member'");
+                        if(!member.row())
+                            throw std::runtime_error("SQLite: family move missing world effect");
+                        Statement link(db_,"SELECT 1 FROM sg_society_household_member "
+                            "WHERE event_id=? AND family_scope=?");
+                        link.text(1,sqlite_str(q.get(),1));
+                        link.text(2,sqlite_str(q.get(),0));
+                        if(!link.row() || link.row())
+                            throw std::runtime_error("SQLite: household family move unlinked");
+                    }else if(effect.row())
+                        throw std::runtime_error("SQLite: duplicate family migration effect");
+                }
+            }
+            if(has_migration){
+                bool has_household_count=false,has_physical_manifest=false,has_coparent=false;
+                {
+                    Statement info(db_,"PRAGMA table_info(sg_society_migration)");
+                    while(info.row()){
+                        if(sqlite_str(info.get(),1)=="household_count")has_household_count=true;
+                        if(sqlite_str(info.get(),1)=="physical_manifest")has_physical_manifest=true;
+                        if(sqlite_str(info.get(),1)=="co_parent_id")has_coparent=true;
+                    }
+                }
+                const std::string query=std::string("SELECT command_id,world_generation,tick,family_scope,")+
+                    "region_scope,region_revision,owner_generation,origin,destination,"+
+                    "origin_colony,destination_colony,npc_id,transport_id,"+
+                    "origin_family_revision,destination_family_revision,"+
+                    (has_household_count ? "household_count" : "1")+","+
+                    (has_physical_manifest ? "physical_manifest" : "0")+","+
+                    (has_coparent ? "co_parent_id,co_parent_event" : "'0','0'")+
+                    " FROM sg_society_migration";
+                Statement rows(db_,query.c_str());
+                while(rows.row()){
+                    const auto id=parse_u64(sqlite3_column_text(rows.get(),0));
+                    const auto gen=sqlite3_column_int64(rows.get(),1);
+                    const auto tick=sqlite3_column_int64(rows.get(),2);
+                    const auto fam=sqlite_str(rows.get(),3), reg=sqlite_str(rows.get(),4);
+                    const auto reg_rev=sqlite3_column_int64(rows.get(),5);
+                    const auto owner=sqlite3_column_int64(rows.get(),6);
+                    const auto src=parse_u64(sqlite3_column_text(rows.get(),7));
+                    const auto dst=parse_u64(sqlite3_column_text(rows.get(),8));
+                    const auto src_col=sqlite_str(rows.get(),9), dst_col=sqlite_str(rows.get(),10);
+                    const auto npc=parse_u64(sqlite3_column_text(rows.get(),11));
+                    const auto voyage=parse_u64(sqlite3_column_text(rows.get(),12));
+                    const auto src_rev=sqlite3_column_int64(rows.get(),13);
+                    const auto dst_rev=sqlite3_column_int64(rows.get(),14);
+                    const auto household_count=sqlite3_column_int64(rows.get(),15);
+                    const auto physical_manifest=sqlite3_column_int64(rows.get(),16);
+                    const auto co=parse_u64(sqlite3_column_text(rows.get(),17));
+                    const auto co_event=parse_u64(sqlite3_column_text(rows.get(),18));
+                    const auto cmd=journal_commands.find(id);
+                    const auto ev=event_by_id.find(id);
+                    if(!id || gen<=1 || static_cast<std::uint64_t>(gen)>generation ||
+                       tick<=0 || fam.empty() || reg.empty() || reg_rev<2 || owner<1 ||
+                       src==dst || src_col.empty() || dst_col.empty() || src_col==dst_col ||
+                       !npc || !voyage || src_rev<1 || dst_rev<1 ||
+                       household_count<1 || household_count>34 ||
+                       ((co==0)!=(co_event==0)) ||
+                       (co && (co<=npc || co_event==id || household_count<2 ||
+                         !has_coparent)) ||
+                       (physical_manifest!=0 && physical_manifest!=1) ||
+                       (physical_manifest==1 && household_count<2) ||
+                       cmd==journal_commands.end() || ev==event_by_id.end() ||
+                       cmd->second.action!=Action::HostSettleMigrant ||
+                       cmd->second.actor!=src || cmd->second.target!=dst ||
+                       cmd->second.transport_id!=voyage ||
+                       cmd->second.passenger_ids!=(co ?
+                           std::vector<std::uint64_t>{npc,co}:
+                           std::vector<std::uint64_t>{npc}) ||
+                       ev->second.result!=Outcome::Applied ||
+                       ev->second.tick!=static_cast<std::uint64_t>(tick))
+                        throw std::runtime_error("SQLite: malformed atomic migrant or wrong world command");
+                    Statement op(db_,"SELECT kind,tick FROM operation_log WHERE generation=?");
+                    op.i64(1,gen);
+                    if(!op.row() || sqlite3_column_int(op.get(),0)!=2 ||
+                       sqlite3_column_int64(op.get(),1)!=tick || op.row())
+                        throw std::runtime_error("SQLite: migration has no committed world step");
+                    Statement family(db_,"SELECT npc_id,origin,destination,tick,"
+                        "origin_revision,destination_revision FROM npc_family_moves "
+                        "WHERE scope=? AND event_id=?");
+                    family.text(1,fam);family.text(2,std::to_string(id));
+                    if(!family.row() || parse_u64(sqlite3_column_text(family.get(),0))!=npc ||
+                       parse_u64(sqlite3_column_text(family.get(),1))!=src ||
+                       parse_u64(sqlite3_column_text(family.get(),2))!=dst ||
+                       sqlite3_column_int64(family.get(),3)!=tick ||
+                       sqlite3_column_int64(family.get(),4)!=src_rev ||
+                       sqlite3_column_int64(family.get(),5)!=dst_rev || family.row())
+                        throw std::runtime_error("SQLite: missing/forged ART02 family migration");
+                    if(co){
+                        Statement parent(db_,"SELECT npc_id,origin,destination,tick,"
+                            "origin_revision,destination_revision FROM npc_family_moves "
+                            "WHERE scope=? AND event_id=?");
+                        parent.text(1,fam);parent.text(2,std::to_string(co_event));
+                        if(!parent.row() ||
+                           parse_u64(sqlite3_column_text(parent.get(),0))!=co ||
+                           parse_u64(sqlite3_column_text(parent.get(),1))!=src ||
+                           parse_u64(sqlite3_column_text(parent.get(),2))!=dst ||
+                           sqlite3_column_int64(parent.get(),3)!=tick ||
+                           sqlite3_column_int64(parent.get(),4)!=src_rev+1 ||
+                           sqlite3_column_int64(parent.get(),5)!=dst_rev+1 || parent.row())
+                            throw std::runtime_error("missing or forged co-parent family migration");
+                    }
+                    if(household_count>(co?2:1)){
+                        Statement child_table(db_,"SELECT 1 FROM sqlite_master "
+                            "WHERE type='table' AND name='sg_society_household_member'");
+                        if(!child_table.row())throw std::runtime_error("missing household receipt table");
+                        Statement members(db_,"SELECT event_id,child_id,guardian_id,origin,"
+                            "destination,origin_revision,destination_revision "
+                            "FROM sg_society_household_member WHERE parent_command_id=? "
+                            "AND family_scope=? ORDER BY child_id");
+                        members.text(1,std::to_string(id));
+                        members.text(2,fam);
+                        std::uint64_t previous_child=0;
+                        std::int64_t found=co?2:1;
+                        while(members.row()){
+                            const auto child_event=sqlite_str(members.get(),0);
+                            const auto child=parse_u64(sqlite3_column_text(members.get(),1));
+                            const auto guardian=parse_u64(sqlite3_column_text(members.get(),2));
+                            const auto cm_src=parse_u64(sqlite3_column_text(members.get(),3));
+                            const auto cm_dst=parse_u64(sqlite3_column_text(members.get(),4));
+                            const auto cr_src=sqlite3_column_int64(members.get(),5);
+                            const auto cr_dst=sqlite3_column_int64(members.get(),6);
+                            if(child<(1ULL<<62) || child<=previous_child || guardian!=npc ||
+                               cm_src!=src || cm_dst!=dst || cr_src!=src_rev+found ||
+                               cr_dst!=dst_rev+found)
+                                throw std::runtime_error("forged dependent household manifest");
+                            previous_child=child;
+                            Statement birth(db_,"SELECT parent_a,parent_b FROM npc_family_births "
+                                "WHERE scope=? AND child_id=?");
+                            birth.text(1,fam);birth.text(2,std::to_string(child));
+                            if(!birth.row())throw std::runtime_error("household child has no birth");
+                            const auto a=parse_u64(sqlite3_column_text(birth.get(),0));
+                            const auto b=parse_u64(sqlite3_column_text(birth.get(),1));
+                            if((a!=npc && b!=npc) || birth.row())
+                                throw std::runtime_error("household child lineage forged");
+                            if(physical_manifest==0 && has_dependent_table()){
+                                Statement fraud(db_,"SELECT 1 FROM sg_dependent_travel "
+                                    "WHERE family_scope=? AND child_id=? AND "
+                                    "transport_id=? AND guardian_id=? AND status=2");
+                                fraud.text(1,fam);fraud.text(2,std::to_string(child));
+                                fraud.text(3,std::to_string(voyage));
+                                fraud.text(4,std::to_string(npc));
+                                if(fraud.row())
+                                    throw std::runtime_error("physical household receipt downgraded");
+                            }
+                            if(physical_manifest==1){
+                                if(!has_dependent_table())
+                                    throw std::runtime_error("physical family transport ledger removed");
+                                Statement travel(db_,"SELECT arrival_generation FROM "
+                                    "sg_dependent_travel WHERE family_scope=? AND child_id=? "
+                                    "AND transport_id=? AND guardian_id=? AND origin=? "
+                                    "AND destination=? AND status=2");
+                                travel.text(1,fam);travel.text(2,std::to_string(child));
+                                travel.text(3,std::to_string(voyage));
+                                travel.text(4,std::to_string(npc));
+                                travel.text(5,std::to_string(src));
+                                travel.text(6,std::to_string(dst));
+                                if(!travel.row() || sqlite3_column_int64(travel.get(),0)>=gen ||
+                                   travel.row())
+                                    throw std::runtime_error("household moved without child arrival");
+                            }
+                            Statement moved_child(db_,"SELECT npc_id,origin,destination,tick,"
+                                "origin_revision,destination_revision FROM npc_family_moves "
+                                "WHERE scope=? AND event_id=?");
+                            moved_child.text(1,fam);moved_child.text(2,child_event);
+                            if(!moved_child.row() ||
+                               parse_u64(sqlite3_column_text(moved_child.get(),0))!=child ||
+                               parse_u64(sqlite3_column_text(moved_child.get(),1))!=src ||
+                               parse_u64(sqlite3_column_text(moved_child.get(),2))!=dst ||
+                               sqlite3_column_int64(moved_child.get(),3)!=tick ||
+                               sqlite3_column_int64(moved_child.get(),4)!=cr_src ||
+                               sqlite3_column_int64(moved_child.get(),5)!=cr_dst ||
+                               moved_child.row())
+                                throw std::runtime_error("household child missing ART02 move");
+                            ++found;
+                        }
+                        if(found!=household_count)
+                            throw std::runtime_error("incomplete household group on replay");
+                    }
+                    Statement region(db_,"SELECT actor,request,revision,outcome FROM "
+                        "sg_regional_command_receipt WHERE scope=? AND command_id=?");
+                    region.text(1,reg);region.text(2,std::to_string(id));
+                    if(!region.row() ||
+                       sqlite_str(region.get(),0)!="society-migration-host" ||
+                       sqlite_str(region.get(),1)!="society-migration-generation:"+
+                           std::to_string(tick)+":"+src_col+":"+dst_col+
+                           (household_count==1 ? "" : ":household:"+
+                              std::to_string(household_count)) ||
+                       sqlite3_column_int64(region.get(),2)!=reg_rev ||
+                       sqlite3_column_int64(region.get(),3)!=1 || region.row())
+                        throw std::runtime_error("SQLite: missing/forged regional migration receipt");
+                    const auto snapshot=[&](std::int64_t generation_at)->Simulation{
+                        Statement state(db_,"SELECT state FROM snapshots WHERE generation=?");
+                        state.i64(1,generation_at);
+                        if(!state.row())throw std::runtime_error("SQLite: missing migration checkpoint");
+                        const auto* bytes=sqlite3_column_blob(state.get(),0);
+                        const int size=sqlite3_column_bytes(state.get(),0);
+                        if(!bytes || size<=0)throw std::runtime_error("SQLite: empty migration checkpoint");
+                        const std::string serialized(static_cast<const char*>(bytes),
+                                                     static_cast<std::size_t>(size));
+                        if(state.row())throw std::runtime_error("SQLite: duplicate checkpoint generation");
+                        return Simulation::from_snapshot(serialized);
+                    };
+                    const auto before=snapshot(gen-1),after=snapshot(gen);
+                    if(co){
+                        const auto prior_co=before.npc_records().find(co);
+                        const auto now_co=after.npc_records().find(co);
+                        if(prior_co==before.npc_records().end() ||
+                           now_co==after.npc_records().end() ||
+                           prior_co->second.home_ship!=src ||
+                           prior_co->second.assigned_site!=src ||
+                           prior_co->second.location!=dst || prior_co->second.transport_id ||
+                           now_co->second.home_ship!=dst ||
+                           now_co->second.assigned_site!=dst ||
+                           now_co->second.location!=dst || now_co->second.transport_id)
+                            throw std::runtime_error("co-parent migration has invalid world state");
+                    }
+                    const auto prior=before.npc_records().find(npc),now=after.npc_records().find(npc);
+                    if(prior==before.npc_records().end() || now==after.npc_records().end() ||
+                       prior->second.home_ship!=src || prior->second.assigned_site!=src ||
+                       prior->second.location!=dst || prior->second.transport_id ||
+                       now->second.home_ship!=dst || now->second.assigned_site!=dst ||
+                       now->second.location!=dst || now->second.transport_id ||
+                       before.npc_records().size()!=after.npc_records().size() ||
+                       before.npc_casualties().size()!=after.npc_casualties().size() ||
+                       before.colony_ship(src)->crew!=after.colony_ship(src)->crew+(co?2:1) ||
+                       before.colony_ship(dst)->crew+(co?2:1)!=after.colony_ship(dst)->crew ||
+                       after.tick()!=static_cast<std::uint64_t>(tick))
+                        throw std::runtime_error("SQLite: migrant changed custody or population history");
+                }
+            }
+            // In addition to checking every root receipt, reject orphaned
+            // child links or a forged attempt to downgrade a household to a
+            // one-person move while retaining dependent receipts.
+            Statement household_table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                                     "AND name='sg_society_household_member'");
+            if(household_table.row()){
+                Statement children(db_,"SELECT parent_command_id,event_id,child_id,family_scope "
+                    "FROM sg_society_household_member");
+                while(children.row()){
+                    if(!has_migration)
+                        throw std::runtime_error("SQLite: orphaned dependent move table");
+                    Statement parent(db_,"SELECT household_count,npc_id FROM "
+                        "sg_society_migration WHERE command_id=?");
+                    parent.text(1,sqlite_str(children.get(),0));
+                    if(!parent.row() || sqlite3_column_int64(parent.get(),0)<2 ||
+                       parent.row())
+                        throw std::runtime_error("SQLite: orphaned or downgraded household receipt");
+                    Statement child(db_,"SELECT npc_id FROM npc_family_moves "
+                        "WHERE scope=? AND event_id=?");
+                    child.text(1,sqlite_str(children.get(),3));
+                    child.text(2,sqlite_str(children.get(),1));
+                    if(!child.row() ||
+                       sqlite_str(child.get(),0)!=sqlite_str(children.get(),2) ||
+                       child.row())
+                        throw std::runtime_error("SQLite: orphaned dependent family move");
+                }
+            }
+        }
+        // DEMOG-05q6e2: child physical custody is an authoritative sibling
+        // receipt to the real world step, not an unverified travel annotation.
+        // A v43 child-travel activation marker survives independent deletion
+        // of either custody table. This is a local corroboration receipt, not
+        // protection against an offline attacker who rewrites the whole DB.
+        {
+            Statement marker(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                                 "AND name='sg_dependent_transport_anchor'");
+            if(marker.row()){
+                if(!has_dependent_table())
+                    throw std::runtime_error("activated child custody table has vanished");
+                Statement anchor(db_,"SELECT first_generation FROM "
+                                     "sg_dependent_transport_anchor WHERE id=1");
+                if(!anchor.row() || sqlite3_column_int64(anchor.get(),0)<2 || anchor.row())
+                    throw std::runtime_error("child custody activation marker corrupted");
+                Statement count(db_,"SELECT COUNT(*) FROM sg_dependent_travel");
+                if(!count.row() || sqlite3_column_int64(count.get(),0)<1)
+                    throw std::runtime_error("activated world lost its child custody ledger");
+            }
+            Statement batch(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                                "AND name='sg_dependent_transport_batch'");
+            if(batch.row() && !has_dependent_table())
+                throw std::runtime_error("child transport batches survive missing traveler ledger");
+        }
+        if(has_dependent_table()){
+            Statement batch_exists(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='sg_dependent_transport_batch'");
+            if(!batch_exists.row())
+                throw std::runtime_error("dependent transport batch registry missing");
+            std::map<std::pair<std::string,std::string>,std::int64_t> actual;
+            std::map<EntityId,std::size_t> onboard;
+            bool paired_column=false,transfer_column=false;
+            {Statement columns(db_,"PRAGMA table_info(sg_dependent_travel)");
+             while(columns.row()){
+                 if(sqlite_str(columns.get(),1)=="co_guardian_id")paired_column=true;
+                 if(sqlite_str(columns.get(),1)=="transfer_from_transport")transfer_column=true;
+             }}
+            const std::string child_sql=std::string("SELECT family_scope,child_id,transport_id,guardian_id,")+
+                "ferry,origin,destination,board_command,arrival_command,board_generation,"+
+                "arrival_generation,board_tick,arrival_tick,status,"+
+                (paired_column?"co_guardian_id":"'0'")+","+
+                (transfer_column?"transfer_from_transport":"'0'")+","+
+                (transfer_column?"termination_kind":"0")+
+                " FROM sg_dependent_travel";
+            Statement rows(db_,child_sql.c_str());
+            while(rows.row()){
+                const auto fam=sqlite_str(rows.get(),0);
+                const auto child=parse_u64(sqlite3_column_text(rows.get(),1));
+                const auto voyage=parse_u64(sqlite3_column_text(rows.get(),2));
+                const auto guardian=parse_u64(sqlite3_column_text(rows.get(),3));
+                const auto ferry=parse_u64(sqlite3_column_text(rows.get(),4));
+                const auto src=parse_u64(sqlite3_column_text(rows.get(),5));
+                const auto dst=parse_u64(sqlite3_column_text(rows.get(),6));
+                const auto board=parse_u64(sqlite3_column_text(rows.get(),7));
+                const bool arrived=sqlite3_column_type(rows.get(),8)!=SQLITE_NULL;
+                const auto arrival=arrived?parse_u64(sqlite3_column_text(rows.get(),8)):0;
+                const auto bg=sqlite3_column_int64(rows.get(),9);
+                const auto ag=arrived?sqlite3_column_int64(rows.get(),10):0;
+                const auto bt=sqlite3_column_int64(rows.get(),11);
+                const auto at=arrived?sqlite3_column_int64(rows.get(),12):0;
+                const int status=sqlite3_column_int(rows.get(),13);
+                const auto co_guardian=parse_u64(sqlite3_column_text(rows.get(),14));
+                const auto transfer_from=parse_u64(sqlite3_column_text(rows.get(),15));
+                const auto termination_kind=sqlite3_column_int(rows.get(),16);
+                if(termination_kind<0 || termination_kind>1 ||
+                   (termination_kind==1 && (!transfer_column || !arrived || transfer_from)) ||
+                   (transfer_from && (termination_kind || !transfer_column)))
+                    throw std::runtime_error("invalid child emergency-transfer lineage");
+                if((co_guardian && co_guardian==guardian) ||
+                   (co_guardian && !paired_column))
+                    throw std::runtime_error("invalid paired-parent child manifest");
+                if(fam.empty() || child<(1ULL<<62) || !guardian || !ferry || !src ||
+                   !dst || src==dst || !voyage || !board ||
+                   bg<=1 || static_cast<std::uint64_t>(bg)>generation || bt<=0 ||
+                   (status!=1 && status!=2) || (status==2)!=arrived ||
+                   (arrived && (ag<=bg || static_cast<std::uint64_t>(ag)>generation || at<=bt)) ||
+                   restored.npc_records().count(child) || restored.npc_casualties().count(child))
+                    throw std::runtime_error("invalid durable child passenger identity/state");
+                auto assert_action=[&](std::uint64_t id,Action action,
+                                       std::uint64_t expect_tick){
+                    auto cmd=journal_commands.find(id); auto ev=event_by_id.find(id);
+                    if(cmd==journal_commands.end() || ev==event_by_id.end() ||
+                       ev->second.result!=Outcome::Applied ||
+                       ev->second.tick!=expect_tick || cmd->second.action!=action ||
+                       cmd->second.issuer!=Simulation::kServerAuthority ||
+                       cmd->second.actor!=ferry || cmd->second.transport_id!=voyage ||
+                       cmd->second.target!=(action==Action::HostEmbarkPassengers?src:dst) ||
+                       std::find(cmd->second.passenger_ids.begin(),
+                                 cmd->second.passenger_ids.end(),guardian)==
+                                 cmd->second.passenger_ids.end() ||
+                       (co_guardian && std::find(cmd->second.passenger_ids.begin(),
+                           cmd->second.passenger_ids.end(),co_guardian)==
+                           cmd->second.passenger_ids.end()))
+                        throw std::runtime_error("child ferry command/journal evidence forged");
+                };
+                if(transfer_from){
+                    const auto cmd=journal_commands.find(board);
+                    const auto ev=event_by_id.find(board);
+                    if(cmd==journal_commands.end() || ev==event_by_id.end() ||
+                       (cmd->second.action!=Action::HostEvacuatePassengers &&
+                        cmd->second.action!=Action::HostSplitEvacuatePassengers) ||
+                       cmd->second.issuer!=Simulation::kServerAuthority ||
+                       cmd->second.transport_id!=transfer_from ||
+                       !(cmd->second.action==Action::HostSplitEvacuatePassengers ?
+                         split_receiver_matches(cmd->second,ferry,voyage,guardian,co_guardian):
+                         (cmd->second.target==ferry &&
+                          cmd->second.amount==static_cast<std::int64_t>(voyage))) ||
+                       ev->second.result!=Outcome::Applied ||
+                       ev->second.tick!=static_cast<std::uint64_t>(bt) ||
+                       std::find(cmd->second.passenger_ids.begin(),
+                                 cmd->second.passenger_ids.end(),guardian)==
+                                 cmd->second.passenger_ids.end() ||
+                       (co_guardian && std::find(cmd->second.passenger_ids.begin(),
+                           cmd->second.passenger_ids.end(),co_guardian)==
+                           cmd->second.passenger_ids.end()))
+                        throw std::runtime_error("rescued minor lacks actual ferry evacuation");
+                    Statement original(db_,"SELECT ferry,origin,destination,status,"
+                        "termination_kind,arrival_command FROM sg_dependent_travel "
+                        "WHERE family_scope=? AND child_id=? AND transport_id=?");
+                    original.text(1,fam);original.text(2,std::to_string(child));
+                    original.text(3,std::to_string(transfer_from));
+                    if(!original.row() ||
+                       parse_u64(sqlite3_column_text(original.get(),0))!=cmd->second.actor ||
+                       parse_u64(sqlite3_column_text(original.get(),1))!=src ||
+                       parse_u64(sqlite3_column_text(original.get(),2))!=dst ||
+                       sqlite3_column_int(original.get(),3)!=2 ||
+                       sqlite3_column_int(original.get(),4)!=1 ||
+                       parse_u64(sqlite3_column_text(original.get(),5))!=board || original.row())
+                        throw std::runtime_error("child rescue lacks terminated original leg");
+                }else
+                    assert_action(board,Action::HostEmbarkPassengers,static_cast<std::uint64_t>(bt));
+                Statement op(db_,"SELECT kind,tick FROM operation_log WHERE generation=?");
+                op.i64(1,bg);
+                if(!op.row() || sqlite3_column_int(op.get(),0)!=2 ||
+                   sqlite3_column_int64(op.get(),1)!=bt || op.row())
+                    throw std::runtime_error("child boarding lacks durable world step");
+                if(arrived){
+                    if(termination_kind==1){
+                        const auto cmd=journal_commands.find(arrival);
+                        const auto ev=event_by_id.find(arrival);
+                        if(cmd==journal_commands.end() || ev==event_by_id.end() ||
+                           (cmd->second.action!=Action::HostEvacuatePassengers &&
+                            cmd->second.action!=Action::HostSplitEvacuatePassengers) ||
+                           cmd->second.actor!=ferry ||
+                           cmd->second.transport_id!=voyage ||
+                           (cmd->second.action==Action::HostEvacuatePassengers &&
+                            cmd->second.amount<=0) ||
+                           ev->second.result!=Outcome::Applied ||
+                           ev->second.tick!=static_cast<std::uint64_t>(at) ||
+                           restored.voyage_status(voyage)!=5)
+                            throw std::runtime_error("child evacuation leg forged");
+                        // Terminal evacuation is not physical destination arrival.
+                        // A separate new rescue-voyage row must prove custody.
+                        Statement next_leg(db_,"SELECT 1 FROM sg_dependent_travel "
+                            "WHERE family_scope=? AND child_id=? AND transport_id=? "
+                            "AND transfer_from_transport=? AND board_command=?");
+                        next_leg.text(1,fam);next_leg.text(2,std::to_string(child));
+                        const auto split_at=cmd->second.action==Action::HostSplitEvacuatePassengers ?
+                            static_cast<std::size_t>(cmd->second.thrust_x) : 0U;
+                        const bool second_split=split_at &&
+                            std::find(cmd->second.passenger_ids.begin(),
+                                cmd->second.passenger_ids.begin()+split_at,guardian)==
+                                cmd->second.passenger_ids.begin()+split_at;
+                        next_leg.text(3,std::to_string(second_split ?
+                            cmd->second.secondary_transport:
+                            static_cast<std::uint64_t>(cmd->second.amount)));
+                        next_leg.text(4,std::to_string(voyage));
+                        next_leg.text(5,std::to_string(arrival));
+                        if(!next_leg.row() || next_leg.row())
+                            throw std::runtime_error("evacuated child has no receiving ferry leg");
+                        if(cmd->second.action==Action::HostSplitEvacuatePassengers){
+                            Statement landed(db_,"SELECT ferry,transport_id FROM sg_dependent_travel "
+                                "WHERE family_scope=? AND child_id=? AND transfer_from_transport=? "
+                                "AND board_command=?");
+                            landed.text(1,fam);landed.text(2,std::to_string(child));
+                            landed.text(3,std::to_string(voyage));
+                            landed.text(4,std::to_string(arrival));
+                            if(!landed.row())throw std::runtime_error("split child receiver missing");
+                            const auto receiving_ferry=parse_u64(sqlite3_column_text(landed.get(),0));
+                            const auto receiving_voyage=parse_u64(sqlite3_column_text(landed.get(),1));
+                            if(!split_receiver_matches(cmd->second,receiving_ferry,
+                                receiving_voyage,guardian,co_guardian)||landed.row())
+                                throw std::runtime_error("split child assigned to wrong receiver");
+                        }
+                    }else{
+                        assert_action(arrival,Action::HostDisembarkPassengers,
+                                      static_cast<std::uint64_t>(at));
+                        if(restored.voyage_status(voyage)!=2)
+                            throw std::runtime_error("child arrived on incomplete voyage");
+                    }
+                    Statement arrival_step(db_,"SELECT kind,tick FROM operation_log WHERE generation=?");
+                    arrival_step.i64(1,ag);
+                    if(!arrival_step.row() || sqlite3_column_int(arrival_step.get(),0)!=2 ||
+                       sqlite3_column_int64(arrival_step.get(),1)!=at || arrival_step.row())
+                        throw std::runtime_error("child arrival/evacuation lacks committed world step");
+                }else{
+                    ++onboard[ferry];
+                    if(restored.voyage_status(voyage)!=1 &&
+                       restored.voyage_status(voyage)!=3)
+                        throw std::runtime_error("child aboard inactive ferry");
+                    auto adult=restored.npc_records().find(guardian);
+                    if(adult==restored.npc_records().end() ||
+                       adult->second.location!=ferry || adult->second.transport_id!=voyage)
+                        throw std::runtime_error("guardian separated from active dependent");
+                }
+                Statement birth(db_,"SELECT parent_a,parent_b FROM npc_family_births "
+                    "WHERE scope=? AND child_id=?");
+                birth.text(1,fam);birth.text(2,std::to_string(child));
+                if(!birth.row())throw std::runtime_error("physical child lacks actual birth");
+                const auto a=parse_u64(sqlite3_column_text(birth.get(),0));
+                const auto b=parse_u64(sqlite3_column_text(birth.get(),1));
+                if((a!=guardian && b!=guardian) ||
+                   (co_guardian && !((a==guardian && b==co_guardian) ||
+                                      (b==guardian && a==co_guardian))) || birth.row())
+                    throw std::runtime_error("child travel guardian lineage forged");
+                if(co_guardian && !arrived){
+                    // Replaying the host command proves both were admitted.
+                    // While the pair remains aboard they must also occupy the
+                    // current canonical physical voyage. Historical checkpoints
+                    // may be pruned, so never require an old snapshot here.
+                    const auto co=restored.npc_records().find(co_guardian);
+                    if(co==restored.npc_records().end() ||
+                       co->second.location!=ferry || co->second.transport_id!=voyage)
+                        throw std::runtime_error("second parent absent from live ferry");
+                }
+                ++actual[{fam,std::to_string(board)}];
+                if(arrived && termination_kind==0)++actual[{fam,std::to_string(arrival)}];
+            }
+            for(const auto& [ferry,count]:onboard)
+                if(count+restored.passengers_aboard(ferry)>16)
+                    throw std::runtime_error("child/adult physical seats overbooked");
+            Statement batches(db_,"SELECT family_scope,command_id,transport_id,phase,"
+                "member_count,world_generation FROM sg_dependent_transport_batch");
+            std::map<std::pair<std::string,std::string>,std::int64_t> declared;
+            while(batches.row()){
+                const auto fam=sqlite_str(batches.get(),0),cmd=sqlite_str(batches.get(),1);
+                const auto trans=sqlite_str(batches.get(),2);
+                const auto phase=sqlite3_column_int(batches.get(),3);
+                const auto count=sqlite3_column_int64(batches.get(),4);
+                const auto gen=sqlite3_column_int64(batches.get(),5);
+                if(fam.empty() || cmd.empty() || trans.empty() || (phase!=1 && phase!=2 && phase!=3) ||
+                   count<1 || count>15 || gen<=1 || static_cast<std::uint64_t>(gen)>generation ||
+                   !declared.emplace(std::make_pair(fam,cmd),count).second ||
+                   actual[{fam,cmd}]!=count)
+                    throw std::runtime_error("child batch physical manifest incomplete");
+                // One actual world command may carry several scoped family
+                // receipts, but none may be retyped into boarding/arrival or
+                // rescue without the independently applied command to match.
+                const auto command_id=parse_u64(reinterpret_cast<const unsigned char*>(cmd.c_str()));
+                const auto voyage_id=parse_u64(reinterpret_cast<const unsigned char*>(trans.c_str()));
+                const auto applied=journal_commands.find(command_id);
+                const auto event=event_by_id.find(command_id);
+                if(applied==journal_commands.end() || event==event_by_id.end() ||
+                   event->second.result!=Outcome::Applied ||
+                   (phase==1 && (applied->second.action!=Action::HostEmbarkPassengers ||
+                                  applied->second.transport_id!=voyage_id)) ||
+                   (phase==2 && (applied->second.action!=Action::HostDisembarkPassengers ||
+                                  applied->second.transport_id!=voyage_id)) ||
+                   (phase==3 && !((applied->second.action==Action::HostEvacuatePassengers &&
+                       applied->second.amount>0 &&
+                       static_cast<std::uint64_t>(applied->second.amount)==voyage_id) ||
+                       (applied->second.action==Action::HostSplitEvacuatePassengers &&
+                        (static_cast<std::uint64_t>(applied->second.amount)==voyage_id ||
+                         applied->second.secondary_transport==voyage_id)))))
+                    throw std::runtime_error("family transport receipt phase or voyage forged");
+                Statement op(db_,"SELECT kind,tick FROM operation_log WHERE generation=?");
+                op.i64(1,gen);
+                if(!op.row() || sqlite3_column_int(op.get(),0)!=2 ||
+                   sqlite3_column_int64(op.get(),1)!=
+                        static_cast<std::int64_t>(event->second.tick) || op.row())
+                    throw std::runtime_error("child family batch lacks applied world-step proof");
+            }
+            if(actual!=declared)
+                throw std::runtime_error("orphaned child berth/arrival records");
+        }
         out.swap(restored);
         return true;
     }
@@ -2688,7 +3597,8 @@ public:
                 const std::map<std::uint64_t, Command>& due_commands,
                 const std::vector<ActivityEvent>& activity_delta, FailPoint fail,
                 const NpcMiningAssignment* npc_mining_assignment=nullptr,
-                const NpcFabricationAssignment* npc_fabrication_assignment=nullptr) {
+                const NpcFabricationAssignment* npc_fabrication_assignment=nullptr,
+                const std::function<void(sqlite3*,std::uint64_t)>& society_effect={}) {
         if (state.total_ore() != origin || state.total_credits() != credit_origin)
             throw std::runtime_error("resource or credit conservation violation");
         const auto bytes = state.canonical_state();
@@ -2699,6 +3609,14 @@ public:
             const auto current = latest_generation(db_);
             if (current != expected_generation)
                 throw std::runtime_error("stale world generation; reload before writing");
+            // Enforce reservations again under the SAME SQLite writer lock as
+            // the authoritative cargo effects. A command queued before a new
+            // manifest was booked cannot bypass the later booking at execution.
+            for(const auto& [id,c]:due_commands){(void)id;
+                if(!shipping::manifest_transfer_authorized(db_,c) ||
+                   !shipping::third_party_transfer_authorized(db_,c))
+                    throw std::runtime_error("shipment: unreserved due cargo command");
+            }
             if (expected_generation >= static_cast<std::uint64_t>(std::numeric_limits<sqlite3_int64>::max()))
                 throw std::runtime_error("generation exhausted");
             const auto next = expected_generation + 1;
@@ -2826,6 +3744,9 @@ public:
                          cmd->second.action!=Action::TransferWorkshopFinalOutput &&
                          cmd->second.action!=Action::TransferWorkshopStack &&
                          cmd->second.action!=Action::ConstructStorage &&
+                         cmd->second.action!=Action::HostEscrowConstructedStock &&
+                         cmd->second.action!=Action::HostReturnConstructedStock &&
+                         cmd->second.action!=Action::HostTransferConsignedStock &&
                          cmd->second.action!=Action::TransferStorageStack &&
                          cmd->second.action!=Action::ConstructStorageNode &&
                          cmd->second.action!=Action::TransferStorageNodeStack &&
@@ -2848,8 +3769,27 @@ public:
                         ledger.text(5,(refine?"goods:":"modules:")+std::to_string(cmd->second.actor));
                         ledger.i64(6,ev.transferred);
                         ledger.text(7,refine?"mineral_refining_kg":"material_fabrication_t");
+                    } else if(cmd->second.action==Action::HostEscrowConstructedStock){
+                        const auto& c=cmd->second;
+                        if(c.issuer!=Simulation::kServerAuthority||c.thrust_x||c.thrust_y||
+                           c.amount<=0||ev.transferred!=c.amount)
+                            throw std::runtime_error("constructed world escrow transfer mismatch");
+                        ledger.text(4,"storage:"+std::to_string(c.target)+":aluminum");
+                        ledger.text(5,"network-escrow:"+std::to_string(c.target));
+                        ledger.i64(6,ev.transferred);ledger.text(7,"constructed_network_stock_kg");
+                    } else if(cmd->second.action==Action::HostReturnConstructedStock){
+                        const auto& c=cmd->second;
+                        if(c.issuer!=Simulation::kServerAuthority||
+                           (c.thrust_x!=1&&c.thrust_x!=2)||c.thrust_y||
+                           c.amount<=0||ev.transferred!=c.amount)
+                            throw std::runtime_error("constructed finished-goods release mismatch");
+                        ledger.text(4,"network-escrow:"+std::to_string(c.target));
+                        ledger.text(5,"storage:"+std::to_string(c.target)+":"+
+                            (c.thrust_x==1?"aluminum_panels":"aluminum_frames"));
+                        ledger.i64(6,ev.transferred);ledger.text(7,"constructed_network_return_kg");
                     } else if(cmd->second.action==Action::ConstructStorage ||
-                              cmd->second.action==Action::TransferStorageStack){
+                              cmd->second.action==Action::TransferStorageStack ||
+                              cmd->second.action==Action::HostTransferConsignedStock){
                         const auto& c=cmd->second;
                         const bool build=c.action==Action::ConstructStorage;
                         if(ev.transferred!=(build?2:c.amount))
@@ -3337,9 +4277,52 @@ public:
             op.text(4, std::to_string(state.state_hash()));
             op.i64(5, static_cast<std::int64_t>(state.tick()));
             op.execute();
-            // Keep three last immutable checkpoints for offline inspection; never silently recover
+            if(society_effect)society_effect(db_,next);
+            enforce_physical_guardianship_at_commit(db_,next);
+            // Retain genesis (generation 1) plus three latest immutable checkpoints.
+            // Genesis permits independent replay of the complete operation journal; never silently recover
             // from a corrupt latest snapshot because its effects/receipts may be newer.
-            Statement prune(db_, "DELETE FROM snapshots WHERE generation < ?");
+            // Incident case receipts require permanent provenance for their
+            // observed world generation. Pin only those exact historical
+            // snapshots; unrelated checkpoints retain the 3-snapshot policy.
+            Statement has_cases(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                                    "AND name='sg_dependent_incident_case'");
+            const bool incident_cases_exist=has_cases.row();
+            Statement has_rescues(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                                      "AND name='sg_dependent_rescue_outcome'");
+            const bool outcomes_exist=has_rescues.row();
+            Statement has_guardian_approvals(db_,"SELECT 1 FROM sqlite_master "
+                                              "WHERE type='table' AND name='sg_guardian_approval'");
+            const bool guardian_approvals_exist=has_guardian_approvals.row();
+            Statement has_guardian_transfers(db_,"SELECT 1 FROM sqlite_master "
+                                              "WHERE type='table' AND name='sg_guardian_transfer'");
+            const bool guardian_transfers_exist=has_guardian_transfers.row();
+            Statement has_physical(db_,"SELECT 1 FROM sqlite_master "
+                                   "WHERE type='table' AND name='sg_dependent_physical_handoff'");
+            const bool physical_exists=has_physical.row();
+            Statement has_split(db_,"SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='sg_split_rescue_intent'");
+            const bool split_exists=has_split.row();
+            Statement has_split_execution(db_,"SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='sg_split_rescue_execution'");
+            const bool split_execution_exists=has_split_execution.row();
+            const std::string prune_sql=std::string(
+                "DELETE FROM snapshots WHERE generation > 1 AND generation < ?")+
+                (incident_cases_exist ? " AND generation NOT IN "
+                    "(SELECT observed_generation FROM sg_dependent_incident_case)" : "")+
+                (outcomes_exist ? " AND generation NOT IN "
+                    "(SELECT rescue_generation FROM sg_dependent_rescue_outcome)" : "")+
+                (guardian_approvals_exist ? " AND generation NOT IN "
+                    "(SELECT approved_generation FROM sg_guardian_approval)" : "")+
+                (guardian_transfers_exist ? " AND generation NOT IN "
+                    "(SELECT world_generation FROM sg_guardian_transfer)" : "")+
+                (physical_exists ? " AND generation NOT IN "
+                    "(SELECT generation FROM sg_dependent_physical_handoff)" : "")+
+                (split_exists ? " AND generation NOT IN "
+                    "(SELECT world_generation FROM sg_split_rescue_intent)" : "")+
+                (split_execution_exists ? " AND generation NOT IN "
+                    "(SELECT world_generation FROM sg_split_rescue_execution)" : "");
+            Statement prune(db_,prune_sql.c_str());
             prune.i64(1, static_cast<std::int64_t>(next > 2 ? next - 2 : 1));
             prune.execute();
             if (fail == FailPoint::AfterSnapshotWrite)
@@ -4390,8 +5373,14 @@ public:
                     if (g != previous + 1 || g > newest) throw std::runtime_error("recovery: missing operation");
                     if (kind == 1) {
                         const auto* raw = sqlite3_column_text(journal.get(), 2);
-                        if (!raw || !sim.submit(decode_command(reinterpret_cast<const char*>(raw))))
+                        if (!raw) throw std::runtime_error("recovery: missing submission command");
+                        const auto command = decode_command(reinterpret_cast<const char*>(raw));
+                        if (!sim.submit(command))
                             throw std::runtime_error("recovery: command replay refused");
+                        // v52's atomic host warehouse escrow advances the real world
+                        // in the same SQLite commit as the command submission.
+                        if (command.action == Action::HostEscrowConstructedStock ||
+                            command.action == Action::HostReturnConstructedStock) sim.step();
                     } else if (kind == 2) {
                         sim.step();
                     } else throw std::runtime_error("recovery: invalid journal kind");
@@ -4434,6 +5423,10 @@ private:
     sqlite3* db_ = nullptr;
 };
 
+// Independently verify supplementary incident-case receipts against historical
+// world snapshots and passenger ledgers during open and recovery.
+void verify_dependent_stranding_cases(const std::string& path, std::uint64_t max_generation);
+
 void PersistentWorld::recover_copy(const std::string& source, const std::string& destination) {
     if (source.empty() || destination.empty() || source == destination)
         throw std::invalid_argument("recovery requires distinct nonempty paths");
@@ -4467,6 +5460,12 @@ void PersistentWorld::recover_copy(const std::string& source, const std::string&
         sqlite3_close(src); src = nullptr;
         Store copy(destination);
         copy.repair_latest_from_journal();
+        // Do not certify a replay whose sidecar incident evidence was forged.
+        Simulation checked(1);std::uint64_t gen=0;std::int64_t ore=0,credit=0;
+        if(!copy.restore(checked,gen,ore,credit))
+            throw std::runtime_error("recovery: missing world checkpoint");
+        verify_dependent_stranding_cases(destination,gen);
+        verify_split_rescue_intents(destination,gen);
     } catch (...) {
         if (dest) sqlite3_close(dest);
         if (src) sqlite3_close(src);
@@ -4480,7 +5479,7 @@ void PersistentWorld::recover_copy(const std::string& source, const std::string&
 }
 
 PersistentWorld::PersistentWorld(const std::string& path, Simulation initial_world)
-    : store_(std::make_unique<Store>(path)), world_(std::move(initial_world)) {
+    : store_(std::make_unique<Store>(path)), db_path_(path), world_(std::move(initial_world)) {
     if (!store_->restore(world_, generation_, resource_origin_, credit_origin_)) {
         if (world_.tick() != 0 || !world_.events().empty() || world_.accepted_command_count() != 0)
             throw std::invalid_argument("initial world must be at tick zero without commands");
@@ -4489,8 +5488,83 @@ PersistentWorld::PersistentWorld(const std::string& path, Simulation initial_wor
         store_->commit(world_, 0, resource_origin_, credit_origin_, nullptr, {}, {}, {}, FailPoint::None);
         generation_ = 1;
     }
+    verify_dependent_stranding_cases(db_path_,generation_);
+    verify_split_rescue_intents(db_path_,generation_);
+    verify_split_executions(db_path_,generation_);
+    shipping::verify_manifest_registry(db_path_);
+    shipping::verify_third_party_registry(db_path_);
 }
 PersistentWorld::~PersistentWorld() = default;
+
+std::vector<DependentTravelRecord> PersistentWorld::dependent_travel(
+    const std::string& family_scope) const {
+    return store_->dependent_travel(family_scope);
+}
+
+bool PersistentWorld::submit_host_dependent_rescue_action(const Command& command,
+        FailPoint fail){
+    if(command.action!=Action::HostEvacuatePassengers ||
+       command.issuer!=Simulation::kServerAuthority || !command.actor ||
+       !command.target || command.actor==command.target || command.amount<=0 ||
+       store_->active_dependent_berths(command.actor)<=0)return false;
+    auto next=world_;
+    if(!next.submit(command))return false;
+    store_->commit(next,generation_,resource_origin_,credit_origin_,
+                   &command,{},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+
+bool PersistentWorld::submit_host_medical_action(const Command& command, FailPoint fail){
+    if(command.action!=Action::HostTrainMedic &&
+       command.action!=Action::HostTriageRescued &&
+       command.action!=Action::HostTreatInjuries &&
+       command.action!=Action::HostScheduleMedicShift &&
+       command.action!=Action::HostLoadMedicalKit &&
+       command.action!=Action::HostMobileStabilize)return false;
+    return submit_host_passenger_action(command,fail);
+}
+
+bool PersistentWorld::submit_host_passenger_action(const Command& command, FailPoint fail){
+    if(command.action!=Action::HostEmbarkPassengers && command.action!=Action::HostDisembarkPassengers &&
+       command.action!=Action::HostStrandFerry && command.action!=Action::HostResumeFerry &&
+       command.action!=Action::HostEvacuatePassengers &&
+       command.action!=Action::HostDestroyPassengerFerry &&
+       command.action!=Action::HostResolveMixedFerryLoss &&
+       command.action!=Action::HostTrainMedic &&
+       command.action!=Action::HostTriageRescued &&
+       command.action!=Action::HostTreatInjuries &&
+       command.action!=Action::HostScheduleMedicShift &&
+       command.action!=Action::HostLoadMedicalKit &&
+       command.action!=Action::HostMobileStabilize &&
+       command.action!=Action::HostSettleMigrant)return false;
+    if(command.issuer!=Simulation::kServerAuthority)return false;
+    // Child physical berths count against the same actual 16 seats. Host-only
+    // incident handlers must not destroy/teleport a ferry full of dependents.
+    if(command.action==Action::HostEmbarkPassengers &&
+       store_->active_dependent_berths(command.actor)>0)return false;
+    if((command.action==Action::HostEvacuatePassengers ||
+        command.action==Action::HostResolveMixedFerryLoss ||
+        command.action==Action::HostDestroyPassengerFerry) &&
+       store_->active_dependent_berths(command.actor)>0)return false;
+    auto next=world_;
+    if(!next.submit(command))return false;
+    store_->commit(next,generation_,resource_origin_,credit_origin_,&command,{},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+
+bool PersistentWorld::submit_host_consigned_transfer(const Command& command,FailPoint fail){
+    if(command.action!=Action::HostTransferConsignedStock ||
+       command.issuer!=Simulation::kServerAuthority ||
+       !store_->manifest_transfer_allowed(command))return false;
+    auto next=world_;
+    if(!next.submit(command))return false;
+    store_->commit(next,generation_,resource_origin_,credit_origin_,&command,{},{},{},fail);
+    world_.swap(next);++generation_;return true;
+}
 
 bool PersistentWorld::submit(const Command& command, FailPoint fail) {
     if (command.action == Action::HostDestroyShip || command.action == Action::HostCrewLoss ||
@@ -4498,6 +5572,7 @@ bool PersistentWorld::submit(const Command& command, FailPoint fail) {
         command.action == Action::SetGateStaff ||
         command.action == Action::DeliverGateSpares ||
         command.issuer == Simulation::kServerAuthority) return false;
+    if(!store_->manifest_transfer_allowed(command))return false;
     auto next = world_;
     if (!next.submit(command)) return false;
     store_->commit(next, generation_, resource_origin_, credit_origin_, &command, {}, {}, {}, fail);
@@ -4629,6 +5704,1638 @@ bool PersistentWorld::submit_testing_crew_loss(EntityId ship,std::int64_t count,
     store_->commit(next,generation_,resource_origin_,credit_origin_,&c,{},{},{},fail);
     world_.swap(next);++generation_;return true;
 }
+void PersistentWorld::step_with_atomic_society(const SocietyAtomicPlan& plan,FailPoint fail){
+    if(plan.expected_world_generation!=generation_ || !plan.command_id ||
+       plan.family_scope.empty() || plan.region_scope.empty() ||
+       !plan.expected_region_revision || !plan.expected_owner_generation ||
+       plan.deaths.empty())throw std::invalid_argument("stale or incomplete society atomic plan");
+    auto next=world_;
+    const auto before=next.events().size(), before_activity=next.activity_events().size();
+    std::map<std::uint64_t,Command> due;
+    if(const auto it=next.commands_.find(next.tick()+1);it!=next.commands_.end())
+        for(const auto& c:it->second)due.emplace(c.id,c);
+    // Restrict to exactly one scheduled terminal host action; no accompanying
+    // commands may unknowingly change additional NPC identities in this tick.
+    if(due.size()!=1 || !due.count(plan.command_id) ||
+       due.at(plan.command_id).issuer!=Simulation::kServerAuthority ||
+       (due.at(plan.command_id).action!=Action::HostResolveMixedFerryLoss &&
+        due.at(plan.command_id).action!=Action::HostDestroyPassengerFerry))
+        throw std::invalid_argument("society commit requires one host ferry-loss command");
+    next.step();
+    const std::vector<Event> delta(next.events().begin()+static_cast<std::ptrdiff_t>(before),next.events().end());
+    if(delta.size()!=1 || delta[0].command_id!=plan.command_id || delta[0].result!=Outcome::Applied)
+        throw std::runtime_error("ferry-loss command did not apply successfully");
+    const std::vector<ActivityEvent> activity(next.activity_events().begin()+static_cast<std::ptrdiff_t>(before_activity),next.activity_events().end());
+    std::set<std::uint64_t> newly_dead, requested;
+    std::map<std::string,std::uint64_t> reductions;
+    for(const auto& [id,death]:next.npc_casualties())
+        if(world_.npc_casualties().count(id)==0)newly_dead.insert(id);
+    for(const auto& d:plan.deaths){
+        if(!d.event_id || !d.npc_id || !d.home_ship || d.regional_colony.empty() ||
+           !requested.insert(d.npc_id).second)
+            throw std::invalid_argument("invalid/duplicated society death manifest");
+        const auto found=next.npc_casualties().find(d.npc_id);
+        if(found==next.npc_casualties().end() || found->second.death_tick!=next.tick() ||
+           found->second.identity.home_ship!=d.home_ship)
+            throw std::runtime_error("society manifest disagrees with world casualty");
+        ++reductions[d.regional_colony];
+    }
+    if(requested!=newly_dead)throw std::runtime_error("society manifest must cover every new casualty");
+    // Bound all regional names to their real home-ship identities before taking
+    // the world writer lock. The CAS checks below repeat this within the write
+    // transaction, so no caller may redirect a death into another colony.
+    const auto path=store_->sqlite_path();
+    regional_events::CheckpointStore region(path,plan.region_scope);
+    NpcAppearanceStore preflight_family(path,plan.family_scope,plan.family_seed,
+        [&](std::uint64_t id){return world_.npc_records().count(id)!=0;});
+    std::map<EntityId,std::pair<std::string,std::uint64_t>> homes;
+    std::set<std::string> used_regions;
+    for(const auto& d:plan.deaths){
+        auto [it,added]=homes.emplace(d.home_ship,
+            std::make_pair(d.regional_colony,d.expected_family_revision));
+        if(!added && (it->second.first!=d.regional_colony ||
+                       it->second.second!=d.expected_family_revision))
+            throw std::runtime_error("ambiguous society home to regional colony mapping");
+    }
+    std::map<std::string,std::uint64_t> initial_populations;
+    for(const auto& [home,binding]:homes){
+        if(!used_regions.insert(binding.first).second)
+            throw std::runtime_error("two home colonies mapped to one regional checkpoint");
+        const auto proof=reconcile_medical_society(*this,preflight_family,path,
+            plan.family_scope,home,region,binding.first,
+            plan.expected_region_revision,plan.expected_world_generation);
+        if(!proof.reconciled || proof.family_revision!=binding.second)
+            throw std::runtime_error("society preflight family revision/census refused");
+        initial_populations.emplace(binding.first,proof.family_population);
+    }
+    const auto effect=[&](sqlite3* db,std::uint64_t committed_generation){
+        NpcAppearanceStore family(db,plan.family_scope,plan.family_seed,
+            [&](std::uint64_t id){return world_.npc_records().count(id)!=0;});
+        std::map<EntityId,std::uint64_t> revs;
+        for(const auto& d:plan.deaths){
+            auto [it,inserted]=revs.emplace(d.home_ship,d.expected_family_revision);
+            if(!inserted && d.expected_family_revision!=it->second)
+                throw std::runtime_error("conflicting family revision for one home ship");
+        }
+        // Receipt order is canonical independent of caller vector order.
+        auto ordered=plan.deaths;
+        std::sort(ordered.begin(),ordered.end(),[](const auto& a,const auto& b){
+            return std::tie(a.home_ship,a.npc_id)<std::tie(b.home_ship,b.npc_id);
+        });
+        for(const auto& d:ordered){
+            auto& rev=revs.at(d.home_ship);
+            const auto death=family.record_death(d.event_id,d.npc_id,d.home_ship,next.tick(),rev,
+                [&](auto home,auto id,auto tick){
+                    const auto found=next.npc_casualties().find(id);
+                    return found!=next.npc_casualties().end() &&
+                        found->second.identity.home_ship==home && found->second.death_tick==tick;
+                });
+            if(death.census_revision!=rev+1)throw std::runtime_error("family death revision did not advance");
+            ++rev;
+        }
+        const auto regional_rev=region.commit_casualties_in_world_transaction(
+            db,plan.expected_region_revision,plan.expected_owner_generation,
+            next.tick(),reductions,initial_populations,std::to_string(plan.command_id));
+        run(db,"CREATE TABLE IF NOT EXISTS sg_med_society_effect ("
+               "command_id TEXT PRIMARY KEY, world_generation INTEGER NOT NULL,"
+               "tick INTEGER NOT NULL, family_scope TEXT NOT NULL,"
+               "region_scope TEXT NOT NULL, region_revision INTEGER NOT NULL,"
+               "owner_generation INTEGER NOT NULL, casualty_count INTEGER NOT NULL)");
+        Statement receipt(db,"INSERT INTO sg_med_society_effect VALUES (?,?,?,?,?,?,?,?)");
+        receipt.text(1,std::to_string(plan.command_id));
+        receipt.i64(2,static_cast<std::int64_t>(committed_generation));
+        receipt.i64(3,static_cast<std::int64_t>(next.tick()));
+        receipt.text(4,plan.family_scope);receipt.text(5,plan.region_scope);
+        receipt.i64(6,static_cast<std::int64_t>(regional_rev));
+        receipt.i64(7,static_cast<std::int64_t>(plan.expected_owner_generation));
+        receipt.i64(8,static_cast<std::int64_t>(requested.size()));
+        receipt.execute();
+    };
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,delta,due,activity,
+                   fail,nullptr,nullptr,effect);
+    world_.swap(next);
+    ++generation_;
+}
+
+void PersistentWorld::step_with_atomic_dependent_birth(
+    const SocietyBirthPlan& plan,FailPoint fail){
+    constexpr std::uint64_t reserved=(1ULL<<62);
+    if(!plan.expected_world_generation || plan.expected_world_generation!=generation_ ||
+       !plan.expected_region_revision || !plan.expected_owner_generation ||
+       !plan.event_id || !plan.home_ship || !plan.parent_a || !plan.parent_b ||
+       plan.parent_a==plan.parent_b || plan.child_id<reserved ||
+       plan.family_scope.empty() || plan.region_scope.empty() ||
+       plan.regional_colony.empty() ||
+       plan.event_id>static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
+        throw std::invalid_argument("incomplete or stale atomic dependent birth");
+    const auto& existing=world_.npc_records();
+    for(auto parent:{plan.parent_a,plan.parent_b}){
+        const auto it=existing.find(parent);
+        if(it==existing.end() || it->second.home_ship!=plan.home_ship ||
+           it->second.location!=plan.home_ship || it->second.transport_id!=0 ||
+           world_.npc_casualties().count(parent)!=0)
+            throw std::runtime_error("birth parents not physically present in home settlement");
+    }
+    if(!world_.colony_ship(plan.home_ship) ||
+       existing.count(plan.child_id) || world_.npc_casualties().count(plan.child_id))
+        throw std::runtime_error("birth settlement or child identity invalid");
+    // No pending game command can be smuggled into this cohort-only world step.
+    auto next=world_;
+    const auto pending=next.commands_.find(next.tick()+1);
+    if(pending!=next.commands_.end() && !pending->second.empty())
+        throw std::runtime_error("birth world step requires no pending commands");
+    const auto before=next.events().size(), activity_before=next.activity_events().size();
+    next.step();
+    if(next.events().size()!=before)
+        throw std::runtime_error("birth step unexpectedly executed a command");
+    const std::vector<ActivityEvent> activity(next.activity_events().begin()+
+        static_cast<std::ptrdiff_t>(activity_before),next.activity_events().end());
+    const auto path=store_->sqlite_path();
+    regional_events::CheckpointStore region(path,plan.region_scope);
+    NpcAppearanceStore family(path,plan.family_scope,plan.family_seed,
+        [&](std::uint64_t id){return world_.npc_records().count(id)!=0;});
+    const auto projection=reconcile_medical_society(*this,family,path,plan.family_scope,
+        plan.home_ship,region,plan.regional_colony,plan.expected_region_revision,
+        plan.expected_world_generation);
+    if(!projection.reconciled || projection.family_revision!=plan.expected_family_revision ||
+       family.exists(plan.child_id))
+        throw std::runtime_error("birth preflight family revision/child identity refused");
+    const auto effect=[&](sqlite3* db,std::uint64_t committed_generation){
+        NpcAppearanceStore joined(db,plan.family_scope,plan.family_seed,
+            [&](std::uint64_t id){return world_.npc_records().count(id)!=0;});
+        const auto birth=joined.record_birth(plan.event_id,plan.child_id,
+            plan.parent_a,plan.parent_b,plan.home_ship,next.tick(),
+            plan.expected_family_revision,[&](auto home,auto a,auto b,auto tick){
+                return home==plan.home_ship && tick==next.tick() &&
+                    existing.at(a).home_ship==home && existing.at(b).home_ship==home &&
+                    existing.at(a).location==home && existing.at(b).location==home;
+            });
+        if(birth.census_revision!=plan.expected_family_revision+1 ||
+           birth.child_id!=plan.child_id)
+            throw std::runtime_error("birth family receipt refused");
+        const auto new_revision=region.commit_birth_in_world_transaction(
+            db,plan.expected_region_revision,plan.expected_owner_generation,
+            next.tick(),plan.regional_colony,projection.family_population,
+            std::to_string(plan.event_id));
+        run(db,"CREATE TABLE IF NOT EXISTS sg_med_society_birth ("
+               "event_id TEXT PRIMARY KEY, world_generation INTEGER NOT NULL,"
+               "tick INTEGER NOT NULL, family_scope TEXT NOT NULL,"
+               "region_scope TEXT NOT NULL, region_revision INTEGER NOT NULL,"
+               "owner_generation INTEGER NOT NULL, home_ship TEXT NOT NULL,"
+               "regional_colony TEXT NOT NULL, child_id TEXT NOT NULL UNIQUE,"
+               "parent_a TEXT NOT NULL, parent_b TEXT NOT NULL,"
+               "family_revision INTEGER NOT NULL)");
+        Statement rec(db,"INSERT INTO sg_med_society_birth VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)");
+        rec.text(1,std::to_string(plan.event_id));
+        rec.i64(2,static_cast<std::int64_t>(committed_generation));
+        rec.i64(3,static_cast<std::int64_t>(next.tick()));
+        rec.text(4,plan.family_scope);rec.text(5,plan.region_scope);
+        rec.i64(6,static_cast<std::int64_t>(new_revision));
+        rec.i64(7,static_cast<std::int64_t>(plan.expected_owner_generation));
+        rec.text(8,std::to_string(plan.home_ship));rec.text(9,plan.regional_colony);
+        rec.text(10,std::to_string(plan.child_id));
+        rec.text(11,std::to_string(birth.parent_a));rec.text(12,std::to_string(birth.parent_b));
+        rec.i64(13,static_cast<std::int64_t>(birth.census_revision));rec.execute();
+    };
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,{},
+                   {},activity,fail,nullptr,nullptr,effect);
+    world_.swap(next);++generation_;
+}
+
+void PersistentWorld::step_with_atomic_migration(const SocietyMigrationPlan& plan,FailPoint fail){
+    if(!plan.command_id || !plan.npc_id || !plan.transport_id ||
+       !plan.expected_world_generation || plan.expected_world_generation!=generation_ ||
+       !plan.expected_region_revision || !plan.expected_owner_generation ||
+       !plan.origin || !plan.destination || plan.origin==plan.destination ||
+       plan.origin_colony.empty() || plan.destination_colony.empty() ||
+       plan.origin_colony==plan.destination_colony ||
+       plan.family_scope.empty() || plan.region_scope.empty())
+        throw std::invalid_argument("stale or incomplete host migration plan");
+    auto next=world_;
+    const auto before=next.events().size(), prior_activity=next.activity_events().size();
+    std::map<std::uint64_t,Command> due;
+    if(auto it=next.commands_.find(next.tick()+1);it!=next.commands_.end())
+        for(const auto& c:it->second)due.emplace(c.id,c);
+    if(due.size()!=1 || !due.count(plan.command_id))
+        throw std::runtime_error("migration must execute exactly one host command");
+    const auto& command=due.at(plan.command_id);
+    if(command.issuer!=Simulation::kServerAuthority ||
+       command.action!=Action::HostSettleMigrant ||
+       command.actor!=plan.origin || command.target!=plan.destination ||
+       command.transport_id!=plan.transport_id ||
+       command.passenger_ids!=(plan.co_parent_id ?
+           std::vector<std::uint64_t>{plan.npc_id,plan.co_parent_id}:
+           std::vector<std::uint64_t>{plan.npc_id}) ||
+       (plan.co_parent_id && (plan.co_parent_id<=plan.npc_id ||
+           !plan.co_parent_event_id || plan.co_parent_event_id==plan.command_id)) ||
+       (!plan.co_parent_id && plan.co_parent_event_id))
+        throw std::runtime_error("migration plan does not match authenticated passenger command");
+    const auto old=world_.npc_records().find(plan.npc_id);
+    if(old==world_.npc_records().end() || old->second.home_ship!=plan.origin ||
+       old->second.location!=plan.destination || old->second.transport_id!=0)
+        throw std::runtime_error("migration requires already completed physical disembarkation");
+    const auto path=store_->sqlite_path();
+    regional_events::CheckpointStore region(path,plan.region_scope);
+    NpcAppearanceStore family(path,plan.family_scope,plan.family_seed,
+        [&](std::uint64_t id){return world_.npc_records().count(id)!=0;});
+    const auto src=reconcile_medical_society(*this,family,path,plan.family_scope,
+        plan.origin,region,plan.origin_colony,plan.expected_region_revision,generation_);
+    const auto dst=reconcile_medical_society(*this,family,path,plan.family_scope,
+        plan.destination,region,plan.destination_colony,plan.expected_region_revision,generation_);
+    if(!src.reconciled || !dst.reconciled ||
+       src.family_revision!=plan.expected_origin_family_revision ||
+       dst.family_revision!=plan.expected_destination_family_revision ||
+       family.current_residence(plan.npc_id)!=plan.origin ||
+       src.family_population==0)
+        throw std::runtime_error("migration family or regional population preflight failed");
+    const auto initial_named=world_.npc_records().size();
+    if(plan.co_parent_id){
+        const auto co=world_.npc_records().find(plan.co_parent_id);
+        const auto voy=world_.voyages_.find(plan.transport_id);
+        if(co==world_.npc_records().end() ||
+           co->second.home_ship!=plan.origin ||
+           co->second.assigned_site!=plan.origin ||
+           co->second.location!=plan.destination || co->second.transport_id ||
+           family.current_residence(plan.co_parent_id)!=plan.origin ||
+           voy==world_.voyages_.end() || voy->second.status!=2 ||
+           !std::binary_search(voy->second.passengers.begin(),
+               voy->second.passengers.end(),plan.co_parent_id))
+            throw std::runtime_error("second parent has no completed physical arrival");
+    }
+    if(plan.dependents.size()>32)
+        throw std::invalid_argument("household manifest exceeds bounded dependent capacity");
+    std::uint64_t previous_child=0;
+    std::set<std::uint64_t> child_receipt_ids{plan.command_id};
+    if(plan.co_parent_id)child_receipt_ids.insert(plan.co_parent_event_id);
+    std::vector<std::pair<std::uint64_t,std::uint64_t>> dependent_bindings;
+    for(const auto& dependent:plan.dependents){
+        if(dependent.child_id<(1ULL<<62) ||
+           dependent.child_id<=previous_child || !dependent.event_id ||
+           !child_receipt_ids.insert(dependent.event_id).second ||
+           world_.npc_records().count(dependent.child_id) ||
+           world_.npc_casualties().count(dependent.child_id) ||
+           family.current_residence(dependent.child_id)!=plan.origin)
+            throw std::runtime_error("dependent manifest is invalid or already moved");
+        // A change of census address is NOT proof that this child traveled.
+        // Require completed physical berth/custody evidence on the guardian's
+        // actual ferry, with arrival before this migration step.
+        bool arrived=false;
+        for(const auto& leg:store_->dependent_travel(plan.family_scope)){
+            if(leg.child_id==dependent.child_id && leg.guardian_id==plan.npc_id &&
+               leg.co_guardian_id==plan.co_parent_id &&
+               leg.transport_id==plan.transport_id && leg.origin==plan.origin &&
+               leg.destination==plan.destination && leg.status==2 &&
+               leg.arrival_generation<=generation_ &&
+               leg.termination_kind==0)arrived=true;
+        }
+        if(!arrived)throw std::runtime_error("child has no physically completed ferry voyage");
+        previous_child=dependent.child_id;
+        dependent_bindings.emplace_back(dependent.child_id,dependent.event_id);
+    }
+    const auto member_count=1ULL+(plan.co_parent_id?1ULL:0ULL)+dependent_bindings.size();
+    if(src.family_population<member_count)
+        throw std::runtime_error("household would overdraw source census");
+    next.step();
+    const std::vector<Event> delta(next.events().begin()+
+        static_cast<std::ptrdiff_t>(before),next.events().end());
+    if(delta.size()!=1 || delta[0].command_id!=plan.command_id ||
+       delta[0].result!=Outcome::Applied || next.npc_records().size()!=initial_named ||
+       next.npc_casualties().size()!=world_.npc_casualties().size())
+        throw std::runtime_error("migration did not physically execute exactly once");
+    const auto moved=next.npc_records().find(plan.npc_id);
+    if(plan.co_parent_id){
+        const auto co=next.npc_records().find(plan.co_parent_id);
+        if(co==next.npc_records().end() || co->second.home_ship!=plan.destination ||
+           co->second.assigned_site!=plan.destination ||
+           co->second.location!=plan.destination || co->second.transport_id)
+            throw std::runtime_error("second parent's residence failed atomic execution");
+    }
+    if(moved==next.npc_records().end() || moved->second.home_ship!=plan.destination ||
+       moved->second.assigned_site!=plan.destination ||
+       moved->second.location!=plan.destination || moved->second.transport_id)
+        throw std::runtime_error("migration execution changed unexpected custody");
+    const auto activity=std::vector<ActivityEvent>(next.activity_events().begin()+
+        static_cast<std::ptrdiff_t>(prior_activity),next.activity_events().end());
+    const auto effect=[&](sqlite3* db,std::uint64_t committed_generation){
+        NpcAppearanceStore joined(db,plan.family_scope,plan.family_seed,
+            [&](std::uint64_t id){return next.npc_records().count(id)!=0;});
+        const auto authorizer=[&](auto npc,auto orig,auto dest){
+            if(orig!=plan.origin || dest!=plan.destination)return false;
+            if(npc==plan.npc_id)return moved->second.home_ship==dest &&
+                old->second.home_ship==orig;
+            if(npc==plan.co_parent_id && plan.co_parent_id){
+                const auto earlier=world_.npc_records().find(npc);
+                const auto later=next.npc_records().find(npc);
+                return earlier!=world_.npc_records().end() &&
+                    later!=next.npc_records().end() &&
+                    earlier->second.home_ship==orig && later->second.home_ship==dest;
+            }
+            return false;
+        };
+        std::vector<NpcMoveRecord> household_moves;
+        if(dependent_bindings.empty() && !plan.co_parent_id)
+            household_moves.push_back(joined.record_move(plan.command_id,plan.npc_id,
+                plan.origin,plan.destination,next.tick(),plan.expected_origin_family_revision,
+                plan.expected_destination_family_revision,authorizer));
+        else
+            household_moves=joined.record_guardian_household_moves(plan.command_id,plan.npc_id,
+                dependent_bindings,plan.origin,plan.destination,next.tick(),
+                plan.expected_origin_family_revision,
+                plan.expected_destination_family_revision,authorizer,
+                plan.co_parent_id,plan.co_parent_event_id);
+        const auto& move=household_moves.front();
+        const auto region_revision=region.commit_migration_in_world_transaction(
+            db,plan.expected_region_revision,plan.expected_owner_generation,next.tick(),
+            plan.origin_colony,plan.destination_colony,src.family_population,
+            dst.family_population,std::to_string(plan.command_id),member_count);
+        run(db,"CREATE TABLE IF NOT EXISTS sg_society_migration ("
+            "command_id TEXT PRIMARY KEY,world_generation INTEGER NOT NULL,"
+            "tick INTEGER NOT NULL,family_scope TEXT NOT NULL,"
+            "region_scope TEXT NOT NULL,region_revision INTEGER NOT NULL,"
+            "owner_generation INTEGER NOT NULL,origin TEXT NOT NULL,"
+            "destination TEXT NOT NULL,origin_colony TEXT NOT NULL,"
+            "destination_colony TEXT NOT NULL,npc_id TEXT NOT NULL,"
+            "transport_id TEXT NOT NULL,origin_family_revision INTEGER NOT NULL,"
+            "destination_family_revision INTEGER NOT NULL,"
+            "household_count INTEGER NOT NULL DEFAULT 1 CHECK(household_count>=1),"
+            "physical_manifest INTEGER NOT NULL DEFAULT 0 CHECK(physical_manifest IN (0,1)),"
+            "co_parent_id TEXT NOT NULL DEFAULT '0',"
+            "co_parent_event TEXT NOT NULL DEFAULT '0')");
+        // Existing v41 saves have the 15-column schema. This is an additive,
+        // transactional migration; older receipts acquire default count 1.
+        bool has_count=false;
+        {
+            Statement info(db,"PRAGMA table_info(sg_society_migration)");
+            while(info.row())if(sqlite_str(info.get(),1)=="household_count")has_count=true;
+        }
+        if(!has_count)run(db,"ALTER TABLE sg_society_migration ADD COLUMN "
+                          "household_count INTEGER NOT NULL DEFAULT 1");
+        bool has_physical=false;
+        {Statement info(db,"PRAGMA table_info(sg_society_migration)");
+         while(info.row())if(sqlite_str(info.get(),1)=="physical_manifest")has_physical=true;}
+        if(!has_physical)run(db,"ALTER TABLE sg_society_migration ADD COLUMN "
+                             "physical_manifest INTEGER NOT NULL DEFAULT 0");
+        bool has_co_parent=false;
+        {Statement info(db,"PRAGMA table_info(sg_society_migration)");
+         while(info.row())if(sqlite_str(info.get(),1)=="co_parent_id")has_co_parent=true;}
+        if(!has_co_parent){
+            run(db,"ALTER TABLE sg_society_migration ADD COLUMN "
+                   "co_parent_id TEXT NOT NULL DEFAULT '0'");
+            run(db,"ALTER TABLE sg_society_migration ADD COLUMN "
+                   "co_parent_event TEXT NOT NULL DEFAULT '0'");
+        }
+        Statement receipt(db,"INSERT INTO sg_society_migration VALUES "
+            "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+        receipt.text(1,std::to_string(plan.command_id));
+        receipt.i64(2,static_cast<std::int64_t>(committed_generation));
+        receipt.i64(3,static_cast<std::int64_t>(next.tick()));
+        receipt.text(4,plan.family_scope);receipt.text(5,plan.region_scope);
+        receipt.i64(6,static_cast<std::int64_t>(region_revision));
+        receipt.i64(7,static_cast<std::int64_t>(plan.expected_owner_generation));
+        receipt.text(8,std::to_string(plan.origin));
+        receipt.text(9,std::to_string(plan.destination));
+        receipt.text(10,plan.origin_colony);receipt.text(11,plan.destination_colony);
+        receipt.text(12,std::to_string(plan.npc_id));
+        receipt.text(13,std::to_string(plan.transport_id));
+        receipt.i64(14,static_cast<std::int64_t>(move.origin_revision));
+        receipt.i64(15,static_cast<std::int64_t>(move.destination_revision));
+        receipt.i64(16,static_cast<std::int64_t>(member_count));
+        receipt.i64(17,dependent_bindings.empty()?0:1);
+        receipt.text(18,std::to_string(plan.co_parent_id));
+        receipt.text(19,std::to_string(plan.co_parent_event_id));
+        receipt.execute();
+        if(member_count>1){
+            run(db,"CREATE TABLE IF NOT EXISTS sg_society_household_member ("
+                "parent_command_id TEXT NOT NULL,event_id TEXT NOT NULL,"
+                "family_scope TEXT NOT NULL,child_id TEXT NOT NULL,"
+                "guardian_id TEXT NOT NULL,origin TEXT NOT NULL,destination TEXT NOT NULL,"
+                "origin_revision INTEGER NOT NULL,destination_revision INTEGER NOT NULL,"
+                "PRIMARY KEY(parent_command_id,event_id,child_id),"
+                "UNIQUE(family_scope,event_id))");
+            for(std::size_t i=plan.co_parent_id?2:1;i<household_moves.size();++i){
+                const auto& m=household_moves[i];
+                Statement child(db,"INSERT INTO sg_society_household_member "
+                    "VALUES(?,?,?,?,?,?,?,?,?)");
+                child.text(1,std::to_string(plan.command_id));
+                child.text(2,std::to_string(m.event_id));
+                child.text(3,plan.family_scope);
+                child.text(4,std::to_string(m.npc_id));
+                child.text(5,std::to_string(plan.npc_id));
+                child.text(6,std::to_string(plan.origin));
+                child.text(7,std::to_string(plan.destination));
+                child.i64(8,static_cast<std::int64_t>(m.origin_revision));
+                child.i64(9,static_cast<std::int64_t>(m.destination_revision));
+                child.execute();
+            }
+        }
+    };
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,delta,due,
+                   activity,fail,nullptr,nullptr,effect);
+    world_.swap(next);
+    ++generation_;
+}
+
+void PersistentWorld::step_with_dependent_transport(
+    const DependentTravelPlan& plan,FailPoint fail){
+    if(plan.expected_world_generation!=generation_ || !plan.command_id ||
+       !plan.transport_id || !plan.guardian_id || !plan.origin ||
+       !plan.destination || plan.origin==plan.destination || !plan.ferry ||
+       plan.family_scope.empty() || !plan.family_seed ||
+       plan.child_ids.empty() || plan.child_ids.size()>15 ||
+       !std::is_sorted(plan.child_ids.begin(),plan.child_ids.end()) ||
+       std::adjacent_find(plan.child_ids.begin(),plan.child_ids.end())!=plan.child_ids.end() ||
+       (plan.co_guardian_id && (plan.co_guardian_id==plan.guardian_id ||
+          plan.region_scope.empty() || !plan.expected_owner_generation)))
+        throw std::invalid_argument("invalid or stale physical dependent travel plan");
+    auto next=world_;
+    const auto first=next.events().size(),first_activity=next.activity_events().size();
+    std::map<std::uint64_t,Command> due;
+    if(auto it=next.commands_.find(next.tick()+1);it!=next.commands_.end())
+        for(const auto& c:it->second)due.emplace(c.id,c);
+    if(due.size()!=1 || !due.count(plan.command_id))
+        throw std::runtime_error("dependent travel requires exactly one due host command");
+    const auto& cmd=due.at(plan.command_id);
+    const auto expected=plan.boarding ? Action::HostEmbarkPassengers : Action::HostDisembarkPassengers;
+    if(cmd.action!=expected || cmd.issuer!=Simulation::kServerAuthority ||
+       cmd.actor!=plan.ferry || cmd.target!=(plan.boarding ? plan.origin:plan.destination) ||
+       cmd.transport_id!=plan.transport_id ||
+       std::find(cmd.passenger_ids.begin(),cmd.passenger_ids.end(),plan.guardian_id)==
+           cmd.passenger_ids.end() ||
+       (plan.co_guardian_id && std::find(cmd.passenger_ids.begin(),
+           cmd.passenger_ids.end(),plan.co_guardian_id)==cmd.passenger_ids.end()))
+        throw std::runtime_error("child manifest not bound to actual guardian ferry command");
+    NpcAppearanceStore family(store_->sqlite_path(),plan.family_scope,plan.family_seed,
+        [&](std::uint64_t id){return world_.npc_records().count(id)!=0;});
+    if(family.current_residence(plan.guardian_id)!=plan.origin ||
+       !world_.colony_ship(plan.origin) || !world_.colony_ship(plan.destination) ||
+       !world_.colony_ship(plan.ferry))
+        throw std::runtime_error("invalid child source, destination or guardian identity");
+    auto before=world_.npc_records().find(plan.guardian_id);
+    if(before==world_.npc_records().end() ||
+       before->second.location!=(plan.boarding?plan.origin:plan.ferry) ||
+       before->second.home_ship!=plan.origin ||
+       before->second.transport_id!=(plan.boarding?0:plan.transport_id))
+        throw std::runtime_error("guardian is not in expected physical custody");
+    if(plan.co_guardian_id){
+        const auto co=world_.npc_records().find(plan.co_guardian_id);
+        if(co==world_.npc_records().end() ||
+           family.current_residence(plan.co_guardian_id)!=plan.origin ||
+           co->second.home_ship!=plan.origin ||
+           co->second.location!=(plan.boarding?plan.origin:plan.ferry) ||
+           co->second.transport_id!=(plan.boarding?0:plan.transport_id))
+            throw std::runtime_error("second parent is not physically co-traveling");
+        // This is a *preflight* hint; the authoritative CAS is rechecked
+        // while holding the SQLite world transaction below.
+        regional_events::CheckpointStore checkpoint(store_->sqlite_path(),plan.region_scope);
+        regional_events::RegionalModeAuthority region(checkpoint);
+        const auto owner=region.state();
+        if(owner.generation!=plan.expected_owner_generation ||
+           owner.owner!=regional_events::SimulationOwner::Cold ||
+           owner.phase!=regional_events::TransitionPhase::Stable)
+            throw std::runtime_error("paired-family region lacks stable cold authority");
+    }
+    // Each child must have a real ART02 birth and current legal residence,
+    // but remains a non-worker cohort identity rather than an NPC clone.
+    sqlite3* verify=nullptr;
+    if(sqlite3_open_v2(store_->sqlite_path().c_str(),&verify,SQLITE_OPEN_READONLY,nullptr)!=SQLITE_OK){
+        if(verify)sqlite3_close(verify);
+        throw std::runtime_error("cannot inspect dependent births");
+    }
+    try{
+        for(auto child:plan.child_ids){
+            if(child<(1ULL<<62) || world_.npc_records().count(child) ||
+               family.current_residence(child)!=plan.origin)
+                throw std::runtime_error("dependent identity or residence invalid");
+            Statement birth(verify,"SELECT parent_a,parent_b FROM npc_family_births "
+                "WHERE scope=? AND child_id=?");
+            birth.text(1,plan.family_scope);birth.text(2,std::to_string(child));
+            if(!birth.row())throw std::runtime_error("child lacks ART02 birth certificate");
+            const auto a=parse_u64(sqlite3_column_text(birth.get(),0));
+            const auto b=parse_u64(sqlite3_column_text(birth.get(),1));
+            if((a!=plan.guardian_id && b!=plan.guardian_id) ||
+               (plan.co_guardian_id && !
+                  ((a==plan.guardian_id && b==plan.co_guardian_id) ||
+                   (b==plan.guardian_id && a==plan.co_guardian_id))) || birth.row())
+                throw std::runtime_error("child/guardian lineage invalid");
+        }
+        // Boarding a guardian while omitting one of their currently resident
+        // dependents is not a complete physical family itinerary.
+        Statement all(verify,"SELECT child_id FROM npc_family_births WHERE scope=? "
+            "AND (parent_a=? OR parent_b=?) ORDER BY child_id");
+        all.text(1,plan.family_scope);
+        all.text(2,std::to_string(plan.guardian_id));
+        all.text(3,std::to_string(plan.guardian_id));
+        std::vector<std::uint64_t> actual;
+        while(all.row()){
+            const auto child=parse_u64(sqlite3_column_text(all.get(),0));
+            if(family.current_residence(child)==plan.origin)actual.push_back(child);
+        }
+        if(actual!=plan.child_ids)
+            throw std::runtime_error("unmanifested guardian dependents");
+    }catch(...){sqlite3_close(verify);throw;}
+    sqlite3_close(verify);
+    const auto legs=store_->dependent_travel(plan.family_scope);
+    if(plan.boarding){
+        std::uint64_t adult_aboard=0;
+        for(const auto& [id,n]:world_.npc_records()){
+            (void)id;
+            if(n.location==plan.ferry && n.transport_id)++adult_aboard;
+        }
+        const auto active=store_->active_dependent_berths(plan.ferry);
+        if(active<0 || adult_aboard+static_cast<std::uint64_t>(active)+
+           cmd.passenger_ids.size()+plan.child_ids.size()>16)
+            throw std::runtime_error("family boarding exceeds physical 16-seat limit");
+        for(auto child:plan.child_ids)for(const auto& leg:legs){
+            if(leg.child_id!=child)continue;
+            if(leg.status==1 || (leg.status==2 &&
+               family.current_residence(child)!=leg.destination))
+                throw std::runtime_error("dependent already traveling or arrival unsettled");
+            if(leg.transport_id==plan.transport_id)
+                throw std::runtime_error("dependent voyage ID reused");
+        }
+    }else{
+        for(auto child:plan.child_ids){
+            std::size_t matched=0;
+            for(const auto& leg:legs)if(leg.child_id==child &&
+                leg.transport_id==plan.transport_id && leg.status==1 &&
+                leg.guardian_id==plan.guardian_id &&
+                leg.co_guardian_id==plan.co_guardian_id &&
+                leg.ferry==plan.ferry &&
+                leg.origin==plan.origin && leg.destination==plan.destination)++matched;
+            if(matched!=1)throw std::runtime_error("child is not aboard this ferry voyage");
+        }
+    }
+    next.step();
+    const std::vector<Event> delta(next.events().begin()+static_cast<std::ptrdiff_t>(first),
+                                   next.events().end());
+    if(delta.size()!=1 || delta.front().command_id!=plan.command_id ||
+       delta.front().result!=Outcome::Applied)
+        throw std::runtime_error("underlying physical ferry command did not execute");
+    const auto after=next.npc_records().at(plan.guardian_id);
+    if(plan.co_guardian_id){
+        const auto co=next.npc_records().find(plan.co_guardian_id);
+        if(co==next.npc_records().end() ||
+           co->second.location!=(plan.boarding?plan.ferry:plan.destination) ||
+           co->second.transport_id!=(plan.boarding?plan.transport_id:0))
+            throw std::runtime_error("second parent not in committed physical custody");
+    }
+    const auto voy=next.voyages_.find(plan.transport_id);
+    bool resumed_rescue=false;
+    if(!plan.boarding && voy!=next.voyages_.end() &&
+       voy->second.origin!=plan.origin){
+        for(const auto& leg:legs){
+            if(leg.child_id==plan.child_ids.front() &&
+               leg.transport_id==plan.transport_id &&
+               leg.transfer_from_transport && leg.ferry==plan.ferry){
+                const auto parent=world_.voyages_.find(leg.transfer_from_transport);
+                resumed_rescue=parent!=world_.voyages_.end() &&
+                    parent->second.ferry==voy->second.origin &&
+                    parent->second.origin==plan.origin &&
+                    parent->second.rescue_transport_id==plan.transport_id;
+            }
+        }
+    }
+    if(voy==next.voyages_.end() || voy->second.ferry!=plan.ferry ||
+       (voy->second.origin!=plan.origin && !resumed_rescue) ||
+       (plan.boarding ? (voy->second.status!=1 || after.location!=plan.ferry ||
+         after.transport_id!=plan.transport_id) :
+        (voy->second.status!=2 || voy->second.destination!=plan.destination ||
+         after.location!=plan.destination || after.transport_id!=0)))
+        throw std::runtime_error("guardian/voyage custody did not transition");
+    const std::vector<ActivityEvent> activity(next.activity_events().begin()+
+        static_cast<std::ptrdiff_t>(first_activity),next.activity_events().end());
+    const auto effect=[&](sqlite3* db,std::uint64_t gen){
+        if(plan.co_guardian_id){
+            Statement owner(db,"SELECT owner,phase,generation FROM "
+                "sg_regional_mode_authority WHERE scope=?");
+            owner.text(1,plan.region_scope);
+            if(!owner.row() || sqlite3_column_int(owner.get(),0)!=0 ||
+               sqlite3_column_int(owner.get(),1)!=0 ||
+               sqlite3_column_int64(owner.get(),2)!=
+                  static_cast<std::int64_t>(plan.expected_owner_generation) || owner.row())
+                throw std::runtime_error("regional ownership changed during paired-family world commit");
+        }
+        run(db,"CREATE TABLE IF NOT EXISTS sg_dependent_travel ("
+            "family_scope TEXT NOT NULL,child_id TEXT NOT NULL,transport_id TEXT NOT NULL,"
+            "guardian_id TEXT NOT NULL,ferry TEXT NOT NULL,origin TEXT NOT NULL,"
+            "destination TEXT NOT NULL,board_command TEXT NOT NULL,"
+            "arrival_command TEXT,board_generation INTEGER NOT NULL,"
+            "arrival_generation INTEGER,board_tick INTEGER NOT NULL,arrival_tick INTEGER,"
+            "status INTEGER NOT NULL CHECK(status IN (1,2)),"
+            "PRIMARY KEY(family_scope,child_id,transport_id))");
+        if(plan.co_guardian_id){
+            bool has_parent=false;
+            {Statement cols(db,"PRAGMA table_info(sg_dependent_travel)");
+             while(cols.row())if(sqlite_str(cols.get(),1)=="co_guardian_id")has_parent=true;}
+            if(!has_parent)run(db,"ALTER TABLE sg_dependent_travel ADD COLUMN "
+                    "co_guardian_id TEXT NOT NULL DEFAULT '0'");
+        }
+        // 05q6e5b3b: a family's very first child boarding binds its region.
+        // Never retroactively stamp an old, unscoped in-flight voyage with a
+        // new region; legacy child custody stays under conservative global fence.
+        if(plan.boarding && !plan.region_scope.empty()){
+            run(db,"CREATE TABLE IF NOT EXISTS sg_dependent_region_binding ("
+                "family_scope TEXT PRIMARY KEY,region_scope TEXT NOT NULL,"
+                "first_generation INTEGER NOT NULL,first_command TEXT NOT NULL)");
+            run(db,"CREATE TRIGGER IF NOT EXISTS sg_dependent_region_binding_immutable_update "
+                "BEFORE UPDATE ON sg_dependent_region_binding "
+                "BEGIN SELECT RAISE(ABORT,'child region binding immutable'); END");
+            run(db,"CREATE TRIGGER IF NOT EXISTS sg_dependent_region_binding_immutable_delete "
+                "BEFORE DELETE ON sg_dependent_region_binding "
+                "BEGIN SELECT RAISE(ABORT,'child region binding immutable'); END");
+            bool bound=false;
+            {Statement prior(db,"SELECT region_scope FROM sg_dependent_region_binding "
+                "WHERE family_scope=?");prior.text(1,plan.family_scope);
+             if(prior.row()){
+                bound=true;
+                if(sqlite_str(prior.get(),0)!=plan.region_scope||prior.row())
+                    throw std::runtime_error("family region binding cannot change mid-voyage");
+             }}
+            if(!bound){
+                Statement old(db,"SELECT 1 FROM sg_dependent_travel WHERE family_scope=? LIMIT 1");
+                old.text(1,plan.family_scope);
+                if(old.row())throw std::runtime_error("cannot backfill region for legacy child voyages");
+                bool has_anchor=false;
+                {Statement cols(db,"PRAGMA table_info(world_meta)");
+                 while(cols.row())if(sqlite_str(cols.get(),1)=="dependent_region_binding_count")
+                    has_anchor=true;}
+                if(!has_anchor)run(db,"ALTER TABLE world_meta ADD COLUMN "
+                    "dependent_region_binding_count INTEGER NOT NULL DEFAULT 0 "
+                    "CHECK(dependent_region_binding_count>=0)");
+                // The ALTER above runs only for the first binding in this DB.
+                Statement insert(db,"INSERT INTO sg_dependent_region_binding VALUES(?,?,?,?)");
+                insert.text(1,plan.family_scope);insert.text(2,plan.region_scope);
+                insert.i64(3,static_cast<std::int64_t>(gen));
+                insert.text(4,std::to_string(plan.command_id));insert.execute();
+                run(db,"UPDATE world_meta SET dependent_region_binding_count="
+                    "dependent_region_binding_count+1 WHERE singleton=1");
+            }
+        }
+        run(db,"CREATE TABLE IF NOT EXISTS sg_dependent_transport_batch ("
+            "family_scope TEXT NOT NULL,command_id TEXT NOT NULL PRIMARY KEY,"
+            "transport_id TEXT NOT NULL,phase INTEGER NOT NULL,"
+            "member_count INTEGER NOT NULL,world_generation INTEGER NOT NULL)");
+        run(db,"CREATE TABLE IF NOT EXISTS sg_dependent_transport_anchor "
+               "(id INTEGER PRIMARY KEY CHECK(id=1),first_generation INTEGER NOT NULL)");
+        Statement activation(db,"INSERT OR IGNORE INTO sg_dependent_transport_anchor "
+                       "VALUES(1,?)");
+        activation.i64(1,static_cast<std::int64_t>(gen));activation.execute();
+        Statement batch(db,"INSERT INTO sg_dependent_transport_batch VALUES(?,?,?,?,?,?)");
+        batch.text(1,plan.family_scope);
+        batch.text(2,std::to_string(plan.command_id));
+        batch.text(3,std::to_string(plan.transport_id));
+        batch.i64(4,plan.boarding?1:2);
+        batch.i64(5,static_cast<std::int64_t>(plan.child_ids.size()));
+        batch.i64(6,static_cast<std::int64_t>(gen));
+        batch.execute();
+        for(auto child:plan.child_ids){
+            if(plan.boarding){
+                Statement insert(db,"INSERT INTO sg_dependent_travel "
+                    "(family_scope,child_id,transport_id,guardian_id,ferry,origin,destination,"
+                    "board_command,arrival_command,board_generation,arrival_generation,"
+                    "board_tick,arrival_tick,status) VALUES "
+                    "(?,?,?,?,?,?,?,?,NULL,?,NULL,?,NULL,1)");
+                insert.text(1,plan.family_scope);
+                insert.text(2,std::to_string(child));
+                insert.text(3,std::to_string(plan.transport_id));
+                insert.text(4,std::to_string(plan.guardian_id));
+                insert.text(5,std::to_string(plan.ferry));
+                insert.text(6,std::to_string(plan.origin));
+                insert.text(7,std::to_string(plan.destination));
+                insert.text(8,std::to_string(plan.command_id));
+                insert.i64(9,static_cast<std::int64_t>(gen));
+                insert.i64(10,static_cast<std::int64_t>(next.tick()));
+                insert.execute();
+                if(plan.co_guardian_id){
+                    Statement paired(db,"UPDATE sg_dependent_travel SET co_guardian_id=? "
+                        "WHERE family_scope=? AND child_id=? AND transport_id=?");
+                    paired.text(1,std::to_string(plan.co_guardian_id));
+                    paired.text(2,plan.family_scope);
+                    paired.text(3,std::to_string(child));
+                    paired.text(4,std::to_string(plan.transport_id));
+                    paired.execute();
+                    if(sqlite3_changes(db)!=1)
+                        throw std::runtime_error("co-parent custody receipt not saved");
+                }
+            }else{
+                Statement update(db,"UPDATE sg_dependent_travel SET status=2,"
+                    "arrival_command=?,arrival_generation=?,arrival_tick=? "
+                    "WHERE family_scope=? AND child_id=? AND transport_id=? AND "
+                    "guardian_id=? AND ferry=? AND origin=? AND destination=? AND status=1");
+                update.text(1,std::to_string(plan.command_id));
+                update.i64(2,static_cast<std::int64_t>(gen));
+                update.i64(3,static_cast<std::int64_t>(next.tick()));
+                update.text(4,plan.family_scope);
+                update.text(5,std::to_string(child));
+                update.text(6,std::to_string(plan.transport_id));
+                update.text(7,std::to_string(plan.guardian_id));
+                update.text(8,std::to_string(plan.ferry));
+                update.text(9,std::to_string(plan.origin));
+                update.text(10,std::to_string(plan.destination));
+                update.execute();
+                if(sqlite3_changes(db)!=1)
+                    throw std::runtime_error("dependent arrival CAS failed");
+            }
+        }
+        Statement count(db,"SELECT COUNT(*) FROM sg_dependent_travel WHERE ferry=? AND status=1");
+        count.text(1,std::to_string(plan.ferry));
+        if(!count.row() || sqlite3_column_int64(count.get(),0)>16)
+            throw std::runtime_error("physical child berth overbooking");
+    };
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,delta,due,
+                   activity,fail,nullptr,nullptr,effect);
+    world_.swap(next);++generation_;
+}
+
+void PersistentWorld::step_with_dependent_rescue(
+    const DependentRescuePlan& plan,FailPoint fail){
+    if(plan.expected_world_generation!=generation_ || !plan.command_id ||
+       !plan.original_transport || !plan.rescue_transport ||
+       plan.original_transport==plan.rescue_transport ||
+       !plan.guardian_id || !plan.original_ferry || !plan.rescue_ferry ||
+       plan.original_ferry==plan.rescue_ferry || !plan.origin || !plan.destination ||
+       plan.origin==plan.destination || !plan.family_seed ||
+       plan.family_scope.empty() || plan.child_ids.empty() ||
+       plan.child_ids.size()>15 || !std::is_sorted(plan.child_ids.begin(),plan.child_ids.end()) ||
+       std::adjacent_find(plan.child_ids.begin(),plan.child_ids.end())!=plan.child_ids.end() ||
+       (plan.co_guardian_id && (plan.co_guardian_id==plan.guardian_id ||
+          plan.region_scope.empty() || !plan.expected_owner_generation)))
+        throw std::invalid_argument("stale or invalid child rescue plan");
+    auto next=world_;
+    const auto before=next.events().size(),before_activity=next.activity_events().size();
+    std::map<std::uint64_t,Command> due;
+    if(auto it=next.commands_.find(next.tick()+1);it!=next.commands_.end())
+        for(const auto& c:it->second)due.emplace(c.id,c);
+    if(due.size()!=1 || !due.count(plan.command_id))
+        throw std::runtime_error("child rescue requires single scheduled host incident");
+    const auto& command=due.at(plan.command_id);
+    if(command.action!=Action::HostEvacuatePassengers ||
+       command.issuer!=Simulation::kServerAuthority ||
+       command.actor!=plan.original_ferry || command.target!=plan.rescue_ferry ||
+       command.transport_id!=plan.original_transport ||
+       command.amount!=static_cast<std::int64_t>(plan.rescue_transport) ||
+       std::find(command.passenger_ids.begin(),command.passenger_ids.end(),plan.guardian_id)==
+           command.passenger_ids.end() ||
+       (plan.co_guardian_id &&
+        std::find(command.passenger_ids.begin(),command.passenger_ids.end(),
+                  plan.co_guardian_id)==command.passenger_ids.end()))
+        throw std::runtime_error("child rescue incident not bound to guardian manifest");
+    const auto original_voyage=world_.voyages_.find(plan.original_transport);
+    if(original_voyage==world_.voyages_.end() ||
+       original_voyage->second.ferry!=plan.original_ferry ||
+       original_voyage->second.origin!=plan.origin ||
+       (original_voyage->second.status!=1 && original_voyage->second.status!=3))
+        throw std::runtime_error("invalid actual source child voyage");
+    NpcAppearanceStore family(store_->sqlite_path(),plan.family_scope,plan.family_seed,
+        [&](std::uint64_t id){return world_.npc_records().count(id)!=0;});
+    const auto legs=store_->dependent_travel(plan.family_scope);
+    if(store_->active_dependent_berths(plan.original_ferry)!=
+       static_cast<std::int64_t>(plan.child_ids.size()))
+        throw std::runtime_error("rescue must enumerate all children on source ferry");
+    for(auto child:plan.child_ids){
+        std::size_t found=0;
+        for(const auto& leg:legs)if(leg.child_id==child &&
+            leg.transport_id==plan.original_transport && leg.status==1 &&
+            leg.guardian_id==plan.guardian_id &&
+            leg.co_guardian_id==plan.co_guardian_id &&
+            leg.ferry==plan.original_ferry && leg.origin==plan.origin &&
+            leg.destination==plan.destination)++found;
+        if(found!=1 || family.current_residence(child)!=plan.origin)
+            throw std::runtime_error("rescue child missing or in contradictory custody");
+    }
+    for(auto adult:{plan.guardian_id,plan.co_guardian_id}){
+        if(!adult)continue;
+        const auto n=world_.npc_records().find(adult);
+        if(n==world_.npc_records().end() || n->second.location!=plan.original_ferry ||
+           n->second.transport_id!=plan.original_transport)
+            throw std::runtime_error("rescue guardian is not aboard stranded ferry");
+    }
+    if(plan.co_guardian_id){
+        regional_events::CheckpointStore region(store_->sqlite_path(),plan.region_scope);
+        regional_events::RegionalModeAuthority auth(region);
+        const auto owner=auth.state();
+        if(owner.owner!=regional_events::SimulationOwner::Cold ||
+           owner.phase!=regional_events::TransitionPhase::Stable ||
+           owner.generation!=plan.expected_owner_generation)
+            throw std::runtime_error("rescue region ownership is stale");
+    }
+    const auto occupied=store_->active_dependent_berths(plan.rescue_ferry);
+    if(occupied<0 || next.passengers_aboard(plan.rescue_ferry)+
+       static_cast<std::uint64_t>(occupied)+plan.child_ids.size()>16)
+        throw std::runtime_error("receiving child ferry overbooked");
+    next.step();
+    const std::vector<Event> changes(next.events().begin()+
+        static_cast<std::ptrdiff_t>(before),next.events().end());
+    if(changes.size()!=1 || changes[0].command_id!=plan.command_id ||
+       changes[0].result!=Outcome::Applied ||
+       next.voyage_status(plan.original_transport)!=5 ||
+       next.voyage_status(plan.rescue_transport)!=1)
+        throw std::runtime_error("underlying world rescue not applied");
+    for(auto adult:{plan.guardian_id,plan.co_guardian_id}){
+        if(!adult)continue;
+        const auto& n=next.npc_records().at(adult);
+        if(n.location!=plan.rescue_ferry || n.transport_id!=plan.rescue_transport)
+            throw std::runtime_error("rescue parent not aboard receiving ferry");
+    }
+    const std::vector<ActivityEvent> activity(next.activity_events().begin()+
+        static_cast<std::ptrdiff_t>(before_activity),next.activity_events().end());
+    const auto effect=[&](sqlite3* db,std::uint64_t gen){
+        if(plan.co_guardian_id){
+            Statement owner(db,"SELECT owner,phase,generation FROM sg_regional_mode_authority "
+                               "WHERE scope=?");
+            owner.text(1,plan.region_scope);
+            if(!owner.row() || sqlite3_column_int(owner.get(),0)!=0 ||
+               sqlite3_column_int(owner.get(),1)!=0 ||
+               sqlite3_column_int64(owner.get(),2)!=
+                    static_cast<std::int64_t>(plan.expected_owner_generation) || owner.row())
+                throw std::runtime_error("rescue region changed during transaction");
+        }
+        bool has_transfer=false,has_coguardian=false;
+        {Statement columns(db,"PRAGMA table_info(sg_dependent_travel)");
+         while(columns.row()){
+             if(sqlite_str(columns.get(),1)=="transfer_from_transport")has_transfer=true;
+             if(sqlite_str(columns.get(),1)=="co_guardian_id")has_coguardian=true;
+         }}
+        if(!has_coguardian)
+            run(db,"ALTER TABLE sg_dependent_travel ADD COLUMN "
+                   "co_guardian_id TEXT NOT NULL DEFAULT '0'");
+        if(!has_transfer){
+            run(db,"ALTER TABLE sg_dependent_travel ADD COLUMN "
+                   "transfer_from_transport TEXT NOT NULL DEFAULT '0'");
+            run(db,"ALTER TABLE sg_dependent_travel ADD COLUMN "
+                   "termination_kind INTEGER NOT NULL DEFAULT 0 CHECK(termination_kind IN (0,1))");
+        }
+        run(db,"CREATE TABLE IF NOT EXISTS sg_dependent_transport_anchor "
+               "(id INTEGER PRIMARY KEY CHECK(id=1),first_generation INTEGER NOT NULL)");
+        Statement activation(db,"INSERT OR IGNORE INTO sg_dependent_transport_anchor "
+                       "VALUES(1,?)");
+        activation.i64(1,static_cast<std::int64_t>(gen));activation.execute();
+        {Statement binding(db,"SELECT region_scope FROM sg_dependent_region_binding "
+                "WHERE family_scope=?");
+         binding.text(1,plan.family_scope);
+         if(!binding.row()||sqlite_str(binding.get(),0)!=plan.region_scope||binding.row())
+            throw std::runtime_error("rescue requires original family-region custody binding");}
+        Statement batch(db,"INSERT INTO sg_dependent_transport_batch VALUES(?,?,?,?,?,?)");
+        batch.text(1,plan.family_scope);batch.text(2,std::to_string(plan.command_id));
+        batch.text(3,std::to_string(plan.rescue_transport));
+        batch.i64(4,3);batch.i64(5,static_cast<std::int64_t>(plan.child_ids.size()));
+        batch.i64(6,static_cast<std::int64_t>(gen));batch.execute();
+        for(auto child:plan.child_ids){
+            Statement close(db,"UPDATE sg_dependent_travel SET status=2,"
+                "arrival_command=?,arrival_generation=?,arrival_tick=?,termination_kind=1 "
+                "WHERE family_scope=? AND child_id=? AND transport_id=? AND status=1");
+            close.text(1,std::to_string(plan.command_id));
+            close.i64(2,static_cast<std::int64_t>(gen));
+            close.i64(3,static_cast<std::int64_t>(next.tick()));
+            close.text(4,plan.family_scope);close.text(5,std::to_string(child));
+            close.text(6,std::to_string(plan.original_transport));close.execute();
+            if(sqlite3_changes(db)!=1)throw std::runtime_error("child old berth not closed");
+            Statement fresh(db,"INSERT INTO sg_dependent_travel (family_scope,child_id,"
+                "transport_id,guardian_id,ferry,origin,destination,board_command,"
+                "board_generation,board_tick,status,co_guardian_id,transfer_from_transport) "
+                "VALUES(?,?,?,?,?,?,?,?,?, ?,1,?,?)");
+            fresh.text(1,plan.family_scope);fresh.text(2,std::to_string(child));
+            fresh.text(3,std::to_string(plan.rescue_transport));
+            fresh.text(4,std::to_string(plan.guardian_id));
+            fresh.text(5,std::to_string(plan.rescue_ferry));
+            fresh.text(6,std::to_string(plan.origin));
+            fresh.text(7,std::to_string(plan.destination));
+            fresh.text(8,std::to_string(plan.command_id));
+            fresh.i64(9,static_cast<std::int64_t>(gen));
+            fresh.i64(10,static_cast<std::int64_t>(next.tick()));
+            fresh.text(11,std::to_string(plan.co_guardian_id));
+            fresh.text(12,std::to_string(plan.original_transport));fresh.execute();
+        }
+        Statement capacity(db,"SELECT COUNT(*) FROM sg_dependent_travel "
+                              "WHERE ferry=? AND status=1");
+        capacity.text(1,std::to_string(plan.rescue_ferry));
+        if(!capacity.row() ||
+           next.passengers_aboard(plan.rescue_ferry)+
+            static_cast<std::uint64_t>(sqlite3_column_int64(capacity.get(),0))>16)
+            throw std::runtime_error("receiving child occupancy over physical capacity");
+    };
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   changes,due,activity,fail,nullptr,nullptr,effect);
+    world_.swap(next);++generation_;
+}
+
+// DEMOG-05q6e5b4b: one world step and one SQL transaction for EVERY family
+// on a real adult ferry. Family-scoped receipts share the true command ID.
+namespace {
+void multi_batch_schema(sqlite3* db){
+    bool exists=false,composite=false;
+    {Statement found(db,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                        "AND name='sg_dependent_transport_batch'");exists=found.row();}
+    if(exists){
+        int family_pk=0,command_pk=0;
+        Statement cols(db,"PRAGMA table_info(sg_dependent_transport_batch)");
+        while(cols.row()){
+            const auto name=sqlite_str(cols.get(),1);
+            if(name=="family_scope")family_pk=sqlite3_column_int(cols.get(),5);
+            if(name=="command_id")command_pk=sqlite3_column_int(cols.get(),5);
+        }
+        composite=family_pk==1&&command_pk==2;
+        if(!composite){
+            run(db,"ALTER TABLE sg_dependent_transport_batch RENAME TO "
+                   "sg_dependent_transport_batch_legacy_upgrade");
+        }
+    }
+    if(!composite){
+        run(db,"CREATE TABLE sg_dependent_transport_batch ("
+               "family_scope TEXT NOT NULL,command_id TEXT NOT NULL,"
+               "transport_id TEXT NOT NULL,phase INTEGER NOT NULL,"
+               "member_count INTEGER NOT NULL,world_generation INTEGER NOT NULL,"
+               "PRIMARY KEY(family_scope,command_id))");
+        if(exists){
+            run(db,"INSERT INTO sg_dependent_transport_batch SELECT * "
+                   "FROM sg_dependent_transport_batch_legacy_upgrade");
+            run(db,"DROP TABLE sg_dependent_transport_batch_legacy_upgrade");
+        }
+    }
+}
+void multi_schema(sqlite3* db){
+    run(db,"CREATE TABLE IF NOT EXISTS sg_dependent_travel ("
+        "family_scope TEXT NOT NULL,child_id TEXT NOT NULL,transport_id TEXT NOT NULL,"
+        "guardian_id TEXT NOT NULL,ferry TEXT NOT NULL,origin TEXT NOT NULL,"
+        "destination TEXT NOT NULL,board_command TEXT NOT NULL,arrival_command TEXT,"
+        "board_generation INTEGER NOT NULL,arrival_generation INTEGER,"
+        "board_tick INTEGER NOT NULL,arrival_tick INTEGER,"
+        "status INTEGER NOT NULL CHECK(status IN (1,2)),"
+        "PRIMARY KEY(family_scope,child_id,transport_id))");
+    bool co=false,from=false,kind=false;
+    {Statement cols(db,"PRAGMA table_info(sg_dependent_travel)");
+     while(cols.row()){
+        const auto name=sqlite_str(cols.get(),1);
+        if(name=="co_guardian_id")co=true;
+        if(name=="transfer_from_transport")from=true;
+        if(name=="termination_kind")kind=true;
+     }}
+    if(!co)run(db,"ALTER TABLE sg_dependent_travel ADD COLUMN "
+               "co_guardian_id TEXT NOT NULL DEFAULT '0'");
+    if(!from)run(db,"ALTER TABLE sg_dependent_travel ADD COLUMN "
+                 "transfer_from_transport TEXT NOT NULL DEFAULT '0'");
+    if(!kind)run(db,"ALTER TABLE sg_dependent_travel ADD COLUMN "
+                 "termination_kind INTEGER NOT NULL DEFAULT 0 CHECK(termination_kind IN (0,1))");
+    multi_batch_schema(db);
+    run(db,"CREATE TABLE IF NOT EXISTS sg_dependent_transport_anchor "
+           "(id INTEGER PRIMARY KEY CHECK(id=1),first_generation INTEGER NOT NULL)");
+    run(db,"CREATE TABLE IF NOT EXISTS sg_dependent_region_binding ("
+           "family_scope TEXT PRIMARY KEY,region_scope TEXT NOT NULL,"
+           "first_generation INTEGER NOT NULL,first_command TEXT NOT NULL)");
+    run(db,"CREATE TRIGGER IF NOT EXISTS sg_dependent_region_binding_immutable_update "
+           "BEFORE UPDATE ON sg_dependent_region_binding "
+           "BEGIN SELECT RAISE(ABORT,'child region binding immutable'); END");
+    run(db,"CREATE TRIGGER IF NOT EXISTS sg_dependent_region_binding_immutable_delete "
+           "BEFORE DELETE ON sg_dependent_region_binding "
+           "BEGIN SELECT RAISE(ABORT,'child region binding immutable'); END");
+    bool anchor=false;
+    {Statement cols(db,"PRAGMA table_info(world_meta)");
+     while(cols.row())if(sqlite_str(cols.get(),1)=="dependent_region_binding_count")anchor=true;}
+    if(!anchor)run(db,"ALTER TABLE world_meta ADD COLUMN "
+                   "dependent_region_binding_count INTEGER NOT NULL DEFAULT 0 "
+                   "CHECK(dependent_region_binding_count>=0)");
+}
+void multi_region_bind(sqlite3* db,const DependentFamilyManifest& family,
+                       std::uint64_t command,std::uint64_t gen,bool boarding){
+    Statement exists(db,"SELECT region_scope FROM sg_dependent_region_binding "
+                        "WHERE family_scope=?");exists.text(1,family.family_scope);
+    if(exists.row()){
+        if(sqlite_str(exists.get(),0)!=family.region_scope||exists.row())
+            throw std::runtime_error("family region authority binding mismatch");
+        return;
+    }
+    if(!boarding)throw std::runtime_error("unbound multi-family rescue region");
+    Statement legacy(db,"SELECT 1 FROM sg_dependent_travel WHERE family_scope=? LIMIT 1");
+    legacy.text(1,family.family_scope);
+    if(legacy.row())throw std::runtime_error("cannot add regional provenance to old child travel");
+    Statement insert(db,"INSERT INTO sg_dependent_region_binding VALUES(?,?,?,?)");
+    insert.text(1,family.family_scope);insert.text(2,family.region_scope);
+    insert.i64(3,static_cast<std::int64_t>(gen));
+    insert.text(4,std::to_string(command));insert.execute();
+    run(db,"UPDATE world_meta SET dependent_region_binding_count="
+           "dependent_region_binding_count+1 WHERE singleton=1");
+}
+void multi_receipt(sqlite3* db,const DependentFamilyManifest& family,
+                   std::uint64_t command,std::uint64_t voyage,unsigned phase,
+                   std::uint64_t gen){
+    Statement batch(db,"INSERT INTO sg_dependent_transport_batch VALUES(?,?,?,?,?,?)");
+    batch.text(1,family.family_scope);batch.text(2,std::to_string(command));
+    batch.text(3,std::to_string(voyage));batch.i64(4,phase);
+    batch.i64(5,static_cast<std::int64_t>(family.child_ids.size()));
+    batch.i64(6,static_cast<std::int64_t>(gen));batch.execute();
+}
+void multi_owner(sqlite3* db,const DependentFamilyManifest& family){
+    Statement owner(db,"SELECT owner,phase,generation FROM sg_regional_mode_authority "
+                       "WHERE scope=?");owner.text(1,family.region_scope);
+    if(!owner.row() || sqlite3_column_int(owner.get(),0)!=0 ||
+       sqlite3_column_int(owner.get(),1)!=0 ||
+       sqlite3_column_int64(owner.get(),2)!=
+           static_cast<std::int64_t>(family.expected_owner_generation) || owner.row())
+        throw std::runtime_error("multi-family region custody owner changed");
+}
+} // namespace
+
+void PersistentWorld::step_with_multi_dependent_transport(
+        const MultiDependentTransportPlan& p,FailPoint fail){
+    if(p.expected_world_generation!=generation_||!p.command_id||!p.transport_id||
+       !p.ferry||!p.origin||!p.destination||p.origin==p.destination||
+       p.families.size()<2||p.families.size()>8)
+        throw std::invalid_argument("invalid multi-family boarding/arrival plan");
+    auto next=world_;
+    const auto first=next.events().size(),activities=next.activity_events().size();
+    std::map<std::uint64_t,Command> due;
+    if(auto it=next.commands_.find(next.tick()+1);it!=next.commands_.end())
+        for(const auto& c:it->second)due.emplace(c.id,c);
+    if(due.size()!=1||!due.count(p.command_id))
+        throw std::runtime_error("multi-family command must be only due world action");
+    const auto& cmd=due.at(p.command_id);
+    if(cmd.issuer!=Simulation::kServerAuthority||
+       cmd.action!=(p.boarding?Action::HostEmbarkPassengers:Action::HostDisembarkPassengers)||
+       cmd.actor!=p.ferry||cmd.target!=(p.boarding?p.origin:p.destination)||
+       cmd.transport_id!=p.transport_id)
+        throw std::runtime_error("invalid real multi-family ferry command");
+    std::size_t total_children=0;
+    std::set<std::uint64_t> all_children,all_adults;
+    std::string previous_scope;
+    for(const auto& f:p.families){
+        if(f.family_scope.empty()||f.region_scope.empty()||
+           f.family_scope<=previous_scope||!f.family_seed||!f.guardian_id||
+           !f.expected_owner_generation ||
+           (f.co_guardian_id&&f.co_guardian_id==f.guardian_id)||
+           f.child_ids.empty()||f.child_ids.size()>15||
+           !std::is_sorted(f.child_ids.begin(),f.child_ids.end())||
+           std::adjacent_find(f.child_ids.begin(),f.child_ids.end())!=f.child_ids.end())
+            throw std::invalid_argument("noncanonical family manifest");
+        previous_scope=f.family_scope;
+        for(const auto adult:{f.guardian_id,f.co_guardian_id}){
+            if(!adult)continue;
+            if(!all_adults.insert(adult).second ||
+               std::find(cmd.passenger_ids.begin(),cmd.passenger_ids.end(),adult)==
+                   cmd.passenger_ids.end())
+                throw std::runtime_error("guardian omitted or duplicated across families");
+            const auto n=world_.npc_records().find(adult);
+            if(n==world_.npc_records().end()||n->second.home_ship!=p.origin||
+               n->second.location!=(p.boarding?p.origin:p.ferry)||
+               n->second.transport_id!=(p.boarding?0:p.transport_id))
+                throw std::runtime_error("multi-family parent has wrong current custody");
+        }
+        NpcAppearanceStore family(store_->sqlite_path(),f.family_scope,f.family_seed,
+            [&](std::uint64_t id){return world_.npc_records().count(id)!=0;});
+        if(family.current_residence(f.guardian_id)!=p.origin||
+           (f.co_guardian_id&&family.current_residence(f.co_guardian_id)!=p.origin))
+            throw std::runtime_error("multi-family guardian not enrolled at original home");
+        sqlite3* verify=nullptr;
+        if(sqlite3_open_v2(store_->sqlite_path().c_str(),&verify,
+             SQLITE_OPEN_READONLY,nullptr)!=SQLITE_OK){
+            if(verify)sqlite3_close(verify);
+            throw std::runtime_error("family birth DB unavailable");
+        }
+        try{
+            std::vector<std::uint64_t> expected;
+            Statement births(verify,"SELECT child_id,parent_a,parent_b FROM npc_family_births "
+                "WHERE scope=? AND (parent_a=? OR parent_b=?) ORDER BY child_id");
+            births.text(1,f.family_scope);births.text(2,std::to_string(f.guardian_id));
+            births.text(3,std::to_string(f.guardian_id));
+            while(births.row()){
+                const auto child=parse_u64(sqlite3_column_text(births.get(),0));
+                const auto a=parse_u64(sqlite3_column_text(births.get(),1));
+                const auto b=parse_u64(sqlite3_column_text(births.get(),2));
+                if(f.co_guardian_id&&!((a==f.guardian_id&&b==f.co_guardian_id)||
+                   (a==f.co_guardian_id&&b==f.guardian_id)))
+                    throw std::runtime_error("wrong multi-family biological parents");
+                if(family.current_residence(child)==p.origin)expected.push_back(child);
+            }
+            if(expected!=f.child_ids)throw std::runtime_error("incomplete multi-family child manifest");
+        }catch(...){sqlite3_close(verify);throw;}
+        sqlite3_close(verify);
+        for(const auto child:f.child_ids){
+            if(child<(1ULL<<62)||world_.npc_records().count(child)||
+               !all_children.insert(child).second)
+                throw std::runtime_error("reused, duplicated or playable dependent ID");
+            const auto legs=store_->dependent_travel(f.family_scope);
+            if(p.boarding){
+                for(const auto& leg:legs)if(leg.child_id==child&&
+                    (leg.status==1||leg.transport_id==p.transport_id))
+                    throw std::runtime_error("minor already traveling");
+            }else{
+                std::size_t count=0;
+                for(const auto& leg:legs)if(leg.child_id==child&&leg.status==1&&
+                    leg.transport_id==p.transport_id&&leg.ferry==p.ferry&&
+                    leg.guardian_id==f.guardian_id&&leg.co_guardian_id==f.co_guardian_id&&
+                    leg.origin==p.origin&&leg.destination==p.destination)++count;
+                if(count!=1)throw std::runtime_error("minor missing from destination arrival");
+            }
+        }
+        regional_events::CheckpointStore r(store_->sqlite_path(),f.region_scope);
+        regional_events::RegionalModeAuthority authority(r);
+        const auto owner=authority.state();
+        if(owner.owner!=regional_events::SimulationOwner::Cold||
+           owner.phase!=regional_events::TransitionPhase::Stable||
+           owner.generation!=f.expected_owner_generation)
+            throw std::runtime_error("multi-family owner not stable cold");
+        total_children+=f.child_ids.size();
+    }
+    if(total_children+cmd.passenger_ids.size()>16)
+        throw std::runtime_error("adult/child manifest exceeds real ferry capacity");
+    if(p.boarding){
+        if(store_->active_dependent_berths(p.ferry)!=0||
+           next.passengers_aboard(p.ferry)+cmd.passenger_ids.size()+total_children>16)
+            throw std::runtime_error("multi-family boarding exceeds occupied ferry berths");
+    }else if(store_->active_dependent_berths(p.ferry)!=
+              static_cast<std::int64_t>(total_children))
+        throw std::runtime_error("unmanifested child aboard receiving ferry");
+    next.step();
+    const std::vector<Event> delta(next.events().begin()+static_cast<std::ptrdiff_t>(first),
+                                   next.events().end());
+    if(delta.size()!=1||delta[0].command_id!=p.command_id||
+       delta[0].result!=Outcome::Applied||
+       next.voyage_status(p.transport_id)!=(p.boarding?1U:2U))
+        throw std::runtime_error("physical multi-family ferry command not applied");
+    for(const auto adult:all_adults){
+        const auto& n=next.npc_records().at(adult);
+        if(n.location!=(p.boarding?p.ferry:p.destination)||
+           n.transport_id!=(p.boarding?p.transport_id:0))
+            throw std::runtime_error("family adult missing from committed ferry state");
+    }
+    const std::vector<ActivityEvent> activity(next.activity_events().begin()+
+        static_cast<std::ptrdiff_t>(activities),next.activity_events().end());
+    const auto effect=[&](sqlite3* db,std::uint64_t gen){
+        multi_schema(db);
+        for(const auto& f:p.families){
+            multi_owner(db,f);
+            multi_region_bind(db,f,p.command_id,gen,p.boarding);
+            multi_receipt(db,f,p.command_id,p.transport_id,p.boarding?1U:2U,gen);
+            for(const auto child:f.child_ids){
+                if(p.boarding){
+                    Statement ins(db,"INSERT INTO sg_dependent_travel (family_scope,child_id,"
+                        "transport_id,guardian_id,ferry,origin,destination,board_command,"
+                        "board_generation,board_tick,status,co_guardian_id) "
+                        "VALUES(?,?,?,?,?,?,?,?,?,?,1,?)");
+                    ins.text(1,f.family_scope);ins.text(2,std::to_string(child));
+                    ins.text(3,std::to_string(p.transport_id));
+                    ins.text(4,std::to_string(f.guardian_id));
+                    ins.text(5,std::to_string(p.ferry));
+                    ins.text(6,std::to_string(p.origin));
+                    ins.text(7,std::to_string(p.destination));
+                    ins.text(8,std::to_string(p.command_id));
+                    ins.i64(9,static_cast<std::int64_t>(gen));
+                    ins.i64(10,static_cast<std::int64_t>(next.tick()));
+                    ins.text(11,std::to_string(f.co_guardian_id));ins.execute();
+                }else{
+                    Statement update(db,"UPDATE sg_dependent_travel SET status=2,"
+                        "arrival_command=?,arrival_generation=?,arrival_tick=? WHERE "
+                        "family_scope=? AND child_id=? AND transport_id=? AND status=1");
+                    update.text(1,std::to_string(p.command_id));
+                    update.i64(2,static_cast<std::int64_t>(gen));
+                    update.i64(3,static_cast<std::int64_t>(next.tick()));
+                    update.text(4,f.family_scope);update.text(5,std::to_string(child));
+                    update.text(6,std::to_string(p.transport_id));update.execute();
+                    if(sqlite3_changes(db)!=1)throw std::runtime_error("failed multi-family minor arrival CAS");
+                }
+            }
+        }
+        Statement anchor(db,"INSERT OR IGNORE INTO sg_dependent_transport_anchor "
+                         "VALUES(1,?)");anchor.i64(1,static_cast<std::int64_t>(gen));anchor.execute();
+        Statement capacity(db,"SELECT COUNT(*) FROM sg_dependent_travel WHERE ferry=? AND status=1");
+        capacity.text(1,std::to_string(p.ferry));
+        if(!capacity.row()||next.passengers_aboard(p.ferry)+
+           static_cast<std::uint64_t>(sqlite3_column_int64(capacity.get(),0))>16)
+            throw std::runtime_error("multi-family occupied seats overbooked");
+    };
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,delta,due,
+                   activity,fail,nullptr,nullptr,effect);
+    world_.swap(next);++generation_;
+}
+
+void PersistentWorld::step_with_multi_dependent_rescue(
+        const MultiDependentRescuePlan& p,FailPoint fail){
+    if(p.expected_world_generation!=generation_||!p.command_id||
+       !p.original_transport||!p.rescue_transport||
+       p.original_transport==p.rescue_transport||!p.original_ferry||!p.rescue_ferry||
+       p.original_ferry==p.rescue_ferry||!p.origin||!p.destination||
+       p.origin==p.destination||p.families.size()<2||p.families.size()>8)
+        throw std::invalid_argument("invalid multi-family rescue authority");
+    auto next=world_;
+    const auto first=next.events().size(),activities=next.activity_events().size();
+    std::map<std::uint64_t,Command> due;
+    if(auto it=next.commands_.find(next.tick()+1);it!=next.commands_.end())
+        for(const auto& c:it->second)due.emplace(c.id,c);
+    if(due.size()!=1||!due.count(p.command_id))
+        throw std::runtime_error("multi-family rescue requires single actual incident");
+    const auto& cmd=due.at(p.command_id);
+    if(cmd.action!=Action::HostEvacuatePassengers||
+       cmd.issuer!=Simulation::kServerAuthority||
+       cmd.actor!=p.original_ferry||cmd.target!=p.rescue_ferry||
+       cmd.transport_id!=p.original_transport||
+       cmd.amount!=static_cast<std::int64_t>(p.rescue_transport))
+        throw std::runtime_error("real adult evacuation does not match rescue plan");
+    const auto original=world_.voyages_.find(p.original_transport);
+    if(original==world_.voyages_.end()||original->second.ferry!=p.original_ferry||
+       original->second.origin!=p.origin||
+       (original->second.status!=1&&original->second.status!=3))
+        throw std::runtime_error("original real stranded voyage unavailable");
+    std::set<std::uint64_t> children,adults;
+    std::string last;
+    for(const auto& f:p.families){
+        if(f.family_scope.empty()||f.family_scope<=last||f.region_scope.empty()||
+           !f.family_seed||!f.guardian_id||!f.expected_owner_generation||
+           (f.co_guardian_id&&f.co_guardian_id==f.guardian_id)||
+           f.child_ids.empty()||f.child_ids.size()>15||
+           !std::is_sorted(f.child_ids.begin(),f.child_ids.end())||
+           std::adjacent_find(f.child_ids.begin(),f.child_ids.end())!=f.child_ids.end())
+            throw std::invalid_argument("noncanonical multi-family rescue list");
+        last=f.family_scope;
+        NpcAppearanceStore family(store_->sqlite_path(),f.family_scope,f.family_seed,
+            [&](std::uint64_t id){return world_.npc_records().count(id)!=0;});
+        for(const auto adult:{f.guardian_id,f.co_guardian_id}){
+            if(!adult)continue;
+            if(!adults.insert(adult).second||
+               std::find(cmd.passenger_ids.begin(),cmd.passenger_ids.end(),adult)==
+                   cmd.passenger_ids.end())
+                throw std::runtime_error("rescue guardian omitted or duplicated");
+            const auto n=world_.npc_records().find(adult);
+            if(n==world_.npc_records().end()||n->second.location!=p.original_ferry||
+               n->second.transport_id!=p.original_transport||
+               family.current_residence(adult)!=p.origin)
+                throw std::runtime_error("guardian missing from stranded physical ferry");
+        }
+        const auto legs=store_->dependent_travel(f.family_scope);
+        for(const auto child:f.child_ids){
+            if(!children.insert(child).second||family.current_residence(child)!=p.origin)
+                throw std::runtime_error("duplicate or absent mixed-family dependent");
+            std::size_t valid=0;
+            for(const auto& leg:legs)if(leg.child_id==child&&
+               leg.status==1&&leg.transport_id==p.original_transport&&
+               leg.ferry==p.original_ferry&&leg.guardian_id==f.guardian_id&&
+               leg.co_guardian_id==f.co_guardian_id&&
+               leg.origin==p.origin&&leg.destination==p.destination)++valid;
+            if(valid!=1)throw std::runtime_error("unmanifested rescue child berth");
+        }
+        regional_events::CheckpointStore region(store_->sqlite_path(),f.region_scope);
+        regional_events::RegionalModeAuthority authority(region);
+        const auto owner=authority.state();
+        if(owner.owner!=regional_events::SimulationOwner::Cold||
+           owner.phase!=regional_events::TransitionPhase::Stable||
+           owner.generation!=f.expected_owner_generation)
+            throw std::runtime_error("multi-family rescue region ownership not stable");
+    }
+    if(store_->active_dependent_berths(p.original_ferry)!=
+        static_cast<std::int64_t>(children.size()))
+        throw std::runtime_error("multi-family evacuation omitted an active minor");
+    if(children.size()+cmd.passenger_ids.size()>16||
+       next.passengers_aboard(p.rescue_ferry)+cmd.passenger_ids.size()+children.size()>16)
+        throw std::runtime_error("receiving rescue ferry berths exceeded");
+    next.step();
+    const std::vector<Event> delta(next.events().begin()+static_cast<std::ptrdiff_t>(first),
+                                   next.events().end());
+    if(delta.size()!=1||delta[0].command_id!=p.command_id||
+       delta[0].result!=Outcome::Applied||
+       next.voyage_status(p.original_transport)!=5||
+       next.voyage_status(p.rescue_transport)!=1)
+        throw std::runtime_error("actual evacuation was not applied");
+    for(const auto adult:adults){
+        const auto n=next.npc_records().find(adult);
+        if(n==next.npc_records().end()||n->second.location!=p.rescue_ferry||
+           n->second.transport_id!=p.rescue_transport)
+            throw std::runtime_error("actual receiving adult custody missing");
+    }
+    const std::vector<ActivityEvent> activity(next.activity_events().begin()+
+        static_cast<std::ptrdiff_t>(activities),next.activity_events().end());
+    const auto effect=[&](sqlite3* db,std::uint64_t gen){
+        multi_schema(db);
+        for(const auto& f:p.families){
+            multi_owner(db,f);
+            multi_region_bind(db,f,p.command_id,gen,false);
+            multi_receipt(db,f,p.command_id,p.rescue_transport,3,gen);
+            for(const auto child:f.child_ids){
+                Statement close(db,"UPDATE sg_dependent_travel SET status=2,"
+                    "arrival_command=?,arrival_generation=?,arrival_tick=?,termination_kind=1 "
+                    "WHERE family_scope=? AND child_id=? AND transport_id=? AND status=1");
+                close.text(1,std::to_string(p.command_id));
+                close.i64(2,static_cast<std::int64_t>(gen));
+                close.i64(3,static_cast<std::int64_t>(next.tick()));
+                close.text(4,f.family_scope);close.text(5,std::to_string(child));
+                close.text(6,std::to_string(p.original_transport));close.execute();
+                if(sqlite3_changes(db)!=1)
+                    throw std::runtime_error("original child berth not closed on rescue");
+                Statement receiving(db,"INSERT INTO sg_dependent_travel (family_scope,child_id,"
+                    "transport_id,guardian_id,ferry,origin,destination,board_command,"
+                    "board_generation,board_tick,status,co_guardian_id,transfer_from_transport) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,1,?,?)");
+                receiving.text(1,f.family_scope);receiving.text(2,std::to_string(child));
+                receiving.text(3,std::to_string(p.rescue_transport));
+                receiving.text(4,std::to_string(f.guardian_id));
+                receiving.text(5,std::to_string(p.rescue_ferry));
+                receiving.text(6,std::to_string(p.origin));
+                receiving.text(7,std::to_string(p.destination));
+                receiving.text(8,std::to_string(p.command_id));
+                receiving.i64(9,static_cast<std::int64_t>(gen));
+                receiving.i64(10,static_cast<std::int64_t>(next.tick()));
+                receiving.text(11,std::to_string(f.co_guardian_id));
+                receiving.text(12,std::to_string(p.original_transport));receiving.execute();
+            }
+        }
+        Statement capacity(db,"SELECT COUNT(*) FROM sg_dependent_travel "
+                              "WHERE ferry=? AND status=1");
+        capacity.text(1,std::to_string(p.rescue_ferry));
+        if(!capacity.row()||next.passengers_aboard(p.rescue_ferry)+
+           static_cast<std::uint64_t>(sqlite3_column_int64(capacity.get(),0))>16)
+            throw std::runtime_error("multi-family receiving ferry physical capacity exceeded");
+    };
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,delta,due,
+                   activity,fail,nullptr,nullptr,effect);
+    world_.swap(next);++generation_;
+}
+
+// v48: submission persists one scheduled, fully specified physical command but
+// does NOT move a passenger. The following step is the sole execution path.
+bool PersistentWorld::submit_host_atomic_split_rescue(
+        const SplitRescueIntentPlan& plan,std::uint64_t command_id,FailPoint fail,
+        int operating_crew_to_first){
+    if(operating_crew_to_first<0)return false;
+    if(!command_id||plan.receivers.size()!=2||plan.intent_id.empty()||
+       plan.receivers[0].ferry>=plan.receivers[1].ferry||
+       plan.expected_world_generation>generation_)
+        return false;
+    (void)verify_split_rescue_intent(plan.intent_id);
+    Command command{};
+    command.id=command_id;command.sequence=command_id;
+    command.execute_tick=world_.tick()+1;
+    command.issuer=Simulation::kServerAuthority;
+    command.action=Action::HostSplitEvacuatePassengers;
+    command.thrust_y=operating_crew_to_first; // v49, 0 retains exact v48 behavior
+    command.actor=plan.source_ferry;
+    command.target=plan.receivers[0].ferry;
+    command.secondary_receiver=plan.receivers[1].ferry;
+    command.amount=static_cast<std::int64_t>(plan.receivers[0].new_transport_id);
+    command.secondary_transport=plan.receivers[1].new_transport_id;
+    command.transport_id=plan.source_transport;
+    std::set<std::uint64_t> used;
+    for(std::size_t i=0;i<2;++i){
+        std::vector<std::uint64_t> passengers;
+        for(const auto& family:plan.receivers[i].families){
+            if(!family.guardian_id||!family.co_guardian_id||
+               family.guardian_id==family.co_guardian_id)return false;
+            if(!used.insert(family.guardian_id).second||
+               !used.insert(family.co_guardian_id).second)return false;
+            passengers.push_back(family.guardian_id);
+            passengers.push_back(family.co_guardian_id);
+        }
+        std::sort(passengers.begin(),passengers.end());
+        command.passenger_ids.insert(command.passenger_ids.end(),
+                                     passengers.begin(),passengers.end());
+        if(i==0)command.thrust_x=static_cast<int>(passengers.size());
+    }
+    auto next=world_;
+    if(!next.submit(command))return false;
+    store_->commit(next,generation_,resource_origin_,credit_origin_,
+                   &command,{},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+
+void PersistentWorld::step_with_atomic_split_rescue(
+        const SplitRescueIntentPlan& plan,std::uint64_t command_id,FailPoint fail){
+    if(!command_id||plan.intent_id.empty()||plan.receivers.size()!=2||
+       plan.expected_world_generation>generation_||
+       plan.receivers[0].ferry>=plan.receivers[1].ferry)
+        throw std::invalid_argument("split rescue not tied to an admitted two-receiver plan");
+    (void)verify_split_rescue_intent(plan.intent_id);
+    auto next=world_;
+    const auto first=next.events().size(),prior_activity=next.activity_events().size();
+    std::map<std::uint64_t,Command> due;
+    if(auto it=next.commands_.find(next.tick()+1);it!=next.commands_.end())
+        for(const auto& c:it->second)due.emplace(c.id,c);
+    if(due.size()!=1||!due.count(command_id))
+        throw std::runtime_error("split rescue needs one authenticated host command");
+    const auto& cmd=due.at(command_id);
+    if(cmd.action!=Action::HostSplitEvacuatePassengers||
+       cmd.issuer!=Simulation::kServerAuthority||cmd.actor!=plan.source_ferry||
+       cmd.transport_id!=plan.source_transport||
+       cmd.target!=plan.receivers[0].ferry||
+       cmd.secondary_receiver!=plan.receivers[1].ferry||
+       cmd.amount!=static_cast<std::int64_t>(plan.receivers[0].new_transport_id)||
+       cmd.secondary_transport!=plan.receivers[1].new_transport_id||
+       plan.origin==plan.destination||!plan.origin||!plan.destination)
+        throw std::runtime_error("actual split command does not match allocated receiving voyages");
+    std::set<std::uint64_t> expected_adults;
+    std::set<std::pair<std::string,std::uint64_t>> expected_children;
+    std::vector<std::vector<std::uint64_t>> receiver_adults;
+    std::string last_scope;
+    for(const auto& receiver:plan.receivers){
+        std::vector<std::uint64_t> adults;
+        if(receiver.families.empty())throw std::runtime_error("empty receiver allocation");
+        for(const auto& family:receiver.families){
+            if(family.family_scope.empty()||!family.family_seed||
+               !family.guardian_id||!family.co_guardian_id||
+               family.guardian_id==family.co_guardian_id||family.child_ids.empty()||
+               !std::is_sorted(family.child_ids.begin(),family.child_ids.end())||
+               std::adjacent_find(family.child_ids.begin(),family.child_ids.end())!=
+                   family.child_ids.end())
+                throw std::runtime_error("noncanonical family on split rescue");
+            for(const auto adult:{family.guardian_id,family.co_guardian_id}){
+                if(!expected_adults.insert(adult).second)
+                    throw std::runtime_error("adult assigned twice to two rescue ferries");
+                adults.push_back(adult);
+                const auto npc=world_.npc_records().find(adult);
+                if(npc==world_.npc_records().end()||
+                   npc->second.location!=plan.source_ferry||
+                   npc->second.transport_id!=plan.source_transport)
+                    throw std::runtime_error("split rescue source adult missing");
+            }
+            for(const auto child:family.child_ids){
+                if(!expected_children.emplace(family.family_scope,child).second)
+                    throw std::runtime_error("dependent assigned twice to two rescue ferries");
+                std::uint64_t active=0;
+                for(const auto& leg:store_->dependent_travel(family.family_scope))
+                    if(leg.child_id==child&&leg.ferry==plan.source_ferry&&
+                       leg.transport_id==plan.source_transport&&leg.status==1&&
+                       leg.guardian_id==family.guardian_id&&
+                       leg.co_guardian_id==family.co_guardian_id)++active;
+                if(active!=1)throw std::runtime_error("dependent not actively aboard original ferry");
+            }
+        }
+        std::sort(adults.begin(),adults.end());
+        receiver_adults.push_back(std::move(adults));
+    }
+    // v49: operating crew are a physically distinct named-NPC partition.
+    // They are not added to the pre-existing passenger manifest and retain
+    // legal home and assigned job while in-transit on the receiving ferry.
+    std::vector<std::uint64_t> native_crew;
+    if(cmd.thrust_y>0){
+        for(const auto& [id,n]:world_.npc_records())
+            if(n.home_ship==plan.source_ferry && n.role==NpcRole::Ship &&
+               n.assigned_site==plan.source_ferry){
+                if(n.location!=plan.source_ferry||n.transport_id)
+                    throw std::runtime_error("split crew not physically available on source ferry");
+                native_crew.push_back(id);
+            }
+        const auto* source=world_.colony_ship(plan.source_ferry);
+        if(!source||native_crew.size()!=static_cast<std::size_t>(source->crew)||
+           native_crew.size()<2||
+           static_cast<std::size_t>(cmd.thrust_y)>=native_crew.size())
+            throw std::runtime_error("split crew roster incomplete or invalid partition");
+    }
+    const auto crew_primary=static_cast<std::size_t>(cmd.thrust_y);
+    std::vector<std::vector<std::uint64_t>> receiver_crew(2);
+    receiver_crew[0].assign(native_crew.begin(),native_crew.begin()+crew_primary);
+    receiver_crew[1].assign(native_crew.begin()+crew_primary,native_crew.end());
+    std::vector<std::uint64_t> manifest=receiver_adults[0];
+    manifest.insert(manifest.end(),receiver_adults[1].begin(),receiver_adults[1].end());
+    if(manifest!=cmd.passenger_ids||
+       static_cast<std::size_t>(cmd.thrust_x)!=receiver_adults[0].size()||
+       store_->active_dependent_berths(plan.source_ferry)!=
+           static_cast<std::int64_t>(expected_children.size())||
+       world_.passengers_aboard(plan.source_ferry)!=expected_adults.size())
+        throw std::runtime_error("incomplete source passenger/census split manifest");
+    for(std::size_t i=0;i<2;++i){
+        const auto& receiver=plan.receivers[i];
+        std::size_t child_count=0;
+        for(const auto& family:receiver.families)child_count+=family.child_ids.size();
+        if(store_->active_dependent_berths(receiver.ferry)!=0||
+           world_.passengers_aboard(receiver.ferry)!=0||
+           child_count+receiver_adults[i].size()+receiver_crew[i].size()>16)
+            throw std::runtime_error("split rescue destination is full or occupied");
+    }
+    next.step();
+    const std::vector<Event> events(next.events().begin()+
+         static_cast<std::ptrdiff_t>(first),next.events().end());
+    if(events.size()!=1||events[0].command_id!=command_id||
+       events[0].result!=Outcome::Applied||
+       next.voyage_status(plan.source_transport)!=5)
+        throw std::runtime_error("single atomic split world event was not applied");
+    for(std::size_t i=0;i<2;++i){
+        const auto& receiver=plan.receivers[i];
+        if(next.voyage_status(receiver.new_transport_id)!=1||
+           next.passengers_aboard(receiver.ferry)!=
+               receiver_adults[i].size()+receiver_crew[i].size())
+            throw std::runtime_error("split receiver physical adult manifest incomplete");
+        for(const auto adult:receiver_adults[i]){
+            const auto npc=next.npc_records().find(adult);
+            if(npc==next.npc_records().end()||npc->second.location!=receiver.ferry||
+               npc->second.transport_id!=receiver.new_transport_id)
+                throw std::runtime_error("split adult not physically aboard allocated vessel");
+        }
+        for(const auto crew:receiver_crew[i]){
+            const auto before=world_.npc_records().find(crew);
+            const auto after=next.npc_records().find(crew);
+            if(before==world_.npc_records().end()||after==next.npc_records().end()||
+               before->second.home_ship!=plan.source_ferry||
+               before->second.assigned_site!=plan.source_ferry||
+               after->second.home_ship!=before->second.home_ship||
+               after->second.assigned_site!=before->second.assigned_site||
+               after->second.role!=NpcRole::Ship||
+               after->second.location!=receiver.ferry||
+               after->second.transport_id!=receiver.new_transport_id)
+                throw std::runtime_error("operating crew identity, job, or rescue custody incorrect");
+        }
+    }
+    const std::vector<ActivityEvent> activity(next.activity_events().begin()+
+        static_cast<std::ptrdiff_t>(prior_activity),next.activity_events().end());
+    const auto effect=[&](sqlite3* db,std::uint64_t gen){
+        assert_split_execution_intent(db,plan,gen);
+        multi_schema(db);
+        for(std::size_t i=0;i<2;++i){
+            const auto& receiver=plan.receivers[i];
+            for(const auto& family:receiver.families){
+                multi_owner(db,family); // CAS inside this same IMMEDIATE transaction
+                multi_region_bind(db,family,command_id,gen,false);
+                multi_receipt(db,family,command_id,receiver.new_transport_id,3,gen);
+                for(const auto child:family.child_ids){
+                    Statement close(db,"UPDATE sg_dependent_travel SET status=2,"
+                        "arrival_command=?,arrival_generation=?,arrival_tick=?,termination_kind=1 "
+                        "WHERE family_scope=? AND child_id=? AND transport_id=? AND "
+                        "ferry=? AND status=1");
+                    close.text(1,std::to_string(command_id));
+                    close.i64(2,static_cast<std::int64_t>(gen));
+                    close.i64(3,static_cast<std::int64_t>(next.tick()));
+                    close.text(4,family.family_scope);close.text(5,std::to_string(child));
+                    close.text(6,std::to_string(plan.source_transport));
+                    close.text(7,std::to_string(plan.source_ferry));close.execute();
+                    if(sqlite3_changes(db)!=1)
+                        throw std::runtime_error("split child original berth not closed");
+                    Statement berth(db,"INSERT INTO sg_dependent_travel (family_scope,child_id,"
+                        "transport_id,guardian_id,ferry,origin,destination,board_command,"
+                        "board_generation,board_tick,status,co_guardian_id,transfer_from_transport) "
+                        "VALUES(?,?,?,?,?,?,?,?,?,?,1,?,?)");
+                    berth.text(1,family.family_scope);berth.text(2,std::to_string(child));
+                    berth.text(3,std::to_string(receiver.new_transport_id));
+                    berth.text(4,std::to_string(family.guardian_id));
+                    berth.text(5,std::to_string(receiver.ferry));
+                    berth.text(6,std::to_string(plan.origin));
+                    berth.text(7,std::to_string(plan.destination));
+                    berth.text(8,std::to_string(command_id));
+                    berth.i64(9,static_cast<std::int64_t>(gen));
+                    berth.i64(10,static_cast<std::int64_t>(next.tick()));
+                    berth.text(11,std::to_string(family.co_guardian_id));
+                    berth.text(12,std::to_string(plan.source_transport));berth.execute();
+                }
+            }
+            Statement seats(db,"SELECT COUNT(*) FROM sg_dependent_travel WHERE ferry=? AND status=1");
+            seats.text(1,std::to_string(receiver.ferry));
+            if(!seats.row()||next.passengers_aboard(receiver.ferry)+
+               static_cast<std::uint64_t>(sqlite3_column_int64(seats.get(),0))>16)
+                throw std::runtime_error("split receiver berth count overbooked");
+            if(i==0&&fail==FailPoint::AfterFirstSplitReceiver)
+                throw std::runtime_error("injected failure after first physical rescue receiver");
+        }
+        Statement left(db,"SELECT COUNT(*) FROM sg_dependent_travel WHERE ferry=? "
+                          "AND transport_id=? AND status=1");
+        left.text(1,std::to_string(plan.source_ferry));
+        left.text(2,std::to_string(plan.source_transport));
+        if(!left.row()||sqlite3_column_int64(left.get(),0)!=0)
+            throw std::runtime_error("split left child behind on source ferry");
+        if(!native_crew.empty())
+            record_split_crew_execution(db,plan,command_id,gen,native_crew,crew_primary);
+        record_split_execution(db,plan,command_id,gen,next.tick());
+    };
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   events,due,activity,fail,nullptr,nullptr,effect);
+    world_.swap(next);++generation_;
+}
+
+void PersistentWorld::settle_constructed_stock(const Command& command,
+    const std::function<void(sqlite3*,std::uint64_t)>& effect,FailPoint fail){
+    if((command.action!=Action::HostEscrowConstructedStock &&
+        command.action!=Action::HostReturnConstructedStock)||
+       command.issuer!=Simulation::kServerAuthority||
+       command.execute_tick!=world_.tick()+1||!effect)
+        throw std::runtime_error("invalid host warehouse debit authority");
+    const auto scheduled=world_.commands_.find(command.execute_tick);
+    if(scheduled!=world_.commands_.end()&&!scheduled->second.empty())
+        throw std::runtime_error("warehouse debit requires exclusive scheduled world step");
+    auto next=world_;
+    if(!next.submit(command))throw std::runtime_error("world rejected warehouse debit");
+    const auto e=next.events().size(),a=next.activity_events().size();
+    next.step();
+    if(next.events().size()!=e+1||next.events().back().command_id!=command.id||
+       next.events().back().result!=Outcome::Applied)
+        throw std::runtime_error("physical storage withdrawal not applied");
+    const std::vector<Event> events(next.events().begin()+static_cast<std::ptrdiff_t>(e),next.events().end());
+    const std::vector<ActivityEvent> activity(next.activity_events().begin()+static_cast<std::ptrdiff_t>(a),next.activity_events().end());
+    const std::map<std::uint64_t,Command> due{{command.id,command}};
+    const auto enforced_effect=[&](sqlite3* db,std::uint64_t gen){
+        effect(db,gen);
+        if(command.action==Action::HostReturnConstructedStock){
+            Statement witness(db,"SELECT COUNT(*) FROM sg_v53_world_return r "
+                "JOIN sg_v51_event e ON e.scope=r.scope AND e.event_id=r.event_id "
+                "WHERE r.command_id=?1 AND r.site=?2 AND r.source_ship=?3 "
+                "AND r.stock_kg=?4 AND r.world_generation=?5 AND e.kind='world-return' "
+                "AND e.world_generation=?5 AND e.after_payload=r.after_payload");
+            witness.i64(1,static_cast<std::int64_t>(command.id));
+            witness.i64(2,static_cast<std::int64_t>(command.target));
+            witness.i64(3,static_cast<std::int64_t>(command.actor));
+            witness.i64(4,command.amount);
+            witness.i64(5,static_cast<std::int64_t>(gen));
+            if(!witness.row()||sqlite3_column_int64(witness.get(),0)!=1)
+                throw std::runtime_error("world return requires committed factory debit witness");
+        }
+    };
+    store_->commit(next,generation_,resource_origin_,credit_origin_,&command,events,due,activity,
+                   fail,nullptr,nullptr,enforced_effect);
+    world_.swap(next);++generation_;
+}
+
 void PersistentWorld::step(FailPoint fail) {
     auto next = world_;
     const auto before = next.events().size();
@@ -4637,6 +7344,25 @@ void PersistentWorld::step(FailPoint fail) {
     // One logical step processes precisely the commands scheduled for tick+1.
     if (auto it = next.commands_.find(next.tick() + 1); it != next.commands_.end()) {
         for (const auto& c : it->second) due.emplace(c.id, c);
+    }
+    // Never allow the ordinary worker tick to publish a residence change
+    // without its ART02/ECON03 settlement in the same SQLite transaction.
+    for(const auto& [id,c]:due){(void)id;
+        if(c.action==Action::HostEscrowConstructedStock ||
+           c.action==Action::HostReturnConstructedStock)
+            throw std::runtime_error("constructed warehouse transfer requires atomic network effect");
+        if(c.action==Action::HostSettleMigrant)
+            throw std::runtime_error("migration needs host atomic society step");
+        if(c.action==Action::HostSplitEvacuatePassengers)
+            throw std::runtime_error("split evacuation requires atomic two-receiver child custody step");
+    }
+    for(const auto& [id,c]:due){(void)id;
+        if((c.action==Action::HostDisembarkPassengers ||
+            c.action==Action::HostDestroyPassengerFerry ||
+            c.action==Action::HostEvacuatePassengers ||
+            c.action==Action::HostResolveMixedFerryLoss) &&
+           store_->active_dependent_berths(c.actor)>0)
+            throw std::runtime_error("dependent travelers need atomic child custody step");
     }
     next.step();
     const std::vector<Event> new_events(next.events().begin() + static_cast<std::ptrdiff_t>(before), next.events().end());

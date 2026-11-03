@@ -102,7 +102,7 @@ int main(){
             w.steps(3);
             CHECK(w.world().storage_link(site,180)->units_moved==0);
             CHECK(w.world().total_material_kg()==total);
-            CHECK(w.world().canonical_state().rfind("galaxy-kernel-v27|",0)==0);
+            CHECK(w.world().canonical_state().rfind("galaxy-kernel-v31|",0)==0);
             CHECK(Simulation::from_snapshot(w.world().canonical_state()).canonical_state()==w.world().canonical_state());
             before_restart=w.world().canonical_state();
         }

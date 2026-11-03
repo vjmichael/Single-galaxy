@@ -5,10 +5,14 @@
 #include <string>
 #include <vector>
 #include <cstddef>
+#include <functional>
+#include <sqlite3.h>
 
 namespace galaxy {
+namespace industry {class RegionalProductionNetwork;}
+namespace shipping {class ThirdPartyRegistry;}
 // Failures occur inside an SQLite transaction, before durable COMMIT.
-enum class FailPoint { None, AfterReceiptWrite, AfterSnapshotWrite };
+enum class FailPoint { None, AfterReceiptWrite, AfterSnapshotWrite, AfterFirstSplitReceiver };
 
 // GRSM-01: an authoritative outcome of a committed player/host command.
 // This is not a reputation, moral judgment, casualty count, or NPC belief.
@@ -185,7 +189,231 @@ struct SocialTieEvent {
     int delta=0, trust=50;
 };
 
+// DEMOG-05q6b: explicit host-only binding for all newly deceased named NPCs
+// in ONE scheduled terminal ferry incident. No implicit population updates.
+struct SocietyDeathBinding {
+    std::uint64_t event_id=0, npc_id=0;
+    EntityId home_ship=0;
+    std::uint64_t expected_family_revision=0;
+    std::string regional_colony;
+};
+struct SocietyAtomicPlan {
+    std::uint64_t expected_world_generation=0, command_id=0;
+    std::uint64_t expected_region_revision=0, expected_owner_generation=0;
+    std::uint64_t family_seed=0;
+    std::string family_scope, region_scope;
+    std::vector<SocietyDeathBinding> deaths;
+};
+
+// DEMOG-05q6c: cohort-only birth is a reserved ART02 dependent identity,
+// not a playable NPC or a free source of labor. Trusted host admission only.
+struct SocietyBirthPlan {
+    std::uint64_t expected_world_generation=0;
+    std::uint64_t expected_region_revision=0, expected_owner_generation=0;
+    std::uint64_t family_seed=0, expected_family_revision=0;
+    std::uint64_t event_id=0, child_id=0, parent_a=0, parent_b=0;
+    EntityId home_ship=0;
+    std::string family_scope, region_scope, regional_colony;
+};
+
+// DEMOG-05q6d: host-authorized administrative migration AFTER a committed
+// voyage arrival and disembarkation. Only one named adult per transaction;
+// dependent household transfer requires separate policies and manifests.
+struct SocietyMigrationPlan {
+    std::uint64_t expected_world_generation=0,command_id=0;
+    std::uint64_t expected_region_revision=0,expected_owner_generation=0;
+    std::uint64_t family_seed=0,expected_origin_family_revision=0;
+    std::uint64_t expected_destination_family_revision=0;
+    std::uint64_t npc_id=0,transport_id=0;
+    // 05q6e4: optionally migrate the second physically arrived parent in the SAME step.
+    std::uint64_t co_parent_id=0,co_parent_event_id=0;
+    // 05q6e: registered dependent cohort IDs, each with a distinct immutable
+    // family-move receipt ID. No simulated passenger entity is created.
+    struct DependentMove { std::uint64_t child_id=0, event_id=0; };
+    std::vector<DependentMove> dependents;
+    EntityId origin=0,destination=0;
+    std::string family_scope,region_scope,origin_colony,destination_colony;
+};
+
+// DEMOG-05q6e2: ART02 dependent identity has physical custody in the
+// trusted world SQLite transaction, without creating a playable NPC.
+struct DependentTravelPlan {
+    std::uint64_t expected_world_generation=0, command_id=0;
+    std::uint64_t transport_id=0,guardian_id=0, family_seed=0;
+    // q6e3a: optional physically present second parent; both must be on
+    // the same real ferry command and be recorded in the berth receipt.
+    std::uint64_t co_guardian_id=0,expected_owner_generation=0;
+    EntityId ferry=0,origin=0,destination=0;
+    std::string family_scope,region_scope;
+    std::vector<std::uint64_t> child_ids; // canonical sorted, complete guardian manifest
+    bool boarding=true;                 // false: disembarkation
+};
+// q6e3b: explicit nonfatal emergency evacuation of ALL dependent passengers.
+// A rescue is a new real voyage and cannot silently delete a prior ferry leg.
+struct DependentRescuePlan {
+    std::uint64_t expected_world_generation=0,command_id=0;
+    std::uint64_t original_transport=0,rescue_transport=0;
+    std::uint64_t guardian_id=0,co_guardian_id=0, family_seed=0;
+    EntityId original_ferry=0,rescue_ferry=0,origin=0,destination=0;
+    std::string family_scope,region_scope;
+    std::uint64_t expected_owner_generation=0;
+    std::vector<std::uint64_t> child_ids;
+};
+struct DependentTravelRecord {
+    std::uint64_t child_id=0,transport_id=0,guardian_id=0,co_guardian_id=0;
+    std::uint64_t transfer_from_transport=0;
+    unsigned termination_kind=0; // 0=normal destination, 1=evacuated to next leg
+    EntityId ferry=0,origin=0,destination=0;
+    std::uint64_t board_command=0,arrival_command=0;
+    std::uint64_t board_generation=0,arrival_generation=0;
+    unsigned status=0; // 1=aboard actual ferry, 2=arrived physical destination
+};
+
+// DEMOG-05q6e5a: read-only incident custody audit. These are VERIFIED
+// current passenger states, NOT outcomes of injury, disappearance, or death.
+// Unaccounted and deceased minors have no authorized transition in v44/v45a;
+// missing evidence is an error rather than an invented outcome.
+enum class DependentVerifiedCustody : unsigned {
+    Aboard=1, Stranded=2, RescuedAboard=3, Arrived=4, RescuedStranded=5
+};
+struct DependentIncidentMember {
+    std::uint64_t child_id=0, guardian_id=0, co_guardian_id=0;
+    std::uint64_t initial_transport=0, current_transport=0;
+    EntityId current_ferry=0;
+    DependentVerifiedCustody custody=DependentVerifiedCustody::Aboard;
+    bool ever_rescued=false;
+};
+struct DependentIncidentAudit {
+    std::uint64_t world_generation=0, initial_transport=0;
+    std::size_t aboard=0, stranded=0, rescued_aboard=0, arrived=0;
+    std::size_t rescued_stranded=0;
+    std::size_t ever_rescued=0;
+    // There is deliberately no death/unaccounted count in this schema;
+    // those states require their own independently verified incident ledger.
+    std::vector<DependentIncidentMember> members;
+};
+
+// DEMOG-05q6e5b1: a host-attested, historical NONFATAL stranding case.
+// The roster exactly exhausts a real ferry's current passenger custody.
+// A stranded or rescued-and-stranded dependent is accounted for, NOT missing.
+// No death, injury or family population effect can be authorized here.
+struct DependentStrandingCasePlan {
+    std::string case_id, family_scope;
+    std::uint64_t expected_world_generation=0;
+    std::uint64_t original_transport=0, current_transport=0;
+    std::uint64_t stranding_command_id=0;
+    EntityId ferry=0;
+    std::vector<std::uint64_t> adult_ids, child_ids; // sorted, complete, unique
+};
+
+// DEMOG-05q6e5b2: host-attested NONFATAL outcome of a *recorded* stranding.
+// This is a recovery proof of the actual rescue and parent custody, not a
+// new physical/legal transfer or a missing/death determination.
+struct DependentRescueOutcomePlan {
+    std::string outcome_id,case_id,family_scope;
+    std::uint64_t expected_world_generation=0,rescue_command_id=0;
+    std::uint64_t source_transport=0,rescue_transport=0;
+    EntityId receiving_ferry=0;
+    std::uint64_t receiving_guardian_id=0; // must be actual parent aboard receiving ferry
+    std::vector<std::uint64_t> child_ids; // exact original stranded roster
+};
+struct DependentRescueOutcome {
+    std::string outcome_id,case_id;
+    std::uint64_t rescue_generation=0,receiving_guardian_id=0;
+    std::uint64_t receiving_transport=0;
+    EntityId receiving_ferry=0;
+    std::vector<std::uint64_t> child_ids;
+    // Current custody comes from verified world/child ledgers, never from
+    // this immutable historical receipt alone.
+    DependentIncidentAudit current_custody;
+};
+
+// DEMOG-05q6e5b3a: explicit host-adjudicated, immutable approval of a
+// NON-PARENT legal guardian. These are NOT inferred from physical rescue.
+// Each real parent authorizes the full dependent manifest separately. Consent
+// attribution is a trusted-host receipt, NOT an NPC cryptographic signature.
+struct NonParentGuardianApprovalPlan {
+    std::string authorization_id,rescue_outcome_id,family_scope;
+    std::uint64_t expected_world_generation=0;
+    std::uint64_t approving_parent_id=0,receiving_guardian_id=0;
+    std::vector<std::uint64_t> child_ids;
+};
+struct NonParentGuardianshipPlan {
+    std::string transfer_id,rescue_outcome_id,family_scope;
+    std::uint64_t expected_world_generation=0,receiving_guardian_id=0;
+    std::vector<std::string> authorizations; // exactly one per recorded parent
+    std::vector<std::uint64_t> child_ids; // complete rescued-family manifest
+};
+struct VerifiedNonParentGuardianship {
+    std::string transfer_id,rescue_outcome_id;
+    std::uint64_t guardian_id=0,world_generation=0;
+    std::vector<std::uint64_t> child_ids;
+};
+
+// 05q6e5b4a: a real, distinct physical escort/custody handoff on the
+// receiving vessel. Original birth parentage, rescue guardians and voyage
+// history remain immutable; the latest independently certified escort is an
+// additional authoritative custody assignment, not a worker NPC clone.
+struct DependentPhysicalHandoffPlan {
+    std::string handoff_id, legal_transfer_id, family_scope;
+    std::uint64_t expected_world_generation=0, receiving_guardian_id=0;
+    std::uint64_t transport_id=0;
+    EntityId ferry=0;
+    std::vector<std::uint64_t> child_ids;
+};
+struct VerifiedDependentPhysicalHandoff {
+    std::string handoff_id, legal_transfer_id;
+    std::uint64_t receiving_guardian_id=0, generation=0, transport_id=0;
+    EntityId ferry=0;
+    std::vector<std::uint64_t> child_ids;
+};
+
+// Two or more distinct family registries, one REAL world ferry command.
+// Every child on a source ferry is required; no partial or synthetic rescue.
+struct DependentFamilyManifest {
+    std::string family_scope,region_scope;
+    std::uint64_t family_seed=0,guardian_id=0,co_guardian_id=0;
+    std::uint64_t expected_owner_generation=0;
+    std::vector<std::uint64_t> child_ids;
+};
+struct MultiDependentTransportPlan {
+    std::uint64_t expected_world_generation=0,command_id=0,transport_id=0;
+    EntityId ferry=0,origin=0,destination=0;
+    bool boarding=true;
+    std::vector<DependentFamilyManifest> families; // sorted by family_scope
+};
+struct MultiDependentRescuePlan {
+    std::uint64_t expected_world_generation=0,command_id=0;
+    std::uint64_t original_transport=0,rescue_transport=0;
+    EntityId original_ferry=0,rescue_ferry=0,origin=0,destination=0;
+    std::vector<DependentFamilyManifest> families; // complete source-ferry roster
+};
+
+// DEMOG-05q6e5b5a: strictly admitted two-vessel ALLOCATION INTENT.
+// This does not perform the split: existing ferry evacuation remains all-or-
+// nothing to one receiver until a separate atomic two-receiver world command
+// is implemented and verified. The reservation is immutable but non-binding.
+struct SplitRescueReceiver {
+    EntityId ferry=0;
+    std::uint64_t new_transport_id=0;
+    std::vector<DependentFamilyManifest> families;
+};
+struct SplitRescueIntentPlan {
+    std::string intent_id;
+    std::uint64_t expected_world_generation=0,source_transport=0;
+    EntityId source_ferry=0,origin=0,destination=0;
+    std::vector<SplitRescueReceiver> receivers; // exactly 2, sorted by ferry ID
+};
+struct VerifiedSplitRescueIntent {
+    std::string intent_id;
+    std::uint64_t generation=0,source_transport=0;
+    std::size_t families=0,adults=0,children=0;
+    std::vector<EntityId> receiving_ferries;
+};
+
 class PersistentWorld {
+    friend class industry::RegionalProductionNetwork;
+    friend class shipping::ThirdPartyRegistry;
 public:
     // If the SQLite file is new, persist the supplied initial world.
     // For an existing database, load authoritative saved world and ignore initial state.
@@ -199,6 +427,15 @@ public:
     static void recover_copy(const std::string& source, const std::string& destination);
 
     bool submit(const Command& command, FailPoint fail = FailPoint::None);
+    // Host-only: admits a receipt-reserved third-party shipment under the writer lock.
+    bool submit_host_consigned_transfer(const Command&, FailPoint=FailPoint::None);
+    bool submit_host_passenger_action(const Command& command, FailPoint fail = FailPoint::None);
+    // q6e3b: only the trusted host can queue a rescue from a child-occupied
+    // ferry. The paired atomic effect MUST execute the due command.
+    bool submit_host_dependent_rescue_action(const Command& command,
+                                             FailPoint fail=FailPoint::None);
+    // Same canonical world transaction; separate public host-only medical entry point.
+    bool submit_host_medical_action(const Command& command, FailPoint fail = FailPoint::None);
     // Privileged, explicit test/host-only gate administration. Not exposed as
     // a player action. Persists through the normal operation receipt and journal.
     bool submit_testing_gate_change(EntityId forward, EntityId reverse,
@@ -216,6 +453,75 @@ public:
     bool submit_testing_crew_loss(EntityId colony_ship, std::int64_t count,
                                   std::uint64_t command_id, FailPoint fail = FailPoint::None);
     void step(FailPoint fail = FailPoint::None);
+    // TRUSTED HOST only; executes one due terminal ferry incident and commits
+    // world snapshot, ART02 deaths, ECON03 population and receipts atomically.
+    // For other ticks call step(); non-enrolled regions are refused.
+    void step_with_atomic_society(const SocietyAtomicPlan& plan,
+                                  FailPoint fail=FailPoint::None);
+    // Host-only atomic ART02 reserved dependent birth + ECON03 population
+    // increase, journaled on one otherwise command-free world simulation step.
+    // Does not add playable NPC or certify reproductive/housing policies.
+    void step_with_atomic_dependent_birth(const SocietyBirthPlan& plan,
+                                          FailPoint fail=FailPoint::None);
+    void step_with_atomic_migration(const SocietyMigrationPlan& plan,
+                                    FailPoint fail=FailPoint::None);
+    // Host executes exactly one pending real boarding/disembarkation command,
+    // atomically accounting for each physical ART02 dependent berth.
+    void step_with_dependent_transport(const DependentTravelPlan& plan,
+                                       FailPoint fail=FailPoint::None);
+    // Moves an entire child manifest to a real receiving ferry atomically
+    // with HostEvacuatePassengers. Never invents fatalities or orphaned minors.
+    void step_with_dependent_rescue(const DependentRescuePlan& plan,
+                                    FailPoint fail=FailPoint::None);
+    std::vector<DependentTravelRecord> dependent_travel(const std::string& family_scope) const;
+    // Caller provides the COMPLETE manifest expected for the original voyage.
+    // Rejects missing/extra/duplicate IDs and broken rescue chains. Never
+    // changes custody, advances time or infers casualties from missing data.
+    DependentIncidentAudit audit_dependent_incident(
+        const std::string& family_scope, std::uint64_t original_transport,
+        const std::vector<std::uint64_t>& expected_children) const;
+    // Host-only durable case attestation; requires a real already-committed
+    // stranding and the COMPLETE manifest. No world population or physical
+    // state is changed. Insertion and complete roster are atomic in SQLite.
+    void record_dependent_stranding_case(const DependentStrandingCasePlan& plan,
+                                         FailPoint fail=FailPoint::None);
+    // A case may be adjudicated as fully rescued only immediately following
+    // the actual applied evacuation world step. One SQLite transaction binds
+    // every dependent to the preexisting case and real receiving parent.
+    void record_dependent_rescue_outcome(const DependentRescueOutcomePlan& plan,
+                                         FailPoint fail=FailPoint::None);
+    DependentRescueOutcome verify_dependent_rescue_outcome(
+        const std::string& outcome_id) const;
+    // Authoritative *legal* guardianship follows separately verified nonfatal
+    // rescue. A non-parent must have a REAL receiving-ferry passenger record.
+    // Two-parent children require independent recorded approvals by BOTH.
+    void record_nonparent_guardian_approval(const NonParentGuardianApprovalPlan& plan,
+                                            FailPoint fail=FailPoint::None);
+    void settle_nonparent_guardianship(const NonParentGuardianshipPlan& plan,
+                                      FailPoint fail=FailPoint::None);
+    VerifiedNonParentGuardianship verify_nonparent_guardianship(
+        const std::string& transfer_id) const;
+    // Authoritative custody changes only with separate valid legal transfer;
+    // requires current ferry co-location, complete minor roster and rollback.
+    void transfer_dependent_physical_custody(const DependentPhysicalHandoffPlan& plan,
+                                             FailPoint fail=FailPoint::None);
+    VerifiedDependentPhysicalHandoff verify_dependent_physical_custody(
+        const std::string& handoff_id) const;
+    void step_with_multi_dependent_transport(const MultiDependentTransportPlan& plan,
+                                              FailPoint fail=FailPoint::None);
+    void step_with_multi_dependent_rescue(const MultiDependentRescuePlan& plan,
+                                           FailPoint fail=FailPoint::None);
+    // 05q6e5b5a: authenticated ALLOCATION INTENT only. Does NOT physically
+    // evacuate anyone. Execution requires a distinct atomic two-receiver
+    // command which is deliberately not yet exposed to the gameplay runtime.
+    void record_split_rescue_intent(const SplitRescueIntentPlan& plan,
+                                    FailPoint fail=FailPoint::None);
+    VerifiedSplitRescueIntent verify_split_rescue_intent(const std::string& id) const;
+    bool submit_host_atomic_split_rescue(const SplitRescueIntentPlan& plan,
+        std::uint64_t command_id,FailPoint fail=FailPoint::None,
+        int operating_crew_to_first=0);
+    void step_with_atomic_split_rescue(const SplitRescueIntentPlan& plan,
+        std::uint64_t command_id,FailPoint fail=FailPoint::None);
     void steps(std::uint64_t n);
     const Simulation& world() const noexcept { return world_; }
     std::int64_t resource_origin() const noexcept { return resource_origin_; }
@@ -336,8 +642,13 @@ public:
 
 
 private:
+    // Only the trusted regional production bridge may attach a physical
+    // inventory escrow effect to this canonical world command.
+    void settle_constructed_stock(const Command&,
+        const std::function<void(sqlite3*,std::uint64_t)>&,FailPoint);
     class Store;
     std::unique_ptr<Store> store_;
+    std::string db_path_;
     Simulation world_;
     std::int64_t resource_origin_ = 0;
     std::int64_t credit_origin_ = 0;

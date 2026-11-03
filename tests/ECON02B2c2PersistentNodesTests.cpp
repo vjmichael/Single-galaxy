@@ -61,7 +61,7 @@ int main(){
         ok(w,ship,19,Action::TransferStorageNodeStack,site,7,8,1);
         CHECK(w.world().storage_node_inventory_snapshot(site,2).amount("good/aluminum")==1493);
         CHECK(w.world().total_material_kg()==initial);
-        CHECK(w.world().canonical_state().rfind("galaxy-kernel-v26|",0)==0);
+        CHECK(w.world().canonical_state().rfind("galaxy-kernel-v31|",0)==0);
         CHECK(Simulation::from_snapshot(w.world().canonical_state()).canonical_state()==w.world().canonical_state());
         // Extra node state must be journaled and restored with no phantom changes.
     }

@@ -91,7 +91,7 @@ int main(){
             CHECK(w.world().storage_inventory_snapshot(site).amount("good/aluminum_scrap")>0);
             CHECK(w.world().total_material_kg()==conservation);
             saved=w.world().canonical_state();
-            CHECK(saved.rfind("galaxy-kernel-v28|",0)==0);
+            CHECK(saved.rfind("galaxy-kernel-v31|",0)==0);
             CHECK(Simulation::from_snapshot(saved).canonical_state()==saved);
             // Remote ordinary-step accounting must match sequential steps exactly.
             auto independent=Simulation::from_snapshot(saved);

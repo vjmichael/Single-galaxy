@@ -1,0 +1,635 @@
+{
+  "include/galaxy/BlueprintConstruction.hpp": [
+    "77638c02b8870f40e2a155be311577a3c25360c6"
+  ],
+  "include/galaxy/ClientContract.hpp": [
+    "ed0eb250e1716a8a69e8e8338c486ebdde76b097"
+  ],
+  "include/galaxy/ColdColonyNeeds.hpp": [
+    "b9a6c15b4a7af027d5840563642373e9e8d4753f"
+  ],
+  "include/galaxy/EconomyPrototype.hpp": [
+    "aac3118ecd18c7144277f26844e94f9830628e96"
+  ],
+  "include/galaxy/FactoryLayout.hpp": [
+    "dde67894b9cf78ab9ff605907a3de32edfaba450"
+  ],
+  "include/galaxy/Galaxy.hpp": [
+    "52e783f1eaa7d977b3e830d3492f8380cf69f076"
+  ],
+  "include/galaxy/GateTransit.hpp": [
+    "64ebe263b2de0b66d7d440cfd2a9156ccc6c60a4"
+  ],
+  "include/galaxy/HostBlueprintRegistry.hpp": [
+    "b3b13492a116164c8c47b0e6188f7f5bc8176d70"
+  ],
+  "include/galaxy/Inventory.hpp": [
+    "0be651c20061e2ff9d423cfba7509d4f9fd29425"
+  ],
+  "include/galaxy/InventoryLogistics.hpp": [
+    "63257d8b9e322851f32cbe2a058d63ce9aa93dcf"
+  ],
+  "include/galaxy/MacroNeeds.hpp": [
+    "fa62474c8bbb88d0d365c0cf5516e5b3d6a1b303"
+  ],
+  "include/galaxy/Navigation.hpp": [
+    "9bb19aa39406bc617dc2cc191fa3ed502059dfe3"
+  ],
+  "include/galaxy/Persistence.hpp": [
+    "b278ae325d73f822a448b3124acfc3afa2b5403b"
+  ],
+  "include/galaxy/PopulationCohorts.hpp": [
+    "986f79b22672cd830703ebdd51a89ee4308b1de6"
+  ],
+  "include/galaxy/QuantifiedProduction.hpp": [
+    "e689847eb4b54a4b4aef49ff095a45aa5bcef0d1"
+  ],
+  "include/galaxy/Region.hpp": [
+    "0534bcc7bc24b319ff7e4dd899f0268f5f76ab7f"
+  ],
+  "include/galaxy/RegionalCheckpointStore.hpp": [
+    "cf84918b5e82537772c432e44096b37b8e573489",
+    "6191ea508ab442e5f4cbb8d204167baa08d89c4c"
+  ],
+  "include/galaxy/RegionalColdIndustry.hpp": [
+    "7a428b5a9894e1feb35e2474d26b8ee64f1ba5e8"
+  ],
+  "include/galaxy/RegionalCustodyLedger.hpp": [
+    "64b288fe02dd4a4aaae81e42c55e0e772c6d8604"
+  ],
+  "include/galaxy/RegionalEventScheduler.hpp": [
+    "626ba6107561071afe68692b7705ad446cc3dcb9"
+  ],
+  "include/galaxy/RegionalHostCommands.hpp": [
+    "d326b156ee538129280bb8fcaf1719233c0479eb"
+  ],
+  "include/galaxy/RegionalInterestManager.hpp": [
+    "83966bf93ea3412cd4f6ad27ad48153abb131f8a"
+  ],
+  "include/galaxy/RegionalModeAuthority.hpp": [
+    "9434d0533f73afccf66cd39ac8024f2376701979"
+  ],
+  "include/galaxy/RegionalPersistentWorldBridge.hpp": [
+    "a41378f35fa889dffa60333cf163e1ef1493edb2"
+  ],
+  "include/galaxy/RegionalWarmRuntime.hpp": [
+    "95ba71312cef9ea50935012177c57b5fb7fcee2f"
+  ],
+  "include/galaxy/Simulation.hpp": [
+    "8a3e72cf74033c8847f0f3e7fa73eccae0bae1ba"
+  ],
+  "src/BlueprintConstruction.cpp": [
+    "0fa47be930b34fb2cc6a46377e905e0942d0176a"
+  ],
+  "src/ClientContract.cpp": [
+    "1d9de008abbaae69eea56a4da2a409237fe5f556"
+  ],
+  "src/ColdColonyNeeds.cpp": [
+    "44658d6ea323005f6e51c78ed142adc3d3b80bb8"
+  ],
+  "src/ColonyPolicy.cpp": [
+    "3ba1e0ca6e3b04d134d3398aaf281455bddccf35"
+  ],
+  "src/ColonyRecovery.cpp": [
+    "e3745ff3bdb7002bedebd6161aa3c75d6ecd86e5"
+  ],
+  "src/ColonyResilience.cpp": [
+    "f765584ef9af6cb51648f10a98f21e755838ff8a"
+  ],
+  "src/ColonyWaterSupply.cpp": [
+    "06bb846fedc034e189a95d049aaf2859629f1534"
+  ],
+  "src/EconomyPrototype.cpp": [
+    "38f55f87272228819ee2af73846b72d3bb939991"
+  ],
+  "src/FactoryLayout.cpp": [
+    "0c4cab366ad06c6360a04fcda4d2c3bb3ff18a1c"
+  ],
+  "src/Galaxy.cpp": [
+    "7c1a52e8e74139ffbac408557e9dc6d96d2b7d46"
+  ],
+  "src/GateTransit.cpp": [
+    "173dafd64d9c3456b0374217fdd49ae25de34dd8"
+  ],
+  "src/HostBlueprintRegistry.cpp": [
+    "e2a52a0847657cc3636a326c12be9953e308c7d7"
+  ],
+  "src/Inventory.cpp": [
+    "d63a9cf10ffdb927b51310a45d78937ef015a328"
+  ],
+  "src/InventoryLogistics.cpp": [
+    "4b71695ad8b602c2513bcb5cc5a302a98709b2cf"
+  ],
+  "src/MacroNeeds.cpp": [
+    "ca7d2cc45b8b82ad76ed9c88ac658e26355a124c"
+  ],
+  "src/Navigation.cpp": [
+    "9eb60c51c42d1407329c541bb396064f09b3b270"
+  ],
+  "src/Persistence.cpp": [
+    "0b5280d1cf95ba803f545d105a0f8022d0e919f1"
+  ],
+  "src/PopulationCohorts.cpp": [
+    "e6de87404ea43461de0c9f9185e63fcb6c6ea5d9"
+  ],
+  "src/QuantifiedProduction.cpp": [
+    "72df72046651a1c144598ce74e5a101e3bb6849b"
+  ],
+  "src/Region.cpp": [
+    "446236b43ce7f18a3d1f67bb2b58d9057fdedf5c"
+  ],
+  "src/RegionalCheckpointStore.cpp": [
+    "fe879d6eda523a2913b09c8daef87317ad5c5a0b",
+    "627c3b4f6a02f351c9851f947482753cfc2dd95e"
+  ],
+  "src/RegionalColdIndustry.cpp": [
+    "1b511dcd9222a36e4b6596611da4bc66461ea14e"
+  ],
+  "src/RegionalCustodyLedger.cpp": [
+    "1993b4a64b11ffea3fcedb2157b164d32cfd897a"
+  ],
+  "src/RegionalEventScheduler.cpp": [
+    "5af6c4ba89d9b21a46c1ab9bd5f63699a7bf1cf2",
+    "607ea2359c79f373e1c2ed47b8392587c142db11"
+  ],
+  "src/RegionalHostCommands.cpp": [
+    "dfbfd900084f30e3d6f34afc89d39ab856356ca3"
+  ],
+  "src/RegionalInterestManager.cpp": [
+    "e8000c0995f39a086384c912a8c194c4e4c423e8"
+  ],
+  "src/RegionalModeAuthority.cpp": [
+    "d584b37285618cd1b9aac55ec324ff4e8eb58493"
+  ],
+  "src/RegionalPersistentWorldBridge.cpp": [
+    "3a0fb9d8a6f822ff62e1af05a6044e2d662f7641"
+  ],
+  "src/RegionalWarmRuntime.cpp": [
+    "4dd6cc057970c65698007a3856ab11e87d4a8e37"
+  ],
+  "src/Simulation.cpp": [
+    "e98115647c9a1deda3c90b12fba803f37be08181"
+  ],
+  "src/benchmark.cpp": [
+    "5552b89c8655cb7410e836eae26e702fb31961d5"
+  ],
+  "src/client_stream_demo.cpp": [
+    "31be43abf13ef576eece093a3f2c10f44e15499c"
+  ],
+  "src/client_wire_consumer.cpp": [
+    "fd215a43c99544ae853a2d67348d790922dce765"
+  ],
+  "src/client_wire_producer.cpp": [
+    "f2b49ca174a302810856b25ccf1fed4bfb0f280f"
+  ],
+  "src/colony_cli.cpp": [
+    "28bf6e765a44667c87bf8bbd54a8e8b5b3b03bc9"
+  ],
+  "src/colony_live_host.cpp": [
+    "aa6eea652f2cb867aeafddb8be0e99f08180989f"
+  ],
+  "src/factory_host_bridge.cpp": [
+    "8e6d2b3a0683a6560a0d2438f55ccdd4c561e6b4"
+  ],
+  "src/interactive_host.cpp": [
+    "c748ec309aaeb9b02b1197b821f1589b628d072b"
+  ],
+  "src/live_scenario_host.cpp": [
+    "56ad15976fdd57eeddc980e87a1b4df9e29c2a75"
+  ],
+  "src/multisystem_demo.cpp": [
+    "e712b8ce2a5fdf52698cf8ad49a55c5e3ff67360"
+  ],
+  "src/persistence_benchmark.cpp": [
+    "c5b6f9b1bfccd2aef6fe3bdacaf7a1e8b585f6cc"
+  ],
+  "src/persistence_demo.cpp": [
+    "03a0ac329b4feef91cfde3e179f98f275464fe7a"
+  ],
+  "src/recover_copy.cpp": [
+    "082056308cb108d70defc7cd0913d99147872a0a"
+  ],
+  "src/survey_demo.cpp": [
+    "2f37d13cf0f04f3b14392758fbc91f524beae635"
+  ],
+  "src/visual_scenario_recorder.cpp": [
+    "5995f280f798620b4fcd385f334f431003f8e459"
+  ],
+  "tests/B52InteractiveEndToEndTests.py": [
+    "ca589fd9c2c8d3506f09264ccf760a25d67403d7"
+  ],
+  "tests/B52LiveStationUiSmokeNodeTests.js": [
+    "04f35f7d9d73e0c01f87045fd88bd2f053d459dd"
+  ],
+  "tests/B52StationContractNodeTests.js": [
+    "f287e37b39042a1d4c66210e9a0ff25dce728c4e"
+  ],
+  "tests/B53InteractiveEndToEndTests.py": [
+    "367b9e03521b72b337a97259f72703c47c2486a6"
+  ],
+  "tests/B53LogisticsNodeTests.js": [
+    "6cede9d15dcc81a7aba86eb87e9bc76f9a4dd3f1"
+  ],
+  "tests/B53LogisticsUiNodeTests.js": [
+    "bae46b6405f5f5529526b2569eea17888070295e"
+  ],
+  "tests/B54NavigationLiveNodeTests.js": [
+    "8686477d9b9ee875ac5e7b2bf4e38e9ffee8a5af"
+  ],
+  "tests/B61LiveScanningTests.py": [
+    "c2085b07ffb7bfc7f9b254e7b2a4f3ce22d0e98c"
+  ],
+  "tests/B61SurveyNodeTests.js": [
+    "07722bc490d44f4d176c6d29fc8af604078321d3"
+  ],
+  "tests/B62cLiveJumpTests.py": [
+    "a0d6b65a9bc0365dfc85a669f51eeb4a13d7e2e2"
+  ],
+  "tests/B62cLiveUiNodeTests.js": [
+    "bad8417fce6b9e3b8e8d4a1a1a79ae19991c4ced"
+  ],
+  "tests/B62cProjectionTests.cpp": [
+    "a594a2e71ae62dd1a2c7d7622dac66b3f1b6ceb5"
+  ],
+  "tests/B62cRelayTests.py": [
+    "d0c85bd5b9851c6133abea457b50c3278c8ce0ff"
+  ],
+  "tests/B63RelayRouteTests.py": [
+    "46eedb53b756f435a8a07bc1ea7c3992f98cef36"
+  ],
+  "tests/B63RouteSurveyEndToEndTests.py": [
+    "25a344d27d6b8b37ef37f0bbfb92fec61d0160a7"
+  ],
+  "tests/B63RouteSurveyNodeTests.js": [
+    "572e6b7dc443c8ad5f5cc58fd1ce25545164adba"
+  ],
+  "tests/B64LiveMultihopTests.py": [
+    "4806f997dc5fb52e37309cae124b889245c0cf74"
+  ],
+  "tests/B64RegionNodeTests.js": [
+    "e0aa48933d2facc887dc2462f7bf40527b97ad47"
+  ],
+  "tests/B64RegionTests.cpp": [
+    "ca5e3e463d47a3c6a714905c5e6de91fe5c7c8b1"
+  ],
+  "tests/B65GateDisruptionTests.cpp": [
+    "a09cf577c46624bfb9095eb7523e5f67794f313f"
+  ],
+  "tests/B65LiveGateQATests.py": [
+    "ebdab70e346ca2064eea5ef980e83cdf44b775e0"
+  ],
+  "tests/B65QASensorNodeTests.js": [
+    "9cf5bf61d380581359b7a068b99133ce2957e7bf"
+  ],
+  "tests/B65RelayQATests.py": [
+    "02c63aae193aae4e5cd2dde0c1fb47873aaf63c3"
+  ],
+  "tests/B66GateOperationsTests.cpp": [
+    "48aa0916feca13777f9417482d809486165281dd"
+  ],
+  "tests/B66GateSensorNodeTests.js": [
+    "f39a67f8c30b38d191baf91c954f60ae931e2959"
+  ],
+  "tests/B66LiveGateTelemetryTests.py": [
+    "b3f36e5a172be7caed9f1b985138a9f3efa8a7b1"
+  ],
+  "tests/B70ColonyCliE2E.py": [
+    "28c215cb449edcf2ed9cd04e2b0033add2cfb91f"
+  ],
+  "tests/B70ColonyCoreLoopTests.cpp": [
+    "84441a7e84f679bcadb2d8878f938f1eb982c7b7"
+  ],
+  "tests/B70bBrowserSmoke.py": [
+    "1d3b5bef51adef05cf8170726cb4c08259d9589f"
+  ],
+  "tests/B70bColonyContractNodeTests.js": [
+    "5f64549182b9a94cddca066cdde938bbac1f65c2"
+  ],
+  "tests/B70bGeologyTests.cpp": [
+    "1ef5b16158fe1c1b425939f6223fc803c539f812"
+  ],
+  "tests/B70bLiveColonyTests.py": [
+    "592a11d2e1874ab2e04601cf48941110898c8c40"
+  ],
+  "tests/B70cLiveRelayTests.py": [
+    "ee1a48b8c7cb56722251f2dfbb12d432d8035ab3"
+  ],
+  "tests/B70cMineralIndustryNodeTests.js": [
+    "868d3c86d1e1eb303916874f8573d0080db94024"
+  ],
+  "tests/B70cMineralIndustryTests.cpp": [
+    "21879a4cb9144aebeb3e503e2993f145a32f703c"
+  ],
+  "tests/B70dLifeSupportNodeTests.js": [
+    "affc5cd01a5d29aaf083858eb6091bf57adcd66a"
+  ],
+  "tests/B70dLifeSupportTests.cpp": [
+    "15d2f870b345b99a52e329268cdd2f3108ed4f9c"
+  ],
+  "tests/B70dLiveAgricultureTests.py": [
+    "8fa51d1cdb97e5c70d97da9dd26e1709044766e7"
+  ],
+  "tests/B70eColonyFarmNodeTests.js": [
+    "d5dbd99e6ae0716530bba48155a27f955f8d911f"
+  ],
+  "tests/B70eColonyFarmsTests.cpp": [
+    "caf9824ebe26a41dd470f85325a84606d0966d31"
+  ],
+  "tests/B70eLiveFarmTests.py": [
+    "a90bb01a1ea380e21847296197aacf4172642b4c"
+  ],
+  "tests/B70fHabitatNodeTests.js": [
+    "70c87e02363d6ef5343f2d86229133d8b604615e"
+  ],
+  "tests/B70fHabitationTests.cpp": [
+    "511ab5833bafdeacf4f4cdb53b42b6c3cf41d8d7"
+  ],
+  "tests/B70fLiveHabitatTests.py": [
+    "f52ff57ed2c4baa5785d887c7a5ac9dd8b35f533"
+  ],
+  "tests/B70gLiveUtilityTests.py": [
+    "6908f0c0a042a96cd05e858c9c8010a84af40bbf"
+  ],
+  "tests/B70gUtilitiesNodeTests.js": [
+    "554be2e64a9bff057f54024cc2cb718d90d31778"
+  ],
+  "tests/B70gUtilitiesTests.cpp": [
+    "154b2ea2e4fba27e9c3785ee7e22f13341b72646"
+  ],
+  "tests/B70hDelegatedMaintenanceTests.cpp": [
+    "7716d7289d803fbff675a878b300eb6a15b71431"
+  ],
+  "tests/B70hLiveMaintenanceTests.py": [
+    "ebb1bb5422f89c4a4f345e06ef30b00ba4c6ac40"
+  ],
+  "tests/B70hMaintenanceNodeTests.js": [
+    "aae7ee03916669df8e07b7b037de199dd939bfda"
+  ],
+  "tests/B70iLiveResilienceTests.py": [
+    "e5c11af0c3f95ea017f2853d34732fae309a38ec"
+  ],
+  "tests/B70iResilienceNodeTests.js": [
+    "928dbb10deef7837bbef5c6ea9a5beaa03a6b523"
+  ],
+  "tests/B70iResilienceTests.cpp": [
+    "1b60e0680c29fe0191a80cda11fb2d27dd49a79b"
+  ],
+  "tests/B70jCommunityNodeTests.js": [
+    "d1c03b57d3540f66d0397bffb31d0f395e459536"
+  ],
+  "tests/B70jCommunityTests.cpp": [
+    "e92ddfeae2634f05559a8974b900a23a06cdcd36"
+  ],
+  "tests/B70jLiveCommunityTests.py": [
+    "7e23a54c8ffc36b92fc92fcd77959b8227056dc5"
+  ],
+  "tests/B70kClinicNodeTests.js": [
+    "858f8d900d17889dc64e6d183a2635d8a1d45bcc"
+  ],
+  "tests/B70kClinicTests.cpp": [
+    "81ef61060a72824465042b10c46bbfdb4c4760ea"
+  ],
+  "tests/B70kLiveClinicTests.py": [
+    "21f504075bd44d3e716464767015904cd8752b1d"
+  ],
+  "tests/B70kLiveReclaimerTests.py": [
+    "8a2ecdacabff7751403af28f187902d0ee3d371f"
+  ],
+  "tests/B70kReclaimerNodeTests.js": [
+    "a30463bc98926a624c74f5ed262253524b8c0a2e"
+  ],
+  "tests/B70kReclaimerTests.cpp": [
+    "d87e94faf23917c04b6290eba86c7d1c052b2289"
+  ],
+  "tests/B70lLiveWaterworksTests.py": [
+    "c0f94576e69a28011896428cce3e92c9b6676230"
+  ],
+  "tests/B70lWaterworksNodeTests.js": [
+    "62fd2cb16e6b7fcf8c4b0eb1fb12f40506897ae1"
+  ],
+  "tests/B70lWaterworksTests.cpp": [
+    "46a2a58330676e2a41dfc09e64a010478de4c40a"
+  ],
+  "tests/B70mLivePolicyTests.py": [
+    "8c386b2110bada27880890b57519e5e27a4b7e48"
+  ],
+  "tests/B70mPolicyNodeTests.js": [
+    "424ee55b30a3390b3df5812762b98ace6b7b30b9"
+  ],
+  "tests/B70mPolicyTests.cpp": [
+    "b173516be8a31fd7f0bb6b867e06357d4c864270"
+  ],
+  "tests/B70nWorkforceTests.cpp": [
+    "b64dc20c55638d58b8fa6f8d8446e802b05570a8"
+  ],
+  "tests/ClientContractTests.cpp": [
+    "31304bcb3a71ae3b83c88a8a6cbbabe21c9d3179"
+  ],
+  "tests/ECON02AWorkshopTests.cpp": [
+    "fa7b063af2db1af5446923fc8072c9dbf3e8975d"
+  ],
+  "tests/ECON02B0QuantifiedTests.cpp": [
+    "1711875a33e8a58967e4574a76d1e6ee8ddbef0f"
+  ],
+  "tests/ECON02B1aOutpostWorkshopTests.cpp": [
+    "a4133f7209c1996a0b112827b68504c0f57b478f"
+  ],
+  "tests/ECON02B1bConnectedLineTests.cpp": [
+    "ce789f8e28502c8d33c1fb492f91af3b0f80c864"
+  ],
+  "tests/ECON02B1cCargoVolumeTests.cpp": [
+    "448b4bca7f146822ad043b1067216ad29c719c89"
+  ],
+  "tests/ECON02B2InventoryTests.cpp": [
+    "3cbbfcc823a849e5947c2bcbf78d066b1c89d82d"
+  ],
+  "tests/ECON02B2bStorageTests.cpp": [
+    "4e01b7e41a8ec087551f1642872a2f31b19187a8"
+  ],
+  "tests/ECON02B2c1LogisticsTests.cpp": [
+    "cc205060fc765fabbeaf382c54e451708adab521"
+  ],
+  "tests/ECON02B2c2PersistentNodesTests.cpp": [
+    "8262f2e7631fa1f321cfe44456baa4a6ce9f8346"
+  ],
+  "tests/ECON02B2c3AutomaticLinksTests.cpp": [
+    "aa4865a1c5cd6daefd9feed6acf77c8fba47ae13"
+  ],
+  "tests/ECON02B2d1FactoryLayoutTests.cpp": [
+    "46b14bc09d52953e77da3a58e73b3f8687e0d537"
+  ],
+  "tests/ECON02B2d2WorkshopLinksTests.cpp": [
+    "c89005cb4e3d4976882e0bbf301f9da7a885951f"
+  ],
+  "tests/ECON02B2d3aInstalledPlacementTests.cpp": [
+    "7adf9630d653f285aa077db576754b5622c12626"
+  ],
+  "tests/ECON02B2d3bSpatialConveyorTests.cpp": [
+    "669ecf5b587b75ae729cf1a9be3f2e9d23f33bbc"
+  ],
+  "tests/ECON02B2d4aBlueprintConstructionTests.cpp": [
+    "bed79eaed9165a3208ba35ab02ee27328951e671"
+  ],
+  "tests/ECON02B2d4bEditorContractTests.cpp": [
+    "12b46afbaa2875fbe71486c0453fe18d972968ed"
+  ],
+  "tests/ECON02B2d4c1HostPlanTests.cpp": [
+    "05582eafe98d4b12d70561cef37963f448ff0455"
+  ],
+  "tests/ECON02B2d4c2LiveEditorTests.cjs": [
+    "19f350b61859bd3eb73e8f7e9c7d795566b2efdb"
+  ],
+  "tests/ECON02B2d4c2WorldFixture.cpp": [
+    "b80ac0e3cd36c13c7a552eca94c85d128b5252bc"
+  ],
+  "tests/ECON03c10WarmReconstructionScenarios.cpp": [
+    "427495c903de86bd8f42c23b1501a24b254e7038"
+  ],
+  "tests/ECON03c2ColdColonyTests.cpp": [
+    "279f72bb18ad889ef494f3b80ded6746dc11ad7a"
+  ],
+  "tests/ECON03c3RegionalSchedulerTests.cpp": [
+    "8596745bb23cc2846fbd4973a8fa81b320bfc067"
+  ],
+  "tests/ECON03c4RegionalDurabilityTests.cpp": [
+    "950c29a5cfcf4690ccc097448c0188fe89180c19"
+  ],
+  "tests/ECON03c5HostCommandsTests.cpp": [
+    "79b1a4b4dd5947ea3dfd29a5da038bb0ae4a6500"
+  ],
+  "tests/ECON03c6InterestCustodyTests.cpp": [
+    "1651e277db1530297ce03f310765c5c164af9476"
+  ],
+  "tests/ECON03c7ModeAuthorityTests.cpp": [
+    "b10fedde1ef94239275dbdb5e13698e6382be8da"
+  ],
+  "tests/ECON03c8RealWorldBridgeTests.cpp": [
+    "2ce841dea13bc3dff8f45aa916eb6bf8ad996123"
+  ],
+  "tests/ECON03c8aSoakRunner.cpp": [
+    "dd947b033a4720ba50cacecea00038bbe3130ac6"
+  ],
+  "tests/ECON03c8bWorldReconciliationTests.cpp": [
+    "86254de33359052db38667117e195309ed9a2bb7"
+  ],
+  "tests/ECON03c9EightColonyScenarios.cpp": [
+    "d97343954196964d4e87fd50d7697b1456721052"
+  ],
+  "tests/FactoryDesignerNodeTests.js": [
+    "2528650d447f1ae235bbb97ab81a97ab6f121d8e"
+  ],
+  "tests/FourColonySixHourHarness.cpp": [
+    "4ba45bd5f546fc084ff1cf5f0b70038316085953"
+  ],
+  "tests/GRSM01HistoryTests.cpp": [
+    "1b959e6f05a32496c4acf27b6ea9f8830764f861"
+  ],
+  "tests/GRSM01bPhysicalTests.cpp": [
+    "4cbe2bfa2d6fe62f9e792faa7bf98b0c421d389a"
+  ],
+  "tests/GRSM02KnowledgeTests.cpp": [
+    "02eff908a6f7dd3ff0788bed2a6cc15dff3b7a49"
+  ],
+  "tests/GRSM03SocialTests.cpp": [
+    "0ad24083bd4f2d916ba26e82ac17dbe521a5402a"
+  ],
+  "tests/GRSM03bTrustTests.cpp": [
+    "9b687214ee6fa73487ad7fc82740d7624b6581ae"
+  ],
+  "tests/GRSM03c2EncounterTests.cpp": [
+    "bd740eed59d37408c0ceb32d546b035a30f32704"
+  ],
+  "tests/GRSM03c3RelationshipTests.cpp": [
+    "ff1408f880414aa845c29896e70cbcaa05688ef2"
+  ],
+  "tests/GRSM03cMembershipTests.cpp": [
+    "e4f40f7e2e0e43740016207aa2287d0978dfd0cc"
+  ],
+  "tests/GRSM03dGroupRelationsTests.cpp": [
+    "3d1d0854584002e6cd52b3c7a9d2a0343b97341c"
+  ],
+  "tests/GRSM04aPhysicalAppraisalTests.cpp": [
+    "2f684d61a7a76e383bc3a66bcc007070fb4b149b"
+  ],
+  "tests/GRSM04bFabricationTests.cpp": [
+    "5d3aa4c04044d06dad0c191f07ac6423969177b2"
+  ],
+  "tests/GRSM04bNamedJobTests.cpp": [
+    "17af2a8c0c4664d7bb09fcb8763e53e700326787"
+  ],
+  "tests/GRSM04bResponsibilityTests.cpp": [
+    "1bc06bf2115d8f1a1b815abd12d27d14e1455019"
+  ],
+  "tests/GateTransitTests.cpp": [
+    "9fd5e708df756b30801e4dbee5dfa756066e13ea"
+  ],
+  "tests/GeographyScanningTests.cpp": [
+    "f5693ac56b4b09121bd0dc2eec8fe55a51de2bcb"
+  ],
+  "tests/InteractiveEndToEndTests.py": [
+    "98f1e3c3abe0db2ace4b212c8f73dd8f1b7230fc"
+  ],
+  "tests/InterpolationNodeTests.js": [
+    "f0598079cc3a90b1e14ef4b29b99925c06092858"
+  ],
+  "tests/LiveEndToEndTests.py": [
+    "216a51c6e5caa4a812e8a67fc569b44ef68dd037"
+  ],
+  "tests/LiveProtocolNodeTests.js": [
+    "e5f04fe80e0bc23dae4b10a748498972454950ef"
+  ],
+  "tests/LiveUiSmokeNodeTests.js": [
+    "56314eb211cb676b5dffeb0a5443ee515bf2a615"
+  ],
+  "tests/LogisticsTests.cpp": [
+    "ad94d40ec0d4381b72d2b78d1deda147290d2880"
+  ],
+  "tests/MiningLifecycleTests.cpp": [
+    "7a6187a75a84ce5c7b1484a3bd74a3d2f81fecc5"
+  ],
+  "tests/MultiSystemTransitTests.cpp": [
+    "65711d3f5ff2fcef39ccd18714229ea212312b93"
+  ],
+  "tests/NavigationTests.cpp": [
+    "9f44f6f4d78e67ab3ec47e6e7cf1f6a8020c6e99"
+  ],
+  "tests/PersistenceTests.cpp": [
+    "4a98a13a93b28a3569fd595047e4aa5e419b6885"
+  ],
+  "tests/RelayReadiness.py": [
+    "9a1c769331f4435a0af98603b068ce37b67cbf8b"
+  ],
+  "tests/SimulationTests.cpp": [
+    "7cfe9315b40af5c39c67e9ee5a24dad9521c5fab"
+  ],
+  "tests/StationLifecycleTests.cpp": [
+    "72732ea7d7c3cfeaeb72d083bd7ead35b77a1c55"
+  ],
+  "tests/VisualContractNodeTests.js": [
+    "b7e0cca1f4d8fadbd3dd43c5a1e5200273d29f5a"
+  ],
+  "tests/VisualUiSmokeNodeTests.js": [
+    "bbb42cda1eea27187d393da864de6e15a07946bc"
+  ],
+  "tests/__pycache__/B52InteractiveEndToEndTests.cpython-313.pyc": [
+    "2cf0af8969d7027346a15fc3c08bf74abe3329af"
+  ],
+  "tests/__pycache__/B61LiveScanningTests.cpython-313.pyc": [
+    "a43f83d4bf43be9f5980ab3c193089da0de34211"
+  ],
+  "tests/__pycache__/RelayReadiness.cpython-313.pyc": [
+    "64c25bcd7eb9eef94a26b8cd63afd351464d618b"
+  ],
+  "tests/design/__pycache__/test_grsm_design_example.cpython-313.pyc": [
+    "4292e18556b11f6b17427dd6f94fd144d0cff212"
+  ],
+  "tests/design/test_grsm_design_example.py": [
+    "8d22f05d21d3c11b32de61b0ac0ec6f0c516fb8a"
+  ],
+  "tests/fixtures/ECON02B2d4b_editor_blueprint.sglayout": [
+    "655cfaf798a0a3c4e165270067683232d3fa9699"
+  ],
+  "tests/legacy/B43InteractiveEndToEndTests.py": [
+    "bc551d34fe25aca4018a98858786a7cc157a3575"
+  ]
+}

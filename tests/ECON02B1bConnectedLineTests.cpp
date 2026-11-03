@@ -92,7 +92,7 @@ int main(){
             CHECK(mid.reserved_panels_kg==20 && mid.finisher_ticks_remaining==4);
             CHECK(mid.frames_kg==0);
             const auto mid_snapshot=w.world().canonical_state();
-            CHECK(mid_snapshot.rfind("galaxy-kernel-v23|",0)==0);
+            CHECK(mid_snapshot.rfind("galaxy-kernel-v31|",0)==0);
             CHECK(Simulation::from_snapshot(mid_snapshot).canonical_state()==mid_snapshot);
             PersistentWorld::recover_copy(db,recovery);
             {

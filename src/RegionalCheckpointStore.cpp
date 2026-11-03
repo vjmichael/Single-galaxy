@@ -82,6 +82,33 @@ public:
     }
     void bind_blob(int n,const std::string& s){must(sqlite3_bind_blob(stmt,n,s.data(),static_cast<int>(s.size()),SQLITE_TRANSIENT),db,"bind checkpoint");}
 };
+// v50: a region hosting an actual material-backed factory may not accept an
+// unrelated cold command or society tick that leaves the factory behind.
+// The single-factory adapter commits both effects in its own authorized path.
+bool has_active_factory(sqlite3* db,const std::string& scope){
+    Statement table(db,"SELECT 1 FROM sqlite_master WHERE type='table' AND name='sg_v50_factory'");
+    const int found=sqlite3_step(table.stmt);
+    if(found==SQLITE_DONE)return false;
+    if(found!=SQLITE_ROW)throw std::runtime_error("factory presence check failed");
+    Statement row(db,"SELECT 1 FROM sg_v50_factory WHERE scope=?1");
+    row.bind_text(1,scope);
+    const int rc=sqlite3_step(row.stmt);
+    if(rc!=SQLITE_ROW&&rc!=SQLITE_DONE)
+        throw std::runtime_error("factory region binding check failed");
+    return rc==SQLITE_ROW;
+}
+bool has_active_network(sqlite3* db,const std::string& scope){
+    Statement table(db,"SELECT 1 FROM sqlite_master WHERE type='table' AND name='sg_v51_network'");
+    if(sqlite3_step(table.stmt)!=SQLITE_ROW)return false;
+    Statement row(db,"SELECT 1 FROM sg_v51_network WHERE scope=?1");row.bind_text(1,scope);
+    const auto result=sqlite3_step(row.stmt);
+    if(result!=SQLITE_ROW && result!=SQLITE_DONE)throw std::runtime_error("network authority lookup failed");
+    return result==SQLITE_ROW;
+}
+void reject_uncoordinated_factory(sqlite3* db,const std::string& scope){
+    if(has_active_factory(db,scope) || has_active_network(db,scope))
+        throw std::runtime_error("factory region requires coordinated industry+population effects");
+}
 void put_life(Binary& b,const ColonyLifeSupport& c){
     b.i64(c.food_kg);b.i64(c.water_kg);b.i64(c.oxygen_kg);
     b.i64(c.nutrients_kg);b.i64(c.co2_kg);b.i64(c.crops_kg);
@@ -240,6 +267,223 @@ std::optional<VersionedCheckpoint> CheckpointStore::load() const {
     auto state=decode(bytes);
     return VersionedCheckpoint{std::move(state),static_cast<std::uint64_t>(rev)};
 }
+std::uint64_t CheckpointStore::commit_casualties_in_world_transaction(
+    sqlite3* active,std::uint64_t expected_revision,std::uint64_t expected_owner_generation,
+    std::uint64_t tick,const std::map<std::string,std::uint64_t>& reductions,
+    const std::map<std::string,std::uint64_t>& initial_populations,
+    const std::string& command_id) const {
+    if(!active || sqlite3_get_autocommit(active)!=0 || active==db_ || reductions.empty() ||
+       !expected_revision || expected_revision>=max_sqlint ||
+       !expected_owner_generation || expected_owner_generation>max_sqlint ||
+       command_id.empty() || command_id.size()>max_label || tick>max_sqlint)
+        throw std::invalid_argument("regional society transition requires live world transaction");
+    const auto* world_path=sqlite3_db_filename(active,"main");
+    const auto* region_path=sqlite3_db_filename(db_,"main");
+    if(!world_path||!region_path||std::string(world_path)!=region_path)
+        throw std::runtime_error("regional society transition used detached SQLite world");
+    reject_uncoordinated_factory(active,scope_);
+    { // A prepared handoff or ownership change always freezes the writer.
+        Statement owner(active,"SELECT owner,phase,generation,checkpoint_revision FROM "
+                               "sg_regional_mode_authority WHERE scope=?1");
+        owner.bind_text(1,scope_);
+        if(sqlite3_step(owner.stmt)!=SQLITE_ROW ||
+           sqlite3_column_int(owner.stmt,0)!=0 || sqlite3_column_int(owner.stmt,1)!=0 ||
+           sqlite3_column_int64(owner.stmt,2)!=static_cast<sqlite3_int64>(expected_owner_generation) ||
+           sqlite3_column_int64(owner.stmt,3)!=static_cast<sqlite3_int64>(expected_revision))
+            throw std::runtime_error("regional society owner generation/phase/revision fence rejected");
+    }
+    Statement old(active,"SELECT revision,payload FROM sg_regional_checkpoint WHERE scope=?1");
+    old.bind_text(1,scope_);
+    if(sqlite3_step(old.stmt)!=SQLITE_ROW ||
+       sqlite3_column_int64(old.stmt,0)!=static_cast<sqlite3_int64>(expected_revision))
+        throw std::runtime_error("regional society CAS revision mismatch");
+    const auto* blob=sqlite3_column_blob(old.stmt,1);
+    const int len=sqlite3_column_bytes(old.stmt,1);
+    if(!blob || len<16 || static_cast<std::size_t>(len)>max_bytes)
+        throw std::runtime_error("regional checkpoint payload missing");
+    Scheduler updated=decode(std::string(static_cast<const char*>(blob),static_cast<std::size_t>(len)));
+    if(updated.pending_events()!=0 || updated.tick()>=tick)
+        throw std::runtime_error("regional society pending events or invalid tick");
+    if(initial_populations.size()!=reductions.size())
+        throw std::runtime_error("regional colony population bindings incomplete");
+    for(const auto& [name,n]:reductions){
+        const auto prior=initial_populations.find(name);
+        if(prior==initial_populations.end() ||
+           updated.colony(name).population!=prior->second)
+            throw std::runtime_error("regional colony population preflight stale");
+        if(name.empty() || n==0 || updated.colony(name).population<n)
+            throw std::runtime_error("regional society invalid colony casualty reduction");
+        updated.schedule_population(name,updated.colony(name).population-n,tick);
+    }
+    updated.advance_to(tick);  // same deterministic ECON03 scheduler, not an ad hoc blob edit
+    if(updated.pending_events()!=0)throw std::runtime_error("regional society update left events pending");
+    const auto bytes=encode(updated);
+    Statement update(active,"UPDATE sg_regional_checkpoint SET revision=?2,payload=?3 "
+                            "WHERE scope=?1 AND revision=?4");
+    update.bind_text(1,scope_);update.bind_int(2,expected_revision+1);
+    update.bind_blob(3,bytes);update.bind_int(4,expected_revision);
+    if(sqlite3_step(update.stmt)!=SQLITE_DONE||sqlite3_changes(active)!=1)
+        throw std::runtime_error("regional society concurrent checkpoint write");
+    Statement fence(active,"UPDATE sg_regional_mode_authority SET checkpoint_revision=?2,"
+                           "boundary_tick=?3 WHERE scope=?1 AND generation=?4 AND "
+                           "owner=0 AND phase=0 AND checkpoint_revision=?5");
+    fence.bind_text(1,scope_);fence.bind_int(2,expected_revision+1);
+    fence.bind_int(3,tick);fence.bind_int(4,expected_owner_generation);
+    fence.bind_int(5,expected_revision);
+    if(sqlite3_step(fence.stmt)!=SQLITE_DONE||sqlite3_changes(active)!=1)
+        throw std::runtime_error("regional society authority changed during update");
+    Statement receipt(active,"INSERT INTO sg_regional_command_receipt "
+                             "(scope,command_id,actor,request,revision,outcome) "
+                             "VALUES (?1,?2,'society-host',?3,?4,?5)");
+    receipt.bind_text(1,scope_);receipt.bind_text(2,command_id);
+    receipt.bind_text(3,"society-deaths-generation:"+std::to_string(tick));
+    receipt.bind_int(4,expected_revision+1);receipt.bind_int(5,reductions.size());
+    if(sqlite3_step(receipt.stmt)!=SQLITE_DONE)
+        throw std::runtime_error("regional society duplicate or corrupt effect receipt");
+    return expected_revision+1;
+}
+
+std::uint64_t CheckpointStore::commit_birth_in_world_transaction(
+    sqlite3* active,std::uint64_t expected_revision,std::uint64_t expected_owner_generation,
+    std::uint64_t tick,const std::string& colony,std::uint64_t initial_population,
+    const std::string& birth_event_id) const {
+    if(!active || active==db_ || sqlite3_get_autocommit(active)!=0 ||
+       !expected_revision || expected_revision>=max_sqlint ||
+       !expected_owner_generation || expected_owner_generation>max_sqlint ||
+       colony.empty() || colony.size()>max_label || birth_event_id.empty() ||
+       birth_event_id.size()>max_label || !tick || tick>max_sqlint ||
+       initial_population>=max_sqlint)
+        throw std::invalid_argument("birth requires a bounded active world transaction");
+    const auto* w=sqlite3_db_filename(active,"main");
+    const auto* reg=sqlite3_db_filename(db_,"main");
+    if(!w || !reg || std::string(w)!=reg)
+        throw std::runtime_error("birth linked to detached region database");
+    reject_uncoordinated_factory(active,scope_);
+    {
+        Statement owner(active,"SELECT owner,phase,generation,checkpoint_revision "
+            "FROM sg_regional_mode_authority WHERE scope=?1");
+        owner.bind_text(1,scope_);
+        if(sqlite3_step(owner.stmt)!=SQLITE_ROW ||
+           sqlite3_column_int(owner.stmt,0)!=0 || sqlite3_column_int(owner.stmt,1)!=0 ||
+           sqlite3_column_int64(owner.stmt,2)!=static_cast<sqlite3_int64>(expected_owner_generation) ||
+           sqlite3_column_int64(owner.stmt,3)!=static_cast<sqlite3_int64>(expected_revision))
+            throw std::runtime_error("birth cold-owner generation/phase fence refused");
+    }
+    Statement old(active,"SELECT revision,payload FROM sg_regional_checkpoint WHERE scope=?1");
+    old.bind_text(1,scope_);
+    if(sqlite3_step(old.stmt)!=SQLITE_ROW ||
+       sqlite3_column_int64(old.stmt,0)!=static_cast<sqlite3_int64>(expected_revision))
+        throw std::runtime_error("birth regional checkpoint revision mismatch");
+    const auto* blob=sqlite3_column_blob(old.stmt,1);
+    const auto len=sqlite3_column_bytes(old.stmt,1);
+    if(!blob || len<16 || static_cast<std::size_t>(len)>max_bytes)
+        throw std::runtime_error("birth regional payload absent");
+    auto updated=decode(std::string(static_cast<const char*>(blob),static_cast<std::size_t>(len)));
+    if(updated.pending_events()!=0 || updated.tick()>=tick ||
+       updated.colony(colony).population!=initial_population)
+        throw std::runtime_error("birth regional cohort not at certified pre-state");
+    updated.schedule_population(colony,initial_population+1,tick);
+    updated.advance_to(tick);
+    if(updated.pending_events()!=0 || updated.colony(colony).population!=initial_population+1)
+        throw std::runtime_error("birth regional scheduler failed population increase");
+    const auto bytes=encode(updated);
+    Statement cp(active,"UPDATE sg_regional_checkpoint SET revision=?2,payload=?3 "
+                        "WHERE scope=?1 AND revision=?4");
+    cp.bind_text(1,scope_);cp.bind_int(2,expected_revision+1);
+    cp.bind_blob(3,bytes);cp.bind_int(4,expected_revision);
+    if(sqlite3_step(cp.stmt)!=SQLITE_DONE || sqlite3_changes(active)!=1)
+        throw std::runtime_error("birth checkpoint CAS failed");
+    Statement fence(active,"UPDATE sg_regional_mode_authority SET checkpoint_revision=?2,"
+        "boundary_tick=?3 WHERE scope=?1 AND generation=?4 "
+        "AND owner=0 AND phase=0 AND checkpoint_revision=?5");
+    fence.bind_text(1,scope_);fence.bind_int(2,expected_revision+1);
+    fence.bind_int(3,tick);fence.bind_int(4,expected_owner_generation);
+    fence.bind_int(5,expected_revision);
+    if(sqlite3_step(fence.stmt)!=SQLITE_DONE || sqlite3_changes(active)!=1)
+        throw std::runtime_error("birth owner changed during commit");
+    Statement receipt(active,"INSERT INTO sg_regional_command_receipt "
+        "(scope,command_id,actor,request,revision,outcome) "
+        "VALUES (?1,?2,'society-birth-host',?3,?4,1)");
+    receipt.bind_text(1,scope_);receipt.bind_text(2,birth_event_id);
+    receipt.bind_text(3,"society-birth-generation:"+std::to_string(tick)+":"+colony);
+    receipt.bind_int(4,expected_revision+1);
+    if(sqlite3_step(receipt.stmt)!=SQLITE_DONE)
+        throw std::runtime_error("duplicate regional birth receipt");
+    return expected_revision+1;
+}
+
+std::uint64_t CheckpointStore::commit_migration_in_world_transaction(
+    sqlite3* active,std::uint64_t expected_revision,std::uint64_t expected_owner_generation,
+    std::uint64_t tick,const std::string& origin,const std::string& destination,
+    std::uint64_t origin_pop,std::uint64_t dest_pop,const std::string& command_id,
+    std::uint64_t person_count) const {
+    if(!active || sqlite3_get_autocommit(active)!=0 || active==db_ || !expected_revision ||
+       expected_revision>=max_sqlint || !expected_owner_generation ||
+       expected_owner_generation>max_sqlint || !tick || tick>max_sqlint ||
+       origin.empty() || destination.empty() || origin==destination ||
+       person_count==0 || origin_pop<person_count || origin_pop>max_records ||
+       person_count>max_records-dest_pop ||
+       command_id.empty() || command_id.size()>max_label)
+        throw std::invalid_argument("migration requires bounded world transaction");
+    const auto* a=sqlite3_db_filename(active,"main"),*b=sqlite3_db_filename(db_,"main");
+    if(!a || !b || std::string(a)!=b)
+        throw std::runtime_error("migration cannot use a detached region database");
+    reject_uncoordinated_factory(active,scope_);
+    Statement owner(active,"SELECT owner,phase,generation,checkpoint_revision FROM "
+        "sg_regional_mode_authority WHERE scope=?1");
+    owner.bind_text(1,scope_);
+    if(sqlite3_step(owner.stmt)!=SQLITE_ROW || sqlite3_column_int(owner.stmt,0)!=0 ||
+       sqlite3_column_int(owner.stmt,1)!=0 ||
+       sqlite3_column_int64(owner.stmt,2)!=static_cast<sqlite3_int64>(expected_owner_generation) ||
+       sqlite3_column_int64(owner.stmt,3)!=static_cast<sqlite3_int64>(expected_revision))
+        throw std::runtime_error("migration cold owner generation or handoff fence refused");
+    Statement old(active,"SELECT revision,payload FROM sg_regional_checkpoint WHERE scope=?1");
+    old.bind_text(1,scope_);
+    if(sqlite3_step(old.stmt)!=SQLITE_ROW ||
+       sqlite3_column_int64(old.stmt,0)!=static_cast<sqlite3_int64>(expected_revision))
+        throw std::runtime_error("migration stale regional revision");
+    const auto* blob=sqlite3_column_blob(old.stmt,1);
+    const int len=sqlite3_column_bytes(old.stmt,1);
+    if(!blob || len<16 || static_cast<std::size_t>(len)>max_bytes)
+        throw std::runtime_error("migration missing regional checkpoint payload");
+    auto updated=decode(std::string(static_cast<const char*>(blob),static_cast<std::size_t>(len)));
+    if(updated.pending_events()!=0 || updated.tick()>=tick ||
+       updated.colony(origin).population!=origin_pop ||
+       updated.colony(destination).population!=dest_pop)
+        throw std::runtime_error("migration regional populations or tick stale");
+    updated.schedule_population(origin,origin_pop-person_count,tick);
+    updated.schedule_population(destination,dest_pop+person_count,tick);
+    updated.advance_to(tick);
+    if(updated.pending_events()!=0 || updated.colony(origin).population!=origin_pop-person_count ||
+       updated.colony(destination).population!=dest_pop+person_count)
+        throw std::runtime_error("migration scheduler population conservation failed");
+    const auto bytes=encode(updated);
+    Statement cp(active,"UPDATE sg_regional_checkpoint SET revision=?2,payload=?3 "
+                        "WHERE scope=?1 AND revision=?4");
+    cp.bind_text(1,scope_);cp.bind_int(2,expected_revision+1);
+    cp.bind_blob(3,bytes);cp.bind_int(4,expected_revision);
+    if(sqlite3_step(cp.stmt)!=SQLITE_DONE || sqlite3_changes(active)!=1)
+        throw std::runtime_error("migration regional checkpoint CAS failed");
+    Statement fence(active,"UPDATE sg_regional_mode_authority SET checkpoint_revision=?2,"
+        "boundary_tick=?3 WHERE scope=?1 AND generation=?4 AND owner=0 AND phase=0 "
+        "AND checkpoint_revision=?5");
+    fence.bind_text(1,scope_);fence.bind_int(2,expected_revision+1);
+    fence.bind_int(3,tick);fence.bind_int(4,expected_owner_generation);
+    fence.bind_int(5,expected_revision);
+    if(sqlite3_step(fence.stmt)!=SQLITE_DONE || sqlite3_changes(active)!=1)
+        throw std::runtime_error("migration authority generation changed during world step");
+    Statement receipt(active,"INSERT INTO sg_regional_command_receipt "
+        "(scope,command_id,actor,request,revision,outcome) "
+        "VALUES (?1,?2,'society-migration-host',?3,?4,1)");
+    receipt.bind_text(1,scope_);receipt.bind_text(2,command_id);
+    receipt.bind_text(3,"society-migration-generation:"+std::to_string(tick)+":"+origin+":"+destination+
+        (person_count==1 ? "" : ":household:"+std::to_string(person_count)));
+    receipt.bind_int(4,expected_revision+1);
+    if(sqlite3_step(receipt.stmt)!=SQLITE_DONE)
+        throw std::runtime_error("duplicate migration regional receipt");
+    return expected_revision+1;
+}
+
 std::uint64_t CheckpointStore::save(const Scheduler& scheduler,std::uint64_t expected_revision){
     if(expected_revision>=max_sqlint)throw std::overflow_error("regional revision overflow");
     const auto payload=encode(scheduler);
@@ -297,7 +541,9 @@ CommandReceipt CheckpointStore::commit_command(
     const std::string& canonical_request,std::uint64_t expected_revision,
     const std::function<std::uint64_t(Scheduler&)>& mutate,
     const SqliteMutationEffect& atomic_effect,bool custody_enforced,
-    std::uint64_t expected_owner_generation){
+    std::uint64_t expected_owner_generation,int required_owner_mode){
+    if(required_owner_mode!=0 && required_owner_mode!=1)
+        throw std::invalid_argument("invalid required region owner");
     if(command_id.empty() || command_id.size()>max_label || actor.empty() ||
        actor.size()>max_label || canonical_request.empty() ||
        canonical_request.size()>max_label)
@@ -329,13 +575,39 @@ CommandReceipt CheckpointStore::commit_command(
                 const auto rc=sqlite3_step(q.stmt);
                 if(rc==SQLITE_ROW){
                     const auto actual=sqlite3_column_int64(q.stmt,2);
-                    if(sqlite3_column_int(q.stmt,0)!=0 || sqlite3_column_int(q.stmt,1)!=0)
-                        throw std::runtime_error("regional scheduler is not owned by stable cold mode");
+                    if(sqlite3_column_int(q.stmt,0)!=required_owner_mode || sqlite3_column_int(q.stmt,1)!=0)
+                        throw std::runtime_error("regional owner/phase fence rejected command");
                     if(expected_owner_generation==0 || expected_owner_generation>max_sqlint ||
                        actual<1 || actual!=static_cast<sqlite3_int64>(expected_owner_generation))
                         throw std::runtime_error("regional cold-owner generation fence rejected writer");
-                }else if(rc!=SQLITE_DONE)throw std::runtime_error("regional mode fence query failed");
-            }else if(found!=SQLITE_DONE)throw std::runtime_error("regional mode schema query failed");
+                }else if(rc==SQLITE_DONE){
+                    if(required_owner_mode!=0)throw std::runtime_error("detailed command without enrolled region");
+                }else throw std::runtime_error("regional mode fence query failed");
+            }else if(found==SQLITE_DONE){
+                if(required_owner_mode!=0)throw std::runtime_error("detailed command without authority table");
+            }else throw std::runtime_error("regional mode schema query failed");
+        }
+        const bool single=has_active_factory(db_,scope_);
+        const bool network=has_active_network(db_,scope_);
+        if(single&&network)throw std::runtime_error("two industrial checkpoint owners registered");
+        if((single||network) && (!atomic_effect || !custody_enforced ||
+           (single && (actor!="factory-host" ||
+             canonical_request.rfind("industrial-cold-v50:",0)!=0)) ||
+           (network && (actor!="network-host" ||
+             canonical_request.rfind("network-cold-v51:",0)!=0))))
+            throw std::runtime_error("uncoordinated regional command would bypass industry checkpoint");
+        // Detailed-mode calls additionally require a durable active-entity
+        // registration for this exact authority generation. Merely supplying
+        // detailed_mode=true from a host path cannot create a warm owner.
+        if(required_owner_mode==1){
+            Statement table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                                 "AND name='sg_warm_active'");
+            if(sqlite3_step(table.stmt)!=SQLITE_ROW)
+                throw std::runtime_error("detailed operation without active materialization table");
+            Statement scene(db_,"SELECT 1 FROM sg_warm_active WHERE scope=?1 AND generation=?2");
+            scene.bind_text(1,scope_);scene.bind_int(2,expected_owner_generation);
+            if(sqlite3_step(scene.stmt)!=SQLITE_ROW)
+                throw std::runtime_error("detailed operation without active generation manifest");
         }
         // Check deduplication BEFORE CAS, so delayed repeats after subsequent
         // successful commands still return their original receipt.
@@ -391,10 +663,10 @@ CommandReceipt CheckpointStore::commit_command(
             if(found==SQLITE_ROW){
                 Statement u(db_,"UPDATE sg_regional_mode_authority SET "
                     "checkpoint_revision=?2,boundary_tick=?3 WHERE scope=?1 "
-                    "AND owner=0 AND phase=0");
+                    "AND owner=?4 AND phase=0");
                 u.bind_text(1,scope_);u.bind_int(2,expected_revision+1);
-                u.bind_int(3,candidate.tick());
-                if(sqlite3_step(u.stmt)!=SQLITE_DONE)
+                u.bind_int(3,candidate.tick());u.bind_int(4,static_cast<std::uint64_t>(required_owner_mode));
+                if(sqlite3_step(u.stmt)!=SQLITE_DONE || sqlite3_changes(db_)!=1)
                     throw std::runtime_error("regional authority checkpoint sync failed");
             }else if(found!=SQLITE_DONE)
                 throw std::runtime_error("regional authority schema query failed");

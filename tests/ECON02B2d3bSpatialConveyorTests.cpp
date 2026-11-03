@@ -76,7 +76,7 @@ int main(){
             CHECK(issue(w,ship,21,Action::CompleteConveyorRoute,site,13).result==Outcome::InvalidArgument);
             CHECK(stock(w,site,1)==350 && stock(w,site,2)==0);
             unfinished=w.world().canonical_state();
-            CHECK(unfinished.rfind("galaxy-kernel-v30|",0)==0);
+            CHECK(unfinished.rfind("galaxy-kernel-v31|",0)==0);
             CHECK(Simulation::from_snapshot(unfinished).canonical_state()==unfinished);
             CHECK(w.world().storage_link(site,13)->route_cells.size()==2);
             CHECK(w.world().colony_ship(ship)->modules==modules-3);

@@ -82,7 +82,7 @@ int main(){
       ok(w,ship,20,Action::TransferStorageStack,site,325,0,0);
       CHECK(w.world().storage_inventory_snapshot(site).used_liters()==4000);
       const auto keep=w.world().canonical_state();
-      CHECK(keep.rfind("galaxy-kernel-v25|",0)==0);
+      CHECK(keep.rfind("galaxy-kernel-v31|",0)==0);
       CHECK(send(w,ship,21,Action::TransferStorageStack,site,1,0,0).result==Outcome::CargoFull);
       CHECK(w.world().storage_inventory_snapshot(site).used_liters()==4000);
       CHECK(send(w,ship,22,Action::TransferStorageStack,site,1,1,1).result==Outcome::NoResources);

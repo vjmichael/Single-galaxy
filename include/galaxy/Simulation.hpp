@@ -22,7 +22,7 @@ struct Vector2 {
 };
 
 enum class EntityType { Ship, Asteroid, Station, Stargate, Wreck };
-enum class Action { Thrust, Mine, StartMining, StopMining, RequestUndock, RequestDock, UnloadOre, LoadOre, SellOre, RequestJump, SetGatePairOnline, SetGateStaff, DeliverGateSpares, RefineOre, FabricateModule, ConstructOutpost, RefineMineral, FabricateMaterialModule, PlantCrops, HarvestCrops, RecycleWater, RecycleCompost, ProduceOxygen, LoadLifeWater, ConstructFarm, TransferFarmStock, AssignFarmWorkers, ConstructHabitat, TransferHabitatStock, AssignHabitatResidents, ConstructUtility, RepairUtility, TransferUtilitySpares, AssignUtilityTechnicians, SetUtilityMaintenance, ConstructCommunity, TransferCommunityStock, AssignCommunityStaff, ConstructClinic, TransferClinicStock, AssignClinicStaff, ConstructReclaimer, ConstructWaterworks, TransferWaterworksFeed, SetPolicyAssurance, AssignPolicyInspectors, AssignFarmMentor, HostDestroyShip, HostCrewLoss, ConstructWorkshop, TransferWorkshopFeed, AssignWorkshopOperator, TransferWorkshopOutput, ConstructWorkshopFinisher, AssignWorkshopFinisher, TransferWorkshopFinalOutput, TransferWorkshopStack, ConstructStorage, TransferStorageStack, ConstructStorageNode, TransferStorageNodeStack, ConstructStorageLink, ConstructWorkshopLink, PlaceFactoryEquipment, PlaceConveyorCell, CompleteConveyorRoute };
+enum class Action { Thrust, Mine, StartMining, StopMining, RequestUndock, RequestDock, UnloadOre, LoadOre, SellOre, RequestJump, SetGatePairOnline, SetGateStaff, DeliverGateSpares, RefineOre, FabricateModule, ConstructOutpost, RefineMineral, FabricateMaterialModule, PlantCrops, HarvestCrops, RecycleWater, RecycleCompost, ProduceOxygen, LoadLifeWater, ConstructFarm, TransferFarmStock, AssignFarmWorkers, ConstructHabitat, TransferHabitatStock, AssignHabitatResidents, ConstructUtility, RepairUtility, TransferUtilitySpares, AssignUtilityTechnicians, SetUtilityMaintenance, ConstructCommunity, TransferCommunityStock, AssignCommunityStaff, ConstructClinic, TransferClinicStock, AssignClinicStaff, ConstructReclaimer, ConstructWaterworks, TransferWaterworksFeed, SetPolicyAssurance, AssignPolicyInspectors, AssignFarmMentor, HostDestroyShip, HostCrewLoss, ConstructWorkshop, TransferWorkshopFeed, AssignWorkshopOperator, TransferWorkshopOutput, ConstructWorkshopFinisher, AssignWorkshopFinisher, TransferWorkshopFinalOutput, TransferWorkshopStack, ConstructStorage, TransferStorageStack, ConstructStorageNode, TransferStorageNodeStack, ConstructStorageLink, ConstructWorkshopLink, PlaceFactoryEquipment, PlaceConveyorCell, CompleteConveyorRoute, HostEmbarkPassengers, HostDisembarkPassengers, HostStrandFerry, HostResumeFerry, HostEvacuatePassengers, HostDestroyPassengerFerry, HostResolveMixedFerryLoss, HostTrainMedic, HostTriageRescued, HostTreatInjuries, HostScheduleMedicShift, HostLoadMedicalKit, HostMobileStabilize, HostSettleMigrant, HostSplitEvacuatePassengers, HostEscrowConstructedStock, HostReturnConstructedStock, HostTransferConsignedStock };
 enum class Outcome { Applied, InvalidActor, Unauthorized, InvalidTarget, OutOfRange, InvalidArgument, NoResources, CargoFull, NotMining, NotInSpace, NotDocked, InTransition, ShipMoving, HangarFull, InsufficientFunds, WrongSystem, GateOffline, NotColonyShip, InsufficientCrew };
 enum class ActivityKind { AsteroidDespawned, AutoMiningTransfer, MiningStopped, Undocked, Docked, JumpCompleted, ShipDestroyed, NpcLost, AutoStorageTransfer };
 enum class DockState { InSpace, Docked, Undocking, Docking };
@@ -128,6 +128,9 @@ struct ClinicFacility {
     std::int64_t water_kg=0,substrate_kg=0,wastewater_kg=0,medical_waste_kg=0;
     std::int64_t medics=0,active_cases=0;
     std::uint64_t cycles=0,consecutive_care_cycles=0,shortages=0,treated_cases=0,recorded_cases=0;
+    // v38: audited medical input budgets separate from aggregate clinic episodes.
+    std::uint64_t training_units=0,ems_treatment_units=0,ems_treated_cases=0;
+    std::uint64_t last_ems_tick=0,ems_cases_this_tick=0;
 };
 // B7.0k-2: a physically constructed local water/oxygen reclamation unit.
 // Processing at most 20kg of each feedstream per 20-tick needs period.
@@ -166,6 +169,57 @@ struct NpcRecord {
     EntityId home_ship=0, location=0;
     NpcRole role=NpcRole::Ship;
     std::uint64_t farm_xp=0, mentor_id=0;
+    // Zero for legacy assigned custody; future passenger transfers require a voyage.
+    std::uint64_t transport_id=0;
+    EntityId assigned_site=0; // v32: permanent assignment, independent of physical location
+};
+// Distinguish permanent workforce assignment from physical custody.
+// This view is read-only until the world-owned transfer journal is implemented.
+// v36: immutable tombstone with the full NPC identity/assignment snapshot.
+// The original live record is removed only after committing an explicit death.
+struct NpcCasualty {
+    NpcRecord identity{};
+    std::uint64_t death_tick=0, command_id=0;
+    EntityId ferry=0;
+};
+// A host-authorized skill assessment uses real clinic materials. Three units
+// establish basic medic qualification; XP is attached to the actual named NPC.
+struct MedicTraining { EntityId clinic_site=0; std::uint64_t units=0; };
+// Named patient status is independent of fatal tombstones. Never die on restart.
+struct MedicalCase {
+    std::uint64_t rescue_voyage=0,triage_command=0,triage_tick=0;
+    unsigned severity=0; // 1-3; status injured until an explicit treatment receipt
+    std::uint64_t treatment_command=0,treatment_tick=0;
+    EntityId clinic_site=0;
+    std::uint64_t medic_id=0;
+    // v39: stabilization is a bounded first-aid step, not definitive treatment.
+    std::uint64_t stabilization_command=0, stabilized_tick=0;
+    std::uint64_t recovery_due_tick=0, recovered_tick=0;
+};
+struct MedicShift {
+    EntityId clinic_site=0;
+    std::uint64_t medic_id=0, start_tick=0, end_tick=0;
+};
+struct MobileMedicalKit {
+    std::int64_t water_kg=0,substrate_kg=0,wastewater_kg=0,medical_waste_kg=0;
+};
+enum class NpcHealthStatus { Healthy, Injured, Treated, Deceased, Unknown, Stabilized, Recovering, Recovered };
+struct ColonyMedicalAudit {
+    struct Counts { std::int64_t living=0,deceased=0,injured=0,stabilized=0,recovering=0,fit=0;
+                    std::int64_t on_duty=0,unavailable=0,in_transit=0; };
+    std::map<EntityId,Counts> by_home_ship;
+    bool reconciled=false;
+};
+struct CrewRehome {
+    EntityId wreck=0,rescue_ship=0;
+    std::uint64_t incident_command=0,tick=0;
+};
+struct NpcCustodyView {
+    std::uint64_t npc_id=0;
+    EntityId home_ship=0, physical_location=0;
+    NpcRole assigned_role=NpcRole::Ship;
+    std::uint64_t active_transport_id=0;
+    bool passenger=false;
 };
 struct FarmWorkforceAssessment {
     std::uint64_t cooperative_cycles=0;
@@ -338,6 +392,10 @@ struct OutpostStorage {
     EntityId source_ship=0;
     std::int64_t embodied_ore=2; // one real module, no free storage
     std::map<std::string,std::int64_t> goods_kg;
+    // v52: world-owned physical mass reserved by a verified production network.
+    // Not available to ordinary storage transfers; its detailed contents are
+    // conserved in the matching network checkpoint.
+    std::int64_t network_escrow_kg=0;
     // ECON-02B2c2: additional real module-built 4m3 bins, keyed by positive site-local ID.
     // Legacy container remains node 0. All bins belong to the same constructed site.
     std::map<std::uint32_t,std::map<std::string,std::int64_t>> extra_bins;
@@ -386,7 +444,16 @@ struct Command {
     Action action = Action::Thrust;
     int thrust_x = 0;              // each axis -1, 0, +1
     int thrust_y = 0;
-    std::int64_t amount = 0;       // ore units for Mine
+    std::int64_t amount = 0;       // ore units for Mine; v37 mixed-ferry rescue count
+    // Durable transport envelope: original voyage ID and authenticated passenger manifest.
+    std::uint64_t transport_id = 0;
+    // v37 HostResolveMixedFerryLoss: complete onboard manifest in two sorted
+    // segments [survivors (amount entries), fatalities (remaining entries)].
+    // The immutable rescue voyage ID is the globally unique command ID.
+    std::vector<std::uint64_t> passenger_ids;
+    // v48 one source voyage, two disjoint receiving voyages, one applied command.
+    EntityId secondary_receiver=0;
+    std::uint64_t secondary_transport=0;
 };
 
 struct ActivityEvent {
@@ -439,6 +506,48 @@ public:
     // No NPC is added: counts at all sites must match the existing ledger.
     void enable_individual_workforce();
     const std::map<std::uint64_t,NpcRecord>& npc_records() const {return npcs_;}
+    const std::map<std::uint64_t,NpcCasualty>& npc_casualties() const {return casualties_;}
+    const std::map<std::uint64_t,MedicalCase>& medical_cases() const {return medical_cases_;}
+    const std::map<std::uint64_t,MedicTraining>& named_medics() const {return named_medics_;}
+    const std::map<std::pair<std::uint64_t,std::uint64_t>,MedicalCase>& medical_history() const {return medical_history_;}
+    const std::map<std::uint64_t,MedicShift>& medic_shifts() const {return medic_shifts_;}
+    const std::map<EntityId,MobileMedicalKit>& mobile_medical_kits() const {return mobile_medical_kits_;}
+    ColonyMedicalAudit assess_medical_population() const;
+    // A canonical, read-only job dispatch check. The caller remains responsible
+    // for role qualification, schedules and facility-specific requirements.
+    bool npc_available_for_duty(std::uint64_t npc_id) const;
+    const std::map<std::uint64_t,CrewRehome>& crew_rehomes() const {return crew_rehomes_;}
+    NpcHealthStatus npc_health_status(std::uint64_t npc_id) const;
+    // Returns an immutable projection, never a second NPC authority.
+    struct LegacyVoyageManifest {
+        std::uint64_t transport_id=0;
+        EntityId ferry=0, origin=0;
+        std::vector<std::uint64_t> passenger_ids;
+    };
+    // Offline migration only: caller must independently verify supplied manifests.
+    // Does not rewrite an existing PersistentWorld journal.
+    static Simulation migrate_legacy_active_voyages(
+        const std::string& v32_snapshot,
+        const std::vector<LegacyVoyageManifest>& verified_manifests);
+    void upgrade_passenger_snapshot_format();
+    void upgrade_assignment_snapshot_format();
+    // v40 opt-in, genesis-only rule change. Old v39 farms and workshops retain
+    // their original behavior unless an explicit journaled migration is built.
+    void enable_medical_workforce_rules();
+    NpcCustodyView npc_custody(std::uint64_t npc_id) const;
+    std::size_t passengers_aboard(EntityId ship) const;
+    // 1 active, 2 completed, 3 stranded, 5 rescued, 6 lost; zero unknown.
+    unsigned voyage_status(std::uint64_t transport_id) const;
+    // Derived, read-only incident/EMS dispatch report from canonical voyage,
+    // casualty and receipt state. Never maintains a shadow NPC authority.
+    struct FerryEmergencyReport {
+        bool recorded=false;
+        std::uint64_t incident_command_id=0, rescue_voyage_id=0;
+        EntityId wreck=0, rescue_ship=0;
+        std::vector<std::uint64_t> survivors, deceased;
+    };
+    FerryEmergencyReport ferry_emergency_report(std::uint64_t source_voyage_id) const;
+
     FarmWorkforceAssessment assess_farm_workforce(EntityId site) const;
     const ColonyShip* colony_ship(EntityId ship) const;
     // Authoritative cargo capacity uses game volume, NOT payload mass.
@@ -599,7 +708,30 @@ private:
     std::map<EntityId, ReclaimerFacility> reclaimers_;
     std::map<EntityId, WaterworksFacility> waterworks_;
     std::map<EntityId,PolicySite> policy_sites_;
+    // Permanently retained voyage receipts: v33/v34 1=active, 2=completed;
+    // v35 adds 3=stranded and 5=rescued; v36 adds 6=lost.
+    // v37 allows lost ferries with an atomic, linked partial rescue leg.
+    // Passenger IDs are canonical sorted; historical voyage IDs never recycle.
+    struct VoyageRecord {
+        EntityId ferry=0, origin=0;
+        std::vector<std::uint64_t> passengers;
+        unsigned status=0;
+        EntityId destination=0;
+        // v35: immutable command ID for last incident; no random wall-clock actions.
+        std::uint64_t last_incident_id=0, stranded_tick=0, rescue_transport_id=0;
+        std::uint64_t secondary_rescue_transport_id=0;
+        unsigned stranded_reason=0;
+    };
+    std::map<std::uint64_t,VoyageRecord> voyages_;
     std::map<std::uint64_t,NpcRecord> npcs_;
+    std::map<std::uint64_t,NpcCasualty> casualties_;
+    std::map<std::uint64_t,MedicTraining> named_medics_;
+    std::map<std::uint64_t,MedicalCase> medical_cases_;
+    // Immutable completed episodes; the existing medical_cases_ holds latest episodes.
+    std::map<std::pair<std::uint64_t,std::uint64_t>,MedicalCase> medical_history_;
+    std::map<std::uint64_t,MedicShift> medic_shifts_; // keyed by immutable host command
+    std::map<EntityId,MobileMedicalKit> mobile_medical_kits_;
+    std::map<std::uint64_t,CrewRehome> crew_rehomes_;
     std::uint64_t next_npc_id_=1;
     bool npc_next_seen_=false;
     std::map<EntityId,std::uint64_t> farm_team_xp_;

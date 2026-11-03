@@ -368,21 +368,98 @@ void Simulation::enable_individual_workforce(){
     for(const auto& [ship,c]:colony_ships_){
         for(std::int64_t n=0;n<c.crew;++n){
             auto id=next_npc_id_++;
-            npcs_.emplace(id,NpcRecord{id,ship,ship,NpcRole::Ship,0,0});
+            npcs_.emplace(id,NpcRecord{id,ship,ship,NpcRole::Ship,0,0,0,ship});
         }
         for(const auto& [site,f]:farms_)if(f.source_ship==ship)
             for(std::int64_t n=0;n<f.workers;++n){
                 auto id=next_npc_id_++;
-                npcs_.emplace(id,NpcRecord{id,ship,site,NpcRole::Farm,0,0});
+                npcs_.emplace(id,NpcRecord{id,ship,site,NpcRole::Farm,0,0,0,site});
             }
         for(const auto& [site,h]:habitats_)if(h.source_ship==ship)
             for(std::int64_t n=0;n<h.residents;++n){
                 auto id=next_npc_id_++;
-                npcs_.emplace(id,NpcRecord{id,ship,site,NpcRole::Habitat,0,0});
+                npcs_.emplace(id,NpcRecord{id,ship,site,NpcRole::Habitat,0,0,0,site});
             }
     }
     if(npcs_.empty())throw std::invalid_argument("no colony population to materialize");
-    snapshot_version_=20;
+    snapshot_version_=31;
+}
+NpcCustodyView Simulation::npc_custody(std::uint64_t id) const {
+    const auto it=npcs_.find(id);
+    if(it==npcs_.end())throw std::out_of_range("npc custody: unknown identity");
+    const auto& n=it->second;
+    return {n.id,n.home_ship,n.location,n.role,n.transport_id,n.transport_id!=0};
+}
+std::size_t Simulation::passengers_aboard(EntityId ship) const {
+    std::size_t count=0;
+    for(const auto& [id,n]:npcs_){
+        (void)id;
+        if(n.location==ship && n.transport_id!=0)++count;
+    }
+    return count;
+}
+Simulation Simulation::migrate_legacy_active_voyages(
+    const std::string& snapshot,
+    const std::vector<LegacyVoyageManifest>& manifests){
+    if(snapshot.rfind("galaxy-kernel-v32|",0)!=0)
+        throw std::runtime_error("migration: v32 snapshot required");
+    if(manifests.empty())throw std::runtime_error("migration: verified manifests required");
+    // Transform in memory only. The v33 parser validates custody, ships,
+    // passenger identity, manifest ordering, and orphaned passengers.
+    std::string upgraded=snapshot;
+    upgraded.replace(0,17,"galaxy-kernel-v33");
+    std::set<std::uint64_t> voyage_ids, passenger_ids;
+    std::string records;
+    for(const auto& m:manifests){
+        if(!m.transport_id || !m.ferry || !m.origin || m.ferry==m.origin ||
+           m.passenger_ids.empty() || m.passenger_ids.size()>10000 ||
+           !voyage_ids.insert(m.transport_id).second)
+            throw std::runtime_error("migration: invalid/duplicate voyage");
+        records+="voyage|"+std::to_string(m.transport_id)+"|"+
+            std::to_string(m.ferry)+"|"+std::to_string(m.origin)+"|1|"+
+            std::to_string(m.passenger_ids.size());
+        std::uint64_t prev=0;
+        for(auto id:m.passenger_ids){
+            if(!id || id<=prev || !passenger_ids.insert(id).second)
+                throw std::runtime_error("migration: unsorted/duplicate passenger");
+            prev=id;records+="|"+std::to_string(id);
+        }
+        records+='\n';
+    }
+    auto insertion=upgraded.find("\naccepted|");
+    if(insertion==std::string::npos)
+        throw std::runtime_error("migration: missing command receipts");
+    upgraded.insert(insertion+1,records);
+    auto result=Simulation::from_snapshot(upgraded);
+    // Reject extraneous manifests: every listed passenger must be in active
+    // custody, and the v33 parser has already checked the converse.
+    std::size_t active=0;
+    for(const auto& [id,n]:result.npc_records()){
+        (void)id;
+        if(n.transport_id)++active;
+    }
+    if(active!=passenger_ids.size())
+        throw std::runtime_error("migration: manifest does not match active custody");
+    return result;
+}
+void Simulation::upgrade_passenger_snapshot_format(){
+    if(snapshot_version_<20)throw std::logic_error("individual NPC records required");
+    for(const auto& [id,n]:npcs_){
+        (void)id;
+        if(n.transport_id!=0)throw std::logic_error("active passenger migration unsupported");
+    }
+    snapshot_version_=std::max(snapshot_version_,31);
+}
+void Simulation::upgrade_assignment_snapshot_format(){
+    if(snapshot_version_<20)throw std::logic_error("individual NPC records required");
+    for(auto& [id,n]:npcs_){(void)id;if(!n.assigned_site)n.assigned_site=n.location;}
+    snapshot_version_=std::max(snapshot_version_,32);
+}
+void Simulation::enable_medical_workforce_rules(){
+    if(tick_ || !submitted_ids_.empty() || !commands_.empty() ||
+       snapshot_version_<32 || npcs_.empty())
+        throw std::invalid_argument("v40 medical workforce opt-in is genesis-only");
+    snapshot_version_=40;
 }
 void Simulation::move_npc_records(EntityId ship,EntityId site,NpcRole role,std::int64_t delta){
     if(snapshot_version_<20 || !delta)return;
@@ -394,6 +471,7 @@ void Simulation::move_npc_records(EntityId ship,EntityId site,NpcRole role,std::
     for(auto& [id,n]:npcs_){
         (void)id;
         if(n.home_ship!=ship || n.location!=source || n.role!=source_role)continue;
+        if(snapshot_version_>=40 && delta>0 && !npc_available_for_duty(id))continue;
         // A resident reassigned away from this outpost cannot remain its
         // machine operator. Reserved material remains owned by the workshop.
         if(source!=ship){
@@ -403,7 +481,7 @@ void Simulation::move_npc_records(EntityId ship,EntityId site,NpcRole role,std::
                 if(wi->second.finisher_npc_id==id)wi->second.finisher_npc_id=0;
             }
         }
-        n.location=target;n.role=target_role;
+        n.location=target;n.assigned_site=target;n.role=target_role;
         // A departed mentor or apprentice must not leave phantom training.
         for(auto& [other,trainee]:npcs_)if(trainee.mentor_id==n.id)trainee.mentor_id=0;
         n.mentor_id=0;
@@ -419,11 +497,12 @@ void Simulation::award_farm_experience(EntityId site){
     if(f==farms_.end() || f->second.workers==0)return;
     for(auto& [id,n]:npcs_){
         (void)id;
-        if(n.role!=NpcRole::Farm || n.location!=site)continue;
+        if(n.role!=NpcRole::Farm || n.assigned_site!=site || n.location!=site)continue;
+        if(snapshot_version_>=40 && !npc_available_for_duty(id))continue;
         std::uint64_t bonus=0;
         if(n.mentor_id){
             auto mentor=npcs_.find(n.mentor_id);
-            if(mentor!=npcs_.end() && mentor->second.location==site &&
+            if(mentor!=npcs_.end() && mentor->second.assigned_site==site && mentor->second.location==site &&
                mentor->second.role==NpcRole::Farm && mentor->second.farm_xp>n.farm_xp)
                 bonus=1;
         }
@@ -435,7 +514,13 @@ void Simulation::award_farm_experience(EntityId site){
                 n.mentor_id=0;
         }
     }
-    if(f->second.workers>=2)farm_team_xp_[site]=std::min<std::uint64_t>(1000000,farm_team_xp_[site]+1);
+    std::int64_t available=f->second.workers;
+    if(snapshot_version_>=40){
+        available=0;
+        for(const auto& [id,n]:npcs_)if(n.role==NpcRole::Farm &&
+            n.assigned_site==site && npc_available_for_duty(id))++available;
+    }
+    if(available>=2)farm_team_xp_[site]=std::min<std::uint64_t>(1000000,farm_team_xp_[site]+1);
 }
 FarmWorkforceAssessment Simulation::assess_farm_workforce(EntityId site) const {
     FarmWorkforceAssessment r{};
@@ -445,7 +530,7 @@ FarmWorkforceAssessment Simulation::assess_farm_workforce(EntityId site) const {
     if(auto it=farm_team_xp_.find(site);it!=farm_team_xp_.end())r.cooperative_cycles=it->second;
     r.coordination=static_cast<std::int64_t>(std::min<std::uint64_t>(100,r.cooperative_cycles/10));
     for(const auto& [id,n]:npcs_){(void)id;
-        if(n.location==site && n.role==NpcRole::Farm)r.experience_total+=n.farm_xp;
+        if(n.assigned_site==site && n.location==site && n.role==NpcRole::Farm)r.experience_total+=n.farm_xp;
     }
     return r;
 }
@@ -455,8 +540,11 @@ const ColonyShip* Simulation::colony_ship(EntityId id) const {
 }
 inventory::StackStore Simulation::ship_inventory_snapshot(EntityId ship_id) const {
     const auto* ship=find(ship_id);
-    if(!ship || ship->type!=EntityType::Ship)
-        throw std::invalid_argument("not a ship");
+    // Wreck inventory remains physical and conserved. This is a read-only
+    // snapshot; accepting a wreck here does not authorize any ship action.
+    if(!ship || (ship->type!=EntityType::Ship &&
+       !(ship->type==EntityType::Wreck && colony_ships_.count(ship_id))))
+        throw std::invalid_argument("not a ship or colony wreck");
     if(ship->cargo_capacity<0 || ship->cargo_capacity>1000000000000LL)
         throw std::overflow_error("invalid ship cargo capacity");
     inventory::StackStore store(inventory::Catalogue::standard(),ship->cargo_capacity*1000);
@@ -684,9 +772,513 @@ std::vector<EntityId> Simulation::generate_asteroids(std::size_t count, std::int
     return ids;
 }
 
+NpcHealthStatus Simulation::npc_health_status(std::uint64_t id) const {
+    if(casualties_.count(id))return NpcHealthStatus::Deceased;
+    if(!npcs_.count(id))return NpcHealthStatus::Unknown;
+    const auto p=medical_cases_.find(id);
+    if(p==medical_cases_.end())return NpcHealthStatus::Healthy;
+    if(p->second.recovered_tick)return NpcHealthStatus::Recovered;
+    if(p->second.recovery_due_tick)return NpcHealthStatus::Recovering;
+    if(p->second.treatment_command)return NpcHealthStatus::Treated; // legacy v38 treatment
+    return p->second.stabilization_command?NpcHealthStatus::Stabilized:NpcHealthStatus::Injured;
+}
+
+bool Simulation::npc_available_for_duty(std::uint64_t npc_id) const {
+    const auto it=npcs_.find(npc_id);
+    if(it==npcs_.end())return false;
+    const auto& n=it->second;
+    if(n.location!=n.assigned_site || n.transport_id)return false;
+    const auto status=npc_health_status(npc_id);
+    return status==NpcHealthStatus::Healthy || status==NpcHealthStatus::Treated ||
+           status==NpcHealthStatus::Recovered;
+}
+
+ColonyMedicalAudit Simulation::assess_medical_population() const {
+    ColonyMedicalAudit a;std::map<std::pair<EntityId,int>,std::int64_t> counted;
+    for(const auto& [id,n]:npcs_){
+        auto& c=a.by_home_ship[n.home_ship];++c.living;
+        const auto status=npc_health_status(id);
+        if(status==NpcHealthStatus::Injured)++c.injured;
+        else if(status==NpcHealthStatus::Stabilized)++c.stabilized;
+        else if(status==NpcHealthStatus::Recovering)++c.recovering;
+        else ++c.fit;
+        if(n.transport_id || n.location!=n.assigned_site)++c.in_transit;
+        if(npc_available_for_duty(id))++c.on_duty;else ++c.unavailable;
+        ++counted[{n.assigned_site,static_cast<int>(n.role)}];
+    }
+    for(const auto& [id,d]:casualties_){(void)id;++a.by_home_ship[d.identity.home_ship].deceased;}
+    a.reconciled=true;
+    for(const auto& [id,c]:colony_ships_)
+        if(counted[{id,static_cast<int>(NpcRole::Ship)}]!=c.crew)a.reconciled=false;
+    for(const auto& [id,c]:farms_)
+        if(counted[{id,static_cast<int>(NpcRole::Farm)}]!=c.workers)a.reconciled=false;
+    for(const auto& [id,c]:habitats_)
+        if(counted[{id,static_cast<int>(NpcRole::Habitat)}]!=c.residents)a.reconciled=false;
+    for(const auto& [id,c]:a.by_home_ship){(void)id;
+        if(c.living!=c.fit+c.injured+c.stabilized+c.recovering ||
+           c.living!=c.on_duty+c.unavailable || c.in_transit>c.unavailable)
+            a.reconciled=false;
+    }
+    return a;
+}
+
+unsigned Simulation::voyage_status(std::uint64_t id) const {
+    const auto it=voyages_.find(id);
+    return it==voyages_.end()?0:it->second.status;
+}
+
+Simulation::FerryEmergencyReport Simulation::ferry_emergency_report(std::uint64_t voyage_id) const {
+    FerryEmergencyReport report;
+    const auto v=voyages_.find(voyage_id);
+    if(v==voyages_.end() || v->second.status!=6 ||
+       !v->second.rescue_transport_id || !v->second.last_incident_id)return report;
+    const auto rescue=voyages_.find(v->second.rescue_transport_id);
+    if(rescue==voyages_.end())return report;
+    report.recorded=true;
+    report.incident_command_id=v->second.last_incident_id;
+    report.rescue_voyage_id=v->second.rescue_transport_id;
+    report.wreck=v->second.ferry;
+    report.rescue_ship=v->second.destination;
+    report.survivors=rescue->second.passengers;
+    for(const auto& [id,death]:casualties_){
+        if(death.command_id==report.incident_command_id && death.ferry==report.wreck)
+            report.deceased.push_back(id);
+    }
+    return report;
+}
+
 bool Simulation::submit(const Command& c) {
+    const bool split_action=c.action==Action::HostSplitEvacuatePassengers;
+    const bool consigned=c.action==Action::HostTransferConsignedStock;
+    if(consigned){
+        if(c.issuer!=kServerAuthority||!c.id||c.execute_tick!=tick_+1||
+           submitted_ids_.count(c.id)||!c.actor||!c.target||
+           c.amount<1||c.amount>1000||(c.thrust_x!=1&&c.thrust_x!=2)||
+           (c.thrust_y!=0&&c.thrust_y!=1)||c.transport_id||
+           !c.passenger_ids.empty()||c.secondary_receiver||c.secondary_transport)return false;
+        snapshot_version_=std::max(snapshot_version_,56);
+    }
+    const bool return_action=c.action==Action::HostReturnConstructedStock;
+    const bool escrow_action=c.action==Action::HostEscrowConstructedStock;
+    if(return_action){
+        if(c.issuer!=kServerAuthority||!c.id||c.execute_tick!=tick_+1||
+           submitted_ids_.count(c.id)||!c.actor||!c.target||c.amount<=0||c.amount>4000||
+           (c.thrust_x!=1&&c.thrust_x!=2)||c.thrust_y||c.transport_id||
+           !c.passenger_ids.empty()||c.secondary_receiver||c.secondary_transport)return false;
+        const auto st=storages_.find(c.target);
+        if(st==storages_.end()||st->second.source_ship!=c.actor||
+           st->second.network_escrow_kg<c.amount)return false;
+        const std::string code=c.thrust_x==1?"aluminum_panels":"aluminum_frames";
+        auto bin=storage_inventory_snapshot(c.target);
+        if(bin.free_liters()<c.amount||bin.amount("good/"+code)>4000-c.amount)return false;
+        snapshot_version_=std::max(snapshot_version_,53);
+    }
+    if(escrow_action){
+        if(c.issuer!=kServerAuthority||!c.id||c.execute_tick!=tick_+1||
+           submitted_ids_.count(c.id)||!c.actor||!c.target||
+           c.thrust_x!=0||c.thrust_y!=0||c.amount<=0||c.amount>4000||
+           c.transport_id||!c.passenger_ids.empty()||
+           c.secondary_receiver||c.secondary_transport)return false;
+        const auto st=storages_.find(c.target);
+        if(st==storages_.end()||st->second.source_ship!=c.actor||
+           st->second.goods_kg.count("aluminum")==0||
+           st->second.goods_kg.at("aluminum")<c.amount)return false;
+        snapshot_version_=std::max(snapshot_version_,52);
+    }
+    if(!split_action&&(c.secondary_receiver||c.secondary_transport))return false;
+    if(split_action){
+        if(c.issuer!=kServerAuthority||!c.id||c.execute_tick<=tick_||
+           submitted_ids_.count(c.id)||!c.actor||!c.target||!c.secondary_receiver||
+           c.actor==c.target||c.actor==c.secondary_receiver||
+           c.target==c.secondary_receiver||c.thrust_x<=0||c.thrust_y<0||
+           c.amount<=0||!c.secondary_transport||!c.transport_id||
+           static_cast<std::size_t>(c.thrust_x)>=c.passenger_ids.size()||
+           c.passenger_ids.size()>16||snapshot_version_<33)return false;
+        const auto primary=static_cast<std::uint64_t>(c.amount);
+        if(primary==c.secondary_transport||primary==c.transport_id||
+           c.secondary_transport==c.transport_id||voyages_.count(primary)||
+           voyages_.count(c.secondary_transport))return false;
+        const auto original=voyages_.find(c.transport_id);
+        if(original==voyages_.end()||original->second.ferry!=c.actor||
+           original->second.status!=3)return false;
+        const auto split=c.passenger_ids.begin()+c.thrust_x;
+        if(!std::is_sorted(c.passenger_ids.begin(),split)||
+           !std::is_sorted(split,c.passenger_ids.end()))return false;
+        auto everybody=c.passenger_ids;std::sort(everybody.begin(),everybody.end());
+        if(everybody!=original->second.passengers||
+           std::adjacent_find(everybody.begin(),everybody.end())!=everybody.end())return false;
+        const auto* source=find(c.actor);const auto* first=find(c.target);
+        const auto* second=find(c.secondary_receiver);
+        if(!source||!first||!second||source->type!=EntityType::Ship||
+           first->type!=EntityType::Ship||second->type!=EntityType::Ship||
+           !colony_ships_.count(c.actor)||!colony_ships_.count(c.target)||
+           !colony_ships_.count(c.secondary_receiver)||
+           source->dock_state!=DockState::InSpace||
+           source->jump_state!=ShipJumpState::Ready||
+           first->dock_state!=DockState::InSpace||
+           second->dock_state!=DockState::InSpace||
+           first->jump_state!=ShipJumpState::Ready||
+           second->jump_state!=ShipJumpState::Ready||
+           source->system_id!=first->system_id||source->system_id!=second->system_id)
+            return false;
+        for(const auto receiver:{first,second}){
+            const auto dx=source->position.x-receiver->position.x;
+            const auto dy=source->position.y-receiver->position.y;
+            if(dx<-2500||dx>2500||dy<-2500||dy>2500||dx*dx+dy*dy>2500*2500)
+                return false;
+        }
+        for(const auto& [id,n]:npcs_){(void)id;
+            if((n.location==c.target||n.location==c.secondary_receiver)&&n.transport_id)
+                return false;
+        }
+        for(const auto adult:c.passenger_ids){
+            const auto found=npcs_.find(adult);
+            if(found==npcs_.end()||found->second.location!=c.actor||
+               found->second.transport_id!=c.transport_id)return false;
+        }
+        if(c.thrust_y){
+            std::size_t crew_count=0;
+            for(const auto& [id,n]:npcs_){(void)id;
+                if(n.home_ship==c.actor && n.role==NpcRole::Ship &&
+                   n.assigned_site==c.actor){
+                    // Split rescue cannot strand an absent, dead, or already
+                    // transported operating crew member.
+                    if(n.location!=c.actor||n.transport_id)return false;
+                    ++crew_count;
+                }
+            }
+            if(!crew_count||crew_count!=static_cast<std::size_t>(colony_ships_.at(c.actor).crew)||
+               c.thrust_y>=static_cast<int>(crew_count)||
+               c.passenger_ids.size()+crew_count>30)return false;
+        }
+        for(const auto& [when,commands]:commands_){(void)when;
+            for(const auto& pending:commands)if(
+                pending.transport_id==c.transport_id||
+                pending.transport_id==primary||pending.transport_id==c.secondary_transport||
+                pending.actor==c.actor||pending.target==c.actor||
+                pending.actor==c.target||pending.target==c.target||
+                pending.actor==c.secondary_receiver||
+                pending.target==c.secondary_receiver)return false;
+        }
+        snapshot_version_=std::max(snapshot_version_,c.thrust_y?49:48);
+        submitted_ids_.insert(c.id);commands_[c.execute_tick].push_back(c);
+        return true;
+    }
+    const bool medical_action=c.action==Action::HostTrainMedic ||
+        c.action==Action::HostTriageRescued || c.action==Action::HostTreatInjuries ||
+        c.action==Action::HostScheduleMedicShift || c.action==Action::HostLoadMedicalKit ||
+        c.action==Action::HostMobileStabilize;
+    if(medical_action){
+        if(c.issuer!=kServerAuthority || !c.actor || !c.target ||
+           c.thrust_x || c.thrust_y || snapshot_version_<32)return false;
+        const auto ordered=[](const std::vector<std::uint64_t>& ids){
+            return !ids.empty() && ids.size()<=16 && ids.front()!=0 &&
+                   std::is_sorted(ids.begin(),ids.end()) &&
+                   std::adjacent_find(ids.begin(),ids.end())==ids.end();
+        };
+        if(c.action==Action::HostTrainMedic){
+            if(c.transport_id || !c.passenger_ids.empty() || c.amount<1 || c.amount>3 ||
+               !clinics_.count(c.actor) || !npcs_.count(c.target))return false;
+            const auto& n=npcs_.at(c.target);
+            const bool resident=n.role==NpcRole::Habitat && n.location==c.actor &&
+                n.assigned_site==c.actor && habitats_.count(c.actor);
+            const bool ship_medic=snapshot_version_>=39 && n.role==NpcRole::Ship && n.location==n.home_ship &&
+                n.assigned_site==n.home_ship && entities_.count(n.location) &&
+                entities_.count(c.actor) && entities_.at(n.location).type==EntityType::Ship &&
+                entities_.at(n.location).owner_id==entities_.at(c.actor).owner_id &&
+                entities_.at(n.location).system_id==entities_.at(c.actor).system_id;
+            if((!resident && !ship_medic) || clinics_.at(c.actor).medics<1)return false;
+        } else if(c.action==Action::HostTriageRescued){
+            if(c.actor!=c.target || c.amount<1 || c.amount>3 || !c.transport_id ||
+               !ordered(c.passenger_ids) || !voyages_.count(c.transport_id) ||
+               voyages_.at(c.transport_id).ferry!=c.actor ||
+               voyages_.at(c.transport_id).status!=1)return false;
+            // Triage only after a documented evacuation or mixed incident.
+            bool rescue=false;
+            for(const auto& [id,v]:voyages_){(void)id;
+                if((v.status==5 || v.status==6) && v.rescue_transport_id==c.transport_id)
+                    rescue=true;
+            }
+            if(!rescue)return false;
+            for(const auto id:c.passenger_ids){
+                const auto it=npcs_.find(id);
+                if(it==npcs_.end() || it->second.location!=c.actor ||
+                   it->second.transport_id!=c.transport_id ||
+                   (medical_cases_.count(id) &&
+                    medical_cases_.at(id).recovered_tick==0 &&
+                    medical_cases_.at(id).treatment_command==0))return false;
+            }
+        } else if(c.action==Action::HostScheduleMedicShift){
+            if(c.transport_id || !c.passenger_ids.empty() || c.amount<1 || c.amount>10000 ||
+               !clinics_.count(c.actor) || !npcs_.count(c.target) ||
+               !named_medics_.count(c.target) || named_medics_.at(c.target).units<3 ||
+               named_medics_.at(c.target).clinic_site!=c.actor)return false;
+        } else if(c.action==Action::HostLoadMedicalKit){
+            if(c.transport_id || !c.passenger_ids.empty() || c.amount<1 || c.amount>100 ||
+               !clinics_.count(c.target) || !colony_ships_.count(c.actor))return false;
+        } else if(c.action==Action::HostMobileStabilize){
+            if(c.transport_id!=c.target || c.amount || !ordered(c.passenger_ids) ||
+               !colony_ships_.count(c.actor) || !npcs_.count(c.target) ||
+               !named_medics_.count(c.target) || named_medics_.at(c.target).units<3 ||
+               npcs_.at(c.target).location!=c.actor ||
+               !mobile_medical_kits_.count(c.actor))return false;
+            for(const auto id:c.passenger_ids){
+                const auto patient=medical_cases_.find(id);const auto n=npcs_.find(id);
+                if(patient==medical_cases_.end() || n==npcs_.end() ||
+                   n->second.location!=c.actor || patient->second.treatment_command ||
+                   patient->second.stabilization_command)return false;
+            }
+        } else {
+            if(!c.transport_id || c.amount || !ordered(c.passenger_ids) ||
+               !clinics_.count(c.target) || !npcs_.count(c.transport_id))return false;
+            const auto& n=npcs_.at(c.transport_id);
+            const auto qualification=named_medics_.find(c.transport_id);
+            if(n.location!=c.target || n.assigned_site!=c.target ||
+               n.role!=NpcRole::Habitat || qualification==named_medics_.end() ||
+               qualification->second.units<3 || clinics_.at(c.target).medics<1 ||
+               c.passenger_ids.size()>static_cast<std::size_t>(clinics_.at(c.target).medics))return false;
+            std::size_t qualified=0;
+            for(const auto& [id,q]:named_medics_){
+                if(q.units>=3 && npcs_.count(id) &&
+                   npcs_.at(id).location==c.target &&
+                   npcs_.at(id).role==NpcRole::Habitat)++qualified;
+            }
+            if(c.passenger_ids.size()>qualified)return false;
+            for(auto id:c.passenger_ids){
+                auto it=medical_cases_.find(id);
+                if(it==medical_cases_.end() || it->second.treatment_command ||
+                   !npcs_.count(id) || npcs_.at(id).location!=c.actor)return false;
+            }
+        }
+        snapshot_version_=std::max(snapshot_version_,
+            c.action==Action::HostScheduleMedicShift || c.action==Action::HostLoadMedicalKit ||
+            c.action==Action::HostMobileStabilize ||
+            (c.action==Action::HostTriageRescued && !c.passenger_ids.empty() &&
+             medical_cases_.count(c.passenger_ids.front())) ? 39 : 38);
+    }
+    // DEMOG-05q6d: host-only residence settlement is distinct from physical
+    // travel. A person stays aboard until disembarkation is committed; only a
+    // completed voyage may change their administrative home.
+    const bool migration_action=c.action==Action::HostSettleMigrant;
+    if(migration_action){
+        if(c.issuer!=kServerAuthority || c.actor==c.target || !c.actor || !c.target ||
+           !c.transport_id || (c.passenger_ids.empty() || c.passenger_ids.size()>2 ||
+            c.passenger_ids[0]==0 ||
+            (c.passenger_ids.size()==2 && (c.passenger_ids[1]<=c.passenger_ids[0] ||
+             snapshot_version_<40))) ||
+           c.amount || c.thrust_x || c.thrust_y || snapshot_version_<40)return false;
+        const auto id=c.passenger_ids[0];
+        const auto n=npcs_.find(id);
+        const auto v=voyages_.find(c.transport_id);
+        if(n==npcs_.end() || v==voyages_.end() || v->second.status!=2 ||
+           v->second.origin!=c.actor || v->second.destination!=c.target ||
+           !std::binary_search(v->second.passengers.begin(),v->second.passengers.end(),id) ||
+           n->second.home_ship!=c.actor || n->second.location!=c.target ||
+           n->second.assigned_site!=c.actor || n->second.transport_id ||
+           n->second.role!=NpcRole::Ship || n->second.mentor_id ||
+           crew_rehomes_.count(id) || named_medics_.count(id) ||
+           !colony_ships_.count(c.actor) || !colony_ships_.count(c.target) ||
+           colony_ships_.at(c.actor).crew<=1 || colony_ships_.at(c.target).crew>=1000 ||
+           !entities_.count(c.actor) || !entities_.count(c.target) ||
+           entities_.at(c.actor).type!=EntityType::Ship ||
+           entities_.at(c.target).type!=EntityType::Ship ||
+           entities_.at(c.target).jump_state!=ShipJumpState::Ready)return false;
+        if(c.passenger_ids.size()==2){
+            const auto co=npcs_.find(c.passenger_ids[1]);
+            if(co==npcs_.end() || co->second.home_ship!=c.actor ||
+               co->second.location!=c.target || co->second.assigned_site!=c.actor ||
+               co->second.transport_id || co->second.role!=NpcRole::Ship ||
+               co->second.mentor_id || crew_rehomes_.count(co->first) ||
+               named_medics_.count(co->first) ||
+               !std::binary_search(v->second.passengers.begin(),
+                   v->second.passengers.end(),co->first) ||
+               colony_ships_.at(c.actor).crew<=2 ||
+               colony_ships_.at(c.target).crew>998)return false;
+        }
+        for(const auto& [tick,batch]:commands_){(void)tick;
+            for(const auto& queued:batch)
+                if(queued.action==Action::HostSettleMigrant &&
+                   std::any_of(queued.passenger_ids.begin(),queued.passenger_ids.end(),
+                       [&](auto p){return std::binary_search(c.passenger_ids.begin(),
+                           c.passenger_ids.end(),p);}))return false;
+        }
+    }
+    const bool passenger_action=c.action==Action::HostEmbarkPassengers ||
+        c.action==Action::HostDisembarkPassengers || c.action==Action::HostStrandFerry ||
+        c.action==Action::HostResumeFerry || c.action==Action::HostEvacuatePassengers ||
+        c.action==Action::HostDestroyPassengerFerry ||
+        c.action==Action::HostResolveMixedFerryLoss;
+    const bool incident_action=c.action==Action::HostStrandFerry ||
+        c.action==Action::HostResumeFerry || c.action==Action::HostEvacuatePassengers ||
+        c.action==Action::HostDestroyPassengerFerry ||
+        c.action==Action::HostResolveMixedFerryLoss;
+    if(passenger_action){
+        if(c.issuer!=kServerAuthority || !c.actor || !c.target || !c.transport_id ||
+           c.passenger_ids.empty() || c.passenger_ids.size()>10000 ||
+           c.thrust_x || c.thrust_y || snapshot_version_<32)return false;
+        if(incident_action && snapshot_version_<34)return false;
+        if(c.action==Action::HostStrandFerry){
+            if(c.actor!=c.target || c.amount<1 || c.amount>5)return false;
+        }else if(c.action==Action::HostResumeFerry){
+            if(c.actor!=c.target || c.amount)return false;
+        }else if(c.action==Action::HostDestroyPassengerFerry){
+            if(c.actor!=c.target || c.amount)return false;
+        }else if(c.action==Action::HostResolveMixedFerryLoss){
+            if(c.actor==c.target || c.amount<=0 ||
+               static_cast<std::uint64_t>(c.amount)>=c.passenger_ids.size() ||
+               c.id==c.transport_id || voyages_.count(c.id))return false;
+            // The explicit survivor and fatality groups have independent sorted
+            // order. No inference from a random/untrusted partition is allowed.
+            const auto split=c.passenger_ids.begin()+c.amount;
+            if(!std::is_sorted(c.passenger_ids.begin(),split) ||
+               !std::is_sorted(split,c.passenger_ids.end()))return false;
+        }else if(c.action==Action::HostEvacuatePassengers){
+            if(c.actor==c.target || c.amount<=0 || voyages_.count(static_cast<std::uint64_t>(c.amount)))return false;
+        }else if(c.actor==c.target || c.amount)return false;
+        std::set<std::uint64_t> unique;
+        for(auto id:c.passenger_ids)if(!id || !unique.insert(id).second)return false;
+        if(c.action==Action::HostEmbarkPassengers && voyages_.count(c.transport_id))return false;
+        auto voyage=voyages_.find(c.transport_id);
+        if(c.action!=Action::HostEmbarkPassengers){
+            if(voyage==voyages_.end() || voyage->second.ferry!=c.actor)return false;
+            auto ids=c.passenger_ids;std::sort(ids.begin(),ids.end());
+            if(c.action!=Action::HostDestroyPassengerFerry && c.action!=Action::HostResolveMixedFerryLoss && ids!=voyage->second.passengers)return false;
+            if((c.action==Action::HostDestroyPassengerFerry || c.action==Action::HostResolveMixedFerryLoss) &&
+               (voyage->second.status!=1 && voyage->second.status!=3))return false;
+            if(c.action==Action::HostStrandFerry && voyage->second.status!=1)return false;
+            if(c.action==Action::HostResumeFerry && voyage->second.status!=3)return false;
+            if(c.action==Action::HostDisembarkPassengers && voyage->second.status!=1)return false;
+            if(c.action==Action::HostEvacuatePassengers &&
+               (voyage->second.status!=1 && voyage->second.status!=3))return false;
+        }
+        // No concurrent mutations of one voyage; reserve custody and rescue berth
+        // occupancy against all pending host manifest operations.
+        for(const auto& entry:commands_)for(const auto& queued:entry.second){
+            if(queued.action!=Action::HostEmbarkPassengers && queued.action!=Action::HostDisembarkPassengers &&
+               queued.action!=Action::HostStrandFerry && queued.action!=Action::HostResumeFerry &&
+               queued.action!=Action::HostEvacuatePassengers &&
+               queued.action!=Action::HostDestroyPassengerFerry &&
+               queued.action!=Action::HostResolveMixedFerryLoss)continue;
+            // Rescue and destruction may compete on the same tick. Their canonical
+            // sequence determines the winner; the loser must revalidate and fail.
+            const bool competitive=(c.action==Action::HostDestroyPassengerFerry &&
+                queued.action==Action::HostEvacuatePassengers) ||
+                (c.action==Action::HostEvacuatePassengers &&
+                queued.action==Action::HostDestroyPassengerFerry);
+            if(!competitive){
+                if(queued.transport_id==c.transport_id ||
+                   (c.action==Action::HostEvacuatePassengers &&
+                    queued.action==Action::HostEvacuatePassengers && queued.amount==c.amount) ||
+                   (c.action==Action::HostResolveMixedFerryLoss &&
+                    ((queued.action==Action::HostEvacuatePassengers &&
+                      queued.amount>0 && static_cast<std::uint64_t>(queued.amount)==c.id) ||
+                     (queued.action==Action::HostEmbarkPassengers &&
+                      queued.transport_id==c.id))) ||
+                   (queued.action==Action::HostResolveMixedFerryLoss &&
+                    ((c.action==Action::HostEvacuatePassengers && c.amount>0 &&
+                      static_cast<std::uint64_t>(c.amount)==queued.id) ||
+                     (c.action==Action::HostEmbarkPassengers && c.transport_id==queued.id))))return false;
+                for(auto id:c.passenger_ids)
+                    if(std::find(queued.passenger_ids.begin(),queued.passenger_ids.end(),id)!=queued.passenger_ids.end())return false;
+            }
+        }
+        const auto ship=entities_.find(c.actor),endpoint=entities_.find(c.target);
+        if(ship==entities_.end() || endpoint==entities_.end() ||
+           ship->second.type!=EntityType::Ship || endpoint->second.type!=EntityType::Ship ||
+           !colony_ships_.count(c.actor) || !colony_ships_.count(c.target) ||
+           ship->second.system_id!=endpoint->second.system_id)return false;
+        if(incident_action && (ship->second.jump_state!=ShipJumpState::Ready ||
+           ship->second.dock_state!=DockState::InSpace))return false;
+        if(c.action==Action::HostEvacuatePassengers || c.action==Action::HostResolveMixedFerryLoss){
+            const auto dx=ship->second.position.x-endpoint->second.position.x;
+            const auto dy=ship->second.position.y-endpoint->second.position.y;
+            if(dx<-kDockingRangeMm || dx>kDockingRangeMm ||
+               dy<-kDockingRangeMm || dy>kDockingRangeMm ||
+               dx*dx+dy*dy>kDockingRangeMm*kDockingRangeMm)return false;
+        }
+        if(c.action==Action::HostEmbarkPassengers || c.action==Action::HostEvacuatePassengers ||
+           c.action==Action::HostResolveMixedFerryLoss){
+            const EntityId receiving=c.action==Action::HostEmbarkPassengers?c.actor:c.target;
+            constexpr std::size_t kPassengerBerths=16;
+            std::size_t aboard=0;
+            for(const auto& [id,n]:npcs_){(void)id;
+                if(n.location==receiving && n.transport_id)++aboard;
+            }
+            for(const auto& [t,batch]:commands_){(void)t;for(const auto& queued:batch){
+                if((queued.action==Action::HostEmbarkPassengers && queued.actor==receiving) ||
+                   (queued.action==Action::HostEvacuatePassengers && queued.target==receiving))
+                    aboard+=queued.passenger_ids.size();
+                if(queued.action==Action::HostResolveMixedFerryLoss && queued.target==receiving)
+                    aboard+=static_cast<std::size_t>(queued.amount);
+            }}
+            const auto seats=c.action==Action::HostResolveMixedFerryLoss ?
+                static_cast<std::size_t>(c.amount) : c.passenger_ids.size();
+            if(aboard>kPassengerBerths || seats>kPassengerBerths-aboard)return false;
+        }
+        if(c.action==Action::HostDestroyPassengerFerry || c.action==Action::HostResolveMixedFerryLoss){
+            // All people physically aboard (including native crew) must be declared.
+            // No away-assigned workforce, secondary active voyage or construction
+            // dependencies may become orphaned by destroying this ship.
+            std::vector<std::uint64_t> aboard;
+            for(const auto& [id,n]:npcs_){
+                if(n.location==c.actor)aboard.push_back(id);
+                if(n.home_ship==c.actor && (n.location!=c.actor ||
+                    n.assigned_site!=c.actor || n.role!=NpcRole::Ship))return false;
+            }
+            std::map<EntityId,std::int64_t> losses;
+            const auto fatal_start=c.action==Action::HostResolveMixedFerryLoss ?
+                c.passenger_ids.begin()+c.amount : c.passenger_ids.begin();
+            for(auto it_id=fatal_start;it_id!=c.passenger_ids.end();++it_id){
+                const auto it=npcs_.find(*it_id);
+                if(it==npcs_.end() || it->second.role!=NpcRole::Ship ||
+                   it->second.assigned_site!=it->second.home_ship)return false;
+                ++losses[it->second.home_ship];
+            }
+            if(c.action==Action::HostResolveMixedFerryLoss){
+                for(auto it_id=c.passenger_ids.begin();it_id!=fatal_start;++it_id){
+                    const auto it=npcs_.find(*it_id);
+                    if(it==npcs_.end() ||
+                       (it->second.home_ship==c.actor ? it->second.transport_id!=0 :
+                        it->second.transport_id!=c.transport_id) ||
+                       it->second.role!=NpcRole::Ship ||
+                       it->second.assigned_site!=it->second.home_ship)return false;
+                }
+            }
+            for(const auto& [home,number]:losses){
+                auto shipcrew=colony_ships_.find(home);
+                if(shipcrew==colony_ships_.end() || shipcrew->second.crew<number ||
+                   (home!=c.actor && shipcrew->second.crew<=number))return false;
+            }
+            std::int64_t rescued_native=0;
+            if(c.action==Action::HostResolveMixedFerryLoss)
+                for(auto it_id=c.passenger_ids.begin();it_id!=fatal_start;++it_id)
+                    if(npcs_.at(*it_id).home_ship==c.actor)++rescued_native;
+            if(losses[c.actor]+rescued_native!=colony_ships_.at(c.actor).crew)return false;
+            if(rescued_native && (colony_ships_.at(c.target).crew>1000-rescued_native ||
+                colony_ships_.at(c.target).crew<1))return false;
+            if(rescued_native>0)snapshot_version_=std::max(snapshot_version_,38);
+            auto ids=c.passenger_ids;std::sort(ids.begin(),ids.end());
+            if(aboard!=ids || !std::includes(ids.begin(),ids.end(),
+                voyage->second.passengers.begin(),voyage->second.passengers.end()))return false;
+            for(const auto& [id,v]:voyages_)
+                if(id!=c.transport_id && v.ferry==c.actor && (v.status==1 || v.status==3))return false;
+            for(const auto& [id,site]:built_outposts_){(void)id;
+                if(site.source_colony_ship==c.actor)return false;
+            }
+        }
+        for(auto id:c.passenger_ids){
+            const auto it=npcs_.find(id);
+            if(it==npcs_.end())return false;
+            if(c.action==Action::HostDestroyPassengerFerry || c.action==Action::HostResolveMixedFerryLoss){
+                if(it->second.location!=c.actor)return false;
+            }else if(c.action==Action::HostEmbarkPassengers){
+                if(it->second.location!=c.target || it->second.transport_id)return false;
+            }else if(it->second.location!=c.actor || it->second.transport_id!=c.transport_id)return false;
+        }
+    }else if(!medical_action && !migration_action && (c.transport_id || !c.passenger_ids.empty()))return false;
     if (c.id == 0 || c.execute_tick <= tick_ || c.issuer == 0 || submitted_ids_.count(c.id)) return false;
-    if (c.action == Action::HostDestroyShip || c.action == Action::HostCrewLoss) {
+    if (passenger_action || medical_action || migration_action || escrow_action || return_action || consigned) { /* validated host command above */ }
+    else if (c.action == Action::HostDestroyShip || c.action == Action::HostCrewLoss) {
         if(c.issuer != kServerAuthority || !c.actor || !c.target ||
            c.thrust_x || c.thrust_y ||
            (c.action==Action::HostDestroyShip && (c.actor==c.target || c.amount!=0)) ||
@@ -882,6 +1474,11 @@ bool Simulation::submit(const Command& c) {
     // A queued new industrial command must be restorable even before it executes.
     if(c.action==Action::RefineMineral || c.action==Action::FabricateMaterialModule)
         snapshot_version_=std::max(snapshot_version_,9);
+    if(migration_action)snapshot_version_=std::max(snapshot_version_,
+        c.passenger_ids.size()==2 ? 44:41);
+    if(incident_action)snapshot_version_=std::max(snapshot_version_,
+        c.action==Action::HostResolveMixedFerryLoss?37:
+        c.action==Action::HostDestroyPassengerFerry?36:35);
     submitted_ids_.insert(c.id);
     commands_[c.execute_tick].push_back(c);
     return true;
@@ -955,9 +1552,713 @@ void Simulation::stop_mining(EntityId actor, Outcome reason) {
 
 Event Simulation::execute(const Command& c) {
     Event result{tick_, c.id, Outcome::InvalidActor, 0};
+    // A separate host-authorized action: never relax ordinary owner-bound
+    // TransferStorageStack. Permission and immutable order are checked by the
+    // SQLite world writer before a command can reach this deterministic replay.
+    if(c.action==Action::HostTransferConsignedStock){
+        if(c.issuer!=kServerAuthority||!colony_ships_.count(c.actor)||
+           !life_support_.count(c.actor)||c.amount<1||c.amount>1000||
+           (c.thrust_x!=1&&c.thrust_x!=2)||(c.thrust_y!=0&&c.thrust_y!=1)){
+            result.result=Outcome::Unauthorized;return result;
+        }
+        auto ship=entities_.find(c.actor),site=entities_.find(c.target);
+        auto storage=storages_.find(c.target);auto built=built_outposts_.find(c.target);
+        if(ship==entities_.end()||site==entities_.end()||storage==storages_.end()||
+           built==built_outposts_.end()||ship->second.type!=EntityType::Ship||
+           site->second.type!=EntityType::Station||
+           site->second.owner_id==ship->second.owner_id||
+           built->second.source_colony_ship!=storage->second.source_ship||
+           built->second.source_colony_ship==c.actor||
+           entities_.at(built->second.source_colony_ship).owner_id!=site->second.owner_id||
+           ship->second.system_id!=site->second.system_id){
+            result.result=Outcome::InvalidTarget;return result;
+        }
+        const auto& vehicle=ship->second;
+        if(vehicle.jump_state!=ShipJumpState::Ready ||
+           (vehicle.dock_state!=DockState::InSpace&&vehicle.dock_station!=c.target)){
+            result.result=Outcome::InTransition;return result;
+        }
+        const auto dx=vehicle.position.x-site->second.position.x;
+        const auto dy=vehicle.position.y-site->second.position.y;
+        if(dx<-kDockingRangeMm||dx>kDockingRangeMm||
+           dy<-kDockingRangeMm||dy>kDockingRangeMm||
+           dx*dx+dy*dy>kDockingRangeMm*kDockingRangeMm){
+            result.result=Outcome::OutOfRange;return result;
+        }
+        const std::string item_name=c.thrust_x==1?"aluminum_panels":"aluminum_frames";
+        const auto code="good/"+item_name;
+        auto bin=storage_inventory_snapshot(c.target);
+        auto cargo=ship_inventory_snapshot(c.actor);
+        const auto status=c.thrust_y==1?bin.transfer_to(cargo,code,c.amount):
+                                         cargo.transfer_to(bin,code,c.amount);
+        if(status!=inventory::TransferStatus::Applied){
+            result.result=status==inventory::TransferStatus::DestinationFull?
+                Outcome::CargoFull:Outcome::NoResources;return result;
+        }
+        const auto bqty=bin.amount(code),cqty=cargo.amount(code);
+        if(bqty)storage->second.goods_kg[item_name]=bqty;
+        else storage->second.goods_kg.erase(item_name);
+        if(cqty)colony_ships_.at(c.actor).goods_kg[item_name]=cqty;
+        else colony_ships_.at(c.actor).goods_kg.erase(item_name);
+        snapshot_version_=std::max(snapshot_version_,56);
+        result.transferred=c.amount;result.result=Outcome::Applied;return result;
+    }
+    if(c.action==Action::HostEscrowConstructedStock){
+        const auto st=storages_.find(c.target);
+        const auto site=entities_.find(c.target),ship=entities_.find(c.actor);
+        if(c.issuer!=kServerAuthority||st==storages_.end()||
+           site==entities_.end()||ship==entities_.end()||
+           site->second.type!=EntityType::Station||
+           ship->second.type!=EntityType::Ship||
+           st->second.source_ship!=c.actor||
+           site->second.owner_id!=ship->second.owner_id||
+           site->second.system_id!=ship->second.system_id||
+           !built_outposts_.count(c.target)||
+           built_outposts_.at(c.target).source_colony_ship!=c.actor||
+           c.thrust_x||c.thrust_y||c.amount<=0||c.amount>4000||
+           st->second.goods_kg.count("aluminum")==0||
+           st->second.goods_kg.at("aluminum")<c.amount||
+           st->second.network_escrow_kg>1000000000-c.amount){
+            result.result=Outcome::InvalidArgument;return result;
+        }
+        auto& storage=st->second;
+        storage.goods_kg.at("aluminum")-=c.amount;
+        if(storage.goods_kg.at("aluminum")==0)storage.goods_kg.erase("aluminum");
+        storage.network_escrow_kg+=c.amount;
+        snapshot_version_=std::max(snapshot_version_,52);
+        result.transferred=c.amount;result.result=Outcome::Applied;return result;
+    }
+    if(c.action==Action::HostReturnConstructedStock){
+        const auto st=storages_.find(c.target);
+        const auto site=entities_.find(c.target),ship=entities_.find(c.actor);
+        if(c.issuer!=kServerAuthority||st==storages_.end()||
+           site==entities_.end()||ship==entities_.end()||
+           site->second.type!=EntityType::Station||ship->second.type!=EntityType::Ship||
+           st->second.source_ship!=c.actor||
+           site->second.owner_id!=ship->second.owner_id||
+           site->second.system_id!=ship->second.system_id||
+           !built_outposts_.count(c.target)||
+           built_outposts_.at(c.target).source_colony_ship!=c.actor||
+           (c.thrust_x!=1&&c.thrust_x!=2)||c.thrust_y||c.amount<=0||c.amount>4000||
+           st->second.network_escrow_kg<c.amount){
+            result.result=Outcome::InvalidArgument;return result;
+        }
+        const std::string code=c.thrust_x==1?"aluminum_panels":"aluminum_frames";
+        auto available=storage_inventory_snapshot(c.target);
+        if(available.free_liters()<c.amount||available.amount("good/"+code)>4000-c.amount){
+            result.result=Outcome::CargoFull;return result;
+        }
+        auto& storage=st->second;
+        storage.network_escrow_kg-=c.amount;
+        storage.goods_kg[code]+=c.amount;
+        snapshot_version_=std::max(snapshot_version_,53);
+        result.transferred=c.amount;result.result=Outcome::Applied;return result;
+    }
     // GRSM-01b: host-authorized deterministic physical incidents. These are
     // simulation state transitions, NOT user-invokable reputation events.
     // Combat/damage resolution will eventually authorize these outcomes.
+    if(c.action==Action::Thrust || c.action==Action::RequestJump ||
+       c.action==Action::RequestDock || c.action==Action::RequestUndock){
+        for(const auto& [id,v]:voyages_){(void)id;
+            if(v.ferry==c.actor && v.status==3){result.result=Outcome::InTransition;return result;}
+        }
+    }
+    if(c.action==Action::HostTrainMedic || c.action==Action::HostTriageRescued ||
+       c.action==Action::HostTreatInjuries || c.action==Action::HostScheduleMedicShift ||
+       c.action==Action::HostLoadMedicalKit || c.action==Action::HostMobileStabilize){
+        if(c.issuer!=kServerAuthority){result.result=Outcome::Unauthorized;return result;}
+        if(c.action==Action::HostScheduleMedicShift){
+            const auto cl=clinics_.find(c.actor);const auto n=npcs_.find(c.target);
+            const auto q=named_medics_.find(c.target);
+            if(cl==clinics_.end() || n==npcs_.end() || q==named_medics_.end() ||
+               q->second.units<3 || q->second.clinic_site!=c.actor ||
+               n->second.role!=NpcRole::Habitat || n->second.location!=c.actor ||
+               n->second.assigned_site!=c.actor || c.amount<1 || c.amount>10000 ||
+               tick_>std::numeric_limits<std::uint64_t>::max()-static_cast<std::uint64_t>(c.amount)){
+                result.result=Outcome::InvalidArgument;return result;
+            }
+            unsigned overlapping=0;
+            for(const auto& [id,shift]:medic_shifts_){(void)id;
+                if(tick_>=shift.end_tick || tick_+static_cast<std::uint64_t>(c.amount)<=shift.start_tick)continue;
+                if(shift.medic_id==c.target){result.result=Outcome::InvalidArgument;return result;}
+                if(shift.clinic_site==c.actor)++overlapping;
+            }
+            if(overlapping>=static_cast<unsigned>(cl->second.medics)){
+                result.result=Outcome::NoResources;return result;
+            }
+            medic_shifts_.emplace(c.id,MedicShift{c.actor,c.target,tick_,tick_+static_cast<std::uint64_t>(c.amount)});
+            result.result=Outcome::Applied;return result;
+        }
+        if(c.action==Action::HostLoadMedicalKit){
+            const auto ship=entities_.find(c.actor),site=entities_.find(c.target);
+            auto cl=clinics_.find(c.target);
+            if(ship==entities_.end() || site==entities_.end() ||
+               ship->second.type!=EntityType::Ship || site->second.type!=EntityType::Station ||
+               !colony_ships_.count(c.actor) || cl==clinics_.end() ||
+               ship->second.owner_id!=site->second.owner_id ||
+               ship->second.system_id!=site->second.system_id || c.amount<1 || c.amount>100){
+                result.result=Outcome::InvalidTarget;return result;
+            }
+            const auto dx=ship->second.position.x-site->second.position.x;
+            const auto dy=ship->second.position.y-site->second.position.y;
+            if(dx<-kDockingRangeMm || dx>kDockingRangeMm ||
+               dy<-kDockingRangeMm || dy>kDockingRangeMm ||
+               dx*dx+dy*dy>kDockingRangeMm*kDockingRangeMm){result.result=Outcome::OutOfRange;return result;}
+            auto& kit=mobile_medical_kits_[c.actor];
+            if(cl->second.water_kg<c.amount || cl->second.substrate_kg<c.amount ||
+               kit.water_kg>1000-c.amount || kit.substrate_kg>1000-c.amount){
+                result.result=Outcome::NoResources;return result;
+            }
+            cl->second.water_kg-=c.amount;cl->second.substrate_kg-=c.amount;
+            kit.water_kg+=c.amount;kit.substrate_kg+=c.amount;
+            result.result=Outcome::Applied;return result;
+        }
+        if(c.action==Action::HostMobileStabilize){
+            const auto ship=entities_.find(c.actor);const auto medic=npcs_.find(c.target);
+            const auto q=named_medics_.find(c.target);
+            auto kit=mobile_medical_kits_.find(c.actor);
+            if(ship==entities_.end() || ship->second.type!=EntityType::Ship ||
+               medic==npcs_.end() || q==named_medics_.end() || q->second.units<3 ||
+               medic->second.location!=c.actor || kit==mobile_medical_kits_.end()){
+                result.result=Outcome::InvalidTarget;return result;
+            }
+            std::int64_t need=0;
+            for(auto id:c.passenger_ids){
+                const auto n=npcs_.find(id);const auto care=medical_cases_.find(id);
+                if(n==npcs_.end() || care==medical_cases_.end() ||
+                   n->second.location!=c.actor || care->second.treatment_command ||
+                   care->second.stabilization_command || need>1000-care->second.severity){
+                    result.result=Outcome::InvalidArgument;return result;
+                }
+                need+=care->second.severity;
+            }
+            if(kit->second.water_kg<need || kit->second.substrate_kg<need){
+                result.result=Outcome::NoResources;return result;
+            }
+            for(auto id:c.passenger_ids){auto& m=medical_cases_.at(id);
+                m.stabilization_command=c.id;m.stabilized_tick=tick_;
+            }
+            kit->second.water_kg-=need;kit->second.substrate_kg-=need;
+            kit->second.wastewater_kg+=need;kit->second.medical_waste_kg+=need;
+            result.result=Outcome::Applied;return result;
+        }
+        if(c.action==Action::HostTrainMedic){
+            auto clinic=clinics_.find(c.actor);auto medic=npcs_.find(c.target);
+            const bool resident=medic!=npcs_.end() && medic->second.role==NpcRole::Habitat &&
+                medic->second.location==c.actor && medic->second.assigned_site==c.actor;
+            bool crew=false;
+            if(snapshot_version_>=39 && medic!=npcs_.end() && medic->second.role==NpcRole::Ship &&
+               medic->second.location==medic->second.home_ship &&
+               entities_.count(medic->second.location) && entities_.count(c.actor)){
+                const auto& ship=entities_.at(medic->second.location),&site=entities_.at(c.actor);
+                const auto dx=ship.position.x-site.position.x,dy=ship.position.y-site.position.y;
+                crew=ship.type==EntityType::Ship && ship.owner_id==site.owner_id &&
+                     ship.system_id==site.system_id && dx>=-kDockingRangeMm && dx<=kDockingRangeMm &&
+                     dy>=-kDockingRangeMm && dy<=kDockingRangeMm &&
+                     dx*dx+dy*dy<=kDockingRangeMm*kDockingRangeMm;
+            }
+            if(clinic==clinics_.end() || medic==npcs_.end() || clinic->second.medics<1 ||
+               (!resident && !crew) || c.amount<1 || c.amount>3 ||
+               clinic->second.water_kg<c.amount || clinic->second.substrate_kg<c.amount){
+                result.result=Outcome::NoResources;return result;
+            }
+            auto& q=named_medics_[c.target];
+            if((q.clinic_site && q.clinic_site!=c.actor) ||
+               q.units>1000-static_cast<std::uint64_t>(c.amount)){
+                result.result=Outcome::InvalidArgument;return result;
+            }
+            q.clinic_site=c.actor;q.units+=static_cast<std::uint64_t>(c.amount);
+            auto& cl=clinic->second;cl.water_kg-=c.amount;cl.substrate_kg-=c.amount;
+            cl.medical_waste_kg+=c.amount;cl.wastewater_kg+=c.amount;
+            cl.training_units+=static_cast<std::uint64_t>(c.amount);
+            snapshot_version_=std::max(snapshot_version_,38);
+            result.result=Outcome::Applied;return result;
+        }
+        if(c.action==Action::HostTriageRescued){
+            auto voyage=voyages_.find(c.transport_id);
+            bool rescue=false;
+            for(const auto& [id,v]:voyages_){(void)id;
+                if((v.status==5 || v.status==6) && v.rescue_transport_id==c.transport_id)rescue=true;
+            }
+            if(!rescue || voyage==voyages_.end() || voyage->second.status!=1 ||
+               voyage->second.ferry!=c.actor || c.actor!=c.target ||
+               c.amount<1 || c.amount>3){result.result=Outcome::InvalidArgument;return result;}
+            for(auto id:c.passenger_ids){
+                auto it=npcs_.find(id);
+                if(it==npcs_.end() || it->second.location!=c.actor ||
+                   it->second.transport_id!=c.transport_id ||
+                   (medical_cases_.count(id) &&
+                    !medical_cases_.at(id).recovered_tick &&
+                    !(!medical_cases_.at(id).recovery_due_tick && medical_cases_.at(id).treatment_command))){
+                    result.result=Outcome::InvalidArgument;return result;
+                }
+            }
+            for(auto id:c.passenger_ids){
+                auto older=medical_cases_.find(id);
+                if(older!=medical_cases_.end()){
+                    medical_history_.emplace(std::make_pair(id,older->second.triage_command),older->second);
+                    medical_cases_.erase(older);
+                }
+                medical_cases_.emplace(id,MedicalCase{
+                c.transport_id,c.id,tick_,static_cast<unsigned>(c.amount),0,0,0,0});
+            }
+            snapshot_version_=std::max(snapshot_version_,medical_history_.empty()?38:39);
+            result.result=Outcome::Applied;return result;
+        }
+        // Treatment occurs at an existing player-built, supplied clinic. The
+        // patients remain in the adjacent EMS vessel; no teleport/copy of people.
+        const auto ship=entities_.find(c.actor),station=entities_.find(c.target);
+        auto clinic=clinics_.find(c.target);auto medic=npcs_.find(c.transport_id);
+        auto training=named_medics_.find(c.transport_id);
+        if(ship==entities_.end() || station==entities_.end() ||
+           ship->second.type!=EntityType::Ship || station->second.type!=EntityType::Station ||
+           !built_outposts_.count(c.target) || clinic==clinics_.end() ||
+           medic==npcs_.end() || training==named_medics_.end() || training->second.units<3 ||
+           medic->second.role!=NpcRole::Habitat || medic->second.location!=c.target ||
+           medic->second.assigned_site!=c.target || clinic->second.medics<1 ||
+           ship->second.system_id!=station->second.system_id ||
+           ship->second.owner_id!=station->second.owner_id){
+            result.result=Outcome::InvalidTarget;return result;
+        }
+        const auto dx=ship->second.position.x-station->second.position.x;
+        const auto dy=ship->second.position.y-station->second.position.y;
+        if(dx<-kDockingRangeMm || dx>kDockingRangeMm ||
+           dy<-kDockingRangeMm || dy>kDockingRangeMm ||
+           dx*dx+dy*dy>kDockingRangeMm*kDockingRangeMm){
+            result.result=Outcome::OutOfRange;return result;
+        }
+        auto& cl=clinic->second;
+        // Never mutate durable clock/slot state for a refused action.
+        const auto used=cl.last_ems_tick==tick_?cl.ems_cases_this_tick:0;
+        std::uint64_t slots=static_cast<std::uint64_t>(cl.medics);
+        if(snapshot_version_>=39){
+            std::set<std::uint64_t> on_shift;
+            for(const auto& [id,shift]:medic_shifts_){(void)id;
+                if(shift.clinic_site!=c.target || tick_<shift.start_tick || tick_>=shift.end_tick)continue;
+                const auto n=npcs_.find(shift.medic_id);
+                if(n==npcs_.end() || n->second.location!=c.target ||
+                   npc_health_status(shift.medic_id)==NpcHealthStatus::Injured ||
+                   npc_health_status(shift.medic_id)==NpcHealthStatus::Stabilized ||
+                   npc_health_status(shift.medic_id)==NpcHealthStatus::Recovering)continue;
+                on_shift.insert(shift.medic_id);
+            }
+            if(!on_shift.count(c.transport_id)){
+                result.result=Outcome::NoResources;return result;
+            }
+            slots=std::min(slots,static_cast<std::uint64_t>(on_shift.size()));
+        }
+        if(c.passenger_ids.size()>slots || used>slots-c.passenger_ids.size()){
+            result.result=Outcome::NoResources;return result;
+        }
+        std::int64_t needed=0;
+        for(auto id:c.passenger_ids){
+            auto case_it=medical_cases_.find(id);auto person=npcs_.find(id);
+            if(case_it==medical_cases_.end() || person==npcs_.end() ||
+               case_it->second.treatment_command || person->second.location!=c.actor){
+                result.result=Outcome::InvalidArgument;return result;
+            }
+            needed+=case_it->second.severity;
+        }
+        if(cl.water_kg<needed || cl.substrate_kg<needed){
+            result.result=Outcome::NoResources;return result;
+        }
+        for(auto id:c.passenger_ids){
+            auto& care=medical_cases_.at(id);
+            care.treatment_command=c.id;care.treatment_tick=tick_;
+            care.clinic_site=c.target;care.medic_id=c.transport_id;
+            if(snapshot_version_>=39){
+                const auto period=3ULL*care.severity;
+                if(tick_>std::numeric_limits<std::uint64_t>::max()-period)
+                    throw std::overflow_error("medical recovery tick overflow");
+                care.recovery_due_tick=tick_+period;
+            }
+        }
+        cl.water_kg-=needed;cl.substrate_kg-=needed;
+        cl.wastewater_kg+=needed;cl.medical_waste_kg+=needed;
+        cl.ems_treatment_units+=static_cast<std::uint64_t>(needed);
+        cl.ems_treated_cases+=c.passenger_ids.size();
+        cl.last_ems_tick=tick_;
+        cl.ems_cases_this_tick=used+c.passenger_ids.size();
+        snapshot_version_=std::max(snapshot_version_,38);
+        result.result=Outcome::Applied;return result;
+    }
+    if(c.action==Action::HostSettleMigrant){
+        const auto id=c.passenger_ids.empty()?0:c.passenger_ids.front();
+        auto n=npcs_.find(id);
+        const auto v=voyages_.find(c.transport_id);
+        if(c.issuer!=kServerAuthority || c.passenger_ids.empty() ||
+           c.passenger_ids.size()>2 || !id ||
+           (c.passenger_ids.size()==2 && (c.passenger_ids[1]<=id ||
+             snapshot_version_<41)) ||
+           n==npcs_.end() || v==voyages_.end() || v->second.status!=2 ||
+           v->second.origin!=c.actor || v->second.destination!=c.target ||
+           !std::binary_search(v->second.passengers.begin(),v->second.passengers.end(),id) ||
+           n->second.home_ship!=c.actor || n->second.assigned_site!=c.actor ||
+           n->second.location!=c.target || n->second.transport_id ||
+           n->second.role!=NpcRole::Ship || n->second.mentor_id ||
+           crew_rehomes_.count(id) || named_medics_.count(id) ||
+           !colony_ships_.count(c.actor) || !colony_ships_.count(c.target) ||
+           colony_ships_.at(c.actor).crew<=1 || colony_ships_.at(c.target).crew>=1000){
+            result.result=Outcome::InvalidArgument;return result;
+        }
+        if(c.passenger_ids.size()==2){
+            const auto co=npcs_.find(c.passenger_ids[1]);
+            if(co==npcs_.end() || co->second.home_ship!=c.actor ||
+               co->second.assigned_site!=c.actor ||
+               co->second.location!=c.target || co->second.transport_id ||
+               co->second.role!=NpcRole::Ship || co->second.mentor_id ||
+               crew_rehomes_.count(co->first) || named_medics_.count(co->first) ||
+               !std::binary_search(v->second.passengers.begin(),
+                    v->second.passengers.end(),co->first) ||
+               colony_ships_.at(c.actor).crew<=2 ||
+               colony_ships_.at(c.target).crew>998){
+                result.result=Outcome::InvalidArgument;return result;
+            }
+            --colony_ships_.at(c.actor).crew;
+            ++colony_ships_.at(c.target).crew;
+            co->second.home_ship=c.target;
+            co->second.assigned_site=c.target;
+        }
+        --colony_ships_.at(c.actor).crew;
+        ++colony_ships_.at(c.target).crew;
+        n->second.home_ship=c.target;
+        n->second.assigned_site=c.target;
+        snapshot_version_=std::max(snapshot_version_,
+            c.passenger_ids.size()==2 ? 44:41);
+        result.result=Outcome::Applied;
+        return result;
+    }
+    if(c.action==Action::HostSplitEvacuatePassengers){
+        const auto old=voyages_.find(c.transport_id);
+        if(old==voyages_.end()||old->second.status!=3||old->second.ferry!=c.actor||
+           c.amount<=0||!c.secondary_transport||
+           voyages_.count(static_cast<std::uint64_t>(c.amount))||
+           voyages_.count(c.secondary_transport)||
+           c.thrust_x<=0||static_cast<std::size_t>(c.thrust_x)>=c.passenger_ids.size()){
+            result.result=Outcome::InvalidArgument;return result;
+        }
+        const auto divider=c.passenger_ids.begin()+c.thrust_x;
+        auto ids=c.passenger_ids;std::sort(ids.begin(),ids.end());
+        if(ids!=old->second.passengers||
+           std::adjacent_find(ids.begin(),ids.end())!=ids.end()){
+            result.result=Outcome::InvalidArgument;return result;
+        }
+        const auto* source=find(c.actor);const auto* first=find(c.target);
+        const auto* second=find(c.secondary_receiver);
+        if(!source||!first||!second||source->type!=EntityType::Ship||
+           first->type!=EntityType::Ship||second->type!=EntityType::Ship||
+           c.actor==c.target||c.actor==c.secondary_receiver||
+           c.target==c.secondary_receiver||
+           source->system_id!=first->system_id||
+           source->system_id!=second->system_id||source->jump_state!=ShipJumpState::Ready||
+           first->jump_state!=ShipJumpState::Ready||
+           second->jump_state!=ShipJumpState::Ready||
+           source->dock_state!=DockState::InSpace||
+           first->dock_state!=DockState::InSpace||
+           second->dock_state!=DockState::InSpace||
+           c.secondary_transport==static_cast<std::uint64_t>(c.amount)||
+           c.secondary_transport==c.transport_id||
+           static_cast<std::uint64_t>(c.amount)==c.transport_id){
+            result.result=Outcome::InvalidTarget;return result;
+        }
+        for(const auto receiver:{first,second}){
+            const auto dx=source->position.x-receiver->position.x;
+            const auto dy=source->position.y-receiver->position.y;
+            if(dx<-2500||dx>2500||dy<-2500||dy>2500||dx*dx+dy*dy>2500*2500){
+                result.result=Outcome::OutOfRange;return result;
+            }
+        }
+        for(const auto receiver:{c.target,c.secondary_receiver}){
+            for(const auto& [id,n]:npcs_){(void)id;
+                if(n.location==receiver&&n.transport_id){
+                    result.result=Outcome::InvalidArgument;return result;
+                }
+            }
+        }
+        for(const auto passenger:c.passenger_ids){
+            const auto it=npcs_.find(passenger);
+            if(it==npcs_.end()||it->second.location!=c.actor||
+               it->second.transport_id!=c.transport_id){
+                result.result=Outcome::InvalidArgument;return result;
+            }
+        }
+        const auto primary=static_cast<std::uint64_t>(c.amount);
+        const auto secondary=c.secondary_transport;
+        std::vector<std::uint64_t> p1(c.passenger_ids.begin(),divider);
+        std::vector<std::uint64_t> p2(divider,c.passenger_ids.end());
+        std::vector<std::uint64_t> operating_crew;
+        if(c.thrust_y>0){
+            for(const auto& [id,n]:npcs_)
+                if(n.home_ship==c.actor&&n.assigned_site==c.actor&&
+                   n.role==NpcRole::Ship){
+                    if(n.location!=c.actor||n.transport_id){
+                        result.result=Outcome::InvalidArgument;return result;
+                    }
+                    operating_crew.push_back(id);
+                }
+            if(operating_crew.size()!=static_cast<std::size_t>(colony_ships_.at(c.actor).crew)||
+               operating_crew.size()<2||
+               static_cast<std::size_t>(c.thrust_y)>=operating_crew.size()){
+                result.result=Outcome::InvalidArgument;return result;
+            }
+            p1.insert(p1.end(),operating_crew.begin(),operating_crew.begin()+c.thrust_y);
+            p2.insert(p2.end(),operating_crew.begin()+c.thrust_y,operating_crew.end());
+            std::sort(p1.begin(),p1.end());std::sort(p2.begin(),p2.end());
+        }
+        if(p1.size()>16||p2.size()>16){
+            result.result=Outcome::InvalidArgument;return result;
+        }
+        voyages_.emplace(primary,VoyageRecord{c.target,c.actor,p1,1,0});
+        voyages_.emplace(secondary,VoyageRecord{c.secondary_receiver,c.actor,p2,1,0});
+        for(const auto passenger:p1){auto& n=npcs_.at(passenger);
+            n.location=c.target;n.transport_id=primary;
+        }
+        for(const auto passenger:p2){auto& n=npcs_.at(passenger);
+            n.location=c.secondary_receiver;n.transport_id=secondary;
+        }
+        // Native crew are now physically aboard their assigned rescue vessel,
+        // but retain their original employer and home. No free replacement crew.
+        old->second.status=5;old->second.destination=c.target;
+        old->second.rescue_transport_id=primary;
+        old->second.secondary_rescue_transport_id=secondary;
+        old->second.last_incident_id=c.id;old->second.stranded_tick=0;
+        old->second.stranded_reason=0;
+        snapshot_version_=std::max(snapshot_version_,c.thrust_y?49:48);
+        result.result=Outcome::Applied;return result;
+    }
+    if(c.action==Action::HostEmbarkPassengers || c.action==Action::HostDisembarkPassengers ||
+       c.action==Action::HostStrandFerry || c.action==Action::HostResumeFerry ||
+       c.action==Action::HostEvacuatePassengers || c.action==Action::HostDestroyPassengerFerry ||
+       c.action==Action::HostResolveMixedFerryLoss){
+        const bool incident=c.action==Action::HostStrandFerry ||
+            c.action==Action::HostResumeFerry || c.action==Action::HostEvacuatePassengers ||
+        c.action==Action::HostDestroyPassengerFerry || c.action==Action::HostResolveMixedFerryLoss;
+        if(c.issuer!=kServerAuthority || !c.transport_id || c.passenger_ids.empty() ||
+           c.thrust_x || c.thrust_y){result.result=Outcome::Unauthorized;return result;}
+        auto ship=entities_.find(c.actor),endpoint=entities_.find(c.target);
+        if(ship==entities_.end() || endpoint==entities_.end() ||
+           ship->second.type!=EntityType::Ship || endpoint->second.type!=EntityType::Ship ||
+           !colony_ships_.count(c.actor) || !colony_ships_.count(c.target) ||
+           ship->second.system_id!=endpoint->second.system_id){
+            result.result=Outcome::InvalidTarget;return result;
+        }
+        auto ids=c.passenger_ids;std::sort(ids.begin(),ids.end());
+        if(ids.front()==0 || std::adjacent_find(ids.begin(),ids.end())!=ids.end()){
+            result.result=Outcome::InvalidArgument;return result;
+        }
+        if(incident){
+            auto voyage=voyages_.find(c.transport_id);
+            if(voyage==voyages_.end() || voyage->second.ferry!=c.actor ||
+               (c.action!=Action::HostDestroyPassengerFerry &&
+                c.action!=Action::HostResolveMixedFerryLoss && voyage->second.passengers!=ids) ||
+               ship->second.jump_state!=ShipJumpState::Ready ||
+               ship->second.dock_state!=DockState::InSpace ||
+               (c.action!=Action::HostEvacuatePassengers &&
+                c.action!=Action::HostResolveMixedFerryLoss && c.actor!=c.target)){
+                result.result=Outcome::InvalidArgument;return result;
+            }
+            const auto status=voyage->second.status;
+            if((c.action==Action::HostStrandFerry && (status!=1 || c.amount<1 || c.amount>5)) ||
+               (c.action==Action::HostResumeFerry && (status!=3 || c.amount)) ||
+               (c.action==Action::HostEvacuatePassengers &&
+                ((status!=1 && status!=3) || c.actor==c.target || c.amount<=0 ||
+                 voyages_.count(static_cast<std::uint64_t>(c.amount)))) ||
+               (c.action==Action::HostDestroyPassengerFerry &&
+                 ((status!=1 && status!=3) || c.amount!=0)) ||
+               (c.action==Action::HostResolveMixedFerryLoss &&
+                 ((status!=1 && status!=3) || c.actor==c.target ||
+                  c.amount<=0 || static_cast<std::uint64_t>(c.amount)>=ids.size() ||
+                  c.id==c.transport_id || voyages_.count(c.id)))){
+                result.result=Outcome::InvalidArgument;return result;
+            }
+            for(auto npc:ids){const auto n=npcs_.find(npc);
+                if(n==npcs_.end() || n->second.location!=c.actor ||
+                   (c.action!=Action::HostDestroyPassengerFerry &&
+                    c.action!=Action::HostResolveMixedFerryLoss && n->second.transport_id!=c.transport_id)){
+                    result.result=Outcome::InvalidArgument;return result;
+                }
+            }
+            if(c.action==Action::HostDestroyPassengerFerry || c.action==Action::HostResolveMixedFerryLoss){
+                const bool mixed=c.action==Action::HostResolveMixedFerryLoss;
+                const auto rescue_count=mixed?static_cast<std::size_t>(c.amount):0U;
+                std::vector<std::uint64_t> aboard;
+                for(const auto& [id,n]:npcs_){
+                    if(n.location==c.actor)aboard.push_back(id);
+                    if(n.home_ship==c.actor && (n.location!=c.actor ||
+                       n.assigned_site!=c.actor || n.role!=NpcRole::Ship)){
+                        result.result=Outcome::InvalidArgument;return result;
+                    }
+                }
+                if(aboard!=ids || !std::includes(ids.begin(),ids.end(),
+                     voyage->second.passengers.begin(),voyage->second.passengers.end())){
+                    result.result=Outcome::InvalidArgument;return result;
+                }
+                for(const auto& [id,v]:voyages_){
+                    if(id!=c.transport_id && v.ferry==c.actor && (v.status==1 || v.status==3)){
+                        result.result=Outcome::InvalidArgument;return result;
+                    }
+                }
+                for(const auto& [id,site]:built_outposts_){(void)id;
+                    if(site.source_colony_ship==c.actor){result.result=Outcome::InvalidArgument;return result;}
+                }
+                std::map<EntityId,std::int64_t> losses;
+                // The command carries a COMPLETE onboard partition. In the mixed
+                // variant, the first amount IDs are survivors, the rest fatalities.
+                // Native ferry crew cannot yet be rehomed without a dedicated
+                // employment/kinship transfer, so fail closed if they survive.
+                const auto survivors_end=c.passenger_ids.begin()+rescue_count;
+                if(mixed){
+                    if(!std::is_sorted(c.passenger_ids.begin(),survivors_end) ||
+                       !std::is_sorted(survivors_end,c.passenger_ids.end())){
+                        result.result=Outcome::InvalidArgument;return result;
+                    }
+                    if(snapshot_version_<38 &&
+                       !std::includes(voyage->second.passengers.begin(),voyage->second.passengers.end(),
+                       c.passenger_ids.begin(),survivors_end)){
+                        result.result=Outcome::InvalidArgument;return result;
+                    }
+                }
+                for(auto i=c.passenger_ids.begin();i!=c.passenger_ids.end();++i){
+                    const auto& n=npcs_.at(*i);
+                    if(n.role!=NpcRole::Ship || n.assigned_site!=n.home_ship ||
+                       (mixed && i<survivors_end &&
+                        (n.home_ship==c.actor ? n.transport_id!=0 : n.transport_id!=c.transport_id))){
+                        result.result=Outcome::InvalidArgument;return result;
+                    }
+                    if(!mixed || i>=survivors_end)++losses[n.home_ship];
+                }
+                for(const auto& [home,number]:losses){
+                    auto it=colony_ships_.find(home);
+                    if(it==colony_ships_.end() || it->second.crew<number ||
+                       (home!=c.actor && it->second.crew<=number)){
+                        result.result=Outcome::InvalidArgument;return result;
+                    }
+                }
+                std::int64_t rescued_native=0;
+                if(mixed)for(auto i=c.passenger_ids.begin();i!=survivors_end;++i)
+                    if(npcs_.at(*i).home_ship==c.actor)++rescued_native;
+                if(losses[c.actor]+rescued_native!=colony_ships_.at(c.actor).crew ||
+                   (mixed && rescued_native &&
+                    colony_ships_.at(c.target).crew>1000-rescued_native)){
+                    result.result=Outcome::InvalidArgument;return result;
+                }
+                if(mixed){
+                    const auto dx=ship->second.position.x-endpoint->second.position.x;
+                    const auto dy=ship->second.position.y-endpoint->second.position.y;
+                    if(dx<-kDockingRangeMm || dx>kDockingRangeMm ||
+                       dy<-kDockingRangeMm || dy>kDockingRangeMm ||
+                       dx*dx+dy*dy>kDockingRangeMm*kDockingRangeMm){
+                        result.result=Outcome::OutOfRange;return result;
+                    }
+                    std::size_t occupied=0;
+                    for(const auto& [id,n]:npcs_){(void)id;
+                        if(n.location==c.target && n.transport_id)++occupied;
+                    }
+                    if(occupied>16 || rescue_count>16-occupied ||
+                       endpoint->second.type!=EntityType::Ship ||
+                       colony_ships_.at(c.target).crew<1){
+                        result.result=Outcome::InvalidArgument;return result;
+                    }
+                }
+                for(auto i=survivors_end;i!=c.passenger_ids.end();++i){
+                    const auto npc=*i;
+                    const auto n=npcs_.at(npc);
+                    casualties_.emplace(npc,NpcCasualty{n,tick_,c.id,c.actor});
+                    npcs_.erase(npc);
+                    activity_events_.push_back({tick_,ActivityKind::NpcLost,c.id,c.actor,npc,Outcome::Applied,0});
+                }
+                for(const auto& [home,number]:losses)colony_ships_.at(home).crew-=number;
+                if(mixed){
+                    std::vector<std::uint64_t> saved(c.passenger_ids.begin(),survivors_end);
+                    voyages_.emplace(c.id,VoyageRecord{c.target,c.actor,saved,1,0});
+                    for(auto npc:saved){
+                        auto& n=npcs_.at(npc);
+                        if(n.home_ship==c.actor){
+                            crew_rehomes_.emplace(npc,CrewRehome{c.actor,c.target,c.id,tick_});
+                            n.home_ship=c.target;n.assigned_site=c.target;
+                            --colony_ships_.at(c.actor).crew;
+                            ++colony_ships_.at(c.target).crew;
+                        }
+                        n.location=c.target;n.transport_id=c.id;
+                    }
+                    voyage->second.destination=c.target;
+                    voyage->second.rescue_transport_id=c.id;
+                }
+                voyage->second.status=6;voyage->second.last_incident_id=c.id;
+                voyage->second.stranded_tick=0;voyage->second.stranded_reason=0;
+                stop_mining(c.actor,Outcome::NotInSpace);
+                ship->second.type=EntityType::Wreck;
+                ship->second.velocity={};
+                activity_events_.push_back({tick_,ActivityKind::ShipDestroyed,c.id,c.actor,c.actor,Outcome::Applied,0});
+            }else if(c.action==Action::HostStrandFerry){
+                voyage->second.status=3;voyage->second.stranded_reason=static_cast<unsigned>(c.amount);
+                voyage->second.stranded_tick=tick_;voyage->second.last_incident_id=c.id;
+                ship->second.velocity={};stop_mining(c.actor,Outcome::InTransition);
+            }else if(c.action==Action::HostResumeFerry){
+                voyage->second.status=1;voyage->second.stranded_reason=0;
+                voyage->second.stranded_tick=0;voyage->second.last_incident_id=c.id;
+            }else{
+                const auto dx=ship->second.position.x-endpoint->second.position.x;
+                const auto dy=ship->second.position.y-endpoint->second.position.y;
+                if(dx<-kDockingRangeMm || dx>kDockingRangeMm ||
+                   dy<-kDockingRangeMm || dy>kDockingRangeMm ||
+                   dx*dx+dy*dy>kDockingRangeMm*kDockingRangeMm){
+                    result.result=Outcome::OutOfRange;return result;
+                }
+                std::size_t aboard=0;
+                for(const auto& [id,n]:npcs_){(void)id;
+                    if(n.location==c.target && n.transport_id)++aboard;
+                }
+                if(aboard>16 || ids.size()>16-aboard){
+                    result.result=Outcome::InvalidArgument;return result;
+                }
+                voyage->second.status=5;voyage->second.destination=c.target;
+                voyage->second.rescue_transport_id=static_cast<std::uint64_t>(c.amount);
+                voyage->second.last_incident_id=c.id;voyage->second.stranded_tick=0;
+                voyage->second.stranded_reason=0;
+                voyages_.emplace(static_cast<std::uint64_t>(c.amount),
+                    VoyageRecord{c.target,c.actor,ids,1,0});
+                for(auto npc:ids){auto& n=npcs_.at(npc);n.location=c.target;
+                    n.transport_id=static_cast<std::uint64_t>(c.amount);
+                }
+            }
+            snapshot_version_=std::max(snapshot_version_,
+                c.action==Action::HostResolveMixedFerryLoss?37:
+                c.action==Action::HostDestroyPassengerFerry?36:35);
+            result.result=Outcome::Applied;return result;
+        }
+        if(c.actor==c.target || c.amount){result.result=Outcome::InvalidArgument;return result;}
+        for(auto id:ids){const auto it=npcs_.find(id);
+            if(it==npcs_.end() || (c.action==Action::HostEmbarkPassengers ?
+                (it->second.location!=c.target || it->second.transport_id!=0) :
+                (it->second.location!=c.actor || it->second.transport_id!=c.transport_id))){
+                result.result=Outcome::InvalidArgument;return result;
+            }
+        }
+        if(c.action==Action::HostEmbarkPassengers){
+            std::size_t aboard=0;
+            for(const auto& [id,n]:npcs_){(void)id;
+                if(n.location==c.actor && n.transport_id)++aboard;
+            }
+            if(aboard>16 || ids.size()>16-aboard || voyages_.count(c.transport_id)){
+                result.result=Outcome::InvalidArgument;return result;
+            }
+            voyages_.emplace(c.transport_id,VoyageRecord{c.actor,c.target,ids,1,0});
+        }else{
+            const auto v=voyages_.find(c.transport_id);
+            if(v==voyages_.end() || v->second.status!=1 || v->second.ferry!=c.actor ||
+               v->second.origin==0 || v->second.passengers!=ids){
+                result.result=Outcome::InvalidArgument;return result;
+            }
+            v->second.status=2;v->second.destination=c.target;
+        }
+        for(auto id:ids){auto& n=npcs_.at(id);
+            n.location=c.action==Action::HostEmbarkPassengers ? c.actor : c.target;
+            n.transport_id=c.action==Action::HostEmbarkPassengers ? c.transport_id : 0;
+        }
+        snapshot_version_=std::max(snapshot_version_,34);
+        result.result=Outcome::Applied;return result;
+    }
     if (c.action==Action::HostDestroyShip || c.action==Action::HostCrewLoss) {
         if(c.issuer!=kServerAuthority || !c.actor || !c.target || c.thrust_x || c.thrust_y)
             {result.result=Outcome::Unauthorized;return result;}
@@ -1940,6 +3241,13 @@ Event Simulation::execute(const Command& c) {
                        h.residents+c.amount<(ui==utilities_.end()?0:ui->second.technicians)+community_staff+clinic_staff+assigned_policy_inspectors(c.target)){
                         result.result=Outcome::NoResources;return result;
                     }
+                    if(snapshot_version_>=40 && c.amount>0){
+                        std::int64_t ready=0;
+                        for(const auto& [id,n]:npcs_)
+                            if(n.home_ship==c.actor && n.role==NpcRole::Ship &&
+                               n.assigned_site==c.actor && npc_available_for_duty(id))++ready;
+                        if(ready<c.amount){result.result=Outcome::NoResources;return result;}
+                    }
                     move_npc_records(c.actor,c.target,NpcRole::Habitat,c.amount);
                     cship.crew-=c.amount;h.residents+=c.amount;
                     h.consecutive_comfort_cycles=0;
@@ -1992,6 +3300,13 @@ Event Simulation::execute(const Command& c) {
                        cli->second.active_cases>farm.workers+c.amount+
                            (habitats_.count(c.target)?habitats_.at(c.target).residents:0)){
                         result.result=Outcome::NoResources;return result;
+                    }
+                    if(snapshot_version_>=40 && c.amount>0){
+                        std::int64_t ready=0;
+                        for(const auto& [id,n]:npcs_)
+                            if(n.home_ship==c.actor && n.role==NpcRole::Ship &&
+                               n.assigned_site==c.actor && npc_available_for_duty(id))++ready;
+                        if(ready<c.amount){result.result=Outcome::NoResources;return result;}
                     }
                     move_npc_records(c.actor,c.target,NpcRole::Farm,c.amount);
                     cship.crew-=c.amount;farm.workers+=c.amount;
@@ -2286,7 +3601,14 @@ void Simulation::process_farms(){
                 else{l.consecutive_supplied_cycles=0;++l.shortages;}
             }
         }
-        if(!f.workers)continue;
+        std::int64_t effective_workers=f.workers;
+        if(snapshot_version_>=40){
+            effective_workers=0;
+            for(const auto& [npc_id,n]:npcs_)
+                if(n.role==NpcRole::Farm && n.assigned_site==id &&
+                   npc_available_for_duty(npc_id))++effective_workers;
+        }
+        if(!effective_workers)continue;
         if(utilities_.count(id) && !utilities_.at(id).powered)continue;
         if(l.crops_kg && tick_>=l.crops_ready_tick){
             // Consume mature biomass; every three kilograms give 2 food and 1 compost.
@@ -2305,7 +3627,7 @@ void Simulation::process_farms(){
         l.compost_kg+=l.organic_waste_kg;l.organic_waste_kg=0;
         l.nutrients_kg+=l.compost_kg;l.compost_kg=0;
         // One planted batch per worker per cycle (max eight), 5 ticks maturation.
-        const auto batches=std::min({f.workers,std::int64_t{8},l.water_kg/2,
+        const auto batches=std::min({effective_workers,std::int64_t{8},l.water_kg/2,
             l.nutrients_kg,l.co2_kg});
         if(batches>0){
             l.water_kg-=2*batches;l.nutrients_kg-=batches;l.co2_kg-=batches;
@@ -2525,6 +3847,7 @@ void Simulation::process_reclaimers(){
 void Simulation::process_colony_needs(){
     if(tick_%20) return;
     for(auto& [id,l]:life_support_){
+        if(entities_.at(id).type==EntityType::Wreck)continue;
         const auto crew=colony_ships_.at(id).crew;
         const auto food=std::min(crew,l.food_kg);
         const auto water=std::min(crew,l.water_kg);
@@ -2547,7 +3870,8 @@ void Simulation::process_workshops(){
         const bool staff=w.operator_npc_id && n!=npcs_.end() &&
             n->second.home_ship==w.source_ship &&
             n->second.location==site && n->second.role==NpcRole::Habitat &&
-            habitats_.count(site) && habitats_.at(site).residents>0;
+            habitats_.count(site) && habitats_.at(site).residents>0 &&
+            (snapshot_version_<40 || npc_available_for_duty(w.operator_npc_id));
         const bool power=u!=utilities_.end() && u->second.powered;
         const bool working=u!=utilities_.end() && u->second.condition>0;
         industry::Recipe recipe{"aluminum_panel","cut",{{"aluminum",20000}},
@@ -2585,7 +3909,8 @@ void Simulation::process_workshops(){
                 fn->second.home_ship==w.source_ship && fn->second.location==site &&
                 fn->second.role==NpcRole::Habitat &&
                 habitats_.count(site) && habitats_.at(site).residents>0 &&
-                w.finisher_npc_id!=w.operator_npc_id;
+                w.finisher_npc_id!=w.operator_npc_id &&
+                (snapshot_version_<40 || npc_available_for_duty(w.finisher_npc_id));
             industry::Recipe fr{"aluminum_frame","shape",{{"aluminum_panels",20000}},
                 {"aluminum_frames",19000},{"aluminum_scrap",1000}};
             industry::Machine fm{1,"shape",power,fn_staff,working};
@@ -2698,6 +4023,13 @@ void Simulation::step() {
     process_habitats();
     process_communities();
     process_clinics();
+    // Scheduled recovery runs in the same authoritative, journaled step.
+    if(snapshot_version_>=39)for(auto& [id,care]:medical_cases_){
+        // Death is terminal; an automatic timer must never heal a tombstone.
+        if(npcs_.count(id) && care.recovery_due_tick &&
+           tick_>=care.recovery_due_tick && !care.recovered_tick)
+            care.recovered_tick=tick_;
+    }
     process_reclaimers();
     for (auto& pair : entities_) {
         Entity& entity = pair.second;
@@ -2727,7 +4059,7 @@ void Simulation::steps(std::uint64_t count) {
 
 std::string Simulation::canonical_state() const {
     std::ostringstream out;
-    out << (snapshot_version_ >= 30 ? "galaxy-kernel-v30|" : snapshot_version_ >= 29 ? "galaxy-kernel-v29|" : snapshot_version_ >= 28 ? "galaxy-kernel-v28|" : snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
+    out << (snapshot_version_ >= 53 ? "galaxy-kernel-v53|" : snapshot_version_ >= 52 ? "galaxy-kernel-v52|" : snapshot_version_ >= 49 ? "galaxy-kernel-v49|" : snapshot_version_ >= 48 ? "galaxy-kernel-v48|" : snapshot_version_ >= 44 ? "galaxy-kernel-v44|" : snapshot_version_ >= 41 ? "galaxy-kernel-v41|" : snapshot_version_ >= 40 ? "galaxy-kernel-v40|" : snapshot_version_ >= 39 ? "galaxy-kernel-v39|" : snapshot_version_ >= 38 ? "galaxy-kernel-v38|" : snapshot_version_ >= 37 ? "galaxy-kernel-v37|" : snapshot_version_ >= 36 ? "galaxy-kernel-v36|" : snapshot_version_ >= 35 ? "galaxy-kernel-v35|" : snapshot_version_ >= 34 ? "galaxy-kernel-v34|" : snapshot_version_ >= 33 ? "galaxy-kernel-v33|" : snapshot_version_ >= 32 ? "galaxy-kernel-v32|" : snapshot_version_ >= 31 ? "galaxy-kernel-v31|" : snapshot_version_ >= 30 ? "galaxy-kernel-v30|" : snapshot_version_ >= 29 ? "galaxy-kernel-v29|" : snapshot_version_ >= 28 ? "galaxy-kernel-v28|" : snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
         << '|' << rng_state_ << '\n';
     if (snapshot_version_>=5) for(const auto system:systems_)out<<"system|"<<system<<'\n';
     for (const auto& entry : entities_) {
@@ -2773,6 +4105,7 @@ std::string Simulation::canonical_state() const {
         static const char* names[]={"aluminum","aluminum_panels","aluminum_frames","aluminum_scrap"};
         for(const auto* name:names){const auto i=st.goods_kg.find(name);
             out<<'|'<<(i==st.goods_kg.end()?0:i->second);}
+        if(snapshot_version_>=52)out<<'|'<<st.network_escrow_kg;
         out<<'\n';
         if(snapshot_version_>=26){
             for(const auto& [node,stacks]:st.extra_bins){
@@ -2855,7 +4188,10 @@ std::string Simulation::canonical_state() const {
            <<c.water_kg<<'|'<<c.substrate_kg<<'|'<<c.wastewater_kg<<'|'
            <<c.medical_waste_kg<<'|'<<c.medics<<'|'<<c.active_cases<<'|'
            <<c.cycles<<'|'<<c.consecutive_care_cycles<<'|'<<c.shortages<<'|'
-           <<c.treated_cases<<'|'<<c.recorded_cases<<'\n';
+           <<c.treated_cases<<'|'<<c.recorded_cases;
+        if(snapshot_version_>=38)out<<'|'<<c.training_units<<'|'<<c.ems_treatment_units
+            <<'|'<<c.ems_treated_cases<<'|'<<c.last_ems_tick<<'|'<<c.ems_cases_this_tick;
+        out<<'\n';
     }
     if(snapshot_version_>=17)for(const auto& [id,r]:reclaimers_){
         out<<"reclaimer|"<<id<<'|'<<r.source_ship<<'|'<<r.embodied_ore<<'|'
@@ -2878,9 +4214,13 @@ std::string Simulation::canonical_state() const {
     }
     if(snapshot_version_>=20){
         out<<"npcnext|"<<next_npc_id_<<'\n';
-        for(const auto& [id,n]:npcs_)
+        for(const auto& [id,n]:npcs_){
             out<<"npc|"<<id<<'|'<<n.home_ship<<'|'<<n.location<<'|'
-               <<static_cast<int>(n.role)<<'|'<<n.farm_xp<<'|'<<n.mentor_id<<'\n';
+               <<static_cast<int>(n.role)<<'|'<<n.farm_xp<<'|'<<n.mentor_id;
+            if(snapshot_version_>=31)out<<'|'<<n.transport_id;
+            if(snapshot_version_>=32)out<<'|'<<n.assigned_site;
+            out<<'\n';
+        }
         for(const auto& [site,xp]:farm_team_xp_)
             out<<"teamxp|"<<site<<'|'<<xp<<'\n';
     }
@@ -2928,8 +4268,53 @@ std::string Simulation::canonical_state() const {
             out << "pending|" << c.id << '|' << c.execute_tick << '|' << c.sequence
                 << '|' << c.issuer << '|' << c.actor << '|' << c.target << '|'
                 << static_cast<int>(c.action) << '|' << c.thrust_x << '|' << c.thrust_y
-                << '|' << c.amount << '\n';
+                << '|' << c.amount;
+            if (snapshot_version_ >= 31) {
+                out << '|' << c.transport_id << '|' << c.passenger_ids.size();
+                for (auto npc : c.passenger_ids) out << '|' << npc;
+                if(c.action==Action::HostSplitEvacuatePassengers)
+                    out<<'|'<<c.secondary_receiver<<'|'<<c.secondary_transport;
+            }
+            out << '\n';
         }
+    }
+    if(snapshot_version_>=33)for(const auto& [id,v]:voyages_){
+        out<<"voyage|"<<id<<'|'<<v.ferry<<'|'<<v.origin<<'|'<<v.status<<'|'<<v.passengers.size();
+        if(snapshot_version_>=34)out<<'|'<<v.destination;
+        if(snapshot_version_>=35)out<<'|'<<v.last_incident_id<<'|'<<v.stranded_tick
+                                     <<'|'<<v.stranded_reason<<'|'<<v.rescue_transport_id;
+        if(snapshot_version_>=48)out<<'|'<<v.secondary_rescue_transport_id;
+        for(auto npc:v.passengers)out<<'|'<<npc;
+        out<<'\n';
+    }
+    if(snapshot_version_>=38){
+        for(const auto& [id,q]:named_medics_)out<<"medic|"<<id<<'|'<<q.clinic_site<<'|'<<q.units<<'\n';
+        const auto emit_case=[&](const char* type,std::uint64_t id,const MedicalCase& m){
+            out<<type<<'|'<<id<<'|'<<m.rescue_voyage<<'|'<<m.triage_command
+               <<'|'<<m.triage_tick<<'|'<<m.severity<<'|'<<m.treatment_command
+               <<'|'<<m.treatment_tick<<'|'<<m.clinic_site<<'|'<<m.medic_id;
+            if(snapshot_version_>=39)out<<'|'<<m.stabilization_command<<'|'
+                <<m.stabilized_tick<<'|'<<m.recovery_due_tick<<'|'<<m.recovered_tick;
+            out<<'\n';
+        };
+        for(const auto& [id,m]:medical_cases_)emit_case("patient",id,m);
+        if(snapshot_version_>=39){
+            for(const auto& [key,m]:medical_history_)emit_case("patienthistory",key.first,m);
+            for(const auto& [id,sh]:medic_shifts_)out<<"medicshift|"<<id<<'|'
+                <<sh.clinic_site<<'|'<<sh.medic_id<<'|'<<sh.start_tick<<'|'<<sh.end_tick<<'\n';
+            for(const auto& [id,k]:mobile_medical_kits_)out<<"medicalkit|"<<id<<'|'
+                <<k.water_kg<<'|'<<k.substrate_kg<<'|'<<k.wastewater_kg<<'|'<<k.medical_waste_kg<<'\n';
+        }
+        for(const auto& [id,h]:crew_rehomes_)
+            out<<"crewrehome|"<<id<<'|'<<h.wreck<<'|'<<h.rescue_ship
+               <<'|'<<h.incident_command<<'|'<<h.tick<<'\n';
+    }
+    if(snapshot_version_>=36)for(const auto& [id,record]:casualties_){
+        const auto& n=record.identity;
+        out<<"deceased|"<<id<<'|'<<n.home_ship<<'|'<<n.location<<'|'
+           <<static_cast<unsigned>(n.role)<<'|'<<n.farm_xp<<'|'<<n.mentor_id<<'|'
+           <<n.transport_id<<'|'<<n.assigned_site<<'|'<<record.death_tick<<'|'
+           <<record.command_id<<'|'<<record.ferry<<'\n';
     }
     for (auto id : submitted_ids_) out << "accepted|" << id << '\n';
     for (const auto& ev : events_) {
@@ -3026,12 +4411,12 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
     if (!std::getline(in, line)) throw std::runtime_error("snapshot: missing header");
     auto h = fields(line);
     require_fields(h, 5);
-    if (h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27" && h[0] != "galaxy-kernel-v28" && h[0] != "galaxy-kernel-v29" && h[0] != "galaxy-kernel-v30") throw std::runtime_error("snapshot: unsupported version");
+    if (h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27" && h[0] != "galaxy-kernel-v28" && h[0] != "galaxy-kernel-v29" && h[0] != "galaxy-kernel-v30" && h[0] != "galaxy-kernel-v31" && h[0] != "galaxy-kernel-v32" && h[0] != "galaxy-kernel-v33" && h[0] != "galaxy-kernel-v34" && h[0] != "galaxy-kernel-v35" && h[0] != "galaxy-kernel-v36" && h[0] != "galaxy-kernel-v37" && h[0] != "galaxy-kernel-v38" && h[0] != "galaxy-kernel-v39" && h[0] != "galaxy-kernel-v40" && h[0] != "galaxy-kernel-v41" && h[0] != "galaxy-kernel-v44" && h[0] != "galaxy-kernel-v48" && h[0] != "galaxy-kernel-v49" && h[0] != "galaxy-kernel-v52" && h[0] != "galaxy-kernel-v53") throw std::runtime_error("snapshot: unsupported version");
     const auto sys = u64(h[1]);
     if (sys == 0 || sys > std::numeric_limits<std::uint32_t>::max())
         throw std::runtime_error("snapshot: invalid system");
     Simulation result(u64(h[4]), static_cast<std::uint32_t>(sys));
-    result.snapshot_version_ = h[0] == "galaxy-kernel-v30" ? 30 : h[0] == "galaxy-kernel-v29" ? 29 : h[0] == "galaxy-kernel-v28" ? 28 : h[0] == "galaxy-kernel-v27" ? 27 : h[0] == "galaxy-kernel-v26" ? 26 : h[0] == "galaxy-kernel-v25" ? 25 : h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
+    result.snapshot_version_ = h[0] == "galaxy-kernel-v53" ? 53 : h[0] == "galaxy-kernel-v52" ? 52 : h[0] == "galaxy-kernel-v49" ? 49 : h[0] == "galaxy-kernel-v48" ? 48 : h[0] == "galaxy-kernel-v44" ? 44 : h[0] == "galaxy-kernel-v41" ? 41 : h[0] == "galaxy-kernel-v40" ? 40 : h[0] == "galaxy-kernel-v39" ? 39 : h[0] == "galaxy-kernel-v38" ? 38 : h[0] == "galaxy-kernel-v37" ? 37 : h[0] == "galaxy-kernel-v36" ? 36 : h[0] == "galaxy-kernel-v35" ? 35 : h[0] == "galaxy-kernel-v34" ? 34 : h[0] == "galaxy-kernel-v33" ? 33 : h[0] == "galaxy-kernel-v32" ? 32 : h[0] == "galaxy-kernel-v31" ? 31 : h[0] == "galaxy-kernel-v30" ? 30 : h[0] == "galaxy-kernel-v29" ? 29 : h[0] == "galaxy-kernel-v28" ? 28 : h[0] == "galaxy-kernel-v27" ? 27 : h[0] == "galaxy-kernel-v26" ? 26 : h[0] == "galaxy-kernel-v25" ? 25 : h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
     result.tick_ = u64(h[2]);
     result.next_entity_id_ = u64(h[3]);
     if (result.next_entity_id_ == 0) throw std::runtime_error("snapshot: invalid next entity ID");
@@ -3123,7 +4508,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
         } else if(f[0]=="colony" && result.snapshot_version_>=7){
             require_fields(f,5);
             const auto id=u64(f[1]);auto crew=i64(f[2]),refined=i64(f[3]),modules=i64(f[4]);
-            if(!id || crew<1 || crew>1000 || refined<0 || modules<0 ||
+            if(!id || crew<(result.snapshot_version_>=36?0:1) || crew>1000 || refined<0 || modules<0 ||
                refined>1000000000LL || modules>500000000LL ||
                !result.colony_ships_.emplace(id,ColonyShip{crew,refined,modules,{},{},0}).second)
                 throw std::runtime_error("snapshot: invalid colony inventory");
@@ -3169,8 +4554,11 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                !result.workshops_.emplace(id,w).second)
                 throw std::runtime_error("snapshot: invalid outpost workshop");
         } else if(f[0]=="storage" && result.snapshot_version_>=25){
-            require_fields(f,8);
+            require_fields(f,result.snapshot_version_>=52?9:8);
             const auto site=u64(f[1]);OutpostStorage st{};
+            if(result.snapshot_version_>=52){st.network_escrow_kg=i64(f[8]);
+              if(st.network_escrow_kg<0||st.network_escrow_kg>1000000000)
+                  throw std::runtime_error("snapshot: invalid production escrow");}
             st.source_ship=u64(f[2]);st.embodied_ore=i64(f[3]);
             static const char* names[]={"aluminum","aluminum_panels","aluminum_frames","aluminum_scrap"};
             for(int i=0;i<4;++i){auto qty=i64(f[4+i]);
@@ -3393,13 +4781,19 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                !result.communities_.emplace(id,c).second)
                 throw std::runtime_error("snapshot: invalid community services");
         } else if(f[0]=="clinic" && result.snapshot_version_>=16){
-            require_fields(f,15);const auto id=u64(f[1]);ClinicFacility c{};
+            require_fields(f,result.snapshot_version_>=38?20:15);
+            const auto id=u64(f[1]);ClinicFacility c{};
             c.source_ship=u64(f[2]);c.embodied_ore=i64(f[3]);
             c.water_kg=i64(f[4]);c.substrate_kg=i64(f[5]);
             c.wastewater_kg=i64(f[6]);c.medical_waste_kg=i64(f[7]);
             c.medics=i64(f[8]);c.active_cases=i64(f[9]);
             c.cycles=u64(f[10]);c.consecutive_care_cycles=u64(f[11]);
             c.shortages=u64(f[12]);c.treated_cases=u64(f[13]);c.recorded_cases=u64(f[14]);
+            if(result.snapshot_version_>=38){
+                c.training_units=u64(f[15]);c.ems_treatment_units=u64(f[16]);
+                c.ems_treated_cases=u64(f[17]);c.last_ems_tick=u64(f[18]);
+                c.ems_cases_this_tick=u64(f[19]);
+            }
             const auto valid=[](std::int64_t v){return v>=0 && v<=100000000;};
             if(!id || !c.source_ship || c.embodied_ore!=4 ||
                !valid(c.water_kg)||!valid(c.substrate_kg)||!valid(c.wastewater_kg)||
@@ -3408,7 +4802,10 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                c.consecutive_care_cycles>c.cycles||c.shortages>c.cycles||
                c.recorded_cases>c.cycles||c.treated_cases>c.recorded_cases||
                c.active_cases!=static_cast<std::int64_t>(c.recorded_cases-c.treated_cases)||
-               c.medical_waste_kg!=static_cast<std::int64_t>(c.treated_cases) ||
+               c.medical_waste_kg!=static_cast<std::int64_t>(c.treated_cases+c.training_units+c.ems_treatment_units) ||
+               c.last_ems_tick>result.tick_ || c.ems_cases_this_tick>4 ||
+               (c.ems_cases_this_tick && !c.last_ems_tick) ||
+               c.ems_treated_cases>c.ems_treatment_units ||
                !result.clinics_.emplace(id,c).second)
                 throw std::runtime_error("snapshot: invalid clinic");
         } else if(f[0]=="waterworks" && result.snapshot_version_>=18){
@@ -3462,13 +4859,15 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                (result.next_npc_id_==1 && (result.snapshot_version_==20 || !result.colony_ships_.empty())))
                 throw std::runtime_error("snapshot: invalid NPC counter");
         } else if(f[0]=="npc" && result.snapshot_version_>=20){
-            require_fields(f,7);
+            require_fields(f,result.snapshot_version_>=32 ? 9 : result.snapshot_version_>=31 ? 8 : 7);
             NpcRecord n{};n.id=u64(f[1]);n.home_ship=u64(f[2]);n.location=u64(f[3]);
             const auto role=u64(f[4]);n.farm_xp=u64(f[5]);n.mentor_id=u64(f[6]);
+            if(result.snapshot_version_>=31)n.transport_id=u64(f[7]);
+            n.assigned_site=result.snapshot_version_>=32 ? u64(f[8]) : n.location;
             if(!n.id || role>2 || n.farm_xp>1000000 || n.mentor_id==n.id ||
                !result.npc_next_seen_ || n.id>=result.next_npc_id_ ||
                !result.npcs_.emplace(n.id,NpcRecord{n.id,n.home_ship,n.location,
-                                            static_cast<NpcRole>(role),n.farm_xp,n.mentor_id}).second)
+                                            static_cast<NpcRole>(role),n.farm_xp,n.mentor_id,n.transport_id,n.assigned_site}).second)
                 throw std::runtime_error("snapshot: invalid NPC identity");
         } else if(f[0]=="teamxp" && result.snapshot_version_>=20){
             require_fields(f,3);
@@ -3520,13 +4919,135 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                u.stored_energy!=u.generated_energy-u.consumed_energy ||
                !result.utilities_.emplace(id,u).second)
                 throw std::runtime_error("snapshot: invalid utility operation");
+        } else if(f[0]=="voyage" && result.snapshot_version_>=33){
+            if(f.size()<7)throw std::runtime_error("snapshot: truncated voyage");
+            const auto id=u64(f[1]),ferry=u64(f[2]),origin=u64(f[3]);
+            const auto status=u64(f[4]),count=u64(f[5]);
+            if(!id || !ferry || !origin || ferry==origin || (status!=1 && status!=2 && (result.snapshot_version_<35 || (status!=3 && status!=5 && (result.snapshot_version_<36 || status!=6)))) ||
+               !count || count>10000 || f.size()!=(result.snapshot_version_>=48 ? 12+count : result.snapshot_version_>=35 ? 11+count : result.snapshot_version_>=34 ? 7+count : 6+count))
+                throw std::runtime_error("snapshot: invalid voyage manifest");
+            VoyageRecord v;v.ferry=ferry;v.origin=origin;v.status=static_cast<unsigned>(status);
+            const std::size_t offset=result.snapshot_version_>=48?12:result.snapshot_version_>=35?11:result.snapshot_version_>=34?7:6;
+            if(result.snapshot_version_>=34)v.destination=u64(f[6]);
+            if(result.snapshot_version_>=35){
+                v.last_incident_id=u64(f[7]);v.stranded_tick=u64(f[8]);
+                const auto cause=u64(f[9]);v.rescue_transport_id=u64(f[10]);
+                if(cause>5)throw std::runtime_error("snapshot: invalid ferry incident reason");
+                v.stranded_reason=static_cast<unsigned>(cause);
+            }
+            if(result.snapshot_version_>=48)v.secondary_rescue_transport_id=u64(f[11]);
+            if((v.secondary_rescue_transport_id &&
+                (result.snapshot_version_<48 || v.status!=5 ||
+                 v.secondary_rescue_transport_id==v.rescue_transport_id)) ||
+               ((v.status==1 || v.status==3) && v.destination) ||
+               ((v.status==2 || v.status==5) && result.snapshot_version_>=34 && !v.destination) ||
+               (v.status==3 && (!v.stranded_tick || !v.stranded_reason || !v.last_incident_id ||
+                 v.stranded_tick>result.tick_)) ||
+               (v.status==5 && (!v.last_incident_id || !v.rescue_transport_id ||
+                 v.stranded_tick || v.stranded_reason)) ||
+               (v.status!=3 && (v.stranded_tick || v.stranded_reason)) ||
+               (v.status!=5 && v.status!=6 && v.rescue_transport_id) ||
+               (v.status==6 && (!v.last_incident_id || v.stranded_tick || v.stranded_reason ||
+                 ((v.destination || v.rescue_transport_id) &&
+                  (result.snapshot_version_<37 || !v.destination || !v.rescue_transport_id)))))
+                throw std::runtime_error("snapshot: invalid voyage lifecycle");
+            for(std::size_t i=0;i<count;++i){auto npc=u64(f[offset+i]);
+                if(!npc || (!v.passengers.empty() && npc<=v.passengers.back()))
+                    throw std::runtime_error("snapshot: duplicate/unsorted voyage passenger");
+                v.passengers.push_back(npc);
+            }
+            if(!result.voyages_.emplace(id,std::move(v)).second)
+                throw std::runtime_error("snapshot: duplicate voyage ID");
+        } else if(f[0]=="deceased" && result.snapshot_version_>=36){
+            require_fields(f,12);
+            NpcCasualty d{};auto& n=d.identity;n.id=u64(f[1]);
+            n.home_ship=u64(f[2]);n.location=u64(f[3]);
+            const auto role=u64(f[4]);n.role=static_cast<NpcRole>(role);
+            n.farm_xp=u64(f[5]);n.mentor_id=u64(f[6]);
+            n.transport_id=u64(f[7]);n.assigned_site=u64(f[8]);
+            d.death_tick=u64(f[9]);d.command_id=u64(f[10]);d.ferry=u64(f[11]);
+            if(!n.id || n.id>=result.next_npc_id_ || role!=static_cast<unsigned>(NpcRole::Ship) ||
+               n.assigned_site!=n.home_ship || n.farm_xp>1000000 ||
+               !n.home_ship || !n.location || !n.assigned_site || n.mentor_id==n.id ||
+               !d.death_tick || d.death_tick>result.tick_ || !d.command_id ||
+               !d.ferry || d.ferry!=n.location || result.npcs_.count(n.id) ||
+               !result.casualties_.emplace(n.id,d).second)
+                throw std::runtime_error("snapshot: invalid deceased NPC tombstone");
+        } else if(f[0]=="medic" && result.snapshot_version_>=38){
+            require_fields(f,4);
+            const auto id=u64(f[1]),site=u64(f[2]),units=u64(f[3]);
+            if(!id || !site || units<1 || units>1000 ||
+               !result.named_medics_.emplace(id,MedicTraining{site,units}).second)
+                throw std::runtime_error("snapshot: invalid named medical qualification");
+        } else if((f[0]=="patient" || f[0]=="patienthistory") && result.snapshot_version_>=38){
+            require_fields(f,result.snapshot_version_>=39?14:10);
+            if(f[0]=="patienthistory" && result.snapshot_version_<39)
+                throw std::runtime_error("snapshot: premature medical history");
+            const auto id=u64(f[1]);MedicalCase m{};
+            m.rescue_voyage=u64(f[2]);m.triage_command=u64(f[3]);m.triage_tick=u64(f[4]);
+            const auto severity=u64(f[5]);m.severity=static_cast<unsigned>(severity);
+            m.treatment_command=u64(f[6]);m.treatment_tick=u64(f[7]);
+            m.clinic_site=u64(f[8]);m.medic_id=u64(f[9]);
+            if(result.snapshot_version_>=39){
+                m.stabilization_command=u64(f[10]);m.stabilized_tick=u64(f[11]);
+                m.recovery_due_tick=u64(f[12]);m.recovered_tick=u64(f[13]);
+            }
+            if(!id || !m.rescue_voyage || !m.triage_command || !m.triage_tick ||
+               m.triage_tick>result.tick_ || severity<1 || severity>3 ||
+               (!!m.treatment_command != !!m.treatment_tick) ||
+               (!!m.treatment_command != !!m.clinic_site) ||
+               (!!m.treatment_command != !!m.medic_id) ||
+               (!!m.stabilization_command != !!m.stabilized_tick) ||
+               (m.stabilized_tick && (m.stabilized_tick<m.triage_tick ||
+                   m.stabilized_tick>result.tick_ || (m.treatment_tick &&
+                   m.stabilized_tick>m.treatment_tick))) ||
+               (m.recovery_due_tick && (!m.treatment_command ||
+                   m.recovery_due_tick != m.treatment_tick+3*m.severity)) ||
+               (m.recovered_tick && (!m.recovery_due_tick ||
+                   m.recovered_tick!=m.recovery_due_tick || m.recovered_tick>result.tick_)) ||
+               (m.recovery_due_tick && m.recovery_due_tick<=result.tick_ && !m.recovered_tick &&
+                !(result.casualties_.count(id) &&
+                  result.casualties_.at(id).death_tick<=m.recovery_due_tick)) ||
+               m.treatment_tick>result.tick_ ||
+               (m.treatment_tick && m.treatment_tick<m.triage_tick) ||
+               !(f[0]=="patient" ? result.medical_cases_.emplace(id,m).second :
+                 result.medical_history_.emplace(std::make_pair(id,m.triage_command),m).second))
+                throw std::runtime_error("snapshot: invalid patient case");
+        } else if(f[0]=="medicshift" && result.snapshot_version_>=39){
+            require_fields(f,6);const auto cmd=u64(f[1]);MedicShift sh{};
+            sh.clinic_site=u64(f[2]);sh.medic_id=u64(f[3]);
+            sh.start_tick=u64(f[4]);sh.end_tick=u64(f[5]);
+            if(!cmd || !sh.clinic_site || !sh.medic_id || !sh.start_tick ||
+               sh.start_tick>result.tick_ || sh.end_tick<=sh.start_tick ||
+               sh.end_tick-sh.start_tick>10000 ||
+               !result.medic_shifts_.emplace(cmd,sh).second)
+                throw std::runtime_error("snapshot: invalid medic shift");
+        } else if(f[0]=="medicalkit" && result.snapshot_version_>=39){
+            require_fields(f,6);const auto id=u64(f[1]);MobileMedicalKit k{};
+            k.water_kg=i64(f[2]);k.substrate_kg=i64(f[3]);
+            k.wastewater_kg=i64(f[4]);k.medical_waste_kg=i64(f[5]);
+            if(!id || k.water_kg<0 || k.substrate_kg<0 || k.wastewater_kg<0 ||
+               k.medical_waste_kg<0 || k.water_kg>1000 || k.substrate_kg>1000 ||
+               k.wastewater_kg>1000000 || k.medical_waste_kg>1000000 ||
+               !result.mobile_medical_kits_.emplace(id,k).second)
+                throw std::runtime_error("snapshot: invalid ship medical kit");
+        } else if(f[0]=="crewrehome" && result.snapshot_version_>=38){
+            require_fields(f,6);
+            const auto id=u64(f[1]);CrewRehome h{};
+            h.wreck=u64(f[2]);h.rescue_ship=u64(f[3]);
+            h.incident_command=u64(f[4]);h.tick=u64(f[5]);
+            if(!id || !h.wreck || !h.rescue_ship || !h.incident_command ||
+               !h.tick || h.tick>result.tick_ || h.wreck==h.rescue_ship ||
+               !result.crew_rehomes_.emplace(id,h).second)
+                throw std::runtime_error("snapshot: invalid crew rehome");
         } else if (f[0] == "pending") {
-            require_fields(f, 11);
+            if (result.snapshot_version_ < 31) require_fields(f, 11);
+            else if (f.size() < 13) throw std::runtime_error("snapshot: missing v31 pending manifest");
             Command c;
             c.id = u64(f[1]); c.execute_tick = u64(f[2]); c.sequence = u64(f[3]);
             c.issuer = u64(f[4]); c.actor = u64(f[5]); c.target = u64(f[6]);
             auto action = u64(f[7]);
-            if (action > (result.snapshot_version_ >= 30 ? static_cast<unsigned>(Action::CompleteConveyorRoute) : result.snapshot_version_ >= 29 ? static_cast<unsigned>(Action::PlaceFactoryEquipment) : result.snapshot_version_ >= 28 ? static_cast<unsigned>(Action::ConstructWorkshopLink) : result.snapshot_version_ >= 27 ? static_cast<unsigned>(Action::ConstructStorageLink) : result.snapshot_version_ >= 26 ? static_cast<unsigned>(Action::TransferStorageNodeStack) : result.snapshot_version_ >= 25 ? static_cast<unsigned>(Action::TransferStorageStack) : result.snapshot_version_ >= 24 ? static_cast<unsigned>(Action::TransferWorkshopStack) : result.snapshot_version_ >= 23 ? static_cast<unsigned>(Action::TransferWorkshopFinalOutput) : result.snapshot_version_ >= 22 ? static_cast<unsigned>(Action::TransferWorkshopOutput) : result.snapshot_version_ >= 21 ? static_cast<unsigned>(Action::HostCrewLoss) : result.snapshot_version_ >= 20 ? static_cast<unsigned>(Action::AssignFarmMentor) : result.snapshot_version_ >= 19 ? static_cast<unsigned>(Action::AssignPolicyInspectors) : result.snapshot_version_ >= 18 ? static_cast<unsigned>(Action::TransferWaterworksFeed) : result.snapshot_version_ >= 17 ? static_cast<unsigned>(Action::ConstructReclaimer) : result.snapshot_version_ >= 16 ? static_cast<unsigned>(Action::AssignClinicStaff) : result.snapshot_version_ >= 15 ? static_cast<unsigned>(Action::AssignCommunityStaff) : result.snapshot_version_ >= 14 ? static_cast<unsigned>(Action::SetUtilityMaintenance) : result.snapshot_version_ >= 13 ? static_cast<unsigned>(Action::RepairUtility) : result.snapshot_version_ >= 12 ? static_cast<unsigned>(Action::AssignHabitatResidents) : result.snapshot_version_ >= 11 ? static_cast<unsigned>(Action::AssignFarmWorkers) : result.snapshot_version_ >= 10 ? static_cast<unsigned>(Action::LoadLifeWater) : result.snapshot_version_ >= 9 ? static_cast<unsigned>(Action::FabricateMaterialModule) : result.snapshot_version_ >= 7 ? static_cast<unsigned>(Action::ConstructOutpost) : result.snapshot_version_ >= 6 ? static_cast<unsigned>(Action::DeliverGateSpares) : result.snapshot_version_ >= 5 ? static_cast<unsigned>(Action::SetGatePairOnline) : result.snapshot_version_ >= 4 ? static_cast<unsigned>(Action::SellOre) : static_cast<unsigned>(Action::UnloadOre))) throw std::runtime_error("snapshot: invalid action");
+            if (action > (result.snapshot_version_ >= 56 ? static_cast<unsigned>(Action::HostTransferConsignedStock) : result.snapshot_version_ >= 53 ? static_cast<unsigned>(Action::HostReturnConstructedStock) : result.snapshot_version_ >= 52 ? static_cast<unsigned>(Action::HostEscrowConstructedStock) : result.snapshot_version_ >= 48 ? static_cast<unsigned>(Action::HostSplitEvacuatePassengers) : result.snapshot_version_ >= 41 ? static_cast<unsigned>(Action::HostSettleMigrant) : result.snapshot_version_ >= 39 ? static_cast<unsigned>(Action::HostMobileStabilize) : result.snapshot_version_ >= 38 ? static_cast<unsigned>(Action::HostTreatInjuries) : result.snapshot_version_ >= 37 ? static_cast<unsigned>(Action::HostResolveMixedFerryLoss) : result.snapshot_version_ >= 36 ? static_cast<unsigned>(Action::HostDestroyPassengerFerry) : result.snapshot_version_ >= 35 ? static_cast<unsigned>(Action::HostEvacuatePassengers) : result.snapshot_version_ >= 32 ? static_cast<unsigned>(Action::HostDisembarkPassengers) : result.snapshot_version_ >= 30 ? static_cast<unsigned>(Action::CompleteConveyorRoute) : result.snapshot_version_ >= 29 ? static_cast<unsigned>(Action::PlaceFactoryEquipment) : result.snapshot_version_ >= 28 ? static_cast<unsigned>(Action::ConstructWorkshopLink) : result.snapshot_version_ >= 27 ? static_cast<unsigned>(Action::ConstructStorageLink) : result.snapshot_version_ >= 26 ? static_cast<unsigned>(Action::TransferStorageNodeStack) : result.snapshot_version_ >= 25 ? static_cast<unsigned>(Action::TransferStorageStack) : result.snapshot_version_ >= 24 ? static_cast<unsigned>(Action::TransferWorkshopStack) : result.snapshot_version_ >= 23 ? static_cast<unsigned>(Action::TransferWorkshopFinalOutput) : result.snapshot_version_ >= 22 ? static_cast<unsigned>(Action::TransferWorkshopOutput) : result.snapshot_version_ >= 21 ? static_cast<unsigned>(Action::HostCrewLoss) : result.snapshot_version_ >= 20 ? static_cast<unsigned>(Action::AssignFarmMentor) : result.snapshot_version_ >= 19 ? static_cast<unsigned>(Action::AssignPolicyInspectors) : result.snapshot_version_ >= 18 ? static_cast<unsigned>(Action::TransferWaterworksFeed) : result.snapshot_version_ >= 17 ? static_cast<unsigned>(Action::ConstructReclaimer) : result.snapshot_version_ >= 16 ? static_cast<unsigned>(Action::AssignClinicStaff) : result.snapshot_version_ >= 15 ? static_cast<unsigned>(Action::AssignCommunityStaff) : result.snapshot_version_ >= 14 ? static_cast<unsigned>(Action::SetUtilityMaintenance) : result.snapshot_version_ >= 13 ? static_cast<unsigned>(Action::RepairUtility) : result.snapshot_version_ >= 12 ? static_cast<unsigned>(Action::AssignHabitatResidents) : result.snapshot_version_ >= 11 ? static_cast<unsigned>(Action::AssignFarmWorkers) : result.snapshot_version_ >= 10 ? static_cast<unsigned>(Action::LoadLifeWater) : result.snapshot_version_ >= 9 ? static_cast<unsigned>(Action::FabricateMaterialModule) : result.snapshot_version_ >= 7 ? static_cast<unsigned>(Action::ConstructOutpost) : result.snapshot_version_ >= 6 ? static_cast<unsigned>(Action::DeliverGateSpares) : result.snapshot_version_ >= 5 ? static_cast<unsigned>(Action::SetGatePairOnline) : result.snapshot_version_ >= 4 ? static_cast<unsigned>(Action::SellOre) : static_cast<unsigned>(Action::UnloadOre))) throw std::runtime_error("snapshot: invalid action");
             c.action = static_cast<Action>(action);
             auto tx = i64(f[8]), ty = i64(f[9]);
             if (tx < std::numeric_limits<int>::min() || tx > std::numeric_limits<int>::max() ||
@@ -3534,6 +5055,79 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 throw std::runtime_error("snapshot: invalid thrust");
             c.thrust_x = static_cast<int>(tx); c.thrust_y = static_cast<int>(ty);
             c.amount = i64(f[10]);
+            if (result.snapshot_version_ >= 31) {
+                c.transport_id = u64(f[11]);
+                const auto count = u64(f[12]);
+                if (count > 10000 || f.size() != 13 + count +
+                    (c.action==Action::HostSplitEvacuatePassengers?2:0))
+                    throw std::runtime_error("snapshot: invalid pending passenger count");
+                std::set<std::uint64_t> unique;
+                for (std::size_t i=0; i<count; ++i) {
+                    auto npc=u64(f[13+i]);
+                    if (!npc || !unique.insert(npc).second)
+                        throw std::runtime_error("snapshot: duplicate pending passenger");
+                    c.passenger_ids.push_back(npc);
+                }
+                if(c.action==Action::HostSplitEvacuatePassengers){
+                    c.secondary_receiver=u64(f[13+count]);
+                    c.secondary_transport=u64(f[14+count]);
+                    if(result.snapshot_version_<48||!c.secondary_receiver||
+                       !c.secondary_transport||c.thrust_x<=0||
+                       static_cast<std::uint64_t>(c.thrust_x)>=count||
+                       c.thrust_y<0||(c.thrust_y>0 && result.snapshot_version_<49)||
+                       c.amount<=0)
+                        throw std::runtime_error("snapshot: invalid pending split rescue");
+                }
+                const bool incident=c.action==Action::HostStrandFerry || c.action==Action::HostResumeFerry ||
+                    c.action==Action::HostEvacuatePassengers ||
+                    c.action==Action::HostDestroyPassengerFerry ||
+                    c.action==Action::HostResolveMixedFerryLoss;
+                const bool pending_migration=c.action==Action::HostSettleMigrant;
+                const bool pending_split=c.action==Action::HostSplitEvacuatePassengers;
+                const bool passenger_action=incident || c.action==Action::HostEmbarkPassengers ||
+                    c.action==Action::HostDisembarkPassengers;
+                const bool medical=c.action==Action::HostTrainMedic ||
+                    c.action==Action::HostTriageRescued || c.action==Action::HostTreatInjuries ||
+                    c.action==Action::HostScheduleMedicShift || c.action==Action::HostLoadMedicalKit ||
+                    c.action==Action::HostMobileStabilize;
+                if(passenger_action ? (result.snapshot_version_<(incident?35:32) || !c.transport_id || !count ||
+                    c.issuer!=Simulation::kServerAuthority || !c.actor || !c.target ||
+                    c.thrust_x || c.thrust_y ||
+                    (incident ? (c.action==Action::HostStrandFerry ? (c.target!=c.actor || c.amount<1 || c.amount>5) :
+                        c.action==Action::HostResumeFerry ? (c.target!=c.actor || c.amount!=0) :
+                        c.action==Action::HostDestroyPassengerFerry ? (c.target!=c.actor || c.amount!=0 || result.snapshot_version_<36) :
+                        c.action==Action::HostResolveMixedFerryLoss ?
+                            (result.snapshot_version_<37 || c.target==c.actor || c.amount<=0 ||
+                             static_cast<std::uint64_t>(c.amount)>=c.passenger_ids.size() ||
+                             c.id==c.transport_id ||
+                             !std::is_sorted(c.passenger_ids.begin(),c.passenger_ids.begin()+
+                                 (c.amount>0 && static_cast<std::uint64_t>(c.amount)<=c.passenger_ids.size()?c.amount:0)) ||
+                             (c.amount>0 && static_cast<std::uint64_t>(c.amount)<c.passenger_ids.size() &&
+                              !std::is_sorted(c.passenger_ids.begin()+c.amount,c.passenger_ids.end()))) :
+                        (c.target==c.actor || c.amount<=0)) : (c.actor==c.target || c.amount))) :
+                    (!medical && !pending_migration && !pending_split && (c.transport_id || count)))
+                    throw std::runtime_error("snapshot: invalid pending transport action");
+                if(pending_migration && (result.snapshot_version_<41 ||
+                   c.issuer!=Simulation::kServerAuthority || c.actor==c.target ||
+                   !c.actor || !c.target || !c.transport_id ||
+                   (count!=1 && !(result.snapshot_version_>=44 && count==2 &&
+                     c.passenger_ids[0]<c.passenger_ids[1])) ||
+                   c.amount || c.thrust_x || c.thrust_y))
+                    throw std::runtime_error("snapshot: invalid pending migration");
+                if(medical && (result.snapshot_version_<38 || c.issuer!=Simulation::kServerAuthority ||
+                   !c.actor || !c.target || c.thrust_x || c.thrust_y ||
+                   (c.action==Action::HostTrainMedic && (c.transport_id || count || c.amount<1 || c.amount>3)) ||
+                   (c.action==Action::HostTriageRescued && (!count || c.transport_id==0 ||
+                       c.actor!=c.target || c.amount<1 || c.amount>3)) ||
+                   (c.action==Action::HostTreatInjuries && (!count || c.transport_id==0 || c.amount!=0)) ||
+                   (c.action==Action::HostScheduleMedicShift &&
+                    (result.snapshot_version_<39 || c.transport_id || count || c.amount<1 || c.amount>10000)) ||
+                   (c.action==Action::HostLoadMedicalKit &&
+                    (result.snapshot_version_<39 || c.transport_id || count || c.amount<1 || c.amount>100)) ||
+                   (c.action==Action::HostMobileStabilize &&
+                    (result.snapshot_version_<39 || !count || c.transport_id!=c.target || c.amount)) ))
+                    throw std::runtime_error("snapshot: invalid pending medical action");
+            }
             if (c.id == 0 || c.issuer == 0 || c.execute_tick <= result.tick_ ||
                 ((c.action==Action::HostDestroyShip || c.action==Action::HostCrewLoss) &&
                  (result.snapshot_version_<21 || c.issuer!=Simulation::kServerAuthority ||
@@ -3550,7 +5144,20 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                   c.thrust_x!=0 || c.thrust_y!=0)) ||
                 (c.action!=Action::SetGatePairOnline && c.action!=Action::SetGateStaff &&
                  c.action!=Action::DeliverGateSpares && c.action!=Action::HostDestroyShip &&
-                 c.action!=Action::HostCrewLoss && c.issuer==Simulation::kServerAuthority) ||
+                 c.action!=Action::HostCrewLoss && c.action!=Action::HostEmbarkPassengers &&
+                 c.action!=Action::HostDisembarkPassengers && c.action!=Action::HostStrandFerry &&
+                 c.action!=Action::HostResumeFerry && c.action!=Action::HostEvacuatePassengers &&
+                 c.action!=Action::HostDestroyPassengerFerry &&
+                 c.action!=Action::HostResolveMixedFerryLoss &&
+                 c.action!=Action::HostTrainMedic &&
+                 c.action!=Action::HostTriageRescued &&
+                 c.action!=Action::HostTreatInjuries &&
+                 c.action!=Action::HostScheduleMedicShift &&
+                 c.action!=Action::HostLoadMedicalKit &&
+                 c.action!=Action::HostMobileStabilize &&
+                 c.action!=Action::HostSettleMigrant &&
+                 c.action!=Action::HostSplitEvacuatePassengers &&
+                 c.issuer==Simulation::kServerAuthority) ||
                 ((c.action==Action::RefineOre || c.action==Action::FabricateModule ||
                   c.action==Action::ConstructOutpost) && (c.target!=0 || c.thrust_x || c.thrust_y ||
                   c.amount<1 || c.amount>1000 ||
@@ -3735,6 +5342,299 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             result.activity_events_.push_back(a);
         } else throw std::runtime_error("snapshot: unknown record");
     }
+    // v32 could persist active custody without recording the original manifest.
+    // Never synthesize a voyage from incomplete evidence: its origin and
+    // passenger membership cannot be proven. Explicitly refuse this legacy
+    // state until an authenticated external migration manifest is available.
+    if(result.snapshot_version_==32){
+        for(const auto& [id,n]:result.npcs_) {
+            (void)id;
+            if(n.transport_id)
+                throw std::runtime_error("snapshot: legacy v32 active voyage requires verified manifest migration");
+        }
+    }
+    if(result.snapshot_version_>=33){
+        for(const auto& [id,v]:result.voyages_){
+            const auto ferry=result.entities_.find(v.ferry),origin=result.entities_.find(v.origin);
+            if(ferry==result.entities_.end() || origin==result.entities_.end() ||
+               !result.colony_ships_.count(v.ferry) || !result.colony_ships_.count(v.origin) ||
+               (v.destination && !result.colony_ships_.count(v.destination)))
+                throw std::runtime_error("snapshot: voyage ship missing");
+            if(v.status==6 && ferry->second.type!=EntityType::Wreck)
+                throw std::runtime_error("snapshot: lost ferry not a wreck");
+            if(v.status==3 && (ferry->second.velocity.x || ferry->second.velocity.y ||
+               ferry->second.jump_state!=ShipJumpState::Ready ||
+               ferry->second.dock_state!=DockState::InSpace || ferry->second.type!=EntityType::Ship))
+                throw std::runtime_error("snapshot: stranded ferry not immobilized");
+            for(auto npc:v.passengers){
+                auto n=result.npcs_.find(npc);
+                if(n==result.npcs_.end() && v.status!=6)throw std::runtime_error("snapshot: voyage passenger missing");
+                if(v.status==6){
+                    const auto d=result.casualties_.find(npc);
+                    const auto rescue=result.voyages_.find(v.rescue_transport_id);
+                    const bool is_rescued=v.rescue_transport_id &&
+                        rescue!=result.voyages_.end() &&
+                        std::binary_search(rescue->second.passengers.begin(),
+                            rescue->second.passengers.end(),npc);
+                    if(is_rescued){
+                        if(d!=result.casualties_.end() && d->second.command_id==v.last_incident_id)
+                            throw std::runtime_error("snapshot: passenger both rescued and killed");
+                    }else if(d==result.casualties_.end() ||
+                       d->second.identity.transport_id!=id ||
+                       d->second.command_id!=v.last_incident_id || d->second.ferry!=v.ferry)
+                        throw std::runtime_error("snapshot: incomplete fatal passenger manifest");
+                }
+                if((v.status==1 || v.status==3) && (n->second.transport_id!=id || n->second.location!=v.ferry))
+                    throw std::runtime_error("snapshot: active voyage custody mismatch");
+            }
+        }
+        for(const auto& [id,v]:result.voyages_){
+            if(v.last_incident_id){
+                const auto receipt=std::find_if(result.events_.begin(),result.events_.end(),
+                    [&](const Event& e){return e.command_id==v.last_incident_id && e.result==Outcome::Applied;});
+                if(receipt==result.events_.end() ||
+                   (v.status==3 && receipt->tick!=v.stranded_tick))
+                    throw std::runtime_error("snapshot: ferry incident missing committed receipt");
+            }
+            if(v.status==6 && v.rescue_transport_id){
+                const auto linked=result.voyages_.find(v.rescue_transport_id);
+                if(result.snapshot_version_<37 || linked==result.voyages_.end() ||
+                   linked->second.origin!=v.ferry || linked->second.ferry!=v.destination ||
+                   linked->second.passengers.empty() || v.rescue_transport_id!=v.last_incident_id ||
+                   v.rescue_transport_id==id ||
+                   ![&](){for(auto npc:linked->second.passengers){
+                       if(std::binary_search(v.passengers.begin(),v.passengers.end(),npc))continue;
+                       const auto h=result.crew_rehomes_.find(npc);
+                       if(result.snapshot_version_<38 || h==result.crew_rehomes_.end() ||
+                          h->second.wreck!=v.ferry || h->second.rescue_ship!=v.destination ||
+                          h->second.incident_command!=v.last_incident_id)return false;
+                   }return true;}())
+                    throw std::runtime_error("snapshot: invalid mixed-incident rescue provenance");
+            }
+            if(v.status==5 && v.secondary_rescue_transport_id){
+                const auto a=result.voyages_.find(v.rescue_transport_id);
+                const auto b=result.voyages_.find(v.secondary_rescue_transport_id);
+                if(result.snapshot_version_<48||a==result.voyages_.end()||
+                   b==result.voyages_.end()||a==b||
+                   a->second.origin!=v.ferry||b->second.origin!=v.ferry||
+                   a->second.ferry!=v.destination||
+                   !a->second.passengers.size()||!b->second.passengers.size())
+                    throw std::runtime_error("snapshot: incomplete split-ferry rescue provenance");
+                std::vector<std::uint64_t> union_ids=a->second.passengers;
+                union_ids.insert(union_ids.end(),b->second.passengers.begin(),
+                                 b->second.passengers.end());
+                std::sort(union_ids.begin(),union_ids.end());
+                // v49 may additionally evacuate the source's physically
+                // operating crew. They keep source home/assignment, yet each
+                // must be on exactly one resulting receiving voyage.
+                const auto ordinary=std::includes(union_ids.begin(),union_ids.end(),
+                                                   v.passengers.begin(),v.passengers.end());
+                std::vector<std::uint64_t> extras;
+                std::set_difference(union_ids.begin(),union_ids.end(),
+                                    v.passengers.begin(),v.passengers.end(),
+                                    std::back_inserter(extras));
+                if(!ordinary||std::adjacent_find(union_ids.begin(),union_ids.end())!=union_ids.end()||
+                   (!extras.empty()&&result.snapshot_version_<49))
+                    throw std::runtime_error("snapshot: split-ferry passenger conservation failure");
+                if(!extras.empty()){
+                    std::vector<std::uint64_t> actual_crew;
+                    for(const auto& [person,n]:result.npcs_)
+                        if(n.home_ship==v.ferry&&n.assigned_site==v.ferry&&
+                           n.role==NpcRole::Ship)actual_crew.push_back(person);
+                    if(extras!=actual_crew||
+                       extras.size()!=static_cast<std::size_t>(result.colony_ships_.at(v.ferry).crew))
+                        throw std::runtime_error("snapshot: missing/extra source ferry operating crew");
+                    for(const auto crew:extras){
+                        const auto& n=result.npcs_.at(crew);
+                        const bool primary_current=n.location==a->second.ferry&&
+                            n.transport_id==v.rescue_transport_id;
+                        const bool secondary_current=n.location==b->second.ferry&&
+                            n.transport_id==v.secondary_rescue_transport_id;
+                        // On a completed voyage crew may already be ashore;
+                        // immutable historical voyage/crew receipts prove the rescue.
+                        const bool safely_arrived=!n.transport_id&&
+                            ((a->second.status==2&&n.location==a->second.destination)||
+                             (b->second.status==2&&n.location==b->second.destination));
+                        if(!primary_current&&!secondary_current&&!safely_arrived)
+                            throw std::runtime_error("snapshot: split crew custody disagrees with voyage");
+                    }
+                }
+            }else if(v.status==5){
+                const auto linked=result.voyages_.find(v.rescue_transport_id);
+                if(linked==result.voyages_.end() || linked->second.origin!=v.ferry ||
+                   linked->second.ferry!=v.destination || linked->second.passengers!=v.passengers ||
+                   v.rescue_transport_id==id)
+                    throw std::runtime_error("snapshot: broken rescue voyage provenance");
+            }
+        }
+        for(const auto& [id,d]:result.casualties_){
+            if(result.npcs_.count(id) || !result.colony_ships_.count(d.identity.home_ship) ||
+               !result.colony_ships_.count(d.ferry) ||
+               !result.submitted_ids_.count(d.command_id))
+                throw std::runtime_error("snapshot: deceased identity or receipt missing");
+            const auto v=std::find_if(result.voyages_.begin(),result.voyages_.end(),
+                [&](const auto& entry){return entry.second.ferry==d.ferry &&
+                    entry.second.status==6 && entry.second.last_incident_id==d.command_id;});
+            if(v==result.voyages_.end())throw std::runtime_error("snapshot: orphan ferry casualty");
+            if(d.identity.transport_id &&
+               (d.identity.transport_id!=v->first ||
+                !std::binary_search(v->second.passengers.begin(),
+                                    v->second.passengers.end(),id)))
+                throw std::runtime_error("snapshot: casualty not in original voyage manifest");
+            const auto a=std::find_if(result.activity_events_.begin(),result.activity_events_.end(),
+                [&](const ActivityEvent& e){return e.kind==ActivityKind::NpcLost &&
+                    e.start_command_id==d.command_id && e.target==id &&
+                    e.tick==d.death_tick && e.actor==d.ferry;});
+            if(a==result.activity_events_.end())throw std::runtime_error("snapshot: missing casualty activity");
+        }
+        if(result.snapshot_version_>=36){
+            for(const auto& a:result.activity_events_){
+                if(a.kind!=ActivityKind::NpcLost)continue;
+                bool fatal=false;
+                for(const auto& [voyage_id,v]:result.voyages_){(void)voyage_id;
+                    if(v.status==6 && v.last_incident_id==a.start_command_id &&
+                       v.ferry==a.actor){fatal=true;break;}
+                }
+                if(fatal){
+                    const auto dead=result.casualties_.find(a.target);
+                    if(dead==result.casualties_.end() || dead->second.command_id!=a.start_command_id ||
+                       dead->second.death_tick!=a.tick || dead->second.ferry!=a.actor)
+                        throw std::runtime_error("snapshot: missing fatal crew tombstone");
+                }
+            }
+        }
+        // A corrupted snapshot must not bypass the same ferry berth limit.
+        std::map<EntityId,std::size_t> occupied_berths;
+        for(const auto& [npc_id,n]:result.npcs_){(void)npc_id;
+            if(n.transport_id && ++occupied_berths[n.location]>16)
+                throw std::runtime_error("snapshot: passenger ferry over capacity");
+        }
+        for(const auto& [id,n]:result.npcs_)if(n.transport_id){
+            const auto v=result.voyages_.find(n.transport_id);
+            if(v==result.voyages_.end() || (v->second.status!=1 && v->second.status!=3) ||
+               !std::binary_search(v->second.passengers.begin(),v->second.passengers.end(),id))
+                throw std::runtime_error("snapshot: orphan passenger custody");
+        }
+    }
+    if(result.snapshot_version_>=38){
+        for(const auto& [id,h]:result.crew_rehomes_){
+            const auto n=result.npcs_.find(id);
+            const auto death=result.casualties_.find(id);
+            const NpcRecord* identity=n!=result.npcs_.end()?&n->second:
+                death!=result.casualties_.end()?&death->second.identity:nullptr;
+            if(!identity || identity->home_ship!=h.rescue_ship ||
+               identity->assigned_site!=h.rescue_ship || !result.colony_ships_.count(h.wreck) ||
+               !result.colony_ships_.count(h.rescue_ship) ||
+               result.entities_.at(h.wreck).type!=EntityType::Wreck ||
+               !result.submitted_ids_.count(h.incident_command))
+                throw std::runtime_error("snapshot: crew rescue lacks live lineage");
+            bool found=false;
+            for(const auto& [vid,v]:result.voyages_){(void)vid;
+                if(v.ferry==h.wreck && v.status==6 && v.last_incident_id==h.incident_command &&
+                   v.rescue_transport_id && result.voyages_.count(v.rescue_transport_id) &&
+                   std::binary_search(result.voyages_.at(v.rescue_transport_id).passengers.begin(),
+                                      result.voyages_.at(v.rescue_transport_id).passengers.end(),id))found=true;
+            }
+            if(!found)throw std::runtime_error("snapshot: crew rehome missing rescue voyage");
+        }
+        for(const auto& [id,q]:result.named_medics_){
+            if((!result.npcs_.count(id) && !result.casualties_.count(id)) ||
+               !result.clinics_.count(q.clinic_site) || q.units<1)
+                throw std::runtime_error("snapshot: medic qualification missing person/clinic");
+        }
+        const auto check_case=[&](std::uint64_t id,const MedicalCase& m){
+            if((!result.npcs_.count(id) && !result.casualties_.count(id)) ||
+               !result.voyages_.count(m.rescue_voyage) ||
+               !result.submitted_ids_.count(m.triage_command) ||
+               (m.stabilization_command && !result.submitted_ids_.count(m.stabilization_command)) ||
+               (m.treatment_command && (!result.submitted_ids_.count(m.treatment_command) ||
+                  !result.clinics_.count(m.clinic_site) ||
+                  !result.named_medics_.count(m.medic_id) ||
+                  result.named_medics_.at(m.medic_id).units<3)))
+                throw std::runtime_error("snapshot: invalid medical evidence link");
+            const auto has_receipt=[&](std::uint64_t cmd,std::uint64_t tick){
+                return std::any_of(result.events_.begin(),result.events_.end(),
+                    [&](const Event& e){return e.command_id==cmd && e.tick==tick &&
+                        e.result==Outcome::Applied;});
+            };
+            if(result.snapshot_version_>=39 &&
+               (!has_receipt(m.triage_command,m.triage_tick) ||
+                (m.stabilization_command && !has_receipt(m.stabilization_command,m.stabilized_tick)) ||
+                (m.treatment_command && !has_receipt(m.treatment_command,m.treatment_tick))))
+                throw std::runtime_error("snapshot: missing medical episode receipt");
+            if(m.recovery_due_tick){
+                bool served=false;
+                for(const auto& [cmd,shift]:result.medic_shifts_){(void)cmd;
+                    if(shift.clinic_site==m.clinic_site && shift.medic_id==m.medic_id &&
+                       shift.start_tick<=m.treatment_tick && m.treatment_tick<shift.end_tick)
+                       served=true;
+                }
+                if(!served)throw std::runtime_error("snapshot: treated without qualified staff shift");
+            }
+        };
+        for(const auto& [id,m]:result.medical_cases_)check_case(id,m);
+        if(result.snapshot_version_>=39){
+            for(const auto& [key,m]:result.medical_history_){
+                if(key.second!=m.triage_command || (!m.recovered_tick && !m.treatment_command) ||
+                   (result.medical_cases_.count(key.first) &&
+                    result.medical_cases_.at(key.first).triage_tick<=m.triage_tick))
+                    throw std::runtime_error("snapshot: invalid historical medical episode");
+                check_case(key.first,m);
+            }
+            for(const auto& [cmd,shift]:result.medic_shifts_){
+                if(!result.clinics_.count(shift.clinic_site) ||
+                   !result.named_medics_.count(shift.medic_id) ||
+                   result.named_medics_.at(shift.medic_id).clinic_site!=shift.clinic_site ||
+                   !result.submitted_ids_.count(cmd) ||
+                   !std::any_of(result.events_.begin(),result.events_.end(),
+                       [&](const Event& e){return e.command_id==cmd && e.tick==shift.start_tick &&
+                           e.result==Outcome::Applied;}))
+                    throw std::runtime_error("snapshot: invalid medic shift receipt");
+                for(const auto& [other_id,other]:result.medic_shifts_){
+                    if(other_id>=cmd)break;
+                    if(shift.start_tick<other.end_tick && other.start_tick<shift.end_tick &&
+                       shift.medic_id==other.medic_id)
+                        throw std::runtime_error("snapshot: overlapping shifts for one medic");
+                }
+            }
+            for(const auto& [site,cl]:result.clinics_){
+                std::vector<std::pair<std::uint64_t,int>> edges;
+                for(const auto& [cmd,shift]:result.medic_shifts_){(void)cmd;
+                    if(shift.clinic_site==site){edges.emplace_back(shift.start_tick,1);
+                        edges.emplace_back(shift.end_tick,-1);}
+                }
+                std::sort(edges.begin(),edges.end()); // ending shifts release capacity first
+                std::int64_t concurrent=0;
+                for(const auto& [tick,delta]:edges){(void)tick;
+                    concurrent+=delta;
+                    if(concurrent<0 || concurrent>cl.medics)
+                        throw std::runtime_error("snapshot: exceeded clinic shift staffing slots");
+                }
+            }
+            for(const auto& [ship,kit]:result.mobile_medical_kits_){
+                if(!result.entities_.count(ship) || !result.colony_ships_.count(ship) ||
+                   (kit.water_kg+kit.substrate_kg+kit.wastewater_kg+kit.medical_waste_kg)<1)
+                    throw std::runtime_error("snapshot: orphaned mobile medical stock");
+            }
+        }
+        for(const auto& [site,c]:result.clinics_){
+            std::uint64_t training=0;
+            for(const auto& [id,q]:result.named_medics_){(void)id;
+                if(q.clinic_site==site)training+=q.units;
+            }
+            if(c.training_units!=training)
+                throw std::runtime_error("snapshot: training units and medical stocks diverge");
+            std::uint64_t units=0,cases=0;
+            for(const auto& [id,m]:result.medical_cases_){(void)id;
+                if(m.clinic_site==site){units+=m.severity;++cases;}
+            }
+            for(const auto& [key,m]:result.medical_history_){(void)key;
+                if(m.clinic_site==site){units+=m.severity;++cases;}
+            }
+            if(c.ems_treatment_units!=units || c.ems_treated_cases!=cases)
+                throw std::runtime_error("snapshot: clinic EMS treatment totals mismatch");
+        }
+    }
     if (pending_ids.size() + event_ids.size() != result.submitted_ids_.size())
         throw std::runtime_error("snapshot: missing or extra command receipts");
     for (const auto id : pending_ids) if (!result.submitted_ids_.count(id))
@@ -3789,7 +5689,11 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
     }
     for(const auto& [id,c]:result.colony_ships_){
         const auto* ship=result.find(id);
-        if(!ship || ship->type!=EntityType::Ship || !ship->owner_id ||
+        if(!ship || (ship->type!=EntityType::Ship &&
+           !(result.snapshot_version_>=36 && ship->type==EntityType::Wreck && c.crew==0 &&
+             [&](){for(const auto& [vid,v]:result.voyages_){(void)vid;
+                if(v.ferry==id && v.status==6)return true;
+             }return false;}())) || !ship->owner_id ||
            result.loaded_cargo_liters(*ship)>ship->cargo_capacity*1000)
             throw std::runtime_error("snapshot: invalid colony ship or overloaded inventory");
     }
@@ -3959,18 +5863,27 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
         std::map<std::pair<EntityId,int>,std::int64_t> counts;
         std::map<std::uint64_t,int> mentor_occupancy;
         for(const auto& [id,n]:result.npcs_){
+            if(n.transport_id && (result.snapshot_version_<32 || !result.colony_ships_.count(n.location) ||
+                (n.location==n.assigned_site && !result.crew_rehomes_.count(n.id))))
+                throw std::runtime_error("snapshot: invalid active passenger custody");
+            if(result.snapshot_version_>=32 && !n.assigned_site)throw std::runtime_error("snapshot: missing assignment");
             if(!result.colony_ships_.count(n.home_ship) ||
-                (n.role==NpcRole::Ship && n.location!=n.home_ship) ||
-                (n.role==NpcRole::Farm && (!result.farms_.count(n.location) ||
-                  result.farms_.at(n.location).source_ship!=n.home_ship)) ||
-                (n.role==NpcRole::Habitat && (!result.habitats_.count(n.location) ||
-                  result.habitats_.at(n.location).source_ship!=n.home_ship)))
+                (n.role==NpcRole::Ship && n.assigned_site!=n.home_ship) ||
+                (n.role==NpcRole::Farm && (!result.farms_.count(n.assigned_site) ||
+                  result.farms_.at(n.assigned_site).source_ship!=n.home_ship)) ||
+                (n.role==NpcRole::Habitat && (!result.habitats_.count(n.assigned_site) ||
+                  result.habitats_.at(n.assigned_site).source_ship!=n.home_ship)) ||
+                (!n.transport_id && n.location!=n.assigned_site &&
+                 ![&](){for(const auto& [voyage_id,v]:result.voyages_){(void)voyage_id;
+                     if((v.status==2 || v.status==5) && v.destination==n.location &&
+                        std::binary_search(v.passengers.begin(),v.passengers.end(),id))return true;}
+                     return false;}()))
                 throw std::runtime_error("snapshot: NPC outside assigned colony");
-            counts[{n.location,static_cast<int>(n.role)}]++;
+            counts[{n.assigned_site ? n.assigned_site : n.location,static_cast<int>(n.role)}]++;
             if(n.mentor_id){
                 const auto mentor=result.npcs_.find(n.mentor_id);
                 if(mentor==result.npcs_.end() || mentor->second.home_ship!=n.home_ship ||
-                   mentor->second.location!=n.location || n.role!=NpcRole::Farm ||
+                   mentor->second.assigned_site!=n.assigned_site || n.role!=NpcRole::Farm ||
                    mentor->second.role!=NpcRole::Farm || ++mentor_occupancy[n.mentor_id]>1)
                     throw std::runtime_error("snapshot: invalid mentor relationship");
             }
@@ -3997,7 +5910,9 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
         for(const auto& [id,h]:result.habitats_){(void)id;
             if(h.source_ship==ship_id)crew+=h.residents;
         }
-        if(crew<1 || crew>1000)throw std::runtime_error("snapshot: invalid total crew");
+        if((crew<1 && !(result.snapshot_version_>=36 && !crew &&
+            result.entities_.count(ship_id) && result.entities_.at(ship_id).type==EntityType::Wreck)) ||
+           crew>1000)throw std::runtime_error("snapshot: invalid total crew");
     }
     for(const auto& [id,e]:result.entities_){
         if(e.type==EntityType::Station && e.owner_id && !result.built_outposts_.count(id))
@@ -4069,6 +5984,14 @@ void Simulation::swap(Simulation& other) noexcept {
     waterworks_.swap(other.waterworks_);
     policy_sites_.swap(other.policy_sites_);
     npcs_.swap(other.npcs_);
+    casualties_.swap(other.casualties_);
+    named_medics_.swap(other.named_medics_);
+    medical_cases_.swap(other.medical_cases_);
+    medical_history_.swap(other.medical_history_);
+    medic_shifts_.swap(other.medic_shifts_);
+    mobile_medical_kits_.swap(other.mobile_medical_kits_);
+    crew_rehomes_.swap(other.crew_rehomes_);
+    voyages_.swap(other.voyages_);
     farm_team_xp_.swap(other.farm_team_xp_);
     swap(next_npc_id_,other.next_npc_id_);
     swap(npc_next_seen_,other.npc_next_seen_);
@@ -4174,6 +6097,12 @@ std::int64_t Simulation::total_ore() const {
             throw std::overflow_error("invalid clinic mass");
         life_mass_kg+=kg;
     }
+    for(const auto& [id,k]:mobile_medical_kits_){(void)id;
+        const auto kg=k.water_kg+k.substrate_kg+k.wastewater_kg+k.medical_waste_kg;
+        if(kg<0 || kg>1000000000LL-life_mass_kg)
+            throw std::overflow_error("invalid mobile medical inventory");
+        life_mass_kg+=kg;
+    }
     for(const auto& [id,h]:habitats_){(void)id;
         collect(h.life);
         if(h.embodied_ore!=4 || total>std::numeric_limits<std::int64_t>::max()-4)
@@ -4206,10 +6135,12 @@ std::int64_t Simulation::total_ore() const {
                 throw std::overflow_error("invalid conveyor construction mass");
             total+=static_cast<std::int64_t>(2*link.route_cells.size());
         }
-        std::int64_t qty=0;
+        if(st.network_escrow_kg<0||st.network_escrow_kg>1000000000)
+            throw std::overflow_error("invalid constructed storage network escrow");
+        std::int64_t qty=st.network_escrow_kg;
         auto cap=storage_inventory_snapshot(site);
         for(const auto& [name,value]:st.goods_kg){(void)name;
-            if(value<0 || value>4000-qty)throw std::overflow_error("invalid storage stack");
+            if(value<0 || value>4000-(qty-st.network_escrow_kg))throw std::overflow_error("invalid storage stack");
             qty+=value;
         }
         for(const auto& [node,contents]:st.extra_bins){

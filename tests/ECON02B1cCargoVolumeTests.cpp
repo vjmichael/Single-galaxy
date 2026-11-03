@@ -76,7 +76,7 @@ int main(){
             CHECK(w.world().colony_ship(ship)->goods_kg.at("aluminum_scrap")==1);
             CHECK(w.world().total_material_kg()==conserved);
             auto saved=w.world().canonical_state();
-            CHECK(saved.rfind("galaxy-kernel-v24|",0)==0);
+            CHECK(saved.rfind("galaxy-kernel-v31|",0)==0);
             CHECK(Simulation::from_snapshot(saved).canonical_state()==saved);
             // Return individual stacks and prove arbitrary kilogram slices survive.
             ok(w,ship,26,Action::TransferWorkshopStack,site,1,1);

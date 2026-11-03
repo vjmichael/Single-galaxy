@@ -50,7 +50,7 @@ int main(){
       s.provision_colony_genesis(ship,1000,3000,1000,1000,1000);
       s.enable_individual_workforce();
       CHECK(s.npc_records().size()==24);
-      CHECK(s.canonical_state().rfind("galaxy-kernel-v20|",0)==0);
+      CHECK(s.canonical_state().rfind("galaxy-kernel-v31|",0)==0);
       CHECK(Simulation::from_snapshot(s.canonical_state()).canonical_state()==s.canonical_state());
       // Existing worlds are never silently upgraded mid-session.
       const auto rock=s.add_asteroid({2000,0},100);

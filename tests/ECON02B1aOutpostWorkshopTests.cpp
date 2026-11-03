@@ -122,7 +122,7 @@ int main(){
             w.steps(5);
             CHECK(w.world().workshop(site)->completed_batches>=53);
             const auto snap=w.world().canonical_state();
-            CHECK(snap.rfind("galaxy-kernel-v22|",0)==0);
+            CHECK(snap.rfind("galaxy-kernel-v31|",0)==0);
             CHECK(Simulation::from_snapshot(snap).canonical_state()==snap);
             // A corrupted installed machine must fail snapshot validation.
             auto corrupt=snap;
