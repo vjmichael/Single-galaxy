@@ -50,6 +50,9 @@ public:
  void approve(const std::string& id, PlayerId principal, int role);
  // Revoke only before physical loading, never discard goods already in transit.
  void revoke(const std::string& id, PlayerId principal);
+ // Read-only host admission: the active caller must own this specific carrier.
+ // Never authorize cargo movement merely because some other owner is logged in.
+ void require_carrier(const std::string& id, PlayerId principal) const;
  void load(const std::string& id, FailPoint fail=FailPoint::None);
  void unload(const std::string& id, FailPoint fail=FailPoint::None);
  // v57: host-authenticated dispatch after three separate owner approvals.

@@ -223,6 +223,10 @@ int main(){
   game_host.dispatch(frames.id,8,"frames-dispatch");
   reject([&]{contracts.dispatch(frames.id,8,"frames-dispatch-duplicate");},"carrier dispatched twice");
   game_host.dispatch(panels.id,8,"panels-dispatch");
+  active=7;reject([&]{game_host.load(frames.id,7);},"source-owner session moved carrier freight");
+  active=9;reject([&]{game_host.load(frames.id,9);},"receiver session moved carrier freight");
+  active=10;reject([&]{game_host.load(frames.id,10);},"alternate receiver session moved carrier freight");
+  active=8;
   for(const auto& [id,code]:std::vector<std::pair<std::string,std::string>>{{frames.id,"aluminum_frames"},{panels.id,"aluminum_panels"}}){
     auto before=w.world().tick();
     for(const auto fail:{FailPoint::AfterReceiptWrite,FailPoint::AfterSnapshotWrite}){
@@ -320,6 +324,9 @@ int main(){
     ck(w.world().tick()==before&&w.world().ship_inventory_snapshot(carrier).amount("good/aluminum_frames")==1,
        "redirected unload rollback lost in-transit frames");
   }
+  active=7;reject([&]{game_host.deliver_redirected(frames.id,7);},"source owner issued carrier delivery");
+  active=9;reject([&]{game_host.deliver_redirected(frames.id,9);},"former receiver issued carrier delivery");
+  active=10;reject([&]{game_host.deliver_redirected(frames.id,10);},"replacement receiver issued carrier delivery");
   active=8;game_host.deliver_redirected(frames.id,8);
   active=8;game_host.deliver_redirected(frames.id,8); // idempotent exact retry
   ck(w.world().storage(alternate_site)->goods_kg.at("aluminum_frames")==1&&

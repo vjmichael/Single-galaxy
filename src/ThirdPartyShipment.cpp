@@ -405,6 +405,13 @@ static void move(PersistentWorld& world,const std::string& path,const std::strin
  world.step(fail);
  DB after(path);check(transfer(after.d,r.b,unload).generation>0,"consignment world transfer refused");verify_one(after.d,r);
 }
+void ThirdPartyRegistry::require_carrier(const std::string& id,PlayerId principal) const {
+ check(principal&&authenticate_(principal),"unauthenticated carrier movement");
+ DB db(path_);
+ const auto r=record(db.d,id);
+ check(r.b.carrier_owner==principal,"caller does not own consignment carrier");
+ verify_one(db.d,r);
+}
 void ThirdPartyRegistry::load(const std::string& id,FailPoint f){move(world_,path_,id,false,f);}
 void ThirdPartyRegistry::unload(const std::string& id,FailPoint f){move(world_,path_,id,true,f);}
 void ThirdPartyRegistry::verify() const {verify_third_party_registry(path_);}

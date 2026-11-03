@@ -34,7 +34,7 @@ void CanonicalShippingHost::dispatch(const std::string& id,PlayerId carrier,cons
  admission(carrier);require_stable_region();shipping_host_.dispatch_factory_goods(id,carrier,dispatch_id);
 }
 void CanonicalShippingHost::load(const std::string& id,PlayerId carrier,FailPoint fail){
- admission(carrier);require_stable_region();registry_.load(id,fail);shipping_host_.verify();
+ admission(carrier);require_stable_region();registry_.require_carrier(id,carrier);registry_.load(id,fail);shipping_host_.verify();
 }
 void CanonicalShippingHost::propose_redirect(const std::string& id,PlayerId carrier,EntityId ship,
  EntityId site,PlayerId receiver,std::uint32_t system,std::uint64_t command){
@@ -44,7 +44,7 @@ void CanonicalShippingHost::approve_redirect(const std::string& id,PlayerId prin
  admission(principal);require_stable_region();registry_.approve_alternate(id,principal,role);
 }
 void CanonicalShippingHost::deliver_redirected(const std::string& id,PlayerId carrier,FailPoint fail){
- admission(carrier);require_stable_region();shipping_host_.deliver_redirected_goods(id,fail);
+ admission(carrier);require_stable_region();registry_.require_carrier(id,carrier);shipping_host_.deliver_redirected_goods(id,fail);
 }
 regional_events::RegionalAuthorityState CanonicalShippingHost::transition_region(
  const std::string& id,regional_events::SimulationOwner target){
