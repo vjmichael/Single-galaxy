@@ -1,0 +1,11 @@
+# DEMOG-05q6e5b5b — Atomic two-receiver evacuation acceptance contract
+
+**Date:** November 2, 2026. **Status:** **ACCEPTANCE CONTRACT ONLY; NOT IMPLEMENTED.**
+
+v47a provides an immutable two-receiver allocation *plan*, not physical rescue. Before runtime exposure, implement an appended/versioned authenticated host action that contains both receiving ferry IDs, distinct unused rescue voyage IDs and non-overlapping adult and dependent partitions. Its canonical replay encoding must not change historic action ordinals or old snapshot interpretation.
+
+One `Simulation::step` must validate the entire stranded source roster, parent/leg/escort custody, co-location, capacity, stable regional owners and all destinations, then close the source and establish **both** receiving voyages simultaneously. The privileged persistence step must settle every family-scoped child berth and rescue receipt, original-transport termination, source/reception envelopes and world operation log in **one SQLite transaction**, and only publish the new in-memory simulation after COMMIT. The ordinary world step must refuse the action without its child-custody effects.
+
+Inject failures before execution, after the first receiver's rows, after the second receiver's rows, after world snapshot, and after receipt write. Every failure must leave all adults and children on the original source, not split across partial transfers. Verify full manifests and that all people are aboard exactly one receiving ferry after successful COMMIT. Reopen database, recover independently from genesis, and reject altered recipient links, deleted child members, duplicate voyage IDs, forged guardianship/region scopes, absent parent or stale owner tokens.
+
+After implementing actual split execution, address real multi-family census population consolidation, cold/detailed simulation ownership with workforce and industrial effect reconciliation, and integration into the complete playable game. **Fatal incidents involving dependents remain blocked and no images or visualizations may depict children being harmed or dying.**
