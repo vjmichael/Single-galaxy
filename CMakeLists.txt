@@ -20,7 +20,7 @@ endif()
 add_library(galaxy_kernel STATIC src/Simulation.cpp src/ColonyResilience.cpp
   src/ColonyRecovery.cpp src/ColonyPolicy.cpp src/PopulationCohorts.cpp
     src/ColonyWaterSupply.cpp src/Persistence.cpp src/EconomyPrototype.cpp src/QuantifiedProduction.cpp src/Inventory.cpp src/InventoryLogistics.cpp src/FactoryLayout.cpp src/BlueprintConstruction.cpp src/HostBlueprintRegistry.cpp src/ClientContract.cpp src/Galaxy.cpp src/Navigation.cpp src/GateTransit.cpp src/Region.cpp
-  src/ColdColonyNeeds.cpp src/MacroNeeds.cpp src/NpcAppearanceGenome.cpp src/MedicalSocietyBridge.cpp src/DependentIncidentAccounting.cpp src/DependentIncidentJournal.cpp src/DependentGuardianship.cpp src/SplitRescueIntent.cpp src/RegionalCheckpointStore.cpp src/RegionalPopulationAudit.cpp src/RegionalEventScheduler.cpp src/RegionalModeAuthority.cpp src/RegionalFactoryHandoff.cpp src/RegionalProductionNetwork.cpp src/RegionalShipmentReconciliation.cpp src/ShipmentManifest.cpp src/ThirdPartyShipment.cpp src/CanonicalShippingHost.cpp src/ShipmentStatusView.cpp
+  src/ColdColonyNeeds.cpp src/MacroNeeds.cpp src/ColonySafety.cpp src/NpcAppearanceGenome.cpp src/MedicalSocietyBridge.cpp src/DependentIncidentAccounting.cpp src/DependentIncidentJournal.cpp src/DependentGuardianship.cpp src/SplitRescueIntent.cpp src/RegionalCheckpointStore.cpp src/RegionalPopulationAudit.cpp src/RegionalEventScheduler.cpp src/RegionalModeAuthority.cpp src/RegionalFactoryHandoff.cpp src/RegionalProductionNetwork.cpp src/RegionalShipmentReconciliation.cpp src/ShipmentManifest.cpp src/ThirdPartyShipment.cpp src/CanonicalShippingHost.cpp src/ShipmentStatusView.cpp
   src/RegionalHostCommands.cpp src/RegionalInterestManager.cpp src/RegionalCustodyLedger.cpp src/RegionalPersistentWorldBridge.cpp)
 target_include_directories(galaxy_kernel PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(galaxy_kernel PUBLIC SQLite::SQLite3)
@@ -33,6 +33,11 @@ else()
     target_compile_options(galaxy_kernel PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 include(CTest)
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_auto04a_tests tests/COLONY_AUTO04A_SafetyTests.cpp)
+    target_link_libraries(galaxy_colony_auto04a_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_auto04a_safety COMMAND galaxy_colony_auto04a_tests)
+endif()
 if(BUILD_TESTING)
     add_executable(galaxy_tests tests/SimulationTests.cpp)
     target_link_libraries(galaxy_tests PRIVATE galaxy_kernel)
@@ -866,4 +871,23 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
       --bridge $<TARGET_FILE:galaxy_shipping_status_bridge>
       --producer $<TARGET_FILE:v59_multi_destination_host>)
   set_tests_properties(galaxy_integrated_colony_freight_session_e2e PROPERTIES TIMEOUT 90)
+endif()
+
+# COLONY-AUTO-04B: safety admission and durable evidence on the canonical writer.
+if(BUILD_TESTING)
+  add_executable(galaxy_colony_auto04b_host_tests tests/COLONY_AUTO04B_AuthoritativeHostTests.cpp)
+  target_link_libraries(galaxy_colony_auto04b_host_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_colony_auto04b_host COMMAND galaxy_colony_auto04b_host_tests)
+endif()
+
+if(BUILD_TESTING)
+  find_package(Python3 COMPONENTS Interpreter QUIET)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME galaxy_colony_auto04b_authenticated_relay
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/COLONY_AUTO04B_LiveSafetyTests.py
+      --host $<TARGET_FILE:galaxy_colony_live_host>
+      --relay ${CMAKE_CURRENT_SOURCE_DIR}/live/interactive_relay.py
+      --bridge $<TARGET_FILE:galaxy_shipping_status_bridge>)
+    set_tests_properties(galaxy_colony_auto04b_authenticated_relay PROPERTIES TIMEOUT 35)
+  endif()
 endif()

@@ -1,5 +1,6 @@
 #pragma once
 #include "galaxy/Simulation.hpp"
+#include "galaxy/ColonySafety.hpp"
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -426,6 +427,12 @@ public:
     // operations on the copy, and validate receipts. Never mutate source.
     static void recover_copy(const std::string& source, const std::string& destination);
 
+    // v66: Resolve life-safety admission using the authoritative loaded world and
+    // journal the result in the SAME SQLite connection as all other world facts.
+    // No production control is applied by this preflight-only entry point.
+    colony_safety::Decision record_colony_safety_preflight(EntityId home_ship,
+        EntityId site,PlayerId issuer,colony_safety::Order order);
+    std::uint64_t colony_safety_evidence_count() const;
     bool submit(const Command& command, FailPoint fail = FailPoint::None);
     // Host-only: admits a receipt-reserved third-party shipment under the writer lock.
     bool submit_host_consigned_transfer(const Command&, FailPoint=FailPoint::None);

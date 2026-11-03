@@ -65,6 +65,13 @@ el('qaGateDown').addEventListener('click',()=>command('qaGate',{from:2,to:6,onli
 el('qaGateUp').addEventListener('click',()=>command('qaGate',{from:2,to:6,online:true}));
 el('directional').addEventListener('click',()=>command('directional',{bearing:Number(el('scanBearing').value),cone:Number(el('scanCone').value)}));
 el('reconnect').addEventListener('click',connect);
+for(const [id,action] of [['colonySafetyAssess','colonySafetyAssess'],['colonySafetyPreflight','colonySafetyPreflight']])
+ el(id).addEventListener('click',()=>{
+   // This site was emitted by the native host from the active world.
+   const site=window.GalaxyColonyHomeShipId;
+   if(!Number.isSafeInteger(site)||site<1){message('Waiting for verified ship telemetry');return;}
+   command(action,{site});
+ });
 window.onGalaxyLiveProjection=function(state){
  const ship=[...state.entities.values()].find(e=>e.entityType===0&&e.owner===7);
  if(!ship)return;

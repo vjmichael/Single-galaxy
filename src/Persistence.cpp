@@ -1,4 +1,5 @@
 #include "galaxy/Persistence.hpp"
+#include "galaxy/ColonySafety.hpp"
 #include "galaxy/ShipmentManifest.hpp"
 #include "galaxy/SplitRescueIntent.hpp"
 #include "galaxy/RegionalModeAuthority.hpp"
@@ -1069,6 +1070,62 @@ public:
         } catch (...) { sqlite3_close_v2(db_); db_ = nullptr; throw; }
     }
     ~Store() { sqlite3_close(db_); }
+    // This is the canonical writer connection, not a second SQLite handle.
+    // All safety evidence changes and the durable count anchor commit together.
+    void verify_colony_safety_evidence() const {
+        Statement found(db_,"SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name IN ('sg_colony_safety_evidence','sg_colony_safety_meta')");
+        std::size_t present=0;
+        while(found.row())++present;
+        if(!present)return; // An unmodified v64 or v65 save has no host records.
+        if(present!=2)throw std::runtime_error("incomplete colony safety evidence schema");
+        Statement q(db_,"SELECT event_count,last_id FROM sg_colony_safety_meta WHERE singleton=1");
+        if(!q.row())throw std::runtime_error("colony safety count anchor missing");
+        const auto count=sqlite3_column_int64(q.get(),0),last=sqlite3_column_int64(q.get(),1);
+        if(count<0||last<0)throw std::runtime_error("invalid colony safety count anchor");
+        Statement actual(db_,"SELECT COUNT(*),COALESCE(MAX(event_id),0) FROM sg_colony_safety_evidence");
+        if(!actual.row()||sqlite3_column_int64(actual.get(),0)!=count||
+           sqlite3_column_int64(actual.get(),1)!=last)
+            throw std::runtime_error("colony safety evidence does not match count anchor");
+    }
+    std::uint64_t colony_safety_evidence_count() const {
+        Statement found(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_safety_meta'");
+        if(!found.row())return 0;
+        verify_colony_safety_evidence();
+        Statement q(db_,"SELECT event_count FROM sg_colony_safety_meta WHERE singleton=1");
+        if(!q.row())throw std::runtime_error("missing colony safety count");
+        return static_cast<std::uint64_t>(sqlite3_column_int64(q.get(),0));
+    }
+    void record_colony_safety_preflight(const colony_safety::Decision& d,
+                                       std::uint64_t expected_generation){
+        run(db_,"BEGIN IMMEDIATE");
+        try{
+            if(latest_generation(db_)!=expected_generation)
+                throw std::runtime_error("stale world generation for colony safety order");
+            colony_safety::create_evidence_table(db_);
+            run(db_,"CREATE TABLE IF NOT EXISTS sg_colony_safety_meta("
+                "singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
+                "event_count INTEGER NOT NULL CHECK(event_count>=0),"
+                "last_id INTEGER NOT NULL CHECK(last_id>=0))");
+            // A removed meta table must not be silently recreated around retained evidence.
+            Statement actual(db_,"SELECT COUNT(*),COALESCE(MAX(event_id),0) FROM sg_colony_safety_evidence");
+            if(!actual.row())throw std::runtime_error("safety evidence query failed");
+            const auto count=sqlite3_column_int64(actual.get(),0),last=sqlite3_column_int64(actual.get(),1);
+            if(count<0||last<0||last==std::numeric_limits<sqlite3_int64>::max())
+                throw std::runtime_error("safety evidence index invalid");
+            if(count==0)run(db_,"INSERT OR IGNORE INTO sg_colony_safety_meta VALUES(1,0,0)");
+            Statement anchor(db_,"SELECT event_count,last_id FROM sg_colony_safety_meta WHERE singleton=1");
+            if(!anchor.row()||sqlite3_column_int64(anchor.get(),0)!=count||
+               sqlite3_column_int64(anchor.get(),1)!=last)
+                throw std::runtime_error("colony safety evidence anchor mismatch");
+            colony_safety::record_decision(db_,static_cast<std::uint64_t>(last+1),d);
+            Statement update(db_,"UPDATE sg_colony_safety_meta SET event_count=?,last_id=? WHERE singleton=1");
+            update.i64(1,count+1);update.i64(2,last+1);update.execute();
+            if(sqlite3_changes(db_)!=1)throw std::runtime_error("failed safety anchor update");
+            run(db_,"COMMIT");
+        }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
+    }
     Store(const Store&) = delete;
     Store& operator=(const Store&) = delete;
 
@@ -5493,8 +5550,19 @@ PersistentWorld::PersistentWorld(const std::string& path, Simulation initial_wor
     verify_split_executions(db_path_,generation_);
     shipping::verify_manifest_registry(db_path_);
     shipping::verify_third_party_registry(db_path_);
+    store_->verify_colony_safety_evidence();
 }
 PersistentWorld::~PersistentWorld() = default;
+
+colony_safety::Decision PersistentWorld::record_colony_safety_preflight(
+        EntityId home_ship,EntityId site,PlayerId issuer,colony_safety::Order order){
+    const auto d=colony_safety::preflight(world_,home_ship,site,issuer,order);
+    store_->record_colony_safety_preflight(d,generation_);
+    return d;
+}
+std::uint64_t PersistentWorld::colony_safety_evidence_count() const{
+    return store_->colony_safety_evidence_count();
+}
 
 std::vector<DependentTravelRecord> PersistentWorld::dependent_travel(
     const std::string& family_scope) const {

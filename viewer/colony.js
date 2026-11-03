@@ -8,6 +8,20 @@
   function decode(raw){
     if(typeof raw!=='string'||raw.length>180||!/^COLONY\|1\|/.test(raw)||!/^[A-Za-z0-9_|-]+$/.test(raw))throw Error('Invalid colony telemetry');
     const v=raw.split('|'),tick=numeric(v[2],1200),t=v[3];let e={tick,type:t};
+    if(t==='SAFETY'){
+      if(v.length!==10||!v.slice(4).every(x=>/^\d+$/.test(x)))throw Error('Malformed safety report');
+      const [site,risk,food,water,oxygen,pop]=v.slice(4).map(Number);
+      if(!site||risk>3||risk<0)throw Error('Invalid safety report');
+      return {...e,site:numeric(v[4],1e8),risk:numeric(v[5],3),
+        food:numeric(v[6],1e10),water:numeric(v[7],1e10),
+        oxygen:numeric(v[8],1e10),pop:numeric(v[9],1e8)};
+    }
+    if(t==='SAFETY_CHECK'||t==='SAFETY_ORDER'){
+      if((t==='SAFETY_CHECK'&&v.length!==6)||(t==='SAFETY_ORDER'&&v.length!==7))throw Error('Malformed safety order');
+      if(t==='SAFETY_CHECK')return {...e,site:numeric(v[4],1e8),risk:numeric(v[5],3)};
+      if(!['REFUSED','PREFLIGHT_ONLY'].includes(v[5]))throw Error('Invalid safety decision');
+      return {...e,site:numeric(v[4],1e8),decision:v[5],risk:numeric(v[6],3)};
+    }
     if(t==='NEW_COLONY'||t==='RESUMED'){if(v.length!==4)throw Error('Malformed colony mode');}
     else if(t==='STATUS'){
       if(v.length!==10)throw Error('Bad status');
@@ -180,7 +194,7 @@
       if(v.length!==7||!/^\d+$/.test(v[4])||!/^[A-Z_]+$/.test(v[5]))throw Error('Bad action result');
       e.id=numeric(v[4],Number.MAX_SAFE_INTEGER);e.outcome=v[5];e.transferred=numeric(v[6]);
     }else if(t==='ERROR'){
-      if(v.length!==5||v[4]!=='INVALID_INPUT')throw Error('Bad rejected input');e.error=v[4];
+      if(v.length!==5||!['INVALID_INPUT','INVALID_SAFETY_ORDER','UNAUTHORIZED_PRINCIPAL'].includes(v[4]))throw Error('Bad rejected input');e.error=v[4];
     }else throw Error('Unknown colony event');
     return e;
   }
@@ -190,10 +204,17 @@
  const q=id=>document.getElementById(id), policyAudits=new Map(), geology=new Map(),small=new Map(),log=[],stocks=new Map(),outposts=new Map(),farms=new Map(),habitats=new Map(),utilities=new Map(),communities=new Map(),clinics=new Map(),reclaimers=new Map(),waterworks=new Map();
  window.GalaxyColonyGeology=geology;
  window.GalaxyColony={
-   reset(){policyAudits.clear();geology.clear();small.clear();stocks.clear();outposts.clear();farms.clear();habitats.clear();utilities.clear();communities.clear();clinics.clear();reclaimers.clear();waterworks.clear();log.length=0;q('colonyEvents').textContent='Awaiting colony telemetry…';},
+   reset(){window.GalaxyColonyHomeShipId=null;q('colonySafetyAssess').disabled=true;q('colonySafetyPreflight').disabled=true;policyAudits.clear();geology.clear();small.clear();stocks.clear();outposts.clear();farms.clear();habitats.clear();utilities.clear();communities.clear();clinics.clear();reclaimers.clear();waterworks.clear();log.length=0;q('colonyEvents').textContent='Awaiting colony telemetry…';},
    accept(raw){const e=window.GalaxyColonyContract.decode(raw);
      if(e.type==='STATUS'){
        for(const [name,val] of [['colonyCrew',e.crew],['colonyRaw',e.raw],['colonyRefined',e.refined],['colonyModules',e.modules],['colonyOutposts',e.outposts],['colonyTotal',e.total]])q(name).textContent=val.toLocaleString();
+     }else if(e.type==='SAFETY'){
+       window.GalaxyColonyHomeShipId=e.site;
+       const states=['STABLE','FORECAST SHORTAGE','CRITICAL BUFFER','EMERGENCY'];
+       q('colonySafetyRisk').textContent=states[e.risk];
+       q('colonySafetyRunway').textContent=`${e.pop} colonists · food ${e.food}, water ${e.water}, oxygen ${e.oxygen} consumption periods remaining · physical supplies only, not promised imports.`;
+       q('colonySafetyAssess').disabled=false;
+       q('colonySafetyPreflight').disabled=false;
      }else if(e.type==='LIFE'){
        for(const [name,val] of [['lifeFood',e.food],['lifeWater',e.water],['lifeOxygen',e.oxygen],
          ['lifeNutrients',e.nutrients],['lifeCrops',e.crops],['lifeCompost',e.compost],
@@ -244,6 +265,11 @@
      else if(e.type==='MINERAL'){
        const rock=geology.get(e.id);if(!rock)throw Error('Mineral without scanned rock');rock.minerals.set(e.name,e.share);
      }else if(e.type==='SMALL_ROCK')small.set(e.id,e.remaining);
+     else if(e.type==='SAFETY_CHECK'||e.type==='SAFETY_ORDER'){
+       const msg=e.type==='SAFETY_CHECK'?`Site ${e.site}: safety assessment requested; current runway shown above.`:
+        `Site ${e.site}: ${e.decision.replaceAll('_',' ')} (risk ${e.risk}). ${e.decision==='REFUSED'?'Unsafe order refused and recorded.':'No production state changed.'}`;
+       log.push(msg);q('colonyEvents').textContent=log.slice(-5).reverse().join('\n');
+     }
      else if(e.type==='RESULT'||e.type==='ERROR'||e.type==='SCAN_DONE'||e.type==='NEW_COLONY'||e.type==='RESUMED'){
        const msg=e.type==='RESULT'?`Command ${e.id}: ${e.outcome} (${e.transferred} t)`:
          e.type==='ERROR'?`Rejected ${e.error}`:e.type==='SCAN_DONE'?`Scan returned ${e.count} asteroids`:

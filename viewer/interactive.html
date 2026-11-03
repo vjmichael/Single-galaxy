@@ -90,6 +90,10 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
 <div class="metric"><span class="muted">Compost / wastewater (kg)</span><strong><span id="lifeCompost">—</span> / <span id="lifeWastewater">—</span></strong></div>
 <div class="metric"><span class="muted">Life-support cycles / shortages</span><strong><span id="lifeCycles">—</span> / <span id="lifeShortages">—</span></strong></div>
 <div class="metric"><span class="muted">Reserve cycles at current rate</span><strong id="lifeReserves">—</strong></div>
+<div class="metric"><span class="muted">Colonist safety (real stock)</span><strong id="colonySafetyRisk">Waiting for native host</strong></div>
+<div class="help" id="colonySafetyRunway">No current food/water/oxygen endurance assessment.</div>
+<div class="controls" style="padding:7px 0;gap:5px"><button id="colonySafetyAssess">Assess colony supplies</button><button id="colonySafetyPreflight">Evaluate stopping local production</button></div>
+<div class="help">The production action only evaluates safety and writes an audit entry; it does not change any production policy. Consumption always continues. Occupied-site entrapment or atmosphere sabotage is refused by the native host.</div>
 <div class="controls" style="padding:7px 0;gap:5px"><button id="lifePlant" class="primary">Plant 20 batches</button><button id="lifeHarvest">Harvest 20 batches</button><button id="lifeRecycleWater">Recycle 20 kg water</button><button id="lifeRecycleCompost">Compost 20 kg</button><button id="lifeOxygenAction">Produce O₂</button><button id="lifeLoadWater">Load 1 t mined water</button></div>
 <h2 style="margin-top:14px">B7.0e · Staffed outpost greenhouse</h2>
 <div class="help">Build at your own outpost (cost: 2 modules), then physically deliver food, water, oxygen, nutrients and CO₂. Assign real colonists from the ship to the farm. It produces while you travel away; supplies are finite. Negative cargo quantities retrieve stock. Food production alone does not certify self-sufficiency.</div>

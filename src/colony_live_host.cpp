@@ -4,6 +4,7 @@
 #include "galaxy/Simulation.hpp"
 #include "galaxy/Persistence.hpp"
 #include "galaxy/ClientContract.hpp"
+#include "galaxy/ColonySafety.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
@@ -116,6 +117,13 @@ void status(const Simulation& w,EntityId ship){
         std::to_string(c->refined)+"|"+std::to_string(c->modules)+"|"+
         std::to_string(w.built_outposts().size())+"|"+std::to_string(w.total_ore()));
     if(const auto* l=w.life_support(ship)){
+        const auto safety=colony_safety::assess(w,ship,ship);
+        announce(w,"SAFETY|"+std::to_string(ship)+"|"+
+            std::to_string(static_cast<int>(safety.risk))+"|"+
+            std::to_string(safety.remaining.food_periods)+"|"+
+            std::to_string(safety.remaining.water_periods)+"|"+
+            std::to_string(safety.remaining.oxygen_periods)+"|"+
+            std::to_string(safety.population));
         const auto v=w.assess_colony(ship);
         announce(w,"LIFE|"+std::to_string(l->food_kg)+"|"+std::to_string(l->water_kg)+"|"+
             std::to_string(l->oxygen_kg)+"|"+std::to_string(l->nutrients_kg)+"|"+
@@ -310,6 +318,30 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
     if(principal!=owner){announce(world.world(),"ERROR|UNAUTHORIZED_PRINCIPAL");return;}
     const auto v=split(line);if(v.empty())return;
     if(v.size()==1 && v[0]=="SCAN") {scan(world.world(),ship);return;}
+    if(v.size()==3 && v[0]=="SAFETY"){
+        try{
+            const auto site=integer(v[1]);
+            if(site<=0||site>100000000)throw std::invalid_argument("invalid site");
+            if(v[2]=="ASSESS"){
+                const auto a=colony_safety::assess(world.world(),ship,static_cast<EntityId>(site));
+                announce(world.world(),"SAFETY_CHECK|"+std::to_string(a.site)+"|"+
+                    std::to_string(static_cast<int>(a.risk)));
+                return;
+            }
+            colony_safety::Order order{};
+            if(v[2]=="PRODUCTION_PREFLIGHT")order=colony_safety::Order::SetLocalProduction;
+            else if(v[2]=="SEAL_EXIT")order=colony_safety::Order::SealOccupiedExit;
+            else if(v[2]=="DISABLE_DISTRESS")order=colony_safety::Order::DisableDistress;
+            else if(v[2]=="DUMP_ATMOSPHERE")order=colony_safety::Order::DumpOccupiedAtmosphere;
+            else if(v[2]=="BLOCK_REPAIR")order=colony_safety::Order::PreventEmergencyRepair;
+            else throw std::invalid_argument("unknown safety order");
+            const auto d=world.record_colony_safety_preflight(ship,static_cast<EntityId>(site),principal,order);
+            announce(world.world(),"SAFETY_ORDER|"+std::to_string(d.assessment.site)+"|"+
+                (d.allowed?"PREFLIGHT_ONLY":"REFUSED")+"|"+
+                std::to_string(static_cast<int>(d.assessment.risk)));
+            return;
+        }catch(const std::exception&){announce(world.world(),"ERROR|INVALID_SAFETY_ORDER");return;}
+    }
     Command c{};c.issuer=principal;c.actor=ship;c.execute_tick=world.world().tick()+1;
     c.id=++nonce;c.sequence=c.id;
     try {
