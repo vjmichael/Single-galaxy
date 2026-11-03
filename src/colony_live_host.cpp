@@ -124,6 +124,16 @@ void status(const Simulation& w,EntityId ship){
             std::to_string(safety.remaining.water_periods)+"|"+
             std::to_string(safety.remaining.oxygen_periods)+"|"+
             std::to_string(safety.population));
+        const auto response=colony_safety::plan_response(safety);
+        // Read-only proposal telemetry, NOT an executed repair/rescue receipt.
+        // Never label a searched-for vessel as an arrived rescue.
+        announce(w,"SAFETY_RESPONSE|"+std::to_string(response.site)+"|"+
+            std::to_string(static_cast<int>(response.level))+"|"+
+            std::to_string(response.request_supply?1:0)+"|"+
+            std::to_string(response.seek_physical_repairs?1:0)+"|"+
+            std::to_string(response.search_verified_departure?1:0)+"|"+
+            std::to_string(response.activate_distress?1:0)+"|"+
+            std::to_string(response.rescue_completed?1:0));
         const auto v=w.assess_colony(ship);
         announce(w,"LIFE|"+std::to_string(l->food_kg)+"|"+std::to_string(l->water_kg)+"|"+
             std::to_string(l->oxygen_kg)+"|"+std::to_string(l->nutrients_kg)+"|"+

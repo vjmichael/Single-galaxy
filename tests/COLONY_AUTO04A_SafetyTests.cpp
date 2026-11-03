@@ -25,6 +25,9 @@ try{
     CHECK(initial.owner==7 && initial.population==4);
     CHECK(initial.risk==Risk::Safe && !initial.emergency_override);
     CHECK(initial.remaining.food_periods==25);
+    const auto safe_plan=plan_response(world,ship,ship);
+    CHECK(safe_plan.level==ResponseLevel::None && !safe_plan.request_supply);
+    CHECK(!safe_plan.rescue_completed && safe_plan.population==4);
     auto status=preflight(world,ship,ship,7,Order::SetLocalProduction);
     CHECK(status.allowed && !status.deliberate_hazard_attempt);
     CHECK(!preflight(world,ship,ship,8,Order::SetLocalProduction).allowed);
@@ -35,6 +38,13 @@ try{
     auto warn=assess(world,ship,ship);
     CHECK(warn.risk==Risk::ForecastShortage);
     CHECK(warn.should_prepare_departure && !warn.emergency_override);
+    const auto warn_plan=plan_response(world,ship,ship);
+    CHECK(warn_plan.level==ResponseLevel::MonitorAndRequestSupply);
+    CHECK(warn_plan.request_supply && !warn_plan.seek_physical_repairs);
+    CHECK(!warn_plan.activate_distress && !warn_plan.rescue_completed);
+    const auto increased=response_transition(safe_plan,warn_plan);
+    CHECK(increased.escalated && increased.requires_new_notice);
+    CHECK(!response_transition(warn_plan,warn_plan).requires_new_notice);
     auto blocked=preflight(world,ship,ship,7,Order::SealOccupiedExit);
     CHECK(!blocked.allowed && blocked.deliberate_hazard_attempt);
     CHECK(!preflight(world,ship,ship,7,Order::DisableDistress).allowed);
@@ -43,6 +53,14 @@ try{
     world.steps(3*20);
     CHECK(world.life_support(ship)->food_kg==4);
     CHECK(assess(world,ship,ship).risk==Risk::Critical);
+    const auto critical_plan=plan_response(world,ship,ship);
+    CHECK(critical_plan.level==ResponseLevel::UrgentRepairAndDepartureSearch);
+    CHECK(critical_plan.seek_physical_repairs && critical_plan.search_verified_departure);
+    CHECK(critical_plan.bypass_player_production_preferences);
+    CHECK(!critical_plan.activate_distress && !critical_plan.rescue_completed);
+    CHECK(response_transition(warn_plan,critical_plan).requires_new_notice);
+    CHECK(plan_response(Simulation::from_snapshot(world.canonical_state()),ship,ship).level==
+          ResponseLevel::UrgentRepairAndDepartureSearch);
     const auto restored=Simulation::from_snapshot(world.canonical_state());
     CHECK(assess(restored,ship,ship).risk==Risk::Critical);
     CHECK(restored.life_support(ship)->food_kg==4);
@@ -50,6 +68,22 @@ try{
     world.steps(20);
     CHECK(world.life_support(ship)->food_kg==0);
     CHECK(assess(world,ship,ship).risk==Risk::Emergency);
+    const auto emergency_plan=plan_response(world,ship,ship);
+    CHECK(emergency_plan.level==ResponseLevel::EmergencySurvivalAndDistress);
+    CHECK(emergency_plan.activate_distress && emergency_plan.search_verified_departure);
+    CHECK(!emergency_plan.rescue_completed);
+    CHECK(response_transition(critical_plan,emergency_plan).escalated);
+    bool backwards=false;
+    try{(void)response_transition(emergency_plan,safe_plan);}
+    catch(const std::invalid_argument&){backwards=true;}
+    CHECK(backwards);
+    bool cross_site=false;
+    auto forged=emergency_plan;forged.site=999;
+    try{(void)response_transition(emergency_plan,forged);}
+    catch(const std::invalid_argument&){cross_site=true;}
+    CHECK(cross_site);
+    CHECK(world.life_support(ship)->food_kg==0); // planner never replenishes
+    CHECK(world.colony_ship(ship)->crew==4); // planner never teleports crew
     CHECK(assess(world,ship,ship).should_prepare_departure);
     CHECK(world.colony_ship(ship)->crew==4); // no phantom migration or deaths
     // Social tolerance must not postpone life-preserving emergency assessment.
