@@ -30,11 +30,32 @@ void CanonicalShippingHost::book(const ThirdPartyBooking& b,PlayerId session){
  admission(session);require_stable_region();if(session!=b.source_owner)throw std::runtime_error("foreign warehouse booking principal");
  shipping_host_.book_factory_goods(b);
 }
+void CanonicalShippingHost::approve_booking(const std::string& id,PlayerId principal,int role){
+ admission(principal);require_stable_region();registry_.approve(id,principal,role);
+}
+void CanonicalShippingHost::revoke_booking(const std::string& id,PlayerId principal){
+ admission(principal);require_stable_region();registry_.revoke(id,principal);
+}
 void CanonicalShippingHost::dispatch(const std::string& id,PlayerId carrier,const std::string& dispatch_id){
  admission(carrier);require_stable_region();shipping_host_.dispatch_factory_goods(id,carrier,dispatch_id);
 }
 void CanonicalShippingHost::load(const std::string& id,PlayerId carrier,FailPoint fail){
  admission(carrier);require_stable_region();registry_.require_carrier(id,carrier);registry_.load(id,fail);shipping_host_.verify();
+}
+void CanonicalShippingHost::unload(const std::string& id,PlayerId carrier,FailPoint fail){
+ admission(carrier);require_stable_region();registry_.require_carrier(id,carrier);registry_.unload(id,fail);shipping_host_.verify();
+}
+void CanonicalShippingHost::request_return(const std::string& id,PlayerId principal,std::uint64_t command){
+ admission(principal);require_stable_region();registry_.request_return(id,principal,command);
+}
+void CanonicalShippingHost::approve_return(const std::string& id,PlayerId principal,int role){
+ admission(principal);require_stable_region();registry_.approve_return(id,principal,role);
+}
+void CanonicalShippingHost::return_to_origin(const std::string& id,PlayerId carrier,FailPoint fail){
+ admission(carrier);require_stable_region();registry_.require_carrier(id,carrier);registry_.return_to_origin(id,fail);shipping_host_.verify();
+}
+void CanonicalShippingHost::acknowledge_delivery(const std::string& id,PlayerId principal,int role){
+ admission(principal);require_stable_region();registry_.acknowledge_settlement(id,principal,role);
 }
 void CanonicalShippingHost::propose_redirect(const std::string& id,PlayerId carrier,EntityId ship,
  EntityId site,PlayerId receiver,std::uint32_t system,std::uint64_t command){
@@ -45,6 +66,9 @@ void CanonicalShippingHost::approve_redirect(const std::string& id,PlayerId prin
 }
 void CanonicalShippingHost::deliver_redirected(const std::string& id,PlayerId carrier,FailPoint fail){
  admission(carrier);require_stable_region();registry_.require_carrier(id,carrier);shipping_host_.deliver_redirected_goods(id,fail);
+}
+void CanonicalShippingHost::acknowledge_redirected_delivery(const std::string& id,PlayerId principal,int role){
+ admission(principal);require_stable_region();registry_.acknowledge_alternate_settlement(id,principal,role);
 }
 regional_events::RegionalAuthorityState CanonicalShippingHost::transition_region(
  const std::string& id,regional_events::SimulationOwner target){

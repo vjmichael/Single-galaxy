@@ -212,9 +212,9 @@ int main(){
   reject([&]{contracts.load(frames.id);},"unapproved shipment loaded");
   active=8;reject([&]{production_host.dispatch_factory_goods(frames.id,8,"frames-dispatch");},"unapproved dispatch accepted");
   for(const auto& id:{frames.id,panels.id}){
-    active=7;contracts.approve(id,7,1);
-    active=8;contracts.approve(id,8,2);
-    active=9;contracts.approve(id,9,3);
+    active=7;game_host.approve_booking(id,7,1);
+    active=8;game_host.approve_booking(id,8,2);
+    active=9;game_host.approve_booking(id,9,3);
   }
   active=0;reject([&]{contracts.dispatch(frames.id,8,"fake-dispatch");},"unauthenticated carrier dispatch accepted");
   active=7;reject([&]{contracts.dispatch(frames.id,7,"wrong-role-dispatch");},"warehouse owner dispatched unrelated ship");
@@ -272,7 +272,7 @@ int main(){
   ck(w.world().ship_inventory_snapshot(carrier).amount("good/aluminum_frames")==1&&
      w.world().ship_inventory_snapshot(carrier).amount("good/aluminum_panels")==1&&
      w.world().total_material_kg()==loaded_mass,"cold/detailed transition duplicated in-flight cargo");
-  reject([&]{contracts.acknowledge_settlement(frames.id,8,2);},"unshipped receipt settled before completion");
+  active=8;reject([&]{game_host.acknowledge_delivery(frames.id,8,2);},"unshipped receipt settled before completion");
   // Original receiver and replacement receiver are different people and
   // different constructed sites. All four roles must consent to diversion.
   active=9;reject([&]{contracts.propose_alternate(frames.id,8,alternate_receiver,alternate_site,10,2,9470);},
@@ -282,7 +282,7 @@ int main(){
   reject([&]{contracts.unload(frames.id);},"diverted cargo allowed old destination unload");
   reject([&]{contracts.unload_alternate(frames.id);},"unsigned alternate route unloaded");
   active=7;game_host.approve_redirect(frames.id,7,1);
-  active=8;reject([&]{contracts.approve_alternate(frames.id,7,2);},"source forged carrier approval");
+  active=8;reject([&]{game_host.approve_redirect(frames.id,7,2);},"source forged carrier approval");
   game_host.approve_redirect(frames.id,8,2);
   active=9;game_host.approve_redirect(frames.id,9,3);
   active=10;game_host.approve_redirect(frames.id,10,4);
@@ -302,10 +302,12 @@ int main(){
     ck(w.world().tick()==before&&w.world().ship_inventory_snapshot(carrier).amount("good/aluminum_panels")==1,
        "rollback after original unload lost panels");
   }
-  contracts.unload(panels.id);
+  active=7;reject([&]{game_host.unload(panels.id,7);},"warehouse owner issued carrier unload");
+  active=9;reject([&]{game_host.unload(panels.id,9);},"receiver owner issued carrier unload");
+  active=8;game_host.unload(panels.id,8);
   ck(w.world().storage(destination)->goods_kg.at("aluminum_panels")==1,"original receiver lacks delivered panels");
-  active=8;contracts.acknowledge_settlement(panels.id,8,2);
-  active=9;contracts.acknowledge_settlement(panels.id,9,3);
+  active=8;game_host.acknowledge_delivery(panels.id,8,2);
+  active=9;game_host.acknowledge_delivery(panels.id,9,3);
   active=0;
   // The first destination cannot receive the redirected frames even after
   // delivery of another item: storage and settlement remain destination-scoped.
@@ -337,8 +339,8 @@ int main(){
   ck(w.world().storage(site)->network_escrow_kg==8&&w.world().total_material_kg()==conserved,
      "redispatch invented or destroyed total physical matter");
   active=9;reject([&]{contracts.acknowledge_alternate_settlement(frames.id,9,4);},"original receiver signed replacement receipt");
-  active=8;contracts.acknowledge_alternate_settlement(frames.id,8,2);
-  active=10;contracts.acknowledge_alternate_settlement(frames.id,10,4);
+  active=8;game_host.acknowledge_redirected_delivery(frames.id,8,2);
+  active=10;game_host.acknowledge_redirected_delivery(frames.id,10,4);
   reject([&]{contracts.acknowledge_alternate_settlement(frames.id,10,4);},"duplicate replacement settlement accepted");
   active=0;contracts.verify();production_host.verify();
   // Same handoff after final settlement must see each destination exactly
