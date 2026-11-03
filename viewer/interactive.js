@@ -43,7 +43,7 @@ async function connect(){
      catch(ex){source.close();source=null;bridge.fail('Frame rejected: '+ex.message);}
    });
    source.addEventListener('complete',()=>{bridge.complete();message('Run completed. Reconnect to review the finished world.');source.close();source=null;});
-   source.addEventListener('failed',e=>{bridge.fail('Host failed: '+e.data);source.close();source=null;});
+   source.addEventListener('failed',e=>{bridge.fail('Host failed: '+e.data);source.close();source=null;if(e.data==='Session expired')window.GalaxyDisconnect?.();});
    source.addEventListener('error',()=>{if(source){source.close();source=null;bridge.fail('Stream lost. Use Reconnect to replay and catch up.');}});
    message(colonyMode?'Connected: colony ship in open space; no stations or gates.':'Connected: developer legacy world.');
  }catch(ex){bridge.fail(ex.message);message('Connection failed: '+ex.message);}
@@ -87,6 +87,14 @@ window.onGalaxyLiveProjection=function(state){
  for(const id of ['directional','probeDeploy','probeScan','probeRecover','surveyPublish']) el(id).disabled=docking!==0;
 };
 window.GalaxyColonyCommand=command;
+window.GalaxyReconnect=connect;
+window.GalaxyDisconnect=()=>{
+ if(source){source.close();source=null;}token=null;
+ window.GalaxyLiveBridge?.reset();window.GalaxyColony?.reset();window.GalaxySurveyBridge?.reset();
+ el('interactiveControls').hidden=true;el('colonyPanel').hidden=true;el('surveyPanel').hidden=true;
+ el('qaPanel').hidden=true;
+ message('Signed out. Colony world data is no longer available in this session.');
+};
 window.addEventListener('beforeunload',()=>{if(source)source.close();});
 connect();
 })();

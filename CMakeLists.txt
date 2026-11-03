@@ -853,3 +853,17 @@ if(BUILD_TESTING)
 
   endif()
 endif()
+
+# DEMOG-05q6e5b8k: main colony GUI + v63 credentials + read-only physical freight
+# projection from the SAME SQLite save. Native colony host owns its sole writer
+# lock; the shipping bridge may read but cannot act as a second writer.
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+  add_test(NAME galaxy_integrated_colony_freight_session_e2e
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/DEMOG05q6e5b8kIntegratedColonySessionTests.py
+      --host $<TARGET_FILE:galaxy_colony_live_host>
+      --relay ${CMAKE_CURRENT_SOURCE_DIR}/live/interactive_relay.py
+      --bridge $<TARGET_FILE:galaxy_shipping_status_bridge>
+      --producer $<TARGET_FILE:v59_multi_destination_host>)
+  set_tests_properties(galaxy_integrated_colony_freight_session_e2e PROPERTIES TIMEOUT 90)
+endif()

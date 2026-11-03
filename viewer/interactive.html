@@ -36,6 +36,22 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
 <body>
 <header><div><div class="kicker">Single Galaxy / Colony Frontier & Lumen Reach tests</div><h1>Matrix Vision <span aria-hidden="true">✦</span></h1><small>Original shapes · SQLite-backed simulation streaming live from C++</small></div><div class="pill" id="sourcebadge">Replay mode · No EVE assets</div></header>
 <main>
+<section class="card pad" id="colonySessionPanel" style="grid-column:1/-1" hidden>
+  <h2>Colony identity and physical shipments</h2>
+  <form id="colonySignIn" class="controls" autocomplete="on">
+    <label>Username <input id="colonyUsername" required maxlength="32" autocomplete="username" style="max-width:190px"></label>
+    <label>Password <input id="colonyPassword" required type="password" autocomplete="current-password" style="max-width:190px"></label>
+    <button type="submit" class="primary">Sign in</button>
+  </form>
+  <div id="colonyIdentity" hidden class="controls">
+    <strong id="colonyPlayerLabel"></strong>
+    <button id="colonySignOut" type="button">Sign out</button>
+    <button id="colonyShipmentRefresh" type="button">Refresh shipments</button>
+  </div>
+  <p id="colonyAuthMessage" class="help" role="status" aria-live="polite">Sign in to access your colony and shipment records.</p>
+  <div id="colonyShipmentList" style="display:grid;gap:9px" aria-live="polite"></div>
+  <p class="help">Shipments are read-only in this combined colony view. Freight execution remains restricted to the single authoritative native writer; no second writer or shadow cargo balance is started.</p>
+</section>
 <section class="view">
 <div class="error" id="error" role="alert"></div>
 <div class="card">
@@ -158,7 +174,7 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
 <div class="metric"><span class="muted">Local hangar ore</span><strong id="hangarOre">—</strong></div><div class="metric"><span class="muted">Player credits</span><strong id="walletCredits">0</strong></div><div class="metric"><span class="muted">Station ore bid</span><strong id="marketPrice">—</strong></div><div class="metric"><span class="muted">Station market stock</span><strong id="marketStock">—</strong></div><div class="metric"><span class="muted">Position</span><span id="position">0, 0</span></div><div class="metric"><span class="muted">Velocity / tick</span><span id="velocity">0, 0</span></div><div class="metric"><span class="muted">Asteroids active</span><strong id="asteroids">10</strong></div><div class="metric"><span class="muted">Ore remaining</span><strong id="ore">100</strong></div></div>
 <div class="card pad"><h2>Simulation events</h2><div id="log" role="log" aria-live="polite"></div></div>
 </aside>
-<footer>Local development only: commands are brokered to one SQLite-backed simulation, with a per-session anti-CSRF token. Not secure multiplayer authentication. Windows runtime testing remains outstanding.</footer>
+<footer>Local development only: provisioned player accounts bind authenticated HTTP sessions to the native colony host. Shipments read the same SQLite ledger without a second writer. Public-network multiplayer and Windows acceptance remain open.</footer>
 </main>
 <script src="contract.js"></script>
 <script src="recordings.js"></script>
@@ -168,5 +184,6 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
 <script src="survey.js"></script>
 <script src="colony.js"></script>
 <script src="interactive.js"></script>
+<script src="colony-shipping.js"></script>
 </body>
 </html>

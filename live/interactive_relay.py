@@ -7,10 +7,12 @@ command ID, target ID, tick, or SQL. Not an untrusted multiplayer authority.
 import argparse
 import base64
 import hmac
+import hashlib
+import time
+import re
 import http.server
 import json
 import os
-import re
 import pathlib
 import secrets
 import subprocess
@@ -28,13 +30,50 @@ STATIC={
     '/viewer/recordings.js':'viewer/recordings.js',
     '/viewer/viewer.js':'viewer/viewer.js',
     '/viewer/colony.js':'viewer/colony.js',
+    '/viewer/colony-shipping.js':'viewer/colony-shipping.js',
 }
 MIME={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8'}
 MAX_FRAME=4*1024*1024
 MAX_FRAMES=1202
 
+# Reuse the v63 Node session account file: scrypt(N=16384,r=8,p=1,64 bytes).
+# The browser never supplies a player identity; it only supplies credentials.
+ACCOUNT_NAME=re.compile(r'^[a-zA-Z][a-zA-Z0-9_.-]{2,31}$')
+COOKIE_NAME='sgcolsid'
+SESSION_TTL=20*60
+
+def load_accounts(file):
+    file=pathlib.Path(file)
+    st=file.lstat()
+    if not file.is_file() or st.st_size>32768 or (os.name!='nt' and (st.st_mode & 0o077)):
+        raise ValueError('Invalid private accounts file (0600 required on Unix)')
+    doc=json.loads(file.read_text('utf-8'))
+    rows=doc.get('accounts') if isinstance(doc,dict) and doc.get('version')==1 else None
+    if not isinstance(rows,list) or not 1<=len(rows)<=64:raise ValueError('Invalid accounts manifest')
+    users=set();players=set()
+    for row in rows:
+        if (not isinstance(row,dict) or not ACCOUNT_NAME.fullmatch(str(row.get('username',''))) or
+            type(row.get('playerId'))!=int or row['playerId']<1 or row['playerId']>9007199254740991 or
+            not re.fullmatch(r'[0-9a-f]{64}',str(row.get('salt',''))) or
+            not re.fullmatch(r'[0-9a-f]{128}',str(row.get('hash',''))) or
+            row['username'] in users or row['playerId'] in players):
+            raise ValueError('Invalid or duplicate account')
+        users.add(row['username']);players.add(row['playerId'])
+    return {row['username']:row for row in rows}
+
+def authenticate_account(rows,username,password):
+    if (type(username)!=str or not ACCOUNT_NAME.fullmatch(username) or type(password)!=str):return None
+    try: pw=password.encode('utf-8')
+    except UnicodeEncodeError:return None
+    if len(pw)>512:return None
+    row=rows.get(username)
+    salt=bytes.fromhex(row['salt']) if row else bytes(32)
+    expected=bytes.fromhex(row['hash']) if row else bytes(64)
+    candidate=hashlib.scrypt(pw,salt=salt,n=16384,r=8,p=1,dklen=64,maxmem=32*1024*1024)
+    return row if hmac.compare_digest(candidate,expected) else None
+
 class SharedRuntime:
-    def __init__(self,exe,db,tick_ms,max_ticks,qa_mode=False):
+    def __init__(self,exe,db,tick_ms,max_ticks,qa_mode=False,authenticated=False):
         self.cv=threading.Condition()
         self.frames=[]
         self.survey_events=[]
@@ -44,11 +83,13 @@ class SharedRuntime:
         self.stderr=[]
         self.cmd_lock=threading.Lock()
         self.token=secrets.token_urlsafe(32)
+        self.authenticated=authenticated
         env=os.environ.copy()
         # The relay is local-only and QA commands are disabled unless the
         # explicit developer CLI switch is present. Not a multiplayer authority.
         env['SINGLE_GALAXY_QA_MODE']='1' if qa_mode else '0'
-        self.proc=subprocess.Popen([str(exe),str(db),str(tick_ms),str(max_ticks)],
+        self.proc=subprocess.Popen([str(exe),str(db),str(tick_ms),str(max_ticks)]+
+            (['--authenticated-transport'] if authenticated else []),
             env=env,
             stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0)
         threading.Thread(target=self._read,daemon=True).start()
@@ -102,7 +143,10 @@ class SharedRuntime:
                 self.finished=True
                 self.cv.notify_all()
 
-    def send(self,command):
+    def send(self,command,principal=None):
+        if self.authenticated:
+            if principal!=7:raise PermissionError('This colony ship belongs to player 7')
+            command='AUTH|'+str(principal)+'|'+command
         with self.cmd_lock:
             if self.finished or self.proc.poll() is not None:
                 raise RuntimeError('Simulation is not running')
@@ -127,16 +171,95 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def _host_ok(self):
         return self.headers.get('Host')=='127.0.0.1:'+str(self.server.server_port)
 
-    def _send(self,status,body,content_type):
+    def _send(self,status,body,content_type,headers=None):
         self.send_response(status)
         self.send_header('Content-Type',content_type)
         self.send_header('X-Content-Type-Options','nosniff')
         self.send_header('Cache-Control','no-store')
+        self.send_header('Referrer-Policy','no-referrer')
+        self.send_header('X-Frame-Options','DENY')
+        self.send_header('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+        for key,value in (headers or {}).items():self.send_header(key,value)
         self.send_header('Content-Length',str(len(body)))
         self.end_headers();self.wfile.write(body)
 
-    def _json(self,status,data):
-        self._send(status,json.dumps(data,separators=(',',':')).encode('utf-8'),'application/json')
+    def _json(self,status,data,headers=None):
+        self._send(status,json.dumps(data,separators=(',',':')).encode('utf-8'),'application/json',headers)
+
+    def _principal(self):
+        if not self.server.accounts:return None
+        cookie=self.headers.get('Cookie','')
+        match=re.search(r'(?:^|;\s*)'+COOKIE_NAME+r'=([0-9a-f]{64})(?:;|$)',cookie)
+        if not match:return None
+        with self.server.session_lock:
+            row=self.server.sessions.get(match.group(1))
+            if not row:return None
+            if row['expires']<=time.time():
+                self.server.sessions.pop(match.group(1),None);return None
+            return dict(row,session_id=match.group(1))
+
+    def _session_payload(self,principal):
+        return {'ok':True,'username':principal['username'],'playerId':principal['playerId'],
+                'csrf':principal['csrf'],'writes':False,'colonyWrites':principal['playerId']==7,'colony_mode':principal['playerId']==7,
+                'tick_ms':self.server.tick_ms,'max_ticks':self.server.max_ticks}
+
+    def _same_origin(self):
+        return (self.headers.get('Origin')=='http://127.0.0.1:'+str(self.server.server_port) and
+            self.headers.get('Content-Type')=='application/json' and
+            self.headers.get('Sec-Fetch-Site','same-origin')=='same-origin')
+
+    def _credentials_post(self,path):
+        if not self._same_origin():self._json(403,{'ok':False,'error':'Same-origin JSON required'});return
+        try:
+            size=int(self.headers.get('Content-Length','-1'))
+            if not 2<=size<=4096:raise ValueError('Invalid request size')
+            data=json.loads(self.rfile.read(size).decode('utf-8'))
+            if type(data)!=dict:raise ValueError('Invalid JSON')
+        except (ValueError,UnicodeDecodeError,json.JSONDecodeError):
+            self._json(400,{'ok':False,'error':'Invalid request'});return
+        if path=='/api/login':
+            if set(data)!={'username','password'}:
+                self._json(400,{'ok':False,'error':'Invalid login'});return
+            now=time.time()
+            with self.server.session_lock:
+                recent=[t for t in self.server.failures if now-t<300]
+                self.server.failures=recent
+                if len(recent)>=8:
+                    self._json(429,{'ok':False,'error':'Too many attempts'});return
+            row=authenticate_account(self.server.accounts,data['username'],data['password'])
+            if not row:
+                with self.server.session_lock:self.server.failures.append(now)
+                self._json(401,{'ok':False,'error':'Invalid credentials'});return
+            with self.server.session_lock:
+                self.server.failures=[]
+                self.server.sessions={k:v for k,v in self.server.sessions.items() if v['expires']>now}
+                if len(self.server.sessions)>=64:
+                    self._json(503,{'ok':False,'error':'Session capacity reached'});return
+                sid=secrets.token_hex(32)
+                record={'playerId':row['playerId'],'username':row['username'],
+                        'csrf':secrets.token_hex(32),'expires':now+SESSION_TTL}
+                self.server.sessions[sid]=record
+            self._json(200,self._session_payload(record),{'Set-Cookie':
+                       COOKIE_NAME+'='+sid+'; HttpOnly; SameSite=Strict; Path=/; Max-Age='+str(SESSION_TTL)})
+            return
+        principal=self._principal()
+        if not principal or self.headers.get('X-SG-CSRF')!=principal['csrf'] or data:
+            self._json(403,{'ok':False,'error':'Session denied'});return
+        with self.server.session_lock:self.server.sessions.pop(principal['session_id'],None)
+        self._json(200,{'ok':True},{'Set-Cookie':COOKIE_NAME+'=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0'})
+
+    def _shipment_rows(self,principal):
+        bridge=self.server.shipping_bridge
+        if not bridge:return {'ok':True,'shipments':[]}
+        if not self.server.runtime.db.is_file():raise RuntimeError('World is not initialized')
+        proc=subprocess.run([str(bridge),str(self.server.runtime.db)],
+            input='LIST|'+str(principal['playerId'])+'\n',text=True,capture_output=True,timeout=8)
+        if proc.returncode or not proc.stdout.strip():raise RuntimeError('Native shipping read failed')
+        answer=json.loads(proc.stdout.splitlines()[0])
+        if answer.get('ok') is not True or not isinstance(answer.get('shipments'),list):
+            raise RuntimeError('Native shipment verification refused')
+        return answer
+
 
     def do_GET(self):
         if not self._host_ok():
@@ -144,14 +267,28 @@ class Handler(http.server.BaseHTTPRequestHandler):
         url=urllib.parse.urlsplit(self.path)
         if url.path=='/healthz':
             self._send(200,b'B4 interactive relay alive\n','text/plain');return
+        principal=self._principal()
+        if self.server.accounts and url.path=='/api/session':
+            self._json(200,self._session_payload(principal)) if principal else self._json(401,{'ok':False,'error':'Login required'})
+            return
+        if self.server.accounts and url.path=='/api/shipments':
+            if not principal:self._json(401,{'ok':False,'error':'Login required'});return
+            try:self._json(200,self._shipment_rows(principal))
+            except (RuntimeError,ValueError,subprocess.TimeoutExpired,json.JSONDecodeError):
+                self._json(503,{'ok':False,'error':'Shipment authority unavailable'})
+            return
         if url.path=='/session':
-            self._json(200,{'token':self.server.runtime.token,'qa_mode':self.server.qa_mode,'colony_mode':self.server.colony_mode,'tick_ms':self.server.tick_ms,
+            if self.server.accounts and (not principal or principal['playerId']!=7):
+                self._json(403,{'error':'Colony owner session required'});return
+            self._json(200,{'token':principal['csrf'] if self.server.accounts else self.server.runtime.token,'qa_mode':self.server.qa_mode,'colony_mode':self.server.colony_mode,'tick_ms':self.server.tick_ms,
                 'max_ticks':self.server.max_ticks,'commands':(['thrust','colonyScan','colonyMine','colonyRefine','colonyFabricate','colonyBuild','colonyMineTarget','colonyProcess','colonyFabricateMaterial','colonyPlant','colonyHarvest','colonyRecycleWater','colonyRecycleCompost','colonyOxygen','colonyLifeWater','colonyFarmBuild','colonyFarmStaff','colonyFarmStock','colonyHabBuild','colonyHabResidents','colonyHabStock','colonyUtilityBuild','colonyUtilityRepair','colonyUtilitySpares','colonyUtilityStaff','colonyUtilityAuto','colonyCommunityBuild','colonyCommunityStaff','colonyCommunityStock','colonyClinicBuild','colonyClinicStaff','colonyClinicStock','colonyReclaimerBuild','colonyWaterworksBuild','colonyWaterworksFeed','colonyPolicySet','colonyPolicyStaff'] if self.server.colony_mode else ['thrust','mine','stop','undock','dock','unload','load','sell','travelA','travelB','travelGate','travelHop','jump','jumpHop','directional','probeDeploy','probeScan','probeRecover','surveyArchive','surveyHistory','surveyPublish','planRoute'])});return
         if url.path in STATIC:
             file=ROOT/STATIC[url.path]
             self._send(200,file.read_bytes(),MIME[file.suffix]);return
         if url.path!='/events':
             self._json(404,{'error':'Not found'});return
+        if self.server.accounts and (not principal or principal['playerId']!=7):
+            self._json(403,{'error':'Colony owner session required'});return
         self.send_response(200)
         self.send_header('Content-Type','text/event-stream; charset=utf-8')
         self.send_header('Cache-Control','no-store')
@@ -164,6 +301,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         colony_pos=0
         try:
             while True:
+                # SSE subscriptions must not outlive logout/session expiry.
+                if self.server.accounts:
+                    current=self._principal()
+                    if not current or current['session_id']!=principal['session_id']:
+                        self.wfile.write(b'event: failed\ndata: Session expired\n\n');self.wfile.flush();return
                 with rt.cv:
                     rt.cv.wait_for(lambda:pos<len(rt.frames) or rt.finished,timeout=3)
                     available=rt.frames[pos:]
@@ -192,8 +334,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         if not self._host_ok():
             self._json(403,{'error':'Local host required'});return
+        if self.server.accounts and self.path in ('/api/login','/api/logout'):
+            self._credentials_post(self.path);return
         if self.path!='/command':
             self._json(404,{'error':'Not found'});return
+        principal=self._principal()
+        if self.server.accounts and (not principal or principal['playerId']!=7):
+            self._json(403,{'error':'Colony owner session required'});return
         origin='http://127.0.0.1:'+str(self.server.server_port)
         if self.headers.get('Origin')!=origin or self.headers.get('Content-Type')!='application/json':
             self._json(403,{'error':'Same-origin JSON requests only'});return
@@ -202,7 +349,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if length<2 or length>512:raise ValueError('Invalid request size')
             raw=self.rfile.read(length)
             doc=json.loads(raw.decode('utf-8'))
-            if not isinstance(doc,dict) or not isinstance(doc.get('token'),str) or not hmac.compare_digest(doc['token'],self.server.runtime.token):
+            if not isinstance(doc,dict) or not isinstance(doc.get('token'),str) or not hmac.compare_digest(doc['token'],principal['csrf'] if self.server.accounts else self.server.runtime.token):
                 self._json(403,{'error':'Invalid session token'});return
             action=doc.get('action')
             if self.server.colony_mode:
@@ -378,7 +525,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     raise ValueError('Invalid scan bearing/cone')
                 command=f'DSCAN|{bearing}|{cone}' 
             else:raise ValueError('Unknown or invalid command schema')
-            self.server.runtime.send(command)
+            self.server.runtime.send(command,principal=principal['playerId'] if self.server.accounts else None)
             self._json(202,{'status':'queued_not_committed'})
         except (ValueError,UnicodeDecodeError,json.JSONDecodeError) as exc:
             self._json(400,{'error':str(exc)[:120]})
@@ -397,10 +544,17 @@ def run(args=None):
     p.add_argument('--max-ticks',type=int,default=600)
     p.add_argument('--colony',action='store_true',help='Colony-first local client mode, no seeded infrastructure')
     p.add_argument('--save',type=pathlib.Path,help='Optional persistent SQLite save for colony mode; developer-controlled path')
+    p.add_argument('--accounts',type=pathlib.Path,help='Host-provisioned v63 credentials JSON (requires --colony)')
+    p.add_argument('--shipping-bridge',type=pathlib.Path,help='Read-only canonical shipment-status executable')
     p.add_argument('--qa-test',action='store_true',help='EXPLICIT local testing mode for QA route automation and gate outage injection; never for production')
     opt=p.parse_args(args)
     if not opt.host_exe.is_file():p.error('Host binary does not exist')
     if opt.qa_test and opt.colony:p.error('QA legacy-gate test mode and colony game mode are separate')
+    if opt.accounts and not opt.colony:p.error('--accounts requires --colony')
+    if opt.shipping_bridge and not opt.accounts:p.error('--shipping-bridge requires --accounts')
+    if opt.accounts and not opt.shipping_bridge:p.error('--accounts requires a native --shipping-bridge (fail closed)')
+    if opt.shipping_bridge and not opt.shipping_bridge.is_file():p.error('Native shipping bridge missing')
+    accounts=load_accounts(opt.accounts) if opt.accounts else None
     if opt.save and not opt.colony:p.error('--save requires --colony')
     if not 1024<=opt.port<=65535:p.error('Bad port')
     if not 20<=opt.tick_ms<=5000:p.error('Bad tick interval')
@@ -408,10 +562,13 @@ def run(args=None):
     with tempfile.TemporaryDirectory(prefix='galaxy-interactive-') as tmp:
         save=opt.save.resolve() if opt.save else pathlib.Path(tmp)/'world.sqlite'
         save.parent.mkdir(parents=True,exist_ok=True)
-        rt=SharedRuntime(opt.host_exe.resolve(),save,opt.tick_ms,opt.max_ticks,opt.qa_test)
+        rt=SharedRuntime(opt.host_exe.resolve(),save,opt.tick_ms,opt.max_ticks,opt.qa_test,authenticated=bool(accounts))
+        rt.db=save
         try:
             with Server(('127.0.0.1',opt.port),Handler) as server:
                 server.runtime=rt;server.tick_ms=opt.tick_ms;server.max_ticks=opt.max_ticks;server.qa_mode=opt.qa_test;server.colony_mode=opt.colony
+                server.accounts=accounts;server.shipping_bridge=opt.shipping_bridge.resolve() if opt.shipping_bridge else None
+                server.sessions={};server.failures=[];server.session_lock=threading.RLock()
                 print('Interactive demo: http://127.0.0.1:%d/viewer/interactive.html'%opt.port,flush=True)
                 server.serve_forever(poll_interval=.1)
         except KeyboardInterrupt:pass

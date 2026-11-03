@@ -188,3 +188,38 @@ The offline Factory Designer's canonical `.sglayout` can now be registered by a 
 The existing `viewer/factory.html` now supports a **separately launched trusted localhost host session**. A Linux developer can run `node scripts/factory_live_server.js --db /absolute/path/to/existing-world.sqlite --bridge /path/to/build/galaxy_factory_host_bridge` and open the session-specific URL printed in the terminal. The browser can review the actual ship/site and available construction modules, register the exact canonical `.sglayout` produced by the editor, inspect host-derived progress, request one authorized construction step, and cancel remaining jobs. Only the C++ host bridge loads `PersistentWorld` and `HostBlueprintRegistry`; the browser is never trusted to choose owner, ship, site, command IDs or physical material effects. The web process binds **127.0.0.1 only**, uses an unpredictable per-launch session path/header, rejects cross-origin writes and refuses missing/empty worlds. Construction actions still use the existing SQLite command journal and physical conservation.
 
 **Development-host boundary:** this is a Linux/Node.js local integration prototype, not a packaged Windows installer or multiplayer production service; physical walls/doors/floors remain ghost design annotations. Direct Chromium-to-localhost visual acceptance is blocked in the test container, but the native+HTTP API E2E and offline Chromium editor interactions were independently verified. See [the B2d4c2 engineering report](docs/engineering/ECON02B2d4c2_Live_Factory_Construction_Controls_2026-10-31.md).
+
+## Main colony client: credential-bound freight view (DEMOG-05q6e5b8k)
+
+The original colony live host and its existing `viewer/interactive.html` now use
+**the same v63 host-provisioned account format** for authenticated local play.
+The Python relay stays bound to `127.0.0.1`, verifies each login using scrypt,
+sets an HttpOnly/SameSite session cookie, and resolves the *server-side* player
+identity. The native game process also checks `AUTH|player-id|command` on its
+private inherited pipe. Only the pilot who owns the current colony ship
+(player 7 in this early bounded fixture) can issue colony controls or read its
+SGVIEW stream. Foreign authenticated owners can see only freight in which
+**their** owner identity participates.
+
+1. Provision a private accounts file with `node scripts/shipping_accounts.js
+   --file /private/path/accounts.json --username pilot --player-id 7` and repeat
+   for any other test owners; the CLI prompts securely for a password.
+2. Build `galaxy_colony_live_host` and `galaxy_shipping_status_bridge`.
+3. Run `python3 live/interactive_relay.py --colony --host-exe build/galaxy_colony_live_host
+   --shipping-bridge build/galaxy_shipping_status_bridge --accounts /private/path/accounts.json
+   --save /private/path/colony.sqlite --port 8766 --tick-ms 100 --max-ticks 1200`.
+4. Open `http://127.0.0.1:8766/viewer/interactive.html`, sign in, and use
+   the new **Colony identity and physical shipments** panel above the live view.
+
+The native shipping bridge operates in **read-only mode** in the integrated
+client. Colony and freight status refer to the **same SQLite world**. The native
+colony host holds the same nonblocking `.host.lock` lease as the stand-alone
+freight writer, preventing concurrent independent writers. No cargo, owner,
+shipment or world state is copied into a second simulation.
+
+**Explicit limit:** Freight loading/dispatch/settlement writes are not yet
+admitted through this integrated colony UI; the separately verified v63
+freight writer must never be started against an actively running colony host.
+This is not production remote multiplayer identity, no automatic account
+registration, and native Windows gameplay acceptance is still open.
+

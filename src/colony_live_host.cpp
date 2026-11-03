@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <stdexcept>
 #include <iostream>
 #include <random>
 #include <sstream>
@@ -20,12 +21,49 @@
 #include <fcntl.h>
 #else
 #include <poll.h>
+#include <fcntl.h>
+#include <sys/file.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 using namespace galaxy;
 using Clock=std::chrono::steady_clock;
 namespace fs=std::filesystem;
 namespace {
+// All native world writers (including galaxy_shipping_status_bridge) use
+// this exact sidecar lease. The integrated relay must not launch another writer.
+struct WorldWriterLease {
+#ifdef _WIN32
+    HANDLE fd=INVALID_HANDLE_VALUE;
+    explicit WorldWriterLease(const fs::path& world){
+        const auto p=(fs::weakly_canonical(world).string()+".host.lock");
+        fd=CreateFileA(p.c_str(),GENERIC_READ|GENERIC_WRITE,0,nullptr,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
+        if(fd==INVALID_HANDLE_VALUE)throw std::runtime_error("another game writer owns this world");
+    }
+    ~WorldWriterLease(){if(fd!=INVALID_HANDLE_VALUE)CloseHandle(fd);}
+#else
+    int fd=-1;
+    explicit WorldWriterLease(const fs::path& world){
+        const auto p=fs::weakly_canonical(world).string()+".host.lock";
+        int flags=O_CREAT|O_RDWR;
+#ifdef O_CLOEXEC
+        flags|=O_CLOEXEC;
+#endif
+#ifdef O_NOFOLLOW
+        flags|=O_NOFOLLOW;
+#endif
+        fd=::open(p.c_str(),flags,0600);
+        struct stat st{};
+        if(fd<0)throw std::runtime_error("cannot open world host lock");
+        if(fstat(fd,&st)||!S_ISREG(st.st_mode)||flock(fd,LOCK_EX|LOCK_NB)){
+            close(fd);fd=-1;throw std::runtime_error("another game writer owns this world");
+        }
+    }
+    ~WorldWriterLease(){if(fd>=0){flock(fd,LOCK_UN);close(fd);}}
+#endif
+    WorldWriterLease(const WorldWriterLease&)=delete;
+    WorldWriterLease& operator=(const WorldWriterLease&)=delete;
+};
 constexpr PlayerId owner=7;
 constexpr std::int64_t sensor_mm=500000;
 std::string pending;
@@ -48,10 +86,10 @@ void poll_input(){
         if(size<=0)break;
         for(int k=0;k<size;++k){
             if(data[k]=='\n'){
-                if(!pending.empty() && pending.size()<=64 && commands.size()<32)
+                if(!pending.empty() && pending.size()<=192 && commands.size()<32)
                     commands.push_back(pending);
                 pending.clear();
-            }else if(data[k]>=32 && data[k]<=126 && pending.size()<65)pending+=data[k];
+            }else if(data[k]>=32 && data[k]<=126 && pending.size()<193)pending+=data[k];
             else pending.clear();
         }
     }
@@ -268,10 +306,11 @@ EntityId nearest(const Simulation& w, EntityId ship){
     }
     return chosen;
 }
-void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uint64_t& nonce){
+void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uint64_t& nonce,PlayerId principal){
+    if(principal!=owner){announce(world.world(),"ERROR|UNAUTHORIZED_PRINCIPAL");return;}
     const auto v=split(line);if(v.empty())return;
     if(v.size()==1 && v[0]=="SCAN") {scan(world.world(),ship);return;}
-    Command c{};c.issuer=owner;c.actor=ship;c.execute_tick=world.world().tick()+1;
+    Command c{};c.issuer=principal;c.actor=ship;c.execute_tick=world.world().tick()+1;
     c.id=++nonce;c.sequence=c.id;
     try {
         if(v.size()==3 && v[0]=="THRUST"){
@@ -430,16 +469,21 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
 }
 }
 int main(int argc,char** argv){
-    if(argc!=4){std::cerr<<"usage: galaxy_colony_live_host SAVE.sqlite TICK_MS MAX_TICKS\n";return 2;}
+    if(argc!=4 && (argc!=5 || std::string(argv[4])!="--authenticated-transport")){
+        std::cerr<<"usage: galaxy_colony_live_host SAVE.sqlite TICK_MS MAX_TICKS [--authenticated-transport]\n";return 2;
+    }
+    const bool authenticated_transport=argc==5;
     try{
 #ifdef _WIN32
         if(_setmode(_fileno(stdout),_O_BINARY)==-1)throw std::runtime_error("binary stdout failed");
 #endif
         auto ms=integer(argv[2]),max_ticks=integer(argv[3]);
         if(ms<20||ms>5000||max_ticks<5||max_ticks>1200)throw std::invalid_argument("invalid run limits");
+        WorldWriterLease single_writer(argv[1]);
         Simulation genesis(0xB70B);
-        const auto ship=genesis.add_colony_ship(owner,{0,0},60,24);
-        genesis.provision_colony_genesis(ship,1000,3000,1000,1000,1000);
+        const auto initial_ship=genesis.add_colony_ship(owner,{0,0},60,24);
+        EntityId ship=initial_ship;
+        genesis.provision_colony_genesis(initial_ship,1000,3000,1000,1000,1000);
         genesis.add_asteroid({2000,1000},40); // small reachable starter resource
         genesis.add_asteroid({15000,1000},30);
         genesis.add_geological_asteroid({140000,0},AsteroidClass::Carbonaceous,70,1700);
@@ -448,8 +492,16 @@ int main(int argc,char** argv){
         // No stations, other ships, markets, factions or gates at start.
         const bool was_saved=fs::exists(argv[1]);
         PersistentWorld world(argv[1],std::move(genesis));
-        if(!world.world().colony_ship(ship)||world.world().find(ship)->owner_id!=owner)
-            throw std::runtime_error("not a colony start save");
+        if(!world.world().colony_ship(ship)||!world.world().find(ship)||world.world().find(ship)->owner_id!=owner){
+            // A populated production world can have stations before its first
+            // player-owned colony ship. Do not assume the ship has entity ID 1.
+            ship=0;
+            for(const auto& [id,e]:world.world().entities())
+                if(e.owner_id==owner&&world.world().colony_ship(id)){
+                    if(!ship||id<ship)ship=id;
+                }
+            if(!ship)throw std::runtime_error("no colony ship for authenticated owner");
+        }
         std::random_device rd;auto stream=(std::uint64_t(rd())<<32)^rd();if(!stream)stream=1;
         ServerViewBridge bridge(world.world(),stream,owner);
         std::cout<<encode_frame(bridge.snapshot())<<std::flush;
@@ -461,7 +513,21 @@ int main(int argc,char** argv){
             const auto start=Clock::now();
             poll_input();
             const auto to_apply=std::move(commands);commands.clear();
-            for(const auto& line:to_apply)apply(world,ship,line,nonce);
+            for(const auto& line:to_apply){
+                if(!authenticated_transport){apply(world,ship,line,nonce,owner);continue;}
+                // The trusted relay supplies a resolved account ID over our
+                // private stdin pipe; unprefixed/forged/foreign commands fail
+                // closed even if relay validation is accidentally bypassed.
+                const auto first=line.find('|'),second=first==std::string::npos?first:line.find('|',first+1);
+                try{
+                    if(line.substr(0,first)!="AUTH"||second==std::string::npos)
+                        throw std::invalid_argument("unauthenticated native command");
+                    const auto principal=integer(line.substr(first+1,second-first-1));
+                    if(principal!=static_cast<std::int64_t>(owner))
+                        throw std::invalid_argument("foreign colony command");
+                    apply(world,ship,line.substr(second+1),nonce,static_cast<PlayerId>(principal));
+                }catch(const std::exception&){announce(world.world(),"ERROR|UNAUTHORIZED_PRINCIPAL");}
+            }
             const auto old=world.world().events().size();
             world.step();
             for(std::size_t ix=old;ix<world.world().events().size();++ix){
