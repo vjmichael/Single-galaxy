@@ -93,6 +93,63 @@ Decision preflight(const Simulation& world,EntityId home_ship,EntityId site,
     default:throw std::invalid_argument("unknown colony-safety order");
     }
 }
+ResponsePlan plan_response(const Assessment& a){
+    if(!a.site || !a.home_ship || !a.owner)
+        throw std::invalid_argument("response intent requires authoritative compartment identity");
+    ResponsePlan p;
+    p.site=a.site;p.home_ship=a.home_ship;p.world_tick=a.world_tick;
+    p.population=a.population;p.risk=a.risk;
+    if(!a.population){
+        if(a.risk!=Risk::Safe)
+            throw std::invalid_argument("unoccupied compartment cannot have occupant emergency");
+        return p;
+    }
+    switch(a.risk){
+    case Risk::Safe:break;
+    case Risk::ForecastShortage:
+        p.level=ResponseLevel::MonitorAndRequestSupply;
+        p.request_supply=true;
+        break;
+    case Risk::Critical:
+        p.level=ResponseLevel::UrgentRepairAndDepartureSearch;
+        p.request_supply=true;
+        p.seek_physical_repairs=true;
+        p.search_verified_departure=true;
+        p.bypass_player_production_preferences=true;
+        break;
+    case Risk::Emergency:
+        p.level=ResponseLevel::EmergencySurvivalAndDistress;
+        p.request_supply=true;
+        p.seek_physical_repairs=true;
+        p.search_verified_departure=true;
+        p.activate_distress=true;
+        p.bypass_player_production_preferences=true;
+        break;
+    default:throw std::invalid_argument("unrecognized risk in colony response");
+    }
+    // A planning result never mints provisions or declares an evacuation.
+    return p;
+}
+ResponsePlan plan_response(const Simulation& w,EntityId ship,EntityId site){
+    return plan_response(assess(w,ship,site));
+}
+ResponseTransition response_transition(const ResponsePlan& prior,
+                                       const ResponsePlan& now){
+    if(prior.site!=now.site || prior.home_ship!=now.home_ship ||
+       !prior.site || !prior.home_ship || now.world_tick<prior.world_tick)
+        throw std::invalid_argument("response transition across site or backwards time");
+    if(static_cast<int>(prior.risk)<0||static_cast<int>(prior.risk)>3 ||
+       static_cast<int>(now.risk)<0||static_cast<int>(now.risk)>3)
+        throw std::invalid_argument("invalid risk transition");
+    ResponseTransition t;
+    t.previous=prior;t.current=now;
+    t.risk_changed=prior.risk!=now.risk;
+    t.escalated=static_cast<int>(now.risk)>static_cast<int>(prior.risk);
+    // A notice is generated ONLY on a risk threshold transition; no repeat
+    // per every tick and no fictitious evacuation-arrival event.
+    t.requires_new_notice=t.risk_changed;
+    return t;
+}
 void create_evidence_table(sqlite3* db){
     exec(db,"CREATE TABLE IF NOT EXISTS sg_colony_safety_evidence("
         "event_id INTEGER PRIMARY KEY CHECK(event_id>0),"
