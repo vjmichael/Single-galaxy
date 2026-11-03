@@ -19,7 +19,7 @@
 
 ## Reproducible source
 
-`SingleGalaxy_COLONY_AUTO_04A_SafetyCore_v65_2026-11-03.zip`: complete unified v64 game source plus 04A files, **714/714 source checksums verified**, 1,931,293 bytes, archive SHA-256 `c17e94c3c8f9ea1217b1819fb292e79a4ecf0e6c6852445942a59309aa816828`.
+`SingleGalaxy_COLONY_AUTO_04A_SafetyCore_v65_2026-11-03.zip`: complete unified v64 game source plus 04A files, **714/714 source checksums verified**, 1,931,377 bytes, archive SHA-256 `864bf365af9fc89f4b14a5ec43ead131bb463c1c382a1dcdfa0ea67b27b5b14a`.
 
 ## Remaining core steps
 
