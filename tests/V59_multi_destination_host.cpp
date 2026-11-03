@@ -2,9 +2,11 @@
 #include "galaxy/ShipmentManifest.hpp"
 #include "galaxy/RegionalShipmentReconciliation.hpp"
 #include "galaxy/CanonicalShippingHost.hpp"
+#include "galaxy/ShipmentStatusView.hpp"
 #include "galaxy/ClientContract.hpp"
 #include "galaxy/NpcAppearanceGenome.hpp"
 #include <filesystem>
+#include <cstdlib>
 #include <iostream>
 #include <stdexcept>
 #include <sqlite3.h>
@@ -44,7 +46,11 @@ static void region_seed(re::CheckpointStore& region){
  s.add_colony("home",c);ck(region.save(s,0)==1,"regional census bootstrap failed");
 }
 int main(){
- const auto base=(std::filesystem::temp_directory_path()/"sg_v58_multi_destination").string();
+ const char* run=std::getenv("SG_SHIPPING_RUN_ID");
+ const std::string suffix=run?std::string(run):std::string{};
+ ck(suffix.size()<=32&&suffix.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")==std::string::npos,
+    "invalid test fixture run identifier");
+ const auto base=(std::filesystem::temp_directory_path()/("sg_v58_multi_destination"+(suffix.empty()?std::string{}:"_"+suffix))).string();
  const auto path=base+".db",copy=base+".replay",corrupt=base+".tampered",badledger=base+".badledger";
  for(const auto& file:{path,copy,corrupt,badledger})std::filesystem::remove(file);
  try{
@@ -209,6 +215,18 @@ int main(){
   reject([&]{auto spoof=frames;spoof.factory_return_command=9106;production_host.book_factory_goods(spoof);},
     "production host accepted the wrong finished material provenance");
   game_host.book(frames,7);game_host.book(panels,7);
+  if(const char* fixture=std::getenv("SG_SHIPPING_PENDING_FIXTURE")){
+    sqlite3 *from=nullptr,*to=nullptr;
+    ck(sqlite3_open_v2(path.c_str(),&from,SQLITE_OPEN_READONLY,nullptr)==SQLITE_OK,
+       "cannot open pending-freight fixture source");
+    ck(sqlite3_open_v2(fixture,&to,SQLITE_OPEN_READWRITE|SQLITE_OPEN_CREATE,nullptr)==SQLITE_OK,
+       "cannot open pending-freight fixture destination");
+    auto* backup=sqlite3_backup_init(to,"main",from,"main");
+    ck(backup!=nullptr,"cannot start pending-freight backup");
+    ck(sqlite3_backup_step(backup,-1)==SQLITE_DONE&&sqlite3_backup_finish(backup)==SQLITE_OK,
+       "pending-freight backup incomplete");
+    sqlite3_close(to);sqlite3_close(from);
+  }
   reject([&]{contracts.load(frames.id);},"unapproved shipment loaded");
   active=8;reject([&]{production_host.dispatch_factory_goods(frames.id,8,"frames-dispatch");},"unapproved dispatch accepted");
   for(const auto& id:{frames.id,panels.id}){
@@ -392,6 +410,29 @@ int main(){
   forge(".missing-handoff","DROP TRIGGER sg_v59_no_delete; DELETE FROM sg_v59_shipment_handoff WHERE handoff_id='v59-transit-promote';");
   forge(".forged-handoff","DROP TRIGGER sg_v59_no_update; UPDATE sg_v59_shipment_handoff SET digest='0000000000000000' WHERE handoff_id='v59-delivered-promote';");
   forge(".forged-owner","UPDATE sg_regional_mode_authority SET owner=1 WHERE scope='world-return-net';");
+  // Read-only shipment projection: no arbitrary owner-scoped queries, no
+  // shadow cargo balance, and four-party alternate receivers see only their
+  // own consignments. Derived from canonical physical ledger receipts.
+  {
+    shipping::ShipmentStatusView status(path);
+    reject([&]{(void)status.for_principal(0);},"unauthenticated status principal admitted");
+    ck(status.for_principal(11).empty(),"unrelated player learned a shipment");
+    const auto source_rows=status.for_principal(7);
+    const auto carrier_rows=status.for_principal(8);
+    const auto original_rows=status.for_principal(9);
+    const auto new_rows=status.for_principal(10);
+    ck(source_rows.size()==2&&carrier_rows.size()==2&&original_rows.size()==2&&new_rows.size()==1,
+      "shipping view leaked another owner's manifest or omitted a participant");
+    ck(source_rows[0].settled&&source_rows[1].settled,"world-settled receipts missing in shipment view");
+    ck(new_rows[0].id==frames.id&&new_rows[0].phase=="redirected_settled"&&
+       new_rows[0].delivered&&new_rows[0].destination_site==alternate_site,
+       "alternate receiving owner did not see exact committed warehouse receipt");
+    ck(original_rows[0].role=="receiver"&&new_rows[0].role=="alternate_receiver",
+       "status view misidentified signed-in player's role");
+    const auto json=shipping::ShipmentStatusView::to_json(new_rows);
+    ck(json.find("redirected_settled")!=std::string::npos&&json.find("aluminum_frames")!=std::string::npos,
+       "status JSON omitted canonical material or terminal phase");
+  }
   // The actual game presentation contract and the freight settlement world
   // share one galaxy::Simulation; never instantiate a second transport world.
   ServerViewBridge presentation(w.world(), 6060, 0);
@@ -407,6 +448,21 @@ int main(){
   ck(local_view.apply(empty_delta)==ApplyResult::Applied,
      "original game client failed to consume canonical shipping-world delta");
   std::cout<<"v59 verified regional owner/cargo snapshots and v58 production-host source, alternate constructed receiver, four-party consent, physical inter-system delivery and replay PASS\n";
+  // Optional live-transport fixture: use SQLite backup to export a committed
+  // single-file snapshot (not copying an active WAL database by filename).
+  // The real integration test opens this with the read-only status executable.
+  if(const char* fixture=std::getenv("SG_SHIPPING_STATUS_FIXTURE")){
+    sqlite3 *from=nullptr,*to=nullptr;
+    ck(sqlite3_open_v2(path.c_str(),&from,SQLITE_OPEN_READONLY,nullptr)==SQLITE_OK,
+      "cannot open shipping transport fixture source");
+    ck(sqlite3_open_v2(fixture,&to,SQLITE_OPEN_READWRITE|SQLITE_OPEN_CREATE,nullptr)==SQLITE_OK,
+      "cannot open shipping transport fixture destination");
+    auto* backup=sqlite3_backup_init(to,"main",from,"main");
+    ck(backup!=nullptr,"cannot start transport fixture backup");
+    ck(sqlite3_backup_step(backup,-1)==SQLITE_DONE&&sqlite3_backup_finish(backup)==SQLITE_OK,
+      "transport fixture backup incomplete");
+    sqlite3_close(to);sqlite3_close(from);
+  }
   for(const auto& file:{path,copy,corrupt,badledger})std::filesystem::remove(file);
   return 0;
  }catch(const std::exception& e){std::cerr<<"v58 alternate destination and production host FAIL: "<<e.what()<<'\n';return 1;}

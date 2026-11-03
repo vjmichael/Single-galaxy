@@ -6,7 +6,25 @@ In the released game's intended opening, one player colony ship with finite NPC 
 
 ## Current prototype status
 
-The latest committed engineering integration is **GRSM-04b.B2a** (SQLite v17 named shipboard fabrication, October 31, 2026); **ECON-02B0** adds a separately tested quantified production domain kernel that is **not yet wired into PersistentWorld**. The original historical baseline descends from the **B7.0n** source/testing archive. The archived evidence records a Linux pass of 54/54 CTest native/integration suites and 84/84 Node tests. The opt-in individual workforce model persists up to 24 original NPC crew identities and farm work/mentoring; a separate statistical cohort prototype demonstrates bounded large-number accounting. **Those are not a live trillion-NPC universe.** The game remains a bounded 2D colony/space prototype, not a continuous 3D multiplayer galaxy. Native Windows and full interactive Chromium playthrough remain open gates.
+The current source baseline is **GRSM-04b.A** (SQLite v15 verified victim/observer roles), descended from the **B7.0n** archive dated 2026-10-31. The archived evidence records a Linux pass of 54/54 CTest native/integration suites and 84/84 Node tests. The opt-in individual workforce model persists up to 24 original NPC crew identities and farm work/mentoring; a separate statistical cohort prototype demonstrates bounded large-number accounting. **Those are not a live trillion-NPC universe.** The game remains a bounded 2D colony/space prototype, not a continuous 3D multiplayer galaxy. Native Windows and full interactive Chromium playthrough remain open gates.
+
+
+## Authenticated local freight dashboard (DEMOG-05q6e5b8j)
+
+The unified kernel now builds `galaxy_shipping_status_bridge`, a private-pipe native
+shipping adapter for `scripts/shipping_live_server.js`. The localhost web UI is
+`viewer/shipping.html`. The bridge runs **read-only by default**, deriving statuses
+from verified world inventory receipts; an operator-provisioned credential maps
+one login session to a server-side player identity. No public signup or client
+`PlayerId` selector is available. Host-only freight controls require an explicit
+standalone writer configuration; **never run alongside another world writer**.
+
+For private-account provisioning, launch commands, tested limitations and security
+boundaries see [the v62→shipping session report](docs/engineering/DEMOG05Q6E5B8J_TRANSPORT_SESSION_SHIPMENT_STATUS_2026-11-03.md).
+
+The original colony live relay still uses development-only authentication and is
+not a trusted multiplayer entry point. Native Windows installed-game validation
+and integrated game UI are pending.
 
 ## Design documentation
 
@@ -32,7 +50,7 @@ Tests and development are local-first. This repository is for version control, c
 
 ## Status warning
 
-The foundational GRSM event, evidence, testimony, social-group, directional trust and membership slices are implemented. **Automatic gossip**, personality-driven faction formation, multi-colony migration, persistent passenger traffic, voice rumors, galaxy-scale APS and full autonomous colony governance remain **proposals**, not implemented systems. See milestone reports for actual feature evidence.
+The GRSM event, testimony, group, trust, membership and bounded encounter-record foundations are implemented. Automatic gossip, autonomous personality-driven faction formation, multi-colony migration, true persistent passenger traffic, voice rumors, galaxy-scale APS and full autonomous colony governance remain **design proposals**, not implemented systems. See milestone reports for actual feature evidence.
 
 ## License / distribution
 
@@ -63,79 +81,36 @@ GRSM-03b adds an optional host-controlled **trust-gated individual testimony pat
 SQLite v10 now supports **durable, event-sourced group joins, exits and rejoins** by living workforce NPCs. Joining requires an existing, physically co-located member as sponsor; group claims capture immutable membership sequence receipts so later departures do not rewrite past social history. A group does not broadcast facts by membership alone, and no automatic gossip, comm-network, social decay, player recognition, or autonomous politics is claimed. See [`docs/GRSM03c_Membership_Epochs_Report_2026-10-31.md`](docs/GRSM03c_Membership_Epochs_Report_2026-10-31.md).
 
 
-## GRSM-03c.2 · Durable bounded social-contact opportunities (2026-10-31; Linux tested)
+## GRSM-03c.2 · Bounded social encounters (2026-10-31)
 
-SQLite schema v11 now supports **explicit host-invoked, bounded NPC encounter scheduling** for surviving NPCs at the same real location, with a durable scheduling cursor, append-only encounter and scan receipts, per-pair familiarity counts, repeat-contact cooldown, migration boundaries, and recovery/tamper validation. Encounter eligibility is not evidence of talking, trusting, group affiliation, information transfer or intercolony communication. See [GRSM-03c.2 report](docs/GRSM03c2_Bounded_Encounter_Scheduler_Report_2026-10-31.md) and [acceptance contract](docs/engineering/GRSM03c2_Implementation_and_Acceptance_Plan_2026-10-31.md).
+SQLite v11 adds opt-in, host-supervised, budget-limited recurring co-located NPC encounter opportunities with deterministic pair iteration, durable receipts, eight-tick cooldown, contact ordinals, and recoverable migration. Meeting does **not** mean conversation, social trust, universal knowledge, or physical transport. Details and verification: [`GRSM-03c.2 report`](docs/GRSM03c2_Bounded_Encounter_Scheduler_Report_2026-10-31.md); the [`engineering plan`](docs/engineering/GRSM03c2_Implementation_and_Acceptance_Plan_2026-10-31.md) defines the acceptance gates.
 
-**Current acceptance (post-hardening):** Linux full native/integration CTest **61/61**, Node **84/84**, Python design **3/3**, repeated four-relay smoke **12/12**. Earlier legacy timing failures are preserved in the logs; this establishes a final-code Linux pass, not proof that all timing races are impossible. No Windows-native end-to-end or full interactive Chromium verification is claimed.
-
-**Verification qualification for GRSM-03c.1:** targeted native suites 5/5, Node 84/84, Python design 3/3, full Linux compilation successful. A pre-final-code full CTest pass was 60/60; after final guards, complete runs at 59/60, 59/60 and 58/60 exposed intermittent older live-relay failures. Failed cases later passed individually, and that historical 03c.1 final-code gate remained open at the time. Subsequent **GRSM-03c.2** hardening obtained a complete 61/61 native pass. See [GRSM-03c test evidence](docs/GRSM03c_Membership_Epochs_Report_2026-10-31.md).
+**GRSM-03c.2 Linux verification:** full final-code CTest **61/61**, Node **84/84**, design **3/3**. Four historically intermittent live relay tests also passed 12/12 in three parallel rounds after readiness and timeline improvements. Prior failed traces remain in the engineering report; no Windows validation is asserted.
 
 
-## GRSM-03c.3 · Directed rapport from witnessed opportunities (2026-10-31; Linux tested)
+## GRSM-03c.3 · Directional rapport (2026-10-31)
 
-A new, **explicit host-attested** social-interaction API links each Assistance/Harm reaction to an actual same-tick GRSM-03c.2 encounter. The result is a durable **directional rapport** score, independent of GRSM-03b testimony trust, legal standing, group sentiment and world history. Encounter alone awards no rapport. SQLite v12 migration invents no historical interactions; maliciously edited ordinary social rows fail restore validation. This prototype does **not** independently infer whether an action was helpful/harmful from executed physical effects and does not generate autonomous NPC decisions. See [GRSM-03c.3 report](docs/GRSM03c3_Directional_Rapport_Report_2026-10-31.md).
+SQLite v12 supports source-encounter-attested, host-supplied helpful/harmful social reactions that adjust one NPC's rapport toward another, independently from claim trust or physical history. The social-reaction label is not yet independently derived from committed physical effects. Local Linux regression at the milestone: 62/62 native, 84/84 Node, 3/3 design. See [GRSM-03c.3 report](docs/GRSM03c3_Directional_Rapport_Report_2026-10-31.md).
 
-**Linux acceptance:** 62/62 CTest, 84/84 Node.js, 3/3 Python design, and 12/12 stressed legacy relay checks across three repetitions. Windows-native play and full independent physical-event attribution remain open gates.
+## GRSM-03d · Individual intergroup perspectives (2026-10-31)
 
+SQLite v13 adds host-attested, same-tick **individual interpretations of encounters in a group context**. A social group may contain members with contradictory views of another group; overlapping member NPCs can separately evaluate the same target through different affiliations; reverse group opinion need not match. A descriptive per-group count/mean is **not a ratified group policy**, and one source action does not broadcast knowledge. Local Linux acceptance: **63/63 CTest**, **84/84 Node**, **3/3 design**. See [GRSM-03d test report](docs/GRSM03d_Intergroup_Perspectives_Report_2026-10-31.md) and the [nested loyalty design](docs/engineering/GRSM03d_Group_Opinions_And_Nested_Loyalties_2026-10-31.md). Institutional governance, macro-group policies, autonomous evidence interpretation and independently proved physical help/harm remain open.
 
-## GRSM-03d · Conflicting, overlapping individual views of other groups (2026-10-31)
+## GRSM-04a · Witnessed physical events and contextual appraisal (2026-10-31)
 
-GRSM-03d adds durable, host-attested **individual evaluations of one group by members of another**, linked to actual same-tick social interaction records and immutable historical membership epochs. Different members can **agree, disagree, or remain uninformed**, one NPC can assess another group differently through two overlapping affiliations, and the reverse group's opinions need not match. The group relation summary is a **descriptive distribution among informed active members**, not a group vote, institutional charter, sovereign policy or collective mind. SQLite v13 migrations from older worlds invent no historic group positions.
+**Current Linux prototype baseline: GRSM-04a, SQLite v14.** A local surviving NPC with a real **firsthand knowledge receipt for a committed physical incident** may form an explicit subjective appraisal through a group affiliation or their personal unaffiliated context. The same physical incident can support conflicting interpretations across overlapping affiliations; hearsay does not count as firsthand physical proof. History is append-only, migration invents no old opinions, and no appraisal automatically changes a physical fact, reputation score or formal group policy.
 
-**Verified locally on Linux:** native/integration CTest **63/63**, Node **84/84**, Python design **3/3**. An initial 62/63 run exposed an outdated v1 migration fixture; the fixture was corrected and a new complete 63/63 run passed. Earlier failure logs remain archived. See [GRSM-03d engineering report](docs/GRSM03d_Intergroup_Perspectives_Report_2026-10-31.md) and the [nested loyalty / macro-group design](docs/engineering/GRSM03d_Group_Opinions_And_Nested_Loyalties_2026-10-31.md).
-
-**Not yet implemented:** automatic classification of real physical help/harm, NPC political choices, multiaxis loyalty, nested organization authority, voting, secession, federation-wide consensus, or remote knowledge delivery. The social prototype is host-invoked and small-roster. Windows-native/UI acceptance remains open.
-
-
-## GRSM-04a · Physical evidence–linked individual appraisals (2026-10-31)
-
-A local NPC who has an **actual firsthand witness receipt of a committed physical incident** may express a subjective appraisal in an unaffiliated or verified group-membership context. The same ore movement can produce an appreciative miner-guild opinion and a damaging relief-group interpretation without changing the objective event. A hearsay claim or remote NPC cannot masquerade as direct physical proof. SQLite v14 creates append-only appraisal history with original membership epochs, migration without retrospective opinions, integrity/recovery checks and replay limits.
-
-**Linux acceptance:** native/integration CTest **64/64**, Node **84/84**, Python design **3/3**, targeted social/persistence suites **11/11**; earlier interrupted unbounded full run is recorded, not counted. [GRSM-04a engineering report](docs/GRSM04a_Physical_Evidence_Appraisals_Report_2026-10-31.md).
-
-**Still future work:** independently proving which particular NPC caused an effect, automatic interpretation of physical consequences, autonomous decisions, federation government, long-range information routes and Windows-native/visual manual acceptance. Physical proof of ore moved is not proof an individual stole it.
+**Linux acceptance:** full native/integration CTest **64/64**, Node **84/84**, Python design **3/3**, all persistence/social suites **11/11** and the repeat subset green. **Not yet implemented:** independently established individual responsibility for an incident, automatic social behavior, organizational voting, nested macro-group institutions and remote communications. See [GRSM-04a engineering report](docs/GRSM04a_Physical_Evidence_Appraisals_Report_2026-10-31.md).
 
 
-## GRSM-04b.A · Verified named NPC roles without fabricated culprit (2026-10-31)
+## GRSM-04b.A · Proven individual roles, not invented culpability (2026-10-31)
 
-SQLite v15 adds append-only receipts recording only **NPC victims directly identified by committed NpcLost activity** and **firsthand observers possessing their own validated local-observation source**. These roles are cross-checked against physical event and NPC knowledge ledgers on restoration, survive recovery, and cannot be forged by replaying hearsay, substituting crew members, or retroactively declaring an old incident. The v14-to-v15 migration invents no earlier roles or opinions.
-
-**Linux local verification:** complete final native/integration CTest **65/65**, Node.js **84/84**, Python design **3/3**, persistence/social **12/12**. An earlier whole-suite run was interrupted and is retained as a separate, nonpassing trace. See [GRSM-04b.A engineering report](docs/GRSM04bA_Verified_Roles_Report_2026-10-31.md).
-
-**Crucial limitation:** a player/host command naming a **ship** does not establish a particular **NPC actor**, perpetrator, beneficiary or culpable organization. GRSM-04b.B must implement independently committed NPC job/action-effect receipts before individual culpability can be inferred. No automatic blame, punishment, dialogue, social-policy change, autonomous political behavior, Windows-native or Chromium full playthrough is claimed in this slice.
+Named casualty and firsthand observer roles now have append-only SQLite v15 receipts checked against independently committed physical and eyewitness sources. A ship or facility command does **not** establish an individual NPC perpetrator or beneficiary. The v14 migration invents no retroactive roles. Linux local tests: **65/65** complete native CTest, **84/84** Node, **3/3** Python design. See [GRSM-04b.A report](docs/GRSM04bA_Verified_Roles_Report_2026-10-31.md). GRSM-04b.B (actual NPC job/actor receipts), 04b.C (role causality), and 04b.D (bounded social effect) remain open.
 
 
-## GRSM-04b.B1 · Named NPC mining work with committed effect proof (2026-10-31)
+## Engineering checkpoint: GRSM-04b.B2a / ECON-02B bridge (2026-10-31)
 
-An explicitly authorized host pathway now accepts a **specific living onboard crew member** as the assigned executor of a real mining command. SQLite v16 records an immutable assignment separately from an **executed-work receipt**. The latter is written only with the successfully applied simulation step and a genuine positive ore-transfer incident. A failed command, ordinary ship-level mining, or a fellow passenger can never be retroactively credited as named work merely by association. The source is a host-owned job appointment plus independent committed physical outcome, **not yet** simulation of an NPC independently selecting the task or operating equipment. Replays, restarts, recovery, tampered identity and physical-source rows, and migrations from v15 are tested.
-
-**Linux verified:** complete native/integration CTest **66/66**, Node.js **84/84**, design tests **3/3**, targeted persistence/GRSM **13/13**. Earlier incomplete native runs and a separately passed legacy relay are retained. [GRSM-04b.B1 engineering report](docs/GRSM04bB1_Named_Mining_Execution_Report_2026-10-31.md).
-
-**Deferred network and launcher decision:** use a future **ID-centric versioned binary multiplayer protocol** over an authenticated transport; retain a single authoritative simulation whether single-player or dedicated-hosted. Eventually a single-click game launcher will start the local server invisibly and an optional separate **Server Manager GUI** can manage the same backend. These remain **design decisions, not present functionality**. See [NET-01 deferred transport / hosting design](docs/engineering/NET01_Deferred_Binary_Transport_And_Dual_Mode_Launcher_2026-10-31.md).
-
-**Not yet implemented:** generalized named NPC work across professions, causally validated individual assistance/harm in arbitrary commands, commander/executor/beneficiary attribution, autonomous NPC choices, legal culpability, a production multiplayer protocol, a single-click native launcher or a server GUI. Windows-native and full interactive UI acceptance remain future gates.
-
-
-## ECON-02A — Universal workshop and basic/advanced occupations (2026-10-31)
-
-The new **C++17 ECON-02A domain prototype** introduces one configurable workshop with a multi-stage recipe graph (aluminum feedstock → ingots → sheets/wire → brackets/valves → hull panels/pumps), explicit material input reservations, single-task-per-worker scheduling, selectable powered workstations, shortage proposals requiring authorization, and completed-work receipts identifying the worker. Basic work accepts a zero-experience volunteer; advanced assembly requires combined proficiencies. Seven example recipes use intentionally simplified test masses.
-
-**Scope:** This model compiles with `galaxy_kernel` but is **not yet wired into PersistentWorld, actual colony stores, SQLite work-order persistence, or GRSM personal/social effects**. It does not claim automated business formation, jobs/wages, real ship fuel, a minted currency or a complete NPC labor department.
-
-**Verification:** Linux all-target build passed; dedicated test **1/1**, non-live CTest **42/42**, Node **84/84**, design **3/3**. An attempted complete CTest **did not finish** in legacy live-relay scenarios and remains open; do not count that as 67/67. See [ECON-02A engineering report](docs/engineering/ECON02A_Universal_Workshop_Labor_Board_and_Skill_Convergence_2026-10-31.md) and [global money-slang/name research](docs/engineering/ECON02A_Global_Money_Slang_Currency_Name_Research_2026-10-31.md).
-
-**Development order:** retain GRSM-04b.B1 / SQLite v16 as the *latest verified durable game integration*, with ECON-02A as the latest *standalone economy domain*. Next join the two by binding the workshop's actual inputs/outputs and named labor completion to transaction-safe simulation receipts. Defer universal multiplayer transport and launcher UI as specified in NET-01.
-
-
-## 2026-10-31 · GRSM-04b.B2a + ECON-02B0 engineering convergence
-
-**B2a:** Real shipboard module fabrication can be assigned to a named, living onboard NPC, with assignment distinguished from successfully committed execution proof. Failed commands do not award execution credit. See [named fabrication report](docs/engineering/GRSM04bB2a_Named_Fabrication_Report_2026-10-31.md).
-
-**ECON-02B0:** Added the standalone deterministic quantified production kernel. Every ingredient must meet the machine-tier minimum before a batch begins; below-minimum material generates **no output, no scrap, and no input consumption**. Whole valid batches reserve input, finite finished/scrap containers enforce backpressure, and in-progress batches can resume from validated state copies. Remote aggregated production matches tick-by-tick production in deterministic no-intervention tests. See [quantified production report](docs/ECON02B0_Quantified_Production_Engineering_Report_2026-10-31.md).
-
-**Local evidence:** ECON-02B0 all-target Linux build, 44/44 non-live native suites, 84/84 Node tests, 3/3 Python design checks. The entire live E2E suite, Windows-native integration, and a persistent outpost manufacturing pipeline remain open. See [factory design and gates](docs/engineering/ECON02B1_Factory_Design_And_Next_Gates_2026-10-31.md).
-
+Host-attested named fabrication now binds real shipboard production to SQLite v17 assignment and verified physical execution receipts. The configurable ECON-02A universal workshop is **still an isolated prototype**, not yet an authoritative outpost facility. See `docs/engineering/GRSM04bB2a_Named_Fabrication_Report_2026-10-31.md`. Local bounded verification: 43/43 non-live native, 84/84 Node, 3/3 design Python. Full live CTest remains unverified.
 
 ## ECON-02B1a · Real outpost workshop integration (2026-10-31; Linux local tested)
 
@@ -148,9 +123,6 @@ Local Linux evidence: 45/45 non-live native CTest suites, 84/84 Node tests, 3/3 
 The persistent outpost workshop can now install a second, material-paid Tier 1 machine, assign a **different real local NPC operator**, consume the first machine's bounded panel-output stock, and create durable aluminum-frame stock plus physical scrap. Every stage needs a complete minimum batch; unavailable inputs cause no new input consumption/output/scrap. Both stages share finite intermediate and scrap stores. A filled final bin blocks the finisher, which eventually blocks its supplier. Power and maintenance remain real dependencies. Output can be moved back to the ship in a conserved 1t batch under legacy cargo constraints. Snapshot format `galaxy-kernel-v23` survives restarts and recovery; ledger checks reject forged material-transfer destinations.
 
 **Local verification:** full Linux build; non-live native CTest **46/46**, Node **84/84**, design Python **3/3**; targeted real-world and recovery tests pass. **No** world-scale accelerated remote simulation, actual conveyor entity/path throughput, general recipe graph, spatial floor-plan builder, native Windows/UI acceptance or full live E2E is claimed. Read [ECON-02B1b engineering report](docs/engineering/ECON02B1b_Connected_Outpost_Line_Engineering_Report_2026-10-31.md) for exact scope and acceptance.
-
-
-**Final broader Linux acceptance (same source revision):** all **71/71** native CTest cases passed, including the previously intermittent legacy live/relay scenarios (parallel local run with per-test timeout). This is Linux evidence only; Windows-native and browser GUI acceptance remain open.
 
 ## ECON-02B1c — Metric-volume cargo and independent item stacks (2026-10-31)
 
@@ -199,6 +171,7 @@ Existing module-built automatic storage/workshop links can now have real, author
 ## ECON-02B2d4a — Saved blueprints driving real construction jobs (2026-10-31)
 
 `BlueprintConstruction` now compiles a canonical `FactoryLayout` file into a deterministic construction-job preview and submits **one normal host-authorized world command per explicit step**, using freshly assigned command IDs. It constructs real original/extra storage, a Tier-1 workshop, grid installations, storage/workshop links and material-backed conveyor paths. Incomplete projects and resupplied jobs resume from SQLite-verified **world state**, not a trusted client progress counter. A saved user-side plan supports cancellation without refunds, but this is **not** yet durable host revocation. Unsupported machine tiers and junctions are intentionally rejected. No extra SQLite migration: existing v30 snapshots and command/resource receipts remain authoritative. Linux verification: **82/82 full native CTest, 58/58 non-live native, 84/84 Node, 3/3 design**. This is a restricted construction-planning integration, **not** a GUI or autonomous NPC builder. See [B2d4a engineering report](docs/engineering/ECON02B2d4a_Blueprint_Construction_Planner_2026-10-31.md).
+
 
 ## ECON-02B2d4b — Interactive ghost factory-layout editor with snapped walls (2026-10-31)
 

@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Single-Galaxy · Shipments</title><style>
+:root{font-family:system-ui,sans-serif;color-scheme:dark;background:#101722;color:#ecf1fa}
+body{max-width:900px;margin:2rem auto;padding:0 1rem}h1{font-size:1.65rem}h2{font-size:1.1rem}
+.panel{background:#1b2635;border:1px solid #3b516b;border-radius:12px;padding:1rem;margin:1rem 0}
+input,button{font:inherit;padding:.65rem;border-radius:7px;border:1px solid #6483a0}input{display:block;box-sizing:border-box;width:100%;margin:.4rem 0 1rem;background:#0d1725;color:#fff}button{background:#305b83;color:white;cursor:pointer}button:hover{background:#4076a7}button:focus-visible{outline:3px solid #86b9f7}
+#notice{min-height:1.25rem}#list{display:grid;gap:.8rem}.shipment{border:1px solid #425a71;border-radius:10px;padding:.9rem;background:#1b2635}
+.state{color:#a3e7d4;font-weight:bold}small{color:#b4c4d5}.meta{display:flex;gap:.6rem;flex-wrap:wrap}
+[hidden]{display:none!important}
+</style></head><body>
+<h1>Single-Galaxy · Cargo shipments</h1><p>Verified physical deliveries and custody records from the world ledger. Only shipments associated with your signed-in player are displayed.</p>
+<section id="signin" class="panel"><h2>Sign in to your colony account</h2><form id="loginForm" autocomplete="on">
+<label>Username<input id="username" name="username" required maxlength="32" autocomplete="username"></label>
+<label>Password<input id="password" name="password" type="password" required autocomplete="current-password"></label>
+<button type="submit">Sign in</button></form></section>
+<section id="dashboard" hidden><div class="panel"><div class="meta"><strong id="who"></strong><button id="refresh" type="button">Refresh shipments</button><button id="logout" type="button">Sign out</button></div></div><div id="list" aria-live="polite"></div></section>
+<p id="notice" role="status" aria-live="polite"></p><script src="/shipping.js" defer></script></body></html>
