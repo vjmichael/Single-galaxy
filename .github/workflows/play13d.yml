@@ -7,6 +7,8 @@ on:
       - 'include/galaxy/PlanetaryAgriculture.hpp'
       - 'src/PlanetaryAgriculture.cpp'
       - 'tests/PLAY13D_PlanetaryAgricultureTests.cpp'
+      - 'include/galaxy/PlanetaryRegions.hpp'
+      - 'tests/PLAY13D_PlanetaryRegionsTests.cpp'
       - 'CMakeLists.txt'
       - '.github/workflows/play13d.yml'
 jobs:
@@ -21,6 +23,6 @@ jobs:
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
       - name: Build real galaxy kernel and planetary test
-        run: cmake --build build --config Release --target galaxy_play13d_planetary_agriculture_tests
+        run: cmake --build build --config Release --target galaxy_play13d_planetary_agriculture_tests galaxy_play13d_planetary_regions_tests
       - name: Native mass conservation and return logistics
-        run: ctest --test-dir build -C Release -R "^galaxy_play13d_planetary_agriculture$" --output-on-failure
+        run: ctest --test-dir build -C Release -R "^galaxy_play13d_planetary_(agriculture|regions)$" --output-on-failure
