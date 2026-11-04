@@ -9682,6 +9682,185 @@ PersistentWorld::record_voluntary_immigration_admission(
         world_,generation_,event,pressure,origin,destination,ferry,
         npc,transport,receiving_owner);
 }
+
+PersistentWorld::HostVoluntaryDepartureReport
+PersistentWorld::supervise_voluntary_migration(
+    const HostVoluntaryDepartureSchedule& schedule,FailPoint fail){
+    HostVoluntaryDepartureReport out;
+    out.origin=schedule.origin;out.tick=world_.tick();
+    if(!schedule.origin || !schedule.scan_budget || schedule.scan_budget>32)
+        throw std::invalid_argument("voluntary supervisor requires colony and scan budget 1..32");
+    const auto* site=world_.find(schedule.origin);
+    if(!site || !world_.colony_ship(schedule.origin) ||
+       !site->owner_id || site->type!=EntityType::Ship)
+        throw std::invalid_argument("voluntary supervisor source is not a physically owned colony");
+    constexpr auto max_id=static_cast<std::uint64_t>(
+        std::numeric_limits<sqlite3_int64>::max());
+    if(schedule.personal_event_base &&
+       schedule.personal_event_base>max_id-schedule.scan_budget)
+        throw std::invalid_argument("host reserved a non-viable personal history event range");
+    // The host calls us every committed tick. We only assess on a bounded,
+    // deterministic cadence; restarting cannot secretly advance any NPC's
+    // appraisal clock or duplicate a past current-generation observation.
+    if(world_.tick()<8 || world_.tick()%8){
+        out.status=HostVoluntaryDepartureStatus::NotDue;
+        out.reason="individual observations are due every eight world ticks";
+        return out;
+    }
+    std::vector<std::uint64_t> people;
+    for(const auto& [id,npc]:world_.npc_records())
+        if(npc.home_ship==schedule.origin && npc.location==schedule.origin &&
+           !npc.transport_id)people.push_back(id);
+    if(people.empty()){
+        out.status=HostVoluntaryDepartureStatus::NoResidents;
+        out.reason="there are no named physical residents to observe";
+        return out;
+    }
+    const auto budget=std::min<std::size_t>(
+        schedule.scan_budget,people.size());
+    const auto start=((world_.tick()/8)%people.size() *
+                      (schedule.scan_budget%people.size()))%people.size();
+    std::uint64_t eligible=0;
+    for(std::size_t i=0;i<budget;++i){
+        const auto npc=people[(start+i)%people.size()];
+        ++out.examined;
+        if(!store_->personal_outlook_recorded_at(
+               schedule.origin,npc,generation_)){
+            if(store_->assess_personal_outlook(
+                   world_,generation_,schedule.origin,npc)){
+                const auto event=schedule.personal_event_base?
+                    schedule.personal_event_base+i:
+                    store_->next_personal_outlook_event_id();
+                record_personal_outlook(event,schedule.origin,npc);
+                ++out.observed;
+            }
+        }
+        const auto now=colony_personal_outlook(schedule.origin,npc);
+        if(!now || !now->considering_departure)continue;
+        ++out.considering_departure;
+        // A decision first reached at this very generation must be
+        // committed before it can authorize a future immigrant permit.
+        const auto previous=store_->personal_outlook_before(
+            schedule.origin,npc,generation_);
+        if(!eligible && previous && previous->considering_departure &&
+           now->world_generation>=previous->world_generation)
+            eligible=npc;
+    }
+    if(!eligible){
+        out.status=out.considering_departure?
+            HostVoluntaryDepartureStatus::SeekingDestination:
+            (out.observed?HostVoluntaryDepartureStatus::Observed:
+                          HostVoluntaryDepartureStatus::NoEligibleMigrants);
+        out.reason=out.considering_departure?
+            "new intent must mature into a prior committed history generation":
+            "none of the bounded physical residents has mature exit intention";
+        return out;
+    }
+    out.selected_npc=eligible;
+    if(!schedule.approved_offer){
+        out.status=HostVoluntaryDepartureStatus::SeekingDestination;
+        out.reason="adult wants to emigrate, but no authenticated receiving-owner offer exists";
+        return out;
+    }
+    const auto& offer=*schedule.approved_offer;
+    if(!offer.destination || !offer.ferry || !offer.receiving_owner ||
+       !offer.transport_id || !offer.admission_event_id ||
+       !offer.boarding_command_id)
+        throw std::invalid_argument("host offer must reserve route, owner and durable identifiers");
+    const auto* destination=world_.find(offer.destination);
+    const auto* ferry=world_.find(offer.ferry);
+    const auto* origin=site;
+    const auto* old=world_.npc_records().count(eligible)?
+        &world_.npc_records().at(eligible):nullptr;
+    // Never create even a pending admission for an ungrounded ferry:
+    // physical same-system boarding, capacity/receiving owner and vehicle
+    // owner must already be real. The native passenger command does the
+    // final authoritative safety admission before execution.
+    if(!destination || !ferry || !old ||
+       destination->owner_id!=offer.receiving_owner ||
+       !world_.colony_ship(offer.destination) ||
+       !world_.colony_ship(offer.ferry) ||
+       ferry->system_id!=origin->system_id ||
+       (ferry->owner_id!=origin->owner_id &&
+        ferry->owner_id!=offer.receiving_owner) ||
+       colony_safety::assess(
+           world_,offer.destination,offer.destination).risk!=
+           colony_safety::Risk::Safe ||
+       store_->has_child_or_dependent_link(schedule.origin)){
+        out.status=HostVoluntaryDepartureStatus::PhysicalRouteBlocked;
+        out.reason="no real, safe, approved single-adult ferry route";
+        return out;
+    }
+    const auto dx=ferry->position.x-origin->position.x;
+    const auto dy=ferry->position.y-origin->position.y;
+    const auto range=Simulation::kDockingRangeMm;
+    if(dx < -range || dx>range || dy < -range || dy>range ||
+       dx*dx+dy*dy>range*range){
+        out.status=HostVoluntaryDepartureStatus::PhysicalRouteBlocked;
+        out.reason="offered ferry is not physically within boarding range";
+        return out;
+    }
+    const auto existing=store_->outstanding_voluntary_admission(
+        schedule.origin,eligible);
+    if(existing){
+        out.admission_event_id=existing->event_id;
+        if(existing->event_id!=offer.admission_event_id ||
+           existing->destination!=offer.destination ||
+           existing->ferry!=offer.ferry ||
+           existing->receiving_owner!=offer.receiving_owner ||
+           existing->transport_id!=offer.transport_id){
+            out.status=HostVoluntaryDepartureStatus::ExistingAdmission;
+            out.reason="this NPC has an unresolved different immigration admission";
+            return out;
+        }
+    }else{
+        // Deliberate scarcity can create a physical eligibility witness; a
+        // satisfied resident or unsupported subjective grievance cannot
+        // forge a new Critical/Emergency source event.
+        auto pressure=store_->existing_exit_pressure(schedule.origin,eligible);
+        if(!pressure){
+            if(!store_->assess_colony_exit_pressure(
+                   world_,generation_,schedule.origin,eligible)){
+                out.status=HostVoluntaryDepartureStatus::PhysicalRouteBlocked;
+                out.reason="resident lacks an authentic earlier shortage witness";
+                return out;
+            }
+            if(!offer.pressure_event_id)
+                throw std::invalid_argument(
+                    "host must reserve an event ID for the first physical shortage witness");
+            pressure=record_colony_exit_pressure(
+                offer.pressure_event_id,schedule.origin,eligible).event_id;
+        }
+        const auto accepted=record_voluntary_immigration_admission(
+            offer.admission_event_id,*pressure,schedule.origin,
+            offer.destination,offer.ferry,eligible,offer.transport_id,
+            offer.receiving_owner);
+        out.admission_event_id=accepted.event_id;
+    }
+    out.status=HostVoluntaryDepartureStatus::AdmissionCreated;
+    out.reason="receiving-owner admission is durable but boarding not yet queued";
+    if(world_.has_command_id(offer.boarding_command_id)){
+        out.status=HostVoluntaryDepartureStatus::ExistingAdmission;
+        out.reason="the host command identifier is already reserved; never duplicate a voyage";
+        return out;
+    }
+    Command board{};
+    board.id=offer.boarding_command_id;
+    board.sequence=offer.boarding_command_id;
+    board.execute_tick=world_.tick()+1;
+    board.issuer=Simulation::kServerAuthority;
+    board.actor=offer.ferry;
+    board.target=schedule.origin;
+    board.action=Action::HostEmbarkPassengers;
+    board.transport_id=offer.transport_id;
+    board.passenger_ids={eligible};
+    if(submit_voluntary_immigration_boarding(out.admission_event_id,board,fail)){
+        out.status=HostVoluntaryDepartureStatus::BoardingQueued;
+        out.reason="native host boarding command admitted; next physical world step executes it";
+    }
+    return out;
+}
+
 bool PersistentWorld::submit_voluntary_immigration_boarding(
     std::uint64_t admission_event,const Command& c,FailPoint fail){
     const auto a=store_->immigration_admission(admission_event);
