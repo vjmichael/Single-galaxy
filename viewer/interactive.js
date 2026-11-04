@@ -191,6 +191,20 @@ el('combatFire').addEventListener('click',()=>{
  command('colonyFireTraining',{target});
 });
 el('flightScan').addEventListener('click',()=>command('colonyScan'));
+el('probeLaunch').addEventListener('click',()=>command('colonyProbeDeploy'));
+el('probeTarget').addEventListener('change',()=>{
+ const selected=el('probeTarget').value!=='';
+ el('probeSurvey').disabled=!selected;
+ el('probeRetrieve').disabled=!selected;
+});
+el('probeSurvey').addEventListener('click',()=>{
+ const probe=Number(el('probeTarget').value);
+ if(Number.isSafeInteger(probe)&&probe>0)command('colonyProbeScan',{probe});
+});
+el('probeRetrieve').addEventListener('click',()=>{
+ const probe=Number(el('probeTarget').value);
+ if(Number.isSafeInteger(probe)&&probe>0)command('colonyProbeRecover',{probe});
+});
 el('explorationScan').addEventListener('click',()=>command('colonyScan'));
 el('fitScanner').addEventListener('click',()=>command('colonyConfigureScanner',{mode:1}));
 el('unfitScanner').addEventListener('click',()=>command('colonyConfigureScanner',{mode:-1}));
