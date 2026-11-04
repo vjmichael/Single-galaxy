@@ -1,6 +1,7 @@
 #include "galaxy/Persistence.hpp"
 #include "galaxy/ColonySafety.hpp"
 #include "galaxy/ColonyDefense.hpp"
+#include "galaxy/ColonyConflict.hpp"
 #include "galaxy/ColonySafetyJournal.hpp"
 #include "galaxy/ColonySafetyNotice.hpp"
 #include "galaxy/ShipmentManifest.hpp"
@@ -1704,6 +1705,267 @@ public:
                it->system!=static_cast<std::uint32_t>(system) ||
                it->distance_squared!=static_cast<std::uint64_t>(distance))
                 throw std::runtime_error("local watch witness forged or not physically possible");
+        }
+    }
+    // CONFLICT-01A: colony political agenda exists independently of any
+    // player's conduct. Host approves a real, named, resident leader. Every
+    // later warning/raid preparation needs one specific observed contact.
+    void establish_colony_agenda(const Simulation& world,
+         std::uint64_t generation,std::uint64_t agenda_id,
+         EntityId source,std::uint64_t npc,colony_conflict::Agenda agenda){
+        if(!agenda_id || agenda_id>
+              static_cast<std::uint64_t>(std::numeric_limits<sqlite3_int64>::max()) ||
+           !source || !npc || static_cast<int>(agenda)<0 ||
+           static_cast<int>(agenda)>3)
+            throw std::invalid_argument("invalid colony political agenda");
+        const auto* entity=world.find(source);
+        const auto person=world.npc_records().find(npc);
+        if(!entity || entity->type!=EntityType::Ship ||
+           !entity->owner_id || !world.colony_ship(source) ||
+           person==world.npc_records().end() ||
+           person->second.home_ship!=source || person->second.location!=source ||
+           person->second.transport_id || !world.npc_available_for_duty(npc))
+            throw std::runtime_error("agenda leader is not living physically present colony NPC");
+        run(db_,"BEGIN IMMEDIATE");
+        try{
+            if(latest_generation(db_)!=generation)
+                throw std::runtime_error("stale world before colony political agenda");
+            run(db_,"CREATE TABLE IF NOT EXISTS sg_colony_conflict_agenda("
+                "event_id INTEGER PRIMARY KEY CHECK(event_id>0),"
+                "world_generation INTEGER NOT NULL CHECK(world_generation>0),"
+                "world_hash TEXT NOT NULL,tick INTEGER NOT NULL,"
+                "colony TEXT NOT NULL UNIQUE,leader TEXT NOT NULL,"
+                "agenda INTEGER NOT NULL CHECK(agenda BETWEEN 0 AND 3))");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_conflict_agenda_no_update "
+                "BEFORE UPDATE ON sg_colony_conflict_agenda "
+                "BEGIN SELECT RAISE(ABORT,'immutable founding colony agenda'); END");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_conflict_agenda_no_delete "
+                "BEFORE DELETE ON sg_colony_conflict_agenda "
+                "BEGIN SELECT RAISE(ABORT,'immutable founding colony agenda'); END");
+            Statement insert(db_,"INSERT INTO sg_colony_conflict_agenda "
+                "VALUES(?,?,?,?,?,?,?)");
+            insert.i64(1,static_cast<sqlite3_int64>(agenda_id));
+            insert.i64(2,static_cast<sqlite3_int64>(generation));
+            insert.text(3,std::to_string(world.state_hash()));
+            insert.i64(4,static_cast<sqlite3_int64>(world.tick()));
+            insert.text(5,std::to_string(source));
+            insert.text(6,std::to_string(npc));
+            insert.i64(7,static_cast<int>(agenda));
+            insert.execute();
+            run(db_,"COMMIT");
+        }catch(...){
+            sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;
+        }
+    }
+    colony_conflict::Decision assess_colony_aggression(
+        const Simulation& world,std::uint64_t generation,
+        EntityId source,std::uint64_t contact_event_id) const{
+        if(!source || !contact_event_id || contact_event_id>
+           static_cast<std::uint64_t>(std::numeric_limits<sqlite3_int64>::max()))
+            throw std::invalid_argument("missing physical aggression provenance");
+        Statement agenda(db_,"SELECT event_id,leader,agenda FROM "
+            "sg_colony_conflict_agenda WHERE colony=?");
+        agenda.text(1,std::to_string(source));
+        if(!agenda.row())throw std::runtime_error("colony has no durable leadership agenda");
+        const auto leader=parse_u64(sqlite3_column_text(agenda.get(),1));
+        const int disposition=sqlite3_column_int(agenda.get(),2);
+        if(!leader || disposition<0 || disposition>3 || agenda.row())
+            throw std::runtime_error("invalid founding colony agenda");
+        Statement contact(db_,"SELECT world_generation,tick,source,observer,"
+            "foreign_ship,foreign_owner,system,distance_squared "
+            "FROM sg_colony_watch_contacts WHERE event_id=?");
+        contact.i64(1,static_cast<sqlite3_int64>(contact_event_id));
+        if(!contact.row())throw std::runtime_error("no real witnessed foreign-ship contact");
+        const auto observed_generation=sqlite3_column_int64(contact.get(),0);
+        colony_defense::Contact seen;
+        seen.world_tick=static_cast<std::uint64_t>(
+            sqlite3_column_int64(contact.get(),1));
+        seen.source=parse_u64(sqlite3_column_text(contact.get(),2));
+        seen.observer_npc=parse_u64(sqlite3_column_text(contact.get(),3));
+        seen.foreign_ship=parse_u64(sqlite3_column_text(contact.get(),4));
+        seen.foreign_owner=parse_u64(sqlite3_column_text(contact.get(),5));
+        seen.system=static_cast<std::uint32_t>(
+            sqlite3_column_int64(contact.get(),6));
+        seen.distance_squared=static_cast<std::uint64_t>(
+            sqlite3_column_int64(contact.get(),7));
+        if(observed_generation!=static_cast<sqlite3_int64>(generation) ||
+           seen.source!=source || seen.world_tick!=world.tick() ||
+           !seen.foreign_ship || contact.row())
+            throw std::runtime_error("stale/wrong-colony contact cannot motivate action");
+        return colony_conflict::evaluate(world,source,leader,
+            static_cast<colony_conflict::Agenda>(disposition),seen,contact_event_id);
+    }
+    colony_conflict::Decision record_colony_aggression(
+        const Simulation& world,std::uint64_t generation,
+        std::uint64_t decision_id,EntityId source,std::uint64_t contact_id){
+        if(!decision_id || decision_id>
+           static_cast<std::uint64_t>(std::numeric_limits<sqlite3_int64>::max()) ||
+           decision_id==contact_id)
+            throw std::invalid_argument("invalid or reused offensive decision id");
+        run(db_,"BEGIN IMMEDIATE");
+        try{
+            if(latest_generation(db_)!=generation)
+                throw std::runtime_error("stale world generation for offensive intent");
+            const auto choice=assess_colony_aggression(world,generation,source,contact_id);
+            Statement agenda(db_,"SELECT event_id FROM sg_colony_conflict_agenda "
+                "WHERE colony=?");
+            agenda.text(1,std::to_string(source));
+            if(!agenda.row())throw std::runtime_error("no leadership agenda");
+            const auto agenda_event=sqlite3_column_int64(agenda.get(),0);
+            if(agenda.row())throw std::runtime_error("multiple colony agendas");
+            run(db_,"CREATE TABLE IF NOT EXISTS sg_colony_conflict_intent("
+                "event_id INTEGER PRIMARY KEY CHECK(event_id>0),"
+                "world_generation INTEGER NOT NULL CHECK(world_generation>0),"
+                "world_hash TEXT NOT NULL,tick INTEGER NOT NULL,"
+                "colony TEXT NOT NULL,leader TEXT NOT NULL,"
+                "agenda_event INTEGER NOT NULL,contact_event INTEGER NOT NULL UNIQUE,"
+                "target_ship TEXT NOT NULL,target_owner TEXT NOT NULL,"
+                "motive INTEGER NOT NULL CHECK(motive BETWEEN 0 AND 4),"
+                "posture INTEGER NOT NULL CHECK(posture BETWEEN 0 AND 4),"
+                "risk INTEGER NOT NULL CHECK(risk BETWEEN 0 AND 3))");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_conflict_intent_no_update "
+                "BEFORE UPDATE ON sg_colony_conflict_intent "
+                "BEGIN SELECT RAISE(ABORT,'immutable colony strategic intent'); END");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_conflict_intent_no_delete "
+                "BEFORE DELETE ON sg_colony_conflict_intent "
+                "BEGIN SELECT RAISE(ABORT,'immutable colony strategic intent'); END");
+            Statement ins(db_,"INSERT INTO sg_colony_conflict_intent "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)");
+            ins.i64(1,static_cast<sqlite3_int64>(decision_id));
+            ins.i64(2,static_cast<sqlite3_int64>(generation));
+            ins.text(3,std::to_string(world.state_hash()));
+            ins.i64(4,static_cast<sqlite3_int64>(world.tick()));
+            ins.text(5,std::to_string(source));
+            ins.text(6,std::to_string(choice.leader_id));
+            ins.i64(7,agenda_event);
+            ins.i64(8,static_cast<sqlite3_int64>(contact_id));
+            ins.text(9,std::to_string(choice.target_ship));
+            ins.text(10,std::to_string(choice.target_owner));
+            ins.i64(11,static_cast<int>(choice.motive));
+            ins.i64(12,static_cast<int>(choice.posture));
+            ins.i64(13,static_cast<int>(choice.source_risk));
+            ins.execute();
+            run(db_,"COMMIT");
+            return choice;
+        }catch(...){
+            sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;
+        }
+    }
+    void verify_colony_conflicts(std::uint64_t max_generation) const{
+        Statement have_agenda(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_conflict_agenda'");
+        Statement have_intent(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_conflict_intent'");
+        const bool agenda_exists=have_agenda.row(),intent_exists=have_intent.row();
+        if(!agenda_exists && !intent_exists)return;
+        if(!agenda_exists)throw std::runtime_error("colony intent without agenda");
+        for(const auto* tr:{"sg_conflict_agenda_no_update",
+                            "sg_conflict_agenda_no_delete"}){
+            Statement q(db_,"SELECT 1 FROM sqlite_master "
+                "WHERE type='trigger' AND name=?");
+            q.text(1,tr);
+            if(!q.row() || q.row())
+                throw std::runtime_error("colony founding intent guard missing");
+        }
+        if(intent_exists){
+            for(const auto* tr:{"sg_conflict_intent_no_update",
+                                "sg_conflict_intent_no_delete"}){
+                Statement q(db_,"SELECT 1 FROM sqlite_master "
+                    "WHERE type='trigger' AND name=?");
+                q.text(1,tr);
+                if(!q.row() || q.row())
+                    throw std::runtime_error("colony strategic intent guard missing");
+            }
+        }
+        // Cross-check leadership founding against the original preserved
+        // physical colony/leader snapshot, not current possibly changed roles.
+        Statement agendas(db_,"SELECT event_id,world_generation,world_hash,"
+            "tick,colony,leader,agenda FROM sg_colony_conflict_agenda");
+        while(agendas.row()){
+            const auto generation=sqlite3_column_int64(agendas.get(),1);
+            const auto expected_hash=sqlite_str(agendas.get(),2);
+            const auto tick=sqlite3_column_int64(agendas.get(),3);
+            const auto colony=parse_u64(sqlite3_column_text(agendas.get(),4));
+            const auto leader=parse_u64(sqlite3_column_text(agendas.get(),5));
+            const auto disposition=sqlite3_column_int(agendas.get(),6);
+            if(sqlite3_column_int64(agendas.get(),0)<1 || generation<1 ||
+               static_cast<std::uint64_t>(generation)>max_generation ||
+               tick<0 || !colony || !leader || disposition<0 || disposition>3)
+                throw std::runtime_error("historical colony agenda invalid");
+            Statement snap(db_,"SELECT state,checksum FROM snapshots WHERE generation=?");
+            snap.i64(1,generation);
+            if(!snap.row())throw std::runtime_error("founding colony snapshot pruned");
+            const auto size=sqlite3_column_bytes(snap.get(),0);
+            const auto* bytes=sqlite3_column_blob(snap.get(),0);
+            if(!bytes || size<=0 || size>16*1024*1024)
+                throw std::runtime_error("founding colony snapshot malformed");
+            const auto w=Simulation::from_snapshot(std::string(
+                static_cast<const char*>(bytes),static_cast<std::size_t>(size)));
+            const auto* entity=w.find(colony);
+            const auto person=w.npc_records().find(leader);
+            if(w.state_hash()!=parse_u64(sqlite3_column_text(snap.get(),1)) ||
+               std::to_string(w.state_hash())!=expected_hash ||
+               w.tick()!=static_cast<std::uint64_t>(tick) || snap.row() ||
+               !entity || entity->type!=EntityType::Ship ||
+               !entity->owner_id || !w.colony_ship(colony) ||
+               person==w.npc_records().end() ||
+               person->second.home_ship!=colony ||
+               person->second.location!=colony ||
+               person->second.transport_id ||
+               !w.npc_available_for_duty(leader))
+                throw std::runtime_error("colony political agenda origin forged");
+        }
+        if(!intent_exists)return;
+        Statement decisions(db_,"SELECT event_id,world_generation,world_hash,tick,"
+            "colony,leader,agenda_event,contact_event,target_ship,target_owner,"
+            "motive,posture,risk FROM sg_colony_conflict_intent");
+        while(decisions.row()){
+            const auto event=sqlite3_column_int64(decisions.get(),0);
+            const auto gen=sqlite3_column_int64(decisions.get(),1);
+            const auto hash=sqlite_str(decisions.get(),2);
+            const auto tick=sqlite3_column_int64(decisions.get(),3);
+            const auto source=parse_u64(sqlite3_column_text(decisions.get(),4));
+            const auto leader=parse_u64(sqlite3_column_text(decisions.get(),5));
+            const auto agenda_event=sqlite3_column_int64(decisions.get(),6);
+            const auto contact_event=sqlite3_column_int64(decisions.get(),7);
+            const auto target=parse_u64(sqlite3_column_text(decisions.get(),8));
+            const auto owner=parse_u64(sqlite3_column_text(decisions.get(),9));
+            const auto motive=sqlite3_column_int(decisions.get(),10);
+            const auto posture=sqlite3_column_int(decisions.get(),11);
+            const auto risk=sqlite3_column_int(decisions.get(),12);
+            if(event<1 || gen<1 || static_cast<std::uint64_t>(gen)>max_generation ||
+               tick<0 || !source || !leader || !target || !owner ||
+               agenda_event<1 || contact_event<1)
+                throw std::runtime_error("offensive strategic intent malformed");
+            Statement linked(db_,"SELECT event_id FROM sg_colony_conflict_agenda "
+                "WHERE colony=? AND leader=?");
+            linked.text(1,std::to_string(source));linked.text(2,std::to_string(leader));
+            if(!linked.row() ||
+               sqlite3_column_int64(linked.get(),0)!=agenda_event ||
+               linked.row())
+                throw std::runtime_error("offensive intent invented a leader");
+            Statement cp(db_,"SELECT state,checksum FROM snapshots WHERE generation=?");
+            cp.i64(1,gen);
+            if(!cp.row())throw std::runtime_error("offensive decision snapshot pruned");
+            const auto len=sqlite3_column_bytes(cp.get(),0);
+            const auto* bytes=sqlite3_column_blob(cp.get(),0);
+            if(!bytes || len<=0 || len>16*1024*1024)
+                throw std::runtime_error("offensive decision snapshot malformed");
+            const auto w=Simulation::from_snapshot(std::string(
+                static_cast<const char*>(bytes),static_cast<std::size_t>(len)));
+            if(w.state_hash()!=parse_u64(sqlite3_column_text(cp.get(),1)) ||
+               std::to_string(w.state_hash())!=hash ||
+               w.tick()!=static_cast<std::uint64_t>(tick) || cp.row())
+                throw std::runtime_error("offensive decision physical provenance forged");
+            const auto recomputed=assess_colony_aggression(w,
+                static_cast<std::uint64_t>(gen),source,
+                static_cast<std::uint64_t>(contact_event));
+            if(recomputed.leader_id!=leader || recomputed.target_ship!=target ||
+               recomputed.target_owner!=owner ||
+               static_cast<int>(recomputed.motive)!=motive ||
+               static_cast<int>(recomputed.posture)!=posture ||
+               static_cast<int>(recomputed.source_risk)!=risk)
+                throw std::runtime_error("offensive posture or motive replaced");
         }
     }
     void verify_colony_response(const Simulation& state,std::uint64_t gen) const {
@@ -5419,6 +5681,12 @@ public:
             Statement contact_events(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
                 "AND name='sg_colony_watch_contacts'");
             const bool has_colony_contacts=contact_events.row();
+            Statement conflict_agendas(db_,"SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='sg_colony_conflict_agenda'");
+            Statement conflict_intents(db_,"SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='sg_colony_conflict_intent'");
+            const bool has_conflict_agendas=conflict_agendas.row();
+            const bool has_conflict_intents=conflict_intents.row();
             const std::string prune_sql=std::string(
                 "DELETE FROM snapshots WHERE generation > 1 AND generation < ?")+
                 (incident_cases_exist ? " AND generation NOT IN "
@@ -5454,6 +5722,12 @@ public:
                     : "")+
                 (has_colony_contacts ? " AND generation NOT IN "
                     "(SELECT world_generation FROM sg_colony_watch_contacts)"
+                    : "")+
+                (has_conflict_agendas ? " AND generation NOT IN "
+                    "(SELECT world_generation FROM sg_colony_conflict_agenda)"
+                    : "")+
+                (has_conflict_intents ? " AND generation NOT IN "
+                    "(SELECT world_generation FROM sg_colony_conflict_intent)"
                     : "");
             Statement prune(db_,prune_sql.c_str());
             prune.i64(1, static_cast<std::int64_t>(next > 2 ? next - 2 : 1));
@@ -6602,6 +6876,7 @@ void PersistentWorld::recover_copy(const std::string& source, const std::string&
         copy.verify_supervisor_plans(gen);
         copy.verify_npc_habitat_supplies(gen);
         copy.verify_colony_watch_contacts(gen);
+        copy.verify_colony_conflicts(gen);
         verify_dependent_stranding_cases(destination,gen);
         verify_split_rescue_intents(destination,gen);
     } catch (...) {
@@ -6639,6 +6914,7 @@ PersistentWorld::PersistentWorld(const std::string& path, Simulation initial_wor
     store_->verify_supervisor_plans(generation_);
     store_->verify_npc_habitat_supplies(generation_);
     store_->verify_colony_watch_contacts(generation_);
+    store_->verify_colony_conflicts(generation_);
 }
 PersistentWorld::~PersistentWorld() = default;
 
@@ -7633,6 +7909,23 @@ colony_defense::Contact PersistentWorld::record_colony_watch_contact(
     std::uint64_t id,EntityId source,std::uint64_t npc,EntityId foreign){
     return store_->record_colony_watch_contact(
         world_,generation_,id,source,npc,foreign);
+}
+
+void PersistentWorld::establish_colony_conflict_agenda(
+    std::uint64_t agenda_id,EntityId source,std::uint64_t leader,
+    colony_conflict::Agenda agenda){
+    store_->establish_colony_agenda(
+        world_,generation_,agenda_id,source,leader,agenda);
+}
+colony_conflict::Decision PersistentWorld::assess_colony_conflict_intent(
+    EntityId source,std::uint64_t contact_event_id) const{
+    return store_->assess_colony_aggression(
+        world_,generation_,source,contact_event_id);
+}
+colony_conflict::Decision PersistentWorld::record_colony_conflict_intent(
+    std::uint64_t event,EntityId source,std::uint64_t contact_event){
+    return store_->record_colony_aggression(
+        world_,generation_,event,source,contact_event);
 }
 
 // COLONY-AUTO-04D.4D2B2: admission only. No family member relocates until
