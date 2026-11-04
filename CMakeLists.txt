@@ -1002,3 +1002,12 @@ if(BUILD_TESTING)
     add_test(NAME galaxy_colony_auto04d5b_durable_supervisor
         COMMAND galaxy_colony_auto04d5b_durable_supervisor_tests)
 endif()
+
+# AUTO-04D.5C1: physical emergency habitat supply from staffed colony ship.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_auto04d5c1_npc_resupply_tests
+        tests/COLONY_AUTO04D5C1_NpcResupplyTests.cpp)
+    target_link_libraries(galaxy_colony_auto04d5c1_npc_resupply_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_auto04d5c1_npc_resupply
+        COMMAND galaxy_colony_auto04d5c1_npc_resupply_tests)
+endif()
