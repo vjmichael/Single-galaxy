@@ -1290,3 +1290,12 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_play13d_planetary_framework_tests PRIVATE galaxy_kernel)
   add_test(NAME galaxy_play13d_planetary_framework COMMAND galaxy_play13d_planetary_framework_tests)
 endif()
+
+# PGF-01B: connected planetary terrain and watershed acceptance.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13d_planetary_watershed_tests
+    tests/PLAY13D_PlanetaryWatershedTests.cpp)
+  target_link_libraries(galaxy_play13d_planetary_watershed_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_planetary_watershed
+    COMMAND galaxy_play13d_planetary_watershed_tests)
+endif()
