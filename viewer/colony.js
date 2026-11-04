@@ -55,6 +55,32 @@
          (kind!==0&&parent===0))throw Error('Invalid celestial parent/body');
       return {...e,id,parent,kind,orbit,x,y,z,radius};
     }
+    if(t==='PLANET_CREW_AVAILABLE'){
+      if(v.length!==5)throw Error('Malformed available surface NPC');
+      const id=numeric(v[4],Number.MAX_SAFE_INTEGER);
+      if(!id)throw Error('Invalid surface NPC');
+      return {...e,id};
+    }
+    if(t==='PLANET_CREW_DONE'){
+      if(v.length!==4)throw Error('Malformed surface crew terminator');
+      return e;
+    }
+    if(t==='PLANET_SITE_STATUS'){
+      if(v.length!==16)throw Error('Malformed planetary spaceport status');
+      const id=numeric(v[4],Number.MAX_SAFE_INTEGER),
+       latitude=numeric(v[5],35),longitude=numeric(v[6],71),
+       phase=numeric(v[7],3),progress=numeric(v[8],40),
+       required=numeric(v[9],40),workers=numeric(v[10],2),
+       food=numeric(v[11],1000000),water=numeric(v[12],1000000),
+       oxygen=numeric(v[13],1000000),npc1=numeric(v[14],Number.MAX_SAFE_INTEGER),
+       npc2=numeric(v[15],Number.MAX_SAFE_INTEGER);
+      if(!id || phase<1 || required!==40 || workers!==2 ||
+          (npc1===npc2 && npc1!==0) ||
+          (phase===3 && progress!==40))
+        throw Error('Invalid surface spaceport status');
+      return {...e,id,latitude,longitude,phase,progress,required,workers,
+              food,water,oxygen,npc1,npc2};
+    }
     if(t==='PLANET_OPERATION_COMMITTED'){
       if(v.length!==9)throw Error('Malformed planetary operation receipt');
       const id=numeric(v[4],Number.MAX_SAFE_INTEGER);
@@ -572,7 +598,7 @@
            const choice=document.createElement('select');
            choice.setAttribute('aria-label','Planetary region operation');
            const operations=[
-             ['Build a site','colonyPlanetBuild',{}],
+             ['Delegate NPCs — build surface spaceport','colonyPlanetBuild',{}],
              ['Install farm (two modules)','colonyPlanetEquip',{equipment:'FARM'}],
              ['Install extractor (two modules)','colonyPlanetEquip',{equipment:'EXTRACT'}],
              ['Supply 100 kg water','colonyPlanetSupply',{resource:'WATER',kg:100}],
@@ -584,8 +610,27 @@
              ['Retrieve 1000 kg water','colonyPlanetRetrieve',{resource:'WATER',kg:1000}]
            ];
            operations.forEach(([label],index)=>choice.add(new Option(label,String(index))));
+           const firstNpc=document.createElement('input');
+           const secondNpc=document.createElement('input');
+           for(const [input,label] of [[firstNpc,'First NPC ID (optional)'],
+                                       [secondNpc,'Second NPC ID (optional)']]){
+             input.type='number';input.min='1';input.step='1';
+             input.placeholder=label;
+             input.setAttribute('aria-label',label);
+           }
+           const crewButton=document.createElement('button');
+           crewButton.type='button';crewButton.textContent='List available NPCs';
+           crewButton.addEventListener('click',()=>window.GalaxyColonyCommand?.('colonyPlanetCrew',{}));
+           const statusButton=document.createElement('button');
+           statusButton.type='button';statusButton.textContent='Check spaceport progress';
+           statusButton.addEventListener('click',()=>{
+             const lat=Number(latitude.value),lon=Number(longitude.value);
+             if(Number.isInteger(lat)&&lat>=0&&lat<36&&Number.isInteger(lon)&&lon>=0&&lon<72)
+               window.GalaxyColonyCommand?.('colonyPlanetStatus',
+                 {body:body.id,latitude:lat,longitude:lon});
+           });
            const perform=document.createElement('button');
-           perform.type='button';perform.textContent='Request operation';
+           perform.type='button';perform.textContent='Send orbital order';
            perform.addEventListener('click',()=>{
              const lat=Number(latitude.value),lon=Number(longitude.value);
              if(!Number.isSafeInteger(lat)||lat<0||lat>=36||
@@ -595,16 +640,48 @@
              }
              const selected=operations[Number(choice.value)];
              if(!selected)return;
-             window.GalaxyColonyCommand?.(selected[1],
-               {body:body.id,latitude:lat,longitude:lon,...selected[2]});
+             const payload={body:body.id,latitude:lat,longitude:lon,...selected[2]};
+             if(selected[1]==='colonyPlanetBuild' &&
+                (firstNpc.value||secondNpc.value)){
+               const first=Number(firstNpc.value),second=Number(secondNpc.value);
+               if(!Number.isSafeInteger(first)||first<=0||
+                  !Number.isSafeInteger(second)||second<=0||first===second){
+                 q('signatureFeedback').textContent='Select two distinct valid NPC IDs.';
+                 return;
+               }
+               payload.firstNpc=first;payload.secondNpc=second;
+             }
+             window.GalaxyColonyCommand?.(selected[1],payload);
              q('signatureFeedback').textContent=
                'Operation requested. A native survey of this exact region is required.';
            });
-           actions.append(caption,choice,perform);
+           actions.append(caption,choice,firstNpc,secondNpc,crewButton,statusButton,perform);
            item.append(latitude,longitude,survey,actions);
          }
          return item;
        }));
+     }
+     if(e.type==='PLANET_CREW_AVAILABLE'){
+       if(!window.GalaxyAvailableSurfaceNpcIds)window.GalaxyAvailableSurfaceNpcIds=[];
+       window.GalaxyAvailableSurfaceNpcIds.push(e.id);
+     }
+     if(e.type==='PLANET_CREW_DONE'){
+       const roster=window.GalaxyAvailableSurfaceNpcIds||[];
+       q('signatureFeedback').textContent=roster.length?
+         'Ready NPCs (assign two by ID): '+roster.join(', '):
+         'No individually available NPC records. Legacy finite crew can be auto-delegated.';
+       window.GalaxyAvailableSurfaceNpcIds=[];
+     }
+     if(e.type==='PLANET_SITE_STATUS'){
+       const names={1:'NPC descent / equipment unloading',
+                    2:'Spaceport under construction',3:'Spaceport operational'};
+       q('signatureFeedback').textContent=
+         'Orbital site '+e.id+' ('+e.latitude+','+e.longitude+'): '+
+         names[e.phase]+' · '+e.progress+'/'+e.required+
+         ' progress ticks · '+e.workers+' delegated NPCs '+
+         (e.npc1?'#'+e.npc1+' and #'+e.npc2:'(legacy finite crew)')+
+         ' · surface food '+e.food+' kg, water '+e.water+
+         ' kg, oxygen '+e.oxygen+' kg.';
      }
      if(e.type==='PLANET_OPERATION_COMMITTED'){
        q('signatureFeedback').textContent='Planetary action committed: '+
