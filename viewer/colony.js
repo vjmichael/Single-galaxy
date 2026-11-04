@@ -55,6 +55,17 @@
          (kind!==0&&parent===0))throw Error('Invalid celestial parent/body');
       return {...e,id,parent,kind,orbit,x,y,z,radius};
     }
+    if(t==='PLANET_OPERATION_COMMITTED'){
+      if(v.length!==10)throw Error('Malformed planetary operation receipt');
+      const id=numeric(v[4],Number.MAX_SAFE_INTEGER);
+      const latitude=numeric(v[5],35),longitude=numeric(v[6],71);
+      const action=v[7],generation=numeric(v[8],Number.MAX_SAFE_INTEGER);
+      const permitted=new Set(['PLANET_BUILD','PLANET_EQUIP','PLANET_SUPPLY',
+         'PLANET_GROW','PLANET_EXTRACT','PLANET_RETRIEVE']);
+      if(!id||!permitted.has(action)||!generation||v[9]!==undefined)
+        throw Error('Invalid planetary operation receipt');
+      return {...e,id,latitude,longitude,action,generation};
+    }
     if(t==='PLANET_REGION'){
       if(v.length!==15)throw Error('Malformed native planet region');
       const signed=x=>{if(!/^(0|-?[1-9][0-9]*)$/.test(x))throw Error('Invalid signed region value');
@@ -547,10 +558,50 @@
              q('signatureFeedback').textContent=
                'Planetary region requested from authoritative native geography.';
            });
-           item.append(latitude,longitude,survey);
+           const actions=document.createElement('details');
+           const caption=document.createElement('summary');
+           caption.textContent='Regional construction / farming / extraction';
+           const choice=document.createElement('select');
+           choice.setAttribute('aria-label','Planetary region operation');
+           const operations=[
+             ['Build a site','colonyPlanetBuild',{}],
+             ['Install farm (two modules)','colonyPlanetEquip',{equipment:'FARM'}],
+             ['Install extractor (two modules)','colonyPlanetEquip',{equipment:'EXTRACT'}],
+             ['Supply 100 kg water','colonyPlanetSupply',{resource:'WATER',kg:100}],
+             ['Supply 50 kg nutrients','colonyPlanetSupply',{resource:'NUTRIENTS',kg:50}],
+             ['Grow two farm batches','colonyPlanetGrow',{batches:2}],
+             ['Extract 1000 kg water','colonyPlanetExtract',{resource:'WATER',kg:1000}],
+             ['Extract 1000 kg nutrients','colonyPlanetExtract',{resource:'NUTRIENTS',kg:1000}],
+             ['Retrieve 12 kg food','colonyPlanetRetrieve',{resource:'FOOD',kg:12}],
+             ['Retrieve 1000 kg water','colonyPlanetRetrieve',{resource:'WATER',kg:1000}]
+           ];
+           operations.forEach(([label],index)=>choice.add(new Option(label,String(index))));
+           const perform=document.createElement('button');
+           perform.type='button';perform.textContent='Request operation';
+           perform.addEventListener('click',()=>{
+             const lat=Number(latitude.value),lon=Number(longitude.value);
+             if(!Number.isSafeInteger(lat)||lat<0||lat>=36||
+                !Number.isSafeInteger(lon)||lon<0||lon>=72){
+               q('signatureFeedback').textContent='Invalid planetary region coordinates.';
+               return;
+             }
+             const selected=operations[Number(choice.value)];
+             if(!selected)return;
+             window.GalaxyColonyCommand?.(selected[1],
+               {body:body.id,latitude:lat,longitude:lon,...selected[2]});
+             q('signatureFeedback').textContent=
+               'Operation requested. A native survey of this exact region is required.';
+           });
+           actions.append(caption,choice,perform);
+           item.append(latitude,longitude,survey,actions);
          }
          return item;
        }));
+     }
+     if(e.type==='PLANET_OPERATION_COMMITTED'){
+       q('signatureFeedback').textContent='Planetary action committed: '+
+          e.action+' at body #'+e.id+' region ('+e.latitude+','+e.longitude+
+          '), world generation '+e.generation+'.';
      }
      if(e.type==='PLANET_REGION'){
        const terrains=['Deep ocean','Shallow sea','Coast','Wetland','Grassland',
