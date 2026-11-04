@@ -159,6 +159,16 @@ try{
         // Same tick retry with proper broker-supplied authorization does
         // not reappraise people a second time or fabricate any passenger.
         pulse.approved_offer=authorized;
+        // A failure between durable acceptance and durable *boarding*
+        // preserves a pending offer but cannot create a passenger, and the
+        // next supervisor pulse must resume that precise consent/manifest.
+        const auto before_boarding_generation=w.generation();
+        refused([&]{(void)w.supervise_voluntary_migration(
+            pulse,FailPoint::AfterSnapshotWrite);});
+        CHECK(w.generation()==before_boarding_generation);
+        CHECK(!w.world().has_command_id(101));
+        CHECK(w.world().npc_records().at(2).location==origin);
+        CHECK(!w.verified_voluntary_immigration(8701));
         auto accepted=w.supervise_voluntary_migration(pulse);
         CHECK(accepted.status==
               PersistentWorld::HostVoluntaryDepartureStatus::BoardingQueued);
