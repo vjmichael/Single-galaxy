@@ -668,6 +668,17 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
                 std::to_string(unsigned(oasis.energy))+"|"+
                 std::to_string(unsigned(oasis.nutrients))+"|"+
                 std::to_string(unsigned(oasis.shelter)));
+        // A fitted scanner can locate a finite reserve's surface waypoint.
+        // This is exploration metadata, never authorization to harvest.
+        for(const auto& oasis:world.world().survey_oasis_prospects(principal,ship)){
+            const auto source=world.world().planetary_oasis_source_region(
+                principal,ship,oasis.body);
+            if(source)announce(world.world(),"OASIS_REGION|"+
+                std::to_string(oasis.body)+"|"+
+                std::to_string(source->latitude)+"|"+
+                std::to_string(source->longitude)+"|"+
+                std::to_string(source->revision));
+        }
         announce(world.world(),"CELESTIAL_DONE|"+
             std::to_string(profile->orbital_bands.size()));
         return;
