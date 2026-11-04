@@ -56,7 +56,7 @@ try{
             <<" risk="<<static_cast<int>(colony_safety::assess(w.world(),ship,site).risk)
             <<" condition="<<u->condition<<" repairs="<<u->repairs
             <<" spares="<<u->spare_modules<<" techs="<<u->technicians
-            <<'\\n';
+            <<std::endl;
         CHECK(u->repairs==previous+1);  // actually executed using physical module
         CHECK(u->delegated_repairs==0); // owner never enabled delegated policy
         CHECK(u->spare_modules==1);     // physical module consumed
