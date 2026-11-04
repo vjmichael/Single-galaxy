@@ -128,6 +128,15 @@ public:
         std::uint64_t site) const;
     std::vector<ScanObservation> known_sites(PlayerId owner,std::uint32_t system,
         int minimum_confidence=1) const;
+    // A host-observed report enters a durable outbox. Reports become readable
+    // no earlier than 10 seconds of game-time after capture and only in range.
+    // Retrying delivery after a crash is safe: observation writes are idempotent.
+    bool queue_probe_report(const ScanObservation& observation,
+        std::uint64_t captured_at_ms);
+    std::size_t deliver_probe_reports(PlayerId owner,std::uint64_t now_ms,
+        std::int64_t link_distance_mm);
+    static constexpr std::int64_t kDeepProbeLinkMm=74798935350000LL;
+    static constexpr std::uint64_t kNominalResponseMs=10000ULL;
 private:
     ::sqlite3* db_=nullptr;
 };
