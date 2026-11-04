@@ -2372,6 +2372,30 @@ public:
                         throw std::runtime_error("migration time-traveled before acceptance");
                 }
             }
+            if(moved){
+                // The original authoritative post-execution world must
+                // independently contain the SAME physical ferry and named
+                // manifest promised by the receiving-colony admission.
+                Statement arrived(db_,"SELECT state,checksum FROM snapshots "
+                    "WHERE generation=?");
+                arrived.i64(1,static_cast<sqlite3_int64>(committed));
+                if(!arrived.row())throw std::runtime_error(
+                    "immigration original arrival snapshot pruned");
+                const auto* arrived_bytes=sqlite3_column_blob(arrived.get(),0);
+                const auto arrived_len=sqlite3_column_bytes(arrived.get(),0);
+                if(!arrived_bytes || arrived_len<=0 || arrived_len>16*1024*1024)
+                    throw std::runtime_error("immigration original arrival snapshot malformed");
+                const auto arrival_world=Simulation::from_snapshot(std::string(
+                    static_cast<const char*>(arrived_bytes),
+                    static_cast<std::size_t>(arrived_len)));
+                if(arrival_world.state_hash()!=parse_u64(
+                       sqlite3_column_text(arrived.get(),1)) ||
+                   !arrival_world.completed_voyage_matches(
+                       transport,ferry,origin,dest,std::vector<std::uint64_t>{npc}) ||
+                   arrival_world.npc_records().at(npc).home_ship!=dest ||
+                   arrived.row())
+                    throw std::runtime_error("immigration ferry/custody history was forged");
+            }
             if(moved && !have_settled)
                 throw std::runtime_error("voluntary immigration lost settlement receipt");
             if(have_settled){
@@ -2424,8 +2448,10 @@ public:
         if(!source || !dest || source->owner_id!=a.original_owner ||
            dest->owner_id!=a.receiving_owner)
             throw std::runtime_error("receiving-owner or source-owner authority changed");
-        if(world.voyage_status(a.transport_id)!=2)
-            throw std::runtime_error("immigrant has not physically disembarked");
+        if(!world.completed_voyage_matches(
+               a.transport_id,a.ferry,a.origin,a.destination,
+               std::vector<std::uint64_t>{a.npc_id}))
+            throw std::runtime_error("immigrant lacks exact completed admitted ferry and passenger manifest");
         const auto person=world.npc_records().find(a.npc_id);
         if(person==world.npc_records().end() ||
            person->second.home_ship!=a.origin ||
