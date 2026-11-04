@@ -5986,7 +5986,8 @@ void PersistentWorld::step_with_atomic_colony_family_departure(
                "source TEXT NOT NULL,receiver TEXT NOT NULL,"
                "family_scope TEXT NOT NULL,region_scope TEXT NOT NULL,"
                "region_revision INTEGER NOT NULL,member_count INTEGER NOT NULL,"
-               "adult_count INTEGER NOT NULL,child_count INTEGER NOT NULL)");
+               "adult_count INTEGER NOT NULL,child_count INTEGER NOT NULL,"
+               "origin_colony TEXT NOT NULL,destination_colony TEXT NOT NULL)");
         run(db,"CREATE TRIGGER IF NOT EXISTS sg_colony_family_execute_no_update "
                "BEFORE UPDATE ON sg_colony_family_departure_execute "
                "BEGIN SELECT RAISE(ABORT,'executed family custody immutable'); END");
@@ -5994,7 +5995,7 @@ void PersistentWorld::step_with_atomic_colony_family_departure(
                "BEFORE DELETE ON sg_colony_family_departure_execute "
                "BEGIN SELECT RAISE(ABORT,'executed family custody immutable'); END");
         Statement receipt(db,"INSERT INTO sg_colony_family_departure_execute "
-                             "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)");
+                             "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
         receipt.text(1,std::to_string(plan.command_id));
         receipt.i64(2,static_cast<std::int64_t>(committed_generation));
         receipt.i64(3,static_cast<std::int64_t>(next.tick()));
@@ -6007,6 +6008,8 @@ void PersistentWorld::step_with_atomic_colony_family_departure(
         receipt.i64(10,static_cast<std::int64_t>(recorded.size()));
         receipt.i64(11,static_cast<std::int64_t>(req.adult_ids.size()));
         receipt.i64(12,static_cast<std::int64_t>(req.children.size()));
+        receipt.text(13,plan.origin_colony);
+        receipt.text(14,plan.destination_colony);
         receipt.execute();
         // One independently checkable ART02 move linkage for every physically
         // rescued person (two parents plus each high-range dependent).
