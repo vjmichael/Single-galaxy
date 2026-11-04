@@ -610,6 +610,19 @@ public:
     colony_conflict::Decision record_colony_diplomatic_intent(
         std::uint64_t decision_event_id,EntityId source_colony,
         std::uint64_t observed_contact_event_id);
+    // CONFLICT-01B3: trusted, owner-approved governance transaction. The
+    // successor must actually be present and available at the colony.
+    // Appointments require a present incumbent; emergency replacements
+    // require a vacancy; same-leader policy revision is a separate cause.
+    // A new epoch becomes effective ONLY after the next world generation.
+    colony_conflict::GovernanceEpoch record_colony_governance_transition(
+        std::uint64_t event_id,EntityId colony,std::uint64_t successor_npc,
+        colony_conflict::Agenda agenda,
+        colony_conflict::DiplomaticPolicy policy,
+        colony_conflict::TransitionKind kind,PlayerId approving_owner);
+    // Effective leadership and political direction, excluding same-generation
+    // pending changes. Zero epoch event means the immutable founding charter.
+    colony_conflict::GovernanceEpoch colony_governance(EntityId colony) const;
     // CONFLICT-01B1: actual ship destruction + a real NPC's delivered GRSM
     // interpretation produces a subjective, directed diplomatic revision.
     // The incident's real attacker owner is independently reconstructed;
