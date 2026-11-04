@@ -410,6 +410,19 @@ struct OasisExtractor {
     std::uint16_t energy_units=0; // bounded harvested local solar energy
     std::uint64_t cycles=0;
 };
+// PLAY-13D.3: one persistent facility per physical body+surface cell.
+// All module tonnage is retained in embodied_ore. All stored resources are kg.
+// The ship remains the physical logistics origin; no free settlement population.
+struct PlanetarySiteFacility {
+    planetary::PlanetaryRegionKey region{};
+    PlayerId owner=0;
+    EntityId source_ship=0;
+    std::int64_t embodied_ore=4;
+    bool farm=false, extractor=false;
+    std::int64_t water_kg=0, nutrients_kg=0, food_kg=0, wastewater_kg=0;
+    std::uint64_t harvest_cycles=0;
+};
+using PlanetarySiteKey = std::tuple<std::uint64_t,std::uint16_t,std::uint16_t,std::uint32_t>;
 struct PhysicalOasisReserve {
     std::int64_t water_kg=0,nutrients_kg=0;
     std::int64_t initial_water_kg=0,initial_nutrients_kg=0;
@@ -900,6 +913,24 @@ public:
     // PGF-01B.2: authenticated, read-only planetary geography survey. The
     // returned site and surface projection originate from one watershed map.
     // Body IDs must already exist in the authoritative physical catalogue.
+    const std::map<PlanetarySiteKey,PlanetarySiteFacility>& planetary_sites() const {
+        return planetary_sites_;
+    }
+    bool build_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude);
+    // Install only with more real manufactured modules and appropriate ground.
+    bool equip_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,bool farm);
+    // Ship and site remain in identical anchored celestial frame.
+    bool supply_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,bool water,std::int64_t kilograms);
+    bool cultivate_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,std::int64_t batches);
+    // Finite, explicitly genesis-funded oasis matter moves to a SITE stock.
+    bool extract_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,bool water,std::int64_t kilograms);
+    bool retrieve_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,bool food,std::int64_t kilograms);
     std::optional<planetary::GeographicSite> scan_planetary_geography(
         PlayerId owner, EntityId ship, std::uint64_t body_id,
         std::uint16_t latitude, std::uint16_t longitude) const;
@@ -976,7 +1007,8 @@ private:
     std::map<EntityId,std::uint64_t> local_entity_anchors_; // v73 nonship frame custody
     std::map<std::uint64_t,LocalCelestialEnvironment> local_environments_; // v74
     std::map<std::uint64_t,PhysicalOasisReserve> oasis_reserves_; // v75 explicit finite sources
-    std::map<EntityId,OasisExtractor> oasis_extractors_; // v76 real installed machinery
+    std::map<EntityId,OasisExtractor> oasis_extractors_;
+    std::map<PlanetarySiteKey,PlanetarySiteFacility> planetary_sites_; // v76 real installed machinery
     std::map<std::uint64_t,PendingCelestialTransit> pending_celestial_transits_;
     std::map<std::uint64_t,CompletedCelestialTransit> completed_celestial_transits_;
     std::map<std::uint32_t,std::vector<PhysicalCelestialBody>> physical_celestial_systems_;
