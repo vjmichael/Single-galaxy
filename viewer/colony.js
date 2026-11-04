@@ -55,6 +55,23 @@
          (kind!==0&&parent===0))throw Error('Invalid celestial parent/body');
       return {...e,id,parent,kind,orbit,x,y,z,radius};
     }
+    if(t==='PLANET_REGION'){
+      if(v.length!==15)throw Error('Malformed native planet region');
+      const signed=x=>{if(!/^(0|-?[1-9][0-9]*)$/.test(x))throw Error('Invalid signed region value');
+        const n=Number(x);if(!Number.isSafeInteger(n))throw Error('Region integer overflow');return n;};
+      const id=numeric(v[4],Number.MAX_SAFE_INTEGER);
+      const latitude=numeric(v[5],35),longitude=numeric(v[6],71);
+      const elevation=signed(v[7]),ocean=numeric(v[8],1),
+            terrain=numeric(v[9],10),watercourse=numeric(v[10],3),
+            runoff=numeric(v[11],Number.MAX_SAFE_INTEGER),
+            downLatitude=signed(v[12]),downLongitude=signed(v[13]),
+            revision=numeric(v[14],100000);
+      if(!id || !revision || (downLatitude===-1)!==(downLongitude===-1) ||
+         downLatitude>35 || downLongitude>71 || downLatitude< -1 || downLongitude< -1)
+        throw Error('Invalid planetary region geography');
+      return {...e,id,latitude,longitude,elevation,ocean:!!ocean,
+        terrain,watercourse,runoff,downLatitude,downLongitude,revision};
+    }
     if(t==='OASIS_PROSPECT'){
       if(v.length!==9)throw Error('Malformed oasis prospect');
       const id=numeric(v[4],Number.MAX_SAFE_INTEGER);
@@ -504,8 +521,31 @@
            q('signatureFeedback').textContent='Celestial travel requested. Awaiting the authoritative host.';
          });
          item.appendChild(action);
+         if(body.kind===1 || body.kind===2) {
+           const survey=document.createElement('button');
+           survey.type='button';
+           survey.textContent='Survey equatorial region';
+           survey.addEventListener('click',()=>{
+             window.GalaxyColonyCommand?.('colonyPlanetSurvey',
+               {body:body.id,latitude:17,longitude:36});
+             q('signatureFeedback').textContent=
+               'Planetary region requested from authoritative native geography.';
+           });
+           item.appendChild(survey);
+         }
          return item;
        }));
+     }
+     if(e.type==='PLANET_REGION'){
+       const terrains=['Deep ocean','Shallow sea','Coast','Wetland','Grassland',
+         'Forest','Dryland','Desert','Mountain','Ice','Bare rock'];
+       const channels=['No channel','Dry arroyo','Seasonal stream','Perennial river'];
+       q('signatureFeedback').textContent=
+         'Planet #'+e.id+' region ('+e.latitude+','+e.longitude+') · '+
+         terrains[e.terrain]+' · elevation '+e.elevation+
+         ' · '+channels[e.watercourse]+' · watershed runoff score '+e.runoff+
+         ' · geographic version '+e.revision+
+         ' (survey potential, not extractable water).';
      }
      if(e.type==='OASIS_PROSPECT'){
        if(celestialBodies.has(e.id)){
