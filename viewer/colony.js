@@ -267,7 +267,7 @@
  const combatTargets=new Map();
  const salvageWrecks=new Map();
  const deployedProbes=new Map();
- let probeCarried=0,probeLauncher=false;
+ let probeCarried=0,probeLauncher=false,probeChoice='';
  const discoveries=new Map();
  window.GalaxySalvageStock=salvageWrecks;
  window.GalaxyColonyGeology=geology;
@@ -322,9 +322,10 @@
        guide.action==='colonyFabricate'?{amount:4}:{});
  });
  window.GalaxyColony={
-   reset(){deployedProbes.clear();probeCarried=0;probeLauncher=false;q('probeTarget').replaceChildren(new Option('No probe deployed',''));q('probeLaunch').disabled=true;q('probeSurvey').disabled=true;q('probeRetrieve').disabled=true;q('probeInventory').textContent='Awaiting native probe stock.';q('probeFeedback').textContent='Native equipment required.';q('fittingCapacity').textContent='Awaiting actual ship fittings.';q('proximityStatus').textContent='Proximity safety sensor awaiting contacts.';q('fitScanner').disabled=true;q('unfitScanner').disabled=true;discoveries.clear();q('explorationResults').replaceChildren();q('explorationSummary').textContent='No mapped discoveries yet. Execute a native local scan.';salvageWrecks.clear();q('salvageTarget').replaceChildren(new Option('No recoverable wreck reported',''));q('salvageRecover').disabled=true;q('salvageFeedback').textContent='Waiting for native wreck inventory.';combatTargets.clear();q('combatHull').textContent='—';q('combatCharges').textContent='—';q('combatFire').disabled=true;q('combatFeedback').textContent='Awaiting native combat telemetry.';window.GalaxySelectedRockId=null;window.GalaxyShipHeading=null;window.GalaxyColonyOutpostIds.clear();openingStatus=null;openingScanned=false;refreshOpening();window.GalaxyColonyHomeShipId=null;q('colonySafetyAssess').disabled=true;q('colonySafetyPreflight').disabled=true;policyAudits.clear();geology.clear();small.clear();stocks.clear();outposts.clear();farms.clear();habitats.clear();utilities.clear();communities.clear();clinics.clear();reclaimers.clear();waterworks.clear();log.length=0;q('colonyEvents').textContent='Awaiting colony telemetry…';q('expeditionOutcome').textContent='Awaiting an actual native result';},
+   reset(){deployedProbes.clear();probeCarried=0;probeLauncher=false;probeChoice='';q('probeTarget').replaceChildren(new Option('No probe deployed',''));q('probeLaunch').disabled=true;q('probeSurvey').disabled=true;q('probeRetrieve').disabled=true;q('probeInventory').textContent='Awaiting native probe stock.';q('probeFeedback').textContent='Native equipment required.';q('fittingCapacity').textContent='Awaiting actual ship fittings.';q('proximityStatus').textContent='Proximity safety sensor awaiting contacts.';q('fitScanner').disabled=true;q('unfitScanner').disabled=true;discoveries.clear();q('explorationResults').replaceChildren();q('explorationSummary').textContent='No mapped discoveries yet. Execute a native local scan.';salvageWrecks.clear();q('salvageTarget').replaceChildren(new Option('No recoverable wreck reported',''));q('salvageRecover').disabled=true;q('salvageFeedback').textContent='Waiting for native wreck inventory.';combatTargets.clear();q('combatHull').textContent='—';q('combatCharges').textContent='—';q('combatFire').disabled=true;q('combatFeedback').textContent='Awaiting native combat telemetry.';window.GalaxySelectedRockId=null;window.GalaxyShipHeading=null;window.GalaxyColonyOutpostIds.clear();openingStatus=null;openingScanned=false;refreshOpening();window.GalaxyColonyHomeShipId=null;q('colonySafetyAssess').disabled=true;q('colonySafetyPreflight').disabled=true;policyAudits.clear();geology.clear();small.clear();stocks.clear();outposts.clear();farms.clear();habitats.clear();utilities.clear();communities.clear();clinics.clear();reclaimers.clear();waterworks.clear();log.length=0;q('colonyEvents').textContent='Awaiting colony telemetry…';q('expeditionOutcome').textContent='Awaiting an actual native result';},
    accept(raw){const e=window.GalaxyColonyContract.decode(raw);
      if(e.type==='PROBE_RESET'){
+        probeChoice=q('probeTarget').value||probeChoice;
         deployedProbes.clear();
         q('probeTarget').replaceChildren(new Option('Choose deployed probe',''));
       }
@@ -351,13 +352,14 @@
         selected.replaceChildren(new Option('Choose deployed probe',''),...[...deployedProbes].map(([id,p])=>
           new Option('#'+id+' · '+p.x+', '+p.y+' mm',String(id))));
         if([...selected.options].some(o=>o.value===current))selected.value=current;
+        else if([...selected.options].some(o=>o.value===probeChoice))selected.value=probeChoice;
         q('probeSurvey').disabled=!probeLauncher||!selected.value;
         q('probeRetrieve').disabled=!probeLauncher||!selected.value;
         q('probeFeedback').textContent='Probe #'+e.id+' remains at '+e.x+', '+e.y+' mm';
       }
       if(e.type==='FITTING'){
        q('fittingCapacity').textContent=
-         'Hardpoints '+(e.installed?'1':'0')+'/'+e.hardpoints+
+         'Hardpoints '+(Number(e.installed)+Number(probeLauncher))+'/'+e.hardpoints+
          ' · Support 0/'+e.support+' · Subsystems 0/'+e.subsystems+
          ' · Rigging 0/'+e.rigging+
          ' · '+(e.installed?'Survey scanner installed':'No exploration scanner installed');
