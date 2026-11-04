@@ -1,0 +1,59 @@
+# PLAY-11 — Ship Fitting and Exploration Architecture
+**2026-11-04 · Single Galaxy authoritative design decision · Implementation branch `integration/play11-ship-fitting-exploration-20261104`**
+
+## Design source and priority
+These are player-selected design constraints, not optional decoration. The initial PLAY-11 code delivers only the narrow fitted-exploration-scanner and safety-sensor vertical slice described below. Later tasks should extend this one fitting schema instead of letting every ship carry unlimited equipment.
+
+## Four finite ship-module categories
+
+| Class | What it changes | Player examples | Constraints |
+|---|---|---|---|
+| **Hardpoint** | Active equipment that causes **world interactions** | exploration scanner, radar array, LiDAR mapper, mining laser, weapons, tractor beam, probe launcher, drone operations module, biological/life detector | Fits in real hardpoint socket; invoked via native authorized command; requires operational ship resources |
+| **Support** | Passive aids to fitted hardpoints | tracking enhancer, range extender, multi-target lock, scan-resolution enhancer, sensor noise reduction | Occupies support socket; cannot generate independent actions; applies bounded bonuses only to compatible active module |
+| **Subsystem** | Internal ship equipment | power plant augmentation, processing-speed booster, data analyzer, shield booster, communications uplink, hacking subsystem | Occupies subsystem socket; power/CPU/heat/cooling resource budgets in future; never a license to bypass sensor or contact privacy |
+| **Rigging** | Physical ship properties | armor/hull reinforcement, additional cargo volume, cloaking modifications, propulsion, shield-envelope shaping | Occupies rig socket; modifies actual hull physics and persists; retrofit costs, tradeoffs and removal penalties later |
+
+**PLAY-11 introductory hull rack capacities:** 2 hardpoints, 2 support, 2 subsystem, 1 rig. These are *introductory values*, **not** fixed capacities for every future hull. Physical rack state is serialized into native **v64**. Module ID 0 = empty, 1 = active local exploration scanner (valid only in a hardpoint). Support, subsystem and rig IDs are reserved as empty until real modules have validated definitions, production recipes and effects. A scanner cannot occupy two slots at once. Future hull classes will have distinct rack capacities, power, CPU, mass, thermal and calibration budgets, ship size and attachment geometry.
+
+### PLAY-11 implemented starter scanner
+- A **newly generated** player colony ship has one real pre-mounted exploration scanner in hardpoint #1, represented as **2 tonnes of embodied construction-module-equivalent mass**. It is a *starting physical asset*, not loot spawned on scan.
+- Scans are **not available** when the ship lacks the fitted module. Scanner presence is checked **inside native `SurveyLocal`**, not in browser flags.
+- The player can remove a scanner while stopped, returning exactly one physical construction module to onboard inventory; refitting consumes it. This is an introductory material-accounting stand-in for eventual dedicated equipment fabrication, not the final scanner crafting recipe. Total world material remains conserved, including mounted equipment and carrier wrecks.
+- Old saved ships do **not** automatically receive free scanners. They must produce an onboard module via existing refinement/fabrication and fit it using native authorized commands.
+- A 50,000 mm **local exploration survey** records real currently present nearby asteroids and preserves first-observation facts in the v63 discovery ledger.
+- The ship also has a **separate, always-on close-proximity sensor**, providing a 5,000 mm native nearest-ship contact advisory. This is **situational awareness**, not a physics collision-detection or collision-response system. Dedicated collision handling remains a separate milestone.
+- This is intentionally the first step toward multiple hardpoints, not a general replacement for combat, mining, or other active actions yet.
+
+## Dedicated exploration equipment roadmap (not implemented in PLAY-11)
+**Long-range scanners:** broad-field astronomy, long-range radar or passive signal analysis; distance reduces identification confidence; signal propagation and obstacle occlusion eventually matter. Different scanners can discover objects without identifying exact contents. No free map-wide reveal.
+
+**Probe launcher and recoverable probes:** finite deployable physical units with communication windows and battery/fuel; selectable sensor payloads; probes launch from a compatible fitted hardpoint and are tracked as world entities with ownership and custody.
+
+**Drones:** persistent drone bays, control bandwidth, communications dependency, batteries, mass, maximum range and risk of loss. Specialized geological drill drones interact with asteroids, moons and planets to collect samples; surface, orbit, and subsurface sample provenance must be explicit. Do not let “scan” secretly drill or produce resources.
+
+**Instrument options:** LiDAR for surface geometry and ranging; radar for large object/range detection; optical/infrared spectroscopy for material signatures; sonar only where a **physical sound-propagating medium** exists (liquids, gas/atmosphere or a solid substrate), **not** as vacuum-space ship sonar. Material analyzers for resource-specific chemistry/isotopes; life-sign scanners capable of identifying humans and ordinary biology (no intelligent alien civilizations currently exist by design).
+
+**Exploration infrastructure:** player-created sensor beacons, survey satellites, orbital relays, communications datalink hubs and mapping repositories; their power, maintenance, bandwidth, construction mass and vulnerability are real. Sharing/discovery licensing/credits and multi-user trust must be future explicit designs.
+
+## Space environments and navigation roadmap (not implemented in PLAY-11)
+- **Comms deadzones:** attenuation, disruptions, delayed data transmission, lost sensor uplinks; never delete durable onboard observations arbitrarily. Risk and recovery possible.
+- **Dense regions:** spatial drag/collision hazard and speed restrictions grounded in actual region physics; apply consistently to ships and projectiles.
+- **Solar radiation/activity:** heat, electronics degradation, shield/power efficiency, sensor interference, crew health risk with protective equipment and warnings.
+- **Cosmic winds / useful flow fields:** bounded direction-dependent acceleration; physically coherent hazards and aids.
+- **Gas, ice, rocks, fields and irregular regions:** surveyable physical content and differing resource extraction procedures, not reskinned asteroids.
+- **Fold space / wormholes:** region-to-region shortcuts, with stability, navigation conditions, and mass-dependent transit/cooldown potentially distinct. No faster-than-light ordinary inertial motion required.
+- **Terminology:** **folding** is the official instantaneous spatial-distance-collapse transition; player colloquialism “jump” and “jump gate” remains acceptable but UI/design canonical names are **Fold** and **Fold Gate**. Ship size can affect *fold preparation, transition or recovery duration*; do not imply smaller vessels occupy less distance once folded. Existing historical gate code should be renamed carefully with persistent format compatibility.
+- **Warp:** near-light-speed but **sublight** ship travel, physically separate from folding. Sustained warp assisted by player-built **hyperlanes**/hypergates.
+- **Hyperlane infrastructure:** player-authored layout in the galaxy macro map, with physical placement and delegated NPC construction/hauling if nearby qualified NPC crews and materials are actually available. Adjacent hyperlane gates must be separated by **at least 0.5 astronomical units** (1 AU is approximately 149.6 million km). To connect, independently verify the swept flight corridor is clear of obstructing stars, planets, moons, asteroid masses and other impassable geometry, including safe margins. **No warping through solid celestial bodies.** No arbitrary straight-line gates through the sun. Route planner uses collision-aware line-of-sight, not a visual-only check. Extra AU/light-year-scale layout needs a future 64-bit/large-coordinate model; **current native `kWorldBoundMm=1,000,000,000` is far smaller than 0.5 AU**, so hyperlane placement **cannot honestly be implemented** until cosmic-scale coordinates, partitioning and persistence are updated.
+- **NPC logistics:** laying out a hyperlane is a proposed construction project, not an instant deployment. Crews, materials, fuel, workforce, safe routes and execution history are committed in the existing authoritative logistics/world model.
+
+## Mandatory future engineering gates
+1. Generalized module registry and ship-class fitting plans: hardpoint/support/subsystem/rigging socket compatibility, power/compute/heat/mass budget and slot-fit transactions, cargo custody, hull invariants, snapshot recovery, manufacturing and field servicing.
+2. Scan attenuation and dedicated sensor modality / physical probe/drone lifecycles with strict source provenance; multi-stage discovery (detect → localize → characterize → verify).
+3. Proximity collision avoidance and actual ship–body collision physics in native simulation, independent of scanning.
+4. Real celestial bodies, gas/ice/resources, environmental physics and safe world-state effects, with no magic resource creation.
+5. Galactic coordinate/scale upgrade **before** AU-spaced hyperlanes, swept-volume obstacle checks, dedicated fold travel vs sublight warp, NPC-dependent infrastructure construction.
+6. Persistence/CI/native owner-auth acceptance on Windows and Linux, including save upgrades and older snapshots.
+7. Redesign finite weapon ammunition together with the future comprehensive weapon, manufacturing and logistics system. PLAY-08's 12-shot training charge remains a temporary fixture, **not** the final ammunition design.
+
+**Current status:** PLAY-11 fitting/scanner implementation has tests and focused CI; successful installed-client acceptance and environment/network performance are not yet verified. Historical PLAY-10 native regression revealed a v63 legacy NPC-counter incompatibility; a narrow migration validation correction is included on this branch for testing.
