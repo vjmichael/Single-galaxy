@@ -360,6 +360,18 @@
       e.hazard=numeric(v[11],3);
       e.support=numeric(v[12],1);
       if(!e.body)throw Error('Invalid expedition body');
+    }else if(t==='OASIS_EXTRACTOR'){
+      if(v.length!==9)throw Error('Malformed oasis extractor');
+      e.ship=numeric(v[4],100000000);
+      e.body=numeric(v[5],Number.MAX_SAFE_INTEGER);
+      e.energy=numeric(v[6],120);
+      e.workers=numeric(v[7],2);
+      e.condition=numeric(v[8],100);
+      if(!e.ship||!e.body||e.workers!==2)throw Error('Invalid oasis extractor');
+    }else if(t==='OASIS_INSTALLED'){
+      if(v.length!==5)throw Error('Malformed oasis installation');
+      e.body=numeric(v[4],Number.MAX_SAFE_INTEGER);
+      if(!e.body)throw Error('Invalid oasis installation body');
     }else if(t==='OASIS_SOURCE'){
       if(v.length!==7)throw Error('Malformed physical oasis reserve');
       e.body=numeric(v[4],Number.MAX_SAFE_INTEGER);
@@ -740,6 +752,15 @@
        const rock=geology.get(e.id);if(!rock)throw Error('Mineral without scanned rock');rock.minerals.set(e.name,e.share);
      }else if(e.type==='SMALL_ROCK')small.set(e.id,e.remaining);
      else if(e.type==='LOCAL_DEPOSIT')localOreTaxonomy.set(e.id,e.classId);
+     else if(e.type==='OASIS_EXTRACTOR'){
+       q('signatureFeedback').textContent='Deployed oasis extractor at #'+e.body+
+         ': '+e.energy+'/120 stored solar power units, '+e.workers+
+         ' assigned onboard crew, condition '+e.condition+'/100.';
+     }
+     else if(e.type==='OASIS_INSTALLED'){
+       q('signatureFeedback').textContent='Installed a physical two-module oasis extractor at #'+e.body+
+         '. Requires actual crew, food, water, oxygen and solar charge before resource collection.';
+     }
      else if(e.type==='OASIS_SOURCE'){
        q('signatureFeedback').textContent='Physical oasis reserves at body #'+e.body+
          ': '+e.waterKg.toLocaleString()+' kg water and '+
