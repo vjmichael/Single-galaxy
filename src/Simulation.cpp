@@ -6909,11 +6909,10 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
         for(const auto& [key,p]:result.pending_probe_discoveries_){
             const auto carrier=result.entities_.find(p.carrier);
             if(key.first!=p.report.owner||key.second!=p.report.site||
-               result.discoveries_.count(key)||
                carrier==result.entities_.end()||
-               carrier->second.type!=EntityType::Ship||
-               carrier->second.owner_id!=p.report.owner||
-               carrier->second.system_id!=p.report.system)
+               (carrier->second.type!=EntityType::Ship&&
+                carrier->second.type!=EntityType::Wreck)||
+               carrier->second.owner_id!=p.report.owner)
                 throw std::runtime_error("snapshot: invalid delayed probe custody");
             const auto probe=result.survey_probes_.find(p.probe_id);
             if(probe!=result.survey_probes_.end()&&
