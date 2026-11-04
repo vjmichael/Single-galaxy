@@ -55,6 +55,15 @@
          (kind!==0&&parent===0))throw Error('Invalid celestial parent/body');
       return {...e,id,parent,kind,orbit,x,y,z,radius};
     }
+    if(t==='OASIS_PROSPECT'){
+      if(v.length!==9)throw Error('Malformed oasis prospect');
+      const id=numeric(v[4],Number.MAX_SAFE_INTEGER);
+      const water=numeric(v[5],1),energy=numeric(v[6],1),
+            nutrients=numeric(v[7],1),shelter=numeric(v[8],1);
+      if(!id||!water||!energy||!nutrients||!shelter)
+        throw Error('Invalid oasis prerequisite');
+      return {...e,id,water,energy,nutrients,shelter};
+    }
     if(t==='CELESTIAL_DONE'){
       if(v.length!==5)throw Error('Malformed orbital catalogue count');
       return {...e,count:numeric(v[4],9)};
@@ -380,7 +389,7 @@
  const salvageWrecks=new Map();
  const deployedProbes=new Map();
  const signatureContacts=new Map();
- const celestialBodies=new Map(), localOreTaxonomy=new Map();
+ const celestialBodies=new Map(), localOreTaxonomy=new Map(),oasises=new Map();
  let probeCarried=0,probeLauncher=false,probeChoice='';
  const discoveries=new Map();
  window.GalaxySalvageStock=salvageWrecks;
@@ -437,7 +446,7 @@
        guide.action==='colonyFabricate'?{amount:4}:{});
  });
  window.GalaxyColony={
-   reset(){signatureContacts.clear();celestialBodies.clear();localOreTaxonomy.clear();expeditionAssessment=null;
+   reset(){signatureContacts.clear();celestialBodies.clear();oasises.clear();localOreTaxonomy.clear();expeditionAssessment=null;
      q('celestialBodyList').textContent='No physical celestial bodies surveyed yet.';
      q('signatureTarget').replaceChildren(new Option('Scan to detect signals',''));
      q('signatureFocus').disabled=true;q('signatureCancel').disabled=true;
@@ -445,7 +454,7 @@
      q('droneTarget').replaceChildren(new Option('Scan nearby rocks first',''));q('droneLaunch').disabled=true;deployedProbes.clear();probeCarried=0;probeLauncher=false;probeChoice='';q('probeTarget').replaceChildren(new Option('No probe deployed',''));q('probeLaunch').disabled=true;q('probeSurvey').disabled=true;q('probeRetrieve').disabled=true;q('probeInventory').textContent='Awaiting native probe stock.';q('probeFeedback').textContent='Native equipment required.';q('fittingCapacity').textContent='Awaiting actual ship fittings.';q('proximityStatus').textContent='Proximity safety sensor awaiting contacts.';q('fitScanner').disabled=true;q('unfitScanner').disabled=true;discoveries.clear();q('explorationResults').replaceChildren();q('explorationSummary').textContent='No mapped discoveries yet. Execute a native local scan.';salvageWrecks.clear();q('salvageTarget').replaceChildren(new Option('No recoverable wreck reported',''));q('salvageRecover').disabled=true;q('salvageFeedback').textContent='Waiting for native wreck inventory.';combatTargets.clear();q('combatHull').textContent='—';q('combatCharges').textContent='—';q('combatFire').disabled=true;q('combatFeedback').textContent='Awaiting native combat telemetry.';window.GalaxySelectedRockId=null;window.GalaxyShipHeading=null;window.GalaxyColonyOutpostIds.clear();openingStatus=null;openingScanned=false;refreshOpening();window.GalaxyColonyHomeShipId=null;q('colonySafetyAssess').disabled=true;q('colonySafetyPreflight').disabled=true;policyAudits.clear();geology.clear();small.clear();stocks.clear();outposts.clear();farms.clear();habitats.clear();utilities.clear();communities.clear();clinics.clear();reclaimers.clear();waterworks.clear();log.length=0;q('colonyEvents').textContent='Awaiting colony telemetry…';q('expeditionOutcome').textContent='Awaiting an actual native result';},
    accept(raw){const e=window.GalaxyColonyContract.decode(raw);
      if(e.type==='CELESTIAL_HEADER'){
-       celestialBodies.clear();
+       celestialBodies.clear();oasises.clear();
        q('celestialBodyList').textContent='Receiving authoritative physical bodies…';
      }
      if(e.type==='CELESTIAL_BODY'){
@@ -474,6 +483,20 @@
          item.appendChild(action);
          return item;
        }));
+     }
+     if(e.type==='OASIS_PROSPECT'){
+       if(celestialBodies.has(e.id)){
+         oasises.set(e.id,e);
+         const rows=[...celestialBodies.keys()];
+         const index=rows.indexOf(e.id);
+         const card=q('celestialBodyList').children[index];
+         if(card && !card.dataset.oasis){
+           card.dataset.oasis='1';
+           const note=document.createElement('div');
+           note.textContent='Rare oasis prospect: local water, accessible energy, nutrients and possible radiation shelter. No free supplies, buildings, oxygen or guaranteed safety; development required.';
+           card.appendChild(note);
+         }
+       }
      }
      if(e.type==='LOCAL_FRAME'){
        if(window.GalaxyActiveCelestialBody!==e.anchor){
