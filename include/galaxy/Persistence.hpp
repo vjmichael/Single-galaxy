@@ -485,6 +485,42 @@ public:
         FailPoint fail=FailPoint::None);
     // A completed receipt is not a prepared manifest or a narrative claim.
     bool verified_atomic_family_departure(std::uint64_t command_id) const;
+    // AUTO-04D.5A: a host-supervised NPC coordinator responds to a real
+    // DELIVERED local shortage notice. It autonomously chooses among supplied,
+    // geographically grounded recipient colony bindings, but never invents
+    // personnel, resources, ships, legal custody, or permission.
+    struct AutonomousRescueDestination {
+        EntityId ship=0;
+        std::string regional_colony;
+    };
+    struct AutonomousRescueRequest {
+        EntityId source=0;
+        std::uint64_t leader_id=0, observed_event_id=0;
+        std::uint64_t family_seed=0, intent_id=0, command_id=0;
+        std::string family_scope, region_scope, origin_colony;
+        // These are host-trusted region bindings, NOT arbitrary client names.
+        std::vector<AutonomousRescueDestination> destinations;
+        // Trusted durable ID allocator supplies one unique event for each
+        // adult and child; the NPC does not mint commands or member IDs.
+        std::vector<std::uint64_t> member_event_ids;
+    };
+    struct AutonomousRescueDecision {
+        colony_safety::ResponsePlan response;
+        bool notified_leader=false, rescue_ready=false;
+        EntityId selected_receiver=0;
+        std::string reason;
+        AtomicColonyFamilyPlan transfer;
+    };
+    // Read-only deterministic option search, with real ART02 and ECON03 CAS
+    // revisions obtained from SQLite. Does not alter world or queue commands.
+    AutonomousRescueDecision assess_autonomous_colony_emergency(
+        const AutonomousRescueRequest& request) const;
+    // Host entrypoint; internally verifies notice and actual danger again
+    // under the SAME writer lock as queue admission and an immutable NPC
+    // decision witness. No family member moves until the existing v76
+    // step_with_atomic_family_departure executes with decision.transfer.
+    bool submit_autonomous_colony_rescue(const AutonomousRescueRequest& request,
+        FailPoint fail=FailPoint::None);
     // D2a: register ART02-authenticated, actually resident child into the
     // replayable world occupancy ledger. Separate from declaring evacuation.
     bool submit_host_dependent_registration(const Command& command,

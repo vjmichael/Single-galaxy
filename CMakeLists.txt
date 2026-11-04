@@ -983,3 +983,13 @@ if(BUILD_TESTING)
     add_test(NAME galaxy_colony_auto04d4d2c_mixed_guardians
         COMMAND galaxy_colony_auto04d4d2c_mixed_guardians_tests)
 endif()
+
+# AUTO-04D.5A: observed NPC leader and real multi-recipient autonomous rescue
+# admission, with the existing v76 one-transaction family execution.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_auto04d5a_autonomous_emergency_tests
+        tests/COLONY_AUTO04D5A_AutonomousEmergencyTests.cpp)
+    target_link_libraries(galaxy_colony_auto04d5a_autonomous_emergency_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_auto04d5a_autonomous_emergency
+        COMMAND galaxy_colony_auto04d5a_autonomous_emergency_tests)
+endif()
