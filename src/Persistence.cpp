@@ -6554,6 +6554,18 @@ bool PersistentWorld::verified_atomic_family_departure(std::uint64_t command_id)
         [&](const auto& row){return row.second.command_id==command_id;});
     if(found==world_.colony_departures().end() ||
        found->second.relocated_dependents.empty())return false;
+    // COLONY-AUTO-04D.4D2C: a yes/no "evacuated" query must independently
+    // certify its entire durable ledger, not just trust a mutable header.
+    // Store::restore audits the source/destination snapshots, birth bridge,
+    // every ART02 member and census revision, and the ECON03 receipt.
+    // A removed child row or changed guardian MUST throw, never return true.
+    Simulation reread(1);
+    std::uint64_t persisted_generation=0;
+    std::int64_t persisted_ore=0,persisted_credits=0;
+    if(!store_->restore(reread,persisted_generation,persisted_ore,persisted_credits) ||
+       persisted_generation!=generation_ || reread.state_hash()!=world_.state_hash())
+        throw std::runtime_error("family receipt does not match authoritative world");
+    store_->verify_physical_dependent_authority(reread);
     sqlite3* raw=nullptr;
     if(sqlite3_open_v2(db_path_.c_str(),&raw,SQLITE_OPEN_READONLY,nullptr)!=SQLITE_OK){
         if(raw)sqlite3_close(raw);
