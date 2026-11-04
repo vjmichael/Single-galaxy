@@ -1,0 +1,26 @@
+name: Colony AUTO-04D4D2C mixed guardian fault matrix
+on:
+  push:
+    branches:
+      - integration/colony-auto04d4d2c-family-faultmatrix-v77-20261103
+  pull_request:
+    paths:
+      - 'src/Persistence.cpp'
+      - 'src/ColonyFamilyDeparture.cpp'
+      - 'tests/COLONY_AUTO04D4D2C_*'
+      - 'CMakeLists.txt'
+  workflow_dispatch:
+jobs:
+  mixed-custody-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SQLite
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+      - name: Build v77 mixed-guardian and v76 original acceptance
+        run: cmake --build build --target galaxy_colony_auto04d4d2c_mixed_guardians_tests galaxy_colony_auto04d4d2b2_atomic_family_tests -j 2
+      - name: Run real persisted family fault matrix
+        run: ctest --test-dir build --output-on-failure -R 'galaxy_colony_auto04d4d2(c_mixed_guardians|b2_atomic_family)'
