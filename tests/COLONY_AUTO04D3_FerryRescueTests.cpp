@@ -21,7 +21,7 @@ try{
         initial.provision_colony_genesis(source,100,100,100,200,500);
         initial.provision_colony_genesis(origin,1000,1000,1000,1000,1000);
         initial.provision_colony_genesis(receiver,1000,1000,1000,1000,1000);
-        initial.provision_colony_genesis(understocked,100,100,100,200,500);
+        initial.provision_colony_genesis(understocked,20,20,20,200,500);
         initial.enable_individual_workforce();
         initial.upgrade_assignment_snapshot_format();
         initial.enable_medical_workforce_rules();
@@ -49,7 +49,7 @@ try{
         rescue.passenger_ids={5,6,7,8};
         // Healthy source ferry does not justify autonomous emergency authority.
         CHECK(!w.submit_host_emergency_ferry_rescue(rescue));
-        w.steps(480-w.world().tick());
+        w.steps(220-w.world().tick());
         CHECK(colony_safety::assess(w.world(),source,source).risk==colony_safety::Risk::Critical);
         rescue.execute_tick=w.world().tick()+1;
         auto starved_receiver=rescue;starved_receiver.target=understocked;
@@ -71,6 +71,14 @@ try{
         CHECK(w.world().passengers_aboard(receiver)==4);
         CHECK(w.world().npc_records().size()==16);
         CHECK(w.world().colony_ship(source)->crew==4); // native ship crew NOT falsely rescued
+        CHECK(w.world().total_material_kg()==mass);
+        const auto receiver_food=w.world().life_support(receiver)->food_kg;
+        const auto source_food=w.world().life_support(source)->food_kg;
+        const auto origin_food=w.world().life_support(origin)->food_kg;
+        w.steps(240-w.world().tick()); // physically consume next 20-tick needs period
+        CHECK(w.world().life_support(receiver)->food_kg==receiver_food-8);
+        CHECK(w.world().life_support(source)->food_kg==source_food-4);
+        CHECK(w.world().life_support(origin)->food_kg==origin_food-4);
         CHECK(w.world().total_material_kg()==mass);
     }
     {
