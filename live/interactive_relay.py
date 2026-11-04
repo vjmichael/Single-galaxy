@@ -33,6 +33,7 @@ STATIC={
     '/viewer/opening-guide.js':'viewer/opening-guide.js',
     '/viewer/flight-controls.js':'viewer/flight-controls.js',
     '/viewer/flight-camera.js':'viewer/flight-camera.js',
+    '/viewer/exploration-journal.js':'viewer/exploration-journal.js',
     '/viewer/travel-assist.js':'viewer/travel-assist.js',
     '/viewer/cargo-return.js':'viewer/cargo-return.js',
     '/viewer/expedition-feedback.js':'viewer/expedition-feedback.js',
