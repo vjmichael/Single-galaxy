@@ -1,0 +1,32 @@
+name: PLAY-06 flight camera and target controls
+on:
+  push:
+    branches:
+      - integration/play06-camera-target-controls-20261104
+  pull_request:
+    paths:
+      - 'viewer/flight-camera.js'
+      - 'viewer/viewer.js'
+      - 'viewer/colony.js'
+      - 'viewer/interactive.js'
+      - 'viewer/interactive.html'
+      - 'live/interactive_relay.py'
+      - 'tests/FlightCameraTests.js'
+      - 'tests/Play06WiringTests.js'
+      - '.github/workflows/play06.yml'
+jobs:
+  flight-ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify camera, target, expedition and controls
+        run: node --test tests/FlightCameraTests.js tests/Play06WiringTests.js tests/ExpeditionFeedbackTests.js tests/ExpeditionWiringTests.js tests/CargoReturnTests.js tests/FlightControlsTests.js tests/OpeningGuideTests.js
+      - name: Parse live scripts
+        run: |
+          node --check viewer/flight-camera.js
+          node --check viewer/viewer.js
+          node --check viewer/interactive.js
+          node --check viewer/colony.js
+          node --check viewer/flight-controls.js
+          node --check viewer/expedition-feedback.js
+          python3 -m py_compile live/interactive_relay.py
