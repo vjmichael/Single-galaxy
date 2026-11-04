@@ -398,6 +398,17 @@ struct AsteroidGeology {
 struct MineralFraction { const char* name; int permille; };
 // PLAY-13C.5: descriptive environment; hazards are not yet physics damage.
 // PLAY-13C.6B: read-only prospect, NOT resource inventories, shelter or safety.
+// Deployed *from* an existing ship: consumes two real manufactured modules.
+// No extra NPCs are spawned and no free water/nutrient sources are created.
+struct OasisExtractor {
+    EntityId ship=0;
+    std::uint64_t body=0;
+    std::int64_t embodied_ore=4; // tonnes of installed modules
+    std::uint8_t assigned_workers=2; // actual aboard colony crew, not new residents
+    std::uint8_t condition=100;
+    std::uint16_t energy_units=0; // bounded harvested local solar energy
+    std::uint64_t cycles=0;
+};
 struct PhysicalOasisReserve {
     std::int64_t water_kg=0,nutrients_kg=0;
     std::int64_t initial_water_kg=0,initial_nutrients_kg=0;
@@ -848,6 +859,10 @@ public:
     // production, planetary mining rigs and farming remain future gates.
     bool collect_oasis_resource(PlayerId owner,EntityId ship,
         std::uint64_t body,bool water,std::int64_t kilograms);
+    bool install_oasis_extractor(PlayerId owner,EntityId ship,std::uint64_t body);
+    const std::map<EntityId,OasisExtractor>& oasis_extractors() const {
+        return oasis_extractors_;
+    }
     std::optional<CelestialOasisProspect> celestial_oasis_prospect(
         std::uint64_t body_id) const;
     std::vector<CelestialOasisProspect> survey_oasis_prospects(
@@ -930,6 +945,7 @@ private:
     void process_jump_transitions();
     void process_gate_maintenance();
     void process_colony_needs();
+    void process_oasis_extractors();
     void process_farms();
     void move_npc_records(EntityId ship, EntityId site, NpcRole role, std::int64_t delta);
     void award_farm_experience(EntityId site);
@@ -953,6 +969,7 @@ private:
     std::map<EntityId,std::uint64_t> local_entity_anchors_; // v73 nonship frame custody
     std::map<std::uint64_t,LocalCelestialEnvironment> local_environments_; // v74
     std::map<std::uint64_t,PhysicalOasisReserve> oasis_reserves_; // v75 explicit finite sources
+    std::map<EntityId,OasisExtractor> oasis_extractors_; // v76 real installed machinery
     std::map<std::uint64_t,PendingCelestialTransit> pending_celestial_transits_;
     std::map<std::uint64_t,CompletedCelestialTransit> completed_celestial_transits_;
     std::map<std::uint32_t,std::vector<PhysicalCelestialBody>> physical_celestial_systems_;
