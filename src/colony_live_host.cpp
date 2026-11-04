@@ -437,6 +437,7 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
                 std::to_string(body.orbital_radius_milli_au)+"|"+
                 std::to_string(body.position.x_mm)+"|"+
                 std::to_string(body.position.y_mm)+"|"+
+                std::to_string(body.position.z_mm)+"|"+
                 std::to_string(body.physical_radius_mm));
         announce(world.world(),"CELESTIAL_DONE|"+
             std::to_string(profile->orbital_bands.size()));

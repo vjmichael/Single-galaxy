@@ -29,10 +29,10 @@
       return {...e,first,last};
     }
     if(t==='CELESTIAL_BODY'){
-      if(v.length!==11)throw Error('Malformed persisted celestial body');
+      if(v.length!==12)throw Error('Malformed persisted celestial body');
       const id=numeric(v[4],Number.MAX_SAFE_INTEGER),
         parent=numeric(v[5],Number.MAX_SAFE_INTEGER),kind=numeric(v[6],3),
-        orbit=numeric(v[7],300000),radius=numeric(v[10],Number.MAX_SAFE_INTEGER);
+        orbit=numeric(v[7],300000),radius=numeric(v[11],Number.MAX_SAFE_INTEGER);
       const coord=value=>{
         if(!/^(?:0|-?[1-9][0-9]*)$/.test(value))throw Error('Invalid cosmic coordinate');
         const n=Number(value);
@@ -40,10 +40,10 @@
           throw Error('Cosmic coordinate out of range');
         return n;
       };
-      const x=coord(v[8]),y=coord(v[9]);
+      const x=coord(v[8]),y=coord(v[9]),z=coord(v[10]);
       if(!id||!radius||(kind===0&&parent!==0)||
          (kind!==0&&parent===0))throw Error('Invalid celestial parent/body');
-      return {...e,id,parent,kind,orbit,x,y,radius};
+      return {...e,id,parent,kind,orbit,x,y,z,radius};
     }
     if(t==='CELESTIAL_DONE'){
       if(v.length!==5)throw Error('Malformed orbital catalogue count');
@@ -428,7 +428,8 @@
            ' · '+(body.orbit/1000).toFixed(2)+' AU orbital band'+
            ' · radius '+Math.round(body.radius/1000000)+' km'+
            ' · world '+(body.x/1000000).toFixed(0)+', '+
-           (body.y/1000000).toFixed(0)+' km';
+           (body.y/1000000).toFixed(0)+', '+
+           (body.z/1000000).toFixed(0)+' km (x/y/z)';
          return item;
        }));
      }

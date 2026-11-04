@@ -4644,7 +4644,11 @@ CosmicPosition celestial_point(std::uint64_t radius_mm,std::uint64_t selector){
     const auto component=[&](std::int64_t direction){
         return (radius/scale)*direction+((radius%scale)*direction)/scale;
     };
-    return {component(dx),component(dy)};
+    // A small stable inclination distributes bodies above and below the
+    // local orbital plane without invoking nondeterministic trigonometry.
+    const auto inclination=static_cast<std::int64_t>(selector%7)-3;
+    return {component(dx),component(dy),
+            (radius/1000)*inclination};
 }
 std::vector<PhysicalCelestialBody> physical_bodies_for_system(std::uint32_t system){
     const auto profile=generate_astronomical_profile(kAstronomicalGalaxySeed,system);
@@ -4676,7 +4680,8 @@ std::vector<PhysicalCelestialBody> physical_bodies_for_system(std::uint32_t syst
             const auto offset=celestial_point(380000000000ULL,
                 astronomy_mix(planet_id^0x1234ULL)%8);
             out.push_back({key(ordinal++),planet_id,system,CelestialKind::Moon,
-                orbit,{position.x_mm+offset.x_mm,position.y_mm+offset.y_mm},
+                orbit,{position.x_mm+offset.x_mm,position.y_mm+offset.y_mm,
+                       position.z_mm+offset.z_mm},
                 1700000000ULL});
         }
     }
@@ -4968,7 +4973,7 @@ std::string Simulation::canonical_state() const {
             out<<"celestial|"<<system<<'|'<<body.id<<'|'<<unsigned(body.kind)<<'|'
                <<body.parent_id<<'|'<<body.orbital_radius_milli_au<<'|'
                <<body.position.x_mm<<'|'<<body.position.y_mm<<'|'
-               <<body.physical_radius_mm<<'\n';
+               <<body.position.z_mm<<'|'<<body.physical_radius_mm<<'\n';
     for (const auto& entry : entities_) {
         const auto& e = entry.second;
         out << "entity|" << e.id << '|' << e.system_id << '|' << static_cast<int>(e.type)
@@ -5390,14 +5395,15 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 throw std::runtime_error("snapshot: invalid system registry");
             result.systems_.insert(static_cast<std::uint32_t>(id));
         } else if(f[0]=="celestial" && result.snapshot_version_>=70) {
-            require_fields(f,9);
+            require_fields(f,10);
             const auto system=u64(f[1]),id=u64(f[2]),kind=u64(f[3]),parent=u64(f[4]);
-            const auto orbit=u64(f[5]),x=i64(f[6]),y=i64(f[7]),radius=u64(f[8]);
+            const auto orbit=u64(f[5]),x=i64(f[6]),y=i64(f[7]),z=i64(f[8]),radius=u64(f[9]);
             if(!system||system>std::numeric_limits<std::uint32_t>::max()||
                !id||kind>3||!radius||radius>kCosmicLimitMm||
                orbit>300000||
                std::abs(static_cast<long double>(x))>kCosmicLimitMm||
-               std::abs(static_cast<long double>(y))>kCosmicLimitMm)
+               std::abs(static_cast<long double>(y))>kCosmicLimitMm||
+               std::abs(static_cast<long double>(z))>kCosmicLimitMm)
                 throw std::runtime_error("snapshot: invalid celestial geometry");
             const auto sid=static_cast<std::uint32_t>(system);
             auto& bodies=result.physical_celestial_systems_[sid];
@@ -5405,7 +5411,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             if(!bodies.empty()&&bodies.back().id>=id)
                 throw std::runtime_error("snapshot: celestial IDs out of order");
             bodies.push_back({id,parent,sid,static_cast<CelestialKind>(kind),
-                orbit,{x,y},radius});
+                orbit,{x,y,z},radius});
         } else if(f[0]=="probelatency" && result.snapshot_version_>=68) {
             require_fields(f,2);
             const auto n=u64(f[1]);
@@ -7214,6 +7220,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                    x.orbital_radius_milli_au!=y.orbital_radius_milli_au||
                    x.position.x_mm!=y.position.x_mm||
                    x.position.y_mm!=y.position.y_mm||
+                   x.position.z_mm!=y.position.z_mm||
                    x.physical_radius_mm!=y.physical_radius_mm)
                     throw std::runtime_error("snapshot: celestial geometry tampering");
             }

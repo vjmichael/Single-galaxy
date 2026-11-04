@@ -25,7 +25,7 @@ struct Vector2 {
 
 // Persistent astronomical world-space coordinates in real millimeters,
 // separate from short-range physics simulation coordinates (±1000 km).
-struct CosmicPosition {std::int64_t x_mm=0,y_mm=0;};
+struct CosmicPosition {std::int64_t x_mm=0,y_mm=0,z_mm=0;};
 enum class CelestialKind {Star=0,Planet=1,Moon=2,DebrisRegion=3};
 struct PhysicalCelestialBody {
     std::uint64_t id=0,parent_id=0;
