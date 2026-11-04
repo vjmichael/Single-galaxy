@@ -1469,8 +1469,13 @@ public:
                     const auto* raw = sqlite3_column_text(steps.get(), 3);
                     if (!raw) continue;
                     const auto type=decode_command(reinterpret_cast<const char*>(raw)).action;
+                    // Only these strictly host-authorized commands publish
+                    // an applied native world step in their own admission
+                    // generation. All other submissions remain pending.
                     if(type!=Action::HostEscrowConstructedStock &&
-                       type!=Action::HostReturnConstructedStock)continue;
+                       type!=Action::HostReturnConstructedStock &&
+                       type!=Action::HostRegisterDependentBirth &&
+                       type!=Action::HostColonyFamilyDeparture)continue;
                 }
                 if (g <= 0 || tick <= 0 || !tick_generation.emplace(static_cast<std::uint64_t>(tick),
                     static_cast<std::uint64_t>(g)).second)
@@ -5631,7 +5636,9 @@ public:
                         // v52's atomic host warehouse escrow advances the real world
                         // in the same SQLite commit as the command submission.
                         if (command.action == Action::HostEscrowConstructedStock ||
-                            command.action == Action::HostReturnConstructedStock) sim.step();
+                            command.action == Action::HostReturnConstructedStock ||
+                            command.action == Action::HostRegisterDependentBirth ||
+                            command.action == Action::HostColonyFamilyDeparture) sim.step();
                     } else if (kind == 2) {
                         sim.step();
                     } else throw std::runtime_error("recovery: invalid journal kind");
