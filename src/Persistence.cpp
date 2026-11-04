@@ -2406,12 +2406,17 @@ public:
         if(colony_safety::assess(world,destination,destination).risk!=
                colony_safety::Risk::Safe)
             throw std::runtime_error("receiver lacks healthy life support");
-        if(static_cast<int>(colony_safety::assess(world,origin,origin).risk)<
-           static_cast<int>(colony_safety::Risk::Critical))
-            throw std::runtime_error("source survival pressure has recovered");
         const auto govt=effective_governance(origin,generation);
         if(govt.leader_id==npc)
             throw std::runtime_error("individual immigrant would vacate incumbent government");
+        // Only this particular resident's PREVIOUSLY committed personal
+        // history—not collective panic, a guessed sentiment or a single
+        // physical shortage—can authorize their attempt to emigrate. A
+        // recovering resident may cease wanting to leave even with a
+        // historical critical-shortage witness on file.
+        const auto own=personal_outlook_before(origin,npc,generation);
+        if(!own || !own->considering_departure)
+            throw std::runtime_error("resident has no active historically grounded decision to depart");
         Statement pressure(db_,"SELECT world_generation,colony,source_owner,npc,"
             "governance_event,risk FROM sg_colony_npc_exit_pressure WHERE event_id=?");
         pressure.i64(1,static_cast<sqlite3_int64>(pressure_event));
@@ -2425,7 +2430,6 @@ public:
         if(born<=0 || static_cast<std::uint64_t>(born)>generation ||
            source_id!=origin || source_owner!=source->owner_id ||
            witnessed!=npc || past_govt<0 ||
-           static_cast<std::uint64_t>(past_govt)!=govt.event_id ||
            old_risk<2 || old_risk>3 || pressure.row())
             throw std::runtime_error("pressure witness does not belong to this adult/current government");
         PersistentWorld::VoluntaryImmigrationAdmission a;
@@ -7182,6 +7186,9 @@ public:
             Statement npc_exit_pressure(db_,"SELECT 1 FROM sqlite_master "
                 "WHERE type='table' AND name='sg_colony_npc_exit_pressure'");
             const bool has_npc_exit_pressure=npc_exit_pressure.row();
+            Statement personal_outlooks(db_,"SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='sg_colony_npc_personal_outlook'");
+            const bool has_personal_outlooks=personal_outlooks.row();
             Statement immigration_admissions(db_,"SELECT 1 FROM sqlite_master "
                 "WHERE type='table' AND name='sg_colony_voluntary_immigration'");
             const bool has_immigration_admissions=immigration_admissions.row();
@@ -7238,6 +7245,9 @@ public:
                     : "")+
                 (has_npc_exit_pressure ? " AND generation NOT IN "
                     "(SELECT world_generation FROM sg_colony_npc_exit_pressure)"
+                    : "")+
+                (has_personal_outlooks ? " AND generation NOT IN "
+                    "(SELECT world_generation FROM sg_colony_npc_personal_outlook)"
                     : "")+
                 (has_immigration_admissions ? " AND generation NOT IN "
                     "(SELECT world_generation FROM sg_colony_voluntary_immigration)"
@@ -8402,6 +8412,7 @@ void PersistentWorld::recover_copy(const std::string& source, const std::string&
         copy.verify_colony_conflicts(gen);
         copy.verify_colony_governance(gen);
         copy.verify_colony_exit_pressure(gen);
+        copy.verify_personal_outlooks(gen);
         copy.verify_colony_voluntary_immigration(gen);
         copy.verify_colony_relationships(gen);
         copy.verify_colony_diplomatic_intents(gen);
@@ -8445,6 +8456,7 @@ PersistentWorld::PersistentWorld(const std::string& path, Simulation initial_wor
     store_->verify_colony_conflicts(generation_);
     store_->verify_colony_governance(generation_);
     store_->verify_colony_exit_pressure(generation_);
+    store_->verify_personal_outlooks(generation_);
     store_->verify_colony_voluntary_immigration(generation_);
     store_->verify_colony_relationships(generation_);
     store_->verify_colony_diplomatic_intents(generation_);
@@ -9492,6 +9504,23 @@ colony_conflict::ExitPressure PersistentWorld::record_colony_exit_pressure(
         world_,generation_,event_id,source,npc_id);
 }
 
+std::optional<colony_conflict::PersonalOutlook>
+PersistentWorld::assess_personal_outlook(
+    EntityId source,std::uint64_t npc) const{
+    return store_->assess_personal_outlook(world_,generation_,source,npc);
+}
+colony_conflict::PersonalOutlook PersistentWorld::record_personal_outlook(
+    std::uint64_t event,EntityId source,std::uint64_t npc){
+    return store_->record_personal_outlook(world_,generation_,event,source,npc);
+}
+std::optional<colony_conflict::PersonalOutlook>
+PersistentWorld::colony_personal_outlook(
+    EntityId source,std::uint64_t npc) const{
+    if(generation_==std::numeric_limits<std::uint64_t>::max())
+        throw std::overflow_error("world generation exhausted");
+    return store_->personal_outlook_before(source,npc,generation_+1);
+}
+
 PersistentWorld::VoluntaryImmigrationAdmission
 PersistentWorld::record_voluntary_immigration_admission(
     std::uint64_t event,std::uint64_t pressure,
@@ -9521,9 +9550,12 @@ bool PersistentWorld::submit_voluntary_immigration_boarding(
        !world_.npc_available_for_duty(a.npc_id) ||
        store_->has_child_or_dependent_link(a.origin) ||
        world_.voyage_status(a.transport_id)!=0 ||
-       static_cast<int>(colony_safety::assess(
-           world_,a.origin,a.origin).risk)<
-           static_cast<int>(colony_safety::Risk::Critical) ||
+       store_->effective_governance(a.origin,generation_).leader_id==a.npc_id ||
+       !([&]{
+           const auto memory=store_->personal_outlook_before(
+               a.origin,a.npc_id,generation_);
+           return memory && memory->considering_departure;
+       }()) ||
        colony_safety::assess(world_,a.destination,a.destination).risk!=
            colony_safety::Risk::Safe ||
        c.action!=Action::HostEmbarkPassengers ||
