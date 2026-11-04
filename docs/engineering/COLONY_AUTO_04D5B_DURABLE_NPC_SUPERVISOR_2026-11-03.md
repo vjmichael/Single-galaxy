@@ -65,4 +65,6 @@ The v76 and v77 custody and v78 autonomous decision tests are part of v79's focu
 - Only a same-owner, same-system, *fully registered*, locally reachable household with verified stable cold owner and sufficient receiving needs is automatically rescued. Remote ferries, multiple-region transactions, specialist staffing and unproven nonparent custody stay refused.
 - A mixed cohort of NPCs in multiple family scopes must be resolved as a complete authority transfer, not stripped of missing dependents.
 
-**Acceptance status:** CI result must be attached after the current dedicated v79 workflow completes. Keep its pull request draft until the focused test and wider predecessor workflows pass.
+**Focused acceptance PASSED:** [GitHub Actions run 41774303537](https://github.com/vjmichael/Single-galaxy/actions/runs/41774303537), compiled real SQLite-backed `galaxy_kernel` and passed 4/4 named CTests: `galaxy_colony_auto04d4d2b2_atomic_family`, `galaxy_colony_auto04d4d2c_mixed_guardians`, `galaxy_colony_auto04d5a_autonomous_emergency`, and `galaxy_colony_auto04d5b_durable_supervisor`. New v79 test passed 1.07 s, full selected matrix 3.65 s. Tested code commit `980d2f311a6eaab2cccdbf766c8d79202ce4800e`. This documentation edit does not change compiled source.
+
+Keep the pull request draft pending the wider predecessor CI and independent integration review; do not treat physical supply transfer and repairs as implemented based on a rescue dispatcher alone.
