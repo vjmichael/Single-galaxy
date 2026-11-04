@@ -1968,6 +1968,302 @@ public:
                 throw std::runtime_error("offensive posture or motive replaced");
         }
     }
+    struct GrievanceEvidence {
+        std::uint64_t leader=0,agenda_event=0,incident_generation=0;
+        PlayerId actor_owner=0;
+        std::string incident_id;
+        int fidelity=0,valence=0,confidence=0;
+    };
+    GrievanceEvidence interpret_colony_incident(
+        const Simulation& present,std::uint64_t generation,
+        EntityId source,std::uint64_t knowledge_id) const{
+        if(!source || !knowledge_id)throw std::invalid_argument(
+            "colony interpretation requires real source and NPC knowledge");
+        Statement leadership(db_,"SELECT event_id,leader FROM "
+            "sg_colony_conflict_agenda WHERE colony=?");
+        leadership.text(1,std::to_string(source));
+        if(!leadership.row())throw std::runtime_error("colony has no founding leadership");
+        GrievanceEvidence proof;
+        proof.agenda_event=static_cast<std::uint64_t>(
+            sqlite3_column_int64(leadership.get(),0));
+        proof.leader=parse_u64(sqlite3_column_text(leadership.get(),1));
+        if(leadership.row())throw std::runtime_error("duplicate founding leadership");
+        const auto* entity=present.find(source);
+        const auto leader=present.npc_records().find(proof.leader);
+        if(!entity || !present.colony_ship(source) || !entity->owner_id ||
+           leader==present.npc_records().end() ||
+           leader->second.home_ship!=source ||
+           leader->second.location!=source ||
+           leader->second.transport_id ||
+           !present.npc_available_for_duty(proof.leader))
+            throw std::runtime_error("colony representative not physically available");
+        Statement opinion(db_,"SELECT id,incident_id,COALESCE(parent_id,0),"
+            "speaker_id,recipient_id,fidelity,valence,confidence,generation,tick,"
+            "account FROM npc_knowledge WHERE id=?");
+        opinion.i64(1,static_cast<sqlite3_int64>(knowledge_id));
+        if(!opinion.row())throw std::runtime_error("NPC was not informed of historical event");
+        const auto claim=read_knowledge(opinion.get());
+        if(!valid_knowledge(claim) || claim.id!=knowledge_id ||
+           !claim.parent_id || claim.recipient_npc!=proof.leader ||
+           claim.fidelity==ClaimFidelity::LocalObservation ||
+           claim.generation>generation || claim.tick>present.tick() ||
+           opinion.row())
+            throw std::runtime_error("no delivered subjective claim to real colony leader");
+        proof.fidelity=static_cast<int>(claim.fidelity);
+        proof.valence=claim.valence;
+        proof.confidence=claim.confidence;
+        proof.incident_id=claim.incident_id;
+        Statement physical(db_,"SELECT generation,kind,source,destination,"
+            "command_id FROM physical_incidents WHERE incident_id=?");
+        physical.text(1,proof.incident_id);
+        if(!physical.row() ||
+           sqlite3_column_int(physical.get(),1)!=
+                static_cast<int>(PhysicalKind::ShipDestroyed) ||
+           sqlite3_column_int64(physical.get(),0)<1 ||
+           static_cast<std::uint64_t>(sqlite3_column_int64(physical.get(),0))>generation)
+            throw std::runtime_error("claim lacks real ship-destruction event");
+        proof.incident_generation=static_cast<std::uint64_t>(
+            sqlite3_column_int64(physical.get(),0));
+        const auto actor=parse_u64(sqlite3_column_text(physical.get(),2));
+        const auto victim=parse_u64(sqlite3_column_text(physical.get(),3));
+        const auto command=parse_u64(sqlite3_column_text(physical.get(),4));
+        if(!actor || !victim || !command || actor==victim || physical.row())
+            throw std::runtime_error("original damage participants corrupted");
+        // Use the actual incident-generation world snapshot to identify the
+        // attacker owner; a player-entered rumor must never supply that ID.
+        Statement cp(db_,"SELECT state,checksum FROM snapshots WHERE generation=?");
+        cp.i64(1,static_cast<sqlite3_int64>(proof.incident_generation));
+        if(!cp.row())throw std::runtime_error(
+            "historical attack snapshot pruned; attribution refused");
+        const auto* bytes=sqlite3_column_blob(cp.get(),0);
+        const auto length=sqlite3_column_bytes(cp.get(),0);
+        if(!bytes || length<=0 || length>16*1024*1024)
+            throw std::runtime_error("historical attack snapshot malformed");
+        const auto actual=Simulation::from_snapshot(std::string(
+            static_cast<const char*>(bytes),static_cast<std::size_t>(length)));
+        const auto* attacker=actual.find(actor);
+        const auto* wreck=actual.find(victim);
+        if(actual.state_hash()!=parse_u64(sqlite3_column_text(cp.get(),1)) ||
+           !attacker || attacker->type!=EntityType::Ship ||
+           !attacker->owner_id || !wreck || wreck->type!=EntityType::Wreck ||
+           !actual.has_command_id(command) || cp.row())
+            throw std::runtime_error("original physical attack no longer verifiable");
+        if(attacker->owner_id==entity->owner_id)
+            throw std::runtime_error("self-attacks cannot become foreign-owner grievance");
+        proof.actor_owner=attacker->owner_id;
+        return proof;
+    }
+    colony_conflict::RelationRevision latest_colony_relationship(
+        EntityId source,PlayerId target) const{
+        colony_conflict::RelationRevision out;
+        out.colony=source;out.target_owner=target;
+        Statement exists(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_relationship_revisions'");
+        if(!exists.row())return out;
+        Statement q(db_,"SELECT event_id,revision,leader,knowledge_id,"
+            "incident_generation,prior_event,old_score,delta,new_score "
+            "FROM sg_colony_relationship_revisions "
+            "WHERE colony=? AND target_owner=? ORDER BY revision DESC LIMIT 1");
+        q.text(1,std::to_string(source));q.text(2,std::to_string(target));
+        if(q.row()){
+            out.event_id=static_cast<std::uint64_t>(sqlite3_column_int64(q.get(),0));
+            out.revision=static_cast<std::uint64_t>(sqlite3_column_int64(q.get(),1));
+            out.leader_id=parse_u64(sqlite3_column_text(q.get(),2));
+            out.knowledge_id=static_cast<std::uint64_t>(sqlite3_column_int64(q.get(),3));
+            out.incident_generation=static_cast<std::uint64_t>(sqlite3_column_int64(q.get(),4));
+            out.prior_event_id=static_cast<std::uint64_t>(sqlite3_column_int64(q.get(),5));
+            out.old_score=sqlite3_column_int(q.get(),6);
+            out.delta=sqlite3_column_int(q.get(),7);
+            out.new_score=sqlite3_column_int(q.get(),8);
+            out.attitude=colony_conflict::attitude_for_score(out.new_score);
+            if(q.row())throw std::runtime_error("ambiguous colony relationship tip");
+        }
+        return out;
+    }
+    colony_conflict::RelationRevision assess_colony_relationship(
+        const Simulation& present,std::uint64_t generation,
+        EntityId source,std::uint64_t knowledge_id) const{
+        const auto proof=interpret_colony_incident(
+            present,generation,source,knowledge_id);
+        colony_conflict::RelationRevision out=latest_colony_relationship(
+            source,proof.actor_owner);
+        // One physical event can be discussed by multiple NPCs, but may not
+        // be counted more than once for a given colony and foreign owner.
+        Statement exists(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_relationship_revisions'");
+        if(exists.row()){
+            Statement duplicate(db_,"SELECT 1 FROM sg_colony_relationship_revisions "
+                "WHERE colony=? AND target_owner=? AND incident_id=?");
+            duplicate.text(1,std::to_string(source));
+            duplicate.text(2,std::to_string(proof.actor_owner));
+            duplicate.text(3,proof.incident_id);
+            if(duplicate.row())throw std::runtime_error(
+                "colony already interpreted this same real incident");
+        }
+        out.prior_event_id=out.event_id;
+        out.event_id=0;
+        out.revision+=1;
+        out.old_score=out.new_score;
+        out.leader_id=proof.leader;
+        out.knowledge_id=knowledge_id;
+        out.incident_generation=proof.incident_generation;
+        out.delta=colony_conflict::relationship_delta(
+            proof.fidelity,proof.valence,proof.confidence);
+        out.new_score=std::clamp(out.old_score+out.delta,-100,100);
+        out.attitude=colony_conflict::attitude_for_score(out.new_score);
+        if(!out.delta)throw std::runtime_error(
+            "zero-confidence claim cannot rewrite diplomatic history");
+        return out;
+    }
+    colony_conflict::RelationRevision record_colony_relationship(
+        const Simulation& world,std::uint64_t generation,std::uint64_t id,
+        EntityId source,std::uint64_t knowledge_id){
+        if(!id || id>static_cast<std::uint64_t>(
+            std::numeric_limits<sqlite3_int64>::max()))
+            throw std::invalid_argument("invalid diplomatic revision event ID");
+        run(db_,"BEGIN IMMEDIATE");
+        try{
+            if(latest_generation(db_)!=generation)
+                throw std::runtime_error("stale world during colony diplomacy revision");
+            auto out=assess_colony_relationship(
+                world,generation,source,knowledge_id);
+            const auto proof=interpret_colony_incident(
+                world,generation,source,knowledge_id);
+            run(db_,"CREATE TABLE IF NOT EXISTS sg_colony_relationship_revisions("
+                "event_id INTEGER PRIMARY KEY CHECK(event_id>0),"
+                "generation INTEGER NOT NULL CHECK(generation>0),"
+                "world_hash TEXT NOT NULL,tick INTEGER NOT NULL,"
+                "colony TEXT NOT NULL,leader TEXT NOT NULL,agenda_event INTEGER NOT NULL,"
+                "knowledge_id INTEGER NOT NULL UNIQUE,"
+                "incident_id TEXT NOT NULL,incident_generation INTEGER NOT NULL,"
+                "target_owner TEXT NOT NULL,revision INTEGER NOT NULL CHECK(revision>0),"
+                "prior_event INTEGER NOT NULL,old_score INTEGER NOT NULL,"
+                "delta INTEGER NOT NULL,new_score INTEGER NOT NULL,"
+                "fidelity INTEGER NOT NULL,valence INTEGER NOT NULL,"
+                "confidence INTEGER NOT NULL,"
+                "UNIQUE(colony,target_owner,incident_id),"
+                "UNIQUE(colony,target_owner,revision))");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_colony_relation_no_update "
+                "BEFORE UPDATE ON sg_colony_relationship_revisions "
+                "BEGIN SELECT RAISE(ABORT,'immutable colony diplomatic decision'); END");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_colony_relation_no_delete "
+                "BEFORE DELETE ON sg_colony_relationship_revisions "
+                "BEGIN SELECT RAISE(ABORT,'immutable colony diplomatic decision'); END");
+            Statement q(db_,"INSERT INTO sg_colony_relationship_revisions "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+            q.i64(1,static_cast<sqlite3_int64>(id));
+            q.i64(2,static_cast<sqlite3_int64>(generation));
+            q.text(3,std::to_string(world.state_hash()));
+            q.i64(4,static_cast<sqlite3_int64>(world.tick()));
+            q.text(5,std::to_string(source));
+            q.text(6,std::to_string(proof.leader));
+            q.i64(7,static_cast<sqlite3_int64>(proof.agenda_event));
+            q.i64(8,static_cast<sqlite3_int64>(knowledge_id));
+            q.text(9,proof.incident_id);
+            q.i64(10,static_cast<sqlite3_int64>(proof.incident_generation));
+            q.text(11,std::to_string(proof.actor_owner));
+            q.i64(12,static_cast<sqlite3_int64>(out.revision));
+            q.i64(13,static_cast<sqlite3_int64>(out.prior_event_id));
+            q.i64(14,out.old_score);q.i64(15,out.delta);q.i64(16,out.new_score);
+            q.i64(17,proof.fidelity);q.i64(18,proof.valence);
+            q.i64(19,proof.confidence);
+            q.execute();
+            run(db_,"COMMIT");
+            out.event_id=id;
+            return out;
+        }catch(...){
+            sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);
+            throw;
+        }
+    }
+    void verify_colony_relationships(std::uint64_t max_generation) const{
+        Statement exists(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_relationship_revisions'");
+        if(!exists.row())return;
+        for(const auto* guard:{"sg_colony_relation_no_update",
+                               "sg_colony_relation_no_delete"}){
+            Statement q(db_,"SELECT 1 FROM sqlite_master "
+                "WHERE type='trigger' AND name=?");
+            q.text(1,guard);
+            if(!q.row() || q.row())
+                throw std::runtime_error("colony relation immutability removed");
+        }
+        Statement rows(db_,"SELECT event_id,generation,world_hash,tick,colony,"
+            "leader,agenda_event,knowledge_id,incident_id,incident_generation,"
+            "target_owner,revision,prior_event,old_score,delta,new_score,"
+            "fidelity,valence,confidence "
+            "FROM sg_colony_relationship_revisions "
+            "ORDER BY generation,revision,event_id");
+        std::map<std::pair<EntityId,PlayerId>,colony_conflict::RelationRevision> prior;
+        while(rows.row()){
+            const auto event=sqlite3_column_int64(rows.get(),0);
+            const auto generation=sqlite3_column_int64(rows.get(),1);
+            const auto hash=sqlite_str(rows.get(),2);
+            const auto tick=sqlite3_column_int64(rows.get(),3);
+            const auto source=parse_u64(sqlite3_column_text(rows.get(),4));
+            const auto leader=parse_u64(sqlite3_column_text(rows.get(),5));
+            const auto agenda=sqlite3_column_int64(rows.get(),6);
+            const auto knowledge=sqlite3_column_int64(rows.get(),7);
+            const auto incident=sqlite_str(rows.get(),8);
+            const auto incident_generation=sqlite3_column_int64(rows.get(),9);
+            const auto owner=parse_u64(sqlite3_column_text(rows.get(),10));
+            const auto revision=sqlite3_column_int64(rows.get(),11);
+            const auto prev=sqlite3_column_int64(rows.get(),12);
+            const auto before=sqlite3_column_int(rows.get(),13);
+            const auto delta=sqlite3_column_int(rows.get(),14);
+            const auto after=sqlite3_column_int(rows.get(),15);
+            const auto fidelity=sqlite3_column_int(rows.get(),16);
+            const auto valence=sqlite3_column_int(rows.get(),17);
+            const auto confidence=sqlite3_column_int(rows.get(),18);
+            if(event<1 || generation<1 || generation>
+               static_cast<sqlite3_int64>(max_generation) ||
+               tick<0 || !source || !leader || agenda<1 ||
+               knowledge<1 || incident.empty() ||
+               incident_generation<1 || incident_generation>generation ||
+               !owner || revision<1 || prev<0 ||
+               before< -100 || before>100 ||
+               after< -100 || after>100)
+                throw std::runtime_error("colony diplomatic revision metadata corrupted");
+            Statement snap(db_,"SELECT state,checksum FROM snapshots "
+                "WHERE generation=?");
+            snap.i64(1,generation);
+            if(!snap.row())throw std::runtime_error("colony relation world snapshot missing");
+            const auto* ptr=sqlite3_column_blob(snap.get(),0);
+            const auto len=sqlite3_column_bytes(snap.get(),0);
+            if(!ptr || len<=0 || len>16*1024*1024)
+                throw std::runtime_error("colony relation physical snapshot malformed");
+            const auto historical=Simulation::from_snapshot(std::string(
+                static_cast<const char*>(ptr),static_cast<std::size_t>(len)));
+            if(historical.state_hash()!=parse_u64(sqlite3_column_text(snap.get(),1)) ||
+               std::to_string(historical.state_hash())!=hash ||
+               historical.tick()!=static_cast<std::uint64_t>(tick) || snap.row())
+                throw std::runtime_error("colony relationship world claim substituted");
+            const auto proof=interpret_colony_incident(
+                historical,static_cast<std::uint64_t>(generation),
+                source,static_cast<std::uint64_t>(knowledge));
+            if(proof.leader!=leader || proof.agenda_event!=
+               static_cast<std::uint64_t>(agenda) ||
+               proof.incident_id!=incident ||
+               proof.incident_generation!=
+                    static_cast<std::uint64_t>(incident_generation) ||
+               proof.actor_owner!=owner ||
+               proof.fidelity!=fidelity ||
+               proof.valence!=valence || proof.confidence!=confidence)
+                throw std::runtime_error("colony grievance lost its actual NPC evidence");
+            auto& prior_row=prior[{source,owner}];
+            if(static_cast<std::uint64_t>(revision)!=prior_row.revision+1 ||
+               static_cast<std::uint64_t>(prev)!=prior_row.event_id ||
+               before!=prior_row.new_score ||
+               delta!=colony_conflict::relationship_delta(
+                   fidelity,valence,confidence) ||
+               after!=std::clamp(before+delta,-100,100) ||
+               delta==0)
+                throw std::runtime_error("colony relation revision chain or score forged");
+            prior_row.event_id=static_cast<std::uint64_t>(event);
+            prior_row.revision=static_cast<std::uint64_t>(revision);
+            prior_row.new_score=after;
+        }
+    }
     void verify_colony_response(const Simulation& state,std::uint64_t gen) const {
         colony_safety::journal::verify(db_,state,gen);
     }
@@ -5687,6 +5983,9 @@ public:
                 "WHERE type='table' AND name='sg_colony_conflict_intent'");
             const bool has_conflict_agendas=conflict_agendas.row();
             const bool has_conflict_intents=conflict_intents.row();
+            Statement colony_relations(db_,"SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='sg_colony_relationship_revisions'");
+            const bool has_colony_relations=colony_relations.row();
             const std::string prune_sql=std::string(
                 "DELETE FROM snapshots WHERE generation > 1 AND generation < ?")+
                 (incident_cases_exist ? " AND generation NOT IN "
@@ -5728,6 +6027,13 @@ public:
                     : "")+
                 (has_conflict_intents ? " AND generation NOT IN "
                     "(SELECT world_generation FROM sg_colony_conflict_intent)"
+                    : "")+
+                // Bind subjective diplomacy to BOTH the original physical
+                // incident and the later real NPC belief/decision generation.
+                (has_colony_relations ? " AND generation NOT IN "
+                    "(SELECT generation FROM sg_colony_relationship_revisions)"
+                    " AND generation NOT IN "
+                    "(SELECT incident_generation FROM sg_colony_relationship_revisions)"
                     : "");
             Statement prune(db_,prune_sql.c_str());
             prune.i64(1, static_cast<std::int64_t>(next > 2 ? next - 2 : 1));
@@ -6877,6 +7183,7 @@ void PersistentWorld::recover_copy(const std::string& source, const std::string&
         copy.verify_npc_habitat_supplies(gen);
         copy.verify_colony_watch_contacts(gen);
         copy.verify_colony_conflicts(gen);
+        copy.verify_colony_relationships(gen);
         verify_dependent_stranding_cases(destination,gen);
         verify_split_rescue_intents(destination,gen);
     } catch (...) {
@@ -6915,6 +7222,7 @@ PersistentWorld::PersistentWorld(const std::string& path, Simulation initial_wor
     store_->verify_npc_habitat_supplies(generation_);
     store_->verify_colony_watch_contacts(generation_);
     store_->verify_colony_conflicts(generation_);
+    store_->verify_colony_relationships(generation_);
 }
 PersistentWorld::~PersistentWorld() = default;
 
@@ -7926,6 +8234,25 @@ colony_conflict::Decision PersistentWorld::record_colony_conflict_intent(
     std::uint64_t event,EntityId source,std::uint64_t contact_event){
     return store_->record_colony_aggression(
         world_,generation_,event,source,contact_event);
+}
+
+colony_conflict::RelationRevision
+PersistentWorld::assess_colony_relationship_revision(
+    EntityId source,std::uint64_t knowledge_id) const{
+    return store_->assess_colony_relationship(
+        world_,generation_,source,knowledge_id);
+}
+colony_conflict::RelationRevision
+PersistentWorld::record_colony_relationship_revision(
+    std::uint64_t event_id,EntityId source,std::uint64_t knowledge_id){
+    return store_->record_colony_relationship(
+        world_,generation_,event_id,source,knowledge_id);
+}
+colony_conflict::RelationRevision
+PersistentWorld::colony_relationship(EntityId source,PlayerId owner) const{
+    if(!source || !owner)
+        throw std::invalid_argument("colony diplomacy needs source and foreign owner");
+    return store_->latest_colony_relationship(source,owner);
 }
 
 // COLONY-AUTO-04D.4D2B2: admission only. No family member relocates until

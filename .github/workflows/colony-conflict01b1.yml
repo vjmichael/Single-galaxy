@@ -1,0 +1,28 @@
+name: Colony CONFLICT-01B1 durable grievance and diplomacy
+on:
+  push:
+    branches:
+      - integration/colony-conflict01b1-grievance-belief-v83-20261103
+  pull_request:
+    paths:
+      - 'src/ColonyConflict.cpp'
+      - 'include/galaxy/ColonyConflict.hpp'
+      - 'src/Persistence.cpp'
+      - 'include/galaxy/Persistence.hpp'
+      - 'tests/COLONY_CONFLICT01B1_*'
+      - 'CMakeLists.txt'
+  workflow_dispatch:
+jobs:
+  evidence-grounded-diplomacy-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SQLite
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+      - name: Build actual physical facts, NPC knowledge and diplomatic revisions
+        run: cmake --build build --target galaxy_colony_conflict01b1_grievance_tests galaxy_colony_conflict01a_aggressive_intent_tests galaxy_colony_defense01a_watch_tests -j 2
+      - name: Test independent SQLite fact/belief history and tamper recovery
+        run: ctest --test-dir build --output-on-failure -R 'galaxy_colony_(conflict01b1_grievance|conflict01a_aggressive_intent|defense01a_local_watch)'

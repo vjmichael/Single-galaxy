@@ -1029,3 +1029,13 @@ if(BUILD_TESTING)
     add_test(NAME galaxy_colony_conflict01a_aggressive_intent
         COMMAND galaxy_colony_conflict01a_aggressive_intent_tests)
 endif()
+
+# CONFLICT-01B1: one real event can generate different subjective colony
+# relationships; later real incidents revise that score without altering facts.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_conflict01b1_grievance_tests
+        tests/COLONY_CONFLICT01B1_GrievanceBeliefTests.cpp)
+    target_link_libraries(galaxy_colony_conflict01b1_grievance_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_conflict01b1_grievance
+        COMMAND galaxy_colony_conflict01b1_grievance_tests)
+endif()
