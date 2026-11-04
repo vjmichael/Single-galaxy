@@ -2704,7 +2704,7 @@ Event Simulation::execute(const Command& c) {
                     const auto dx=probe.position.x-actor.position.x;
                     const auto dy=probe.position.y-actor.position.y;
                     constexpr auto link=kDeepSpaceProbeCommsRangeMm;
-                    if(std::hypot(double(dx),double(dy))>double(link)){
+                    if(!within_deep_probe_link(dx,dy)){
                         result.result=Outcome::OutOfRange;return result;
                     }
                     std::vector<DiscoveryRecord> candidates;
@@ -4573,6 +4573,11 @@ void Simulation::process_storage_links() {
     }
 }
 
+bool Simulation::within_deep_probe_link(std::int64_t dx_mm,
+    std::int64_t dy_mm) {
+    return std::hypot(double(dx_mm),double(dy_mm))<=
+           double(kDeepSpaceProbeCommsRangeMm);
+}
 void Simulation::configure_probe_report_tick_ms(std::uint64_t tick_ms) {
     if(tick_ms<20||tick_ms>5000)
         throw std::invalid_argument("invalid probe timing period");
@@ -4667,7 +4672,7 @@ void Simulation::step() {
             const auto dx=probe->second.position.x-carrier->second.position.x;
             const auto dy=probe->second.position.y-carrier->second.position.y;
             constexpr auto range=kDeepSpaceProbeCommsRangeMm;
-            if(std::hypot(double(dx),double(dy))>double(range)){
+            if(!within_deep_probe_link(dx,dy)){
                 ++it;continue;
             }
         }
