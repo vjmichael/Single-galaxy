@@ -2390,6 +2390,13 @@ public:
                     "voluntary migrant moved without immutable matching receipt");
             }
         }
+        if(have_settled){
+            Statement orphans(db_,"SELECT 1 FROM sg_colony_voluntary_immigration_settled s "
+                "LEFT JOIN sg_colony_voluntary_immigration a "
+                "ON a.event_id=s.admission_event WHERE a.event_id IS NULL LIMIT 1");
+            if(orphans.row())throw std::runtime_error(
+                "orphan completed immigration without an original accepted source");
+        }
     }
     bool verified_voluntary_immigration(std::uint64_t event) const{
         Statement table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
@@ -2399,6 +2406,74 @@ public:
             "WHERE admission_event=?");
         q.i64(1,static_cast<sqlite3_int64>(event));
         return q.row();
+    }
+
+
+    void validate_voluntary_settlement(
+        const Simulation& world,std::uint64_t generation,
+        const SocietyMigrationPlan& plan) const{
+        if(!plan.voluntary_admission_event_id || plan.co_parent_id ||
+           !plan.dependents.empty())
+            throw std::runtime_error("solo voluntary immigration cannot bypass household closure");
+        const auto a=immigration_admission(plan.voluntary_admission_event_id);
+        if(a.world_generation>=generation ||
+           a.npc_id!=plan.npc_id || a.transport_id!=plan.transport_id ||
+           a.origin!=plan.origin || a.destination!=plan.destination)
+            throw std::runtime_error("settlement is not the admitted physical immigration route");
+        const auto* source=world.find(a.origin),*dest=world.find(a.destination);
+        if(!source || !dest || source->owner_id!=a.original_owner ||
+           dest->owner_id!=a.receiving_owner)
+            throw std::runtime_error("receiving-owner or source-owner authority changed");
+        if(world.voyage_status(a.transport_id)!=2)
+            throw std::runtime_error("immigrant has not physically disembarked");
+        const auto person=world.npc_records().find(a.npc_id);
+        if(person==world.npc_records().end() ||
+           person->second.home_ship!=a.origin ||
+           person->second.location!=a.destination ||
+           person->second.transport_id)
+            throw std::runtime_error("immigrant not at admitted destination");
+        if(verified_voluntary_immigration(a.event_id))
+            throw std::runtime_error("voluntary immigration already settled");
+    }
+    void insert_voluntary_settlement_receipt(sqlite3* db,
+        std::uint64_t admission_event,const SocietyMigrationPlan& p,
+        std::uint64_t committed_generation) const{
+        if(!db || !admission_event || !p.command_id || !committed_generation)
+            throw std::runtime_error("incomplete immigration effect binding");
+        run(db,"CREATE TABLE IF NOT EXISTS sg_colony_voluntary_immigration_settled("
+            "admission_event INTEGER PRIMARY KEY CHECK(admission_event>0),"
+            "migration_command TEXT NOT NULL UNIQUE,"
+            "world_generation INTEGER NOT NULL CHECK(world_generation>0))");
+        run(db,"CREATE TRIGGER IF NOT EXISTS sg_voluntary_immigration_settled_no_update "
+            "BEFORE UPDATE ON sg_colony_voluntary_immigration_settled "
+            "BEGIN SELECT RAISE(ABORT,'immutable completed immigration'); END");
+        run(db,"CREATE TRIGGER IF NOT EXISTS sg_voluntary_immigration_settled_no_delete "
+            "BEFORE DELETE ON sg_colony_voluntary_immigration_settled "
+            "BEGIN SELECT RAISE(ABORT,'immutable completed immigration'); END");
+        // The normal authoritative ART02 family move, ECON03 regional
+        // transfer and source/destination world update have already been
+        // checked/inserted in this SAME Store::commit SQL transaction.
+        Statement registered(db,"SELECT command_id,world_generation,npc_id,"
+            "transport_id,origin,destination,household_count "
+            "FROM sg_society_migration WHERE command_id=?");
+        registered.text(1,std::to_string(p.command_id));
+        if(!registered.row() ||
+           sqlite_str(registered.get(),0)!=std::to_string(p.command_id) ||
+           sqlite3_column_int64(registered.get(),1)!=
+               static_cast<sqlite3_int64>(committed_generation) ||
+           sqlite_str(registered.get(),2)!=std::to_string(p.npc_id) ||
+           sqlite_str(registered.get(),3)!=std::to_string(p.transport_id) ||
+           sqlite_str(registered.get(),4)!=std::to_string(p.origin) ||
+           sqlite_str(registered.get(),5)!=std::to_string(p.destination) ||
+           sqlite3_column_int64(registered.get(),6)!=1 ||
+           registered.row())
+            throw std::runtime_error("voluntary settlement lacks exactly one native immigration transfer");
+        Statement insert(db,"INSERT INTO sg_colony_voluntary_immigration_settled "
+            "VALUES(?,?,?)");
+        insert.i64(1,static_cast<sqlite3_int64>(admission_event));
+        insert.text(2,std::to_string(p.command_id));
+        insert.i64(3,static_cast<sqlite3_int64>(committed_generation));
+        insert.execute();
     }
 
     colony_conflict::Decision assess_colony_aggression(
