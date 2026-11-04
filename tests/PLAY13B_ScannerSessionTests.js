@@ -62,3 +62,15 @@ test('native UI, relay and authoritative command hooks remain connected',()=>{
    'pending_probe_discoveries_','focus_waypoint'])
    assert.ok(native.includes(term));
 });
+
+test('the live scanner exposes radius and does not fake unfinished modes',()=>{
+ const fs=require('node:fs'),path=require('node:path');
+ const read=p=>fs.readFileSync(path.resolve(__dirname,'..',p),'utf8');
+ const html=read('viewer/interactive.html'),host=read('src/colony_live_host.cpp');
+ const relay=read('live/interactive_relay.py');
+ for(const id of ['signatureRange','signatureMode','signatureScan','signatureTarget','signatureFocus','signatureCancel'])
+   assert.ok(html.includes('id="'+id+'"'));
+ assert.ok(html.includes('Celestial (survey preview)'));
+ assert.ok(relay.includes("command=f'SIGNATURES|{radius}'"));
+ assert.ok(host.includes('coarse_probe_signatures(principal,ship,radius)'));
+});

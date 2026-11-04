@@ -72,7 +72,14 @@ static void focus_mission() {
   {
    PersistentWorld w(db,Simulation(22));
    CHECK(w.world().survey_probes().at(probe).focus_site==rock);
-   w.steps(5);
+   // First approach arrives at the coarse region; only then may the
+   // scanner obtain a fine target waypoint (persisted safely at restart).
+   w.step();
+   CHECK(w.world().survey_probes().at(probe).focus_site==rock);
+   CHECK(w.world().survey_probes().at(probe).focus_waypoint.x==16000000);
+   CHECK(Simulation::from_snapshot(w.world().canonical_state())
+     .survey_probes().at(probe).focus_waypoint.x==16000000);
+   w.steps(4);
    CHECK(w.world().survey_probes().at(probe).focus_site==0);
    CHECK(w.world().pending_probe_report_count()==1);
    CHECK(w.world().discoveries().count({7,rock})==0);
@@ -97,10 +104,10 @@ static void focus_mission() {
  }catch(...){std::error_code ignored;fs::remove_all(dir,ignored);throw;}
 }
 int main(){
- focus_mission();
  const auto dir=fs::temp_directory_path()/
   ("sg_play12_"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
  try{
+  focus_mission();
   fs::create_directories(dir);
   const auto db=(dir/"world.sqlite").string(),copy=(dir/"recovered.sqlite").string();
   EntityId ship=0,near=0,far=0;
