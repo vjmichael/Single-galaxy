@@ -48,6 +48,15 @@ try{
         const auto previous=w.world().utility(site)->repairs;
         w.steps(145-w.world().tick());
         const auto* u=w.world().utility(site);
+        std::cerr<<"AUTO04D3R trace: tick="<<w.world().tick()
+            <<" food="<<w.world().habitat(site)->life.food_kg
+            <<" water="<<w.world().habitat(site)->life.water_kg
+            <<" oxygen="<<w.world().habitat(site)->life.oxygen_kg
+            <<" supplied="<<w.world().habitat(site)->life.consecutive_supplied_cycles
+            <<" risk="<<static_cast<int>(colony_safety::assess(w.world(),ship,site).risk)
+            <<" condition="<<u->condition<<" repairs="<<u->repairs
+            <<" spares="<<u->spare_modules<<" techs="<<u->technicians
+            <<'\\n';
         CHECK(u->repairs==previous+1);  // actually executed using physical module
         CHECK(u->delegated_repairs==0); // owner never enabled delegated policy
         CHECK(u->spare_modules==1);     // physical module consumed
