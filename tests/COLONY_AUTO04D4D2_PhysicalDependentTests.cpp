@@ -71,6 +71,8 @@ try{
         cmd.action=Action::HostRegisterDependent;cmd.transport_id=child;
         cmd.passenger_ids={1};cmd.execute_tick=world.world().tick()+1;
         CHECK(world.world().physical_dependents().empty());
+        auto wrong=cmd;wrong.id=8202;wrong.sequence=8202;wrong.passenger_ids={3};
+        CHECK(!world.submit_host_dependent_registration(wrong,scope,seed)); // unrelated ship's crew
         CHECK(world.submit_host_dependent_registration(cmd,scope,seed));
         CHECK(!world.submit_host_dependent_registration(cmd,scope,seed));
         bool blocked=false;
@@ -115,7 +117,24 @@ try{
         CHECK(replay.world().life_support(home)->food_kg==97);
         CHECK(replay.world().total_material_kg()==mass);
     }
-    for(const auto& f:{path,copy}){
+    // A detached SQLite attacker cannot make the physical dependent
+    // legitimate by deleting the independently registered birth authority.
+    const auto damaged=path+".tamper";
+    PersistentWorld::recover_copy(path,damaged);
+    {
+        sqlite3* db=nullptr;
+        CHECK(sqlite3_open(damaged.c_str(),&db)==SQLITE_OK);
+        // Simulate privileged tampering after disabling the immutable trigger.
+        sql(db,"DROP TRIGGER sg_colony_child_authority_no_delete");
+        sql(db,"DELETE FROM sg_colony_physical_child_authority WHERE child_id='"+
+               std::to_string(child)+"'");
+        sqlite3_close(db);
+        bool refused=false;
+        try{PersistentWorld inconsistent(damaged,Simulation(4));}
+        catch(const std::runtime_error&){refused=true;}
+        CHECK(refused);
+    }
+    for(const auto& f:{path,copy,damaged}){
         std::filesystem::remove(f);std::filesystem::remove(f+"-wal");
         std::filesystem::remove(f+"-shm");
     }
