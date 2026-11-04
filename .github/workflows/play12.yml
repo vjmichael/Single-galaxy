@@ -23,9 +23,18 @@ jobs:
       - name: Configure C++ game
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
       - name: Build physical probe, fitting, exploration and host
-        run: cmake --build build --target galaxy_play12_probe_tests galaxy_play11_fitting_tests galaxy_play10_exploration_tests galaxy_colony_live_host -j2
+        run: cmake --build build --target galaxy_play12_probe_tests galaxy_play11_fitting_tests galaxy_play10_exploration_tests galaxy_play09_wreck_salvage_tests galaxy_colony_live_host -j2
       - name: Verify all authoritative persistent gameplay stages
-        run: ctest --test-dir build -R '^galaxy_play(10_exploration|11_fitting|12_probes)$' --output-on-failure
+        run: ctest --test-dir build -R '^galaxy_play(09_wreck_salvage|10_exploration|11_fitting|12_probes) --output-on-failure
+      - name: Verify strict browser and relay native command wiring
+        run: node --test tests/PLAY12_ProbeWiringTests.js tests/PLAY11_FittingWiringTests.js tests/PLAY10_ExplorationWiringTests.js tests/ExplorationJournalTests.js tests/PLAY09_SalvageWiringTests.js tests/PLAY08_CombatWiringTests.js
+      - name: Check browser and relay syntax
+        run: |
+          node --check viewer/colony.js
+          node --check viewer/interactive.js
+          node --check viewer/exploration-journal.js
+          python3 -m py_compile live/interactive_relay.py
+ --output-on-failure
       - name: Verify strict browser and relay native command wiring
         run: node --test tests/PLAY12_ProbeWiringTests.js tests/PLAY11_FittingWiringTests.js tests/PLAY10_ExplorationWiringTests.js tests/ExplorationJournalTests.js tests/PLAY09_SalvageWiringTests.js tests/PLAY08_CombatWiringTests.js
       - name: Check browser and relay syntax
