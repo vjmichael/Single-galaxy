@@ -360,6 +360,17 @@
       e.hazard=numeric(v[11],3);
       e.support=numeric(v[12],1);
       if(!e.body)throw Error('Invalid expedition body');
+    }else if(t==='OASIS_SOURCE'){
+      if(v.length!==7)throw Error('Malformed physical oasis reserve');
+      e.body=numeric(v[4],Number.MAX_SAFE_INTEGER);
+      e.waterKg=numeric(v[5],100000000);e.nutrientsKg=numeric(v[6],100000000);
+      if(!e.body)throw Error('Invalid oasis body ID');
+    }else if(t==='OASIS_COLLECTED'){
+      if(v.length!==7)throw Error('Malformed oasis collection receipt');
+      e.body=numeric(v[4],Number.MAX_SAFE_INTEGER);
+      e.material=v[5];e.kg=numeric(v[6],10000);
+      if(!e.body || !['WATER','NUTRIENTS'].includes(e.material) || !e.kg)
+        throw Error('Invalid oasis collection receipt');
     }else if(t==='LOCAL_ENVIRONMENT'){
       if(v.length!==7)throw Error('Malformed celestial environment');
       e.body=numeric(v[4],Number.MAX_SAFE_INTEGER);
@@ -729,6 +740,16 @@
        const rock=geology.get(e.id);if(!rock)throw Error('Mineral without scanned rock');rock.minerals.set(e.name,e.share);
      }else if(e.type==='SMALL_ROCK')small.set(e.id,e.remaining);
      else if(e.type==='LOCAL_DEPOSIT')localOreTaxonomy.set(e.id,e.classId);
+     else if(e.type==='OASIS_SOURCE'){
+       q('signatureFeedback').textContent='Physical oasis reserves at body #'+e.body+
+         ': '+e.waterKg.toLocaleString()+' kg water and '+
+         e.nutrientsKg.toLocaleString()+' kg nutrients. These are finite deposits, not free food or oxygen.';
+     }
+     else if(e.type==='OASIS_COLLECTED'){
+       q('signatureFeedback').textContent='Collected '+e.kg.toLocaleString()+
+         ' kg '+e.material.toLowerCase()+' from real oasis #'+e.body+
+         ' into the ship life-support inventory.';
+     }
      else if(e.type==='EXPEDITION')expeditionAssessment=e;
      else if(e.type==='LOCAL_ENVIRONMENT'){
        const names=['','Stellar radiation zone','Debris region','Rocky planetary region','Outer icy planetary region','Lunar region'];
