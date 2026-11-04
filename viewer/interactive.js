@@ -1,6 +1,7 @@
 /* B4.3 live browser: no player IDs, target IDs or authority supplied by UI. */
 (function(){'use strict';
 let source=null,token=null, colonyMode=false;
+window.GalaxyColonyMode=false;
 const el=id=>document.getElementById(id);
 const message=text=>{el('commandMessage').textContent=text;};
 async function command(action,extra={}){
@@ -15,12 +16,14 @@ async function command(action,extra={}){
 }
 async function connect(){
  if(source){source.close();source=null;}
+ window.GalaxyColonyMode=false;
  const bridge=window.GalaxyLiveBridge;bridge.reset();window.GalaxySurveyBridge?.reset();window.GalaxyColony?.reset();message('Connecting to one running local world…');
  try{
    const response=await fetch('/session',{cache:'no-store'});
    if(!response.ok)throw new Error('Session unavailable');
    const data=await response.json();token=data.token;window.GalaxyTickMs=data.tick_ms;
    colonyMode=!!data.colony_mode;
+   window.GalaxyColonyMode=colonyMode;
    el('qaPanel').hidden=!data.qa_mode;
    el('interactiveControls').hidden=colonyMode;
    el('surveyPanel').hidden=colonyMode;
@@ -156,6 +159,7 @@ window.GalaxyReconnect=connect;
 window.GalaxyDisconnect=()=>{
  lastReturnShip=null;
  if(source){source.close();source=null;}token=null;
+ colonyMode=false;window.GalaxyColonyMode=false;
  window.GalaxyLiveBridge?.reset();window.GalaxyColony?.reset();window.GalaxySurveyBridge?.reset();
  el('interactiveControls').hidden=true;el('colonyPanel').hidden=true;el('surveyPanel').hidden=true;
  el('qaPanel').hidden=true;
