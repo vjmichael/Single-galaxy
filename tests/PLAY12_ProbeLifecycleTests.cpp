@@ -36,6 +36,12 @@ int main(){
    CHECK(seed.find(ship)->fitting.hardpoints[1]==2);
    CHECK(seed.find(ship)->survey_probes_carried==1);
    CHECK(seed.total_ore()==56); // 50 ore + 2t scanner + 2t launcher + 2t probe
+   // Gameplay link is radial, not a square around the carrier.
+   const auto link=Simulation::kDeepSpaceProbeCommsRangeMm;
+   CHECK(Simulation::within_deep_probe_link(link,0));
+   CHECK(!Simulation::within_deep_probe_link(link+1,0));
+   CHECK(Simulation::within_deep_probe_link(link/2,link/2));
+   CHECK(!Simulation::within_deep_probe_link(link*4/5,link*4/5));
    PersistentWorld w(db,std::move(seed));
    CHECK(run(w,order(w,1,ship,Action::DeploySurveyProbe,0,8))==Outcome::Unauthorized);
    CHECK(w.world().survey_probes().empty());
