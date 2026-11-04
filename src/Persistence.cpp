@@ -2657,7 +2657,9 @@ public:
             // forged admission cannot erase its nonzero personal decision and
             // claim the older scarcity-only rule instead.
             const bool legacy=intent==0;
-            if(legacy && has_intent){
+            // A schema-column downgrade is not sufficient to masquerade a
+            // newly issued personal-intent permit as an older one.
+            if(legacy){
                 Statement personal_table(db_,"SELECT 1 FROM sqlite_master "
                     "WHERE type='table' AND name='sg_colony_npc_personal_outlook'");
                 if(personal_table.row()){
