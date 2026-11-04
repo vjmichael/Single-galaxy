@@ -214,17 +214,17 @@ el('probeSurvey').addEventListener('click',()=>{
  if(Number.isSafeInteger(probe)&&probe>0)command('colonyProbeScan',{probe});
 });
 el('signatureMode').addEventListener('change',()=>{
- const preview=el('signatureMode').value!=='anomaly';
- el('signatureScan').disabled=preview;
- el('signatureFocus').disabled=preview||!el('probeTarget').value||!el('signatureTarget').value;
- if(preview)
-   message('This scan mode needs native live-host integration. Anomaly search is available.');
+ const anomaly=el('signatureMode').value==='anomaly';
+ el('signatureRange').disabled=!anomaly;
+ el('signatureFocus').disabled=!anomaly||!el('probeTarget').value||!el('signatureTarget').value;
+ message(anomaly?'Anomaly scan: select a signature to investigate.':
+   'Catalogue and environmental readings are host-sourced metadata, not physical planets or active hazards.');
 });
 el('signatureScan').addEventListener('click',()=>{
- if(el('signatureMode').value!=='anomaly'){
-   message('Celestial/environmental live scan is not enabled yet.');return;
- }
- command('colonySignatureScan',{rangeMm:Number(el('signatureRange').value)});
+ const mode=el('signatureMode').value;
+ if(mode==='anomaly')command('colonySignatureScan',{rangeMm:Number(el('signatureRange').value)});
+ else if(mode==='celestial')command('colonyCelestialScan');
+ else if(mode==='environmental')command('colonyEnvironmentScan');
 });
 el('signatureFocus').addEventListener('click',()=>{
  if(el('signatureMode').value!=='anomaly'){

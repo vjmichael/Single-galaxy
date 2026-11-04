@@ -81,3 +81,30 @@ test('preview-only modes cannot submit unsupported anomaly refinement',()=>{
  assert.ok(ui.includes("if(el('signatureMode').value!=='anomaly'){"));
  assert.ok(ui.includes('Only anomaly focus is implemented in the native host'));
 });
+
+test('native celestial and environmental frames validate generated metadata',()=>{
+ const {decode}=require('../viewer/colony.js');
+ assert.deepEqual(decode('COLONY|1|7|CELESTIAL_HEADER|2|1|2|4'),
+   {tick:7,type:'CELESTIAL_HEADER',architecture:2,morphology:1,stars:2,bands:4});
+ assert.deepEqual(decode('COLONY|1|7|CELESTIAL_BAND|1|1800|42|1'),
+   {tick:7,type:'CELESTIAL_BAND',ordinal:1,radius:1800,eccentricity:42,zone:1});
+ assert.equal(decode('COLONY|1|7|CELESTIAL_DONE|4').count,4);
+ assert.deepEqual(decode('COLONY|1|7|ENVIRONMENT_STATUS|1|0|1|250'),
+   {tick:7,type:'ENVIRONMENT_STATUS',system:1,magnetized:false,dust:true,speed:250});
+ for(const bad of ['COLONY|1|7|CELESTIAL_HEADER|4|1|2|4',
+   'COLONY|1|7|CELESTIAL_BAND|0|1800|42|1',
+   'COLONY|1|7|ENVIRONMENT_STATUS|1|2|0|5'])
+   assert.throws(()=>decode(bad));
+});
+test('celestial and environmental modes route only to native survey endpoints',()=>{
+ const fs=require('node:fs'),path=require('node:path');
+ const read=p=>fs.readFileSync(path.resolve(__dirname,'..',p),'utf8');
+ const ui=read('viewer/interactive.js'),relay=read('live/interactive_relay.py'),
+   host=read('src/colony_live_host.cpp');
+ assert.ok(ui.includes("command('colonyCelestialScan')"));
+ assert.ok(ui.includes("command('colonyEnvironmentScan')"));
+ assert.ok(relay.includes('SYSTEM_CELESTIAL'));
+ assert.ok(relay.includes('SYSTEM_ENVIRONMENT'));
+ assert.ok(host.includes('scan_celestial_profile(principal,ship)'));
+ assert.ok(host.includes('scan_environment(principal,ship)'));
+});

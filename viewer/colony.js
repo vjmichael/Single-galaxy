@@ -8,6 +8,31 @@
   function decode(raw){
     if(typeof raw!=='string'||raw.length>180||!/^COLONY\|1\|/.test(raw)||!/^[A-Za-z0-9_|-]+$/.test(raw))throw Error('Invalid colony telemetry');
     const v=raw.split('|'),tick=numeric(v[2],1200),t=v[3];let e={tick,type:t};
+    if(t==='CELESTIAL_HEADER'){
+      if(v.length!==8)throw Error('Malformed celestial catalogue');
+      const architecture=numeric(v[4],3),morphology=numeric(v[5],2),
+        stars=numeric(v[6],3),bands=numeric(v[7],9);
+      if(!stars||!bands)throw Error('Invalid celestial catalogue');
+      return {...e,architecture,morphology,stars,bands};
+    }
+    if(t==='CELESTIAL_BAND'){
+      if(v.length!==8)throw Error('Malformed orbital band');
+      const ordinal=numeric(v[4],9),radius=numeric(v[5],100000),
+        eccentricity=numeric(v[6],999),zone=numeric(v[7],4);
+      if(!ordinal||!radius)throw Error('Invalid orbital band');
+      return {...e,ordinal,radius,eccentricity,zone};
+    }
+    if(t==='CELESTIAL_DONE'){
+      if(v.length!==5)throw Error('Malformed orbital catalogue count');
+      return {...e,count:numeric(v[4],9)};
+    }
+    if(t==='ENVIRONMENT_STATUS'){
+      if(v.length!==8)throw Error('Malformed environment survey');
+      const system=numeric(v[4],100000000),magnetized=numeric(v[5],1),
+        dust=numeric(v[6],1),speed=numeric(v[7],200000);
+      if(!system)throw Error('Invalid environment system');
+      return {...e,system,magnetized:!!magnetized,dust:!!dust,speed};
+    }
     if(t==='SIGNATURE_RESET'){
       if(v.length!==4)throw Error('Malformed signature reset');
       return e;
@@ -362,6 +387,21 @@
      q('signatureFeedback').textContent='Search for coarse anomaly signatures.';
      q('droneTarget').replaceChildren(new Option('Scan nearby rocks first',''));q('droneLaunch').disabled=true;deployedProbes.clear();probeCarried=0;probeLauncher=false;probeChoice='';q('probeTarget').replaceChildren(new Option('No probe deployed',''));q('probeLaunch').disabled=true;q('probeSurvey').disabled=true;q('probeRetrieve').disabled=true;q('probeInventory').textContent='Awaiting native probe stock.';q('probeFeedback').textContent='Native equipment required.';q('fittingCapacity').textContent='Awaiting actual ship fittings.';q('proximityStatus').textContent='Proximity safety sensor awaiting contacts.';q('fitScanner').disabled=true;q('unfitScanner').disabled=true;discoveries.clear();q('explorationResults').replaceChildren();q('explorationSummary').textContent='No mapped discoveries yet. Execute a native local scan.';salvageWrecks.clear();q('salvageTarget').replaceChildren(new Option('No recoverable wreck reported',''));q('salvageRecover').disabled=true;q('salvageFeedback').textContent='Waiting for native wreck inventory.';combatTargets.clear();q('combatHull').textContent='—';q('combatCharges').textContent='—';q('combatFire').disabled=true;q('combatFeedback').textContent='Awaiting native combat telemetry.';window.GalaxySelectedRockId=null;window.GalaxyShipHeading=null;window.GalaxyColonyOutpostIds.clear();openingStatus=null;openingScanned=false;refreshOpening();window.GalaxyColonyHomeShipId=null;q('colonySafetyAssess').disabled=true;q('colonySafetyPreflight').disabled=true;policyAudits.clear();geology.clear();small.clear();stocks.clear();outposts.clear();farms.clear();habitats.clear();utilities.clear();communities.clear();clinics.clear();reclaimers.clear();waterworks.clear();log.length=0;q('colonyEvents').textContent='Awaiting colony telemetry…';q('expeditionOutcome').textContent='Awaiting an actual native result';},
    accept(raw){const e=window.GalaxyColonyContract.decode(raw);
+     if(e.type==='CELESTIAL_HEADER'){
+       const names=['Single star','Wide binary','Circumbinary','Hierarchical triple'];
+       q('signatureFeedback').textContent=
+         'System catalogue: '+names[e.architecture]+', '+e.stars+
+         ' star(s), '+e.bands+' generated orbital bands. Catalogue only.';
+     }
+     if(e.type==='CELESTIAL_BAND')
+       q('signatureFeedback').textContent+=
+         ' Band '+e.ordinal+': '+(e.radius/1000).toFixed(2)+' AU.';
+     if(e.type==='ENVIRONMENT_STATUS')
+       q('signatureFeedback').textContent='System '+e.system+
+         ' survey — ship speed '+e.speed+' mm/tick; '+
+         (e.magnetized?'magnetized-region feature':'no magnetized-region feature')+
+         ', '+(e.dust?'dust-arc feature':'no dust-arc feature')+
+         '. Indicators only; not physical hazards yet.';
      if(e.type==='SIGNATURE_RESET'){
        signatureContacts.clear();
        q('signatureTarget').replaceChildren(new Option('No signatures detected',''));

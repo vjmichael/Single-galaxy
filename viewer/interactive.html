@@ -109,8 +109,8 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
   <div class="controls" style="padding:8px 0;gap:6px">
     <label>Scanner mode <select id="signatureMode">
       <option value="anomaly">Anomalies</option>
-      <option value="celestial">Celestial (survey preview)</option>
-      <option value="environmental">Environment (survey preview)</option>
+      <option value="celestial">Celestial catalogue</option>
+      <option value="environmental">Environment survey</option>
     </select></label>
     <label>Range <select id="signatureRange">
       <option value="5000000">5 km</option>
@@ -123,7 +123,7 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
     <button id="signatureFocus" type="button" disabled>Focus selected probe</button>
     <button id="signatureCancel" type="button" disabled>Cancel probe focus</button>
   </div>
-  <div class="help" id="signatureFeedback" role="status" aria-live="polite">Coarse native signatures, no exact hidden coordinates. Anomaly mode is active; other scan modes await native live-host integration.</div>
+  <div class="help" id="signatureFeedback" role="status" aria-live="polite">Native survey: anomaly signatures, generated celestial catalogue, or environmental indicators. Orbital bands are metadata, not physical bodies.</div>
   <div class="help" id="probeFeedback" role="status" aria-live="polite">Native equipment required. Deployments and discoveries are saved.</div>
   <div class="help">Drone mission: travel to a geological asteroid within 10 km of your ship, inspect its composition without removing ore, and return with a saved geological report. Live contact requires the ship to be within 10 km; the drone continues its assigned mission autonomously if the link drops. Recover the same finite drone when it returns to its launch point and you are within the native recovery radius (currently 2.5 m).</div>
 </section>
