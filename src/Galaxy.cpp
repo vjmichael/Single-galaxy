@@ -291,6 +291,30 @@ std::vector<ScanObservation> SurveySensors::scan_mode(PlayerId owner,std::uint32
            (mode==ScanMode::Celestial&&celestial)||
            (mode==ScanMode::Anomaly&&anomaly))selected.push_back(o);
     }
+    if(mode==ScanMode::Celestial) {
+        // Major bodies are map-visible on entry, but their composition still
+        // requires a genuine nearby probe measurement; visibility is NOT a
+        // completed mineral/settlement survey.
+        for(const auto& site:map_.sites(system)) {
+            if(!site.mapped_on_entry)continue;
+            if(site.kind!=SiteKind::Star&&site.kind!=SiteKind::Planet&&
+               site.kind!=SiteKind::Moon&&site.kind!=SiteKind::AsteroidDeposit)
+                continue;
+            int useful=0;
+            for(const auto& [id,probe]:probes_) {
+                (void)id;
+                if(probe.owner!=owner||!probe.deployed||probe.system!=system)continue;
+                if(std::hypot(double(site.position.x)-probe.position.x,
+                              double(site.position.y)-probe.position.y)<=double(radius_mm))
+                    ++useful;
+            }
+            if(useful)
+                selected.push_back({owner,system,site.id,site.kind,
+                    site.position,tick,std::min(100,60+useful*10),false});
+        }
+        std::sort(selected.begin(),selected.end(),
+            [](const ScanObservation& a,const ScanObservation& b){return a.site<b.site;});
+    }
     return selected;
 }
 SurveyArchive::SurveyArchive(const std::string& path) {
