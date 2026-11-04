@@ -99,12 +99,15 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
   <div class="help">A real probe launcher occupies a hardpoint. Launching places one persistent probe at your ship's current position, consuming one onboard probe. A deployed probe can scan locally even when your ship has traveled away; return within 2,500 mm to recover the same device.</div>
   <div id="probeInventory" class="help" role="status">Awaiting native probe stock.</div>
   <div class="controls" style="padding:8px 0;gap:6px">
+    <label>Geological asteroid <select id="droneTarget"><option value="">Scan nearby rocks first</option></select></label>
+    <button id="droneLaunch" type="button" disabled>Launch geological drone</button>
     <button id="probeLaunch" type="button" disabled>Launch probe</button>
     <label>Deployed probe <select id="probeTarget"><option value="">No probe deployed</option></select></label>
     <button id="probeSurvey" type="button" disabled>Scan from probe</button>
     <button id="probeRetrieve" type="button" disabled>Recover probe</button>
   </div>
   <div class="help" id="probeFeedback" role="status" aria-live="polite">Native equipment required. Deployments and discoveries are saved.</div>
+  <div class="help">Drone mission: travel to a nearby geological asteroid, drill one real tonne of ore, return to launch coordinates, then recover within 2,500 mm. Depletion and physical cargo capacity are enforced in the native simulation. This uses one of your finite onboard survey probes.</div>
 </section>
 <section aria-labelledby="explorationTitle" style="border:1px solid #3b6077;border-radius:10px;padding:12px;margin:10px 0">
  <h2 id="explorationTitle">Exploration · Discoveries</h2>
