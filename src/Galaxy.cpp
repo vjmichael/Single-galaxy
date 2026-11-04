@@ -92,6 +92,11 @@ RouteResult GalaxyMap::route(std::uint32_t from,std::uint32_t to,RoutePolicy pol
     }
     std::reverse(route.systems.begin(),route.systems.end());return route;
 }
+AstronomicalProfile GalaxyMap::astronomy(std::uint32_t system,
+    std::uint64_t galaxy_seed) const {
+    (void)this->system(system);
+    return generate_astronomical_profile(galaxy_seed,system);
+}
 std::vector<DirectionalContact> SurveySensors::directional(std::uint32_t system,Vector2 ship,
     double heading_deg,double cone_deg,std::int64_t range_mm) const {
     if(!bounded(ship)||!std::isfinite(heading_deg)||!std::isfinite(cone_deg)||
@@ -465,6 +470,33 @@ std::size_t SurveyArchive::deliver_probe_reports(PlayerId owner,
         ++delivered;
     }
     return delivered;
+}
+
+std::vector<ScanObservation> SurveyArchive::actionable_sites(PlayerId owner,
+    std::uint32_t system,const GalaxyMap& live_map,DiscoveryUse purpose,
+    int minimum_confidence,std::uint64_t current_tick,
+    std::uint64_t max_age_ticks) const {
+    // Advisory-only: live game actions must independently verify a destination,
+    // resource quantity, permits, geometry and player authorization.
+    const auto candidates=known_sites(owner,system,minimum_confidence);
+    const auto& live=live_map.sites(system);
+    std::vector<ScanObservation> result;
+    for(const auto& candidate:candidates) {
+        if(candidate.observed_tick>current_tick||
+           current_tick-candidate.observed_tick>max_age_ticks)continue;
+        const auto site=std::find_if(live.begin(),live.end(),
+            [&](const SpaceSite& s){return s.id==candidate.site;});
+        if(site==live.end()||site->kind!=candidate.kind)continue;
+        const bool navigate=(site->kind==SiteKind::Planet||
+            site->kind==SiteKind::Moon||site->kind==SiteKind::Station||
+            site->kind==SiteKind::Structure);
+        const bool settle=(site->kind==SiteKind::Planet||
+            site->kind==SiteKind::Moon||site->kind==SiteKind::AsteroidDeposit);
+        if((purpose==DiscoveryUse::Navigation&&navigate)||
+           (purpose==DiscoveryUse::SettlementSurvey&&settle))
+            result.push_back(candidate);
+    }
+    return result;
 }
 
 } // namespace galaxy
