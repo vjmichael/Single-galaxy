@@ -1057,3 +1057,12 @@ if(BUILD_TESTING)
     add_test(NAME galaxy_colony_conflict01b3_governance
         COMMAND galaxy_colony_conflict01b3_governance_tests)
 endif()
+
+# CONFLICT-01B4A: non-binding, self-originating finite NPC reform petition.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_conflict01b4a_petition_tests
+        tests/COLONY_CONFLICT01B4A_EmergencyPetitionTests.cpp)
+    target_link_libraries(galaxy_colony_conflict01b4a_petition_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_conflict01b4a_petition
+        COMMAND galaxy_colony_conflict01b4a_petition_tests)
+endif()
