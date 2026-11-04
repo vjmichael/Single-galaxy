@@ -115,6 +115,17 @@ static void astronomy_profiles() {
     CHECK(first.morphology==again.morphology);
     CHECK(first.star_count==again.star_count);
     CHECK(first.features==again.features);
+    CHECK(first.orbital_bands.size()==again.orbital_bands.size());
+    CHECK(first.orbital_bands.size()>=3);
+    for(std::size_t i=0;i<first.orbital_bands.size();++i) {
+        const auto& a=first.orbital_bands[i];
+        const auto& b=again.orbital_bands[i];
+        CHECK(a.ordinal==i+1 && a.ordinal==b.ordinal);
+        CHECK(a.radius_milli_au==b.radius_milli_au);
+        CHECK(a.eccentricity_permille==b.eccentricity_permille);
+        CHECK(a.eccentricity_permille<180);
+        if(i>0)CHECK(a.radius_milli_au>first.orbital_bands[i-1].radius_milli_au);
+    }
     CHECK(first.generator_version==1);
     std::set<StellarArchitecture> architectures;
     for(std::uint32_t system=1;system<1000;++system) {
