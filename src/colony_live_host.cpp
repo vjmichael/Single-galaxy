@@ -67,7 +67,7 @@ struct WorldWriterLease {
     WorldWriterLease& operator=(const WorldWriterLease&)=delete;
 };
 constexpr PlayerId owner=7;
-constexpr std::int64_t sensor_mm=500000;
+constexpr std::int64_t sensor_mm=Simulation::kLocalSurveyRangeMm;
 std::string pending;
 std::vector<std::string> commands;
 void poll_input(){
@@ -115,6 +115,12 @@ void status(const Simulation& w,EntityId ship){
     const auto* s=w.find(ship);const auto* c=w.colony_ship(ship);
     if(!s || !c)throw std::runtime_error("colony ship missing");
     announce(w,"HEADING|"+std::to_string(s->heading_deg));
+    for(const auto& [key,d]:w.discoveries()){
+        if(key.first!=s->owner_id)continue;
+        announce(w,"DISCOVERY|"+std::to_string(d.site)+"|"+std::to_string(d.system)+"|"+
+            std::to_string(d.location.x)+"|"+std::to_string(d.location.y)+"|"+
+            std::to_string(d.first_tick)+"|"+std::to_string(d.geological?1:0));
+    }
     for(const auto& [id,e]:w.entities()){
         if(e.type==EntityType::Wreck && e.owner_id==8 &&
            e.system_id==s->system_id && !w.colony_ship(id)){
@@ -340,10 +346,16 @@ EntityId nearest(const Simulation& w, EntityId ship){
     }
     return chosen;
 }
-void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uint64_t& nonce,PlayerId principal){
+void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uint64_t& nonce,PlayerId principal,std::set<std::uint64_t>& pending_scans){
     if(principal!=owner){announce(world.world(),"ERROR|UNAUTHORIZED_PRINCIPAL");return;}
     const auto v=split(line);if(v.empty())return;
-    if(v.size()==1 && v[0]=="SCAN") {scan(world.world(),ship);return;}
+    if(v.size()==1 && v[0]=="SCAN"){
+        Command c{};c.id=++nonce;c.sequence=c.id;c.execute_tick=world.world().tick()+1;
+        c.issuer=principal;c.actor=ship;c.action=Action::SurveyLocal;
+        if(world.submit(c))pending_scans.insert(c.id);
+        else announce(world.world(),"ERROR|INVALID_INPUT");
+        return;
+    }
     if(v.size()==3 && v[0]=="SAFETY"){
         try{
             const auto site=integer(v[1]);
@@ -610,15 +622,16 @@ int main(int argc,char** argv){
         ServerViewBridge bridge(world.world(),stream,owner);
         std::cout<<encode_frame(bridge.snapshot())<<std::flush;
         announce(world.world(),was_saved?"RESUMED":"NEW_COLONY");
-        status(world.world(),ship);scan(world.world(),ship);
+        status(world.world(),ship);
         std::uint64_t nonce=900000000000ULL+world.generation();
+        std::set<std::uint64_t> pending_scans;
         const auto period=std::chrono::milliseconds(ms);
         for(int i=0;i<max_ticks;++i){
             const auto start=Clock::now();
             poll_input();
             const auto to_apply=std::move(commands);commands.clear();
             for(const auto& line:to_apply){
-                if(!authenticated_transport){apply(world,ship,line,nonce,owner);continue;}
+                if(!authenticated_transport){apply(world,ship,line,nonce,owner,pending_scans);continue;}
                 // The trusted relay supplies a resolved account ID over our
                 // private stdin pipe; unprefixed/forged/foreign commands fail
                 // closed even if relay validation is accidentally bypassed.
@@ -629,7 +642,7 @@ int main(int argc,char** argv){
                     const auto principal=integer(line.substr(first+1,second-first-1));
                     if(principal!=static_cast<std::int64_t>(owner))
                         throw std::invalid_argument("foreign colony command");
-                    apply(world,ship,line.substr(second+1),nonce,static_cast<PlayerId>(principal));
+                    apply(world,ship,line.substr(second+1),nonce,static_cast<PlayerId>(principal),pending_scans);
                 }catch(const std::exception&){announce(world.world(),"ERROR|UNAUTHORIZED_PRINCIPAL");}
             }
             const auto old=world.world().events().size();
@@ -666,6 +679,8 @@ int main(int argc,char** argv){
             }
             for(std::size_t ix=old;ix<world.world().events().size();++ix){
                 const auto& ev=world.world().events()[ix];
+                if(pending_scans.erase(ev.command_id) && ev.result==Outcome::Applied)
+                    scan(world.world(),ship);
                 announce(world.world(),"RESULT|"+std::to_string(ev.command_id)+"|"+
                     to_string(ev.result)+"|"+std::to_string(ev.transferred));
             }
