@@ -1308,3 +1308,12 @@ if(BUILD_TESTING)
   add_test(NAME galaxy_play13d_planetary_geography
     COMMAND galaxy_play13d_planetary_geography_tests)
 endif()
+
+# PGF-01B.2: authenticated real host planetary survey and saved restart.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13d_live_planet_survey_tests
+    tests/PLAY13D_LivePlanetSurveyTests.cpp)
+  target_link_libraries(galaxy_play13d_live_planet_survey_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_live_planet_survey
+    COMMAND galaxy_play13d_live_planet_survey_tests)
+endif()
