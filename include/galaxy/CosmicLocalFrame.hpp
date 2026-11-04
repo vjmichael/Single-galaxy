@@ -8,7 +8,7 @@
 #include <optional>
 
 namespace galaxy {
-constexpr std::int64_t kLocalFrameLimitMm = 1000000000000LL; // 1000 km
+constexpr std::int64_t kLocalFrameLimitMm = Simulation::kWorldBoundMm; // authoritative existing world bound
 
 struct LocalSpaceFrame {
     std::uint32_t system=0;
