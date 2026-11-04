@@ -693,7 +693,7 @@ private:
     std::uint64_t random_u64();
     EntityId add_entity(Entity entity);
     Event execute(const Command& command);
-    bool can_depart_colony(const Command& command) const;
+    bool can_depart_colony(const Command& command,bool within_family=false) const;
     bool can_depart_family(const Command& command) const;
     bool can_record_dependent_birth(const Command& command) const;
     bool valid_position(Vector2 position) const;
