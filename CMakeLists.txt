@@ -945,3 +945,10 @@ if(BUILD_TESTING)
     target_link_libraries(galaxy_colony_auto04d4c_staffed_tests PRIVATE galaxy_kernel)
     add_test(NAME galaxy_colony_auto04d4c_staffed_colony COMMAND galaxy_colony_auto04d4c_staffed_tests)
 endif()
+
+# 04D.4D1: real ART02 birth/guardian/census closure, no phantom child rescue.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_auto04d4d_family_tests tests/COLONY_AUTO04D4D_FamilyProofTests.cpp)
+    target_link_libraries(galaxy_colony_auto04d4d_family_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_auto04d4d_family_proof COMMAND galaxy_colony_auto04d4d_family_tests)
+endif()
