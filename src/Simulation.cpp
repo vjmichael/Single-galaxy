@@ -4674,8 +4674,12 @@ void Simulation::step() {
                 ++it;continue;
             }
         }
-        if(discoveries_.size()<10000 && !discoveries_.count(it->first))
+        if(!discoveries_.count(it->first)) {
+            // A full journal cannot cause a verified, undelivered report to
+            // disappear. Keep it durable and retry on a later committed tick.
+            if(discoveries_.size()>=10000){++it;continue;}
             discoveries_.emplace(it->first,pending.report);
+        }
         it=pending_probe_discoveries_.erase(it);
     }
     process_gate_maintenance();
