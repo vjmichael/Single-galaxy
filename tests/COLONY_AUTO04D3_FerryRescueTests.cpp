@@ -16,7 +16,7 @@ try{
         source=initial.add_colony_ship(7,{0,0},100,4);
         origin=initial.add_colony_ship(8,{0,0},100,4);
         receiver=initial.add_colony_ship(9,{0,0},100,4);
-        understocked=initial.add_colony_ship(10,{0,0},100,4);
+        understocked=initial.add_colony_ship(10,{0,0},100,16);
         CHECK(source!=origin && origin!=receiver);
         initial.provision_colony_genesis(source,100,100,100,200,500);
         initial.provision_colony_genesis(origin,1000,1000,1000,1000,1000);
@@ -25,7 +25,8 @@ try{
         initial.enable_individual_workforce();
         initial.upgrade_assignment_snapshot_format();
         initial.enable_medical_workforce_rules();
-        CHECK(initial.npc_records().size()==16);
+        initial.enable_passenger_life_support();
+        CHECK(initial.npc_records().size()==28);
         mass=initial.total_material_kg();
         PersistentWorld w(path,std::move(initial));
         Command board{};
@@ -49,7 +50,7 @@ try{
         rescue.passenger_ids={5,6,7,8};
         // Healthy source ferry does not justify autonomous emergency authority.
         CHECK(!w.submit_host_emergency_ferry_rescue(rescue));
-        w.steps(480-w.world().tick());
+        w.steps(220-w.world().tick());
         CHECK(colony_safety::assess(w.world(),source,source).risk==colony_safety::Risk::Critical);
         rescue.execute_tick=w.world().tick()+1;
         auto starved_receiver=rescue;starved_receiver.target=understocked;
@@ -69,8 +70,18 @@ try{
         CHECK(w.world().voyage_status(1003)==1);
         CHECK(w.world().passengers_aboard(source)==0);
         CHECK(w.world().passengers_aboard(receiver)==4);
-        CHECK(w.world().npc_records().size()==16);
+        CHECK(w.world().npc_records().size()==28);
         CHECK(w.world().colony_ship(source)->crew==4); // native ship crew NOT falsely rescued
+        CHECK(w.world().total_material_kg()==mass);
+        const auto receiver_food=w.world().life_support(receiver)->food_kg;
+        const auto source_food=w.world().life_support(source)->food_kg;
+        const auto origin_food=w.world().life_support(origin)->food_kg;
+        w.steps(240-w.world().tick()); // physically consume next 20-tick needs period
+        CHECK(w.world().life_support(receiver)->food_kg==receiver_food-8);
+        CHECK(w.world().life_support(source)->food_kg==source_food-4);
+        CHECK(w.world().life_support(origin)->food_kg==origin_food);
+        // All four original crew are physically away. Home employment is
+        // persistent, but absent people do not consume a second supply ration.
         CHECK(w.world().total_material_kg()==mass);
     }
     {
@@ -80,7 +91,7 @@ try{
         CHECK(recovered.world().passengers_aboard(source)==0);
         CHECK(recovered.world().passengers_aboard(receiver)==4);
         CHECK(recovered.world().colony_ship(source)->crew==4);
-        CHECK(recovered.world().npc_records().size()==16);
+        CHECK(recovered.world().npc_records().size()==28);
         CHECK(recovered.world().total_material_kg()==mass);
     }
     std::filesystem::remove(path);

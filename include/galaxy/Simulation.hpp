@@ -531,11 +531,20 @@ public:
         const std::vector<LegacyVoyageManifest>& verified_manifests);
     void upgrade_passenger_snapshot_format();
     void upgrade_assignment_snapshot_format();
+    // AUTO-04D.4/v57: genesis-only opt-in for physically accountable onboard
+    // passengers. Preexisting worlds keep their historical needs semantics
+    // until a separately journaled and verified migration is implemented.
+    void enable_passenger_life_support();
+    bool passenger_needs_enabled() const {return snapshot_version_>=57;}
+
     // v40 opt-in, genesis-only rule change. Old v39 farms and workshops retain
     // their original behavior unless an explicit journaled migration is built.
     void enable_medical_workforce_rules();
     NpcCustodyView npc_custody(std::uint64_t npc_id) const;
     std::size_t passengers_aboard(EntityId ship) const;
+    // Physical compartment occupancy, including native crew and real travelers.
+    // Required by v57; no double-charge for crew who boarded another ship.
+    std::size_t people_physically_aboard(EntityId ship) const;
     // 1 active, 2 completed, 3 stranded, 5 rescued, 6 lost; zero unknown.
     unsigned voyage_status(std::uint64_t transport_id) const;
     // Derived, read-only incident/EMS dispatch report from canonical voyage,

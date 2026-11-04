@@ -5678,9 +5678,10 @@ bool PersistentWorld::submit_host_emergency_ferry_rescue(
     // Recipient must carry physical provisions for at least TWO whole
     // consumption periods for its native crew, existing onboard passengers,
     // and every newly rescued passenger. Unfulfilled imports do not count.
-    const auto aboard=world_.passengers_aboard(command.target);
-    const auto people=static_cast<std::uint64_t>(receiver->crew)+
-                      static_cast<std::uint64_t>(aboard)+
+    const auto currently_present=world_.passenger_needs_enabled()?
+        static_cast<std::uint64_t>(world_.people_physically_aboard(command.target)):
+        static_cast<std::uint64_t>(receiver->crew)+world_.passengers_aboard(command.target);
+    const auto people=currently_present+
                       static_cast<std::uint64_t>(command.passenger_ids.size());
     if(people==0||people>1000 ||
        provision->food_kg<static_cast<std::int64_t>(2*people) ||
@@ -5708,6 +5709,22 @@ bool PersistentWorld::submit_host_passenger_action(const Command& command, FailP
        command.action!=Action::HostMobileStabilize &&
        command.action!=Action::HostSettleMigrant)return false;
     if(command.issuer!=Simulation::kServerAuthority)return false;
+    // v57: boarding is physical custody, so reserve a conservative TWO-cycle
+    // runway at the *actual* receiving ship, for everyone currently present
+    // and every newly boarding named passenger. Legacy replay is unchanged.
+    if(world_.passenger_needs_enabled() &&
+       (command.action==Action::HostEmbarkPassengers ||
+        command.action==Action::HostEvacuatePassengers)){
+        const auto receiving=command.action==Action::HostEmbarkPassengers ?
+                             command.actor:command.target;
+        const auto* life=world_.life_support(receiving);
+        const auto present=world_.people_physically_aboard(receiving);
+        if(!life || command.passenger_ids.empty() || present>1000 ||
+           command.passenger_ids.size()>1000-present)return false;
+        const auto count=static_cast<std::int64_t>(present+command.passenger_ids.size());
+        if(life->food_kg<2*count || life->water_kg<2*count ||
+           life->oxygen_kg<2*count)return false;
+    }
     // Child physical berths count against the same actual 16 seats. Host-only
     // incident handlers must not destroy/teleport a ferry full of dependents.
     if(command.action==Action::HostEmbarkPassengers &&
