@@ -4624,7 +4624,7 @@ std::vector<Simulation::SignatureHint> Simulation::coarse_probe_signatures(
     const auto carrier=entities_.find(ship);
     if(!owner||carrier==entities_.end()||carrier->second.type!=EntityType::Ship||
        carrier->second.owner_id!=owner)return {};
-    constexpr std::int64_t q=25000; // 25 m bins; no secret exact coordinates
+    constexpr std::int64_t q=5000000; // 5 km coarse bins; no secret exact coordinates
     const double radius=double(range_mm); // host-enforced discovery envelope
     std::vector<SignatureHint> result;
     for(const auto& [id,e]:entities_) {
@@ -4635,7 +4635,7 @@ std::vector<Simulation::SignatureHint> Simulation::coarse_probe_signatures(
         const auto quant=[](std::int64_t value){
             return (value>=0 ? (value+q/2)/q : -((-value+q/2)/q))*q;
         };
-        result.push_back({id,{quant(e.position.x),quant(e.position.y)},25000});
+        result.push_back({id,{quant(e.position.x),quant(e.position.y)},5000000});
         if(result.size()>=128)break;
     }
     return result;
@@ -4685,6 +4685,19 @@ void Simulation::step() {
            target->second.system_id==probe.system) {
             const auto distance=std::hypot(double(target->second.position.x)-p.x,
                                            double(target->second.position.y)-p.y);
+            // Only once the probe physically reaches the coarse area can
+            // local instruments refine that region to a new 25 m waypoint.
+            // No accurate location is revealed to the player beforehand.
+            if(distance>double(kProbeScanRangeMm) && distance<=5000000.0){
+                constexpr std::int64_t fine=25000;
+                const auto refine=[](std::int64_t value) {
+                    return (value>=0 ? (value+fine/2)/fine :
+                        -((-value+fine/2)/fine))*fine;
+                };
+                probe.focus_waypoint={refine(target->second.position.x),
+                                      refine(target->second.position.y)};
+                continue;
+            }
             const auto key=std::make_pair(probe.owner,probe.focus_site);
             if(distance<=double(kProbeScanRangeMm)&&
                !discoveries_.count(key)&&!pending_probe_discoveries_.count(key)&&
