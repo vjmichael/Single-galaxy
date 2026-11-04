@@ -279,13 +279,11 @@ void record_world_commit(sqlite3* db,const Simulation& next,
     }
     for(const auto& [site,r]:prior){
         if(now.count(site))continue;
-        // A physically removed occupied site cannot silently disappear from
-        // emergency history. Closure is an explicitly journaled transition.
-        if(r.risk!=Risk::Safe){
-            Row cleared=r;cleared.risk=Risk::Safe;cleared.population=0;
-            append_event(db,new_generation,next.tick(),cleared,static_cast<int>(r.risk),
-                         std::to_string(next.state_hash()),count,tip);
-        }
+        // Never convert a destroyed or disappeared occupied compartment into
+        // a fictional 'safe' rescue. The underlying death/transport/custody
+        // writer must explicitly certify the removal before this gate opens.
+        if(r.population)
+            throw std::runtime_error("occupied safety compartment vanished without verified closure adapter");
     }
     replace_sites(db,now);
     Q update(db,"UPDATE sg_colony_response_meta SET generation=?,tick=?,"
