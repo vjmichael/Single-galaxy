@@ -25,6 +25,9 @@ on:
       - 'viewer/colony.js'
       - 'tests/PLAY13D_LiveHostPlanetSurveySmoke.py'
       - 'tests/PLAY13D_PlanetSurveyNodeTests.js'
+      - 'tests/PLAY13D_PlanetSurveyRelayTests.py'
+      - 'src/Galaxy.cpp'
+      - 'include/galaxy/Galaxy.hpp'
       - 'CMakeLists.txt'
       - '.github/workflows/play13d.yml'
 jobs:
@@ -51,3 +54,10 @@ jobs:
       - name: Real native planetary host scan and restart (Windows)
         if: runner.os == 'Windows'
         run: python tests/PLAY13D_LiveHostPlanetSurveySmoke.py build/Release/galaxy_colony_live_host.exe
+
+      - name: Authenticated native planetary survey HTTP relay (Linux)
+        if: runner.os == 'Linux'
+        run: python3 tests/PLAY13D_PlanetSurveyRelayTests.py --host build/galaxy_colony_live_host --relay live/interactive_relay.py
+      - name: Authenticated native planetary survey HTTP relay (Windows)
+        if: runner.os == 'Windows'
+        run: python tests/PLAY13D_PlanetSurveyRelayTests.py --host build/Release/galaxy_colony_live_host.exe --relay live/interactive_relay.py
