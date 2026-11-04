@@ -8,6 +8,10 @@
   function decode(raw){
     if(typeof raw!=='string'||raw.length>180||!/^COLONY\|1\|/.test(raw)||!/^[A-Za-z0-9_|-]+$/.test(raw))throw Error('Invalid colony telemetry');
     const v=raw.split('|'),tick=numeric(v[2],1200),t=v[3];let e={tick,type:t};
+    if(t==='PROBE_RESET'){
+      if(v.length!==4)throw Error('Malformed probe roster reset');
+      return e;
+    }
     if(t==='PROBE_REMOVED'){
       if(v.length!==5)throw Error('Malformed recovered probe');
       return {...e,id:numeric(v[4],1000000000000000)};
@@ -320,7 +324,11 @@
  window.GalaxyColony={
    reset(){deployedProbes.clear();probeCarried=0;probeLauncher=false;q('probeTarget').replaceChildren(new Option('No probe deployed',''));q('probeLaunch').disabled=true;q('probeSurvey').disabled=true;q('probeRetrieve').disabled=true;q('probeInventory').textContent='Awaiting native probe stock.';q('probeFeedback').textContent='Native equipment required.';q('fittingCapacity').textContent='Awaiting actual ship fittings.';q('proximityStatus').textContent='Proximity safety sensor awaiting contacts.';q('fitScanner').disabled=true;q('unfitScanner').disabled=true;discoveries.clear();q('explorationResults').replaceChildren();q('explorationSummary').textContent='No mapped discoveries yet. Execute a native local scan.';salvageWrecks.clear();q('salvageTarget').replaceChildren(new Option('No recoverable wreck reported',''));q('salvageRecover').disabled=true;q('salvageFeedback').textContent='Waiting for native wreck inventory.';combatTargets.clear();q('combatHull').textContent='—';q('combatCharges').textContent='—';q('combatFire').disabled=true;q('combatFeedback').textContent='Awaiting native combat telemetry.';window.GalaxySelectedRockId=null;window.GalaxyShipHeading=null;window.GalaxyColonyOutpostIds.clear();openingStatus=null;openingScanned=false;refreshOpening();window.GalaxyColonyHomeShipId=null;q('colonySafetyAssess').disabled=true;q('colonySafetyPreflight').disabled=true;policyAudits.clear();geology.clear();small.clear();stocks.clear();outposts.clear();farms.clear();habitats.clear();utilities.clear();communities.clear();clinics.clear();reclaimers.clear();waterworks.clear();log.length=0;q('colonyEvents').textContent='Awaiting colony telemetry…';q('expeditionOutcome').textContent='Awaiting an actual native result';},
    accept(raw){const e=window.GalaxyColonyContract.decode(raw);
-     if(e.type==='PROBE_REMOVED'){
+     if(e.type==='PROBE_RESET'){
+        deployedProbes.clear();
+        q('probeTarget').replaceChildren(new Option('Choose deployed probe',''));
+      }
+      if(e.type==='PROBE_REMOVED'){
         deployedProbes.delete(e.id);
         const select=q('probeTarget'),current=select.value;
         select.replaceChildren(new Option('Choose deployed probe',''),...[...deployedProbes].map(([id,p])=>
