@@ -1174,3 +1174,12 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_play13_drone_tests PRIVATE galaxy_kernel)
   add_test(NAME galaxy_play13_drones COMMAND galaxy_play13_drone_tests)
 endif()
+
+# PLAY-13C.2: host-custody celestial arrival preflight, built against real kernel.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13c_celestial_transition_tests
+    tests/PLAY13C_CelestialTransitionTests.cpp)
+  target_link_libraries(galaxy_play13c_celestial_transition_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13c_celestial_transition
+    COMMAND galaxy_play13c_celestial_transition_tests)
+endif()
