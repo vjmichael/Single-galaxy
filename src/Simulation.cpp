@@ -391,6 +391,14 @@ NpcCustodyView Simulation::npc_custody(std::uint64_t id) const {
     const auto& n=it->second;
     return {n.id,n.home_ship,n.location,n.role,n.transport_id,n.transport_id!=0};
 }
+std::size_t Simulation::dependents_physically_at(EntityId place) const {
+    std::size_t count=0;
+    for(const auto& [id,n]:physical_dependents_){
+        (void)id;
+        if(n.location==place)++count;
+    }
+    return count;
+}
 std::size_t Simulation::people_physically_aboard(EntityId ship) const {
     std::size_t count=0;
     for(const auto& [id,n]:npcs_){
@@ -462,6 +470,12 @@ void Simulation::upgrade_passenger_snapshot_format(){
         if(n.transport_id!=0)throw std::logic_error("active passenger migration unsupported");
     }
     snapshot_version_=std::max(snapshot_version_,31);
+}
+void Simulation::enable_physical_dependent_accounting(){
+    if(tick_ || !submitted_ids_.empty() || !commands_.empty() ||
+       snapshot_version_<57 || npcs_.empty() || !physical_dependents_.empty())
+        throw std::invalid_argument("physical child accounting requires new named-crew genesis");
+    snapshot_version_=59; // Explicit opt-in; no retroactive older-world replay changes.
 }
 void Simulation::enable_passenger_life_support(){
     if(tick_ || !submitted_ids_.empty() || !commands_.empty() ||
@@ -4023,7 +4037,11 @@ void Simulation::process_colony_needs(){
         // absent people, and transport movement must not create provisions.
         // Legacy aggregate-only worlds have no named passengers to count.
         const auto crew=colony_ships_.at(id).crew;
-        const auto physical=passenger_needs_enabled()?people_physically_aboard(id):0;
+        const auto named=passenger_needs_enabled()?people_physically_aboard(id):0;
+        const auto children=physical_dependents_enabled()?dependents_physically_at(id):0;
+        if(named>std::numeric_limits<std::size_t>::max()-children)
+            throw std::overflow_error("shipborne dependent occupancy overflow");
+        const auto physical=named+children;
         if(crew<0 || physical>static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max()))
             throw std::overflow_error("physical ferry population overflow");
         const auto people=passenger_needs_enabled()?
@@ -6235,6 +6253,7 @@ void Simulation::swap(Simulation& other) noexcept {
     mobile_medical_kits_.swap(other.mobile_medical_kits_);
     crew_rehomes_.swap(other.crew_rehomes_);
     colony_departures_.swap(other.colony_departures_);
+    physical_dependents_.swap(other.physical_dependents_);
     voyages_.swap(other.voyages_);
     farm_team_xp_.swap(other.farm_team_xp_);
     swap(next_npc_id_,other.next_npc_id_);
