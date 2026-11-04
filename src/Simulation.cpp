@@ -1830,6 +1830,30 @@ void Simulation::stop_mining(EntityId actor, Outcome reason) {
 
 Event Simulation::execute(const Command& c) {
     Event result{tick_, c.id, Outcome::InvalidActor, 0};
+    if(snapshot_version_>=72) {
+        // No legacy 2-D interaction can silently cross a celestial local
+        // frame. Transit ships are unavailable until atomic arrival.
+        const auto active=[](const auto& rows,EntityId id){
+            for(const auto& [key,p]:rows){(void)key;if(p.ship==id)return true;}
+            return false;
+        };
+        if(active(pending_celestial_transits_,c.actor) ||
+           active(pending_celestial_transits_,c.target)){
+            result.result=Outcome::InTransition;return result;
+        }
+        const auto source=entities_.find(c.actor);
+        const auto target=entities_.find(c.target);
+        if(source!=entities_.end() && source->second.type==EntityType::Ship){
+            const auto frame=ship_frames_.find(c.actor);
+            if(frame!=ship_frames_.end() && frame->second.anchor_body &&
+               c.action!=Action::Thrust){
+                result.result=Outcome::OutOfRange;return result;
+            }
+            if(target!=entities_.end() && !same_local_frame(c.actor,c.target)){
+                result.result=Outcome::OutOfRange;return result;
+            }
+        }
+    }
     if(c.action==Action::HostRegisterDependent){
         if(c.issuer!=kServerAuthority || snapshot_version_<59 || !c.actor ||
            c.actor!=c.target || !c.transport_id || c.transport_id<(1ULL<<62) ||
