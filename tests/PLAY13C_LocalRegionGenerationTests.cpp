@@ -45,7 +45,7 @@ int main(){
             CHECK(w.world().generated_local_regions().empty());
             CHECK(w.world().total_material_kg()==initial_mass);
             CHECK(w.complete_celestial_transit(501));
-            CHECK(w.world().canonical_state().rfind("galaxy-kernel-v73|",0)==0);
+            CHECK(w.world().canonical_state().rfind("galaxy-kernel-v74|",0)==0);
             CHECK(w.world().generated_local_regions().count(first_body)==1);
             CHECK(w.world().local_entity_anchors().size()==2);
             CHECK(w.world().entities().at(donor).ore==46);
