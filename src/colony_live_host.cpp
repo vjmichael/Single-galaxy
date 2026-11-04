@@ -112,11 +112,11 @@ std::int64_t integer(const std::string& s){
 void announce(const Simulation& w,const std::string& text){
     std::cerr<<"COLONY|1|"<<w.tick()<<'|'<<text<<'\n'<<std::flush;
 }
-void status(const Simulation& w,EntityId ship){
+void status(const Simulation& w,EntityId ship,bool replay_discoveries=false){
     const auto* s=w.find(ship);const auto* c=w.colony_ship(ship);
     if(!s || !c)throw std::runtime_error("colony ship missing");
     announce(w,"HEADING|"+std::to_string(s->heading_deg));
-    for(const auto& [key,d]:w.discoveries()){
+    if(replay_discoveries)for(const auto& [key,d]:w.discoveries()){
         if(key.first!=s->owner_id)continue;
         announce(w,"DISCOVERY|"+std::to_string(d.site)+"|"+std::to_string(d.system)+"|"+
             std::to_string(d.location.x)+"|"+std::to_string(d.location.y)+"|"+
@@ -323,7 +323,7 @@ void scan(const Simulation& w,EntityId ship){
     const auto* s=w.find(ship);if(!s)return;
     int found=0;
     for(const auto& [id,e]:w.entities()){
-        if(e.type!=EntityType::Asteroid)continue;
+        if(e.type!=EntityType::Asteroid || e.system_id!=s->system_id)continue;
         auto dx=e.position.x-s->position.x,dy=e.position.y-s->position.y;
         if(dx*dx+dy*dy>sensor_mm*sensor_mm)continue;
         ++found;
@@ -623,7 +623,7 @@ int main(int argc,char** argv){
         ServerViewBridge bridge(world.world(),stream,owner);
         std::cout<<encode_frame(bridge.snapshot())<<std::flush;
         announce(world.world(),was_saved?"RESUMED":"NEW_COLONY");
-        status(world.world(),ship);
+        status(world.world(),ship,true);
         std::uint64_t nonce=900000000000ULL+world.generation();
         std::set<std::uint64_t> pending_scans;
         const auto period=std::chrono::milliseconds(ms);
@@ -678,15 +678,18 @@ int main(int argc,char** argv){
                     }
                 }
             }
+            bool scanned=false;
             for(std::size_t ix=old;ix<world.world().events().size();++ix){
                 const auto& ev=world.world().events()[ix];
-                if(pending_scans.erase(ev.command_id) && ev.result==Outcome::Applied)
+                if(pending_scans.erase(ev.command_id) && ev.result==Outcome::Applied){
                     scan(world.world(),ship);
+                    scanned=true;
+                }
                 announce(world.world(),"RESULT|"+std::to_string(ev.command_id)+"|"+
                     to_string(ev.result)+"|"+std::to_string(ev.transferred));
             }
             std::cout<<encode_frame(bridge.after_committed_step(world.world()))<<std::flush;
-            status(world.world(),ship);
+            status(world.world(),ship,scanned);
             std::this_thread::sleep_until(start+period);
         }
         std::cerr<<"B7_0E COLONY HOST COMPLETED generation="<<world.generation()<<'\n';
