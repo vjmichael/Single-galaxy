@@ -886,6 +886,7 @@ bool Simulation::can_depart_colony(const Command& c) const {
     if(!source||!receiver||from==colony_ships_.end()||to==colony_ships_.end()||
        !receiver_life || source->type!=EntityType::Ship ||
        receiver->type!=EntityType::Ship ||
+       source->owner_id!=receiver->owner_id ||
        source->system_id!=receiver->system_id ||
        source->jump_state!=ShipJumpState::Ready ||
        receiver->jump_state!=ShipJumpState::Ready ||
