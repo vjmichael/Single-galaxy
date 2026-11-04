@@ -98,6 +98,23 @@ Audit assess(const Simulation& world,sqlite3* db,const DeparturePlan& request){
            origin->type!=EntityType::Ship || dest->type!=EntityType::Ship ||
            origin->owner_id!=dest->owner_id || origin->system_id!=dest->system_id)
             throw std::runtime_error("source/receiver physical owner or ship mismatch");
+        const auto near=[&](const Entity* place){
+            if(!place || place->system_id!=dest->system_id)return false;
+            const auto dx=place->position.x-dest->position.x;
+            const auto dy=place->position.y-dest->position.y;
+            const auto limit=Simulation::kDockingRangeMm;
+            return dx>=-limit && dx<=limit && dy>=-limit && dy<=limit &&
+                   dx*dx+dy*dy<=limit*limit;
+        };
+        if(!near(origin) || world.passengers_aboard(request.source) ||
+           world.passengers_aboard(request.receiver))
+            throw std::runtime_error("local rescue proximity or berth custody not reconciled");
+        for(const auto& [site,h]:world.habitats())
+            if(h.source_ship==request.source && h.residents && !near(world.find(site)))
+                throw std::runtime_error("habitat residents cannot physically reach receiver");
+        for(const auto& [site,fr]:world.farms())
+            if(fr.source_ship==request.source && fr.workers && !near(world.find(site)))
+                throw std::runtime_error("farm workers cannot physically reach receiver");
         std::vector<std::uint64_t> expected_adults;
         for(const auto& [id,n]:world.npc_records())if(n.home_ship==request.source){
             if(n.transport_id || n.location!=n.assigned_site)
@@ -197,7 +214,9 @@ Audit assess(const Simulation& world,sqlite3* db,const DeparturePlan& request){
             throw std::runtime_error("family census includes unaccounted source/receiver population");
         const auto receiver_count=world.people_physically_aboard(request.receiver);
         const auto incoming=expected_adults.size()+source_children.size();
-        if(incoming>32 || receiver_count>1000-incoming)
+        // One locally stationed rescue ship offers at most sixteen passenger
+        // berths in the current native transport model.
+        if(incoming>16 || receiver_count>1000-incoming)
             throw std::runtime_error("insufficient physical receiving population capacity");
         const auto total=static_cast<std::int64_t>(receiver_count+incoming);
         result.receiving_supplies=supplies->food_kg>=2*total &&
