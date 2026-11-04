@@ -26,6 +26,13 @@ struct Vector2 {
 // Persistent astronomical world-space coordinates in real millimeters,
 // separate from short-range physics simulation coordinates (±1000 km).
 struct CosmicPosition {std::int64_t x_mm=0,y_mm=0,z_mm=0;};
+// v71: authoritative local-space frame custody per ship. An anchor of zero
+// identifies the preexisting unanchored legacy-local world with origin (0,0,0).
+struct ShipFrameCustody {
+    std::uint32_t system=0;
+    std::uint64_t anchor_body=0;
+    CosmicPosition origin{};
+};
 enum class CelestialKind {Star=0,Planet=1,Moon=2,DebrisRegion=3};
 struct PhysicalCelestialBody {
     std::uint64_t id=0,parent_id=0;
@@ -765,6 +772,9 @@ public:
     // v70: deterministic physical celestial bodies with stable world IDs.
     // Init never consumes ship resources, and cannot run twice with new geometry.
     void ensure_physical_celestial_systems();
+    // Explicit atomic migration, NOT a travel command.
+    void ensure_ship_frame_registry();
+    const std::map<EntityId,ShipFrameCustody>& ship_frames() const {return ship_frames_;}
     std::uint64_t probe_report_delay_ticks() const {return probe_report_delay_ticks_;}
 
     std::uint64_t tick() const { return tick_; }
@@ -849,6 +859,7 @@ private:
     std::uint64_t next_entity_id_ = 1;
     std::uint64_t rng_state_;
     std::map<EntityId, Entity> entities_; // stable deterministic iteration
+    std::map<EntityId,ShipFrameCustody> ship_frames_; // durable v71 local-space custody
     std::map<std::uint32_t,std::vector<PhysicalCelestialBody>> physical_celestial_systems_;
     std::set<EntityId> depleted_;
     std::map<EntityId, AutoMining> mining_;
