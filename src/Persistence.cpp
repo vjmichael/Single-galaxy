@@ -3655,7 +3655,8 @@ public:
                     if(gen<2 || static_cast<std::uint64_t>(gen)>generation ||
                        tick<1 || src==dst || scope.empty() || region_scope.empty() ||
                        src_col.empty() || dst_col.empty() || src_col==dst_col ||
-                       adults!=2 || children<1 || members!=adults+children || members>16 ||
+                       (adults!=2 && adults!=4) || children<(adults/2) ||
+                       members!=adults+children || members>16 ||
                        revision<2 || cmd==journal_commands.end() ||
                        cmd->second.action!=Action::HostColonyFamilyDeparture ||
                        cmd->second.issuer!=Simulation::kServerAuthority ||
@@ -3765,6 +3766,29 @@ public:
                     }
                     if(actual!=expected)
                         throw std::runtime_error("SQLite: incomplete or duplicated family custody roster");
+                    // Independently derive the complete parent-pair partition
+                    // from the frozen PRE-departure physical child records.
+                    // Four-adult receipts cannot disguise a shared guardian.
+                    std::set<std::pair<std::uint64_t,std::uint64_t>> pairs;
+                    std::set<std::uint64_t> parents;
+                    for(const auto child:dep->second.relocated_children){
+                        const auto proof=prior.physical_dependents().find(child);
+                        if(proof==prior.physical_dependents().end() ||
+                           proof->second.parent_a>=proof->second.parent_b ||
+                           !std::binary_search(dep->second.relocated_npcs.begin(),
+                               dep->second.relocated_npcs.end(),proof->second.parent_a) ||
+                           !std::binary_search(dep->second.relocated_npcs.begin(),
+                               dep->second.relocated_npcs.end(),proof->second.parent_b))
+                            throw std::runtime_error("SQLite: rescued child lacks both original parents");
+                        pairs.emplace(proof->second.parent_a,proof->second.parent_b);
+                        parents.insert(proof->second.parent_a);
+                        parents.insert(proof->second.parent_b);
+                    }
+                    if(pairs.size()!=static_cast<std::size_t>(adults/2) ||
+                       parents.size()!=static_cast<std::size_t>(adults) ||
+                       std::vector<std::uint64_t>(parents.begin(),parents.end())!=
+                           dep->second.relocated_npcs)
+                        throw std::runtime_error("SQLite: parent pairs fail household conservation");
                 }
                 // Every new world departure must have exactly one actual
                 // executed ART02 receipt, and no orphaned member table rows.
@@ -6078,37 +6102,83 @@ bool PersistentWorld::submit_host_colony_departure(const Command& command,FailPo
 void PersistentWorld::step_with_atomic_colony_family_departure(
     const colony_family::ExecutionPlan& plan,FailPoint fail){
     const auto& req=plan.prepared;
+    // One physical command + ART02/ECON03 transaction. v77 permits exactly
+    // TWO separate two-parent households in the same family/region scope.
+    // The empty-households path retains the previously verified v74 API.
+    const bool grouped=!plan.households.empty();
     if(!world_.physical_dependents_enabled() ||
-       !plan.command_id || plan.command_id>=static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) ||
+       !plan.command_id ||
+       plan.command_id>=static_cast<std::uint64_t>(std::numeric_limits<sqlite3_int64>::max()) ||
        !req.intent_id || req.expected_world_generation!=generation_ ||
        !plan.expected_region_revision || !plan.expected_owner_generation ||
-       req.adult_ids.size()!=2 || req.children.empty() ||
-       req.adult_ids.size()+req.children.size()>16 ||
-       plan.child_move_events.size()!=req.children.size() ||
-       !plan.co_parent_event_id || plan.region_scope.empty() ||
-       plan.origin_colony.empty() || plan.destination_colony.empty() ||
-       plan.origin_colony==plan.destination_colony)
+       req.children.empty() || req.adult_ids.size()+req.children.size()>16 ||
+       plan.region_scope.empty() || plan.origin_colony.empty() ||
+       plan.destination_colony.empty() || plan.origin_colony==plan.destination_colony ||
+       (grouped ? (plan.households.size()!=2 || req.adult_ids.size()!=4 ||
+                   plan.co_parent_event_id || !plan.child_move_events.empty())
+                : (req.adult_ids.size()!=2 || !plan.co_parent_event_id ||
+                   plan.child_move_events.size()!=req.children.size())))
         throw std::invalid_argument("invalid bounded complete family departure plan");
-    std::set<std::uint64_t> move_ids{plan.command_id};
-    if(!move_ids.insert(plan.co_parent_event_id).second)
-        throw std::runtime_error("duplicate adult family custody event");
-    std::vector<std::pair<std::uint64_t,std::uint64_t>> moves;
-    for(std::size_t i=0;i<req.children.size();++i){
-        const auto& c=req.children[i];
-        const auto event=plan.child_move_events[i];
-        if(c.guardian_id!=req.adult_ids[0] ||
-           !event || event>=static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) ||
-           !move_ids.insert(event).second)
-            throw std::runtime_error("incomplete or conflicting guardian household event");
-        const auto physical=world_.physical_dependents().find(c.child_id);
-        if(physical==world_.physical_dependents().end() ||
-           physical->second.home_ship!=req.source ||
-           physical->second.location!=req.source ||
-           physical->second.parent_a!=req.adult_ids[0] ||
-           physical->second.parent_b!=req.adult_ids[1])
-            throw std::runtime_error("family departure requires native registered two-parent custody");
-        moves.emplace_back(c.child_id,event);
+    using Household=colony_family::ExecutionPlan::Household;
+    std::vector<Household> households;
+    if(grouped)households=plan.households;
+    else {
+        Household h{};
+        h.guardian_id=req.adult_ids[0];h.co_parent_id=req.adult_ids[1];
+        h.guardian_event_id=plan.command_id;
+        h.co_parent_event_id=plan.co_parent_event_id;
+        for(std::size_t i=0;i<req.children.size();++i)
+            h.children.push_back({req.children[i].child_id,plan.child_move_events[i]});
+        households.push_back(std::move(h));
     }
+    std::map<std::uint64_t,std::uint64_t> required_children;
+    for(const auto& c:req.children)
+        if(!required_children.emplace(c.child_id,c.guardian_id).second)
+            throw std::runtime_error("duplicate prepared child identity");
+    std::set<std::uint64_t> move_ids,claimed_adults,claimed_children;
+    std::vector<std::vector<std::pair<std::uint64_t,std::uint64_t>>> household_moves;
+    std::uint64_t last_guardian=0;
+    constexpr auto kSqlMax=static_cast<std::uint64_t>(std::numeric_limits<sqlite3_int64>::max());
+    for(std::size_t index=0;index<households.size();++index){
+        const auto& h=households[index];
+        if(!h.guardian_id || h.guardian_id<=last_guardian ||
+           h.guardian_id>=h.co_parent_id ||
+           h.children.empty() || h.children.size()>32 ||
+           (index==0 && h.guardian_event_id!=plan.command_id) ||
+           !h.guardian_event_id || !h.co_parent_event_id ||
+           h.guardian_event_id>=kSqlMax || h.co_parent_event_id>=kSqlMax ||
+           !move_ids.insert(h.guardian_event_id).second ||
+           !move_ids.insert(h.co_parent_event_id).second ||
+           !claimed_adults.insert(h.guardian_id).second ||
+           !claimed_adults.insert(h.co_parent_id).second ||
+           !std::binary_search(req.adult_ids.begin(),req.adult_ids.end(),h.guardian_id) ||
+           !std::binary_search(req.adult_ids.begin(),req.adult_ids.end(),h.co_parent_id))
+            throw std::runtime_error("duplicate, missing or noncanonical household parents");
+        last_guardian=h.guardian_id;
+        std::vector<std::pair<std::uint64_t,std::uint64_t>> members;
+        std::uint64_t last_child=0;
+        for(const auto& child:h.children){
+            const auto found=required_children.find(child.child_id);
+            const auto physical=world_.physical_dependents().find(child.child_id);
+            if(child.child_id<=last_child || child.child_id<(1ULL<<62) ||
+               !child.event_id || child.event_id>=kSqlMax ||
+               !move_ids.insert(child.event_id).second ||
+               !claimed_children.insert(child.child_id).second ||
+               found==required_children.end() || found->second!=h.guardian_id ||
+               physical==world_.physical_dependents().end() ||
+               physical->second.home_ship!=req.source ||
+               physical->second.location!=req.source ||
+               physical->second.parent_a!=h.guardian_id ||
+               physical->second.parent_b!=h.co_parent_id)
+                throw std::runtime_error("dependent omitted, duplicated or assigned to wrong parent pair");
+            last_child=child.child_id;
+            members.emplace_back(child.child_id,child.event_id);
+        }
+        household_moves.push_back(std::move(members));
+    }
+    if(std::vector<std::uint64_t>(claimed_adults.begin(),claimed_adults.end())!=req.adult_ids ||
+       claimed_children.size()!=required_children.size())
+        throw std::runtime_error("departure omitted an adult or a dependent household");
     if(!store_->prepared_colony_family_departure(world_,generation_,req))
         throw std::runtime_error("missing/stale immutable prepared family roster");
     const auto audit=store_->audit_colony_family_departure(world_,req);
@@ -6166,8 +6236,9 @@ void PersistentWorld::step_with_atomic_colony_family_departure(
         NpcAppearanceStore joined(db,req.family_scope,req.family_seed,
             [&](std::uint64_t id){return next.npc_records().count(id)!=0;});
         const auto authorize=[&](std::uint64_t id,std::uint64_t origin,std::uint64_t destination){
-            if(origin!=req.source||destination!=req.receiver ||
-               (id!=req.adult_ids[0]&&id!=req.adult_ids[1]))return false;
+            if(origin!=req.source || destination!=req.receiver ||
+               !std::binary_search(req.adult_ids.begin(),req.adult_ids.end(),id))
+                return false;
             const auto previous=world_.npc_records().find(id);
             const auto current=next.npc_records().find(id);
             return previous!=world_.npc_records().end() &&
@@ -6176,12 +6247,27 @@ void PersistentWorld::step_with_atomic_colony_family_departure(
                 current->second.home_ship==destination &&
                 current->second.location==destination && !current->second.transport_id;
         };
-        const auto recorded=joined.record_guardian_household_moves(
-            plan.command_id,req.adult_ids[0],moves,req.source,req.receiver,
-            next.tick(),plan.expected_origin_family_revision,
-            plan.expected_destination_family_revision,authorize,
-            req.adult_ids[1],plan.co_parent_event_id);
-        if(recorded.size()!=req.adult_ids.size()+req.children.size())
+        // Each pair and every dependent receives its own immutable move,
+        // but the two household batches and regional totals share ONE commit.
+        std::vector<NpcMoveRecord> recorded;
+        auto from_revision=plan.expected_origin_family_revision;
+        auto to_revision=plan.expected_destination_family_revision;
+        for(std::size_t index=0;index<households.size();++index){
+            const auto& h=households[index];
+            const auto batch=joined.record_guardian_household_moves(
+                h.guardian_event_id,h.guardian_id,household_moves[index],
+                req.source,req.receiver,next.tick(),from_revision,to_revision,
+                authorize,h.co_parent_id,h.co_parent_event_id);
+            if(batch.size()!=h.children.size()+2)
+                throw std::runtime_error("ART02 household member partition incomplete");
+            from_revision+=batch.size();
+            to_revision+=batch.size();
+            recorded.insert(recorded.end(),batch.begin(),batch.end());
+        }
+        if(recorded.size()!=req.adult_ids.size()+req.children.size() ||
+           joined.family_census(req.source).current_population!=0 ||
+           joined.family_census(req.receiver).current_population!=
+               destination_family.current_population+recorded.size())
             throw std::runtime_error("ART02 household residence count differs from physical rescue");
         const auto revision=region.commit_migration_in_world_transaction(
             db,plan.expected_region_revision,plan.expected_owner_generation,

@@ -28,8 +28,23 @@ struct ExecutionPlan {
     std::uint64_t expected_region_revision=0,expected_owner_generation=0;
     std::uint64_t expected_origin_family_revision=0;
     std::uint64_t expected_destination_family_revision=0;
+    // Legacy single-household move events stay source-compatible.
+    // For the v77 two-household gate these fields MUST remain empty/zero.
     std::uint64_t co_parent_event_id=0;
     std::vector<std::uint64_t> child_move_events;
+    struct ChildMove {
+        std::uint64_t child_id=0, event_id=0;
+    };
+    struct Household {
+        // Canonical guardian < co-parent; both are actual resident parents.
+        std::uint64_t guardian_id=0, co_parent_id=0;
+        std::uint64_t guardian_event_id=0, co_parent_event_id=0;
+        std::vector<ChildMove> children; // sorted, exact ART02 descendants
+    };
+    // v77: exactly two disjoint parent pairs in one family/region scope,
+    // with at least one living dependent per pair. No split destinations.
+    // The first guardian's event ID is the world departure command ID.
+    std::vector<Household> households;
     std::string region_scope,origin_colony,destination_colony;
 };
 struct Audit {

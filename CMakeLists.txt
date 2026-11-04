@@ -969,3 +969,12 @@ if(BUILD_TESTING)
     add_test(NAME galaxy_colony_auto04d4d2_atomic_family
              COMMAND galaxy_colony_auto04d4d2_atomic_tests)
 endif()
+
+# 04D.4D3A: two independent two-parent households on one local receiver.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_auto04d4d3a_households_tests
+                   tests/COLONY_AUTO04D4D3A_TwoHouseholdTests.cpp)
+    target_link_libraries(galaxy_colony_auto04d4d3a_households_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_auto04d4d3a_two_households
+             COMMAND galaxy_colony_auto04d4d3a_households_tests)
+endif()
