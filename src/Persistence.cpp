@@ -6968,6 +6968,170 @@ bool PersistentWorld::submit_autonomous_colony_rescue(
     return true;
 }
 
+// AUTO-04D.5B — Persisted NPC supervisor. A whole family plan is a durable
+// admission, never an implication that its world transaction already ran.
+std::optional<PersistentWorld::AtomicColonyFamilyPlan>
+PersistentWorld::pending_autonomous_family_rescue(std::uint64_t command_id) const{
+    if(!command_id)return std::nullopt;
+    store_->verify_autonomous_dispatch(generation_);
+    store_->verify_supervisor_plans(generation_);
+    auto plan=store_->supervisor_plan(command_id);
+    if(!plan)return std::nullopt; // v78 legacy admissions lacked a resume plan
+    if(plan->family.expected_world_generation+1!=generation_)
+        return std::nullopt; // already applied or obsolete; never replay it
+    if(const auto result=world_.colony_departures().find(plan->family.source);
+       result!=world_.colony_departures().end() &&
+       result->second.command_id==command_id)
+        return std::nullopt;
+    const auto it=world_.commands_.find(world_.tick()+1);
+    if(it==world_.commands_.end() || it->second.size()!=1 ||
+       it->second.front().id!=command_id ||
+       it->second.front().action!=Action::HostColonyDeparture ||
+       it->second.front().issuer!=Simulation::kServerAuthority ||
+       it->second.front().actor!=plan->family.source ||
+       it->second.front().target!=plan->family.receiver ||
+       it->second.front().passenger_ids!=plan->family.adult_ids)
+        throw std::runtime_error("supervisor plan not equal to only pending native command");
+    return plan;
+}
+
+bool PersistentWorld::resume_autonomous_family_rescue(
+    std::uint64_t command_id,FailPoint fail){
+    auto pending=pending_autonomous_family_rescue(command_id);
+    if(!pending)return false;
+    // Independent existing atomic writer: one world snapshot, ART02
+    // residence/guardian batch and ECON03 regional population receipt.
+    step_with_atomic_family_departure(*pending,fail);
+    if(!verified_atomic_family_departure(command_id))
+        throw std::runtime_error("supervisor resumed evacuation without final custody proof");
+    return true;
+}
+
+bool PersistentWorld::resume_next_pending_autonomous_rescue(FailPoint fail){
+    sqlite3* raw=nullptr;
+    if(sqlite3_open_v2(db_path_.c_str(),&raw,SQLITE_OPEN_READONLY,nullptr)!=SQLITE_OK){
+        if(raw)sqlite3_close(raw);
+        throw std::runtime_error("cannot inspect NPC supervisor recoverable queue");
+    }
+    std::unique_ptr<sqlite3,decltype(&sqlite3_close)> db(raw,sqlite3_close);
+    Statement table(db.get(),"SELECT 1 FROM sqlite_master WHERE type='table' "
+        "AND name='sg_colony_npc_supervisor_plan'");
+    if(!table.row())return false;
+    Statement due(db.get(),"SELECT command_id FROM sg_colony_npc_supervisor_plan "
+        "WHERE admission_generation=? ORDER BY command_id");
+    due.i64(1,static_cast<sqlite3_int64>(generation_));
+    if(!due.row())return false;
+    const auto command_id=parse_u64(sqlite3_column_text(due.get(),0));
+    if(due.row())
+        throw std::runtime_error("two competing autonomous rescues at same world generation");
+    return resume_autonomous_family_rescue(command_id,fail);
+}
+
+PersistentWorld::SupervisorTick PersistentWorld::supervise_autonomous_colony_emergency(
+    const AutonomousSupervisorRoute& route,FailPoint fail){
+    SupervisorTick result;
+    result.command_id=route.command_id;
+    if(!route.source || !route.family_seed || !route.intent_id ||
+       !route.command_id || route.command_id==route.intent_id ||
+       route.family_scope.empty() || route.region_scope.empty() ||
+       route.origin_colony.empty() || route.destinations.empty() ||
+       route.destinations.size()>32)
+        throw std::invalid_argument("NPC supervisor requires trusted bounded region bindings");
+    // Highest priority: finish an already-admitted rescue after restart.
+    // The host does not need to keep the plan, leader or allocated event IDs.
+    if(resume_next_pending_autonomous_rescue(fail)){
+        result.status=SupervisorStatus::RescueCompleted;
+        result.reason="recovered and verified already-admitted whole-family evacuation";
+        const auto departure=world_.colony_departures().find(route.source);
+        if(departure!=world_.colony_departures().end())
+            result.receiver=departure->second.receiver;
+        return result;
+    }
+    if(const auto completed=world_.colony_departures().find(route.source);
+       completed!=world_.colony_departures().end()){
+        result.status=SupervisorStatus::RescueCompleted;
+        result.command_id=completed->second.command_id;
+        result.receiver=completed->second.receiver;
+        result.reason="family already physically evacuated; no second rescue admitted";
+        return result;
+    }
+    const auto response=colony_safety::plan_response(world_,route.source,route.source);
+    if(response.risk!=colony_safety::Risk::Critical &&
+       response.risk!=colony_safety::Risk::Emergency){
+        result.status=SupervisorStatus::NoCurrentEmergency;
+        result.reason="canonical life support not in emergency evacuation range";
+        return result;
+    }
+    sqlite3* raw=nullptr;
+    if(sqlite3_open_v2(db_path_.c_str(),&raw,SQLITE_OPEN_READONLY,nullptr)!=SQLITE_OK){
+        if(raw)sqlite3_close(raw);
+        throw std::runtime_error("cannot read NPC emergency observation ledger");
+    }
+    std::unique_ptr<sqlite3,decltype(&sqlite3_close)> db(raw,sqlite3_close);
+    Statement latest(db.get(),"SELECT id,new_risk FROM sg_colony_response_events "
+        "WHERE site=? ORDER BY id DESC LIMIT 1");
+    latest.i64(1,static_cast<sqlite3_int64>(route.source));
+    if(!latest.row() ||
+       sqlite3_column_int(latest.get(),1)!=static_cast<int>(response.risk)){
+        result.status=SupervisorStatus::NoCurrentEmergency;
+        result.reason="no current committed life-support threshold notification";
+        return result;
+    }
+    result.notice_id=static_cast<std::uint64_t>(sqlite3_column_int64(latest.get(),0));
+    Statement eligible(db.get(),"SELECT npc_id FROM sg_colony_npc_opportunities "
+        "WHERE event_id=? AND site=? ORDER BY npc_id");
+    eligible.i64(1,static_cast<sqlite3_int64>(result.notice_id));
+    eligible.i64(2,static_cast<sqlite3_int64>(route.source));
+    while(eligible.row()){
+        const auto id=static_cast<std::uint64_t>(sqlite3_column_int64(eligible.get(),0));
+        const auto person=world_.npc_records().find(id);
+        if(person!=world_.npc_records().end() &&
+           person->second.home_ship==route.source &&
+           person->second.location==route.source &&
+           !person->second.transport_id){
+            result.leader_id=id;break;
+        }
+    }
+    if(!result.leader_id){
+        result.status=SupervisorStatus::NoLocalNpc;
+        result.reason="no living, physically present NPC received a local alert opportunity";
+        return result;
+    }
+    // This is the host's actual delivery step. A crash immediately after
+    // acknowledgment is safe: the outbox remembers delivery, and the next
+    // supervisor pass will select the same latest observable alert.
+    acknowledge_colony_notification(result.notice_id,result.leader_id);
+    AutonomousRescueRequest request{};
+    request.source=route.source;
+    request.leader_id=result.leader_id;
+    request.observed_event_id=result.notice_id;
+    request.family_seed=route.family_seed;
+    request.intent_id=route.intent_id;
+    request.command_id=route.command_id;
+    request.family_scope=route.family_scope;
+    request.region_scope=route.region_scope;
+    request.origin_colony=route.origin_colony;
+    request.destinations=route.destinations;
+    request.member_event_ids=route.member_event_ids;
+    const auto evaluated=assess_autonomous_colony_emergency(request);
+    if(!evaluated.rescue_ready){
+        result.status=SupervisorStatus::AwaitingPhysicalRescue;
+        result.reason=evaluated.reason;
+        // The original physical shortage and delivered-NPC outbox remain
+        // durable; neither a shipment nor a person movement is fabricated.
+        return result;
+    }
+    if(!submit_autonomous_colony_rescue(request,fail)){
+        result.status=SupervisorStatus::AwaitingPhysicalRescue;
+        result.reason="qualified recipient could not receive an admitted command";
+        return result;
+    }
+    result.status=SupervisorStatus::RescueQueued;
+    result.receiver=evaluated.selected_receiver;
+    result.reason="supervisor queued immutable whole-family transfer; execution still pending";
+    return result;
+}
+
 // COLONY-AUTO-04D.4D2B2: admission only. No family member relocates until
 // step_with_atomic_family_departure commits world, ART02 and ECON03 together.
 bool PersistentWorld::submit_host_atomic_family_departure(
