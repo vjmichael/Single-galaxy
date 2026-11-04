@@ -151,6 +151,22 @@ public:
         std::uint64_t observed_tick,const AstronomicalProfile& profile);
     std::optional<SystemCatalogueRecord> known_system_catalogue(
         PlayerId owner,std::uint32_t system) const;
+    // PGF-01B.2: private, restart-durable observed geography. A catalogue
+    // result is immutable within one generator revision. The authoritative
+    // world is still Simulation, not this read-model/sidecar.
+    struct PlanetRegionRecord {
+        std::uint64_t body=0, observed_tick=0, drainage=0;
+        std::uint32_t revision=0;
+        std::uint16_t latitude=0, longitude=0;
+        std::int32_t elevation=0, down_latitude=-1, down_longitude=-1;
+        std::uint8_t ocean=0, terrain=0, watercourse=0;
+    };
+    bool record_planetary_region(PlayerId owner,std::uint32_t system,
+        const planetary::GeographicSite& site,std::uint64_t observed_tick);
+    std::optional<PlanetRegionRecord> known_planetary_region(
+        PlayerId owner,std::uint32_t system,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,
+        std::uint32_t revision) const;
     std::size_t import_native_discoveries(const Simulation& world,
         PlayerId owner,std::uint32_t system);
     // A host-observed report enters a durable outbox. Reports become readable
