@@ -602,6 +602,19 @@ public:
     colony_conflict::Decision record_colony_conflict_intent(
         std::uint64_t decision_event_id,EntityId source_colony,
         std::uint64_t observed_contact_event_id);
+    // CONFLICT-01B1: actual ship destruction + a real NPC's delivered GRSM
+    // interpretation produces a subjective, directed diplomatic revision.
+    // The incident's real attacker owner is independently reconstructed;
+    // admiration, grievance and blame are BELIEFS, not adjudicated crimes.
+    colony_conflict::RelationRevision assess_colony_relationship_revision(
+        EntityId source_colony,std::uint64_t knowledge_id) const;
+    colony_conflict::RelationRevision record_colony_relationship_revision(
+        std::uint64_t revision_event_id,EntityId source_colony,
+        std::uint64_t knowledge_id);
+    // Latest audited relationship from this colony toward one foreign owner.
+    // Not an automatic attack authorization or reciprocal treaty.
+    colony_conflict::RelationRevision colony_relationship(
+        EntityId source_colony,PlayerId foreign_owner) const;
     // D2a: register ART02-authenticated, actually resident child into the
     // replayable world occupancy ledger. Separate from declaring evacuation.
     bool submit_host_dependent_registration(const Command& command,
