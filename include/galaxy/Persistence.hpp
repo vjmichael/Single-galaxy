@@ -830,6 +830,8 @@ public:
     void step_with_atomic_split_rescue(const SplitRescueIntentPlan& plan,
         std::uint64_t command_id,FailPoint fail=FailPoint::None);
     void steps(std::uint64_t n);
+    void configure_probe_report_tick_ms(std::uint64_t tick_ms);
+    void ensure_physical_celestial_systems();
     const Simulation& world() const noexcept { return world_; }
     std::int64_t resource_origin() const noexcept { return resource_origin_; }
     std::uint64_t generation() const noexcept { return generation_; }

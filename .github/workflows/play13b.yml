@@ -1,0 +1,54 @@
+name: PLAY-13B scanner knowledge acceptance
+on:
+  push:
+    branches:
+      - integration/play13b-scanner-knowledge-20261104
+  pull_request:
+    paths:
+      - 'include/galaxy/Galaxy.hpp'
+      - 'include/galaxy/Astronomy.hpp'
+      - 'include/galaxy/Simulation.hpp'
+      - 'include/galaxy/Persistence.hpp'
+      - 'src/Galaxy.cpp'
+      - 'src/Simulation.cpp'
+      - 'src/Persistence.cpp'
+      - 'src/colony_live_host.cpp'
+      - 'tests/GeographyScanningTests.cpp'
+      - 'tests/PLAY13_GeologicalDroneTests.cpp'
+      - 'tests/PLAY12_ProbeLifecycleTests.cpp'
+      - 'tests/PLAY13B_LiveSurveyIndexSmoke.py'
+      - 'viewer/scanner-session.js'
+      - 'viewer/colony.js'
+      - 'viewer/interactive.js'
+      - 'viewer/interactive.html'
+      - 'live/interactive_relay.py'
+      - 'tests/PLAY12_ProbeWiringTests.js'
+      - 'tests/PLAY13_DroneWiringTests.js'
+      - 'tests/PLAY13B_ScannerSessionTests.js'
+      - '.github/workflows/play13b.yml'
+jobs:
+  scanner-knowledge:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure native code
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+      - name: Build authoritative scanning tests
+        run: cmake --build build --config Release --target galaxy_geography_scanning_tests galaxy_play12_probe_tests galaxy_play13_drone_tests galaxy_colony_live_host
+      - name: Exercise scan modes and durable survey history
+        run: ctest --test-dir build -C Release -R "galaxy_(b54_b60_geography_scanning_tests|play12_probes|play13_drones)" --output-on-failure
+      - name: Real colony host survey index restart smoke
+        run: python tests/PLAY13B_LiveSurveyIndexSmoke.py "${{ github.workspace }}/build/galaxy_colony_live_host"
+        if: runner.os == 'Linux'
+      - name: Browser scanner lock-on contract
+        run: node --test tests/PLAY13B_ScannerSessionTests.js tests/PLAY12_ProbeWiringTests.js tests/PLAY13_DroneWiringTests.js
+      - name: Parse authoritative relay and browser JavaScript
+        run: |
+          python -m py_compile live/interactive_relay.py
+          node --check viewer/colony.js
+          node --check viewer/interactive.js
+          node --check viewer/scanner-session.js

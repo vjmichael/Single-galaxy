@@ -3,6 +3,7 @@
 // stdout SGVIEW frames; stderr bounded COLONY telemetry for the local relay.
 #include "galaxy/Simulation.hpp"
 #include "galaxy/Persistence.hpp"
+#include "galaxy/Galaxy.hpp"
 #include "galaxy/ClientContract.hpp"
 #include "galaxy/ColonySafety.hpp"
 #include <algorithm>
@@ -13,6 +14,7 @@
 #include <stdexcept>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <random>
 #include <set>
 #include <sstream>
@@ -131,7 +133,9 @@ void status(const Simulation& w,EntityId ship,bool replay_discoveries=false){
         announce(w,"SURVEY_PROBE|"+std::to_string(id)+"|"+std::to_string(p.system)+"|"+
             std::to_string(p.position.x)+"|"+std::to_string(p.position.y)+"|"+
             std::to_string(p.drone_phase)+"|"+std::to_string(p.drone_target)+"|"+
-            std::to_string(p.sample_ore)+"|"+std::to_string(p.taxonomy));
+            std::to_string(p.sample_ore)+"|"+std::to_string(p.taxonomy)+"|"+
+            std::to_string(p.focus_site)+"|"+std::to_string(p.focus_waypoint.x)+"|"+
+            std::to_string(p.focus_waypoint.y));
     }
     announce(w,"PROBE_STOCK|"+std::to_string(s->survey_probes_carried)+"|"+
         std::to_string(s->fitting.probe_launcher()?1:0));
@@ -388,7 +392,7 @@ EntityId nearest(const Simulation& w, EntityId ship){
     }
     return chosen;
 }
-void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uint64_t& nonce,PlayerId principal,std::set<std::uint64_t>& pending_scans,std::set<std::uint64_t>& pending_probe_scans){
+void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uint64_t& nonce,PlayerId principal,std::set<std::uint64_t>& pending_scans,std::set<std::uint64_t>& pending_probe_scans,SurveyArchive* knowledge){
     if(principal!=owner){announce(world.world(),"ERROR|UNAUTHORIZED_PRINCIPAL");return;}
     const auto v=split(line);if(v.empty())return;
     if(v.size()==1 && v[0]=="SCAN"){
@@ -396,6 +400,92 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
         c.issuer=principal;c.actor=ship;c.action=Action::SurveyLocal;
         if(world.submit(c))pending_scans.insert(c.id);
         else announce(world.world(),"ERROR|INVALID_INPUT");
+        return;
+    }
+    if(v.size()==1 && v[0]=="SYSTEM_CELESTIAL"){
+        const auto profile=world.world().scan_celestial_profile(principal,ship);
+        if(!profile){announce(world.world(),"ERROR|INVALID_INPUT");return;}
+        if(knowledge)try {
+            const auto* carrier=world.world().find(ship);
+            const auto system=carrier?carrier->system_id:0;
+            if(!system)throw std::runtime_error("missing active survey system");
+            knowledge->record_system_catalogue(principal,system,world.world().tick()+1,*profile);
+            const auto history=knowledge->known_system_catalogue(principal,system);
+            if(history)
+                announce(world.world(),"CELESTIAL_HISTORY|"+
+                    std::to_string(history->first_tick)+"|"+
+                    std::to_string(history->last_tick));
+        }catch(const std::exception& ex){
+            std::cerr<<"PLAY13B_CATALOGUE_WRITE_ERROR "<<ex.what()<<'\n';
+        }
+        announce(world.world(),"CELESTIAL_HEADER|"+
+            std::to_string(static_cast<unsigned>(profile->architecture))+"|"+
+            std::to_string(static_cast<unsigned>(profile->morphology))+"|"+
+            std::to_string(profile->star_count)+"|"+
+            std::to_string(profile->orbital_bands.size()));
+        for(const auto& band:profile->orbital_bands)
+            announce(world.world(),"CELESTIAL_BAND|"+
+                std::to_string(band.ordinal)+"|"+
+                std::to_string(band.radius_milli_au)+"|"+
+                std::to_string(band.eccentricity_permille)+"|"+
+                std::to_string(static_cast<unsigned>(band.zone)));
+        const bodies=world.world().scan_physical_celestials(principal,ship);
+        for(const auto& body:bodies)
+            announce(world.world(),"CELESTIAL_BODY|"+std::to_string(body.id)+"|"+
+                std::to_string(body.parent_id)+"|"+
+                std::to_string(static_cast<unsigned>(body.kind))+"|"+
+                std::to_string(body.orbital_radius_milli_au)+"|"+
+                std::to_string(body.position.x_mm)+"|"+
+                std::to_string(body.position.y_mm)+"|"+
+                std::to_string(body.position.z_mm)+"|"+
+                std::to_string(body.physical_radius_mm));
+        announce(world.world(),"CELESTIAL_DONE|"+
+            std::to_string(profile->orbital_bands.size()));
+        return;
+    }
+    if(v.size()==1 && v[0]=="SYSTEM_ENVIRONMENT"){
+        const auto reading=world.world().scan_environment(principal,ship);
+        if(!reading){announce(world.world(),"ERROR|INVALID_INPUT");return;}
+        announce(world.world(),"ENVIRONMENT_STATUS|"+
+            std::to_string(reading->system)+"|"+
+            std::to_string(reading->magnetized_region?1:0)+"|"+
+            std::to_string(reading->dust_region?1:0)+"|"+
+            std::to_string(reading->ship_speed_mm_per_tick));
+        return;
+    }
+    if(v.size()==2 && v[0]=="SIGNATURES"){
+        announce(world.world(),"SIGNATURE_RESET");
+        try{
+        const auto radius=integer(v[1]);
+        const auto found=world.world().coarse_probe_signatures(principal,ship,radius);
+        for(const auto& item:found)
+            announce(world.world(),"SIGNATURE_CONTACT|"+std::to_string(item.id)+"|"+
+                std::to_string(item.coarse.x)+"|"+std::to_string(item.coarse.y)+"|"+
+                std::to_string(item.uncertainty_mm));
+        announce(world.world(),"SIGNATURE_DONE|"+std::to_string(found.size()));
+        }catch(const std::exception&){announce(world.world(),"ERROR|INVALID_INPUT");}
+        return;
+    }
+    if((v.size()==3 && v[0]=="PROBE_FOCUS") ||
+       (v.size()==2 && v[0]=="PROBE_CANCEL")){
+        try {
+            const auto id=integer(v[1]);
+            const auto site=v.size()==3?integer(v[2]):0;
+            if(id<1||id>1000000000000000LL||
+               (v.size()==3&&(site<1||site>100000000)))
+                throw std::invalid_argument("invalid probe lock-on");
+            Command command{};
+            command.id=++nonce;command.sequence=command.id;
+            command.execute_tick=world.world().tick()+1;
+            command.issuer=principal;command.actor=ship;
+            command.target=static_cast<EntityId>(id);
+            command.amount=site;
+            command.action=v.size()==3?Action::FocusSurveyProbe:Action::CancelSurveyFocus;
+            if(!world.submit(command))
+                announce(world.world(),"ERROR|INVALID_INPUT");
+        }catch(const std::exception&){
+            announce(world.world(),"ERROR|INVALID_INPUT");
+        }
         return;
     }
     if(v.size()==2 && v[0]=="PROBE_SCAN"){
@@ -683,6 +773,11 @@ int main(int argc,char** argv){
         // No stations, other ships, markets, factions or gates at start.
         const bool was_saved=fs::exists(argv[1]);
         PersistentWorld world(argv[1],std::move(genesis));
+        // v68: translate the nominal 10-second report into durable game ticks
+        // using this host session's actual fixed-step duration.
+        world.configure_probe_report_tick_ms(static_cast<std::uint64_t>(ms));
+        // Existing saves are upgraded atomically on first new-host start.
+        world.ensure_physical_celestial_systems();
         if(!world.world().colony_ship(ship)||!world.world().find(ship)||world.world().find(ship)->owner_id!=owner){
             // A populated production world can have stations before its first
             // player-owned colony ship. Do not assume the ship has entity ID 1.
@@ -692,6 +787,33 @@ int main(int argc,char** argv){
                     if(!ship||id<ship)ship=id;
                 }
             if(!ship)throw std::runtime_error("no colony ship for authenticated owner");
+        }
+        // PLAY-13B: the v67 world is the authoritative discovery source.
+        // This sidecar is an owner-scoped, rebuildable navigation/survey index.
+        // Every host restart replays committed native discoveries idempotently.
+        std::unique_ptr<SurveyArchive> survey_knowledge;
+        auto sync_survey_knowledge=[&]() {
+            if(!survey_knowledge)return;
+            try {
+                std::set<std::uint32_t> systems;
+                for(const auto& [key,discovery]:world.world().discoveries()) {
+                    (void)key;
+                    if(discovery.owner==owner)systems.insert(discovery.system);
+                }
+                for(const auto system:systems)
+                    survey_knowledge->import_native_discoveries(world.world(),owner,system);
+            }catch(const std::exception& e) {
+                std::cerr<<"PLAY13B_SURVEY_INDEX_ERROR "<<e.what()<<'\n';
+                survey_knowledge.reset(); // never discard the committed world
+            }
+        };
+        try {
+            survey_knowledge=std::make_unique<SurveyArchive>(
+                std::string(argv[1])+".survey.sqlite");
+            sync_survey_knowledge();
+        }catch(const std::exception& e) {
+            std::cerr<<"PLAY13B_SURVEY_INDEX_UNAVAILABLE "<<e.what()<<'\n';
+            survey_knowledge.reset();
         }
         std::random_device rd;auto stream=(std::uint64_t(rd())<<32)^rd();if(!stream)stream=1;
         ServerViewBridge bridge(world.world(),stream,owner);
@@ -713,7 +835,7 @@ int main(int argc,char** argv){
             poll_input();
             const auto to_apply=std::move(commands);commands.clear();
             for(const auto& line:to_apply){
-                if(!authenticated_transport){apply(world,ship,line,nonce,owner,pending_scans,pending_probe_scans);continue;}
+                if(!authenticated_transport){apply(world,ship,line,nonce,owner,pending_scans,pending_probe_scans,survey_knowledge.get());continue;}
                 // The trusted relay supplies a resolved account ID over our
                 // private stdin pipe; unprefixed/forged/foreign commands fail
                 // closed even if relay validation is accidentally bypassed.
@@ -724,11 +846,12 @@ int main(int argc,char** argv){
                     const auto principal=integer(line.substr(first+1,second-first-1));
                     if(principal!=static_cast<std::int64_t>(owner))
                         throw std::invalid_argument("foreign colony command");
-                    apply(world,ship,line.substr(second+1),nonce,static_cast<PlayerId>(principal),pending_scans,pending_probe_scans);
+                    apply(world,ship,line.substr(second+1),nonce,static_cast<PlayerId>(principal),pending_scans,pending_probe_scans,survey_knowledge.get());
                 }catch(const std::exception&){announce(world.world(),"ERROR|UNAUTHORIZED_PRINCIPAL");}
             }
             const auto old=world.world().events().size();
             world.step();
+            sync_survey_knowledge(); // only after durable native world step
             // EXIT-01D: every eighth committed world tick, host (not the
             // player input UI) automatically observes a bounded rotation of
             // real inhabited colonies. No receiving-owner permission is
@@ -766,8 +889,10 @@ int main(int argc,char** argv){
                     scan(world.world(),ship);
                     scanned=true;
                 }
-                if(pending_probe_scans.erase(ev.command_id) && ev.result==Outcome::Applied)
-                    scanned=true; // remote probe survey: only native discovery records, no ship scan
+                // A successful probe order queues a withheld native report.
+                // Do not mark discovery complete until the committed journal
+                // actually gains the observation after the response interval.
+                pending_probe_scans.erase(ev.command_id);
                 announce(world.world(),"RESULT|"+std::to_string(ev.command_id)+"|"+
                     to_string(ev.result)+"|"+std::to_string(ev.transferred));
             }

@@ -203,10 +203,47 @@ el('probeTarget').addEventListener('change',()=>{
  const selected=el('probeTarget').value!=='';
  el('probeSurvey').disabled=!selected;
  el('probeRetrieve').disabled=!selected;
+ el('signatureFocus').disabled=el('signatureMode').value!=='anomaly'||!selected||!el('signatureTarget').value;
+ el('signatureCancel').disabled=!selected;
+});
+el('signatureTarget').addEventListener('change',()=>{
+ el('signatureFocus').disabled=el('signatureMode').value!=='anomaly'||!el('probeTarget').value||!el('signatureTarget').value;
 });
 el('probeSurvey').addEventListener('click',()=>{
  const probe=Number(el('probeTarget').value);
  if(Number.isSafeInteger(probe)&&probe>0)command('colonyProbeScan',{probe});
+});
+el('signatureMode').addEventListener('change',()=>{
+ const anomaly=el('signatureMode').value==='anomaly';
+ el('signatureRange').disabled=!anomaly;
+ el('signatureFocus').disabled=!anomaly||!el('probeTarget').value||!el('signatureTarget').value;
+ message(anomaly?'Anomaly scan: select a signature to investigate.':
+   'Catalogue and environmental readings are host-sourced metadata, not physical planets or active hazards.');
+});
+el('signatureScan').addEventListener('click',()=>{
+ const mode=el('signatureMode').value;
+ if(mode==='anomaly')command('colonySignatureScan',{rangeMm:Number(el('signatureRange').value)});
+ else if(mode==='celestial')command('colonyCelestialScan');
+ else if(mode==='environmental')command('colonyEnvironmentScan');
+});
+el('signatureFocus').addEventListener('click',()=>{
+ if(el('signatureMode').value!=='anomaly'){
+   message('Only anomaly focus is implemented in the native host.');return;
+ }
+ const probe=Number(el('probeTarget').value);
+ const signature=Number(el('signatureTarget').value);
+ if(!Number.isSafeInteger(probe)||probe<=0||
+    !Number.isSafeInteger(signature)||signature<=0){
+   message('Deploy a probe and select a detected signature first.');return;
+ }
+ command('colonyProbeFocus',{probe,signature});
+});
+el('signatureCancel').addEventListener('click',()=>{
+ const probe=Number(el('probeTarget').value);
+ if(!Number.isSafeInteger(probe)||probe<=0){
+   message('Select a deployed probe to cancel its mission.');return;
+ }
+ command('colonyProbeCancel',{probe});
 });
 el('probeRetrieve').addEventListener('click',()=>{
  const probe=Number(el('probeTarget').value);

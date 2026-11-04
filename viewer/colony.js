@@ -8,6 +8,71 @@
   function decode(raw){
     if(typeof raw!=='string'||raw.length>180||!/^COLONY\|1\|/.test(raw)||!/^[A-Za-z0-9_|-]+$/.test(raw))throw Error('Invalid colony telemetry');
     const v=raw.split('|'),tick=numeric(v[2],1200),t=v[3];let e={tick,type:t};
+    if(t==='CELESTIAL_HEADER'){
+      if(v.length!==8)throw Error('Malformed celestial catalogue');
+      const architecture=numeric(v[4],3),morphology=numeric(v[5],2),
+        stars=numeric(v[6],3),bands=numeric(v[7],9);
+      if(!stars||!bands)throw Error('Invalid celestial catalogue');
+      return {...e,architecture,morphology,stars,bands};
+    }
+    if(t==='CELESTIAL_BAND'){
+      if(v.length!==8)throw Error('Malformed orbital band');
+      const ordinal=numeric(v[4],9),radius=numeric(v[5],100000),
+        eccentricity=numeric(v[6],999),zone=numeric(v[7],4);
+      if(!ordinal||!radius)throw Error('Invalid orbital band');
+      return {...e,ordinal,radius,eccentricity,zone};
+    }
+    if(t==='CELESTIAL_HISTORY'){
+      if(v.length!==6)throw Error('Malformed celestial survey history');
+      const first=numeric(v[4],1201),last=numeric(v[5],1201);
+      if(!first||last<first)throw Error('Invalid celestial survey history');
+      return {...e,first,last};
+    }
+    if(t==='CELESTIAL_BODY'){
+      if(v.length!==12)throw Error('Malformed persisted celestial body');
+      const id=numeric(v[4],Number.MAX_SAFE_INTEGER),
+        parent=numeric(v[5],Number.MAX_SAFE_INTEGER),kind=numeric(v[6],3),
+        orbit=numeric(v[7],300000),radius=numeric(v[11],Number.MAX_SAFE_INTEGER);
+      const coord=value=>{
+        if(!/^(?:0|-?[1-9][0-9]*)$/.test(value))throw Error('Invalid cosmic coordinate');
+        const n=Number(value);
+        if(!Number.isSafeInteger(n)||Math.abs(n)>50000000000000000)
+          throw Error('Cosmic coordinate out of range');
+        return n;
+      };
+      const x=coord(v[8]),y=coord(v[9]),z=coord(v[10]);
+      if(!id||!radius||(kind===0&&parent!==0)||
+         (kind!==0&&parent===0))throw Error('Invalid celestial parent/body');
+      return {...e,id,parent,kind,orbit,x,y,z,radius};
+    }
+    if(t==='CELESTIAL_DONE'){
+      if(v.length!==5)throw Error('Malformed orbital catalogue count');
+      return {...e,count:numeric(v[4],9)};
+    }
+    if(t==='ENVIRONMENT_STATUS'){
+      if(v.length!==8)throw Error('Malformed environment survey');
+      const system=numeric(v[4],100000000),magnetized=numeric(v[5],1),
+        dust=numeric(v[6],1),speed=numeric(v[7],200000);
+      if(!system)throw Error('Invalid environment system');
+      return {...e,system,magnetized:!!magnetized,dust:!!dust,speed};
+    }
+    if(t==='SIGNATURE_RESET'){
+      if(v.length!==4)throw Error('Malformed signature reset');
+      return e;
+    }
+    if(t==='SIGNATURE_DONE'){
+      if(v.length!==5)throw Error('Malformed signature count');
+      return {...e,count:numeric(v[4],128)};
+    }
+    if(t==='SIGNATURE_CONTACT'){
+      if(v.length!==8)throw Error('Malformed coarse signature');
+      const coord=x=>{if(!/^(?:0|-?[1-9][0-9]*)$/.test(x))throw Error('Invalid coarse coordinate');
+        const n=Number(x);if(!Number.isSafeInteger(n)||Math.abs(n)>1000000000)throw Error('Signature coordinate overflow');return n;};
+      const id=numeric(v[4],100000000),x=coord(v[5]),y=coord(v[6]);
+      const uncertainty=numeric(v[7],500000000);
+      if(!id||!uncertainty)throw Error('Invalid signature');
+      return {...e,id,x,y,uncertainty};
+    }
     if(t==='PROBE_RESET'){
       if(v.length!==4)throw Error('Malformed probe roster reset');
       return e;
@@ -21,20 +86,24 @@
       return {...e,carried:numeric(v[4],8),launcher:!!numeric(v[5],1)};
     }
     if(t==='SURVEY_PROBE'){
-      if(v.length!==8 && v.length!==12)throw Error('Malformed deployed survey probe');
+      if(v.length!==8 && v.length!==12 && v.length!==15)throw Error('Malformed deployed survey probe');
       const id=numeric(v[4],1000000000000000),system=numeric(v[5],100000000);
       const coord=value=>{if(!/^(?:0|-?[1-9][0-9]*)$/.test(value))throw Error('Bad probe coordinate');
         const n=Number(value);if(!Number.isSafeInteger(n)||Math.abs(n)>1000000000)throw Error('Probe coordinate out of range');return n;};
       const x=coord(v[6]),y=coord(v[7]);
       if(!id||!system)throw Error('Invalid deployed probe identity');
-      if(v.length===12){
+      if(v.length>=12){
         const phase=numeric(v[8],3),target=numeric(v[9],100000000);
         const sample=numeric(v[10],0),taxonomy=numeric(v[11],3);
         if((phase===0 && (target||sample||taxonomy)) ||
            (phase!==0 && !target) || sample!==0)throw Error('Invalid geological drone state');
-        return {...e,id,system,x,y,phase,target,sample,taxonomy};
+        const focus=v.length===15?numeric(v[12],100000000):0;
+        const fx=v.length===15?coord(v[13]):0,fy=v.length===15?coord(v[14]):0;
+        if(focus && phase)throw Error('Invalid focused geological drone');
+        if(!focus && (fx||fy))throw Error('Unowned focus waypoint');
+        return {...e,id,system,x,y,phase,target,sample,taxonomy,focus,fx,fy};
       }
-      return {...e,id,system,x,y,phase:0,target:0,sample:0,taxonomy:0};
+      return {...e,id,system,x,y,phase:0,target:0,sample:0,taxonomy:0,focus:0,fx:0,fy:0};
     }
     if(t==='FITTING'){
       if(v.length!==9)throw Error('Malformed ship fitting telemetry');
@@ -279,6 +348,8 @@
  const combatTargets=new Map();
  const salvageWrecks=new Map();
  const deployedProbes=new Map();
+ const signatureContacts=new Map();
+ const celestialBodies=new Map();
  let probeCarried=0,probeLauncher=false,probeChoice='';
  const discoveries=new Map();
  window.GalaxySalvageStock=salvageWrecks;
@@ -334,8 +405,72 @@
        guide.action==='colonyFabricate'?{amount:4}:{});
  });
  window.GalaxyColony={
-   reset(){q('droneTarget').replaceChildren(new Option('Scan nearby rocks first',''));q('droneLaunch').disabled=true;deployedProbes.clear();probeCarried=0;probeLauncher=false;probeChoice='';q('probeTarget').replaceChildren(new Option('No probe deployed',''));q('probeLaunch').disabled=true;q('probeSurvey').disabled=true;q('probeRetrieve').disabled=true;q('probeInventory').textContent='Awaiting native probe stock.';q('probeFeedback').textContent='Native equipment required.';q('fittingCapacity').textContent='Awaiting actual ship fittings.';q('proximityStatus').textContent='Proximity safety sensor awaiting contacts.';q('fitScanner').disabled=true;q('unfitScanner').disabled=true;discoveries.clear();q('explorationResults').replaceChildren();q('explorationSummary').textContent='No mapped discoveries yet. Execute a native local scan.';salvageWrecks.clear();q('salvageTarget').replaceChildren(new Option('No recoverable wreck reported',''));q('salvageRecover').disabled=true;q('salvageFeedback').textContent='Waiting for native wreck inventory.';combatTargets.clear();q('combatHull').textContent='—';q('combatCharges').textContent='—';q('combatFire').disabled=true;q('combatFeedback').textContent='Awaiting native combat telemetry.';window.GalaxySelectedRockId=null;window.GalaxyShipHeading=null;window.GalaxyColonyOutpostIds.clear();openingStatus=null;openingScanned=false;refreshOpening();window.GalaxyColonyHomeShipId=null;q('colonySafetyAssess').disabled=true;q('colonySafetyPreflight').disabled=true;policyAudits.clear();geology.clear();small.clear();stocks.clear();outposts.clear();farms.clear();habitats.clear();utilities.clear();communities.clear();clinics.clear();reclaimers.clear();waterworks.clear();log.length=0;q('colonyEvents').textContent='Awaiting colony telemetry…';q('expeditionOutcome').textContent='Awaiting an actual native result';},
+   reset(){signatureContacts.clear();celestialBodies.clear();
+     q('celestialBodyList').textContent='No physical celestial bodies surveyed yet.';
+     q('signatureTarget').replaceChildren(new Option('Scan to detect signals',''));
+     q('signatureFocus').disabled=true;q('signatureCancel').disabled=true;
+     q('signatureFeedback').textContent='Search for coarse anomaly signatures.';
+     q('droneTarget').replaceChildren(new Option('Scan nearby rocks first',''));q('droneLaunch').disabled=true;deployedProbes.clear();probeCarried=0;probeLauncher=false;probeChoice='';q('probeTarget').replaceChildren(new Option('No probe deployed',''));q('probeLaunch').disabled=true;q('probeSurvey').disabled=true;q('probeRetrieve').disabled=true;q('probeInventory').textContent='Awaiting native probe stock.';q('probeFeedback').textContent='Native equipment required.';q('fittingCapacity').textContent='Awaiting actual ship fittings.';q('proximityStatus').textContent='Proximity safety sensor awaiting contacts.';q('fitScanner').disabled=true;q('unfitScanner').disabled=true;discoveries.clear();q('explorationResults').replaceChildren();q('explorationSummary').textContent='No mapped discoveries yet. Execute a native local scan.';salvageWrecks.clear();q('salvageTarget').replaceChildren(new Option('No recoverable wreck reported',''));q('salvageRecover').disabled=true;q('salvageFeedback').textContent='Waiting for native wreck inventory.';combatTargets.clear();q('combatHull').textContent='—';q('combatCharges').textContent='—';q('combatFire').disabled=true;q('combatFeedback').textContent='Awaiting native combat telemetry.';window.GalaxySelectedRockId=null;window.GalaxyShipHeading=null;window.GalaxyColonyOutpostIds.clear();openingStatus=null;openingScanned=false;refreshOpening();window.GalaxyColonyHomeShipId=null;q('colonySafetyAssess').disabled=true;q('colonySafetyPreflight').disabled=true;policyAudits.clear();geology.clear();small.clear();stocks.clear();outposts.clear();farms.clear();habitats.clear();utilities.clear();communities.clear();clinics.clear();reclaimers.clear();waterworks.clear();log.length=0;q('colonyEvents').textContent='Awaiting colony telemetry…';q('expeditionOutcome').textContent='Awaiting an actual native result';},
    accept(raw){const e=window.GalaxyColonyContract.decode(raw);
+     if(e.type==='CELESTIAL_HEADER'){
+       celestialBodies.clear();
+       q('celestialBodyList').textContent='Receiving authoritative physical bodies…';
+     }
+     if(e.type==='CELESTIAL_BODY'){
+       celestialBodies.set(e.id,e);
+       const labels=['Star','Planet','Moon','Debris region'];
+       const rows=[...celestialBodies.values()];
+       q('celestialBodyList').replaceChildren(...rows.map(body=>{
+         const item=document.createElement('div');
+         item.className='entry';
+         item.textContent=labels[body.kind]+' #'+body.id+
+           ' · parent '+(body.parent||'none')+
+           ' · '+(body.orbit/1000).toFixed(2)+' AU orbital band'+
+           ' · radius '+Math.round(body.radius/1000000)+' km'+
+           ' · world '+(body.x/1000000).toFixed(0)+', '+
+           (body.y/1000000).toFixed(0)+', '+
+           (body.z/1000000).toFixed(0)+' km (x/y/z)';
+         return item;
+       }));
+     }
+     if(e.type==='CELESTIAL_HISTORY')
+       q('signatureFeedback').textContent='Previously surveyed on tick '+e.first+
+         ' (most recent survey tick '+e.last+'). ';
+     if(e.type==='CELESTIAL_HEADER'){
+       const names=['Single star','Wide binary','Circumbinary','Hierarchical triple'];
+       const history=q('signatureFeedback').textContent.startsWith('Previously surveyed')?
+         q('signatureFeedback').textContent:'';
+       q('signatureFeedback').textContent=history+
+         'System catalogue: '+names[e.architecture]+', '+e.stars+
+         ' star(s), '+e.bands+' generated orbital bands. Catalogue only.';
+     }
+     if(e.type==='CELESTIAL_BAND')
+       q('signatureFeedback').textContent+=
+         ' Band '+e.ordinal+': '+(e.radius/1000).toFixed(2)+' AU.';
+     if(e.type==='ENVIRONMENT_STATUS')
+       q('signatureFeedback').textContent='System '+e.system+
+         ' survey — ship speed '+e.speed+' mm/tick; '+
+         (e.magnetized?'magnetized-region feature':'no magnetized-region feature')+
+         ', '+(e.dust?'dust-arc feature':'no dust-arc feature')+
+         '. Indicators only; not physical hazards yet.';
+     if(e.type==='SIGNATURE_RESET'){
+       signatureContacts.clear();
+       q('signatureTarget').replaceChildren(new Option('No signatures detected',''));
+       q('signatureFocus').disabled=true;
+     }
+     if(e.type==='SIGNATURE_CONTACT'){
+       signatureContacts.set(e.id,e);
+       const select=q('signatureTarget'),chosen=select.value;
+       select.replaceChildren(new Option('Select signature',''),
+         ...[...signatureContacts].map(([id,p])=>new Option(
+           '#'+id+' · coarse '+p.x+', '+p.y+' mm (±'+p.uncertainty+' mm)',String(id))));
+       if([...select.options].some(option=>option.value===chosen))select.value=chosen;
+       q('signatureFocus').disabled=!select.value||!q('probeTarget').value;
+     }
+     if(e.type==='SIGNATURE_DONE'){
+       q('signatureFeedback').textContent=e.count+
+         ' nearby signatures detected. Select one, choose a deployed probe and lock on.';
+     }
      if(e.type==='PROBE_RESET'){
         probeChoice=q('probeTarget').value||probeChoice;
         deployedProbes.clear();
@@ -374,7 +509,13 @@
         const p=deployedProbes.get(Number(selected.value));
         q('probeRetrieve').disabled=!probeLauncher||!p||
           (p.phase!==0 && p.phase!==3);
-        q('probeSurvey').disabled=!probeLauncher||!p||p.phase!==0;
+        q('probeSurvey').disabled=!probeLauncher||!p||p.phase!==0||!!p.focus;
+        q('signatureFocus').disabled=!probeLauncher||!p||!!p.focus||!q('signatureTarget').value;
+        q('signatureCancel').disabled=!probeLauncher||!p||!p.focus;
+        if(p&&p.focus)
+          q('signatureFeedback').textContent='Probe #'+p.id+
+            ' refining signature #'+p.focus+' · native waypoint progress: '+
+            p.x+', '+p.y+' mm';
         q('probeFeedback').textContent=e.phase?
           'Geological drone #'+e.id+' · '+
           ['','outbound','returning','ready to recover'][e.phase]+

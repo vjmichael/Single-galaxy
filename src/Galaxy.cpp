@@ -92,6 +92,11 @@ RouteResult GalaxyMap::route(std::uint32_t from,std::uint32_t to,RoutePolicy pol
     }
     std::reverse(route.systems.begin(),route.systems.end());return route;
 }
+AstronomicalProfile GalaxyMap::astronomy(std::uint32_t system,
+    std::uint64_t galaxy_seed) const {
+    (void)this->system(system);
+    return generate_astronomical_profile(galaxy_seed,system);
+}
 std::vector<DirectionalContact> SurveySensors::directional(std::uint32_t system,Vector2 ship,
     double heading_deg,double cone_deg,std::int64_t range_mm) const {
     if(!bounded(ship)||!std::isfinite(heading_deg)||!std::isfinite(cone_deg)||
@@ -131,6 +136,109 @@ bool SurveySensors::recover(std::uint64_t id,PlayerId owner,std::uint32_t system
 std::size_t SurveySensors::deployed_count(PlayerId owner) const {
     std::size_t n=0;for(const auto& [id,p]:probes_) { (void)id;if(p.owner==owner&&p.deployed)++n; }return n;
 }
+std::vector<SignatureContact> SurveySensors::coarse_signatures(PlayerId owner,
+    std::uint32_t system,Vector2 scanner_position,std::int64_t range_mm,
+    int sensor_strength) const {
+    if(!owner||!bounded(scanner_position)||range_mm<=0||
+       range_mm>Simulation::kWorldBoundMm*2||sensor_strength<1||sensor_strength>100)
+        throw std::invalid_argument("invalid signature search");
+    std::vector<SignatureContact> results;
+    for(const auto& site:map_.sites(system)) {
+        // Only sufficiently detectable hidden signatures. Do not expose kind
+        // or precise coordinates until real samples support classification.
+        if(site.mapped_on_entry||site.probe_difficulty==0||
+           sensor_strength<(site.probe_difficulty+1)/2)continue;
+        const double distance=std::hypot(double(site.position.x)-scanner_position.x,
+                                         double(site.position.y)-scanner_position.y);
+        if(distance>double(range_mm))continue;
+        constexpr std::int64_t quant=5000;
+        const auto coarse=[](std::int64_t x) {
+            return std::int64_t(std::llround(double(x)/5000.0))*5000;
+        };
+        (void)quant;
+        results.push_back({site.id,{coarse(site.position.x),coarse(site.position.y)},5000});
+    }
+    return results;
+}
+std::optional<RefinementPlan> SurveySensors::plan_refinement(PlayerId owner,
+    std::uint32_t system,std::uint64_t signature,Vector2 scanner_position,
+    std::int64_t discovery_range_mm,std::int64_t scan_radius_mm,
+    int sensor_strength) const {
+    if(!owner||!signature||!bounded(scanner_position)||discovery_range_mm<=0||
+       discovery_range_mm>Simulation::kWorldBoundMm*2||scan_radius_mm<=0||
+       scan_radius_mm>Simulation::kWorldBoundMm*2||
+       sensor_strength<1||sensor_strength>100)
+        throw std::invalid_argument("invalid signature refinement request");
+    // A lock requires the actual target to be detectable from the trusted
+    // host's current scanner location and configured range. This plan is for the trusted host, never a client map.
+    const auto& sites=map_.sites(system);
+    const auto target=std::find_if(sites.begin(),sites.end(),
+        [signature](const SpaceSite& s){return s.id==signature;});
+    if(target==sites.end()||target->mapped_on_entry||target->probe_difficulty==0||
+       sensor_strength<(target->probe_difficulty+1)/2||
+       std::hypot(double(target->position.x)-scanner_position.x,
+                  double(target->position.y)-scanner_position.y)>double(discovery_range_mm))
+        return std::nullopt;
+    std::vector<std::uint64_t> owned;
+    for(const auto& [id,p]:probes_)
+        if(p.owner==owner&&p.deployed&&p.system==system)owned.push_back(id);
+    if(owned.empty())return std::nullopt;
+    // Use the coarse result, not the exact hidden target. The host moves
+    // physical probes to these waypoints over committed simulation ticks.
+    const auto quant=[](std::int64_t x) {
+        return std::int64_t(std::llround(double(x)/5000.0))*5000;
+    };
+    const Vector2 center{quant(target->position.x),quant(target->position.y)};
+    const auto spread=std::min<std::int64_t>(2500,std::max<std::int64_t>(250,scan_radius_mm/2));
+    RefinementPlan plan;plan.site=signature;
+    constexpr double pi=3.14159265358979323846;
+    for(std::size_t i=0;i<owned.size();++i) {
+        const double angle=2*pi*double(i)/double(owned.size());
+        Vector2 point{center.x+std::int64_t(std::llround(spread*std::cos(angle))),
+                      center.y+std::int64_t(std::llround(spread*std::sin(angle)))};
+        point.x=std::clamp(point.x,-Simulation::kWorldBoundMm,Simulation::kWorldBoundMm);
+        point.y=std::clamp(point.y,-Simulation::kWorldBoundMm,Simulation::kWorldBoundMm);
+        plan.waypoints.emplace_back(owned[i],point);
+    }
+    return plan;
+}
+bool SurveySensors::advance_refinement(PlayerId owner,std::uint32_t system,
+    std::uint64_t signature,Vector2 scanner_position,
+    std::int64_t discovery_range_mm,std::int64_t scan_radius_mm,
+    int sensor_strength,std::int64_t max_step_mm) {
+    if(max_step_mm<1||max_step_mm>Simulation::kWorldBoundMm)
+        throw std::invalid_argument("invalid physical probe step");
+    const auto plan=plan_refinement(owner,system,signature,scanner_position,
+        discovery_range_mm,scan_radius_mm,sensor_strength);
+    if(!plan)return false;
+    bool complete=true;
+    for(const auto& [id,waypoint]:plan->waypoints) {
+        auto p=probes_.find(id);
+        if(p==probes_.end()||!p->second.deployed||
+           p->second.owner!=owner||p->second.system!=system)
+            throw std::logic_error("probe ownership changed during refinement");
+        auto& position=p->second.position;
+        const double dx=double(waypoint.x)-position.x;
+        const double dy=double(waypoint.y)-position.y;
+        const double length=std::hypot(dx,dy);
+        if(length<=double(max_step_mm)) {
+            position=waypoint;
+        } else {
+            // No teleportation: movement never exceeds a single scheduled
+            // host-tick step. Minimum one millimetre of progress.
+            auto mx=std::int64_t(std::copysign(std::floor(double(max_step_mm)*std::abs(dx)/length),dx));
+            auto my=std::int64_t(std::copysign(std::floor(double(max_step_mm)*std::abs(dy)/length),dy));
+            if(mx==0&&my==0) {
+                if(std::abs(dx)>=std::abs(dy))mx=dx>0?1:-1;
+                else my=dy>0?1:-1;
+            }
+            position.x+=mx;
+            position.y+=my;
+            complete=false;
+        }
+    }
+    return complete;
+}
 std::vector<ScanObservation> SurveySensors::probe_scan(PlayerId owner,std::uint32_t system,
     std::uint64_t tick,std::int64_t radius_mm,int sensor_strength) const {
     if(!owner||!tick||radius_mm<=0||radius_mm>Simulation::kWorldBoundMm*2||
@@ -167,6 +275,48 @@ std::vector<ScanObservation> SurveySensors::probe_scan(PlayerId owner,std::uint3
     }
     return found;
 }
+std::vector<ScanObservation> SurveySensors::scan_mode(PlayerId owner,std::uint32_t system,
+    std::uint64_t tick,std::int64_t radius_mm,int sensor_strength,ScanMode mode) const {
+    // Classification is evaluated on genuine native probe readings. This
+    // prototype cannot conjure hidden information from client-selected pixels.
+    const auto observations=probe_scan(owner,system,tick,radius_mm,sensor_strength);
+    std::vector<ScanObservation> selected;
+    for(const auto& o:observations) {
+        const bool environmental=o.kind==SiteKind::GasCloud;
+        const bool celestial=o.kind==SiteKind::Star||o.kind==SiteKind::Planet||
+            o.kind==SiteKind::Moon||o.kind==SiteKind::AsteroidDeposit;
+        const bool anomaly=o.kind==SiteKind::Anomaly||o.kind==SiteKind::Wormhole||
+            o.kind==SiteKind::Structure;
+        if((mode==ScanMode::Environmental&&environmental)||
+           (mode==ScanMode::Celestial&&celestial)||
+           (mode==ScanMode::Anomaly&&anomaly))selected.push_back(o);
+    }
+    if(mode==ScanMode::Celestial) {
+        // Major bodies are map-visible on entry, but their composition still
+        // requires a genuine nearby probe measurement; visibility is NOT a
+        // completed mineral/settlement survey.
+        for(const auto& site:map_.sites(system)) {
+            if(!site.mapped_on_entry)continue;
+            if(site.kind!=SiteKind::Star&&site.kind!=SiteKind::Planet&&
+               site.kind!=SiteKind::Moon&&site.kind!=SiteKind::AsteroidDeposit)
+                continue;
+            int useful=0;
+            for(const auto& [id,probe]:probes_) {
+                (void)id;
+                if(probe.owner!=owner||!probe.deployed||probe.system!=system)continue;
+                if(std::hypot(double(site.position.x)-probe.position.x,
+                              double(site.position.y)-probe.position.y)<=double(radius_mm))
+                    ++useful;
+            }
+            if(useful)
+                selected.push_back({owner,system,site.id,site.kind,
+                    site.position,tick,std::min(100,60+useful*10),false});
+        }
+        std::sort(selected.begin(),selected.end(),
+            [](const ScanObservation& a,const ScanObservation& b){return a.site<b.site;});
+    }
+    return selected;
+}
 SurveyArchive::SurveyArchive(const std::string& path) {
     if(sqlite3_open_v2(path.c_str(),&db_,SQLITE_OPEN_READWRITE|SQLITE_OPEN_CREATE|SQLITE_OPEN_FULLMUTEX,nullptr)!=SQLITE_OK) {
         std::string err=db_?sqlite3_errmsg(db_):"opening SQLite failed";
@@ -188,9 +338,69 @@ SurveyArchive::SurveyArchive(const std::string& path) {
             "x INTEGER NOT NULL,y INTEGER NOT NULL,tick INTEGER NOT NULL CHECK(tick>0),"
             "confidence INTEGER NOT NULL CHECK(confidence BETWEEN 1 AND 100),"
             "published INTEGER NOT NULL CHECK(published IN (0,1)));"
-            "CREATE INDEX IF NOT EXISTS idx_survey_history_owner ON observation_history(player,system,revision DESC);",
+            "CREATE INDEX IF NOT EXISTS idx_survey_history_owner ON observation_history(player,system,revision DESC);"
+            "CREATE TABLE IF NOT EXISTS pending_probe_reports("
+            "player INTEGER NOT NULL CHECK(player>0),system INTEGER NOT NULL CHECK(system>0),"
+            "site INTEGER NOT NULL CHECK(site>0),kind INTEGER NOT NULL CHECK(kind BETWEEN 0 AND 9),"
+            "x INTEGER NOT NULL,y INTEGER NOT NULL,tick INTEGER NOT NULL CHECK(tick>0),"
+            "confidence INTEGER NOT NULL CHECK(confidence BETWEEN 1 AND 100),"
+            "captured_ms INTEGER NOT NULL CHECK(captured_ms>=0),"
+            "PRIMARY KEY(player,system,site,tick));"
+            "CREATE INDEX IF NOT EXISTS idx_probe_pending_ready ON pending_probe_reports(player,captured_ms);"
+            "CREATE TABLE IF NOT EXISTS system_catalogues("
+            "player INTEGER NOT NULL CHECK(player>0),system INTEGER NOT NULL CHECK(system>0),"
+            "first_tick INTEGER NOT NULL CHECK(first_tick>0),"
+            "last_tick INTEGER NOT NULL CHECK(last_tick>=first_tick),"
+            "generator_version INTEGER NOT NULL CHECK(generator_version>0),"
+            "architecture INTEGER NOT NULL CHECK(architecture BETWEEN 0 AND 3),"
+            "star_count INTEGER NOT NULL CHECK(star_count BETWEEN 1 AND 3),"
+            "band_count INTEGER NOT NULL CHECK(band_count BETWEEN 1 AND 20),"
+            "PRIMARY KEY(player,system));",
             nullptr,nullptr,nullptr),db_,"create survey archive");
     } catch(...) {sqlite3_close(db_);db_=nullptr;throw;}
+}
+bool SurveyArchive::record_system_catalogue(PlayerId owner,std::uint32_t system,
+    std::uint64_t observed_tick,const AstronomicalProfile& profile) {
+    if(!owner||!system||!observed_tick||
+       owner>std::uint64_t(std::numeric_limits<std::int64_t>::max())||
+       observed_tick>std::uint64_t(std::numeric_limits<std::int64_t>::max())||
+       profile.generator_version==0||profile.star_count<1||profile.star_count>3||
+       profile.orbital_bands.empty()||profile.orbital_bands.size()>20||
+       int(profile.architecture)<0||int(profile.architecture)>3)
+        throw std::invalid_argument("invalid private system catalogue");
+    Stmt insert(db_,"INSERT INTO system_catalogues"
+        "(player,system,first_tick,last_tick,generator_version,architecture,star_count,band_count) "
+        "VALUES(?,?,?,?,?,?,?,?) "
+        "ON CONFLICT(player,system) DO UPDATE SET "
+        "last_tick=MAX(system_catalogues.last_tick,excluded.last_tick) "
+        "WHERE system_catalogues.generator_version=excluded.generator_version");
+    sqlite3_bind_int64(insert.get(),1,sqlite3_int64(owner));
+    sqlite3_bind_int(insert.get(),2,int(system));
+    sqlite3_bind_int64(insert.get(),3,sqlite3_int64(observed_tick));
+    sqlite3_bind_int64(insert.get(),4,sqlite3_int64(observed_tick));
+    sqlite3_bind_int64(insert.get(),5,sqlite3_int64(profile.generator_version));
+    sqlite3_bind_int(insert.get(),6,int(profile.architecture));
+    sqlite3_bind_int(insert.get(),7,int(profile.star_count));
+    sqlite3_bind_int(insert.get(),8,int(profile.orbital_bands.size()));
+    insert.step();
+    return sqlite3_changes(db_)>0;
+}
+std::optional<SurveyArchive::SystemCatalogueRecord>
+SurveyArchive::known_system_catalogue(PlayerId owner,std::uint32_t system) const {
+    if(!owner||!system||owner>std::uint64_t(std::numeric_limits<std::int64_t>::max()))
+        throw std::invalid_argument("invalid catalogue selector");
+    Stmt query(db_,"SELECT first_tick,last_tick,generator_version,architecture,"
+        "star_count,band_count FROM system_catalogues WHERE player=? AND system=?");
+    sqlite3_bind_int64(query.get(),1,sqlite3_int64(owner));
+    sqlite3_bind_int(query.get(),2,int(system));
+    if(query.step()!=SQLITE_ROW)return std::nullopt;
+    return SystemCatalogueRecord{
+        std::uint64_t(sqlite3_column_int64(query.get(),0)),
+        std::uint64_t(sqlite3_column_int64(query.get(),1)),
+        std::uint64_t(sqlite3_column_int64(query.get(),2)),
+        StellarArchitecture(sqlite3_column_int(query.get(),3)),
+        std::uint8_t(sqlite3_column_int(query.get(),4)),
+        std::uint32_t(sqlite3_column_int(query.get(),5))};
 }
 SurveyArchive::~SurveyArchive(){if(db_)sqlite3_close(db_);}
 bool SurveyArchive::record(const ScanObservation& o) {
@@ -284,4 +494,146 @@ std::vector<SurveyArchive::PublicRecord> SurveyArchive::published(std::uint32_t 
     }
     return out;
 }
+std::size_t SurveyArchive::import_native_discoveries(const Simulation& world,
+    PlayerId owner,std::uint32_t system) {
+    if(!owner||!system)throw std::invalid_argument("invalid native discovery import");
+    std::size_t imported=0;
+    for(const auto& [key,d]:world.discoveries()) {
+        (void)key;
+        if(d.owner!=owner||d.system!=system)continue;
+        // Native v67 journal stores verified asteroid discoveries, including
+        // non-extractive geological classifications. Do not import unknown
+        // entity kinds as fabricated settlement sites.
+        const Entity* source=world.find(d.site);
+        if(source && source->type!=EntityType::Asteroid)continue;
+        if(!bounded(d.location)||d.first_tick==0)continue;
+        const int confidence=d.survey_taxonomy?100:(d.geological?85:70);
+        ScanObservation observation{owner,system,d.site,SiteKind::AsteroidDeposit,
+            d.location,d.first_tick,confidence,false};
+        if(record(observation))++imported;
+    }
+    return imported;
+}
+std::optional<ScanObservation> SurveyArchive::known_site(PlayerId owner,
+    std::uint32_t system,std::uint64_t site) const {
+    if(!owner||!system||!site||
+       owner>std::uint64_t(std::numeric_limits<std::int64_t>::max())||
+       site>std::uint64_t(std::numeric_limits<std::int64_t>::max()))
+        throw std::invalid_argument("invalid known-site selector");
+    Stmt stmt(db_,"SELECT kind,x,y,tick,confidence,published FROM observations "
+        "WHERE player=? AND system=? AND site=?");
+    sqlite3_bind_int64(stmt.get(),1,sqlite3_int64(owner));
+    sqlite3_bind_int(stmt.get(),2,int(system));
+    sqlite3_bind_int64(stmt.get(),3,sqlite3_int64(site));
+    if(stmt.step()!=SQLITE_ROW)return std::nullopt;
+    return ScanObservation{owner,system,site,SiteKind(sqlite3_column_int(stmt.get(),0)),
+        {sqlite3_column_int64(stmt.get(),1),sqlite3_column_int64(stmt.get(),2)},
+        std::uint64_t(sqlite3_column_int64(stmt.get(),3)),
+        sqlite3_column_int(stmt.get(),4),sqlite3_column_int(stmt.get(),5)!=0};
+}
+std::vector<ScanObservation> SurveyArchive::known_sites(PlayerId owner,
+    std::uint32_t system,int minimum_confidence) const {
+    if(!owner||!system||owner>std::uint64_t(std::numeric_limits<std::int64_t>::max())||
+       minimum_confidence<1||minimum_confidence>100)
+        throw std::invalid_argument("invalid known-sites selector");
+    Stmt stmt(db_,"SELECT site,kind,x,y,tick,confidence,published FROM observations "
+        "WHERE player=? AND system=? AND confidence>=? ORDER BY site");
+    sqlite3_bind_int64(stmt.get(),1,sqlite3_int64(owner));
+    sqlite3_bind_int(stmt.get(),2,int(system));
+    sqlite3_bind_int(stmt.get(),3,minimum_confidence);
+    std::vector<ScanObservation> result;
+    while(stmt.step()==SQLITE_ROW)
+        result.push_back({owner,system,std::uint64_t(sqlite3_column_int64(stmt.get(),0)),
+            SiteKind(sqlite3_column_int(stmt.get(),1)),
+            {sqlite3_column_int64(stmt.get(),2),sqlite3_column_int64(stmt.get(),3)},
+            std::uint64_t(sqlite3_column_int64(stmt.get(),4)),
+            sqlite3_column_int(stmt.get(),5),sqlite3_column_int(stmt.get(),6)!=0});
+    return result;
+}
+
+bool SurveyArchive::queue_probe_report(const ScanObservation& o,
+    std::uint64_t captured_at_ms) {
+    if(!o.player||!o.system||!o.site||!o.observed_tick||
+       o.player>std::uint64_t(std::numeric_limits<std::int64_t>::max())||
+       o.site>std::uint64_t(std::numeric_limits<std::int64_t>::max())||
+       o.observed_tick>std::uint64_t(std::numeric_limits<std::int64_t>::max())||
+       captured_at_ms>std::uint64_t(std::numeric_limits<std::int64_t>::max())-kNominalResponseMs||
+       o.confidence<1||o.confidence>100||!bounded(o.estimated_position)||
+       int(o.kind)<0||int(o.kind)>9||o.published)
+        throw std::invalid_argument("invalid trusted probe report");
+    Stmt stmt(db_,"INSERT OR IGNORE INTO pending_probe_reports"
+        "(player,system,site,kind,x,y,tick,confidence,captured_ms) VALUES(?,?,?,?,?,?,?,?,?)");
+    sqlite3_bind_int64(stmt.get(),1,sqlite3_int64(o.player));
+    sqlite3_bind_int(stmt.get(),2,int(o.system));
+    sqlite3_bind_int64(stmt.get(),3,sqlite3_int64(o.site));
+    sqlite3_bind_int(stmt.get(),4,int(o.kind));
+    sqlite3_bind_int64(stmt.get(),5,o.estimated_position.x);
+    sqlite3_bind_int64(stmt.get(),6,o.estimated_position.y);
+    sqlite3_bind_int64(stmt.get(),7,sqlite3_int64(o.observed_tick));
+    sqlite3_bind_int(stmt.get(),8,o.confidence);
+    sqlite3_bind_int64(stmt.get(),9,sqlite3_int64(captured_at_ms));
+    stmt.step();
+    return sqlite3_changes(db_)>0;
+}
+std::size_t SurveyArchive::deliver_probe_reports(PlayerId owner,
+    std::uint64_t now_ms,std::int64_t link_distance_mm) {
+    if(!owner||owner>std::uint64_t(std::numeric_limits<std::int64_t>::max())||
+       now_ms>std::uint64_t(std::numeric_limits<std::int64_t>::max())||
+       link_distance_mm<0)throw std::invalid_argument("invalid trusted probe delivery");
+    if(link_distance_mm>kDeepProbeLinkMm||now_ms<kNominalResponseMs)return 0;
+    // Read pending rows before calling record(), which uses its own transaction.
+    // Crash between record and delete safely replays an idempotent revision.
+    Stmt stmt(db_,"SELECT system,site,kind,x,y,tick,confidence FROM pending_probe_reports "
+        "WHERE player=? AND captured_ms<=? ORDER BY captured_ms,site,tick");
+    sqlite3_bind_int64(stmt.get(),1,sqlite3_int64(owner));
+    sqlite3_bind_int64(stmt.get(),2,sqlite3_int64(now_ms-kNominalResponseMs));
+    std::vector<ScanObservation> reports;
+    while(stmt.step()==SQLITE_ROW)
+        reports.push_back({owner,std::uint32_t(sqlite3_column_int(stmt.get(),0)),
+            std::uint64_t(sqlite3_column_int64(stmt.get(),1)),
+            SiteKind(sqlite3_column_int(stmt.get(),2)),
+            {sqlite3_column_int64(stmt.get(),3),sqlite3_column_int64(stmt.get(),4)},
+            std::uint64_t(sqlite3_column_int64(stmt.get(),5)),
+            sqlite3_column_int(stmt.get(),6),false});
+    std::size_t delivered=0;
+    for(const auto& report:reports) {
+        record(report);
+        Stmt clear(db_,"DELETE FROM pending_probe_reports WHERE player=? AND system=? AND site=? AND tick=?");
+        sqlite3_bind_int64(clear.get(),1,sqlite3_int64(owner));
+        sqlite3_bind_int(clear.get(),2,int(report.system));
+        sqlite3_bind_int64(clear.get(),3,sqlite3_int64(report.site));
+        sqlite3_bind_int64(clear.get(),4,sqlite3_int64(report.observed_tick));
+        clear.step();
+        ++delivered;
+    }
+    return delivered;
+}
+
+std::vector<ScanObservation> SurveyArchive::actionable_sites(PlayerId owner,
+    std::uint32_t system,const GalaxyMap& live_map,DiscoveryUse purpose,
+    int minimum_confidence,std::uint64_t current_tick,
+    std::uint64_t max_age_ticks) const {
+    // Advisory-only: live game actions must independently verify a destination,
+    // resource quantity, permits, geometry and player authorization.
+    const auto candidates=known_sites(owner,system,minimum_confidence);
+    const auto& live=live_map.sites(system);
+    std::vector<ScanObservation> result;
+    for(const auto& candidate:candidates) {
+        if(candidate.observed_tick>current_tick||
+           current_tick-candidate.observed_tick>max_age_ticks)continue;
+        const auto site=std::find_if(live.begin(),live.end(),
+            [&](const SpaceSite& s){return s.id==candidate.site;});
+        if(site==live.end()||site->kind!=candidate.kind)continue;
+        const bool navigate=(site->kind==SiteKind::Planet||
+            site->kind==SiteKind::Moon||site->kind==SiteKind::Station||
+            site->kind==SiteKind::Structure);
+        const bool settle=(site->kind==SiteKind::Planet||
+            site->kind==SiteKind::Moon||site->kind==SiteKind::AsteroidDeposit);
+        if((purpose==DiscoveryUse::Navigation&&navigate)||
+           (purpose==DiscoveryUse::SettlementSurvey&&settle))
+            result.push_back(candidate);
+    }
+    return result;
+}
+
 } // namespace galaxy

@@ -7,7 +7,8 @@ test('probe stock and persistent deployed coordinates have strict native frames'
  assert.deepEqual(decode('COLONY|1|12|PROBE_STOCK|1|1'),
  {tick:12,type:'PROBE_STOCK',carried:1,launcher:true});
  assert.deepEqual(decode('COLONY|1|12|SURVEY_PROBE|900000000001|1|-2000|0'),
- {tick:12,type:'SURVEY_PROBE',id:900000000001,system:1,x:-2000,y:0});
+ {tick:12,type:'SURVEY_PROBE',id:900000000001,system:1,x:-2000,y:0,
+  phase:0,target:0,sample:0,taxonomy:0,focus:0,fx:0,fy:0});
  assert.deepEqual(decode('COLONY|1|12|PROBE_RESET'),{tick:12,type:'PROBE_RESET'});
  for(const bad of ['COLONY|1|12|PROBE_STOCK|9|1',
   'COLONY|1|12|PROBE_STOCK|1|3',
