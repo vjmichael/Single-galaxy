@@ -23,7 +23,7 @@ static void focus_mission() {
  fs::create_directories(dir);
  const auto db=(dir/"focus.sqlite").string();
  try {
-  EntityId ship=0,rock=0;
+  EntityId ship=0,rock=0,farrock=0;
   std::uint64_t probe=2;
   {
    Simulation seed(8091);
@@ -32,10 +32,12 @@ static void focus_mission() {
    seed.provision_starter_exploration_scanner(ship);
    seed.provision_starter_probe_kit(ship);
    rock=seed.add_asteroid({16000000,0},20); // 16 km from carrier
+   farrock=seed.add_asteroid({200000000,0},20); // distant cancellation target
    PersistentWorld w(db,std::move(seed));
    CHECK(w.world().coarse_probe_signatures(8,ship).empty());
    auto signatures=w.world().coarse_probe_signatures(7,ship);
-   CHECK(signatures.size()==1 && signatures[0].id==rock);
+   CHECK(signatures.size()==2 && signatures[0].id==rock);
+   CHECK(w.world().coarse_probe_signatures(7,ship,5000000).empty());
    CHECK(signatures[0].coarse.x==16000000);
    CHECK(run(w,order(w,probe,ship,Action::DeploySurveyProbe))==Outcome::Applied);
    auto unauthorized=order(w,3,ship,Action::FocusSurveyProbe,probe,8);
@@ -47,6 +49,23 @@ static void focus_mission() {
    CHECK(w.world().canonical_state().find("galaxy-kernel-v69|")==0);
    CHECK(w.world().survey_probes().at(probe).focus_site==rock);
    CHECK(w.world().survey_probes().at(probe).position.x>0);
+   CHECK(Simulation::from_snapshot(w.world().canonical_state())
+     .survey_probes().at(probe).focus_site==rock);
+   // A forged waypoint must be rejected even when the outer record is valid.
+   auto corrupt=w.world().canonical_state();
+   const auto probe_prefix=std::string("surveyprobe|")+std::to_string(probe)+"|";
+   const auto pos=corrupt.find(probe_prefix);
+   CHECK(pos!=std::string::npos);
+   const auto line_end=corrupt.find('\\n',pos);
+   auto line=corrupt.substr(pos,line_end-pos);
+   const auto delimiter=line.rfind('|');
+   CHECK(delimiter!=std::string::npos);
+   line.replace(delimiter+1,line.size()-delimiter-1,"25000");
+   corrupt.replace(pos,line_end-pos,line);
+   bool rejected=false;
+   try{(void)Simulation::from_snapshot(corrupt);}
+   catch(const std::exception&){rejected=true;}
+   CHECK(rejected);
    CHECK(run(w,order(w,5,ship,Action::RecoverSurveyProbe,probe))==Outcome::InTransition);
   }
   {
@@ -61,7 +80,17 @@ static void focus_mission() {
    w.step();
    CHECK(w.world().discoveries().count({7,rock})==1);
    CHECK(w.world().pending_probe_report_count()==0);
-   CHECK(w.world().total_ore()==26); // 20 asteroid ore plus six physical equipment units
+   // A second, still-unresolved signature can be focused then cancelled.
+   auto cancel_target=order(w,6,ship,Action::FocusSurveyProbe,probe);
+   cancel_target.amount=static_cast<std::int64_t>(farrock);
+   CHECK(run(w,cancel_target)==Outcome::Applied);
+   CHECK(w.world().survey_probes().at(probe).focus_site==farrock);
+   CHECK(run(w,order(w,7,ship,Action::CancelSurveyFocus,probe))==Outcome::Applied);
+   CHECK(w.world().survey_probes().at(probe).focus_site==0);
+   w.steps(5);
+   CHECK(w.world().discoveries().count({7,farrock})==0);
+   CHECK(w.world().pending_probe_report_count()==0);
+   CHECK(w.world().total_ore()==46); // 40 asteroid ore plus six physical equipment units
   }
   fs::remove_all(dir);
  }catch(...){std::error_code ignored;fs::remove_all(dir,ignored);throw;}
