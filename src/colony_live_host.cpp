@@ -778,6 +778,8 @@ int main(int argc,char** argv){
         world.configure_probe_report_tick_ms(static_cast<std::uint64_t>(ms));
         // Existing saves are upgraded atomically on first new-host start.
         world.ensure_physical_celestial_systems();
+        // PLAY-13C.2B: migrate current ships to durable legacy-local frames.
+        world.ensure_ship_frame_registry();
         if(!world.world().colony_ship(ship)||!world.world().find(ship)||world.world().find(ship)->owner_id!=owner){
             // A populated production world can have stations before its first
             // player-owned colony ship. Do not assume the ship has entity ID 1.
