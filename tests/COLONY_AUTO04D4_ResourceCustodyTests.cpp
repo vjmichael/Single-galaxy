@@ -80,6 +80,22 @@ try{
         CHECK(w.world().npc_records().size()==6);
         CHECK(w.world().total_material_kg()==material);
     }
+    // Independent journal-based recovered copy must preserve v57 physical
+    // life support semantics and every named NPC's custody.
+    const auto salvaged=file+"_recovered";
+    PersistentWorld::recover_copy(file,salvaged);
+    {
+        PersistentWorld replayed(salvaged,Simulation(1));
+        CHECK(replayed.world().tick()==40);
+        CHECK(replayed.world().life_support(ferry)->food_kg==90);
+        CHECK(replayed.world().life_support(home)->food_kg==98);
+        CHECK(replayed.world().people_physically_aboard(ferry)==4);
+        CHECK(replayed.world().people_physically_aboard(home)==2);
+        CHECK(replayed.world().total_material_kg()==material);
+    }
+    std::filesystem::remove(salvaged);
+    std::filesystem::remove(salvaged+"-wal");
+    std::filesystem::remove(salvaged+"-shm");
     // Physical berth access is not a license to board an understocked ferry.
     const auto poor_file=file+"_poor";
     {
