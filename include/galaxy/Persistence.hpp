@@ -650,6 +650,9 @@ public:
     // current source-pressure witness. A permit is not a voyage or transfer.
     struct VoluntaryImmigrationAdmission {
         std::uint64_t event_id=0,exit_pressure_event_id=0;
+        // Zero is reserved for recorded legacy EXIT-01B permits, issued
+        // before any personal-history requirement existed.
+        std::uint64_t personal_outlook_event_id=0;
         std::uint64_t world_generation=0,npc_id=0,transport_id=0;
         EntityId origin=0,destination=0,ferry=0;
         PlayerId original_owner=0,receiving_owner=0;
