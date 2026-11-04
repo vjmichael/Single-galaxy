@@ -1855,7 +1855,11 @@ Event Simulation::execute(const Command& c) {
         if(source!=entities_.end() && source->second.type==EntityType::Ship){
             const auto frame=ship_frames_.find(c.actor);
             if(frame!=ship_frames_.end() && frame->second.anchor_body &&
-               c.action!=Action::Thrust){
+               c.action!=Action::Thrust &&
+               c.action!=Action::SurveyLocal &&
+               c.action!=Action::Mine &&
+               c.action!=Action::StartMining &&
+               c.action!=Action::StopMining){
                 result.result=Outcome::OutOfRange;return result;
             }
             if(target!=entities_.end() && !same_local_frame(c.actor,c.target)){
@@ -2890,7 +2894,8 @@ Event Simulation::execute(const Command& c) {
             constexpr auto range=kLocalSurveyRangeMm;
             std::vector<DiscoveryRecord> candidates;
             for(const auto& [id,e]:entities_){
-                if(e.type!=EntityType::Asteroid || e.system_id!=actor.system_id)continue;
+                if(e.type!=EntityType::Asteroid || e.system_id!=actor.system_id ||
+                   !same_local_frame(c.actor,id))continue;
                 const auto dx=e.position.x-actor.position.x,dy=e.position.y-actor.position.y;
                 if(dx<-range || dx>range || dy<-range || dy>range ||
                    dx*dx+dy*dy>range*range)continue;
@@ -4753,7 +4758,9 @@ void Simulation::seed_celestial_local_region(std::uint64_t body_id) {
     EntityId donor=0;
     for(const auto& [id,e]:entities_) {
         if(e.type==EntityType::Asteroid && e.system_id==system &&
-           e.ore>=15 && !local_entity_anchors_.count(id)) {
+           e.ore>=15 && !local_entity_anchors_.count(id) &&
+           std::none_of(mining_.begin(),mining_.end(),
+              [id](const auto& row){return row.second.target==id;})) {
             donor=id;
             break;
         }
