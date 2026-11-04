@@ -103,7 +103,7 @@ try{
                                   ferry,origin,Action::HostEmbarkPassengers,true);
         auto bogus=board;bogus.passenger_ids={3};
         CHECK(!w.submit_voluntary_immigration_boarding(8701,bogus));
-        CHECK(!w.submit_voluntary_immigration_boarding(9999,board)==false ? false:true);
+        refused([&]{(void)w.submit_voluntary_immigration_boarding(9999,board);});
         CHECK(w.submit_voluntary_immigration_boarding(8701,board));
         executed(w,101);
         CHECK(w.world().npc_records().at(2).transport_id==900);
