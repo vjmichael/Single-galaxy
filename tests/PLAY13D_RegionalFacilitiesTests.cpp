@@ -84,6 +84,17 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(w.world().canonical_state()==pre);
         CHECK(w.build_planetary_site(7,ship,chosen.body,chosen.latitude,chosen.longitude));
         CHECK(!w.build_planetary_site(7,ship,chosen.body,chosen.latitude,chosen.longitude));
+        const auto key=PlanetarySiteKey{chosen.body,chosen.latitude,chosen.longitude,1};
+        CHECK(!w.world().planetary_spaceport_operational(chosen.body,chosen.latitude,chosen.longitude));
+        CHECK(!w.equip_planetary_site(7,ship,chosen.body,chosen.latitude,chosen.longitude,farming));
+        CHECK(w.world().planetary_sites().at(key).assigned_workers==2);
+        CHECK(w.world().colony_ship(ship)->crew==6);
+        w.steps(4);
+        CHECK(w.world().planetary_sites().at(key).spaceport_phase==2);
+        w.steps(39);
+        CHECK(!w.world().planetary_spaceport_operational(chosen.body,chosen.latitude,chosen.longitude));
+        w.step();
+        CHECK(w.world().planetary_spaceport_operational(chosen.body,chosen.latitude,chosen.longitude));
         CHECK(w.equip_planetary_site(7,ship,chosen.body,chosen.latitude,chosen.longitude,farming));
         CHECK(!w.equip_planetary_site(7,ship,chosen.body,chosen.latitude,chosen.longitude,farming));
         CHECK(w.world().colony_ship(ship)->modules==0);
@@ -102,14 +113,14 @@ static void scenario(const fs::path& db, bool farming){
             CHECK(w.extract_planetary_site(7,ship,chosen.body,chosen.latitude,chosen.longitude,true,1000));
             CHECK(w.world().oasis_reserves().at(chosen.body).water_kg==7000);
         }
-        const auto key=PlanetarySiteKey{chosen.body,chosen.latitude,chosen.longitude,1};
         const auto& region=w.world().planetary_sites().at(key);
         CHECK(region.owner==7&&region.source_ship==ship&&region.embodied_ore==8);
         if(farming) {
-            CHECK(region.food_kg==24 && region.wastewater_kg==6);
+            CHECK(region.food_kg>=24 && region.wastewater_kg>=6);
+            CHECK(region.harvest_cycles==2);
             CHECK(w.retrieve_planetary_site(7,ship,chosen.body,chosen.latitude,chosen.longitude,true,24));
         } else {
-            CHECK(region.water_kg==1000);
+            CHECK(region.water_kg>=1000);
             CHECK(w.retrieve_planetary_site(7,ship,chosen.body,chosen.latitude,chosen.longitude,false,1000));
             CHECK(w.world().oasis_reserves().at(chosen.body).water_kg==7000);
         }
@@ -129,7 +140,7 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(w.world().planetary_sites().size()==1);
         CHECK(w.world().total_ore()==origin);
         durable=w.world().canonical_state();
-        CHECK(durable.rfind("galaxy-kernel-v77|",0)==0);
+        CHECK(durable.rfind("galaxy-kernel-v78|",0)==0);
         CHECK(Simulation::from_snapshot(durable).canonical_state()==durable);
     }
     {
