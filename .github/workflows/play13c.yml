@@ -15,6 +15,7 @@ on:
       - 'src/colony_live_host.cpp'
       - 'tests/PLAY13C_DurableShipFramesTests.cpp'
       - 'tests/PLAY13C_ActualFrameTransitTests.cpp'
+      - 'tests/PLAY13C_LiveHostTravelSmoke.py'
       - 'tests/PLAY13C_CosmicLocalFrameTests.cpp'
       - 'tests/play13c_bridge/CMakeLists.txt'
       - '.github/workflows/play13c.yml'
@@ -47,3 +48,6 @@ jobs:
         run: cmake --build build --config Release --target galaxy_play13c_celestial_transition_tests galaxy_play13c_durable_frames_tests galaxy_play13c_actual_transit_tests galaxy_colony_live_host
       - name: Verify owner and travel evidence gates
         run: ctest --test-dir build -C Release -R "^galaxy_play13c_(celestial_transition|durable_frames|actual_transit)$" --output-on-failure
+      - name: Real native host celestial journey and saved restart
+        if: runner.os == 'Linux'
+        run: python3 tests/PLAY13C_LiveHostTravelSmoke.py build/galaxy_colony_live_host
