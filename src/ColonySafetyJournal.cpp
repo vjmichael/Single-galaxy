@@ -63,6 +63,7 @@ struct Row {
     EntityId ship=0,site=0;
     std::uint64_t population=0;
     Risk risk=Risk::Safe;
+    std::uint64_t food_periods=0,water_periods=0,oxygen_periods=0;
 };
 using Rows=std::map<EntityId,Row>;
 Rows sites(const Simulation& w){
@@ -71,19 +72,19 @@ Rows sites(const Simulation& w){
         (void)ship;
         if(w.life_support(id)){
             auto a=assess(w,id,id);
-            out.emplace(id,Row{id,id,a.population,a.risk});
+            out.emplace(id,Row{id,id,a.population,a.risk,a.remaining.food_periods,a.remaining.water_periods,a.remaining.oxygen_periods});
         }
     }
     for(const auto& [id,h]:w.habitats()){
         if(!out.count(id)){
             auto a=assess(w,h.source_ship,id);
-            out.emplace(id,Row{h.source_ship,id,a.population,a.risk});
+            out.emplace(id,Row{h.source_ship,id,a.population,a.risk,a.remaining.food_periods,a.remaining.water_periods,a.remaining.oxygen_periods});
         }
     }
     for(const auto& [id,f]:w.farms()){
         if(!out.count(id)){
             auto a=assess(w,f.source_ship,id);
-            out.emplace(id,Row{f.source_ship,id,a.population,a.risk});
+            out.emplace(id,Row{f.source_ship,id,a.population,a.risk,a.remaining.food_periods,a.remaining.water_periods,a.remaining.oxygen_periods});
         }
     }
     return out;
@@ -115,6 +116,9 @@ void create(sqlite3* db){
         "old_risk INTEGER NOT NULL CHECK(old_risk BETWEEN 0 AND 3),"
         "new_risk INTEGER NOT NULL CHECK(new_risk BETWEEN 0 AND 3),"
         "population INTEGER NOT NULL CHECK(population>=0),"
+        "food_periods INTEGER NOT NULL CHECK(food_periods>=0),"
+        "water_periods INTEGER NOT NULL CHECK(water_periods>=0),"
+        "oxygen_periods INTEGER NOT NULL CHECK(oxygen_periods>=0),"
         "world_hash TEXT NOT NULL,digest TEXT NOT NULL,"
         "UNIQUE(generation,site),CHECK(old_risk!=new_risk))");
     sql(db,"CREATE TRIGGER sg_response_events_immutable_update "
@@ -129,7 +133,8 @@ std::string event_body(std::uint64_t id,std::uint64_t generation,std::uint64_t t
     return std::to_string(id)+"|"+std::to_string(generation)+"|"+std::to_string(tick)+
         "|"+std::to_string(r.ship)+"|"+std::to_string(r.site)+"|"+
         std::to_string(from)+"|"+std::to_string(static_cast<int>(r.risk))+"|"+
-        std::to_string(r.population)+"|"+world_hash;
+        std::to_string(r.population)+"|"+std::to_string(r.food_periods)+"|"+
+        std::to_string(r.water_periods)+"|"+std::to_string(r.oxygen_periods)+"|"+world_hash;
 }
 struct Meta {std::uint64_t generation=0,tick=0,count=0;std::string world_hash,tip;};
 Meta read_meta(sqlite3* db){
@@ -167,10 +172,11 @@ void append_event(sqlite3* db,std::uint64_t generation,std::uint64_t tick,
         throw std::runtime_error("colony response event sequence exhausted");
     const auto id=++count;
     tip=hash(tip+"|"+event_body(id,generation,tick,r,from,world_hash));
-    Q q(db,"INSERT INTO sg_colony_response_events VALUES(?,?,?,?,?,?,?,?,?,?)");
+    Q q(db,"INSERT INTO sg_colony_response_events VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)");
     q.num(1,id);q.num(2,generation);q.num(3,tick);q.num(4,r.ship);
     q.num(5,r.site);q.num(6,from);q.num(7,static_cast<int>(r.risk));
-    q.num(8,r.population);q.str(9,world_hash);q.str(10,tip);q.done();
+    q.num(8,r.population);q.num(9,r.food_periods);q.num(10,r.water_periods);
+    q.num(11,r.oxygen_periods);q.str(12,world_hash);q.str(13,tip);q.done();
 }
 } // namespace
 void verify(sqlite3* db,const Simulation& current,std::uint64_t generation){
@@ -188,7 +194,8 @@ void verify(sqlite3* db,const Simulation& current,std::uint64_t generation){
             throw std::runtime_error("response journal no longer agrees with physical stock");
     }
     Q q(db,"SELECT id,generation,tick,ship,site,old_risk,new_risk,population,"
-           "world_hash,digest FROM sg_colony_response_events ORDER BY id");
+           "food_periods,water_periods,oxygen_periods,world_hash,digest "
+           "FROM sg_colony_response_events ORDER BY id");
     std::uint64_t count=0;
     std::string tip="genesis";
     while(q.row()){
@@ -197,11 +204,12 @@ void verify(sqlite3* db,const Simulation& current,std::uint64_t generation){
         const auto id=nn(q.s,0),gen=nn(q.s,1),tick=nn(q.s,2);
         const auto ship=nn(q.s,3),site=nn(q.s,4),old=nn(q.s,5);
         const auto now=nn(q.s,6),pop=nn(q.s,7);
-        const auto world_hash=txt(q.s,8),digest=txt(q.s,9);
+        const auto food=nn(q.s,8),water=nn(q.s,9),oxygen=nn(q.s,10);
+        const auto world_hash=txt(q.s,11),digest=txt(q.s,12);
         if(id!=++count||!gen||gen>generation||tick>current.tick()||
            !ship||!site||old>3||now>3||old==now)
             throw std::runtime_error("invalid response transition history");
-        const Row r{ship,site,pop,static_cast<Risk>(now)};
+        const Row r{ship,site,pop,static_cast<Risk>(now),food,water,oxygen};
         tip=hash(tip+"|"+event_body(id,gen,tick,r,static_cast<int>(old),world_hash));
         if(tip!=digest)throw std::runtime_error("response transition digest mismatch");
     }
