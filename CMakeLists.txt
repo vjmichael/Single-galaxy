@@ -898,3 +898,10 @@ if(BUILD_TESTING)
     target_link_libraries(galaxy_colony_auto04d2_tests PRIVATE galaxy_kernel)
     add_test(NAME galaxy_colony_auto04d2_durable_response COMMAND galaxy_colony_auto04d2_tests)
 endif()
+
+# COLONY-AUTO-04D.3: individual NPC emergency outbox and durable delivery.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_auto04d3_tests tests/COLONY_AUTO04D3_NpcNoticeTests.cpp)
+    target_link_libraries(galaxy_colony_auto04d3_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_auto04d3_npc_notice COMMAND galaxy_colony_auto04d3_tests)
+endif()
