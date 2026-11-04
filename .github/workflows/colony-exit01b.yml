@@ -7,6 +7,8 @@ on:
     paths:
       - 'src/Persistence.cpp'
       - 'include/galaxy/Persistence.hpp'
+      - 'src/Simulation.cpp'
+      - 'include/galaxy/Simulation.hpp'
       - 'tests/COLONY_EXIT01B*'
       - 'CMakeLists.txt'
   workflow_dispatch:
