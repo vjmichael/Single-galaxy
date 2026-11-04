@@ -3,6 +3,7 @@
 // The authoritative simulation remains Simulation/PersistentWorld; no global
 // omniscient object stream is exposed to a player by this API.
 #include "galaxy/Simulation.hpp"
+#include "galaxy/Astronomy.hpp"
 #include <cstdint>
 #include <sqlite3.h>
 #include <map>
@@ -15,6 +16,7 @@ namespace galaxy {
 enum class Sovereignty { NPC, Player, Unclaimed };
 enum class SiteKind { Star, Planet, Moon, Station, Ship, AsteroidDeposit, GasCloud, Anomaly, Wormhole, Structure };
 enum class RoutePolicy { Shortest, PreferSecure };
+enum class DiscoveryUse { Navigation, SettlementSurvey };
 struct SystemDescriptor {
     std::uint32_t id = 0;
     std::string name;
@@ -42,6 +44,7 @@ public:
     const std::vector<SpaceSite>& sites(std::uint32_t system) const;
     std::vector<SpaceSite> visible_on_entry(std::uint32_t system) const;
     RouteResult route(std::uint32_t from,std::uint32_t to,RoutePolicy policy) const;
+    AstronomicalProfile astronomy(std::uint32_t system,std::uint64_t galaxy_seed) const;
 private:
     std::map<std::uint32_t,SystemDescriptor> systems_;
     std::map<std::uint32_t,std::vector<SpaceSite>> sites_;
@@ -135,6 +138,11 @@ public:
         std::uint64_t captured_at_ms);
     std::size_t deliver_probe_reports(PlayerId owner,std::uint64_t now_ms,
         std::int64_t link_distance_mm);
+    // Candidate filtering is a recommendation only; it does not authorize
+    // docking, gate transit, settlement or construction in the world.
+    std::vector<ScanObservation> actionable_sites(PlayerId owner,std::uint32_t system,
+        const GalaxyMap& live_map,DiscoveryUse purpose,int minimum_confidence,
+        std::uint64_t current_tick,std::uint64_t max_age_ticks) const;
     static constexpr std::int64_t kDeepProbeLinkMm=74798935350000LL;
     static constexpr std::uint64_t kNominalResponseMs=10000ULL;
 private:
