@@ -1,0 +1,26 @@
+name: PLAY-13B scanner knowledge acceptance
+on:
+  push:
+    branches:
+      - integration/play13b-scanner-knowledge-20261104
+  pull_request:
+    paths:
+      - 'include/galaxy/Galaxy.hpp'
+      - 'src/Galaxy.cpp'
+      - 'tests/GeographyScanningTests.cpp'
+      - '.github/workflows/play13b.yml'
+jobs:
+  scanner-knowledge:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure native code
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+      - name: Build authoritative scanning tests
+        run: cmake --build build --config Release --target galaxy_geography_scanning_tests
+      - name: Exercise scan modes and durable survey history
+        run: ctest --test-dir build -C Release -R '^galaxy_b54_b60_geography_scanning_tests$' --output-on-failure
