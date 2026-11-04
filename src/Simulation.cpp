@@ -5292,7 +5292,8 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             result.next_npc_id_=u64(f[1]);
             result.npc_next_seen_=true;
             if(result.next_npc_id_==0 || result.next_npc_id_>100000000 ||
-               (result.next_npc_id_==1 && (result.snapshot_version_==20 || !result.colony_ships_.empty())))
+               (result.next_npc_id_==1 && (result.snapshot_version_==20 ||
+                    (result.snapshot_version_<63 && !result.colony_ships_.empty()))))
                 throw std::runtime_error("snapshot: invalid NPC counter");
         } else if(f[0]=="npc" && result.snapshot_version_>=20){
             require_fields(f,result.snapshot_version_>=32 ? 9 : result.snapshot_version_>=31 ? 8 : 7);
