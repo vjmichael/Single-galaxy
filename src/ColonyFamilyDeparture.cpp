@@ -212,6 +212,16 @@ Audit assess(const Simulation& world,sqlite3* db,const DeparturePlan& request){
             previous=ch.child_id;
             requested_ids.push_back(ch.child_id);
             const auto [a,b]=births.at(ch.child_id);
+            // An already-registered physical child may have a different
+            // lawful parent than the one listed as present escort. A draft
+            // manifest must never silently substitute the escort during
+            // preparation; legal AND existing physical guardian must agree.
+            const auto physically_registered=world.physical_dependents().find(ch.child_id);
+            if(physically_registered!=world.physical_dependents().end() &&
+               (physically_registered->second.guardian_id!=ch.guardian_id ||
+                physically_registered->second.home_ship!=request.source ||
+                physically_registered->second.location!=request.source))
+                throw std::runtime_error("evacuation manifest contradicts physical child guardian");
             const auto legal=family.current_nonparent_guardian(ch.child_id);
             if(legal){
                 if(legal!=ch.guardian_id ||
