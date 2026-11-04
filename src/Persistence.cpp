@@ -2192,7 +2192,8 @@ public:
             "leader,agenda_event,knowledge_id,incident_id,incident_generation,"
             "target_owner,revision,prior_event,old_score,delta,new_score,"
             "fidelity,valence,confidence "
-            "FROM sg_colony_relationship_revisions ORDER BY rowid");
+            "FROM sg_colony_relationship_revisions "
+            "ORDER BY generation,revision,event_id");
         std::map<std::pair<EntityId,PlayerId>,colony_conflict::RelationRevision> prior;
         while(rows.row()){
             const auto event=sqlite3_column_int64(rows.get(),0);
