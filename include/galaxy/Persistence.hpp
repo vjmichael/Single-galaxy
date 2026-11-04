@@ -433,6 +433,8 @@ public:
     colony_safety::Decision record_colony_safety_preflight(EntityId home_ship,
         EntityId site,PlayerId issuer,colony_safety::Order order);
     std::uint64_t colony_safety_evidence_count() const;
+    // AUTO-04D.2: committed threshold transitions, not actual rescues.
+    std::uint64_t colony_response_event_count() const;
     bool submit(const Command& command, FailPoint fail = FailPoint::None);
     // Host-only: admits a receipt-reserved third-party shipment under the writer lock.
     bool submit_host_consigned_transfer(const Command&, FailPoint=FailPoint::None);
