@@ -222,6 +222,8 @@ struct ColonyDeparture {
     EntityId source=0, receiver=0;
     std::uint64_t command_id=0, tick=0;
     std::vector<std::uint64_t> relocated_npcs;
+    // v60: registered children evacuated with this complete adult roster.
+    std::vector<std::uint64_t> relocated_dependents;
 };
 struct CrewRehome {
     EntityId wreck=0,rescue_ship=0;

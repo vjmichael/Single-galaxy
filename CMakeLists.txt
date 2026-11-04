@@ -959,3 +959,10 @@ if(BUILD_TESTING)
     target_link_libraries(galaxy_colony_auto04d4d2_physical_tests PRIVATE galaxy_kernel)
     add_test(NAME galaxy_colony_auto04d4d2_physical_dependents COMMAND galaxy_colony_auto04d4d2_physical_tests)
 endif()
+
+# AUTO-04D.4D2B1: native all-person colony transfer of physical dependents.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_auto04d4d2b_native_family_tests tests/COLONY_AUTO04D4D2B_NativeFamilyTransferTests.cpp)
+    target_link_libraries(galaxy_colony_auto04d4d2b_native_family_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_auto04d4d2b_native_family COMMAND galaxy_colony_auto04d4d2b_native_family_tests)
+endif()
