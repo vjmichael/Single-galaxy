@@ -3655,7 +3655,8 @@ public:
                     if(gen<2 || static_cast<std::uint64_t>(gen)>generation ||
                        tick<1 || src==dst || scope.empty() || region_scope.empty() ||
                        src_col.empty() || dst_col.empty() || src_col==dst_col ||
-                       adults!=2 || children<1 || members!=adults+children || members>16 ||
+                       (adults!=2 && adults!=4) || children<(adults/2) ||
+                       members!=adults+children || members>16 ||
                        revision<2 || cmd==journal_commands.end() ||
                        cmd->second.action!=Action::HostColonyFamilyDeparture ||
                        cmd->second.issuer!=Simulation::kServerAuthority ||
@@ -3765,6 +3766,29 @@ public:
                     }
                     if(actual!=expected)
                         throw std::runtime_error("SQLite: incomplete or duplicated family custody roster");
+                    // Independently derive the complete parent-pair partition
+                    // from the frozen PRE-departure physical child records.
+                    // Four-adult receipts cannot disguise a shared guardian.
+                    std::set<std::pair<std::uint64_t,std::uint64_t>> pairs;
+                    std::set<std::uint64_t> parents;
+                    for(const auto child:dep->second.relocated_children){
+                        const auto proof=prior.physical_dependents().find(child);
+                        if(proof==prior.physical_dependents().end() ||
+                           proof->second.parent_a>=proof->second.parent_b ||
+                           !std::binary_search(dep->second.relocated_npcs.begin(),
+                               dep->second.relocated_npcs.end(),proof->second.parent_a) ||
+                           !std::binary_search(dep->second.relocated_npcs.begin(),
+                               dep->second.relocated_npcs.end(),proof->second.parent_b))
+                            throw std::runtime_error("SQLite: rescued child lacks both original parents");
+                        pairs.emplace(proof->second.parent_a,proof->second.parent_b);
+                        parents.insert(proof->second.parent_a);
+                        parents.insert(proof->second.parent_b);
+                    }
+                    if(pairs.size()!=static_cast<std::size_t>(adults/2) ||
+                       parents.size()!=static_cast<std::size_t>(adults) ||
+                       std::vector<std::uint64_t>(parents.begin(),parents.end())!=
+                           dep->second.relocated_npcs)
+                        throw std::runtime_error("SQLite: parent pairs fail household conservation");
                 }
                 // Every new world departure must have exactly one actual
                 // executed ART02 receipt, and no orphaned member table rows.
