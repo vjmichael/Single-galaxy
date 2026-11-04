@@ -623,6 +623,14 @@ public:
     // Effective leadership and political direction, excluding same-generation
     // pending changes. Zero epoch event means the immutable founding charter.
     colony_conflict::GovernanceEpoch colony_governance(EntityId colony) const;
+    // CONFLICT-01B4A: deterministic, locally computed NPC pressure to reform
+    // a risky colonial administration. A finite, present two-adult caucus
+    // raises a petition; no votes, succession, transfer or combat is invented.
+    // The trusted host only allocates the immutable petition event ID.
+    std::optional<colony_conflict::PoliticalPetition>
+        assess_autonomous_colony_petition(EntityId source_colony) const;
+    colony_conflict::PoliticalPetition record_autonomous_colony_petition(
+        std::uint64_t petition_event_id,EntityId source_colony);
     // CONFLICT-01B1: actual ship destruction + a real NPC's delivered GRSM
     // interpretation produces a subjective, directed diplomatic revision.
     // The incident's real attacker owner is independently reconstructed;
