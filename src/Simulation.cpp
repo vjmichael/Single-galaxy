@@ -2737,9 +2737,23 @@ Event Simulation::execute(const Command& c) {
                     if(actor.survey_probes_carried>=8){
                         result.result=Outcome::CargoFull;return result;
                     }
-                    // Geological survey results are data, not ore or cargo.
-                    // Probes return exactly one device; the geological report
-                    // remains in the owner-scoped durable survey ledger.
+                    // The geological report is durable ship data, not cargo.
+                    // Only transferring the recovered device to the ship writes
+                    // its first-observation/taxonomy record; a remote, offline
+                    // drone cannot silently reveal its findings to the player.
+                    if(probe.drone_phase==3 && probe.taxonomy){
+                        const auto site=entities_.find(probe.drone_target);
+                        const auto key=std::make_pair(probe.owner,probe.drone_target);
+                        if(!discoveries_.count(key)){
+                            if(discoveries_.size()>=10000){
+                                result.result=Outcome::InvalidArgument;return result;
+                            }
+                            const auto where=site!=entities_.end()?site->second.position:probe.position;
+                            discoveries_.emplace(key,DiscoveryRecord{probe.owner,
+                                probe.drone_target,probe.system,where,tick_,true,
+                                probe.taxonomy});
+                        }else discoveries_.at(key).survey_taxonomy=probe.taxonomy;
+                    }
                     ++actor.survey_probes_carried;
                     survey_probes_.erase(it);
                     result.transferred=1;result.result=Outcome::Applied;
@@ -4584,12 +4598,8 @@ void Simulation::step() {
             // extraction, mass transfer, or cargo creation is authorized.
             p.sample_ore=0;
             p.taxonomy=1+static_cast<std::uint8_t>(geology_.at(p.drone_target).taxonomy);
-            const auto key=std::make_pair(p.owner,p.drone_target);
-            if(!discoveries_.count(key) && discoveries_.size()<10000)
-                discoveries_.emplace(key,DiscoveryRecord{p.owner,p.drone_target,p.system,
-                    it->second.position,tick_,true,p.taxonomy});
-            else if(auto record=discoveries_.find(key);record!=discoveries_.end())
-                record->second.survey_taxonomy=p.taxonomy;
+            // Store the native observation on the physical drone until the
+            // carrier returns to retrieve the report. No remote revelation.
         }
         p.drone_phase=2;
     }
