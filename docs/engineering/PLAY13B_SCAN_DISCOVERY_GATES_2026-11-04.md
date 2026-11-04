@@ -19,11 +19,13 @@
 8. `Astronomy.hpp`: deterministic seeded system archetypes with single/wide binary/circumbinary/hierarchical triple star structures; ordinary/oblate/tidally distorted star morphology, ordered orbital bands, and diverse scientific and fictional features. Generation weights are game-design choices, not astronomical occurrence estimates. **No live orbital/world rendering integration yet**.
 9. `GalaxyMap::astronomy`: consumes generator for registered systems.
 10. `SurveyArchive::actionable_sites`: revalidates owner-private observations against current map for navigation/settlement-survey suggestions, with minimum confidence and maximum age. It does NOT authorize travel, site construction or extraction.
+11. `viewer/scanner-session.js`: tested browser state model for mode selection, range and locking only host-provided coarse signatures. It cannot invent an undiscovered target and does not expose precise hidden coordinates. Actual UI controls and authorized native refine command remain open.
 
 ## Cross-platform tests
 - `GeographyScanningTests.cpp`: signal strength, owner isolation, coarse targeting, denied owner/range, multi-probe geometry, bounded step movement, real subsequent sensor refinement; SQLite report delay/unique delivery/visibility; deterministic star configurations; recent knowledge filtering, persistence.
 - `PLAY13_GeologicalDroneTests.cpp`: live v67 drone data imported into owner-private SQLite archive, preserving taxonomy and original no-extraction/mass invariants.
 - `PLAY13B_LiveSurveyIndexSmoke.py`: real colony native host startup/restart verifies the derived survey index sidecar. Does not yet exercise full lock-on UI.
+- `PLAY13B_ScannerSessionTests.js`: node-browser contract for safe signature selection, radius, mode changes, and rejection of unknown IDs.
 - `.github/workflows/play13b.yml`: Windows/Linux CMake build + CTest of the two native targets, real host build, plus Linux live-host restart smoke. The inherited malformed PLAY-12 workflow was also repaired on this stacked branch.
 - Earlier malformed CTest workflow expression was corrected at commit `967c701a85444af9e76fe5a0c1254dc9db6d1ddb`. Await **current-head success** before passing a validation gate.
 
