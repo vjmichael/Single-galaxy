@@ -446,6 +446,11 @@ public:
     // Host-only: admits a receipt-reserved third-party shipment under the writer lock.
     bool submit_host_consigned_transfer(const Command&, FailPoint=FailPoint::None);
     bool submit_host_passenger_action(const Command& command, FailPoint fail = FailPoint::None);
+    // AUTO-04D.3E: narrow passenger-only, physical-ferry rescue gate.
+    // This is NOT a colony household evacuation or an executed rescue receipt.
+    // Submitted host voyage still requires a committed successful step().
+    bool submit_host_emergency_ferry_rescue(const Command& command,
+                                            FailPoint fail=FailPoint::None);
     // q6e3b: only the trusted host can queue a rescue from a child-occupied
     // ferry. The paired atomic effect MUST execute the due command.
     bool submit_host_dependent_rescue_action(const Command& command,
