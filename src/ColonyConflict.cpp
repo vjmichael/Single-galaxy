@@ -1,6 +1,25 @@
 #include "galaxy/ColonyConflict.hpp"
 #include <stdexcept>
 namespace galaxy::colony_conflict {
+int relationship_delta(int fidelity,int valence,int confidence){
+    // GRSM fidelity IDs: 0=local factual encounter (never attributed a
+    // sentiment), 1=faithful retelling, 2=embellished, 3=contrary rumor.
+    // These multipliers are credibility, not proof of truth or guilt.
+    if(fidelity<1 || fidelity>3 || valence< -100 || valence>100 ||
+       confidence<0 || confidence>100)
+        throw std::invalid_argument("invalid bounded NPC interpretation");
+    const int credibility=fidelity==1?100:fidelity==2?60:40;
+    return valence*confidence*credibility/10000;
+}
+Attitude attitude_for_score(int score){
+    if(score < -100 || score > 100)
+        throw std::invalid_argument("invalid colony relation score");
+    if(score<=-50)return Attitude::Hostile;
+    if(score<=-15)return Attitude::Wary;
+    if(score>=50)return Attitude::Allied;
+    if(score>=15)return Attitude::Friendly;
+    return Attitude::Neutral;
+}
 Decision evaluate(const Simulation& world,EntityId colony,
                   std::uint64_t leader,Agenda agenda,
                   const colony_defense::Contact& seen,
