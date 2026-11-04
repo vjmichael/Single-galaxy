@@ -5165,6 +5165,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                !d.first_tick||d.first_tick>result.tick_||
                !pending.carrier||!pending.probe_id||geology>1||
                pending.ready_tick<=d.first_tick||
+               pending.ready_tick-d.first_tick>500||
                !result.valid_position(d.location)||
                result.pending_probe_discoveries_.size()>=10000)
                 throw std::runtime_error("snapshot: invalid pending probe observation");
@@ -6903,6 +6904,24 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             throw std::runtime_error("snapshot: activity refers to unknown command");
         if (a.kind == ActivityKind::AsteroidDespawned && !result.depleted_.count(a.target))
             throw std::runtime_error("snapshot: missing depleted tombstone");
+    }
+    if(result.snapshot_version_>=68){
+        for(const auto& [key,p]:result.pending_probe_discoveries_){
+            const auto carrier=result.entities_.find(p.carrier);
+            if(key.first!=p.report.owner||key.second!=p.report.site||
+               result.discoveries_.count(key)||
+               carrier==result.entities_.end()||
+               carrier->second.type!=EntityType::Ship||
+               carrier->second.owner_id!=p.report.owner||
+               carrier->second.system_id!=p.report.system)
+                throw std::runtime_error("snapshot: invalid delayed probe custody");
+            const auto probe=result.survey_probes_.find(p.probe_id);
+            if(probe!=result.survey_probes_.end()&&
+               (probe->second.owner!=p.report.owner||
+                probe->second.carrier!=p.carrier||
+                probe->second.system!=p.report.system))
+                throw std::runtime_error("snapshot: delayed probe ownership conflict");
+        }
     }
     if(result.snapshot_version_>=65){
         for(const auto& [id,p]:result.survey_probes_){
