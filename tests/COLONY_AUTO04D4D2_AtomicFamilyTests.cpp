@@ -125,6 +125,28 @@ try{
         CHECK(w.world().physical_dependents().at(child).location==source);
         CHECK(family.current_residence(child)==source);
         CHECK(region.load()->revision==2);
+        // 04D.4D2C: even a perfectly prepared physical household cannot
+        // cross a cold->detailed ownership transition. A cancelled handoff
+        // rotates authority generation; the formerly valid token stays dead.
+        const auto accepted_generation=w.generation();
+        const auto frozen=authority.prepare("family-v76-warm-intent",
+            re::SimulationOwner::Detailed,1,2,region.load()->scheduler.tick());
+        CHECK(frozen.phase==re::TransitionPhase::ToDetailed);
+        denied([&]{w.step_with_atomic_colony_family_departure(execution);});
+        CHECK(w.generation()==accepted_generation);
+        CHECK(w.world().colony_ship(source)->crew==2);
+        CHECK(w.world().physical_dependents().at(child).location==source);
+        CHECK(family.current_residence(child)==source);
+        CHECK(family.family_census(source).current_population==3);
+        CHECK(region.load()->revision==2);
+        const auto thawed=authority.abort("family-v76-warm-intent",1);
+        CHECK(thawed.phase==re::TransitionPhase::Stable);
+        CHECK(thawed.generation==2);
+        denied([&]{w.step_with_atomic_colony_family_departure(execution);});
+        CHECK(w.generation()==accepted_generation);
+        CHECK(family.current_residence(child)==source);
+        CHECK(region.load()->revision==2);
+        execution.expected_owner_generation=thawed.generation;
         w.step_with_atomic_colony_family_departure(execution);
         CHECK(w.world().colony_ship(source)->crew==0);
         CHECK(w.world().colony_ship(receiver)->crew==4);
