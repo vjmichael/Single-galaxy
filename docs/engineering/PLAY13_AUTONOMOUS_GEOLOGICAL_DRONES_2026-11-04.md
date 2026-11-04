@@ -4,13 +4,19 @@
 ## User-driven objective
 Extend PLAY-12 physical probes with genuinely autonomous geological survey drones, not a client-side visual that teleports to rocks or fabricates mineral reports.
 
-## First implemented gameplay slice
-- The starter ship has a finite probe inventory and a fitted probe-launcher hardpoint inherited from PLAY-12. A **geological drone** uses one of those existing recoverable survey probe chassis. Launching decreases onboard inventory by one. It does **not** generate a replacement drone.
-- The player first scans nearby space, selects a geological asteroid in the native geology roster, and issues an authenticated `colonyDroneLaunch` request. The native action `LaunchGeologicalDrone` rejects nonexistent/non-geological/depleted targets, unauthorized carriers, wrong systems, missing launchers, insufficient probe inventory, and targets farther than 50,000 mm.
-- A v66 persisted `DeployedSurveyProbe` record tracks drone phase, target, launch/home position, current position, observed geology taxonomy, and physical 1-tonne ore sample. The drone travels at a bounded maximum of **2,000 mm per axis per committed world tick**; it cannot instantly appear at the asteroid.
-- When it reaches a still-existing, same-system, non-depleted geological asteroid, the native game transfers exactly **one actual tonne** from that asteroid's ore into drone sample custody, records its real geological class, and adds an owner-scoped first-discovery record when possible. It does **not** extract ore from a rock that disappeared or became depleted.
-- The drone turns around and returns to its original launch coordinates, maintaining its sample in physical custody. Only after it has arrived may the carrier move within 2,500 mm and recover the same chassis via PLAY-12's native `RecoverSurveyProbe`. Recovery atomically transfers the real sample to actual ship cargo, subject to free cargo volume, and returns exactly one onboard probe unit.
-- Native `total_ore()` accounts for the drone's material and its actual sample separately; sampling and return cannot duplicate ore. The world persists in canonical v66 with strict validation. The host publishes actual phase/target/sample status, and the browser accepts only the committed native roster.
+## Corrected native gameplay design — survey data, not ore
+- Finite probe/drone chassis and launcher are unchanged: one launch consumes one onboard device and adds a persistent, owner-identified autonomous drone at its real starting position.
+- **Geological drones return data only.** At the target, the native simulation reads its real geological taxonomy and persists a report. It does **not** decrement asteroid ore, carry a physical tonne, change ship cargo, or create physical resources.
+- A geological drone is a local device with a **10 km (10,000,000 mm) ship-to-device control/telemetry radius**. The launch target is restricted to this local envelope. If its carrier moves farther away mid-mission, the drone continues to execute its already-issued outbound survey and return autonomously; the host withholds live drone telemetry until radio contact resumes.
+- A successful mission persists a report in the deployed-device record (taxonomy 1–3, representing the real asteroid type) and writes a first-observation discovery if no owner observation exists. The report is recovered/read via native data and is not represented as cargo.
+- The drone returns to its launch point over committed world ticks. It is recoverable only after phase 3 and when its carrier enters the physical recovery radius. The same chassis returns to inventory; no ore is transferred.
+- The legacy `sample_ore` v66 field remains in the serialized row temporarily for fixed-width draft compatibility but is required to be **zero** in all new worlds and snapshots. This PR has not shipped as an accepted stable save format. Any pre-correction v66 experimental save with real extracted material requires a controlled migration; it is not silently reinterpreted.
+- The full mission, state, position, source geological metadata and physical chassis survive SQLite restart/recovery. Native authority and idempotent command IDs remain in place.
+
+## Distance and communications model
+- **Drones:** 10 km is a good local control range. For gameplay purposes, the maximum distance applies to command/telemetry between carrier and drone; range loss does not erase results or automatically teleport it home. Future signal occlusion, jamming, energy, and retransmission can change link quality.
+- **Deep-space probes:** **0.5 AU = 74,798,935.35 km = 74,798,935,350,000 mm** is a sensible initial communications envelope using a normal ship uplink. Even at light speed, this is about **249.5 seconds (~4 minutes 10 seconds) one way**, so orders and reports must eventually use queued/asynchronous transmission with finite bandwidth, relay satellites and delayed receipt. This envelope is now declared in native code, and the existing same-system stationary-probe scan action checks it; however the current simulation's ±1,000 km coordinate bounds make its true maximum unattainable. Planetary/interplanetary enforcement needs a future cosmic-coordinate, time-scale and transmission model.
+- Existing `kProbeRecoveryRangeMm=2500` is literally **2.5 metres**, not 2.5 km; the prior prose misstated it. Local `kLocalSurveyRangeMm=50000` is literally **50 metres**, not 50 km. This is a pre-existing units audit to fix separately before presenting the scanner/range UI as physically scaled.
 
 ## Boundaries / follow-on
 This is a **single-class asteroid drill and return mission**. It does not yet drive to planets or moons, operate underwater or in atmospheres, extract ore from rare gas/ice, navigate around obstacles, model battery/thermal/radiation/wear, or use a standalone expensive drone hull produced through a new fabrication recipe. Those are separate future upgrades.
@@ -20,8 +26,8 @@ The first mission samples up to 1 tonne as a gameplay-scale demonstration rather
 Fold Gates remain **point-to-point transport**, not tools for revealing intermediate space. Small, medium and large one-way hyperlane accelerators are intended as **explorable highways** with voluntary exits and independently constructed reverse directions, not instant jumps; this milestone does not implement them.
 
 ## Verification
-- `tests/PLAY13_GeologicalDroneTests.cpp`: native owner/target/resource guards, incremental travel, one tonne physical extraction, discovery, persistent mid-mission reload, complete return, recovery transfer and recovered-world copy conservation.
-- `tests/PLAY13_DroneWiringTests.js`: strict v66 drone phase, geological target, sample and owner-authorized relay command contract.
-- `.github/workflows/play13.yml`: build and run PLAY-09–13 native regressions, browser contracts and parse checks.
+- Native test `PLAY13_GeologicalDroneTests.cpp` checks owner/target guards, exact distance units, non-destructive geological reading, 0 t extracted, persisted return, physical device recovery and constant total world mass.
+- Browser `PLAY13_DroneWiringTests.js` checks zero-cargo geological telemetry and authenticated target selection.
+- `.github/workflows/play13.yml` builds the integrated native host and runs PLAY-09 to PLAY-13 regression tests. Exact-head CI and Windows/browser tests must pass before the draft is treated as complete.
 
-**Status:** committed to draft PR; successful exact-head Linux CI and actual physical Windows/Chromium host acceptance remain separate gates. Do not claim complete or production-ready without observed results.
+**Status:** implementation corrected to player direction; verification is not yet proven.\n
