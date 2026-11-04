@@ -522,16 +522,32 @@
          });
          item.appendChild(action);
          if(body.kind===1 || body.kind===2) {
+           // Coordinates are logical coarse surface cells, not a claim of
+           // exact landing position. Native Simulation validates them again.
+           const latitude=document.createElement('input');
+           latitude.type='number';latitude.min='0';latitude.max='35';
+           latitude.step='1';latitude.value='17';
+           latitude.setAttribute('aria-label','Region latitude cell 0–35');
+           const longitude=document.createElement('input');
+           longitude.type='number';longitude.min='0';longitude.max='71';
+           longitude.step='1';longitude.value='36';
+           longitude.setAttribute('aria-label','Region longitude cell 0–71');
            const survey=document.createElement('button');
            survey.type='button';
-           survey.textContent='Survey equatorial region';
+           survey.textContent='Survey region';
            survey.addEventListener('click',()=>{
+             const lat=Number(latitude.value),lon=Number(longitude.value);
+             if(!Number.isSafeInteger(lat)||lat<0||lat>=36||
+                !Number.isSafeInteger(lon)||lon<0||lon>=72) {
+               q('signatureFeedback').textContent='Select valid region cells: latitude 0–35 and longitude 0–71.';
+               return;
+             }
              window.GalaxyColonyCommand?.('colonyPlanetSurvey',
-               {body:body.id,latitude:17,longitude:36});
+               {body:body.id,latitude:lat,longitude:lon});
              q('signatureFeedback').textContent=
                'Planetary region requested from authoritative native geography.';
            });
-           item.appendChild(survey);
+           item.append(latitude,longitude,survey);
          }
          return item;
        }));
