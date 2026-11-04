@@ -845,6 +845,24 @@ public:
     bool complete_celestial_transit(std::uint64_t request_id,
         FailPoint fail=FailPoint::None);
     // Real finite resource collection, committed atomically before publication.
+    // PLAY-13D.3: atomic source-backed player site actions. These reuse
+    // Simulation's exact geography and the existing world SQLite journal.
+    bool build_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,FailPoint fail=FailPoint::None);
+    bool equip_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,bool farm,FailPoint fail=FailPoint::None);
+    bool supply_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,bool water,std::int64_t kg,
+        FailPoint fail=FailPoint::None);
+    bool cultivate_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,std::int64_t batches,
+        FailPoint fail=FailPoint::None);
+    bool extract_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,bool water,std::int64_t kg,
+        FailPoint fail=FailPoint::None);
+    bool retrieve_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,bool food,std::int64_t kg,
+        FailPoint fail=FailPoint::None);
     bool install_oasis_extractor(PlayerId owner,EntityId ship,
         std::uint64_t body,FailPoint fail=FailPoint::None);
     bool collect_oasis_resource(PlayerId owner,EntityId ship,std::uint64_t body,
