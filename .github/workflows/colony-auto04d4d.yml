@@ -1,0 +1,27 @@
+name: Colony AUTO-04D4D family custody acceptance
+on:
+  push:
+    branches:
+      - integration/colony-auto04d4d-family-custody-v73-20261103
+  pull_request:
+    paths:
+      - 'src/ColonyFamilyDeparture.cpp'
+      - 'include/galaxy/ColonyFamilyDeparture.hpp'
+      - 'src/Persistence.cpp'
+      - 'tests/COLONY_AUTO04D4D_*'
+      - 'CMakeLists.txt'
+  workflow_dispatch:
+jobs:
+  native-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native SQLite
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+      - name: Build native family and predecessor colony acceptance
+        run: cmake --build build --target galaxy_colony_auto04d4d_family_tests galaxy_colony_auto04d4c_departure_tests galaxy_colony_auto04d4c_staffed_tests galaxy_colony_auto04d4_custody_tests galaxy_colony_auto04d4_manifest_tests galaxy_colony_auto04d3_tests galaxy_colony_auto04d2_tests -j 2
+      - name: Run native acceptance
+        run: ctest --test-dir build --output-on-failure -R 'galaxy_colony_auto04(d2_durable_response|d3_npc_notice|d4_resource_custody|d4_departure_manifest|d4c_atomic_departure|d4c_staffed_colony|d4d_family_proof)'

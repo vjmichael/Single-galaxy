@@ -1163,6 +1163,102 @@ public:
     Store(const Store&) = delete;
     Store& operator=(const Store&) = delete;
 
+    colony_family::Audit audit_colony_family_departure(
+            const Simulation& world,const colony_family::DeparturePlan& request) const {
+        return colony_family::assess(world,db_,request);
+    }
+    bool prepare_colony_family_departure(
+            const Simulation& world,std::uint64_t generation,
+            const colony_family::DeparturePlan& plan,FailPoint fail){
+        if(!plan.intent_id || plan.intent_id>=static_cast<std::uint64_t>(std::numeric_limits<sqlite3_int64>::max()) ||
+           !plan.expected_world_generation ||
+           plan.expected_world_generation!=generation)return false;
+        const auto encode_adults=[&](){
+            std::string out;
+            for(auto id:plan.adult_ids){
+                if(!out.empty())out.push_back(',');
+                out+=std::to_string(id);
+            }
+            return out;
+        };
+        const auto encode_children=[&](){
+            std::string out;
+            for(const auto& c:plan.children){
+                if(!out.empty())out.push_back(',');
+                out+=std::to_string(c.child_id);
+                out.push_back(':');out+=std::to_string(c.guardian_id);
+            }
+            return out;
+        };
+        const auto adults=encode_adults(),children=encode_children();
+        run(db_,"BEGIN IMMEDIATE");
+        try {
+            if(latest_generation(db_)!=generation)
+                throw std::runtime_error("family preparation stale canonical world generation");
+            const auto audited=colony_family::assess(world,db_,plan);
+            if(!audited.ready_for_transaction){
+                run(db_,"ROLLBACK");
+                return false;
+            }
+            // This is a PREPARED manifest, never an executed relocation.
+            // Triggers protect against accidental rewriting of witnessed data.
+            run(db_,"CREATE TABLE IF NOT EXISTS sg_colony_family_departure_prepare("
+                    "intent_id TEXT PRIMARY KEY, generation INTEGER NOT NULL CHECK(generation>0),"
+                    "world_hash TEXT NOT NULL, source TEXT NOT NULL, receiver TEXT NOT NULL,"
+                    "family_scope TEXT NOT NULL, family_seed TEXT NOT NULL,"
+                    "adult_roster TEXT NOT NULL, child_guardians TEXT NOT NULL,"
+                    "status INTEGER NOT NULL CHECK(status=1))");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_colony_family_prepare_no_update "
+                    "BEFORE UPDATE ON sg_colony_family_departure_prepare "
+                    "BEGIN SELECT RAISE(ABORT,'prepared family evidence is immutable'); END");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_colony_family_prepare_no_delete "
+                    "BEFORE DELETE ON sg_colony_family_departure_prepare "
+                    "BEGIN SELECT RAISE(ABORT,'prepared family evidence is immutable'); END");
+            const auto id=std::to_string(plan.intent_id);
+            const auto hash=std::to_string(world.state_hash());
+            const auto source=std::to_string(plan.source);
+            const auto receiver=std::to_string(plan.receiver);
+            const auto seed=std::to_string(plan.family_seed);
+            Statement prior(db_,"SELECT generation,world_hash,source,receiver,family_scope,"
+                "family_seed,adult_roster,child_guardians,status "
+                "FROM sg_colony_family_departure_prepare WHERE intent_id=?");
+            prior.text(1,id);
+            if(prior.row()){
+                const bool identical=
+                    sqlite3_column_int64(prior.get(),0)==static_cast<sqlite3_int64>(generation) &&
+                    sqlite_str(prior.get(),1)==hash &&
+                    sqlite_str(prior.get(),2)==source &&
+                    sqlite_str(prior.get(),3)==receiver &&
+                    sqlite_str(prior.get(),4)==plan.family_scope &&
+                    sqlite_str(prior.get(),5)==seed &&
+                    sqlite_str(prior.get(),6)==adults &&
+                    sqlite_str(prior.get(),7)==children &&
+                    sqlite3_column_int(prior.get(),8)==1 &&
+                    !prior.row();
+                run(db_,"COMMIT");
+                return identical;
+            }
+            Statement insert(db_,"INSERT INTO sg_colony_family_departure_prepare "
+                "VALUES(?,?,?,?,?,?,?,?,?,1)");
+            insert.text(1,id);
+            insert.i64(2,static_cast<std::int64_t>(generation));
+            insert.text(3,hash);
+            insert.text(4,source);
+            insert.text(5,receiver);
+            insert.text(6,plan.family_scope);
+            insert.text(7,seed);
+            insert.text(8,adults);
+            insert.text(9,children);
+            insert.execute();
+            if(fail==FailPoint::AfterReceiptWrite || fail==FailPoint::AfterSnapshotWrite)
+                throw std::runtime_error("injected family preparation crash before commit");
+            run(db_,"COMMIT");
+            return true;
+        }catch(...){
+            sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);
+            throw;
+        }
+    }
     bool has_dependent_table() const {
         Statement t(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
                         "AND name='sg_dependent_travel'");
@@ -5672,6 +5768,14 @@ bool PersistentWorld::submit_host_medical_action(const Command& command, FailPoi
 // COLONY-AUTO-04D.4C: one canonical world writer; no secondary population
 // table, orphaned station crew, or player-facing shortcut. This operation is
 // adult-only until independent ART02 dependent-custody settlement is available.
+colony_family::Audit PersistentWorld::audit_colony_family_departure(
+        const colony_family::DeparturePlan& plan) const{
+    return store_->audit_colony_family_departure(world_,plan);
+}
+bool PersistentWorld::prepare_host_colony_family_departure(
+        const colony_family::DeparturePlan& plan,FailPoint fail){
+    return store_->prepare_colony_family_departure(world_,generation_,plan,fail);
+}
 bool PersistentWorld::submit_host_colony_departure(const Command& command,FailPoint fail){
     if(command.action!=Action::HostColonyDeparture ||
        command.issuer!=Simulation::kServerAuthority ||
