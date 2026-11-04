@@ -34,6 +34,14 @@ static void focus_mission() {
    rock=seed.add_asteroid({16000000,0},20); // 16 km from carrier
    farrock=seed.add_asteroid({200000000,0},20); // distant cancellation target
    PersistentWorld w(db,std::move(seed));
+   CHECK(!w.world().scan_celestial_profile(8,ship).has_value());
+   CHECK(!w.world().scan_environment(8,ship).has_value());
+   const auto celestial=w.world().scan_celestial_profile(7,ship);
+   CHECK(celestial.has_value() && celestial->star_count>=1);
+   CHECK(celestial->orbital_bands.size()>=3);
+   const auto environmental=w.world().scan_environment(7,ship);
+   CHECK(environmental.has_value() && environmental->system==1);
+   CHECK(environmental->ship_speed_mm_per_tick==0);
    CHECK(w.world().coarse_probe_signatures(8,ship).empty());
    auto signatures=w.world().coarse_probe_signatures(7,ship);
    CHECK(signatures.size()==2 && signatures[0].id==rock);
@@ -71,6 +79,10 @@ static void focus_mission() {
   }
   {
    PersistentWorld w(db,Simulation(22));
+   const auto catalogue=w.world().scan_celestial_profile(7,ship);
+   CHECK(catalogue.has_value());
+   CHECK(catalogue->star_count>=1 && catalogue->orbital_bands.size()>=3);
+   CHECK(!w.world().scan_celestial_profile(8,ship).has_value());
    CHECK(w.world().survey_probes().at(probe).focus_site==rock);
    // First approach arrives at the coarse region; only then may the
    // scanner obtain a fine target waypoint (persisted safely at restart).
