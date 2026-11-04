@@ -80,6 +80,31 @@ try{
         CHECK(w.world().npc_records().size()==6);
         CHECK(w.world().total_material_kg()==material);
     }
+    // Physical berth access is not a license to board an understocked ferry.
+    const auto poor_file=file+"_poor";
+    {
+        Simulation poor(7045);
+        const auto target=poor.add_colony_ship(7,{0,0},100,60);
+        const auto origin=poor.add_colony_ship(8,{0,0},100,2);
+        poor.provision_colony_genesis(target,100,100,100,200,500);
+        poor.provision_colony_genesis(origin,1000,1000,1000,1000,1000);
+        poor.enable_individual_workforce();
+        poor.upgrade_assignment_snapshot_format();
+        poor.enable_passenger_life_support();
+        PersistentWorld pw(poor_file,std::move(poor));
+        Command boarded{};
+        boarded.id=2001;boarded.sequence=1;boarded.execute_tick=1;
+        boarded.transport_id=2001;boarded.issuer=Simulation::kServerAuthority;
+        boarded.actor=target;boarded.target=origin;
+        boarded.action=Action::HostEmbarkPassengers;
+        boarded.passenger_ids={61,62};
+        CHECK(!pw.submit_host_passenger_action(boarded)); // 62 occupants need 124 per stock, have only 100
+        CHECK(pw.world().passengers_aboard(target)==0);
+        CHECK(pw.world().life_support(target)->food_kg==100);
+    }
+    std::filesystem::remove(poor_file);
+    std::filesystem::remove(poor_file+"-wal");
+    std::filesystem::remove(poor_file+"-shm");
     std::filesystem::remove(file);
     std::filesystem::remove(file+"-wal");
     std::filesystem::remove(file+"-shm");
