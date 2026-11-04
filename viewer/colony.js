@@ -207,6 +207,21 @@
 (function(){'use strict';if(typeof document==='undefined')return;
  const q=id=>document.getElementById(id), policyAudits=new Map(), geology=new Map(),small=new Map(),log=[],stocks=new Map(),outposts=new Map(),farms=new Map(),habitats=new Map(),utilities=new Map(),communities=new Map(),clinics=new Map(),reclaimers=new Map(),waterworks=new Map();
  window.GalaxyColonyGeology=geology;
+ window.GalaxySelectedRockId=null;
+ window.GalaxySelectAsteroid=id=>{
+   if(!Number.isSafeInteger(id)||id<=0||(!small.has(id)&&!geology.has(id)))return false;
+   const control=q('colonyRockTarget');
+   if(![...control.options].some(option=>option.value===String(id)))return false;
+   control.value=String(id);
+   window.GalaxySelectedRockId=id;
+   q('expeditionTarget').textContent='Scanned asteroid #'+id+' selected. Check the current distance before mining.';
+   return true;
+ };
+ q('colonyRockTarget').addEventListener('change',()=>{
+   const id=Number(q('colonyRockTarget').value);
+   window.GalaxySelectedRockId=(Number.isSafeInteger(id)&&id>0&&
+     (small.has(id)||geology.has(id)))?id:null;
+ });
  window.GalaxyColonyOutpostIds=new Set();
  const guideStorage=(()=>{try{return window.localStorage;}catch{return null;}})();
  let skippedOpening=window.GalaxyFlightControls?.guideSkipped(guideStorage)||false;
@@ -243,7 +258,7 @@
        guide.action==='colonyFabricate'?{amount:4}:{});
  });
  window.GalaxyColony={
-   reset(){window.GalaxyShipHeading=null;window.GalaxyColonyOutpostIds.clear();openingStatus=null;openingScanned=false;refreshOpening();window.GalaxyColonyHomeShipId=null;q('colonySafetyAssess').disabled=true;q('colonySafetyPreflight').disabled=true;policyAudits.clear();geology.clear();small.clear();stocks.clear();outposts.clear();farms.clear();habitats.clear();utilities.clear();communities.clear();clinics.clear();reclaimers.clear();waterworks.clear();log.length=0;q('colonyEvents').textContent='Awaiting colony telemetry…';q('expeditionOutcome').textContent='Awaiting an actual native result';},
+   reset(){window.GalaxySelectedRockId=null;window.GalaxyShipHeading=null;window.GalaxyColonyOutpostIds.clear();openingStatus=null;openingScanned=false;refreshOpening();window.GalaxyColonyHomeShipId=null;q('colonySafetyAssess').disabled=true;q('colonySafetyPreflight').disabled=true;policyAudits.clear();geology.clear();small.clear();stocks.clear();outposts.clear();farms.clear();habitats.clear();utilities.clear();communities.clear();clinics.clear();reclaimers.clear();waterworks.clear();log.length=0;q('colonyEvents').textContent='Awaiting colony telemetry…';q('expeditionOutcome').textContent='Awaiting an actual native result';},
    accept(raw){const e=window.GalaxyColonyContract.decode(raw);
      if(e.type==='HEADING'){
        window.GalaxyShipHeading=e.heading;
@@ -386,10 +401,14 @@
      q('farmTelemetry').textContent=[...farms.values()].map(f=>
        `Outpost #${f.id}: ${f.workers} crew · food ${f.food} kg · water ${f.water} kg · O₂ ${f.oxygen} kg · harvest total ${f.harvested} kg · shortages ${f.shortages}`).join('\n')||'Build a greenhouse at a player-owned outpost.';
      const selected=q('colonyRockTarget'), current=selected.value;
-     selected.replaceChildren(new Option('Select a scanned rock',''),...rows.map((_,i)=>{
-       const rock=[...geology.values()].sort((a,b)=>a.id-b.id)[i];
-       return new Option(`#${rock.id} · ${window.GalaxyColonyContract.names[rock.classId]}`,String(rock.id));
-     }));
+     const targets=[
+       ...[...geology.values()].map(rock=>({id:rock.id,name:window.GalaxyColonyContract.names[rock.classId]})),
+       ...[...small].map(([id,remaining])=>({id,name:'Small asteroid · '+remaining+' t'}))
+     ].sort((x,y)=>x.id-y.id);
+     selected.replaceChildren(new Option('Select a scanned rock',''),...targets.map(rock=>
+       new Option(`#${rock.id} · ${rock.name}`,String(rock.id))));
+     if(window.GalaxySelectedRockId!==null&&!targets.some(rock=>rock.id===window.GalaxySelectedRockId))
+       window.GalaxySelectedRockId=null;
      if([...selected.options].some(o=>o.value===current))selected.value=current;
    }
  };
