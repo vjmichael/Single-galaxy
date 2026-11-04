@@ -402,14 +402,17 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
         else announce(world.world(),"ERROR|INVALID_INPUT");
         return;
     }
-    if(v.size()==1 && v[0]=="SIGNATURES"){
+    if(v.size()==2 && v[0]=="SIGNATURES"){
         announce(world.world(),"SIGNATURE_RESET");
-        const auto found=world.world().coarse_probe_signatures(principal,ship);
+        try{
+        const auto radius=integer(v[1]);
+        const auto found=world.world().coarse_probe_signatures(principal,ship,radius);
         for(const auto& item:found)
             announce(world.world(),"SIGNATURE_CONTACT|"+std::to_string(item.id)+"|"+
                 std::to_string(item.coarse.x)+"|"+std::to_string(item.coarse.y)+"|"+
                 std::to_string(item.uncertainty_mm));
         announce(world.world(),"SIGNATURE_DONE|"+std::to_string(found.size()));
+        }catch(const std::exception&){announce(world.world(),"ERROR|INVALID_INPUT");}
         return;
     }
     if((v.size()==3 && v[0]=="PROBE_FOCUS") ||
