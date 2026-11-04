@@ -44,9 +44,13 @@ static void fabricate(PersistentWorld& w,EntityId ship) {
         CHECK(w.submit(c));w.step();
         CHECK(w.world().events().back().result==Outcome::Applied);
     };
-    apply(2001,Action::Mine,8,ship+1);
-    apply(2002,Action::RefineOre,8);
-    apply(2003,Action::FabricateModule,4);
+    // Use the existing verified 4-ore/2-module production cadence.
+    apply(2001,Action::Mine,4,ship+1);
+    apply(2002,Action::RefineOre,4);
+    apply(2003,Action::FabricateModule,2);
+    apply(2004,Action::Mine,4,ship+1);
+    apply(2005,Action::RefineOre,4);
+    apply(2006,Action::FabricateModule,2);
     CHECK(w.world().colony_ship(ship)->modules>=4);
 }
 static void scenario(const fs::path& db, bool farming){
