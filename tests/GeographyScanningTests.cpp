@@ -68,6 +68,17 @@ static void scanning_and_probes() {
     auto dual=sensors.plan_refinement(7,3,104,{0,0},20000,2000,40);
     CHECK(dual.has_value() && dual->waypoints.size()==2);
     CHECK(dual->waypoints[0].second.x!=dual->waypoints[1].second.x);
+    // The host advances finite probes over actual steps. A plan alone
+    // yields no sample or instantaneous change in the sensor projection.
+    const auto prior=sensors.probe_scan(7,3,5,5000,40);
+    CHECK(prior.size()==1 && prior[0].confidence==first[0].confidence);
+    CHECK(!sensors.advance_refinement(8,3,104,{0,0},20000,2000,40,250));
+    bool arrived=false;
+    for(int step=0;step<100 && !arrived;++step)
+        arrived=sensors.advance_refinement(7,3,104,{0,0},20000,2000,40,250);
+    CHECK(arrived);
+    const auto after=sensors.probe_scan(7,3,6,5000,40);
+    CHECK(after.size()==1 && after[0].confidence>prior[0].confidence);
     CHECK(sensors.probe_scan(7,3,5,1000,40)[0].confidence==first[0].confidence);
     auto env=sensors.scan_mode(7,3,5,1000,40,ScanMode::Environmental);
     CHECK(env.size()==1 && env[0].site==104);
