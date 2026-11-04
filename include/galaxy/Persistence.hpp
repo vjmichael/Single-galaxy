@@ -552,6 +552,9 @@ public:
         std::uint64_t command_id) const;
     bool resume_autonomous_family_rescue(std::uint64_t command_id,
         FailPoint fail=FailPoint::None);
+    // Host restart does not need to remember command IDs or transfer details:
+    // look up the one admitted due plan in SQLite and execute it precisely once.
+    bool resume_next_pending_autonomous_rescue(FailPoint fail=FailPoint::None);
     // D2a: register ART02-authenticated, actually resident child into the
     // replayable world occupancy ledger. Separate from declaring evacuation.
     bool submit_host_dependent_registration(const Command& command,
