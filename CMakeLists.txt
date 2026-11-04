@@ -1241,3 +1241,13 @@ if(BUILD_TESTING)
   add_test(NAME galaxy_play13c_expedition_assessment
     COMMAND galaxy_play13c_expedition_assessment_tests)
 endif()
+
+# PLAY-13C.6B: sparse, physically unbuilt oasis prospects, discovery privacy
+# and no free resource/infrastructure injection.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13c_rare_oasis_tests
+    tests/PLAY13C_RareOasisTests.cpp)
+  target_link_libraries(galaxy_play13c_rare_oasis_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13c_rare_oasis
+    COMMAND galaxy_play13c_rare_oasis_tests)
+endif()
