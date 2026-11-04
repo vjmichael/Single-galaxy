@@ -5178,7 +5178,8 @@ EntityId surface_custody_id(const PlanetarySiteKey& key) {
 }
 }
 bool Simulation::build_planetary_site(PlayerId owner,EntityId ship,
-    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude) {
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,
+    std::uint64_t first_npc,std::uint64_t second_npc) {
     const auto site=scan_planetary_geography(owner,ship,body,latitude,longitude);
     const auto frame=ship_frames_.find(ship);
     const auto* vessel=find(ship);
@@ -5205,23 +5206,36 @@ bool Simulation::build_planetary_site(PlayerId owner,EntityId ship,
         if(facility.surface_location==surface_location)return false;
     }
     std::array<std::uint64_t,2> assigned{{0,0}};
+    if((first_npc==0)!=(second_npc==0) ||
+       (first_npc && first_npc==second_npc))return false;
     if(snapshot_version_>=20) {
-        std::size_t ready=0;
-        for(const auto& [id,n]:npcs_) {
+        const auto eligible=[&](std::uint64_t id)->bool {
+            const auto it=npcs_.find(id);
+            if(it==npcs_.end())return false;
+            const auto& n=it->second;
             if(n.home_ship!=ship || n.location!=ship ||
                n.assigned_site!=ship || n.role!=NpcRole::Ship ||
-               !npc_available_for_duty(id))continue;
-            bool guardian=false;
-            for(const auto& [child,d]:physical_dependents_){
+               !npc_available_for_duty(id))return false;
+            for(const auto& [child,d]:physical_dependents_) {
                 (void)child;
-                if(d.guardian_id==id) {guardian=true;break;}
+                if(d.guardian_id==id)return false;
             }
-            if(guardian)continue;
-            assigned[ready++]=id;
-            if(ready==2)break;
+            return true;
+        };
+        if(first_npc) {
+            if(!eligible(first_npc) || !eligible(second_npc))return false;
+            assigned={{first_npc,second_npc}};
+        } else {
+            std::size_t ready=0;
+            for(const auto& [id,n]:npcs_) {
+                (void)n;
+                if(!eligible(id))continue;
+                assigned[ready++]=id;
+                if(ready==2)break;
+            }
+            if(ready!=2)return false;
         }
-        if(ready!=2)return false;
-    }
+    } else if(first_npc) return false;
     // A materialized transport kit and two adult workers leave the ship.
     // This does not create a player landing or a rendered planetary scene.
     colony->second.modules-=2;
