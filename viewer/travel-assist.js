@@ -44,7 +44,7 @@
    if(!state?.entities||!Number.isSafeInteger(id)||id<=0)return null;
    const e=state.entities.get(id);
    if(!e)return null;
-   if(kind==='rock'&&e.entityType===1&&e.ore>0&&outposts!==null)return e;
+   if(kind==='rock'&&e.entityType===1&&e.ore>0)return e;
    if(kind==='home'&&e.entityType===2&&e.owner===7&&outposts?.has(id))return e;
    return null;
  }
