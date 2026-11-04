@@ -6262,6 +6262,22 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             if(counts[{id,static_cast<int>(NpcRole::Habitat)}]!=h.residents)
                 throw std::runtime_error("snapshot: habitat NPC count mismatch");
     }
+    if(result.snapshot_version_>=59){
+        for(const auto& [id,d]:result.physical_dependents_){
+            if(id<(1ULL<<62) || d.id!=id || d.parent_a>= (1ULL<<62) ||
+               d.parent_b>=(1ULL<<62) || d.parent_a==d.parent_b ||
+               !result.colony_ships_.count(d.home_ship) ||
+               !result.colony_ships_.count(d.location) ||
+               result.entities_.at(d.location).type!=EntityType::Ship ||
+               result.npcs_.count(id) || result.casualties_.count(id))
+                throw std::runtime_error("snapshot: dependent physical ownership invalid");
+            const auto birth=std::find_if(result.events_.begin(),result.events_.end(),
+                [&](const Event& e){return e.command_id==d.birth_command &&
+                   e.result==Outcome::Applied;});
+            if(birth==result.events_.end())
+                throw std::runtime_error("snapshot: dependent birth has no applied physical receipt");
+        }
+    }
     // Validate the immutable full-roster handoff against the final physical
     // simulation, not just against a promising event label.
     if(result.snapshot_version_>=58)for(const auto& [ship_id,d]:result.colony_departures_){
@@ -6283,6 +6299,15 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
         for(const auto& [site,ha]:result.habitats_)
             if(ha.source_ship==ship_id && ha.residents)
                 throw std::runtime_error("snapshot: stranded resident workforce");
+        for(const auto& [id,dependent]:result.physical_dependents_)
+            if(dependent.home_ship==ship_id)
+                throw std::runtime_error("snapshot: source still owns a dependent after departure");
+        for(auto id:d.relocated_children){
+            const auto it=result.physical_dependents_.find(id);
+            if(it==result.physical_dependents_.end() ||
+               it->second.home_ship!=d.receiver || it->second.location!=d.receiver)
+                throw std::runtime_error("snapshot: departed dependent not at the actual receiving compartment");
+        }
         for(auto id:d.relocated_npcs){
             const auto n=result.npcs_.find(id);
             if(n==result.npcs_.end() || n->second.home_ship!=d.receiver ||
