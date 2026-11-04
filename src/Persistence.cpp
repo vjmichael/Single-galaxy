@@ -8732,6 +8732,24 @@ bool PersistentWorld::build_planetary_site(PlayerId owner,EntityId ship,
     return true;
 }
 
+bool PersistentWorld::build_planetary_site(PlayerId owner,EntityId ship,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,
+    std::uint64_t first_npc,std::uint64_t second_npc,FailPoint fail) {
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.build_planetary_site(owner,ship,body,latitude,longitude,
+                                 first_npc,second_npc))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("surface delegation changed world resource origin");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
 bool PersistentWorld::equip_planetary_site(PlayerId owner,EntityId ship,
     std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,bool farm,FailPoint fail) {
     // Every mutation happens on an isolated candidate. Commit succeeds before
