@@ -462,6 +462,12 @@ public:
     // This audit is NOT an authorization to commit population departure.
     colony_family::Audit audit_colony_family_departure(
         const colony_family::DeparturePlan& plan) const;
+    // 04D.4D2A: checks frozen ART02/ECON03/world execution fences under
+    // BEGIN IMMEDIATE, without scheduling departure or moving any people.
+    // True means eligible for a future atomic executor, NEVER evacuated.
+    bool verify_prepared_colony_family_execution(
+        const colony_family::DeparturePlan& plan,
+        const colony_family::ExecutionFence& fence) const;
     // Durable generation-bound PREPARATION ONLY. A returned true means the
     // complete manifest was checked and journaled, not that a child moved.
     bool prepare_host_colony_family_departure(
