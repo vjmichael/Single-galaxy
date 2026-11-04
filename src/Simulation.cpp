@@ -854,6 +854,16 @@ unsigned Simulation::voyage_status(std::uint64_t id) const {
     return it==voyages_.end()?0:it->second.status;
 }
 
+bool Simulation::completed_voyage_matches(
+    std::uint64_t transport_id,EntityId ferry,EntityId origin,
+    EntityId destination,const std::vector<std::uint64_t>& passengers) const{
+    const auto it=voyages_.find(transport_id);
+    return it!=voyages_.end() && it->second.status==2 &&
+           it->second.ferry==ferry && it->second.origin==origin &&
+           it->second.destination==destination &&
+           it->second.passengers==passengers;
+}
+
 Simulation::FerryEmergencyReport Simulation::ferry_emergency_report(std::uint64_t voyage_id) const {
     FerryEmergencyReport report;
     const auto v=voyages_.find(voyage_id);
