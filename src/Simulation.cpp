@@ -6234,6 +6234,7 @@ void Simulation::swap(Simulation& other) noexcept {
     medic_shifts_.swap(other.medic_shifts_);
     mobile_medical_kits_.swap(other.mobile_medical_kits_);
     crew_rehomes_.swap(other.crew_rehomes_);
+    colony_departures_.swap(other.colony_departures_);
     voyages_.swap(other.voyages_);
     farm_team_xp_.swap(other.farm_team_xp_);
     swap(next_npc_id_,other.next_npc_id_);
