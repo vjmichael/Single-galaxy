@@ -9,6 +9,10 @@ static void check(const PlanetaryWorldKey& key,const PlanetaryEnvelope& env){
     for(int y=0;y<kWatershedRows;++y)for(int x=0;x<kWatershedColumns;++x){
         const auto a=survey_geographic_site(map,key,env,y,x);
         const auto b=survey_geographic_site(map,key,env,y,x);
+        const auto pgf=survey_planetary_world(map,key,env,std::uint16_t(y),std::uint16_t(x));
+        CHECK(pgf.surface.elevation==a.landscape.region.elevation);
+        CHECK(pgf.surface.surface_water==a.landscape.region.surface_water);
+        CHECK(pgf.surface.terrain==a.landscape.region.terrain);
         const auto& cell=map.at(y,x);
         CHECK(a.key.body==key.body && a.key.revision==key.generator_revision);
         CHECK(a.landscape.region.elevation==cell.elevation);
@@ -55,6 +59,11 @@ int main(){
     auto wrong=key;wrong.body++;
     bool reject=false;
     try{(void)survey_geographic_site(map,wrong,env,17,17);}
+    catch(const std::invalid_argument&){reject=true;}
+    CHECK(reject);
+    reject=false;
+    try{auto bad=env;bad.water_coverage=15;
+        (void)survey_geographic_site(map,key,bad,17,17);}
     catch(const std::invalid_argument&){reject=true;}
     CHECK(reject);
     std::cout<<"PASS PGF-01B.2 shared terrain, runoff and river geography\n";
