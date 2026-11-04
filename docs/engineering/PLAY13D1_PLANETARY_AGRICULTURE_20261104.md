@@ -23,3 +23,11 @@ Test path: `tests/PLAY13D_PlanetaryAgricultureTests.cpp`. Build target `galaxy_p
 6. D.7: UI planet selection, landing, farm controls, power/crew/water status, crop and waste shipment panels.
 
 Do not merge this branch as a complete gameplay feature until those gates have native acceptance and the existing PLAY-13C stack passes.
+
+## PLAY-13D.2A — Regional ecological diversity (implementation added)
+
+**A planet is never assigned one biome just because it is habitable.** Planetary climate archetype is global context, not a uniform terrain/material label. Deterministic body-ID/seed-based surveys divide the surface into bounded latitude/longitude regions; each has independently reported temperature, moisture, relief, shoreline/depth, terrain and fertility. Latitude produces warm and cold belts, while low-frequency continental-scale variation and local relief prevent perfect horizontal bands. Productive farmland and unproductive areas can coexist on one planet. Ocean planets may contain deep water, shallow seas and occasional exposed terrain; airless worlds can remain sterile bare rock. Do not force an ocean/rock/ice world to have vegetation merely to meet diversity quotas.
+
+The first `PlanetaryRegions.hpp` kernel is deliberately a coarse regional approximation, not authoritative simulated hydrology, geology, erosion, weather or atmospheric chemistry. Subsequent tests should require plausibility of adjacent regions, elevation and coast connectivity, polar behavior, climate history and actionable placement differences. Farming must eventually bind **site region coordinates** and specific local water/soil conditions, rather than the global average. User-facing scanners must reveal the regional map and allow choosing a site before paying construction materials. World generation and region metadata must be versioned and preserved through reload, avoiding shifting surface resources after updates.
+
+Native CTest: `galaxy_play13d_planetary_regions_tests` (Windows/Linux). **Not yet host-integrated or SQLite-persisted.**
