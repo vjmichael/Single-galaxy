@@ -118,13 +118,13 @@ void status(const Simulation& w,EntityId ship,bool replay_discoveries=false){
     if(!s || !c)throw std::runtime_error("colony ship missing");
     announce(w,"HEADING|"+std::to_string(s->heading_deg));
     announce(w,"PROBE_RESET");
-    announce(w,"PROBE_STOCK|"+std::to_string(s->survey_probes_carried)+"|"+
-        std::to_string(s->fitting.probe_launcher()?1:0));
     for(const auto& [id,p]:w.survey_probes()){
         if(p.owner!=s->owner_id || p.carrier!=ship)continue;
         announce(w,"SURVEY_PROBE|"+std::to_string(id)+"|"+std::to_string(p.system)+"|"+
             std::to_string(p.position.x)+"|"+std::to_string(p.position.y));
     }
+    announce(w,"PROBE_STOCK|"+std::to_string(s->survey_probes_carried)+"|"+
+        std::to_string(s->fitting.probe_launcher()?1:0));
     announce(w,"FITTING|"+std::to_string(s->fitting.exploration_scanner()?1:0)+"|"+
         std::to_string(s->fitting.hardpoints.size())+"|"+
         std::to_string(s->fitting.support.size())+"|"+
