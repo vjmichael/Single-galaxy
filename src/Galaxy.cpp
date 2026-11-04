@@ -202,6 +202,43 @@ std::optional<RefinementPlan> SurveySensors::plan_refinement(PlayerId owner,
     }
     return plan;
 }
+bool SurveySensors::advance_refinement(PlayerId owner,std::uint32_t system,
+    std::uint64_t signature,Vector2 scanner_position,
+    std::int64_t discovery_range_mm,std::int64_t scan_radius_mm,
+    int sensor_strength,std::int64_t max_step_mm) {
+    if(max_step_mm<1||max_step_mm>Simulation::kWorldBoundMm)
+        throw std::invalid_argument("invalid physical probe step");
+    const auto plan=plan_refinement(owner,system,signature,scanner_position,
+        discovery_range_mm,scan_radius_mm,sensor_strength);
+    if(!plan)return false;
+    bool complete=true;
+    for(const auto& [id,waypoint]:plan->waypoints) {
+        auto p=probes_.find(id);
+        if(p==probes_.end()||!p->second.deployed||
+           p->second.owner!=owner||p->second.system!=system)
+            throw std::logic_error("probe ownership changed during refinement");
+        auto& position=p->second.position;
+        const double dx=double(waypoint.x)-position.x;
+        const double dy=double(waypoint.y)-position.y;
+        const double length=std::hypot(dx,dy);
+        if(length<=double(max_step_mm)) {
+            position=waypoint;
+        } else {
+            // No teleportation: movement never exceeds a single scheduled
+            // host-tick step. Minimum one millimetre of progress.
+            auto mx=std::int64_t(std::llround(double(max_step_mm)*dx/length));
+            auto my=std::int64_t(std::llround(double(max_step_mm)*dy/length));
+            if(mx==0&&my==0) {
+                if(std::abs(dx)>=std::abs(dy))mx=dx>0?1:-1;
+                else my=dy>0?1:-1;
+            }
+            position.x+=mx;
+            position.y+=my;
+            complete=false;
+        }
+    }
+    return complete;
+}
 std::vector<ScanObservation> SurveySensors::probe_scan(PlayerId owner,std::uint32_t system,
     std::uint64_t tick,std::int64_t radius_mm,int sensor_strength) const {
     if(!owner||!tick||radius_mm<=0||radius_mm>Simulation::kWorldBoundMm*2||
