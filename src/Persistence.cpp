@@ -1806,6 +1806,15 @@ public:
         try{
             if(latest_generation(db_)!=generation)
                 throw std::runtime_error("stale world generation for offensive intent");
+            Statement dated(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='sg_colony_diplomatic_intent'");
+            if(dated.row()){
+                Statement used(db_,"SELECT 1 FROM sg_colony_diplomatic_intent "
+                    "WHERE contact_event=?");
+                used.i64(1,static_cast<sqlite3_int64>(contact_id));
+                if(used.row())throw std::runtime_error(
+                    "contact already consumed by a dated strategic intent");
+            }
             const auto choice=assess_colony_aggression(world,generation,source,contact_id);
             Statement agenda(db_,"SELECT event_id FROM sg_colony_conflict_agenda "
                 "WHERE colony=?");
@@ -2262,6 +2271,187 @@ public:
             prior_row.event_id=static_cast<std::uint64_t>(event);
             prior_row.revision=static_cast<std::uint64_t>(revision);
             prior_row.new_score=after;
+        }
+    }
+
+    // 01B2 generations are deliberate evidence fences: later relations in
+    // the SAME generation cannot change an already accepted intent.
+    colony_conflict::RelationRevision relation_before_generation(
+        EntityId colony,PlayerId owner,std::uint64_t decision_generation) const{
+        colony_conflict::RelationRevision out;
+        out.colony=colony;out.target_owner=owner;
+        Statement exists(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_relationship_revisions'");
+        if(!exists.row())return out;
+        Statement q(db_,"SELECT event_id,revision,new_score,generation "
+            "FROM sg_colony_relationship_revisions "
+            "WHERE colony=? AND target_owner=? AND generation<? "
+            "ORDER BY generation DESC,revision DESC LIMIT 1");
+        q.text(1,std::to_string(colony));q.text(2,std::to_string(owner));
+        q.i64(3,static_cast<sqlite3_int64>(decision_generation));
+        if(q.row()){
+            const auto id=sqlite3_column_int64(q.get(),0);
+            const auto rev=sqlite3_column_int64(q.get(),1);
+            const auto score=sqlite3_column_int(q.get(),2);
+            const auto gen=sqlite3_column_int64(q.get(),3);
+            if(id<1 || rev<1 || gen<1 ||
+               static_cast<std::uint64_t>(gen)>=decision_generation ||
+               score< -100 || score>100 || q.row())
+                throw std::runtime_error("invalid historical relation epoch");
+            out.event_id=static_cast<std::uint64_t>(id);
+            out.revision=static_cast<std::uint64_t>(rev);
+            out.new_score=score;
+            out.attitude=colony_conflict::attitude_for_score(score);
+        }
+        return out;
+    }
+    colony_conflict::Decision assess_colony_diplomacy(
+        const Simulation& world,std::uint64_t generation,
+        EntityId source,std::uint64_t contact) const{
+        const auto base=assess_colony_aggression(world,generation,source,contact);
+        const auto opinion=relation_before_generation(
+            source,base.target_owner,generation);
+        return colony_conflict::evaluate_diplomatic(
+            base,opinion.new_score,opinion.event_id);
+    }
+    colony_conflict::Decision record_colony_diplomacy(
+        const Simulation& world,std::uint64_t generation,
+        std::uint64_t id,EntityId source,std::uint64_t contact){
+        if(!id || id>static_cast<std::uint64_t>(
+                std::numeric_limits<sqlite3_int64>::max()) || id==contact)
+            throw std::invalid_argument("invalid diplomatic intent id");
+        run(db_,"BEGIN IMMEDIATE");
+        try{
+            if(latest_generation(db_)!=generation)
+                throw std::runtime_error("stale diplomatic decision generation");
+            Statement old(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='sg_colony_conflict_intent'");
+            if(old.row()){
+                Statement used(db_,"SELECT 1 FROM sg_colony_conflict_intent "
+                    "WHERE contact_event=?");
+                used.i64(1,static_cast<sqlite3_int64>(contact));
+                if(used.row())throw std::runtime_error(
+                    "contact already consumed by original strategic intent");
+            }
+            const auto d=assess_colony_diplomacy(world,generation,source,contact);
+            Statement leader(db_,"SELECT event_id FROM sg_colony_conflict_agenda "
+                "WHERE colony=? AND leader=?");
+            leader.text(1,std::to_string(source));
+            leader.text(2,std::to_string(d.leader_id));
+            if(!leader.row())throw std::runtime_error("no original colony leader");
+            const auto agenda=sqlite3_column_int64(leader.get(),0);
+            if(leader.row())throw std::runtime_error("ambiguous original leader");
+            run(db_,"CREATE TABLE IF NOT EXISTS sg_colony_diplomatic_intent("
+                "event_id INTEGER PRIMARY KEY CHECK(event_id>0),"
+                "world_generation INTEGER NOT NULL CHECK(world_generation>0),"
+                "world_hash TEXT NOT NULL,tick INTEGER NOT NULL,"
+                "colony TEXT NOT NULL,leader TEXT NOT NULL,"
+                "agenda_event INTEGER NOT NULL,"
+                "contact_event INTEGER NOT NULL UNIQUE,"
+                "target_ship TEXT NOT NULL,target_owner TEXT NOT NULL,"
+                "relation_event INTEGER NOT NULL CHECK(relation_event>=0),"
+                "relation_score INTEGER NOT NULL CHECK(relation_score BETWEEN -100 AND 100),"
+                "motive INTEGER NOT NULL CHECK(motive BETWEEN 0 AND 4),"
+                "posture INTEGER NOT NULL CHECK(posture BETWEEN 0 AND 4),"
+                "risk INTEGER NOT NULL CHECK(risk BETWEEN 0 AND 3))");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_diplomatic_intent_no_update "
+                "BEFORE UPDATE ON sg_colony_diplomatic_intent "
+                "BEGIN SELECT RAISE(ABORT,'immutable diplomatic intent'); END");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_diplomatic_intent_no_delete "
+                "BEFORE DELETE ON sg_colony_diplomatic_intent "
+                "BEGIN SELECT RAISE(ABORT,'immutable diplomatic intent'); END");
+            Statement insert(db_,"INSERT INTO sg_colony_diplomatic_intent "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+            insert.i64(1,static_cast<sqlite3_int64>(id));
+            insert.i64(2,static_cast<sqlite3_int64>(generation));
+            insert.text(3,std::to_string(world.state_hash()));
+            insert.i64(4,static_cast<sqlite3_int64>(world.tick()));
+            insert.text(5,std::to_string(source));insert.text(6,std::to_string(d.leader_id));
+            insert.i64(7,agenda);insert.i64(8,static_cast<sqlite3_int64>(contact));
+            insert.text(9,std::to_string(d.target_ship));insert.text(10,std::to_string(d.target_owner));
+            insert.i64(11,static_cast<sqlite3_int64>(d.relation_event_id));
+            insert.i64(12,d.relation_score);
+            insert.i64(13,static_cast<int>(d.motive));insert.i64(14,static_cast<int>(d.posture));
+            insert.i64(15,static_cast<int>(d.source_risk));insert.execute();
+            run(db_,"COMMIT");
+            return d;
+        }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
+    }
+    void verify_colony_diplomatic_intents(std::uint64_t max_generation) const{
+        Statement exists(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_diplomatic_intent'");
+        if(!exists.row())return;
+        for(const auto* guard:{"sg_diplomatic_intent_no_update",
+                               "sg_diplomatic_intent_no_delete"}){
+            Statement check(db_,"SELECT 1 FROM sqlite_master WHERE type='trigger' "
+                "AND name=?");
+            check.text(1,guard);
+            if(!check.row() || check.row())
+                throw std::runtime_error("missing immutable diplomatic intent guard");
+        }
+        Statement rows(db_,"SELECT event_id,world_generation,world_hash,tick,"
+            "colony,leader,agenda_event,contact_event,target_ship,target_owner,"
+            "relation_event,relation_score,motive,posture,risk "
+            "FROM sg_colony_diplomatic_intent");
+        while(rows.row()){
+            const auto id=sqlite3_column_int64(rows.get(),0);
+            const auto gen=sqlite3_column_int64(rows.get(),1);
+            const auto hash=sqlite_str(rows.get(),2);
+            const auto tick=sqlite3_column_int64(rows.get(),3);
+            const auto colony=parse_u64(sqlite3_column_text(rows.get(),4));
+            const auto leader=parse_u64(sqlite3_column_text(rows.get(),5));
+            const auto agenda=sqlite3_column_int64(rows.get(),6);
+            const auto contact=sqlite3_column_int64(rows.get(),7);
+            const auto target=parse_u64(sqlite3_column_text(rows.get(),8));
+            const auto owner=parse_u64(sqlite3_column_text(rows.get(),9));
+            const auto relation=sqlite3_column_int64(rows.get(),10);
+            const auto score=sqlite3_column_int(rows.get(),11);
+            const auto motive=sqlite3_column_int(rows.get(),12);
+            const auto posture=sqlite3_column_int(rows.get(),13);
+            const auto risk=sqlite3_column_int(rows.get(),14);
+            if(id<1 || gen<1 || static_cast<std::uint64_t>(gen)>max_generation ||
+               tick<0 || !colony || !leader || agenda<1 || contact<1 ||
+               !target || !owner || relation<0 || score< -100 || score>100)
+                throw std::runtime_error("malformed historical diplomatic intent");
+            Statement original(db_,"SELECT event_id FROM sg_colony_conflict_agenda "
+                "WHERE colony=? AND leader=?");
+            original.text(1,std::to_string(colony));original.text(2,std::to_string(leader));
+            if(!original.row() || sqlite3_column_int64(original.get(),0)!=agenda ||
+               original.row())
+                throw std::runtime_error("diplomatic decision forged leader");
+            Statement old(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='sg_colony_conflict_intent'");
+            if(old.row()){
+                Statement used(db_,"SELECT 1 FROM sg_colony_conflict_intent "
+                    "WHERE contact_event=?");
+                used.i64(1,contact);
+                if(used.row())throw std::runtime_error("strategic double use of contact");
+            }
+            Statement snapshot(db_,"SELECT state,checksum FROM snapshots "
+                "WHERE generation=?");
+            snapshot.i64(1,gen);
+            if(!snapshot.row())throw std::runtime_error("diplomacy snapshot pruned");
+            const auto* bytes=sqlite3_column_blob(snapshot.get(),0);
+            const auto len=sqlite3_column_bytes(snapshot.get(),0);
+            if(!bytes || len<=0 || len>16*1024*1024)
+                throw std::runtime_error("diplomacy snapshot malformed");
+            const auto w=Simulation::from_snapshot(std::string(
+                static_cast<const char*>(bytes),static_cast<std::size_t>(len)));
+            if(w.state_hash()!=parse_u64(sqlite3_column_text(snapshot.get(),1)) ||
+               std::to_string(w.state_hash())!=hash ||
+               w.tick()!=static_cast<std::uint64_t>(tick) || snapshot.row())
+                throw std::runtime_error("diplomatic intent lost original world");
+            const auto recomputed=assess_colony_diplomacy(
+                w,static_cast<std::uint64_t>(gen),colony,
+                static_cast<std::uint64_t>(contact));
+            if(recomputed.leader_id!=leader || recomputed.target_ship!=target ||
+               recomputed.target_owner!=owner ||
+               recomputed.relation_event_id!=static_cast<std::uint64_t>(relation) ||
+               recomputed.relation_score!=score ||
+               static_cast<int>(recomputed.motive)!=motive ||
+               static_cast<int>(recomputed.posture)!=posture ||
+               static_cast<int>(recomputed.source_risk)!=risk)
+                throw std::runtime_error("historical diplomatic intent changed");
         }
     }
     void verify_colony_response(const Simulation& state,std::uint64_t gen) const {
@@ -5986,6 +6176,9 @@ public:
             Statement colony_relations(db_,"SELECT 1 FROM sqlite_master "
                 "WHERE type='table' AND name='sg_colony_relationship_revisions'");
             const bool has_colony_relations=colony_relations.row();
+            Statement dated_intents(db_,"SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='sg_colony_diplomatic_intent'");
+            const bool has_dated_intents=dated_intents.row();
             const std::string prune_sql=std::string(
                 "DELETE FROM snapshots WHERE generation > 1 AND generation < ?")+
                 (incident_cases_exist ? " AND generation NOT IN "
@@ -6027,6 +6220,9 @@ public:
                     : "")+
                 (has_conflict_intents ? " AND generation NOT IN "
                     "(SELECT world_generation FROM sg_colony_conflict_intent)"
+                    : "")+
+                (has_dated_intents ? " AND generation NOT IN "
+                    "(SELECT world_generation FROM sg_colony_diplomatic_intent)"
                     : "")+
                 // Bind subjective diplomacy to BOTH the original physical
                 // incident and the later real NPC belief/decision generation.
@@ -7184,6 +7380,7 @@ void PersistentWorld::recover_copy(const std::string& source, const std::string&
         copy.verify_colony_watch_contacts(gen);
         copy.verify_colony_conflicts(gen);
         copy.verify_colony_relationships(gen);
+        copy.verify_colony_diplomatic_intents(gen);
         verify_dependent_stranding_cases(destination,gen);
         verify_split_rescue_intents(destination,gen);
     } catch (...) {
@@ -7223,6 +7420,7 @@ PersistentWorld::PersistentWorld(const std::string& path, Simulation initial_wor
     store_->verify_colony_watch_contacts(generation_);
     store_->verify_colony_conflicts(generation_);
     store_->verify_colony_relationships(generation_);
+    store_->verify_colony_diplomatic_intents(generation_);
 }
 PersistentWorld::~PersistentWorld() = default;
 
@@ -8253,6 +8451,16 @@ PersistentWorld::colony_relationship(EntityId source,PlayerId owner) const{
     if(!source || !owner)
         throw std::invalid_argument("colony diplomacy needs source and foreign owner");
     return store_->latest_colony_relationship(source,owner);
+}
+
+colony_conflict::Decision PersistentWorld::assess_colony_diplomatic_intent(
+    EntityId source,std::uint64_t contact) const{
+    return store_->assess_colony_diplomacy(world_,generation_,source,contact);
+}
+colony_conflict::Decision PersistentWorld::record_colony_diplomatic_intent(
+    std::uint64_t event,EntityId source,std::uint64_t contact){
+    return store_->record_colony_diplomacy(
+        world_,generation_,event,source,contact);
 }
 
 // COLONY-AUTO-04D.4D2B2: admission only. No family member relocates until
