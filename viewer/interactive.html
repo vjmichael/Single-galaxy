@@ -83,6 +83,17 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
  <div class="help" style="margin-top:8px">The host saves the world. Reconnecting reloads the actual inventory and construction progress; a queued command is not a completed action.</div>
 </section>
 <div class="help">One ship · finite crew · no starting stations or gates. Every resource action is executed and saved by the C++ simulation. The mineral distributions below are illustrative based on real mineral classes.</div>
+<section aria-labelledby="fittingTitle" style="border:1px solid #596a84;border-radius:10px;padding:12px;margin:10px 0">
+ <h2 id="fittingTitle">Ship fitting · Exploration systems</h2>
+ <div class="help">Finite ship module slots: hardpoints for active equipment, support for passive assistance, subsystems for internal upgrades, and rigging for physical modifications. Only the survey scanner is available to fit in PLAY-11.</div>
+ <div id="fittingCapacity" role="status" class="help">Awaiting actual ship fittings.</div>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <button id="fitScanner" type="button" disabled>Fit scanner (1 constructed module)</button>
+  <button id="unfitScanner" type="button" disabled>Remove fitted scanner</button>
+ </div>
+ <div class="help" id="proximityStatus" role="status">Proximity safety sensor awaiting native ship contacts.</div>
+ <div class="help">The intrinsic proximity sensor warns of nearby ships; it is not a long-range discovery scanner or an implemented collision-response engine. Future scanning probes and drones will consume hardpoint capacity and physical inventory.</div>
+</section>
 <section aria-labelledby="explorationTitle" style="border:1px solid #3b6077;border-radius:10px;padding:12px;margin:10px 0">
  <h2 id="explorationTitle">Exploration · Discoveries</h2>
  <div class="help">Local sensors map existing asteroids within 50,000 mm of the colony ship. Native SQLite stores the first observation tick and location. Fly closer to distant deposits to map them; no instant galaxy-wide reveal.</div>
