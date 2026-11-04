@@ -90,6 +90,26 @@ static void scanning_and_probes() {
     CHECK(sensors.scan_mode(7,3,9,1000,85,ScanMode::Environmental).empty());
     std::cout<<"PASS directional geometry, ownership, strength, probe recovery and hidden wormhole\n";
 }
+static void astronomy_profiles() {
+    auto map=make_map();
+    const auto first=map.astronomy(3,123456);
+    const auto again=map.astronomy(3,123456);
+    CHECK(first.architecture==again.architecture);
+    CHECK(first.morphology==again.morphology);
+    CHECK(first.star_count==again.star_count);
+    CHECK(first.features==again.features);
+    CHECK(first.generator_version==1);
+    std::set<StellarArchitecture> architectures;
+    for(std::uint32_t system=1;system<1000;++system) {
+        const auto p=generate_astronomical_profile(123456,system);
+        architectures.insert(p.architecture);
+        CHECK(p.star_count>=1 && p.star_count<=3);
+        CHECK(p.architecture!=StellarArchitecture::Single || p.star_count==1);
+        CHECK(p.morphology!=StarMorphology::CloseBinaryTidal || p.star_count>1);
+    }
+    CHECK(architectures.size()==4);
+    std::cout<<"PASS deterministic stellar structure and unusual space features\\n";
+}
 static void archive_persistence() {
     const auto file=std::filesystem::temp_directory_path()/"galaxy-b60-survey-tests.sqlite";
     std::filesystem::remove(file);
@@ -160,10 +180,20 @@ static void archive_persistence() {
             CHECK(restored.known_site(7,3,105)->confidence==88);
             CHECK(!restored.known_site(8,3,105).has_value());
             CHECK(restored.published(3).size()==1);
+            auto current=make_map();
+            // An archived position is knowledge, not construction permission.
+            CHECK(restored.actionable_sites(7,3,current,DiscoveryUse::Navigation,50,20,10).empty());
+            CHECK(restored.record({7,3,102,SiteKind::Planet,{8000,0},30,90,false}));
+            auto route=restored.actionable_sites(7,3,current,DiscoveryUse::Navigation,80,30,2);
+            CHECK(route.size()==1 && route[0].site==102);
+            CHECK(restored.actionable_sites(8,3,current,DiscoveryUse::Navigation,80,30,2).empty());
+            CHECK(restored.actionable_sites(7,3,current,DiscoveryUse::Navigation,80,50,2).empty());
+            CHECK(restored.actionable_sites(7,3,current,DiscoveryUse::SettlementSurvey,80,30,2).size()==1);
+            CHECK(restored.actionable_sites(7,3,current,DiscoveryUse::SettlementSurvey,95,30,2).empty());
             CHECK(restored.published(3)[0].independent_surveyors==2);
         }
     }catch(...){std::filesystem::remove(file);throw;}
     std::filesystem::remove(file);
     std::cout<<"PASS durable per-player survey history, private/public isolation, deduplicated contributions\n";
 }
-int main(){try{geography_routes();scanning_and_probes();archive_persistence();std::cout<<"B5.4/B6.0 ALL PASS\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
+int main(){try{geography_routes();scanning_and_probes();astronomy_profiles();archive_persistence();std::cout<<"B5.4/B6.0 ALL PASS\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
