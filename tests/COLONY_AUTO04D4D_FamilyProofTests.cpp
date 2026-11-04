@@ -85,10 +85,23 @@ try{
         CHECK(injected);
         CHECK(sqlite3_open(path.c_str(),&db)==SQLITE_OK);
         sqlite3_stmt* count=nullptr;
-        CHECK(sqlite3_prepare_v2(db,"SELECT COUNT(*) FROM sg_colony_family_departure_prepare",
+        // SQLite DDL is transactional: the failed first preparation may
+        // roll back the entire new table, which is stronger than zero rows.
+        CHECK(sqlite3_prepare_v2(db,
+              "SELECT COUNT(*) FROM sqlite_master WHERE type='table' "
+              "AND name='sg_colony_family_departure_prepare'",
               -1,&count,nullptr)==SQLITE_OK);
-        CHECK(sqlite3_step(count)==SQLITE_ROW && sqlite3_column_int(count,0)==0);
-        sqlite3_finalize(count);sqlite3_close(db);
+        CHECK(sqlite3_step(count)==SQLITE_ROW);
+        const bool table_exists=sqlite3_column_int(count,0)==1;
+        sqlite3_finalize(count);
+        if(table_exists){
+            CHECK(sqlite3_prepare_v2(db,
+                "SELECT COUNT(*) FROM sg_colony_family_departure_prepare",
+                -1,&count,nullptr)==SQLITE_OK);
+            CHECK(sqlite3_step(count)==SQLITE_ROW && sqlite3_column_int(count,0)==0);
+            sqlite3_finalize(count);
+        }
+        sqlite3_close(db);
         CHECK(host.prepare_host_colony_family_departure(plan));
         CHECK(host.prepare_host_colony_family_departure(plan)); // identical retry
         auto reused=plan;reused.receiver=source;
