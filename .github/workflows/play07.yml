@@ -7,6 +7,7 @@ on:
     paths:
       - 'viewer/travel-assist.js'
       - 'viewer/interactive.js'
+      - 'viewer/colony.js'
       - 'viewer/interactive.html'
       - 'live/interactive_relay.py'
       - 'tests/TravelAssistTests.js'
