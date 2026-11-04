@@ -14,6 +14,14 @@ test('strict native geological drone status including sample and flight phase',(
     'COLONY|1|15|SURVEY_PROBE|3|1|0|0|2|8|2|3'])
     assert.throws(()=>decode(bad),bad);
 });
+test('native geological report becomes durable first-discovery classification',()=>{
+ const row=decode('COLONY|1|19|DISCOVERY|7|1|20000|0|18|1|3');
+ assert.equal(row.surveyTaxonomy,3);
+ assert.equal(row.geological,true);
+ const journal=require('../viewer/exploration-journal.js');
+ assert.match(journal.describe({...row,local:true,distance:null}),/drone report: Metal-rich/);
+ assert.throws(()=>decode('COLONY|1|19|DISCOVERY|7|1|20000|0|18|0|3'));
+});
 test('real native target, owner-authorized drone launch and physical recovery controls',()=>{
  const host=read('src/colony_live_host.cpp'),relay=read('live/interactive_relay.py');
  const html=read('viewer/interactive.html'),ui=read('viewer/interactive.js');
