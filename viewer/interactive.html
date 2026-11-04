@@ -94,6 +94,20 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
  </div>
  <div class="help">Mining range and cargo capacity are enforced by the native world. A queued request does not confirm extraction.</div>
 </section>
+<section aria-labelledby="returnTitle" style="border:1px solid #475774;border-radius:10px;padding:12px;margin:10px 0">
+ <h2 id="returnTitle">Cargo run · Return to outpost</h2>
+ <div id="returnTelemetry" class="help" role="status" aria-live="polite">Build your first outpost to establish a home hangar.</div>
+ <div class="metric"><span>Bulk ore in ship</span><strong id="returnHold">—</strong></div>
+ <div class="metric"><span>Bulk ore in outpost hangar</span><strong id="returnBay">—</strong></div>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <button id="returnBrake" type="button" disabled>Brake toward zero</button>
+  <button id="returnDock" class="primary" type="button" disabled>Dock at home outpost</button>
+  <button id="returnUnload" type="button" disabled>Unload bulk ore</button>
+  <button id="returnLoad" type="button" disabled>Load bulk ore</button>
+  <button id="returnUndock" type="button" disabled>Undock</button>
+ </div>
+ <div class="help">Outpost docking requires real proximity and zero velocity. Ore moves between the ship's hold and a location-specific native hangar. Refined materials and geological mineral stock remain separate.</div>
+</section>
 <div class="metric"><span class="muted">Colonists</span><strong id="colonyCrew">—</strong></div>
 <div class="metric"><span class="muted">Raw ore (t)</span><strong id="colonyRaw">—</strong></div>
 <div class="metric"><span class="muted">Refined material (t)</span><strong id="colonyRefined">—</strong></div>
@@ -216,6 +230,7 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
 <script src="survey.js"></script>
 <script src="opening-guide.js"></script>
 <script src="flight-controls.js"></script>
+<script src="cargo-return.js"></script>
 <script src="colony.js"></script>
 <script src="interactive.js"></script>
 <script src="colony-shipping.js"></script>
