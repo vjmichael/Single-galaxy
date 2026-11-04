@@ -5127,8 +5127,7 @@ bool Simulation::build_planetary_site(PlayerId owner,EntityId ship,
        colony==colony_ships_.end() || colony->second.modules<2 ||
        colony->second.crew<2 || planetary_sites_.count(key) ||
        planetary_sites_.size()>=10000 ||
-       site->landscape.region.surface_water ||
-       site->landscape.region.terrain==planetary::Terrain::Ice)
+       site->landscape.region.surface_water)
         return false;
     colony->second.modules-=2;
     planetary_sites_.emplace(key,PlanetarySiteFacility{
