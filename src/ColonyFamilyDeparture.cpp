@@ -161,6 +161,15 @@ Audit assess(const Simulation& world,sqlite3* db,const DeparturePlan& request){
             if(world.npc_records().count(child))
                 throw std::runtime_error("dependent alias collides with living world NPC");
             if(family.current_residence(child)!=request.source)continue;
+            if(world.physical_dependents_enabled()){
+                const auto physical=world.physical_dependents().find(child);
+                if(physical==world.physical_dependents().end() ||
+                   physical->second.home_ship!=request.source ||
+                   physical->second.location!=request.source ||
+                   physical->second.parent_a!=a || physical->second.parent_b!=b ||
+                   physical->second.birth_command!=event)
+                    throw std::runtime_error("ART02 dependent lacks matched native physical birth/custody");
+            }
             Query deceased(db,"SELECT 1 FROM npc_family_deaths WHERE scope=? AND npc_id=? LIMIT 1");
             deceased.bind(1,request.family_scope);
             deceased.bind(2,std::to_string(child));
@@ -203,6 +212,10 @@ Audit assess(const Simulation& world,sqlite3* db,const DeparturePlan& request){
                !source_children.count(child))
                 throw std::runtime_error("unlisted family scope or split child custody at source");
         }
+        if(world.physical_dependents_enabled())
+            for(const auto& [id,physical]:world.physical_dependents())
+                if(physical.home_ship==request.source && !source_children.count(id))
+                    throw std::runtime_error("living world dependent missing from ART02 family census");
         std::vector<std::uint64_t> requested_ids;
         std::uint64_t previous=0;
         for(const auto& ch:request.children){
