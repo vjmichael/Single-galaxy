@@ -1269,3 +1269,10 @@ if(BUILD_TESTING)
   add_test(NAME galaxy_play13d_planetary_agriculture
     COMMAND galaxy_play13d_planetary_agriculture_tests)
 endif()
+
+# PLAY-13D.2A multi-region planetary environment survey acceptance.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13d_planetary_regions_tests tests/PLAY13D_PlanetaryRegionsTests.cpp)
+  target_link_libraries(galaxy_play13d_planetary_regions_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_planetary_regions COMMAND galaxy_play13d_planetary_regions_tests)
+endif()
