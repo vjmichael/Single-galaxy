@@ -33,6 +33,25 @@ struct ShipFrameCustody {
     std::uint64_t anchor_body=0;
     CosmicPosition origin{};
 };
+// v72: host-registered transit request; IDs are single-use and journaled.
+// The player chooses a destination, but the host validates ownership and
+// computes final placement from authoritative celestial geometry.
+struct PendingCelestialTransit {
+    PlayerId owner=0;
+    EntityId ship=0;
+    std::uint32_t system=0;
+    std::uint64_t source_anchor=0;
+    std::uint64_t destination_body=0;
+    std::uint64_t started_tick=0;
+    std::uint64_t due_tick=0;
+};
+struct CompletedCelestialTransit {
+    PlayerId owner=0;
+    EntityId ship=0;
+    std::uint32_t system=0;
+    std::uint64_t destination_body=0;
+    std::uint64_t completed_tick=0;
+};
 enum class CelestialKind {Star=0,Planet=1,Moon=2,DebrisRegion=3};
 struct PhysicalCelestialBody {
     std::uint64_t id=0,parent_id=0;
@@ -775,6 +794,14 @@ public:
     // Explicit atomic migration, NOT a travel command.
     void ensure_ship_frame_registry();
     const std::map<EntityId,ShipFrameCustody>& ship_frames() const {return ship_frames_;}
+    const std::map<std::uint64_t,PendingCelestialTransit>& pending_celestial_transits() const {
+        return pending_celestial_transits_;
+    }
+    const std::map<std::uint64_t,CompletedCelestialTransit>& completed_celestial_transits() const {
+        return completed_celestial_transits_;
+    }
+    // Different local frames never share ordinary spatial interactions.
+    bool same_local_frame(EntityId a,EntityId b) const;
     std::uint64_t probe_report_delay_ticks() const {return probe_report_delay_ticks_;}
 
     std::uint64_t tick() const { return tick_; }
@@ -860,6 +887,8 @@ private:
     std::uint64_t rng_state_;
     std::map<EntityId, Entity> entities_; // stable deterministic iteration
     std::map<EntityId,ShipFrameCustody> ship_frames_; // durable v71 local-space custody
+    std::map<std::uint64_t,PendingCelestialTransit> pending_celestial_transits_;
+    std::map<std::uint64_t,CompletedCelestialTransit> completed_celestial_transits_;
     std::map<std::uint32_t,std::vector<PhysicalCelestialBody>> physical_celestial_systems_;
     std::set<EntityId> depleted_;
     std::map<EntityId, AutoMining> mining_;
