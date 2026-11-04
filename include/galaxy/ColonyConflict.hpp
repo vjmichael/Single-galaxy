@@ -49,7 +49,7 @@ struct ExitPressure {
 // Each dated observation has one historical predecessor, and can recover.
 // Intent is not a binding travel command or a vote.
 struct PersonalOutlook {
-    std::uint64_t event_id=0,prior_event_id=0,world_generation=0;
+    std::uint64_t event_id=0,prior_event_id=0,world_generation=0,world_tick=0;
     EntityId colony=0;
     std::uint64_t npc_id=0,leader_id=0;
     std::uint64_t interaction_event_id=0,government_event_id=0;
