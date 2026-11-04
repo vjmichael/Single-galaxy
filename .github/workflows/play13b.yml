@@ -12,6 +12,8 @@ on:
       - 'tests/GeographyScanningTests.cpp'
       - 'tests/PLAY13_GeologicalDroneTests.cpp'
       - 'tests/PLAY13B_LiveSurveyIndexSmoke.py'
+      - 'viewer/scanner-session.js'
+      - 'tests/PLAY13B_ScannerSessionTests.js'
       - '.github/workflows/play13b.yml'
 jobs:
   scanner-knowledge:
@@ -31,3 +33,5 @@ jobs:
       - name: Real colony host survey index restart smoke
         run: python tests/PLAY13B_LiveSurveyIndexSmoke.py "${{ github.workspace }}/build/galaxy_colony_live_host"
         if: runner.os == 'Linux'
+      - name: Browser scanner lock-on contract
+        run: node --test tests/PLAY13B_ScannerSessionTests.js
