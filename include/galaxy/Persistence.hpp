@@ -844,6 +844,9 @@ public:
     // is idempotent: a completed request never moves the ship twice.
     bool complete_celestial_transit(std::uint64_t request_id,
         FailPoint fail=FailPoint::None);
+    // Real finite resource collection, committed atomically before publication.
+    bool collect_oasis_resource(PlayerId owner,EntityId ship,std::uint64_t body,
+        bool water,std::int64_t kilograms,FailPoint fail=FailPoint::None);
     const Simulation& world() const noexcept { return world_; }
     std::int64_t resource_origin() const noexcept { return resource_origin_; }
     std::uint64_t generation() const noexcept { return generation_; }
