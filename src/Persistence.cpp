@@ -8713,6 +8713,16 @@ bool PersistentWorld::complete_celestial_transit(std::uint64_t id,FailPoint fail
     ++generation_;
     return true;
 }
+void PersistentWorld::ensure_local_environment_profiles() {
+    if(world_.generated_local_regions_.empty())return;
+    auto next=world_;
+    next.ensure_local_environment_profiles();
+    if(next.canonical_state()==world_.canonical_state())return;
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},FailPoint::None);
+    world_.swap(next);
+    ++generation_;
+}
 void PersistentWorld::ensure_visited_local_regions() {
     if(world_.ship_frames_.empty())return;
     auto next=world_;
