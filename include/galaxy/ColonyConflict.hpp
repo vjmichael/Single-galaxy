@@ -5,6 +5,7 @@
 #include "galaxy/ColonyDefense.hpp"
 #include "galaxy/ColonySafety.hpp"
 #include <cstdint>
+#include <vector>
 
 namespace galaxy::colony_conflict {
 enum class Agenda : int {
