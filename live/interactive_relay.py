@@ -288,7 +288,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if self.server.accounts and (not principal or principal['playerId']!=7):
                 self._json(403,{'error':'Colony owner session required'});return
             self._json(200,{'token':principal['csrf'] if self.server.accounts else self.server.runtime.token,'qa_mode':self.server.qa_mode,'colony_mode':self.server.colony_mode,'tick_ms':self.server.tick_ms,
-                'max_ticks':self.server.max_ticks,'commands':(['thrust','yaw','colonyFireTraining','colonySalvageWreck','colonyDockBase','colonyUndockBase','colonyUnloadBase','colonyLoadBase','colonyScan','colonyConfigureScanner','colonyProbeDeploy','colonyProbeScan','colonyProbeRecover','colonyDroneLaunch','colonyMine','colonyRefine','colonyFabricate','colonyBuild','colonyMineTarget','colonyProcess','colonyFabricateMaterial','colonyPlant','colonyHarvest','colonyRecycleWater','colonyRecycleCompost','colonyOxygen','colonyLifeWater','colonyFarmBuild','colonyFarmStaff','colonyFarmStock','colonyHabBuild','colonyHabResidents','colonyHabStock','colonyUtilityBuild','colonyUtilityRepair','colonyUtilitySpares','colonyUtilityStaff','colonyUtilityAuto','colonyCommunityBuild','colonyCommunityStaff','colonyCommunityStock','colonyClinicBuild','colonyClinicStaff','colonyClinicStock','colonyReclaimerBuild','colonyWaterworksBuild','colonyWaterworksFeed','colonyPolicySet','colonyPolicyStaff','colonySafetyAssess','colonySafetyPreflight'] if self.server.colony_mode else ['thrust','mine','stop','undock','dock','unload','load','sell','travelA','travelB','travelGate','travelHop','jump','jumpHop','directional','probeDeploy','probeScan','probeRecover','surveyArchive','surveyHistory','surveyPublish','planRoute'])});return
+                'max_ticks':self.server.max_ticks,'commands':(['thrust','yaw','colonyFireTraining','colonySalvageWreck','colonyDockBase','colonyUndockBase','colonyUnloadBase','colonyLoadBase','colonyScan','colonyConfigureScanner','colonyProbeDeploy','colonyProbeScan','colonyProbeRecover','colonySignatureScan','colonyProbeFocus','colonyProbeCancel','colonyDroneLaunch','colonyMine','colonyRefine','colonyFabricate','colonyBuild','colonyMineTarget','colonyProcess','colonyFabricateMaterial','colonyPlant','colonyHarvest','colonyRecycleWater','colonyRecycleCompost','colonyOxygen','colonyLifeWater','colonyFarmBuild','colonyFarmStaff','colonyFarmStock','colonyHabBuild','colonyHabResidents','colonyHabStock','colonyUtilityBuild','colonyUtilityRepair','colonyUtilitySpares','colonyUtilityStaff','colonyUtilityAuto','colonyCommunityBuild','colonyCommunityStaff','colonyCommunityStock','colonyClinicBuild','colonyClinicStaff','colonyClinicStock','colonyReclaimerBuild','colonyWaterworksBuild','colonyWaterworksFeed','colonyPolicySet','colonyPolicyStaff','colonySafetyAssess','colonySafetyPreflight'] if self.server.colony_mode else ['thrust','mine','stop','undock','dock','unload','load','sell','travelA','travelB','travelGate','travelHop','jump','jumpHop','directional','probeDeploy','probeScan','probeRecover','surveyArchive','surveyHistory','surveyPublish','planRoute'])});return
         if url.path in STATIC:
             file=ROOT/STATIC[url.path]
             self._send(200,file.read_bytes(),MIME[file.suffix]);return
@@ -378,6 +378,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if type(target)!=int or not 1<=target<=100000000:
                     raise ValueError('Invalid geological target')
                 command=f'DRONE_LAUNCH|{target}'
+            elif action=='colonySignatureScan' and set(doc)=={'token','action'}:
+                command='SIGNATURES'
+            elif action=='colonyProbeFocus' and set(doc)=={'token','action','probe','signature'}:
+                probe,signature=doc['probe'],doc['signature']
+                if (type(probe)!=int or type(signature)!=int or
+                    not 1<=probe<=1000000000000000 or not 1<=signature<=100000000):
+                    raise ValueError('Invalid probe focus request')
+                command=f'PROBE_FOCUS|{probe}|{signature}'
+            elif action=='colonyProbeCancel' and set(doc)=={'token','action','probe'}:
+                probe=doc['probe']
+                if type(probe)!=int or not 1<=probe<=1000000000000000:
+                    raise ValueError('Invalid probe cancellation request')
+                command=f'PROBE_CANCEL|{probe}'
             elif action=='colonyProbeDeploy' and set(doc)=={'token','action'}:
                 command='PROBE_DEPLOY'
             elif action in ('colonyProbeScan','colonyProbeRecover') and set(doc)=={'token','action','probe'}:
