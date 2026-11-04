@@ -1,6 +1,7 @@
 #pragma once
 #include "galaxy/Simulation.hpp"
 #include "galaxy/ColonySafety.hpp"
+#include "galaxy/ColonySafetyNotice.hpp"
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -435,6 +436,12 @@ public:
     std::uint64_t colony_safety_evidence_count() const;
     // AUTO-04D.2: committed threshold transitions, not actual rescues.
     std::uint64_t colony_response_event_count() const;
+    // Read-only host queue. Presence at event tick is only an observation opportunity.
+    std::vector<colony_safety::notice::Pending> pending_colony_notifications(std::uint64_t limit=100) const;
+    // Trusted-host-only delivered-message receipt, not a GRSM belief or social judgment.
+    bool acknowledge_colony_notification(std::uint64_t event_id,std::uint64_t npc_id);
+    std::uint64_t colony_notification_opportunity_count() const;
+    std::uint64_t colony_notification_acknowledgement_count() const;
     bool submit(const Command& command, FailPoint fail = FailPoint::None);
     // Host-only: admits a receipt-reserved third-party shipment under the writer lock.
     bool submit_host_consigned_transfer(const Command&, FailPoint=FailPoint::None);
