@@ -17,6 +17,7 @@ async function command(action,extra={}){
 async function connect(){
  if(source){source.close();source=null;}
  window.GalaxyColonyMode=false;
+ window.GalaxyResetExpedition?.();
  const bridge=window.GalaxyLiveBridge;bridge.reset();window.GalaxySurveyBridge?.reset();window.GalaxyColony?.reset();message('Connecting to one running local world…');
  try{
    const response=await fetch('/session',{cache:'no-store'});
@@ -85,7 +86,17 @@ for(const [id,act] of [
  ['returnDock','colonyDockBase'],['returnUnload','colonyUnloadBase'],
  ['returnLoad','colonyLoadBase'],['returnUndock','colonyUndockBase']
 ])el(id).addEventListener('click',()=>command(act));
-let lastReturnShip=null;
+let window.GalaxyResetExpedition?.();
+ lastReturnShip=null;
+let expedition=window.GalaxyExpeditionFeedback?.initial();
+window.GalaxyResetExpedition=()=>{
+ expedition=window.GalaxyExpeditionFeedback?.initial();
+ el('expeditionMined').textContent='0 t';
+ el('expeditionDelivered').textContent='0 t';
+ el('expeditionTarget').textContent='—';
+ el('expeditionStatus').textContent='Waiting for committed ship and outpost state.';
+ el('expeditionOutcome').textContent='Awaiting an actual native result';
+};
 el('returnBrake').addEventListener('click',()=>{
  if(!lastReturnShip)return;
  const x=Math.sign(lastReturnShip.vx||0),y=Math.sign(lastReturnShip.vy||0);
@@ -124,8 +135,30 @@ window.onGalaxyLiveProjection=function(state){
    ' · speed '+speed.toFixed(0)+' mm/tick'+
    (first?' · nearest visible asteroid #'+first.rock.id+
       ' at '+first.range.toFixed(0)+' mm':' · no asteroid currently visible');
+ const chosen=Number(el('colonyRockTarget').value);
+ const selected=Number.isSafeInteger(chosen)&&chosen>0?chosen:null;
+ const mine=window.GalaxyExpeditionFeedback?.target(ship,nearby,selected);
+ el('expeditionTarget').textContent=mine?
+   '#'+mine.id+' · '+Math.ceil(mine.distance).toLocaleString()+' mm · '+mine.ore.toLocaleString()+' t visible ore':
+   'No mineable asteroid currently visible';
  const cargo=window.GalaxyCargoReturn?.plan(state,7,window.GalaxyColonyOutpostIds);
  lastReturnShip=ship;
+ if(cargo?.site && window.GalaxyExpeditionFeedback){
+   const homeBay=cargo.bayOre;
+   const valid=Number.isSafeInteger(homeBay)&&Number.isSafeInteger(ship.cargo)&&
+     Number.isSafeInteger(state.tick);
+   if(valid){
+     expedition=window.GalaxyExpeditionFeedback.advance(expedition,{
+       tick:state.tick,hold:ship.cargo,bay:homeBay,home:cargo.site.id,
+       docked:cargo.dockState===1&&state.docks.get(ship.id)?.station===cargo.site.id
+     });
+     el('expeditionMined').textContent=expedition.mined+' t';
+     el('expeditionDelivered').textContent=expedition.delivered+' t';
+     el('expeditionStatus').textContent=window.GalaxyExpeditionFeedback.status(expedition);
+   }
+ }else if(cargo?.ready){
+   el('expeditionStatus').textContent='No player-built home outpost visible. Complete your first settlement before a full cargo-return expedition.';
+ }
  if(cargo){
    el('returnTelemetry').textContent=cargo.message+
      (cargo.site?' Direction to home: ΔX '+cargo.dx.toFixed(0)+' mm, ΔY '+cargo.dy.toFixed(0)+' mm.':'');
