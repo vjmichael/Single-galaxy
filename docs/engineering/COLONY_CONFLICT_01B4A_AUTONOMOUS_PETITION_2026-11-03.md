@@ -24,3 +24,5 @@ This is a **first autonomous institutional-pressure gate**, not a true vote or i
 
 ## Verification
 Focused six-suite workflow `.github/workflows/colony-conflict01b4a.yml`; real CI status must be recorded from the actual run. Broader Linux and Windows integration stay separate.
+
+**Observed focused Linux acceptance: PASSED 6/6 native CTests** at executable commit `853d5199298a30fe0171b8df2d12d4f239aedb39`: [Actions run 41784134206](https://github.com/vjmichael/Single-galaxy/actions/runs/41784134206), 4.82 s CTest execution. Original physically witnessed colony contact, predatory intent, grievance interpretation, historical diplomacy, governance succession and new nonbinding political-pressure caucus tests all passed. Documentation revisions are not new executable verification.
