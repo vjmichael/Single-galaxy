@@ -1087,3 +1087,13 @@ if(BUILD_TESTING)
     add_test(NAME galaxy_colony_exit01c_personal
         COMMAND galaxy_colony_exit01c_personal_tests)
 endif()
+
+# EXIT-01D: deterministic native-host observer/selector with authenticated
+# receiving-owner route; real boarding and ART02/ECON03 immigration follow.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_exit01d_scheduler_tests
+        tests/COLONY_EXIT01D_HostMigrationSchedulerTests.cpp)
+    target_link_libraries(galaxy_colony_exit01d_scheduler_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_exit01d_scheduler
+        COMMAND galaxy_colony_exit01d_scheduler_tests)
+endif()
