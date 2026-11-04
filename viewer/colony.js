@@ -8,6 +8,12 @@
   function decode(raw){
     if(typeof raw!=='string'||raw.length>180||!/^COLONY\|1\|/.test(raw)||!/^[A-Za-z0-9_|-]+$/.test(raw))throw Error('Invalid colony telemetry');
     const v=raw.split('|'),tick=numeric(v[2],1200),t=v[3];let e={tick,type:t};
+    if(t==='SALVAGE_WRECK'){
+      if(v.length!==6)throw Error('Malformed salvage wreck');
+      const id=numeric(v[4],100000000),cargo=numeric(v[5],1000000);
+      if(!id)throw Error('Invalid salvage ID');
+      return {...e,id,cargo};
+    }
     if(t==='COMBAT_SHIP'){
       if(v.length!==6)throw Error('Malformed combat ship');
       return {...e,hull:numeric(v[4],100),charges:numeric(v[5],12)};
@@ -215,6 +221,7 @@
 (function(){'use strict';if(typeof document==='undefined')return;
  const q=id=>document.getElementById(id), policyAudits=new Map(), geology=new Map(),small=new Map(),log=[],stocks=new Map(),outposts=new Map(),farms=new Map(),habitats=new Map(),utilities=new Map(),communities=new Map(),clinics=new Map(),reclaimers=new Map(),waterworks=new Map();
  const combatTargets=new Map();
+ const salvageWrecks=new Map();
  window.GalaxyColonyGeology=geology;
  window.GalaxySelectedRockId=null;
  window.GalaxySelectAsteroid=id=>{
@@ -267,8 +274,17 @@
        guide.action==='colonyFabricate'?{amount:4}:{});
  });
  window.GalaxyColony={
-   reset(){combatTargets.clear();q('combatHull').textContent='—';q('combatCharges').textContent='—';q('combatFire').disabled=true;q('combatFeedback').textContent='Awaiting native combat telemetry.';window.GalaxySelectedRockId=null;window.GalaxyShipHeading=null;window.GalaxyColonyOutpostIds.clear();openingStatus=null;openingScanned=false;refreshOpening();window.GalaxyColonyHomeShipId=null;q('colonySafetyAssess').disabled=true;q('colonySafetyPreflight').disabled=true;policyAudits.clear();geology.clear();small.clear();stocks.clear();outposts.clear();farms.clear();habitats.clear();utilities.clear();communities.clear();clinics.clear();reclaimers.clear();waterworks.clear();log.length=0;q('colonyEvents').textContent='Awaiting colony telemetry…';q('expeditionOutcome').textContent='Awaiting an actual native result';},
+   reset(){salvageWrecks.clear();q('salvageTarget').replaceChildren(new Option('No recoverable wreck reported',''));q('salvageRecover').disabled=true;q('salvageFeedback').textContent='Waiting for native wreck inventory.';combatTargets.clear();q('combatHull').textContent='—';q('combatCharges').textContent='—';q('combatFire').disabled=true;q('combatFeedback').textContent='Awaiting native combat telemetry.';window.GalaxySelectedRockId=null;window.GalaxyShipHeading=null;window.GalaxyColonyOutpostIds.clear();openingStatus=null;openingScanned=false;refreshOpening();window.GalaxyColonyHomeShipId=null;q('colonySafetyAssess').disabled=true;q('colonySafetyPreflight').disabled=true;policyAudits.clear();geology.clear();small.clear();stocks.clear();outposts.clear();farms.clear();habitats.clear();utilities.clear();communities.clear();clinics.clear();reclaimers.clear();waterworks.clear();log.length=0;q('colonyEvents').textContent='Awaiting colony telemetry…';q('expeditionOutcome').textContent='Awaiting an actual native result';},
    accept(raw){const e=window.GalaxyColonyContract.decode(raw);
+     if(e.type==='SALVAGE_WRECK'){
+       salvageWrecks.set(e.id,e.cargo);
+       const select=q('salvageTarget'),current=select.value;
+       select.replaceChildren(new Option('Choose recoverable wreck',''),...[...salvageWrecks].map(([id,cargo])=>
+         new Option('#'+id+' · '+cargo+' t remaining',String(id))));
+       if([...select.options].some(option=>option.value===current))select.value=current;
+       q('salvageRecover').disabled=!select.value||!salvageWrecks.get(Number(select.value));
+       q('salvageFeedback').textContent='Wreck #'+e.id+' contains '+e.cargo+' t of conserved bulk material.';
+     }
      if(e.type==='COMBAT_SHIP'){
        q('combatHull').textContent=e.hull+' / 100';
        q('combatCharges').textContent=String(e.charges);
