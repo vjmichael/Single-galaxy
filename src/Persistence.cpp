@@ -6079,6 +6079,232 @@ void PersistentWorld::step_with_colony_departure(FailPoint fail){
     ++generation_;
 }
 
+// COLONY-AUTO-04D.4D2B2: admission only. No family member relocates until
+// step_with_atomic_family_departure commits world, ART02 and ECON03 together.
+bool PersistentWorld::submit_host_atomic_family_departure(
+    const AtomicColonyFamilyPlan& p,FailPoint fail){
+    if(p.family.expected_world_generation!=generation_ ||
+       !p.command_id || p.command_id==p.family.intent_id)return false;
+    const auto audit=store_->audit_colony_family_departure(world_,p.family);
+    if(!audit.ready_for_transaction)return false;
+    Command command{};
+    command.id=p.command_id;command.sequence=p.command_id;
+    command.execute_tick=world_.tick()+1;
+    command.issuer=Simulation::kServerAuthority;
+    command.actor=p.family.source;command.target=p.family.receiver;
+    command.action=Action::HostColonyDeparture;
+    command.passenger_ids=p.family.adult_ids;
+    auto next=world_;
+    if(!next.submit(command))return false;
+    const auto effect=[&](sqlite3* db,std::uint64_t){
+        verify_atomic_colony_family_preparation(db,world_,p);
+    };
+    store_->commit(next,generation_,resource_origin_,credit_origin_,
+                   &command,{},{},{},fail,nullptr,nullptr,effect);
+    world_.swap(next);++generation_;
+    return true;
+}
+
+// The only publication point for a whole-family rescue. ART02 identity,
+ // cold-owner population, world snapshot, applied command and immutable
+// physical custody proof share the Store::commit BEGIN IMMEDIATE/COMMIT.
+void PersistentWorld::step_with_atomic_family_departure(
+    const AtomicColonyFamilyPlan& p,FailPoint fail){
+    if(!p.family.expected_world_generation ||
+       p.family.expected_world_generation+1!=generation_)
+        throw std::runtime_error("stale family evacuation execution generation");
+    auto next=world_;
+    const auto first=next.events().size(),first_activity=next.activity_events().size();
+    std::map<std::uint64_t,Command> due;
+    if(auto it=next.commands_.find(next.tick()+1);it!=next.commands_.end())
+        for(const auto& command:it->second)due.emplace(command.id,command);
+    if(due.size()!=1 || !due.count(p.command_id))
+        throw std::runtime_error("whole-family rescue needs exactly one due host command");
+    const auto& command=due.at(p.command_id);
+    if(command.issuer!=Simulation::kServerAuthority ||
+       command.action!=Action::HostColonyDeparture ||
+       command.actor!=p.family.source || command.target!=p.family.receiver ||
+       command.passenger_ids!=p.family.adult_ids)
+        throw std::runtime_error("family evacuation command/manifest mismatch");
+    const auto source_npcs=world_.npc_records().size();
+    const auto source_children=world_.physical_dependents().size();
+    next.step();
+    if(next.events().size()!=first+1 ||
+       next.events().back().command_id!=p.command_id ||
+       next.events().back().result!=Outcome::Applied ||
+       next.events().back().transferred!=0 ||
+       next.npc_records().size()!=source_npcs ||
+       next.physical_dependents().size()!=source_children)
+        throw std::runtime_error("native family transfer not atomically applied");
+    const auto result=next.colony_departures().find(p.family.source);
+    if(result==next.colony_departures().end() ||
+       result->second.receiver!=p.family.receiver ||
+       result->second.command_id!=p.command_id ||
+       result->second.relocated_npcs!=p.family.adult_ids ||
+       result->second.relocated_dependents.size()!=p.family.children.size())
+        throw std::runtime_error("native family receipt missing or partial");
+    std::vector<std::uint64_t> children;
+    for(const auto& c:p.family.children){
+        children.push_back(c.child_id);
+        const auto d=next.physical_dependents().find(c.child_id);
+        if(d==next.physical_dependents().end() ||
+           d->second.guardian_id!=c.guardian_id ||
+           d->second.home_ship!=p.family.receiver ||
+           d->second.location!=p.family.receiver)
+            throw std::runtime_error("native dependent did not arrive with guardian");
+    }
+    if(result->second.relocated_dependents!=children ||
+       next.children_physically_aboard(p.family.source)!=0)
+        throw std::runtime_error("world execution stranded or misplaced child");
+    const auto events=std::vector<Event>(next.events().begin()+
+        static_cast<std::ptrdiff_t>(first),next.events().end());
+    const auto activity=std::vector<ActivityEvent>(next.activity_events().begin()+
+        static_cast<std::ptrdiff_t>(first_activity),next.activity_events().end());
+    const auto path=store_->sqlite_path();
+    regional_events::CheckpointStore region(path,p.region_scope);
+    const auto effect=[&](sqlite3* db,std::uint64_t committed_generation){
+        verify_atomic_colony_family_preparation(db,world_,p);
+        NpcAppearanceStore family(db,p.family.family_scope,p.family.family_seed,
+            [&](std::uint64_t id){return next.npc_records().count(id)!=0;});
+        const auto original=family.family_census(p.family.source);
+        const auto receiver=family.family_census(p.family.receiver);
+        if(original.revision!=p.expected_origin_family_revision ||
+           receiver.revision!=p.expected_receiver_family_revision)
+            throw std::runtime_error("family census changed during evacuation");
+        std::vector<std::pair<std::uint64_t,std::uint64_t>> members;
+        for(std::size_t i=0;i<p.family.adult_ids.size();++i)
+            members.emplace_back(p.family.adult_ids[i],p.member_event_ids[i]);
+        for(std::size_t i=0;i<p.family.children.size();++i)
+            members.emplace_back(p.family.children[i].child_id,
+                p.member_event_ids[p.family.adult_ids.size()+i]);
+        const auto authorize=[&](auto id,auto origin,auto destination){
+            if(origin!=p.family.source || destination!=p.family.receiver)return false;
+            auto adult=world_.npc_records().find(id);
+            if(adult!=world_.npc_records().end()){
+                const auto after=next.npc_records().find(id);
+                return std::binary_search(p.family.adult_ids.begin(),
+                         p.family.adult_ids.end(),id) &&
+                       adult->second.home_ship==origin &&
+                       after!=next.npc_records().end() &&
+                       after->second.home_ship==destination &&
+                       after->second.location==destination &&
+                       after->second.transport_id==0;
+            }
+            const auto before=world_.physical_dependents().find(id);
+            const auto after=next.physical_dependents().find(id);
+            if(before==world_.physical_dependents().end() ||
+               after==next.physical_dependents().end())return false;
+            const auto selected=std::find_if(p.family.children.begin(),
+                p.family.children.end(),[&](const auto& c){return c.child_id==id;});
+            return selected!=p.family.children.end() &&
+                   selected->guardian_id==after->second.guardian_id &&
+                   before->second.home_ship==origin &&
+                   before->second.location==origin &&
+                   after->second.home_ship==destination &&
+                   after->second.location==destination &&
+                   next.npc_records().at(after->second.guardian_id).home_ship==destination;
+        };
+        const auto moved=family.record_complete_colony_moves(members,
+            p.family.source,p.family.receiver,next.tick(),
+            p.expected_origin_family_revision,p.expected_receiver_family_revision,authorize);
+        if(moved.size()!=members.size())
+            throw std::runtime_error("ART02 household movement incomplete");
+        const auto regional_revision=region.commit_migration_in_world_transaction(
+            db,p.expected_region_revision,p.expected_owner_generation,next.tick(),
+            p.origin_colony,p.receiver_colony,original.current_population,
+            receiver.current_population,std::to_string(p.command_id),
+            members.size(),"colony-family-evacuation-host");
+        run(db,"CREATE TABLE IF NOT EXISTS sg_colony_family_evacuation("
+            "command_id TEXT PRIMARY KEY,intent_id TEXT NOT NULL UNIQUE,"
+            "world_generation INTEGER NOT NULL,tick INTEGER NOT NULL,"
+            "family_scope TEXT NOT NULL,family_seed TEXT NOT NULL,"
+            "region_scope TEXT NOT NULL,region_revision INTEGER NOT NULL,"
+            "owner_generation INTEGER NOT NULL,source TEXT NOT NULL,"
+            "receiver TEXT NOT NULL,origin_colony TEXT NOT NULL,"
+            "receiver_colony TEXT NOT NULL,member_count INTEGER NOT NULL,"
+            "adult_count INTEGER NOT NULL,child_count INTEGER NOT NULL)");
+        run(db,"CREATE TABLE IF NOT EXISTS sg_colony_family_evacuation_member("
+            "command_id TEXT NOT NULL,event_id TEXT NOT NULL UNIQUE,"
+            "person_id TEXT NOT NULL,guardian_id TEXT NOT NULL,"
+            "kind INTEGER NOT NULL CHECK(kind IN (0,1)),"
+            "origin_revision INTEGER NOT NULL,destination_revision INTEGER NOT NULL,"
+            "PRIMARY KEY(command_id,person_id))");
+        for(const auto* tab:{"sg_colony_family_evacuation",
+                             "sg_colony_family_evacuation_member"}){
+            const auto table=std::string(tab);
+            run(db,("CREATE TRIGGER IF NOT EXISTS "+table+"_immutable_update "
+                "BEFORE UPDATE ON "+table+" BEGIN SELECT RAISE(ABORT,"
+                "'family evacuation immutable'); END").c_str());
+            run(db,("CREATE TRIGGER IF NOT EXISTS "+table+"_immutable_delete "
+                "BEFORE DELETE ON "+table+" BEGIN SELECT RAISE(ABORT,"
+                "'family evacuation immutable'); END").c_str());
+        }
+        Statement head(db,"INSERT INTO sg_colony_family_evacuation VALUES "
+            "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+        head.text(1,std::to_string(p.command_id));
+        head.text(2,std::to_string(p.family.intent_id));
+        head.i64(3,static_cast<sqlite3_int64>(committed_generation));
+        head.i64(4,static_cast<sqlite3_int64>(next.tick()));
+        head.text(5,p.family.family_scope);
+        head.text(6,std::to_string(p.family.family_seed));
+        head.text(7,p.region_scope);
+        head.i64(8,static_cast<sqlite3_int64>(regional_revision));
+        head.i64(9,static_cast<sqlite3_int64>(p.expected_owner_generation));
+        head.text(10,std::to_string(p.family.source));
+        head.text(11,std::to_string(p.family.receiver));
+        head.text(12,p.origin_colony);head.text(13,p.receiver_colony);
+        head.i64(14,static_cast<sqlite3_int64>(members.size()));
+        head.i64(15,static_cast<sqlite3_int64>(p.family.adult_ids.size()));
+        head.i64(16,static_cast<sqlite3_int64>(p.family.children.size()));
+        head.execute();
+        for(std::size_t i=0;i<moved.size();++i){
+            const auto child=i>=p.family.adult_ids.size();
+            const auto guardian=child?
+                p.family.children[i-p.family.adult_ids.size()].guardian_id:0;
+            Statement member(db,"INSERT INTO sg_colony_family_evacuation_member "
+                "VALUES(?,?,?,?,?,?,?)");
+            member.text(1,std::to_string(p.command_id));
+            member.text(2,std::to_string(moved[i].event_id));
+            member.text(3,std::to_string(moved[i].npc_id));
+            member.text(4,std::to_string(guardian));
+            member.i64(5,child?1:0);
+            member.i64(6,static_cast<sqlite3_int64>(moved[i].origin_revision));
+            member.i64(7,static_cast<sqlite3_int64>(moved[i].destination_revision));
+            member.execute();
+        }
+    };
+    store_->commit(next,generation_,resource_origin_,credit_origin_,
+                   nullptr,events,due,activity,fail,nullptr,nullptr,effect);
+    world_.swap(next);++generation_;
+}
+
+bool PersistentWorld::verified_atomic_family_departure(std::uint64_t command_id) const{
+    if(!command_id)return false;
+    const auto found=std::find_if(world_.colony_departures().begin(),
+        world_.colony_departures().end(),
+        [&](const auto& row){return row.second.command_id==command_id;});
+    if(found==world_.colony_departures().end() ||
+       found->second.relocated_dependents.empty())return false;
+    sqlite3* raw=nullptr;
+    if(sqlite3_open_v2(db_path_.c_str(),&raw,SQLITE_OPEN_READONLY,nullptr)!=SQLITE_OK){
+        if(raw)sqlite3_close(raw);
+        throw std::runtime_error("cannot verify family evacuation database");
+    }
+    std::unique_ptr<sqlite3,decltype(&sqlite3_close)> db(raw,sqlite3_close);
+    Statement witness(db.get(),"SELECT receiver,member_count,child_count "
+        "FROM sg_colony_family_evacuation WHERE command_id=?");
+    witness.text(1,std::to_string(command_id));
+    if(!witness.row())return false;
+    const auto receiver=parse_u64(sqlite3_column_text(witness.get(),0));
+    const auto count=sqlite3_column_int64(witness.get(),1);
+    const auto children=sqlite3_column_int64(witness.get(),2);
+    if(witness.row())return false;
+    return receiver==found->second.receiver &&
+           count==static_cast<sqlite3_int64>(found->second.relocated_npcs.size()+
+                found->second.relocated_dependents.size()) &&
+           children==static_cast<sqlite3_int64>(found->second.relocated_dependents.size());
+}
+
 bool PersistentWorld::submit_host_emergency_ferry_rescue(
         const Command& command,FailPoint fail){
     // This gate is deliberately limited to EXISTING ferry passengers in one
