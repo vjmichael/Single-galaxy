@@ -19,7 +19,7 @@
     if(t==='PROXIMITY'){
       if(v.length!==6)throw Error('Malformed proximity telemetry');
       const id=numeric(v[4],100000000),distance=numeric(v[5],5000);
-      if((id===0)!==(distance===0))throw Error('Invalid safety contact');
+      if(id===0 && distance!==0)throw Error('Invalid safety contact');
       return {...e,id,distance};
     }
     if(t==='DISCOVERY'){
