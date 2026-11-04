@@ -918,3 +918,10 @@ if(BUILD_TESTING)
     target_link_libraries(galaxy_colony_auto04d3_ferry_tests PRIVATE galaxy_kernel)
     add_test(NAME galaxy_colony_auto04d3_ferry_rescue COMMAND galaxy_colony_auto04d3_ferry_tests)
 endif()
+
+# COLONY-AUTO-04D.4: cargo and named passenger life support custody.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_auto04d4_custody_tests tests/COLONY_AUTO04D4_ResourceCustodyTests.cpp)
+    target_link_libraries(galaxy_colony_auto04d4_custody_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_auto04d4_resource_custody COMMAND galaxy_colony_auto04d4_custody_tests)
+endif()
