@@ -9,6 +9,7 @@
 #include "galaxy/MedicalSocietyBridge.hpp"
 #include "galaxy/RegionalCheckpointStore.hpp"
 #include <algorithm>
+#include <array>
 #include <sqlite3.h>
 
 #include <filesystem>
@@ -7295,6 +7296,202 @@ PersistentWorld::SupervisorTick PersistentWorld::supervise_autonomous_colony_eme
     result.receiver=evaluated.selected_receiver;
     result.reason="supervisor queued immutable whole-family transfer; execution still pending";
     return result;
+}
+
+// AUTO-04D.5C1: re-use the native physical habitat stock transfer. The
+// NPC receives a genuinely delivered LOCAL danger observation; its proposed
+// supplies come only from the colony ship's already-existing inventory.
+PersistentWorld::NpcLocalSupplyResult
+PersistentWorld::supervise_npc_habitat_resupply(
+    EntityId source,EntityId site,std::uint64_t command_id,FailPoint fail){
+    NpcLocalSupplyResult result;
+    result.command_id=command_id;
+    if(!source || !site || source==site || !command_id)
+        throw std::invalid_argument("NPC resupply requires host route and unique command ID");
+    const auto* origin=world_.find(source);
+    const auto* destination=world_.find(site);
+    const auto* stocks=world_.life_support(source);
+    const auto* habitat=world_.habitat(site);
+    if(!origin || !destination || !stocks || !habitat ||
+       habitat->source_ship!=source || origin->type!=EntityType::Ship ||
+       destination->type!=EntityType::Station ||
+       origin->owner_id!=destination->owner_id ||
+       origin->system_id!=destination->system_id ||
+       origin->owner_id==Simulation::kServerAuthority)
+        throw std::invalid_argument("NPC resupply has no valid owned local habitat/ship");
+    const auto dx=origin->position.x-destination->position.x;
+    const auto dy=origin->position.y-destination->position.y;
+    if(dx < -Simulation::kDockingRangeMm || dx>Simulation::kDockingRangeMm ||
+       dy < -Simulation::kDockingRangeMm || dy>Simulation::kDockingRangeMm ||
+       dx*dx+dy*dy>Simulation::kDockingRangeMm*Simulation::kDockingRangeMm){
+        result.status=NpcLocalSupplyStatus::NoUsableStock;
+        result.reason="no physical delivery access to threatened habitat";
+        return result;
+    }
+    const auto risk=colony_safety::assess(world_,source,site);
+    if(risk.population==0 ||
+       static_cast<int>(risk.risk)<static_cast<int>(colony_safety::Risk::Critical)){
+        result.reason="occupied habitat has no critical or emergency shortage";
+        return result;
+    }
+    if(const auto it=world_.commands_.find(world_.tick()+1);
+       it!=world_.commands_.end() && !it->second.empty()){
+        result.status=NpcLocalSupplyStatus::NoUsableStock;
+        result.reason="pending due world commands need reconciliation before emergency logistics";
+        return result;
+    }
+    // Observations are bound to a real committed threshold crossing, NOT a
+    // hazard inferred by the NPC or a fabricated notification.
+    sqlite3* raw=nullptr;
+    if(sqlite3_open_v2(db_path_.c_str(),&raw,SQLITE_OPEN_READONLY,nullptr)!=SQLITE_OK){
+        if(raw)sqlite3_close(raw);
+        throw std::runtime_error("NPC supply cannot open local observation ledger");
+    }
+    std::unique_ptr<sqlite3,decltype(&sqlite3_close)> db(raw,sqlite3_close);
+    Statement latest(db.get(),"SELECT id,new_risk FROM sg_colony_response_events "
+        "WHERE site=? ORDER BY id DESC LIMIT 1");
+    latest.i64(1,static_cast<sqlite3_int64>(site));
+    if(!latest.row() ||
+       sqlite3_column_int(latest.get(),1)!=static_cast<int>(risk.risk)){
+        result.status=NpcLocalSupplyStatus::NoResponder;
+        result.reason="no current locally committed critical shortage observation";
+        return result;
+    }
+    result.notice_id=static_cast<std::uint64_t>(
+        sqlite3_column_int64(latest.get(),0));
+    Statement responders(db.get(),"SELECT npc_id FROM sg_colony_npc_opportunities "
+        "WHERE event_id=? AND site=? ORDER BY npc_id");
+    responders.i64(1,static_cast<sqlite3_int64>(result.notice_id));
+    responders.i64(2,static_cast<sqlite3_int64>(site));
+    while(responders.row()){
+        const auto npc=static_cast<std::uint64_t>(
+            sqlite3_column_int64(responders.get(),0));
+        const auto it=world_.npc_records().find(npc);
+        if(it!=world_.npc_records().end() &&
+           it->second.home_ship==source &&
+           it->second.location==site &&
+           !it->second.transport_id && world_.npc_available_for_duty(npc)){
+            result.npc_id=npc;break;
+        }
+    }
+    if(!result.npc_id){
+        result.status=NpcLocalSupplyStatus::NoResponder;
+        result.reason="no available physically present NPC received a current local alert";
+        return result;
+    }
+    // Real host delivery happens before execution. It survives interruption,
+    // and a retry does not generate a second notification.
+    acknowledge_colony_notification(result.notice_id,result.npc_id);
+    std::array<std::pair<std::int64_t,int>,3> choices{{
+        {risk.remaining.food_periods,1},
+        {risk.remaining.water_periods,2},
+        {risk.remaining.oxygen_periods,3}
+    }};
+    std::stable_sort(choices.begin(),choices.end());
+    const auto source_amount=[&](int r){
+        return r==1?stocks->food_kg:r==2?stocks->water_kg:stocks->oxygen_kg;
+    };
+    const auto destination_amount=[&](int r){
+        return r==1?habitat->life.food_kg:r==2?
+            habitat->life.water_kg:habitat->life.oxygen_kg;
+    };
+    for(const auto& [runway,selector]:choices){
+        (void)runway;
+        const auto required=static_cast<std::int64_t>(4*risk.population);
+        const auto present=destination_amount(selector);
+        const auto available=source_amount(selector);
+        if(present>=required || available<=0)continue;
+        const auto amount=std::min<std::int64_t>(
+            {required-present,available,10000});
+        if(amount<=0)continue;
+        result.resource_selector=selector;
+        result.amount_kg=amount;
+        break;
+    }
+    if(!result.resource_selector){
+        result.status=NpcLocalSupplyStatus::NoUsableStock;
+        result.reason="no physically stock-backed local replenishment is possible";
+        return result;
+    }
+    Command command{};
+    command.id=command_id;command.sequence=command_id;
+    command.execute_tick=world_.tick()+1;
+    command.issuer=origin->owner_id;
+    command.actor=source;command.target=site;
+    command.action=Action::TransferHabitatStock;
+    command.thrust_x=result.resource_selector;
+    command.amount=result.amount_kg;
+    auto next=world_;
+    if(!next.submit(command)){
+        result.status=NpcLocalSupplyStatus::NoUsableStock;
+        result.reason="native authorization rejected emergency habitat stock transfer";
+        return result;
+    }
+    const auto before_source=source_amount(result.resource_selector);
+    const auto before_dest=destination_amount(result.resource_selector);
+    const auto effect=[&](sqlite3* writer,std::uint64_t next_generation){
+        Statement observed(writer,"SELECT o.risk,e.ship,a.delivery_generation "
+            "FROM sg_colony_npc_opportunities o "
+            "JOIN sg_colony_response_events e ON e.id=o.event_id "
+            "JOIN sg_colony_npc_acks a ON a.event_id=o.event_id AND a.npc_id=o.npc_id "
+            "WHERE o.event_id=? AND o.npc_id=? AND o.site=?");
+        observed.i64(1,static_cast<sqlite3_int64>(result.notice_id));
+        observed.i64(2,static_cast<sqlite3_int64>(result.npc_id));
+        observed.i64(3,static_cast<sqlite3_int64>(site));
+        if(!observed.row() ||
+           sqlite3_column_int(observed.get(),0)!=static_cast<int>(risk.risk) ||
+           sqlite3_column_int64(observed.get(),1)!=static_cast<sqlite3_int64>(source) ||
+           sqlite3_column_int64(observed.get(),2)>static_cast<sqlite3_int64>(generation_) ||
+           observed.row())
+            throw std::runtime_error("NPC resupply has no actual delivered local warning");
+        Statement newest(writer,"SELECT id FROM sg_colony_response_events "
+            "WHERE site=? ORDER BY id DESC LIMIT 1");
+        newest.i64(1,static_cast<sqlite3_int64>(site));
+        if(!newest.row() ||
+           sqlite3_column_int64(newest.get(),0)!=
+               static_cast<sqlite3_int64>(result.notice_id) || newest.row())
+            throw std::runtime_error("NPC attempted supply using obsolete hazard");
+        run(writer,"CREATE TABLE IF NOT EXISTS sg_colony_npc_emergency_supply("
+            "command_id TEXT PRIMARY KEY,generation INTEGER NOT NULL CHECK(generation>1),"
+            "world_hash TEXT NOT NULL,npc_id TEXT NOT NULL,notice_id INTEGER NOT NULL,"
+            "source_ship TEXT NOT NULL,habitat TEXT NOT NULL,"
+            "resource INTEGER NOT NULL CHECK(resource BETWEEN 1 AND 3),"
+            "amount_kg INTEGER NOT NULL CHECK(amount_kg>0 AND amount_kg<=10000),"
+            "source_before_kg INTEGER NOT NULL,habitat_before_kg INTEGER NOT NULL,"
+            "risk INTEGER NOT NULL CHECK(risk IN(2,3)))");
+        run(writer,"CREATE TRIGGER IF NOT EXISTS sg_colony_npc_emergency_supply_no_update "
+            "BEFORE UPDATE ON sg_colony_npc_emergency_supply "
+            "BEGIN SELECT RAISE(ABORT,'immutable emergency stock order'); END");
+        run(writer,"CREATE TRIGGER IF NOT EXISTS sg_colony_npc_emergency_supply_no_delete "
+            "BEFORE DELETE ON sg_colony_npc_emergency_supply "
+            "BEGIN SELECT RAISE(ABORT,'immutable emergency stock order'); END");
+        Statement receipt(writer,"INSERT INTO sg_colony_npc_emergency_supply "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)");
+        receipt.text(1,std::to_string(command_id));
+        receipt.i64(2,static_cast<sqlite3_int64>(next_generation));
+        receipt.text(3,std::to_string(next.state_hash()));
+        receipt.text(4,std::to_string(result.npc_id));
+        receipt.i64(5,static_cast<sqlite3_int64>(result.notice_id));
+        receipt.text(6,std::to_string(source));
+        receipt.text(7,std::to_string(site));
+        receipt.i64(8,result.resource_selector);
+        receipt.i64(9,result.amount_kg);
+        receipt.i64(10,before_source);
+        receipt.i64(11,before_dest);
+        receipt.i64(12,static_cast<int>(risk.risk));
+        receipt.execute();
+    };
+    store_->commit(next,generation_,resource_origin_,credit_origin_,&command,
+                   {},{},{},fail,nullptr,nullptr,effect);
+    world_.swap(next);
+    ++generation_;
+    result.status=NpcLocalSupplyStatus::Accepted;
+    result.reason="real local inventory transfer admitted; native world step pending";
+    return result;
+}
+bool PersistentWorld::verified_npc_habitat_resupply(std::uint64_t command_id) const{
+    if(!command_id)return false;
+    return store_->npc_habitat_supply_applied(command_id,generation_);
 }
 
 // COLONY-AUTO-04D.4D2B2: admission only. No family member relocates until
