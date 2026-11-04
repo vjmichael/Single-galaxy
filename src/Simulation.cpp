@@ -4710,6 +4710,14 @@ std::vector<PhysicalCelestialBody> Simulation::scan_physical_celestials(
     return found==physical_celestial_systems_.end()?
         std::vector<PhysicalCelestialBody>{}:found->second;
 }
+std::optional<PhysicalCelestialBody> Simulation::celestial_navigation_anchor(
+    PlayerId owner,EntityId ship,std::uint64_t body_id) const {
+    if(!body_id)return std::nullopt;
+    const auto bodies=scan_physical_celestials(owner,ship);
+    const auto it=std::find_if(bodies.begin(),bodies.end(),
+        [body_id](const PhysicalCelestialBody& b){return b.id==body_id;});
+    return it==bodies.end()?std::nullopt:std::optional<PhysicalCelestialBody>(*it);
+}
 std::optional<AstronomicalProfile> Simulation::scan_celestial_profile(
     PlayerId owner,EntityId ship) const {
     const auto it=entities_.find(ship);

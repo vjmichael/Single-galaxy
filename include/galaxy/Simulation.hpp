@@ -782,6 +782,10 @@ public:
     // Read-only survey of deterministic system metadata; no fabricated physical bodies.
     std::optional<AstronomicalProfile> scan_celestial_profile(PlayerId owner,EntityId ship) const;
     std::vector<PhysicalCelestialBody> scan_physical_celestials(PlayerId owner,EntityId ship) const;
+    // A persistent celestial body can be addressed by ID as a future navigation
+    // anchor; this does not authorize warp, construction or landing.
+    std::optional<PhysicalCelestialBody> celestial_navigation_anchor(
+        PlayerId owner,EntityId ship,std::uint64_t body_id) const;
     const std::map<std::uint32_t,std::vector<PhysicalCelestialBody>>& physical_celestial_systems() const {
         return physical_celestial_systems_;
     }

@@ -41,14 +41,21 @@ static void physical_celestial_world() {
    const auto bodies=w.world().scan_physical_celestials(7,ship);
    CHECK(!bodies.empty());
    CHECK(w.world().scan_physical_celestials(8,ship).empty());
+   CHECK(!w.world().celestial_navigation_anchor(8,ship,bodies.front().id));
+   CHECK(w.world().celestial_navigation_anchor(7,ship,bodies.front().id).has_value());
+   CHECK(!w.world().celestial_navigation_anchor(7,ship,0).has_value());
+   CHECK(!w.world().celestial_navigation_anchor(7,ship,
+       (std::uint64_t(2)<<32)|1).has_value());
    CHECK(w.world().total_ore()==static_cast<std::int64_t>(original_ore));
    const auto& second=w.world().physical_celestial_systems().at(2);
    CHECK(!second.empty()&&second.front().system==2);
    std::set<std::uint64_t> all_ids;
+   bool elevated_body=false;
    for(const auto& [system,world_bodies]:w.world().physical_celestial_systems()){
     CHECK(!world_bodies.empty()&&world_bodies.size()<=50);
     for(const auto& body:world_bodies){
      CHECK(body.system==system&&body.id!=0&&body.physical_radius_mm>0);
+     if(body.position.z_mm!=0)elevated_body=true;
      CHECK(all_ids.insert(body.id).second);
      if(body.kind!=CelestialKind::Star){
        CHECK(body.parent_id!=0);
@@ -56,6 +63,7 @@ static void physical_celestial_world() {
      }
     }
    }
+   CHECK(elevated_body); // world coordinates are genuinely 3D
    const auto generation=w.generation();
    w.ensure_physical_celestial_systems();
    CHECK(w.generation()==generation);

@@ -73,3 +73,21 @@ Dependency: PLAY-13 draft PR #44, not merged. PLAY-13B PR #46 is stacked on the 
 - `SurveyArchive::record_system_catalogue` stores owner/system/first survey tick/latest survey tick/generator revision/star architecture/star count/band count in a dedicated SQLite table. Repeat scans update the last tick but preserve the original discovery provenance. Cross-owner lookup returns no entry.
 - A completed owner-authorized native `SYSTEM_CELESTIAL` survey now saves this record in the existing sidecar and emits `CELESTIAL_HISTORY` telemetry to the same player; this permits previously surveyed systems to be recognized across host restarts.
 - The sidecar is a derived knowledge index; first survey timestamps may be lost if the index itself is destroyed. Full authoritative event journaling and optional sharing/publication of celestial knowledge remain open. Physical planets and environmental hazards remain separate future development gates.
+
+## PLAY-13B.6 — Physical astronomical bodies (v70, 2026-11-04)
+
+### Implemented
+- New `PhysicalCelestialBody` world-layer records: `id`, `system`, `kind` (star/planet/moon/debris region), `parent_id`, `orbital_radius_milli_au`, `physical_radius_mm`, and a real millimeter **3-D** `x/y/z` cosmic position. They are NOT encoded in the preexisting short-range ship/asteroid entity table.
+- Body IDs are deterministic in a dedicated identity space `(system << 32) | ordinal`; parents are durable references. Star systems are generated once and saved, and the host uses `PersistentWorld::ensure_physical_celestial_systems()` to migrate old worlds through the normal atomic world journal.
+- A v70 canonical snapshot contains `celestial|...` records. Restore parses strict dimensions and numeric bounds, verifies stable ordering, and **reconstructs** the fixed v70 procedural geometry to reject unknown, moved, reparented or altered celestial records. Earlier v69 and older snapshots still parse and can migrate explicitly.
+- `scan_physical_celestials` and `celestial_navigation_anchor` are owner- and scanner-fitted-authorized views. Navigation can address the stable body identity, but the query grants no flight or settlement privileges.
+- The live `SYSTEM_CELESTIAL` response now includes `CELESTIAL_BODY` records showing 3-D physical positions, radii and parent IDs. The browser decoder rejects malformed values and displays the persisted bodies with separate text rows.
+- Existing short-range physical inventory/ship rules remain unchanged; material conservation tests ensure seeding these bodies creates no ore, crew, equipment, credits or other free resources.
+- Native acceptance exercises two-system ID separation, owner isolation, idempotent migration, 3-D positions, exact save/reopen, snapshot tampering and resource conservation.
+
+### Explicit next gates
+- Add an actual 3-D astronomical map/renderer and interplanetary-to-local coordinate transition for ships, probes, and fold-gate destinations. Static celestial geometry is **not yet traversable** through the existing short-range ship physics, nor does it carry collision or gravity calculations.
+- Integrate celestial body radius, environmental effects, orbital progression, planetary biome and resource surveys, surface landing and permitted colony placement with gameplay authorization.
+- Store source-world / per-player body discovery evidence in the authoritative journal, rather than treating system-catalogue sidecar timestamps as a sufficient irreversible proof of first discovery.
+- Freeze v70 procedural geometry and seed under generator revision 1. Future content revisions must introduce a new generator version and explicit migration rather than changing old saved positions in place.
+- Require *real* Windows/Linux C++ compile, CTest, live host restart and browser acceptance before calling this gate passed. GitHub check failure with missing job steps/log blob is an infrastructure/unknown status, not proof of test success or a verified compiler failure.
