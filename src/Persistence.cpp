@@ -162,10 +162,14 @@ Command decode_command(const std::string& record) {
         if (extra != "T31" || !(in >> c.transport_id))
             throw std::runtime_error("recovery: invalid transport envelope");
         std::size_t count=0;
-        const bool colony_departure=action==static_cast<int>(Action::HostColonyDeparture);
-        if (!(in >> count) || count==0 || count>(colony_departure?16U:10000U) ||
-            (colony_departure ? c.transport_id!=0 : c.transport_id==0))
-            throw std::runtime_error("recovery: invalid transport/departure manifest size");
+        const bool colony_departure=action==static_cast<int>(Action::HostColonyDeparture) ||
+            action==static_cast<int>(Action::HostColonyFamilyDeparture);
+        const bool dependent_birth=action==static_cast<int>(Action::HostRegisterDependentBirth);
+        if (!(in >> count) || count==0 ||
+            count>(colony_departure?16U:dependent_birth?1U:10000U) ||
+            ((colony_departure && c.transport_id!=0) ||
+             (!colony_departure && c.transport_id==0)))
+            throw std::runtime_error("recovery: invalid transport/departure/birth manifest size");
         std::set<std::uint64_t> unique;
         for (std::size_t i=0;i<count;++i) {
             std::uint64_t npc=0;
@@ -173,15 +177,19 @@ Command decode_command(const std::string& record) {
                 throw std::runtime_error("recovery: invalid transport passenger");
             c.passenger_ids.push_back(npc);
         }
-        if(colony_departure && !std::is_sorted(c.passenger_ids.begin(),c.passenger_ids.end()))
+        if(colony_departure && (!std::is_sorted(c.passenger_ids.begin(),c.passenger_ids.end()) ||
+            std::adjacent_find(c.passenger_ids.begin(),c.passenger_ids.end())!=c.passenger_ids.end()))
             throw std::runtime_error("recovery: departure IDs not canonical");
+        if(dependent_birth && (c.passenger_ids.front()<(1ULL<<62) ||
+            c.amount<=0 || c.actor!=c.target || !c.actor))
+            throw std::runtime_error("recovery: invalid physical birth identity");
         if(action==static_cast<int>(Action::HostSplitEvacuatePassengers)){
             if(!(in>>extra)||extra!="S48"||!(in>>c.secondary_receiver>>c.secondary_transport)||
                !c.secondary_receiver||!c.secondary_transport)
                 throw std::runtime_error("recovery: malformed split rescue envelope");
         }
     }
-    if (in >> extra || action < 0 || action > static_cast<int>(Action::HostColonyDeparture) || c.id == 0 || c.issuer == 0)
+    if (in >> extra || action < 0 || action > static_cast<int>(Action::HostColonyFamilyDeparture) || c.id == 0 || c.issuer == 0)
         throw std::runtime_error("recovery: invalid command journal values");
     c.action = static_cast<Action>(action);
     if (command_record(c) != record) throw std::runtime_error("recovery: noncanonical command journal");
