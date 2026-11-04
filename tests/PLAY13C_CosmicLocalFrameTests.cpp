@@ -10,7 +10,7 @@ using namespace galaxy;
 int main() {
     const LocalSpaceFrame frame{17, (std::uint64_t(17)<<32)|3,
         {200000000000000LL,-300000000000000LL,900000000000000LL}};
-    const LocalOffset3 d{123456789,-999999999999LL,500000000000LL};
+    const LocalOffset3 d{123456789,-999999999LL,500000000LL};
     auto cosmic=local_to_cosmic(frame,d);
     assert(cosmic.has_value());
     auto back=cosmic_to_local(frame,*cosmic);
