@@ -1,0 +1,28 @@
+name: Colony EXIT-01B actual voluntary immigration
+on:
+  push:
+    branches:
+      - integration/colony-exit01b-physical-immigration-v87-20261103
+  pull_request:
+    paths:
+      - 'src/Persistence.cpp'
+      - 'include/galaxy/Persistence.hpp'
+      - 'src/Simulation.cpp'
+      - 'include/galaxy/Simulation.hpp'
+      - 'tests/COLONY_EXIT01B*'
+      - 'CMakeLists.txt'
+  workflow_dispatch:
+jobs:
+  real-immigration-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SQLite
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+      - name: Build executed native immigration and custody regression
+        run: cmake --build build --target galaxy_colony_exit01b_immigration_tests galaxy_colony_exit01a_survival_tests galaxy_colony_conflict01b3_governance_tests galaxy_colony_conflict01b2_diplomacy_epoch_tests galaxy_colony_conflict01b1_grievance_tests v59_atomic_migration v59_household_migration -j 2
+      - name: Verify actual single-adult migration with original native family and region
+        run: ctest --test-dir build --output-on-failure -R 'galaxy_colony_(exit01b_immigration|exit01a_survival|conflict01b3_governance|conflict01b2_diplomacy_epoch|conflict01b1_grievance)|v59_(atomic_migration|household_migration)'

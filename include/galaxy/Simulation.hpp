@@ -565,6 +565,11 @@ public:
     std::size_t children_physically_aboard(EntityId ship) const;
     // 1 active, 2 completed, 3 stranded, 5 rescued, 6 lost; zero unknown.
     unsigned voyage_status(std::uint64_t transport_id) const;
+    // Native, read-only physical manifest audit. Does not create another
+    // passenger registry or infer arrival from an external travel narrative.
+    bool completed_voyage_matches(
+        std::uint64_t transport_id,EntityId ferry,EntityId origin,
+        EntityId destination,const std::vector<std::uint64_t>& passengers) const;
     // Derived, read-only incident/EMS dispatch report from canonical voyage,
     // casualty and receipt state. Never maintains a shadow NPC authority.
     struct FerryEmergencyReport {
