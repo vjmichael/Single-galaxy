@@ -120,8 +120,18 @@ void status(const Simulation& w,EntityId ship,bool replay_discoveries=false){
     announce(w,"PROBE_RESET");
     for(const auto& [id,p]:w.survey_probes()){
         if(p.owner!=s->owner_id || p.carrier!=ship)continue;
+        if(p.drone_phase && p.system==s->system_id){
+            // A geological drone keeps flying autonomously out of radio range,
+            // but live status is available only while its carrier is within 10 km.
+            const auto dx=p.position.x-s->position.x;
+            const auto dy=p.position.y-s->position.y;
+            const auto r=Simulation::kDroneControlRangeMm;
+            if(dx<-r || dx>r || dy<-r || dy>r || dx*dx+dy*dy>r*r)continue;
+        }else if(p.drone_phase && p.system!=s->system_id)continue;
         announce(w,"SURVEY_PROBE|"+std::to_string(id)+"|"+std::to_string(p.system)+"|"+
-            std::to_string(p.position.x)+"|"+std::to_string(p.position.y));
+            std::to_string(p.position.x)+"|"+std::to_string(p.position.y)+"|"+
+            std::to_string(p.drone_phase)+"|"+std::to_string(p.drone_target)+"|"+
+            std::to_string(p.sample_ore)+"|"+std::to_string(p.taxonomy));
     }
     announce(w,"PROBE_STOCK|"+std::to_string(s->survey_probes_carried)+"|"+
         std::to_string(s->fitting.probe_launcher()?1:0));
@@ -150,7 +160,8 @@ void status(const Simulation& w,EntityId ship,bool replay_discoveries=false){
         if(key.first!=s->owner_id)continue;
         announce(w,"DISCOVERY|"+std::to_string(d.site)+"|"+std::to_string(d.system)+"|"+
             std::to_string(d.location.x)+"|"+std::to_string(d.location.y)+"|"+
-            std::to_string(d.first_tick)+"|"+std::to_string(d.geological?1:0));
+            std::to_string(d.first_tick)+"|"+std::to_string(d.geological?1:0)+"|"+
+            std::to_string(d.survey_taxonomy));
     }
     for(const auto& [id,e]:w.entities()){
         if(e.type==EntityType::Wreck && e.owner_id==8 &&
@@ -436,6 +447,12 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
                 throw std::invalid_argument("invalid wreck salvage");
             c.action=Action::SalvageWreck;
             c.target=static_cast<EntityId>(target);c.amount=amount;
+        }else if(v.size()==2 && v[0]=="DRONE_LAUNCH"){
+            const auto target=integer(v[1]);
+            if(target<1 || target>100000000)
+                throw std::invalid_argument("invalid geological drone target");
+            c.action=Action::LaunchGeologicalDrone;
+            c.target=static_cast<EntityId>(target);
         }else if(v.size()==1 && v[0]=="PROBE_DEPLOY"){
             c.action=Action::DeploySurveyProbe;
         }else if(v.size()==2 && (v[0]=="PROBE_SCAN" || v[0]=="PROBE_RECOVER")){
@@ -683,6 +700,13 @@ int main(int argc,char** argv){
         status(world.world(),ship,true);
         std::uint64_t nonce=900000000000ULL+world.generation();
         std::set<std::uint64_t> pending_scans,pending_probe_scans;
+        std::size_t known_discoveries=world.world().discoveries().size();
+        const auto report_count=[&](){
+            return std::count_if(world.world().discoveries().begin(),
+                world.world().discoveries().end(),
+                [](const auto& record){return record.second.survey_taxonomy!=0;});
+        };
+        std::size_t known_reports=report_count();
         const auto period=std::chrono::milliseconds(ms);
         for(int i=0;i<max_ticks;++i){
             const auto start=Clock::now();
@@ -746,6 +770,15 @@ int main(int argc,char** argv){
                     scanned=true; // remote probe survey: only native discovery records, no ship scan
                 announce(world.world(),"RESULT|"+std::to_string(ev.command_id)+"|"+
                     to_string(ev.result)+"|"+std::to_string(ev.transferred));
+            }
+            const auto reports_now=report_count();
+            if(world.world().discoveries().size()!=known_discoveries ||
+               reports_now!=known_reports){
+                // Native geology report arrived over a live 10 km link,
+                // even when its target was already discovered previously.
+                scanned=true;
+                known_discoveries=world.world().discoveries().size();
+                known_reports=reports_now;
             }
             std::cout<<encode_frame(bridge.after_committed_step(world.world()))<<std::flush;
             status(world.world(),ship,scanned);

@@ -13,6 +13,8 @@ function describe(r){
  return '#'+r.site+' · '+(r.geological?'geological asteroid':'small asteroid')+
    ' · system '+r.system+' · mapped at '+Math.round(r.x).toLocaleString()+', '+
    Math.round(r.y).toLocaleString()+' mm · first discovered tick '+r.firstTick+
+   (r.surveyTaxonomy>=1&&r.surveyTaxonomy<=3?
+      ' · drone report: '+['Carbonaceous','Silicate','Metal-rich'][r.surveyTaxonomy-1]:'')+
    (r.distance!==null?' · '+Math.round(r.distance).toLocaleString()+' mm from ship':'');
 }
 function stats(rows){

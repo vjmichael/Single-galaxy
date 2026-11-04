@@ -1167,3 +1167,10 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_play12_probe_tests PRIVATE galaxy_kernel)
   add_test(NAME galaxy_play12_probes COMMAND galaxy_play12_probe_tests)
 endif()
+
+# PLAY-13 host-supervised geological drone flight and physical core sampling.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13_drone_tests tests/PLAY13_GeologicalDroneTests.cpp)
+  target_link_libraries(galaxy_play13_drone_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13_drones COMMAND galaxy_play13_drone_tests)
+endif()
