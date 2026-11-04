@@ -1164,6 +1164,26 @@ public:
                         "AND name='sg_dependent_travel'");
         return t.row();
     }
+    // Whole-colony adult departure cannot silently orphan any known ART02
+    // dependent or world-recorded birth. Historical child links are refused
+    // conservatively until a complete guardian+births closure adapter exists.
+    bool has_child_or_dependent_link(EntityId scope) const {
+        const auto key=std::to_string(scope);
+        if(has_dependent_table()){
+            Statement child(db_,"SELECT 1 FROM sg_dependent_travel "
+                                 "WHERE ferry=? OR origin=? OR destination=? LIMIT 1");
+            child.text(1,key);child.text(2,key);child.text(3,key);
+            if(child.row())return true;
+        }
+        Statement table(db_,"SELECT 1 FROM sqlite_master "
+                             "WHERE type='table' AND name='sg_med_society_birth'");
+        if(table.row()){
+            Statement birth(db_,"SELECT 1 FROM sg_med_society_birth WHERE home_ship=? LIMIT 1");
+            birth.text(1,key);
+            if(birth.row())return true;
+        }
+        return false;
+    }
     std::int64_t active_dependent_berths(EntityId ferry) const {
         if(!has_dependent_table())return 0;
         Statement q(db_,"SELECT COUNT(*) FROM sg_dependent_travel WHERE ferry=? AND status=1");
@@ -5653,11 +5673,11 @@ bool PersistentWorld::submit_host_colony_departure(const Command& command,FailPo
        command.issuer!=Simulation::kServerAuthority ||
        command.execute_tick!=world_.tick()+1 ||
        !command.actor || !command.target)return false;
-    if(store_->active_dependent_berths(command.actor)>0 ||
-       store_->active_dependent_berths(command.target)>0)return false;
+    if(store_->has_child_or_dependent_link(command.actor) ||
+       store_->has_child_or_dependent_link(command.target))return false;
     for(const auto& [site,outpost]:world_.built_outposts()){
         if(outpost.source_colony_ship==command.actor &&
-           store_->active_dependent_berths(site)>0)return false;
+           store_->has_child_or_dependent_link(site))return false;
     }
     auto next=world_;
     if(!next.submit(command))return false;
@@ -5678,13 +5698,13 @@ void PersistentWorld::step_with_colony_departure(FailPoint fail){
        due.begin()->second.issuer!=Simulation::kServerAuthority)
         throw std::runtime_error("colony departure requires one authorized due command");
     const auto cmd=due.begin()->second;
-    if(store_->active_dependent_berths(cmd.actor)>0 ||
-       store_->active_dependent_berths(cmd.target)>0)
-        throw std::runtime_error("colony departure conflicts with dependent custody");
+    if(store_->has_child_or_dependent_link(cmd.actor) ||
+       store_->has_child_or_dependent_link(cmd.target))
+        throw std::runtime_error("colony departure conflicts with recorded dependent or birth custody");
     for(const auto& [site,outpost]:world_.built_outposts())
         if(outpost.source_colony_ship==cmd.actor &&
-           store_->active_dependent_berths(site)>0)
-            throw std::runtime_error("occupied dependent site blocks colony departure");
+           store_->has_child_or_dependent_link(site))
+            throw std::runtime_error("recorded dependent site blocks colony departure");
     next.step();
     if(next.events().size()!=before+1 ||
        next.events().back().command_id!=cmd.id ||
