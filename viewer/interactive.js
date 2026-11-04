@@ -121,7 +121,7 @@ window.onGalaxyLiveProjection=function(state){
    ' · speed '+speed.toFixed(0)+' mm/tick'+
    (first?' · nearest visible asteroid #'+first.rock.id+
       ' at '+first.range.toFixed(0)+' mm':' · no asteroid currently visible');
- const cargo=window.GalaxyCargoReturn?.plan(state,7);
+ const cargo=window.GalaxyCargoReturn?.plan(state,7,window.GalaxyColonyOutpostIds);
  lastReturnShip=ship;
  if(cargo){
    el('returnTelemetry').textContent=cargo.message+
