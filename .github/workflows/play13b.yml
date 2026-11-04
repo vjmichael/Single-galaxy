@@ -8,8 +8,10 @@ on:
       - 'include/galaxy/Galaxy.hpp'
       - 'include/galaxy/Astronomy.hpp'
       - 'src/Galaxy.cpp'
+      - 'src/colony_live_host.cpp'
       - 'tests/GeographyScanningTests.cpp'
       - 'tests/PLAY13_GeologicalDroneTests.cpp'
+      - 'tests/PLAY13B_LiveSurveyIndexSmoke.py'
       - '.github/workflows/play13b.yml'
 jobs:
   scanner-knowledge:
@@ -23,6 +25,9 @@ jobs:
       - name: Configure native code
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
       - name: Build authoritative scanning tests
-        run: cmake --build build --config Release --target galaxy_geography_scanning_tests galaxy_play13_drone_tests
+        run: cmake --build build --config Release --target galaxy_geography_scanning_tests galaxy_play13_drone_tests galaxy_colony_live_host
       - name: Exercise scan modes and durable survey history
         run: ctest --test-dir build -C Release -R "galaxy_(b54_b60_geography_scanning_tests|play13_drones)" --output-on-failure
+      - name: Real colony host survey index restart smoke
+        run: python tests/PLAY13B_LiveSurveyIndexSmoke.py "${{ github.workspace }}/build/galaxy_colony_live_host"
+        if: runner.os == 'Linux'
