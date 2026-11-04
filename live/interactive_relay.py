@@ -32,6 +32,7 @@ STATIC={
     '/viewer/colony.js':'viewer/colony.js',
     '/viewer/opening-guide.js':'viewer/opening-guide.js',
     '/viewer/flight-controls.js':'viewer/flight-controls.js',
+    '/viewer/flight-camera.js':'viewer/flight-camera.js',
     '/viewer/cargo-return.js':'viewer/cargo-return.js',
     '/viewer/expedition-feedback.js':'viewer/expedition-feedback.js',
     '/viewer/colony-shipping.js':'viewer/colony-shipping.js',
