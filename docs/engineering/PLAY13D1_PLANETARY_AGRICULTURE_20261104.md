@@ -31,3 +31,11 @@ Do not merge this branch as a complete gameplay feature until those gates have n
 The first `PlanetaryRegions.hpp` kernel is deliberately a coarse regional approximation, not authoritative simulated hydrology, geology, erosion, weather or atmospheric chemistry. Subsequent tests should require plausibility of adjacent regions, elevation and coast connectivity, polar behavior, climate history and actionable placement differences. Farming must eventually bind **site region coordinates** and specific local water/soil conditions, rather than the global average. User-facing scanners must reveal the regional map and allow choosing a site before paying construction materials. World generation and region metadata must be versioned and preserved through reload, avoiding shifting surface resources after updates.
 
 Native CTest: `galaxy_play13d_planetary_regions_tests` (Windows/Linux). **Not yet host-integrated or SQLite-persisted.**
+
+## PLAY-13D.2B — Arid ecosystems are alive (code added; CI pending)
+
+Aridity describes limited precipitation, **not** absence of life or an endless sandy desert. The regional survey now independently reports sparse shrubs, succulent scrub, drought-adapted grasses, dormant seed banks, and episodic bloom potential. Extreme dry regions can remain mostly bare, while other regions on the same planet retain sparse cover or seasonally bloom. Rocky ground, basins, canyons and other relief still coexist with this vegetation layer. Wild desert ecosystems do not automatically qualify as arable farmland.
+
+`arid_bloom_active(region, season, rain_pulse)` is a deterministic ecological indicator, not a promise that it rains each season or that biomass appears from nothing. Rainfall must later be supplied by authoritative weather and water custody; growth, vegetation harvest and environmental change require separate durable material/energy effects. Current function is a prototype and does not yet model actual rainfall persistence, phenology, or biogeochemical storage. Native tests distinguish sparse vegetation, dormant seeds, rainfall pulses and truly sterile airless rock.
+
+Design inspiration: desert blooms in Death Valley following suitable precipitation. Avoid classifying all arid worlds as sterile or all bloom events as agricultural fertility.
