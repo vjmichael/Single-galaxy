@@ -113,6 +113,7 @@ void announce(const Simulation& w,const std::string& text){
 void status(const Simulation& w,EntityId ship){
     const auto* s=w.find(ship);const auto* c=w.colony_ship(ship);
     if(!s || !c)throw std::runtime_error("colony ship missing");
+    announce(w,"HEADING|"+std::to_string(s->heading_deg));
     announce(w,"STATUS|"+std::to_string(c->crew)+"|"+std::to_string(s->cargo)+"|"+
         std::to_string(c->refined)+"|"+std::to_string(c->modules)+"|"+
         std::to_string(w.built_outposts().size())+"|"+std::to_string(w.total_ore()));
@@ -359,6 +360,10 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
             auto x=integer(v[1]),y=integer(v[2]);
             if(x<-1||x>1||y<-1||y>1)throw std::invalid_argument("bad thrust");
             c.action=Action::Thrust;c.thrust_x=static_cast<int>(x);c.thrust_y=static_cast<int>(y);
+        }else if(v.size()==2 && v[0]=="YAW"){
+            const auto delta=integer(v[1]);
+            if(delta!=15 && delta!=-15)throw std::invalid_argument("bad yaw");
+            c.action=Action::Thrust;c.amount=delta;
         }else if(v.size()==2 && v[0]=="MINE"){
             c.amount=integer(v[1]);if(c.amount<1||c.amount>100)throw std::invalid_argument("bad mine amount");
             c.action=Action::Mine;c.target=nearest(world.world(),ship);
