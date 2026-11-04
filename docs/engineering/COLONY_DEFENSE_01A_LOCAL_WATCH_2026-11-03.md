@@ -24,4 +24,6 @@ This is a **sentry sighting**, not a sensor array, weapons lock, trespass judgme
 
 The player can eventually attack a colony, but these actions may not reuse `HostDestroyShip` to delete a populated colony or create casualties without a world physical-cause receipt and appropriate ART02+ECON03 population reconciliation.
 
-**Status:** Await final dedicated v81 GitHub Actions acceptance and whole-branch regression results.
+**Focused acceptance PASSED:** [GitHub Actions run 41777022780](https://github.com/vjmichael/Single-galaxy/actions/runs/41777022780), executable commit `d501bb140a39974fff2496f50a2e32b685fd2675`, 2/2 native CTests passed in 0.50 seconds: NPC local watch and v80 physical resupply. This documentation change does not alter executed C++.
+
+**Wider PR regression checks remain separate**; leave the pull request draft until they finish and integrate DEF-01B/C with independently verified physical combat transactions.
