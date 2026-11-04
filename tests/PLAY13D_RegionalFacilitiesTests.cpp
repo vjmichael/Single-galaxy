@@ -110,6 +110,20 @@ static void scenario(const fs::path& db, bool farming){
             CHECK(w.world().oasis_reserves().at(chosen.body).water_kg==7000);
         }
         CHECK(w.world().total_ore()==origin);
+        // Leaving the planet must neither delete its completed structure
+        // nor permit remote inventory use from another celestial frame.
+        const auto& system_bodies=w.world().physical_celestial_systems().at(chosen.system);
+        std::uint64_t remote=0;
+        for(const auto& candidate:system_bodies)
+            if(candidate.id!=chosen.body){remote=candidate.id;break;}
+        CHECK(remote!=0);
+        CHECK(w.begin_celestial_transit(7,ship,remote,90002));
+        w.steps(4);
+        CHECK(w.complete_celestial_transit(90002));
+        CHECK(!w.supply_planetary_site(7,ship,chosen.body,
+            chosen.latitude,chosen.longitude,true,1));
+        CHECK(w.world().planetary_sites().size()==1);
+        CHECK(w.world().total_ore()==origin);
         durable=w.world().canonical_state();
         CHECK(durable.rfind("galaxy-kernel-v77|",0)==0);
         CHECK(Simulation::from_snapshot(durable).canonical_state()==durable);
