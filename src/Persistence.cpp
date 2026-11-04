@@ -8622,6 +8622,17 @@ PersistentWorld::PersistentWorld(const std::string& path, Simulation initial_wor
     store_->verify_colony_diplomatic_intents(generation_);
 }
 PersistentWorld::~PersistentWorld() = default;
+void PersistentWorld::ensure_ship_frame_registry() {
+    auto next=world_;
+    next.ensure_ship_frame_registry();
+    if(next.canonical_state()==world_.canonical_state())return;
+    // The existing journal commits the complete v71 snapshot before memory
+    // publication. On failure both the previous world and cargo remain intact.
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},FailPoint::None);
+    world_.swap(next);
+    ++generation_;
+}
 void PersistentWorld::ensure_physical_celestial_systems() {
     auto next=world_;
     next.ensure_physical_celestial_systems();
