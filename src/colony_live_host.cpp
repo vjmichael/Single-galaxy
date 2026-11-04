@@ -400,6 +400,38 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
         else announce(world.world(),"ERROR|INVALID_INPUT");
         return;
     }
+    if(v.size()==1 && v[0]=="SIGNATURES"){
+        announce(world.world(),"SIGNATURE_RESET");
+        const auto found=world.world().coarse_probe_signatures(principal,ship);
+        for(const auto& item:found)
+            announce(world.world(),"SIGNATURE_CONTACT|"+std::to_string(item.id)+"|"+
+                std::to_string(item.coarse.x)+"|"+std::to_string(item.coarse.y)+"|"+
+                std::to_string(item.uncertainty_mm));
+        announce(world.world(),"SIGNATURE_DONE|"+std::to_string(found.size()));
+        return;
+    }
+    if((v.size()==3 && v[0]=="PROBE_FOCUS") ||
+       (v.size()==2 && v[0]=="PROBE_CANCEL")){
+        try {
+            const auto id=integer(v[1]);
+            const auto site=v.size()==3?integer(v[2]):0;
+            if(id<1||id>1000000000000000LL||
+               (v.size()==3&&(site<1||site>100000000)))
+                throw std::invalid_argument("invalid probe lock-on");
+            Command command{};
+            command.id=++nonce;command.sequence=command.id;
+            command.execute_tick=world.world().tick()+1;
+            command.issuer=principal;command.actor=ship;
+            command.target=static_cast<EntityId>(id);
+            command.amount=site;
+            command.action=v.size()==3?Action::FocusSurveyProbe:Action::CancelSurveyFocus;
+            if(!world.submit(command))
+                announce(world.world(),"ERROR|INVALID_INPUT");
+        }catch(const std::exception&){
+            announce(world.world(),"ERROR|INVALID_INPUT");
+        }
+        return;
+    }
     if(v.size()==2 && v[0]=="PROBE_SCAN"){
         try{
             const auto id=integer(v[1]);
