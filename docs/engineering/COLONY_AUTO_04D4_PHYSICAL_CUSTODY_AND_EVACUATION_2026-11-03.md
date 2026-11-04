@@ -43,6 +43,18 @@ This work is a **necessary physical foundation**, NOT the complete promised full
 
 **AUTO-04D.4B — all-or-nothing colony departure manifest and stock escrow:** implement a durable, conflict-safe household/crew/worker roster checked against the actual ART02/ECON03 and world inventory, then introduce physically valid last-crew evacuation/mothballing in the canonical `Simulation` command grammar. Pair this with finite onboard provisions, real receiving/operating crew custody and rollback/restart/cold-warm verification before any 'colony evacuated' outcome. No bypass by player preference, and no fabricated rescue.
 
+## Implemented 04D.4B: complete-colony survey, still not departure
+
+A read-only `colony_evacuation::survey` now gathers the **living** named NPCs assigned to a source colony ship, calculates the existing aggregate crew + farm workers + habitat residents, reconciles each named NPC's current physical location, and reports whether those counts agree. It discovers actual intact nearby colony rescue vessels using the native docking range, exact free passenger berths, and food/water/oxygen capacity for two consumption periods after accounting for people already aboard.
+
+This is a capacity/manifest **survey**, not an admission, seat reservation, or legal guardian check. The result exposes `dependent_guardianship_verified=false`, `last_operating_crew_departure_supported=false` and `executable=false` until the corresponding physical/legal atomic adapters exist. A positive `sufficient_local_berths` cannot be mistaken for an evacuated colony.
+
+`COLONY_AUTO04D4_DepartureManifestTests.cpp` exercises a complete four-person named origin, a nearby adequately stocked receiver, an inaccessible distant ferry, a nearby but underfunded receiver, snapshot round-trip and explicit refusal of any success claim.
+
+### Critical correction: the old home ship must not double-consume
+
+For v57 **the entire physical shipboard population** is counted from living named NPCs with `location == ship`, not `assigned_crew + visitors`. This prevents absent native crew boarded onto a ferry from continuing to consume supplies at their original ship. Disembarkation restores those people to the old ship's consumption count. The ship-level life-support `Assessment`, 20-tick needs kernel, and receiving-rescue budget share this definition; older world versions keep their original replay rules.
+
 ## CI
 
 Native GitHub workflow: `.github/workflows/colony-auto04d4.yml`. Tests must pass on the final branch head before the 04D.4A gate is considered verified.
