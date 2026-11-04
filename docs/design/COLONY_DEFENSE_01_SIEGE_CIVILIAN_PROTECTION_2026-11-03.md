@@ -2,6 +2,12 @@
 
 **Design gate** · v80 discovery, November 3, 2026. **Implementation status:** NOT YET a working combat or siege system. Do not infer host combat capabilities from this document.
 
+## Two-sided colony conflict, not defensive NPCs only
+
+NPC-controlled colonies may initiate **offensive** war, piracy, coercion and territorial expansion on their own strategic initiative. The player does not need to provoke every encounter. A faction may be expansionist or predatory, or become hostile through observed losses, supply desperation, contested ownership, leadership policy or inaccurate beliefs. This gate's complementary specification is `COLONY_CONFLICT_01_NPC_OFFENSE_DIPLOMACY_2026-11-03.md`, with concrete `CONFLICT-01A` evidence-grounded founding agendas and escalating postures.
+
+Both offense and defense must use the same physical resource and world-authority constraints: real ships and NPCs, finite ammunition, verified sensors, position/range, named civilians, persisted events, casualties, shelters and conservation. **An intention to raid is not an attack; an unknown ship is not a proven aggressor.** Any diplomatic accusation is an NPC belief unless independently supported by authoritative combat history.
+
 ## Why this must be designed before player-versus-colony attacks
 
 Single-Galaxy is not an empty space shooter: it has actual persistent colony inventories, finite named staff, dependent children, family and guardian custody, and warm/cold population authorities. A hostile player can eventually attack stations, habitats, farms, utility systems, supply convoys, infrastructure and people. This is part of the game world, but no action should turn a colony into a silently deleted row, instantly annihilate a population merely because the client clicked the station, or generate free replacement personnel/defensive ammunition.
