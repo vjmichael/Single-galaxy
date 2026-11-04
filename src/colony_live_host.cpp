@@ -134,6 +134,14 @@ void status(const Simulation& w,EntityId ship,bool replay_discoveries=false){
             std::to_string(unsigned(p->hazard))+"|"+
             std::to_string(p->local_supply_site?1:0));
     }
+    if(const auto frame=w.ship_frames().find(ship);
+       frame!=w.ship_frames().end()&&frame->second.anchor_body) {
+        const auto reserve=w.oasis_reserves().find(frame->second.anchor_body);
+        if(reserve!=w.oasis_reserves().end())
+            announce(w,"OASIS_SOURCE|"+std::to_string(reserve->first)+"|"+
+                std::to_string(reserve->second.water_kg)+"|"+
+                std::to_string(reserve->second.nutrients_kg));
+    }
     announce(w,"HEADING|"+std::to_string(s->heading_deg));
     announce(w,"PROBE_RESET");
     for(const auto& [id,p]:w.survey_probes()){
@@ -433,6 +441,25 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
         c.issuer=principal;c.actor=ship;c.action=Action::SurveyLocal;
         if(world.submit(c))pending_scans.insert(c.id);
         else announce(world.world(),"ERROR|INVALID_INPUT");
+        return;
+    }
+    if(v.size()==4 && v[0]=="OASIS_COLLECT") {
+        try {
+            const auto id=integer(v[1]);
+            const auto kg=integer(v[3]);
+            if(id<=0 || kg<=0 || (v[2]!="WATER" && v[2]!="NUTRIENTS"))
+                throw std::invalid_argument("bad native oasis collection");
+            if(!world.collect_oasis_resource(principal,ship,
+                static_cast<std::uint64_t>(id),v[2]=="WATER",kg)) {
+                announce(world.world(),"ERROR|INVALID_INPUT");
+            }else {
+                announce(world.world(),"OASIS_COLLECTED|"+std::to_string(id)+"|"+
+                    v[2]+"|"+std::to_string(kg));
+                status(world.world(),ship);
+            }
+        }catch(const std::exception&) {
+            announce(world.world(),"ERROR|INVALID_INPUT");
+        }
         return;
     }
     if(v.size()==2 && v[0]=="FRAME_TRAVEL") {
