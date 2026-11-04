@@ -40,7 +40,7 @@ try{
         ("sg_exit_v87_"+std::to_string(std::chrono::steady_clock::now()
         .time_since_epoch().count())+".sqlite")).string();
     const auto recovered=db+".recovered",spoof=db+".spoof",bad_receipt=db+".badreceipt",
-               false_ferry=db+".falseferry";
+               false_ferry=db+".falseferry",stripped_reason=db+".strippedreason";
     EntityId origin=0,dest=0,ferry=0,alternate_ferry=0;
     {
         Simulation initial(8701);initial.add_system(2);
@@ -77,6 +77,8 @@ try{
         CHECK(regional_owner.enroll().generation==1);
         w.establish_colony_conflict_agenda(
             8501,origin,1,colony_conflict::Agenda::Predatory);
+        w.establish_colony_conflict_agenda(
+            8502,dest,13,colony_conflict::Agenda::Cooperative);
         // The receiving owner physically relocates its own colony to system 2.
         CHECK(w.submit(command(w,100,10,dest,gate,Action::RequestJump)));
         executed(w,100);
@@ -89,7 +91,47 @@ try{
         CHECK(colony_safety::assess(w.world(),dest,dest).risk==
               colony_safety::Risk::Safe);
         const auto pressure=w.record_colony_exit_pressure(8601,origin,2);
-        CHECK(pressure.npc_id==2);
+        const auto rival_pressure=w.record_colony_exit_pressure(8603,origin,3);
+        CHECK(pressure.npc_id==2 && rival_pressure.npc_id==3);
+        // A physical shortage by itself no longer proves that an individual
+        // consented to emigrate. A dated, persistent personal appraisal must
+        // first cross the exit threshold.
+        refused([&]{w.record_voluntary_immigration_admission(
+            8700,8601,origin,dest,ferry,2,900,10);});
+        // GRSM social history is directed. NPC #2 witnessed hostile treatment
+        // by leader #1; NPC #3 separately remembers actual host-attested help.
+        CHECK(w.schedule_social_encounters(64,8)>=2);
+        std::uint64_t harm_encounter=0,help_encounter=0;
+        for(const auto& contact:w.recent_social_encounters(128)){
+            if(contact.npc_low==1 && contact.npc_high==2)harm_encounter=contact.id;
+            if(contact.npc_low==1 && contact.npc_high==3)help_encounter=contact.id;
+        }
+        CHECK(harm_encounter && help_encounter);
+        CHECK(w.record_social_interaction(
+            harm_encounter,2,1,SocialInteractionKind::Harm));
+        CHECK(w.record_social_interaction(
+            help_encounter,3,1,SocialInteractionKind::Assistance));
+        w.step(); // use only prior-generation known personal social events
+        const auto first=w.record_personal_outlook(8610,origin,2);
+        const auto helped=w.record_personal_outlook(8611,origin,3);
+        CHECK(first.interaction_event_id!=0 && helped.interaction_event_id!=0);
+        CHECK(first.leader_rapport<0 && helped.leader_rapport>0);
+        CHECK(first.discontent>helped.discontent);
+        CHECK(!first.considering_departure && !helped.considering_departure);
+        refused([&]{w.record_personal_outlook(8612,origin,2);}); // same tick
+        w.steps(8);
+        const auto second=w.record_personal_outlook(8613,origin,2);
+        const auto second_helped=w.record_personal_outlook(8614,origin,3);
+        CHECK(second.prior_event_id==8610 &&
+              second_helped.prior_event_id==8611);
+        CHECK(second.considering_departure);
+        CHECK(!second_helped.considering_departure);
+        CHECK(second.discontent>second_helped.discontent);
+        w.step(); // dated decisions now effective for immigration admission
+        CHECK(w.colony_personal_outlook(origin,2)->considering_departure);
+        CHECK(!w.colony_personal_outlook(origin,3)->considering_departure);
+        refused([&]{w.record_voluntary_immigration_admission(
+            8700,8603,origin,dest,ferry,3,901,10);});
         refused([&]{w.record_voluntary_immigration_admission(
             8700,8601,origin,dest,ferry,2,900,7);});
         refused([&]{w.record_voluntary_immigration_admission(
@@ -98,6 +140,7 @@ try{
             8701,8601,origin,dest,ferry,2,900,10);
         CHECK(admission.event_id==8701);
         CHECK(admission.original_owner==7 && admission.receiving_owner==10);
+        CHECK(admission.personal_outlook_event_id==8613);
         CHECK(!w.verified_voluntary_immigration(8701));
         refused([&]{w.record_voluntary_immigration_admission(
             8702,8601,origin,dest,ferry,2,901,10);});
@@ -165,6 +208,16 @@ try{
         CHECK(region.load()->scheduler.colony("origin").population==5);
         CHECK(region.load()->scheduler.colony("destination").population==7);
         CHECK(w.colony_governance(origin).leader_id==1);
+        // Immigration does not erase a resident's life history. The new
+        // stable colony relieves the old-home escape intention, but the
+        // individual's underlying discontent fades by normal observations.
+        const auto newcomer=w.record_personal_outlook(8615,dest,2);
+        CHECK(newcomer.prior_event_id==8613);
+        CHECK(newcomer.leader_id==13);
+        CHECK(newcomer.discontent<second.discontent);
+        CHECK(!newcomer.considering_departure);
+        CHECK(w.colony_personal_outlook(origin,2)->event_id==8613);
+        CHECK(w.colony_personal_outlook(dest,2)->event_id==8615);
         CHECK(w.world().npc_casualties().empty());
         refused([&]{w.step_with_voluntary_immigration(8701,plan);});
     }
@@ -175,6 +228,8 @@ try{
         CHECK(w.world().colony_ship(origin)->crew==5);
         CHECK(w.world().colony_ship(dest)->crew==7);
         CHECK(w.colony_governance(origin).leader_id==1);
+        CHECK(w.colony_personal_outlook(dest,2)->prior_event_id==8613);
+        CHECK(!w.colony_personal_outlook(dest,2)->considering_departure);
         CHECK(w.world().npc_casualties().empty());
     }
     PersistentWorld::recover_copy(db,recovered);
@@ -182,6 +237,7 @@ try{
         PersistentWorld w(recovered,Simulation(8703));
         CHECK(w.verified_voluntary_immigration(8701));
         CHECK(w.world().npc_records().at(2).home_ship==dest);
+        CHECK(w.colony_personal_outlook(dest,2)->event_id==8615);
         NpcAppearanceStore family(recovered,"voluntary",8701,[&](auto id){
             return w.world().npc_records().count(id)!=0;});
         CHECK(family.current_residence(2)==dest);
@@ -224,7 +280,22 @@ try{
         sqlite3_close(raw);
         refused([&]{PersistentWorld forged(false_ferry,Simulation(8706));});
     }
-    clean(db);clean(recovered);clean(spoof);clean(bad_receipt);clean(false_ferry);
+    // An attacker cannot turn a v88 personal-history admission into an
+    // inherited v87 scarcity-only permit by erasing the decision reference.
+    PersistentWorld::recover_copy(db,stripped_reason);
+    {
+        sqlite3* raw=nullptr;CHECK(sqlite3_open(stripped_reason.c_str(),&raw)==SQLITE_OK);
+        sql(raw,"DROP TRIGGER sg_voluntary_immigration_no_update");
+        sql(raw,"UPDATE sg_colony_voluntary_immigration "
+            "SET personal_intent_event=0 WHERE event_id=8701");
+        sql(raw,"CREATE TRIGGER sg_voluntary_immigration_no_update "
+            "BEFORE UPDATE ON sg_colony_voluntary_immigration "
+            "BEGIN SELECT RAISE(ABORT,'immutable receiving colony admission'); END");
+        sqlite3_close(raw);
+        refused([&]{PersistentWorld forged(stripped_reason,Simulation(8707));});
+    }
+    clean(db);clean(recovered);clean(spoof);clean(bad_receipt);
+    clean(false_ferry);clean(stripped_reason);
     std::cout<<"PASS EXIT01B: genuine cross-owner accepted solo immigration, actual "
         "gate ferry boarding/arrival, source pressure, native immutable ART02/ECON03 "
         "world+census+region conservation, fault rollback, restart, recover_copy "

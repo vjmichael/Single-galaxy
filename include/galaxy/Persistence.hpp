@@ -635,10 +635,24 @@ public:
     colony_conflict::ExitPressure record_colony_exit_pressure(
         std::uint64_t witness_event_id,EntityId source_colony,
         std::uint64_t npc_id);
+    // EXIT-01C: independent dated observations of an NPC's OWN living
+    // conditions and directional relationship to the historical local leader.
+    // At least 8 actual simulation ticks separate successive appraisals.
+    // The bounded score has conservative exit/recovery hysteresis, survives
+    // governance changes and never itself moves people.
+    std::optional<colony_conflict::PersonalOutlook> assess_personal_outlook(
+        EntityId source_colony,std::uint64_t npc_id) const;
+    colony_conflict::PersonalOutlook record_personal_outlook(
+        std::uint64_t event_id,EntityId source_colony,std::uint64_t npc_id);
+    std::optional<colony_conflict::PersonalOutlook> colony_personal_outlook(
+        EntityId source_colony,std::uint64_t npc_id) const;
     // EXIT-01B: consent-to-receive an eligible single adult who has a real
     // current source-pressure witness. A permit is not a voyage or transfer.
     struct VoluntaryImmigrationAdmission {
         std::uint64_t event_id=0,exit_pressure_event_id=0;
+        // Zero is reserved for recorded legacy EXIT-01B permits, issued
+        // before any personal-history requirement existed.
+        std::uint64_t personal_outlook_event_id=0;
         std::uint64_t world_generation=0,npc_id=0,transport_id=0;
         EntityId origin=0,destination=0,ferry=0;
         PlayerId original_owner=0,receiving_owner=0;

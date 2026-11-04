@@ -2127,6 +2127,257 @@ public:
     }
 
 
+
+    // EXIT-01C: read the committed latest appraisal strictly prior to a
+    // generation. No retroactive recalculation under later leadership or
+    // rapport, even if a different appraisal was recorded on the same tick.
+    std::optional<colony_conflict::PersonalOutlook> personal_outlook_before(
+        EntityId source,std::uint64_t npc,std::uint64_t generation,
+        bool across_colonies=false) const{
+        Statement table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_npc_personal_outlook'");
+        if(!table.row())return std::nullopt;
+        const std::string sql=std::string(
+            "SELECT event_id,prior_event,world_generation,tick,")+
+            "colony,npc,leader,interaction_event,governance_event,"+
+            "risk,rapport,delta,discontent,considering_departure "+
+            "FROM sg_colony_npc_personal_outlook "+
+            (across_colonies?"WHERE npc=? AND world_generation<? ":
+                             "WHERE colony=? AND npc=? AND world_generation<? ")+
+            "ORDER BY world_generation DESC LIMIT 1";
+        Statement q(db_,sql.c_str());
+        if(!across_colonies)q.text(1,std::to_string(source));
+        q.text(across_colonies?1:2,std::to_string(npc));
+        q.i64(across_colonies?2:3,static_cast<sqlite3_int64>(generation));
+        if(!q.row())return std::nullopt;
+        colony_conflict::PersonalOutlook p;
+        const auto event=sqlite3_column_int64(q.get(),0);
+        const auto prior=sqlite3_column_int64(q.get(),1);
+        const auto gen=sqlite3_column_int64(q.get(),2);
+        const auto tick=sqlite3_column_int64(q.get(),3);
+        const auto interaction=sqlite3_column_int64(q.get(),7);
+        const auto governance=sqlite3_column_int64(q.get(),8);
+        if(event<1 || prior<0 || gen<1 || tick<0 ||
+           interaction<0 || governance<0)
+            throw std::runtime_error("malformed historical personal appraisal");
+        p.event_id=static_cast<std::uint64_t>(event);
+        p.prior_event_id=static_cast<std::uint64_t>(prior);
+        p.world_generation=static_cast<std::uint64_t>(gen);
+        p.world_tick=static_cast<std::uint64_t>(tick);
+        p.colony=parse_u64(sqlite3_column_text(q.get(),4));
+        p.npc_id=parse_u64(sqlite3_column_text(q.get(),5));
+        p.leader_id=parse_u64(sqlite3_column_text(q.get(),6));
+        p.interaction_event_id=static_cast<std::uint64_t>(interaction);
+        p.government_event_id=static_cast<std::uint64_t>(governance);
+        const auto risk=sqlite3_column_int(q.get(),9);
+        p.leader_rapport=sqlite3_column_int(q.get(),10);
+        p.delta=sqlite3_column_int(q.get(),11);
+        p.discontent=sqlite3_column_int(q.get(),12);
+        const auto intending=sqlite3_column_int(q.get(),13);
+        if(!p.colony || !p.npc_id || !p.leader_id ||
+           (!across_colonies && p.colony!=source) ||
+           p.npc_id!=npc || p.world_generation>=generation ||
+           risk<0 || risk>3 || p.leader_rapport<-100 ||
+           p.leader_rapport>100 || p.discontent<0 || p.discontent>100 ||
+           (intending!=0 && intending!=1) || q.row())
+            throw std::runtime_error("personal appraisal values or uniqueness forged");
+        p.risk=static_cast<colony_safety::Risk>(risk);
+        p.considering_departure=(intending==1);
+        return p;
+    }
+    std::optional<colony_conflict::PersonalOutlook> assess_personal_outlook(
+        const Simulation& world,std::uint64_t generation,
+        EntityId source,std::uint64_t npc_id) const{
+        if(!source || !npc_id || !generation)
+            throw std::invalid_argument("personal outlook needs a named resident");
+        const auto* colony=world.find(source);
+        const auto* owned=world.colony_ship(source);
+        const auto resident=world.npc_records().find(npc_id);
+        if(!colony || !owned || colony->type!=EntityType::Ship ||
+           !colony->owner_id || resident==world.npc_records().end() ||
+           resident->second.home_ship!=source ||
+           resident->second.location!=source ||
+           resident->second.transport_id ||
+           !world.npc_available_for_duty(npc_id))
+            return std::nullopt;
+        const auto govt=effective_governance(source,generation);
+        if(govt.leader_id==npc_id)return std::nullopt;
+        // An immigrant carries the same NPC identity and biographical
+        // discontent into the new colony. Appraisals never reset to zero
+        // merely because the legal home changed in ART02/ECON03.
+        const auto previous=personal_outlook_before(
+            source,npc_id,generation,true);
+        if(previous){
+            if(world.tick()<previous->world_tick ||
+               world.tick()-previous->world_tick<8)return std::nullopt;
+        }
+        colony_conflict::PersonalOutlook p;
+        p.world_generation=generation;p.world_tick=world.tick();
+        p.colony=source;p.npc_id=npc_id;p.leader_id=govt.leader_id;
+        p.government_event_id=govt.event_id;
+        p.risk=colony_safety::assess(world,source,source).risk;
+        // Only historically committed, directed actual interaction appraisals
+        // involving this named resident and the then-current local leader.
+        // Rapport is PERSON-SPECIFIC, and absence means neutral; neither
+        // group-wide rumor nor leadership policy becomes everyone else's mood.
+        Statement relation(db_,"SELECT id,rapport FROM social_interactions "
+            "WHERE observer=? AND actor=? AND generation<? "
+            "ORDER BY generation DESC,id DESC LIMIT 1");
+        relation.text(1,std::to_string(npc_id));
+        relation.text(2,std::to_string(govt.leader_id));
+        relation.i64(3,static_cast<sqlite3_int64>(generation));
+        if(relation.row()){
+            const auto id=sqlite3_column_int64(relation.get(),0);
+            const auto score=sqlite3_column_int(relation.get(),1);
+            if(id<1 || score<-100 || score>100 || relation.row())
+                throw std::runtime_error("malformed dated directional social interaction");
+            p.interaction_event_id=static_cast<std::uint64_t>(id);
+            p.leader_rapport=score;
+        }
+        switch(p.risk){
+            case colony_safety::Risk::Safe: p.delta=-28;break;
+            case colony_safety::Risk::ForecastShortage: p.delta=8;break;
+            case colony_safety::Risk::Critical: p.delta=34;break;
+            case colony_safety::Risk::Emergency: p.delta=46;break;
+        }
+        if(p.interaction_event_id){
+            if(p.leader_rapport<=-12)p.delta+=12;
+            else if(p.leader_rapport>=8)p.delta-=20;
+        }
+        const int old=previous?previous->discontent:0;
+        p.discontent=std::clamp(old+p.delta,0,100);
+        // A real deteriorating personal history, not one global crisis tick.
+        // Once considering a move, the resident needs substantial sustained
+        // improvement to abandon it; one repaired supply tick is not magic.
+        // A legitimate NEW healthy residence relieves the immediate desire
+        // to abandon the former colony without destroying historical feelings.
+        // A new unsafe home can still activate a genuinely new local intent.
+        const bool arrived_in_new_home=previous && previous->colony!=source;
+        p.considering_departure=
+            (arrived_in_new_home && p.risk==colony_safety::Risk::Safe)
+            ? false :
+            ((previous && previous->considering_departure &&
+              !arrived_in_new_home)
+              ? p.discontent>=30 : p.discontent>=65);
+        p.prior_event_id=previous?previous->event_id:0;
+        return p;
+    }
+    colony_conflict::PersonalOutlook record_personal_outlook(
+        const Simulation& world,std::uint64_t generation,
+        std::uint64_t event_id,EntityId source,std::uint64_t npc_id){
+        if(!event_id || event_id>static_cast<std::uint64_t>(
+           std::numeric_limits<sqlite3_int64>::max()))
+            throw std::invalid_argument("invalid dated personal appraisal event");
+        run(db_,"BEGIN IMMEDIATE");
+        try{
+            if(latest_generation(db_)!=generation)
+                throw std::runtime_error("personal appraisal world generation changed");
+            auto p=assess_personal_outlook(world,generation,source,npc_id);
+            if(!p)throw std::runtime_error(
+                "no new physical or dated social conditions for this resident");
+            run(db_,"CREATE TABLE IF NOT EXISTS sg_colony_npc_personal_outlook("
+                "event_id INTEGER PRIMARY KEY CHECK(event_id>0),"
+                "world_generation INTEGER NOT NULL CHECK(world_generation>0),"
+                "world_hash TEXT NOT NULL,tick INTEGER NOT NULL CHECK(tick>=0),"
+                "colony TEXT NOT NULL,npc TEXT NOT NULL,"
+                "leader TEXT NOT NULL,governance_event INTEGER NOT NULL CHECK(governance_event>=0),"
+                "interaction_event INTEGER NOT NULL CHECK(interaction_event>=0),"
+                "risk INTEGER NOT NULL CHECK(risk BETWEEN 0 AND 3),"
+                "rapport INTEGER NOT NULL CHECK(rapport BETWEEN -100 AND 100),"
+                "prior_event INTEGER NOT NULL CHECK(prior_event>=0),"
+                "delta INTEGER NOT NULL,discontent INTEGER NOT NULL "
+                "CHECK(discontent BETWEEN 0 AND 100),"
+                "considering_departure INTEGER NOT NULL CHECK(considering_departure IN(0,1)),"
+                "UNIQUE(colony,npc,world_generation))");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_personal_outlook_no_update "
+                "BEFORE UPDATE ON sg_colony_npc_personal_outlook "
+                "BEGIN SELECT RAISE(ABORT,'immutable dated personal history'); END");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_personal_outlook_no_delete "
+                "BEFORE DELETE ON sg_colony_npc_personal_outlook "
+                "BEGIN SELECT RAISE(ABORT,'immutable dated personal history'); END");
+            Statement ins(db_,"INSERT INTO sg_colony_npc_personal_outlook "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+            ins.i64(1,static_cast<sqlite3_int64>(event_id));
+            ins.i64(2,static_cast<sqlite3_int64>(generation));
+            ins.text(3,std::to_string(world.state_hash()));
+            ins.i64(4,static_cast<sqlite3_int64>(world.tick()));
+            ins.text(5,std::to_string(source));ins.text(6,std::to_string(npc_id));
+            ins.text(7,std::to_string(p->leader_id));
+            ins.i64(8,static_cast<sqlite3_int64>(p->government_event_id));
+            ins.i64(9,static_cast<sqlite3_int64>(p->interaction_event_id));
+            ins.i64(10,static_cast<int>(p->risk));
+            ins.i64(11,p->leader_rapport);
+            ins.i64(12,static_cast<sqlite3_int64>(p->prior_event_id));
+            ins.i64(13,p->delta);
+            ins.i64(14,p->discontent);
+            ins.i64(15,p->considering_departure?1:0);
+            ins.execute();
+            run(db_,"COMMIT");
+            p->event_id=event_id;
+            return *p;
+        }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
+    }
+    void verify_personal_outlooks(std::uint64_t max_generation) const{
+        Statement exists(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_npc_personal_outlook'");
+        if(!exists.row())return;
+        for(const auto* name:{"sg_personal_outlook_no_update",
+                              "sg_personal_outlook_no_delete"}){
+            Statement guard(db_,"SELECT 1 FROM sqlite_master "
+                "WHERE type='trigger' AND name=?");
+            guard.text(1,name);
+            if(!guard.row() || guard.row())
+                throw std::runtime_error("personal-history immutability guard missing");
+        }
+        Statement rows(db_,"SELECT event_id,world_generation,world_hash,tick,"
+            "colony,npc,leader,governance_event,interaction_event,risk,rapport,"
+            "prior_event,delta,discontent,considering_departure "
+            "FROM sg_colony_npc_personal_outlook");
+        while(rows.row()){
+            const auto id=sqlite3_column_int64(rows.get(),0);
+            const auto gen=sqlite3_column_int64(rows.get(),1);
+            const auto hash=sqlite_str(rows.get(),2);
+            const auto tick=sqlite3_column_int64(rows.get(),3);
+            const auto source=parse_u64(sqlite3_column_text(rows.get(),4));
+            const auto npc=parse_u64(sqlite3_column_text(rows.get(),5));
+            if(id<1 || gen<1 || static_cast<std::uint64_t>(gen)>max_generation ||
+               tick<0 || !source || !npc)
+                throw std::runtime_error("invalid resident personal-history chronology");
+            Statement snap(db_,"SELECT state,checksum FROM snapshots "
+                "WHERE generation=?");
+            snap.i64(1,gen);
+            if(!snap.row())throw std::runtime_error("personal-history source world pruned");
+            const auto* bytes=sqlite3_column_blob(snap.get(),0);
+            const auto n=sqlite3_column_bytes(snap.get(),0);
+            if(!bytes || n<=0 || n>16*1024*1024)
+                throw std::runtime_error("personal-history original snapshot malformed");
+            const auto original=Simulation::from_snapshot(std::string(
+                static_cast<const char*>(bytes),static_cast<std::size_t>(n)));
+            if(original.state_hash()!=parse_u64(sqlite3_column_text(snap.get(),1)) ||
+               std::to_string(original.state_hash())!=hash ||
+               original.tick()!=static_cast<std::uint64_t>(tick) || snap.row())
+                throw std::runtime_error("personal-history original world modified");
+            const auto predicted=assess_personal_outlook(
+                original,static_cast<std::uint64_t>(gen),source,npc);
+            if(!predicted ||
+               predicted->leader_id!=parse_u64(sqlite3_column_text(rows.get(),6)) ||
+               predicted->government_event_id!=static_cast<std::uint64_t>(
+                   sqlite3_column_int64(rows.get(),7)) ||
+               predicted->interaction_event_id!=static_cast<std::uint64_t>(
+                   sqlite3_column_int64(rows.get(),8)) ||
+               static_cast<int>(predicted->risk)!=sqlite3_column_int(rows.get(),9) ||
+               predicted->leader_rapport!=sqlite3_column_int(rows.get(),10) ||
+               predicted->prior_event_id!=static_cast<std::uint64_t>(
+                   sqlite3_column_int64(rows.get(),11)) ||
+               predicted->delta!=sqlite3_column_int(rows.get(),12) ||
+               predicted->discontent!=sqlite3_column_int(rows.get(),13) ||
+               static_cast<int>(predicted->considering_departure)!=
+                   sqlite3_column_int(rows.get(),14))
+                throw std::runtime_error(
+                    "resident personal memory, lived risk or social evidence forged");
+        }
+    }
+
     // EXIT-01B: a concrete receiving-owner-approved immigration admission.
     // This only makes an adult eligible for an existing real ferry voyage;
     // neither a fabricated departure nor an automatic labor/population edit.
@@ -2134,7 +2385,8 @@ public:
         const Simulation& world,std::uint64_t generation,
         std::uint64_t pressure_event,EntityId origin,EntityId destination,
         EntityId ferry,std::uint64_t npc,std::uint64_t transport_id,
-        PlayerId receiving_owner,bool require_current_custody=false) const{
+        PlayerId receiving_owner,bool require_current_custody=false,
+        bool historical_legacy_personal_rule=false) const{
         if(!pressure_event || !origin || !destination || !ferry ||
            origin==destination || ferry==origin || ferry==destination ||
            !npc || !transport_id || !receiving_owner)
@@ -2172,12 +2424,18 @@ public:
         if(colony_safety::assess(world,destination,destination).risk!=
                colony_safety::Risk::Safe)
             throw std::runtime_error("receiver lacks healthy life support");
-        if(static_cast<int>(colony_safety::assess(world,origin,origin).risk)<
-           static_cast<int>(colony_safety::Risk::Critical))
-            throw std::runtime_error("source survival pressure has recovered");
         const auto govt=effective_governance(origin,generation);
         if(govt.leader_id==npc)
             throw std::runtime_error("individual immigrant would vacate incumbent government");
+        // Only this particular resident's PREVIOUSLY committed personal
+        // history—not collective panic, a guessed sentiment or a single
+        // physical shortage—can authorize their attempt to emigrate. A
+        // recovering resident may cease wanting to leave even with a
+        // historical critical-shortage witness on file.
+        const auto own=personal_outlook_before(origin,npc,generation);
+        if(!historical_legacy_personal_rule &&
+           (!own || !own->considering_departure))
+            throw std::runtime_error("resident has no active historically grounded decision to depart");
         Statement pressure(db_,"SELECT world_generation,colony,source_owner,npc,"
             "governance_event,risk FROM sg_colony_npc_exit_pressure WHERE event_id=?");
         pressure.i64(1,static_cast<sqlite3_int64>(pressure_event));
@@ -2191,11 +2449,20 @@ public:
         if(born<=0 || static_cast<std::uint64_t>(born)>generation ||
            source_id!=origin || source_owner!=source->owner_id ||
            witnessed!=npc || past_govt<0 ||
-           static_cast<std::uint64_t>(past_govt)!=govt.event_id ||
            old_risk<2 || old_risk>3 || pressure.row())
             throw std::runtime_error("pressure witness does not belong to this adult/current government");
+        // Read-only backward compatibility: the earlier EXIT-01B issue
+        // required critical scarcity *at the actual permit generation*, not
+        // a personal mood record which did not yet exist.
+        if(historical_legacy_personal_rule &&
+           (static_cast<int>(colony_safety::assess(
+                  world,origin,origin).risk)<
+                static_cast<int>(colony_safety::Risk::Critical) ||
+            static_cast<std::uint64_t>(past_govt)!=govt.event_id))
+            throw std::runtime_error("legacy immigrant had no real crisis at issuance");
         PersistentWorld::VoluntaryImmigrationAdmission a;
         a.exit_pressure_event_id=pressure_event;
+        a.personal_outlook_event_id=historical_legacy_personal_rule?0:own->event_id;
         a.world_generation=generation;
         a.npc_id=npc;a.transport_id=transport_id;
         a.origin=origin;a.destination=destination;a.ferry=ferry;
@@ -2225,15 +2492,31 @@ public:
                 "ferry TEXT NOT NULL,npc TEXT NOT NULL,"
                 "transport TEXT NOT NULL UNIQUE,"
                 "original_owner TEXT NOT NULL,receiving_owner TEXT NOT NULL,"
-                "governance_event INTEGER NOT NULL CHECK(governance_event>=0))");
+                "governance_event INTEGER NOT NULL CHECK(governance_event>=0),"
+                "personal_intent_event INTEGER NOT NULL DEFAULT 0 "
+                "CHECK(personal_intent_event>=0))");
+            // Pre-EXIT01C saves have a 13-column immutable admission table;
+            // preserve all its original records with a typed zero legacy
+            // personal intent, rather than rewriting their historical terms.
+            bool has_intent=false;
+            {Statement info(db_,"PRAGMA table_info(sg_colony_voluntary_immigration)");
+             while(info.row())if(sqlite_str(info.get(),1)=="personal_intent_event")
+                 has_intent=true;}
+            if(!has_intent)
+                run(db_,"ALTER TABLE sg_colony_voluntary_immigration ADD COLUMN "
+                    "personal_intent_event INTEGER NOT NULL DEFAULT 0 "
+                    "CHECK(personal_intent_event>=0)");
             run(db_,"CREATE TRIGGER IF NOT EXISTS sg_voluntary_immigration_no_update "
                 "BEFORE UPDATE ON sg_colony_voluntary_immigration "
                 "BEGIN SELECT RAISE(ABORT,'immutable receiving colony admission'); END");
             run(db_,"CREATE TRIGGER IF NOT EXISTS sg_voluntary_immigration_no_delete "
                 "BEFORE DELETE ON sg_colony_voluntary_immigration "
                 "BEGIN SELECT RAISE(ABORT,'immutable receiving colony admission'); END");
-            Statement ins(db_,"INSERT INTO sg_colony_voluntary_immigration "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)");
+            Statement ins(db_,"INSERT INTO sg_colony_voluntary_immigration ("
+                "event_id,world_generation,world_hash,tick,pressure_event,"
+                "origin,destination,ferry,npc,transport,original_owner,"
+                "receiving_owner,governance_event,personal_intent_event) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
             ins.i64(1,static_cast<sqlite3_int64>(event));
             ins.i64(2,static_cast<sqlite3_int64>(generation));
             ins.text(3,std::to_string(world.state_hash()));
@@ -2248,6 +2531,9 @@ public:
             ins.text(12,std::to_string(receiving_owner));
             ins.i64(13,static_cast<sqlite3_int64>(
                 effective_governance(origin,generation).event_id));
+            ins.i64(14,static_cast<sqlite3_int64>(a.personal_outlook_event_id));
+            if(!a.personal_outlook_event_id)
+                throw std::runtime_error("new admission cannot omit actual personal intent");
             ins.execute();
             run(db_,"COMMIT");
             a.event_id=event;
@@ -2259,9 +2545,16 @@ public:
         Statement table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
             "AND name='sg_colony_voluntary_immigration'");
         if(!table.row())throw std::runtime_error("no immigrant admission ledger");
-        Statement q(db_,"SELECT world_generation,pressure_event,origin,"
-            "destination,ferry,npc,transport,original_owner,receiving_owner "
-            "FROM sg_colony_voluntary_immigration WHERE event_id=?");
+        bool has_intent=false;
+        {Statement cols(db_,"PRAGMA table_info(sg_colony_voluntary_immigration)");
+         while(cols.row())if(sqlite_str(cols.get(),1)=="personal_intent_event")
+             has_intent=true;}
+        const std::string read_sql=std::string(
+            "SELECT world_generation,pressure_event,origin,")+
+            "destination,ferry,npc,transport,original_owner,receiving_owner,"+
+            (has_intent?"personal_intent_event":"0")+
+            " FROM sg_colony_voluntary_immigration WHERE event_id=?";
+        Statement q(db_,read_sql.c_str());
         q.i64(1,static_cast<sqlite3_int64>(event));
         if(!q.row())throw std::runtime_error("unknown immigrant admission");
         PersistentWorld::VoluntaryImmigrationAdmission a;
@@ -2275,6 +2568,9 @@ public:
         a.transport_id=parse_u64(sqlite3_column_text(q.get(),6));
         a.original_owner=parse_u64(sqlite3_column_text(q.get(),7));
         a.receiving_owner=parse_u64(sqlite3_column_text(q.get(),8));
+        const auto intended=sqlite3_column_int64(q.get(),9);
+        if(intended<0)throw std::runtime_error("invalid immigration personal reason");
+        a.personal_outlook_event_id=static_cast<std::uint64_t>(intended);
         if(q.row())throw std::runtime_error("duplicate immigrant admission");
         return a;
     }
@@ -2311,10 +2607,17 @@ public:
             if(!t.row() || t.row())throw std::runtime_error(
                 "missing immutable immigration settlement guard");
         }
-        Statement rows(db_,"SELECT event_id,world_generation,world_hash,tick,"
-            "pressure_event,origin,destination,ferry,npc,transport,"
-            "original_owner,receiving_owner,governance_event "
-            "FROM sg_colony_voluntary_immigration");
+        bool has_intent=false;
+        {Statement cols(db_,"PRAGMA table_info(sg_colony_voluntary_immigration)");
+         while(cols.row())if(sqlite_str(cols.get(),1)=="personal_intent_event")
+             has_intent=true;}
+        const std::string verify_sql=std::string(
+            "SELECT event_id,world_generation,world_hash,tick,")+
+            "pressure_event,origin,destination,ferry,npc,transport,"+
+            "original_owner,receiving_owner,governance_event,"+
+            (has_intent?"personal_intent_event":"0")+
+            " FROM sg_colony_voluntary_immigration";
+        Statement rows(db_,verify_sql.c_str());
         while(rows.row()){
             const auto id=sqlite3_column_int64(rows.get(),0);
             const auto gen=sqlite3_column_int64(rows.get(),1);
@@ -2329,8 +2632,10 @@ public:
             const auto old_owner=parse_u64(sqlite3_column_text(rows.get(),10));
             const auto receiver=parse_u64(sqlite3_column_text(rows.get(),11));
             const auto gov=sqlite3_column_int64(rows.get(),12);
+            const auto intent=sqlite3_column_int64(rows.get(),13);
             if(id<1 || gen<1 || static_cast<std::uint64_t>(gen)>max_generation ||
-               tick<0 || pressure<1 || gov<0 || !origin || !dest || !ferry ||
+               tick<0 || pressure<1 || gov<0 || intent<0 ||
+               !origin || !dest || !ferry ||
                !npc || !transport || !old_owner || !receiver)
                 throw std::runtime_error("invalid immigration admission chronology");
             Statement snap(db_,"SELECT state,checksum FROM snapshots WHERE generation=?");
@@ -2346,13 +2651,33 @@ public:
                std::to_string(original.state_hash())!=hash ||
                original.tick()!=static_cast<std::uint64_t>(tick) || snap.row())
                 throw std::runtime_error("immigration admission original world forged");
+            // Preserve authentic EXIT-01B admissions issued before the
+            // personal-history scheme existed: they have no intent column or
+            // a zero default after the additive schema upgrade. A post-v88
+            // forged admission cannot erase its nonzero personal decision and
+            // claim the older scarcity-only rule instead.
+            const bool legacy=intent==0;
+            // A schema-column downgrade is not sufficient to masquerade a
+            // newly issued personal-intent permit as an older one.
+            if(legacy){
+                Statement personal_table(db_,"SELECT 1 FROM sqlite_master "
+                    "WHERE type='table' AND name='sg_colony_npc_personal_outlook'");
+                if(personal_table.row()){
+                    Statement before(db_,"SELECT 1 FROM sg_colony_npc_personal_outlook "
+                        "WHERE world_generation<? LIMIT 1");
+                    before.i64(1,gen);
+                    if(before.row())throw std::runtime_error(
+                        "post-personal-history admission stripped its actual NPC decision");
+                }
+            }
             const auto calculated=assess_voluntary_admission(original,
                 static_cast<std::uint64_t>(gen),static_cast<std::uint64_t>(pressure),
-                origin,dest,ferry,npc,transport,receiver);
+                origin,dest,ferry,npc,transport,receiver,false,legacy);
             if(calculated.original_owner!=old_owner ||
+               calculated.personal_outlook_event_id!=static_cast<std::uint64_t>(intent) ||
                effective_governance(origin,static_cast<std::uint64_t>(gen)).event_id!=
                    static_cast<std::uint64_t>(gov))
-                throw std::runtime_error("immigration consent or former government forged");
+                throw std::runtime_error("immigration consent, personal intent or former government forged");
             bool moved=false;
             std::string command;
             std::uint64_t committed=0;
@@ -6948,6 +7273,9 @@ public:
             Statement npc_exit_pressure(db_,"SELECT 1 FROM sqlite_master "
                 "WHERE type='table' AND name='sg_colony_npc_exit_pressure'");
             const bool has_npc_exit_pressure=npc_exit_pressure.row();
+            Statement personal_outlooks(db_,"SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='sg_colony_npc_personal_outlook'");
+            const bool has_personal_outlooks=personal_outlooks.row();
             Statement immigration_admissions(db_,"SELECT 1 FROM sqlite_master "
                 "WHERE type='table' AND name='sg_colony_voluntary_immigration'");
             const bool has_immigration_admissions=immigration_admissions.row();
@@ -7004,6 +7332,9 @@ public:
                     : "")+
                 (has_npc_exit_pressure ? " AND generation NOT IN "
                     "(SELECT world_generation FROM sg_colony_npc_exit_pressure)"
+                    : "")+
+                (has_personal_outlooks ? " AND generation NOT IN "
+                    "(SELECT world_generation FROM sg_colony_npc_personal_outlook)"
                     : "")+
                 (has_immigration_admissions ? " AND generation NOT IN "
                     "(SELECT world_generation FROM sg_colony_voluntary_immigration)"
@@ -8168,6 +8499,7 @@ void PersistentWorld::recover_copy(const std::string& source, const std::string&
         copy.verify_colony_conflicts(gen);
         copy.verify_colony_governance(gen);
         copy.verify_colony_exit_pressure(gen);
+        copy.verify_personal_outlooks(gen);
         copy.verify_colony_voluntary_immigration(gen);
         copy.verify_colony_relationships(gen);
         copy.verify_colony_diplomatic_intents(gen);
@@ -8211,6 +8543,7 @@ PersistentWorld::PersistentWorld(const std::string& path, Simulation initial_wor
     store_->verify_colony_conflicts(generation_);
     store_->verify_colony_governance(generation_);
     store_->verify_colony_exit_pressure(generation_);
+    store_->verify_personal_outlooks(generation_);
     store_->verify_colony_voluntary_immigration(generation_);
     store_->verify_colony_relationships(generation_);
     store_->verify_colony_diplomatic_intents(generation_);
@@ -9258,6 +9591,23 @@ colony_conflict::ExitPressure PersistentWorld::record_colony_exit_pressure(
         world_,generation_,event_id,source,npc_id);
 }
 
+std::optional<colony_conflict::PersonalOutlook>
+PersistentWorld::assess_personal_outlook(
+    EntityId source,std::uint64_t npc) const{
+    return store_->assess_personal_outlook(world_,generation_,source,npc);
+}
+colony_conflict::PersonalOutlook PersistentWorld::record_personal_outlook(
+    std::uint64_t event,EntityId source,std::uint64_t npc){
+    return store_->record_personal_outlook(world_,generation_,event,source,npc);
+}
+std::optional<colony_conflict::PersonalOutlook>
+PersistentWorld::colony_personal_outlook(
+    EntityId source,std::uint64_t npc) const{
+    if(generation_==std::numeric_limits<std::uint64_t>::max())
+        throw std::overflow_error("world generation exhausted");
+    return store_->personal_outlook_before(source,npc,generation_+1);
+}
+
 PersistentWorld::VoluntaryImmigrationAdmission
 PersistentWorld::record_voluntary_immigration_admission(
     std::uint64_t event,std::uint64_t pressure,
@@ -9287,9 +9637,30 @@ bool PersistentWorld::submit_voluntary_immigration_boarding(
        !world_.npc_available_for_duty(a.npc_id) ||
        store_->has_child_or_dependent_link(a.origin) ||
        world_.voyage_status(a.transport_id)!=0 ||
-       static_cast<int>(colony_safety::assess(
-           world_,a.origin,a.origin).risk)<
-           static_cast<int>(colony_safety::Risk::Critical) ||
+       store_->effective_governance(a.origin,generation_).leader_id==a.npc_id ||
+       !([&]{
+           if(!a.personal_outlook_event_id){
+               // An authentic pre-EXIT01C permit may finish boarding under its
+               // original strict, still-critical source scarcity condition.
+               return static_cast<int>(colony_safety::assess(
+                   world_,a.origin,a.origin).risk)>=
+                   static_cast<int>(colony_safety::Risk::Critical);
+           }
+           const auto approved=store_->personal_outlook_before(
+               a.origin,a.npc_id,a.world_generation);
+           // Boarding is a new prospective action: a same-generation
+           // *already committed* recovery observation can veto it. The
+           // original admission still references only prior-generation
+           // personal history, preserving dated decisions without time travel.
+           if(generation_==std::numeric_limits<std::uint64_t>::max())
+               return false;
+           const auto latest=store_->personal_outlook_before(
+               a.origin,a.npc_id,generation_+1);
+           return approved && latest &&
+                  approved->event_id==a.personal_outlook_event_id &&
+                  approved->considering_departure &&
+                  latest->considering_departure;
+       }()) ||
        colony_safety::assess(world_,a.destination,a.destination).risk!=
            colony_safety::Risk::Safe ||
        c.action!=Action::HostEmbarkPassengers ||

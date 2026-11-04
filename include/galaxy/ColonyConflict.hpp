@@ -44,6 +44,19 @@ struct ExitPressure {
     std::uint64_t npc_id=0;
     colony_safety::Risk source_risk=colony_safety::Risk::Safe;
 };
+// COLONY-EXIT-01C: the resident's own persistent appraisal of experienced
+// material conditions and explicitly recorded directed interpersonal rapport.
+// Each dated observation has one historical predecessor, and can recover.
+// Intent is not a binding travel command or a vote.
+struct PersonalOutlook {
+    std::uint64_t event_id=0,prior_event_id=0,world_generation=0,world_tick=0;
+    EntityId colony=0;
+    std::uint64_t npc_id=0,leader_id=0;
+    std::uint64_t interaction_event_id=0,government_event_id=0;
+    colony_safety::Risk risk=colony_safety::Risk::Safe;
+    int leader_rapport=0,discontent=0,delta=0;
+    bool considering_departure=false;
+};
 // CONFLICT-01B1: a colony's subjective attitude toward an identifiable
 // foreign owner; distinct from any criminal verdict or physical attack fact.
 enum class Attitude : int {
