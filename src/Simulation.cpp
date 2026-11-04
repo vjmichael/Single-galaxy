@@ -1760,6 +1760,47 @@ void Simulation::stop_mining(EntityId actor, Outcome reason) {
 
 Event Simulation::execute(const Command& c) {
     Event result{tick_, c.id, Outcome::InvalidActor, 0};
+    if(c.action==Action::HostRegisterDependentBirth){
+        if(!can_record_dependent_birth(c)){
+            result.result=Outcome::InvalidArgument;return result;
+        }
+        const auto child=c.passenger_ids.front();
+        physical_dependents_.emplace(child,PhysicalDependent{
+            child,c.transport_id,static_cast<std::uint64_t>(c.amount),
+            c.id,c.actor,c.actor
+        });
+        result.result=Outcome::Applied;
+        return result;
+    }
+    if(c.action==Action::HostColonyFamilyDeparture){
+        if(!can_depart_family(c)){
+            result.result=Outcome::InvalidArgument;return result;
+        }
+        std::vector<std::uint64_t> adults,children;
+        for(auto id:c.passenger_ids)
+            (id<(1ULL<<62)?adults:children).push_back(id);
+        auto& source=colony_ships_.at(c.actor);
+        auto& receiver=colony_ships_.at(c.target);
+        for(auto id:adults){
+            auto& n=npcs_.at(id);
+            n.home_ship=c.target;n.location=c.target;n.assigned_site=c.target;
+            n.role=NpcRole::Ship;n.transport_id=0;
+        }
+        for(auto id:children){
+            auto& n=physical_dependents_.at(id);
+            n.home_ship=c.target;n.location=c.target;
+        }
+        for(auto& [site,f]:farms_)if(f.source_ship==c.actor)f.workers=0;
+        for(auto& [site,h]:habitats_)if(h.source_ship==c.actor)h.residents=0;
+        source.crew=0;
+        receiver.crew+=static_cast<std::int64_t>(adults.size());
+        colony_departures_.emplace(c.actor,ColonyDeparture{
+            c.actor,c.target,c.id,tick_,adults,children
+        });
+        result.result=Outcome::Applied;
+        result.transferred=0; // persons never enter material ledger
+        return result;
+    }
     if(c.action==Action::HostColonyDeparture){
         if(!can_depart_colony(c)){
             result.result=Outcome::InvalidArgument;return result;
