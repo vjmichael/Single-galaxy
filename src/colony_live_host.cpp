@@ -710,7 +710,7 @@ int main(int argc,char** argv){
                 for(const auto system:systems)
                     survey_knowledge->import_native_discoveries(world.world(),owner,system);
             }catch(const std::exception& e) {
-                std::cerr<<"PLAY13B_SURVEY_INDEX_ERROR "<<e.what()<<'\\n';
+                std::cerr<<"PLAY13B_SURVEY_INDEX_ERROR "<<e.what()<<'\n';
                 survey_knowledge.reset(); // never discard the committed world
             }
         };
@@ -719,7 +719,7 @@ int main(int argc,char** argv){
                 std::string(argv[1])+".survey.sqlite");
             sync_survey_knowledge();
         }catch(const std::exception& e) {
-            std::cerr<<"PLAY13B_SURVEY_INDEX_UNAVAILABLE "<<e.what()<<'\\n';
+            std::cerr<<"PLAY13B_SURVEY_INDEX_UNAVAILABLE "<<e.what()<<'\n';
             survey_knowledge.reset();
         }
         std::random_device rd;auto stream=(std::uint64_t(rd())<<32)^rd();if(!stream)stream=1;
