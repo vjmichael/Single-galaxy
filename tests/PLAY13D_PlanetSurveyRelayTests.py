@@ -56,6 +56,42 @@ def main(executable,relay):
             assert status==403,status
             status,_=request(port,"POST","/command",valid,origin=False)
             assert status==403,status
+            operations=[
+                ("colonyPlanetBuild",{}),
+                ("colonyPlanetEquip",{"equipment":"FARM"}),
+                ("colonyPlanetEquip",{"equipment":"EXTRACT"}),
+                ("colonyPlanetSupply",{"resource":"WATER","kg":100}),
+                ("colonyPlanetGrow",{"batches":2}),
+                ("colonyPlanetExtract",{"resource":"NUTRIENTS","kg":1000}),
+                ("colonyPlanetRetrieve",{"resource":"FOOD","kg":12}),
+            ]
+            for action,details in operations:
+                assert action in session["commands"],action
+                payload={**valid,"action":action,**details}
+                status,_=request(port,"POST","/command",payload)
+                assert status==202,(action,status)
+                for mutation in [
+                    {"latitude":36},
+                    {"longitude":72},
+                    {"body":False},
+                    {"unexpected":"forged"}
+                ]:
+                    status,_=request(port,"POST","/command",
+                                     {**payload,**mutation})
+                    assert status==400,(action,mutation,status)
+                status,_=request(port,"POST","/command",
+                                 {**payload,"token":"forged"})
+                assert status==403,(action,status)
+            for payload in [
+                {**valid,"action":"colonyPlanetEquip","equipment":"SHUTTLE"},
+                {**valid,"action":"colonyPlanetGrow","batches":True},
+                {**valid,"action":"colonyPlanetGrow","batches":101},
+                {**valid,"action":"colonyPlanetSupply","resource":"FOOD","kg":1},
+                {**valid,"action":"colonyPlanetExtract","resource":"WATER","kg":500},
+                {**valid,"action":"colonyPlanetRetrieve","resource":"NUTRIENTS","kg":1}
+            ]:
+                status,_=request(port,"POST","/command",payload)
+                assert status==400,(payload,status)
             print("PASS PGF01B2 HTTP relay accepts valid geography and rejects forged inputs")
         finally:
             proc.terminate()
