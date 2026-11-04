@@ -117,6 +117,13 @@ void status(const Simulation& w,EntityId ship,bool replay_discoveries=false){
     const auto* s=w.find(ship);const auto* c=w.colony_ship(ship);
     if(!s || !c)throw std::runtime_error("colony ship missing");
     announce(w,"HEADING|"+std::to_string(s->heading_deg));
+    announce(w,"PROBE_STOCK|"+std::to_string(s->survey_probes_carried)+"|"+
+        std::to_string(s->fitting.probe_launcher()?1:0));
+    for(const auto& [id,p]:w.survey_probes()){
+        if(p.owner!=s->owner_id || p.carrier!=ship)continue;
+        announce(w,"SURVEY_PROBE|"+std::to_string(id)+"|"+std::to_string(p.system)+"|"+
+            std::to_string(p.position.x)+"|"+std::to_string(p.position.y));
+    }
     announce(w,"FITTING|"+std::to_string(s->fitting.exploration_scanner()?1:0)+"|"+
         std::to_string(s->fitting.hardpoints.size())+"|"+
         std::to_string(s->fitting.support.size())+"|"+
@@ -379,6 +386,18 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
         else announce(world.world(),"ERROR|INVALID_INPUT");
         return;
     }
+    if(v.size()==2 && v[0]=="PROBE_SCAN"){
+        try{
+            const auto id=integer(v[1]);
+            if(id<1 || id>1000000000000000LL)throw std::invalid_argument("bad probe id");
+            Command c{};c.id=++nonce;c.sequence=c.id;c.execute_tick=world.world().tick()+1;
+            c.issuer=principal;c.actor=ship;c.target=static_cast<EntityId>(id);
+            c.action=Action::ScanSurveyProbe;
+            if(world.submit(c))pending_scans.insert(c.id);
+            else announce(world.world(),"ERROR|INVALID_INPUT");
+        }catch(const std::exception&){announce(world.world(),"ERROR|INVALID_INPUT");}
+        return;
+    }
     if(v.size()==3 && v[0]=="SAFETY"){
         try{
             const auto site=integer(v[1]);
@@ -416,6 +435,14 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
                 throw std::invalid_argument("invalid wreck salvage");
             c.action=Action::SalvageWreck;
             c.target=static_cast<EntityId>(target);c.amount=amount;
+        }else if(v.size()==1 && v[0]=="PROBE_DEPLOY"){
+            c.action=Action::DeploySurveyProbe;
+        }else if(v.size()==2 && (v[0]=="PROBE_SCAN" || v[0]=="PROBE_RECOVER")){
+            const auto target=integer(v[1]);
+            if(target<1 || target>1000000000000000LL)
+                throw std::invalid_argument("invalid deployed survey probe");
+            c.target=static_cast<EntityId>(target);
+            c.action=v[0]=="PROBE_SCAN"?Action::ScanSurveyProbe:Action::RecoverSurveyProbe;
         }else if(v.size()==2 && v[0]=="FIT_SCANNER"){
             const auto mode=integer(v[1]);
             if(mode!=1 && mode!=-1)throw std::invalid_argument("invalid scanner fit mode");
@@ -627,6 +654,7 @@ int main(int argc,char** argv){
         EntityId ship=initial_ship;
         genesis.provision_colony_genesis(initial_ship,1000,3000,1000,1000,1000);
         genesis.provision_starter_exploration_scanner(initial_ship);
+        genesis.provision_starter_probe_kit(initial_ship);
         genesis.add_asteroid({2000,1000},40); // small reachable starter resource
         genesis.add_asteroid({15000,1000},30);
         genesis.add_training_drone({8000,0}); // uncrewed training opponent; no colony NPCs
