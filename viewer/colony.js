@@ -8,6 +8,14 @@
   function decode(raw){
     if(typeof raw!=='string'||raw.length>180||!/^COLONY\|1\|/.test(raw)||!/^[A-Za-z0-9_|-]+$/.test(raw))throw Error('Invalid colony telemetry');
     const v=raw.split('|'),tick=numeric(v[2],1200),t=v[3];let e={tick,type:t};
+    if(t==='COMBAT_SHIP'){
+      if(v.length!==6)throw Error('Malformed combat ship');
+      return {...e,hull:numeric(v[4],100),charges:numeric(v[5],12)};
+    }
+    if(t==='COMBAT_TARGET'){
+      if(v.length!==6)throw Error('Malformed combat target');
+      return {...e,id:numeric(v[4],100000000),hull:numeric(v[5],100)};
+    }
     if(t==='HEADING'){
       if(v.length!==5)throw Error('Bad ship heading');
       return {...e,heading:numeric(v[4],359)};
@@ -206,6 +214,7 @@
 });
 (function(){'use strict';if(typeof document==='undefined')return;
  const q=id=>document.getElementById(id), policyAudits=new Map(), geology=new Map(),small=new Map(),log=[],stocks=new Map(),outposts=new Map(),farms=new Map(),habitats=new Map(),utilities=new Map(),communities=new Map(),clinics=new Map(),reclaimers=new Map(),waterworks=new Map();
+ const combatTargets=new Map();
  window.GalaxyColonyGeology=geology;
  window.GalaxySelectedRockId=null;
  window.GalaxySelectAsteroid=id=>{
@@ -258,8 +267,22 @@
        guide.action==='colonyFabricate'?{amount:4}:{});
  });
  window.GalaxyColony={
-   reset(){window.GalaxySelectedRockId=null;window.GalaxyShipHeading=null;window.GalaxyColonyOutpostIds.clear();openingStatus=null;openingScanned=false;refreshOpening();window.GalaxyColonyHomeShipId=null;q('colonySafetyAssess').disabled=true;q('colonySafetyPreflight').disabled=true;policyAudits.clear();geology.clear();small.clear();stocks.clear();outposts.clear();farms.clear();habitats.clear();utilities.clear();communities.clear();clinics.clear();reclaimers.clear();waterworks.clear();log.length=0;q('colonyEvents').textContent='Awaiting colony telemetry…';q('expeditionOutcome').textContent='Awaiting an actual native result';},
+   reset(){combatTargets.clear();q('combatHull').textContent='—';q('combatCharges').textContent='—';q('combatFire').disabled=true;q('combatFeedback').textContent='Awaiting native combat telemetry.';window.GalaxySelectedRockId=null;window.GalaxyShipHeading=null;window.GalaxyColonyOutpostIds.clear();openingStatus=null;openingScanned=false;refreshOpening();window.GalaxyColonyHomeShipId=null;q('colonySafetyAssess').disabled=true;q('colonySafetyPreflight').disabled=true;policyAudits.clear();geology.clear();small.clear();stocks.clear();outposts.clear();farms.clear();habitats.clear();utilities.clear();communities.clear();clinics.clear();reclaimers.clear();waterworks.clear();log.length=0;q('colonyEvents').textContent='Awaiting colony telemetry…';q('expeditionOutcome').textContent='Awaiting an actual native result';},
    accept(raw){const e=window.GalaxyColonyContract.decode(raw);
+     if(e.type==='COMBAT_SHIP'){
+       q('combatHull').textContent=e.hull+' / 100';
+       q('combatCharges').textContent=String(e.charges);
+       q('combatFire').disabled=e.charges===0||q('combatTarget').value==='';
+     }
+     if(e.type==='COMBAT_TARGET'){
+       combatTargets.set(e.id,e.hull);
+       const select=q('combatTarget'),current=select.value;
+       select.replaceChildren(new Option('Select training drone',''),...[...combatTargets].map(([id,hull])=>
+         new Option('#'+id+' · hull '+hull,String(id))));
+       if([...select.options].some(o=>o.value===current))select.value=current;
+       q('combatFire').disabled=!select.value||q('combatCharges').textContent==='0';
+       q('combatFeedback').textContent='Training drone #'+e.id+' has '+e.hull+' hull remaining.';
+     }
      if(e.type==='HEADING'){
        window.GalaxyShipHeading=e.heading;
        q('flightHeading').textContent=e.heading+'°';
@@ -332,6 +355,10 @@
        log.push(msg);q('colonyEvents').textContent=log.slice(-5).reverse().join('\n');
      }
      else if(e.type==='RESULT'||e.type==='ERROR'||e.type==='SCAN_DONE'||e.type==='NEW_COLONY'||e.type==='RESUMED'){
+       if(e.type==='RESULT'&&combatTargets.size){
+         q('combatFeedback').textContent='Latest native command #'+e.id+': '+e.outcome+
+           ' · effect '+e.transferred+' (see training drone hull for confirmed damage).';
+       }
        if(e.type==='RESULT'){
          window.GalaxyAssistNativeOutcome?.(e.outcome);
          const detail=window.GalaxyExpeditionFeedback?.diagnostic(e.outcome,e.transferred);

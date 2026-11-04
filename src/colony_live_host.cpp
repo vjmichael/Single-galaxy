@@ -115,6 +115,14 @@ void status(const Simulation& w,EntityId ship){
     const auto* s=w.find(ship);const auto* c=w.colony_ship(ship);
     if(!s || !c)throw std::runtime_error("colony ship missing");
     announce(w,"HEADING|"+std::to_string(s->heading_deg));
+    announce(w,"COMBAT_SHIP|"+std::to_string(s->hull)+"|"+
+        std::to_string(s->weapon_charges));
+    for(const auto& [id,e]:w.entities()){
+        if(!e.training_drone || e.type!=EntityType::Ship ||
+           e.system_id!=s->system_id)continue;
+        announce(w,"COMBAT_TARGET|"+std::to_string(id)+"|"+
+            std::to_string(e.hull));
+    }
     announce(w,"STATUS|"+std::to_string(c->crew)+"|"+std::to_string(s->cargo)+"|"+
         std::to_string(c->refined)+"|"+std::to_string(c->modules)+"|"+
         std::to_string(w.built_outposts().size())+"|"+std::to_string(w.total_ore()));
@@ -361,6 +369,10 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
             auto x=integer(v[1]),y=integer(v[2]);
             if(x<-1||x>1||y<-1||y>1)throw std::invalid_argument("bad thrust");
             c.action=Action::Thrust;c.thrust_x=static_cast<int>(x);c.thrust_y=static_cast<int>(y);
+        }else if(v.size()==2 && v[0]=="FIRE_TRAINING"){
+            const auto id=integer(v[1]);
+            if(id<=0||id>100000000)throw std::invalid_argument("invalid combat target");
+            c.action=Action::FireTrainingWeapon;c.target=static_cast<EntityId>(id);
         }else if(v.size()==1 && v[0]=="DOCK_BASE"){
             const auto* self=world.world().find(ship);
             if(!self)throw std::invalid_argument("ship missing");
@@ -565,6 +577,7 @@ int main(int argc,char** argv){
         genesis.provision_colony_genesis(initial_ship,1000,3000,1000,1000,1000);
         genesis.add_asteroid({2000,1000},40); // small reachable starter resource
         genesis.add_asteroid({15000,1000},30);
+        genesis.add_training_drone({8000,0}); // uncrewed training opponent; no colony NPCs
         genesis.add_geological_asteroid({140000,0},AsteroidClass::Carbonaceous,70,1700);
         genesis.add_geological_asteroid({320000,90000},AsteroidClass::Silicate,95,2900);
         genesis.add_geological_asteroid({-220000,-90000},AsteroidClass::Metallic,55,5700);

@@ -1,0 +1,37 @@
+name: PLAY-08 native training combat
+on:
+  push:
+    branches:
+      - integration/play08-ship-combat-20261104
+  pull_request:
+    paths:
+      - 'include/galaxy/Simulation.hpp'
+      - 'src/Simulation.cpp'
+      - 'src/colony_live_host.cpp'
+      - 'viewer/colony.js'
+      - 'viewer/interactive.js'
+      - 'viewer/interactive.html'
+      - 'live/interactive_relay.py'
+      - 'tests/PLAY08_TrainingCombatTests.cpp'
+      - 'tests/PLAY08_CombatWiringTests.js'
+      - '.github/workflows/play08.yml'
+jobs:
+  combat-acceptance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure game kernel
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+      - name: Build native combat and real live host
+        run: cmake --build build --target galaxy_play08_training_combat_tests galaxy_colony_live_host -j2
+      - name: Run durable weapon and recovery acceptance
+        run: ctest --test-dir build -R '^galaxy_play08_training_combat$' --output-on-failure
+      - name: Verify browser combat, travel and earlier flight workflows
+        run: node --test tests/PLAY08_CombatWiringTests.js tests/TravelAssistTests.js tests/Play07WiringTests.js tests/FlightCameraTests.js tests/Play06WiringTests.js tests/ExpeditionFeedbackTests.js tests/ExpeditionWiringTests.js tests/CargoReturnTests.js tests/FlightControlsTests.js tests/OpeningGuideTests.js
+      - name: Parse live client and relay
+        run: |
+          node --check viewer/colony.js
+          node --check viewer/interactive.js
+          node --check viewer/viewer.js
+          node --check viewer/travel-assist.js
+          python3 -m py_compile live/interactive_relay.py
