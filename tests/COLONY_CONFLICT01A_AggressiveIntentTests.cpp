@@ -51,7 +51,7 @@ try{
         player=sim.add_ship(8,{1000,0},100);
         sim.provision_colony_genesis(predatory,1000,1000,1000,1000,1000);
         sim.provision_colony_genesis(expansion,1000,1000,1000,1000,1000);
-        sim.provision_colony_genesis(desperate,5,1000,1000,1000,1000);
+        sim.provision_colony_genesis(desperate,100,100,100,100,600);
         sim.provision_colony_genesis(isolation,1000,1000,1000,1000,1000);
         sim.provision_colony_genesis(cooperative,1000,1000,1000,1000,1000);
         const auto ore=sim.add_asteroid({2000,0},70);
@@ -63,9 +63,9 @@ try{
         CHECK(action(world,predatory,2,Action::RefineOre,0,60).result==Outcome::Applied);
         CHECK(action(world,predatory,3,Action::FabricateModule,0,30).result==Outcome::Applied);
         CHECK(world.world().colony_ship(predatory)->modules>=2);
-        world.steps(20-world.world().tick());
-        CHECK(world.world().tick()==20);
-        CHECK(world.world().life_support(desperate)->food_kg==3);
+        world.steps(980-world.world().tick());
+        CHECK(world.world().tick()==980);
+        CHECK(world.world().life_support(desperate)->food_kg==2);
         CHECK(colony_safety::assess(world.world(),desperate,desperate).risk==
               colony_safety::Risk::Critical);
         struct Case {
@@ -124,21 +124,21 @@ try{
         CHECK(world.world().colony_ship(predatory)->crew==6);
         CHECK(world.world().npc_records().size()==14);
         CHECK(world.world().npc_casualties().empty());
-        world.steps(120-world.world().tick());
-        CHECK(world.world().tick()==120);
+        world.steps(1100-world.world().tick());
+        CHECK(world.world().tick()==1100);
         CHECK(world.world().find(player)->type==EntityType::Ship);
         CHECK(world.world().npc_casualties().empty());
     }
     {
         PersistentWorld replay(path,Simulation(8220));
-        CHECK(replay.world().tick()==120);
+        CHECK(replay.world().tick()==1100);
         CHECK(replay.world().find(player)->type==EntityType::Ship);
         CHECK(replay.world().colony_ship(predatory)->modules>=2);
     }
     PersistentWorld::recover_copy(path,recovered);
     {
         PersistentWorld replay(recovered,Simulation(8221));
-        CHECK(replay.world().tick()==120);
+        CHECK(replay.world().tick()==1100);
         CHECK(replay.world().npc_casualties().empty());
     }
     PersistentWorld::recover_copy(path,tampered);
@@ -159,7 +159,7 @@ try{
     }
     clean(path);clean(recovered);clean(tampered);
     std::cout<<"PASS CONFLICT01A: unprovoked predatory preparation, expansionist claims, "
-      "scarcity pleas, security warnings, neutral contact, 120-tick replay and false-history rejection\n";
+      "scarcity pleas, security warnings, neutral contact, 120-post-observation-tick replay and false-history rejection\n";
     return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}
 }
