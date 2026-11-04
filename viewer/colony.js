@@ -203,6 +203,22 @@
 (function(){'use strict';if(typeof document==='undefined')return;
  const q=id=>document.getElementById(id), policyAudits=new Map(), geology=new Map(),small=new Map(),log=[],stocks=new Map(),outposts=new Map(),farms=new Map(),habitats=new Map(),utilities=new Map(),communities=new Map(),clinics=new Map(),reclaimers=new Map(),waterworks=new Map();
  window.GalaxyColonyGeology=geology;
+ const guideStorage=(()=>{try{return window.localStorage;}catch{return null;}})();
+ let skippedOpening=window.GalaxyFlightControls?.guideSkipped(guideStorage)||false;
+ q('openingGuide').hidden=skippedOpening;
+ q('skipOpening').textContent=skippedOpening?'Show tutorial':'Skip tutorial';
+ q('skipOpening').addEventListener('click',()=>{
+   skippedOpening=!skippedOpening;
+   window.GalaxyFlightControls?.setGuideSkipped(guideStorage,skippedOpening);
+   q('openingGuide').hidden=skippedOpening;
+   q('showOpening').hidden=!skippedOpening;
+ });
+ q('showOpening').addEventListener('click',()=>{
+   skippedOpening=false;
+   window.GalaxyFlightControls?.setGuideSkipped(guideStorage,false);
+   q('openingGuide').hidden=false;q('showOpening').hidden=true;
+ });
+ q('showOpening').hidden=!skippedOpening;
  let openingStatus=null,openingScanned=false;
  function refreshOpening(){
    const guide=window.GalaxyOpeningGuide?.progress(openingStatus,openingScanned);
