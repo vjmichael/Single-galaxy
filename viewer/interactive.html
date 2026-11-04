@@ -94,6 +94,15 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
  </div>
  <div class="help">Mining range and cargo capacity are enforced by the native world. A queued request does not confirm extraction.</div>
 </section>
+<section aria-labelledby="expeditionTitle" style="border:1px solid #236478;border-radius:10px;padding:12px;margin:10px 0;background:#0c2230">
+ <h2 id="expeditionTitle">Mining expedition · Live mission status</h2>
+ <div id="expeditionStatus" role="status" aria-live="polite" class="help">Waiting for committed ship and outpost state.</div>
+ <div class="metric"><span>New bulk ore mined this session</span><strong id="expeditionMined">0 t</strong></div>
+ <div class="metric"><span>Delivered to home from this session</span><strong id="expeditionDelivered">0 t</strong></div>
+ <div class="metric"><span>Current mineable target</span><strong id="expeditionTarget">—</strong></div>
+ <div class="metric"><span>Latest native command outcome</span><span id="expeditionOutcome" class="help">Awaiting an actual native result</span></div>
+ <div class="help">These are session-only indicators derived from the native world and result journal. The saved ore and structures live in SQLite. Reconnection does not fabricate completed expeditions.</div>
+</section>
 <section aria-labelledby="returnTitle" style="border:1px solid #475774;border-radius:10px;padding:12px;margin:10px 0">
  <h2 id="returnTitle">Cargo run · Return to outpost</h2>
  <div id="returnTelemetry" class="help" role="status" aria-live="polite">Build your first outpost to establish a home hangar.</div>
@@ -231,6 +240,7 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
 <script src="opening-guide.js"></script>
 <script src="flight-controls.js"></script>
 <script src="cargo-return.js"></script>
+<script src="expedition-feedback.js"></script>
 <script src="colony.js"></script>
 <script src="interactive.js"></script>
 <script src="colony-shipping.js"></script>
