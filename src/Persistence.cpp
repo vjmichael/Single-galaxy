@@ -3277,6 +3277,24 @@ public:
             Statement table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
                                 "AND name='sg_society_migration'");
             const bool has_migration=table.row();
+            Statement family_execute_table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                       "AND name='sg_colony_family_departure_execute'");
+            const bool has_family_execute=family_execute_table.row();
+            Statement family_member_table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                       "AND name='sg_colony_family_household_member'");
+            const bool has_family_members=family_member_table.row();
+            if(has_family_execute!=has_family_members)
+                throw std::runtime_error("SQLite: incomplete executed family custody schema");
+            // The new family receipt is a distinct authoritative world
+            // transition, never a forged legacy HostSettleMigrant receipt.
+            const auto family_command_exists=[&](const std::string& cmd){
+                if(!has_family_execute)return false;
+                Statement q(db_,"SELECT 1 FROM sg_colony_family_departure_execute WHERE command_id=?");
+                q.text(1,cmd);
+                if(!q.row())return false;
+                if(q.row())throw std::runtime_error("SQLite: duplicate executed family command");
+                return true;
+            };
             for(const auto& [id,c]:journal_commands){
                 if(c.action!=Action::HostSettleMigrant)continue;
                 const auto ev=event_by_id.find(id);
@@ -3294,10 +3312,18 @@ public:
                 Statement receipt(db_,"SELECT command_id FROM sg_regional_command_receipt "
                     "WHERE actor='society-migration-host'");
                 while(receipt.row()){
-                    if(!has_migration)throw std::runtime_error("SQLite: orphaned regional migration");
-                    Statement q(db_,"SELECT 1 FROM sg_society_migration WHERE command_id=?");
-                    q.text(1,sqlite_str(receipt.get(),0));
-                    if(!q.row() || q.row())throw std::runtime_error("SQLite: regional migration unlinked");
+                    const auto command_id=sqlite_str(receipt.get(),0);
+                    const bool linked_family=family_command_exists(command_id);
+                    bool linked_legacy=false;
+                    if(has_migration){
+                        Statement q(db_,"SELECT 1 FROM sg_society_migration WHERE command_id=?");
+                        q.text(1,command_id);
+                        linked_legacy=q.row();
+                        if(linked_legacy && q.row())
+                            throw std::runtime_error("SQLite: duplicated legacy regional migration");
+                    }
+                    if(linked_family==linked_legacy)
+                        throw std::runtime_error("SQLite: regional migration has zero or conflicting world effect");
                 }
             }
             Statement family_table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
@@ -3305,9 +3331,26 @@ public:
             if(family_table.row()){
                 Statement q(db_,"SELECT scope,event_id FROM npc_family_moves");
                 while(q.row()){
+                    const auto event_id=sqlite_str(q.get(),1);
+                    const auto family_scope=sqlite_str(q.get(),0);
+                    // New physically executed complete-family commands carry
+                    // a per-person immutable movement link, not a fake
+                    // generic society-migration row.
+                    bool linked_family_member=false;
+                    if(has_family_members){
+                        Statement f(db_,"SELECT command_id FROM sg_colony_family_household_member "
+                            "WHERE family_scope=? AND event_id=?");
+                        f.text(1,family_scope);f.text(2,event_id);
+                        if(f.row()){
+                            linked_family_member=family_command_exists(sqlite_str(f.get(),0));
+                            if(!linked_family_member || f.row())
+                                throw std::runtime_error("SQLite: invalid executed family member linkage");
+                        }
+                    }
+                    if(linked_family_member)continue;
                     if(!has_migration)throw std::runtime_error("SQLite: family move without world effect");
                     Statement effect(db_,"SELECT 1 FROM sg_society_migration WHERE command_id=?");
-                    effect.text(1,sqlite_str(q.get(),1));
+                    effect.text(1,event_id);
                     if(!effect.row()){
                         Statement co_table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
                             "AND name='sg_society_migration'");
