@@ -4765,6 +4765,7 @@ void Simulation::seed_celestial_local_region(std::uint64_t body_id) {
             break;
         }
     }
+    std::array<EntityId,2> manifest{};
     if(donor) {
         if(next_entity_id_>std::numeric_limits<EntityId>::max()-2)
             throw std::overflow_error("local region entity IDs exhausted");
@@ -4779,10 +4780,11 @@ void Simulation::seed_celestial_local_region(std::uint64_t body_id) {
             rock.ore=allocations[i];
             entities_.emplace(rock.id,rock);
             local_entity_anchors_.emplace(rock.id,body_id);
+            manifest[i]=rock.id;
         }
         entities_.at(donor).ore-=14;
     }
-    generated_local_regions_.insert(body_id);
+    generated_local_regions_.emplace(body_id,manifest);
     snapshot_version_=std::max(snapshot_version_,73);
 }
 void Simulation::ensure_ship_frame_registry() {
@@ -5098,8 +5100,8 @@ std::string Simulation::canonical_state() const {
            <<frame.origin.x_mm<<'|'<<frame.origin.y_mm<<'|'
            <<frame.origin.z_mm<<'\n';
     if(snapshot_version_>=73) {
-        for(const auto body:generated_local_regions_)
-            out<<"localregion|"<<body<<'\n';
+        for(const auto& [body,manifest]:generated_local_regions_)
+            out<<"localregion|"<<body<<'|'<<manifest[0]<<'|'<<manifest[1]<<'\n';
         for(const auto& [entity,body]:local_entity_anchors_)
             out<<"localanchor|"<<entity<<'|'<<body<<'\n';
     }
@@ -5533,9 +5535,10 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 throw std::runtime_error("snapshot: invalid system registry");
             result.systems_.insert(static_cast<std::uint32_t>(id));
         } else if(f[0]=="localregion" && result.snapshot_version_>=73) {
-            require_fields(f,2);
-            const auto body=u64(f[1]);
-            if(!body || !result.generated_local_regions_.insert(body).second ||
+            require_fields(f,4);
+            const auto body=u64(f[1]),a=u64(f[2]),b=u64(f[3]);
+            if(!body || ((a==0)!=(b==0)) || (a && a>=b) ||
+               !result.generated_local_regions_.emplace(body,std::array<EntityId,2>{a,b}).second ||
                result.generated_local_regions_.size()>10000)
                 throw std::runtime_error("snapshot: duplicate or invalid local region");
         } else if(f[0]=="localanchor" && result.snapshot_version_>=73) {
@@ -7393,17 +7396,32 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             throw std::runtime_error("snapshot: missing depleted tombstone");
     }
     if(result.snapshot_version_>=73) {
-        for(const auto body:result.generated_local_regions_) {
+        std::set<EntityId> all_generated_ids;
+        for(const auto& [body,manifest]:result.generated_local_regions_) {
             const auto system=static_cast<std::uint32_t>(body>>32);
             const auto it=result.physical_celestial_systems_.find(system);
             if(it==result.physical_celestial_systems_.end() ||
                std::none_of(it->second.begin(),it->second.end(),
                    [body](const PhysicalCelestialBody& e){return e.id==body;}))
                 throw std::runtime_error("snapshot: unrecognized generated region");
+            for(const auto entity:manifest) {
+                if(!entity)continue;
+                if(!all_generated_ids.insert(entity).second)
+                    throw std::runtime_error("snapshot: reused generated local entity");
+                // Each originally allocated deposit is either still in the
+                // correct local frame or exists as a durable depletion tombstone.
+                const auto live=result.local_entity_anchors_.find(entity);
+                if(live==result.local_entity_anchors_.end()) {
+                    if(!result.depleted_.count(entity))
+                        throw std::runtime_error("snapshot: generated deposit disappeared");
+                }else if(live->second!=body)
+                    throw std::runtime_error("snapshot: region deposit anchor changed");
+            }
         }
         for(const auto& [entity,body]:result.local_entity_anchors_) {
             const auto it=result.entities_.find(entity);
             if(!result.generated_local_regions_.count(body) ||
+               !all_generated_ids.count(entity) ||
                it==result.entities_.end() ||
                it->second.type!=EntityType::Asteroid ||
                it->second.system_id!=static_cast<std::uint32_t>(body>>32))
