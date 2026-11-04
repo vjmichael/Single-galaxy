@@ -22,7 +22,7 @@ struct Vector2 {
 };
 
 enum class EntityType { Ship, Asteroid, Station, Stargate, Wreck };
-enum class Action { Thrust, Mine, StartMining, StopMining, RequestUndock, RequestDock, UnloadOre, LoadOre, SellOre, RequestJump, SetGatePairOnline, SetGateStaff, DeliverGateSpares, RefineOre, FabricateModule, ConstructOutpost, RefineMineral, FabricateMaterialModule, PlantCrops, HarvestCrops, RecycleWater, RecycleCompost, ProduceOxygen, LoadLifeWater, ConstructFarm, TransferFarmStock, AssignFarmWorkers, ConstructHabitat, TransferHabitatStock, AssignHabitatResidents, ConstructUtility, RepairUtility, TransferUtilitySpares, AssignUtilityTechnicians, SetUtilityMaintenance, ConstructCommunity, TransferCommunityStock, AssignCommunityStaff, ConstructClinic, TransferClinicStock, AssignClinicStaff, ConstructReclaimer, ConstructWaterworks, TransferWaterworksFeed, SetPolicyAssurance, AssignPolicyInspectors, AssignFarmMentor, HostDestroyShip, HostCrewLoss, ConstructWorkshop, TransferWorkshopFeed, AssignWorkshopOperator, TransferWorkshopOutput, ConstructWorkshopFinisher, AssignWorkshopFinisher, TransferWorkshopFinalOutput, TransferWorkshopStack, ConstructStorage, TransferStorageStack, ConstructStorageNode, TransferStorageNodeStack, ConstructStorageLink, ConstructWorkshopLink, PlaceFactoryEquipment, PlaceConveyorCell, CompleteConveyorRoute, HostEmbarkPassengers, HostDisembarkPassengers, HostStrandFerry, HostResumeFerry, HostEvacuatePassengers, HostDestroyPassengerFerry, HostResolveMixedFerryLoss, HostTrainMedic, HostTriageRescued, HostTreatInjuries, HostScheduleMedicShift, HostLoadMedicalKit, HostMobileStabilize, HostSettleMigrant, HostSplitEvacuatePassengers, HostEscrowConstructedStock, HostReturnConstructedStock, HostTransferConsignedStock, HostColonyDeparture, HostRegisterDependent, FireTrainingWeapon, SalvageWreck, SurveyLocal, ConfigureExplorationScanner };
+enum class Action { Thrust, Mine, StartMining, StopMining, RequestUndock, RequestDock, UnloadOre, LoadOre, SellOre, RequestJump, SetGatePairOnline, SetGateStaff, DeliverGateSpares, RefineOre, FabricateModule, ConstructOutpost, RefineMineral, FabricateMaterialModule, PlantCrops, HarvestCrops, RecycleWater, RecycleCompost, ProduceOxygen, LoadLifeWater, ConstructFarm, TransferFarmStock, AssignFarmWorkers, ConstructHabitat, TransferHabitatStock, AssignHabitatResidents, ConstructUtility, RepairUtility, TransferUtilitySpares, AssignUtilityTechnicians, SetUtilityMaintenance, ConstructCommunity, TransferCommunityStock, AssignCommunityStaff, ConstructClinic, TransferClinicStock, AssignClinicStaff, ConstructReclaimer, ConstructWaterworks, TransferWaterworksFeed, SetPolicyAssurance, AssignPolicyInspectors, AssignFarmMentor, HostDestroyShip, HostCrewLoss, ConstructWorkshop, TransferWorkshopFeed, AssignWorkshopOperator, TransferWorkshopOutput, ConstructWorkshopFinisher, AssignWorkshopFinisher, TransferWorkshopFinalOutput, TransferWorkshopStack, ConstructStorage, TransferStorageStack, ConstructStorageNode, TransferStorageNodeStack, ConstructStorageLink, ConstructWorkshopLink, PlaceFactoryEquipment, PlaceConveyorCell, CompleteConveyorRoute, HostEmbarkPassengers, HostDisembarkPassengers, HostStrandFerry, HostResumeFerry, HostEvacuatePassengers, HostDestroyPassengerFerry, HostResolveMixedFerryLoss, HostTrainMedic, HostTriageRescued, HostTreatInjuries, HostScheduleMedicShift, HostLoadMedicalKit, HostMobileStabilize, HostSettleMigrant, HostSplitEvacuatePassengers, HostEscrowConstructedStock, HostReturnConstructedStock, HostTransferConsignedStock, HostColonyDeparture, HostRegisterDependent, FireTrainingWeapon, SalvageWreck, SurveyLocal, ConfigureExplorationScanner, DeploySurveyProbe, ScanSurveyProbe, RecoverSurveyProbe };
 enum class Outcome { Applied, InvalidActor, Unauthorized, InvalidTarget, OutOfRange, InvalidArgument, NoResources, CargoFull, NotMining, NotInSpace, NotDocked, InTransition, ShipMoving, HangarFull, InsufficientFunds, WrongSystem, GateOffline, NotColonyShip, InsufficientCrew };
 enum class ActivityKind { AsteroidDespawned, AutoMiningTransfer, MiningStopped, Undocked, Docked, JumpCompleted, ShipDestroyed, NpcLost, AutoStorageTransfer };
 enum class DockState { InSpace, Docked, Undocking, Docking };
@@ -433,6 +433,7 @@ struct ShipFitting {
     std::array<std::uint8_t,2> support{{0,0}};
     std::array<std::uint8_t,2> subsystems{{0,0}};
     std::array<std::uint8_t,1> rigging{{0}};
+    bool probe_launcher() const { return hardpoints[0]==2 || hardpoints[1]==2; }
     bool exploration_scanner() const {
         return hardpoints[0]==1 || hardpoints[1]==1;
     }
@@ -450,6 +451,7 @@ struct Entity {
     std::uint64_t last_weapon_tick = 0; // cooldown persists through restart
     bool training_drone = false; // explicit non-crew practice target; never a colony ship
     ShipFitting fitting{};
+    std::uint8_t survey_probes_carried=0; // physically onboard probes, 2t-equivalent each
     std::int64_t ore = 0;
     std::int64_t cargo = 0;
     std::int64_t cargo_capacity = 0; // m3; fixed gameplay item volumes, NO mass limit
@@ -469,6 +471,14 @@ struct Entity {
 
 // PLAY-10: first observation is a durable owner-scoped fact; the source entity
 // may later be depleted. Positions are copied only from real native entities.
+struct DeployedSurveyProbe {
+    std::uint64_t id=0; // launching command ID, unique and persistent
+    EntityId carrier=0;
+    PlayerId owner=0;
+    std::uint32_t system=0;
+    Vector2 position{};
+    std::uint64_t launched_tick=0;
+};
 struct DiscoveryRecord {
     PlayerId owner=0;
     EntityId site=0;
@@ -533,6 +543,8 @@ public:
     static constexpr std::int64_t kTrainingWeaponRangeMm = 12000;
     static constexpr std::int64_t kSalvageRangeMm = 2500;
     static constexpr std::int64_t kLocalSurveyRangeMm = 50000;
+    static constexpr std::int64_t kProbeScanRangeMm = 50000;
+    static constexpr std::int64_t kProbeRecoveryRangeMm = 2500;
     static constexpr std::int64_t kProximitySafetyRangeMm = 5000;
     static constexpr std::int64_t kTrainingWeaponDamage = 15;
     static constexpr std::uint64_t kTrainingWeaponCooldownTicks = 2;
@@ -551,6 +563,7 @@ public:
     // Starting vessel receives one real pre-fitted scanner, represented in
     // resource-equivalent conservation. Does not migrate pre-existing saves.
     void provision_starter_exploration_scanner(EntityId ship);
+    void provision_starter_probe_kit(EntityId ship);
     // Genesis-only colony start: one real ship with a finite founding crew.
     EntityId add_colony_ship(PlayerId owner, Vector2 position,
                              std::int64_t cargo_capacity, std::int64_t founding_crew);
@@ -713,6 +726,7 @@ public:
     const std::vector<ActivityEvent>& activity_events() const { return activity_events_; }
     const std::map<EntityId, AutoMining>& active_mining() const { return mining_; }
     const std::map<std::pair<PlayerId,EntityId>,DiscoveryRecord>& discoveries() const { return discoveries_; }
+    const std::map<std::uint64_t,DeployedSurveyProbe>& survey_probes() const {return survey_probes_;}
     bool was_depleted(EntityId id) const { return depleted_.count(id) != 0; }
     const Entity* find(EntityId id) const;
     // Server-side partition query. Callers must not broadcast `entities()` to
@@ -768,6 +782,7 @@ private:
     std::set<EntityId> depleted_;
     std::map<EntityId, AutoMining> mining_;
     std::map<std::pair<PlayerId,EntityId>,DiscoveryRecord> discoveries_;
+    std::map<std::uint64_t,DeployedSurveyProbe> survey_probes_;
     std::map<std::pair<EntityId, PlayerId>, StationHangar> hangars_;
     std::map<EntityId, StationMarket> markets_;
     std::map<PlayerId, std::int64_t> wallets_;
