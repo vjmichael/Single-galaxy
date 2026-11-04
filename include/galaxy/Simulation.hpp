@@ -22,7 +22,7 @@ struct Vector2 {
 };
 
 enum class EntityType { Ship, Asteroid, Station, Stargate, Wreck };
-enum class Action { Thrust, Mine, StartMining, StopMining, RequestUndock, RequestDock, UnloadOre, LoadOre, SellOre, RequestJump, SetGatePairOnline, SetGateStaff, DeliverGateSpares, RefineOre, FabricateModule, ConstructOutpost, RefineMineral, FabricateMaterialModule, PlantCrops, HarvestCrops, RecycleWater, RecycleCompost, ProduceOxygen, LoadLifeWater, ConstructFarm, TransferFarmStock, AssignFarmWorkers, ConstructHabitat, TransferHabitatStock, AssignHabitatResidents, ConstructUtility, RepairUtility, TransferUtilitySpares, AssignUtilityTechnicians, SetUtilityMaintenance, ConstructCommunity, TransferCommunityStock, AssignCommunityStaff, ConstructClinic, TransferClinicStock, AssignClinicStaff, ConstructReclaimer, ConstructWaterworks, TransferWaterworksFeed, SetPolicyAssurance, AssignPolicyInspectors, AssignFarmMentor, HostDestroyShip, HostCrewLoss, ConstructWorkshop, TransferWorkshopFeed, AssignWorkshopOperator, TransferWorkshopOutput, ConstructWorkshopFinisher, AssignWorkshopFinisher, TransferWorkshopFinalOutput, TransferWorkshopStack, ConstructStorage, TransferStorageStack, ConstructStorageNode, TransferStorageNodeStack, ConstructStorageLink, ConstructWorkshopLink, PlaceFactoryEquipment, PlaceConveyorCell, CompleteConveyorRoute, HostEmbarkPassengers, HostDisembarkPassengers, HostStrandFerry, HostResumeFerry, HostEvacuatePassengers, HostDestroyPassengerFerry, HostResolveMixedFerryLoss, HostTrainMedic, HostTriageRescued, HostTreatInjuries, HostScheduleMedicShift, HostLoadMedicalKit, HostMobileStabilize, HostSettleMigrant, HostSplitEvacuatePassengers, HostEscrowConstructedStock, HostReturnConstructedStock, HostTransferConsignedStock, HostColonyDeparture, HostRegisterDependent, FireTrainingWeapon, SalvageWreck, SurveyLocal };
+enum class Action { Thrust, Mine, StartMining, StopMining, RequestUndock, RequestDock, UnloadOre, LoadOre, SellOre, RequestJump, SetGatePairOnline, SetGateStaff, DeliverGateSpares, RefineOre, FabricateModule, ConstructOutpost, RefineMineral, FabricateMaterialModule, PlantCrops, HarvestCrops, RecycleWater, RecycleCompost, ProduceOxygen, LoadLifeWater, ConstructFarm, TransferFarmStock, AssignFarmWorkers, ConstructHabitat, TransferHabitatStock, AssignHabitatResidents, ConstructUtility, RepairUtility, TransferUtilitySpares, AssignUtilityTechnicians, SetUtilityMaintenance, ConstructCommunity, TransferCommunityStock, AssignCommunityStaff, ConstructClinic, TransferClinicStock, AssignClinicStaff, ConstructReclaimer, ConstructWaterworks, TransferWaterworksFeed, SetPolicyAssurance, AssignPolicyInspectors, AssignFarmMentor, HostDestroyShip, HostCrewLoss, ConstructWorkshop, TransferWorkshopFeed, AssignWorkshopOperator, TransferWorkshopOutput, ConstructWorkshopFinisher, AssignWorkshopFinisher, TransferWorkshopFinalOutput, TransferWorkshopStack, ConstructStorage, TransferStorageStack, ConstructStorageNode, TransferStorageNodeStack, ConstructStorageLink, ConstructWorkshopLink, PlaceFactoryEquipment, PlaceConveyorCell, CompleteConveyorRoute, HostEmbarkPassengers, HostDisembarkPassengers, HostStrandFerry, HostResumeFerry, HostEvacuatePassengers, HostDestroyPassengerFerry, HostResolveMixedFerryLoss, HostTrainMedic, HostTriageRescued, HostTreatInjuries, HostScheduleMedicShift, HostLoadMedicalKit, HostMobileStabilize, HostSettleMigrant, HostSplitEvacuatePassengers, HostEscrowConstructedStock, HostReturnConstructedStock, HostTransferConsignedStock, HostColonyDeparture, HostRegisterDependent, FireTrainingWeapon, SalvageWreck, SurveyLocal, ConfigureExplorationScanner };
 enum class Outcome { Applied, InvalidActor, Unauthorized, InvalidTarget, OutOfRange, InvalidArgument, NoResources, CargoFull, NotMining, NotInSpace, NotDocked, InTransition, ShipMoving, HangarFull, InsufficientFunds, WrongSystem, GateOffline, NotColonyShip, InsufficientCrew };
 enum class ActivityKind { AsteroidDespawned, AutoMiningTransfer, MiningStopped, Undocked, Docked, JumpCompleted, ShipDestroyed, NpcLost, AutoStorageTransfer };
 enum class DockState { InSpace, Docked, Undocking, Docking };
@@ -425,6 +425,18 @@ struct BuiltOutpost {
     std::int64_t embodied_ore = 0; // four modules, eight ore-equivalent units
 };
 
+// PLAY-11: physical fitting racks. IDs: 0=empty, 1=exploration survey scanner.
+// Fixed introductory hull layout: 2 hardpoints / 2 support / 2 subsystem / 1 rig.
+// A separate always-on proximity safety sensor is intrinsic to the hull.
+struct ShipFitting {
+    std::array<std::uint8_t,2> hardpoints{{0,0}};
+    std::array<std::uint8_t,2> support{{0,0}};
+    std::array<std::uint8_t,2> subsystems{{0,0}};
+    std::array<std::uint8_t,1> rigging{{0}};
+    bool exploration_scanner() const {
+        return hardpoints[0]==1 || hardpoints[1]==1;
+    }
+};
 struct Entity {
     EntityId id = 0;
     std::uint32_t system_id = 1;
@@ -437,6 +449,7 @@ struct Entity {
     std::int64_t weapon_charges = 0; // finite starter training-weapon shots
     std::uint64_t last_weapon_tick = 0; // cooldown persists through restart
     bool training_drone = false; // explicit non-crew practice target; never a colony ship
+    ShipFitting fitting{};
     std::int64_t ore = 0;
     std::int64_t cargo = 0;
     std::int64_t cargo_capacity = 0; // m3; fixed gameplay item volumes, NO mass limit
@@ -520,6 +533,7 @@ public:
     static constexpr std::int64_t kTrainingWeaponRangeMm = 12000;
     static constexpr std::int64_t kSalvageRangeMm = 2500;
     static constexpr std::int64_t kLocalSurveyRangeMm = 50000;
+    static constexpr std::int64_t kProximitySafetyRangeMm = 5000;
     static constexpr std::int64_t kTrainingWeaponDamage = 15;
     static constexpr std::uint64_t kTrainingWeaponCooldownTicks = 2;
     static constexpr std::int64_t kDockingRangeMm = 2500;
@@ -534,6 +548,9 @@ public:
     EntityId add_ship(PlayerId owner, Vector2 position, std::int64_t cargo_capacity);
     // Genesis-only uncrewed training target; does not appear in production worlds by migration.
     EntityId add_training_drone(Vector2 position);
+    // Starting vessel receives one real pre-fitted scanner, represented in
+    // resource-equivalent conservation. Does not migrate pre-existing saves.
+    void provision_starter_exploration_scanner(EntityId ship);
     // Genesis-only colony start: one real ship with a finite founding crew.
     EntityId add_colony_ship(PlayerId owner, Vector2 position,
                              std::int64_t cargo_capacity, std::int64_t founding_crew);
