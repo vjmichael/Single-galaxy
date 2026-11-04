@@ -17,6 +17,25 @@ enum class Posture : int {
     Observe=0, Warn=1, RequestAid=2, DemandSupplies=3,
     PrepareRaid=4
 };
+// CONFLICT-01B1: a colony's subjective attitude toward an identifiable
+// foreign owner; distinct from any criminal verdict or physical attack fact.
+enum class Attitude : int {
+    Hostile=-2, Wary=-1, Neutral=0, Friendly=1, Allied=2
+};
+struct RelationRevision {
+    std::uint64_t event_id=0,prior_event_id=0,revision=0;
+    std::uint64_t knowledge_id=0,leader_id=0,incident_generation=0;
+    EntityId colony=0;
+    PlayerId target_owner=0;
+    int old_score=0,delta=0,new_score=0;
+    Attitude attitude=Attitude::Neutral;
+    bool subjective=true;
+};
+// Transmitted (never fabricated firsthand) GRSM interpretations may change
+// one colony's diplomatic attitude differently from another's. The observer
+// chain is checked independently by existing knowledge and incident journals.
+int relationship_delta(int fidelity,int valence,int confidence);
+Attitude attitude_for_score(int score);
 struct Decision {
     EntityId source=0,target_ship=0;
     PlayerId target_owner=0;
