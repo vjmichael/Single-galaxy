@@ -33,6 +33,17 @@ struct GovernanceEpoch {
     DiplomaticPolicy policy=DiplomaticPolicy::Pragmatic;
     TransitionKind kind=TransitionKind::Appointment;
 };
+// COLONY-EXIT-01A: witnessed *survival pressure* on a named, physically
+// resident NPC. Not a vote, political petition, proof of dissatisfaction,
+// valid emigration permit, or a completed physical transfer. Any departure
+// requires an independent passenger, household and receiving-colony gate.
+struct ExitPressure {
+    std::uint64_t event_id=0,world_generation=0,governance_event_id=0;
+    EntityId source_colony=0;
+    PlayerId source_owner=0;
+    std::uint64_t npc_id=0;
+    colony_safety::Risk source_risk=colony_safety::Risk::Safe;
+};
 // CONFLICT-01B1: a colony's subjective attitude toward an identifiable
 // foreign owner; distinct from any criminal verdict or physical attack fact.
 enum class Attitude : int {

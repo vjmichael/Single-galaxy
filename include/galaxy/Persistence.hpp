@@ -623,6 +623,15 @@ public:
     // Effective leadership and political direction, excluding same-generation
     // pending changes. Zero epoch event means the immutable founding charter.
     colony_conflict::GovernanceEpoch colony_governance(EntityId colony) const;
+    // EXIT-01A: a named resident may become eligible to SEEK departure as
+    // objectively observed life support deteriorates. This does NOT invent
+    // dissent, cast ballots, remove crew, or authorize voyages. The witness
+    // is durable and reconstructible from original physical world history.
+    std::optional<colony_conflict::ExitPressure> assess_colony_exit_pressure(
+        EntityId source_colony,std::uint64_t npc_id) const;
+    colony_conflict::ExitPressure record_colony_exit_pressure(
+        std::uint64_t witness_event_id,EntityId source_colony,
+        std::uint64_t npc_id);
     // CONFLICT-01B1: actual ship destruction + a real NPC's delivered GRSM
     // interpretation produces a subjective, directed diplomatic revision.
     // The incident's real attacker owner is independently reconstructed;

@@ -1057,3 +1057,12 @@ if(BUILD_TESTING)
     add_test(NAME galaxy_colony_conflict01b3_governance
         COMMAND galaxy_colony_conflict01b3_governance_tests)
 endif()
+
+# EXIT-01A: individual real-NPC critical survival pressure, never an election.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_exit01a_survival_tests
+        tests/COLONY_EXIT01A_SurvivalPressureTests.cpp)
+    target_link_libraries(galaxy_colony_exit01a_survival_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_exit01a_survival
+        COMMAND galaxy_colony_exit01a_survival_tests)
+endif()
