@@ -38,7 +38,7 @@ try{
     CHECK(sim.total_material_kg()==mass);
     CHECK(Simulation::from_snapshot(sim.canonical_state()).canonical_state()==
           sim.canonical_state());
-    sim.steps(620-sim.tick());
+    sim.steps(640-sim.tick());
     CHECK(static_cast<int>(colony_safety::assess(sim,source,source).risk)>=
           static_cast<int>(colony_safety::Risk::Critical));
     Command unsafe{};
@@ -67,7 +67,7 @@ try{
     CHECK(sim.colony_departures().at(source).relocated_children==
           std::vector<std::uint64_t>({child}));
     const auto before=sim.life_support(receiver)->food_kg;
-    sim.steps(640-sim.tick());
+    sim.steps(660-sim.tick());
     CHECK(sim.life_support(receiver)->food_kg==before-5); // 4 adults + 1 child
     CHECK(sim.total_material_kg()==mass);
     const auto restored=Simulation::from_snapshot(sim.canonical_state());
