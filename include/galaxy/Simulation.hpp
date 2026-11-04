@@ -2,6 +2,7 @@
 
 #include "galaxy/Inventory.hpp"
 #include "galaxy/Astronomy.hpp"
+#include "galaxy/PlanetaryGeography.hpp"
 #include <array>
 #include <cstdint>
 #include <limits>
@@ -896,6 +897,12 @@ public:
     // Read-only survey of deterministic system metadata; no fabricated physical bodies.
     std::optional<AstronomicalProfile> scan_celestial_profile(PlayerId owner,EntityId ship) const;
     std::vector<PhysicalCelestialBody> scan_physical_celestials(PlayerId owner,EntityId ship) const;
+    // PGF-01B.2: authenticated, read-only planetary geography survey. The
+    // returned site and surface projection originate from one watershed map.
+    // Body IDs must already exist in the authoritative physical catalogue.
+    std::optional<planetary::GeographicSite> scan_planetary_geography(
+        PlayerId owner, EntityId ship, std::uint64_t body_id,
+        std::uint16_t latitude, std::uint16_t longitude) const;
     // A persistent celestial body can be addressed by ID as a future navigation
     // anchor; this does not authorize warp, construction or landing.
     std::optional<PhysicalCelestialBody> celestial_navigation_anchor(
