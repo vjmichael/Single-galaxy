@@ -231,6 +231,9 @@ struct SocietyMigrationPlan {
     std::uint64_t family_seed=0,expected_origin_family_revision=0;
     std::uint64_t expected_destination_family_revision=0;
     std::uint64_t npc_id=0,transport_id=0;
+    // EXIT-01B: optional immutable immigration admission, bound to this
+    // *same* ART02/ECON03 transaction, not a parallel population ledger.
+    std::uint64_t voluntary_admission_event_id=0;
     // 05q6e4: optionally migrate the second physically arrived parent in the SAME step.
     std::uint64_t co_parent_id=0,co_parent_event_id=0;
     // 05q6e: registered dependent cohort IDs, each with a distinct immutable
