@@ -691,6 +691,7 @@ int main(int argc,char** argv){
         status(world.world(),ship,true);
         std::uint64_t nonce=900000000000ULL+world.generation();
         std::set<std::uint64_t> pending_scans,pending_probe_scans;
+        std::size_t known_discoveries=world.world().discoveries().size();
         const auto period=std::chrono::milliseconds(ms);
         for(int i=0;i<max_ticks;++i){
             const auto start=Clock::now();
@@ -754,6 +755,12 @@ int main(int argc,char** argv){
                     scanned=true; // remote probe survey: only native discovery records, no ship scan
                 announce(world.world(),"RESULT|"+std::to_string(ev.command_id)+"|"+
                     to_string(ev.result)+"|"+std::to_string(ev.transferred));
+            }
+            if(world.world().discoveries().size()!=known_discoveries){
+                // Newly completed autonomous drone survey: publish only the
+                // authoritative owner-scoped first-observation ledger.
+                scanned=true;
+                known_discoveries=world.world().discoveries().size();
             }
             std::cout<<encode_frame(bridge.after_committed_step(world.world()))<<std::flush;
             status(world.world(),ship,scanned);
