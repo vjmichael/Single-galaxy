@@ -112,6 +112,12 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
       <option value="celestial">Celestial (survey preview)</option>
       <option value="environmental">Environment (survey preview)</option>
     </select></label>
+    <label>Range <select id="signatureRange">
+      <option value="5000000">5 km</option>
+      <option value="50000000">50 km</option>
+      <option value="100000000">100 km</option>
+      <option value="500000000" selected>500 km</option>
+    </select></label>
     <button id="signatureScan" type="button">Search for signatures</button>
     <label>Detected signature <select id="signatureTarget"><option value="">Scan to detect signals</option></select></label>
     <button id="signatureFocus" type="button" disabled>Focus selected probe</button>
