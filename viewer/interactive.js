@@ -191,6 +191,13 @@ el('combatFire').addEventListener('click',()=>{
  command('colonyFireTraining',{target});
 });
 el('flightScan').addEventListener('click',()=>command('colonyScan'));
+el('droneTarget').addEventListener('change',()=>{
+ el('droneLaunch').disabled=!el('droneTarget').value;
+});
+el('droneLaunch').addEventListener('click',()=>{
+ const target=Number(el('droneTarget').value);
+ if(Number.isSafeInteger(target)&&target>0)command('colonyDroneLaunch',{target});
+});
 el('probeLaunch').addEventListener('click',()=>command('colonyProbeDeploy'));
 el('probeTarget').addEventListener('change',()=>{
  const selected=el('probeTarget').value!=='';
