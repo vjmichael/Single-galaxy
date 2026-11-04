@@ -2698,6 +2698,15 @@ Event Simulation::execute(const Command& c) {
                 if(probe.system!=actor.system_id){result.result=Outcome::WrongSystem;return result;}
                 if(c.action==Action::ScanSurveyProbe){
                     if(probe.drone_phase){result.result=Outcome::InvalidTarget;return result;}
+                    // 0.5 AU is the planned deep-space probe command budget.
+                    // Native positions currently span only ~2,000 km per axis,
+                    // so this limit will become meaningful with cosmic scaling.
+                    const auto dx=probe.position.x-actor.position.x;
+                    const auto dy=probe.position.y-actor.position.y;
+                    constexpr auto link=kDeepSpaceProbeCommsRangeMm;
+                    if(dx<-link || dx>link || dy<-link || dy>link){
+                        result.result=Outcome::OutOfRange;return result;
+                    }
                     std::vector<DiscoveryRecord> candidates;
                     constexpr auto r=kProbeScanRangeMm;
                     for(const auto& [id,e]:entities_){
@@ -5057,8 +5066,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 if((phase==0 && (p.drone_target || sample || taxonomy || p.drone_home.x || p.drone_home.y)) ||
                    (phase!=0 && (!p.drone_target ||
                     !result.valid_position(p.drone_home) ||
-                    (sample==0 && taxonomy!=0) ||
-                    (sample!=0 && taxonomy==0))))
+                    (sample!=0))))
                     throw std::runtime_error("snapshot: invalid geological drone state");
             }
             if(!p.id || !p.carrier || !p.owner ||
