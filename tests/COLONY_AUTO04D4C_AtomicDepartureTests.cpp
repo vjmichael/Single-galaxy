@@ -10,22 +10,24 @@ int main(){
 try{
     const auto path=(std::filesystem::temp_directory_path()/
        ("sg_departure_v58_"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count())+".sqlite")).string();
-    EntityId source=0,receiver=0,underfunded=0;
+    EntityId source=0,receiver=0,underfunded=0,foreign=0;
     std::int64_t starting_material=0;
     std::uint64_t accepted_generation=0;
     {
         Simulation genesis(7204);
         source=genesis.add_colony_ship(7,{0,0},100,4);
-        receiver=genesis.add_colony_ship(8,{0,0},100,4);
-        underfunded=genesis.add_colony_ship(9,{0,0},100,60);
+        receiver=genesis.add_colony_ship(7,{0,0},100,4);
+        underfunded=genesis.add_colony_ship(7,{0,0},100,60);
+        foreign=genesis.add_colony_ship(8,{0,0},100,4);
         genesis.provision_colony_genesis(source,100,100,100,200,500);
         genesis.provision_colony_genesis(receiver,1000,1000,1000,1000,1000);
         genesis.provision_colony_genesis(underfunded,100,100,100,200,500);
+        genesis.provision_colony_genesis(foreign,1000,1000,1000,1000,1000);
         genesis.enable_individual_workforce();
         genesis.upgrade_assignment_snapshot_format();
         genesis.enable_passenger_life_support();
         starting_material=genesis.total_material_kg();
-        CHECK(genesis.npc_records().size()==68);
+        CHECK(genesis.npc_records().size()==72);
         PersistentWorld w(path,std::move(genesis));
         Command c{};
         c.id=2001;c.sequence=2001;c.execute_tick=w.world().tick()+1;
@@ -43,6 +45,8 @@ try{
         CHECK(!w.submit_host_colony_departure(bad));
         bad=c;bad.target=underfunded;
         CHECK(!w.submit_host_colony_departure(bad));
+        bad=c;bad.target=foreign;
+        CHECK(!w.submit_host_colony_departure(bad)); // receiver belongs to another player
         CHECK(w.world().colony_ship(source)->crew==4);
         CHECK(w.world().colony_ship(receiver)->crew==4);
         CHECK(w.submit_host_colony_departure(c));
@@ -100,7 +104,7 @@ try{
         CHECK(restart.world().colony_ship(receiver)->crew==8);
         CHECK(restart.world().colony_departures().at(source).relocated_npcs==
               std::vector<std::uint64_t>({1,2,3,4}));
-        CHECK(restart.world().npc_records().size()==68);
+        CHECK(restart.world().npc_records().size()==72);
         CHECK(restart.world().total_material_kg()==starting_material);
     }
     const auto replay_path=path+".replayed";
