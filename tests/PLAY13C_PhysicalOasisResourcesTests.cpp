@@ -31,7 +31,7 @@ int main(){
     ship=seed.add_colony_ship(7,{0,0},60,8);
     seed.provision_colony_genesis(ship,2000,2000,2000,2000,2000);
     seed.provision_starter_exploration_scanner(ship);
-    seed.add_asteroid({30000,0},50);
+    seed.add_asteroid({2000,0},50);
     seed.ensure_physical_celestial_systems();
     seed.provision_oasis_reserve_genesis(body,8000,4000);
     CHECK(seed.oasis_reserves().at(body).water_kg==8000);
@@ -41,11 +41,33 @@ int main(){
     seed.ensure_ship_frame_registry();
     PersistentWorld world(db,std::move(seed));
     CHECK(world.world().total_ore()==origin);
+    // Real mining + processing + fabrication, not test-only free modules.
+    auto action=[&](std::uint64_t id,Action type,std::int64_t qty,EntityId target=0){
+      Command c{};c.id=id;c.sequence=id;c.execute_tick=world.world().tick()+1;
+      c.issuer=7;c.actor=ship;c.action=type;c.amount=qty;c.target=target;
+      CHECK(world.submit(c));world.step();
+      CHECK(world.world().events().back().result==Outcome::Applied);
+    };
+    const auto donor=world.world().entities().find(2);
+    CHECK(donor!=world.world().entities().end());
+    action(51001,Action::Mine,4,donor->first);
+    action(51002,Action::RefineOre,4);
+    action(51003,Action::FabricateModule,2);
+    CHECK(world.world().colony_ship(ship)->modules>=2);
+    CHECK(world.world().total_ore()==origin);
     CHECK(!world.collect_oasis_resource(7,ship,body,true,1000)); // not physically there
     CHECK(world.begin_celestial_transit(7,ship,body,60001));
     world.steps(4);
     CHECK(world.complete_celestial_transit(60001));
     CHECK(world.world().canonical_state().rfind("galaxy-kernel-v75|",0)==0);
+    CHECK(!world.collect_oasis_resource(7,ship,body,true,1000)); // requires installed rig
+    CHECK(world.install_oasis_extractor(7,ship,body));
+    CHECK(world.world().oasis_extractors().count(ship)==1);
+    CHECK(world.world().colony_ship(ship)->modules==0);
+    CHECK(world.world().total_ore()==origin);
+    CHECK(world.world().canonical_state().rfind("galaxy-kernel-v76|",0)==0);
+    world.steps(20); // actual solar energy generation; no mass creation
+    CHECK(world.world().oasis_extractors().at(ship).energy_units>=20);
     const auto initial=world.world().canonical_state();
     CHECK(!world.collect_oasis_resource(8,ship,body,true,1000)); // wrong owner
     CHECK(!world.collect_oasis_resource(7,ship,body,true,500)); // fractional
@@ -85,6 +107,7 @@ int main(){
     CHECK(world.world().canonical_state()==snapshot);
     CHECK(world.world().total_ore()==origin);
     CHECK(world.world().oasis_reserves().at(body).water_kg==7000);
+    world.steps(20);
     CHECK(world.collect_oasis_resource(7,ship,body,true,7000));
     CHECK(world.world().oasis_reserves().at(body).water_kg==0);
     CHECK(!world.collect_oasis_resource(7,ship,body,true,1000));
