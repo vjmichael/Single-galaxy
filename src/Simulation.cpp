@@ -391,6 +391,18 @@ NpcCustodyView Simulation::npc_custody(std::uint64_t id) const {
     const auto& n=it->second;
     return {n.id,n.home_ship,n.location,n.role,n.transport_id,n.transport_id!=0};
 }
+std::size_t Simulation::people_physically_aboard(EntityId ship) const {
+    std::size_t count=0;
+    for(const auto& [id,n]:npcs_){
+        (void)id;
+        if(n.location==ship){
+            if(count==std::numeric_limits<std::size_t>::max())
+                throw std::overflow_error("physical occupancy overflow");
+            ++count;
+        }
+    }
+    return count;
+}
 std::size_t Simulation::passengers_aboard(EntityId ship) const {
     std::size_t count=0;
     for(const auto& [id,n]:npcs_){
@@ -3871,10 +3883,11 @@ void Simulation::process_colony_needs(){
         // absent people, and transport movement must not create provisions.
         // Legacy aggregate-only worlds have no named passengers to count.
         const auto crew=colony_ships_.at(id).crew;
-        const auto aboard=passenger_needs_enabled()?passengers_aboard(id):0;
-        if(crew<0 || aboard>static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max()-crew))
+        const auto physical=passenger_needs_enabled()?people_physically_aboard(id):0;
+        if(crew<0 || physical>static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max()))
             throw std::overflow_error("physical ferry population overflow");
-        const auto people=crew+static_cast<std::int64_t>(aboard);
+        const auto people=passenger_needs_enabled()?
+            static_cast<std::int64_t>(physical):crew;
         const auto food=std::min(people,l.food_kg);
         const auto water=std::min(people,l.water_kg);
         const auto oxygen=std::min(people,l.oxygen_kg);
