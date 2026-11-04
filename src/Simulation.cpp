@@ -7928,6 +7928,30 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
         if (a.kind == ActivityKind::AsteroidDespawned && !result.depleted_.count(a.target))
             throw std::runtime_error("snapshot: missing depleted tombstone");
     }
+    if(result.snapshot_version_>=77) {
+        for(const auto& [key,site]:result.planetary_sites_) {
+            if(key!=PlanetarySiteKey{site.region.body,site.region.latitude,
+                                    site.region.longitude,site.region.revision})
+                throw std::runtime_error("snapshot: planetary cell key mismatch");
+            const auto* body=body_for_local_environment(
+                result.physical_celestial_systems_,site.region.body);
+            const auto* source_ship=result.find(site.source_ship);
+            if(!body || (body->kind!=CelestialKind::Planet &&
+                         body->kind!=CelestialKind::Moon) ||
+               !source_ship || source_ship->type!=EntityType::Ship ||
+               source_ship->owner_id!=site.owner ||
+               source_ship->system_id!=body->system ||
+               !result.colony_ships_.count(site.source_ship))
+                throw std::runtime_error("snapshot: orphan planetary facility");
+            if(!site.farm && (site.food_kg>0 || site.harvest_cycles>0))
+                throw std::runtime_error("snapshot: unbuilt farm produced food");
+            if(site.embodied_ore!=4+4*(std::int64_t(site.farm)+
+                                        std::int64_t(site.extractor)))
+                throw std::runtime_error("snapshot: invalid regional module custody");
+            if(site.extractor && !result.oasis_reserves_.count(site.region.body))
+                throw std::runtime_error("snapshot: extractor has no physical source");
+        }
+    }
     if(result.snapshot_version_>=76) {
         for(const auto& [ship,rig]:result.oasis_extractors_) {
             const auto* hull=result.find(ship);
