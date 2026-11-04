@@ -1023,7 +1023,7 @@ bool Simulation::submit(const Command& c) {
                  pending.transport_id==c.transport_id) ||
                 pending.action==Action::HostColonyDeparture)return false;
         }
-        snapshot_version_=59;
+        snapshot_version_=std::max(snapshot_version_,59); // never drop persisted yaw v61
     }
     const bool colony_departure=c.action==Action::HostColonyDeparture;
     if(colony_departure){
