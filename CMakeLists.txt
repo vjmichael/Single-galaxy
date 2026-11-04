@@ -1251,3 +1251,12 @@ if(BUILD_TESTING)
   add_test(NAME galaxy_play13c_rare_oasis
     COMMAND galaxy_play13c_rare_oasis_tests)
 endif()
+
+# PLAY-13C.6C durable source-backed water/nutrients, no free oasis matter.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13c_physical_oasis_tests
+    tests/PLAY13C_PhysicalOasisResourcesTests.cpp)
+  target_link_libraries(galaxy_play13c_physical_oasis_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13c_physical_oasis
+    COMMAND galaxy_play13c_physical_oasis_tests)
+endif()
