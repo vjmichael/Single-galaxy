@@ -1317,6 +1317,26 @@ public:
            (parent_a!=c.passenger_ids.front() && parent_b!=c.passenger_ids.front()))
             throw std::runtime_error("not the child's legally recorded guardian");
     }
+    void verify_physical_dependent_authority(const Simulation& world) const{
+        Statement tables(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_physical_child_authority'");
+        if(!tables.row()){
+            if(!world.physical_dependents().empty())
+                throw std::runtime_error("physical child exists without durable birth authority table");
+            return;
+        }
+        for(const auto& [id,d]:world.physical_dependents()){
+            Statement auth(db_,"SELECT command_id,guardian_id,home_ship FROM "
+                "sg_colony_physical_child_authority WHERE child_id=?");
+            auth.text(1,std::to_string(id));
+            if(!auth.row() ||
+               parse_u64(sqlite3_column_text(auth.get(),0))!=d.registration_command ||
+               parse_u64(sqlite3_column_text(auth.get(),1))!=d.guardian_id ||
+               parse_u64(sqlite3_column_text(auth.get(),2))!=d.home_ship ||
+               auth.row())
+                throw std::runtime_error("physical dependent lacks matching immutable birth authority");
+        }
+    }
     bool has_dependent_table() const {
         Statement t(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
                         "AND name='sg_dependent_travel'");
@@ -5764,6 +5784,7 @@ PersistentWorld::PersistentWorld(const std::string& path, Simulation initial_wor
     store_->verify_colony_safety_evidence();
     store_->verify_colony_response(world_,generation_);
     store_->verify_colony_notifications(world_,generation_);
+    store_->verify_physical_dependent_authority(world_);
 }
 PersistentWorld::~PersistentWorld() = default;
 
