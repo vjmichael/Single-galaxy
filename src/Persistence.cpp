@@ -6681,6 +6681,70 @@ bool PersistentWorld::submit_autonomous_colony_rescue(
         insert.text(10,request.region_scope);
         insert.i64(11,static_cast<int>(planned.response.risk));
         insert.execute();
+        // v79: the complete restart plan belongs to this SAME writer
+        // transaction as the actual accepted command and NPC observation.
+        // Never persist half a manifest or a speculative player-facing rescue.
+        run(db,"CREATE TABLE IF NOT EXISTS sg_colony_npc_supervisor_activation("
+            "singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
+            "first_generation INTEGER NOT NULL CHECK(first_generation>1))");
+        run(db,"INSERT OR IGNORE INTO sg_colony_npc_supervisor_activation "
+            "VALUES(1,"+std::to_string(next_generation)+")");
+        run(db,"CREATE TABLE IF NOT EXISTS sg_colony_npc_supervisor_plan("
+            "command_id TEXT PRIMARY KEY,intent_id TEXT NOT NULL UNIQUE,"
+            "admission_generation INTEGER NOT NULL CHECK(admission_generation>1),"
+            "family_seed TEXT NOT NULL,origin_colony TEXT NOT NULL,"
+            "receiver_colony TEXT NOT NULL,regional_revision INTEGER NOT NULL,"
+            "owner_generation INTEGER NOT NULL,"
+            "origin_family_revision INTEGER NOT NULL,"
+            "receiver_family_revision INTEGER NOT NULL,"
+            "adult_count INTEGER NOT NULL CHECK(adult_count>0),"
+            "child_count INTEGER NOT NULL CHECK(child_count>0))");
+        run(db,"CREATE TABLE IF NOT EXISTS sg_colony_npc_supervisor_member("
+            "command_id TEXT NOT NULL,ordinal INTEGER NOT NULL CHECK(ordinal>=0),"
+            "person_id TEXT NOT NULL,guardian_id TEXT NOT NULL,"
+            "kind INTEGER NOT NULL CHECK(kind IN(0,1)),event_id TEXT NOT NULL UNIQUE,"
+            "PRIMARY KEY(command_id,ordinal),UNIQUE(command_id,person_id))");
+        for(const auto* name:{"sg_colony_npc_supervisor_activation",
+                              "sg_colony_npc_supervisor_plan",
+                              "sg_colony_npc_supervisor_member"}){
+            const auto tab=std::string(name);
+            run(db,("CREATE TRIGGER IF NOT EXISTS "+tab+"_immutable_update "
+                "BEFORE UPDATE ON "+tab+" BEGIN SELECT RAISE(ABORT,"
+                "'immutable NPC supervisor'); END").c_str());
+            run(db,("CREATE TRIGGER IF NOT EXISTS "+tab+"_immutable_delete "
+                "BEFORE DELETE ON "+tab+" BEGIN SELECT RAISE(ABORT,"
+                "'immutable NPC supervisor'); END").c_str());
+        }
+        Statement plan(db,"INSERT INTO sg_colony_npc_supervisor_plan VALUES("
+            "?,?,?,?,?,?,?,?,?,?,?,?)");
+        plan.text(1,std::to_string(p.command_id));
+        plan.text(2,std::to_string(p.family.intent_id));
+        plan.i64(3,static_cast<sqlite3_int64>(next_generation));
+        plan.text(4,std::to_string(p.family.family_seed));
+        plan.text(5,p.origin_colony);plan.text(6,p.receiver_colony);
+        plan.i64(7,static_cast<sqlite3_int64>(p.expected_region_revision));
+        plan.i64(8,static_cast<sqlite3_int64>(p.expected_owner_generation));
+        plan.i64(9,static_cast<sqlite3_int64>(p.expected_origin_family_revision));
+        plan.i64(10,static_cast<sqlite3_int64>(p.expected_receiver_family_revision));
+        plan.i64(11,static_cast<sqlite3_int64>(p.family.adult_ids.size()));
+        plan.i64(12,static_cast<sqlite3_int64>(p.family.children.size()));
+        plan.execute();
+        for(std::size_t i=0;i<p.member_event_ids.size();++i){
+            const bool is_child=i>=p.family.adult_ids.size();
+            const auto child_index=i-p.family.adult_ids.size();
+            const auto person=is_child?p.family.children[child_index].child_id:
+                p.family.adult_ids[i];
+            const auto guardian=is_child?p.family.children[child_index].guardian_id:0;
+            Statement member(db,"INSERT INTO sg_colony_npc_supervisor_member "
+                "VALUES(?,?,?,?,?,?)");
+            member.text(1,std::to_string(p.command_id));
+            member.i64(2,static_cast<sqlite3_int64>(i));
+            member.text(3,std::to_string(person));
+            member.text(4,std::to_string(guardian));
+            member.i64(5,is_child?1:0);
+            member.text(6,std::to_string(p.member_event_ids[i]));
+            member.execute();
+        }
     };
     store_->commit(next,generation_,resource_origin_,credit_origin_,
                    &command,{},{},{},fail,nullptr,nullptr,effect);
