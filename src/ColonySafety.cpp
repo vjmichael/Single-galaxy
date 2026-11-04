@@ -38,7 +38,7 @@ Assessment assess(const Simulation& world,EntityId home_ship,EntityId site,
         // An embarked passenger is a real local consumer, not invisible cargo.
         // Only physically onboard named passengers count; native crew is
         // already represented by the authoritative aggregate headcount.
-        const auto passengers=world.passengers_aboard(home_ship);
+        const auto passengers=world.passenger_needs_enabled()?world.passengers_aboard(home_ship):0;
         if(passengers>std::numeric_limits<std::uint64_t>::max()-
                           static_cast<std::uint64_t>(ship->crew))
             throw std::overflow_error("life-safety population overflow");
