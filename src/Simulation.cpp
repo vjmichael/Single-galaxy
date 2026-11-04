@@ -4661,7 +4661,8 @@ std::vector<PhysicalCelestialBody> physical_bodies_for_system(std::uint32_t syst
     for(const auto& band:profile.orbital_bands){
         const auto orbit=band.radius_milli_au;
         if(orbit>300000)throw std::logic_error("celestial orbit exceeds design envelope");
-        const auto radial_mm=(orbit*kAuMm)/1000;
+        // Division before multiplication avoids 64-bit overflow for AU-scale orbits.
+        const auto radial_mm=orbit*(kAuMm/1000);
         const auto selector=astronomy_mix((std::uint64_t(system)<<32)|band.ordinal)%8;
         const auto position=celestial_point(radial_mm,selector);
         const bool debris=band.zone==OrbitZone::Debris;
