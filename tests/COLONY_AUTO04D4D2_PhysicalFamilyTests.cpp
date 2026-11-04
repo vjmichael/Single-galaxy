@@ -10,8 +10,8 @@ try{
     Simulation sim(7402);
     const auto source=sim.add_colony_ship(7,{0,0},100,2);
     const auto receiver=sim.add_colony_ship(7,{0,0},100,2);
-    sim.provision_colony_genesis(source,100,100,100,300,500);
-    sim.provision_colony_genesis(receiver,1000,1000,1000,300,500);
+    sim.provision_colony_genesis(source,100,100,100,200,500);
+    sim.provision_colony_genesis(receiver,1000,1000,1000,1000,1000);
     sim.enable_individual_workforce();
     sim.upgrade_assignment_snapshot_format();
     sim.enable_passenger_life_support();
