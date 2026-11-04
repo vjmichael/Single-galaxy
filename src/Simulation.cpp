@@ -2651,7 +2651,7 @@ Event Simulation::execute(const Command& c) {
             if(actor.jump_state!=ShipJumpState::Ready){result.result=Outcome::InTransition;return result;}
             if(!actor.fitting.exploration_scanner()){result.result=Outcome::NoResources;return result;}
             constexpr auto range=kLocalSurveyRangeMm;
-            std::int64_t discovered=0;
+            std::vector<DiscoveryRecord> candidates;
             for(const auto& [id,e]:entities_){
                 if(e.type!=EntityType::Asteroid || e.system_id!=actor.system_id)continue;
                 const auto dx=e.position.x-actor.position.x,dy=e.position.y-actor.position.y;
@@ -2659,14 +2659,17 @@ Event Simulation::execute(const Command& c) {
                    dx*dx+dy*dy>range*range)continue;
                 auto key=std::make_pair(c.issuer,id);
                 if(!discoveries_.count(key)){
-                    if(discoveries_.size()>=10000){result.result=Outcome::InvalidArgument;return result;}
-                    discoveries_.emplace(key,DiscoveryRecord{c.issuer,id,e.system_id,e.position,
+                    candidates.push_back(DiscoveryRecord{c.issuer,id,e.system_id,e.position,
                         tick_,geology_.count(id)!=0});
-                    ++discovered;
                 }
             }
+            if(candidates.size()>10000-discoveries_.size()){
+                result.result=Outcome::InvalidArgument;return result;
+            }
+            for(const auto& d:candidates)
+                discoveries_.emplace(std::make_pair(d.owner,d.site),d);
             snapshot_version_=std::max(snapshot_version_,63);
-            result.transferred=discovered;result.result=Outcome::Applied;
+            result.transferred=static_cast<std::int64_t>(candidates.size());result.result=Outcome::Applied;
             return result;
         }
         case Action::SalvageWreck: {
