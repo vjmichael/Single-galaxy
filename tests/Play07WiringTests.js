@@ -23,6 +23,8 @@ test('assist only uses authenticated native thrust and one command per projected
 });
 test('prevent earlier blocking malformed JavaScript regression and protect reconnect',()=>{
  assert.ok(!interactive.includes('let window.GalaxyResetExpedition?.();'));
+ assert.ok(interactive.includes("window.GalaxyAssistNativeOutcome=outcome=>{if(assist&&outcome!=='APPLIED')"));
+ assert.ok(read('viewer/colony.js').includes('window.GalaxyAssistNativeOutcome?.(e.outcome)'));
  assert.ok(interactive.includes("async function connect(){\n cancelAssist('paused')"));
  assert.ok(interactive.includes("window.GalaxyDisconnect=()=>{\n cancelAssist('paused')"));
  assert.ok(interactive.includes("source.addEventListener('error',()=>{if(source){cancelAssist('paused')"));
