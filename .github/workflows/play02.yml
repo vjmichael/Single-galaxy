@@ -1,0 +1,27 @@
+name: PLAY-02 first-outpost browser contract
+on:
+  push:
+    branches:
+      - integration/play02-first-outpost-ui-20261104
+  pull_request:
+    paths:
+      - 'viewer/opening-guide.js'
+      - 'viewer/colony.js'
+      - 'viewer/interactive.html'
+      - 'live/interactive_relay.py'
+      - 'tests/OpeningGuideTests.js'
+      - '.github/workflows/play02.yml'
+jobs:
+  browser-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Node opening progression
+        run: node --test tests/OpeningGuideTests.js
+      - name: Validate browser JavaScript
+        run: |
+          node --check viewer/opening-guide.js
+          node --check viewer/colony.js
+          node --check viewer/interactive.js
+      - name: Validate local relay syntax
+        run: python3 -m py_compile live/interactive_relay.py
