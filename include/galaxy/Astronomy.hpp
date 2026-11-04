@@ -14,11 +14,19 @@ enum class AstronomicalFeature {
     DebrisBelt, CometPopulation, DustArc, MagnetizedEnvironment,
     StellarRemnant, RogueWorld, RareUnexplainedSignal
 };
+enum class OrbitZone { InnerRocky, Temperate, OuterGiant, OuterIcy, Debris };
+struct OrbitalBand {
+    std::uint8_t ordinal=0;
+    std::uint64_t radius_milli_au=0; // 1000 == one AU; metadata only
+    std::uint16_t eccentricity_permille=0;
+    OrbitZone zone=OrbitZone::InnerRocky;
+};
 struct AstronomicalProfile {
     StellarArchitecture architecture=StellarArchitecture::Single;
     StarMorphology morphology=StarMorphology::Ordinary;
     std::uint8_t star_count=1;
     std::vector<AstronomicalFeature> features;
+    std::vector<OrbitalBand> orbital_bands;
     std::uint64_t generator_version=1;
 };
 inline std::uint64_t astronomy_mix(std::uint64_t x) {
@@ -49,6 +57,22 @@ inline AstronomicalProfile generate_astronomical_profile(
     if((features>>8)%11==0)p.features.push_back(AstronomicalFeature::StellarRemnant);
     if((features>>12)%17==0)p.features.push_back(AstronomicalFeature::RogueWorld);
     if((features>>16)%79==0)p.features.push_back(AstronomicalFeature::RareUnexplainedSignal);
+    // Orbital bands are a procedural system blueprint, not solved N-body orbits.
+    // Spacing is monotonic and bounded; circumbinary bands begin farther from
+    // the central pair to leave a plausible cleared interior gameplay region.
+    std::uint64_t radius=p.architecture==StellarArchitecture::Circumbinary?1800:350;
+    const auto count=std::uint32_t(3+(astronomy_mix(seed^0x10293847ULL)%7));
+    for(std::uint32_t i=0;i<count;++i) {
+        const auto roll=astronomy_mix(seed+(i+1)*0x4051ULL);
+        radius+=200+(roll%2100)+i*135;
+        const auto zone=radius<1300?OrbitZone::InnerRocky:
+            radius<3600?OrbitZone::Temperate:
+            radius<11000?OrbitZone::OuterGiant:OrbitZone::OuterIcy;
+        p.orbital_bands.push_back({std::uint8_t(i+1),radius,
+            std::uint16_t((roll>>13)%180),zone});
+    }
+    if(!p.orbital_bands.empty() &&
+       (features&1ULL))p.orbital_bands.back().zone=OrbitZone::Debris;
     return p;
 }
 } // namespace galaxy
