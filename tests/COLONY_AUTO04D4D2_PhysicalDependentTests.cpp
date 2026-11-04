@@ -1,5 +1,6 @@
 #include "galaxy/Persistence.hpp"
 #include "galaxy/NpcAppearanceGenome.hpp"
+#include "galaxy/RegionalModeAuthority.hpp"
 #include <sqlite3.h>
 #include <chrono>
 #include <filesystem>
@@ -39,22 +40,31 @@ try{
             family.register_settlement(receiver,2);
             for(std::uint64_t id=1;id<=2;++id)family.enroll_family_founder(id,home);
             for(std::uint64_t id=3;id<=4;++id)family.enroll_family_founder(id,receiver);
-            family.record_birth(7401,child,1,2,home,1,0,
-                [](auto,auto,auto,auto){return true;});
         }
-        sqlite3* db=nullptr;CHECK(sqlite3_open(path.c_str(),&db)==SQLITE_OK);
-        sql(db,"CREATE TABLE sg_med_society_birth ("
-            "event_id TEXT PRIMARY KEY,world_generation INTEGER NOT NULL,"
-            "tick INTEGER NOT NULL,family_scope TEXT NOT NULL,"
-            "region_scope TEXT NOT NULL,region_revision INTEGER NOT NULL,"
-            "owner_generation INTEGER NOT NULL,home_ship TEXT NOT NULL,"
-            "regional_colony TEXT NOT NULL,child_id TEXT NOT NULL UNIQUE,"
-            "parent_a TEXT NOT NULL,parent_b TEXT NOT NULL,"
-            "family_revision INTEGER NOT NULL)");
-        sql(db,"INSERT INTO sg_med_society_birth VALUES('7401',1,1,'"+scope+
-            "','reg-74',1,1,'"+std::to_string(home)+
-            "','colony','"+std::to_string(child)+"','1','2',1)");
-        sqlite3_close(db);
+        // Use the real ART02+ECON03 atomic birth with a durable world receipt.
+        // A hand-written birth bridge cannot pass the canonical integrity audit.
+        namespace re=galaxy::regional_events;
+        re::CheckpointStore region(path,"reg-74");
+        re::Scheduler scheduler;
+        cold_colony::State baseline{};baseline.population=2;
+        scheduler.add_colony("home",baseline);
+        scheduler.add_colony("receiver",baseline);
+        CHECK(region.save(scheduler,0)==1);
+        re::RegionalModeAuthority authority(region);
+        CHECK(authority.enroll().generation==1);
+        SocietyBirthPlan birth{};
+        birth.expected_world_generation=world.generation();
+        birth.expected_region_revision=1;
+        birth.expected_owner_generation=1;
+        birth.family_seed=seed;
+        birth.expected_family_revision=0;
+        birth.event_id=7401;
+        birth.child_id=child;
+        birth.parent_a=1;birth.parent_b=2;birth.home_ship=home;
+        birth.family_scope=scope;birth.region_scope="reg-74";
+        birth.regional_colony="home";
+        world.step_with_atomic_dependent_birth(birth);
+        CHECK(world.generation()==2 && world.world().tick()==1);
         Command cmd{};
         cmd.id=8101;cmd.sequence=8101;cmd.issuer=Simulation::kServerAuthority;
         cmd.actor=home;cmd.target=home;
@@ -71,7 +81,7 @@ try{
         catch(const std::runtime_error&){crashed=true;}
         CHECK(crashed);
         CHECK(world.world().physical_dependents().empty());
-        CHECK(world.world().tick()==0);
+        CHECK(world.world().tick()==1);
         world.step_with_dependent_registration();
         CHECK(world.world().physical_dependents().count(child)==1);
         CHECK(world.world().physical_dependents().at(child).guardian_id==1);
