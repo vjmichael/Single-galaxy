@@ -1994,6 +1994,138 @@ public:
         }
     }
 
+
+    // EXIT-01A: only a real eligible nonleader adult actually living under
+    // critical conditions can produce a record of pressure to seek departure.
+    // It is a physical-risk witness, NOT proof of subjective intent to leave.
+    std::optional<colony_conflict::ExitPressure> assess_colony_exit_pressure(
+        const Simulation& world,std::uint64_t generation,
+        EntityId source,std::uint64_t npc_id) const{
+        if(!source || !npc_id || !generation)
+            throw std::invalid_argument("exit pressure requires named NPC and real colony");
+        const auto* entity=world.find(source);
+        const auto* colony=world.colony_ship(source);
+        const auto person=world.npc_records().find(npc_id);
+        if(!entity || !colony || entity->type!=EntityType::Ship ||
+           !entity->owner_id || person==world.npc_records().end() ||
+           person->second.home_ship!=source ||
+           person->second.location!=source ||
+           person->second.transport_id ||
+           !world.npc_available_for_duty(npc_id))
+            return std::nullopt;
+        const auto govt=effective_governance(source,generation);
+        // Leadership vacancy has its own already-verified B3 process. Do not
+        // strand the local government through the first individual exit gate.
+        if(govt.leader_id==npc_id)return std::nullopt;
+        const auto risk=colony_safety::assess(world,source,source).risk;
+        if(static_cast<int>(risk)<static_cast<int>(colony_safety::Risk::Critical))
+            return std::nullopt;
+        colony_conflict::ExitPressure p;
+        p.world_generation=generation;
+        p.governance_event_id=govt.event_id;
+        p.source_colony=source;
+        p.source_owner=entity->owner_id;
+        p.npc_id=npc_id;
+        p.source_risk=risk;
+        return p;
+    }
+    colony_conflict::ExitPressure record_colony_exit_pressure(
+        const Simulation& world,std::uint64_t generation,
+        std::uint64_t event_id,EntityId source,std::uint64_t npc_id){
+        if(!event_id || event_id>static_cast<std::uint64_t>(
+             std::numeric_limits<sqlite3_int64>::max()))
+            throw std::invalid_argument("invalid exit-pressure evidence event id");
+        run(db_,"BEGIN IMMEDIATE");
+        try{
+            if(latest_generation(db_)!=generation)
+                throw std::runtime_error("exit pressure uses stale physical generation");
+            auto p=assess_colony_exit_pressure(world,generation,source,npc_id);
+            if(!p)
+                throw std::runtime_error("named NPC lacks real exit-pressure evidence");
+            run(db_,"CREATE TABLE IF NOT EXISTS sg_colony_npc_exit_pressure("
+                "event_id INTEGER PRIMARY KEY CHECK(event_id>0),"
+                "world_generation INTEGER NOT NULL CHECK(world_generation>0),"
+                "world_hash TEXT NOT NULL,tick INTEGER NOT NULL,"
+                "colony TEXT NOT NULL,source_owner TEXT NOT NULL,npc TEXT NOT NULL,"
+                "governance_event INTEGER NOT NULL CHECK(governance_event>=0),"
+                "risk INTEGER NOT NULL CHECK(risk IN(2,3)),"
+                "UNIQUE(colony,npc,governance_event))");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_npc_exit_pressure_no_update "
+                "BEFORE UPDATE ON sg_colony_npc_exit_pressure "
+                "BEGIN SELECT RAISE(ABORT,'immutable real NPC exit pressure'); END");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_npc_exit_pressure_no_delete "
+                "BEFORE DELETE ON sg_colony_npc_exit_pressure "
+                "BEGIN SELECT RAISE(ABORT,'immutable real NPC exit pressure'); END");
+            Statement ins(db_,"INSERT INTO sg_colony_npc_exit_pressure "
+                "VALUES(?,?,?,?,?,?,?,?,?)");
+            ins.i64(1,static_cast<sqlite3_int64>(event_id));
+            ins.i64(2,static_cast<sqlite3_int64>(generation));
+            ins.text(3,std::to_string(world.state_hash()));
+            ins.i64(4,static_cast<sqlite3_int64>(world.tick()));
+            ins.text(5,std::to_string(source));
+            ins.text(6,std::to_string(p->source_owner));
+            ins.text(7,std::to_string(npc_id));
+            ins.i64(8,static_cast<sqlite3_int64>(p->governance_event_id));
+            ins.i64(9,static_cast<int>(p->source_risk));
+            ins.execute();
+            run(db_,"COMMIT");
+            p->event_id=event_id;
+            return *p;
+        }catch(...){
+            sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;
+        }
+    }
+    void verify_colony_exit_pressure(std::uint64_t max_generation) const{
+        Statement present(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_npc_exit_pressure'");
+        if(!present.row())return;
+        for(const auto* name:{"sg_npc_exit_pressure_no_update",
+                              "sg_npc_exit_pressure_no_delete"}){
+            Statement guard(db_,"SELECT 1 FROM sqlite_master "
+                "WHERE type='trigger' AND name=?");
+            guard.text(1,name);
+            if(!guard.row() || guard.row())
+                throw std::runtime_error("NPC exit evidence immutable guard missing");
+        }
+        Statement q(db_,"SELECT event_id,world_generation,world_hash,tick,"
+            "colony,source_owner,npc,governance_event,risk "
+            "FROM sg_colony_npc_exit_pressure");
+        while(q.row()){
+            const auto id=sqlite3_column_int64(q.get(),0);
+            const auto generation=sqlite3_column_int64(q.get(),1);
+            const auto hash=sqlite_str(q.get(),2);
+            const auto tick=sqlite3_column_int64(q.get(),3);
+            const auto source=parse_u64(sqlite3_column_text(q.get(),4));
+            const auto owner=parse_u64(sqlite3_column_text(q.get(),5));
+            const auto npc=parse_u64(sqlite3_column_text(q.get(),6));
+            const auto govt=sqlite3_column_int64(q.get(),7);
+            const auto risk=sqlite3_column_int(q.get(),8);
+            if(id<1 || generation<1 ||
+               static_cast<std::uint64_t>(generation)>max_generation ||
+               tick<0 || !source || !owner || !npc || govt<0)
+                throw std::runtime_error("invalid NPC exit evidence chronology");
+            Statement cp(db_,"SELECT state,checksum FROM snapshots WHERE generation=?");
+            cp.i64(1,generation);
+            if(!cp.row())throw std::runtime_error("NPC exit evidence original snapshot pruned");
+            const auto* bytes=sqlite3_column_blob(cp.get(),0);
+            const auto size=sqlite3_column_bytes(cp.get(),0);
+            if(!bytes || size<=0 || size>16*1024*1024)
+                throw std::runtime_error("NPC exit evidence snapshot malformed");
+            const auto original=Simulation::from_snapshot(std::string(
+                static_cast<const char*>(bytes),static_cast<std::size_t>(size)));
+            if(original.state_hash()!=parse_u64(sqlite3_column_text(cp.get(),1)) ||
+               std::to_string(original.state_hash())!=hash ||
+               original.tick()!=static_cast<std::uint64_t>(tick) || cp.row())
+                throw std::runtime_error("NPC exit evidence physical state forged");
+            const auto proof=assess_colony_exit_pressure(
+                original,static_cast<std::uint64_t>(generation),source,npc);
+            if(!proof || proof->source_owner!=owner ||
+               proof->governance_event_id!=static_cast<std::uint64_t>(govt) ||
+               static_cast<int>(proof->source_risk)!=risk)
+                throw std::runtime_error("NPC exit evidence invented a resident or shortage");
+        }
+    }
+
     colony_conflict::Decision assess_colony_aggression(
         const Simulation& world,std::uint64_t generation,
         EntityId source,std::uint64_t contact_event_id,
@@ -6434,6 +6566,9 @@ public:
             Statement governance_epochs(db_,"SELECT 1 FROM sqlite_master "
                 "WHERE type='table' AND name='sg_colony_governance_epochs'");
             const bool has_governance_epochs=governance_epochs.row();
+            Statement npc_exit_pressure(db_,"SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='sg_colony_npc_exit_pressure'");
+            const bool has_npc_exit_pressure=npc_exit_pressure.row();
             const std::string prune_sql=std::string(
                 "DELETE FROM snapshots WHERE generation > 1 AND generation < ?")+
                 (incident_cases_exist ? " AND generation NOT IN "
@@ -6481,6 +6616,9 @@ public:
                     : "")+
                 (has_governance_epochs ? " AND generation NOT IN "
                     "(SELECT world_generation FROM sg_colony_governance_epochs)"
+                    : "")+
+                (has_npc_exit_pressure ? " AND generation NOT IN "
+                    "(SELECT world_generation FROM sg_colony_npc_exit_pressure)"
                     : "")+
                 // Bind subjective diplomacy to BOTH the original physical
                 // incident and the later real NPC belief/decision generation.
@@ -7638,6 +7776,7 @@ void PersistentWorld::recover_copy(const std::string& source, const std::string&
         copy.verify_colony_watch_contacts(gen);
         copy.verify_colony_conflicts(gen);
         copy.verify_colony_governance(gen);
+        copy.verify_colony_exit_pressure(gen);
         copy.verify_colony_relationships(gen);
         copy.verify_colony_diplomatic_intents(gen);
         verify_dependent_stranding_cases(destination,gen);
@@ -7679,6 +7818,7 @@ PersistentWorld::PersistentWorld(const std::string& path, Simulation initial_wor
     store_->verify_colony_watch_contacts(generation_);
     store_->verify_colony_conflicts(generation_);
     store_->verify_colony_governance(generation_);
+    store_->verify_colony_exit_pressure(generation_);
     store_->verify_colony_relationships(generation_);
     store_->verify_colony_diplomatic_intents(generation_);
 }
@@ -8711,6 +8851,18 @@ PersistentWorld::colony_relationship(EntityId source,PlayerId owner) const{
     if(!source || !owner)
         throw std::invalid_argument("colony diplomacy needs source and foreign owner");
     return store_->latest_colony_relationship(source,owner);
+}
+
+std::optional<colony_conflict::ExitPressure>
+PersistentWorld::assess_colony_exit_pressure(
+    EntityId source,std::uint64_t npc_id) const{
+    return store_->assess_colony_exit_pressure(
+        world_,generation_,source,npc_id);
+}
+colony_conflict::ExitPressure PersistentWorld::record_colony_exit_pressure(
+    std::uint64_t event_id,EntityId source,std::uint64_t npc_id){
+    return store_->record_colony_exit_pressure(
+        world_,generation_,event_id,source,npc_id);
 }
 
 colony_conflict::GovernanceEpoch PersistentWorld::record_colony_governance_transition(
