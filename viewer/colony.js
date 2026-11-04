@@ -398,7 +398,9 @@
          ' (most recent survey tick '+e.last+'). ';
      if(e.type==='CELESTIAL_HEADER'){
        const names=['Single star','Wide binary','Circumbinary','Hierarchical triple'];
-       q('signatureFeedback').textContent=
+       const history=q('signatureFeedback').textContent.startsWith('Previously surveyed')?
+         q('signatureFeedback').textContent:'';
+       q('signatureFeedback').textContent=history+
          'System catalogue: '+names[e.architecture]+', '+e.stars+
          ' star(s), '+e.bands+' generated orbital bands. Catalogue only.';
      }
