@@ -1994,6 +1994,190 @@ public:
         }
     }
 
+
+    // CONFLICT-01B4A: finite real NPCs may initiate a nonbinding reform
+    // petition during verifiable survival failure. This is NOT an election:
+    // no personally chosen ballots or consent is fabricated from a headcount.
+    std::optional<colony_conflict::PoliticalPetition> assess_autonomous_petition(
+        const Simulation& world,std::uint64_t generation,EntityId source) const{
+        const auto govt=effective_governance(source,generation);
+        const auto* entity=world.find(source);
+        const auto* ship=world.colony_ship(source);
+        if(!entity || !ship || entity->type!=EntityType::Ship ||
+           !entity->owner_id)
+            throw std::runtime_error("petition needs an existing occupied colony");
+        const auto source_risk=colony_safety::assess(world,source,source).risk;
+        if(static_cast<int>(source_risk)<
+           static_cast<int>(colony_safety::Risk::Critical))
+            return std::nullopt;
+        // Reconciliation, not blind governmental turnover when the existing
+        // leadership is already Cooperative and not prioritizing security.
+        if(govt.agenda==colony_conflict::Agenda::Cooperative &&
+           govt.policy!=colony_conflict::DiplomaticPolicy::SecurityFirst)
+            return std::nullopt;
+        const auto incumbent=world.npc_records().find(govt.leader_id);
+        if(incumbent==world.npc_records().end() ||
+           incumbent->second.home_ship!=source ||
+           incumbent->second.location!=source ||
+           incumbent->second.transport_id ||
+           !world.npc_available_for_duty(govt.leader_id))
+            return std::nullopt; // actual vacancy uses B3 emergency succession
+        colony_conflict::PoliticalPetition p;
+        p.world_generation=generation;
+        p.colony=source;
+        p.governance_event_id=govt.event_id;
+        p.incumbent_id=govt.leader_id;
+        p.incumbent_agenda=govt.agenda;
+        p.incumbent_policy=govt.policy;
+        p.source_risk=source_risk;
+        for(const auto& [id,npc]:world.npc_records()){
+            if(id==govt.leader_id || npc.home_ship!=source ||
+               npc.location!=source || npc.transport_id ||
+               !world.npc_available_for_duty(id))continue;
+            p.present_caucus.push_back(id);
+        }
+        // Two separate adults, not one NPC multiplied into fake supporters.
+        if(p.present_caucus.size()<2)return std::nullopt;
+        p.nominee_id=p.present_caucus.front(); // deterministic spokesperson
+        p.requested_agenda=colony_conflict::Agenda::Cooperative;
+        p.requested_policy=colony_conflict::DiplomaticPolicy::Pragmatic;
+        return p;
+    }
+    static std::string encode_petition_caucus(
+        const std::vector<std::uint64_t>& roster){
+        std::string result;
+        for(const auto id:roster){
+            if(!id)throw std::runtime_error("invalid political caucus identity");
+            if(!result.empty())result.push_back(',');
+            result+=std::to_string(id);
+        }
+        return result;
+    }
+    colony_conflict::PoliticalPetition record_autonomous_petition(
+        const Simulation& world,std::uint64_t generation,
+        std::uint64_t id,EntityId source){
+        if(!id || id>static_cast<std::uint64_t>(
+           std::numeric_limits<sqlite3_int64>::max()))
+            throw std::invalid_argument("invalid petition event");
+        run(db_,"BEGIN IMMEDIATE");
+        try{
+            if(latest_generation(db_)!=generation)
+                throw std::runtime_error("political petition uses stale world state");
+            auto p=assess_autonomous_petition(world,generation,source);
+            if(!p)throw std::runtime_error(
+                "no physical, independently grounded reform pressure");
+            run(db_,"CREATE TABLE IF NOT EXISTS sg_colony_political_petitions("
+                "event_id INTEGER PRIMARY KEY CHECK(event_id>0),"
+                "world_generation INTEGER NOT NULL CHECK(world_generation>0),"
+                "world_hash TEXT NOT NULL,tick INTEGER NOT NULL,"
+                "colony TEXT NOT NULL,governance_event INTEGER NOT NULL,"
+                "incumbent TEXT NOT NULL,nominee TEXT NOT NULL,"
+                "incumbent_agenda INTEGER NOT NULL CHECK(incumbent_agenda BETWEEN 0 AND 3),"
+                "incumbent_policy INTEGER NOT NULL CHECK(incumbent_policy BETWEEN 0 AND 2),"
+                "risk INTEGER NOT NULL CHECK(risk IN(2,3)),"
+                "caucus_roster TEXT NOT NULL,participants INTEGER NOT NULL CHECK(participants>=2),"
+                "requested_agenda INTEGER NOT NULL CHECK(requested_agenda BETWEEN 0 AND 3),"
+                "requested_policy INTEGER NOT NULL CHECK(requested_policy BETWEEN 0 AND 2),"
+                "UNIQUE(colony,governance_event))");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_colony_petition_no_update "
+                "BEFORE UPDATE ON sg_colony_political_petitions "
+                "BEGIN SELECT RAISE(ABORT,'immutable NPC pressure petition'); END");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_colony_petition_no_delete "
+                "BEFORE DELETE ON sg_colony_political_petitions "
+                "BEGIN SELECT RAISE(ABORT,'immutable NPC pressure petition'); END");
+            Statement ins(db_,"INSERT INTO sg_colony_political_petitions "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+            ins.i64(1,static_cast<sqlite3_int64>(id));
+            ins.i64(2,static_cast<sqlite3_int64>(generation));
+            ins.text(3,std::to_string(world.state_hash()));
+            ins.i64(4,static_cast<sqlite3_int64>(world.tick()));
+            ins.text(5,std::to_string(source));
+            ins.i64(6,static_cast<sqlite3_int64>(p->governance_event_id));
+            ins.text(7,std::to_string(p->incumbent_id));
+            ins.text(8,std::to_string(p->nominee_id));
+            ins.i64(9,static_cast<int>(p->incumbent_agenda));
+            ins.i64(10,static_cast<int>(p->incumbent_policy));
+            ins.i64(11,static_cast<int>(p->source_risk));
+            ins.text(12,encode_petition_caucus(p->present_caucus));
+            ins.i64(13,static_cast<sqlite3_int64>(p->present_caucus.size()));
+            ins.i64(14,static_cast<int>(p->requested_agenda));
+            ins.i64(15,static_cast<int>(p->requested_policy));
+            ins.execute();
+            run(db_,"COMMIT");
+            p->event_id=id;
+            return *p;
+        }catch(...){
+            sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;
+        }
+    }
+    void verify_colony_petitions(std::uint64_t max_generation) const{
+        Statement present(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_political_petitions'");
+        if(!present.row())return;
+        for(const auto* tr:{"sg_colony_petition_no_update",
+                            "sg_colony_petition_no_delete"}){
+            Statement exists(db_,"SELECT 1 FROM sqlite_master "
+                "WHERE type='trigger' AND name=?");
+            exists.text(1,tr);
+            if(!exists.row() || exists.row())
+                throw std::runtime_error("NPC political petition immutable trigger absent");
+        }
+        Statement rows(db_,"SELECT event_id,world_generation,world_hash,tick,"
+            "colony,governance_event,incumbent,nominee,incumbent_agenda,"
+            "incumbent_policy,risk,caucus_roster,participants,"
+            "requested_agenda,requested_policy "
+            "FROM sg_colony_political_petitions");
+        while(rows.row()){
+            const auto id=sqlite3_column_int64(rows.get(),0);
+            const auto gen=sqlite3_column_int64(rows.get(),1);
+            const auto hash=sqlite_str(rows.get(),2);
+            const auto tick=sqlite3_column_int64(rows.get(),3);
+            const auto colony=parse_u64(sqlite3_column_text(rows.get(),4));
+            const auto govt=sqlite3_column_int64(rows.get(),5);
+            const auto incumbent=parse_u64(sqlite3_column_text(rows.get(),6));
+            const auto nominee=parse_u64(sqlite3_column_text(rows.get(),7));
+            const auto agenda=sqlite3_column_int(rows.get(),8);
+            const auto policy=sqlite3_column_int(rows.get(),9);
+            const auto risk=sqlite3_column_int(rows.get(),10);
+            const auto roster=sqlite_str(rows.get(),11);
+            const auto participants=sqlite3_column_int64(rows.get(),12);
+            const auto target_agenda=sqlite3_column_int(rows.get(),13);
+            const auto target_policy=sqlite3_column_int(rows.get(),14);
+            if(id<1 || gen<1 || static_cast<std::uint64_t>(gen)>max_generation ||
+               tick<0 || !colony || govt<0 || !incumbent || !nominee ||
+               participants<2)
+                throw std::runtime_error("NPC petition chronology malformed");
+            Statement cp(db_,"SELECT state,checksum FROM snapshots "
+                "WHERE generation=?");
+            cp.i64(1,gen);
+            if(!cp.row())throw std::runtime_error("NPC petition source state pruned");
+            const auto* bytes=sqlite3_column_blob(cp.get(),0);
+            const auto n=sqlite3_column_bytes(cp.get(),0);
+            if(!bytes || n<=0 || n>16*1024*1024)
+                throw std::runtime_error("NPC petition snapshot damaged");
+            const auto old_world=Simulation::from_snapshot(std::string(
+                static_cast<const char*>(bytes),static_cast<std::size_t>(n)));
+            if(old_world.state_hash()!=parse_u64(sqlite3_column_text(cp.get(),1)) ||
+               std::to_string(old_world.state_hash())!=hash ||
+               old_world.tick()!=static_cast<std::uint64_t>(tick) || cp.row())
+                throw std::runtime_error("NPC petition original physical hash forged");
+            const auto projected=assess_autonomous_petition(
+                old_world,static_cast<std::uint64_t>(gen),colony);
+            if(!projected ||
+               projected->governance_event_id!=static_cast<std::uint64_t>(govt) ||
+               projected->incumbent_id!=incumbent ||
+               projected->nominee_id!=nominee ||
+               static_cast<int>(projected->incumbent_agenda)!=agenda ||
+               static_cast<int>(projected->incumbent_policy)!=policy ||
+               static_cast<int>(projected->source_risk)!=risk ||
+               encode_petition_caucus(projected->present_caucus)!=roster ||
+               static_cast<sqlite3_int64>(projected->present_caucus.size())!=participants ||
+               static_cast<int>(projected->requested_agenda)!=target_agenda ||
+               static_cast<int>(projected->requested_policy)!=target_policy)
+                throw std::runtime_error("NPC petition fabricated an elector or emergency");
+        }
+    }
+
     colony_conflict::Decision assess_colony_aggression(
         const Simulation& world,std::uint64_t generation,
         EntityId source,std::uint64_t contact_event_id,
@@ -6434,6 +6618,9 @@ public:
             Statement governance_epochs(db_,"SELECT 1 FROM sqlite_master "
                 "WHERE type='table' AND name='sg_colony_governance_epochs'");
             const bool has_governance_epochs=governance_epochs.row();
+            Statement political_petitions(db_,"SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='sg_colony_political_petitions'");
+            const bool has_political_petitions=political_petitions.row();
             const std::string prune_sql=std::string(
                 "DELETE FROM snapshots WHERE generation > 1 AND generation < ?")+
                 (incident_cases_exist ? " AND generation NOT IN "
@@ -6481,6 +6668,9 @@ public:
                     : "")+
                 (has_governance_epochs ? " AND generation NOT IN "
                     "(SELECT world_generation FROM sg_colony_governance_epochs)"
+                    : "")+
+                (has_political_petitions ? " AND generation NOT IN "
+                    "(SELECT world_generation FROM sg_colony_political_petitions)"
                     : "")+
                 // Bind subjective diplomacy to BOTH the original physical
                 // incident and the later real NPC belief/decision generation.
@@ -7638,6 +7828,7 @@ void PersistentWorld::recover_copy(const std::string& source, const std::string&
         copy.verify_colony_watch_contacts(gen);
         copy.verify_colony_conflicts(gen);
         copy.verify_colony_governance(gen);
+        copy.verify_colony_petitions(gen);
         copy.verify_colony_relationships(gen);
         copy.verify_colony_diplomatic_intents(gen);
         verify_dependent_stranding_cases(destination,gen);
@@ -7679,6 +7870,7 @@ PersistentWorld::PersistentWorld(const std::string& path, Simulation initial_wor
     store_->verify_colony_watch_contacts(generation_);
     store_->verify_colony_conflicts(generation_);
     store_->verify_colony_governance(generation_);
+    store_->verify_colony_petitions(generation_);
     store_->verify_colony_relationships(generation_);
     store_->verify_colony_diplomatic_intents(generation_);
 }
@@ -8711,6 +8903,16 @@ PersistentWorld::colony_relationship(EntityId source,PlayerId owner) const{
     if(!source || !owner)
         throw std::invalid_argument("colony diplomacy needs source and foreign owner");
     return store_->latest_colony_relationship(source,owner);
+}
+
+std::optional<colony_conflict::PoliticalPetition>
+PersistentWorld::assess_autonomous_colony_petition(EntityId source) const{
+    return store_->assess_autonomous_petition(world_,generation_,source);
+}
+colony_conflict::PoliticalPetition
+PersistentWorld::record_autonomous_colony_petition(
+    std::uint64_t event,EntityId source){
+    return store_->record_autonomous_petition(world_,generation_,event,source);
 }
 
 colony_conflict::GovernanceEpoch PersistentWorld::record_colony_governance_transition(
