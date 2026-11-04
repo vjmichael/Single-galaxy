@@ -46,6 +46,9 @@ inline GeographicSite survey_geographic_site(
     // with the graph's single-source data.
     r.elevation=std::int16_t(std::clamp(source.elevation,-32768,32767));
     r.surface_water=source.ocean;
+    // Reject independent cave/groundwater guesses in the authoritative view.
+    land.underground_light=false;
+    land.groundwater_potential=false;
     land.watercourse=source.ocean?Watercourse::None:
                      watercourse_from_drainage(source.flow);
     site.catchment_runoff=source.drainage;
@@ -64,14 +67,15 @@ inline GeographicSite survey_geographic_site(
     // world is airless or frozen; seasonally frozen water is PGF-01C.
     const bool river_valley=active_water&&!sterile&&!frozen;
     if(source.ocean) {
-        r.terrain=Terrain::ShallowSea; // depth bands require bathymetry stage
+        // An ocean basin on an ice world is covered ice, NOT liquid sea.
+        r.terrain=frozen?Terrain::Ice:Terrain::ShallowSea; // bathymetry later
         land.landform=Landform::OpenWater;
         land.shelter=Shelter::Open;
         r.farming_possible=false;
         r.fertility=0;
         r.vegetation=Vegetation::None;
         land.vegetation_density=0;
-        land.local_water_potential=100;
+        land.local_water_potential=frozen?0:100;
     } else if(sterile) {
         r.terrain=Terrain::BareRock;
         r.farming_possible=false;
@@ -106,7 +110,7 @@ inline GeographicSite survey_geographic_site(
                  source.elevation-map.cells[source.downstream].elevation>=80;
             land.landform=canyon?Landform::ForestedCanyon:Landform::RiverValley;
             if(canyon) land.shelter=Shelter::Canyon;
-            r.terrain=Terrain::Wetland;
+            r.terrain=canyon?Terrain::Forest:Terrain::Wetland;
             land.local_water_potential=land.watercourse==Watercourse::PerennialRiver?90:60;
             // Ecosystem expression is conditional on independently seeded life.
             land.vegetation_density=std::uint8_t(
