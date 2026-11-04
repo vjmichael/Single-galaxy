@@ -1,0 +1,37 @@
+name: PLAY-13C cosmic/local coordinate acceptance
+on:
+  push:
+    branches:
+      - integration/play13c-cosmic-local-frame-20261104
+  pull_request:
+    paths:
+      - 'include/galaxy/CosmicLocalFrame.hpp'
+      - 'include/galaxy/Simulation.hpp'
+      - 'tests/PLAY13C_CosmicLocalFrameTests.cpp'
+      - '.github/workflows/play13c.yml'
+jobs:
+  coordinate-bridge:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure native project
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+      - name: Compile and execute C++ bridge regression
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cmd.exe /c 'where cl'
+            cat > build/play13c-compile.bat <<'EOF'
+          @echo off
+          cl /nologo /std:c++17 /EHsc /Iinclude tests\PLAY13C_CosmicLocalFrameTests.cpp /Febuild\play13c_bridge.exe
+          build\play13c_bridge.exe
+          EOF
+            cmd.exe /c build\\play13c-compile.bat
+          else
+            c++ -std=c++17 -Wall -Wextra -Werror -Iinclude tests/PLAY13C_CosmicLocalFrameTests.cpp -o build/play13c_bridge
+            ./build/play13c_bridge
+          fi
