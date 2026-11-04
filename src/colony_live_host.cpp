@@ -121,7 +121,9 @@ void status(const Simulation& w,EntityId ship,bool replay_discoveries=false){
     for(const auto& [id,p]:w.survey_probes()){
         if(p.owner!=s->owner_id || p.carrier!=ship)continue;
         announce(w,"SURVEY_PROBE|"+std::to_string(id)+"|"+std::to_string(p.system)+"|"+
-            std::to_string(p.position.x)+"|"+std::to_string(p.position.y));
+            std::to_string(p.position.x)+"|"+std::to_string(p.position.y)+"|"+
+            std::to_string(p.drone_phase)+"|"+std::to_string(p.drone_target)+"|"+
+            std::to_string(p.sample_ore)+"|"+std::to_string(p.taxonomy));
     }
     announce(w,"PROBE_STOCK|"+std::to_string(s->survey_probes_carried)+"|"+
         std::to_string(s->fitting.probe_launcher()?1:0));
@@ -436,6 +438,12 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
                 throw std::invalid_argument("invalid wreck salvage");
             c.action=Action::SalvageWreck;
             c.target=static_cast<EntityId>(target);c.amount=amount;
+        }else if(v.size()==2 && v[0]=="DRONE_LAUNCH"){
+            const auto target=integer(v[1]);
+            if(target<1 || target>100000000)
+                throw std::invalid_argument("invalid geological drone target");
+            c.action=Action::LaunchGeologicalDrone;
+            c.target=static_cast<EntityId>(target);
         }else if(v.size()==1 && v[0]=="PROBE_DEPLOY"){
             c.action=Action::DeploySurveyProbe;
         }else if(v.size()==2 && (v[0]=="PROBE_SCAN" || v[0]=="PROBE_RECOVER")){
