@@ -4806,6 +4806,68 @@ std::optional<AsteroidClass> Simulation::local_deposit_taxonomy(EntityId rock) c
     if(manifest->second[1]==rock)return profile->second.second;
     return std::nullopt;
 }
+std::optional<Simulation::ExpeditionProspect> Simulation::assess_expedition(
+    PlayerId authenticated_owner,EntityId ship) const {
+    const auto* e=find(ship);
+    const auto* colony=colony_ship(ship);
+    const auto* stocks=life_support(ship);
+    if(!authenticated_owner || !e || !colony || !stocks ||
+       e->type!=EntityType::Ship || e->owner_id!=authenticated_owner)
+        return std::nullopt;
+    const auto frame=ship_frames_.find(ship);
+    if(frame==ship_frames_.end() || !frame->second.anchor_body)return std::nullopt;
+    const auto region=local_environments_.find(frame->second.anchor_body);
+    if(region==local_environments_.end())return std::nullopt;
+    ExpeditionProspect p{};
+    p.body=frame->second.anchor_body;
+    p.hazard=region->second.hazard;
+    // Same physical population accounting as process_colony_needs; forecast
+    // is read-only and excludes any promise of future delivery or harvest.
+    const auto physical=passenger_needs_enabled()?people_physically_aboard(ship):0;
+    const auto child_count=snapshot_version_>=59?children_physically_aboard(ship):0;
+    if(physical>std::size_t(std::numeric_limits<std::int64_t>::max()) ||
+       child_count>std::size_t(std::numeric_limits<std::int64_t>::max())-physical)
+        throw std::overflow_error("expedition population exceeds integer bounds");
+    const auto people=passenger_needs_enabled()?
+        std::int64_t(physical+child_count):colony->crew;
+    if(people<0)throw std::logic_error("expedition population negative");
+    if(people>0) {
+        p.food_periods=std::uint64_t(stocks->food_kg/people);
+        p.water_periods=std::uint64_t(stocks->water_kg/people);
+        p.oxygen_periods=std::uint64_t(stocks->oxygen_kg/people);
+    }
+    const auto manifest=generated_local_regions_.find(p.body);
+    if(manifest==generated_local_regions_.end())return std::nullopt;
+    for(const auto site:manifest->second) {
+        const auto it=entities_.find(site);
+        if(!site || it==entities_.end())continue; // depleted tombstone
+        if(it->second.type!=EntityType::Asteroid ||
+           !same_local_frame(ship,site))throw std::logic_error("invalid expedition rock custody");
+        const auto tonnes=std::uint64_t(it->second.ore);
+        if(tonnes>std::numeric_limits<std::uint64_t>::max()-p.ore_tonnes)
+            throw std::overflow_error("expedition ore overflow");
+        p.ore_tonnes+=tonnes;
+        const auto taxonomy=local_deposit_taxonomy(site);
+        if(!taxonomy)throw std::logic_error("expedition geology missing");
+        // Profiles are integer permille, so tonnes * permille == kilograms.
+        for(const auto& mineral:mineral_profile(*taxonomy)) {
+            const auto kilograms=tonnes*std::uint64_t(mineral.permille);
+            if(std::string(mineral.name)=="nickel_iron")
+                p.nickel_iron_kg+=kilograms;
+            if(std::string(mineral.name)=="plagioclase")
+                p.plagioclase_kg+=kilograms;
+        }
+    }
+    // Physical supply infrastructure must actually be present in this frame.
+    // Station in some OTHER frame or a hypothetical supply ship is not support.
+    for(const auto& [site,facility]:built_outposts_) {
+        (void)facility;
+        const auto it=entities_.find(site);
+        if(it!=entities_.end()&&it->second.owner_id==authenticated_owner &&
+           same_local_frame(ship,site)) {p.local_supply_site=true;break;}
+    }
+    return p;
+}
 void Simulation::seed_celestial_local_region(std::uint64_t body_id) {
     if(snapshot_version_<71 || !body_id)
         throw std::invalid_argument("local region requires ship-frame world");
