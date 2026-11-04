@@ -743,6 +743,7 @@ public:
     // Native host converts 10 gameplay seconds to its configured tick period.
     // The requested period is durable for future queued reports.
     void configure_probe_report_tick_ms(std::uint64_t tick_ms);
+    std::uint64_t probe_report_delay_ticks() const {return probe_report_delay_ticks_;}
 
     std::uint64_t tick() const { return tick_; }
     std::uint32_t system_id() const { return system_id_; }
