@@ -1156,6 +1156,210 @@ public:
     }
     // AUTO-04D.5A: independent admission provenance. No caller-provided
     // NPC story or receipt header can bypass the persisted real-world state.
+    std::optional<PersistentWorld::AtomicColonyFamilyPlan> supervisor_plan(
+        std::uint64_t command_id) const{
+        if(!command_id)return std::nullopt;
+        Statement table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_npc_supervisor_plan'");
+        if(!table.row())return std::nullopt; // pre-v79 legacy admission
+        Statement q(db_,"SELECT p.intent_id,p.admission_generation,p.family_seed,"
+            "p.origin_colony,p.receiver_colony,p.regional_revision,p.owner_generation,"
+            "p.origin_family_revision,p.receiver_family_revision,p.adult_count,"
+            "p.child_count,d.source,d.receiver,d.family_scope,d.region_scope,"
+            "d.admission_generation,d.intent_id "
+            "FROM sg_colony_npc_supervisor_plan p "
+            "JOIN sg_colony_npc_autonomous_dispatch d ON d.command_id=p.command_id "
+            "WHERE p.command_id=?");
+        q.text(1,std::to_string(command_id));
+        if(!q.row())return std::nullopt;
+        PersistentWorld::AtomicColonyFamilyPlan p{};
+        p.command_id=command_id;
+        p.family.intent_id=parse_u64(sqlite3_column_text(q.get(),0));
+        const auto gen=sqlite3_column_int64(q.get(),1);
+        p.family.family_seed=parse_u64(sqlite3_column_text(q.get(),2));
+        p.origin_colony=sqlite_str(q.get(),3);
+        p.receiver_colony=sqlite_str(q.get(),4);
+        const auto reg_rev=sqlite3_column_int64(q.get(),5);
+        const auto owner_gen=sqlite3_column_int64(q.get(),6);
+        const auto from_rev=sqlite3_column_int64(q.get(),7);
+        const auto to_rev=sqlite3_column_int64(q.get(),8);
+        const auto adults=sqlite3_column_int64(q.get(),9);
+        const auto children=sqlite3_column_int64(q.get(),10);
+        p.family.source=parse_u64(sqlite3_column_text(q.get(),11));
+        p.family.receiver=parse_u64(sqlite3_column_text(q.get(),12));
+        p.family.family_scope=sqlite_str(q.get(),13);
+        p.region_scope=sqlite_str(q.get(),14);
+        if(gen<2 || sqlite3_column_int64(q.get(),15)!=gen ||
+           parse_u64(sqlite3_column_text(q.get(),16))!=p.family.intent_id ||
+           !p.family.source || !p.family.receiver ||
+           p.family.source==p.family.receiver ||
+           !p.family.family_seed || !p.family.intent_id ||
+           p.family.intent_id==command_id ||
+           p.family.family_scope.empty() || p.region_scope.empty() ||
+           p.origin_colony.empty() || p.receiver_colony.empty() ||
+           p.origin_colony==p.receiver_colony ||
+           reg_rev<1 || owner_gen<1 || from_rev<0 || to_rev<0 ||
+           adults<1 || children<1 || adults+children>16 || q.row())
+            throw std::runtime_error("supervisor saved transfer plan invalid or mismatched");
+        p.family.expected_world_generation=static_cast<std::uint64_t>(gen-1);
+        p.expected_region_revision=static_cast<std::uint64_t>(reg_rev);
+        p.expected_owner_generation=static_cast<std::uint64_t>(owner_gen);
+        p.expected_origin_family_revision=static_cast<std::uint64_t>(from_rev);
+        p.expected_receiver_family_revision=static_cast<std::uint64_t>(to_rev);
+        Statement rows(db_,"SELECT ordinal,person_id,guardian_id,kind,event_id "
+            "FROM sg_colony_npc_supervisor_member WHERE command_id=? ORDER BY ordinal");
+        rows.text(1,std::to_string(command_id));
+        std::set<std::uint64_t> people,events{command_id,p.family.intent_id};
+        std::uint64_t prev_adult=0,prev_child=0;
+        sqlite3_int64 index=0;
+        while(rows.row()){
+            const auto ordinal=sqlite3_column_int64(rows.get(),0);
+            const auto person=parse_u64(sqlite3_column_text(rows.get(),1));
+            const auto guardian=parse_u64(sqlite3_column_text(rows.get(),2));
+            const auto kind=sqlite3_column_int(rows.get(),3);
+            const auto event=parse_u64(sqlite3_column_text(rows.get(),4));
+            if(ordinal!=index || index>=adults+children || !person || !event ||
+               !people.insert(person).second || !events.insert(event).second)
+                throw std::runtime_error("supervisor plan has missing or duplicate member");
+            if(index<adults){
+                if(kind!=0 || guardian || person<=prev_adult ||
+                   person>=(1ULL<<62))
+                    throw std::runtime_error("supervisor adult roster not canonical");
+                prev_adult=person;p.family.adult_ids.push_back(person);
+            }else{
+                if(kind!=1 || !guardian || person<(1ULL<<62) ||
+                   person<=prev_child ||
+                   !std::binary_search(p.family.adult_ids.begin(),
+                                       p.family.adult_ids.end(),guardian))
+                    throw std::runtime_error("supervisor child guardian/roster not canonical");
+                prev_child=person;
+                p.family.children.push_back({person,guardian});
+            }
+            p.member_event_ids.push_back(event);
+            ++index;
+        }
+        if(index!=adults+children)
+            throw std::runtime_error("supervisor plan omitted an adult or dependent");
+        return p;
+    }
+    void verify_supervisor_plans(std::uint64_t max_generation) const{
+        Statement schema(db_,"SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name IN ('sg_colony_npc_supervisor_activation',"
+            "'sg_colony_npc_supervisor_plan','sg_colony_npc_supervisor_member')");
+        unsigned seen=0;while(schema.row())++seen;
+        if(!seen)return; // pre-v79 world
+        if(seen!=3)throw std::runtime_error("partial NPC supervisor ledger");
+        for(const auto* tab:{"sg_colony_npc_supervisor_activation",
+                             "sg_colony_npc_supervisor_plan",
+                             "sg_colony_npc_supervisor_member"})
+            for(const auto* suffix:{"_immutable_update","_immutable_delete"}){
+                Statement trigger(db_,"SELECT 1 FROM sqlite_master "
+                    "WHERE type='trigger' AND name=?");
+                trigger.text(1,std::string(tab)+suffix);
+                if(!trigger.row() || trigger.row())
+                    throw std::runtime_error("supervisor immutable evidence trigger missing");
+            }
+        Statement first(db_,"SELECT first_generation FROM "
+            "sg_colony_npc_supervisor_activation WHERE singleton=1");
+        if(!first.row())throw std::runtime_error("supervisor activation missing");
+        const auto activation=sqlite3_column_int64(first.get(),0);
+        if(activation<2 || static_cast<std::uint64_t>(activation)>max_generation ||
+           first.row())
+            throw std::runtime_error("supervisor activation invalid");
+        Statement dispatch(db_,"SELECT command_id,admission_generation "
+            "FROM sg_colony_npc_autonomous_dispatch "
+            "WHERE admission_generation>=? ORDER BY admission_generation");
+        dispatch.i64(1,activation);
+        while(dispatch.row()){
+            const auto id=parse_u64(sqlite3_column_text(dispatch.get(),0));
+            const auto generation=sqlite3_column_int64(dispatch.get(),1);
+            auto plan=supervisor_plan(id);
+            if(!plan || generation!=static_cast<sqlite3_int64>(
+                   plan->family.expected_world_generation+1) ||
+               generation>static_cast<sqlite3_int64>(max_generation))
+                throw std::runtime_error("accepted NPC rescue lost its durable executable plan");
+            Statement accepted(db_,"SELECT kind,command FROM operation_log "
+                "WHERE generation=?");
+            accepted.i64(1,generation);
+            if(!accepted.row() || sqlite3_column_int(accepted.get(),0)!=1)
+                throw std::runtime_error("supervisor recovery has no admitted world command");
+            const auto command=decode_command(sqlite_str(accepted.get(),1));
+            if(command.id!=id || command.action!=Action::HostColonyDeparture ||
+               command.issuer!=Simulation::kServerAuthority ||
+               command.actor!=plan->family.source ||
+               command.target!=plan->family.receiver ||
+               command.passenger_ids!=plan->family.adult_ids ||
+               accepted.row())
+                throw std::runtime_error("supervisor plan does not match actual host command");
+            Statement prepared(db_,"SELECT generation,source,receiver,family_scope,"
+                "family_seed,adult_roster,child_guardians "
+                "FROM sg_colony_family_departure_prepare WHERE intent_id=?");
+            prepared.text(1,std::to_string(plan->family.intent_id));
+            if(!prepared.row() ||
+               sqlite3_column_int64(prepared.get(),0)!=generation-1 ||
+               sqlite_str(prepared.get(),1)!=std::to_string(plan->family.source) ||
+               sqlite_str(prepared.get(),2)!=std::to_string(plan->family.receiver) ||
+               sqlite_str(prepared.get(),3)!=plan->family.family_scope ||
+               sqlite_str(prepared.get(),4)!=std::to_string(plan->family.family_seed))
+                throw std::runtime_error("supervisor plan contradicts original preparation");
+            std::string adult_roster,child_roster;
+            for(const auto person:plan->family.adult_ids){
+                if(!adult_roster.empty())adult_roster.push_back(',');
+                adult_roster+=std::to_string(person);
+            }
+            for(const auto& child:plan->family.children){
+                if(!child_roster.empty())child_roster.push_back(',');
+                child_roster+=std::to_string(child.child_id)+":"+
+                    std::to_string(child.guardian_id);
+            }
+            if(sqlite_str(prepared.get(),5)!=adult_roster ||
+               sqlite_str(prepared.get(),6)!=child_roster || prepared.row())
+                throw std::runtime_error("supervisor saved member manifest was corrupted");
+            Statement checkpoint(db_,"SELECT state,checksum FROM snapshots "
+                "WHERE generation=?");
+            checkpoint.i64(1,generation);
+            if(!checkpoint.row())throw std::runtime_error("supervisor admission snapshot pruned");
+            const auto* ptr=sqlite3_column_blob(checkpoint.get(),0);
+            const auto len=sqlite3_column_bytes(checkpoint.get(),0);
+            if(!ptr || len<=0 || len>16*1024*1024)
+                throw std::runtime_error("invalid supervisor admission checkpoint");
+            const auto admitted=Simulation::from_snapshot(std::string(
+                static_cast<const char*>(ptr),static_cast<std::size_t>(len)));
+            if(admitted.state_hash()!=parse_u64(sqlite3_column_text(checkpoint.get(),1)) ||
+               checkpoint.row())
+                throw std::runtime_error("supervisor checkpoint has wrong physical hash");
+            std::vector<std::uint64_t> world_adults,world_children;
+            for(const auto& [person,record]:admitted.npc_records())
+                if(record.home_ship==plan->family.source)
+                    world_adults.push_back(person);
+            for(const auto& [person,child]:admitted.physical_dependents())
+                if(child.home_ship==plan->family.source){
+                    world_children.push_back(person);
+                    const auto member=std::find_if(plan->family.children.begin(),
+                        plan->family.children.end(),
+                        [&](const auto& x){return x.child_id==person &&
+                            x.guardian_id==child.guardian_id;});
+                    if(member==plan->family.children.end() ||
+                       child.location!=plan->family.source)
+                        throw std::runtime_error("supervisor saved dependent guardian forged");
+                }
+            std::vector<std::uint64_t> plan_children;
+            for(const auto& c:plan->family.children)plan_children.push_back(c.child_id);
+            if(world_adults!=plan->family.adult_ids ||
+               world_children!=plan_children)
+                throw std::runtime_error("supervisor plan did not contain entire real family");
+        }
+        Statement dangling(db_,"SELECT 1 FROM sg_colony_npc_supervisor_plan p "
+            "LEFT JOIN sg_colony_npc_autonomous_dispatch d "
+            "ON d.command_id=p.command_id WHERE d.command_id IS NULL LIMIT 1");
+        if(dangling.row())
+            throw std::runtime_error("orphaned supervisor plan header");
+        Statement orphan(db_,"SELECT 1 FROM sg_colony_npc_supervisor_member m "
+            "LEFT JOIN sg_colony_npc_supervisor_plan p "
+            "ON p.command_id=m.command_id WHERE p.command_id IS NULL LIMIT 1");
+        if(orphan.row())
+            throw std::runtime_error("orphaned supervisor plan member");
+    }
     void verify_autonomous_dispatch(std::uint64_t max_generation) const{
         Statement exists(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
             "AND name='sg_colony_npc_autonomous_dispatch'");
@@ -4953,6 +5157,9 @@ public:
             Statement family_evacuation(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
                 "AND name='sg_colony_family_evacuation'");
             const bool has_family_evacuation=family_evacuation.row();
+            Statement npc_dispatch(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='sg_colony_npc_autonomous_dispatch'");
+            const bool has_npc_dispatch=npc_dispatch.row();
             const std::string prune_sql=std::string(
                 "DELETE FROM snapshots WHERE generation > 1 AND generation < ?")+
                 (incident_cases_exist ? " AND generation NOT IN "
@@ -4972,7 +5179,12 @@ public:
                 (has_family_evacuation ? " AND generation NOT IN "
                     "(SELECT world_generation FROM sg_colony_family_evacuation)"
                     " AND generation NOT IN "
-                    "(SELECT world_generation-1 FROM sg_colony_family_evacuation)" : "");
+                    "(SELECT world_generation-1 FROM sg_colony_family_evacuation)" : "")+
+                // The v78 NPC admission verifier independently reads this
+                // exact original accepted world snapshot at every restart.
+                (has_npc_dispatch ? " AND generation NOT IN "
+                    "(SELECT admission_generation FROM sg_colony_npc_autonomous_dispatch)"
+                    : "");
             Statement prune(db_,prune_sql.c_str());
             prune.i64(1, static_cast<std::int64_t>(next > 2 ? next - 2 : 1));
             prune.execute();
@@ -6117,6 +6329,7 @@ void PersistentWorld::recover_copy(const std::string& source, const std::string&
             throw std::runtime_error("recovery: missing world checkpoint");
         copy.verify_physical_dependent_authority(checked);
         copy.verify_autonomous_dispatch(gen);
+        copy.verify_supervisor_plans(gen);
         verify_dependent_stranding_cases(destination,gen);
         verify_split_rescue_intents(destination,gen);
     } catch (...) {
@@ -6151,6 +6364,7 @@ PersistentWorld::PersistentWorld(const std::string& path, Simulation initial_wor
     store_->verify_colony_notifications(world_,generation_);
     store_->verify_physical_dependent_authority(world_);
     store_->verify_autonomous_dispatch(generation_);
+    store_->verify_supervisor_plans(generation_);
 }
 PersistentWorld::~PersistentWorld() = default;
 
@@ -6681,11 +6895,263 @@ bool PersistentWorld::submit_autonomous_colony_rescue(
         insert.text(10,request.region_scope);
         insert.i64(11,static_cast<int>(planned.response.risk));
         insert.execute();
+        // v79: the complete restart plan belongs to this SAME writer
+        // transaction as the actual accepted command and NPC observation.
+        // Never persist half a manifest or a speculative player-facing rescue.
+        run(db,"CREATE TABLE IF NOT EXISTS sg_colony_npc_supervisor_activation("
+            "singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
+            "first_generation INTEGER NOT NULL CHECK(first_generation>1))");
+        Statement activate(db,"INSERT OR IGNORE INTO "
+            "sg_colony_npc_supervisor_activation VALUES(1,?)");
+        activate.i64(1,static_cast<sqlite3_int64>(next_generation));
+        activate.execute();
+        run(db,"CREATE TABLE IF NOT EXISTS sg_colony_npc_supervisor_plan("
+            "command_id TEXT PRIMARY KEY,intent_id TEXT NOT NULL UNIQUE,"
+            "admission_generation INTEGER NOT NULL CHECK(admission_generation>1),"
+            "family_seed TEXT NOT NULL,origin_colony TEXT NOT NULL,"
+            "receiver_colony TEXT NOT NULL,regional_revision INTEGER NOT NULL,"
+            "owner_generation INTEGER NOT NULL,"
+            "origin_family_revision INTEGER NOT NULL,"
+            "receiver_family_revision INTEGER NOT NULL,"
+            "adult_count INTEGER NOT NULL CHECK(adult_count>0),"
+            "child_count INTEGER NOT NULL CHECK(child_count>0))");
+        run(db,"CREATE TABLE IF NOT EXISTS sg_colony_npc_supervisor_member("
+            "command_id TEXT NOT NULL,ordinal INTEGER NOT NULL CHECK(ordinal>=0),"
+            "person_id TEXT NOT NULL,guardian_id TEXT NOT NULL,"
+            "kind INTEGER NOT NULL CHECK(kind IN(0,1)),event_id TEXT NOT NULL UNIQUE,"
+            "PRIMARY KEY(command_id,ordinal),UNIQUE(command_id,person_id))");
+        for(const auto* name:{"sg_colony_npc_supervisor_activation",
+                              "sg_colony_npc_supervisor_plan",
+                              "sg_colony_npc_supervisor_member"}){
+            const auto tab=std::string(name);
+            run(db,("CREATE TRIGGER IF NOT EXISTS "+tab+"_immutable_update "
+                "BEFORE UPDATE ON "+tab+" BEGIN SELECT RAISE(ABORT,"
+                "'immutable NPC supervisor'); END").c_str());
+            run(db,("CREATE TRIGGER IF NOT EXISTS "+tab+"_immutable_delete "
+                "BEFORE DELETE ON "+tab+" BEGIN SELECT RAISE(ABORT,"
+                "'immutable NPC supervisor'); END").c_str());
+        }
+        Statement plan(db,"INSERT INTO sg_colony_npc_supervisor_plan VALUES("
+            "?,?,?,?,?,?,?,?,?,?,?,?)");
+        plan.text(1,std::to_string(p.command_id));
+        plan.text(2,std::to_string(p.family.intent_id));
+        plan.i64(3,static_cast<sqlite3_int64>(next_generation));
+        plan.text(4,std::to_string(p.family.family_seed));
+        plan.text(5,p.origin_colony);plan.text(6,p.receiver_colony);
+        plan.i64(7,static_cast<sqlite3_int64>(p.expected_region_revision));
+        plan.i64(8,static_cast<sqlite3_int64>(p.expected_owner_generation));
+        plan.i64(9,static_cast<sqlite3_int64>(p.expected_origin_family_revision));
+        plan.i64(10,static_cast<sqlite3_int64>(p.expected_receiver_family_revision));
+        plan.i64(11,static_cast<sqlite3_int64>(p.family.adult_ids.size()));
+        plan.i64(12,static_cast<sqlite3_int64>(p.family.children.size()));
+        plan.execute();
+        for(std::size_t i=0;i<p.member_event_ids.size();++i){
+            const bool is_child=i>=p.family.adult_ids.size();
+            const auto child_index=is_child?i-p.family.adult_ids.size():0;
+            const auto person=is_child?p.family.children[child_index].child_id:
+                p.family.adult_ids[i];
+            const auto guardian=is_child?p.family.children[child_index].guardian_id:0;
+            Statement member(db,"INSERT INTO sg_colony_npc_supervisor_member "
+                "VALUES(?,?,?,?,?,?)");
+            member.text(1,std::to_string(p.command_id));
+            member.i64(2,static_cast<sqlite3_int64>(i));
+            member.text(3,std::to_string(person));
+            member.text(4,std::to_string(guardian));
+            member.i64(5,is_child?1:0);
+            member.text(6,std::to_string(p.member_event_ids[i]));
+            member.execute();
+        }
     };
     store_->commit(next,generation_,resource_origin_,credit_origin_,
                    &command,{},{},{},fail,nullptr,nullptr,effect);
     world_.swap(next);++generation_;
     return true;
+}
+
+// AUTO-04D.5B — Persisted NPC supervisor. A whole family plan is a durable
+// admission, never an implication that its world transaction already ran.
+std::optional<PersistentWorld::AtomicColonyFamilyPlan>
+PersistentWorld::pending_autonomous_family_rescue(std::uint64_t command_id) const{
+    if(!command_id)return std::nullopt;
+    store_->verify_autonomous_dispatch(generation_);
+    store_->verify_supervisor_plans(generation_);
+    auto plan=store_->supervisor_plan(command_id);
+    if(!plan)return std::nullopt; // v78 legacy admissions lacked a resume plan
+    if(plan->family.expected_world_generation+1!=generation_)
+        return std::nullopt; // already applied or obsolete; never replay it
+    if(const auto result=world_.colony_departures().find(plan->family.source);
+       result!=world_.colony_departures().end() &&
+       result->second.command_id==command_id)
+        return std::nullopt;
+    const auto it=world_.commands_.find(world_.tick()+1);
+    if(it==world_.commands_.end() || it->second.size()!=1 ||
+       it->second.front().id!=command_id ||
+       it->second.front().action!=Action::HostColonyDeparture ||
+       it->second.front().issuer!=Simulation::kServerAuthority ||
+       it->second.front().actor!=plan->family.source ||
+       it->second.front().target!=plan->family.receiver ||
+       it->second.front().passenger_ids!=plan->family.adult_ids)
+        throw std::runtime_error("supervisor plan not equal to only pending native command");
+    return plan;
+}
+
+bool PersistentWorld::resume_autonomous_family_rescue(
+    std::uint64_t command_id,FailPoint fail){
+    auto pending=pending_autonomous_family_rescue(command_id);
+    if(!pending)return false;
+    // Independent existing atomic writer: one world snapshot, ART02
+    // residence/guardian batch and ECON03 regional population receipt.
+    step_with_atomic_family_departure(*pending,fail);
+    if(!verified_atomic_family_departure(command_id))
+        throw std::runtime_error("supervisor resumed evacuation without final custody proof");
+    return true;
+}
+
+bool PersistentWorld::resume_next_pending_autonomous_rescue(FailPoint fail){
+    sqlite3* raw=nullptr;
+    if(sqlite3_open_v2(db_path_.c_str(),&raw,SQLITE_OPEN_READONLY,nullptr)!=SQLITE_OK){
+        if(raw)sqlite3_close(raw);
+        throw std::runtime_error("cannot inspect NPC supervisor recoverable queue");
+    }
+    std::unique_ptr<sqlite3,decltype(&sqlite3_close)> db(raw,sqlite3_close);
+    Statement table(db.get(),"SELECT 1 FROM sqlite_master WHERE type='table' "
+        "AND name='sg_colony_npc_supervisor_plan'");
+    if(!table.row())return false;
+    Statement due(db.get(),"SELECT command_id FROM sg_colony_npc_supervisor_plan "
+        "WHERE admission_generation=? ORDER BY command_id");
+    due.i64(1,static_cast<sqlite3_int64>(generation_));
+    if(!due.row())return false;
+    const auto command_id=parse_u64(sqlite3_column_text(due.get(),0));
+    if(due.row())
+        throw std::runtime_error("two competing autonomous rescues at same world generation");
+    return resume_autonomous_family_rescue(command_id,fail);
+}
+
+PersistentWorld::SupervisorTick PersistentWorld::supervise_autonomous_colony_emergency(
+    const AutonomousSupervisorRoute& route,FailPoint fail){
+    SupervisorTick result;
+    result.command_id=route.command_id;
+    if(!route.source || !route.family_seed || !route.intent_id ||
+       !route.command_id || route.command_id==route.intent_id ||
+       route.family_scope.empty() || route.region_scope.empty() ||
+       route.origin_colony.empty() || route.destinations.empty() ||
+       route.destinations.size()>32)
+        throw std::invalid_argument("NPC supervisor requires trusted bounded region bindings");
+    // A supervisor for one colony cannot inadvertently execute another
+    // colony's durable rescue. Only the correct site owner may drive the
+    // corresponding host-scheduled follow-up.
+    if(const auto due=world_.commands_.find(world_.tick()+1);
+       due!=world_.commands_.end()){
+        for(const auto& accepted:due->second){
+            if(accepted.action!=Action::HostColonyDeparture)continue;
+            const auto recorded=store_->supervisor_plan(accepted.id);
+            if(!recorded)continue;
+            if(recorded->family.source!=route.source ||
+               recorded->region_scope!=route.region_scope ||
+               recorded->family.family_scope!=route.family_scope){
+                result.status=SupervisorStatus::RescuePending;
+                result.command_id=accepted.id;
+                result.receiver=accepted.target;
+                result.reason="a different colony owns the pending rescue; route-scoped execution refused";
+                return result;
+            }
+        }
+    }
+    // Highest priority: finish an already-admitted rescue after restart.
+    // The host does not need to keep the plan, leader or allocated event IDs.
+    if(resume_next_pending_autonomous_rescue(fail)){
+        result.status=SupervisorStatus::RescueCompleted;
+        result.reason="recovered and verified already-admitted whole-family evacuation";
+        const auto departure=world_.colony_departures().find(route.source);
+        if(departure!=world_.colony_departures().end()){
+            result.receiver=departure->second.receiver;
+            result.command_id=departure->second.command_id;
+        }
+        return result;
+    }
+    if(const auto completed=world_.colony_departures().find(route.source);
+       completed!=world_.colony_departures().end()){
+        result.status=SupervisorStatus::RescueCompleted;
+        result.command_id=completed->second.command_id;
+        result.receiver=completed->second.receiver;
+        result.reason="family already physically evacuated; no second rescue admitted";
+        return result;
+    }
+    const auto response=colony_safety::plan_response(world_,route.source,route.source);
+    if(response.risk!=colony_safety::Risk::Critical &&
+       response.risk!=colony_safety::Risk::Emergency){
+        result.status=SupervisorStatus::NoCurrentEmergency;
+        result.reason="canonical life support not in emergency evacuation range";
+        return result;
+    }
+    sqlite3* raw=nullptr;
+    if(sqlite3_open_v2(db_path_.c_str(),&raw,SQLITE_OPEN_READONLY,nullptr)!=SQLITE_OK){
+        if(raw)sqlite3_close(raw);
+        throw std::runtime_error("cannot read NPC emergency observation ledger");
+    }
+    std::unique_ptr<sqlite3,decltype(&sqlite3_close)> db(raw,sqlite3_close);
+    Statement latest(db.get(),"SELECT id,new_risk FROM sg_colony_response_events "
+        "WHERE site=? ORDER BY id DESC LIMIT 1");
+    latest.i64(1,static_cast<sqlite3_int64>(route.source));
+    if(!latest.row() ||
+       sqlite3_column_int(latest.get(),1)!=static_cast<int>(response.risk)){
+        result.status=SupervisorStatus::NoCurrentEmergency;
+        result.reason="no current committed life-support threshold notification";
+        return result;
+    }
+    result.notice_id=static_cast<std::uint64_t>(sqlite3_column_int64(latest.get(),0));
+    Statement eligible(db.get(),"SELECT npc_id FROM sg_colony_npc_opportunities "
+        "WHERE event_id=? AND site=? ORDER BY npc_id");
+    eligible.i64(1,static_cast<sqlite3_int64>(result.notice_id));
+    eligible.i64(2,static_cast<sqlite3_int64>(route.source));
+    while(eligible.row()){
+        const auto id=static_cast<std::uint64_t>(sqlite3_column_int64(eligible.get(),0));
+        const auto person=world_.npc_records().find(id);
+        if(person!=world_.npc_records().end() &&
+           person->second.home_ship==route.source &&
+           person->second.location==route.source &&
+           !person->second.transport_id){
+            result.leader_id=id;break;
+        }
+    }
+    if(!result.leader_id){
+        result.status=SupervisorStatus::NoLocalNpc;
+        result.reason="no living, physically present NPC received a local alert opportunity";
+        return result;
+    }
+    // This is the host's actual delivery step. A crash immediately after
+    // acknowledgment is safe: the outbox remembers delivery, and the next
+    // supervisor pass will select the same latest observable alert.
+    acknowledge_colony_notification(result.notice_id,result.leader_id);
+    AutonomousRescueRequest request{};
+    request.source=route.source;
+    request.leader_id=result.leader_id;
+    request.observed_event_id=result.notice_id;
+    request.family_seed=route.family_seed;
+    request.intent_id=route.intent_id;
+    request.command_id=route.command_id;
+    request.family_scope=route.family_scope;
+    request.region_scope=route.region_scope;
+    request.origin_colony=route.origin_colony;
+    request.destinations=route.destinations;
+    request.member_event_ids=route.member_event_ids;
+    const auto evaluated=assess_autonomous_colony_emergency(request);
+    if(!evaluated.rescue_ready){
+        result.status=SupervisorStatus::AwaitingPhysicalRescue;
+        result.reason=evaluated.reason;
+        // The original physical shortage and delivered-NPC outbox remain
+        // durable; neither a shipment nor a person movement is fabricated.
+        return result;
+    }
+    if(!submit_autonomous_colony_rescue(request,fail)){
+        result.status=SupervisorStatus::AwaitingPhysicalRescue;
+        result.reason="qualified recipient could not receive an admitted command";
+        return result;
+    }
+    result.status=SupervisorStatus::RescueQueued;
+    result.receiver=evaluated.selected_receiver;
+    result.reason="supervisor queued immutable whole-family transfer; execution still pending";
+    return result;
 }
 
 // COLONY-AUTO-04D.4D2B2: admission only. No family member relocates until
@@ -6907,6 +7373,7 @@ bool PersistentWorld::verified_atomic_family_departure(std::uint64_t command_id)
         throw std::runtime_error("family receipt does not match authoritative world");
     store_->verify_physical_dependent_authority(reread);
     store_->verify_autonomous_dispatch(persisted_generation);
+    store_->verify_supervisor_plans(persisted_generation);
     sqlite3* raw=nullptr;
     if(sqlite3_open_v2(db_path_.c_str(),&raw,SQLITE_OPEN_READONLY,nullptr)!=SQLITE_OK){
         if(raw)sqlite3_close(raw);
