@@ -660,8 +660,9 @@ public:
     };
     struct HostVoluntaryDepartureSchedule {
         EntityId origin=0;
-        // Unique, host-journal-reserved ID for the first NPC in this batch.
-        // The next examined resident receives personal_event_base+1 etc.
+        // Zero requests monotonic IDs automatically from the durable
+        // SQLite diary. Nonzero means the trusted host already reserved a
+        // unique contiguous event range (base + examined index).
         std::uint64_t personal_event_base=0;
         std::uint32_t scan_budget=8; // 1..32; 8 actual tick cadence
         std::optional<HostVoluntaryImmigrationOffer> approved_offer;
