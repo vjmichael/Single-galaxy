@@ -47,12 +47,13 @@
      },
      clear(){selected=null;},
      state(){return {mode,radiusMm,selected,contacts:[...contacts]};},
-     refinementRequest(){
+     refinementRequest(probe){
+       if(!validId(probe))throw Error('Select a deployed probe first');
        const contact=current();
        if(!contact)throw Error('Lock a host-observed signature first');
        // Build proposed action; host must authorize and derive all waypoints.
-       return Object.freeze({action:'refineSignature',mode,
-         signature:contact.id,radiusMm});
+       return Object.freeze({action:'colonyProbeFocus',probe,
+         signature:contact.id});
      }
    });
  }
