@@ -36,4 +36,4 @@ The query returns a candidate revision and changes nothing. `record_colony_relat
 
 ## Verification
 
-Dedicated Linux workflow: `.github/workflows/colony-conflict01b1.yml`; compile v83 + prior v82 conflict and v81 watch CTests. Claim success only after retrieving the actual result and logs.
+**Focused acceptance PASSED:** [GitHub Actions run 41780823938](https://github.com/vjmichael/Single-galaxy/actions/runs/41780823938), executable code/test commit `66440d5e3636f0568c512f5007cd6a3e2dfa7526`. All **3/3** real native SQLite CTests passed in 2.51 seconds: `galaxy_colony_defense01a_local_watch`, `galaxy_colony_conflict01a_aggressive_intent`, and `galaxy_colony_conflict01b1_grievance`. The hardening revision orders history by actual physical generation and per-colony relationship revision rather than externally allocated event IDs; the test deliberately uses **decreasing** event IDs for later revisions. This document edit does not change executable code. Broader PR workflows and integration review are separate acceptance gates.
