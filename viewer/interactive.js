@@ -7,6 +7,7 @@ function assistMessage(mode,description='destination'){
  if(label)label.textContent=window.GalaxyTravelAssist?.statusText(mode,description)||mode;
  if(el('assistCancel'))el('assistCancel').disabled=!assist;
 }
+window.GalaxyAssistNativeOutcome=outcome=>{if(assist&&outcome!=='APPLIED')cancelAssist('paused');};
 function cancelAssist(mode='cancelled'){
  const old=assist;assist=null;assistPending=false;
  if(old)assistMessage(mode,old.description);
