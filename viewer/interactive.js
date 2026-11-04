@@ -143,8 +143,7 @@ window.onGalaxyLiveProjection=function(state){
    ' · speed '+speed.toFixed(0)+' mm/tick'+
    (first?' · nearest visible asteroid #'+first.rock.id+
       ' at '+first.range.toFixed(0)+' mm':' · no asteroid currently visible');
- const chosen=window.GalaxySelectedRockId;
-  const chosen=Number(el('colonyRockTarget').value);
+ const chosen=Number(el('colonyRockTarget').value);
  const selected=Number.isSafeInteger(window.GalaxySelectedRockId)&&window.GalaxySelectedRockId>0?
    window.GalaxySelectedRockId:(Number.isSafeInteger(chosen)&&chosen>0?chosen:null);
  const mine=window.GalaxyExpeditionFeedback?.target(ship,nearby,selected);
