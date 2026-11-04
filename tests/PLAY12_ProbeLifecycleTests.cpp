@@ -17,7 +17,57 @@ static Outcome run(PersistentWorld& w,const Command& c){
  CHECK(w.world().events().back().command_id==c.id);
  return w.world().events().back().result;
 }
+static void focus_mission() {
+ const auto dir=fs::temp_directory_path()/
+   ("sg_play13b_focus_"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+ fs::create_directories(dir);
+ const auto db=(dir/"focus.sqlite").string();
+ try {
+  EntityId ship=0,rock=0;
+  std::uint64_t probe=2;
+  {
+   Simulation seed(8091);
+   ship=seed.add_colony_ship(7,{0,0},60,24);
+   seed.enable_individual_workforce();
+   seed.provision_starter_exploration_scanner(ship);
+   seed.provision_starter_probe_kit(ship);
+   rock=seed.add_asteroid({16000000,0},20); // 16 km from carrier
+   PersistentWorld w(db,std::move(seed));
+   CHECK(w.world().coarse_probe_signatures(8,ship).empty());
+   auto signatures=w.world().coarse_probe_signatures(7,ship);
+   CHECK(signatures.size()==1 && signatures[0].id==rock);
+   CHECK(signatures[0].coarse.x==16000000);
+   CHECK(run(w,order(w,probe,ship,Action::DeploySurveyProbe))==Outcome::Applied);
+   auto unauthorized=order(w,3,ship,Action::FocusSurveyProbe,probe,8);
+   unauthorized.amount=static_cast<std::int64_t>(rock);
+   CHECK(run(w,unauthorized)==Outcome::Unauthorized);
+   auto lock=order(w,4,ship,Action::FocusSurveyProbe,probe);
+   lock.amount=static_cast<std::int64_t>(rock);
+   CHECK(run(w,lock)==Outcome::Applied);
+   CHECK(w.world().canonical_state().find("galaxy-kernel-v69|")==0);
+   CHECK(w.world().survey_probes().at(probe).focus_site==rock);
+   CHECK(w.world().survey_probes().at(probe).position.x>0);
+   CHECK(run(w,order(w,5,ship,Action::RecoverSurveyProbe,probe))==Outcome::InTransition);
+  }
+  {
+   PersistentWorld w(db,Simulation(22));
+   CHECK(w.world().survey_probes().at(probe).focus_site==rock);
+   w.steps(5);
+   CHECK(w.world().survey_probes().at(probe).focus_site==0);
+   CHECK(w.world().pending_probe_report_count()==1);
+   CHECK(w.world().discoveries().count({7,rock})==0);
+   w.steps(9);
+   CHECK(w.world().discoveries().count({7,rock})==0);
+   w.step();
+   CHECK(w.world().discoveries().count({7,rock})==1);
+   CHECK(w.world().pending_probe_report_count()==0);
+   CHECK(w.world().total_ore()==46); // 40 base plus 6 equipment
+  }
+  fs::remove_all(dir);
+ }catch(...){std::error_code ignored;fs::remove_all(dir,ignored);throw;}
+}
 int main(){
+ focus_mission();
  const auto dir=fs::temp_directory_path()/
   ("sg_play12_"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
  try{
