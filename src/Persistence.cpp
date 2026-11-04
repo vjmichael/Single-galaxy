@@ -1259,6 +1259,64 @@ public:
             throw;
         }
     }
+    // An ART02 child enters the physical world only when the existing birth
+    // registry and the independently witnessed world-birth bridge agree.
+    // Call under the SAME SQLite writer transaction as the new world event.
+    void verify_physical_dependent_birth(const Simulation& world,
+        const Command& c,const std::string& scope,std::uint64_t seed) const {
+        if(!c.transport_id || c.transport_id<(1ULL<<62) ||
+           c.passenger_ids.size()!=1 || !c.passenger_ids.front() ||
+           !c.actor || c.actor!=c.target || scope.empty() || !seed)
+            throw std::runtime_error("invalid dependent registration identity");
+        if(world.physical_dependents().count(c.transport_id) ||
+           world.npc_records().count(c.transport_id) ||
+           world.npc_casualties().count(c.transport_id))
+            throw std::runtime_error("dependent already physically registered");
+        const auto guardian=world.npc_records().find(c.passenger_ids.front());
+        if(guardian==world.npc_records().end() ||
+           guardian->second.location!=c.actor ||
+           guardian->second.home_ship!=c.actor || guardian->second.transport_id)
+            throw std::runtime_error("dependent guardian lacks physical residence");
+        Statement bridge(db_,"SELECT event_id,parent_a,parent_b,family_scope FROM "
+                             "sg_med_society_birth WHERE child_id=? AND home_ship=?");
+        bridge.text(1,std::to_string(c.transport_id));
+        bridge.text(2,std::to_string(c.actor));
+        if(!bridge.row())throw std::runtime_error("dependent birth has no world bridge");
+        const auto birth_event=sqlite_str(bridge.get(),0);
+        const auto parent_a=parse_u64(sqlite3_column_text(bridge.get(),1));
+        const auto parent_b=parse_u64(sqlite3_column_text(bridge.get(),2));
+        if(sqlite_str(bridge.get(),3)!=scope || bridge.row())
+            throw std::runtime_error("dependent birth bridge family scope conflict");
+        Statement natal(db_,"SELECT parent_a,parent_b,settlement FROM npc_family_births "
+                            "WHERE scope=? AND event_id=? AND child_id=?");
+        natal.text(1,scope);natal.text(2,birth_event);
+        natal.text(3,std::to_string(c.transport_id));
+        if(!natal.row() ||
+           parse_u64(sqlite3_column_text(natal.get(),0))!=parent_a ||
+           parse_u64(sqlite3_column_text(natal.get(),1))!=parent_b ||
+           parse_u64(sqlite3_column_text(natal.get(),2))!=c.actor ||
+           natal.row())
+            throw std::runtime_error("world/ART02 original parent records diverge");
+        Statement deceased(db_,"SELECT 1 FROM npc_family_deaths "
+            "WHERE scope=? AND npc_id=? LIMIT 1");
+        deceased.text(1,scope);deceased.text(2,std::to_string(c.transport_id));
+        if(deceased.row())throw std::runtime_error("cannot register deceased dependent");
+        if(has_dependent_table()){
+            Statement ferry(db_,"SELECT 1 FROM sg_dependent_travel WHERE child_id=? "
+                                 "AND status=1 LIMIT 1");
+            ferry.text(1,std::to_string(c.transport_id));
+            if(ferry.row())throw std::runtime_error("cannot register child aboard an active ferry");
+        }
+        NpcAppearanceStore family(db_,scope,seed,
+            [&](std::uint64_t id){return world.npc_records().count(id)!=0;});
+        if(family.current_residence(c.transport_id)!=c.actor ||
+           family.current_residence(c.passenger_ids.front())!=c.actor)
+            throw std::runtime_error("child/guardian census location mismatch");
+        const auto lawful=family.current_nonparent_guardian(c.transport_id);
+        if(lawful ? lawful!=c.passenger_ids.front() :
+           (parent_a!=c.passenger_ids.front() && parent_b!=c.passenger_ids.front()))
+            throw std::runtime_error("not the child's legally recorded guardian");
+    }
     bool has_dependent_table() const {
         Statement t(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
                         "AND name='sg_dependent_travel'");
