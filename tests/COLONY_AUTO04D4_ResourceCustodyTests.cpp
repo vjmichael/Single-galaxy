@@ -35,12 +35,13 @@ try{
         w.step();
         CHECK(w.world().passengers_aboard(ferry)==2);
         CHECK(colony_safety::assess(w.world(),ferry,ferry).population==6);
-        CHECK(colony_safety::assess(w.world(),home,home).population==2);
+        CHECK(colony_safety::assess(w.world(),home,home).population==0);
         w.steps(20-w.world().tick());
         CHECK(w.world().life_support(ferry)->food_kg==94);
+        CHECK(w.world().passengers_aboard(ferry)==2);
         CHECK(w.world().life_support(ferry)->water_kg==94);
         CHECK(w.world().life_support(ferry)->oxygen_kg==94);
-        CHECK(w.world().life_support(home)->food_kg==98);
+        CHECK(w.world().life_support(home)->food_kg==100);
         CHECK(w.world().total_material_kg()==material);
         Command disembark{};
         disembark.id=1002;disembark.transport_id=1001;disembark.sequence=2;
@@ -59,7 +60,9 @@ try{
         // passengers who disembarked are not a second copy of home crew.
         w.steps(40-w.world().tick());
         CHECK(w.world().life_support(ferry)->food_kg==90);
-        CHECK(w.world().life_support(home)->food_kg==96);
+        CHECK(w.world().people_physically_aboard(ferry)==4);
+        CHECK(w.world().people_physically_aboard(home)==2);
+        CHECK(w.world().life_support(home)->food_kg==98);
         CHECK(w.world().total_material_kg()==material);
         const auto generation=w.generation(),tick=w.world().tick();
         bool rolled_back=false;
@@ -73,7 +76,7 @@ try{
         CHECK(w.world().tick()==40);
         CHECK(w.world().passengers_aboard(ferry)==0);
         CHECK(w.world().life_support(ferry)->food_kg==90);
-        CHECK(w.world().life_support(home)->food_kg==96);
+        CHECK(w.world().life_support(home)->food_kg==98);
         CHECK(w.world().npc_records().size()==6);
         CHECK(w.world().total_material_kg()==material);
     }
