@@ -5645,6 +5645,55 @@ bool PersistentWorld::submit_host_medical_action(const Command& command, FailPoi
     return submit_host_passenger_action(command,fail);
 }
 
+bool PersistentWorld::submit_host_emergency_ferry_rescue(
+        const Command& command,FailPoint fail){
+    // This gate is deliberately limited to EXISTING ferry passengers in one
+    // active/stranded voyage. It does not move home-ship crew, colonists,
+    // dependents, or create a transport/repair resource.
+    if(command.action!=Action::HostEvacuatePassengers ||
+       command.issuer!=Simulation::kServerAuthority ||
+       !command.actor || !command.target || command.actor==command.target ||
+       command.execute_tick!=world_.tick()+1 ||
+       command.transport_id==0 || command.amount<=0 ||
+       command.passenger_ids.empty() || command.passenger_ids.size()>16)
+        return false;
+    const auto voyage=world_.voyages_.find(command.transport_id);
+    if(voyage==world_.voyages_.end() ||
+       voyage->second.ferry!=command.actor ||
+       (voyage->second.status!=1 && voyage->second.status!=3) ||
+       voyage->second.passengers!=command.passenger_ids)
+        return false;
+    const auto* source=world_.colony_ship(command.actor);
+    const auto* receiver=world_.colony_ship(command.target);
+    const auto* provision=world_.life_support(command.target);
+    const auto* dest=world_.find(command.target);
+    if(!source||!receiver||!provision||!dest||
+       dest->type!=EntityType::Ship || receiver->crew<=0)
+        return false;
+    // No emergency authority to evacuate a healthy ferry speculatively.
+    const auto hazard=colony_safety::assess(world_,command.actor,command.actor);
+    if(hazard.risk!=colony_safety::Risk::Critical &&
+       hazard.risk!=colony_safety::Risk::Emergency)
+        return false;
+    // Recipient must carry physical provisions for at least TWO whole
+    // consumption periods for its native crew, existing onboard passengers,
+    // and every newly rescued passenger. Unfulfilled imports do not count.
+    const auto aboard=world_.passengers_aboard(command.target);
+    const auto people=static_cast<std::uint64_t>(receiver->crew)+
+                      static_cast<std::uint64_t>(aboard)+
+                      static_cast<std::uint64_t>(command.passenger_ids.size());
+    if(people==0||people>1000 ||
+       provision->food_kg<static_cast<std::int64_t>(2*people) ||
+       provision->water_kg<static_cast<std::int64_t>(2*people) ||
+       provision->oxygen_kg<static_cast<std::int64_t>(2*people))
+        return false;
+    // Full source passenger roster, exact seat capacity, route/ship proximity,
+    // reserved voyage identity, child berth protection and custody validation
+    // are all rechecked by existing native command admission.
+    // Success here means SCHEDULED, never arrived or rescued until execution.
+    return submit_host_passenger_action(command,fail);
+}
+
 bool PersistentWorld::submit_host_passenger_action(const Command& command, FailPoint fail){
     if(command.action!=Action::HostEmbarkPassengers && command.action!=Action::HostDisembarkPassengers &&
        command.action!=Action::HostStrandFerry && command.action!=Action::HostResumeFerry &&
