@@ -21,6 +21,10 @@ on:
       - 'include/galaxy/Simulation.hpp'
       - 'src/colony_live_host.cpp'
       - 'tests/PLAY13D_LivePlanetSurveyTests.cpp'
+      - 'live/interactive_relay.py'
+      - 'viewer/colony.js'
+      - 'tests/PLAY13D_LiveHostPlanetSurveySmoke.py'
+      - 'tests/PLAY13D_PlanetSurveyNodeTests.js'
       - 'CMakeLists.txt'
       - '.github/workflows/play13d.yml'
 jobs:
@@ -35,6 +39,15 @@ jobs:
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
       - name: Build real galaxy kernel and planetary test
-        run: cmake --build build --config Release --target galaxy_play13d_planetary_agriculture_tests galaxy_play13d_planetary_regions_tests galaxy_play13d_planetary_landscape_tests galaxy_play13d_planetary_framework_tests galaxy_play13d_planetary_watershed_tests galaxy_play13d_planetary_geography_tests galaxy_play13d_live_planet_survey_tests
+        run: cmake --build build --config Release --target galaxy_play13d_planetary_agriculture_tests galaxy_play13d_planetary_regions_tests galaxy_play13d_planetary_landscape_tests galaxy_play13d_planetary_framework_tests galaxy_play13d_planetary_watershed_tests galaxy_play13d_planetary_geography_tests galaxy_play13d_live_planet_survey_tests galaxy_colony_live_host
       - name: Native mass conservation and return logistics
         run: ctest --test-dir build -C Release -R "^galaxy_play13d_planetary_(agriculture|regions|landscape|framework|watershed|geography|live_planet_survey)$" --output-on-failure
+
+      - name: Browser native telemetry validation
+        run: node --test tests/PLAY13D_PlanetSurveyNodeTests.js
+      - name: Real native planetary host scan and restart (Linux)
+        if: runner.os == 'Linux'
+        run: python3 tests/PLAY13D_LiveHostPlanetSurveySmoke.py build/galaxy_colony_live_host
+      - name: Real native planetary host scan and restart (Windows)
+        if: runner.os == 'Windows'
+        run: python tests/PLAY13D_LiveHostPlanetSurveySmoke.py build/Release/galaxy_colony_live_host.exe
