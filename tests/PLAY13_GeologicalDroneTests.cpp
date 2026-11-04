@@ -68,6 +68,9 @@ int main(){
    w.steps(20);
    CHECK(w.world().survey_probes().at(3).drone_phase==3);
    CHECK(w.world().survey_probes().at(3).position.x==0);
+   CHECK(w.world().discoveries().count({7,ore})==1);
+   CHECK(w.world().discoveries().at({7,ore}).survey_taxonomy==3);
+   // Report arrived over the native radio link, without taking drone custody.
    CHECK(w.world().total_ore()==original);
    PersistentWorld::recover_copy(db,copy);
   }
