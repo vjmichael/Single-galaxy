@@ -42,6 +42,11 @@ public:
         if(c==SQLITE_DONE)return false;
         throw std::runtime_error("family audit authoritative read failed");
     }
+    std::int64_t integer(int index) const{
+        if(sqlite3_column_type(q_,index)!=SQLITE_INTEGER)
+            throw std::runtime_error("family audit invalid numeric proof");
+        return sqlite3_column_int64(q_,index);
+    }
     std::string get(int index) const{
         if(sqlite3_column_type(q_,index)!=SQLITE_TEXT)
             throw std::runtime_error("family audit invalid identity representation");
@@ -141,6 +146,9 @@ Audit assess(const Simulation& world,sqlite3* db,const DeparturePlan& request){
         // Genuine child identities are ART02 births, NOT Simulation NPCs.
         // Require the independent world-birth bridge and family ledger to
         // agree for EVERY born child at the source (even unlisted children).
+        Query travel_schema(db,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                               "AND name='sg_dependent_travel'");
+        const bool has_child_travel=travel_schema.row();
         Query all(db,"SELECT child_id,parent_a,parent_b,event_id FROM npc_family_births "
                      "WHERE scope=? ORDER BY child_id");
         all.bind(1,request.family_scope);
@@ -153,6 +161,24 @@ Audit assess(const Simulation& world,sqlite3* db,const DeparturePlan& request){
             if(world.npc_records().count(child))
                 throw std::runtime_error("dependent alias collides with living world NPC");
             if(family.current_residence(child)!=request.source)continue;
+            Query deceased(db,"SELECT 1 FROM npc_family_deaths WHERE scope=? AND npc_id=? LIMIT 1");
+            deceased.bind(1,request.family_scope);
+            deceased.bind(2,std::to_string(child));
+            if(deceased.row())
+                throw std::runtime_error("deceased dependent cannot board as living child");
+            if(has_child_travel){
+                // Even if ART02 census still says 'source', an in-flight child
+                // has custody on the actual ferry; no parent may silently
+                // teleport that child out of the voyage. Check all scopes.
+                Query traveling(db,"SELECT status,destination FROM sg_dependent_travel "
+                    "WHERE child_id=? ORDER BY board_generation DESC,rowid DESC LIMIT 1");
+                traveling.bind(1,std::to_string(child));
+                if(traveling.row()){
+                    if(traveling.integer(0)!=2 ||
+                       parse(traveling.get(1))!=request.source)
+                        throw std::runtime_error("dependent physically aboard or arrived elsewhere");
+                }
+            }
             Query proof(db,"SELECT parent_a,parent_b,home_ship,family_scope FROM sg_med_society_birth "
                             "WHERE event_id=? AND child_id=?");
             proof.bind(1,std::to_string(event));proof.bind(2,std::to_string(child));
