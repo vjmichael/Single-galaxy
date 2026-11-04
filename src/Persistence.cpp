@@ -8622,6 +8622,18 @@ PersistentWorld::PersistentWorld(const std::string& path, Simulation initial_wor
     store_->verify_colony_diplomatic_intents(generation_);
 }
 PersistentWorld::~PersistentWorld() = default;
+void PersistentWorld::configure_probe_report_tick_ms(std::uint64_t tick_ms) {
+    // Commit policy through the existing durable single-writer journal.
+    // No private mutation of world_ that could disappear at restart.
+    auto next=world_;
+    next.configure_probe_report_tick_ms(tick_ms);
+    if(next.canonical_state()==world_.canonical_state())return;
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},FailPoint::None);
+    world_.swap(next);
+    ++generation_;
+}
+
 
 colony_safety::Decision PersistentWorld::record_colony_safety_preflight(
         EntityId home_ship,EntityId site,PlayerId issuer,colony_safety::Order order){
