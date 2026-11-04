@@ -218,7 +218,8 @@ window.onGalaxyLiveProjection=function(state){
  if(wreck?.entityType===4){
    const distance=Math.hypot(wreck.x-ship.x,wreck.y-ship.y);
    const inRange=distance<=2500;
-   el('salvageRecover').disabled=!inRange||ship.cargo>=ship.capacity;
+   el('salvageRecover').disabled=!inRange||ship.cargo>=ship.capacity||
+     !(window.GalaxySalvageStock?.get(wreckId)>0);
    el('salvageFeedback').textContent='Wreck #'+wreckId+' · '+Math.ceil(distance)+' mm away.'+
       (inRange?' Within salvage reach.':' Pilot within 2,500 mm to recover stock.');
  }
