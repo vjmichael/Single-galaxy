@@ -127,6 +127,38 @@ static void astronomy_profiles() {
     CHECK(architectures.size()==4);
     std::cout<<"PASS deterministic stellar structure and unusual space features\\n";
 }
+static void report_outbox_restart() {
+    const auto file=std::filesystem::temp_directory_path()/"galaxy-play13b-queued-report.sqlite";
+    std::filesystem::remove(file);
+    const ScanObservation report{7,3,105,SiteKind::Wormhole,
+        {-9000,0},31,80,false};
+    try {
+        {
+            SurveyArchive archive(file.string());
+            CHECK(archive.queue_probe_report(report,45000));
+            CHECK(!archive.known_site(7,3,105).has_value());
+            CHECK(archive.deliver_probe_reports(7,55000,
+                SurveyArchive::kDeepProbeLinkMm+1)==0);
+        }
+        {
+            SurveyArchive recovered(file.string());
+            CHECK(!recovered.known_site(7,3,105).has_value());
+            CHECK(recovered.deliver_probe_reports(8,55000,0)==0);
+            CHECK(recovered.deliver_probe_reports(7,54999,0)==0);
+            CHECK(recovered.deliver_probe_reports(7,55000,
+                SurveyArchive::kDeepProbeLinkMm)==1);
+            CHECK(recovered.known_site(7,3,105).has_value());
+            CHECK(!recovered.known_site(8,3,105).has_value());
+        }
+        {
+            SurveyArchive recovered(file.string());
+            CHECK(recovered.deliver_probe_reports(7,60000,0)==0);
+            CHECK(recovered.history(7,3).size()==1);
+        }
+    }catch(...){std::filesystem::remove(file);throw;}
+    std::filesystem::remove(file);
+    std::cout<<"PASS durable ten-second delayed uplink across restart and reconnect\\n";
+}
 static void archive_persistence() {
     const auto file=std::filesystem::temp_directory_path()/"galaxy-b60-survey-tests.sqlite";
     std::filesystem::remove(file);
@@ -213,4 +245,4 @@ static void archive_persistence() {
     std::filesystem::remove(file);
     std::cout<<"PASS durable per-player survey history, private/public isolation, deduplicated contributions\n";
 }
-int main(){try{geography_routes();scanning_and_probes();astronomy_profiles();archive_persistence();std::cout<<"B5.4/B6.0 ALL PASS\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
+int main(){try{geography_routes();scanning_and_probes();astronomy_profiles();report_outbox_restart();archive_persistence();std::cout<<"B5.4/B6.0 ALL PASS\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
