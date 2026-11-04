@@ -5645,6 +5645,62 @@ bool PersistentWorld::submit_host_medical_action(const Command& command, FailPoi
     return submit_host_passenger_action(command,fail);
 }
 
+// COLONY-AUTO-04D.4C: one canonical world writer; no secondary population
+// table, orphaned station crew, or player-facing shortcut. This operation is
+// adult-only until independent ART02 dependent-custody settlement is available.
+bool PersistentWorld::submit_host_colony_departure(const Command& command,FailPoint fail){
+    if(command.action!=Action::HostColonyDeparture ||
+       command.issuer!=Simulation::kServerAuthority ||
+       command.execute_tick!=world_.tick()+1 ||
+       !command.actor || !command.target)return false;
+    if(store_->active_dependent_berths(command.actor)>0 ||
+       store_->active_dependent_berths(command.target)>0)return false;
+    for(const auto& [site,outpost]:world_.built_outposts()){
+        if(outpost.source_colony_ship==command.actor &&
+           store_->active_dependent_berths(site)>0)return false;
+    }
+    auto next=world_;
+    if(!next.submit(command))return false;
+    store_->commit(next,generation_,resource_origin_,credit_origin_,
+                   &command,{},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+void PersistentWorld::step_with_colony_departure(FailPoint fail){
+    auto next=world_;
+    const auto before=next.events().size();
+    const auto before_activity=next.activity_events().size();
+    std::map<std::uint64_t,Command> due;
+    if(auto it=next.commands_.find(next.tick()+1);it!=next.commands_.end())
+        for(const auto& c:it->second)due.emplace(c.id,c);
+    if(due.size()!=1 ||
+       due.begin()->second.action!=Action::HostColonyDeparture ||
+       due.begin()->second.issuer!=Simulation::kServerAuthority)
+        throw std::runtime_error("colony departure requires one authorized due command");
+    const auto cmd=due.begin()->second;
+    if(store_->active_dependent_berths(cmd.actor)>0 ||
+       store_->active_dependent_berths(cmd.target)>0)
+        throw std::runtime_error("colony departure conflicts with dependent custody");
+    for(const auto& [site,outpost]:world_.built_outposts())
+        if(outpost.source_colony_ship==cmd.actor &&
+           store_->active_dependent_berths(site)>0)
+            throw std::runtime_error("occupied dependent site blocks colony departure");
+    next.step();
+    if(next.events().size()!=before+1 ||
+       next.events().back().command_id!=cmd.id ||
+       next.events().back().result!=Outcome::Applied ||
+       !next.colony_departures_.count(cmd.actor))
+        throw std::runtime_error("departure failed physical execution; original world unchanged");
+    const std::vector<Event> events(next.events().begin()+
+        static_cast<std::ptrdiff_t>(before),next.events().end());
+    const std::vector<ActivityEvent> activity(next.activity_events().begin()+
+        static_cast<std::ptrdiff_t>(before_activity),next.activity_events().end());
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   events,due,activity,fail);
+    world_.swap(next);
+    ++generation_;
+}
+
 bool PersistentWorld::submit_host_emergency_ferry_rescue(
         const Command& command,FailPoint fail){
     // This gate is deliberately limited to EXISTING ferry passengers in one
@@ -7541,6 +7597,8 @@ void PersistentWorld::step(FailPoint fail) {
             throw std::runtime_error("migration needs host atomic society step");
         if(c.action==Action::HostSplitEvacuatePassengers)
             throw std::runtime_error("split evacuation requires atomic two-receiver child custody step");
+        if(c.action==Action::HostColonyDeparture)
+            throw std::runtime_error("colony departure requires atomic full-population host step");
     }
     for(const auto& [id,c]:due){(void)id;
         if((c.action==Action::HostDisembarkPassengers ||
