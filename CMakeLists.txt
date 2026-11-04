@@ -1202,3 +1202,13 @@ if(BUILD_TESTING)
   add_test(NAME galaxy_play13c_actual_transit
     COMMAND galaxy_play13c_actual_transit_tests)
 endif()
+
+# PLAY-13C.3: frame-local owner projections, client deltas, scanner visibility
+# and SQLite restart isolation across physical celestial arrivals.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13c_frame_visibility_tests
+    tests/PLAY13C_FrameVisibilityTests.cpp)
+  target_link_libraries(galaxy_play13c_frame_visibility_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13c_frame_visibility
+    COMMAND galaxy_play13c_frame_visibility_tests)
+endif()
