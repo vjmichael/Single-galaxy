@@ -51,12 +51,17 @@
       return {...e,id,distance};
     }
     if(t==='DISCOVERY'){
-      if(v.length!==10)throw Error('Malformed discovery record');
+      if(v.length!==10 && v.length!==11)throw Error('Malformed discovery record');
       const site=numeric(v[4],100000000),system=numeric(v[5],100000000);
       const coord=x=>{if(!/^(?:0|-?[1-9][0-9]*)$/.test(x))throw Error('Invalid signed discovery coordinate');const n=Number(x);if(!Number.isSafeInteger(n)||Math.abs(n)>1000000000)throw Error('Discovery coordinate overflow');return n;};
       const x=coord(v[6]),y=coord(v[7]);
       const firstTick=numeric(v[8],Number.MAX_SAFE_INTEGER),geological=numeric(v[9],1);
       if(!site||!system||!firstTick||firstTick>e.tick)throw Error('Invalid discovery metadata');
+      if(v.length===11){
+        const surveyTaxonomy=numeric(v[10],3);
+        if(surveyTaxonomy && !geological)throw Error('Non-geological survey classification');
+        return {...e,site,system,x,y,firstTick,geological:!!geological,surveyTaxonomy};
+      }
       return {...e,site,system,x,y,firstTick,geological:!!geological};
     }
     if(t==='SALVAGE_WRECK'){
@@ -393,7 +398,8 @@
          'No other ships within 5,000 mm (safety awareness only).';
      }
      if(e.type==='DISCOVERY'){
-       if(!discoveries.has(e.site))discoveries.set(e.site,e);
+       if(!discoveries.has(e.site) || e.surveyTaxonomy)
+          discoveries.set(e.site,e);
        const rows=window.GalaxyExplorationJournal?.entries(discoveries,e.system);
        if(rows){
          const summary=window.GalaxyExplorationJournal.stats(rows);
