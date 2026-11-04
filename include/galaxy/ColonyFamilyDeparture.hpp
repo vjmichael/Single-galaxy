@@ -19,6 +19,15 @@ struct DeparturePlan {
     std::vector<std::uint64_t> adult_ids;  // entire world population, sorted
     std::vector<Dependent> children;      // entire ART02 child population, sorted
 };
+// Execution CAS inputs are independent of the prepared family manifest.
+// They must be proven under the SAME SQLite world writer lock before any
+// physical relocation is permitted. A successful fence is not a rescue.
+struct ExecutionFence {
+    std::string region_scope, origin_colony, destination_colony;
+    std::uint64_t expected_region_revision=0, expected_owner_generation=0;
+    std::uint64_t expected_origin_family_revision=0;
+    std::uint64_t expected_destination_family_revision=0;
+};
 struct Audit {
     std::uint64_t world_tick=0;
     std::uint64_t named_adults=0, dependent_children=0;
