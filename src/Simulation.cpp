@@ -2702,6 +2702,10 @@ Event Simulation::execute(const Command& c) {
                     result.result=Outcome::InvalidTarget;return result;
                 }
                 auto& survey=probe_it->second;
+                if(!within_deep_probe_link(survey.position.x-actor.position.x,
+                                           survey.position.y-actor.position.y)){
+                    result.result=Outcome::OutOfRange;return result;
+                }
                 if(c.action==Action::CancelSurveyFocus){
                     survey.focus_site=0;survey.focus_waypoint={};
                     result.result=Outcome::Applied;return result;
@@ -4623,7 +4627,8 @@ std::vector<Simulation::SignatureHint> Simulation::coarse_probe_signatures(
         throw std::invalid_argument("invalid signature survey radius");
     const auto carrier=entities_.find(ship);
     if(!owner||carrier==entities_.end()||carrier->second.type!=EntityType::Ship||
-       carrier->second.owner_id!=owner)return {};
+       carrier->second.owner_id!=owner||
+       !carrier->second.fitting.exploration_scanner())return {};
     constexpr std::int64_t q=5000000; // 5 km coarse bins; no secret exact coordinates
     const double radius=double(range_mm); // host-enforced discovery envelope
     std::vector<SignatureHint> result;
