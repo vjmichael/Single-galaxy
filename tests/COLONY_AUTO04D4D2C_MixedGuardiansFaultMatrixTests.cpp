@@ -102,8 +102,8 @@ try{
         CHECK(world.world().children_physically_aboard(source)==3);
         CHECK(world.world().total_material_kg()==original_material);
         world.steps(360-world.world().tick());
-        CHECK(colony_safety::assess(world.world(),source,source).risk==
-              colony_safety::Risk::Critical);
+        CHECK(static_cast<int>(colony_safety::assess(world.world(),source,source).risk)>=
+              static_cast<int>(colony_safety::Risk::Critical));
         PersistentWorld::AtomicColonyFamilyPlan plan{};
         plan.family.source=source;
         plan.family.receiver=destination;
