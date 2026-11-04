@@ -2577,6 +2577,14 @@ public:
     // EXIT-01D: host supervisor helpers read only the authoritative SQLite
     // journals. Auto allocated IDs come from the committed real ledger, not
     // from untrusted client arguments or guessed world timestamps.
+    bool has_founded_governance(EntityId source) const{
+        Statement t(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_conflict_agenda'");
+        if(!t.row())return false;
+        Statement q(db_,"SELECT 1 FROM sg_colony_conflict_agenda WHERE colony=?");
+        q.text(1,std::to_string(source));
+        return q.row();
+    }
     std::uint64_t next_personal_outlook_event_id() const{
         Statement t(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
             "AND name='sg_colony_npc_personal_outlook'");
@@ -9694,6 +9702,11 @@ PersistentWorld::supervise_voluntary_migration(
     if(!site || !world_.colony_ship(schedule.origin) ||
        !site->owner_id || site->type!=EntityType::Ship)
         throw std::invalid_argument("voluntary supervisor source is not a physically owned colony");
+    if(!store_->has_founded_governance(schedule.origin)){
+        out.status=HostVoluntaryDepartureStatus::NoResidents;
+        out.reason="this colony has not yet established a legitimate local governor";
+        return out;
+    }
     constexpr auto max_id=static_cast<std::uint64_t>(
         std::numeric_limits<sqlite3_int64>::max());
     if(schedule.personal_event_base &&
