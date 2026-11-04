@@ -5169,27 +5169,136 @@ Simulation::planetary_oasis_source_region(PlayerId owner,EntityId ship,
     }
     return std::nullopt; // all-ocean world requires future underwater rigs
 }
+namespace {
+EntityId surface_custody_id(const PlanetarySiteKey& key) {
+    const auto [body,lat,lon,revision]=key;
+    return astronomy_mix(body ^ (std::uint64_t(lat)<<32) ^
+         (std::uint64_t(lon)<<16) ^ revision ^
+         0x5355524641434543ULL) | (1ULL<<63);
+}
+}
 bool Simulation::build_planetary_site(PlayerId owner,EntityId ship,
     std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude) {
     const auto site=scan_planetary_geography(owner,ship,body,latitude,longitude);
     const auto frame=ship_frames_.find(ship);
     const auto* vessel=find(ship);
     auto colony=colony_ships_.find(ship);
+    auto support=life_support_.find(ship);
     const auto key=PlanetarySiteKey{body,latitude,longitude,1};
+    const auto surface_location=surface_custody_id(key);
     if(!site || !vessel || !owner || owner==kServerAuthority ||
        frame==ship_frames_.end() || frame->second.anchor_body!=body ||
        vessel->dock_state!=DockState::InSpace ||
        vessel->jump_state!=ShipJumpState::Ready ||
        colony==colony_ships_.end() || colony->second.modules<2 ||
-       colony->second.crew<2 || planetary_sites_.count(key) ||
-       planetary_sites_.size()>=10000 ||
-       site->landscape.region.surface_water)
+       colony->second.crew<3 || support==life_support_.end() ||
+       support->second.food_kg<50 || support->second.water_kg<50 ||
+       support->second.oxygen_kg<50 ||
+       planetary_sites_.count(key) || planetary_sites_.size()>=10000 ||
+       site->landscape.region.surface_water ||
+       entities_.count(surface_location))
         return false;
+    // Collision-resistant deterministic custody handle; reject collisions
+    // rather than allowing two cells to share their workforce.
+    for(const auto& [existing,facility]:planetary_sites_) {
+        (void)existing;
+        if(facility.surface_location==surface_location)return false;
+    }
+    std::array<std::uint64_t,2> assigned{{0,0}};
+    if(snapshot_version_>=20) {
+        std::size_t ready=0;
+        for(const auto& [id,n]:npcs_) {
+            if(n.home_ship!=ship || n.location!=ship ||
+               n.assigned_site!=ship || n.role!=NpcRole::Ship ||
+               !npc_available_for_duty(id))continue;
+            bool guardian=false;
+            for(const auto& [child,d]:physical_dependents_){
+                (void)child;
+                if(d.guardian_id==id) {guardian=true;break;}
+            }
+            if(guardian)continue;
+            assigned[ready++]=id;
+            if(ready==2)break;
+        }
+        if(ready!=2)return false;
+    }
+    // A materialized transport kit and two adult workers leave the ship.
+    // This does not create a player landing or a rendered planetary scene.
     colony->second.modules-=2;
-    planetary_sites_.emplace(key,PlanetarySiteFacility{
-        site->key,owner,ship,4,false,false,0,0,0,0,0});
-    snapshot_version_=std::max(snapshot_version_,77);
+    colony->second.crew-=2;
+    support->second.food_kg-=50;
+    support->second.water_kg-=50;
+    support->second.oxygen_kg-=50;
+    for(auto id:assigned)if(id) {
+        auto& n=npcs_.at(id);
+        n.location=surface_location;
+        n.assigned_site=surface_location;
+        n.role=NpcRole::PlanetarySurface;
+        n.transport_id=0;
+        n.mentor_id=0;
+    }
+    PlanetarySiteFacility facility{
+        site->key,owner,ship,4,false,false,
+        50,0,50,0,0};
+    facility.spaceport_phase=1;
+    facility.construction_progress=0;
+    facility.construction_required=40;
+    facility.surface_location=surface_location;
+    facility.delegated_npcs=assigned;
+    facility.assigned_workers=2;
+    facility.oxygen_kg=50;
+    planetary_sites_.emplace(key,facility);
+    snapshot_version_=std::max(snapshot_version_,78);
     return true;
+}
+bool Simulation::planetary_spaceport_operational(std::uint64_t body,
+    std::uint16_t latitude,std::uint16_t longitude) const {
+    const auto it=planetary_sites_.find(
+        PlanetarySiteKey{body,latitude,longitude,1});
+    return it!=planetary_sites_.end() && it->second.spaceport_phase==3;
+}
+void Simulation::process_planetary_surface_operations() {
+    for(auto& [key,site]:planetary_sites_) {
+        (void)key;
+        if(site.spaceport_phase==0 || site.spaceport_phase==3)continue;
+        std::int64_t ready=site.assigned_workers;
+        if(snapshot_version_>=20) {
+            ready=0;
+            for(auto npc:site.delegated_npcs) {
+                const auto it=npcs_.find(npc);
+                if(it!=npcs_.end() && it->second.home_ship==site.source_ship &&
+                   it->second.location==site.surface_location &&
+                   it->second.assigned_site==site.surface_location &&
+                   it->second.role==NpcRole::PlanetarySurface &&
+                   npc_available_for_duty(npc))++ready;
+            }
+        }
+        if(ready<2)continue; // injured, missing or unavailable crew pause work
+        if(site.food_kg<2 || site.water_kg<2 || site.oxygen_kg<2)
+            continue; // resupply before construction can resume
+        if(tick_%10==0) {
+            site.food_kg-=2;
+            site.organic_waste_kg+=2;
+            site.water_kg-=2;
+            site.wastewater_kg+=2;
+            site.oxygen_kg-=2;
+            site.co2_kg+=2;
+            ++site.worker_support_cycles;
+        }
+        // First four committed ticks represent the abstract NPC descent and
+        // equipment emplacement; building then advances on actual world ticks.
+        if(site.spaceport_phase==1) {
+            if(++site.construction_progress>=4) {
+                site.spaceport_phase=2;
+                site.construction_progress=0;
+            }
+        } else if(site.spaceport_phase==2) {
+            if(++site.construction_progress>=site.construction_required) {
+                site.construction_progress=site.construction_required;
+                site.spaceport_phase=3;
+            }
+        }
+    }
 }
 bool Simulation::equip_planetary_site(PlayerId owner,EntityId ship,
     std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,bool farm) {
@@ -5201,7 +5310,7 @@ bool Simulation::equip_planetary_site(PlayerId owner,EntityId ship,
     const auto source=farm?std::optional<planetary::PlanetaryRegionKey>{}:
         planetary_oasis_source_region(owner,ship,body);
     if(!site || !owner || it==planetary_sites_.end() ||
-       it->second.owner!=owner || it->second.source_ship!=ship ||
+       it->second.owner!=owner || it->second.spaceport_phase!=3 || it->second.source_ship!=ship ||
        frame==ship_frames_.end() || frame->second.anchor_body!=body ||
        colony==colony_ships_.end() || colony->second.modules<2 ||
        colony->second.crew<2 || (farm?it->second.farm:it->second.extractor) ||
@@ -5238,7 +5347,7 @@ bool Simulation::cultivate_planetary_site(PlayerId owner,EntityId ship,
     auto site=planetary_sites_.find(key);
     const auto frame=ship_frames_.find(ship);
     if(!owner || batches<1 || batches>100 || site==planetary_sites_.end() ||
-       site->second.owner!=owner || site->second.source_ship!=ship ||
+       site->second.owner!=owner || site->second.spaceport_phase!=3 || site->second.source_ship!=ship ||
        !site->second.farm ||
        frame==ship_frames_.end() || frame->second.anchor_body!=body)
         return false;
@@ -5263,7 +5372,7 @@ bool Simulation::extract_planetary_site(PlayerId owner,EntityId ship,
     const auto source_region=planetary_oasis_source_region(owner,ship,body);
     if(!owner || kg<1000 || kg>10000 || kg%1000 ||
        site==planetary_sites_.end() || reserve==oasis_reserves_.end() ||
-       site->second.owner!=owner || site->second.source_ship!=ship ||
+       site->second.owner!=owner || site->second.spaceport_phase!=3 || site->second.source_ship!=ship ||
        !site->second.extractor ||
        !source_region || source_region->latitude!=latitude ||
        source_region->longitude!=longitude ||
@@ -5531,6 +5640,7 @@ void Simulation::step() {
     process_waterworks();
     process_colony_needs();
     process_oasis_extractors();
+    process_planetary_surface_operations();
     process_farms();
     process_habitats();
     process_communities();
