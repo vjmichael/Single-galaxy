@@ -396,6 +396,13 @@ struct AsteroidGeology {
 // Fixed illustrative per-thousand mass shares; derived deterministically from
 // geological class, not claimed as lab measurements of a specific asteroid.
 struct MineralFraction { const char* name; int permille; };
+// PLAY-13C.5: descriptive environment; hazards are not yet physics damage.
+struct LocalCelestialEnvironment {
+    std::uint8_t zone=0; // 1 stellar, 2 debris, 3 rocky, 4 icy, 5 lunar
+    std::uint8_t hazard=0; // observational severity 0..3, not applied damage
+    AsteroidClass first=AsteroidClass::Carbonaceous;
+    AsteroidClass second=AsteroidClass::Silicate;
+};
 std::vector<MineralFraction> mineral_profile(AsteroidClass taxonomy);
 // Stable command codes: target=phase ID on RefineMineral, target=1 for
 // structural-alloy or target=2 for aluminum on FabricateMaterialModule.
@@ -811,6 +818,13 @@ public:
     const std::map<EntityId,std::uint64_t>& local_entity_anchors() const {
         return local_entity_anchors_;
     }
+    // Deterministic profiles derived from persistent astronomical body IDs;
+    // v74 snapshots store and independently cross-validate these records.
+    void ensure_local_environment_profiles();
+    const std::map<std::uint64_t,LocalCelestialEnvironment>& local_environments() const {
+        return local_environments_;
+    }
+    std::optional<AsteroidClass> local_deposit_taxonomy(EntityId rock) const;
     std::uint64_t probe_report_delay_ticks() const {return probe_report_delay_ticks_;}
 
     std::uint64_t tick() const { return tick_; }
@@ -898,6 +912,7 @@ private:
     std::map<EntityId,ShipFrameCustody> ship_frames_; // durable v71 local-space custody
     std::map<std::uint64_t,std::array<EntityId,2>> generated_local_regions_; // v73 immutable site manifest
     std::map<EntityId,std::uint64_t> local_entity_anchors_; // v73 nonship frame custody
+    std::map<std::uint64_t,LocalCelestialEnvironment> local_environments_; // v74
     std::map<std::uint64_t,PendingCelestialTransit> pending_celestial_transits_;
     std::map<std::uint64_t,CompletedCelestialTransit> completed_celestial_transits_;
     std::map<std::uint32_t,std::vector<PhysicalCelestialBody>> physical_celestial_systems_;
