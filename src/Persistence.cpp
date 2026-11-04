@@ -2528,8 +2528,13 @@ public:
         Statement table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
             "AND name='sg_colony_voluntary_immigration'");
         if(!table.row())throw std::runtime_error("no immigrant admission ledger");
-        Statement q(db_,"SELECT world_generation,pressure_event,origin,"
-            "destination,ferry,npc,transport,original_owner,receiving_owner "
+        bool has_intent=false;
+        {Statement cols(db_,"PRAGMA table_info(sg_colony_voluntary_immigration)");
+         while(cols.row())if(sqlite_str(cols.get(),1)=="personal_intent_event")
+             has_intent=true;}
+        Statement q(db_,std::string("SELECT world_generation,pressure_event,origin,")+
+            "destination,ferry,npc,transport,original_owner,receiving_owner,"+
+            (has_intent?"personal_intent_event":"0")+" "
             "FROM sg_colony_voluntary_immigration WHERE event_id=?");
         q.i64(1,static_cast<sqlite3_int64>(event));
         if(!q.row())throw std::runtime_error("unknown immigrant admission");
@@ -2544,6 +2549,9 @@ public:
         a.transport_id=parse_u64(sqlite3_column_text(q.get(),6));
         a.original_owner=parse_u64(sqlite3_column_text(q.get(),7));
         a.receiving_owner=parse_u64(sqlite3_column_text(q.get(),8));
+        const auto intended=sqlite3_column_int64(q.get(),9);
+        if(intended<0)throw std::runtime_error("invalid immigration personal reason");
+        a.personal_outlook_event_id=static_cast<std::uint64_t>(intended);
         if(q.row())throw std::runtime_error("duplicate immigrant admission");
         return a;
     }
@@ -2580,10 +2588,15 @@ public:
             if(!t.row() || t.row())throw std::runtime_error(
                 "missing immutable immigration settlement guard");
         }
-        Statement rows(db_,"SELECT event_id,world_generation,world_hash,tick,"
-            "pressure_event,origin,destination,ferry,npc,transport,"
-            "original_owner,receiving_owner,governance_event "
-            "FROM sg_colony_voluntary_immigration");
+        bool has_intent=false;
+        {Statement cols(db_,"PRAGMA table_info(sg_colony_voluntary_immigration)");
+         while(cols.row())if(sqlite_str(cols.get(),1)=="personal_intent_event")
+             has_intent=true;}
+        Statement rows(db_,std::string("SELECT event_id,world_generation,world_hash,tick,")+
+            "pressure_event,origin,destination,ferry,npc,transport,"+
+            "original_owner,receiving_owner,governance_event,"+
+            (has_intent?"personal_intent_event":"0")+
+            " FROM sg_colony_voluntary_immigration");
         while(rows.row()){
             const auto id=sqlite3_column_int64(rows.get(),0);
             const auto gen=sqlite3_column_int64(rows.get(),1);
@@ -2598,8 +2611,10 @@ public:
             const auto old_owner=parse_u64(sqlite3_column_text(rows.get(),10));
             const auto receiver=parse_u64(sqlite3_column_text(rows.get(),11));
             const auto gov=sqlite3_column_int64(rows.get(),12);
+            const auto intent=sqlite3_column_int64(rows.get(),13);
             if(id<1 || gen<1 || static_cast<std::uint64_t>(gen)>max_generation ||
-               tick<0 || pressure<1 || gov<0 || !origin || !dest || !ferry ||
+               tick<0 || pressure<1 || gov<0 || intent<0 ||
+               !origin || !dest || !ferry ||
                !npc || !transport || !old_owner || !receiver)
                 throw std::runtime_error("invalid immigration admission chronology");
             Statement snap(db_,"SELECT state,checksum FROM snapshots WHERE generation=?");
@@ -2615,13 +2630,31 @@ public:
                std::to_string(original.state_hash())!=hash ||
                original.tick()!=static_cast<std::uint64_t>(tick) || snap.row())
                 throw std::runtime_error("immigration admission original world forged");
+            // Preserve authentic EXIT-01B admissions issued before the
+            // personal-history scheme existed: they have no intent column or
+            // a zero default after the additive schema upgrade. A post-v88
+            // forged admission cannot erase its nonzero personal decision and
+            // claim the older scarcity-only rule instead.
+            const bool legacy=intent==0;
+            if(legacy && has_intent){
+                Statement personal_table(db_,"SELECT 1 FROM sqlite_master "
+                    "WHERE type='table' AND name='sg_colony_npc_personal_outlook'");
+                if(personal_table.row()){
+                    Statement before(db_,"SELECT 1 FROM sg_colony_npc_personal_outlook "
+                        "WHERE world_generation<? LIMIT 1");
+                    before.i64(1,gen);
+                    if(before.row())throw std::runtime_error(
+                        "post-personal-history admission stripped its actual NPC decision");
+                }
+            }
             const auto calculated=assess_voluntary_admission(original,
                 static_cast<std::uint64_t>(gen),static_cast<std::uint64_t>(pressure),
-                origin,dest,ferry,npc,transport,receiver);
+                origin,dest,ferry,npc,transport,receiver,false,legacy);
             if(calculated.original_owner!=old_owner ||
+               calculated.personal_outlook_event_id!=static_cast<std::uint64_t>(intent) ||
                effective_governance(origin,static_cast<std::uint64_t>(gen)).event_id!=
                    static_cast<std::uint64_t>(gov))
-                throw std::runtime_error("immigration consent or former government forged");
+                throw std::runtime_error("immigration consent, personal intent or former government forged");
             bool moved=false;
             std::string command;
             std::uint64_t committed=0;
