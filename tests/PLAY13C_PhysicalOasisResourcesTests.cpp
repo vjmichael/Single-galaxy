@@ -107,7 +107,7 @@ int main(){
     CHECK(world.world().canonical_state()==snapshot);
     CHECK(world.world().total_ore()==origin);
     CHECK(world.world().oasis_reserves().at(body).water_kg==7000);
-    world.steps(20);
+    world.steps(30);
     CHECK(world.collect_oasis_resource(7,ship,body,true,7000));
     CHECK(world.world().oasis_reserves().at(body).water_kg==0);
     CHECK(!world.collect_oasis_resource(7,ship,body,true,1000));
