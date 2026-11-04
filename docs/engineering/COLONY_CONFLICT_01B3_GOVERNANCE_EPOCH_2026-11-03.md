@@ -38,3 +38,5 @@ Focused CI `.github/workflows/colony-conflict01b3.yml` builds/runs previous DEF/
 
 ## Not yet included
 Actual elections, complex legitimacy or coups, independent NPC scheduling of leadership turnover, public treaty obligations, actual armed offensive fleets, manufactured defenses, ammunition, casualties, siege and risk-backed civil unrest are separate future gates. This version establishes honest durable constitutional and subjective policy state; it does not pretend to simulate a full RTS military or political economy.
+
+**Broader historical CI matrix:** All **16/16** workflows attached to executable SHA `66d6c6d851719a0376cf69c65fb0b27f239a3f35` completed with success, including colony rescue, physical custody, safety notices, stock transfer and the prior conflict gates. No Windows physical run or independent design review is implied by these Linux GitHub Actions results.
