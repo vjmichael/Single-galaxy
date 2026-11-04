@@ -56,13 +56,13 @@
       return {...e,id,parent,kind,orbit,x,y,z,radius};
     }
     if(t==='PLANET_OPERATION_COMMITTED'){
-      if(v.length!==10)throw Error('Malformed planetary operation receipt');
+      if(v.length!==9)throw Error('Malformed planetary operation receipt');
       const id=numeric(v[4],Number.MAX_SAFE_INTEGER);
       const latitude=numeric(v[5],35),longitude=numeric(v[6],71);
       const action=v[7],generation=numeric(v[8],Number.MAX_SAFE_INTEGER);
       const permitted=new Set(['PLANET_BUILD','PLANET_EQUIP','PLANET_SUPPLY',
          'PLANET_GROW','PLANET_EXTRACT','PLANET_RETRIEVE']);
-      if(!id||!permitted.has(action)||!generation||v[9]!==undefined)
+      if(!id||!permitted.has(action)||!generation)
         throw Error('Invalid planetary operation receipt');
       return {...e,id,latitude,longitude,action,generation};
     }
