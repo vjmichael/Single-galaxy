@@ -124,6 +124,15 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
  <div id="combatFeedback" role="status" aria-live="polite" class="help">Awaiting native weapon and target status.</div>
  <div class="help">Each shot is resolved and saved by the C++ world. A queued command does not confirm a hit. Destroyed drones become persistent physical wrecks; salvage recovery is not yet enabled.</div>
 </section>
+<section aria-labelledby="salvageTitle" style="border:1px solid #55764c;border-radius:10px;padding:12px;margin:10px 0">
+ <h2 id="salvageTitle">Wreck salvage · Physical recovery</h2>
+ <div class="help">Approach within 2,500 mm of a destroyed uncrewed training drone. Recover finite pre-existing bulk material into the ship’s real hold. No manufactured weapons, fuel, or salvage loot is generated.</div>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <label>Wreck <select id="salvageTarget"><option value="">No recoverable wreck reported</option></select></label>
+  <button id="salvageRecover" type="button" disabled>Recover up to 6 t</button>
+ </div>
+ <div id="salvageFeedback" role="status" aria-live="polite" class="help">Waiting for native wreck inventory.</div>
+</section>
 <section aria-labelledby="expeditionTitle" style="border:1px solid #236478;border-radius:10px;padding:12px;margin:10px 0;background:#0c2230">
  <h2 id="expeditionTitle">Mining expedition · Live mission status</h2>
  <div id="expeditionStatus" role="status" aria-live="polite" class="help">Waiting for committed ship and outpost state.</div>

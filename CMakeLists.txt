@@ -1134,3 +1134,12 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_play08_training_combat_tests PRIVATE galaxy_kernel)
   add_test(NAME galaxy_play08_training_combat COMMAND galaxy_play08_training_combat_tests)
 endif()
+
+# PLAY-09 physically conserved training wreck material, live cargo authority
+# and restart/recovery-copy validation.
+if(BUILD_TESTING)
+  add_executable(galaxy_play09_wreck_salvage_tests
+    tests/PLAY09_WreckSalvageTests.cpp)
+  target_link_libraries(galaxy_play09_wreck_salvage_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play09_wreck_salvage COMMAND galaxy_play09_wreck_salvage_tests)
+endif()
