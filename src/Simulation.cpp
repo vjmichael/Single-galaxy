@@ -880,7 +880,12 @@ Simulation::FerryEmergencyReport Simulation::ferry_emergency_report(std::uint64_
     return report;
 }
 
-bool Simulation::can_depart_colony(const Command& c) const {
+bool Simulation::can_depart_colony(const Command& c,bool within_family) const {
+    if(snapshot_version_>=59 && !within_family)
+        for(const auto& [id,child]:physical_dependents_){
+            (void)id;
+            if(child.home_ship==c.actor)return false;
+        }
     // v58: a bounded all-adult local colony transfer is ONE world command.
     // No passenger voyage, offsite transport, fabricated guardian authority,
     // remote relocation, or supply deficit can be accepted.
@@ -1021,7 +1026,7 @@ bool Simulation::can_depart_family(const Command& c) const {
     Command ordinary=c;
     ordinary.action=Action::HostColonyDeparture;
     ordinary.passenger_ids=adults;
-    if(!can_depart_colony(ordinary))return false;
+    if(!can_depart_colony(ordinary,true))return false;
     std::vector<std::uint64_t> exact;
     for(const auto& [id,d]:physical_dependents_)if(d.home_ship==c.actor){
         if(d.location!=c.actor)return false; // not already another ferry's child
