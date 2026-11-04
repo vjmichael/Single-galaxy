@@ -1066,3 +1066,14 @@ if(BUILD_TESTING)
     add_test(NAME galaxy_colony_exit01a_survival
         COMMAND galaxy_colony_exit01a_survival_tests)
 endif()
+
+# EXIT-01B: real player-owner-accepted NPC immigration with existing
+# HostEmbarkPassengers / HostDisembarkPassengers / HostSettleMigrant and
+# atomic native ART02 + ECON03 society and workforce settlement.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_exit01b_immigration_tests
+        tests/COLONY_EXIT01B_PhysicalVoluntaryImmigrationTests.cpp)
+    target_link_libraries(galaxy_colony_exit01b_immigration_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_exit01b_immigration
+        COMMAND galaxy_colony_exit01b_immigration_tests)
+endif()
