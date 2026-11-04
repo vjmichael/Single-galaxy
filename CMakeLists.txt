@@ -911,3 +911,10 @@ if(BUILD_TESTING)
     target_link_libraries(galaxy_colony_auto04d3_repair_tests PRIVATE galaxy_kernel)
     add_test(NAME galaxy_colony_auto04d3_physical_repair COMMAND galaxy_colony_auto04d3_repair_tests)
 endif()
+
+# AUTO-04D3E: actual rescue-ferry physical passenger custody, not whole-colony evacuation.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_auto04d3_ferry_tests tests/COLONY_AUTO04D3_FerryRescueTests.cpp)
+    target_link_libraries(galaxy_colony_auto04d3_ferry_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_auto04d3_ferry_rescue COMMAND galaxy_colony_auto04d3_ferry_tests)
+endif()
