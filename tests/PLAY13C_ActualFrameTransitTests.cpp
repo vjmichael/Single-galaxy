@@ -50,9 +50,26 @@ int main(){
         {
             PersistentWorld w(db,Simulation(1));
             CHECK(w.world().canonical_state()==during);
-            w.steps(3);
+            // A queued local action cannot run while the hull is in transit.
+            Command thrust{};
+            thrust.id=701;thrust.sequence=701;
+            thrust.execute_tick=w.world().tick()+1;
+            thrust.issuer=7;thrust.actor=ship;thrust.action=Action::Thrust;
+            thrust.thrust_x=1;
+            CHECK(w.submit(thrust));
+            w.step();
+            CHECK(w.world().events().back().result==Outcome::InTransition);
+            w.steps(2);
             CHECK(!w.complete_celestial_transit(501));
             w.step();
+            const auto precommit=w.world().canonical_state();
+            bool failed=false;
+            try{(void)w.complete_celestial_transit(
+                501,FailPoint::AfterSnapshotWrite);}
+            catch(const std::exception&){failed=true;}
+            CHECK(failed);
+            CHECK(w.world().canonical_state()==precommit);
+            CHECK(w.world().pending_celestial_transits().count(501)==1);
             CHECK(w.complete_celestial_transit(501));
             CHECK(!w.complete_celestial_transit(501));
             CHECK(!w.begin_celestial_transit(7,ship,body,501));
@@ -65,6 +82,18 @@ int main(){
             CHECK(w.world().colony_ship(ship)->crew==24);
             CHECK(w.world().total_material_kg()==before_mass);
             CHECK(!w.world().same_local_frame(ship,other));
+            // A legacy ship cannot fire at a different celestial frame,
+            // even when both happen to have local coordinates near zero.
+            Command fire{};
+            fire.id=702;fire.sequence=702;
+            fire.execute_tick=w.world().tick()+1;
+            fire.issuer=8;fire.actor=other;fire.target=ship;
+            fire.action=Action::FireTrainingWeapon;
+            CHECK(w.submit(fire));
+            w.step();
+            CHECK(w.world().events().back().result==Outcome::OutOfRange);
+            CHECK(w.world().colony_ship(ship)->crew==24);
+            CHECK(w.world().total_material_kg()==before_mass);
             arrived=w.world().canonical_state();
             CHECK(Simulation::from_snapshot(arrived).canonical_state()==arrived);
             PersistentWorld::recover_copy(db,copy);
