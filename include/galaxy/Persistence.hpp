@@ -635,6 +635,32 @@ public:
     colony_conflict::ExitPressure record_colony_exit_pressure(
         std::uint64_t witness_event_id,EntityId source_colony,
         std::uint64_t npc_id);
+    // EXIT-01B: consent-to-receive an eligible single adult who has a real
+    // current source-pressure witness. A permit is not a voyage or transfer.
+    struct VoluntaryImmigrationAdmission {
+        std::uint64_t event_id=0,exit_pressure_event_id=0;
+        std::uint64_t world_generation=0,npc_id=0,transport_id=0;
+        EntityId origin=0,destination=0,ferry=0;
+        PlayerId original_owner=0,receiving_owner=0;
+    };
+    // Host is responsible for authentication of receiving_owner (not merely
+    // passing an arbitrary owner ID as a substitute for a real player action).
+    VoluntaryImmigrationAdmission record_voluntary_immigration_admission(
+        std::uint64_t event_id,std::uint64_t exit_pressure_event_id,
+        EntityId origin,EntityId destination,EntityId ferry,
+        std::uint64_t npc_id,std::uint64_t transport_id,
+        PlayerId receiving_owner);
+    // Ensures exact admitted manifest and real still-stressed source before
+    // forwarding an embark command to the existing physical voyage engine.
+    bool submit_voluntary_immigration_boarding(
+        std::uint64_t admission_event_id,const Command& embark,
+        FailPoint fail=FailPoint::None);
+    // Reuses HostSettleMigrant and the original atomic ART02/ECON03 commit.
+    // Supports only independent adults without dependent household claims.
+    void step_with_voluntary_immigration(
+        std::uint64_t admission_event_id,const SocietyMigrationPlan& plan,
+        FailPoint fail=FailPoint::None);
+    bool verified_voluntary_immigration(std::uint64_t admission_event_id) const;
     // CONFLICT-01B1: actual ship destruction + a real NPC's delivered GRSM
     // interpretation produces a subjective, directed diplomatic revision.
     // The incident's real attacker owner is independently reconstructed;
