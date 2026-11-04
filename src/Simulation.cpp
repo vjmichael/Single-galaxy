@@ -4577,6 +4577,27 @@ bool Simulation::within_deep_probe_link(std::int64_t dx_mm,
     return std::hypot(double(dx_mm),double(dy_mm))<=
            double(kDeepSpaceProbeCommsRangeMm);
 }
+std::vector<Simulation::SignatureHint> Simulation::coarse_probe_signatures(
+    PlayerId owner,EntityId ship) const {
+    const auto carrier=entities_.find(ship);
+    if(!owner||carrier==entities_.end()||carrier->second.type!=EntityType::Ship||
+       carrier->second.owner_id!=owner)return {};
+    constexpr std::int64_t q=25000; // 25 m bins; no secret exact coordinates
+    constexpr double radius=500000000.0; // 500 km coarse discovery envelope
+    std::vector<SignatureHint> result;
+    for(const auto& [id,e]:entities_) {
+        if(e.type!=EntityType::Asteroid||e.system_id!=carrier->second.system_id||
+           discoveries_.count({owner,id}))continue;
+        if(std::hypot(double(e.position.x)-carrier->second.position.x,
+                      double(e.position.y)-carrier->second.position.y)>radius)continue;
+        const auto quant=[](std::int64_t value){
+            return (value>=0 ? (value+q/2)/q : -((-value+q/2)/q))*q;
+        };
+        result.push_back({id,{quant(e.position.x),quant(e.position.y)},25000});
+        if(result.size()>=128)break;
+    }
+    return result;
+}
 void Simulation::configure_probe_report_tick_ms(std::uint64_t tick_ms) {
     if(tick_ms<20||tick_ms>5000)
         throw std::invalid_argument("invalid probe timing period");
