@@ -1707,7 +1707,7 @@ Event Simulation::execute(const Command& c) {
         colony_departures_.emplace(c.actor,ColonyDeparture{
             c.actor,c.target,c.id,tick_,c.passenger_ids});
         result.result=Outcome::Applied;
-        result.transferred=static_cast<std::int64_t>(c.passenger_ids.size());
+        result.transferred=0; // Reserved for MATERIAL ledger transfers, never people.
         return result;
     }
     // A separate host-authorized action: never relax ordinary owner-bound
@@ -6140,7 +6140,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
         const auto receipt=std::find_if(result.events_.begin(),result.events_.end(),
             [&](const Event& e){return e.command_id==d.command_id &&
                 e.tick==d.tick && e.result==Outcome::Applied &&
-                e.transferred==static_cast<std::int64_t>(d.relocated_npcs.size());});
+                e.transferred==0;});
         if(receipt==result.events_.end())
             throw std::runtime_error("snapshot: departed colony lacks applied world event");
     }
