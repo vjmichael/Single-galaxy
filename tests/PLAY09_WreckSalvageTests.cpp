@@ -27,6 +27,7 @@ int main(){
   {
    Simulation seed(909);
    ship=seed.add_colony_ship(7,{0,0},60,24);
+   seed.enable_individual_workforce();
    drone=seed.add_training_drone({2000,0});
    farDrone=seed.add_training_drone({80000,0});
    CHECK(seed.find(drone)->cargo==6);
