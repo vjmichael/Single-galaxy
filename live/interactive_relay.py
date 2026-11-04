@@ -288,7 +288,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if self.server.accounts and (not principal or principal['playerId']!=7):
                 self._json(403,{'error':'Colony owner session required'});return
             self._json(200,{'token':principal['csrf'] if self.server.accounts else self.server.runtime.token,'qa_mode':self.server.qa_mode,'colony_mode':self.server.colony_mode,'tick_ms':self.server.tick_ms,
-                'max_ticks':self.server.max_ticks,'commands':(['thrust','yaw','colonyFireTraining','colonySalvageWreck','colonyDockBase','colonyUndockBase','colonyUnloadBase','colonyLoadBase','colonyScan','colonyConfigureScanner','colonyProbeDeploy','colonyProbeScan','colonyProbeRecover','colonySignatureScan','colonyCelestialScan','colonyPlanetSurvey','colonyEnvironmentScan','colonyProbeFocus','colonyProbeCancel','colonyDroneLaunch','colonyMine','colonyRefine','colonyFabricate','colonyBuild','colonyMineTarget','colonyProcess','colonyFabricateMaterial','colonyPlant','colonyHarvest','colonyRecycleWater','colonyRecycleCompost','colonyOxygen','colonyLifeWater','colonyFarmBuild','colonyFarmStaff','colonyFarmStock','colonyHabBuild','colonyHabResidents','colonyHabStock','colonyUtilityBuild','colonyUtilityRepair','colonyUtilitySpares','colonyUtilityStaff','colonyUtilityAuto','colonyCommunityBuild','colonyCommunityStaff','colonyCommunityStock','colonyClinicBuild','colonyClinicStaff','colonyClinicStock','colonyReclaimerBuild','colonyWaterworksBuild','colonyWaterworksFeed','colonyPolicySet','colonyPolicyStaff','colonySafetyAssess','colonySafetyPreflight'] if self.server.colony_mode else ['thrust','mine','stop','undock','dock','unload','load','sell','travelA','travelB','travelGate','travelHop','jump','jumpHop','directional','probeDeploy','probeScan','probeRecover','surveyArchive','surveyHistory','surveyPublish','planRoute'])});return
+                'max_ticks':self.server.max_ticks,'commands':(['thrust','yaw','colonyFireTraining','colonySalvageWreck','colonyDockBase','colonyUndockBase','colonyUnloadBase','colonyLoadBase','colonyScan','colonyConfigureScanner','colonyProbeDeploy','colonyProbeScan','colonyProbeRecover','colonySignatureScan','colonyCelestialScan','colonyPlanetSurvey','colonyPlanetBuild','colonyPlanetEquip','colonyPlanetSupply','colonyPlanetGrow','colonyPlanetExtract','colonyPlanetRetrieve','colonyEnvironmentScan','colonyProbeFocus','colonyProbeCancel','colonyDroneLaunch','colonyMine','colonyRefine','colonyFabricate','colonyBuild','colonyMineTarget','colonyProcess','colonyFabricateMaterial','colonyPlant','colonyHarvest','colonyRecycleWater','colonyRecycleCompost','colonyOxygen','colonyLifeWater','colonyFarmBuild','colonyFarmStaff','colonyFarmStock','colonyHabBuild','colonyHabResidents','colonyHabStock','colonyUtilityBuild','colonyUtilityRepair','colonyUtilitySpares','colonyUtilityStaff','colonyUtilityAuto','colonyCommunityBuild','colonyCommunityStaff','colonyCommunityStock','colonyClinicBuild','colonyClinicStaff','colonyClinicStock','colonyReclaimerBuild','colonyWaterworksBuild','colonyWaterworksFeed','colonyPolicySet','colonyPolicyStaff','colonySafetyAssess','colonySafetyPreflight'] if self.server.colony_mode else ['thrust','mine','stop','undock','dock','unload','load','sell','travelA','travelB','travelGate','travelHop','jump','jumpHop','directional','probeDeploy','probeScan','probeRecover','surveyArchive','surveyHistory','surveyPublish','planRoute'])});return
         if url.path in STATIC:
             file=ROOT/STATIC[url.path]
             self._send(200,file.read_bytes(),MIME[file.suffix]);return
@@ -378,6 +378,45 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if type(target)!=int or not 1<=target<=100000000:
                     raise ValueError('Invalid geological target')
                 command=f'DRONE_LAUNCH|{target}'
+            elif action in ('colonyPlanetBuild','colonyPlanetEquip','colonyPlanetSupply',
+                            'colonyPlanetGrow','colonyPlanetExtract','colonyPlanetRetrieve'):
+                base={'token','action','body','latitude','longitude'}
+                expected=(base if action=='colonyPlanetBuild' else
+                          base|({'equipment'} if action=='colonyPlanetEquip' else
+                                {'batches'} if action=='colonyPlanetGrow' else
+                                {'resource','kg'}))
+                if set(doc)!=expected:raise ValueError('Unexpected planetary operation fields')
+                body,latitude,longitude=doc['body'],doc['latitude'],doc['longitude']
+                if (type(body)!=int or not 1<=body<=9223372036854775807 or
+                    type(latitude)!=int or not 0<=latitude<36 or
+                    type(longitude)!=int or not 0<=longitude<72):
+                    raise ValueError('Invalid planetary operation coordinates')
+                prefix=f'{body}|{latitude}|{longitude}'
+                if action=='colonyPlanetBuild':
+                    command=f'PLANET_BUILD|{prefix}'
+                elif action=='colonyPlanetEquip':
+                    equipment=doc['equipment']
+                    if type(equipment)!=str or equipment not in ('FARM','EXTRACT'):
+                        raise ValueError('Invalid planetary equipment')
+                    command=f'PLANET_EQUIP|{prefix}|{equipment}'
+                elif action=='colonyPlanetGrow':
+                    batches=doc['batches']
+                    if type(batches)!=int or not 1<=batches<=100:
+                        raise ValueError('Invalid planetary harvest batches')
+                    command=f'PLANET_GROW|{prefix}|{batches}'
+                else:
+                    resource,kg=doc['resource'],doc['kg']
+                    allowed=(('FOOD','WATER') if action=='colonyPlanetRetrieve'
+                             else ('WATER','NUTRIENTS'))
+                    if type(resource)!=str or resource not in allowed or
+                       type(kg)!=int or not 1<=kg<=10000 or
+                       (action=='colonyPlanetExtract' and (kg<1000 or kg%1000))):
+                        raise ValueError('Invalid planetary resource request')
+                    operation={
+                        'colonyPlanetSupply':'PLANET_SUPPLY',
+                        'colonyPlanetExtract':'PLANET_EXTRACT',
+                        'colonyPlanetRetrieve':'PLANET_RETRIEVE'}[action]
+                    command=f'{operation}|{prefix}|{resource}|{kg}'
             elif action=='colonyPlanetSurvey' and set(doc)=={'token','action','body','latitude','longitude'}:
                 body,latitude,longitude=doc['body'],doc['latitude'],doc['longitude']
                 if (type(body)!=int or not 1<=body<=9223372036854775807 or
