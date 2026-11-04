@@ -27,6 +27,7 @@ int main(){
   {
    Simulation seed(1212);
    ship=seed.add_colony_ship(7,{0,0},60,24);
+   seed.enable_individual_workforce();
    seed.provision_starter_exploration_scanner(ship);
    seed.provision_starter_probe_kit(ship);
    near=seed.add_asteroid({2000,0},20);
