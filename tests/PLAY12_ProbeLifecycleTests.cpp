@@ -49,7 +49,8 @@ int main(){
    CHECK(run(w,order(w,4,ship,Action::ScanSurveyProbe,2,8))==Outcome::Unauthorized);
    CHECK(run(w,order(w,5,ship,Action::ScanSurveyProbe,2))==Outcome::Applied);
    CHECK(w.world().events().back().transferred==1);
-   CHECK(w.world().discoveries().count({7,near})==1);
+   CHECK(w.world().pending_probe_report_count()==1);
+   CHECK(w.world().discoveries().count({7,near})==0); // no early revelation
    CHECK(w.world().discoveries().count({7,far})==0);
    CHECK(run(w,order(w,6,ship,Action::ScanSurveyProbe,2))==Outcome::Applied);
    CHECK(w.world().events().back().transferred==0);
@@ -65,8 +66,12 @@ int main(){
    PersistentWorld w(db,Simulation(1));
    CHECK(w.world().survey_probes().count(9)==1);
    CHECK(w.world().find(ship)->survey_probes_carried==0);
-   CHECK(w.world().discoveries().count({7,near})==1);
+   CHECK(w.world().pending_probe_report_count()==1);
+   CHECK(w.world().discoveries().count({7,near})==0);
    CHECK(w.world().total_ore()==56);
+   w.steps(6);
+   CHECK(w.world().pending_probe_report_count()==0);
+   CHECK(w.world().discoveries().count({7,near})==1);
    PersistentWorld::recover_copy(db,copy);
   }
   {
