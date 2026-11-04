@@ -952,3 +952,10 @@ if(BUILD_TESTING)
     target_link_libraries(galaxy_colony_auto04d4d_family_tests PRIVATE galaxy_kernel)
     add_test(NAME galaxy_colony_auto04d4d_family_proof COMMAND galaxy_colony_auto04d4d_family_tests)
 endif()
+
+# AUTO-04D.4D2A: ART02 born-child physical occupancy, local needs and replay.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_auto04d4d2_physical_tests tests/COLONY_AUTO04D4D2_PhysicalDependentTests.cpp)
+    target_link_libraries(galaxy_colony_auto04d4d2_physical_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_auto04d4d2_physical_dependents COMMAND galaxy_colony_auto04d4d2_physical_tests)
+endif()
