@@ -144,9 +144,21 @@ static void archive_persistence() {
             CHECK(restored.known_sites(7,3,71).empty()); // latest private snapshot confidence is 70
             CHECK(!restored.known_site(10,3,104).has_value());
             CHECK(restored.personal(7,3)[0].observed_tick==14);
-            CHECK(restored.history(7,3).size()==3);
-            CHECK(restored.history(7,3)[1].observed_tick==12);
-            CHECK(restored.history(7,3)[2].observed_tick==11);
+            CHECK(restored.history(7,3).size()==4);
+            CHECK(restored.history(7,3)[1].observed_tick==14);
+            CHECK(restored.history(7,3)[2].observed_tick==12);
+            // Reports are durable across disconnection, and replay is idempotent.
+            const ScanObservation delayed{7,3,105,SiteKind::Wormhole,{-9000,0},15,88,false};
+            CHECK(restored.queue_probe_report(delayed,1000));
+            CHECK(!restored.queue_probe_report(delayed,1000));
+            CHECK(!restored.known_site(7,3,105).has_value());
+            CHECK(restored.deliver_probe_reports(7,10999,0)==0);
+            CHECK(restored.deliver_probe_reports(7,11000,SurveyArchive::kDeepProbeLinkMm+1)==0);
+            CHECK(restored.deliver_probe_reports(8,11000,0)==0);
+            CHECK(restored.deliver_probe_reports(7,11000,SurveyArchive::kDeepProbeLinkMm)==1);
+            CHECK(restored.deliver_probe_reports(7,11000,0)==0);
+            CHECK(restored.known_site(7,3,105)->confidence==88);
+            CHECK(!restored.known_site(8,3,105).has_value());
             CHECK(restored.published(3).size()==1);
             CHECK(restored.published(3)[0].independent_surveyors==2);
         }
