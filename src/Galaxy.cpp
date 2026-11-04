@@ -268,7 +268,15 @@ SurveyArchive::SurveyArchive(const std::string& path) {
             "x INTEGER NOT NULL,y INTEGER NOT NULL,tick INTEGER NOT NULL CHECK(tick>0),"
             "confidence INTEGER NOT NULL CHECK(confidence BETWEEN 1 AND 100),"
             "published INTEGER NOT NULL CHECK(published IN (0,1)));"
-            "CREATE INDEX IF NOT EXISTS idx_survey_history_owner ON observation_history(player,system,revision DESC);",
+            "CREATE INDEX IF NOT EXISTS idx_survey_history_owner ON observation_history(player,system,revision DESC);"
+            "CREATE TABLE IF NOT EXISTS pending_probe_reports("
+            "player INTEGER NOT NULL CHECK(player>0),system INTEGER NOT NULL CHECK(system>0),"
+            "site INTEGER NOT NULL CHECK(site>0),kind INTEGER NOT NULL CHECK(kind BETWEEN 0 AND 9),"
+            "x INTEGER NOT NULL,y INTEGER NOT NULL,tick INTEGER NOT NULL CHECK(tick>0),"
+            "confidence INTEGER NOT NULL CHECK(confidence BETWEEN 1 AND 100),"
+            "captured_ms INTEGER NOT NULL CHECK(captured_ms>=0),"
+            "PRIMARY KEY(player,system,site,tick));"
+            "CREATE INDEX IF NOT EXISTS idx_probe_pending_ready ON pending_probe_reports(player,captured_ms);",
             nullptr,nullptr,nullptr),db_,"create survey archive");
     } catch(...) {sqlite3_close(db_);db_=nullptr;throw;}
 }
@@ -399,6 +407,64 @@ std::vector<ScanObservation> SurveyArchive::known_sites(PlayerId owner,
             std::uint64_t(sqlite3_column_int64(stmt.get(),4)),
             sqlite3_column_int(stmt.get(),5),sqlite3_column_int(stmt.get(),6)!=0});
     return result;
+}
+
+bool SurveyArchive::queue_probe_report(const ScanObservation& o,
+    std::uint64_t captured_at_ms) {
+    if(!o.player||!o.system||!o.site||!o.observed_tick||
+       o.player>std::uint64_t(std::numeric_limits<std::int64_t>::max())||
+       o.site>std::uint64_t(std::numeric_limits<std::int64_t>::max())||
+       o.observed_tick>std::uint64_t(std::numeric_limits<std::int64_t>::max())||
+       captured_at_ms>std::uint64_t(std::numeric_limits<std::int64_t>::max())-kNominalResponseMs||
+       o.confidence<1||o.confidence>100||!bounded(o.estimated_position)||
+       int(o.kind)<0||int(o.kind)>9||o.published)
+        throw std::invalid_argument("invalid trusted probe report");
+    Stmt stmt(db_,"INSERT OR IGNORE INTO pending_probe_reports"
+        "(player,system,site,kind,x,y,tick,confidence,captured_ms) VALUES(?,?,?,?,?,?,?,?,?)");
+    sqlite3_bind_int64(stmt.get(),1,sqlite3_int64(o.player));
+    sqlite3_bind_int(stmt.get(),2,int(o.system));
+    sqlite3_bind_int64(stmt.get(),3,sqlite3_int64(o.site));
+    sqlite3_bind_int(stmt.get(),4,int(o.kind));
+    sqlite3_bind_int64(stmt.get(),5,o.estimated_position.x);
+    sqlite3_bind_int64(stmt.get(),6,o.estimated_position.y);
+    sqlite3_bind_int64(stmt.get(),7,sqlite3_int64(o.observed_tick));
+    sqlite3_bind_int(stmt.get(),8,o.confidence);
+    sqlite3_bind_int64(stmt.get(),9,sqlite3_int64(captured_at_ms));
+    stmt.step();
+    return sqlite3_changes(db_)>0;
+}
+std::size_t SurveyArchive::deliver_probe_reports(PlayerId owner,
+    std::uint64_t now_ms,std::int64_t link_distance_mm) {
+    if(!owner||owner>std::uint64_t(std::numeric_limits<std::int64_t>::max())||
+       now_ms>std::uint64_t(std::numeric_limits<std::int64_t>::max())||
+       link_distance_mm<0)throw std::invalid_argument("invalid trusted probe delivery");
+    if(link_distance_mm>kDeepProbeLinkMm||now_ms<kNominalResponseMs)return 0;
+    // Read pending rows before calling record(), which uses its own transaction.
+    // Crash between record and delete safely replays an idempotent revision.
+    Stmt stmt(db_,"SELECT system,site,kind,x,y,tick,confidence FROM pending_probe_reports "
+        "WHERE player=? AND captured_ms<=? ORDER BY captured_ms,site,tick");
+    sqlite3_bind_int64(stmt.get(),1,sqlite3_int64(owner));
+    sqlite3_bind_int64(stmt.get(),2,sqlite3_int64(now_ms-kNominalResponseMs));
+    std::vector<ScanObservation> reports;
+    while(stmt.step()==SQLITE_ROW)
+        reports.push_back({owner,std::uint32_t(sqlite3_column_int(stmt.get(),0)),
+            std::uint64_t(sqlite3_column_int64(stmt.get(),1)),
+            SiteKind(sqlite3_column_int(stmt.get(),2)),
+            {sqlite3_column_int64(stmt.get(),3),sqlite3_column_int64(stmt.get(),4)},
+            std::uint64_t(sqlite3_column_int64(stmt.get(),5)),
+            sqlite3_column_int(stmt.get(),6),false});
+    std::size_t delivered=0;
+    for(const auto& report:reports) {
+        record(report);
+        Stmt clear(db_,"DELETE FROM pending_probe_reports WHERE player=? AND system=? AND site=? AND tick=?");
+        sqlite3_bind_int64(clear.get(),1,sqlite3_int64(owner));
+        sqlite3_bind_int(clear.get(),2,int(report.system));
+        sqlite3_bind_int64(clear.get(),3,sqlite3_int64(report.site));
+        sqlite3_bind_int64(clear.get(),4,sqlite3_int64(report.observed_tick));
+        clear.step();
+        ++delivered;
+    }
+    return delivered;
 }
 
 } // namespace galaxy
