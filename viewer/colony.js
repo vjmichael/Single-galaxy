@@ -203,10 +203,30 @@
 (function(){'use strict';if(typeof document==='undefined')return;
  const q=id=>document.getElementById(id), policyAudits=new Map(), geology=new Map(),small=new Map(),log=[],stocks=new Map(),outposts=new Map(),farms=new Map(),habitats=new Map(),utilities=new Map(),communities=new Map(),clinics=new Map(),reclaimers=new Map(),waterworks=new Map();
  window.GalaxyColonyGeology=geology;
+ let openingStatus=null,openingScanned=false;
+ function refreshOpening(){
+   const guide=window.GalaxyOpeningGuide?.progress(openingStatus,openingScanned);
+   if(!guide)return;
+   q('openingStage').textContent=guide.done?'Mission complete':guide.stage<0?'Waiting for world':`Step ${guide.stage+1} of 5 · ${guide.title}`;
+   q('openingDetail').textContent=guide.detail;
+   const button=q('openingAction');
+   button.disabled=!guide.action;
+   button.textContent=guide.action?guide.title:guide.done?'First outpost complete':'Awaiting world';
+   button.dataset.action=guide.action||'';
+ }
+ q('openingAction').addEventListener('click',()=>{
+   const guide=window.GalaxyOpeningGuide?.progress(openingStatus,openingScanned);
+   if(guide?.action&&q('openingAction').dataset.action===guide.action)
+     window.GalaxyColonyCommand?.(guide.action,
+       guide.action==='colonyMine'||guide.action==='colonyRefine'?{amount:8}:
+       guide.action==='colonyFabricate'?{amount:4}:{});
+ });
  window.GalaxyColony={
-   reset(){window.GalaxyColonyHomeShipId=null;q('colonySafetyAssess').disabled=true;q('colonySafetyPreflight').disabled=true;policyAudits.clear();geology.clear();small.clear();stocks.clear();outposts.clear();farms.clear();habitats.clear();utilities.clear();communities.clear();clinics.clear();reclaimers.clear();waterworks.clear();log.length=0;q('colonyEvents').textContent='Awaiting colony telemetry…';},
+   reset(){openingStatus=null;openingScanned=false;refreshOpening();window.GalaxyColonyHomeShipId=null;q('colonySafetyAssess').disabled=true;q('colonySafetyPreflight').disabled=true;policyAudits.clear();geology.clear();small.clear();stocks.clear();outposts.clear();farms.clear();habitats.clear();utilities.clear();communities.clear();clinics.clear();reclaimers.clear();waterworks.clear();log.length=0;q('colonyEvents').textContent='Awaiting colony telemetry…';},
    accept(raw){const e=window.GalaxyColonyContract.decode(raw);
      if(e.type==='STATUS'){
+       openingStatus={crew:e.crew,raw:e.raw,refined:e.refined,modules:e.modules,outposts:e.outposts};
+       refreshOpening();
        for(const [name,val] of [['colonyCrew',e.crew],['colonyRaw',e.raw],['colonyRefined',e.refined],['colonyModules',e.modules],['colonyOutposts',e.outposts],['colonyTotal',e.total]])q(name).textContent=val.toLocaleString();
      }else if(e.type==='SAFETY'){
        window.GalaxyColonyHomeShipId=e.site;
@@ -265,6 +285,7 @@
      else if(e.type==='MINERAL'){
        const rock=geology.get(e.id);if(!rock)throw Error('Mineral without scanned rock');rock.minerals.set(e.name,e.share);
      }else if(e.type==='SMALL_ROCK')small.set(e.id,e.remaining);
+     else if(e.type==='SCAN_DONE'){openingScanned=e.count>0;refreshOpening();}
      else if(e.type==='SAFETY_CHECK'||e.type==='SAFETY_ORDER'){
        const msg=e.type==='SAFETY_CHECK'?`Site ${e.site}: safety assessment requested; current runway shown above.`:
         `Site ${e.site}: ${e.decision.replaceAll('_',' ')} (risk ${e.risk}). ${e.decision==='REFUSED'?'Unsafe order refused and recorded.':'No production state changed.'}`;
