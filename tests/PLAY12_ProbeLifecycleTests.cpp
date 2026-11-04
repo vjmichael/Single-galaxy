@@ -37,8 +37,9 @@ static void focus_mission() {
    CHECK(w.world().coarse_probe_signatures(8,ship).empty());
    auto signatures=w.world().coarse_probe_signatures(7,ship);
    CHECK(signatures.size()==2 && signatures[0].id==rock);
+   CHECK(signatures[0].uncertainty_mm==5000000);
    CHECK(w.world().coarse_probe_signatures(7,ship,5000000).empty());
-   CHECK(signatures[0].coarse.x==16000000);
+   CHECK(signatures[0].coarse.x==15000000);
    CHECK(run(w,order(w,probe,ship,Action::DeploySurveyProbe))==Outcome::Applied);
    auto unauthorized=order(w,3,ship,Action::FocusSurveyProbe,probe,8);
    unauthorized.amount=static_cast<std::int64_t>(rock);
