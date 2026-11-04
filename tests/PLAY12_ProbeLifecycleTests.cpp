@@ -56,12 +56,12 @@ static void focus_mission() {
    CHECK(w.world().survey_probes().at(probe).focus_site==0);
    CHECK(w.world().pending_probe_report_count()==1);
    CHECK(w.world().discoveries().count({7,rock})==0);
-   w.steps(9);
+   w.steps(6);
    CHECK(w.world().discoveries().count({7,rock})==0);
    w.step();
    CHECK(w.world().discoveries().count({7,rock})==1);
    CHECK(w.world().pending_probe_report_count()==0);
-   CHECK(w.world().total_ore()==46); // 40 base plus 6 equipment
+   CHECK(w.world().total_ore()==26); // 20 asteroid ore plus six physical equipment units
   }
   fs::remove_all(dir);
  }catch(...){std::error_code ignored;fs::remove_all(dir,ignored);throw;}
