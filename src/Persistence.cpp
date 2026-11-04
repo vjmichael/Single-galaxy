@@ -7037,14 +7037,36 @@ PersistentWorld::SupervisorTick PersistentWorld::supervise_autonomous_colony_eme
        route.origin_colony.empty() || route.destinations.empty() ||
        route.destinations.size()>32)
         throw std::invalid_argument("NPC supervisor requires trusted bounded region bindings");
+    // A supervisor for one colony cannot inadvertently execute another
+    // colony's durable rescue. Only the correct site owner may drive the
+    // corresponding host-scheduled follow-up.
+    if(const auto due=world_.commands_.find(world_.tick()+1);
+       due!=world_.commands_.end()){
+        for(const auto& accepted:due->second){
+            if(accepted.action!=Action::HostColonyDeparture)continue;
+            const auto recorded=store_->supervisor_plan(accepted.id);
+            if(!recorded)continue;
+            if(recorded->family.source!=route.source ||
+               recorded->region_scope!=route.region_scope ||
+               recorded->family.family_scope!=route.family_scope){
+                result.status=SupervisorStatus::RescuePending;
+                result.command_id=accepted.id;
+                result.receiver=accepted.target;
+                result.reason="a different colony owns the pending rescue; route-scoped execution refused";
+                return result;
+            }
+        }
+    }
     // Highest priority: finish an already-admitted rescue after restart.
     // The host does not need to keep the plan, leader or allocated event IDs.
     if(resume_next_pending_autonomous_rescue(fail)){
         result.status=SupervisorStatus::RescueCompleted;
         result.reason="recovered and verified already-admitted whole-family evacuation";
         const auto departure=world_.colony_departures().find(route.source);
-        if(departure!=world_.colony_departures().end())
+        if(departure!=world_.colony_departures().end()){
             result.receiver=departure->second.receiver;
+            result.command_id=departure->second.command_id;
+        }
         return result;
     }
     if(const auto completed=world_.colony_departures().find(route.source);
