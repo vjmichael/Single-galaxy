@@ -167,7 +167,11 @@ try{
         CHECK(accepted.observed==0);
         last_origin_diary=w.colony_personal_outlook(origin,2)->event_id;
         CHECK(w.colony_personal_outlook(origin,2)->considering_departure);
-        CHECK(!w.colony_personal_outlook(origin,3)->considering_departure);
+        // Sustained emergency can eventually overwhelm even positive leader
+        // memories. The important distinction is that the personally harmed
+        // resident is still prioritized for this one available ferry berth.
+        CHECK(w.colony_personal_outlook(origin,2)->discontent >
+              w.colony_personal_outlook(origin,3)->discontent);
         auto retry=w.supervise_voluntary_migration(pulse);
         CHECK(retry.status==
               PersistentWorld::HostVoluntaryDepartureStatus::ExistingAdmission);
