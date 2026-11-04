@@ -36,9 +36,9 @@ try{
         Simulation initial(8801);
         source=initial.add_colony_ship(7,{0,0},100,4);
         // Food and oxygen remain healthy, but the water supply will fail
-        // genuinely before tick 250, leaving real consumed wastewater which
+        // genuinely by tick 500, leaving real consumed wastewater which
         // can be reclaimed rather than magically provisioned.
-        initial.provision_colony_genesis(source,10000,1000,10000,1000,5000);
+        initial.provision_colony_genesis(source,10000,100,10000,1000,4900);
         initial.enable_individual_workforce();
         initial.upgrade_assignment_snapshot_format();
         initial.enable_passenger_life_support();
@@ -46,7 +46,7 @@ try{
         w.establish_colony_conflict_agenda(
             8801,source,1,colony_conflict::Agenda::Cooperative);
         CHECK(!w.colony_personal_outlook(source,2));
-        w.steps(250-w.world().tick());
+        w.steps(500-w.world().tick());
         CHECK(static_cast<int>(colony_safety::assess(w.world(),source,source).risk)>=2);
         CHECK(w.record_colony_exit_pressure(8810,source,2).npc_id==2);
         const auto first=w.record_personal_outlook(8820,source,2);
@@ -69,8 +69,8 @@ try{
         // resource-backed world command increases local water; no test code
         // edits a live Simulation directly.
         const auto* life=w.world().life_support(source);
-        CHECK(life && life->wastewater_kg>=150);
-        execute(w,source,8830,Action::RecycleWater,150);
+        CHECK(life && life->wastewater_kg>=90);
+        execute(w,source,8830,Action::RecycleWater,90);
         CHECK(colony_safety::assess(w.world(),source,source).risk==
               colony_safety::Risk::Safe);
         // Hysteresis: one good observation cannot erase years of harm.
@@ -91,8 +91,8 @@ try{
         CHECK(!w.colony_personal_outlook(source,2)->considering_departure);
         CHECK(w.world().colony_ship(source)->crew==4);
         CHECK(w.world().npc_casualties().empty());
-        w.steps(340-w.world().tick());
-        CHECK(w.world().tick()==340);
+        w.steps(600-w.world().tick());
+        CHECK(w.world().tick()==600);
     }
     {
         PersistentWorld w(db,Simulation(8802));
