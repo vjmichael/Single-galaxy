@@ -133,7 +133,9 @@ void status(const Simulation& w,EntityId ship,bool replay_discoveries=false){
         announce(w,"SURVEY_PROBE|"+std::to_string(id)+"|"+std::to_string(p.system)+"|"+
             std::to_string(p.position.x)+"|"+std::to_string(p.position.y)+"|"+
             std::to_string(p.drone_phase)+"|"+std::to_string(p.drone_target)+"|"+
-            std::to_string(p.sample_ore)+"|"+std::to_string(p.taxonomy));
+            std::to_string(p.sample_ore)+"|"+std::to_string(p.taxonomy)+"|"+
+            std::to_string(p.focus_site)+"|"+std::to_string(p.focus_waypoint.x)+"|"+
+            std::to_string(p.focus_waypoint.y));
     }
     announce(w,"PROBE_STOCK|"+std::to_string(s->survey_probes_carried)+"|"+
         std::to_string(s->fitting.probe_launcher()?1:0));
