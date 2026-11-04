@@ -4775,6 +4775,16 @@ public:
             Statement has_split_execution(db_,"SELECT 1 FROM sqlite_master "
                 "WHERE type='table' AND name='sg_split_rescue_execution'");
             const bool split_execution_exists=has_split_execution.row();
+            // 04D.4D2B: the family departure verifier authenticates the
+            // PRE-departure physical world against the immutable prepared
+            // generation/hash. Its predecessor is permanent legal custody
+            // evidence, not an ordinary rolling simulation checkpoint.
+            // Pin only this one generation per committed family departure.
+            // This must be computed AFTER society_effect inserted its receipt
+            // inside the same BEGIN IMMEDIATE transaction, before pruning.
+            Statement has_family_departure(db_,"SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='sg_colony_family_departure_execute'");
+            const bool family_departure_exists=has_family_departure.row();
             const std::string prune_sql=std::string(
                 "DELETE FROM snapshots WHERE generation > 1 AND generation < ?")+
                 (incident_cases_exist ? " AND generation NOT IN "
@@ -4790,7 +4800,9 @@ public:
                 (split_exists ? " AND generation NOT IN "
                     "(SELECT world_generation FROM sg_split_rescue_intent)" : "")+
                 (split_execution_exists ? " AND generation NOT IN "
-                    "(SELECT world_generation FROM sg_split_rescue_execution)" : "");
+                    "(SELECT world_generation FROM sg_split_rescue_execution)" : "")+
+                (family_departure_exists ? " AND generation NOT IN "
+                    "(SELECT world_generation-1 FROM sg_colony_family_departure_execute)" : "");
             Statement prune(db_,prune_sql.c_str());
             prune.i64(1, static_cast<std::int64_t>(next > 2 ? next - 2 : 1));
             prune.execute();

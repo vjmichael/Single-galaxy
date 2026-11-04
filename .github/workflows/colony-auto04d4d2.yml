@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - integration/colony-auto04d4d2-physical-family-v74-20261103
+      - integration/colony-auto04d4d2b-predecessor-pin-v75-20261103
   pull_request:
     paths:
       - 'src/Simulation.cpp'
