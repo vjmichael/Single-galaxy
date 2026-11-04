@@ -118,6 +118,9 @@ void announce(const Simulation& w,const std::string& text){
 void status(const Simulation& w,EntityId ship,bool replay_discoveries=false){
     const auto* s=w.find(ship);const auto* c=w.colony_ship(ship);
     if(!s || !c)throw std::runtime_error("colony ship missing");
+    if(const auto f=w.ship_frames().find(ship);f!=w.ship_frames().end())
+        announce(w,"LOCAL_FRAME|"+std::to_string(f->second.system)+"|"+
+            std::to_string(f->second.anchor_body));
     announce(w,"HEADING|"+std::to_string(s->heading_deg));
     announce(w,"PROBE_RESET");
     for(const auto& [id,p]:w.survey_probes()){
@@ -368,7 +371,8 @@ void scan(const Simulation& w,EntityId ship){
     const auto* s=w.find(ship);if(!s)return;
     int found=0;
     for(const auto& [id,e]:w.entities()){
-        if(e.type!=EntityType::Asteroid || e.system_id!=s->system_id)continue;
+        if(e.type!=EntityType::Asteroid || e.system_id!=s->system_id ||
+           !w.same_local_frame(ship,id))continue;
         auto dx=e.position.x-s->position.x,dy=e.position.y-s->position.y;
         if(dx*dx+dy*dy>sensor_mm*sensor_mm)continue;
         ++found;
@@ -385,7 +389,8 @@ void scan(const Simulation& w,EntityId ship){
 EntityId nearest(const Simulation& w, EntityId ship){
     const auto* s=w.find(ship);if(!s)return 0;
     EntityId chosen=0;std::int64_t best=std::numeric_limits<std::int64_t>::max();
-    for(const auto& [id,e]:w.entities())if(e.type==EntityType::Asteroid){
+    for(const auto& [id,e]:w.entities())if(e.type==EntityType::Asteroid &&
+        w.same_local_frame(ship,id)){
         auto dx=e.position.x-s->position.x,dy=e.position.y-s->position.y;
         const auto dist=dx*dx+dy*dy;
         if(dist<best){best=dist;chosen=id;}
@@ -878,10 +883,15 @@ int main(int argc,char** argv){
                 if(p.due_tick<=world.world().tick())due_frame_transits.push_back(request);
             for(const auto request:due_frame_transits) {
                 const auto pending=world.world().pending_celestial_transits().at(request);
-                if(world.complete_celestial_transit(request))
+                if(world.complete_celestial_transit(request)) {
                     announce(world.world(),"FRAME_TRANSIT_ARRIVED|"+
                         std::to_string(request)+"|"+
                         std::to_string(pending.destination_body));
+                    // Refresh frame-specific local sensors and inventory only
+                    // after the destination is durably committed.
+                    status(world.world(),ship,true);
+                    scan(world.world(),ship);
+                }
                 else
                     announce(world.world(),"ERROR|FRAME_TRANSIT_BLOCKED");
             }
