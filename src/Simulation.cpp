@@ -982,7 +982,7 @@ bool Simulation::can_depart_colony(const Command& c) const {
     // All persons are rehomed as real ship operating crew, not incorrectly
     // left in an active voyage or simultaneously on the old station payroll.
     const auto present=people_physically_aboard(c.target);
-    const auto count=present+exact.size()+children;
+    const auto count=present+children_physically_aboard(c.target)+exact.size()+children;
     if(count>1000 ||
        receiver_life->food_kg<static_cast<std::int64_t>(2*count) ||
        receiver_life->water_kg<static_cast<std::int64_t>(2*count) ||
