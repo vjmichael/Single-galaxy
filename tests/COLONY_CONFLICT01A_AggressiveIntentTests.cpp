@@ -3,6 +3,7 @@
 #include "galaxy/ColonyDefense.hpp"
 #include <sqlite3.h>
 #include <array>
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <iostream>
