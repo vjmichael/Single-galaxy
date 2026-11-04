@@ -8649,6 +8649,8 @@ bool PersistentWorld::begin_celestial_transit(
             if(c.actor==ship || c.target==ship)return false;
     }
     auto next=world_;
+    // Dock the thrust controller, not the ship: no drifting while in transit.
+    next.entities_.at(ship).velocity={};
     next.pending_celestial_transits_.emplace(id,PendingCelestialTransit{
         owner,ship,frame->second.system,frame->second.anchor_body,body,
         next.tick_,next.tick_+4});
