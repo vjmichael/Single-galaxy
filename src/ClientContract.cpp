@@ -348,7 +348,16 @@ ViewFrame ServerViewBridge::after_committed_step(const Simulation& world) {
         Change c; c.kind=ChangeKind::CommandResult; c.command=world.events()[i]; f.changes.push_back(c);
     }
     for(std::size_t i=activity_cursor_;i<world.activity_events().size();++i) {
-        Change c; c.kind=ChangeKind::Activity; c.activity=world.activity_events()[i]; f.changes.push_back(c);
+        const auto& activity=world.activity_events()[i];
+        // Spatial activity outside both the previous and current visible
+        // region is never a local player's event. Retain despawn notices for
+        // a previously visible target even after the entity was deleted.
+        if(viewer_owner_ &&
+           !previous_.entities.count(activity.actor) &&
+           !previous_.entities.count(activity.target) &&
+           !now.entities.count(activity.actor) &&
+           !now.entities.count(activity.target))continue;
+        Change c; c.kind=ChangeKind::Activity; c.activity=activity; f.changes.push_back(c);
     }
     f.projection_hash=projection_hash(now);
     // Do not advance bridge state if unable to construct a valid bounded frame.
