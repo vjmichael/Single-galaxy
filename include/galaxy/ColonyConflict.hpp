@@ -64,6 +64,10 @@ struct Decision {
     // belief applied to this intent; zero is neutral/no published revision.
     std::uint64_t relation_event_id=0;
     int relation_score=0;
+    // Zero denotes the founding leader. The archived agenda_event in the
+    // durable B2 decision identifies the governance epoch if nonzero.
+    std::uint64_t governance_event_id=0;
+    DiplomaticPolicy diplomatic_policy=DiplomaticPolicy::Pragmatic;
 };
 // Adjust only nonviolent strategic posture using previously committed opinions.
 // A hostile belief is neither a crime finding nor permission to shoot.
