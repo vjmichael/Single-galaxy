@@ -6212,8 +6212,9 @@ void PersistentWorld::step_with_atomic_colony_family_departure(
         NpcAppearanceStore joined(db,req.family_scope,req.family_seed,
             [&](std::uint64_t id){return next.npc_records().count(id)!=0;});
         const auto authorize=[&](std::uint64_t id,std::uint64_t origin,std::uint64_t destination){
-            if(origin!=req.source||destination!=req.receiver ||
-               (id!=req.adult_ids[0]&&id!=req.adult_ids[1]))return false;
+            if(origin!=req.source || destination!=req.receiver ||
+               !std::binary_search(req.adult_ids.begin(),req.adult_ids.end(),id))
+                return false;
             const auto previous=world_.npc_records().find(id);
             const auto current=next.npc_records().find(id);
             return previous!=world_.npc_records().end() &&
@@ -6222,12 +6223,27 @@ void PersistentWorld::step_with_atomic_colony_family_departure(
                 current->second.home_ship==destination &&
                 current->second.location==destination && !current->second.transport_id;
         };
-        const auto recorded=joined.record_guardian_household_moves(
-            plan.command_id,req.adult_ids[0],moves,req.source,req.receiver,
-            next.tick(),plan.expected_origin_family_revision,
-            plan.expected_destination_family_revision,authorize,
-            req.adult_ids[1],plan.co_parent_event_id);
-        if(recorded.size()!=req.adult_ids.size()+req.children.size())
+        // Each pair and every dependent receives its own immutable move,
+        // but the two household batches and regional totals share ONE commit.
+        std::vector<NpcMoveRecord> recorded;
+        auto from_revision=plan.expected_origin_family_revision;
+        auto to_revision=plan.expected_destination_family_revision;
+        for(std::size_t index=0;index<households.size();++index){
+            const auto& h=households[index];
+            const auto batch=joined.record_guardian_household_moves(
+                h.guardian_event_id,h.guardian_id,household_moves[index],
+                req.source,req.receiver,next.tick(),from_revision,to_revision,
+                authorize,h.co_parent_id,h.co_parent_event_id);
+            if(batch.size()!=h.children.size()+2)
+                throw std::runtime_error("ART02 household member partition incomplete");
+            from_revision+=batch.size();
+            to_revision+=batch.size();
+            recorded.insert(recorded.end(),batch.begin(),batch.end());
+        }
+        if(recorded.size()!=req.adult_ids.size()+req.children.size() ||
+           joined.family_census(req.source).current_population!=0 ||
+           joined.family_census(req.receiver).current_population!=
+               destination_family.current_population+recorded.size())
             throw std::runtime_error("ART02 household residence count differs from physical rescue");
         const auto revision=region.commit_migration_in_world_transaction(
             db,plan.expected_region_revision,plan.expected_owner_generation,
