@@ -4951,7 +4951,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                     const auto value=u64(f[27+j]);
                     if(value>(j<2?1u:0u))
                         throw std::runtime_error("snapshot: unavailable ship module type");
-                    if(e.type!=EntityType::Ship && value)
+                    if(e.type!=EntityType::Ship && e.type!=EntityType::Wreck && value)
                         throw std::runtime_error("snapshot: modules installed on nonship");
                     if(j<2)e.fitting.hardpoints[j]=static_cast<std::uint8_t>(value);
                     else if(j<4)e.fitting.support[j-2]=static_cast<std::uint8_t>(value);
