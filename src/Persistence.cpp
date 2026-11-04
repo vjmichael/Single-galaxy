@@ -4953,6 +4953,9 @@ public:
             Statement family_evacuation(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
                 "AND name='sg_colony_family_evacuation'");
             const bool has_family_evacuation=family_evacuation.row();
+            Statement npc_dispatch(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='sg_colony_npc_autonomous_dispatch'");
+            const bool has_npc_dispatch=npc_dispatch.row();
             const std::string prune_sql=std::string(
                 "DELETE FROM snapshots WHERE generation > 1 AND generation < ?")+
                 (incident_cases_exist ? " AND generation NOT IN "
@@ -4972,7 +4975,12 @@ public:
                 (has_family_evacuation ? " AND generation NOT IN "
                     "(SELECT world_generation FROM sg_colony_family_evacuation)"
                     " AND generation NOT IN "
-                    "(SELECT world_generation-1 FROM sg_colony_family_evacuation)" : "");
+                    "(SELECT world_generation-1 FROM sg_colony_family_evacuation)" : "")+
+                // The v78 NPC admission verifier independently reads this
+                // exact original accepted world snapshot at every restart.
+                (has_npc_dispatch ? " AND generation NOT IN "
+                    "(SELECT admission_generation FROM sg_colony_npc_autonomous_dispatch)"
+                    : "");
             Statement prune(db_,prune_sql.c_str());
             prune.i64(1, static_cast<std::int64_t>(next > 2 ? next - 2 : 1));
             prune.execute();
@@ -6687,8 +6695,10 @@ bool PersistentWorld::submit_autonomous_colony_rescue(
         run(db,"CREATE TABLE IF NOT EXISTS sg_colony_npc_supervisor_activation("
             "singleton INTEGER PRIMARY KEY CHECK(singleton=1),"
             "first_generation INTEGER NOT NULL CHECK(first_generation>1))");
-        run(db,"INSERT OR IGNORE INTO sg_colony_npc_supervisor_activation "
-            "VALUES(1,"+std::to_string(next_generation)+")");
+        Statement activate(db,"INSERT OR IGNORE INTO "
+            "sg_colony_npc_supervisor_activation VALUES(1,?)");
+        activate.i64(1,static_cast<sqlite3_int64>(next_generation));
+        activate.execute();
         run(db,"CREATE TABLE IF NOT EXISTS sg_colony_npc_supervisor_plan("
             "command_id TEXT PRIMARY KEY,intent_id TEXT NOT NULL UNIQUE,"
             "admission_generation INTEGER NOT NULL CHECK(admission_generation>1),"
@@ -6731,7 +6741,7 @@ bool PersistentWorld::submit_autonomous_colony_rescue(
         plan.execute();
         for(std::size_t i=0;i<p.member_event_ids.size();++i){
             const bool is_child=i>=p.family.adult_ids.size();
-            const auto child_index=i-p.family.adult_ids.size();
+            const auto child_index=is_child?i-p.family.adult_ids.size():0;
             const auto person=is_child?p.family.children[child_index].child_id:
                 p.family.adult_ids[i];
             const auto guardian=is_child?p.family.children[child_index].guardian_id:0;
