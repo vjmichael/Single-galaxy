@@ -2440,6 +2440,7 @@ Event Simulation::execute(const Command& c) {
                 voyage->second.stranded_tick=0;voyage->second.stranded_reason=0;
                 stop_mining(c.actor,Outcome::NotInSpace);
                 ship->second.type=EntityType::Wreck;
+            ship->second.hull=0;ship->second.weapon_charges=0;ship->second.last_weapon_tick=0;ship->second.training_drone=false;
                 ship->second.velocity={};
                 activity_events_.push_back({tick_,ActivityKind::ShipDestroyed,c.id,c.actor,c.actor,Outcome::Applied,0});
             }else if(c.action==Action::HostStrandFerry){
@@ -2528,6 +2529,7 @@ Event Simulation::execute(const Command& c) {
             // Cargo remains on the persistent wreck; there is no magical
             // deletion, addition, or instant looting of physical ore.
             ship.type=EntityType::Wreck;
+            ship.hull=0;ship.weapon_charges=0;ship.last_weapon_tick=0;ship.training_drone=false;
             // Preserve former ship owner for salvage claims and victim attribution.
             // The Wreck entity is never an executable player ship.
             ship.velocity={};
