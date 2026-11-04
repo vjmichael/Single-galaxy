@@ -37,3 +37,5 @@ Dedicated native CI: .github/workflows/colony-exit01a.yml. Do not claim full dep
 ## Verified native test results
 
 **6/6 focused Linux CTests passed** at executable revision `496b2e151b760585cee78ffbca194b1d7b6d085b` ([Actions run 41785467590](https://github.com/vjmichael/Single-galaxy/actions/runs/41785467590)). The native suite exercised physical colony watch, strategic intent, GRSM grievance, dated diplomacy, dated government succession and the new individual NPC survival-pressure witness in 3.63 seconds. No physical departure or Windows hardware check is inferred from this result.
+
+**Broader collateral CI:** All **17/17 GitHub Actions workflows** associated with the tested executable commit `496b2e151b760585cee78ffbca194b1d7b6d085b` completed successfully, including physical family/guardian custody, emergency supervision and prior diplomatic/governance test chains. This is still not a test of an executed dissatisfied-NPC departure, which belongs to a later gate.
