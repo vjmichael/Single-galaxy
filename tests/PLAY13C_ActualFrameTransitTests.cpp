@@ -92,6 +92,18 @@ int main(){
             CHECK(w.submit(fire));
             w.step();
             CHECK(w.world().events().back().result==Outcome::OutOfRange);
+            CHECK(!w.begin_celestial_transit(7,ship,body,502));
+            // One physical ship can move again to another real celestial
+            // local frame; a second transit does not create a second hull.
+            const auto second_body=w.world().physical_celestial_systems().at(1).at(1).id;
+            CHECK(second_body!=body);
+            CHECK(w.begin_celestial_transit(7,ship,second_body,503));
+            w.steps(4);
+            CHECK(w.complete_celestial_transit(503));
+            CHECK(w.world().ship_frames().at(ship).anchor_body==second_body);
+            CHECK(w.world().completed_celestial_transits().count(501)==1);
+            CHECK(w.world().completed_celestial_transits().count(503)==1);
+            CHECK(w.world().entities().count(ship)==1);
             CHECK(w.world().colony_ship(ship)->crew==24);
             CHECK(w.world().total_material_kg()==before_mass);
             arrived=w.world().canonical_state();
