@@ -9,6 +9,22 @@
 #include <string>
 namespace galaxy::colony_family {
 namespace {
+// ART02 borrowed family handles are valid only inside an active world-owned
+// SQLite transaction. A standalone audit opens a consistent deferred snapshot;
+// preparation already holds BEGIN IMMEDIATE and reuses that lock.
+struct ReadTransaction {
+    sqlite3* db=nullptr;
+    bool own=false;
+    explicit ReadTransaction(sqlite3* handle):db(handle){
+        if(!db)throw std::runtime_error("family audit has no database");
+        own=sqlite3_get_autocommit(db)!=0;
+        if(own && sqlite3_exec(db,"BEGIN DEFERRED",nullptr,nullptr,nullptr)!=SQLITE_OK)
+            throw std::runtime_error("family audit cannot acquire consistent SQLite snapshot");
+    }
+    ~ReadTransaction(){
+        if(own)sqlite3_exec(db,"ROLLBACK",nullptr,nullptr,nullptr);
+    }
+};
 class Query {
 public:
     Query(sqlite3* db,const char* sql){
@@ -70,6 +86,7 @@ Audit assess(const Simulation& world,sqlite3* db,const DeparturePlan& request){
     Audit result;
     result.world_tick=world.tick();
     try {
+        ReadTransaction snapshot(db);
         if(!db || !request.source || !request.receiver ||
            request.source==request.receiver || !request.family_seed ||
            request.family_scope.empty() || !world.passenger_needs_enabled())
