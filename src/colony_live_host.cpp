@@ -7,6 +7,7 @@
 #include "galaxy/ColonySafety.hpp"
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <stdexcept>
@@ -116,6 +117,27 @@ void status(const Simulation& w,EntityId ship,bool replay_discoveries=false){
     const auto* s=w.find(ship);const auto* c=w.colony_ship(ship);
     if(!s || !c)throw std::runtime_error("colony ship missing");
     announce(w,"HEADING|"+std::to_string(s->heading_deg));
+    announce(w,"FITTING|"+std::to_string(s->fitting.exploration_scanner()?1:0)+"|"+
+        std::to_string(s->fitting.hardpoints.size())+"|"+
+        std::to_string(s->fitting.support.size())+"|"+
+        std::to_string(s->fitting.subsystems.size())+"|"+
+        std::to_string(s->fitting.rigging.size()));
+    EntityId closest=0;
+    std::int64_t closest_squared=Simulation::kProximitySafetyRangeMm*
+        Simulation::kProximitySafetyRangeMm+1;
+    for(const auto& [id,e]:w.entities()){
+        if(id==ship || e.type!=EntityType::Ship || e.system_id!=s->system_id)continue;
+        const auto dx=e.position.x-s->position.x,dy=e.position.y-s->position.y;
+        const auto r=Simulation::kProximitySafetyRangeMm;
+        if(dx < -r || dx > r || dy < -r || dy > r)continue;
+        const auto square=dx*dx+dy*dy;
+        if(square<closest_squared || (square==closest_squared && id<closest)){
+            closest_squared=square;closest=id;
+        }
+    }
+    announce(w,"PROXIMITY|"+std::to_string(closest)+"|"+
+        std::to_string(closest?static_cast<std::uint64_t>(std::sqrt(
+            static_cast<double>(closest_squared))):0));
     if(replay_discoveries)for(const auto& [key,d]:w.discoveries()){
         if(key.first!=s->owner_id)continue;
         announce(w,"DISCOVERY|"+std::to_string(d.site)+"|"+std::to_string(d.system)+"|"+
@@ -394,6 +416,10 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
                 throw std::invalid_argument("invalid wreck salvage");
             c.action=Action::SalvageWreck;
             c.target=static_cast<EntityId>(target);c.amount=amount;
+        }else if(v.size()==2 && v[0]=="FIT_SCANNER"){
+            const auto mode=integer(v[1]);
+            if(mode!=1 && mode!=-1)throw std::invalid_argument("invalid scanner fit mode");
+            c.action=Action::ConfigureExplorationScanner;c.amount=mode;
         }else if(v.size()==2 && v[0]=="FIRE_TRAINING"){
             const auto id=integer(v[1]);
             if(id<=0||id>100000000)throw std::invalid_argument("invalid combat target");
@@ -600,6 +626,7 @@ int main(int argc,char** argv){
         const auto initial_ship=genesis.add_colony_ship(owner,{0,0},60,24);
         EntityId ship=initial_ship;
         genesis.provision_colony_genesis(initial_ship,1000,3000,1000,1000,1000);
+        genesis.provision_starter_exploration_scanner(initial_ship);
         genesis.add_asteroid({2000,1000},40); // small reachable starter resource
         genesis.add_asteroid({15000,1000},30);
         genesis.add_training_drone({8000,0}); // uncrewed training opponent; no colony NPCs
