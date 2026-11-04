@@ -33,6 +33,7 @@ int main(){
             w.ensure_ship_frame_registry();
             body=w.world().physical_celestial_systems().at(1).front().id;
             CHECK(!w.begin_celestial_transit(8,ship,body,501));
+            CHECK(!w.begin_celestial_transit(8,other,body,504)); // unfitted ship
             CHECK(!w.begin_celestial_transit(7,ship,(std::uint64_t(2)<<32)|1,501));
             CHECK(!w.begin_celestial_transit(7,ship,body,0));
             CHECK(w.begin_celestial_transit(7,ship,body,501));
