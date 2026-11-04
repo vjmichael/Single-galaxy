@@ -398,6 +398,10 @@ struct AsteroidGeology {
 struct MineralFraction { const char* name; int permille; };
 // PLAY-13C.5: descriptive environment; hazards are not yet physics damage.
 // PLAY-13C.6B: read-only prospect, NOT resource inventories, shelter or safety.
+struct PhysicalOasisReserve {
+    std::int64_t water_kg=0,nutrients_kg=0;
+    std::int64_t initial_water_kg=0,initial_nutrients_kg=0;
+};
 struct CelestialOasisProspect {
     std::uint64_t body=0;
     std::uint8_t water=0,energy=0,nutrients=0,shelter=0;
@@ -833,6 +837,17 @@ public:
     std::optional<AsteroidClass> local_deposit_taxonomy(EntityId rock) const;
     // Derived solely from the saved physical catalogue and fixed galaxy seed.
     // Rare prospects require all four ecological prerequisites.
+    // PLAY-13C.6C: finite explicitly supplied world-genesis material.
+    // No oasis generates resources when discovered or visited.
+    void provision_oasis_reserve_genesis(std::uint64_t body,
+        std::int64_t water_kg,std::int64_t nutrients_kg);
+    const std::map<std::uint64_t,PhysicalOasisReserve>& oasis_reserves() const {
+        return oasis_reserves_;
+    }
+    // A deliberately bounded manual collection action; uninstalled automatic
+    // production, planetary mining rigs and farming remain future gates.
+    bool collect_oasis_resource(PlayerId owner,EntityId ship,
+        std::uint64_t body,bool water,std::int64_t kilograms);
     std::optional<CelestialOasisProspect> celestial_oasis_prospect(
         std::uint64_t body_id) const;
     std::vector<CelestialOasisProspect> survey_oasis_prospects(
@@ -937,6 +952,7 @@ private:
     std::map<std::uint64_t,std::array<EntityId,2>> generated_local_regions_; // v73 immutable site manifest
     std::map<EntityId,std::uint64_t> local_entity_anchors_; // v73 nonship frame custody
     std::map<std::uint64_t,LocalCelestialEnvironment> local_environments_; // v74
+    std::map<std::uint64_t,PhysicalOasisReserve> oasis_reserves_; // v75 explicit finite sources
     std::map<std::uint64_t,PendingCelestialTransit> pending_celestial_transits_;
     std::map<std::uint64_t,CompletedCelestialTransit> completed_celestial_transits_;
     std::map<std::uint32_t,std::vector<PhysicalCelestialBody>> physical_celestial_systems_;
