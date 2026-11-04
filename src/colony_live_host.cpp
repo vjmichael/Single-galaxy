@@ -369,6 +369,16 @@ void status(const Simulation& w,EntityId ship,bool replay_discoveries=false){
 }
 void scan(const Simulation& w,EntityId ship){
     const auto* s=w.find(ship);if(!s)return;
+    const auto frame=w.ship_frames().find(ship);
+    if(frame!=w.ship_frames().end() && frame->second.anchor_body) {
+        const auto region=w.local_environments().find(frame->second.anchor_body);
+        if(region!=w.local_environments().end()) {
+            const auto& e=region->second;
+            announce(w,"LOCAL_ENVIRONMENT|"+std::to_string(frame->second.anchor_body)+
+                "|"+std::to_string(unsigned(e.zone))+
+                "|"+std::to_string(unsigned(e.hazard)));
+        }
+    }
     int found=0;
     for(const auto& [id,e]:w.entities()){
         if(e.type!=EntityType::Asteroid || e.system_id!=s->system_id ||
@@ -382,7 +392,12 @@ void scan(const Simulation& w,EntityId ship){
                 std::to_string(g->original_tonnes)+"|"+std::to_string(e.ore));
             for(const auto& mineral:mineral_profile(g->taxonomy))
                 announce(w,"MINERAL|"+std::to_string(id)+"|"+mineral.name+"|"+std::to_string(mineral.permille));
-        }else announce(w,"SMALL_ROCK|"+std::to_string(id)+"|"+std::to_string(e.ore));
+        }else {
+            announce(w,"SMALL_ROCK|"+std::to_string(id)+"|"+std::to_string(e.ore));
+            if(const auto taxonomy=w.local_deposit_taxonomy(id))
+                announce(w,"LOCAL_DEPOSIT|"+std::to_string(id)+"|"+
+                    std::to_string(unsigned(*taxonomy)));
+        }
     }
     announce(w,"SCAN_DONE|"+std::to_string(found));
 }
@@ -804,6 +819,8 @@ int main(int argc,char** argv){
         world.ensure_ship_frame_registry();
         // PLAY-13C.4: durable, idempotent region seeding for pre-v73 arrivals.
         world.ensure_visited_local_regions();
+        // PLAY-13C.5: v73 worlds migrate to validated v74 mineral profiles.
+        world.ensure_local_environment_profiles();
         if(!world.world().colony_ship(ship)||!world.world().find(ship)||world.world().find(ship)->owner_id!=owner){
             // A populated production world can have stations before its first
             // player-owned colony ship. Do not assume the ship has entity ID 1.
