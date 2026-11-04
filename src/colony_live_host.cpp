@@ -377,7 +377,7 @@ EntityId nearest(const Simulation& w, EntityId ship){
     }
     return chosen;
 }
-void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uint64_t& nonce,PlayerId principal,std::set<std::uint64_t>& pending_scans){
+void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uint64_t& nonce,PlayerId principal,std::set<std::uint64_t>& pending_scans,std::set<std::uint64_t>& pending_probe_scans){
     if(principal!=owner){announce(world.world(),"ERROR|UNAUTHORIZED_PRINCIPAL");return;}
     const auto v=split(line);if(v.empty())return;
     if(v.size()==1 && v[0]=="SCAN"){
@@ -394,7 +394,7 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
             Command c{};c.id=++nonce;c.sequence=c.id;c.execute_tick=world.world().tick()+1;
             c.issuer=principal;c.actor=ship;c.target=static_cast<EntityId>(id);
             c.action=Action::ScanSurveyProbe;
-            if(world.submit(c))pending_scans.insert(c.id);
+            if(world.submit(c))pending_probe_scans.insert(c.id);
             else announce(world.world(),"ERROR|INVALID_INPUT");
         }catch(const std::exception&){announce(world.world(),"ERROR|INVALID_INPUT");}
         return;
@@ -681,14 +681,14 @@ int main(int argc,char** argv){
         announce(world.world(),was_saved?"RESUMED":"NEW_COLONY");
         status(world.world(),ship,true);
         std::uint64_t nonce=900000000000ULL+world.generation();
-        std::set<std::uint64_t> pending_scans;
+        std::set<std::uint64_t> pending_scans,pending_probe_scans;
         const auto period=std::chrono::milliseconds(ms);
         for(int i=0;i<max_ticks;++i){
             const auto start=Clock::now();
             poll_input();
             const auto to_apply=std::move(commands);commands.clear();
             for(const auto& line:to_apply){
-                if(!authenticated_transport){apply(world,ship,line,nonce,owner,pending_scans);continue;}
+                if(!authenticated_transport){apply(world,ship,line,nonce,owner,pending_scans,pending_probe_scans);continue;}
                 // The trusted relay supplies a resolved account ID over our
                 // private stdin pipe; unprefixed/forged/foreign commands fail
                 // closed even if relay validation is accidentally bypassed.
@@ -699,7 +699,7 @@ int main(int argc,char** argv){
                     const auto principal=integer(line.substr(first+1,second-first-1));
                     if(principal!=static_cast<std::int64_t>(owner))
                         throw std::invalid_argument("foreign colony command");
-                    apply(world,ship,line.substr(second+1),nonce,static_cast<PlayerId>(principal),pending_scans);
+                    apply(world,ship,line.substr(second+1),nonce,static_cast<PlayerId>(principal),pending_scans,pending_probe_scans);
                 }catch(const std::exception&){announce(world.world(),"ERROR|UNAUTHORIZED_PRINCIPAL");}
             }
             const auto old=world.world().events().size();
@@ -741,6 +741,8 @@ int main(int argc,char** argv){
                     scan(world.world(),ship);
                     scanned=true;
                 }
+                if(pending_probe_scans.erase(ev.command_id) && ev.result==Outcome::Applied)
+                    scanned=true; // remote probe survey: only native discovery records, no ship scan
                 announce(world.world(),"RESULT|"+std::to_string(ev.command_id)+"|"+
                     to_string(ev.result)+"|"+std::to_string(ev.transferred));
             }
