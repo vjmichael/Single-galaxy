@@ -44,7 +44,15 @@ struct Decision {
     Motive motive=Motive::None;
     Posture posture=Posture::Observe;
     colony_safety::Risk source_risk=colony_safety::Risk::Safe;
+    // CONFLICT-01B2: the historically frozen, previous-generation diplomatic
+    // belief applied to this intent; zero is neutral/no published revision.
+    std::uint64_t relation_event_id=0;
+    int relation_score=0;
 };
+// Adjust only nonviolent strategic posture using previously committed opinions.
+// A hostile belief is neither a crime finding nor permission to shoot.
+Decision evaluate_diplomatic(Decision base,int historical_score,
+                            std::uint64_t historical_revision_event);
 // Deterministic bounded strategic choice using ACTUAL locally observed contact
 // and ACTUAL live resources. It does not submit a combat command, move an NPC,
 // confer guilt, seize materials, or spend fabricated offensive ammunition.
