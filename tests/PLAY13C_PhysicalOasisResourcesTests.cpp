@@ -61,7 +61,16 @@ int main(){
     CHECK(world.complete_celestial_transit(60001));
     CHECK(world.world().canonical_state().rfind("galaxy-kernel-v75|",0)==0);
     CHECK(!world.collect_oasis_resource(7,ship,body,true,1000)); // requires installed rig
+    CHECK(!world.install_oasis_extractor(8,ship,body)); // wrong actual owner
+    const auto before_install=world.world().canonical_state();
+    bool install_rollback=false;
+    try{(void)world.install_oasis_extractor(7,ship,body,FailPoint::AfterSnapshotWrite);}
+    catch(const std::exception&){install_rollback=true;}
+    CHECK(install_rollback);
+    CHECK(world.world().canonical_state()==before_install);
     CHECK(world.install_oasis_extractor(7,ship,body));
+    CHECK(!world.install_oasis_extractor(7,ship,body)); // no duplicate install
+    CHECK(!world.collect_oasis_resource(7,ship,body,true,1000)); // uncharged solar
     CHECK(world.world().oasis_extractors().count(ship)==1);
     CHECK(world.world().colony_ship(ship)->modules==0);
     CHECK(world.world().total_ore()==origin);
@@ -88,6 +97,17 @@ int main(){
     CHECK(world.world().total_ore()==origin);
     snapshot=world.world().canonical_state();
     CHECK(Simulation::from_snapshot(snapshot).canonical_state()==snapshot);
+    auto corrupted_rig=snapshot;
+    const auto rig_record=corrupted_rig.find("oasisextractor|");
+    CHECK(rig_record!=std::string::npos);
+    const auto rig_end=corrupted_rig.find('\n',rig_record);
+    CHECK(rig_end!=std::string::npos);
+    auto rig_line=corrupted_rig.substr(rig_record,rig_end-rig_record);
+    const auto condition=rig_line.find("|2|100|");
+    CHECK(condition!=std::string::npos);
+    rig_line.replace(condition,7,"|2|255|");
+    corrupted_rig.replace(rig_record,rig_end-rig_record,rig_line);
+    CHECK(rejects(corrupted_rig));
     auto altered=snapshot;
     const auto start=altered.find("oasisreserve|");
     CHECK(start!=std::string::npos);
