@@ -833,6 +833,7 @@ public:
     void configure_probe_report_tick_ms(std::uint64_t tick_ms);
     void ensure_physical_celestial_systems();
     void ensure_ship_frame_registry();
+    void ensure_visited_local_regions();
     // Authenticated-host-only entrypoint: pending request is journaled at
     // departure. Completion uses this exact record, never client coordinates.
     bool begin_celestial_transit(PlayerId authenticated_owner, EntityId ship,
