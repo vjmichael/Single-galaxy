@@ -54,7 +54,9 @@ try{
            .time_since_epoch().count())+".sqlite")).string();
     const auto recovered=db+".recovered",tampered=db+".tampered";
     EntityId colonyA=0,colonyB=0,attacker=0,victim=0,second_victim=0;
-    const std::uint64_t first_event=9401,second_event=9402,third_event=9403;
+    // Nonmonotonic globally allocated IDs must not rewrite chronology:
+    // revision order comes from the real prior chain, not numeric event IDs.
+    const std::uint64_t first_event=9403,second_event=9402,third_event=9401;
     std::uint64_t leaderA=0,observerA=0,leaderB=0,observerB=0;
     {
         Simulation sim(8301);
