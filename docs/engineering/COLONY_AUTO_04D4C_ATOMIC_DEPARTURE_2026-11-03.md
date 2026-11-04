@@ -11,20 +11,20 @@ The new `Action::HostColonyDeparture` is host-only, never a player command. Ever
 The atomic world command:
 
 - Requires a *critical or emergency* source ship or occupied source facility; an ordinary healthy colony cannot be stripped by this emergency API.
-- Requires source and receiver to be real, intact, nearby ships in the same system, ready and physically in space. Source outpost occupants must be physically near the receiver too.
+- Requires source and receiver to be real, intact, **same-owner**, nearby ships in the same system, ready and physically in space. Cross-owner physical custody requires a verified independent host acceptance/receiving authority and is refused in this slice. Source outpost occupants must be physically near the receiver too.
 - Requires the complete current named population, including original operating crew, farm workers, and habitat residents, with no duplicate, missing, offsite, or already-transported IDs.
 - Requires a distinct real receiver with its own surviving operating crew and **actual** food, water and oxygen sufficient for at least two consumption periods for everyone already present plus all relocating people.
 - Refuses unresolved active passenger voyages, dependent berths on source/receiver/source outposts, queued competing orders and staffed specialty/clinical/service obligations that need separate settlement.
 - Transfers all residents to the receiving ship, sets their permanent crew assignment and location to that ship, increments receiving crew, zeros original ship/farm/habitat headcounts, and emits an applied world event. Never destroys a real person.
 - Leaves all physical cargo, food, water, oxygen, buildings and the source hull in their original locations. The original ship is **intact, evacuated, and permanently non-operational**, not a wreck. The evacuated-hull registry prevents further normal commands from moving it.
-- Records the complete immutable roster, source, destination, command ID and tick in the canonical **v58 world snapshot**, and cross-checks it against the applied event and individual living NPC custody on reload and independent journal replay.
+- Records the complete immutable roster, source, destination, command ID and tick in the canonical **v58 world snapshot**, and cross-checks it against the applied event (with material transferred=0) and individual living NPC custody on reload and independent journal replay.
 - Uses the same SQLite `BEGIN IMMEDIATE` world transaction and single-generation commit as other world effects. A crash/failpoint before commit publishes neither the departure nor a false completed rescue.
 
 ### Explicit non-goals and hard safety boundaries
 
 This is **not yet universal full-colony evacuation**. It is bounded to an all-adult, one-receiver, near-range 16-person manifest with no active dependents or unresolved clinical/social work. Acknowledged dependent guardianship, physically routed multi-ferry departures, household-level ART02 custody, regional cold/warm acceptance, and ongoing shipborne supply escrow are separate gates. Children must never be silently moved by a generic adult manifest; unresolved family scopes must cause refusal until the integrated dependent authority can attest them.
 
-This version physically transfers people to a receiving ship at docking range; it does **not** model long-range rescue voyages, fuel, road/ship transports between remote outposts, or certify offsite households as evacuated. No player veto may suppress the life-support assessment, but that safety priority never authorizes spawning resources, fabricating transport or declaring an impossible rescue complete.
+This version physically transfers people to a receiving ship at docking range; it does **not** model long-range rescue voyages, fuel, road/ship transports between remote outposts, or certify offsite households as evacuated. Emergency host authority cannot forcibly take over another player's ship. No player veto may suppress the life-support assessment, but that safety priority never authorizes spawning resources, fabricating transport or declaring an impossible rescue complete.
 
 ### Tests and evidence
 
