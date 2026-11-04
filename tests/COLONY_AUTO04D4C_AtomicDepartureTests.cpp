@@ -63,7 +63,7 @@ try{
         w.step_with_colony_departure();
         CHECK(w.world().tick()==481);
         CHECK(w.world().events().back().result==Outcome::Applied);
-        CHECK(w.world().events().back().transferred==4);
+        CHECK(w.world().events().back().transferred==0); // material ledger remains independent of person custody
         CHECK(w.world().colony_ship(source)->crew==0);
         CHECK(w.world().colony_ship(receiver)->crew==8);
         CHECK(w.world().people_physically_aboard(source)==0);
