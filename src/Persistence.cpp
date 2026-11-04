@@ -1331,10 +1331,26 @@ public:
             auth.text(1,std::to_string(id));
             if(!auth.row() ||
                parse_u64(sqlite3_column_text(auth.get(),0))!=d.registration_command ||
-               parse_u64(sqlite3_column_text(auth.get(),1))!=d.guardian_id ||
-               parse_u64(sqlite3_column_text(auth.get(),2))!=d.home_ship ||
-               auth.row())
-                throw std::runtime_error("physical dependent lacks matching immutable birth authority");
+               parse_u64(sqlite3_column_text(auth.get(),1))!=d.guardian_id)
+                throw std::runtime_error("physical dependent lacks immutable birth authority");
+            const auto original_home=parse_u64(sqlite3_column_text(auth.get(),2));
+            if(auth.row())throw std::runtime_error("duplicate physical birth authority");
+            if(original_home!=d.home_ship){
+                // The registration remains immutable at its ORIGINAL home.
+                // A real v60 physical transfer is separately witnessed by
+                // the entire family evacuation and its ART02 member receipt.
+                Statement moved(db_,"SELECT e.source,e.receiver,m.guardian_id "
+                    "FROM sg_colony_family_evacuation_member m "
+                    "JOIN sg_colony_family_evacuation e ON e.command_id=m.command_id "
+                    "WHERE m.person_id=? AND m.kind=1");
+                moved.text(1,std::to_string(id));
+                if(!moved.row() ||
+                   parse_u64(sqlite3_column_text(moved.get(),0))!=original_home ||
+                   parse_u64(sqlite3_column_text(moved.get(),1))!=d.home_ship ||
+                   parse_u64(sqlite3_column_text(moved.get(),2))!=d.guardian_id ||
+                   moved.row())
+                    throw std::runtime_error("child home changed without verified evacuation receipt");
+            }
         }
     }
     bool has_dependent_table() const {
