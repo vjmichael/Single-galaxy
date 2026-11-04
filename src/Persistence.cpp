@@ -6229,9 +6229,33 @@ void PersistentWorld::step_with_atomic_dependent_birth(
     if(pending!=next.commands_.end() && !pending->second.empty())
         throw std::runtime_error("birth world step requires no pending commands");
     const auto before=next.events().size(), activity_before=next.activity_events().size();
+    const bool physical=next.physical_dependents_enabled();
+    Command physical_birth{};
+    std::map<std::uint64_t,Command> due;
+    if(physical){
+        physical_birth.id=plan.event_id;
+        physical_birth.sequence=plan.event_id;
+        physical_birth.execute_tick=next.tick()+1;
+        physical_birth.issuer=Simulation::kServerAuthority;
+        physical_birth.actor=plan.home_ship;
+        physical_birth.target=plan.home_ship;
+        physical_birth.action=Action::HostRegisterDependentBirth;
+        physical_birth.transport_id=plan.parent_a;
+        physical_birth.amount=static_cast<std::int64_t>(plan.parent_b);
+        physical_birth.passenger_ids={plan.child_id};
+        if(!next.submit(physical_birth))
+            throw std::runtime_error("birth rejected by physical-dependent command preflight");
+        due.emplace(physical_birth.id,physical_birth);
+    }
     next.step();
-    if(next.events().size()!=before)
-        throw std::runtime_error("birth step unexpectedly executed a command");
+    if((!physical && next.events().size()!=before) ||
+       (physical && (next.events().size()!=before+1 ||
+          next.events().back().command_id!=plan.event_id ||
+          next.events().back().result!=Outcome::Applied ||
+          !next.physical_dependents().count(plan.child_id))))
+        throw std::runtime_error("birth did not independently create exact physical dependent");
+    const std::vector<Event> delta(next.events().begin()+
+        static_cast<std::ptrdiff_t>(before),next.events().end());
     const std::vector<ActivityEvent> activity(next.activity_events().begin()+
         static_cast<std::ptrdiff_t>(activity_before),next.activity_events().end());
     const auto path=store_->sqlite_path();
@@ -6281,8 +6305,11 @@ void PersistentWorld::step_with_atomic_dependent_birth(
         rec.text(11,std::to_string(birth.parent_a));rec.text(12,std::to_string(birth.parent_b));
         rec.i64(13,static_cast<std::int64_t>(birth.census_revision));rec.execute();
     };
-    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,{},
-                   {},activity,fail,nullptr,nullptr,effect);
+    // v59 birth is itself a replayable native world event and an ART02/ECON03
+    // birth receipt in the SAME authoritative transaction.
+    store_->commit(next,generation_,resource_origin_,credit_origin_,
+                   physical?&physical_birth:nullptr,delta,due,activity,fail,
+                   nullptr,nullptr,effect);
     world_.swap(next);++generation_;
 }
 
