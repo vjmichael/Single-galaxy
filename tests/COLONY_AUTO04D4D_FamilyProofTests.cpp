@@ -76,6 +76,27 @@ try{
         CHECK(ok.ready_for_transaction);
         CHECK(!ok.evacuated);
         CHECK(ok.dependent_children==1);
+        plan.intent_id=50001;
+        plan.expected_world_generation=host.generation();
+        bool injected=false;
+        try{host.prepare_host_colony_family_departure(plan,FailPoint::AfterReceiptWrite);}
+        catch(const std::runtime_error&){injected=true;}
+        CHECK(injected);
+        CHECK(sqlite3_open(path.c_str(),&db)==SQLITE_OK);
+        sqlite3_stmt* count=nullptr;
+        CHECK(sqlite3_prepare_v2(db,"SELECT COUNT(*) FROM sg_colony_family_departure_prepare",
+              -1,&count,nullptr)==SQLITE_OK);
+        CHECK(sqlite3_step(count)==SQLITE_ROW && sqlite3_column_int(count,0)==0);
+        sqlite3_finalize(count);sqlite3_close(db);
+        CHECK(host.prepare_host_colony_family_departure(plan));
+        CHECK(host.prepare_host_colony_family_departure(plan)); // identical retry
+        auto reused=plan;reused.receiver=source;
+        CHECK(!host.prepare_host_colony_family_departure(reused));
+        auto stale=plan;stale.expected_world_generation=plan.expected_world_generation+1;
+        CHECK(!host.prepare_host_colony_family_departure(stale));
+        CHECK(host.world().colony_departures().empty()); // preparation is not rescue
+        CHECK(host.world().npc_records().size()==4);
+        CHECK(!host.audit_colony_family_departure(plan).evacuated);
         auto missing=plan;missing.children.clear();
         CHECK(!host.audit_colony_family_departure(missing).ready_for_transaction);
         auto forged=plan;forged.children={{child+1,1}};
