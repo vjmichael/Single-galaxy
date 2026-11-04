@@ -1,0 +1,27 @@
+name: Colony AUTO-04D2 native acceptance
+on:
+  push:
+    branches:
+      - integration/colony-auto04d2-durable-safety-v69-20261103
+  pull_request:
+    paths:
+      - 'src/ColonySafetyJournal.cpp'
+      - 'src/Persistence.cpp'
+      - 'include/galaxy/ColonySafetyJournal.hpp'
+      - 'tests/COLONY_AUTO04D2_DurableResponseTests.cpp'
+      - 'CMakeLists.txt'
+  workflow_dispatch:
+jobs:
+  native-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SQLite development library
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+      - name: Build physical-world and colony acceptance targets
+        run: cmake --build build --target galaxy_colony_auto04a_tests galaxy_colony_auto04b_host_tests galaxy_colony_auto04d2_tests galaxy_colony_live_host galaxy_shipping_status_bridge -j 2
+      - name: Test native durability and authenticated relay
+        run: ctest --test-dir build --output-on-failure -R 'galaxy_colony_auto04(a_safety|b_host|b_authenticated_relay|d2_durable_response)'
