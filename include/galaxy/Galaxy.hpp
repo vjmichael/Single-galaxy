@@ -97,7 +97,8 @@ public:
     std::vector<SignatureContact> coarse_signatures(PlayerId owner,std::uint32_t system,
         Vector2 scanner_position,std::int64_t range_mm,int sensor_strength) const;
     std::optional<RefinementPlan> plan_refinement(PlayerId owner,std::uint32_t system,
-        std::uint64_t signature,std::int64_t scan_radius_mm,int sensor_strength) const;
+        std::uint64_t signature,Vector2 scanner_position,std::int64_t discovery_range_mm,
+        std::int64_t scan_radius_mm,int sensor_strength) const;
     // Filter actual native probe evidence by scan intent; no client-supplied sightings.
     std::vector<ScanObservation> scan_mode(PlayerId owner,std::uint32_t system,
         std::uint64_t tick,std::int64_t radius_mm,int sensor_strength,ScanMode mode) const;
