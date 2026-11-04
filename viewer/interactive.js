@@ -208,6 +208,32 @@ el('probeSurvey').addEventListener('click',()=>{
  const probe=Number(el('probeTarget').value);
  if(Number.isSafeInteger(probe)&&probe>0)command('colonyProbeScan',{probe});
 });
+el('signatureMode').addEventListener('change',()=>{
+ if(el('signatureMode').value!=='anomaly')
+   message('This scan mode needs native live-host integration. Anomaly search is available.');
+});
+el('signatureScan').addEventListener('click',()=>{
+ if(el('signatureMode').value!=='anomaly'){
+   message('Celestial/environmental live scan is not enabled yet.');return;
+ }
+ command('colonySignatureScan');
+});
+el('signatureFocus').addEventListener('click',()=>{
+ const probe=Number(el('probeTarget').value);
+ const signature=Number(el('signatureTarget').value);
+ if(!Number.isSafeInteger(probe)||probe<=0||
+    !Number.isSafeInteger(signature)||signature<=0){
+   message('Deploy a probe and select a detected signature first.');return;
+ }
+ command('colonyProbeFocus',{probe,signature});
+});
+el('signatureCancel').addEventListener('click',()=>{
+ const probe=Number(el('probeTarget').value);
+ if(!Number.isSafeInteger(probe)||probe<=0){
+   message('Select a deployed probe to cancel its mission.');return;
+ }
+ command('colonyProbeCancel',{probe});
+});
 el('probeRetrieve').addEventListener('click',()=>{
  const probe=Number(el('probeTarget').value);
  if(Number.isSafeInteger(probe)&&probe>0)command('colonyProbeRecover',{probe});
