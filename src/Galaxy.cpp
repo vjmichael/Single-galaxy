@@ -381,6 +381,26 @@ std::vector<SurveyArchive::PublicRecord> SurveyArchive::published(std::uint32_t 
     }
     return out;
 }
+std::size_t SurveyArchive::import_native_discoveries(const Simulation& world,
+    PlayerId owner,std::uint32_t system) {
+    if(!owner||!system)throw std::invalid_argument("invalid native discovery import");
+    std::size_t imported=0;
+    for(const auto& [key,d]:world.discoveries()) {
+        (void)key;
+        if(d.owner!=owner||d.system!=system)continue;
+        // Native v67 journal stores verified asteroid discoveries, including
+        // non-extractive geological classifications. Do not import unknown
+        // entity kinds as fabricated settlement sites.
+        const Entity* source=world.find(d.site);
+        if(source && source->type!=EntityType::Asteroid)continue;
+        if(!bounded(d.location)||d.first_tick==0)continue;
+        const int confidence=d.survey_taxonomy?100:(d.geological?85:70);
+        ScanObservation observation{owner,system,d.site,SiteKind::AsteroidDeposit,
+            d.location,d.first_tick,confidence,false};
+        if(record(observation))++imported;
+    }
+    return imported;
+}
 std::optional<ScanObservation> SurveyArchive::known_site(PlayerId owner,
     std::uint32_t system,std::uint64_t site) const {
     if(!owner||!system||!site||
