@@ -192,6 +192,8 @@ el('combatFire').addEventListener('click',()=>{
 });
 el('flightScan').addEventListener('click',()=>command('colonyScan'));
 el('explorationScan').addEventListener('click',()=>command('colonyScan'));
+el('fitScanner').addEventListener('click',()=>command('colonyConfigureScanner',{mode:1}));
+el('unfitScanner').addEventListener('click',()=>command('colonyConfigureScanner',{mode:-1}));
 el('flightMine').addEventListener('click',()=>command('colonyMine',{amount:8}));
 el('flightMineSelected').addEventListener('click',()=>{
  const id=Number(el('colonyRockTarget').value);

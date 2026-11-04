@@ -26,6 +26,7 @@ int main(){
   {
    Simulation genesis(1010);
    ship=genesis.add_colony_ship(7,{0,0},60,24);
+   genesis.provision_starter_exploration_scanner(ship);
    rock=genesis.add_asteroid({2000,0},20);
    far=genesis.add_asteroid({100000,0},30);
    PersistentWorld w(db,std::move(genesis));
@@ -45,7 +46,7 @@ int main(){
    auto mining=order(w,4,ship,Action::Mine,rock);mining.amount=20;
    CHECK(run(w,mining)==Outcome::Applied);
    CHECK(w.world().discoveries().at({7,rock}).first_tick==rec.first_tick);
-   CHECK(w.world().total_ore()==50);
+   CHECK(w.world().total_ore()==52);
   }
   {
    PersistentWorld w(db,Simulation(1));
@@ -61,7 +62,7 @@ int main(){
    CHECK(w.world().discoveries().count({7,far})==1);
    CHECK(w.world().discoveries().size()==2);
    CHECK(w.world().discoveries().at({7,rock}).first_tick==2);
-   CHECK(w.world().total_ore()==50);
+   CHECK(w.world().total_ore()==52);
    PersistentWorld::recover_copy(db,copy);
   }
   {
@@ -69,7 +70,7 @@ int main(){
    CHECK(w.world().discoveries().size()==2);
    CHECK(w.world().discoveries().at({7,rock}).first_tick==2);
    CHECK(w.world().discoveries().at({7,far}).location.x==100000);
-   CHECK(w.world().total_ore()==50);
+   CHECK(w.world().total_ore()==52);
   }
   fs::remove_all(dir);
   std::cout<<"PASS PLAY-10 first observations, repeat scan, travel, SQLite recovery\n";

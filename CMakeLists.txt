@@ -1151,3 +1151,12 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_play10_exploration_tests PRIVATE galaxy_kernel)
   add_test(NAME galaxy_play10_exploration COMMAND galaxy_play10_exploration_tests)
 endif()
+
+# PLAY-11 hardpoint fitting, installed survey equipment, conservation,
+# strict module/rack snapshot recovery, and persistent discovery gating.
+if(BUILD_TESTING)
+  add_executable(galaxy_play11_fitting_tests
+    tests/PLAY11_FittingExplorationTests.cpp)
+  target_link_libraries(galaxy_play11_fitting_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play11_fitting COMMAND galaxy_play11_fitting_tests)
+endif()
