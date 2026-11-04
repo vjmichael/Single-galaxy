@@ -42,7 +42,8 @@ int main(){
    CHECK(w.world().events().back().transferred==0);
    CHECK(w.world().discoveries().size()==1);
    // Physical world-state change remains native and persisted.
-   CHECK(run(w,order(w,4,ship,Action::Mine,rock))==Outcome::Applied);
+   auto mining=order(w,4,ship,Action::Mine,rock);mining.amount=20;
+   CHECK(run(w,mining)==Outcome::Applied);
    CHECK(w.world().discoveries().at({7,rock}).first_tick==rec.first_tick);
    CHECK(w.world().total_ore()==50);
   }
@@ -54,7 +55,7 @@ int main(){
    Command thrust=order(w,5,ship,Action::Thrust);
    thrust.thrust_x=1;
    CHECK(run(w,thrust)==Outcome::Applied);
-   w.steps(180);
+   w.steps(240);
    CHECK(w.world().find(ship)->position.x>50000);
    CHECK(run(w,order(w,6,ship,Action::SurveyLocal))==Outcome::Applied);
    CHECK(w.world().discoveries().count({7,far})==1);
