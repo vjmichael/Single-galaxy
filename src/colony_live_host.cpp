@@ -429,6 +429,15 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
                 std::to_string(band.radius_milli_au)+"|"+
                 std::to_string(band.eccentricity_permille)+"|"+
                 std::to_string(static_cast<unsigned>(band.zone)));
+        const bodies=world.world().scan_physical_celestials(principal,ship);
+        for(const auto& body:bodies)
+            announce(world.world(),"CELESTIAL_BODY|"+std::to_string(body.id)+"|"+
+                std::to_string(body.parent_id)+"|"+
+                std::to_string(static_cast<unsigned>(body.kind))+"|"+
+                std::to_string(body.orbital_radius_milli_au)+"|"+
+                std::to_string(body.position.x_mm)+"|"+
+                std::to_string(body.position.y_mm)+"|"+
+                std::to_string(body.physical_radius_mm));
         announce(world.world(),"CELESTIAL_DONE|"+
             std::to_string(profile->orbital_bands.size()));
         return;

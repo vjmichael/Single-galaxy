@@ -116,3 +116,19 @@ test('private celestial survey history uses strict provenance fields',()=>{
  assert.throws(()=>decode('COLONY|1|15|CELESTIAL_HISTORY|20|10'));
  assert.throws(()=>decode('COLONY|1|15|CELESTIAL_HISTORY|0|10'));
 });
+
+test('native persisted celestial bodies have safe cosmic identity and coordinates',()=>{
+ const {decode}=require('../viewer/colony.js');
+ const row=decode('COLONY|1|7|CELESTIAL_BODY|4294967297|0|0|0|0|0|700000000000');
+ assert.equal(row.id,4294967297);
+ assert.equal(row.kind,0);
+ assert.equal(row.radius,700000000000);
+ const planet=decode('COLONY|1|7|CELESTIAL_BODY|4294967298|4294967297|1|1500|150000000000000|0|6000000000');
+ assert.equal(planet.kind,1);
+ assert.equal(planet.parent,4294967297);
+ assert.equal(planet.x,150000000000000);
+ for(const bad of ['COLONY|1|7|CELESTIAL_BODY|3|0|1|1500|0|0|6000000000',
+   'COLONY|1|7|CELESTIAL_BODY|3|1|1|1500|-0|0|6000000000',
+   'COLONY|1|7|CELESTIAL_BODY|3|1|7|1500|0|0|6000000000'])
+   assert.throws(()=>decode(bad));
+});
