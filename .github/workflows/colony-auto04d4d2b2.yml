@@ -1,0 +1,30 @@
+name: Colony AUTO-04D4D2B2 atomic family custody
+on:
+  push:
+    branches:
+      - integration/colony-auto04d4d2b2-atomic-family-v76-20261103
+  pull_request:
+    paths:
+      - 'src/Persistence.cpp'
+      - 'src/NpcAppearanceGenome.cpp'
+      - 'src/RegionalCheckpointStore.cpp'
+      - 'include/galaxy/Persistence.hpp'
+      - 'include/galaxy/NpcAppearanceGenome.hpp'
+      - 'include/galaxy/RegionalCheckpointStore.hpp'
+      - 'tests/COLONY_AUTO04D4D2B2_*'
+      - 'CMakeLists.txt'
+  workflow_dispatch:
+jobs:
+  native-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SQLite
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+      - name: Build real family acceptance and native predecessors
+        run: cmake --build build --target galaxy_colony_auto04d4d2b2_atomic_family_tests galaxy_colony_auto04d4d2b_native_family_tests galaxy_colony_auto04d4d2_physical_tests galaxy_colony_auto04d4d_family_tests galaxy_colony_auto04d4c_departure_tests -j 2
+      - name: Test full family transaction and predecessors
+        run: ctest --test-dir build --output-on-failure -R 'galaxy_colony_auto04(d4d2b2_atomic_family|d4d2b_native_family|d4d2_physical_dependents|d4d_family_proof|d4c_atomic_departure)'
