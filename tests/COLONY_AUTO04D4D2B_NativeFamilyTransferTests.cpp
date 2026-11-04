@@ -56,7 +56,8 @@ try{
     CHECK(world.children_physically_aboard(source)==0);
     CHECK(world.children_physically_aboard(receiver)==1);
     CHECK(world.people_physically_aboard(source)==0);
-    CHECK(world.people_physically_aboard(receiver)==5);
+    CHECK(world.people_physically_aboard(receiver)==4); // adult-only NPC API
+    CHECK(world.people_physically_aboard(receiver)+world.children_physically_aboard(receiver)==5);
     CHECK(world.physical_dependents().at(child).home_ship==receiver);
     CHECK(world.physical_dependents().at(child).location==receiver);
     CHECK(world.physical_dependents().at(child).guardian_id==1);
