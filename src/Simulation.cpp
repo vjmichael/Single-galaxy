@@ -5110,6 +5110,48 @@ std::vector<PhysicalCelestialBody> Simulation::scan_physical_celestials(
     return found==physical_celestial_systems_.end()?
         std::vector<PhysicalCelestialBody>{}:found->second;
 }
+std::optional<planetary::GeographicSite> Simulation::scan_planetary_geography(
+    PlayerId owner,EntityId ship,std::uint64_t body_id,
+    std::uint16_t latitude,std::uint16_t longitude) const {
+    // Reuse native ship ownership + fitted scanner authority, never a standalone
+    // client-generated body. Only physical planets and moons have surfaces.
+    const auto body=celestial_navigation_anchor(owner,ship,body_id);
+    if(!body || (body->kind!=CelestialKind::Planet &&
+                 body->kind!=CelestialKind::Moon) ||
+       latitude>=planetary::kWatershedRows ||
+       longitude>=planetary::kWatershedColumns) return std::nullopt;
+    const auto selector=astronomy_mix(kAstronomicalGalaxySeed^body_id);
+    planetary::PlanetaryEnvelope env{};
+    if(body->orbital_radius_milli_au>12000) {
+        env.climate=planetary::WorldClimate::Frozen;
+        env.water_coverage=std::uint8_t(20+(selector%70));
+        env.average_celsius=-25;
+    } else if(body->orbital_radius_milli_au<2200) {
+        env.climate=planetary::WorldClimate::AirlessRock;
+        env.water_coverage=0;
+        env.average_celsius=50;
+    } else if(selector%5==0) {
+        env.climate=planetary::WorldClimate::Arid;
+        env.water_coverage=std::uint8_t(2+(selector%15));
+        env.average_celsius=27;
+    } else if(selector%5==1) {
+        env.climate=planetary::WorldClimate::Ocean;
+        env.water_coverage=std::uint8_t(75+(selector%21));
+        env.average_celsius=16;
+    } else {
+        env.climate=planetary::WorldClimate::LifeSupporting;
+        env.water_coverage=std::uint8_t(25+(selector%45));
+        env.average_celsius=17;
+    }
+    // PGF biosphere genesis has NOT been integrated. Never claim discovered
+    // native vegetation merely from a favorable climate classification.
+    env.biosphere_present=false;
+    const planetary::PlanetaryWorldKey key{
+        kAstronomicalGalaxySeed,body->system,body->id,1};
+    const auto terrain=planetary::generate_watersheds(key,env);
+    return planetary::survey_geographic_site(
+        terrain,key,env,latitude,longitude);
+}
 std::optional<PhysicalCelestialBody> Simulation::celestial_navigation_anchor(
     PlayerId owner,EntityId ship,std::uint64_t body_id) const {
     if(!body_id)return std::nullopt;
