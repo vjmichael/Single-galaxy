@@ -402,6 +402,34 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
         else announce(world.world(),"ERROR|INVALID_INPUT");
         return;
     }
+    if(v.size()==1 && v[0]=="SYSTEM_CELESTIAL"){
+        const auto profile=world.world().scan_celestial_profile(principal,ship);
+        if(!profile){announce(world.world(),"ERROR|INVALID_INPUT");return;}
+        announce(world.world(),"CELESTIAL_HEADER|"+
+            std::to_string(static_cast<unsigned>(profile->architecture))+"|"+
+            std::to_string(static_cast<unsigned>(profile->morphology))+"|"+
+            std::to_string(profile->star_count)+"|"+
+            std::to_string(profile->orbital_bands.size()));
+        for(const auto& band:profile->orbital_bands)
+            announce(world.world(),"CELESTIAL_BAND|"+
+                std::to_string(band.ordinal)+"|"+
+                std::to_string(band.radius_milli_au)+"|"+
+                std::to_string(band.eccentricity_permille)+"|"+
+                std::to_string(static_cast<unsigned>(band.zone)));
+        announce(world.world(),"CELESTIAL_DONE|"+
+            std::to_string(profile->orbital_bands.size()));
+        return;
+    }
+    if(v.size()==1 && v[0]=="SYSTEM_ENVIRONMENT"){
+        const auto reading=world.world().scan_environment(principal,ship);
+        if(!reading){announce(world.world(),"ERROR|INVALID_INPUT");return;}
+        announce(world.world(),"ENVIRONMENT_STATUS|"+
+            std::to_string(reading->system)+"|"+
+            std::to_string(reading->magnetized_region?1:0)+"|"+
+            std::to_string(reading->dust_region?1:0)+"|"+
+            std::to_string(reading->ship_speed_mm_per_tick));
+        return;
+    }
     if(v.size()==2 && v[0]=="SIGNATURES"){
         announce(world.world(),"SIGNATURE_RESET");
         try{

@@ -1,10 +1,12 @@
 #pragma once
 
 #include "galaxy/Inventory.hpp"
+#include "galaxy/Astronomy.hpp"
 #include <array>
 #include <cstdint>
 #include <limits>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -761,6 +763,15 @@ public:
     struct SignatureHint { EntityId id=0;Vector2 coarse{};std::int64_t uncertainty_mm=5000000; };
     std::vector<SignatureHint> coarse_probe_signatures(PlayerId owner,EntityId ship,
         std::int64_t range_mm=500000000) const;
+    // Read-only survey of deterministic system metadata; no fabricated physical bodies.
+    std::optional<AstronomicalProfile> scan_celestial_profile(PlayerId owner,EntityId ship) const;
+    struct EnvironmentSurvey {
+        std::uint32_t system=0;
+        bool magnetized_region=false;
+        bool dust_region=false;
+        std::int64_t ship_speed_mm_per_tick=0;
+    };
+    std::optional<EnvironmentSurvey> scan_environment(PlayerId owner,EntityId ship) const;
     const std::map<std::uint64_t,DeployedSurveyProbe>& survey_probes() const {return survey_probes_;}
     bool was_depleted(EntityId id) const { return depleted_.count(id) != 0; }
     const Entity* find(EntityId id) const;

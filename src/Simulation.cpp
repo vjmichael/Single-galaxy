@@ -4621,6 +4621,34 @@ bool Simulation::within_deep_probe_link(std::int64_t dx_mm,
     return std::hypot(double(dx_mm),double(dy_mm))<=
            double(kDeepSpaceProbeCommsRangeMm);
 }
+std::optional<AstronomicalProfile> Simulation::scan_celestial_profile(
+    PlayerId owner,EntityId ship) const {
+    const auto it=entities_.find(ship);
+    if(!owner||it==entities_.end()||it->second.type!=EntityType::Ship||
+       it->second.owner_id!=owner||!it->second.fitting.exploration_scanner())
+        return std::nullopt;
+    // Shared versioned single-galaxy seed, never the mutable resource RNG.
+    return generate_astronomical_profile(0x53475F415354524FULL,it->second.system_id);
+}
+std::optional<Simulation::EnvironmentSurvey> Simulation::scan_environment(
+    PlayerId owner,EntityId ship) const {
+    const auto it=entities_.find(ship);
+    if(!owner||it==entities_.end()||it->second.type!=EntityType::Ship||
+       it->second.owner_id!=owner||!it->second.fitting.exploration_scanner())
+        return std::nullopt;
+    const auto profile=scan_celestial_profile(owner,ship);
+    if(!profile)return std::nullopt;
+    const auto has=[&](AstronomicalFeature feature){
+        return std::find(profile->features.begin(),profile->features.end(),feature)!=
+               profile->features.end();
+    };
+    const auto& v=it->second.velocity;
+    const auto speed=static_cast<std::int64_t>(std::llround(
+        std::hypot(double(v.x),double(v.y))));
+    return EnvironmentSurvey{it->second.system_id,
+        has(AstronomicalFeature::MagnetizedEnvironment),
+        has(AstronomicalFeature::DustArc),speed};
+}
 std::vector<Simulation::SignatureHint> Simulation::coarse_probe_signatures(
     PlayerId owner,EntityId ship,std::int64_t range_mm) const {
     if(range_mm<5000000||range_mm>500000000)
