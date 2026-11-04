@@ -42,18 +42,23 @@ bool same(const AutoMining& a, const AutoMining& b) {
 ClientProjection project(const Simulation& world, PlayerId owner = 0) {
     ClientProjection p;
     p.tick = world.tick();p.system_id = world.system_id();
+    EntityId viewer_ship=0;
     if(owner) {
-        bool found=false;
         for(const auto& [id,e]:world.entities()) {
-            (void)id;
             if(e.type==EntityType::Ship && e.owner_id==owner) {
-                p.system_id=e.system_id;found=true;break;
+                viewer_ship=id;
+                p.system_id=e.system_id;
+                break;
             }
         }
-        if(!found)throw std::invalid_argument("viewer owns no ship");
+        if(!viewer_ship)throw std::invalid_argument("viewer owns no ship");
     }
     for(const auto& [id,e] : world.entities()) {
         if(e.system_id!=p.system_id)continue;
+        // PLAY-13C.3: the viewer's ship defines one local physical region.
+        // No remote celestial frame may leak via snapshot, delta or inventory.
+        // owner=0 retains the legacy public test adapter semantics.
+        if(viewer_ship && !world.same_local_frame(viewer_ship,id))continue;
         p.entities.emplace(id,e);
         if(e.type==EntityType::Ship && e.dock_state!=DockState::InSpace)
             p.docks.emplace(id,DockTelemetry{e.dock_state,e.dock_station,e.transition_ticks});
