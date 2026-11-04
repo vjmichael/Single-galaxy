@@ -3692,8 +3692,11 @@ public:
                        sqlite3_column_int64(prep.get(),0)!=gen-1 ||
                        sqlite_str(prep.get(),2)!=std::to_string(src) ||
                        sqlite_str(prep.get(),3)!=std::to_string(dst) ||
-                       sqlite_str(prep.get(),4)!=scope || prep.row())
+                       sqlite_str(prep.get(),4)!=scope)
                         throw std::runtime_error("SQLite: executed family lacks exact prepared authority");
+                    const auto expected_prepared_hash=parse_u64(sqlite3_column_text(prep.get(),1));
+                    if(prep.row())
+                        throw std::runtime_error("SQLite: duplicate family preparation receipt");
                     // Match the PREVIOUS physical world; a prepared intent
                     // must not be retroactively attached to a different hull.
                     Statement before_state(db_,"SELECT state FROM snapshots WHERE generation=?");
@@ -3706,6 +3709,8 @@ public:
                     if(!raw || bytes<=0)throw std::runtime_error("SQLite: invalid departure predecessor");
                     const auto prior=Simulation::from_snapshot(
                         std::string(static_cast<const char*>(raw),static_cast<std::size_t>(bytes)));
+                    if(prior.state_hash()!=expected_prepared_hash)
+                        throw std::runtime_error("SQLite: prepared family witness not bound to actual predecessor");
                     if(prior.colony_departures().count(src) || prior.colony_ship(src)==nullptr ||
                        prior.colony_ship(src)->crew<1 ||
                        prior.physical_dependents().size()<static_cast<std::size_t>(children))
