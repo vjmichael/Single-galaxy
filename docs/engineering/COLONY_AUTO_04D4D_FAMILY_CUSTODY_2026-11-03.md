@@ -17,7 +17,7 @@ The v72 adult-only safety boundary stays in force. **No child is moved, created,
 - **Every** birth linked to the source is examined **across all family scopes**; an unlisted second family cannot become an invisible abandoned dependent.
 - Each child accompanies an actual currently living recorded parent or verified legal non-parent guardian, included in the adult manifest. This first conservative adapter requires both original recorded parents to be present as well; more complex lawful custody with deceased or absent parents is a separate adapter.
 - The complete ART02 source census equals the named adults plus accounted dependents, and receiving census equals existing receiving native workforce; no unmatched residents or ghost children can be hidden.
-- The real same-owner receiving vessel holds at least two consumption periods of **food, water and oxygen for everyone already aboard plus ALL incoming adults AND children**. This is stricter than the v72 adult-only budget; it is a preflight, not an actual reservation.
+- The source ship and occupied source worksites are within the native docking range of the same-owner receiver, with no pre-existing passenger voyage custody. The incoming adults plus children fit within **16 actual passenger berths**. The real same-owner receiving vessel holds at least two consumption periods of **food, water and oxygen for everyone already aboard plus ALL incoming adults AND children**. This is stricter than the v72 adult-only budget; it is a preflight, not an actual reservation.
 
 `PersistentWorld::audit_colony_family_departure` exposes the native read-only proof. The returned `ready_for_transaction=true` means **evidence is complete enough to begin designing an integrated commit**; `evacuated` is always false.
 
@@ -27,7 +27,7 @@ The FNV witness is a deterministic integrity identifier, **not cryptographic pro
 
 ## Native tests
 
-`COLONY_AUTO04D4D_FamilyProofTests.cpp` builds real named ship crews, registers ART02 founding population, records a genuine ART02 reserved-ID child birth, mirrors the world-birth bridge as a controlled fixture, and verifies complete adult/child closure. It checks missing/forged/duplicate children, wrong guardian, incomplete adults, corrupted independent birth bridge, crash-rollback, duplicate prepared manifest idempotence, reused/stale intent refusal and explicitly **no rescued children**. The synthetic birth bridge fixture is deliberately distinguished from a production regional birth transaction.
+`COLONY_AUTO04D4D_FamilyProofTests.cpp` builds real named ship crews, registers ART02 founding population, records a genuine ART02 reserved-ID child birth, mirrors the world-birth bridge as a controlled fixture, and verifies complete adult/child closure. It checks missing/forged/duplicate children, wrong guardian, incomplete adults, unlisted second family scope, corrupted independent birth bridge, immutable receipt trigger, crash-rollback, duplicate prepared manifest idempotence, reused/stale intent refusal and explicitly **no rescued children**. The synthetic birth bridge fixture is deliberately distinguished from a production regional birth transaction.
 
 `.github/workflows/colony-auto04d4d.yml` builds and runs this proof alongside v72 actual adult-departure and life-support acceptance.
 
