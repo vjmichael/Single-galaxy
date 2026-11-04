@@ -35,6 +35,7 @@ The new journal is not a competing world store, and is not an authorization to e
 6. Continued emergency does not create repeated alerts.
 7. Mutation of an immutable event is refused by SQLite.
 8. Privileged deletion after dropping the trigger is detected on next startup via count/hash-chain reconciliation.
+9. An occupied colony ship cannot disappear from the physical simulation without a verified closure adapter, and the failed transaction preserves the previous journal state.
 
 `.github/workflows/colony-auto04d2.yml` requests native CMake/CTest checks for AUTO04A, AUTO04B native host + authenticated relay, and AUTO04D2. A committed test **does not** mean it passed; do not close the gate until runner evidence is available.
 
