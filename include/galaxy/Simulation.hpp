@@ -22,7 +22,7 @@ struct Vector2 {
 };
 
 enum class EntityType { Ship, Asteroid, Station, Stargate, Wreck };
-enum class Action { Thrust, Mine, StartMining, StopMining, RequestUndock, RequestDock, UnloadOre, LoadOre, SellOre, RequestJump, SetGatePairOnline, SetGateStaff, DeliverGateSpares, RefineOre, FabricateModule, ConstructOutpost, RefineMineral, FabricateMaterialModule, PlantCrops, HarvestCrops, RecycleWater, RecycleCompost, ProduceOxygen, LoadLifeWater, ConstructFarm, TransferFarmStock, AssignFarmWorkers, ConstructHabitat, TransferHabitatStock, AssignHabitatResidents, ConstructUtility, RepairUtility, TransferUtilitySpares, AssignUtilityTechnicians, SetUtilityMaintenance, ConstructCommunity, TransferCommunityStock, AssignCommunityStaff, ConstructClinic, TransferClinicStock, AssignClinicStaff, ConstructReclaimer, ConstructWaterworks, TransferWaterworksFeed, SetPolicyAssurance, AssignPolicyInspectors, AssignFarmMentor, HostDestroyShip, HostCrewLoss, ConstructWorkshop, TransferWorkshopFeed, AssignWorkshopOperator, TransferWorkshopOutput, ConstructWorkshopFinisher, AssignWorkshopFinisher, TransferWorkshopFinalOutput, TransferWorkshopStack, ConstructStorage, TransferStorageStack, ConstructStorageNode, TransferStorageNodeStack, ConstructStorageLink, ConstructWorkshopLink, PlaceFactoryEquipment, PlaceConveyorCell, CompleteConveyorRoute, HostEmbarkPassengers, HostDisembarkPassengers, HostStrandFerry, HostResumeFerry, HostEvacuatePassengers, HostDestroyPassengerFerry, HostResolveMixedFerryLoss, HostTrainMedic, HostTriageRescued, HostTreatInjuries, HostScheduleMedicShift, HostLoadMedicalKit, HostMobileStabilize, HostSettleMigrant, HostSplitEvacuatePassengers, HostEscrowConstructedStock, HostReturnConstructedStock, HostTransferConsignedStock, HostColonyDeparture };
+enum class Action { Thrust, Mine, StartMining, StopMining, RequestUndock, RequestDock, UnloadOre, LoadOre, SellOre, RequestJump, SetGatePairOnline, SetGateStaff, DeliverGateSpares, RefineOre, FabricateModule, ConstructOutpost, RefineMineral, FabricateMaterialModule, PlantCrops, HarvestCrops, RecycleWater, RecycleCompost, ProduceOxygen, LoadLifeWater, ConstructFarm, TransferFarmStock, AssignFarmWorkers, ConstructHabitat, TransferHabitatStock, AssignHabitatResidents, ConstructUtility, RepairUtility, TransferUtilitySpares, AssignUtilityTechnicians, SetUtilityMaintenance, ConstructCommunity, TransferCommunityStock, AssignCommunityStaff, ConstructClinic, TransferClinicStock, AssignClinicStaff, ConstructReclaimer, ConstructWaterworks, TransferWaterworksFeed, SetPolicyAssurance, AssignPolicyInspectors, AssignFarmMentor, HostDestroyShip, HostCrewLoss, ConstructWorkshop, TransferWorkshopFeed, AssignWorkshopOperator, TransferWorkshopOutput, ConstructWorkshopFinisher, AssignWorkshopFinisher, TransferWorkshopFinalOutput, TransferWorkshopStack, ConstructStorage, TransferStorageStack, ConstructStorageNode, TransferStorageNodeStack, ConstructStorageLink, ConstructWorkshopLink, PlaceFactoryEquipment, PlaceConveyorCell, CompleteConveyorRoute, HostEmbarkPassengers, HostDisembarkPassengers, HostStrandFerry, HostResumeFerry, HostEvacuatePassengers, HostDestroyPassengerFerry, HostResolveMixedFerryLoss, HostTrainMedic, HostTriageRescued, HostTreatInjuries, HostScheduleMedicShift, HostLoadMedicalKit, HostMobileStabilize, HostSettleMigrant, HostSplitEvacuatePassengers, HostEscrowConstructedStock, HostReturnConstructedStock, HostTransferConsignedStock, HostColonyDeparture, HostRegisterDependentBirth, HostColonyFamilyDeparture };
 enum class Outcome { Applied, InvalidActor, Unauthorized, InvalidTarget, OutOfRange, InvalidArgument, NoResources, CargoFull, NotMining, NotInSpace, NotDocked, InTransition, ShipMoving, HangarFull, InsufficientFunds, WrongSystem, GateOffline, NotColonyShip, InsufficientCrew };
 enum class ActivityKind { AsteroidDespawned, AutoMiningTransfer, MiningStopped, Undocked, Docked, JumpCompleted, ShipDestroyed, NpcLost, AutoStorageTransfer };
 enum class DockState { InSpace, Docked, Undocking, Docking };
@@ -216,6 +216,11 @@ struct ColonyDeparture {
     EntityId source=0, receiver=0;
     std::uint64_t command_id=0, tick=0;
     std::vector<std::uint64_t> relocated_npcs;
+    std::vector<std::uint64_t> relocated_children; // v59 dependent identities, never crew
+};
+struct PhysicalDependent {
+    std::uint64_t id=0,parent_a=0,parent_b=0,birth_command=0;
+    EntityId home_ship=0,location=0; // one real life-support compartment
 };
 struct CrewRehome {
     EntityId wreck=0,rescue_ship=0;
@@ -543,6 +548,14 @@ public:
     // until a separately journaled and verified migration is implemented.
     void enable_passenger_life_support();
     bool passenger_needs_enabled() const {return snapshot_version_>=57;}
+    // New-world-only v59: each ART02 dependent consumes actual local needs
+    // without becoming an adult NPC or a workforce member.
+    void enable_physical_dependent_accounting();
+    bool physical_dependents_enabled() const {return snapshot_version_>=59;}
+    const std::map<std::uint64_t,PhysicalDependent>& physical_dependents() const {
+        return physical_dependents_;
+    }
+    std::size_t dependents_physically_at(EntityId place) const;
 
     // v40 opt-in, genesis-only rule change. Old v39 farms and workshops retain
     // their original behavior unless an explicit journaled migration is built.
@@ -681,6 +694,8 @@ private:
     EntityId add_entity(Entity entity);
     Event execute(const Command& command);
     bool can_depart_colony(const Command& command) const;
+    bool can_depart_family(const Command& command) const;
+    bool can_record_dependent_birth(const Command& command) const;
     bool valid_position(Vector2 position) const;
     Outcome mine_status(const Entity& actor, EntityId target) const;
     std::int64_t loaded_cargo_liters(const Entity& ship) const;
@@ -751,6 +766,7 @@ private:
     std::map<EntityId,MobileMedicalKit> mobile_medical_kits_;
     std::map<std::uint64_t,CrewRehome> crew_rehomes_;
     std::map<EntityId,ColonyDeparture> colony_departures_;
+    std::map<std::uint64_t,PhysicalDependent> physical_dependents_;
     std::uint64_t next_npc_id_=1;
     bool npc_next_seen_=false;
     std::map<EntityId,std::uint64_t> farm_team_xp_;
