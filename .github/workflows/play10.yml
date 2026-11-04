@@ -1,0 +1,38 @@
+name: PLAY-10 persistent exploration
+on:
+  push:
+    branches:
+      - integration/play10-persistent-exploration-20261104
+  pull_request:
+    paths:
+      - 'include/galaxy/Simulation.hpp'
+      - 'src/Simulation.cpp'
+      - 'src/colony_live_host.cpp'
+      - 'viewer/colony.js'
+      - 'viewer/interactive.js'
+      - 'viewer/interactive.html'
+      - 'viewer/exploration-journal.js'
+      - 'live/interactive_relay.py'
+      - 'tests/PLAY10_ExplorationPersistenceTests.cpp'
+      - 'tests/PLAY10_ExplorationWiringTests.js'
+      - '.github/workflows/play10.yml'
+jobs:
+  durable-survey:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure native game
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+      - name: Build native exploration and integrated host
+        run: cmake --build build --target galaxy_play10_exploration_tests galaxy_colony_live_host -j2
+      - name: Verify native committed first observations and SQLite recovery
+        run: ctest --test-dir build -R '^galaxy_play10_exploration$' --output-on-failure
+      - name: Verify exploration and existing gameplay browser contracts
+        run: node --test tests/ExplorationJournalTests.js tests/PLAY10_ExplorationWiringTests.js tests/PLAY09_SalvageWiringTests.js tests/PLAY08_CombatWiringTests.js tests/TravelAssistTests.js tests/Play07WiringTests.js tests/FlightCameraTests.js tests/Play06WiringTests.js tests/ExpeditionFeedbackTests.js tests/ExpeditionWiringTests.js tests/CargoReturnTests.js tests/FlightControlsTests.js tests/OpeningGuideTests.js
+      - name: Parse browser and relay code
+        run: |
+          node --check viewer/exploration-journal.js
+          node --check viewer/interactive.js
+          node --check viewer/colony.js
+          node --check viewer/viewer.js
+          python3 -m py_compile live/interactive_relay.py
