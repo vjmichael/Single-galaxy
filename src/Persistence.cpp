@@ -9620,9 +9620,21 @@ bool PersistentWorld::submit_voluntary_immigration_boarding(
        world_.voyage_status(a.transport_id)!=0 ||
        store_->effective_governance(a.origin,generation_).leader_id==a.npc_id ||
        !([&]{
-           const auto memory=store_->personal_outlook_before(
+           if(!a.personal_outlook_event_id){
+               // An authentic pre-EXIT01C permit may finish boarding under its
+               // original strict, still-critical source scarcity condition.
+               return static_cast<int>(colony_safety::assess(
+                   world_,a.origin,a.origin).risk)>=
+                   static_cast<int>(colony_safety::Risk::Critical);
+           }
+           const auto approved=store_->personal_outlook_before(
+               a.origin,a.npc_id,a.world_generation);
+           const auto latest=store_->personal_outlook_before(
                a.origin,a.npc_id,generation_);
-           return memory && memory->considering_departure;
+           return approved && latest &&
+                  approved->event_id==a.personal_outlook_event_id &&
+                  approved->considering_departure &&
+                  latest->considering_departure;
        }()) ||
        colony_safety::assess(world_,a.destination,a.destination).risk!=
            colony_safety::Risk::Safe ||
