@@ -1,0 +1,19 @@
+name: EXIT-01E route coordinator focused acceptance
+on:
+  push:
+    branches:
+      - integration/colony-exit01e-route-coordination-a-20261104
+  pull_request:
+    paths:
+      - 'include/galaxy/VoluntaryRouteCoordinator.hpp'
+      - 'tests/COLONY_EXIT01E_RouteCoordinatorTests.cpp'
+      - '.github/workflows/colony-exit01e.yml'
+jobs:
+  bounded-routes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile native coordinator tests
+        run: g++ -std=c++17 -Wall -Wextra -Werror -pedantic -Iinclude tests/COLONY_EXIT01E_RouteCoordinatorTests.cpp -o /tmp/exit01e-route
+      - name: Run focused coordinator tests
+        run: /tmp/exit01e-route

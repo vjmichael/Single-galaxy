@@ -1107,3 +1107,13 @@ if(BUILD_TESTING)
     add_test(NAME galaxy_colony_exit01d_bounded
         COMMAND galaxy_colony_exit01d_bounded_tests)
 endif()
+
+# EXIT-01E.A: host broker-approved route selection, no fabricated immigration.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_exit01e_route_tests
+        tests/COLONY_EXIT01E_RouteCoordinatorTests.cpp)
+    target_include_directories(galaxy_colony_exit01e_route_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    add_test(NAME galaxy_colony_exit01e_route
+        COMMAND galaxy_colony_exit01e_route_tests)
+endif()
