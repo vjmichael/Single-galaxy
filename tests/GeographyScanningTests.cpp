@@ -83,6 +83,11 @@ static void scanning_and_probes() {
     auto env=sensors.scan_mode(7,3,5,1000,40,ScanMode::Environmental);
     CHECK(env.size()==1 && env[0].site==104);
     CHECK(sensors.scan_mode(7,3,5,1000,40,ScanMode::Celestial).empty());
+    const auto planetary=sensors.scan_mode(7,3,5,5000,40,ScanMode::Celestial);
+    CHECK(planetary.size()==1 && planetary[0].site==102);
+    CHECK(planetary[0].kind==SiteKind::Planet);
+    CHECK(planetary[0].confidence>=70);
+    CHECK(sensors.scan_mode(8,3,5,5000,40,ScanMode::Celestial).empty());
     CHECK(sensors.scan_mode(7,3,5,1000,40,ScanMode::Anomaly).empty());
     CHECK(sensors.scan_mode(8,3,5,1000,40,ScanMode::Environmental).empty());
     CHECK(sensors.recover(100,7,3));
