@@ -23,6 +23,19 @@ struct Vector2 {
     std::int64_t y = 0;
 };
 
+// Persistent astronomical world-space coordinates in real millimeters,
+// separate from short-range physics simulation coordinates (±1000 km).
+struct CosmicPosition {std::int64_t x_mm=0,y_mm=0;};
+enum class CelestialKind {Star=0,Planet=1,Moon=2,DebrisRegion=3};
+struct PhysicalCelestialBody {
+    std::uint64_t id=0,parent_id=0;
+    std::uint32_t system=0;
+    CelestialKind kind=CelestialKind::Star;
+    std::uint64_t orbital_radius_milli_au=0;
+    CosmicPosition position{};
+    std::uint64_t physical_radius_mm=0;
+};
+
 enum class EntityType { Ship, Asteroid, Station, Stargate, Wreck };
 enum class Action { Thrust, Mine, StartMining, StopMining, RequestUndock, RequestDock, UnloadOre, LoadOre, SellOre, RequestJump, SetGatePairOnline, SetGateStaff, DeliverGateSpares, RefineOre, FabricateModule, ConstructOutpost, RefineMineral, FabricateMaterialModule, PlantCrops, HarvestCrops, RecycleWater, RecycleCompost, ProduceOxygen, LoadLifeWater, ConstructFarm, TransferFarmStock, AssignFarmWorkers, ConstructHabitat, TransferHabitatStock, AssignHabitatResidents, ConstructUtility, RepairUtility, TransferUtilitySpares, AssignUtilityTechnicians, SetUtilityMaintenance, ConstructCommunity, TransferCommunityStock, AssignCommunityStaff, ConstructClinic, TransferClinicStock, AssignClinicStaff, ConstructReclaimer, ConstructWaterworks, TransferWaterworksFeed, SetPolicyAssurance, AssignPolicyInspectors, AssignFarmMentor, HostDestroyShip, HostCrewLoss, ConstructWorkshop, TransferWorkshopFeed, AssignWorkshopOperator, TransferWorkshopOutput, ConstructWorkshopFinisher, AssignWorkshopFinisher, TransferWorkshopFinalOutput, TransferWorkshopStack, ConstructStorage, TransferStorageStack, ConstructStorageNode, TransferStorageNodeStack, ConstructStorageLink, ConstructWorkshopLink, PlaceFactoryEquipment, PlaceConveyorCell, CompleteConveyorRoute, HostEmbarkPassengers, HostDisembarkPassengers, HostStrandFerry, HostResumeFerry, HostEvacuatePassengers, HostDestroyPassengerFerry, HostResolveMixedFerryLoss, HostTrainMedic, HostTriageRescued, HostTreatInjuries, HostScheduleMedicShift, HostLoadMedicalKit, HostMobileStabilize, HostSettleMigrant, HostSplitEvacuatePassengers, HostEscrowConstructedStock, HostReturnConstructedStock, HostTransferConsignedStock, HostColonyDeparture, HostRegisterDependent, FireTrainingWeapon, SalvageWreck, SurveyLocal, ConfigureExplorationScanner, DeploySurveyProbe, ScanSurveyProbe, RecoverSurveyProbe, LaunchGeologicalDrone, FocusSurveyProbe, CancelSurveyFocus };
 enum class Outcome { Applied, InvalidActor, Unauthorized, InvalidTarget, OutOfRange, InvalidArgument, NoResources, CargoFull, NotMining, NotInSpace, NotDocked, InTransition, ShipMoving, HangarFull, InsufficientFunds, WrongSystem, GateOffline, NotColonyShip, InsufficientCrew };
@@ -749,6 +762,9 @@ public:
     // Native host converts 10 gameplay seconds to its configured tick period.
     // The requested period is durable for future queued reports.
     void configure_probe_report_tick_ms(std::uint64_t tick_ms);
+    // v70: deterministic physical celestial bodies with stable world IDs.
+    // Init never consumes ship resources, and cannot run twice with new geometry.
+    void ensure_physical_celestial_systems();
     std::uint64_t probe_report_delay_ticks() const {return probe_report_delay_ticks_;}
 
     std::uint64_t tick() const { return tick_; }
@@ -765,6 +781,10 @@ public:
         std::int64_t range_mm=500000000) const;
     // Read-only survey of deterministic system metadata; no fabricated physical bodies.
     std::optional<AstronomicalProfile> scan_celestial_profile(PlayerId owner,EntityId ship) const;
+    std::vector<PhysicalCelestialBody> scan_physical_celestials(PlayerId owner,EntityId ship) const;
+    const std::map<std::uint32_t,std::vector<PhysicalCelestialBody>>& physical_celestial_systems() const {
+        return physical_celestial_systems_;
+    }
     struct EnvironmentSurvey {
         std::uint32_t system=0;
         bool magnetized_region=false;
@@ -825,6 +845,7 @@ private:
     std::uint64_t next_entity_id_ = 1;
     std::uint64_t rng_state_;
     std::map<EntityId, Entity> entities_; // stable deterministic iteration
+    std::map<std::uint32_t,std::vector<PhysicalCelestialBody>> physical_celestial_systems_;
     std::set<EntityId> depleted_;
     std::map<EntityId, AutoMining> mining_;
     std::map<std::pair<PlayerId,EntityId>,DiscoveryRecord> discoveries_;

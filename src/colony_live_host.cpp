@@ -766,6 +766,8 @@ int main(int argc,char** argv){
         // v68: translate the nominal 10-second report into durable game ticks
         // using this host session's actual fixed-step duration.
         world.configure_probe_report_tick_ms(static_cast<std::uint64_t>(ms));
+        // Existing saves are upgraded atomically on first new-host start.
+        world.ensure_physical_celestial_systems();
         if(!world.world().colony_ship(ship)||!world.world().find(ship)||world.world().find(ship)->owner_id!=owner){
             // A populated production world can have stations before its first
             // player-owned colony ship. Do not assume the ship has entity ID 1.
