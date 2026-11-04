@@ -38,7 +38,7 @@ try{
         // Food and oxygen remain healthy, but the water supply will fail
         // genuinely before tick 250, leaving real consumed wastewater which
         // can be reclaimed rather than magically provisioned.
-        initial.provision_colony_genesis(source,10000,220,10000,1000,5000);
+        initial.provision_colony_genesis(source,10000,1000,10000,1000,5000);
         initial.enable_individual_workforce();
         initial.upgrade_assignment_snapshot_format();
         initial.enable_passenger_life_support();
