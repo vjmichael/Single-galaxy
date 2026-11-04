@@ -391,6 +391,14 @@ NpcCustodyView Simulation::npc_custody(std::uint64_t id) const {
     const auto& n=it->second;
     return {n.id,n.home_ship,n.location,n.role,n.transport_id,n.transport_id!=0};
 }
+std::size_t Simulation::children_physically_aboard(EntityId ship) const {
+    std::size_t count=0;
+    for(const auto& [id,child]:physical_dependents_){
+        (void)id;
+        if(child.location==ship)++count;
+    }
+    return count;
+}
 std::size_t Simulation::people_physically_aboard(EntityId ship) const {
     std::size_t count=0;
     for(const auto& [id,n]:npcs_){
@@ -974,6 +982,29 @@ bool Simulation::can_depart_colony(const Command& c) const {
 }
 bool Simulation::submit(const Command& c) {
     if(colony_departures_.count(c.actor) || colony_departures_.count(c.target))return false;
+
+    const bool register_child=c.action==Action::HostRegisterDependent;
+    if(register_child){
+        if(c.issuer!=kServerAuthority || snapshot_version_<57 ||
+           !c.id || !c.actor || c.target!=c.actor || !colony_ships_.count(c.actor) ||
+           !c.transport_id || c.transport_id<(1ULL<<62) ||
+           c.passenger_ids.size()!=1 || c.amount || c.thrust_x || c.thrust_y ||
+           c.secondary_receiver || c.secondary_transport ||
+           physical_dependents_.count(c.transport_id) ||
+           npcs_.count(c.transport_id) || casualties_.count(c.transport_id) ||
+           !npcs_.count(c.passenger_ids.front()))return false;
+        const auto& guardian=npcs_.at(c.passenger_ids.front());
+        if(guardian.home_ship!=c.actor || guardian.location!=c.actor ||
+           guardian.transport_id || colony_departures_.count(c.actor))return false;
+        for(const auto& [tick,cmds]:commands_){
+            (void)tick;
+            for(const auto& pending:cmds)if(
+                (pending.action==Action::HostRegisterDependent &&
+                 pending.transport_id==c.transport_id) ||
+                pending.action==Action::HostColonyDeparture)return false;
+        }
+        snapshot_version_=59;
+    }
     const bool colony_departure=c.action==Action::HostColonyDeparture;
     if(colony_departure){
         if(!can_depart_colony(c)||submitted_ids_.count(c.id))return false;
@@ -1406,9 +1437,9 @@ bool Simulation::submit(const Command& c) {
                 if(it->second.location!=c.target || it->second.transport_id)return false;
             }else if(it->second.location!=c.actor || it->second.transport_id!=c.transport_id)return false;
         }
-    }else if(!medical_action && !migration_action && !colony_departure && (c.transport_id || !c.passenger_ids.empty()))return false;
+    }else if(!medical_action && !migration_action && !colony_departure && !register_child && (c.transport_id || !c.passenger_ids.empty()))return false;
     if (c.id == 0 || c.execute_tick <= tick_ || c.issuer == 0 || submitted_ids_.count(c.id)) return false;
-    if (passenger_action || medical_action || migration_action || escrow_action || return_action || consigned || colony_departure) { /* validated host command above */ }
+    if (passenger_action || medical_action || migration_action || escrow_action || return_action || consigned || colony_departure || register_child) { /* validated host command above */ }
     else if (c.action == Action::HostDestroyShip || c.action == Action::HostCrewLoss) {
         if(c.issuer != kServerAuthority || !c.actor || !c.target ||
            c.thrust_x || c.thrust_y ||
@@ -1683,6 +1714,21 @@ void Simulation::stop_mining(EntityId actor, Outcome reason) {
 
 Event Simulation::execute(const Command& c) {
     Event result{tick_, c.id, Outcome::InvalidActor, 0};
+    if(c.action==Action::HostRegisterDependent){
+        if(c.issuer!=kServerAuthority || snapshot_version_<59 || !c.actor ||
+           c.actor!=c.target || !c.transport_id || c.transport_id<(1ULL<<62) ||
+           c.passenger_ids.size()!=1 || physical_dependents_.count(c.transport_id) ||
+           !colony_ships_.count(c.actor) || !npcs_.count(c.passenger_ids.front()) ||
+           npcs_.at(c.passenger_ids.front()).home_ship!=c.actor ||
+           npcs_.at(c.passenger_ids.front()).location!=c.actor){
+            result.result=Outcome::InvalidArgument;return result;
+        }
+        physical_dependents_.emplace(c.transport_id,PhysicalDependent{
+            c.transport_id,c.passenger_ids.front(),c.id,tick_,c.actor,c.actor});
+        result.result=Outcome::Applied;
+        result.transferred=0; // Physical people must not masquerade as material.
+        return result;
+    }
     if(c.action==Action::HostColonyDeparture){
         if(!can_depart_colony(c)){
             result.result=Outcome::InvalidArgument;return result;
@@ -4026,8 +4072,11 @@ void Simulation::process_colony_needs(){
         const auto physical=passenger_needs_enabled()?people_physically_aboard(id):0;
         if(crew<0 || physical>static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max()))
             throw std::overflow_error("physical ferry population overflow");
+        const auto child_count=snapshot_version_>=59?children_physically_aboard(id):0;
+        if(child_count>static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max())-physical)
+            throw std::overflow_error("dependent ship occupancy overflow");
         const auto people=passenger_needs_enabled()?
-            static_cast<std::int64_t>(physical):crew;
+            static_cast<std::int64_t>(physical+child_count):crew;
         const auto food=std::min(people,l.food_kg);
         const auto water=std::min(people,l.water_kg);
         const auto oxygen=std::min(people,l.oxygen_kg);
@@ -6235,6 +6284,7 @@ void Simulation::swap(Simulation& other) noexcept {
     mobile_medical_kits_.swap(other.mobile_medical_kits_);
     crew_rehomes_.swap(other.crew_rehomes_);
     colony_departures_.swap(other.colony_departures_);
+    physical_dependents_.swap(other.physical_dependents_);
     voyages_.swap(other.voyages_);
     farm_team_xp_.swap(other.farm_team_xp_);
     swap(next_npc_id_,other.next_npc_id_);
