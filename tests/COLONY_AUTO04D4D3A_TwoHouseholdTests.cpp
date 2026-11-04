@@ -186,3 +186,4 @@ try{
     std::cerr<<"FAIL v77 two-household evacuation: "<<e.what()<<'\n';
     return 1;
 }
+}
