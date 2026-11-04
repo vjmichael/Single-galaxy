@@ -24,6 +24,7 @@ int main(){
   EntityId ship=0, rock=0;
   {
    Simulation seed(1111);ship=seed.add_colony_ship(7,{0,0},60,24);
+   seed.enable_individual_workforce();
    seed.provision_starter_exploration_scanner(ship);
    rock=seed.add_asteroid({2000,0},20);
    CHECK(seed.find(ship)->fitting.hardpoints.size()==2);
@@ -65,6 +66,7 @@ int main(){
   }
   {
    Simulation seed(1212);auto unfitted=seed.add_colony_ship(7,{0,0},60,24);
+   seed.enable_individual_workforce();
    PersistentWorld w((dir/"unfitted.sqlite").string(),std::move(seed));
    CHECK(run(w,issue(w,9,unfitted,Action::SurveyLocal))==Outcome::NoResources);
    CHECK(run(w,issue(w,10,unfitted,Action::ConfigureExplorationScanner,1))==Outcome::NoResources);
