@@ -25,7 +25,7 @@ A behavior change applied silently to old save versions would invalidate histori
 
 ### Tested behavior
 
-- `COLONY_AUTO04D4_ResourceCustodyTests.cpp` creates two real colony ships with two native crew temporarily transported aboard another. The ferry consumes resources for all six people. The origin consumes **none** while both crew are absent and resumes consumption when they disembark. The test checks real physical NPC counts, food/water/oxygen, whole-world mass conservation, database crash rollback and restarted state.
+- `COLONY_AUTO04D4_ResourceCustodyTests.cpp` creates two real colony ships with two native crew temporarily transported aboard another. The ferry consumes resources for all six people. The origin consumes **none** while both crew are absent and resumes consumption when they disembark. The test checks real physical NPC counts, food/water/oxygen, whole-world mass conservation, database crash rollback, restart, and an independently recovered `recover_copy` from immutable operation history. It also rejects boarding onto a vessel whose actual stocks cannot sustain the resulting headcount for two needs periods.
 - `COLONY_AUTO04D3_FerryRescueTests.cpp` now exercises v57 needs. Source risk reaches Critical sooner when it contains four additional true passengers. After an applied rescue, four passengers consume onboard the stocked receiving ferry instead of the endangered source. A nearby but depleted 16-crew ferry is refused as receiver; identity and cargo totals persist.
 
 ### Fail-closed full-colony evacuation boundaries
