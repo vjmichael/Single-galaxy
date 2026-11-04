@@ -4603,6 +4603,30 @@ void Simulation::step() {
         }
         p.drone_phase=2;
     }
+    // Autonomous survey reports transmit only after a drone returns and its
+    // owning ship is in real 10 km radio range. Equipment recovery is separate.
+    if(snapshot_version_>=67)for(const auto& [id,p]:survey_probes_){
+        (void)id;
+        if(p.drone_phase!=3 || !p.taxonomy)continue;
+        const auto ship=entities_.find(p.carrier);
+        if(ship==entities_.end() || ship->second.type!=EntityType::Ship ||
+           ship->second.owner_id!=p.owner || ship->second.system_id!=p.system)
+            continue;
+        const auto dx=p.position.x-ship->second.position.x;
+        const auto dy=p.position.y-ship->second.position.y;
+        constexpr auto range=kDroneControlRangeMm;
+        if(dx<-range || dx>range || dy<-range || dy>range ||
+           dx*dx+dy*dy>range*range)continue;
+        const auto key=std::make_pair(p.owner,p.drone_target);
+        if(auto d=discoveries_.find(key);d!=discoveries_.end()){
+            d->second.survey_taxonomy=p.taxonomy;
+        }else if(discoveries_.size()<10000){
+            const auto rock=entities_.find(p.drone_target);
+            const auto position=rock!=entities_.end()?rock->second.position:p.position;
+            discoveries_.emplace(key,DiscoveryRecord{p.owner,p.drone_target,
+                p.system,position,tick_,true,p.taxonomy});
+        }
+    }
     process_gate_maintenance();
     process_utilities();
     process_storage_links();
