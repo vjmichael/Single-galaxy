@@ -79,7 +79,9 @@ try{
         w.steps(240-w.world().tick()); // physically consume next 20-tick needs period
         CHECK(w.world().life_support(receiver)->food_kg==receiver_food-8);
         CHECK(w.world().life_support(source)->food_kg==source_food-4);
-        CHECK(w.world().life_support(origin)->food_kg==origin_food-4);
+        CHECK(w.world().life_support(origin)->food_kg==origin_food);
+        // All four original crew are physically away. Home employment is
+        // persistent, but absent people do not consume a second supply ration.
         CHECK(w.world().total_material_kg()==mass);
     }
     {
