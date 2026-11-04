@@ -509,6 +509,85 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
         }
         return;
     }
+    // PLAY-13D.3: region-scoped physical actions. Player must have
+    // previously observed this exact region/revision in the private archive.
+    if(!v.empty() && (v[0]=="PLANET_BUILD" || v[0]=="PLANET_EQUIP" ||
+       v[0]=="PLANET_SUPPLY" || v[0]=="PLANET_GROW" ||
+       v[0]=="PLANET_EXTRACT" || v[0]=="PLANET_RETRIEVE")) {
+        try {
+            const auto type=v[0];
+            const bool build=type=="PLANET_BUILD";
+            const bool equip=type=="PLANET_EQUIP";
+            const bool grow=type=="PLANET_GROW";
+            if(v.size()!=(build?4:grow?5:6))
+                throw std::invalid_argument("planet operation arity");
+            const auto body=integer(v[1]);
+            const auto latitude=integer(v[2]),longitude=integer(v[3]);
+            if(body<=0 || latitude<0 || latitude>=planetary::kWatershedRows ||
+               longitude<0 || longitude>=planetary::kWatershedColumns ||
+               !knowledge)
+                throw std::invalid_argument("planet operation coordinates");
+            const auto site=world.world().scan_planetary_geography(
+                principal,ship,std::uint64_t(body),
+                std::uint16_t(latitude),std::uint16_t(longitude));
+            if(!site)throw std::invalid_argument("planet operation unauthorized");
+            const auto known=knowledge->known_planetary_region(
+                principal,std::uint32_t(std::uint64_t(body)>>32),
+                std::uint64_t(body),std::uint16_t(latitude),
+                std::uint16_t(longitude),site->key.revision);
+            if(!known || known->elevation!=site->landscape.region.elevation ||
+               known->ocean!=std::uint8_t(site->landscape.region.surface_water) ||
+               known->terrain!=std::uint8_t(site->landscape.region.terrain) ||
+               known->watercourse!=std::uint8_t(site->landscape.watercourse) ||
+               known->drainage!=site->catchment_runoff)
+                throw std::invalid_argument("unsurveyed planetary region");
+            bool success=false;
+            if(build)success=world.build_planetary_site(
+                principal,ship,std::uint64_t(body),
+                std::uint16_t(latitude),std::uint16_t(longitude));
+            else if(equip) {
+                if(v[4]!="FARM" && v[4]!="EXTRACT")
+                    throw std::invalid_argument("invalid equipment");
+                success=world.equip_planetary_site(
+                    principal,ship,std::uint64_t(body),
+                    std::uint16_t(latitude),std::uint16_t(longitude),
+                    v[4]=="FARM");
+            } else if(grow) {
+                success=world.cultivate_planetary_site(principal,ship,
+                    std::uint64_t(body),std::uint16_t(latitude),
+                    std::uint16_t(longitude),integer(v[4]));
+            } else {
+                const auto kind=v[4],kg=integer(v[5]);
+                if(type=="PLANET_SUPPLY") {
+                    if(kind!="WATER" && kind!="NUTRIENTS")
+                        throw std::invalid_argument("invalid supply material");
+                    success=world.supply_planetary_site(principal,ship,
+                        std::uint64_t(body),std::uint16_t(latitude),
+                        std::uint16_t(longitude),kind=="WATER",kg);
+                } else if(type=="PLANET_EXTRACT") {
+                    if(kind!="WATER" && kind!="NUTRIENTS")
+                        throw std::invalid_argument("invalid extraction material");
+                    success=world.extract_planetary_site(principal,ship,
+                        std::uint64_t(body),std::uint16_t(latitude),
+                        std::uint16_t(longitude),kind=="WATER",kg);
+                } else {
+                    if(kind!="FOOD" && kind!="WATER")
+                        throw std::invalid_argument("invalid retrieval material");
+                    success=world.retrieve_planetary_site(principal,ship,
+                        std::uint64_t(body),std::uint16_t(latitude),
+                        std::uint16_t(longitude),kind=="FOOD",kg);
+                }
+            }
+            if(!success){announce(world.world(),"ERROR|PLANET_OPERATION_DENIED");return;}
+            announce(world.world(),"PLANET_OPERATION_COMMITTED|"+
+                std::to_string(body)+"|"+std::to_string(latitude)+"|"+
+                std::to_string(longitude)+"|"+type+"|"+
+                std::to_string(world.generation()));
+        }catch(const std::exception&){
+            announce(world.world(),"ERROR|PLANET_OPERATION_DENIED");
+        }
+        return;
+    }
     // PGF-01B.2: native authorized planetary regional survey; map-backed
     // terrain is the same result exposed by Simulation to other consumers.
     if(v.size()==4 && v[0]=="PLANET_SURVEY"){
