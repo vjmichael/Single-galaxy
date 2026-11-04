@@ -50,6 +50,7 @@ int main(){
    CHECK(run(w,order(w,5,ship,Action::ScanSurveyProbe,2))==Outcome::Applied);
    CHECK(w.world().events().back().transferred==1);
    CHECK(w.world().pending_probe_report_count()==1);
+   CHECK(w.world().canonical_state().find("galaxy-kernel-v68|")==0);
    CHECK(w.world().discoveries().count({7,near})==0); // no early revelation
    CHECK(w.world().discoveries().count({7,far})==0);
    CHECK(run(w,order(w,6,ship,Action::ScanSurveyProbe,2))==Outcome::Applied);
@@ -69,7 +70,14 @@ int main(){
    CHECK(w.world().pending_probe_report_count()==1);
    CHECK(w.world().discoveries().count({7,near})==0);
    CHECK(w.world().total_ore()==56);
-   w.steps(6);
+   // Reconfiguration changes future scans, never the due tick of already
+   // committed pending observations.
+   w.configure_probe_report_tick_ms(20);
+   CHECK(w.world().probe_report_delay_ticks()==500);
+   CHECK(w.world().pending_probe_report_count()==1);
+   w.steps(5);
+   CHECK(w.world().discoveries().count({7,near})==0);
+   w.steps(1);
    CHECK(w.world().pending_probe_report_count()==0);
    CHECK(w.world().discoveries().count({7,near})==1);
    PersistentWorld::recover_copy(db,copy);
