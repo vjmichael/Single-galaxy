@@ -685,6 +685,9 @@ int main(int argc,char** argv){
         // No stations, other ships, markets, factions or gates at start.
         const bool was_saved=fs::exists(argv[1]);
         PersistentWorld world(argv[1],std::move(genesis));
+        // v68: translate the nominal 10-second report into durable game ticks
+        // using this host session's actual fixed-step duration.
+        world.configure_probe_report_tick_ms(static_cast<std::uint64_t>(ms));
         if(!world.world().colony_ship(ship)||!world.world().find(ship)||world.world().find(ship)->owner_id!=owner){
             // A populated production world can have stations before its first
             // player-owned colony ship. Do not assume the ship has entity ID 1.
@@ -796,8 +799,10 @@ int main(int argc,char** argv){
                     scan(world.world(),ship);
                     scanned=true;
                 }
-                if(pending_probe_scans.erase(ev.command_id) && ev.result==Outcome::Applied)
-                    scanned=true; // remote probe survey: only native discovery records, no ship scan
+                // A successful probe order queues a withheld native report.
+                // Do not mark discovery complete until the committed journal
+                // actually gains the observation after the response interval.
+                pending_probe_scans.erase(ev.command_id);
                 announce(world.world(),"RESULT|"+std::to_string(ev.command_id)+"|"+
                     to_string(ev.result)+"|"+std::to_string(ev.transferred));
             }
