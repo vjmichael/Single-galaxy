@@ -174,6 +174,14 @@ window.GalaxyTargetFeedback=text=>message(text);
 el('assistRock').addEventListener('click',()=>startAssist('rock'));
 el('assistHome').addEventListener('click',()=>startAssist('home'));
 el('assistCancel').addEventListener('click',()=>cancelAssist());
+el('combatTarget').addEventListener('change',()=>{
+ el('combatFire').disabled=!el('combatTarget').value||el('combatCharges').textContent==='0';
+});
+el('combatFire').addEventListener('click',()=>{
+ const target=Number(el('combatTarget').value);
+ if(!Number.isSafeInteger(target)||target<=0){message('Choose a native training drone first.');return;}
+ command('colonyFireTraining',{target});
+});
 el('flightScan').addEventListener('click',()=>command('colonyScan'));
 el('flightMine').addEventListener('click',()=>command('colonyMine',{amount:8}));
 el('flightMineSelected').addEventListener('click',()=>{
@@ -197,6 +205,15 @@ window.onGalaxyLiveProjection=function(state){
  if(colonyMode&&assist)void updateAssist(state);
  const ship=[...state.entities.values()].find(e=>e.entityType===0&&e.owner===7);
  if(!ship)return;
+ const combatId=Number(el('combatTarget').value);
+ const opponent=Number.isSafeInteger(combatId)&&combatId>0?state.entities.get(combatId):null;
+ if(opponent?.entityType===4){
+   el('combatFeedback').textContent='Training drone #'+combatId+' destroyed; physical wreck remains in the galaxy.';
+   el('combatFire').disabled=true;
+ }else if(opponent?.entityType===0){
+   const dist=Math.hypot(opponent.x-ship.x,opponent.y-ship.y);
+   el('combatFire').disabled=dist>12000||el('combatCharges').textContent==='0';
+ }
  const nearby=[...state.entities.values()].filter(e=>
    e.entityType===1 && e.system===ship.system);
  const sorted=nearby.map(rock=>({rock,range:window.GalaxyFlightControls?.rockRange(ship,rock)}))
