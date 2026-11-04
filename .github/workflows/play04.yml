@@ -1,0 +1,37 @@
+name: PLAY-04 yaw and physical home cargo loop
+on:
+  push:
+    branches:
+      - integration/play04-yaw-cargo-20261104
+  pull_request:
+    paths:
+      - 'src/Simulation.cpp'
+      - 'include/galaxy/Simulation.hpp'
+      - 'src/colony_live_host.cpp'
+      - 'live/interactive_relay.py'
+      - 'viewer/**'
+      - 'tests/PLAY04_YawCargoReturnTests.cpp'
+      - 'tests/CargoReturnTests.js'
+      - '.github/workflows/play04.yml'
+jobs:
+  native-and-client:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure native game
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+      - name: Build native gameplay and live host
+        run: cmake --build build --target galaxy_play04_yaw_cargo_tests galaxy_colony_live_host -j2
+      - name: Verify persistent ship heading and cargo transfer
+        run: ctest --test-dir build -R '^galaxy_play04_yaw_cargo$' --output-on-failure
+      - name: Verify client controls and player navigation
+        run: node --test tests/FlightControlsTests.js tests/OpeningGuideTests.js tests/CargoReturnTests.js
+      - name: Verify frontend and relay syntax
+        run: |
+          node --check viewer/flight-controls.js
+          node --check viewer/opening-guide.js
+          node --check viewer/cargo-return.js
+          node --check viewer/colony.js
+          node --check viewer/interactive.js
+          node --check viewer/viewer.js
+          python3 -m py_compile live/interactive_relay.py

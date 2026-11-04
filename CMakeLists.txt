@@ -1116,3 +1116,12 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_play01_opening_tests PRIVATE galaxy_kernel)
   add_test(NAME galaxy_play01_opening COMMAND galaxy_play01_opening_tests)
 endif()
+
+# PLAY-04: physically persistent ship yaw, construction, real outpost bay
+# custody, and recovery of ship/bay ore across world restarts.
+if(BUILD_TESTING)
+  add_executable(galaxy_play04_yaw_cargo_tests
+    tests/PLAY04_YawCargoReturnTests.cpp)
+  target_link_libraries(galaxy_play04_yaw_cargo_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play04_yaw_cargo COMMAND galaxy_play04_yaw_cargo_tests)
+endif()

@@ -6,9 +6,12 @@
  const KEYS=Object.freeze({ArrowLeft:[-1,0],a:[-1,0],A:[-1,0],
    ArrowRight:[1,0],d:[1,0],D:[1,0],ArrowUp:[0,-1],w:[0,-1],W:[0,-1],
    ArrowDown:[0,1],s:[0,1],S:[0,1], ' ':[0,0]});
+ const YAW_KEYS=Object.freeze({q:-15,Q:-15,e:15,E:15});
  const GUIDE_KEY='single-galaxy:skip-opening-guide:v1';
  function flightInput(key,editable=false,repeat=false,alt=false,ctrl=false,meta=false){
-   return editable||repeat||alt||ctrl||meta||!Object.prototype.hasOwnProperty.call(KEYS,key)?
+   if(editable||repeat||alt||ctrl||meta)return null;
+   if(Object.prototype.hasOwnProperty.call(YAW_KEYS,key))return {action:'yaw',extra:{delta:YAW_KEYS[key]}};
+   return !Object.prototype.hasOwnProperty.call(KEYS,key)?
       null:{action:'thrust',extra:{x:KEYS[key][0],y:KEYS[key][1]}};
  }
  function guideSkipped(storage){

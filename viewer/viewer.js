@@ -138,13 +138,14 @@ function draw() {
     label('JUMP GATE',p.x,p.y+31,'#9ce8be');
   }
   for(const e of entities.filter(e=>e.entityType===0)) {
-    const p=xy(e.x,e.y),angle=Math.atan2(e.vy,e.vx);
+    const heading=window.GalaxyColonyMode&&e.owner===7?window.GalaxyShipHeading:null;
+    const p=xy(e.x,e.y),angle=Number.isInteger(heading)?heading*Math.PI/180:Math.atan2(e.vy,e.vx);
     ctx.save();ctx.translate(p.x,p.y);ctx.rotate(e.vx||e.vy?angle:0);
     ctx.fillStyle='#56dcef';ctx.shadowColor='#5fe0fc';ctx.shadowBlur=16;
     ctx.beginPath();ctx.moveTo(21,0);ctx.lineTo(-13,-11);ctx.lineTo(-8,0);ctx.lineTo(-13,11);ctx.closePath();ctx.fill();
     ctx.shadowBlur=0;ctx.strokeStyle='#b9f6ff';ctx.lineWidth=1;ctx.stroke();ctx.restore();
     ctx.strokeStyle='rgba(98,225,245,.18)';ctx.beginPath();ctx.arc(p.x,p.y,39,0,Math.PI*2);ctx.stroke();
-    label('MINING SHIP',p.x,p.y-28,'#b8f7ff');
+    label(window.GalaxyColonyMode&&e.owner===7?'COLONY SHIP':'MINING SHIP',p.x,p.y-28,'#b8f7ff');
   }
   ctx.font='11px monospace';ctx.fillStyle='#6584a4';ctx.textAlign='left';ctx.fillText('GALAXY / SYSTEM '+state.system+' / TICK '+state.tick,16,h-19);
 }
@@ -164,7 +165,7 @@ el('next').addEventListener('click',()=>{playing=false;el('play').textContent='â
 el('progress').addEventListener('input',()=>{playing=false;el('play').textContent='â–¶ Play';go(Number(el('progress').value));});
 el('scenario').addEventListener('change',()=>{const name=el('scenario').value;setScenario(name,window.GalaxyRecordings[name]);});
 el('import').addEventListener('change',async e=>{const f=e.target.files[0];if(!f)return;try{if(f.size>16*1024*1024)throw new Error('Recording limit 16 MiB');setScenario('custom',await f.text(),true);}catch(ex){error(ex.message);}e.target.value='';});
-document.addEventListener('keydown',e=>{if(e.target.closest('select,input,button'))return;if(e.code==='Space'){e.preventDefault();togglePlay();}if(e.code==='ArrowRight'){e.preventDefault();go(index+1);}if(e.code==='ArrowLeft'){e.preventDefault();go(index-1);}});
+document.addEventListener('keydown',e=>{if(window.GalaxyColonyMode)return;if(e.target.closest('select,input,button'))return;if(e.code==='Space'){e.preventDefault();togglePlay();}if(e.code==='ArrowRight'){e.preventDefault();go(index+1);}if(e.code==='ArrowLeft'){e.preventDefault();go(index-1);}});
 // B4 local real-time relay supplies exactly one canonical B3 frame per SSE message.
 // The browser never issues game commands; the relay only exposes a read-only feed.
 let liveState=null;

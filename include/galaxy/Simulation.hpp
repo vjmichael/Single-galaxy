@@ -432,6 +432,7 @@ struct Entity {
     PlayerId owner_id = 0; // 0 denotes environment-owned object
     Vector2 position{};
     Vector2 velocity{};
+    std::uint16_t heading_deg = 0; // PLAY-04: yaw, clockwise from +X; authoritative and persistent
     std::int64_t ore = 0;
     std::int64_t cargo = 0;
     std::int64_t cargo_capacity = 0; // m3; fixed gameplay item volumes, NO mass limit

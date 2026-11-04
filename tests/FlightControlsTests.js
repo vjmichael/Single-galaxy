@@ -23,3 +23,12 @@ test('range display is advisory only, never authorizes mining',()=>{
  assert.equal(rockRange(null,{x:0,y:0}),null);
  assert.equal(rockRange({x:0,y:0},{x:Infinity,y:0}),null);
 });
+
+test('Q/E yaw is distinct from world-axis thrust and ignores form focus',()=>{
+ assert.deepEqual(flightInput('q'),{action:'yaw',extra:{delta:-15}});
+ assert.deepEqual(flightInput('e'),{action:'yaw',extra:{delta:15}});
+ assert.deepEqual(flightInput('Q'),{action:'yaw',extra:{delta:-15}});
+ assert.equal(flightInput('e',true),null);
+ assert.equal(flightInput('q',false,true),null);
+ assert.equal(flightInput('q',false,false,false,true),null);
+});
