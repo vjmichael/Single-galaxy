@@ -849,6 +849,10 @@ public:
     // Simulation's exact geography and the existing world SQLite journal.
     bool build_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
         std::uint16_t latitude,std::uint16_t longitude,FailPoint fail=FailPoint::None);
+    bool build_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,
+        std::uint64_t first_npc,std::uint64_t second_npc,
+        FailPoint fail=FailPoint::None);
     bool equip_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
         std::uint16_t latitude,std::uint16_t longitude,bool farm,FailPoint fail=FailPoint::None);
     bool supply_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
