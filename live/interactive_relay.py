@@ -378,8 +378,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if type(target)!=int or not 1<=target<=100000000:
                     raise ValueError('Invalid geological target')
                 command=f'DRONE_LAUNCH|{target}'
-            elif action=='colonySignatureScan' and set(doc)=={'token','action'}:
-                command='SIGNATURES'
+            elif action=='colonySignatureScan' and set(doc)=={'token','action','rangeMm'}:
+                radius=doc['rangeMm']
+                if type(radius)!=int or not 5000000<=radius<=500000000:
+                    raise ValueError('Invalid signature search radius')
+                command=f'SIGNATURES|{radius}'
             elif action=='colonyProbeFocus' and set(doc)=={'token','action','probe','signature'}:
                 probe,signature=doc['probe'],doc['signature']
                 if (type(probe)!=int or type(signature)!=int or
