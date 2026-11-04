@@ -18,7 +18,12 @@ static Chosen select_site(bool farm) {
             if(body.kind!=CelestialKind::Planet && body.kind!=CelestialKind::Moon)continue;
             if(farm && (body.orbital_radius_milli_au<2200 ||
                         body.orbital_radius_milli_au>12000))continue;
-            if(!farm && !sample.celestial_oasis_prospect(body.id)->candidate)continue;
+            if(!farm) {
+                if(!sample.celestial_oasis_prospect(body.id)->candidate)continue;
+                const auto source=sample.planetary_oasis_source_region(7,ship,body.id);
+                if(source)return {system,body.id,source->latitude,source->longitude};
+                continue;
+            }
             for(const auto [y,x]:std::vector<std::pair<unsigned,unsigned>>{
                 {17,36},{17,18},{18,46},{16,60},{14,4},{20,32},{10,27},{26,52},
                 {7,15},{28,8},{12,40},{24,55},{19,50},{15,64}}) {
@@ -78,6 +83,11 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(w.equip_planetary_site(7,ship,chosen.body,chosen.latitude,chosen.longitude,farming));
         CHECK(!w.equip_planetary_site(7,ship,chosen.body,chosen.latitude,chosen.longitude,farming));
         CHECK(w.world().colony_ship(ship)->modules==0);
+        if(!farming) {
+            const auto source=w.world().planetary_oasis_source_region(7,ship,chosen.body);
+            CHECK(source && source->latitude==chosen.latitude &&
+                  source->longitude==chosen.longitude);
+        }
         if(farming) {
             CHECK(w.supply_planetary_site(7,ship,chosen.body,chosen.latitude,chosen.longitude,true,100));
             CHECK(w.supply_planetary_site(7,ship,chosen.body,chosen.latitude,chosen.longitude,false,50));
