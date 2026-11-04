@@ -825,6 +825,18 @@ public:
         return local_environments_;
     }
     std::optional<AsteroidClass> local_deposit_taxonomy(EntityId rock) const;
+    // PLAY-13C.6A: observation only. No production, travel, or free supplies.
+    struct ExpeditionProspect {
+        std::uint64_t body=0;
+        std::uint64_t ore_tonnes=0;
+        std::uint64_t nickel_iron_kg=0;
+        std::uint64_t plagioclase_kg=0;
+        std::uint64_t food_periods=0,water_periods=0,oxygen_periods=0;
+        std::uint8_t hazard=0;
+        bool local_supply_site=false;
+    };
+    std::optional<ExpeditionProspect> assess_expedition(
+        PlayerId authenticated_owner,EntityId ship) const;
     std::uint64_t probe_report_delay_ticks() const {return probe_report_delay_ticks_;}
 
     std::uint64_t tick() const { return tick_; }
