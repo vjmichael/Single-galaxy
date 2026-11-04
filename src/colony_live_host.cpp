@@ -120,6 +120,14 @@ void status(const Simulation& w,EntityId ship,bool replay_discoveries=false){
     announce(w,"PROBE_RESET");
     for(const auto& [id,p]:w.survey_probes()){
         if(p.owner!=s->owner_id || p.carrier!=ship)continue;
+        if(p.drone_phase && p.system==s->system_id){
+            // A geological drone keeps flying autonomously out of radio range,
+            // but live status is available only while its carrier is within 10 km.
+            const auto dx=p.position.x-s->position.x;
+            const auto dy=p.position.y-s->position.y;
+            const auto r=Simulation::kDroneControlRangeMm;
+            if(dx<-r || dx>r || dy<-r || dy>r || dx*dx+dy*dy>r*r)continue;
+        }else if(p.drone_phase && p.system!=s->system_id)continue;
         announce(w,"SURVEY_PROBE|"+std::to_string(id)+"|"+std::to_string(p.system)+"|"+
             std::to_string(p.position.x)+"|"+std::to_string(p.position.y)+"|"+
             std::to_string(p.drone_phase)+"|"+std::to_string(p.drone_target)+"|"+
