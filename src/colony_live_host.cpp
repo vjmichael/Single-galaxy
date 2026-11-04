@@ -519,7 +519,7 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
             const bool build=type=="PLANET_BUILD";
             const bool equip=type=="PLANET_EQUIP";
             const bool grow=type=="PLANET_GROW";
-            if(v.size()!=(build?4:grow?5:6))
+            if(v.size()!=(build?4:(equip||grow)?5:6))
                 throw std::invalid_argument("planet operation arity");
             const auto body=integer(v[1]);
             const auto latitude=integer(v[2]),longitude=integer(v[3]);
