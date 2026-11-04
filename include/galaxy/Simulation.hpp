@@ -542,6 +542,9 @@ public:
     void enable_medical_workforce_rules();
     NpcCustodyView npc_custody(std::uint64_t npc_id) const;
     std::size_t passengers_aboard(EntityId ship) const;
+    // Physical compartment occupancy, including native crew and real travelers.
+    // Required by v57; no double-charge for crew who boarded another ship.
+    std::size_t people_physically_aboard(EntityId ship) const;
     // 1 active, 2 completed, 3 stranded, 5 rescued, 6 lost; zero unknown.
     unsigned voyage_status(std::uint64_t transport_id) const;
     // Derived, read-only incident/EMS dispatch report from canonical voyage,
