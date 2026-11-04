@@ -2737,7 +2737,7 @@ Event Simulation::execute(const Command& c) {
                 const auto& probe=it->second;
                 if(probe.system!=actor.system_id){result.result=Outcome::WrongSystem;return result;}
                 if(c.action==Action::ScanSurveyProbe){
-                    if(probe.drone_phase){result.result=Outcome::InvalidTarget;return result;}
+                    if(probe.drone_phase||probe.focus_site){result.result=Outcome::InvalidTarget;return result;}
                     // 0.5 AU is the planned deep-space probe command budget.
                     // Native positions currently span only ~2,000 km per axis,
                     // so this limit will become meaningful with cosmic scaling.
@@ -2781,7 +2781,7 @@ Event Simulation::execute(const Command& c) {
                     if(dx< -r || dx>r || dy< -r || dy>r || dx*dx+dy*dy>r*r){
                         result.result=Outcome::OutOfRange;return result;
                     }
-                    if(probe.drone_phase && probe.drone_phase!=3){
+                    if(probe.focus_site || (probe.drone_phase && probe.drone_phase!=3)){
                         result.result=Outcome::InTransition;return result;
                     }
                     if(actor.survey_probes_carried>=8){
@@ -4660,6 +4660,39 @@ void Simulation::step() {
         });
         for (const auto& c : commands) events_.push_back(execute(c));
         commands_.erase(it);
+    }
+    // PLAY-13B v69: native autonomous lock-on missions. Fixed bounded motion
+    // occurs in the committed simulation, not browser interpolation. Probe
+    // destination is coarse; only a real sensor-distance check identifies it.
+    if(snapshot_version_>=69)for(auto& [id,probe]:survey_probes_) {
+        if(!probe.focus_site||probe.drone_phase)continue;
+        auto& p=probe.position;
+        const auto waypoint=probe.focus_waypoint;
+        constexpr std::int64_t step_mm=5000000; // 5 km per simulation tick
+        const auto dx=waypoint.x-p.x,dy=waypoint.y-p.y;
+        p.x+=std::clamp(dx,-step_mm,step_mm);
+        p.y+=std::clamp(dy,-step_mm,step_mm);
+        if(p.x!=waypoint.x||p.y!=waypoint.y)continue;
+        const auto target=entities_.find(probe.focus_site);
+        if(target!=entities_.end()&&target->second.type==EntityType::Asteroid&&
+           target->second.system_id==probe.system) {
+            const auto distance=std::hypot(double(target->second.position.x)-p.x,
+                                           double(target->second.position.y)-p.y);
+            const auto key=std::make_pair(probe.owner,probe.focus_site);
+            if(distance<=double(kProbeScanRangeMm)&&
+               !discoveries_.count(key)&&!pending_probe_discoveries_.count(key)&&
+               pending_probe_discoveries_.size()+discoveries_.size()<10000 &&
+               probe_report_delay_ticks_<=std::numeric_limits<std::uint64_t>::max()-tick_) {
+                DiscoveryRecord report{probe.owner,probe.focus_site,probe.system,
+                    target->second.position,tick_,geology_.count(probe.focus_site)!=0};
+                pending_probe_discoveries_.emplace(key,
+                    PendingProbeDiscovery{report,probe.carrier,id,
+                        tick_+probe_report_delay_ticks_});
+            }
+        }
+        // Completion clears the mission even if its subject has disappeared.
+        // A missing finding must not be hallucinated as a successful discovery.
+        probe.focus_site=0;probe.focus_waypoint={};
     }
     // PLAY-13: deterministic host-owned drone flight, not browser interpolation.
     if(snapshot_version_>=66)for(auto& [id,p]:survey_probes_){
