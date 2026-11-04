@@ -8628,6 +8628,7 @@ bool PersistentWorld::begin_celestial_transit(
     if(!id || !owner || owner==Simulation::kServerAuthority ||
        world_.ship_frames_.size()==0 || world_.snapshot_version_<71 ||
        world_.pending_celestial_transits_.size()>=10000 ||
+       world_.completed_celestial_transits_.size()>=10000 ||
        world_.completed_celestial_transits_.count(id) ||
        world_.pending_celestial_transits_.count(id) ||
        world_.tick_>std::numeric_limits<std::uint64_t>::max()-4)
