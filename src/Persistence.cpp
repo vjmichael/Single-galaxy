@@ -5709,6 +5709,22 @@ bool PersistentWorld::submit_host_passenger_action(const Command& command, FailP
        command.action!=Action::HostMobileStabilize &&
        command.action!=Action::HostSettleMigrant)return false;
     if(command.issuer!=Simulation::kServerAuthority)return false;
+    // v57: boarding is physical custody, so reserve a conservative TWO-cycle
+    // runway at the *actual* receiving ship, for everyone currently present
+    // and every newly boarding named passenger. Legacy replay is unchanged.
+    if(world_.passenger_needs_enabled() &&
+       (command.action==Action::HostEmbarkPassengers ||
+        command.action==Action::HostEvacuatePassengers)){
+        const auto receiving=command.action==Action::HostEmbarkPassengers ?
+                             command.actor:command.target;
+        const auto* life=world_.life_support(receiving);
+        const auto present=world_.people_physically_aboard(receiving);
+        if(!life || command.passenger_ids.empty() || present>1000 ||
+           command.passenger_ids.size()>1000-present)return false;
+        const auto count=static_cast<std::int64_t>(present+command.passenger_ids.size());
+        if(life->food_kg<2*count || life->water_kg<2*count ||
+           life->oxygen_kg<2*count)return false;
+    }
     // Child physical berths count against the same actual 16 seats. Host-only
     // incident handlers must not destroy/teleport a ferry full of dependents.
     if(command.action==Action::HostEmbarkPassengers &&
