@@ -29,10 +29,9 @@
       if(!id||!system)throw Error('Invalid deployed probe identity');
       if(v.length===12){
         const phase=numeric(v[8],3),target=numeric(v[9],100000000);
-        const sample=numeric(v[10],1),taxonomy=numeric(v[11],3);
+        const sample=numeric(v[10],0),taxonomy=numeric(v[11],3);
         if((phase===0 && (target||sample||taxonomy)) ||
-           (phase!==0 && !target) || (sample===0 && taxonomy!==0) ||
-           (sample && !taxonomy))throw Error('Invalid geological drone state');
+           (phase!==0 && !target) || sample!==0)throw Error('Invalid geological drone state');
         return {...e,id,system,x,y,phase,target,sample,taxonomy};
       }
       return {...e,id,system,x,y,phase:0,target:0,sample:0,taxonomy:0};
@@ -343,7 +342,7 @@
         select.replaceChildren(new Option('Choose deployed probe',''),...[...deployedProbes].map(([id,p])=>
           new Option('#'+id+' · '+p.x+', '+p.y+' mm'+
             (p.phase?' · drone '+['','outbound','returning','ready'][p.phase]+
-            ' · sampled '+p.sample+' t':' · stationary probe'),String(id))));
+            ' · geology '+(p.taxonomy?window.GalaxyColonyContract.names[p.taxonomy-1]:'pending'):' · stationary probe'),String(id))));
         if([...select.options].some(o=>o.value===current))select.value=current;
         q('probeSurvey').disabled=!probeLauncher||!select.value;
         q('probeRetrieve').disabled=!probeLauncher||!select.value;
@@ -363,7 +362,7 @@
         selected.replaceChildren(new Option('Choose deployed probe',''),...[...deployedProbes].map(([id,p])=>
           new Option('#'+id+' · '+p.x+', '+p.y+' mm'+
             (p.phase?' · drone '+['','outbound','returning','ready to recover'][p.phase]+
-            ' · sample '+p.sample+' t':' · stationary probe'),String(id))));
+            ' · report '+(p.taxonomy?window.GalaxyColonyContract.names[p.taxonomy-1]:'pending'):' · stationary probe'),String(id))));
         if([...selected.options].some(o=>o.value===current))selected.value=current;
         else if([...selected.options].some(o=>o.value===probeChoice))selected.value=probeChoice;
         q('probeSurvey').disabled=!probeLauncher||!selected.value;
@@ -374,7 +373,7 @@
         q('probeFeedback').textContent=e.phase?
           'Geological drone #'+e.id+' · '+
           ['','outbound','returning','ready to recover'][e.phase]+
-          ' · real ore sample '+e.sample+' t · mineral class '+e.taxonomy:
+          ' · geological survey '+(e.taxonomy?window.GalaxyColonyContract.names[e.taxonomy-1]:'pending'):
           'Probe #'+e.id+' remains at '+e.x+', '+e.y+' mm';
       }
       if(e.type==='FITTING'){
