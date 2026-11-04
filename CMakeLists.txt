@@ -1107,3 +1107,12 @@ if(BUILD_TESTING)
     add_test(NAME galaxy_colony_exit01d_bounded
         COMMAND galaxy_colony_exit01d_bounded_tests)
 endif()
+
+# PLAY-01: a single finite-crew opening, restarting between mining, production
+# and first outpost, with recovered-copy conservation checks.
+if(BUILD_TESTING)
+  add_executable(galaxy_play01_opening_tests
+    tests/PLAY01_FirstOutpostRegressionTests.cpp)
+  target_link_libraries(galaxy_play01_opening_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play01_opening COMMAND galaxy_play01_opening_tests)
+endif()
