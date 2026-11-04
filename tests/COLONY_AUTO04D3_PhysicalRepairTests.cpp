@@ -46,7 +46,7 @@ try{
         CHECK(w.world().utility(site)->spare_modules==2);
         CHECK(w.world().total_material_kg()==material);
         const auto previous=w.world().utility(site)->repairs;
-        w.steps(145-w.world().tick());
+        w.steps(165-w.world().tick()); // risk evaluated before each 20-tick consumption cycle
         const auto* u=w.world().utility(site);
         std::cerr<<"AUTO04D3R trace: tick="<<w.world().tick()
             <<" food="<<w.world().habitat(site)->life.food_kg
