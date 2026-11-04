@@ -132,6 +132,10 @@ public:
         std::uint64_t site) const;
     std::vector<ScanObservation> known_sites(PlayerId owner,std::uint32_t system,
         int minimum_confidence=1) const;
+    // Trusted migration/bridge: import authoritative v67 world sightings
+    // into the reusable B6 survey archive without exposing another owner's data.
+    std::size_t import_native_discoveries(const Simulation& world,
+        PlayerId owner,std::uint32_t system);
     // A host-observed report enters a durable outbox. Reports become readable
     // no earlier than 10 seconds of game-time after capture and only in range.
     // Retrying delivery after a crash is safe: observation writes are idempotent.
