@@ -3,6 +3,7 @@
 // stdout SGVIEW frames; stderr bounded COLONY telemetry for the local relay.
 #include "galaxy/Simulation.hpp"
 #include "galaxy/Persistence.hpp"
+#include "galaxy/Galaxy.hpp"
 #include "galaxy/ClientContract.hpp"
 #include "galaxy/ColonySafety.hpp"
 #include <algorithm>
@@ -13,6 +14,7 @@
 #include <stdexcept>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <random>
 #include <set>
 #include <sstream>
@@ -693,6 +695,33 @@ int main(int argc,char** argv){
                 }
             if(!ship)throw std::runtime_error("no colony ship for authenticated owner");
         }
+        // PLAY-13B: the v67 world is the authoritative discovery source.
+        // This sidecar is an owner-scoped, rebuildable navigation/survey index.
+        // Every host restart replays committed native discoveries idempotently.
+        std::unique_ptr<SurveyArchive> survey_knowledge;
+        auto sync_survey_knowledge=[&]() {
+            if(!survey_knowledge)return;
+            try {
+                std::set<std::uint32_t> systems;
+                for(const auto& [key,discovery]:world.world().discoveries()) {
+                    (void)key;
+                    if(discovery.owner==owner)systems.insert(discovery.system);
+                }
+                for(const auto system:systems)
+                    survey_knowledge->import_native_discoveries(world.world(),owner,system);
+            }catch(const std::exception& e) {
+                std::cerr<<"PLAY13B_SURVEY_INDEX_ERROR "<<e.what()<<'\\n';
+                survey_knowledge.reset(); // never discard the committed world
+            }
+        };
+        try {
+            survey_knowledge=std::make_unique<SurveyArchive>(
+                std::string(argv[1])+".survey.sqlite");
+            sync_survey_knowledge();
+        }catch(const std::exception& e) {
+            std::cerr<<"PLAY13B_SURVEY_INDEX_UNAVAILABLE "<<e.what()<<'\\n';
+            survey_knowledge.reset();
+        }
         std::random_device rd;auto stream=(std::uint64_t(rd())<<32)^rd();if(!stream)stream=1;
         ServerViewBridge bridge(world.world(),stream,owner);
         std::cout<<encode_frame(bridge.snapshot())<<std::flush;
@@ -729,6 +758,7 @@ int main(int argc,char** argv){
             }
             const auto old=world.world().events().size();
             world.step();
+            sync_survey_knowledge(); // only after durable native world step
             // EXIT-01D: every eighth committed world tick, host (not the
             // player input UI) automatically observes a bounded rotation of
             // real inhabited colonies. No receiving-owner permission is
