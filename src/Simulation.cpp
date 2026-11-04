@@ -758,6 +758,7 @@ EntityId Simulation::spawn_ship_docked(PlayerId owner, EntityId station_id,
     entity.owner_id = owner;
     entity.position = station->position;
     entity.cargo_capacity = ship_capacity;
+    entity.hull=100;entity.weapon_charges=12;
     entity.dock_state = DockState::Docked;
     entity.dock_station = station_id;
     const auto ship = add_entity(entity);
