@@ -12,7 +12,7 @@ const monoNow=()=>typeof performance!=='undefined'?performance.now():Date.now();
 function visualTransition(previous,current,period=100){visualPrevious=previous;visualCurrent=current;visualPeriod=period;visualReceived=monoNow();}
 function visualState(now=monoNow()){if(!visualCurrent||!window.GalaxyInterpolation)return null;return window.GalaxyInterpolation.interpolatePositions(visualPrevious,visualCurrent,(now-visualReceived)/visualPeriod);}
 let bounds = {left:-5000,right:5000,top:-5000,bottom:5000};
-let cameraFollow=true,cameraZoom=1,cameraSpan=100000;
+let cameraFollow=true,cameraZoom=1,cameraSpan=30000;
 function cameraBounds(state){
  if(!window.GalaxyColonyMode||!state||!window.GalaxyFlightCamera)return;
  const api=window.GalaxyFlightCamera, entities=[...state.entities.values()];
@@ -235,7 +235,8 @@ canvas.addEventListener('click',event=>{
  const rect=canvas.getBoundingClientRect();
  const id=window.GalaxyFlightCamera.pickRock([...view.entities.values()],
    event.clientX-rect.left,event.clientY-rect.top,bounds,rect.width,rect.height);
- if(id!==null)window.GalaxySelectAsteroid?.(id);
+ if(id!==null && !window.GalaxySelectAsteroid?.(id))
+   window.GalaxyTargetFeedback?.('Asteroid #'+id+' is visible but not in your scanned target roster. Scan first.');
 });
 canvas.addEventListener('wheel',event=>{
  if(!window.GalaxyColonyMode||!window.GalaxyFlightCamera)return;
