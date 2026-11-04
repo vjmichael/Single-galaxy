@@ -67,6 +67,7 @@ try{
         plan.family_seed=seed;plan.adult_ids={1,2};
         plan.children={{child,1}};
         auto ok=host.audit_colony_family_departure(plan);
+        if(!ok.ready_for_transaction)std::cerr<<"04D4D audit refused: "<<ok.refusal<<"\n";
         CHECK(ok.complete_adult_roster);
         CHECK(ok.complete_child_roster);
         CHECK(ok.parent_or_guardian_custody);
