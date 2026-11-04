@@ -39,17 +39,20 @@ try{
     const auto db=(std::filesystem::temp_directory_path()/
         ("sg_exit_v87_"+std::to_string(std::chrono::steady_clock::now()
         .time_since_epoch().count())+".sqlite")).string();
-    const auto recovered=db+".recovered",spoof=db+".spoof",bad_receipt=db+".badreceipt";
-    EntityId origin=0,dest=0,ferry=0;
+    const auto recovered=db+".recovered",spoof=db+".spoof",bad_receipt=db+".badreceipt",
+               false_ferry=db+".falseferry";
+    EntityId origin=0,dest=0,ferry=0,alternate_ferry=0;
     {
         Simulation initial(8701);initial.add_system(2);
         origin=initial.add_colony_ship(7,{0,0},100,6);
         ferry=initial.add_colony_ship(7,{0,0},100,6);
         dest=initial.add_colony_ship(10,{0,0},100,6);
+        alternate_ferry=initial.add_colony_ship(7,{0,0},100,2);
         const auto gate=initial.add_gate(1,{0,0},2,{5000,0});
         initial.provision_colony_genesis(origin,100,100,100,100,600);
         initial.provision_colony_genesis(ferry,100000,100000,100000,100000,100000);
         initial.provision_colony_genesis(dest,100000,100000,100000,100000,100000);
+        initial.provision_colony_genesis(alternate_ferry,100000,100000,100000,100000,100000);
         initial.enable_individual_workforce();
         initial.upgrade_assignment_snapshot_format();
         initial.enable_medical_workforce_rules();
@@ -207,7 +210,21 @@ try{
         sqlite3_close(raw);
         refused([&]{PersistentWorld forged(bad_receipt,Simulation(8705));});
     }
-    clean(db);clean(recovered);clean(spoof);clean(bad_receipt);
+    // A forged permit still naming a REAL eligible alternate ferry must be
+    // rejected if that ferry was not the one completing the canonical voyage.
+    PersistentWorld::recover_copy(db,false_ferry);
+    {
+        sqlite3* raw=nullptr;CHECK(sqlite3_open(false_ferry.c_str(),&raw)==SQLITE_OK);
+        sql(raw,"DROP TRIGGER sg_voluntary_immigration_no_update");
+        sql(raw,"UPDATE sg_colony_voluntary_immigration SET ferry='"+
+            std::to_string(alternate_ferry)+"' WHERE event_id=8701");
+        sql(raw,"CREATE TRIGGER sg_voluntary_immigration_no_update "
+            "BEFORE UPDATE ON sg_colony_voluntary_immigration "
+            "BEGIN SELECT RAISE(ABORT,'immutable receiving colony admission'); END");
+        sqlite3_close(raw);
+        refused([&]{PersistentWorld forged(false_ferry,Simulation(8706));});
+    }
+    clean(db);clean(recovered);clean(spoof);clean(bad_receipt);clean(false_ferry);
     std::cout<<"PASS EXIT01B: genuine cross-owner accepted solo immigration, actual "
         "gate ferry boarding/arrival, source pressure, native immutable ART02/ECON03 "
         "world+census+region conservation, fault rollback, restart, recover_copy "
