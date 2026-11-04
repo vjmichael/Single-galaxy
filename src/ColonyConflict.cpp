@@ -20,7 +20,11 @@ Attitude attitude_for_score(int score){
     if(score>=15)return Attitude::Friendly;
     return Attitude::Neutral;
 }
-Decision evaluate_diplomatic(Decision d,int score,std::uint64_t event){
+Decision evaluate_diplomatic(Decision d,int score,std::uint64_t event,
+                           DiplomaticPolicy policy){
+    if(static_cast<int>(policy)<0 || static_cast<int>(policy)>2)
+        throw std::invalid_argument("unrecognized historical colony diplomacy policy");
+    d.diplomatic_policy=policy;
     d.relation_score=score;
     d.relation_event_id=event;
     const auto attitude=attitude_for_score(score);
