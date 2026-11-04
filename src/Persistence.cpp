@@ -6919,6 +6919,12 @@ public:
             Statement npc_exit_pressure(db_,"SELECT 1 FROM sqlite_master "
                 "WHERE type='table' AND name='sg_colony_npc_exit_pressure'");
             const bool has_npc_exit_pressure=npc_exit_pressure.row();
+            Statement immigration_admissions(db_,"SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='sg_colony_voluntary_immigration'");
+            const bool has_immigration_admissions=immigration_admissions.row();
+            Statement immigration_settled(db_,"SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='sg_colony_voluntary_immigration_settled'");
+            const bool has_immigration_settled=immigration_settled.row();
             const std::string prune_sql=std::string(
                 "DELETE FROM snapshots WHERE generation > 1 AND generation < ?")+
                 (incident_cases_exist ? " AND generation NOT IN "
@@ -6969,6 +6975,12 @@ public:
                     : "")+
                 (has_npc_exit_pressure ? " AND generation NOT IN "
                     "(SELECT world_generation FROM sg_colony_npc_exit_pressure)"
+                    : "")+
+                (has_immigration_admissions ? " AND generation NOT IN "
+                    "(SELECT world_generation FROM sg_colony_voluntary_immigration)"
+                    : "")+
+                (has_immigration_settled ? " AND generation NOT IN "
+                    "(SELECT world_generation FROM sg_colony_voluntary_immigration_settled)"
                     : "")+
                 // Bind subjective diplomacy to BOTH the original physical
                 // incident and the later real NPC belief/decision generation.
@@ -8127,6 +8139,7 @@ void PersistentWorld::recover_copy(const std::string& source, const std::string&
         copy.verify_colony_conflicts(gen);
         copy.verify_colony_governance(gen);
         copy.verify_colony_exit_pressure(gen);
+        copy.verify_colony_voluntary_immigration(gen);
         copy.verify_colony_relationships(gen);
         copy.verify_colony_diplomatic_intents(gen);
         verify_dependent_stranding_cases(destination,gen);
@@ -8169,6 +8182,7 @@ PersistentWorld::PersistentWorld(const std::string& path, Simulation initial_wor
     store_->verify_colony_conflicts(generation_);
     store_->verify_colony_governance(generation_);
     store_->verify_colony_exit_pressure(generation_);
+    store_->verify_colony_voluntary_immigration(generation_);
     store_->verify_colony_relationships(generation_);
     store_->verify_colony_diplomatic_intents(generation_);
 }
@@ -9215,6 +9229,62 @@ colony_conflict::ExitPressure PersistentWorld::record_colony_exit_pressure(
         world_,generation_,event_id,source,npc_id);
 }
 
+PersistentWorld::VoluntaryImmigrationAdmission
+PersistentWorld::record_voluntary_immigration_admission(
+    std::uint64_t event,std::uint64_t pressure,
+    EntityId origin,EntityId destination,EntityId ferry,
+    std::uint64_t npc,std::uint64_t transport,PlayerId receiving_owner){
+    return store_->record_voluntary_admission(
+        world_,generation_,event,pressure,origin,destination,ferry,
+        npc,transport,receiving_owner);
+}
+bool PersistentWorld::submit_voluntary_immigration_boarding(
+    std::uint64_t admission_event,const Command& c,FailPoint fail){
+    const auto a=store_->immigration_admission(admission_event);
+    const auto person=world_.npc_records().find(a.npc_id);
+    const auto* origin=world_.find(a.origin);
+    const auto* destination=world_.find(a.destination);
+    const auto* ferry=world_.find(a.ferry);
+    if(a.world_generation>generation_ ||
+       store_->verified_voluntary_immigration(a.event_id) ||
+       !origin || !destination || !ferry ||
+       origin->owner_id!=a.original_owner ||
+       destination->owner_id!=a.receiving_owner ||
+       ferry->system_id!=origin->system_id ||
+       person==world_.npc_records().end() ||
+       person->second.home_ship!=a.origin ||
+       person->second.location!=a.origin ||
+       person->second.transport_id ||
+       !world_.npc_available_for_duty(a.npc_id) ||
+       store_->has_child_or_dependent_link(a.origin) ||
+       world_.voyage_status(a.transport_id)!=0 ||
+       static_cast<int>(colony_safety::assess(
+           world_,a.origin,a.origin).risk)<
+           static_cast<int>(colony_safety::Risk::Critical) ||
+       colony_safety::assess(world_,a.destination,a.destination).risk!=
+           colony_safety::Risk::Safe ||
+       c.action!=Action::HostEmbarkPassengers ||
+       c.issuer!=Simulation::kServerAuthority ||
+       c.actor!=a.ferry || c.target!=a.origin ||
+       c.transport_id!=a.transport_id ||
+       c.passenger_ids!=std::vector<std::uint64_t>{a.npc_id} ||
+       c.execute_tick!=world_.tick()+1)
+        return false;
+    return submit_host_passenger_action(c,fail);
+}
+void PersistentWorld::step_with_voluntary_immigration(
+    std::uint64_t admission_event,const SocietyMigrationPlan& plan,FailPoint fail){
+    if(!admission_event || plan.voluntary_admission_event_id)
+        throw std::invalid_argument("voluntary migration must use exactly one admission");
+    auto linked=plan;
+    linked.voluntary_admission_event_id=admission_event;
+    step_with_atomic_migration(linked,fail);
+}
+bool PersistentWorld::verified_voluntary_immigration(
+    std::uint64_t admission_event) const{
+    return store_->verified_voluntary_immigration(admission_event);
+}
+
 colony_conflict::GovernanceEpoch PersistentWorld::record_colony_governance_transition(
     std::uint64_t event,EntityId colony,std::uint64_t successor,
     colony_conflict::Agenda agenda,colony_conflict::DiplomaticPolicy policy,
@@ -9932,6 +10002,10 @@ void PersistentWorld::step_with_atomic_migration(const SocietyMigrationPlan& pla
        plan.origin_colony==plan.destination_colony ||
        plan.family_scope.empty() || plan.region_scope.empty())
         throw std::invalid_argument("stale or incomplete host migration plan");
+    if(plan.voluntary_admission_event_id)
+        store_->validate_voluntary_settlement(world_,generation_,plan);
+    else if(store_->immigration_pending_for_transport(plan.npc_id,plan.transport_id))
+        throw std::runtime_error("admitted NPC immigration must use voluntary settlement receipt");
     auto next=world_;
     const auto before=next.events().size(), prior_activity=next.activity_events().size();
     std::map<std::uint64_t,Command> due;
@@ -10149,6 +10223,9 @@ void PersistentWorld::step_with_atomic_migration(const SocietyMigrationPlan& pla
                 child.execute();
             }
         }
+        if(plan.voluntary_admission_event_id)
+            store_->insert_voluntary_settlement_receipt(
+                db,plan.voluntary_admission_event_id,plan,committed_generation);
     };
     store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,delta,due,
                    activity,fail,nullptr,nullptr,effect);
