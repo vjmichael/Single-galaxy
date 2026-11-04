@@ -9734,6 +9734,7 @@ PersistentWorld::supervise_voluntary_migration(
     const auto start=((world_.tick()/8)%people.size() *
                       (schedule.scan_budget%people.size()))%people.size();
     std::uint64_t eligible=0;
+    int eligible_priority=-1;
     for(std::size_t i=0;i<budget;++i){
         const auto npc=people[(start+i)%people.size()];
         ++out.examined;
@@ -9755,9 +9756,17 @@ PersistentWorld::supervise_voluntary_migration(
         // committed before it can authorize a future immigrant permit.
         const auto previous=store_->personal_outlook_before(
             schedule.origin,npc,generation_);
-        if(!eligible && previous && previous->considering_departure &&
-           now->world_generation>=previous->world_generation)
-            eligible=npc;
+        if(previous && previous->considering_departure &&
+           now->world_generation>=previous->world_generation){
+            // Prioritize the most distressed and personally aggrieved,
+            // not whichever NPC happened to come first in one cyclic batch.
+            // Equal priorities rotate with the bounded round-robin scan.
+            const int priority=now->discontent+
+                (now->leader_rapport<0?10:0);
+            if(priority>eligible_priority){
+                eligible=npc;eligible_priority=priority;
+            }
+        }
     }
     if(!eligible){
         out.status=out.considering_departure?
