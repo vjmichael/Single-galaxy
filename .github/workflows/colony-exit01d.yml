@@ -1,0 +1,27 @@
+name: Colony EXIT-01D autonomous host migration scheduling
+on:
+  push:
+    branches:
+      - integration/colony-exit01d-host-auto-scheduler-v89-20261104
+  pull_request:
+    paths:
+      - 'src/Persistence.cpp'
+      - 'include/galaxy/Persistence.hpp'
+      - 'src/colony_live_host.cpp'
+      - 'tests/COLONY_EXIT01D*'
+      - 'CMakeLists.txt'
+  workflow_dispatch:
+jobs:
+  autonomous-host-migration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SQLite
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+      - name: Compile actual graphical host and real migration/custody kernel
+        run: cmake --build build --target galaxy_colony_live_host galaxy_colony_exit01d_scheduler_tests galaxy_colony_exit01d_bounded_tests galaxy_colony_exit01c_personal_tests galaxy_colony_exit01b_immigration_tests galaxy_colony_exit01a_survival_tests v59_atomic_migration v59_household_migration galaxy_grsm03c3_relationship_tests -j 2
+      - name: Verify bounded automatic appraisal through physical immigration, historical GRSM and family custody
+        run: ctest --test-dir build --output-on-failure -R 'galaxy_colony_exit01[dcb]_|galaxy_colony_exit01a_|v59_(atomic_migration|household_migration)|galaxy_grsm03c3_relationship_tests'

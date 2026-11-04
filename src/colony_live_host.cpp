@@ -572,6 +572,36 @@ int main(int argc,char** argv){
             }
             const auto old=world.world().events().size();
             world.step();
+            // EXIT-01D: every eighth committed world tick, host (not the
+            // player input UI) automatically observes a bounded rotation of
+            // real inhabited colonies. No receiving-owner permission is
+            // fabricated: without a broker-approved offer the supervisor
+            // preserves individual interest without secretly boarding a ferry.
+            if(world.world().tick()>=8 && world.world().tick()%8==0){
+                const auto& colonies=world.world().colony_ships();
+                if(!colonies.empty()){
+                    constexpr std::size_t max_colonies_per_cycle=4;
+                    const auto count=colonies.size();
+                    const auto cursor=((world.world().tick()/8)%count *
+                        (max_colonies_per_cycle%count))%count;
+                    const auto batch=std::min(count,max_colonies_per_cycle);
+                    for(std::size_t c=0;c<batch;++c){
+                        const auto slot=(cursor+c)%count;
+                        auto it=colonies.begin();
+                        std::advance(it,static_cast<std::ptrdiff_t>(slot));
+                        PersistentWorld::HostVoluntaryDepartureSchedule request;
+                        request.origin=it->first;
+                        request.scan_budget=8;
+                        const auto report=world.supervise_voluntary_migration(request);
+                        if(report.selected_npc &&
+                           report.status==
+                            PersistentWorld::HostVoluntaryDepartureStatus::SeekingDestination)
+                            std::cerr<<"COLONY|MIGRATION_INTEREST|"<<report.origin
+                                <<"|"<<report.selected_npc
+                                <<"|TICK|"<<report.tick<<'\n';
+                    }
+                }
+            }
             for(std::size_t ix=old;ix<world.world().events().size();++ix){
                 const auto& ev=world.world().events()[ix];
                 announce(world.world(),"RESULT|"+std::to_string(ev.command_id)+"|"+
