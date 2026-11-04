@@ -4815,7 +4815,7 @@ bool Simulation::collect_oasis_resource(PlayerId owner,EntityId ship,
     auto& destination=water?l->second.water_kg:l->second.nutrients_kg;
     if(remaining<kilograms || destination>1000000-kilograms)return false;
     const auto rig=oasis_extractors_.find(ship);
-    if(rig==oasis_extractors_.end() || rig->second.body!=body ||
+    if(!colony_ships_.count(ship) || rig==oasis_extractors_.end() || rig->second.body!=body ||
        !rig->second.condition || rig->second.assigned_workers<2 ||
        rig->second.energy_units<std::uint64_t(kilograms/1000)*5 ||
        colony_ships_.at(ship).crew<rig->second.assigned_workers ||
@@ -7744,6 +7744,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                !result.life_support_.count(ship) ||
                !result.oasis_reserves_.count(rig.body) ||
                (rig.body>>32)!=hull->system_id ||
+               !result.celestial_oasis_prospect(rig.body).has_value() ||
                !result.celestial_oasis_prospect(rig.body)->candidate)
                 throw std::runtime_error("snapshot: invalid oasis extractor custody");
         }
