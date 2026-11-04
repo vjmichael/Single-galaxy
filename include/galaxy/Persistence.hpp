@@ -834,6 +834,7 @@ public:
     void ensure_physical_celestial_systems();
     void ensure_ship_frame_registry();
     void ensure_visited_local_regions();
+    void ensure_local_environment_profiles();
     // Authenticated-host-only entrypoint: pending request is journaled at
     // departure. Completion uses this exact record, never client coordinates.
     bool begin_celestial_transit(PlayerId authenticated_owner, EntityId ship,
