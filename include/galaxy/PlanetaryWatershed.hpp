@@ -27,6 +27,9 @@ struct WatershedCell {
 };
 struct WatershedMap {
     PlanetaryWorldKey key{};
+    WorldClimate climate=WorldClimate::LifeSupporting;
+    std::uint8_t water_coverage=0;
+    std::int16_t average_celsius=0;
     std::array<WatershedCell,kWatershedCells> cells{};
     std::uint32_t ocean_count=0;
     std::uint64_t total_rainfall=0, terminal_discharge=0;
@@ -72,6 +75,9 @@ inline WatershedMap generate_watersheds(
     validate_planetary_envelope(key,envelope);
     WatershedMap out;
     out.key=key;
+    out.climate=envelope.climate;
+    out.water_coverage=envelope.water_coverage;
+    out.average_celsius=envelope.average_celsius;
     const auto p=derive_region_profile(key,envelope);
     // Global relief with 3 continuous spatial scales. Note: the final
     // longitude seam is neighbor-connected but not guaranteed C1 smooth.
