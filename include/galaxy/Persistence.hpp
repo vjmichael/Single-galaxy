@@ -451,6 +451,13 @@ public:
     // Submitted host voyage still requires a committed successful step().
     bool submit_host_emergency_ferry_rescue(const Command& command,
                                             FailPoint fail=FailPoint::None);
+    // v58: full, bounded ADULT colony in one local physically stocked receiver.
+    // Admission schedules only; execution revalidates and atomically commits
+    // ALL living named crew, farm staff, habitat residents, and intact hull state.
+    bool submit_host_colony_departure(const Command& command,
+                                      FailPoint fail=FailPoint::None);
+    void step_with_colony_departure(FailPoint fail=FailPoint::None);
+
     // q6e3b: only the trusted host can queue a rescue from a child-occupied
     // ferry. The paired atomic effect MUST execute the due command.
     bool submit_host_dependent_rescue_action(const Command& command,
