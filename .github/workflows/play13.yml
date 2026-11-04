@@ -1,0 +1,35 @@
+name: PLAY-13 autonomous geological drill drones
+on:
+  push:
+    branches:
+      - integration/play13-geological-survey-drones-20261104
+  pull_request:
+    paths:
+      - 'include/galaxy/Simulation.hpp'
+      - 'src/Simulation.cpp'
+      - 'src/colony_live_host.cpp'
+      - 'viewer/colony.js'
+      - 'viewer/interactive.js'
+      - 'viewer/interactive.html'
+      - 'live/interactive_relay.py'
+      - 'tests/PLAY13_GeologicalDroneTests.cpp'
+      - 'tests/PLAY13_DroneWiringTests.js'
+      - '.github/workflows/play13.yml'
+jobs:
+  geological-drone-acceptance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure C++ galaxy
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+      - name: Build native tests and game host
+        run: cmake --build build --target galaxy_play13_drone_tests galaxy_play12_probe_tests galaxy_play11_fitting_tests galaxy_play10_exploration_tests galaxy_play09_wreck_salvage_tests galaxy_colony_live_host -j2
+      - name: Run complete native PLAY-09 through PLAY-13 chain
+        run: ctest --test-dir build -R '^galaxy_play(09_wreck_salvage|10_exploration|11_fitting|12_probes|13_drones)$' --output-on-failure
+      - name: Verify browser and relay contracts
+        run: node --test tests/PLAY13_DroneWiringTests.js tests/PLAY12_ProbeWiringTests.js tests/PLAY11_FittingWiringTests.js tests/PLAY10_ExplorationWiringTests.js tests/ExplorationJournalTests.js tests/PLAY09_SalvageWiringTests.js tests/PLAY08_CombatWiringTests.js
+      - name: Parse UI and relay
+        run: |
+          node --check viewer/interactive.js
+          node --check viewer/colony.js
+          python3 -m py_compile live/interactive_relay.py
