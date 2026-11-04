@@ -174,6 +174,14 @@ window.GalaxyTargetFeedback=text=>message(text);
 el('assistRock').addEventListener('click',()=>startAssist('rock'));
 el('assistHome').addEventListener('click',()=>startAssist('home'));
 el('assistCancel').addEventListener('click',()=>cancelAssist());
+el('salvageTarget').addEventListener('change',()=>{
+ el('salvageRecover').disabled=!el('salvageTarget').value;
+});
+el('salvageRecover').addEventListener('click',()=>{
+ const target=Number(el('salvageTarget').value);
+ if(!Number.isSafeInteger(target)||target<=0){message('Choose a reported physical wreck first.');return;}
+ command('colonySalvageWreck',{target,amount:6});
+});
 el('combatTarget').addEventListener('change',()=>{
  el('combatFire').disabled=!el('combatTarget').value||el('combatCharges').textContent==='0';
 });
@@ -205,6 +213,15 @@ window.onGalaxyLiveProjection=function(state){
  if(colonyMode&&assist)void updateAssist(state);
  const ship=[...state.entities.values()].find(e=>e.entityType===0&&e.owner===7);
  if(!ship)return;
+ const wreckId=Number(el('salvageTarget').value);
+ const wreck=Number.isSafeInteger(wreckId)&&wreckId>0?state.entities.get(wreckId):null;
+ if(wreck?.entityType===4){
+   const distance=Math.hypot(wreck.x-ship.x,wreck.y-ship.y);
+   const inRange=distance<=2500;
+   el('salvageRecover').disabled=!inRange||ship.cargo>=ship.capacity;
+   el('salvageFeedback').textContent='Wreck #'+wreckId+' · '+Math.ceil(distance)+' mm away.'+
+      (inRange?' Within salvage reach.':' Pilot within 2,500 mm to recover stock.');
+ }
  const combatId=Number(el('combatTarget').value);
  const opponent=Number.isSafeInteger(combatId)&&combatId>0?state.entities.get(combatId):null;
  if(opponent?.entityType===4){
