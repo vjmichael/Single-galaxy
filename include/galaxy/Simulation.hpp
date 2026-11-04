@@ -493,6 +493,9 @@ struct DiscoveryRecord {
     Vector2 location{};
     std::uint64_t first_tick=0;
     bool geological=false;
+    // v67: non-destructive geological survey classification, 0 unknown;
+    // 1 carbonaceous, 2 silicate, 3 metallic. Persists after drone recovery.
+    std::uint8_t survey_taxonomy=0;
 };
 struct Command {
     std::uint64_t id = 0;          // globally unique, for idempotency
