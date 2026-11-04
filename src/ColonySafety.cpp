@@ -38,11 +38,12 @@ Assessment assess(const Simulation& world,EntityId home_ship,EntityId site,
         // An embarked passenger is a real local consumer, not invisible cargo.
         // Only physically onboard named passengers count; native crew is
         // already represented by the authoritative aggregate headcount.
-        const auto passengers=world.passenger_needs_enabled()?world.passengers_aboard(home_ship):0;
-        if(passengers>std::numeric_limits<std::uint64_t>::max()-
-                          static_cast<std::uint64_t>(ship->crew))
-            throw std::overflow_error("life-safety population overflow");
-        population=static_cast<std::uint64_t>(ship->crew)+passengers;
+        // v57: real shipboard occupants, not home-ship payroll, consume the
+        // compartment stock. Boarding removes the person from their former
+        // compartment without silently creating a second consumer.
+        population=world.passenger_needs_enabled()?
+            static_cast<std::uint64_t>(world.people_physically_aboard(home_ship)):
+            static_cast<std::uint64_t>(ship->crew);
     }else if(const auto* habitat=world.habitat(site)){
         if(habitat->source_ship!=home_ship || habitat->residents<0)
             throw std::invalid_argument("foreign or invalid residential site");
