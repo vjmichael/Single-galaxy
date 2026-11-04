@@ -66,13 +66,30 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
 <div class="card pad" id="interactiveControls"><h2>Live ship controls</h2><div class="controls" style="padding:0;margin-bottom:8px"><button id="undock" class="primary">Undock</button><button id="dock">Request dock</button><button id="unload">Unload ore</button><button id="load">Load ore</button><button id="sell">Sell local ore</button></div><div class="controls" style="padding:0;margin-bottom:8px"><button id="mine4" class="primary">⛏ Mine 4/tick</button><button id="stopMine">Stop mining</button></div><div class="controls" style="padding:0;gap:5px"><button id="left">← Thrust</button><button id="right">→ Thrust</button><button id="up">↑ Thrust</button><button id="down">↓ Thrust</button><button id="drift">Drift</button></div><div class="controls" style="padding:0;gap:5px;margin-top:8px"><button id="travelA">Assist to Station A</button><button id="travelGate">Assist to Gate</button><button id="jump" class="primary">Jump Gate</button><button id="travelB">Assist to Station B</button></div><button style="margin-top:12px" id="reconnect">Reconnect viewer</button><div class="help" id="commandMessage" aria-live="polite">Opening the local session…</div></div><div class="card pad" style="display:none"><h2>Scenario</h2><select id="scenario" style="width:100%"><option value="ten">10 asteroids · 10 ore each</option><option value="hold">Automatic mining · hold 10</option><option value="motion">Ship movement · inertia</option></select><div class="help" id="description">Ten finite asteroids are removed as they are mined.</div><label class="filebutton" for="import" style="display:block;text-align:center;margin-top:15px">Open other .sgview recording</label><input id="import" type="file" accept=".sgview,.txt,text/plain"></div>
 <div class="card pad" id="colonyPanel" hidden><h2>Colony ship · first settlement</h2>
 <section id="openingGuide" aria-labelledby="openingTitle" style="border:1px solid #37657a;border-radius:10px;padding:12px;margin:10px 0;background:#0d2433">
- <h2 id="openingTitle">First Outpost · Your opening mission</h2>
+ <h2 id="openingTitle">First Outpost · Optional tutorial</h2>
+ <button id="skipOpening" type="button">Skip tutorial</button>
  <div id="openingStage" role="status" aria-live="polite">Awaiting verified colony status…</div>
  <p id="openingDetail" class="help">Your mission updates only when the native world reports committed changes.</p>
  <button id="openingAction" class="primary" type="button" disabled>Awaiting world</button>
  <div class="help" style="margin-top:8px">The host saves the world. Reconnecting reloads the actual inventory and construction progress; a queued command is not a completed action.</div>
 </section>
 <div class="help">One ship · finite crew · no starting stations or gates. Every resource action is executed and saved by the C++ simulation. The mineral distributions below are illustrative based on real mineral classes.</div>
+<section aria-labelledby="flightTitle" style="border:1px solid #31445c;border-radius:10px;padding:12px;margin:10px 0">
+ <h2 id="flightTitle">Flight deck · Manual piloting</h2>
+ <div class="help">Arrow keys or WASD: thrust · Space: neutral drift. Use the buttons if you prefer the mouse. The ship keeps its momentum; stopping thrust is not an instant brake.</div>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <button type="button" id="flightLeft">←</button><button type="button" id="flightUp">↑</button>
+  <button type="button" id="flightDown">↓</button><button type="button" id="flightRight">→</button>
+  <button type="button" id="flightDrift">Neutral drift</button>
+ </div>
+ <div class="help" id="flightTelemetry" role="status" aria-live="polite">Awaiting authoritative ship location and nearby asteroids.</div>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <button type="button" id="flightScan">Scan asteroids</button>
+  <button type="button" id="flightMine" class="primary">Mine nearest 8 t</button>
+  <button type="button" id="flightMineSelected">Mine selected scanned rock</button>
+ </div>
+ <div class="help">Mining range and cargo capacity are enforced by the native world. A queued request does not confirm extraction.</div>
+</section>
 <div class="metric"><span class="muted">Colonists</span><strong id="colonyCrew">—</strong></div>
 <div class="metric"><span class="muted">Raw ore (t)</span><strong id="colonyRaw">—</strong></div>
 <div class="metric"><span class="muted">Refined material (t)</span><strong id="colonyRefined">—</strong></div>
@@ -194,6 +211,7 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
 <script src="region.js"></script>
 <script src="survey.js"></script>
 <script src="opening-guide.js"></script>
+<script src="flight-controls.js"></script>
 <script src="colony.js"></script>
 <script src="interactive.js"></script>
 <script src="colony-shipping.js"></script>
