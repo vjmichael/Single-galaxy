@@ -99,6 +99,12 @@ public:
     std::optional<RefinementPlan> plan_refinement(PlayerId owner,std::uint32_t system,
         std::uint64_t signature,Vector2 scanner_position,std::int64_t discovery_range_mm,
         std::int64_t scan_radius_mm,int sensor_strength) const;
+    // Trusted simulation tick moves real registered probe positions gradually.
+    // Returns true only once every planned probe reaches its waypoint.
+    bool advance_refinement(PlayerId owner,std::uint32_t system,
+        std::uint64_t signature,Vector2 scanner_position,
+        std::int64_t discovery_range_mm,std::int64_t scan_radius_mm,
+        int sensor_strength,std::int64_t max_step_mm);
     // Filter actual native probe evidence by scan intent; no client-supplied sightings.
     std::vector<ScanObservation> scan_mode(PlayerId owner,std::uint32_t system,
         std::uint64_t tick,std::int64_t radius_mm,int sensor_strength,ScanMode mode) const;
