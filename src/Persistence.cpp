@@ -2232,7 +2232,7 @@ public:
         }
         if(p.interaction_event_id){
             if(p.leader_rapport<=-12)p.delta+=12;
-            else if(p.leader_rapport>=8)p.delta-=8;
+            else if(p.leader_rapport>=8)p.delta-=20;
         }
         const int old=previous?previous->discontent:0;
         p.discontent=std::clamp(old+p.delta,0,100);
