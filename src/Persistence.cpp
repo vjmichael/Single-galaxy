@@ -9648,8 +9648,14 @@ bool PersistentWorld::submit_voluntary_immigration_boarding(
            }
            const auto approved=store_->personal_outlook_before(
                a.origin,a.npc_id,a.world_generation);
+           // Boarding is a new prospective action: a same-generation
+           // *already committed* recovery observation can veto it. The
+           // original admission still references only prior-generation
+           // personal history, preserving dated decisions without time travel.
+           if(generation_==std::numeric_limits<std::uint64_t>::max())
+               return false;
            const auto latest=store_->personal_outlook_before(
-               a.origin,a.npc_id,generation_);
+               a.origin,a.npc_id,generation_+1);
            return approved && latest &&
                   approved->event_id==a.personal_outlook_event_id &&
                   approved->considering_departure &&
