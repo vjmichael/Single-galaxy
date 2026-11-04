@@ -23,6 +23,6 @@ jobs:
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
       - name: Build
-        run: cmake --build build --target galaxy_colony_auto04a_tests galaxy_colony_auto04b_host_tests galaxy_colony_auto04d2_tests galaxy_colony_auto04d3_tests galaxy_colony_auto04d3_repair_tests galaxy_colony_auto04d3_ferry_tests galaxy_colony_auto04d4_custody_tests galaxy_colony_auto04d4_manifest_tests galaxy_colony_auto04d4c_departure_tests galaxy_b70h_delegated_maintenance_tests galaxy_colony_live_host galaxy_shipping_status_bridge -j 2
+        run: cmake --build build --target galaxy_colony_auto04a_tests galaxy_colony_auto04b_host_tests galaxy_colony_auto04d2_tests galaxy_colony_auto04d3_tests galaxy_colony_auto04d3_repair_tests galaxy_colony_auto04d3_ferry_tests galaxy_colony_auto04d4_custody_tests galaxy_colony_auto04d4_manifest_tests galaxy_colony_auto04d4c_departure_tests galaxy_colony_auto04d4c_staffed_tests galaxy_b70h_delegated_maintenance_tests galaxy_colony_live_host galaxy_shipping_status_bridge -j 2
       - name: Test
-        run: ctest --test-dir build --output-on-failure -R 'galaxy_colony_auto04(a_safety|b_host|b_authenticated_relay|d2_durable_response|d3_npc_notice|d3_physical_repair|d3_ferry_rescue|d4_resource_custody|d4_departure_manifest|d4c_atomic_departure)|galaxy_b70h_delegated_maintenance_tests'
+        run: ctest --test-dir build --output-on-failure -R 'galaxy_colony_auto04(a_safety|b_host|b_authenticated_relay|d2_durable_response|d3_npc_notice|d3_physical_repair|d3_ferry_rescue|d4_resource_custody|d4_departure_manifest|d4c_atomic_departure|d4c_staffed_colony)|galaxy_b70h_delegated_maintenance_tests'
