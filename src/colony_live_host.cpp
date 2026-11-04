@@ -117,6 +117,7 @@ void status(const Simulation& w,EntityId ship,bool replay_discoveries=false){
     const auto* s=w.find(ship);const auto* c=w.colony_ship(ship);
     if(!s || !c)throw std::runtime_error("colony ship missing");
     announce(w,"HEADING|"+std::to_string(s->heading_deg));
+    announce(w,"PROBE_RESET");
     announce(w,"PROBE_STOCK|"+std::to_string(s->survey_probes_carried)+"|"+
         std::to_string(s->fitting.probe_launcher()?1:0));
     for(const auto& [id,p]:w.survey_probes()){
