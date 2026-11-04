@@ -37,6 +37,9 @@ int main(){
    CHECK(execute(w,order(w,1,ship,Action::LaunchGeologicalDrone,ore,8))==Outcome::Unauthorized);
    CHECK(w.world().survey_probes().empty());
    CHECK(execute(w,order(w,2,ship,Action::LaunchGeologicalDrone,ordinary))==Outcome::InvalidTarget);
+   // The full 10 km drone control radius is native millimetres, not 10,000 mm.
+   CHECK(Simulation::kDroneControlRangeMm==10000000LL);
+   CHECK(Simulation::kDeepSpaceProbeCommsRangeMm==74798935350000LL);
    CHECK(w.world().survey_probes().empty());
    CHECK(execute(w,order(w,3,ship,Action::LaunchGeologicalDrone,ore))==Outcome::Applied);
    CHECK(w.world().find(ship)->survey_probes_carried==0);
@@ -47,15 +50,16 @@ int main(){
    CHECK(execute(w,order(w,4,ship,Action::LaunchGeologicalDrone,ore))==Outcome::NoResources);
    CHECK(execute(w,order(w,5,ship,Action::RecoverSurveyProbe,3))==Outcome::InTransition);
    w.steps(10);
-   CHECK(w.world().survey_probes().at(3).sample_ore==1);
+   CHECK(w.world().survey_probes().at(3).sample_ore==0);
    CHECK(w.world().survey_probes().at(3).taxonomy==3);
+   CHECK(w.world().find(ore)->ore==55); // geological scan never consumes ore
    CHECK(w.world().discoveries().count({7,ore})==1);
    CHECK(w.world().total_ore()==original);
   }
   {
    PersistentWorld w(db,Simulation(1));
    CHECK(w.world().survey_probes().count(3)==1);
-   CHECK(w.world().survey_probes().at(3).sample_ore==1);
+   CHECK(w.world().survey_probes().at(3).sample_ore==0);
    CHECK(w.world().total_ore()==original);
    w.steps(20);
    CHECK(w.world().survey_probes().at(3).drone_phase==3);
@@ -66,17 +70,17 @@ int main(){
   {
    PersistentWorld w(copy,Simulation(2));
    CHECK(w.world().survey_probes().at(3).drone_phase==3);
-   CHECK(w.world().survey_probes().at(3).sample_ore==1);
+   CHECK(w.world().survey_probes().at(3).sample_ore==0);
    CHECK(execute(w,order(w,6,ship,Action::RecoverSurveyProbe,3))==Outcome::Applied);
    CHECK(w.world().survey_probes().empty());
    CHECK(w.world().find(ship)->survey_probes_carried==1);
-   CHECK(w.world().find(ship)->cargo==1);
+   CHECK(w.world().find(ship)->cargo==0);
    CHECK(w.world().total_ore()==original);
    CHECK(execute(w,order(w,7,ship,Action::RecoverSurveyProbe,3))==Outcome::InvalidTarget);
    CHECK(w.world().total_ore()==original);
   }
   fs::remove_all(dir);
-  std::cout<<"PASS PLAY-13 finite drill drone flight, conserved asteroid sample, SQLite recovery\n";
+  std::cout<<"PASS PLAY-13 non-extractive geological drone, survey data and SQLite recovery\n";
   return 0;
  }catch(const std::exception& e){
   std::cerr<<"FAIL PLAY-13 "<<e.what()<<'\n';
