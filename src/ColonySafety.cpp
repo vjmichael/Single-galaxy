@@ -35,7 +35,14 @@ Assessment assess(const Simulation& world,EntityId home_ship,EntityId site,
     if(site==home_ship){
         stock=world.life_support(home_ship);
         if(ship->crew<0)throw std::logic_error("negative colony crew");
-        population=static_cast<std::uint64_t>(ship->crew);
+        // An embarked passenger is a real local consumer, not invisible cargo.
+        // Only physically onboard named passengers count; native crew is
+        // already represented by the authoritative aggregate headcount.
+        const auto passengers=world.passengers_aboard(home_ship);
+        if(passengers>std::numeric_limits<std::uint64_t>::max()-
+                          static_cast<std::uint64_t>(ship->crew))
+            throw std::overflow_error("life-safety population overflow");
+        population=static_cast<std::uint64_t>(ship->crew)+passengers;
     }else if(const auto* habitat=world.habitat(site)){
         if(habitat->source_ship!=home_ship || habitat->residents<0)
             throw std::invalid_argument("foreign or invalid residential site");
