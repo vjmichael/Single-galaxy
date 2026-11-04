@@ -23,8 +23,8 @@ try{
         Simulation genesis(seed);
         source=genesis.add_colony_ship(7,{0,0},100,2);
         receiver=genesis.add_colony_ship(7,{0,0},100,2);
-        genesis.provision_colony_genesis(source,100,100,100,300,500);
-        genesis.provision_colony_genesis(receiver,1000,1000,1000,300,500);
+        genesis.provision_colony_genesis(source,100,100,100,200,500);
+        genesis.provision_colony_genesis(receiver,1000,1000,1000,1000,1000);
         genesis.enable_individual_workforce();
         genesis.upgrade_assignment_snapshot_format();
         genesis.enable_passenger_life_support();
