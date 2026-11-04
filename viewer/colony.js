@@ -8,6 +8,10 @@
   function decode(raw){
     if(typeof raw!=='string'||raw.length>180||!/^COLONY\|1\|/.test(raw)||!/^[A-Za-z0-9_|-]+$/.test(raw))throw Error('Invalid colony telemetry');
     const v=raw.split('|'),tick=numeric(v[2],1200),t=v[3];let e={tick,type:t};
+    if(t==='HEADING'){
+      if(v.length!==5)throw Error('Bad ship heading');
+      return {...e,heading:numeric(v[4],359)};
+    }
     if(t==='SAFETY'){
       if(v.length!==10||!v.slice(4).every(x=>/^\d+$/.test(x)))throw Error('Malformed safety report');
       const [site,risk,food,water,oxygen,pop]=v.slice(4).map(Number);
@@ -240,6 +244,9 @@
  window.GalaxyColony={
    reset(){openingStatus=null;openingScanned=false;refreshOpening();window.GalaxyColonyHomeShipId=null;q('colonySafetyAssess').disabled=true;q('colonySafetyPreflight').disabled=true;policyAudits.clear();geology.clear();small.clear();stocks.clear();outposts.clear();farms.clear();habitats.clear();utilities.clear();communities.clear();clinics.clear();reclaimers.clear();waterworks.clear();log.length=0;q('colonyEvents').textContent='Awaiting colony telemetry…';},
    accept(raw){const e=window.GalaxyColonyContract.decode(raw);
+     if(e.type==='HEADING'){
+       q('flightHeading').textContent=e.heading+'°';
+     }
      if(e.type==='STATUS'){
        openingStatus={crew:e.crew,raw:e.raw,refined:e.refined,modules:e.modules,outposts:e.outposts};
        refreshOpening();
