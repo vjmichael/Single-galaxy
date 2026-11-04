@@ -3701,9 +3701,14 @@ public:
                     // must not be retroactively attached to a different hull.
                     Statement before_state(db_,"SELECT state FROM snapshots WHERE generation=?");
                     before_state.i64(1,gen-1);
-                    if(!before_state.row() ||
-                       sqlite3_column_type(before_state.get(),0)!=SQLITE_BLOB)
-                        throw std::runtime_error("SQLite: missing pre-departure state");
+                    if(!before_state.row())
+                        throw std::runtime_error("SQLite: missing pre-departure generation "+
+                            std::to_string(gen-1));
+                    // The canonical parser and immutable hash below validate
+                    // both BLOB and legacy text-backed snapshot storage.
+                    if(sqlite3_column_type(before_state.get(),0)!=SQLITE_BLOB &&
+                       sqlite3_column_type(before_state.get(),0)!=SQLITE_TEXT)
+                        throw std::runtime_error("SQLite: invalid pre-departure snapshot representation");
                     const auto* raw=sqlite3_column_blob(before_state.get(),0);
                     const auto bytes=sqlite3_column_bytes(before_state.get(),0);
                     if(!raw || bytes<=0)throw std::runtime_error("SQLite: invalid departure predecessor");
