@@ -392,7 +392,7 @@ EntityId nearest(const Simulation& w, EntityId ship){
     }
     return chosen;
 }
-void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uint64_t& nonce,PlayerId principal,std::set<std::uint64_t>& pending_scans,std::set<std::uint64_t>& pending_probe_scans){
+void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uint64_t& nonce,PlayerId principal,std::set<std::uint64_t>& pending_scans,std::set<std::uint64_t>& pending_probe_scans,SurveyArchive* knowledge){
     if(principal!=owner){announce(world.world(),"ERROR|UNAUTHORIZED_PRINCIPAL");return;}
     const auto v=split(line);if(v.empty())return;
     if(v.size()==1 && v[0]=="SCAN"){
@@ -405,6 +405,12 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
     if(v.size()==1 && v[0]=="SYSTEM_CELESTIAL"){
         const auto profile=world.world().scan_celestial_profile(principal,ship);
         if(!profile){announce(world.world(),"ERROR|INVALID_INPUT");return;}
+        if(knowledge)try {
+            knowledge->record_system_catalogue(principal,world.world().system_id(),
+                world.world().tick()+1,*profile);
+        }catch(const std::exception& ex){
+            std::cerr<<"PLAY13B_CATALOGUE_WRITE_ERROR "<<ex.what()<<'\n';
+        }
         announce(world.world(),"CELESTIAL_HEADER|"+
             std::to_string(static_cast<unsigned>(profile->architecture))+"|"+
             std::to_string(static_cast<unsigned>(profile->morphology))+"|"+
@@ -810,7 +816,7 @@ int main(int argc,char** argv){
             poll_input();
             const auto to_apply=std::move(commands);commands.clear();
             for(const auto& line:to_apply){
-                if(!authenticated_transport){apply(world,ship,line,nonce,owner,pending_scans,pending_probe_scans);continue;}
+                if(!authenticated_transport){apply(world,ship,line,nonce,owner,pending_scans,pending_probe_scans,survey_knowledge.get());continue;}
                 // The trusted relay supplies a resolved account ID over our
                 // private stdin pipe; unprefixed/forged/foreign commands fail
                 // closed even if relay validation is accidentally bypassed.
@@ -821,7 +827,7 @@ int main(int argc,char** argv){
                     const auto principal=integer(line.substr(first+1,second-first-1));
                     if(principal!=static_cast<std::int64_t>(owner))
                         throw std::invalid_argument("foreign colony command");
-                    apply(world,ship,line.substr(second+1),nonce,static_cast<PlayerId>(principal),pending_scans,pending_probe_scans);
+                    apply(world,ship,line.substr(second+1),nonce,static_cast<PlayerId>(principal),pending_scans,pending_probe_scans,survey_knowledge.get());
                 }catch(const std::exception&){announce(world.world(),"ERROR|UNAUTHORIZED_PRINCIPAL");}
             }
             const auto old=world.world().events().size();

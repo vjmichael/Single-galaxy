@@ -170,6 +170,30 @@ static void report_outbox_restart() {
     std::filesystem::remove(file);
     std::cout<<"PASS durable ten-second delayed uplink across restart and reconnect\n";
 }
+static void system_catalogue_persistence() {
+    const auto file=std::filesystem::temp_directory_path()/"galaxy-play13b-catalogue.sqlite";
+    std::filesystem::remove(file);
+    const auto profile=generate_astronomical_profile(12345,3);
+    try {
+        {
+            SurveyArchive archive(file.string());
+            CHECK(!archive.known_system_catalogue(7,3).has_value());
+            CHECK(archive.record_system_catalogue(7,3,5,profile));
+            CHECK(!archive.known_system_catalogue(8,3).has_value());
+            CHECK(archive.record_system_catalogue(7,3,10,profile));
+            CHECK(archive.known_system_catalogue(7,3)->first_tick==5);
+            CHECK(archive.known_system_catalogue(7,3)->last_tick==10);
+            CHECK(archive.known_system_catalogue(7,3)->star_count==profile.star_count);
+        }
+        {
+            SurveyArchive reopened(file.string());
+            CHECK(reopened.known_system_catalogue(7,3)->first_tick==5);
+            CHECK(reopened.known_system_catalogue(7,3)->last_tick==10);
+            CHECK(!reopened.known_system_catalogue(8,3).has_value());
+        }
+    }catch(...){std::filesystem::remove(file);throw;}
+    std::filesystem::remove(file);
+}
 static void archive_persistence() {
     const auto file=std::filesystem::temp_directory_path()/"galaxy-b60-survey-tests.sqlite";
     std::filesystem::remove(file);
@@ -263,4 +287,4 @@ static void archive_persistence() {
     std::filesystem::remove(file);
     std::cout<<"PASS durable per-player survey history, private/public isolation, deduplicated contributions\n";
 }
-int main(){try{geography_routes();scanning_and_probes();astronomy_profiles();report_outbox_restart();archive_persistence();std::cout<<"B5.4/B6.0 ALL PASS\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
+int main(){try{geography_routes();scanning_and_probes();astronomy_profiles();report_outbox_restart();system_catalogue_persistence();archive_persistence();std::cout<<"B5.4/B6.0 ALL PASS\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

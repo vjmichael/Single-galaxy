@@ -346,9 +346,61 @@ SurveyArchive::SurveyArchive(const std::string& path) {
             "confidence INTEGER NOT NULL CHECK(confidence BETWEEN 1 AND 100),"
             "captured_ms INTEGER NOT NULL CHECK(captured_ms>=0),"
             "PRIMARY KEY(player,system,site,tick));"
-            "CREATE INDEX IF NOT EXISTS idx_probe_pending_ready ON pending_probe_reports(player,captured_ms);",
+            "CREATE INDEX IF NOT EXISTS idx_probe_pending_ready ON pending_probe_reports(player,captured_ms);"
+            "CREATE TABLE IF NOT EXISTS system_catalogues("
+            "player INTEGER NOT NULL CHECK(player>0),system INTEGER NOT NULL CHECK(system>0),"
+            "first_tick INTEGER NOT NULL CHECK(first_tick>0),"
+            "last_tick INTEGER NOT NULL CHECK(last_tick>=first_tick),"
+            "generator_version INTEGER NOT NULL CHECK(generator_version>0),"
+            "architecture INTEGER NOT NULL CHECK(architecture BETWEEN 0 AND 3),"
+            "star_count INTEGER NOT NULL CHECK(star_count BETWEEN 1 AND 3),"
+            "band_count INTEGER NOT NULL CHECK(band_count BETWEEN 1 AND 20),"
+            "PRIMARY KEY(player,system));",
             nullptr,nullptr,nullptr),db_,"create survey archive");
     } catch(...) {sqlite3_close(db_);db_=nullptr;throw;}
+}
+bool SurveyArchive::record_system_catalogue(PlayerId owner,std::uint32_t system,
+    std::uint64_t observed_tick,const AstronomicalProfile& profile) {
+    if(!owner||!system||!observed_tick||
+       owner>std::uint64_t(std::numeric_limits<std::int64_t>::max())||
+       observed_tick>std::uint64_t(std::numeric_limits<std::int64_t>::max())||
+       profile.generator_version==0||profile.star_count<1||profile.star_count>3||
+       profile.orbital_bands.empty()||profile.orbital_bands.size()>20||
+       int(profile.architecture)<0||int(profile.architecture)>3)
+        throw std::invalid_argument("invalid private system catalogue");
+    Stmt insert(db_,"INSERT INTO system_catalogues"
+        "(player,system,first_tick,last_tick,generator_version,architecture,star_count,band_count) "
+        "VALUES(?,?,?,?,?,?,?,?) "
+        "ON CONFLICT(player,system) DO UPDATE SET "
+        "last_tick=MAX(system_catalogues.last_tick,excluded.last_tick) "
+        "WHERE system_catalogues.generator_version=excluded.generator_version");
+    sqlite3_bind_int64(insert.get(),1,sqlite3_int64(owner));
+    sqlite3_bind_int(insert.get(),2,int(system));
+    sqlite3_bind_int64(insert.get(),3,sqlite3_int64(observed_tick));
+    sqlite3_bind_int64(insert.get(),4,sqlite3_int64(observed_tick));
+    sqlite3_bind_int64(insert.get(),5,sqlite3_int64(profile.generator_version));
+    sqlite3_bind_int(insert.get(),6,int(profile.architecture));
+    sqlite3_bind_int(insert.get(),7,int(profile.star_count));
+    sqlite3_bind_int(insert.get(),8,int(profile.orbital_bands.size()));
+    insert.step();
+    return sqlite3_changes(db_)>0;
+}
+std::optional<SurveyArchive::SystemCatalogueRecord>
+SurveyArchive::known_system_catalogue(PlayerId owner,std::uint32_t system) const {
+    if(!owner||!system||owner>std::uint64_t(std::numeric_limits<std::int64_t>::max()))
+        throw std::invalid_argument("invalid catalogue selector");
+    Stmt query(db_,"SELECT first_tick,last_tick,generator_version,architecture,"
+        "star_count,band_count FROM system_catalogues WHERE player=? AND system=?");
+    sqlite3_bind_int64(query.get(),1,sqlite3_int64(owner));
+    sqlite3_bind_int(query.get(),2,int(system));
+    if(query.step()!=SQLITE_ROW)return std::nullopt;
+    return SystemCatalogueRecord{
+        std::uint64_t(sqlite3_column_int64(query.get(),0)),
+        std::uint64_t(sqlite3_column_int64(query.get(),1)),
+        std::uint64_t(sqlite3_column_int64(query.get(),2)),
+        StellarArchitecture(sqlite3_column_int(query.get(),3)),
+        std::uint8_t(sqlite3_column_int(query.get(),4)),
+        std::uint32_t(sqlite3_column_int(query.get(),5))};
 }
 SurveyArchive::~SurveyArchive(){if(db_)sqlite3_close(db_);}
 bool SurveyArchive::record(const ScanObservation& o) {

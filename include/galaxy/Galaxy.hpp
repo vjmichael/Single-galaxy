@@ -140,6 +140,17 @@ public:
         int minimum_confidence=1) const;
     // Trusted migration/bridge: import authoritative v67 world sightings
     // into the reusable B6 survey archive without exposing another owner's data.
+    struct SystemCatalogueRecord {
+        std::uint64_t first_tick=0,last_tick=0,generator_version=0;
+        StellarArchitecture architecture=StellarArchitecture::Single;
+        std::uint8_t star_count=0;
+        std::uint32_t orbital_bands=0;
+    };
+    // Immutable first-survey provenance, owner-private, separate from live physics.
+    bool record_system_catalogue(PlayerId owner,std::uint32_t system,
+        std::uint64_t observed_tick,const AstronomicalProfile& profile);
+    std::optional<SystemCatalogueRecord> known_system_catalogue(
+        PlayerId owner,std::uint32_t system) const;
     std::size_t import_native_discoveries(const Simulation& world,
         PlayerId owner,std::uint32_t system);
     // A host-observed report enters a durable outbox. Reports become readable
