@@ -1,6 +1,7 @@
 #pragma once
 #include "galaxy/Simulation.hpp"
 #include "galaxy/ColonySafety.hpp"
+#include "galaxy/ColonyDefense.hpp"
 #include "galaxy/ColonySafetyNotice.hpp"
 #include "galaxy/ColonyFamilyDeparture.hpp"
 #include <cstdint>
@@ -578,6 +579,16 @@ public:
     // Positive only after a genuinely executed world command with an Applied
     // event, its real material transfer, and independent SQLite provenance.
     bool verified_npc_habitat_resupply(std::uint64_t command_id) const;
+    // DEF-01A: fixed-range physically observed FOREIGN contact. A contact is
+    // NOT an attack or proof of hostile intent. Cannot see through systems or
+    // assign an omniscient guard; observation requires an on-duty named NPC.
+    std::vector<colony_defense::Contact> local_colony_watch_contacts(
+        EntityId colony_ship,std::uint64_t observer_npc) const;
+    // Trusted host records one already-visible contact under the canonical
+    // SQLite writer and world generation CAS. Durable proof survives restart.
+    colony_defense::Contact record_colony_watch_contact(
+        std::uint64_t event_id,EntityId colony_ship,std::uint64_t observer_npc,
+        EntityId foreign_ship);
     // D2a: register ART02-authenticated, actually resident child into the
     // replayable world occupancy ledger. Separate from declaring evacuation.
     bool submit_host_dependent_registration(const Command& command,

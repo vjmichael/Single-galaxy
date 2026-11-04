@@ -1,0 +1,27 @@
+name: Colony DEF-01A bounded watch and durable contact
+on:
+  push:
+    branches:
+      - integration/colony-defense01a-local-watch-v81-20261103
+  pull_request:
+    paths:
+      - 'src/ColonyDefense.cpp'
+      - 'include/galaxy/ColonyDefense.hpp'
+      - 'src/Persistence.cpp'
+      - 'tests/COLONY_DEFENSE01A_*'
+      - 'CMakeLists.txt'
+  workflow_dispatch:
+jobs:
+  native-defense-watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SQLite
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+      - name: Build physical colony watch and emergency resupply regressions
+        run: cmake --build build --target galaxy_colony_defense01a_watch_tests galaxy_colony_auto04d5c1_npc_resupply_tests -j 2
+      - name: Verify finite local observation and SQLite stock custody
+        run: ctest --test-dir build --output-on-failure -R 'galaxy_colony_(defense01a_local_watch|auto04d5c1_npc_resupply)'
