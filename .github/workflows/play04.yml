@@ -33,4 +33,5 @@ jobs:
           node --check viewer/cargo-return.js
           node --check viewer/colony.js
           node --check viewer/interactive.js
+          node --check viewer/viewer.js
           python3 -m py_compile live/interactive_relay.py
