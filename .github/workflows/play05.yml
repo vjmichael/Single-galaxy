@@ -1,0 +1,31 @@
+name: PLAY-05 mining expedition feedback and wiring
+on:
+  push:
+    branches:
+      - integration/play05-mining-expedition-feedback-20261104
+  pull_request:
+    paths:
+      - 'viewer/expedition-feedback.js'
+      - 'viewer/interactive.js'
+      - 'viewer/interactive.html'
+      - 'viewer/colony.js'
+      - 'live/interactive_relay.py'
+      - 'tests/ExpeditionFeedbackTests.js'
+      - 'tests/ExpeditionWiringTests.js'
+      - '.github/workflows/play05.yml'
+jobs:
+  expedition-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test expedition, piloting and saved progress projection
+        run: node --test tests/ExpeditionFeedbackTests.js tests/ExpeditionWiringTests.js tests/CargoReturnTests.js tests/FlightControlsTests.js tests/OpeningGuideTests.js
+      - name: Validate live browser and relay syntax
+        run: |
+          node --check viewer/expedition-feedback.js
+          node --check viewer/cargo-return.js
+          node --check viewer/opening-guide.js
+          node --check viewer/flight-controls.js
+          node --check viewer/interactive.js
+          node --check viewer/colony.js
+          python3 -m py_compile live/interactive_relay.py
