@@ -497,6 +497,14 @@ struct DiscoveryRecord {
     // 1 carbonaceous, 2 silicate, 3 metallic. Persists after drone recovery.
     std::uint8_t survey_taxonomy=0;
 };
+// v68: host-origin observation withheld from every player projection until
+// its scheduled report time and a valid carrier/probe link. Persisted in world.
+struct PendingProbeDiscovery {
+    DiscoveryRecord report{};
+    EntityId carrier=0;
+    std::uint64_t probe_id=0;
+    std::uint64_t ready_tick=0;
+};
 struct Command {
     std::uint64_t id = 0;          // globally unique, for idempotency
     std::uint64_t execute_tick = 0;
@@ -732,6 +740,9 @@ public:
     bool submit(const Command& command);
     void step();
     void steps(std::uint64_t count);
+    // Native host converts 10 gameplay seconds to its configured tick period.
+    // The requested period is durable for future queued reports.
+    void configure_probe_report_tick_ms(std::uint64_t tick_ms);
 
     std::uint64_t tick() const { return tick_; }
     std::uint32_t system_id() const { return system_id_; }
@@ -740,6 +751,7 @@ public:
     const std::vector<ActivityEvent>& activity_events() const { return activity_events_; }
     const std::map<EntityId, AutoMining>& active_mining() const { return mining_; }
     const std::map<std::pair<PlayerId,EntityId>,DiscoveryRecord>& discoveries() const { return discoveries_; }
+    std::size_t pending_probe_report_count() const {return pending_probe_discoveries_.size();}
     const std::map<std::uint64_t,DeployedSurveyProbe>& survey_probes() const {return survey_probes_;}
     bool was_depleted(EntityId id) const { return depleted_.count(id) != 0; }
     const Entity* find(EntityId id) const;
@@ -796,6 +808,8 @@ private:
     std::set<EntityId> depleted_;
     std::map<EntityId, AutoMining> mining_;
     std::map<std::pair<PlayerId,EntityId>,DiscoveryRecord> discoveries_;
+    std::map<std::pair<PlayerId,EntityId>,PendingProbeDiscovery> pending_probe_discoveries_;
+    std::uint64_t probe_report_delay_ticks_=10;
     std::map<std::uint64_t,DeployedSurveyProbe> survey_probes_;
     std::map<std::pair<EntityId, PlayerId>, StationHangar> hangars_;
     std::map<EntityId, StationMarket> markets_;
