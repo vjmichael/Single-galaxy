@@ -2,6 +2,7 @@
 #include "galaxy/NpcAppearanceGenome.hpp"
 #include "galaxy/RegionalModeAuthority.hpp"
 #include "galaxy/MedicalSocietyBridge.hpp"
+#include <sqlite3.h>
 #include <filesystem>
 #include <chrono>
 #include <iostream>
@@ -9,6 +10,29 @@
 using namespace galaxy;
 namespace re=galaxy::regional_events;
 #define CHECK(c) do{if(!(c))throw std::runtime_error(std::string("AUTO04D4D2 family: ")+ #c+" line "+std::to_string(__LINE__));}while(false)
+static std::uint64_t retained_snapshot_count(const std::string& path,std::uint64_t gen){
+    sqlite3* db=nullptr;
+    CHECK(sqlite3_open_v2(path.c_str(),&db,SQLITE_OPEN_READONLY,nullptr)==SQLITE_OK);
+    sqlite3_stmt* query=nullptr;
+    CHECK(sqlite3_prepare_v2(db,"SELECT COUNT(*) FROM snapshots WHERE generation=?",
+                             -1,&query,nullptr)==SQLITE_OK);
+    CHECK(sqlite3_bind_int64(query,1,static_cast<sqlite3_int64>(gen))==SQLITE_OK);
+    CHECK(sqlite3_step(query)==SQLITE_ROW);
+    const auto count=static_cast<std::uint64_t>(sqlite3_column_int64(query,0));
+    sqlite3_finalize(query);sqlite3_close(db);
+    return count;
+}
+static void delete_historical_snapshot(const std::string& path,std::uint64_t gen){
+    sqlite3* db=nullptr;
+    CHECK(sqlite3_open_v2(path.c_str(),&db,SQLITE_OPEN_READWRITE,nullptr)==SQLITE_OK);
+    sqlite3_stmt* query=nullptr;
+    CHECK(sqlite3_prepare_v2(db,"DELETE FROM snapshots WHERE generation=?",
+                             -1,&query,nullptr)==SQLITE_OK);
+    CHECK(sqlite3_bind_int64(query,1,static_cast<sqlite3_int64>(gen))==SQLITE_OK);
+    CHECK(sqlite3_step(query)==SQLITE_DONE);
+    CHECK(sqlite3_changes(db)==1);
+    sqlite3_finalize(query);sqlite3_close(db);
+}
 template<class F>static void denied(F fn){bool rejected=false;try{fn();}catch(const std::exception& e){std::cerr<<"Expected denial: "<<e.what()<<'\n';rejected=true;}CHECK(rejected);}
 int main(){
 try{
@@ -16,7 +40,7 @@ try{
         ("sg_family_atomic_v59_"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count())+".db")).string();
     const auto copy=file+".replay";
     std::uint64_t source=0,receiver=0,child=(1ULL<<62)+740;
-    std::int64_t material=0;std::uint64_t last_gen=0;
+    std::int64_t material=0;std::uint64_t last_gen=0,predecessor_gen=0;
     const std::string scope="colony-family-v74",region_scope="colony-family-region-v74";
     constexpr std::uint64_t seed=7404;
     {
@@ -80,6 +104,7 @@ try{
         const auto proof=w.audit_colony_family_departure(manifest);
         CHECK(proof.ready_for_transaction);
         CHECK(w.prepare_host_colony_family_departure(manifest));
+        predecessor_gen=w.generation();
         colony_family::ExecutionPlan execution{};
         execution.prepared=manifest;execution.command_id=8001;
         execution.expected_region_revision=2;
@@ -126,6 +151,12 @@ try{
         CHECK(w.world().life_support(receiver)->food_kg==stock-5);
         CHECK(w.world().total_material_kg()==material);
         last_gen=w.generation();
+        // The departure occurred many world commits earlier. Rolling
+        // checkpoints alone must NOT erase the immutable pre-departure
+        // world witness required by the independent custody verifier.
+        CHECK(last_gen>predecessor_gen+3);
+        CHECK(retained_snapshot_count(file,predecessor_gen)==1);
+        CHECK(retained_snapshot_count(file,1)==1); // genesis replay anchor
     }
     {
         PersistentWorld reopened(file,Simulation(99));
@@ -146,7 +177,12 @@ try{
         re::CheckpointStore region(copy,region_scope);
         CHECK(region.load()->revision==3);
         CHECK(region.load()->scheduler.colony("receiver").population==5);
+        CHECK(retained_snapshot_count(copy,predecessor_gen)==1);
     }
+    // A forged/lost predecessor must still fail closed, never silently
+    // pronounce a child safely transferred based only on final census.
+    delete_historical_snapshot(copy,predecessor_gen);
+    denied([&]{PersistentWorld corrupted(copy,Simulation(101));});
     for(auto path:{file,copy}){
         std::filesystem::remove(path);
         std::filesystem::remove(path+"-wal");
