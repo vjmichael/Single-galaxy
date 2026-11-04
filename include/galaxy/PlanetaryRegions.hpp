@@ -9,6 +9,7 @@
 namespace galaxy::planetary {
 enum class WorldClimate { LifeSupporting, Ocean, Arid, AirlessRock, Frozen };
 enum class Terrain { DeepOcean, ShallowSea, Coast, Wetland, Grassland, Forest, Dryland, Desert, Mountain, Ice, BareRock };
+enum class Vegetation { None, SparseShrub, SucculentScrub, DesertGrass, TemperateGrass, Woodland, WetlandPlants };
 struct PlanetProfile {
     std::uint64_t body=0, seed=0;
     WorldClimate climate=WorldClimate::LifeSupporting;
@@ -23,7 +24,17 @@ struct Region {
     Terrain terrain=Terrain::BareRock;
     bool surface_water=false;
     bool farming_possible=false;
+    Vegetation vegetation=Vegetation::None;
+    bool dormant_seed_bank=false;
+    bool episodic_bloom_potential=false; // potential, not free biomass
 };
+// Quarterly seasonal indicator; rain_pulse is a future weather-ledger input.
+inline bool arid_bloom_active(const Region& r,unsigned season,unsigned rain_pulse) {
+    if(season>=4 || rain_pulse>100) throw std::invalid_argument("invalid seasonal observation");
+    return r.episodic_bloom_potential && rain_pulse>=65 &&
+           r.temperature_celsius>=-5 && r.temperature_celsius<=38;
+}
+
 // 36 latitude rows (-90 to +90), 72 longitude columns; stable bounded cost.
 // This smooth, reproducible regional approximation is not a climate simulator.
 inline Region survey_region(const PlanetProfile& p,std::uint16_t lat,std::uint16_t lon) {
@@ -71,6 +82,24 @@ inline Region survey_region(const PlanetProfile& p,std::uint16_t lat,std::uint16
         std::clamp(moisture + (temp>=8&&temp<=30?15:0) -
                    (relief>55?35:0),0,100));
     r.farming_possible=!airless&&!ocean&&!frozen&&temp>=0&&temp<=46&&r.fertility>=40;
+    // Desert != sand or lifeless. Wild ecology is independent of farming.
+    const bool terrestrial=!airless&&!ocean&&!frozen&&r.terrain!=Terrain::Ice;
+    if(terrestrial) {
+        const auto ecological_seed=noise(5,lat,lon)%100;
+        const bool arid=r.terrain==Terrain::Desert || r.terrain==Terrain::Dryland ||
+                        p.climate==WorldClimate::Arid;
+        if(arid && temp>=-15 && temp<=52) {
+            // Local ground, shade and subsurface niches can support sparse life.
+            const int cover=moisture+int(ecological_seed%30);
+            if(cover>=29) r.vegetation=Vegetation::DesertGrass;
+            else if(cover>=18) r.vegetation=Vegetation::SucculentScrub;
+            else if(cover>=9) r.vegetation=Vegetation::SparseShrub;
+            r.dormant_seed_bank=(ecological_seed%7!=0);
+            r.episodic_bloom_potential=r.dormant_seed_bank && temp>=-5 && temp<=38;
+        } else if(moisture>=75) r.vegetation=Vegetation::WetlandPlants;
+        else if(moisture>=55) r.vegetation=Vegetation::Woodland;
+        else if(moisture>=30) r.vegetation=Vegetation::TemperateGrass;
+    }
     return r;
 }
 } // namespace galaxy::planetary
