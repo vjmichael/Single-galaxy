@@ -1,0 +1,36 @@
+name: PLAY-12 physical exploration probes
+on:
+  push:
+    branches:
+      - integration/play12-physical-survey-probes-20261104
+  pull_request:
+    paths:
+      - 'include/galaxy/Simulation.hpp'
+      - 'src/Simulation.cpp'
+      - 'src/colony_live_host.cpp'
+      - 'viewer/interactive.html'
+      - 'viewer/interactive.js'
+      - 'viewer/colony.js'
+      - 'live/interactive_relay.py'
+      - 'tests/PLAY12_ProbeLifecycleTests.cpp'
+      - 'tests/PLAY12_ProbeWiringTests.js'
+      - '.github/workflows/play12.yml'
+jobs:
+  native-probe-acceptance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure C++ game
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+      - name: Build physical probe, fitting, exploration and host
+        run: cmake --build build --target galaxy_play12_probe_tests galaxy_play11_fitting_tests galaxy_play10_exploration_tests galaxy_colony_live_host -j2
+      - name: Verify all authoritative persistent gameplay stages
+        run: ctest --test-dir build -R '^galaxy_play(10_exploration|11_fitting|12_probes)$' --output-on-failure
+      - name: Verify strict browser and relay native command wiring
+        run: node --test tests/PLAY12_ProbeWiringTests.js tests/PLAY11_FittingWiringTests.js tests/PLAY10_ExplorationWiringTests.js tests/ExplorationJournalTests.js tests/PLAY09_SalvageWiringTests.js tests/PLAY08_CombatWiringTests.js
+      - name: Check browser and relay syntax
+        run: |
+          node --check viewer/colony.js
+          node --check viewer/interactive.js
+          node --check viewer/exploration-journal.js
+          python3 -m py_compile live/interactive_relay.py
