@@ -2126,6 +2126,280 @@ public:
         }
     }
 
+
+    // EXIT-01B: a concrete receiving-owner-approved immigration admission.
+    // This only makes an adult eligible for an existing real ferry voyage;
+    // neither a fabricated departure nor an automatic labor/population edit.
+    PersistentWorld::VoluntaryImmigrationAdmission assess_voluntary_admission(
+        const Simulation& world,std::uint64_t generation,
+        std::uint64_t pressure_event,EntityId origin,EntityId destination,
+        EntityId ferry,std::uint64_t npc,std::uint64_t transport_id,
+        PlayerId receiving_owner) const{
+        if(!pressure_event || !origin || !destination || !ferry ||
+           origin==destination || ferry==origin || ferry==destination ||
+           !npc || !transport_id || !receiving_owner)
+            throw std::invalid_argument("incomplete NPC immigration admission");
+        const auto* source=world.find(origin);
+        const auto* target=world.find(destination);
+        const auto* carrier=world.find(ferry);
+        const auto* target_life=world.life_support(destination);
+        const auto* ferry_life=world.life_support(ferry);
+        const auto from=world.colony_ship(origin),to=world.colony_ship(destination);
+        const auto person=world.npc_records().find(npc);
+        if(!source || !target || !carrier || !from || !to ||
+           !target_life || !ferry_life ||
+           source->type!=EntityType::Ship ||
+           target->type!=EntityType::Ship ||
+           carrier->type!=EntityType::Ship ||
+           !source->owner_id || target->owner_id!=receiving_owner ||
+           (carrier->owner_id!=source->owner_id &&
+            carrier->owner_id!=receiving_owner) ||
+           carrier->system_id!=source->system_id ||
+           !person || person==world.npc_records().end() ||
+           person->second.home_ship!=origin ||
+           person->second.location!=origin ||
+           person->second.transport_id ||
+           person->second.assigned_site!=origin ||
+           person->second.role!=NpcRole::Ship ||
+           !world.npc_available_for_duty(npc) ||
+           world.named_medics().count(npc) || from->crew<=1 ||
+           to->crew>=1000 || world.voyage_status(transport_id)!=0 ||
+           !world.physical_dependents().empty() && false)
+            throw std::runtime_error("immigration admission lacks eligible real person or receiving colony");
+        // The current solo-adult entry gate is deliberately conservative:
+        // family closure needs the existing two-parent/child migration path.
+        if(has_child_or_dependent_link(origin))
+            throw std::runtime_error("adult immigration must not bypass ART02 child custody");
+        if(colony_safety::assess(world,destination,destination).risk!=
+               colony_safety::Risk::Safe)
+            throw std::runtime_error("receiver lacks healthy life support");
+        if(static_cast<int>(colony_safety::assess(world,origin,origin).risk)<
+           static_cast<int>(colony_safety::Risk::Critical))
+            throw std::runtime_error("source survival pressure has recovered");
+        const auto govt=effective_governance(origin,generation);
+        if(govt.leader_id==npc)
+            throw std::runtime_error("individual immigrant would vacate incumbent government");
+        Statement pressure(db_,"SELECT world_generation,colony,source_owner,npc,"
+            "governance_event,risk FROM sg_colony_npc_exit_pressure WHERE event_id=?");
+        pressure.i64(1,static_cast<sqlite3_int64>(pressure_event));
+        if(!pressure.row())throw std::runtime_error("immigrant lacks real individual exit-pressure witness");
+        const auto born=sqlite3_column_int64(pressure.get(),0);
+        const auto source_id=parse_u64(sqlite3_column_text(pressure.get(),1));
+        const auto source_owner=parse_u64(sqlite3_column_text(pressure.get(),2));
+        const auto witnessed=parse_u64(sqlite3_column_text(pressure.get(),3));
+        const auto past_govt=sqlite3_column_int64(pressure.get(),4);
+        const auto old_risk=sqlite3_column_int(pressure.get(),5);
+        if(born<=0 || static_cast<std::uint64_t>(born)>generation ||
+           source_id!=origin || source_owner!=source->owner_id ||
+           witnessed!=npc || past_govt<0 ||
+           static_cast<std::uint64_t>(past_govt)!=govt.event_id ||
+           old_risk<2 || old_risk>3 || pressure.row())
+            throw std::runtime_error("pressure witness does not belong to this adult/current government");
+        PersistentWorld::VoluntaryImmigrationAdmission a;
+        a.exit_pressure_event_id=pressure_event;
+        a.world_generation=generation;
+        a.npc_id=npc;a.transport_id=transport_id;
+        a.origin=origin;a.destination=destination;a.ferry=ferry;
+        a.original_owner=source->owner_id;a.receiving_owner=receiving_owner;
+        return a;
+    }
+    PersistentWorld::VoluntaryImmigrationAdmission record_voluntary_admission(
+        const Simulation& world,std::uint64_t generation,std::uint64_t event,
+        std::uint64_t pressure,EntityId origin,EntityId destination,EntityId ferry,
+        std::uint64_t npc,std::uint64_t transport,PlayerId receiving_owner){
+        if(!event || event>static_cast<std::uint64_t>(
+           std::numeric_limits<sqlite3_int64>::max()))
+            throw std::invalid_argument("invalid immigrant admission event ID");
+        run(db_,"BEGIN IMMEDIATE");
+        try{
+            if(latest_generation(db_)!=generation)
+                throw std::runtime_error("stale world for immigrant admission");
+            auto a=assess_voluntary_admission(
+                world,generation,pressure,origin,destination,ferry,npc,
+                transport,receiving_owner);
+            run(db_,"CREATE TABLE IF NOT EXISTS sg_colony_voluntary_immigration("
+                "event_id INTEGER PRIMARY KEY CHECK(event_id>0),"
+                "world_generation INTEGER NOT NULL CHECK(world_generation>0),"
+                "world_hash TEXT NOT NULL,tick INTEGER NOT NULL,"
+                "pressure_event INTEGER NOT NULL UNIQUE,"
+                "origin TEXT NOT NULL,destination TEXT NOT NULL,"
+                "ferry TEXT NOT NULL,npc TEXT NOT NULL,"
+                "transport TEXT NOT NULL UNIQUE,"
+                "original_owner TEXT NOT NULL,receiving_owner TEXT NOT NULL,"
+                "governance_event INTEGER NOT NULL CHECK(governance_event>=0))");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_voluntary_immigration_no_update "
+                "BEFORE UPDATE ON sg_colony_voluntary_immigration "
+                "BEGIN SELECT RAISE(ABORT,'immutable receiving colony admission'); END");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_voluntary_immigration_no_delete "
+                "BEFORE DELETE ON sg_colony_voluntary_immigration "
+                "BEGIN SELECT RAISE(ABORT,'immutable receiving colony admission'); END");
+            Statement ins(db_,"INSERT INTO sg_colony_voluntary_immigration "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)");
+            ins.i64(1,static_cast<sqlite3_int64>(event));
+            ins.i64(2,static_cast<sqlite3_int64>(generation));
+            ins.text(3,std::to_string(world.state_hash()));
+            ins.i64(4,static_cast<sqlite3_int64>(world.tick()));
+            ins.i64(5,static_cast<sqlite3_int64>(pressure));
+            ins.text(6,std::to_string(origin));
+            ins.text(7,std::to_string(destination));
+            ins.text(8,std::to_string(ferry));
+            ins.text(9,std::to_string(npc));
+            ins.text(10,std::to_string(transport));
+            ins.text(11,std::to_string(a.original_owner));
+            ins.text(12,std::to_string(receiving_owner));
+            ins.i64(13,static_cast<sqlite3_int64>(
+                effective_governance(origin,generation).event_id));
+            ins.execute();
+            run(db_,"COMMIT");
+            a.event_id=event;
+            return a;
+        }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
+    }
+    PersistentWorld::VoluntaryImmigrationAdmission immigration_admission(
+        std::uint64_t event) const{
+        Statement table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_voluntary_immigration'");
+        if(!table.row())throw std::runtime_error("no immigrant admission ledger");
+        Statement q(db_,"SELECT world_generation,pressure_event,origin,"
+            "destination,ferry,npc,transport,original_owner,receiving_owner "
+            "FROM sg_colony_voluntary_immigration WHERE event_id=?");
+        q.i64(1,static_cast<sqlite3_int64>(event));
+        if(!q.row())throw std::runtime_error("unknown immigrant admission");
+        PersistentWorld::VoluntaryImmigrationAdmission a;
+        a.event_id=event;
+        a.world_generation=static_cast<std::uint64_t>(sqlite3_column_int64(q.get(),0));
+        a.exit_pressure_event_id=static_cast<std::uint64_t>(sqlite3_column_int64(q.get(),1));
+        a.origin=parse_u64(sqlite3_column_text(q.get(),2));
+        a.destination=parse_u64(sqlite3_column_text(q.get(),3));
+        a.ferry=parse_u64(sqlite3_column_text(q.get(),4));
+        a.npc_id=parse_u64(sqlite3_column_text(q.get(),5));
+        a.transport_id=parse_u64(sqlite3_column_text(q.get(),6));
+        a.original_owner=parse_u64(sqlite3_column_text(q.get(),7));
+        a.receiving_owner=parse_u64(sqlite3_column_text(q.get(),8));
+        if(q.row())throw std::runtime_error("duplicate immigrant admission");
+        return a;
+    }
+    bool immigration_pending_for_transport(
+        std::uint64_t npc,std::uint64_t transport) const{
+        Statement table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_voluntary_immigration'");
+        if(!table.row())return false;
+        Statement q(db_,"SELECT 1 FROM sg_colony_voluntary_immigration "
+            "WHERE npc=? AND transport=?");
+        q.text(1,std::to_string(npc));q.text(2,std::to_string(transport));
+        return q.row();
+    }
+    void verify_colony_voluntary_immigration(std::uint64_t max_generation) const{
+        Statement present(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_voluntary_immigration'");
+        Statement finalized(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_voluntary_immigration_settled'");
+        const bool have_permits=present.row(),have_settled=finalized.row();
+        if(!have_permits){if(have_settled)throw std::runtime_error(
+            "immigration settlement without admissions");return;}
+        for(const auto* trigger:{"sg_voluntary_immigration_no_update",
+                                 "sg_voluntary_immigration_no_delete"}){
+            Statement t(db_,"SELECT 1 FROM sqlite_master WHERE type='trigger' AND name=?");
+            t.text(1,trigger);
+            if(!t.row() || t.row())throw std::runtime_error(
+                "missing immutable immigration admission guard");
+        }
+        if(have_settled)for(const auto* trigger:{
+            "sg_voluntary_immigration_settled_no_update",
+            "sg_voluntary_immigration_settled_no_delete"}){
+            Statement t(db_,"SELECT 1 FROM sqlite_master WHERE type='trigger' AND name=?");
+            t.text(1,trigger);
+            if(!t.row() || t.row())throw std::runtime_error(
+                "missing immutable immigration settlement guard");
+        }
+        Statement rows(db_,"SELECT event_id,world_generation,world_hash,tick,"
+            "pressure_event,origin,destination,ferry,npc,transport,"
+            "original_owner,receiving_owner,governance_event "
+            "FROM sg_colony_voluntary_immigration");
+        while(rows.row()){
+            const auto id=sqlite3_column_int64(rows.get(),0);
+            const auto gen=sqlite3_column_int64(rows.get(),1);
+            const auto hash=sqlite_str(rows.get(),2);
+            const auto tick=sqlite3_column_int64(rows.get(),3);
+            const auto pressure=sqlite3_column_int64(rows.get(),4);
+            const auto origin=parse_u64(sqlite3_column_text(rows.get(),5));
+            const auto dest=parse_u64(sqlite3_column_text(rows.get(),6));
+            const auto ferry=parse_u64(sqlite3_column_text(rows.get(),7));
+            const auto npc=parse_u64(sqlite3_column_text(rows.get(),8));
+            const auto transport=parse_u64(sqlite3_column_text(rows.get(),9));
+            const auto old_owner=parse_u64(sqlite3_column_text(rows.get(),10));
+            const auto receiver=parse_u64(sqlite3_column_text(rows.get(),11));
+            const auto gov=sqlite3_column_int64(rows.get(),12);
+            if(id<1 || gen<1 || static_cast<std::uint64_t>(gen)>max_generation ||
+               tick<0 || pressure<1 || gov<0 || !origin || !dest || !ferry ||
+               !npc || !transport || !old_owner || !receiver)
+                throw std::runtime_error("invalid immigration admission chronology");
+            Statement snap(db_,"SELECT state,checksum FROM snapshots WHERE generation=?");
+            snap.i64(1,gen);
+            if(!snap.row())throw std::runtime_error("immigration source generation pruned");
+            const auto* bytes=sqlite3_column_blob(snap.get(),0);
+            const auto len=sqlite3_column_bytes(snap.get(),0);
+            if(!bytes || len<=0 || len>16*1024*1024)
+                throw std::runtime_error("immigration source snapshot malformed");
+            const auto original=Simulation::from_snapshot(std::string(
+                static_cast<const char*>(bytes),static_cast<std::size_t>(len)));
+            if(original.state_hash()!=parse_u64(sqlite3_column_text(snap.get(),1)) ||
+               std::to_string(original.state_hash())!=hash ||
+               original.tick()!=static_cast<std::uint64_t>(tick) || snap.row())
+                throw std::runtime_error("immigration admission original world forged");
+            const auto calculated=assess_voluntary_admission(original,
+                static_cast<std::uint64_t>(gen),static_cast<std::uint64_t>(pressure),
+                origin,dest,ferry,npc,transport,receiver);
+            if(calculated.original_owner!=old_owner ||
+               effective_governance(origin,static_cast<std::uint64_t>(gen)).event_id!=
+                   static_cast<std::uint64_t>(gov))
+                throw std::runtime_error("immigration consent or former government forged");
+            Statement migration(db_,"SELECT command_id,world_generation "
+                "FROM sg_society_migration WHERE npc_id=? AND transport_id=? "
+                "AND origin=? AND destination=?");
+            migration.text(1,std::to_string(npc));migration.text(2,std::to_string(transport));
+            migration.text(3,std::to_string(origin));migration.text(4,std::to_string(dest));
+            bool moved=false;
+            std::string command;
+            std::uint64_t committed=0;
+            // If not yet migrated, admission remains pending after a restart.
+            Statement migrate_table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='sg_society_migration'");
+            if(migrate_table.row() && migration.row()){
+                moved=true;command=sqlite_str(migration.get(),0);
+                committed=static_cast<std::uint64_t>(sqlite3_column_int64(migration.get(),1));
+                if(migration.row() || committed<=static_cast<std::uint64_t>(gen))
+                    throw std::runtime_error("migration time-traveled before acceptance");
+            }
+            if(moved && !have_settled)
+                throw std::runtime_error("voluntary immigration lost settlement receipt");
+            if(have_settled){
+                Statement receipt(db_,"SELECT migration_command,world_generation "
+                    "FROM sg_colony_voluntary_immigration_settled WHERE admission_event=?");
+                receipt.i64(1,id);
+                const bool arrived=receipt.row();
+                if(arrived){
+                    const auto linked=sqlite_str(receipt.get(),0);
+                    const auto linked_gen=sqlite3_column_int64(receipt.get(),1);
+                    if(!moved || command!=linked ||
+                       linked_gen!=static_cast<sqlite3_int64>(committed) ||
+                       receipt.row())throw std::runtime_error(
+                           "voluntary immigration receipt is not a committed migration");
+                }else if(moved)throw std::runtime_error(
+                    "voluntary migrant moved without immutable matching receipt");
+            }
+        }
+    }
+    bool verified_voluntary_immigration(std::uint64_t event) const{
+        Statement table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_voluntary_immigration_settled'");
+        if(!table.row())return false;
+        Statement q(db_,"SELECT 1 FROM sg_colony_voluntary_immigration_settled "
+            "WHERE admission_event=?");
+        q.i64(1,static_cast<sqlite3_int64>(event));
+        return q.row();
+    }
+
     colony_conflict::Decision assess_colony_aggression(
         const Simulation& world,std::uint64_t generation,
         EntityId source,std::uint64_t contact_event_id,
