@@ -6008,6 +6008,32 @@ void PersistentWorld::step_with_atomic_colony_family_departure(
         receipt.i64(11,static_cast<std::int64_t>(req.adult_ids.size()));
         receipt.i64(12,static_cast<std::int64_t>(req.children.size()));
         receipt.execute();
+        // One independently checkable ART02 move linkage for every physically
+        // rescued person (two parents plus each high-range dependent).
+        run(db,"CREATE TABLE IF NOT EXISTS sg_colony_family_household_member("
+               "command_id TEXT NOT NULL,family_scope TEXT NOT NULL,"
+               "event_id TEXT NOT NULL,npc_id TEXT NOT NULL,"
+               "origin TEXT NOT NULL,destination TEXT NOT NULL,"
+               "tick INTEGER NOT NULL,PRIMARY KEY(family_scope,event_id),"
+               "UNIQUE(command_id,npc_id))");
+        run(db,"CREATE TRIGGER IF NOT EXISTS sg_colony_family_member_no_update "
+               "BEFORE UPDATE ON sg_colony_family_household_member "
+               "BEGIN SELECT RAISE(ABORT,'family custody member receipt immutable'); END");
+        run(db,"CREATE TRIGGER IF NOT EXISTS sg_colony_family_member_no_delete "
+               "BEFORE DELETE ON sg_colony_family_household_member "
+               "BEGIN SELECT RAISE(ABORT,'family custody member receipt immutable'); END");
+        for(const auto& move:recorded){
+            Statement member(db,"INSERT INTO sg_colony_family_household_member "
+                "VALUES(?,?,?,?,?,?,?)");
+            member.text(1,std::to_string(plan.command_id));
+            member.text(2,req.family_scope);
+            member.text(3,std::to_string(move.event_id));
+            member.text(4,std::to_string(move.npc_id));
+            member.text(5,std::to_string(move.origin));
+            member.text(6,std::to_string(move.destination));
+            member.i64(7,static_cast<std::int64_t>(move.tick));
+            member.execute();
+        }
     };
     store_->commit(next,generation_,resource_origin_,credit_origin_,&command,
                    events,due,activity,fail,nullptr,nullptr,effect);
