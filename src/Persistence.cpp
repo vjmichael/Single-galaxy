@@ -1,6 +1,7 @@
 #include "galaxy/Persistence.hpp"
 #include "galaxy/ColonySafety.hpp"
 #include "galaxy/ColonySafetyJournal.hpp"
+#include "galaxy/ColonySafetyNotice.hpp"
 #include "galaxy/ShipmentManifest.hpp"
 #include "galaxy/SplitRescueIntent.hpp"
 #include "galaxy/RegionalModeAuthority.hpp"
@@ -1126,6 +1127,28 @@ public:
             if(sqlite3_changes(db_)!=1)throw std::runtime_error("failed safety anchor update");
             run(db_,"COMMIT");
         }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
+    }
+    void verify_colony_notifications(const Simulation& state,std::uint64_t gen) const {
+        colony_safety::notice::verify(db_,state,gen);
+    }
+    std::vector<colony_safety::notice::Pending> pending_colony_notifications(std::uint64_t limit) const {
+        return colony_safety::notice::pending(db_,limit);
+    }
+    bool acknowledge_colony_notification(const Simulation& state,std::uint64_t gen,
+                                         std::uint64_t event,std::uint64_t npc) {
+        run(db_,"BEGIN IMMEDIATE");
+        try {
+            if(latest_generation(db_)!=gen)throw std::runtime_error("stale world for NPC notification");
+            colony_safety::notice::verify(db_,state,gen);
+            const auto accepted=colony_safety::notice::acknowledge(db_,state,gen,event,npc);
+            run(db_,"COMMIT");return accepted;
+        }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
+    }
+    std::uint64_t colony_notification_opportunity_count() const {
+        return colony_safety::notice::opportunity_count(db_);
+    }
+    std::uint64_t colony_notification_acknowledgement_count() const {
+        return colony_safety::notice::acknowledgement_count(db_);
     }
     void verify_colony_response(const Simulation& state,std::uint64_t gen) const {
         colony_safety::journal::verify(db_,state,gen);
@@ -4344,6 +4367,7 @@ public:
             if(society_effect)society_effect(db_,next);
             // AUTO-04D.2: same exclusive world transaction; no second writer.
             colony_safety::journal::record_world_commit(db_,state,expected_generation,next);
+            colony_safety::notice::publish(db_,state,next);
             enforce_physical_guardianship_at_commit(db_,next);
             // Retain genesis (generation 1) plus three latest immutable checkpoints.
             // Genesis permits independent replay of the complete operation journal; never silently recover
@@ -5561,6 +5585,7 @@ PersistentWorld::PersistentWorld(const std::string& path, Simulation initial_wor
     shipping::verify_third_party_registry(db_path_);
     store_->verify_colony_safety_evidence();
     store_->verify_colony_response(world_,generation_);
+    store_->verify_colony_notifications(world_,generation_);
 }
 PersistentWorld::~PersistentWorld() = default;
 
@@ -5575,6 +5600,19 @@ std::uint64_t PersistentWorld::colony_safety_evidence_count() const{
 }
 std::uint64_t PersistentWorld::colony_response_event_count() const{
     return store_->colony_response_event_count();
+}
+std::vector<colony_safety::notice::Pending> PersistentWorld::pending_colony_notifications(
+        std::uint64_t limit) const {
+    return store_->pending_colony_notifications(limit);
+}
+bool PersistentWorld::acknowledge_colony_notification(std::uint64_t event,std::uint64_t npc){
+    return store_->acknowledge_colony_notification(world_,generation_,event,npc);
+}
+std::uint64_t PersistentWorld::colony_notification_opportunity_count() const{
+    return store_->colony_notification_opportunity_count();
+}
+std::uint64_t PersistentWorld::colony_notification_acknowledgement_count() const{
+    return store_->colony_notification_acknowledgement_count();
 }
 
 
