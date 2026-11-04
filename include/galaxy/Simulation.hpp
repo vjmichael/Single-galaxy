@@ -805,7 +805,7 @@ public:
     // PLAY-13C.4: finite existing mineral stock may be redistributed into
     // native local deposits; this never creates material from nothing.
     void seed_celestial_local_region(std::uint64_t body_id);
-    const std::set<std::uint64_t>& generated_local_regions() const {
+    const std::map<std::uint64_t,std::array<EntityId,2>>& generated_local_regions() const {
         return generated_local_regions_;
     }
     const std::map<EntityId,std::uint64_t>& local_entity_anchors() const {
@@ -896,7 +896,7 @@ private:
     std::uint64_t rng_state_;
     std::map<EntityId, Entity> entities_; // stable deterministic iteration
     std::map<EntityId,ShipFrameCustody> ship_frames_; // durable v71 local-space custody
-    std::set<std::uint64_t> generated_local_regions_; // v73 idempotent world regions
+    std::map<std::uint64_t,std::array<EntityId,2>> generated_local_regions_; // v73 immutable site manifest
     std::map<EntityId,std::uint64_t> local_entity_anchors_; // v73 nonship frame custody
     std::map<std::uint64_t,PendingCelestialTransit> pending_celestial_transits_;
     std::map<std::uint64_t,CompletedCelestialTransit> completed_celestial_transits_;
