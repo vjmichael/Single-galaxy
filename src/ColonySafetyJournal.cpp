@@ -72,19 +72,25 @@ Rows sites(const Simulation& w){
         (void)ship;
         if(w.life_support(id)){
             auto a=assess(w,id,id);
-            out.emplace(id,Row{id,id,a.population,a.risk,a.remaining.food_periods,a.remaining.water_periods,a.remaining.oxygen_periods});
+            out.emplace(id,Row{id,id,a.population,a.risk,a.population?a.remaining.food_periods:0,
+                a.population?a.remaining.water_periods:0,
+                a.population?a.remaining.oxygen_periods:0});
         }
     }
     for(const auto& [id,h]:w.habitats()){
         if(!out.count(id)){
             auto a=assess(w,h.source_ship,id);
-            out.emplace(id,Row{h.source_ship,id,a.population,a.risk,a.remaining.food_periods,a.remaining.water_periods,a.remaining.oxygen_periods});
+            out.emplace(id,Row{h.source_ship,id,a.population,a.risk,a.population?a.remaining.food_periods:0,
+                a.population?a.remaining.water_periods:0,
+                a.population?a.remaining.oxygen_periods:0});
         }
     }
     for(const auto& [id,f]:w.farms()){
         if(!out.count(id)){
             auto a=assess(w,f.source_ship,id);
-            out.emplace(id,Row{f.source_ship,id,a.population,a.risk,a.remaining.food_periods,a.remaining.water_periods,a.remaining.oxygen_periods});
+            out.emplace(id,Row{f.source_ship,id,a.population,a.risk,a.population?a.remaining.food_periods:0,
+                a.population?a.remaining.water_periods:0,
+                a.population?a.remaining.oxygen_periods:0});
         }
     }
     return out;
