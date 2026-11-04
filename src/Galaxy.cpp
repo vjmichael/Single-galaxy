@@ -131,6 +131,68 @@ bool SurveySensors::recover(std::uint64_t id,PlayerId owner,std::uint32_t system
 std::size_t SurveySensors::deployed_count(PlayerId owner) const {
     std::size_t n=0;for(const auto& [id,p]:probes_) { (void)id;if(p.owner==owner&&p.deployed)++n; }return n;
 }
+std::vector<SignatureContact> SurveySensors::coarse_signatures(PlayerId owner,
+    std::uint32_t system,Vector2 scanner_position,std::int64_t range_mm,
+    int sensor_strength) const {
+    if(!owner||!bounded(scanner_position)||range_mm<=0||
+       range_mm>Simulation::kWorldBoundMm*2||sensor_strength<1||sensor_strength>100)
+        throw std::invalid_argument("invalid signature search");
+    std::vector<SignatureContact> results;
+    for(const auto& site:map_.sites(system)) {
+        // Only sufficiently detectable hidden signatures. Do not expose kind
+        // or precise coordinates until real samples support classification.
+        if(site.mapped_on_entry||site.probe_difficulty==0||
+           sensor_strength<(site.probe_difficulty+1)/2)continue;
+        const double distance=std::hypot(double(site.position.x)-scanner_position.x,
+                                         double(site.position.y)-scanner_position.y);
+        if(distance>double(range_mm))continue;
+        constexpr std::int64_t quant=5000;
+        const auto coarse=[](std::int64_t x) {
+            return std::int64_t(std::llround(double(x)/5000.0))*5000;
+        };
+        (void)quant;
+        results.push_back({site.id,{coarse(site.position.x),coarse(site.position.y)},5000});
+    }
+    return results;
+}
+std::optional<RefinementPlan> SurveySensors::plan_refinement(PlayerId owner,
+    std::uint32_t system,std::uint64_t signature,std::int64_t scan_radius_mm,
+    int sensor_strength) const {
+    if(!owner||!signature||scan_radius_mm<=0||
+       scan_radius_mm>Simulation::kWorldBoundMm*2||
+       sensor_strength<1||sensor_strength>100)
+        throw std::invalid_argument("invalid signature refinement request");
+    // The caller must have a coarse signature; a guessed ID does not unlock
+    // arbitrary targets. This plan is for the trusted host, never a client map.
+    const auto& sites=map_.sites(system);
+    const auto target=std::find_if(sites.begin(),sites.end(),
+        [signature](const SpaceSite& s){return s.id==signature;});
+    if(target==sites.end()||target->mapped_on_entry||target->probe_difficulty==0||
+       sensor_strength<(target->probe_difficulty+1)/2)
+        return std::nullopt;
+    std::vector<std::uint64_t> owned;
+    for(const auto& [id,p]:probes_)
+        if(p.owner==owner&&p.deployed&&p.system==system)owned.push_back(id);
+    if(owned.empty())return std::nullopt;
+    // Use the coarse result, not the exact hidden target. The host moves
+    // physical probes to these waypoints over committed simulation ticks.
+    const auto quant=[](std::int64_t x) {
+        return std::int64_t(std::llround(double(x)/5000.0))*5000;
+    };
+    const Vector2 center{quant(target->position.x),quant(target->position.y)};
+    const auto spread=std::min<std::int64_t>(2500,std::max<std::int64_t>(250,scan_radius_mm/2));
+    RefinementPlan plan;plan.site=signature;
+    constexpr double pi=3.14159265358979323846;
+    for(std::size_t i=0;i<owned.size();++i) {
+        const double angle=2*pi*double(i)/double(owned.size());
+        Vector2 point{center.x+std::int64_t(std::llround(spread*std::cos(angle))),
+                      center.y+std::int64_t(std::llround(spread*std::sin(angle)))};
+        point.x=std::clamp(point.x,-Simulation::kWorldBoundMm,Simulation::kWorldBoundMm);
+        point.y=std::clamp(point.y,-Simulation::kWorldBoundMm,Simulation::kWorldBoundMm);
+        plan.waypoints.emplace_back(owned[i],point);
+    }
+    return plan;
+}
 std::vector<ScanObservation> SurveySensors::probe_scan(PlayerId owner,std::uint32_t system,
     std::uint64_t tick,std::int64_t radius_mm,int sensor_strength) const {
     if(!owner||!tick||radius_mm<=0||radius_mm>Simulation::kWorldBoundMm*2||
