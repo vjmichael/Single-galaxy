@@ -4563,8 +4563,8 @@ void Simulation::step() {
             (entities_.count(p.drone_target)?entities_.at(p.drone_target).position:p.drone_home):
             p.drone_home;
         const auto dx=destination.x-p.position.x,dy=destination.y-p.position.y;
-        p.position.x+=std::clamp(dx,-2000LL,2000LL);
-        p.position.y+=std::clamp(dy,-2000LL,2000LL);
+        p.position.x+=std::clamp(dx,std::int64_t{-2000},std::int64_t{2000});
+        p.position.y+=std::clamp(dy,std::int64_t{-2000},std::int64_t{2000});
         if(p.position.x!=destination.x || p.position.y!=destination.y)continue;
         if(p.drone_phase==2){p.drone_phase=3;continue;}
         const auto it=entities_.find(p.drone_target);
