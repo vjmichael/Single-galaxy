@@ -40,7 +40,7 @@ try{
         ("sg_exit_v87_"+std::to_string(std::chrono::steady_clock::now()
         .time_since_epoch().count())+".sqlite")).string();
     const auto recovered=db+".recovered",spoof=db+".spoof",bad_receipt=db+".badreceipt",
-               false_ferry=db+".falseferry";
+               false_ferry=db+".falseferry",stripped_reason=db+".strippedreason";
     EntityId origin=0,dest=0,ferry=0,alternate_ferry=0;
     {
         Simulation initial(8701);initial.add_system(2);
@@ -138,6 +138,7 @@ try{
             8701,8601,origin,dest,ferry,2,900,10);
         CHECK(admission.event_id==8701);
         CHECK(admission.original_owner==7 && admission.receiving_owner==10);
+        CHECK(admission.personal_outlook_event_id==8613);
         CHECK(!w.verified_voluntary_immigration(8701));
         refused([&]{w.record_voluntary_immigration_admission(
             8702,8601,origin,dest,ferry,2,901,10);});
@@ -264,7 +265,22 @@ try{
         sqlite3_close(raw);
         refused([&]{PersistentWorld forged(false_ferry,Simulation(8706));});
     }
-    clean(db);clean(recovered);clean(spoof);clean(bad_receipt);clean(false_ferry);
+    // An attacker cannot turn a v88 personal-history admission into an
+    // inherited v87 scarcity-only permit by erasing the decision reference.
+    PersistentWorld::recover_copy(db,stripped_reason);
+    {
+        sqlite3* raw=nullptr;CHECK(sqlite3_open(stripped_reason.c_str(),&raw)==SQLITE_OK);
+        sql(raw,"DROP TRIGGER sg_voluntary_immigration_no_update");
+        sql(raw,"UPDATE sg_colony_voluntary_immigration "
+            "SET personal_intent_event=0 WHERE event_id=8701");
+        sql(raw,"CREATE TRIGGER sg_voluntary_immigration_no_update "
+            "BEFORE UPDATE ON sg_colony_voluntary_immigration "
+            "BEGIN SELECT RAISE(ABORT,'immutable receiving colony admission'); END");
+        sqlite3_close(raw);
+        refused([&]{PersistentWorld forged(stripped_reason,Simulation(8707));});
+    }
+    clean(db);clean(recovered);clean(spoof);clean(bad_receipt);
+    clean(false_ferry);clean(stripped_reason);
     std::cout<<"PASS EXIT01B: genuine cross-owner accepted solo immigration, actual "
         "gate ferry boarding/arrival, source pressure, native immutable ART02/ECON03 "
         "world+census+region conservation, fault rollback, restart, recover_copy "
