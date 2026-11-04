@@ -802,6 +802,15 @@ public:
     }
     // Different local frames never share ordinary spatial interactions.
     bool same_local_frame(EntityId a,EntityId b) const;
+    // PLAY-13C.4: finite existing mineral stock may be redistributed into
+    // native local deposits; this never creates material from nothing.
+    void seed_celestial_local_region(std::uint64_t body_id);
+    const std::set<std::uint64_t>& generated_local_regions() const {
+        return generated_local_regions_;
+    }
+    const std::map<EntityId,std::uint64_t>& local_entity_anchors() const {
+        return local_entity_anchors_;
+    }
     std::uint64_t probe_report_delay_ticks() const {return probe_report_delay_ticks_;}
 
     std::uint64_t tick() const { return tick_; }
@@ -887,6 +896,8 @@ private:
     std::uint64_t rng_state_;
     std::map<EntityId, Entity> entities_; // stable deterministic iteration
     std::map<EntityId,ShipFrameCustody> ship_frames_; // durable v71 local-space custody
+    std::set<std::uint64_t> generated_local_regions_; // v73 idempotent world regions
+    std::map<EntityId,std::uint64_t> local_entity_anchors_; // v73 nonship frame custody
     std::map<std::uint64_t,PendingCelestialTransit> pending_celestial_transits_;
     std::map<std::uint64_t,CompletedCelestialTransit> completed_celestial_transits_;
     std::map<std::uint32_t,std::vector<PhysicalCelestialBody>> physical_celestial_systems_;
