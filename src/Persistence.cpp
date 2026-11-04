@@ -2448,6 +2448,9 @@ public:
         if(!source || !dest || source->owner_id!=a.original_owner ||
            dest->owner_id!=a.receiving_owner)
             throw std::runtime_error("receiving-owner or source-owner authority changed");
+        if(colony_safety::assess(world,a.destination,a.destination).risk!=
+           colony_safety::Risk::Safe)
+            throw std::runtime_error("receiving colony became unsafe during voyage");
         if(!world.completed_voyage_matches(
                a.transport_id,a.ferry,a.origin,a.destination,
                std::vector<std::uint64_t>{a.npc_id}))
