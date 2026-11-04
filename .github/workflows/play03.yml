@@ -1,0 +1,29 @@
+name: PLAY-03 pilot controls and skippable tutorial
+on:
+  push:
+    branches:
+      - integration/play03-piloting-mining-20261104
+  pull_request:
+    paths:
+      - 'viewer/flight-controls.js'
+      - 'viewer/interactive.js'
+      - 'viewer/interactive.html'
+      - 'viewer/colony.js'
+      - 'live/interactive_relay.py'
+      - 'tests/FlightControlsTests.js'
+      - '.github/workflows/play03.yml'
+jobs:
+  pilot-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test keyboard, optional tutorial and progression
+        run: node --test tests/FlightControlsTests.js tests/OpeningGuideTests.js
+      - name: Validate browser scripts
+        run: |
+          node --check viewer/flight-controls.js
+          node --check viewer/interactive.js
+          node --check viewer/colony.js
+          node --check viewer/opening-guide.js
+      - name: Validate relay syntax
+        run: python3 -m py_compile live/interactive_relay.py
