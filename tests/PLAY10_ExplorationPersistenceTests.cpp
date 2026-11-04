@@ -26,6 +26,7 @@ int main(){
   {
    Simulation genesis(1010);
    ship=genesis.add_colony_ship(7,{0,0},60,24);
+   genesis.enable_individual_workforce();
    genesis.provision_starter_exploration_scanner(ship);
    rock=genesis.add_asteroid({2000,0},20);
    far=genesis.add_asteroid({100000,0},30);
