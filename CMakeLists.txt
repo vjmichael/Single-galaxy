@@ -1039,3 +1039,12 @@ if(BUILD_TESTING)
     add_test(NAME galaxy_colony_conflict01b1_grievance
         COMMAND galaxy_colony_conflict01b1_grievance_tests)
 endif()
+
+# CONFLICT-01B2: epoch-fenced diplomatic strategy never rewrites historical intent.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_conflict01b2_diplomacy_epoch_tests
+        tests/COLONY_CONFLICT01B2_DiplomacyEpochTests.cpp)
+    target_link_libraries(galaxy_colony_conflict01b2_diplomacy_epoch_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_conflict01b2_diplomacy_epoch
+        COMMAND galaxy_colony_conflict01b2_diplomacy_epoch_tests)
+endif()
