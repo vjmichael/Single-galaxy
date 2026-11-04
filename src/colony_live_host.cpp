@@ -489,6 +489,13 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
                 std::to_string(body.position.y_mm)+"|"+
                 std::to_string(body.position.z_mm)+"|"+
                 std::to_string(body.physical_radius_mm));
+        // Rare viable *prospects*, not free supplies or a guarantee of safety.
+        for(const auto& oasis:world.world().survey_oasis_prospects(principal,ship))
+            announce(world.world(),"OASIS_PROSPECT|"+std::to_string(oasis.body)+"|"+
+                std::to_string(unsigned(oasis.water))+"|"+
+                std::to_string(unsigned(oasis.energy))+"|"+
+                std::to_string(unsigned(oasis.nutrients))+"|"+
+                std::to_string(unsigned(oasis.shelter)));
         announce(world.world(),"CELESTIAL_DONE|"+
             std::to_string(profile->orbital_bands.size()));
         return;
