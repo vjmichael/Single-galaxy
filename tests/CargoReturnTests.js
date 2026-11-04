@@ -31,3 +31,10 @@ test('reject foreign outposts as home and keep real source inventory distinct',(
  const s=state();s.entities.get(5).owner=8;
  assert.equal(plan(s).site,null);
 });
+
+test('native outpost receipt is necessary to enable home logistics',()=>{
+ const s=state();
+ assert.equal(plan(s,7,new Set()).site,null);
+ assert.equal(plan(s,7,new Set([5])).site.id,5);
+ assert.equal(plan(s,8,new Set([5])).ready,false);
+});
