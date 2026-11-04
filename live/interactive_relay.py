@@ -378,6 +378,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if type(target)!=int or not 1<=target<=100000000:
                     raise ValueError('Invalid geological target')
                 command=f'DRONE_LAUNCH|{target}'
+            elif action=='colonyFrameTravel' and set(doc)=={'token','action','body'}:
+                body=doc['body']
+                if type(body)!=int or not 1<=body<=9223372036854775807:
+                    raise ValueError('Invalid celestial body ID')
+                command=f'FRAME_TRAVEL|{body}'
             elif action in ('colonyCelestialScan','colonyEnvironmentScan') and set(doc)=={'token','action'}:
                 command='SYSTEM_CELESTIAL' if action=='colonyCelestialScan' else 'SYSTEM_ENVIRONMENT'
             elif action=='colonySignatureScan' and set(doc)=={'token','action','rangeMm'}:
