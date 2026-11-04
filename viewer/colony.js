@@ -339,6 +339,18 @@
       if(v.length!==7)throw Error('Bad mineral');
       e.id=numeric(v[4]);e.name=v[5];e.share=numeric(v[6],1000);
       if(!minerals.has(e.name)||e.id<1||e.share<1)throw Error('Unknown mineral');
+    }else if(t==='EXPEDITION'){
+      if(v.length!==13)throw Error('Malformed native expedition assessment');
+      e.body=numeric(v[4],Number.MAX_SAFE_INTEGER);
+      e.ore=numeric(v[5],1e12);
+      e.nickel=numeric(v[6],1e15);
+      e.plagioclase=numeric(v[7],1e15);
+      e.food=numeric(v[8],1e12);
+      e.water=numeric(v[9],1e12);
+      e.oxygen=numeric(v[10],1e12);
+      e.hazard=numeric(v[11],3);
+      e.support=numeric(v[12],1);
+      if(!e.body)throw Error('Invalid expedition body');
     }else if(t==='LOCAL_ENVIRONMENT'){
       if(v.length!==7)throw Error('Malformed celestial environment');
       e.body=numeric(v[4],Number.MAX_SAFE_INTEGER);
@@ -406,6 +418,7 @@
  });
  q('showOpening').hidden=!skippedOpening;
  let openingStatus=null,openingScanned=false;
+ let expeditionAssessment=null;
  function refreshOpening(){
    const guide=window.GalaxyOpeningGuide?.progress(openingStatus,openingScanned);
    if(!guide)return;
@@ -424,7 +437,7 @@
        guide.action==='colonyFabricate'?{amount:4}:{});
  });
  window.GalaxyColony={
-   reset(){signatureContacts.clear();celestialBodies.clear();localOreTaxonomy.clear();
+   reset(){signatureContacts.clear();celestialBodies.clear();localOreTaxonomy.clear();expeditionAssessment=null;
      q('celestialBodyList').textContent='No physical celestial bodies surveyed yet.';
      q('signatureTarget').replaceChildren(new Option('Scan to detect signals',''));
      q('signatureFocus').disabled=true;q('signatureCancel').disabled=true;
@@ -638,7 +651,8 @@
        window.GalaxyColonyHomeShipId=e.site;
        const states=['STABLE','FORECAST SHORTAGE','CRITICAL BUFFER','EMERGENCY'];
        q('colonySafetyRisk').textContent=states[e.risk];
-       q('colonySafetyRunway').textContent=`${e.pop} colonists · food ${e.food}, water ${e.water}, oxygen ${e.oxygen} consumption periods remaining · physical supplies only, not promised imports.`;
+       q('colonySafetyRunway').textContent=`${e.pop} colonists · food ${e.food}, water ${e.water}, oxygen ${e.oxygen} consumption periods remaining · physical supplies only, not promised imports.`+
+         (expeditionAssessment?` Frontier survey: ${expeditionAssessment.ore} t reachable regional ore, ${expeditionAssessment.nickel.toLocaleString()} kg nickel-iron and ${expeditionAssessment.plagioclase.toLocaleString()} kg plagioclase in existing deposits. Supply runway: ${Math.min(expeditionAssessment.food,expeditionAssessment.water,expeditionAssessment.oxygen)} consumption periods. Local supply site: ${expeditionAssessment.support?'yes':'none'}.`:'');
        q('colonySafetyAssess').disabled=false;
        q('colonySafetyPreflight').disabled=false;
      }else if(e.type==='LIFE'){
@@ -692,6 +706,7 @@
        const rock=geology.get(e.id);if(!rock)throw Error('Mineral without scanned rock');rock.minerals.set(e.name,e.share);
      }else if(e.type==='SMALL_ROCK')small.set(e.id,e.remaining);
      else if(e.type==='LOCAL_DEPOSIT')localOreTaxonomy.set(e.id,e.classId);
+     else if(e.type==='EXPEDITION')expeditionAssessment=e;
      else if(e.type==='LOCAL_ENVIRONMENT'){
        const names=['','Stellar radiation zone','Debris region','Rocky planetary region','Outer icy planetary region','Lunar region'];
        q('signatureFeedback').textContent=names[e.zone]+
