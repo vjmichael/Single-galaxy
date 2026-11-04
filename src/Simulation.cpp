@@ -986,12 +986,75 @@ bool Simulation::can_depart_colony(const Command& c) const {
         return false;
     return true;
 }
+bool Simulation::can_record_dependent_birth(const Command& c) const {
+    if(c.action!=Action::HostRegisterDependentBirth || snapshot_version_<59 ||
+       c.issuer!=kServerAuthority || !c.id || c.actor!=c.target || !c.actor ||
+       (c.execute_tick!=tick_+1 && c.execute_tick!=tick_) ||
+       c.passenger_ids.size()!=1 || c.passenger_ids[0]<(1ULL<<62) ||
+       !c.transport_id || c.amount<=0 || c.thrust_x || c.thrust_y ||
+       c.secondary_receiver || c.secondary_transport ||
+       physical_dependents_.count(c.passenger_ids[0]) ||
+       npcs_.count(c.passenger_ids[0]) || casualties_.count(c.passenger_ids[0]) ||
+       !colony_ships_.count(c.actor) || !life_support_.count(c.actor))
+        return false;
+    const auto pa=npcs_.find(c.transport_id);
+    const auto pb=npcs_.find(static_cast<std::uint64_t>(c.amount));
+    if(pa==npcs_.end()||pb==npcs_.end()||pa==pb ||
+       pa->second.home_ship!=c.actor||pb->second.home_ship!=c.actor ||
+       pa->second.location!=c.actor||pb->second.location!=c.actor ||
+       pa->second.transport_id||pb->second.transport_id ||
+       colony_departures_.count(c.actor))return false;
+    return true;
+}
+bool Simulation::can_depart_family(const Command& c) const {
+    if(c.action!=Action::HostColonyFamilyDeparture ||
+       snapshot_version_<59 || c.passenger_ids.size()<3 ||
+       c.passenger_ids.size()>16 || !std::is_sorted(c.passenger_ids.begin(),c.passenger_ids.end()) ||
+       std::adjacent_find(c.passenger_ids.begin(),c.passenger_ids.end())!=c.passenger_ids.end())
+        return false;
+    std::vector<std::uint64_t> adults,children;
+    for(auto id:c.passenger_ids){
+        if(id<(1ULL<<62))adults.push_back(id);
+        else children.push_back(id);
+    }
+    if(adults.empty()||children.empty())return false;
+    Command ordinary=c;
+    ordinary.action=Action::HostColonyDeparture;
+    ordinary.passenger_ids=adults;
+    if(!can_depart_colony(ordinary))return false;
+    std::vector<std::uint64_t> exact;
+    for(const auto& [id,d]:physical_dependents_)if(d.home_ship==c.actor){
+        if(d.location!=c.actor)return false; // not already another ferry's child
+        exact.push_back(id);
+        if(!std::binary_search(adults.begin(),adults.end(),d.parent_a) ||
+           !std::binary_search(adults.begin(),adults.end(),d.parent_b))
+            return false;
+    }
+    if(exact!=children)return false;
+    const auto* stocks=life_support(c.target);
+    if(!stocks)return false;
+    const auto current=people_physically_aboard(c.target)+dependents_physically_at(c.target);
+    const auto needed=current+adults.size()+children.size();
+    if(needed>1000 || stocks->food_kg<static_cast<std::int64_t>(2*needed) ||
+       stocks->water_kg<static_cast<std::int64_t>(2*needed) ||
+       stocks->oxygen_kg<static_cast<std::int64_t>(2*needed))
+        return false;
+    return true;
+}
 bool Simulation::submit(const Command& c) {
     if(colony_departures_.count(c.actor) || colony_departures_.count(c.target))return false;
     const bool colony_departure=c.action==Action::HostColonyDeparture;
+    const bool family_departure=c.action==Action::HostColonyFamilyDeparture;
+    const bool physical_birth=c.action==Action::HostRegisterDependentBirth;
     if(colony_departure){
         if(!can_depart_colony(c)||submitted_ids_.count(c.id))return false;
-        snapshot_version_=58;
+        snapshot_version_=std::max(snapshot_version_,58);
+    }
+    if(family_departure){
+        if(!can_depart_family(c)||submitted_ids_.count(c.id))return false;
+    }
+    if(physical_birth){
+        if(!can_record_dependent_birth(c)||submitted_ids_.count(c.id))return false;
     }
     const bool split_action=c.action==Action::HostSplitEvacuatePassengers;
     const bool consigned=c.action==Action::HostTransferConsignedStock;
@@ -1420,9 +1483,9 @@ bool Simulation::submit(const Command& c) {
                 if(it->second.location!=c.target || it->second.transport_id)return false;
             }else if(it->second.location!=c.actor || it->second.transport_id!=c.transport_id)return false;
         }
-    }else if(!medical_action && !migration_action && !colony_departure && (c.transport_id || !c.passenger_ids.empty()))return false;
+    }else if(!medical_action && !migration_action && !colony_departure && !family_departure && !physical_birth && (c.transport_id || !c.passenger_ids.empty()))return false;
     if (c.id == 0 || c.execute_tick <= tick_ || c.issuer == 0 || submitted_ids_.count(c.id)) return false;
-    if (passenger_action || medical_action || migration_action || escrow_action || return_action || consigned || colony_departure) { /* validated host command above */ }
+    if (passenger_action || medical_action || migration_action || escrow_action || return_action || consigned || colony_departure || family_departure || physical_birth) { /* validated host command above */ }
     else if (c.action == Action::HostDestroyShip || c.action == Action::HostCrewLoss) {
         if(c.issuer != kServerAuthority || !c.actor || !c.target ||
            c.thrust_x || c.thrust_y ||
