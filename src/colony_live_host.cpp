@@ -509,6 +509,46 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
         }
         return;
     }
+    // Orbital NPC delegation: player never descends. Crew and project status
+    // are native read-models; construction advances only in committed ticks.
+    if(v.size()==1 && v[0]=="PLANET_CREW"){
+        for(const auto& [id,n]:world.world().npc_records()){
+            if(n.home_ship==ship && n.location==ship &&
+               n.role==NpcRole::Ship && n.assigned_site==ship &&
+               world.world().npc_available_for_duty(id))
+                announce(world.world(),"PLANET_CREW_AVAILABLE|"+std::to_string(id));
+        }
+        announce(world.world(),"PLANET_CREW_DONE");
+        return;
+    }
+    if(v.size()==4 && v[0]=="PLANET_SITE_STATUS"){
+        try{
+            const auto body=integer(v[1]),lat=integer(v[2]),lon=integer(v[3]);
+            if(body<=0 || lat<0 || lat>=36 || lon<0 || lon>=72)
+                throw std::invalid_argument("invalid planet site status");
+            const auto key=PlanetarySiteKey{
+                std::uint64_t(body),std::uint16_t(lat),std::uint16_t(lon),1};
+            const auto it=world.world().planetary_sites().find(key);
+            if(it==world.world().planetary_sites().end() ||
+               it->second.owner!=principal)
+                throw std::invalid_argument("planet site not owned");
+            const auto& site=it->second;
+            announce(world.world(),"PLANET_SITE_STATUS|"+
+                std::to_string(body)+"|"+std::to_string(lat)+"|"+
+                std::to_string(lon)+"|"+std::to_string(site.spaceport_phase)+"|"+
+                std::to_string(site.construction_progress)+"|"+
+                std::to_string(site.construction_required)+"|"+
+                std::to_string(site.assigned_workers)+"|"+
+                std::to_string(site.food_kg)+"|"+
+                std::to_string(site.water_kg)+"|"+
+                std::to_string(site.oxygen_kg)+"|"+
+                std::to_string(site.delegated_npcs[0])+"|"+
+                std::to_string(site.delegated_npcs[1]));
+        }catch(const std::exception&){
+            announce(world.world(),"ERROR|PLANET_SITE_STATUS_DENIED");
+        }
+        return;
+    }
     // PLAY-13D.3: region-scoped physical actions. Player must have
     // previously observed this exact region/revision in the private archive.
     if(!v.empty() && (v[0]=="PLANET_BUILD" || v[0]=="PLANET_EQUIP" ||
@@ -519,7 +559,7 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
             const bool build=type=="PLANET_BUILD";
             const bool equip=type=="PLANET_EQUIP";
             const bool grow=type=="PLANET_GROW";
-            if(v.size()!=(build?4:(equip||grow)?5:6))
+            if(v.size()!=(build?(v.size()==6?6:4):(equip||grow)?5:6))
                 throw std::invalid_argument("planet operation arity");
             const auto body=integer(v[1]);
             const auto latitude=integer(v[2]),longitude=integer(v[3]);
@@ -542,9 +582,19 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
                known->drainage!=site->catchment_runoff)
                 throw std::invalid_argument("unsurveyed planetary region");
             bool success=false;
-            if(build)success=world.build_planetary_site(
-                principal,ship,std::uint64_t(body),
-                std::uint16_t(latitude),std::uint16_t(longitude));
+            if(build) {
+                if(v.size()==6) {
+                    const auto first=integer(v[4]),second=integer(v[5]);
+                    if(first<=0 || second<=0)
+                        throw std::invalid_argument("invalid worker selection");
+                    success=world.build_planetary_site(
+                        principal,ship,std::uint64_t(body),
+                        std::uint16_t(latitude),std::uint16_t(longitude),
+                        std::uint64_t(first),std::uint64_t(second));
+                } else success=world.build_planetary_site(
+                    principal,ship,std::uint64_t(body),
+                    std::uint16_t(latitude),std::uint16_t(longitude));
+            }
             else if(equip) {
                 if(v[4]!="FARM" && v[4]!="EXTRACT")
                     throw std::invalid_argument("invalid equipment");
