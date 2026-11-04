@@ -89,7 +89,47 @@ try{
         CHECK(colony_safety::assess(w.world(),dest,dest).risk==
               colony_safety::Risk::Safe);
         const auto pressure=w.record_colony_exit_pressure(8601,origin,2);
-        CHECK(pressure.npc_id==2);
+        const auto rival_pressure=w.record_colony_exit_pressure(8603,origin,3);
+        CHECK(pressure.npc_id==2 && rival_pressure.npc_id==3);
+        // A physical shortage by itself no longer proves that an individual
+        // consented to emigrate. A dated, persistent personal appraisal must
+        // first cross the exit threshold.
+        refused([&]{w.record_voluntary_immigration_admission(
+            8700,8601,origin,dest,ferry,2,900,10);});
+        // GRSM social history is directed. NPC #2 witnessed hostile treatment
+        // by leader #1; NPC #3 separately remembers actual host-attested help.
+        CHECK(w.schedule_social_encounters(64,8)>=2);
+        std::uint64_t harm_encounter=0,help_encounter=0;
+        for(const auto& contact:w.recent_social_encounters(128)){
+            if(contact.npc_low==1 && contact.npc_high==2)harm_encounter=contact.id;
+            if(contact.npc_low==1 && contact.npc_high==3)help_encounter=contact.id;
+        }
+        CHECK(harm_encounter && help_encounter);
+        CHECK(w.record_social_interaction(
+            harm_encounter,2,1,SocialInteractionKind::Harm));
+        CHECK(w.record_social_interaction(
+            help_encounter,3,1,SocialInteractionKind::Assistance));
+        w.step(); // use only prior-generation known personal social events
+        const auto first=w.record_personal_outlook(8610,origin,2);
+        const auto helped=w.record_personal_outlook(8611,origin,3);
+        CHECK(first.interaction_event_id!=0 && helped.interaction_event_id!=0);
+        CHECK(first.leader_rapport<0 && helped.leader_rapport>0);
+        CHECK(first.discontent>helped.discontent);
+        CHECK(!first.considering_departure && !helped.considering_departure);
+        refused([&]{w.record_personal_outlook(8612,origin,2);}); // same tick
+        w.steps(8);
+        const auto second=w.record_personal_outlook(8613,origin,2);
+        const auto second_helped=w.record_personal_outlook(8614,origin,3);
+        CHECK(second.prior_event_id==8610 &&
+              second_helped.prior_event_id==8611);
+        CHECK(second.considering_departure);
+        CHECK(!second_helped.considering_departure);
+        CHECK(second.discontent>second_helped.discontent);
+        w.step(); // dated decisions now effective for immigration admission
+        CHECK(w.colony_personal_outlook(origin,2)->considering_departure);
+        CHECK(!w.colony_personal_outlook(origin,3)->considering_departure);
+        refused([&]{w.record_voluntary_immigration_admission(
+            8700,8603,origin,dest,ferry,3,901,10);});
         refused([&]{w.record_voluntary_immigration_admission(
             8700,8601,origin,dest,ferry,2,900,7);});
         refused([&]{w.record_voluntary_immigration_admission(
