@@ -157,7 +157,7 @@ static void report_outbox_restart() {
         }
     }catch(...){std::filesystem::remove(file);throw;}
     std::filesystem::remove(file);
-    std::cout<<"PASS durable ten-second delayed uplink across restart and reconnect\\n";
+    std::cout<<"PASS durable ten-second delayed uplink across restart and reconnect\n";
 }
 static void archive_persistence() {
     const auto file=std::filesystem::temp_directory_path()/"galaxy-b60-survey-tests.sqlite";
