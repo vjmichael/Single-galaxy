@@ -3,7 +3,6 @@ on:
   push:
     branches:
       - integration/play12-physical-survey-probes-20261104
-      - integration/play13b-scanner-knowledge-20261104
   pull_request:
     paths:
       - 'include/galaxy/Simulation.hpp'
