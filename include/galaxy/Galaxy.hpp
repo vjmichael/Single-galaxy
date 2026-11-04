@@ -59,6 +59,18 @@ struct ScanObservation {
 };
 // PLAY-13B.1: different scan intentions share the trusted sensor implementation.
 enum class ScanMode { Environmental, Celestial, Anomaly };
+// Coarse signature contact never exposes the authoritative target position or class.
+struct SignatureContact {
+    std::uint64_t site=0;
+    Vector2 coarse_center{};
+    std::int64_t uncertainty_radius_mm=0;
+};
+// Host-issued waypoints for existing owned probes; execution requires native
+// per-tick movement and genuine observations, not client-side teleportation.
+struct RefinementPlan {
+    std::uint64_t site=0;
+    std::vector<std::pair<std::uint64_t,Vector2>> waypoints;
+};
 struct DirectionalContact {
     std::uint64_t site=0;
     SiteKind kind=SiteKind::Ship;
@@ -79,6 +91,10 @@ public:
     std::vector<ScanObservation> probe_scan(PlayerId owner,std::uint32_t system,
         std::uint64_t tick,std::int64_t radius_mm,int sensor_strength) const;
     std::size_t deployed_count(PlayerId owner) const;
+    std::vector<SignatureContact> coarse_signatures(PlayerId owner,std::uint32_t system,
+        Vector2 scanner_position,std::int64_t range_mm,int sensor_strength) const;
+    std::optional<RefinementPlan> plan_refinement(PlayerId owner,std::uint32_t system,
+        std::uint64_t signature,std::int64_t scan_radius_mm,int sensor_strength) const;
     // Filter actual native probe evidence by scan intent; no client-supplied sightings.
     std::vector<ScanObservation> scan_mode(PlayerId owner,std::uint32_t system,
         std::uint64_t tick,std::int64_t radius_mm,int sensor_strength,ScanMode mode) const;
