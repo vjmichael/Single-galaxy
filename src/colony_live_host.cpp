@@ -121,6 +121,19 @@ void status(const Simulation& w,EntityId ship,bool replay_discoveries=false){
     if(const auto f=w.ship_frames().find(ship);f!=w.ship_frames().end())
         announce(w,"LOCAL_FRAME|"+std::to_string(f->second.system)+"|"+
             std::to_string(f->second.anchor_body));
+    if(const auto p=w.assess_expedition(s->owner_id,ship)) {
+        // Read-only local opportunity and *existing* life-support buffer.
+        // Each period is exactly one 20-tick consumption cycle, not ETA.
+        announce(w,"EXPEDITION|"+std::to_string(p->body)+"|"+
+            std::to_string(p->ore_tonnes)+"|"+
+            std::to_string(p->nickel_iron_kg)+"|"+
+            std::to_string(p->plagioclase_kg)+"|"+
+            std::to_string(p->food_periods)+"|"+
+            std::to_string(p->water_periods)+"|"+
+            std::to_string(p->oxygen_periods)+"|"+
+            std::to_string(unsigned(p->hazard))+"|"+
+            std::to_string(p->local_supply_site?1:0));
+    }
     announce(w,"HEADING|"+std::to_string(s->heading_deg));
     announce(w,"PROBE_RESET");
     for(const auto& [id,p]:w.survey_probes()){
