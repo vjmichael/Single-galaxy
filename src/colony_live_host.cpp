@@ -654,6 +654,7 @@ int main(int argc,char** argv){
         const auto initial_ship=genesis.add_colony_ship(owner,{0,0},60,24);
         EntityId ship=initial_ship;
         genesis.provision_colony_genesis(initial_ship,1000,3000,1000,1000,1000);
+        genesis.enable_individual_workforce();
         genesis.provision_starter_exploration_scanner(initial_ship);
         genesis.provision_starter_probe_kit(initial_ship);
         genesis.add_asteroid({2000,1000},40); // small reachable starter resource
