@@ -555,7 +555,7 @@ public:
     // Max carrier-to-geological-drone command/telemetry link: 10 km.
     static constexpr std::int64_t kDroneControlRangeMm = 10000000;
     // 0.5 AU long-range probe uplink, reserved for galaxy-scale coordinate work.
-    static constexpr std::int64_t kDeepSpaceProbeCommsRangeMm = 74798935350LL;
+    static constexpr std::int64_t kDeepSpaceProbeCommsRangeMm = 74798935350000LL;
     static constexpr std::int64_t kProximitySafetyRangeMm = 5000;
     static constexpr std::int64_t kTrainingWeaponDamage = 15;
     static constexpr std::uint64_t kTrainingWeaponCooldownTicks = 2;
