@@ -20,6 +20,7 @@ on:
       - 'tests/PLAY13C_LocalRegionGenerationTests.cpp'
       - 'tests/PLAY13C_LocalEnvironmentTests.cpp'
       - 'tests/PLAY13C_ExpeditionAssessmentTests.cpp'
+      - 'tests/PLAY13C_RareOasisTests.cpp'
       - 'src/ClientContract.cpp'
       - 'viewer/colony.js'
       - 'include/galaxy/Persistence.hpp'
@@ -52,9 +53,9 @@ jobs:
       - name: Configure native galaxy kernel
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
       - name: Build transition regression with authoritative Simulation
-        run: cmake --build build --config Release --target galaxy_play13c_celestial_transition_tests galaxy_play13c_durable_frames_tests galaxy_play13c_actual_transit_tests galaxy_play13c_frame_visibility_tests galaxy_play13c_local_region_tests galaxy_play13c_local_environment_tests galaxy_play13c_expedition_assessment_tests galaxy_colony_live_host
+        run: cmake --build build --config Release --target galaxy_play13c_celestial_transition_tests galaxy_play13c_durable_frames_tests galaxy_play13c_actual_transit_tests galaxy_play13c_frame_visibility_tests galaxy_play13c_local_region_tests galaxy_play13c_local_environment_tests galaxy_play13c_expedition_assessment_tests galaxy_play13c_rare_oasis_tests galaxy_colony_live_host
       - name: Verify owner and travel evidence gates
-        run: ctest --test-dir build -C Release -R "^galaxy_play13c_(celestial_transition|durable_frames|actual_transit|frame_visibility|local_region|local_environment|expedition_assessment)$" --output-on-failure
+        run: ctest --test-dir build -C Release -R "^galaxy_play13c_(celestial_transition|durable_frames|actual_transit|frame_visibility|local_region|local_environment|expedition_assessment|rare_oasis)$" --output-on-failure
       - name: Real native host celestial journey and saved restart
         if: runner.os == 'Linux'
         run: python3 tests/PLAY13C_LiveHostTravelSmoke.py build/galaxy_colony_live_host
