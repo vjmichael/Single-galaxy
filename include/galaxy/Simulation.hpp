@@ -483,8 +483,8 @@ struct DeployedSurveyProbe {
     std::uint8_t drone_phase=0;
     EntityId drone_target=0;
     Vector2 drone_home{};
-    std::int64_t sample_ore=0; // actual asteroid ore in drone custody
-    std::uint8_t taxonomy=0; // 0 unknown; 1..3 observed mineral class
+    std::int64_t sample_ore=0; // retired v66 field; MUST remain zero (data-only survey)
+    std::uint8_t taxonomy=0; // 0 unknown; 1..3 recorded mineral class, not physical ore
 };
 struct DiscoveryRecord {
     PlayerId owner=0;
@@ -552,6 +552,10 @@ public:
     static constexpr std::int64_t kLocalSurveyRangeMm = 50000;
     static constexpr std::int64_t kProbeScanRangeMm = 50000;
     static constexpr std::int64_t kProbeRecoveryRangeMm = 2500;
+    // Max carrier-to-geological-drone command/telemetry link: 10 km.
+    static constexpr std::int64_t kDroneControlRangeMm = 10000000;
+    // 0.5 AU long-range probe uplink, reserved for galaxy-scale coordinate work.
+    static constexpr std::int64_t kDeepSpaceProbeCommsRangeMm = 74798935350LL;
     static constexpr std::int64_t kProximitySafetyRangeMm = 5000;
     static constexpr std::int64_t kTrainingWeaponDamage = 15;
     static constexpr std::uint64_t kTrainingWeaponCooldownTicks = 2;
