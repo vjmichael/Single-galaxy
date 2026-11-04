@@ -5110,6 +5110,126 @@ std::vector<PhysicalCelestialBody> Simulation::scan_physical_celestials(
     return found==physical_celestial_systems_.end()?
         std::vector<PhysicalCelestialBody>{}:found->second;
 }
+// PLAY-13D.3: these native game operations use existing canonical module,
+// life-support and oasis custody. A survey is informational; no resource is
+// allocated merely because terrain resembles a river or fertile ground.
+bool Simulation::build_planetary_site(PlayerId owner,EntityId ship,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude) {
+    const auto site=scan_planetary_geography(owner,ship,body,latitude,longitude);
+    const auto frame=ship_frames_.find(ship);
+    const auto* vessel=find(ship);
+    auto colony=colony_ships_.find(ship);
+    const auto key=PlanetarySiteKey{body,latitude,longitude,1};
+    if(!site || !vessel || !owner || owner==kServerAuthority ||
+       frame==ship_frames_.end() || frame->second.anchor_body!=body ||
+       vessel->dock_state!=DockState::InSpace ||
+       vessel->jump_state!=ShipJumpState::Ready ||
+       colony==colony_ships_.end() || colony->second.modules<2 ||
+       colony->second.crew<2 || planetary_sites_.count(key) ||
+       planetary_sites_.size()>=10000 ||
+       site->landscape.region.surface_water ||
+       site->landscape.region.terrain==planetary::Terrain::Ice)
+        return false;
+    colony->second.modules-=2;
+    planetary_sites_.emplace(key,PlanetarySiteFacility{
+        site->key,owner,ship,4,false,false,0,0,0,0,0});
+    snapshot_version_=std::max(snapshot_version_,77);
+    return true;
+}
+bool Simulation::equip_planetary_site(PlayerId owner,EntityId ship,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,bool farm) {
+    const auto key=PlanetarySiteKey{body,latitude,longitude,1};
+    auto it=planetary_sites_.find(key);
+    const auto site=scan_planetary_geography(owner,ship,body,latitude,longitude);
+    const auto frame=ship_frames_.find(ship);
+    auto colony=colony_ships_.find(ship);
+    if(!site || !owner || it==planetary_sites_.end() ||
+       it->second.owner!=owner || it->second.source_ship!=ship ||
+       frame==ship_frames_.end() || frame->second.anchor_body!=body ||
+       colony==colony_ships_.end() || colony->second.modules<2 ||
+       colony->second.crew<2 || (farm?it->second.farm:it->second.extractor) ||
+       (farm && !site->landscape.region.farming_possible) ||
+       (!farm && !oasis_reserves_.count(body)))
+        return false;
+    colony->second.modules-=2;
+    it->second.embodied_ore+=4;
+    if(farm)it->second.farm=true;else it->second.extractor=true;
+    return true;
+}
+bool Simulation::supply_planetary_site(PlayerId owner,EntityId ship,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,
+    bool water,std::int64_t kg) {
+    const auto key=PlanetarySiteKey{body,latitude,longitude,1};
+    auto site=planetary_sites_.find(key);
+    auto life=life_support_.find(ship);
+    const auto frame=ship_frames_.find(ship);
+    if(!owner || kg<=0 || kg>10000 || site==planetary_sites_.end() ||
+       site->second.owner!=owner || site->second.source_ship!=ship ||
+       frame==ship_frames_.end() || frame->second.anchor_body!=body ||
+       life==life_support_.end())return false;
+    auto& origin=water?life->second.water_kg:life->second.nutrients_kg;
+    auto& dest=water?site->second.water_kg:site->second.nutrients_kg;
+    if(origin<kg || dest>1000000-kg)return false;
+    origin-=kg;dest+=kg;
+    return true;
+}
+bool Simulation::cultivate_planetary_site(PlayerId owner,EntityId ship,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,
+    std::int64_t batches) {
+    const auto key=PlanetarySiteKey{body,latitude,longitude,1};
+    auto site=planetary_sites_.find(key);
+    const auto frame=ship_frames_.find(ship);
+    if(!owner || batches<1 || batches>100 || site==planetary_sites_.end() ||
+       site->second.owner!=owner || site->second.source_ship!=ship ||
+       !site->second.farm ||
+       frame==ship_frames_.end() || frame->second.anchor_body!=body)
+        return false;
+    auto& facility=site->second;
+    if(facility.water_kg<10*batches || facility.nutrients_kg<5*batches ||
+       facility.food_kg>1000000-12*batches ||
+       facility.wastewater_kg>1000000-3*batches)return false;
+    facility.water_kg-=10*batches;
+    facility.nutrients_kg-=5*batches;
+    facility.food_kg+=12*batches;
+    facility.wastewater_kg+=3*batches;
+    facility.harvest_cycles+=std::uint64_t(batches);
+    return true;
+}
+bool Simulation::extract_planetary_site(PlayerId owner,EntityId ship,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,
+    bool water,std::int64_t kg) {
+    const auto key=PlanetarySiteKey{body,latitude,longitude,1};
+    auto site=planetary_sites_.find(key);
+    auto reserve=oasis_reserves_.find(body);
+    const auto frame=ship_frames_.find(ship);
+    if(!owner || kg<1000 || kg>10000 || kg%1000 ||
+       site==planetary_sites_.end() || reserve==oasis_reserves_.end() ||
+       site->second.owner!=owner || site->second.source_ship!=ship ||
+       !site->second.extractor ||
+       frame==ship_frames_.end() || frame->second.anchor_body!=body)return false;
+    auto& source=water?reserve->second.water_kg:reserve->second.nutrients_kg;
+    auto& dest=water?site->second.water_kg:site->second.nutrients_kg;
+    if(source<kg || dest>1000000-kg)return false;
+    source-=kg;dest+=kg;
+    return true;
+}
+bool Simulation::retrieve_planetary_site(PlayerId owner,EntityId ship,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,
+    bool food,std::int64_t kg) {
+    const auto key=PlanetarySiteKey{body,latitude,longitude,1};
+    auto site=planetary_sites_.find(key);
+    auto life=life_support_.find(ship);
+    const auto frame=ship_frames_.find(ship);
+    if(!owner || kg<=0 || kg>10000 || site==planetary_sites_.end() ||
+       site->second.owner!=owner || site->second.source_ship!=ship ||
+       frame==ship_frames_.end() || frame->second.anchor_body!=body ||
+       life==life_support_.end())return false;
+    auto& origin=food?site->second.food_kg:site->second.water_kg;
+    auto& dest=food?life->second.food_kg:life->second.water_kg;
+    if(origin<kg || dest>1000000-kg)return false;
+    origin-=kg;dest+=kg;
+    return true;
+}
 std::optional<planetary::GeographicSite> Simulation::scan_planetary_geography(
     PlayerId owner,EntityId ship,std::uint64_t body_id,
     std::uint16_t latitude,std::uint16_t longitude) const {
