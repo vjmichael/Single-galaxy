@@ -4678,6 +4678,37 @@ bool Simulation::within_deep_probe_link(std::int64_t dx_mm,
 }
 namespace {
 constexpr std::uint64_t kAstronomicalGalaxySeed=0x53475F415354524FULL;
+planetary::PlanetaryEnvelope planetary_envelope_for_body(
+    const PhysicalCelestialBody& body) {
+    const auto selector=astronomy_mix(kAstronomicalGalaxySeed^body.id);
+    planetary::PlanetaryEnvelope env{};
+    if(body.orbital_radius_milli_au>12000) {
+        env.climate=planetary::WorldClimate::Frozen;
+        env.water_coverage=std::uint8_t(20+(selector%70));
+        env.average_celsius=-25;
+    } else if(body.orbital_radius_milli_au<2200) {
+        env.climate=planetary::WorldClimate::AirlessRock;
+        env.water_coverage=0;
+        env.average_celsius=50;
+    } else if(selector%5==0) {
+        env.climate=planetary::WorldClimate::Arid;
+        env.water_coverage=std::uint8_t(2+(selector%15));
+        env.average_celsius=27;
+    } else if(selector%5==1) {
+        env.climate=planetary::WorldClimate::Ocean;
+        env.water_coverage=std::uint8_t(75+(selector%21));
+        env.average_celsius=16;
+    } else {
+        env.climate=planetary::WorldClimate::LifeSupporting;
+        env.water_coverage=std::uint8_t(25+(selector%45));
+        env.average_celsius=17;
+    }
+    // PGF biosphere genesis has NOT been integrated. Never claim discovered
+    // native vegetation merely from a favorable climate classification.
+    env.biosphere_present=false;
+    return env;
+}
+
 constexpr std::uint64_t kAuMm=149597870700000ULL;
 constexpr std::uint64_t kCosmicLimitMm=50000000000000000ULL; // 334 AU
 // Fixed-point directional placements avoid libc trig drift across OS builds.
@@ -5239,32 +5270,7 @@ std::optional<planetary::GeographicSite> Simulation::scan_planetary_geography(
                  body->kind!=CelestialKind::Moon) ||
        latitude>=planetary::kWatershedRows ||
        longitude>=planetary::kWatershedColumns) return std::nullopt;
-    const auto selector=astronomy_mix(kAstronomicalGalaxySeed^body_id);
-    planetary::PlanetaryEnvelope env{};
-    if(body->orbital_radius_milli_au>12000) {
-        env.climate=planetary::WorldClimate::Frozen;
-        env.water_coverage=std::uint8_t(20+(selector%70));
-        env.average_celsius=-25;
-    } else if(body->orbital_radius_milli_au<2200) {
-        env.climate=planetary::WorldClimate::AirlessRock;
-        env.water_coverage=0;
-        env.average_celsius=50;
-    } else if(selector%5==0) {
-        env.climate=planetary::WorldClimate::Arid;
-        env.water_coverage=std::uint8_t(2+(selector%15));
-        env.average_celsius=27;
-    } else if(selector%5==1) {
-        env.climate=planetary::WorldClimate::Ocean;
-        env.water_coverage=std::uint8_t(75+(selector%21));
-        env.average_celsius=16;
-    } else {
-        env.climate=planetary::WorldClimate::LifeSupporting;
-        env.water_coverage=std::uint8_t(25+(selector%45));
-        env.average_celsius=17;
-    }
-    // PGF biosphere genesis has NOT been integrated. Never claim discovered
-    // native vegetation merely from a favorable climate classification.
-    env.biosphere_present=false;
+    const auto env=planetary_envelope_for_body(*body);
     const planetary::PlanetaryWorldKey key{
         kAstronomicalGalaxySeed,body->system,body->id,1};
     const auto terrain=planetary::generate_watersheds(key,env);
