@@ -1232,3 +1232,12 @@ if(BUILD_TESTING)
   add_test(NAME galaxy_play13c_local_environment
     COMMAND galaxy_play13c_local_environment_tests)
 endif()
+
+# PLAY-13C.6A read-only frontier resource and life-support viability acceptance.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13c_expedition_assessment_tests
+    tests/PLAY13C_ExpeditionAssessmentTests.cpp)
+  target_link_libraries(galaxy_play13c_expedition_assessment_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13c_expedition_assessment
+    COMMAND galaxy_play13c_expedition_assessment_tests)
+endif()
