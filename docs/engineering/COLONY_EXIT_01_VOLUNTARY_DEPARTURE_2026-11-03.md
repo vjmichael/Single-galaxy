@@ -33,3 +33,7 @@ The existing HostColonyDeparture path evacuates an entire adult colony under str
 EXIT-01B: individual dissatisfaction and recovery from evidenced actions. EXIT-01C: actual route, ship, destination, and household closure. EXIT-01D: durable executed physical departure and society/workforce reconciliation. No single tick of bad conditions or fictional transport should remove a resident.
 
 Dedicated native CI: .github/workflows/colony-exit01a.yml. Do not claim full departure functionality or Windows acceptance from these tests.
+
+## Verified native test results
+
+**6/6 focused Linux CTests passed** at executable revision `496b2e151b760585cee78ffbca194b1d7b6d085b` ([Actions run 41785467590](https://github.com/vjmichael/Single-galaxy/actions/runs/41785467590)). The native suite exercised physical colony watch, strategic intent, GRSM grievance, dated diplomacy, dated government succession and the new individual NPC survival-pressure witness in 3.63 seconds. No physical departure or Windows hardware check is inferred from this result.
