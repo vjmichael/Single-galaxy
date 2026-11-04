@@ -8,6 +8,15 @@
   function decode(raw){
     if(typeof raw!=='string'||raw.length>180||!/^COLONY\|1\|/.test(raw)||!/^[A-Za-z0-9_|-]+$/.test(raw))throw Error('Invalid colony telemetry');
     const v=raw.split('|'),tick=numeric(v[2],1200),t=v[3];let e={tick,type:t};
+    if(t==='DISCOVERY'){
+      if(v.length!==10)throw Error('Malformed discovery record');
+      const site=numeric(v[4],100000000),system=numeric(v[5],100000000);
+      const coord=x=>{if(!/^(?:0|-?[1-9][0-9]*)$/.test(x))throw Error('Invalid signed discovery coordinate');const n=Number(x);if(!Number.isSafeInteger(n)||Math.abs(n)>1000000000)throw Error('Discovery coordinate overflow');return n;};
+      const x=coord(v[6]),y=coord(v[7]);
+      const firstTick=numeric(v[8],Number.MAX_SAFE_INTEGER),geological=numeric(v[9],1);
+      if(!site||!system||!firstTick||firstTick>e.tick)throw Error('Invalid discovery metadata');
+      return {...e,site,system,x,y,firstTick,geological:!!geological};
+    }
     if(t==='SALVAGE_WRECK'){
       if(v.length!==6)throw Error('Malformed salvage wreck');
       const id=numeric(v[4],100000000),cargo=numeric(v[5],1000000);
@@ -222,6 +231,7 @@
  const q=id=>document.getElementById(id), policyAudits=new Map(), geology=new Map(),small=new Map(),log=[],stocks=new Map(),outposts=new Map(),farms=new Map(),habitats=new Map(),utilities=new Map(),communities=new Map(),clinics=new Map(),reclaimers=new Map(),waterworks=new Map();
  const combatTargets=new Map();
  const salvageWrecks=new Map();
+ const discoveries=new Map();
  window.GalaxySalvageStock=salvageWrecks;
  window.GalaxyColonyGeology=geology;
  window.GalaxySelectedRockId=null;
@@ -275,8 +285,21 @@
        guide.action==='colonyFabricate'?{amount:4}:{});
  });
  window.GalaxyColony={
-   reset(){salvageWrecks.clear();q('salvageTarget').replaceChildren(new Option('No recoverable wreck reported',''));q('salvageRecover').disabled=true;q('salvageFeedback').textContent='Waiting for native wreck inventory.';combatTargets.clear();q('combatHull').textContent='—';q('combatCharges').textContent='—';q('combatFire').disabled=true;q('combatFeedback').textContent='Awaiting native combat telemetry.';window.GalaxySelectedRockId=null;window.GalaxyShipHeading=null;window.GalaxyColonyOutpostIds.clear();openingStatus=null;openingScanned=false;refreshOpening();window.GalaxyColonyHomeShipId=null;q('colonySafetyAssess').disabled=true;q('colonySafetyPreflight').disabled=true;policyAudits.clear();geology.clear();small.clear();stocks.clear();outposts.clear();farms.clear();habitats.clear();utilities.clear();communities.clear();clinics.clear();reclaimers.clear();waterworks.clear();log.length=0;q('colonyEvents').textContent='Awaiting colony telemetry…';q('expeditionOutcome').textContent='Awaiting an actual native result';},
+   reset(){discoveries.clear();q('explorationResults').replaceChildren();q('explorationSummary').textContent='No mapped discoveries yet. Execute a native local scan.';salvageWrecks.clear();q('salvageTarget').replaceChildren(new Option('No recoverable wreck reported',''));q('salvageRecover').disabled=true;q('salvageFeedback').textContent='Waiting for native wreck inventory.';combatTargets.clear();q('combatHull').textContent='—';q('combatCharges').textContent='—';q('combatFire').disabled=true;q('combatFeedback').textContent='Awaiting native combat telemetry.';window.GalaxySelectedRockId=null;window.GalaxyShipHeading=null;window.GalaxyColonyOutpostIds.clear();openingStatus=null;openingScanned=false;refreshOpening();window.GalaxyColonyHomeShipId=null;q('colonySafetyAssess').disabled=true;q('colonySafetyPreflight').disabled=true;policyAudits.clear();geology.clear();small.clear();stocks.clear();outposts.clear();farms.clear();habitats.clear();utilities.clear();communities.clear();clinics.clear();reclaimers.clear();waterworks.clear();log.length=0;q('colonyEvents').textContent='Awaiting colony telemetry…';q('expeditionOutcome').textContent='Awaiting an actual native result';},
    accept(raw){const e=window.GalaxyColonyContract.decode(raw);
+     if(e.type==='DISCOVERY'){
+       if(!discoveries.has(e.site))discoveries.set(e.site,e);
+       const rows=window.GalaxyExplorationJournal?.entries(discoveries,e.system);
+       if(rows){
+         const summary=window.GalaxyExplorationJournal.stats(rows);
+         q('explorationSummary').textContent=summary.total+' historically mapped objects · '+
+           summary.geological+' geological deposits · '+summary.systems+' system(s) represented.';
+         q('explorationResults').replaceChildren(...rows.slice(-40).reverse().map(record=>{
+           const node=document.createElement('div');node.className='entry';
+           node.textContent=window.GalaxyExplorationJournal.describe(record);return node;
+         }));
+       }
+     }
      if(e.type==='SALVAGE_WRECK'){
        salvageWrecks.set(e.id,e.cargo);
        const select=q('salvageTarget'),current=select.value;

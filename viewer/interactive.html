@@ -83,6 +83,14 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
  <div class="help" style="margin-top:8px">The host saves the world. Reconnecting reloads the actual inventory and construction progress; a queued command is not a completed action.</div>
 </section>
 <div class="help">One ship · finite crew · no starting stations or gates. Every resource action is executed and saved by the C++ simulation. The mineral distributions below are illustrative based on real mineral classes.</div>
+<section aria-labelledby="explorationTitle" style="border:1px solid #3b6077;border-radius:10px;padding:12px;margin:10px 0">
+ <h2 id="explorationTitle">Exploration · Discoveries</h2>
+ <div class="help">Local sensors map existing asteroids within 50,000 mm of the colony ship. Native SQLite stores the first observation tick and location. Fly closer to distant deposits to map them; no instant galaxy-wide reveal.</div>
+ <div class="controls" style="padding:8px 0;gap:6px"><button type="button" class="primary" id="explorationScan">Scan nearby space</button></div>
+ <div class="help" id="explorationSummary" role="status" aria-live="polite">No mapped discoveries yet. Execute a native local scan.</div>
+ <div id="explorationResults" role="log" aria-live="polite" style="display:grid;gap:5px;max-height:240px;overflow:auto;margin-top:8px"></div>
+ <div class="help">Observations are historical facts, not claims that a deposit still exists or contains the same resources. Mining and selection still require current native world data.</div>
+</section>
 <section aria-labelledby="flightTitle" style="border:1px solid #31445c;border-radius:10px;padding:12px;margin:10px 0">
  <h2 id="flightTitle">Flight deck · Manual piloting</h2>
  <div class="help">Arrow keys or WASD: world-axis thrust · Q/E: yaw left/right (15°) · Space: neutral drift. Use the mouse controls if preferred. Yaw changes the ship’s saved heading; world-axis thrust is unchanged for now.</div>
@@ -279,6 +287,7 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
 <script src="opening-guide.js"></script>
 <script src="flight-controls.js"></script>
 <script src="flight-camera.js"></script>
+<script src="exploration-journal.js"></script>
 <script src="travel-assist.js"></script>
 <script src="cargo-return.js"></script>
 <script src="expedition-feedback.js"></script>

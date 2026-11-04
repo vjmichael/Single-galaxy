@@ -191,6 +191,7 @@ el('combatFire').addEventListener('click',()=>{
  command('colonyFireTraining',{target});
 });
 el('flightScan').addEventListener('click',()=>command('colonyScan'));
+el('explorationScan').addEventListener('click',()=>command('colonyScan'));
 el('flightMine').addEventListener('click',()=>command('colonyMine',{amount:8}));
 el('flightMineSelected').addEventListener('click',()=>{
  const id=Number(el('colonyRockTarget').value);
