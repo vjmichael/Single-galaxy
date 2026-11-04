@@ -41,15 +41,21 @@ int main(){
             CHECK(client.world().entities.count(ship)==1);
             CHECK(client.world().entities.count(other)==0);
             CHECK(client.world().entities.count(rock)==0);
+            CHECK(w.world().generated_local_regions().count(body)==1);
+            CHECK(w.world().local_entity_anchors().size()==2);
+            for(const auto& [new_rock,anchor]:w.world().local_entity_anchors()) {
+                CHECK(anchor==body);
+                CHECK(client.world().entities.count(new_rock)==1);
+            }
             CHECK(!w.world().same_local_frame(ship,other));
-            CHECK(w.world().coarse_probe_signatures(7,ship).empty());
+            CHECK(w.world().coarse_probe_signatures(7,ship).size()==2);
             CHECK(w.world().total_ore()==20);
             CHECK(w.world().colony_ship(ship)->crew==8);
             // A newly attached bridge never leaks old-frame objects on snapshot.
             ServerViewBridge fresh(w.world(),8513,7);
             ClientView reader;
             CHECK(reader.apply(decode_frame(encode_frame(fresh.snapshot())))==ApplyResult::Applied);
-            CHECK(reader.world().entities.size()==1);
+            CHECK(reader.world().entities.size()==3);
             CHECK(reader.world().entities.count(ship)==1);
         }
         {
@@ -61,6 +67,7 @@ int main(){
             CHECK(reader.world().entities.count(ship)==1);
             CHECK(!reader.world().entities.count(other));
             CHECK(!reader.world().entities.count(rock));
+            CHECK(reader.world().entities.size()==3);
         }
         fs::remove(path);
         std::cout<<"PASS PLAY-13C.3 frame-local snapshot/delta/scans/restart\n";
