@@ -866,6 +866,108 @@ Simulation::FerryEmergencyReport Simulation::ferry_emergency_report(std::uint64_
     return report;
 }
 
+bool Simulation::can_depart_colony(const Command& c) const {
+    // v58: a bounded all-adult local colony transfer is ONE world command.
+    // No passenger voyage, offsite transport, fabricated guardian authority,
+    // remote relocation, or supply deficit can be accepted.
+    if(c.action!=Action::HostColonyDeparture ||
+       c.issuer!=kServerAuthority || snapshot_version_<57 ||
+       !c.actor || !c.target || c.actor==c.target || !c.id ||
+       c.execute_tick!=tick_+1 || c.amount || c.transport_id ||
+       c.secondary_receiver || c.secondary_transport || c.thrust_x || c.thrust_y ||
+       c.passenger_ids.empty() || c.passenger_ids.size()>16 ||
+       !std::is_sorted(c.passenger_ids.begin(),c.passenger_ids.end()) ||
+       std::adjacent_find(c.passenger_ids.begin(),c.passenger_ids.end())!=c.passenger_ids.end() ||
+       !c.passenger_ids.front() || colony_departures_.count(c.actor) ||
+       colony_departures_.count(c.target))return false;
+    const auto* source=find(c.actor);const auto* receiver=find(c.target);
+    const auto from=colony_ships_.find(c.actor),to=colony_ships_.find(c.target);
+    const auto* receiver_life=life_support(c.target);
+    if(!source||!receiver||from==colony_ships_.end()||to==colony_ships_.end()||
+       !receiver_life || source->type!=EntityType::Ship ||
+       receiver->type!=EntityType::Ship ||
+       source->system_id!=receiver->system_id ||
+       source->jump_state!=ShipJumpState::Ready ||
+       receiver->jump_state!=ShipJumpState::Ready ||
+       source->dock_state!=DockState::InSpace ||
+       receiver->dock_state!=DockState::InSpace ||
+       from->second.crew<1 || to->second.crew<1 ||
+       to->second.crew>1000-static_cast<std::int64_t>(c.passenger_ids.size()) ||
+       passengers_aboard(c.actor) || passengers_aboard(c.target))return false;
+    const auto near=[&](const Entity* origin){
+        if(!origin || origin->system_id!=receiver->system_id)return false;
+        const auto dx=origin->position.x-receiver->position.x;
+        const auto dy=origin->position.y-receiver->position.y;
+        return dx>=-kDockingRangeMm && dx<=kDockingRangeMm &&
+               dy>=-kDockingRangeMm && dy<=kDockingRangeMm &&
+               dx*dx+dy*dy<=kDockingRangeMm*kDockingRangeMm;
+    };
+    if(!near(source))return false;
+    // The source owner cannot suppress urgent life preservation, but a
+    // healthy colony cannot be forcibly stripped of its crew by this API.
+    bool danger=false;
+    if(life_support(c.actor)){
+        const auto risk=colony_safety::assess(*this,c.actor,c.actor).risk;
+        danger=static_cast<int>(risk)>=static_cast<int>(colony_safety::Risk::Critical);
+    }
+    std::uint64_t declared=static_cast<std::uint64_t>(from->second.crew);
+    for(const auto& [site,h]:habitats_)if(h.source_ship==c.actor){
+        if(h.residents<0 || !near(find(site)))return false;
+        declared+=static_cast<std::uint64_t>(h.residents);
+        if(h.residents &&
+           static_cast<int>(colony_safety::assess(*this,c.actor,site).risk)>=
+           static_cast<int>(colony_safety::Risk::Critical))danger=true;
+    }
+    for(const auto& [site,f]:farms_)if(f.source_ship==c.actor){
+        if(f.workers<0 || !near(find(site)))return false;
+        declared+=static_cast<std::uint64_t>(f.workers);
+        if(f.workers && !habitats_.count(site) &&
+           static_cast<int>(colony_safety::assess(*this,c.actor,site).risk)>=
+           static_cast<int>(colony_safety::Risk::Critical))danger=true;
+    }
+    if(!danger || declared!=c.passenger_ids.size())return false;
+    // Fail closed on staffed services and specialist jobs for which departure
+    // needs an independent social/employment/clinical settlement adapter.
+    for(const auto& [site,u]:utilities_)
+        if(u.source_ship==c.actor && u.technicians)return false;
+    for(const auto& [site,cmt]:communities_)
+        if(cmt.source_ship==c.actor && cmt.attendants)return false;
+    for(const auto& [site,cl]:clinics_)
+        if(cl.source_ship==c.actor && (cl.medics||cl.active_cases))return false;
+    for(const auto& [site,w]:workshops_)
+        if(w.source_ship==c.actor && (w.operator_npc_id||w.finisher_npc_id))return false;
+    for(const auto& [site,policy]:policy_sites_)if(policy.source_ship==c.actor)
+        for(const auto& d:policy.domains)if(d.inspectors)return false;
+    for(const auto& [command,shift]:medic_shifts_){
+        (void)command;
+        const auto n=npcs_.find(shift.medic_id);
+        if(n!=npcs_.end() && n->second.home_ship==c.actor &&
+           shift.end_tick>tick_)return false;
+    }
+    for(const auto& [ship,job]:mining_)if(ship==c.actor)return false;
+    for(const auto& [tick,cmds]:commands_)for(const auto& cmd:cmds)
+        if(cmd.actor==c.actor || cmd.actor==c.target ||
+           (cmd.target==c.actor && cmd.action!=Action::HostColonyDeparture))
+            return false;
+    std::vector<std::uint64_t> exact;
+    for(const auto& [id,n]:npcs_)if(n.home_ship==c.actor){
+        // No preexisting voyage, detached employment or unverified mentor link.
+        if(n.transport_id||n.location!=n.assigned_site||n.mentor_id||
+           named_medics_.count(id)||!near(find(n.location)))return false;
+        exact.push_back(id);
+    }
+    if(exact!=c.passenger_ids)return false;
+    // All persons are rehomed as real ship operating crew, not incorrectly
+    // left in an active voyage or simultaneously on the old station payroll.
+    const auto present=people_physically_aboard(c.target);
+    const auto count=present+exact.size();
+    if(count>1000 ||
+       receiver_life->food_kg<static_cast<std::int64_t>(2*count) ||
+       receiver_life->water_kg<static_cast<std::int64_t>(2*count) ||
+       receiver_life->oxygen_kg<static_cast<std::int64_t>(2*count))
+        return false;
+    return true;
+}
 bool Simulation::submit(const Command& c) {
     const bool split_action=c.action==Action::HostSplitEvacuatePassengers;
     const bool consigned=c.action==Action::HostTransferConsignedStock;
