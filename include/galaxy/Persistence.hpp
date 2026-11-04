@@ -646,6 +646,44 @@ public:
         std::uint64_t event_id,EntityId source_colony,std::uint64_t npc_id);
     std::optional<colony_conflict::PersonalOutlook> colony_personal_outlook(
         EntityId source_colony,std::uint64_t npc_id) const;
+    // EXIT-01D: fixed-cadence host-only supervision. The host invokes this
+    // after world steps; the coordinator scans actual residents in bounded,
+    // deterministic, rotating order and records only fact-backed appraisals.
+    // A route is an explicit previously authenticated receiving-owner offer
+    // from the trusted host resource/permission broker, NEVER discovered or
+    // granted by observing a nearby foreign colony.
+    struct HostVoluntaryImmigrationOffer {
+        EntityId destination=0,ferry=0;
+        PlayerId receiving_owner=0;
+        std::uint64_t admission_event_id=0,transport_id=0;
+        std::uint64_t pressure_event_id=0,boarding_command_id=0;
+    };
+    struct HostVoluntaryDepartureSchedule {
+        EntityId origin=0;
+        // Unique, host-journal-reserved ID for the first NPC in this batch.
+        // The next examined resident receives personal_event_base+1 etc.
+        std::uint64_t personal_event_base=0;
+        std::uint32_t scan_budget=8; // 1..32; 8 actual tick cadence
+        std::optional<HostVoluntaryImmigrationOffer> approved_offer;
+    };
+    enum class HostVoluntaryDepartureStatus : int {
+        NotDue=0,NoResidents=1,Observed=2,SeekingDestination=3,
+        NoEligibleMigrants=4,AdmissionCreated=5,BoardingQueued=6,
+        ExistingAdmission=7,PhysicalRouteBlocked=8
+    };
+    struct HostVoluntaryDepartureReport {
+        HostVoluntaryDepartureStatus status=HostVoluntaryDepartureStatus::NotDue;
+        EntityId origin=0;
+        std::uint64_t tick=0,selected_npc=0,admission_event_id=0;
+        std::uint32_t examined=0,observed=0,considering_departure=0;
+        std::string reason;
+    };
+    // Does not simulate a tick, teleport an NPC, create a foreign approval,
+    // move a child, or independently change immigration population records.
+    // Boarding, when queued, is executed only by the native world step.
+    HostVoluntaryDepartureReport supervise_voluntary_migration(
+        const HostVoluntaryDepartureSchedule& schedule,
+        FailPoint fail=FailPoint::None);
     // EXIT-01B: consent-to-receive an eligible single adult who has a real
     // current source-pressure witness. A permit is not a voyage or transfer.
     struct VoluntaryImmigrationAdmission {
