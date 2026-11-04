@@ -2132,18 +2132,23 @@ public:
     // generation. No retroactive recalculation under later leadership or
     // rapport, even if a different appraisal was recorded on the same tick.
     std::optional<colony_conflict::PersonalOutlook> personal_outlook_before(
-        EntityId source,std::uint64_t npc,std::uint64_t generation) const{
+        EntityId source,std::uint64_t npc,std::uint64_t generation,
+        bool across_colonies=false) const{
         Statement table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
             "AND name='sg_colony_npc_personal_outlook'");
         if(!table.row())return std::nullopt;
-        Statement q(db_,"SELECT event_id,prior_event,world_generation,tick,"
-            "colony,npc,leader,interaction_event,governance_event,"
-            "risk,rapport,delta,discontent,considering_departure "
-            "FROM sg_colony_npc_personal_outlook "
-            "WHERE colony=? AND npc=? AND world_generation<? "
-            "ORDER BY world_generation DESC LIMIT 1");
-        q.text(1,std::to_string(source));q.text(2,std::to_string(npc));
-        q.i64(3,static_cast<sqlite3_int64>(generation));
+        const std::string sql=std::string(
+            "SELECT event_id,prior_event,world_generation,tick,")+
+            "colony,npc,leader,interaction_event,governance_event,"+
+            "risk,rapport,delta,discontent,considering_departure "+
+            "FROM sg_colony_npc_personal_outlook "+
+            (across_colonies?"WHERE npc=? AND world_generation<? ":
+                             "WHERE colony=? AND npc=? AND world_generation<? ")+
+            "ORDER BY world_generation DESC LIMIT 1";
+        Statement q(db_,sql.c_str());
+        if(!across_colonies)q.text(1,std::to_string(source));
+        q.text(across_colonies?1:2,std::to_string(npc));
+        q.i64(across_colonies?2:3,static_cast<sqlite3_int64>(generation));
         if(!q.row())return std::nullopt;
         colony_conflict::PersonalOutlook p;
         const auto event=sqlite3_column_int64(q.get(),0);
@@ -2169,7 +2174,8 @@ public:
         p.delta=sqlite3_column_int(q.get(),11);
         p.discontent=sqlite3_column_int(q.get(),12);
         const auto intending=sqlite3_column_int(q.get(),13);
-        if(!p.colony || !p.npc_id || !p.leader_id || p.colony!=source ||
+        if(!p.colony || !p.npc_id || !p.leader_id ||
+           (!across_colonies && p.colony!=source) ||
            p.npc_id!=npc || p.world_generation>=generation ||
            risk<0 || risk>3 || p.leader_rapport<-100 ||
            p.leader_rapport>100 || p.discontent<0 || p.discontent>100 ||
@@ -2196,7 +2202,11 @@ public:
             return std::nullopt;
         const auto govt=effective_governance(source,generation);
         if(govt.leader_id==npc_id)return std::nullopt;
-        const auto previous=personal_outlook_before(source,npc_id,generation);
+        // An immigrant carries the same NPC identity and biographical
+        // discontent into the new colony. Appraisals never reset to zero
+        // merely because the legal home changed in ART02/ECON03.
+        const auto previous=personal_outlook_before(
+            source,npc_id,generation,true);
         if(previous){
             if(world.tick()<previous->world_tick ||
                world.tick()-previous->world_tick<8)return std::nullopt;
@@ -2239,9 +2249,16 @@ public:
         // A real deteriorating personal history, not one global crisis tick.
         // Once considering a move, the resident needs substantial sustained
         // improvement to abandon it; one repaired supply tick is not magic.
+        // A legitimate NEW healthy residence relieves the immediate desire
+        // to abandon the former colony without destroying historical feelings.
+        // A new unsafe home can still activate a genuinely new local intent.
+        const bool arrived_in_new_home=previous && previous->colony!=source;
         p.considering_departure=
-            (previous && previous->considering_departure)
-            ?p.discontent>=30 : p.discontent>=65;
+            (arrived_in_new_home && p.risk==colony_safety::Risk::Safe)
+            ? false :
+            ((previous && previous->considering_departure &&
+              !arrived_in_new_home)
+              ? p.discontent>=30 : p.discontent>=65);
         p.prior_event_id=previous?previous->event_id:0;
         return p;
     }
