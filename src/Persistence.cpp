@@ -5846,19 +5846,19 @@ bool PersistentWorld::submit_host_dependent_registration(
        !command.transport_id || !command.actor || scope.empty() || !seed)return false;
     auto next=world_;
     if(!next.submit(command))return false;
-    const auto effect=[&](sqlite3*,std::uint64_t){
+    const auto effect=[&](sqlite3* db,std::uint64_t){
         store_->verify_physical_dependent_birth(world_,command,scope,seed);
-        run(store_->db_,"CREATE TABLE IF NOT EXISTS sg_colony_physical_child_authority("
+        run(db,"CREATE TABLE IF NOT EXISTS sg_colony_physical_child_authority("
             "child_id TEXT PRIMARY KEY,command_id TEXT NOT NULL UNIQUE,"
             "guardian_id TEXT NOT NULL,home_ship TEXT NOT NULL,"
             "family_scope TEXT NOT NULL,family_seed TEXT NOT NULL)");
-        run(store_->db_,"CREATE TRIGGER IF NOT EXISTS sg_colony_child_authority_no_update "
+        run(db,"CREATE TRIGGER IF NOT EXISTS sg_colony_child_authority_no_update "
             "BEFORE UPDATE ON sg_colony_physical_child_authority "
             "BEGIN SELECT RAISE(ABORT,'physical child authority immutable'); END");
-        run(store_->db_,"CREATE TRIGGER IF NOT EXISTS sg_colony_child_authority_no_delete "
+        run(db,"CREATE TRIGGER IF NOT EXISTS sg_colony_child_authority_no_delete "
             "BEFORE DELETE ON sg_colony_physical_child_authority "
             "BEGIN SELECT RAISE(ABORT,'physical child authority immutable'); END");
-        Statement entry(store_->db_,"INSERT INTO sg_colony_physical_child_authority "
+        Statement entry(db,"INSERT INTO sg_colony_physical_child_authority "
             "VALUES(?,?,?,?,?,?)");
         entry.text(1,std::to_string(command.transport_id));
         entry.text(2,std::to_string(command.id));
@@ -5884,8 +5884,8 @@ void PersistentWorld::step_with_dependent_registration(FailPoint fail){
        due.begin()->second.issuer!=Simulation::kServerAuthority)
         throw std::runtime_error("physical child registration requires one host command");
     const auto cmd=due.begin()->second;
-    const auto check=[&](){
-        Statement record(store_->db_,"SELECT command_id,guardian_id,home_ship,"
+    const auto check=[&](sqlite3* db){
+        Statement record(db,"SELECT command_id,guardian_id,home_ship,"
             "family_scope,family_seed FROM sg_colony_physical_child_authority WHERE child_id=?");
         record.text(1,std::to_string(cmd.transport_id));
         if(!record.row())throw std::runtime_error("unapproved physical child admission");
@@ -5908,7 +5908,7 @@ void PersistentWorld::step_with_dependent_registration(FailPoint fail){
         static_cast<std::ptrdiff_t>(before),next.events().end());
     const std::vector<ActivityEvent> activity(next.activity_events().begin()+
         static_cast<std::ptrdiff_t>(activity_before),next.activity_events().end());
-    const auto effect=[&](sqlite3*,std::uint64_t){check();};
+    const auto effect=[&](sqlite3* db,std::uint64_t){check(db);};
     store_->commit(next,generation_,resource_origin_,credit_origin_,
                    nullptr,delta,due,activity,fail,nullptr,nullptr,effect);
     world_.swap(next);++generation_;
