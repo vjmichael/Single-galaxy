@@ -1453,6 +1453,147 @@ public:
                 throw std::runtime_error("autonomous dispatch used obsolete warning");
         }
     }
+    // AUTO-04D.5C1: independently check every NPC-initiated local transfer.
+    // A durable intent is not an executed delivery: a positive result requires
+    // the real Applied world event, inventory delta and deterministic replay.
+    void verify_npc_habitat_supplies(std::uint64_t max_generation) const{
+        Statement schema(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_npc_emergency_supply'");
+        if(!schema.row())return;
+        for(const auto* suffix:{"_no_update","_no_delete"}){
+            Statement trigger(db_,"SELECT 1 FROM sqlite_master "
+                "WHERE type='trigger' AND name=?");
+            trigger.text(1,std::string("sg_colony_npc_emergency_supply")+suffix);
+            if(!trigger.row() || trigger.row())
+                throw std::runtime_error("NPC emergency supply immutable witness missing");
+        }
+        Statement all(db_,"SELECT command_id,generation,world_hash,npc_id,"
+            "notice_id,source_ship,habitat,resource,amount_kg,"
+            "source_before_kg,habitat_before_kg,risk "
+            "FROM sg_colony_npc_emergency_supply ORDER BY generation");
+        while(all.row()){
+            const auto id=parse_u64(sqlite3_column_text(all.get(),0));
+            const auto gen=sqlite3_column_int64(all.get(),1);
+            const auto hash=sqlite_str(all.get(),2);
+            const auto npc=parse_u64(sqlite3_column_text(all.get(),3));
+            const auto notice=sqlite3_column_int64(all.get(),4);
+            const auto source=parse_u64(sqlite3_column_text(all.get(),5));
+            const auto site=parse_u64(sqlite3_column_text(all.get(),6));
+            const int selector=sqlite3_column_int(all.get(),7);
+            const auto amount=sqlite3_column_int64(all.get(),8);
+            const auto from=sqlite3_column_int64(all.get(),9);
+            const auto at=sqlite3_column_int64(all.get(),10);
+            const auto risk=sqlite3_column_int(all.get(),11);
+            if(!id || gen<2 || static_cast<std::uint64_t>(gen)>max_generation ||
+               !npc || notice<=0 || !source || !site || source==site ||
+               selector<1 || selector>3 || amount<1 || amount>10000 ||
+               from<amount || at<0 || (risk!=2 && risk!=3))
+                throw std::runtime_error("NPC emergency supply record malformed");
+            Statement op(db_,"SELECT kind,command,state_hash FROM operation_log "
+                "WHERE generation=?");
+            op.i64(1,gen);
+            if(!op.row() || sqlite3_column_int(op.get(),0)!=1 ||
+               sqlite_str(op.get(),2)!=hash)
+                throw std::runtime_error("NPC supply missing canonical admission");
+            const auto command=decode_command(sqlite_str(op.get(),1));
+            if(command.id!=id || command.action!=Action::TransferHabitatStock ||
+               command.actor!=source || command.target!=site ||
+               command.thrust_x!=selector || command.thrust_y!=0 ||
+               command.amount!=amount || command.transport_id ||
+               !command.passenger_ids.empty() || op.row())
+                throw std::runtime_error("NPC supply command/receipt substituted");
+            Statement before(db_,"SELECT state,checksum FROM snapshots "
+                "WHERE generation=?");
+            before.i64(1,gen);
+            if(!before.row())throw std::runtime_error("NPC supply admission snapshot missing");
+            const auto* bytes=sqlite3_column_blob(before.get(),0);
+            const auto size=sqlite3_column_bytes(before.get(),0);
+            if(!bytes || size<=0 || size>16*1024*1024)
+                throw std::runtime_error("NPC supply snapshot malformed");
+            const auto admitted=Simulation::from_snapshot(
+                std::string(static_cast<const char*>(bytes),static_cast<std::size_t>(size)));
+            if(admitted.state_hash()!=parse_u64(sqlite3_column_text(before.get(),1)) ||
+               std::to_string(admitted.state_hash())!=hash || before.row() ||
+               !admitted.has_command_id(id))
+                throw std::runtime_error("NPC supply snapshot/accepted command mismatch");
+            const auto* owner=admitted.find(source);
+            const auto* shipstock=admitted.life_support(source);
+            const auto* habitat=admitted.habitat(site);
+            const auto npc_record=admitted.npc_records().find(npc);
+            if(!owner || command.issuer!=owner->owner_id ||
+               command.issuer==Simulation::kServerAuthority ||
+               !shipstock || !habitat || habitat->source_ship!=source ||
+               !habitat->residents ||
+               npc_record==admitted.npc_records().end() ||
+               npc_record->second.home_ship!=source ||
+               npc_record->second.location!=site ||
+               npc_record->second.transport_id ||
+               static_cast<int>(colony_safety::assess(admitted,source,site).risk)!=risk)
+                throw std::runtime_error("NPC supply admission lacked living local emergency");
+            const auto select=[&](const ColonyLifeSupport& l){
+                return selector==1?l.food_kg:selector==2?l.water_kg:l.oxygen_kg;
+            };
+            if(select(*shipstock)!=from || select(habitat->life)!=at ||
+               from<amount)
+                throw std::runtime_error("NPC supply source inventory authority modified");
+            Statement proof(db_,"SELECT o.site,o.risk,e.ship,a.delivery_generation "
+                "FROM sg_colony_npc_opportunities o "
+                "JOIN sg_colony_response_events e ON e.id=o.event_id "
+                "JOIN sg_colony_npc_acks a ON a.event_id=o.event_id AND a.npc_id=o.npc_id "
+                "WHERE o.event_id=? AND o.npc_id=?");
+            proof.i64(1,notice);proof.i64(2,static_cast<sqlite3_int64>(npc));
+            if(!proof.row() ||
+               sqlite3_column_int64(proof.get(),0)!=static_cast<sqlite3_int64>(site) ||
+               sqlite3_column_int(proof.get(),1)!=risk ||
+               sqlite3_column_int64(proof.get(),2)!=static_cast<sqlite3_int64>(source) ||
+               sqlite3_column_int64(proof.get(),3)>gen || proof.row())
+                throw std::runtime_error("NPC supply has no delivered local warning");
+            Statement latest(db_,"SELECT id FROM sg_colony_response_events "
+                "WHERE site=? AND generation<=? ORDER BY id DESC LIMIT 1");
+            latest.i64(1,static_cast<sqlite3_int64>(site));latest.i64(2,gen);
+            if(!latest.row() || sqlite3_column_int64(latest.get(),0)!=notice ||
+               latest.row())
+                throw std::runtime_error("NPC supply used obsolete risk event");
+            Statement event(db_,"SELECT generation,outcome,transferred FROM historical_events "
+                "WHERE command_id=?");
+            event.text(1,std::to_string(id));
+            if(event.row()){
+                const auto completed=sqlite3_column_int64(event.get(),0);
+                if(completed!=gen+1 ||
+                   sqlite3_column_int(event.get(),1)!=static_cast<int>(Outcome::Applied) ||
+                   sqlite3_column_int64(event.get(),2)!=amount || event.row())
+                    throw std::runtime_error("NPC emergency transfer not actually applied");
+                Statement after(db_,"SELECT state,checksum FROM snapshots "
+                    "WHERE generation=?");
+                after.i64(1,completed);
+                if(!after.row())throw std::runtime_error("NPC delivery snapshot pruned");
+                const auto* later=sqlite3_column_blob(after.get(),0);
+                const auto length=sqlite3_column_bytes(after.get(),0);
+                if(!later || length<=0 || length>16*1024*1024)
+                    throw std::runtime_error("NPC delivered snapshot invalid");
+                const auto physical=Simulation::from_snapshot(
+                    std::string(static_cast<const char*>(later),static_cast<std::size_t>(length)));
+                auto replay=admitted;
+                replay.step();
+                if(physical.state_hash()!=parse_u64(sqlite3_column_text(after.get(),1)) ||
+                   physical.state_hash()!=replay.state_hash() ||
+                   physical.total_material_kg()!=admitted.total_material_kg() ||
+                   after.row())
+                    throw std::runtime_error("NPC stock delivery lacks physical replay");
+            }else if(static_cast<std::uint64_t>(gen)!=max_generation){
+                throw std::runtime_error("NPC stock admission lost its due execution");
+            }
+        }
+    }
+    bool npc_habitat_supply_applied(std::uint64_t command_id,std::uint64_t gen) const{
+        verify_npc_habitat_supplies(gen);
+        Statement q(db_,"SELECT 1 FROM sg_colony_npc_emergency_supply s "
+            "JOIN historical_events e ON e.command_id=s.command_id "
+            "WHERE s.command_id=? AND e.outcome=? AND e.transferred=s.amount_kg");
+        q.text(1,std::to_string(command_id));
+        q.i64(2,static_cast<int>(Outcome::Applied));
+        return q.row() && !q.row();
+    }
     void verify_colony_response(const Simulation& state,std::uint64_t gen) const {
         colony_safety::journal::verify(db_,state,gen);
     }
@@ -6330,6 +6471,7 @@ void PersistentWorld::recover_copy(const std::string& source, const std::string&
         copy.verify_physical_dependent_authority(checked);
         copy.verify_autonomous_dispatch(gen);
         copy.verify_supervisor_plans(gen);
+        copy.verify_npc_habitat_supplies(gen);
         verify_dependent_stranding_cases(destination,gen);
         verify_split_rescue_intents(destination,gen);
     } catch (...) {
@@ -6365,6 +6507,7 @@ PersistentWorld::PersistentWorld(const std::string& path, Simulation initial_wor
     store_->verify_physical_dependent_authority(world_);
     store_->verify_autonomous_dispatch(generation_);
     store_->verify_supervisor_plans(generation_);
+    store_->verify_npc_habitat_supplies(generation_);
 }
 PersistentWorld::~PersistentWorld() = default;
 
