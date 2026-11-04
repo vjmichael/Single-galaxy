@@ -16,13 +16,13 @@ v74 introduces the **versioned v59 physical dependent** record: immutable high-I
 
 ### Canonical population and resources
 
-Version 59 snapshots store every physical dependent. Decode rejects duplicate high-ID identities, guardian outside the actual ship, unsupported home/location or missing applied host registration event. Independent journal replay recognizes the new command action and reconstructs the exact child identity and location.
+Version 59 snapshots store every physical dependent. Startup separately cross-checks every physical child against the immutable registered guardian/source/command authority in SQLite. Decode rejects duplicate high-ID identities, guardian outside the actual ship, unsupported home/location or missing applied host registration event. Independent journal replay recognizes the new command action and reconstructs the exact child identity and location.
 
 Each physical dependent aboard a ship consumes **one physical unit each of local food, water and oxygen** at the ship's existing 20-tick needs interval. The values flow into existing conserved organic waste/wastewater/CO2 accounting. The safety assessment counts registered physical children in the ship's actual local population and shortens its real runway appropriately. **Do not also count the child as a worker.**
 
 ### Acceptance
 
-`tests/COLONY_AUTO04D4D2_PhysicalDependentTests.cpp` sets up ART02 parents and a real high-ID birth, independent world-birth bridge, two native ship crews and real stocks. It tests host admission, duplicate refusal, no generic-step bypass, crash-after-snapshot rollback, physical registration, v59 canonical round-trip, no extra NPC worker, local three-person food/water/oxygen consumption, unchanged world material, restart, and independent `recover_copy` reconstruction.
+`tests/COLONY_AUTO04D4D2_PhysicalDependentTests.cpp` sets up ART02 parents and a real high-ID birth, independent world-birth bridge, two native ship crews and real stocks. It tests host admission, duplicate refusal, no generic-step bypass, crash-after-snapshot rollback, physical registration, v59 canonical round-trip, no extra NPC worker, local three-person food/water/oxygen consumption, unchanged world material, restart, independent `recover_copy` reconstruction and refusal after privileged removal of the durable birth-registration authority. The test now invokes the **real** `step_with_atomic_dependent_birth` with a cold-owner regional checkpoint; it does not synthesize a birth bridge.
 
 This gate must pass GitHub Actions `.github/workflows/colony-auto04d4d2.yml` before acceptance.
 
