@@ -2704,7 +2704,7 @@ Event Simulation::execute(const Command& c) {
                     const auto dx=probe.position.x-actor.position.x;
                     const auto dy=probe.position.y-actor.position.y;
                     constexpr auto link=kDeepSpaceProbeCommsRangeMm;
-                    if(dx<-link || dx>link || dy<-link || dy>link){
+                    if(std::hypot(double(dx),double(dy))>double(link)){
                         result.result=Outcome::OutOfRange;return result;
                     }
                     std::vector<DiscoveryRecord> candidates;
@@ -4667,7 +4667,7 @@ void Simulation::step() {
             const auto dx=probe->second.position.x-carrier->second.position.x;
             const auto dy=probe->second.position.y-carrier->second.position.y;
             constexpr auto range=kDeepSpaceProbeCommsRangeMm;
-            if(dx<-range||dx>range||dy<-range||dy>range){
+            if(std::hypot(double(dx),double(dy))>double(range)){
                 ++it;continue;
             }
         }
