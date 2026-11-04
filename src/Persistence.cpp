@@ -1,5 +1,6 @@
 #include "galaxy/Persistence.hpp"
 #include "galaxy/ColonySafety.hpp"
+#include "galaxy/ColonyDefense.hpp"
 #include "galaxy/ColonySafetyJournal.hpp"
 #include "galaxy/ColonySafetyNotice.hpp"
 #include "galaxy/ShipmentManifest.hpp"
@@ -1597,6 +1598,113 @@ public:
         q.text(1,std::to_string(command_id));
         q.i64(2,static_cast<int>(Outcome::Applied));
         return q.row() && !q.row();
+    }
+    // DEF-01A. A human-on-watch actually observes a nearby ship. The
+    // presence of a foreign ship alone never authorizes weapons or a strike.
+    colony_defense::Contact record_colony_watch_contact(
+        const Simulation& world,std::uint64_t generation,
+        std::uint64_t event_id,EntityId source,
+        std::uint64_t observer,EntityId foreign){
+        if(!event_id || event_id>
+           static_cast<std::uint64_t>(std::numeric_limits<sqlite3_int64>::max()))
+            throw std::invalid_argument("invalid bounded defense event ID");
+        const auto contacts=colony_defense::observe_local_contacts(world,source,observer);
+        const auto it=std::find_if(contacts.begin(),contacts.end(),
+            [&](const auto& c){return c.foreign_ship==foreign;});
+        if(it==contacts.end())throw std::runtime_error(
+            "no real local NPC sighting of requested foreign ship");
+        const auto record=*it;
+        run(db_,"BEGIN IMMEDIATE");
+        try{
+            if(latest_generation(db_)!=generation)
+                throw std::runtime_error("stale world generation for watch contact");
+            run(db_,"CREATE TABLE IF NOT EXISTS sg_colony_watch_contacts("
+                "event_id INTEGER PRIMARY KEY CHECK(event_id>0),"
+                "world_generation INTEGER NOT NULL CHECK(world_generation>0),"
+                "world_hash TEXT NOT NULL,"
+                "tick INTEGER NOT NULL CHECK(tick>=0),"
+                "source TEXT NOT NULL,observer TEXT NOT NULL,"
+                "foreign_ship TEXT NOT NULL,foreign_owner TEXT NOT NULL,"
+                "system INTEGER NOT NULL,distance_squared INTEGER NOT NULL CHECK(distance_squared>=0))");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_colony_watch_no_update "
+                "BEFORE UPDATE ON sg_colony_watch_contacts "
+                "BEGIN SELECT RAISE(ABORT,'immutable local contact'); END");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_colony_watch_no_delete "
+                "BEFORE DELETE ON sg_colony_watch_contacts "
+                "BEGIN SELECT RAISE(ABORT,'immutable local contact'); END");
+            Statement q(db_,"INSERT INTO sg_colony_watch_contacts VALUES("
+                "?,?,?,?,?,?,?,?,?,?)");
+            q.i64(1,static_cast<sqlite3_int64>(event_id));
+            q.i64(2,static_cast<sqlite3_int64>(generation));
+            q.text(3,std::to_string(world.state_hash()));
+            q.i64(4,static_cast<sqlite3_int64>(record.world_tick));
+            q.text(5,std::to_string(source));
+            q.text(6,std::to_string(observer));
+            q.text(7,std::to_string(foreign));
+            q.text(8,std::to_string(record.foreign_owner));
+            q.i64(9,record.system);
+            q.i64(10,static_cast<sqlite3_int64>(record.distance_squared));
+            q.execute();
+            run(db_,"COMMIT");
+        }catch(...){
+            sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);
+            throw;
+        }
+        return record;
+    }
+    void verify_colony_watch_contacts(std::uint64_t maximum_generation) const{
+        Statement schema(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_watch_contacts'");
+        if(!schema.row())return;
+        for(const auto* guard:{"sg_colony_watch_no_update",
+                               "sg_colony_watch_no_delete"}){
+            Statement trigger(db_,"SELECT 1 FROM sqlite_master "
+                "WHERE type='trigger' AND name=?");
+            trigger.text(1,guard);
+            if(!trigger.row() || trigger.row())
+                throw std::runtime_error("local NPC watch immutable guard missing");
+        }
+        Statement q(db_,"SELECT event_id,world_generation,world_hash,tick,"
+            "source,observer,foreign_ship,foreign_owner,system,distance_squared "
+            "FROM sg_colony_watch_contacts ORDER BY event_id");
+        while(q.row()){
+            const auto event=sqlite3_column_int64(q.get(),0);
+            const auto generation=sqlite3_column_int64(q.get(),1);
+            const auto hash=sqlite_str(q.get(),2);
+            const auto tick=sqlite3_column_int64(q.get(),3);
+            const auto source=parse_u64(sqlite3_column_text(q.get(),4));
+            const auto npc=parse_u64(sqlite3_column_text(q.get(),5));
+            const auto foreign=parse_u64(sqlite3_column_text(q.get(),6));
+            const auto owner=parse_u64(sqlite3_column_text(q.get(),7));
+            const auto system=sqlite3_column_int64(q.get(),8);
+            const auto distance=sqlite3_column_int64(q.get(),9);
+            if(event<1 || generation<1 ||
+               static_cast<std::uint64_t>(generation)>maximum_generation ||
+               tick<0 || !source || !npc || !foreign || !owner ||
+               source==foreign || system<1 || distance<0)
+                throw std::runtime_error("local colony contact evidence malformed");
+            Statement snap(db_,"SELECT state,checksum FROM snapshots "
+                "WHERE generation=?");
+            snap.i64(1,generation);
+            if(!snap.row())throw std::runtime_error("local watch snapshot pruned");
+            const auto* ptr=sqlite3_column_blob(snap.get(),0);
+            const auto len=sqlite3_column_bytes(snap.get(),0);
+            if(!ptr || len<=0 || len>16*1024*1024)
+                throw std::runtime_error("local watch snapshot invalid");
+            const auto observed=Simulation::from_snapshot(
+                std::string(static_cast<const char*>(ptr),static_cast<std::size_t>(len)));
+            if(observed.state_hash()!=parse_u64(sqlite3_column_text(snap.get(),1)) ||
+               std::to_string(observed.state_hash())!=hash ||
+               observed.tick()!=static_cast<std::uint64_t>(tick) || snap.row())
+                throw std::runtime_error("local watch world hash or time corrupted");
+            const auto contacts=colony_defense::observe_local_contacts(observed,source,npc);
+            const auto it=std::find_if(contacts.begin(),contacts.end(),
+                [&](const auto& c){return c.foreign_ship==foreign;});
+            if(it==contacts.end() || it->foreign_owner!=owner ||
+               it->system!=static_cast<std::uint32_t>(system) ||
+               it->distance_squared!=static_cast<std::uint64_t>(distance))
+                throw std::runtime_error("local watch witness forged or not physically possible");
+        }
     }
     void verify_colony_response(const Simulation& state,std::uint64_t gen) const {
         colony_safety::journal::verify(db_,state,gen);
@@ -5308,6 +5416,9 @@ public:
             Statement npc_supply(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
                 "AND name='sg_colony_npc_emergency_supply'");
             const bool has_npc_supply=npc_supply.row();
+            Statement contact_events(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='sg_colony_watch_contacts'");
+            const bool has_colony_contacts=contact_events.row();
             const std::string prune_sql=std::string(
                 "DELETE FROM snapshots WHERE generation > 1 AND generation < ?")+
                 (incident_cases_exist ? " AND generation NOT IN "
@@ -5340,6 +5451,9 @@ public:
                     " AND generation NOT IN "
                     "(SELECT e.generation FROM historical_events e "
                     "JOIN sg_colony_npc_emergency_supply s ON s.command_id=e.command_id)"
+                    : "")+
+                (has_colony_contacts ? " AND generation NOT IN "
+                    "(SELECT world_generation FROM sg_colony_watch_contacts)"
                     : "");
             Statement prune(db_,prune_sql.c_str());
             prune.i64(1, static_cast<std::int64_t>(next > 2 ? next - 2 : 1));
@@ -6487,6 +6601,7 @@ void PersistentWorld::recover_copy(const std::string& source, const std::string&
         copy.verify_autonomous_dispatch(gen);
         copy.verify_supervisor_plans(gen);
         copy.verify_npc_habitat_supplies(gen);
+        copy.verify_colony_watch_contacts(gen);
         verify_dependent_stranding_cases(destination,gen);
         verify_split_rescue_intents(destination,gen);
     } catch (...) {
@@ -6523,6 +6638,7 @@ PersistentWorld::PersistentWorld(const std::string& path, Simulation initial_wor
     store_->verify_autonomous_dispatch(generation_);
     store_->verify_supervisor_plans(generation_);
     store_->verify_npc_habitat_supplies(generation_);
+    store_->verify_colony_watch_contacts(generation_);
 }
 PersistentWorld::~PersistentWorld() = default;
 
@@ -7506,6 +7622,17 @@ PersistentWorld::supervise_npc_habitat_resupply(
 bool PersistentWorld::verified_npc_habitat_resupply(std::uint64_t command_id) const{
     if(!command_id)return false;
     return store_->npc_habitat_supply_applied(command_id,generation_);
+}
+
+std::vector<colony_defense::Contact>
+PersistentWorld::local_colony_watch_contacts(
+    EntityId source,std::uint64_t npc) const{
+    return colony_defense::observe_local_contacts(world_,source,npc);
+}
+colony_defense::Contact PersistentWorld::record_colony_watch_contact(
+    std::uint64_t id,EntityId source,std::uint64_t npc,EntityId foreign){
+    return store_->record_colony_watch_contact(
+        world_,generation_,id,source,npc,foreign);
 }
 
 // COLONY-AUTO-04D.4D2B2: admission only. No family member relocates until
