@@ -4672,8 +4672,13 @@ void Simulation::step() {
         const auto waypoint=probe.focus_waypoint;
         constexpr std::int64_t step_mm=5000000; // 5 km per simulation tick
         const auto dx=waypoint.x-p.x,dy=waypoint.y-p.y;
-        p.x+=std::clamp(dx,-step_mm,step_mm);
-        p.y+=std::clamp(dy,-step_mm,step_mm);
+        const double remaining=std::hypot(double(dx),double(dy));
+        if(remaining<=double(step_mm))p=waypoint;
+        else {
+            // True radial step limit; diagonals cannot exceed speed by sqrt(2).
+            p.x+=static_cast<std::int64_t>(double(dx)*step_mm/remaining);
+            p.y+=static_cast<std::int64_t>(double(dy)*step_mm/remaining);
+        }
         if(p.x!=waypoint.x||p.y!=waypoint.y)continue;
         const auto target=entities_.find(probe.focus_site);
         if(target!=entities_.end()&&target->second.type==EntityType::Asteroid&&
