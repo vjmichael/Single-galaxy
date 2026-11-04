@@ -24,7 +24,7 @@ try{
     {
         Simulation genesis(7214);
         source=genesis.add_colony_ship(7,{0,0},100,12);
-        receiver=genesis.add_colony_ship(8,{0,0},100,4);
+        receiver=genesis.add_colony_ship(7,{0,0},100,4);
         genesis.provision_colony_genesis(source,1000,3000,1000,1000,1000);
         genesis.provision_colony_genesis(receiver,1000,1000,1000,1000,1000);
         const auto ore=genesis.add_asteroid({2000,0},70);
