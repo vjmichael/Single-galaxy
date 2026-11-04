@@ -8,6 +8,20 @@
   function decode(raw){
     if(typeof raw!=='string'||raw.length>180||!/^COLONY\|1\|/.test(raw)||!/^[A-Za-z0-9_|-]+$/.test(raw))throw Error('Invalid colony telemetry');
     const v=raw.split('|'),tick=numeric(v[2],1200),t=v[3];let e={tick,type:t};
+    if(t==='FITTING'){
+      if(v.length!==9)throw Error('Malformed ship fitting telemetry');
+      const installed=numeric(v[4],1),hardpoints=numeric(v[5],2);
+      const support=numeric(v[6],2),subsystems=numeric(v[7],2),rigging=numeric(v[8],1);
+      if(hardpoints!==2||support!==2||subsystems!==2||rigging!==1)
+        throw Error('Unknown ship hull fitting capacity');
+      return {...e,installed:!!installed,hardpoints,support,subsystems,rigging};
+    }
+    if(t==='PROXIMITY'){
+      if(v.length!==6)throw Error('Malformed proximity telemetry');
+      const id=numeric(v[4],100000000),distance=numeric(v[5],5000);
+      if((id===0)!==(distance===0))throw Error('Invalid safety contact');
+      return {...e,id,distance};
+    }
     if(t==='DISCOVERY'){
       if(v.length!==10)throw Error('Malformed discovery record');
       const site=numeric(v[4],100000000),system=numeric(v[5],100000000);
@@ -285,8 +299,24 @@
        guide.action==='colonyFabricate'?{amount:4}:{});
  });
  window.GalaxyColony={
-   reset(){discoveries.clear();q('explorationResults').replaceChildren();q('explorationSummary').textContent='No mapped discoveries yet. Execute a native local scan.';salvageWrecks.clear();q('salvageTarget').replaceChildren(new Option('No recoverable wreck reported',''));q('salvageRecover').disabled=true;q('salvageFeedback').textContent='Waiting for native wreck inventory.';combatTargets.clear();q('combatHull').textContent='—';q('combatCharges').textContent='—';q('combatFire').disabled=true;q('combatFeedback').textContent='Awaiting native combat telemetry.';window.GalaxySelectedRockId=null;window.GalaxyShipHeading=null;window.GalaxyColonyOutpostIds.clear();openingStatus=null;openingScanned=false;refreshOpening();window.GalaxyColonyHomeShipId=null;q('colonySafetyAssess').disabled=true;q('colonySafetyPreflight').disabled=true;policyAudits.clear();geology.clear();small.clear();stocks.clear();outposts.clear();farms.clear();habitats.clear();utilities.clear();communities.clear();clinics.clear();reclaimers.clear();waterworks.clear();log.length=0;q('colonyEvents').textContent='Awaiting colony telemetry…';q('expeditionOutcome').textContent='Awaiting an actual native result';},
+   reset(){q('fittingCapacity').textContent='Awaiting actual ship fittings.';q('proximityStatus').textContent='Proximity safety sensor awaiting contacts.';q('fitScanner').disabled=true;q('unfitScanner').disabled=true;discoveries.clear();q('explorationResults').replaceChildren();q('explorationSummary').textContent='No mapped discoveries yet. Execute a native local scan.';salvageWrecks.clear();q('salvageTarget').replaceChildren(new Option('No recoverable wreck reported',''));q('salvageRecover').disabled=true;q('salvageFeedback').textContent='Waiting for native wreck inventory.';combatTargets.clear();q('combatHull').textContent='—';q('combatCharges').textContent='—';q('combatFire').disabled=true;q('combatFeedback').textContent='Awaiting native combat telemetry.';window.GalaxySelectedRockId=null;window.GalaxyShipHeading=null;window.GalaxyColonyOutpostIds.clear();openingStatus=null;openingScanned=false;refreshOpening();window.GalaxyColonyHomeShipId=null;q('colonySafetyAssess').disabled=true;q('colonySafetyPreflight').disabled=true;policyAudits.clear();geology.clear();small.clear();stocks.clear();outposts.clear();farms.clear();habitats.clear();utilities.clear();communities.clear();clinics.clear();reclaimers.clear();waterworks.clear();log.length=0;q('colonyEvents').textContent='Awaiting colony telemetry…';q('expeditionOutcome').textContent='Awaiting an actual native result';},
    accept(raw){const e=window.GalaxyColonyContract.decode(raw);
+     if(e.type==='FITTING'){
+       q('fittingCapacity').textContent=
+         'Hardpoints '+(e.installed?'1':'0')+'/'+e.hardpoints+
+         ' · Support 0/'+e.support+' · Subsystems 0/'+e.subsystems+
+         ' · Rigging 0/'+e.rigging+
+         ' · '+(e.installed?'Survey scanner installed':'No exploration scanner installed');
+       q('fitScanner').disabled=e.installed;
+       q('unfitScanner').disabled=!e.installed;
+       q('explorationScan').disabled=!e.installed;
+       q('flightScan').disabled=!e.installed;
+     }
+     if(e.type==='PROXIMITY'){
+       q('proximityStatus').textContent=e.id?
+         'Proximity contact: ship #'+e.id+' at '+e.distance+' mm. Maneuver manually to avoid collision risk.':
+         'No other ships within 5,000 mm (safety awareness only).';
+     }
      if(e.type==='DISCOVERY'){
        if(!discoveries.has(e.site))discoveries.set(e.site,e);
        const rows=window.GalaxyExplorationJournal?.entries(discoveries,e.system);
