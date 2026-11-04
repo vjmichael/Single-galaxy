@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <stdexcept>
 #include <iostream>
+#include <limits>
 #include <random>
 #include <sstream>
 #include <string>
@@ -360,6 +361,37 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
             auto x=integer(v[1]),y=integer(v[2]);
             if(x<-1||x>1||y<-1||y>1)throw std::invalid_argument("bad thrust");
             c.action=Action::Thrust;c.thrust_x=static_cast<int>(x);c.thrust_y=static_cast<int>(y);
+        }else if(v.size()==1 && v[0]=="DOCK_BASE"){
+            const auto* self=world.world().find(ship);
+            if(!self)throw std::invalid_argument("ship missing");
+            EntityId nearest_base=0;
+            std::int64_t best=std::numeric_limits<std::int64_t>::max();
+            for(const auto& [site,facility]:world.world().built_outposts()){
+                (void)facility;
+                const auto* e=world.world().find(site);
+                if(!e || e->owner_id!=principal || e->system_id!=self->system_id)continue;
+                const auto dx=e->position.x-self->position.x;
+                const auto dy=e->position.y-self->position.y;
+                const auto distance=dx*dx+dy*dy;
+                if(!nearest_base || distance<best || (distance==best && site<nearest_base)){
+                    nearest_base=site;best=distance;
+                }
+            }
+            if(!nearest_base)throw std::invalid_argument("no owned outpost in system");
+            c.action=Action::RequestDock;c.target=nearest_base;
+        }else if(v.size()==1 && (v[0]=="UNDOCK_BASE" ||
+                                v[0]=="UNLOAD_BASE" || v[0]=="LOAD_BASE")){
+            const auto* self=world.world().find(ship);
+            if(!self)throw std::invalid_argument("ship missing");
+            const auto site=self->dock_station;
+            const auto* e=world.world().find(site);
+            if(v[0]!="UNDOCK_BASE" && (!e || e->owner_id!=principal ||
+               !world.world().built_outposts().count(site)))
+                throw std::invalid_argument("not docked at owned outpost");
+            c.target=v[0]=="UNDOCK_BASE"?0:site;
+            c.amount=1000; // native unload/load honors finite hold and bay limits
+            c.action=v[0]=="UNDOCK_BASE"?Action::RequestUndock:
+                     v[0]=="UNLOAD_BASE"?Action::UnloadOre:Action::LoadOre;
         }else if(v.size()==2 && v[0]=="YAW"){
             const auto delta=integer(v[1]);
             if(delta!=15 && delta!=-15)throw std::invalid_argument("bad yaw");
