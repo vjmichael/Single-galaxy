@@ -1125,3 +1125,12 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_play04_yaw_cargo_tests PRIVATE galaxy_kernel)
   add_test(NAME galaxy_play04_yaw_cargo COMMAND galaxy_play04_yaw_cargo_tests)
 endif()
+
+# PLAY-08 native training combat: authorized firing, range/ammo/cooldown,
+# persistent hull damage and physically durable wreck conversion.
+if(BUILD_TESTING)
+  add_executable(galaxy_play08_training_combat_tests
+    tests/PLAY08_TrainingCombatTests.cpp)
+  target_link_libraries(galaxy_play08_training_combat_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play08_training_combat COMMAND galaxy_play08_training_combat_tests)
+endif()
