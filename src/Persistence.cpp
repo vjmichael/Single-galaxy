@@ -3336,6 +3336,19 @@ public:
             if(family_table.row()){
                 Statement q(db_,"SELECT scope,event_id FROM npc_family_moves");
                 while(q.row()){
+                    Statement evacuation_table(db_,"SELECT 1 FROM sqlite_master "
+                        "WHERE type='table' AND name='sg_colony_family_evacuation'");
+                    if(evacuation_table.row()){
+                        Statement linked(db_,"SELECT 1 FROM sg_colony_family_evacuation_member m "
+                            "JOIN sg_colony_family_evacuation e ON e.command_id=m.command_id "
+                            "WHERE m.event_id=? AND e.family_scope=?");
+                        linked.text(1,sqlite_str(q.get(),1));
+                        linked.text(2,sqlite_str(q.get(),0));
+                        if(linked.row()){
+                            if(linked.row())throw std::runtime_error("duplicate evacuation family move");
+                            continue; // audited against the full world receipt below
+                        }
+                    }
                     if(!has_migration)throw std::runtime_error("SQLite: family move without world effect");
                     Statement effect(db_,"SELECT 1 FROM sg_society_migration WHERE command_id=?");
                     effect.text(1,sqlite_str(q.get(),1));
