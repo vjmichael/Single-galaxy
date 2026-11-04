@@ -1,0 +1,20 @@
+name: PLAY-01 first-outpost native checkpoint acceptance
+on:
+  push:
+    branches:
+      - integration/play01-opening-regression-20261104
+  pull_request:
+    paths:
+      - 'tests/PLAY01_FirstOutpostRegressionTests.cpp'
+      - '.github/workflows/play01.yml'
+jobs:
+  opening:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+      - name: Build focused gate
+        run: cmake --build build --target galaxy_play01_opening_tests -j2
+      - name: Verify opening checkpoints
+        run: ctest --test-dir build -R '^galaxy_play01_opening$' --output-on-failure
