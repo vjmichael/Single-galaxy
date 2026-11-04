@@ -23,6 +23,6 @@ jobs:
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
       - name: Build
-        run: cmake --build build --target galaxy_colony_auto04d4d2_physical_tests galaxy_colony_auto04d4d_family_tests galaxy_colony_auto04d4c_departure_tests galaxy_colony_auto04d4c_staffed_tests galaxy_colony_auto04d4_custody_tests galaxy_colony_auto04d3_tests -j 2
+        run: cmake --build build --target galaxy_colony_auto04d4d2_physical_tests galaxy_colony_auto04d4d2_atomic_tests galaxy_colony_auto04d4d_family_tests galaxy_colony_auto04d4c_departure_tests galaxy_colony_auto04d4c_staffed_tests galaxy_colony_auto04d4_custody_tests galaxy_colony_auto04d3_tests -j 2
       - name: Run
-        run: ctest --test-dir build --output-on-failure -R 'galaxy_colony_auto04(d3_npc_notice|d4_resource_custody|d4c_atomic_departure|d4c_staffed_colony|d4d_family_proof|d4d2_physical_family)'
+        run: ctest --test-dir build --output-on-failure -R 'galaxy_colony_auto04(d3_npc_notice|d4_resource_custody|d4c_atomic_departure|d4c_staffed_colony|d4d_family_proof|d4d2_physical_family|d4d2_atomic_family)'
