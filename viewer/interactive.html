@@ -106,6 +106,18 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
     <button id="probeSurvey" type="button" disabled>Scan from probe</button>
     <button id="probeRetrieve" type="button" disabled>Recover probe</button>
   </div>
+  <div class="controls" style="padding:8px 0;gap:6px">
+    <label>Scanner mode <select id="signatureMode">
+      <option value="anomaly">Anomalies</option>
+      <option value="celestial">Celestial (survey preview)</option>
+      <option value="environmental">Environment (survey preview)</option>
+    </select></label>
+    <button id="signatureScan" type="button">Search for signatures</button>
+    <label>Detected signature <select id="signatureTarget"><option value="">Scan to detect signals</option></select></label>
+    <button id="signatureFocus" type="button" disabled>Focus selected probe</button>
+    <button id="signatureCancel" type="button" disabled>Cancel probe focus</button>
+  </div>
+  <div class="help" id="signatureFeedback" role="status" aria-live="polite">Coarse native signatures, no exact hidden coordinates. Anomaly mode is active; other scan modes await native live-host integration.</div>
   <div class="help" id="probeFeedback" role="status" aria-live="polite">Native equipment required. Deployments and discoveries are saved.</div>
   <div class="help">Drone mission: travel to a geological asteroid within 10 km of your ship, inspect its composition without removing ore, and return with a saved geological report. Live contact requires the ship to be within 10 km; the drone continues its assigned mission autonomously if the link drops. Recover the same finite drone when it returns to its launch point and you are within the native recovery radius (currently 2.5 m).</div>
 </section>
