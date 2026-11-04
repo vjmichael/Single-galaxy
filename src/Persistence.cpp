@@ -8691,6 +8691,10 @@ bool PersistentWorld::complete_celestial_transit(std::uint64_t id,FailPoint fail
     if(plan.system!=p.system || plan.owner!=p.owner ||
        plan.ship_id!=p.ship)return false;
     auto next=world_;
+    // PLAY-13C.4: establish the destination region in the SAME durable
+    // transaction as arrival; an aborted commit leaves neither new rocks
+    // nor a moved ship, and a later visit cannot seed the region twice.
+    next.seed_celestial_local_region(p.destination_body);
     auto& ship=next.entities_.at(p.ship);
     auto& frame=next.ship_frames_.at(p.ship);
     frame={plan.destination_frame.system,plan.destination_frame.anchor_body,
