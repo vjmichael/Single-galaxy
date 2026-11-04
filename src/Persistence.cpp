@@ -5678,9 +5678,10 @@ bool PersistentWorld::submit_host_emergency_ferry_rescue(
     // Recipient must carry physical provisions for at least TWO whole
     // consumption periods for its native crew, existing onboard passengers,
     // and every newly rescued passenger. Unfulfilled imports do not count.
-    const auto aboard=world_.passengers_aboard(command.target);
-    const auto people=static_cast<std::uint64_t>(receiver->crew)+
-                      static_cast<std::uint64_t>(aboard)+
+    const auto currently_present=world_.passenger_needs_enabled()?
+        static_cast<std::uint64_t>(world_.people_physically_aboard(command.target)):
+        static_cast<std::uint64_t>(receiver->crew)+world_.passengers_aboard(command.target);
+    const auto people=currently_present+
                       static_cast<std::uint64_t>(command.passenger_ids.size());
     if(people==0||people>1000 ||
        provision->food_kg<static_cast<std::int64_t>(2*people) ||
