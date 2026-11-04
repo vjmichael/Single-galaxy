@@ -7974,10 +7974,8 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             const auto* source_ship=result.find(site.source_ship);
             if(!body || (body->kind!=CelestialKind::Planet &&
                          body->kind!=CelestialKind::Moon) ||
-               !source_ship || source_ship->type!=EntityType::Ship ||
-               source_ship->owner_id!=site.owner ||
-               source_ship->system_id!=body->system ||
-               !result.colony_ships_.count(site.source_ship))
+               !site.owner || !site.source_ship ||
+               (source_ship && source_ship->owner_id!=site.owner))
                 throw std::runtime_error("snapshot: orphan planetary facility");
             if(!site.farm && (site.food_kg>0 || site.harvest_cycles>0))
                 throw std::runtime_error("snapshot: unbuilt farm produced food");
