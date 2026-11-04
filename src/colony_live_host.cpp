@@ -142,6 +142,14 @@ void status(const Simulation& w,EntityId ship,bool replay_discoveries=false){
                 std::to_string(reserve->second.water_kg)+"|"+
                 std::to_string(reserve->second.nutrients_kg));
     }
+    if(const auto rig=w.oasis_extractors().find(ship);
+        rig!=w.oasis_extractors().end()) {
+        const auto& e=rig->second;
+        announce(w,"OASIS_EXTRACTOR|"+std::to_string(e.ship)+"|"+
+            std::to_string(e.body)+"|"+std::to_string(e.energy_units)+"|"+
+            std::to_string(unsigned(e.assigned_workers))+"|"+
+            std::to_string(unsigned(e.condition)));
+    }
     announce(w,"HEADING|"+std::to_string(s->heading_deg));
     announce(w,"PROBE_RESET");
     for(const auto& [id,p]:w.survey_probes()){
@@ -441,6 +449,21 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
         c.issuer=principal;c.actor=ship;c.action=Action::SurveyLocal;
         if(world.submit(c))pending_scans.insert(c.id);
         else announce(world.world(),"ERROR|INVALID_INPUT");
+        return;
+    }
+    if(v.size()==2 && v[0]=="OASIS_INSTALL") {
+        try {
+            const auto id=integer(v[1]);
+            if(id<=0 || !world.install_oasis_extractor(principal,ship,
+                static_cast<std::uint64_t>(id)))
+                announce(world.world(),"ERROR|INVALID_INPUT");
+            else {
+                announce(world.world(),"OASIS_INSTALLED|"+std::to_string(id));
+                status(world.world(),ship);
+            }
+        }catch(const std::exception&) {
+            announce(world.world(),"ERROR|INVALID_INPUT");
+        }
         return;
     }
     if(v.size()==4 && v[0]=="OASIS_COLLECT") {
