@@ -3860,11 +3860,19 @@ void Simulation::process_colony_needs(){
     if(tick_%20) return;
     for(auto& [id,l]:life_support_){
         if(entities_.at(id).type==EntityType::Wreck)continue;
+        // AUTO-04D.4: passengers physically aboard share this ship's actual
+        // food, water and oxygen budget. Their origin ship MUST NOT consume for
+        // absent people, and transport movement must not create provisions.
+        // Legacy aggregate-only worlds have no named passengers to count.
         const auto crew=colony_ships_.at(id).crew;
-        const auto food=std::min(crew,l.food_kg);
-        const auto water=std::min(crew,l.water_kg);
-        const auto oxygen=std::min(crew,l.oxygen_kg);
-        const bool supplied=food==crew && water==crew && oxygen==crew;
+        const auto aboard=passengers_aboard(id);
+        if(crew<0 || aboard>static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max()-crew))
+            throw std::overflow_error("physical ferry population overflow");
+        const auto people=crew+static_cast<std::int64_t>(aboard);
+        const auto food=std::min(people,l.food_kg);
+        const auto water=std::min(people,l.water_kg);
+        const auto oxygen=std::min(people,l.oxygen_kg);
+        const bool supplied=food==people && water==people && oxygen==people;
         l.food_kg-=food;l.water_kg-=water;l.oxygen_kg-=oxygen;
         // Aggregate conserved material streams; detailed physiology comes later.
         l.organic_waste_kg+=food;l.wastewater_kg+=water;l.co2_kg+=oxygen;
