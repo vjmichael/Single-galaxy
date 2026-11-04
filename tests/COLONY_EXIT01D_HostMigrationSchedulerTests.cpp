@@ -42,6 +42,7 @@ try{
     const auto recovered=db+".recovered",spoof=db+".spoof",bad_receipt=db+".badreceipt",
                false_ferry=db+".falseferry",stripped_reason=db+".strippedreason";
     EntityId origin=0,dest=0,ferry=0,alternate_ferry=0;
+    std::uint64_t last_origin_diary=0;
     {
         Simulation initial(8701);initial.add_system(2);
         origin=initial.add_colony_ship(7,{0,0},100,6);
@@ -164,7 +165,7 @@ try{
         CHECK(accepted.selected_npc==2);
         CHECK(accepted.admission_event_id==8701);
         CHECK(accepted.observed==0);
-        const auto last_origin_diary=w.colony_personal_outlook(origin,2)->event_id;
+        last_origin_diary=w.colony_personal_outlook(origin,2)->event_id;
         CHECK(w.colony_personal_outlook(origin,2)->considering_departure);
         CHECK(!w.colony_personal_outlook(origin,3)->considering_departure);
         auto retry=w.supervise_voluntary_migration(pulse);
