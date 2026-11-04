@@ -72,7 +72,8 @@ struct Decision {
 // Adjust only nonviolent strategic posture using previously committed opinions.
 // A hostile belief is neither a crime finding nor permission to shoot.
 Decision evaluate_diplomatic(Decision base,int historical_score,
-                            std::uint64_t historical_revision_event);
+                            std::uint64_t historical_revision_event,
+                            DiplomaticPolicy policy=DiplomaticPolicy::Pragmatic);
 // Deterministic bounded strategic choice using ACTUAL locally observed contact
 // and ACTUAL live resources. It does not submit a combat command, move an NPC,
 // confer guilt, seize materials, or spend fabricated offensive ammunition.
