@@ -1,4 +1,5 @@
 #include "galaxy/Simulation.hpp"
+#include "galaxy/ColonySafety.hpp"
 #include "galaxy/QuantifiedProduction.hpp"
 #include "galaxy/FactoryLayout.hpp"
 
@@ -3666,14 +3667,25 @@ void Simulation::process_utilities(){
             ++u.cycles;
             // NPC maintenance is allowed only by standing policy and consumes a
             // module already delivered to THIS site. No remote ship is necessary.
-            if(u.delegated_maintenance && u.condition<=40){
+            // AUTO-04D.3R: emergency self-preservation is distinct from an
+            // owner-granted standing maintenance policy. A CRITICAL/EMERGENCY
+            // occupied habitat may use EXISTING local technicians and
+            // delivered spare modules despite disabled delegation.
+            // No supplies, people or repairs are created by the forecast.
+            bool emergency_override=false;
+            if(u.condition<=40 && h!=habitats_.end() && h->second.residents>0)
+                emergency_override=static_cast<int>(
+                    colony_safety::assess(*this,u.source_ship,site).risk)>=
+                    static_cast<int>(colony_safety::Risk::Critical);
+            if((u.delegated_maintenance||emergency_override) && u.condition<=40){
                 const bool staffed=u.technicians>0 && h!=habitats_.end() &&
                     h->second.residents>=u.technicians &&
                     h->second.life.consecutive_supplied_cycles>0;
                 if(staffed && u.spare_modules>0){
                     --u.spare_modules;u.embodied_ore+=2;
                     u.condition=std::min<std::int64_t>(100,u.condition+70);
-                    ++u.repairs;++u.delegated_repairs;
+                    ++u.repairs;
+                    if(u.delegated_maintenance)++u.delegated_repairs;
                 }else ++u.blocked_maintenance_cycles;
             }
             if(demand>0 && u.powered)++u.consecutive_powered_cycles;

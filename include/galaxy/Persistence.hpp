@@ -1,6 +1,7 @@
 #pragma once
 #include "galaxy/Simulation.hpp"
 #include "galaxy/ColonySafety.hpp"
+#include "galaxy/ColonySafetyNotice.hpp"
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -435,10 +436,21 @@ public:
     std::uint64_t colony_safety_evidence_count() const;
     // AUTO-04D.2: committed threshold transitions, not actual rescues.
     std::uint64_t colony_response_event_count() const;
+    // Read-only host queue. Presence at event tick is only an observation opportunity.
+    std::vector<colony_safety::notice::Pending> pending_colony_notifications(std::uint64_t limit=100) const;
+    // Trusted-host-only delivered-message receipt, not a GRSM belief or social judgment.
+    bool acknowledge_colony_notification(std::uint64_t event_id,std::uint64_t npc_id);
+    std::uint64_t colony_notification_opportunity_count() const;
+    std::uint64_t colony_notification_acknowledgement_count() const;
     bool submit(const Command& command, FailPoint fail = FailPoint::None);
     // Host-only: admits a receipt-reserved third-party shipment under the writer lock.
     bool submit_host_consigned_transfer(const Command&, FailPoint=FailPoint::None);
     bool submit_host_passenger_action(const Command& command, FailPoint fail = FailPoint::None);
+    // AUTO-04D.3E: narrow passenger-only, physical-ferry rescue gate.
+    // This is NOT a colony household evacuation or an executed rescue receipt.
+    // Submitted host voyage still requires a committed successful step().
+    bool submit_host_emergency_ferry_rescue(const Command& command,
+                                            FailPoint fail=FailPoint::None);
     // q6e3b: only the trusted host can queue a rescue from a child-occupied
     // ferry. The paired atomic effect MUST execute the due command.
     bool submit_host_dependent_rescue_action(const Command& command,

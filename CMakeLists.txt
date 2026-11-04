@@ -20,7 +20,7 @@ endif()
 add_library(galaxy_kernel STATIC src/Simulation.cpp src/ColonyResilience.cpp
   src/ColonyRecovery.cpp src/ColonyPolicy.cpp src/PopulationCohorts.cpp
     src/ColonyWaterSupply.cpp src/Persistence.cpp src/EconomyPrototype.cpp src/QuantifiedProduction.cpp src/Inventory.cpp src/InventoryLogistics.cpp src/FactoryLayout.cpp src/BlueprintConstruction.cpp src/HostBlueprintRegistry.cpp src/ClientContract.cpp src/Galaxy.cpp src/Navigation.cpp src/GateTransit.cpp src/Region.cpp
-  src/ColdColonyNeeds.cpp src/MacroNeeds.cpp src/ColonySafety.cpp src/ColonySafetyJournal.cpp src/NpcAppearanceGenome.cpp src/MedicalSocietyBridge.cpp src/DependentIncidentAccounting.cpp src/DependentIncidentJournal.cpp src/DependentGuardianship.cpp src/SplitRescueIntent.cpp src/RegionalCheckpointStore.cpp src/RegionalPopulationAudit.cpp src/RegionalEventScheduler.cpp src/RegionalModeAuthority.cpp src/RegionalFactoryHandoff.cpp src/RegionalProductionNetwork.cpp src/RegionalShipmentReconciliation.cpp src/ShipmentManifest.cpp src/ThirdPartyShipment.cpp src/CanonicalShippingHost.cpp src/ShipmentStatusView.cpp
+  src/ColdColonyNeeds.cpp src/MacroNeeds.cpp src/ColonySafety.cpp src/ColonySafetyJournal.cpp src/ColonySafetyNotice.cpp src/NpcAppearanceGenome.cpp src/MedicalSocietyBridge.cpp src/DependentIncidentAccounting.cpp src/DependentIncidentJournal.cpp src/DependentGuardianship.cpp src/SplitRescueIntent.cpp src/RegionalCheckpointStore.cpp src/RegionalPopulationAudit.cpp src/RegionalEventScheduler.cpp src/RegionalModeAuthority.cpp src/RegionalFactoryHandoff.cpp src/RegionalProductionNetwork.cpp src/RegionalShipmentReconciliation.cpp src/ShipmentManifest.cpp src/ThirdPartyShipment.cpp src/CanonicalShippingHost.cpp src/ShipmentStatusView.cpp
   src/RegionalHostCommands.cpp src/RegionalInterestManager.cpp src/RegionalCustodyLedger.cpp src/RegionalPersistentWorldBridge.cpp)
 target_include_directories(galaxy_kernel PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(galaxy_kernel PUBLIC SQLite::SQLite3)
@@ -897,4 +897,24 @@ if(BUILD_TESTING)
     add_executable(galaxy_colony_auto04d2_tests tests/COLONY_AUTO04D2_DurableResponseTests.cpp)
     target_link_libraries(galaxy_colony_auto04d2_tests PRIVATE galaxy_kernel)
     add_test(NAME galaxy_colony_auto04d2_durable_response COMMAND galaxy_colony_auto04d2_tests)
+endif()
+
+# COLONY-AUTO-04D.3: individual NPC emergency outbox and durable delivery.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_auto04d3_tests tests/COLONY_AUTO04D3_NpcNoticeTests.cpp)
+    target_link_libraries(galaxy_colony_auto04d3_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_auto04d3_npc_notice COMMAND galaxy_colony_auto04d3_tests)
+endif()
+
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_auto04d3_repair_tests tests/COLONY_AUTO04D3_PhysicalRepairTests.cpp)
+    target_link_libraries(galaxy_colony_auto04d3_repair_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_auto04d3_physical_repair COMMAND galaxy_colony_auto04d3_repair_tests)
+endif()
+
+# AUTO-04D3E: actual rescue-ferry physical passenger custody, not whole-colony evacuation.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_auto04d3_ferry_tests tests/COLONY_AUTO04D3_FerryRescueTests.cpp)
+    target_link_libraries(galaxy_colony_auto04d3_ferry_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_auto04d3_ferry_rescue COMMAND galaxy_colony_auto04d3_ferry_tests)
 endif()
