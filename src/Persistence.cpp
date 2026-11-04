@@ -5677,16 +5677,24 @@ bool PersistentWorld::submit_host_colony_departure(const Command& command,FailPo
        command.issuer!=Simulation::kServerAuthority ||
        command.execute_tick!=world_.tick()+1 ||
        !command.actor || !command.target)return false;
-    if(store_->has_child_or_dependent_link(command.actor) ||
-       store_->has_child_or_dependent_link(command.target))return false;
-    for(const auto& [site,outpost]:world_.built_outposts()){
-        if(outpost.source_colony_ship==command.actor &&
-           store_->has_child_or_dependent_link(site))return false;
-    }
+    const auto no_child_links=[&](){
+        if(store_->has_child_or_dependent_link(command.actor) ||
+           store_->has_child_or_dependent_link(command.target))return false;
+        for(const auto& [site,outpost]:world_.built_outposts())
+            if(outpost.source_colony_ship==command.actor &&
+               store_->has_child_or_dependent_link(site))return false;
+        return true;
+    };
+    if(!no_child_links())return false;
     auto next=world_;
     if(!next.submit(command))return false;
+    // Recheck under BEGIN IMMEDIATE, not only before it, so another writer
+    // cannot insert a guardian/dependent between admission and publication.
+    const auto locked_guard=[&](sqlite3*,std::uint64_t){
+        if(!no_child_links())throw std::runtime_error("birth/guardian custody changed during departure admission");
+    };
     store_->commit(next,generation_,resource_origin_,credit_origin_,
-                   &command,{},{},{},fail);
+                   &command,{},{},{},fail,nullptr,nullptr,locked_guard);
     world_.swap(next);++generation_;
     return true;
 }
@@ -5702,13 +5710,16 @@ void PersistentWorld::step_with_colony_departure(FailPoint fail){
        due.begin()->second.issuer!=Simulation::kServerAuthority)
         throw std::runtime_error("colony departure requires one authorized due command");
     const auto cmd=due.begin()->second;
-    if(store_->has_child_or_dependent_link(cmd.actor) ||
-       store_->has_child_or_dependent_link(cmd.target))
+    const auto no_child_links=[&](){
+        if(store_->has_child_or_dependent_link(cmd.actor) ||
+           store_->has_child_or_dependent_link(cmd.target))return false;
+        for(const auto& [site,outpost]:world_.built_outposts())
+            if(outpost.source_colony_ship==cmd.actor &&
+               store_->has_child_or_dependent_link(site))return false;
+        return true;
+    };
+    if(!no_child_links())
         throw std::runtime_error("colony departure conflicts with recorded dependent or birth custody");
-    for(const auto& [site,outpost]:world_.built_outposts())
-        if(outpost.source_colony_ship==cmd.actor &&
-           store_->has_child_or_dependent_link(site))
-            throw std::runtime_error("recorded dependent site blocks colony departure");
     next.step();
     if(next.events().size()!=before+1 ||
        next.events().back().command_id!=cmd.id ||
@@ -5719,8 +5730,11 @@ void PersistentWorld::step_with_colony_departure(FailPoint fail){
         static_cast<std::ptrdiff_t>(before),next.events().end());
     const std::vector<ActivityEvent> activity(next.activity_events().begin()+
         static_cast<std::ptrdiff_t>(before_activity),next.activity_events().end());
+    const auto locked_guard=[&](sqlite3*,std::uint64_t){
+        if(!no_child_links())throw std::runtime_error("dependent custody changed during atomic world publication");
+    };
     store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
-                   events,due,activity,fail);
+                   events,due,activity,fail,nullptr,nullptr,locked_guard);
     world_.swap(next);
     ++generation_;
 }
