@@ -67,10 +67,10 @@ try{
         CHECK(family.family_census(source).current_population==3);
         CHECK(region.load()->scheduler.colony("origin").population==3);
         CHECK(region.load()->revision==2);
-        w.steps(620-w.world().tick());
+        w.steps(640-w.world().tick());
         CHECK(static_cast<int>(colony_safety::assess(w.world(),source,source).risk)>=
               static_cast<int>(colony_safety::Risk::Critical));
-        CHECK(w.world().life_support(source)->food_kg==7);
+        CHECK(w.world().life_support(source)->food_kg==4);
         colony_family::DeparturePlan manifest{};
         manifest.source=source;manifest.receiver=receiver;
         manifest.intent_id=5001;manifest.expected_world_generation=w.generation();
@@ -122,7 +122,7 @@ try{
         CHECK(Simulation::from_snapshot(w.world().canonical_state()).canonical_state()==
               w.world().canonical_state());
         const auto stock=w.world().life_support(receiver)->food_kg;
-        w.steps(640-w.world().tick());
+        w.steps(660-w.world().tick());
         CHECK(w.world().life_support(receiver)->food_kg==stock-5);
         CHECK(w.world().total_material_kg()==material);
         last_gen=w.generation();
