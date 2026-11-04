@@ -20,6 +20,29 @@ Attitude attitude_for_score(int score){
     if(score>=15)return Attitude::Friendly;
     return Attitude::Neutral;
 }
+Decision evaluate_diplomatic(Decision d,int score,std::uint64_t event){
+    d.relation_score=score;
+    d.relation_event_id=event;
+    const auto attitude=attitude_for_score(score);
+    if(d.source_risk==colony_safety::Risk::Critical ||
+       d.source_risk==colony_safety::Risk::Emergency)
+        return d; // real habitat shortages take precedence over opinions
+    if(attitude==Attitude::Allied){
+        // Admiration suppresses *preparation*, not a binding treaty or
+        // permanent disarmament. Actual actions still require separate gates.
+        d.motive=Motive::None;
+        d.posture=Posture::Observe;
+    }else if(attitude==Attitude::Friendly &&
+             d.posture==Posture::PrepareRaid){
+        d.motive=Motive::Security;
+        d.posture=Posture::Warn;
+    }else if((attitude==Attitude::Hostile || attitude==Attitude::Wary) &&
+             d.posture==Posture::Observe){
+        d.motive=Motive::Security;
+        d.posture=Posture::Warn;
+    }
+    return d;
+}
 Decision evaluate(const Simulation& world,EntityId colony,
                   std::uint64_t leader,Agenda agenda,
                   const colony_defense::Contact& seen,
