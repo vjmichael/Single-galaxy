@@ -680,6 +680,7 @@ private:
     std::uint64_t random_u64();
     EntityId add_entity(Entity entity);
     Event execute(const Command& command);
+    bool can_depart_colony(const Command& command) const;
     bool valid_position(Vector2 position) const;
     Outcome mine_status(const Entity& actor, EntityId target) const;
     std::int64_t loaded_cargo_liters(const Entity& ship) const;
