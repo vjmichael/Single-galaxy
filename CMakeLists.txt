@@ -1317,3 +1317,12 @@ if(BUILD_TESTING)
   add_test(NAME galaxy_play13d_live_planet_survey
     COMMAND galaxy_play13d_live_planet_survey_tests)
 endif()
+
+# PLAY-13D.3 source-backed planetary site construction/farm/extraction persistence.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13d_regional_facilities_tests
+    tests/PLAY13D_RegionalFacilitiesTests.cpp)
+  target_link_libraries(galaxy_play13d_regional_facilities_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_regional_facilities
+    COMMAND galaxy_play13d_regional_facilities_tests)
+endif()
