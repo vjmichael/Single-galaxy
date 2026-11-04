@@ -216,7 +216,7 @@ el('signatureScan').addEventListener('click',()=>{
  if(el('signatureMode').value!=='anomaly'){
    message('Celestial/environmental live scan is not enabled yet.');return;
  }
- command('colonySignatureScan');
+ command('colonySignatureScan',{rangeMm:Number(el('signatureRange').value)});
 });
 el('signatureFocus').addEventListener('click',()=>{
  const probe=Number(el('probeTarget').value);
