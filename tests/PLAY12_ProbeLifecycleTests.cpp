@@ -57,6 +57,22 @@ int main(){
    CHECK(w.world().events().back().transferred==1);
    CHECK(w.world().pending_probe_report_count()==1);
    CHECK(w.world().canonical_state().find("galaxy-kernel-v68|")==0);
+   {
+    const auto serialized=w.world().canonical_state();
+    const auto restored=Simulation::from_snapshot(serialized);
+    CHECK(restored.pending_probe_report_count()==1);
+    CHECK(restored.discoveries().count({7,near})==0);
+    // Native parser must reject forged ownership of a withheld coordinate.
+    auto corrupted=serialized;
+    const auto marker=std::string("pendingprobe|7|");
+    const auto where=corrupted.find(marker);
+    CHECK(where!=std::string::npos);
+    corrupted.replace(where,marker.size(),"pendingprobe|8|");
+    bool rejected=false;
+    try{(void)Simulation::from_snapshot(corrupted);}
+    catch(const std::exception&){rejected=true;}
+    CHECK(rejected);
+   }
    CHECK(w.world().discoveries().count({7,near})==0); // no early revelation
    CHECK(w.world().discoveries().count({7,far})==0);
    CHECK(run(w,order(w,6,ship,Action::ScanSurveyProbe,2))==Outcome::Applied);
