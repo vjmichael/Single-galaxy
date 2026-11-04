@@ -969,6 +969,12 @@ bool Simulation::can_depart_colony(const Command& c) const {
     return true;
 }
 bool Simulation::submit(const Command& c) {
+    if(colony_departures_.count(c.actor) || colony_departures_.count(c.target))return false;
+    const bool colony_departure=c.action==Action::HostColonyDeparture;
+    if(colony_departure){
+        if(!can_depart_colony(c)||submitted_ids_.count(c.id))return false;
+        snapshot_version_=58;
+    }
     const bool split_action=c.action==Action::HostSplitEvacuatePassengers;
     const bool consigned=c.action==Action::HostTransferConsignedStock;
     if(consigned){
@@ -1396,9 +1402,9 @@ bool Simulation::submit(const Command& c) {
                 if(it->second.location!=c.target || it->second.transport_id)return false;
             }else if(it->second.location!=c.actor || it->second.transport_id!=c.transport_id)return false;
         }
-    }else if(!medical_action && !migration_action && (c.transport_id || !c.passenger_ids.empty()))return false;
+    }else if(!medical_action && !migration_action && !colony_departure && (c.transport_id || !c.passenger_ids.empty()))return false;
     if (c.id == 0 || c.execute_tick <= tick_ || c.issuer == 0 || submitted_ids_.count(c.id)) return false;
-    if (passenger_action || medical_action || migration_action || escrow_action || return_action || consigned) { /* validated host command above */ }
+    if (passenger_action || medical_action || migration_action || escrow_action || return_action || consigned || colony_departure) { /* validated host command above */ }
     else if (c.action == Action::HostDestroyShip || c.action == Action::HostCrewLoss) {
         if(c.issuer != kServerAuthority || !c.actor || !c.target ||
            c.thrust_x || c.thrust_y ||
@@ -1673,6 +1679,34 @@ void Simulation::stop_mining(EntityId actor, Outcome reason) {
 
 Event Simulation::execute(const Command& c) {
     Event result{tick_, c.id, Outcome::InvalidActor, 0};
+    if(c.action==Action::HostColonyDeparture){
+        if(!can_depart_colony(c)){
+            result.result=Outcome::InvalidArgument;return result;
+        }
+        // Every identity and receiver supply has passed preflight at the
+        // actual execution tick. No mutation occurs until ALL are verified.
+        auto& source=colony_ships_.at(c.actor);
+        auto& receiver=colony_ships_.at(c.target);
+        for(const auto id:c.passenger_ids){
+            auto& n=npcs_.at(id);
+            n.home_ship=c.target;
+            n.location=c.target;
+            n.assigned_site=c.target;
+            n.role=NpcRole::Ship;
+            n.transport_id=0;
+        }
+        for(auto& [site,f]:farms_)if(f.source_ship==c.actor)f.workers=0;
+        for(auto& [site,h]:habitats_)if(h.source_ship==c.actor)h.residents=0;
+        source.crew=0;
+        receiver.crew+=static_cast<std::int64_t>(c.passenger_ids.size());
+        // An intact source hull stays physically present and retains all
+        // untouched inventory, but can never be operated with zero crew.
+        colony_departures_.emplace(c.actor,ColonyDeparture{
+            c.actor,c.target,c.id,tick_,c.passenger_ids});
+        result.result=Outcome::Applied;
+        result.transferred=static_cast<std::int64_t>(c.passenger_ids.size());
+        return result;
+    }
     // A separate host-authorized action: never relax ordinary owner-bound
     // TransferStorageStack. Permission and immutable order are checked by the
     // SQLite world writer before a command can reach this deterministic replay.
