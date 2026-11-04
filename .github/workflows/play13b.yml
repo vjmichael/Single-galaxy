@@ -18,6 +18,12 @@ on:
       - 'tests/PLAY12_ProbeLifecycleTests.cpp'
       - 'tests/PLAY13B_LiveSurveyIndexSmoke.py'
       - 'viewer/scanner-session.js'
+      - 'viewer/colony.js'
+      - 'viewer/interactive.js'
+      - 'viewer/interactive.html'
+      - 'live/interactive_relay.py'
+      - 'tests/PLAY12_ProbeWiringTests.js'
+      - 'tests/PLAY13_DroneWiringTests.js'
       - 'tests/PLAY13B_ScannerSessionTests.js'
       - '.github/workflows/play13b.yml'
 jobs:
@@ -39,4 +45,10 @@ jobs:
         run: python tests/PLAY13B_LiveSurveyIndexSmoke.py "${{ github.workspace }}/build/galaxy_colony_live_host"
         if: runner.os == 'Linux'
       - name: Browser scanner lock-on contract
-        run: node --test tests/PLAY13B_ScannerSessionTests.js
+        run: node --test tests/PLAY13B_ScannerSessionTests.js tests/PLAY12_ProbeWiringTests.js tests/PLAY13_DroneWiringTests.js
+      - name: Parse authoritative relay and browser JavaScript
+        run: |
+          python -m py_compile live/interactive_relay.py
+          node --check viewer/colony.js
+          node --check viewer/interactive.js
+          node --check viewer/scanner-session.js
