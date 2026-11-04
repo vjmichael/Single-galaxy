@@ -250,6 +250,13 @@ static void archive_persistence() {
             CHECK(restored.actionable_sites(7,3,current,DiscoveryUse::Navigation,80,50,2).empty());
             CHECK(restored.actionable_sites(7,3,current,DiscoveryUse::SettlementSurvey,80,30,2).size()==1);
             CHECK(restored.actionable_sites(7,3,current,DiscoveryUse::SettlementSurvey,95,30,2).empty());
+            GalaxyMap depleted;depleted.add_system({3,"Frontier",0,Sovereignty::Player});
+            CHECK(restored.actionable_sites(7,3,depleted,
+                DiscoveryUse::SettlementSurvey,80,30,2).empty());
+            GalaxyMap changed;changed.add_system({3,"Frontier",0,Sovereignty::Player});
+            changed.add_site(3,{102,SiteKind::Station,{8000,0},"Replaced site",true,false,0});
+            CHECK(restored.actionable_sites(7,3,changed,
+                DiscoveryUse::SettlementSurvey,80,30,2).empty());
             CHECK(restored.published(3)[0].independent_surveyors==2);
         }
     }catch(...){std::filesystem::remove(file);throw;}
