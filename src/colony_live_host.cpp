@@ -701,6 +701,12 @@ int main(int argc,char** argv){
         std::uint64_t nonce=900000000000ULL+world.generation();
         std::set<std::uint64_t> pending_scans,pending_probe_scans;
         std::size_t known_discoveries=world.world().discoveries().size();
+        const auto report_count=[&](){
+            return std::count_if(world.world().discoveries().begin(),
+                world.world().discoveries().end(),
+                [](const auto& record){return record.second.survey_taxonomy!=0;});
+        };
+        std::size_t known_reports=report_count();
         const auto period=std::chrono::milliseconds(ms);
         for(int i=0;i<max_ticks;++i){
             const auto start=Clock::now();
@@ -765,11 +771,14 @@ int main(int argc,char** argv){
                 announce(world.world(),"RESULT|"+std::to_string(ev.command_id)+"|"+
                     to_string(ev.result)+"|"+std::to_string(ev.transferred));
             }
-            if(world.world().discoveries().size()!=known_discoveries){
-                // Newly completed autonomous drone survey: publish only the
-                // authoritative owner-scoped first-observation ledger.
+            const auto reports_now=report_count();
+            if(world.world().discoveries().size()!=known_discoveries ||
+               reports_now!=known_reports){
+                // Native geology report arrived over a live 10 km link,
+                // even when its target was already discovered previously.
                 scanned=true;
                 known_discoveries=world.world().discoveries().size();
+                known_reports=reports_now;
             }
             std::cout<<encode_frame(bridge.after_committed_step(world.world()))<<std::flush;
             status(world.world(),ship,scanned);
