@@ -53,9 +53,10 @@ static void scanning_and_probes() {
     sensors.register_probe(99,7);sensors.register_probe(100,7);
     CHECK(!sensors.deploy(99,8,3,{9000,2000}));
     CHECK(sensors.deploy(99,7,3,{9000,2000}));
-    CHECK(!sensors.plan_refinement(8,3,104,2000,40).has_value());
-    CHECK(!sensors.plan_refinement(7,3,105,2000,40).has_value());
-    auto plan=sensors.plan_refinement(7,3,104,2000,40);
+    CHECK(!sensors.plan_refinement(8,3,104,{0,0},20000,2000,40).has_value());
+    CHECK(!sensors.plan_refinement(7,3,105,{0,0},20000,2000,40).has_value());
+    CHECK(!sensors.plan_refinement(7,3,104,{0,0},5000,2000,40).has_value());
+    auto plan=sensors.plan_refinement(7,3,104,{0,0},20000,2000,40);
     CHECK(plan.has_value() && plan->site==104 && plan->waypoints.size()==1);
     CHECK(plan->waypoints[0].first==99);
     CHECK(!sensors.deploy(99,7,3,{9000,2000}));
@@ -64,7 +65,7 @@ static void scanning_and_probes() {
     CHECK(first[0].estimated_position.x==10000 && first[0].estimated_position.y==2500);
     CHECK(sensors.probe_scan(8,3,4,1000,90).empty());
     CHECK(sensors.deploy(100,7,3,{9000,2000}));
-    auto dual=sensors.plan_refinement(7,3,104,2000,40);
+    auto dual=sensors.plan_refinement(7,3,104,{0,0},20000,2000,40);
     CHECK(dual.has_value() && dual->waypoints.size()==2);
     CHECK(dual->waypoints[0].second.x!=dual->waypoints[1].second.x);
     CHECK(sensors.probe_scan(7,3,5,1000,40)[0].confidence==first[0].confidence);
