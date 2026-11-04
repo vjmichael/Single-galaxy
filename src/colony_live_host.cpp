@@ -502,6 +502,36 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
         }
         return;
     }
+    // PGF-01B.2: native authorized planetary regional survey; map-backed
+    // terrain is the same result exposed by Simulation to other consumers.
+    if(v.size()==4 && v[0]=="PLANET_SURVEY"){
+        try{
+            const auto body=integer(v[1]);
+            const auto latitude=integer(v[2]);
+            const auto longitude=integer(v[3]);
+            if(body<=0 || latitude<0 || latitude>=planetary::kWatershedRows ||
+               longitude<0 || longitude>=planetary::kWatershedColumns)
+                throw std::invalid_argument("invalid planetary region");
+            const auto site=world.world().scan_planetary_geography(
+                principal,ship,static_cast<std::uint64_t>(body),
+                static_cast<std::uint16_t>(latitude),
+                static_cast<std::uint16_t>(longitude));
+            if(!site){announce(world.world(),"ERROR|PLANET_SURVEY_DENIED");return;}
+            const auto& r=site->landscape.region;
+            announce(world.world(),"PLANET_REGION|"+std::to_string(body)+"|"+
+                std::to_string(latitude)+"|"+std::to_string(longitude)+"|"+
+                std::to_string(r.elevation)+"|"+std::to_string(r.surface_water?1:0)+"|"+
+                std::to_string(static_cast<unsigned>(r.terrain))+"|"+
+                std::to_string(static_cast<unsigned>(site->landscape.watercourse))+"|"+
+                std::to_string(site->catchment_runoff)+"|"+
+                std::to_string(site->downstream_latitude)+"|"+
+                std::to_string(site->downstream_longitude)+"|"+
+                std::to_string(site->key.revision));
+        }catch(const std::exception&){
+            announce(world.world(),"ERROR|PLANET_SURVEY_DENIED");
+        }
+        return;
+    }
     if(v.size()==1 && v[0]=="SYSTEM_CELESTIAL"){
         const auto profile=world.world().scan_celestial_profile(principal,ship);
         if(!profile){announce(world.world(),"ERROR|INVALID_INPUT");return;}
