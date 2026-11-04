@@ -26,6 +26,7 @@ try{
     const std::string path=(std::filesystem::temp_directory_path()/
         ("sg_two_household_v77_"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count())+".db")).string();
     const std::string replay=path+".replay",corrupted=path+".corrupted";
+    const std::string forged_guardian=path+".guardian",forged_adults=path+".adults";
     const std::string family_scope="family-shared-v77",region_scope="region-v77";
     constexpr std::uint64_t seed=7703;
     const auto child1=(1ULL<<62)+771,child2=(1ULL<<62)+772;
@@ -179,7 +180,23 @@ try{
         "DELETE FROM sg_colony_family_household_member WHERE npc_id='"+
         std::to_string(child2)+"';").c_str());
     denied([&]{PersistentWorld invalid(corrupted,Simulation(5));});
+    // v78: an offline edit of the original prepared child->guardian map
+    // must be rejected even though the physical world, headcounts and all
+    // executed member receipts have not changed.
+    PersistentWorld::recover_copy(path,forged_guardian);
+    tamper(forged_guardian,("DROP TRIGGER sg_colony_family_prepare_no_update; "
+        "UPDATE sg_colony_family_departure_prepare SET child_guardians='"+
+        std::to_string(child1)+":1,"+std::to_string(child2)+
+        ":1' WHERE intent_id='7771';").c_str());
+    denied([&]{PersistentWorld invalid(forged_guardian,Simulation(6));});
+    // The immutable prepared four-adult roster is independent proof too.
+    PersistentWorld::recover_copy(path,forged_adults);
+    tamper(forged_adults,"DROP TRIGGER sg_colony_family_prepare_no_update; "
+        "UPDATE sg_colony_family_departure_prepare SET adult_roster='1,2,3,6' "
+        "WHERE intent_id='7771';");
+    denied([&]{PersistentWorld invalid(forged_adults,Simulation(7));});
     cleanup(path);cleanup(replay);cleanup(corrupted);
+    cleanup(forged_guardian);cleanup(forged_adults);
     std::cout<<"PASS v77: two ART02 households, one world departure, atomic cold-region census, restart/replay and corruption refusal\n";
     return 0;
 }catch(const std::exception& e){

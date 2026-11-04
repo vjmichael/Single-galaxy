@@ -6,6 +6,7 @@ on:
       - integration/colony-auto04d4d2b-predecessor-pin-v75-20261103
       - integration/colony-auto04d4d2c-coldwarm-v76-20261103
       - integration/colony-auto04d4d3a-two-households-v77-20261103
+      - integration/colony-auto04d4d3b-prepared-guardian-verify-v78-20261103
   pull_request:
     paths:
       - 'src/Simulation.cpp'
