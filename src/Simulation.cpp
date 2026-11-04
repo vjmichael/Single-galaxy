@@ -1782,6 +1782,7 @@ Outcome Simulation::mine_status(const Entity& actor, EntityId target) const {
     const auto& asteroid = it->second;
     if (asteroid.type != EntityType::Asteroid || asteroid.system_id != actor.system_id)
         return Outcome::InvalidTarget;
+    if(!same_local_frame(actor.id,target))return Outcome::OutOfRange;
     const auto dx = actor.position.x - asteroid.position.x;
     const auto dy = actor.position.y - asteroid.position.y;
     const auto* deposit=geology(target);
@@ -1831,6 +1832,9 @@ void Simulation::stop_mining(EntityId actor, Outcome reason) {
 Event Simulation::execute(const Command& c) {
     Event result{tick_, c.id, Outcome::InvalidActor, 0};
     if(snapshot_version_>=72) {
+        // Note that native survey commands and combat must not escape their
+        // ship's local frame even when both regions share one star system.
+        // Existing anchored-ship restrictions below remain conservative.
         // No legacy 2-D interaction can silently cross a celestial local
         // frame. Transit ships are unavailable until atomic arrival.
         const auto active=[](const auto& rows,EntityId id){
@@ -4809,7 +4813,7 @@ std::vector<Simulation::SignatureHint> Simulation::coarse_probe_signatures(
     std::vector<SignatureHint> result;
     for(const auto& [id,e]:entities_) {
         if(e.type!=EntityType::Asteroid||e.system_id!=carrier->second.system_id||
-           discoveries_.count({owner,id}))continue;
+           !same_local_frame(ship,id)||discoveries_.count({owner,id}))continue;
         if(std::hypot(double(e.position.x)-carrier->second.position.x,
                       double(e.position.y)-carrier->second.position.y)>radius)continue;
         const auto quant=[](std::int64_t value){
