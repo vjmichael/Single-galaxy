@@ -25,4 +25,4 @@ This is **parent-guardian multi-child** acceptance; it does not by itself prove 
 
 ## Validation
 
-CI runs the v77 and v76 real SQLite native CTests together in `.github/workflows/colony-auto04d4d2c.yml`, with real engine execution (no mock SQLite). Record GitHub Actions run and outcome after completion.
+CI runs the v77 and v76 real SQLite native CTests together in `.github/workflows/colony-auto04d4d2c.yml`, with real engine execution (no mock SQLite). **Verified passed:** [GitHub Actions run 41772000499](https://github.com/vjmichael/Single-galaxy/actions/runs/41772000499), at commit `fdd95fc5c1d4d69cb27622e6979fdb61afe95fef`. Both `galaxy_colony_auto04d4d2b2_atomic_family` (v76 regression) and `galaxy_colony_auto04d4d2c_mixed_guardians` (v77 fault matrix) passed, 2/2 in 1.55 seconds. The compiler built the real SQLite-linked `galaxy_kernel` and both actual CTest executables.
