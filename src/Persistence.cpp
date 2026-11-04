@@ -181,7 +181,7 @@ Command decode_command(const std::string& record) {
                 throw std::runtime_error("recovery: malformed split rescue envelope");
         }
     }
-    if (in >> extra || action < 0 || action > static_cast<int>(Action::HostColonyDeparture) || c.id == 0 || c.issuer == 0)
+    if (in >> extra || action < 0 || action > static_cast<int>(Action::HostRegisterDependent) || c.id == 0 || c.issuer == 0)
         throw std::runtime_error("recovery: invalid command journal values");
     c.action = static_cast<Action>(action);
     if (command_record(c) != record) throw std::runtime_error("recovery: noncanonical command journal");
@@ -1257,6 +1257,84 @@ public:
         }catch(...){
             sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);
             throw;
+        }
+    }
+    // An ART02 child enters the physical world only when the existing birth
+    // registry and the independently witnessed world-birth bridge agree.
+    // Call under the SAME SQLite writer transaction as the new world event.
+    void verify_physical_dependent_birth(const Simulation& world,
+        const Command& c,const std::string& scope,std::uint64_t seed) const {
+        if(!c.transport_id || c.transport_id<(1ULL<<62) ||
+           c.passenger_ids.size()!=1 || !c.passenger_ids.front() ||
+           !c.actor || c.actor!=c.target || scope.empty() || !seed)
+            throw std::runtime_error("invalid dependent registration identity");
+        if(world.physical_dependents().count(c.transport_id) ||
+           world.npc_records().count(c.transport_id) ||
+           world.npc_casualties().count(c.transport_id))
+            throw std::runtime_error("dependent already physically registered");
+        const auto guardian=world.npc_records().find(c.passenger_ids.front());
+        if(guardian==world.npc_records().end() ||
+           guardian->second.location!=c.actor ||
+           guardian->second.home_ship!=c.actor || guardian->second.transport_id)
+            throw std::runtime_error("dependent guardian lacks physical residence");
+        Statement bridge(db_,"SELECT event_id,parent_a,parent_b,family_scope FROM "
+                             "sg_med_society_birth WHERE child_id=? AND home_ship=?");
+        bridge.text(1,std::to_string(c.transport_id));
+        bridge.text(2,std::to_string(c.actor));
+        if(!bridge.row())throw std::runtime_error("dependent birth has no world bridge");
+        const auto birth_event=sqlite_str(bridge.get(),0);
+        const auto parent_a=parse_u64(sqlite3_column_text(bridge.get(),1));
+        const auto parent_b=parse_u64(sqlite3_column_text(bridge.get(),2));
+        if(sqlite_str(bridge.get(),3)!=scope || bridge.row())
+            throw std::runtime_error("dependent birth bridge family scope conflict");
+        Statement natal(db_,"SELECT parent_a,parent_b,settlement FROM npc_family_births "
+                            "WHERE scope=? AND event_id=? AND child_id=?");
+        natal.text(1,scope);natal.text(2,birth_event);
+        natal.text(3,std::to_string(c.transport_id));
+        if(!natal.row() ||
+           parse_u64(sqlite3_column_text(natal.get(),0))!=parent_a ||
+           parse_u64(sqlite3_column_text(natal.get(),1))!=parent_b ||
+           parse_u64(sqlite3_column_text(natal.get(),2))!=c.actor ||
+           natal.row())
+            throw std::runtime_error("world/ART02 original parent records diverge");
+        Statement deceased(db_,"SELECT 1 FROM npc_family_deaths "
+            "WHERE scope=? AND npc_id=? LIMIT 1");
+        deceased.text(1,scope);deceased.text(2,std::to_string(c.transport_id));
+        if(deceased.row())throw std::runtime_error("cannot register deceased dependent");
+        if(has_dependent_table()){
+            Statement ferry(db_,"SELECT 1 FROM sg_dependent_travel WHERE child_id=? "
+                                 "AND status=1 LIMIT 1");
+            ferry.text(1,std::to_string(c.transport_id));
+            if(ferry.row())throw std::runtime_error("cannot register child aboard an active ferry");
+        }
+        NpcAppearanceStore family(db_,scope,seed,
+            [&](std::uint64_t id){return world.npc_records().count(id)!=0;});
+        if(family.current_residence(c.transport_id)!=c.actor ||
+           family.current_residence(c.passenger_ids.front())!=c.actor)
+            throw std::runtime_error("child/guardian census location mismatch");
+        const auto lawful=family.current_nonparent_guardian(c.transport_id);
+        if(lawful ? lawful!=c.passenger_ids.front() :
+           (parent_a!=c.passenger_ids.front() && parent_b!=c.passenger_ids.front()))
+            throw std::runtime_error("not the child's legally recorded guardian");
+    }
+    void verify_physical_dependent_authority(const Simulation& world) const{
+        Statement tables(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_physical_child_authority'");
+        if(!tables.row()){
+            if(!world.physical_dependents().empty())
+                throw std::runtime_error("physical child exists without durable birth authority table");
+            return;
+        }
+        for(const auto& [id,d]:world.physical_dependents()){
+            Statement auth(db_,"SELECT command_id,guardian_id,home_ship FROM "
+                "sg_colony_physical_child_authority WHERE child_id=?");
+            auth.text(1,std::to_string(id));
+            if(!auth.row() ||
+               parse_u64(sqlite3_column_text(auth.get(),0))!=d.registration_command ||
+               parse_u64(sqlite3_column_text(auth.get(),1))!=d.guardian_id ||
+               parse_u64(sqlite3_column_text(auth.get(),2))!=d.home_ship ||
+               auth.row())
+                throw std::runtime_error("physical dependent lacks matching immutable birth authority");
         }
     }
     bool has_dependent_table() const {
@@ -5706,6 +5784,7 @@ PersistentWorld::PersistentWorld(const std::string& path, Simulation initial_wor
     store_->verify_colony_safety_evidence();
     store_->verify_colony_response(world_,generation_);
     store_->verify_colony_notifications(world_,generation_);
+    store_->verify_physical_dependent_authority(world_);
 }
 PersistentWorld::~PersistentWorld() = default;
 
@@ -5776,6 +5855,86 @@ bool PersistentWorld::prepare_host_colony_family_departure(
         const colony_family::DeparturePlan& plan,FailPoint fail){
     return store_->prepare_colony_family_departure(world_,generation_,plan,fail);
 }
+// AUTO-04D.4D2A: physically register an ALREADY-BORN ART02 child.
+// Two durable stages (admission and execution) use the existing single world
+// writer and immutable operation journal; no new NPC/workforce identity.
+bool PersistentWorld::submit_host_dependent_registration(
+        const Command& command,const std::string& scope,std::uint64_t seed,
+        FailPoint fail){
+    if(command.action!=Action::HostRegisterDependent ||
+       command.issuer!=Simulation::kServerAuthority ||
+       command.execute_tick!=world_.tick()+1 ||
+       !command.transport_id || !command.actor || scope.empty() || !seed)return false;
+    auto next=world_;
+    if(!next.submit(command))return false;
+    const auto effect=[&](sqlite3* db,std::uint64_t){
+        store_->verify_physical_dependent_birth(world_,command,scope,seed);
+        run(db,"CREATE TABLE IF NOT EXISTS sg_colony_physical_child_authority("
+            "child_id TEXT PRIMARY KEY,command_id TEXT NOT NULL UNIQUE,"
+            "guardian_id TEXT NOT NULL,home_ship TEXT NOT NULL,"
+            "family_scope TEXT NOT NULL,family_seed TEXT NOT NULL)");
+        run(db,"CREATE TRIGGER IF NOT EXISTS sg_colony_child_authority_no_update "
+            "BEFORE UPDATE ON sg_colony_physical_child_authority "
+            "BEGIN SELECT RAISE(ABORT,'physical child authority immutable'); END");
+        run(db,"CREATE TRIGGER IF NOT EXISTS sg_colony_child_authority_no_delete "
+            "BEFORE DELETE ON sg_colony_physical_child_authority "
+            "BEGIN SELECT RAISE(ABORT,'physical child authority immutable'); END");
+        Statement entry(db,"INSERT INTO sg_colony_physical_child_authority "
+            "VALUES(?,?,?,?,?,?)");
+        entry.text(1,std::to_string(command.transport_id));
+        entry.text(2,std::to_string(command.id));
+        entry.text(3,std::to_string(command.passenger_ids.front()));
+        entry.text(4,std::to_string(command.actor));
+        entry.text(5,scope);
+        entry.text(6,std::to_string(seed));
+        entry.execute();
+    };
+    store_->commit(next,generation_,resource_origin_,credit_origin_,
+                   &command,{},{},{},fail,nullptr,nullptr,effect);
+    world_.swap(next);++generation_;
+    return true;
+}
+void PersistentWorld::step_with_dependent_registration(FailPoint fail){
+    auto next=world_;
+    const auto before=next.events().size();
+    const auto activity_before=next.activity_events().size();
+    std::map<std::uint64_t,Command> due;
+    if(auto it=next.commands_.find(next.tick()+1);it!=next.commands_.end())
+        for(const auto& cmd:it->second)due.emplace(cmd.id,cmd);
+    if(due.size()!=1 || due.begin()->second.action!=Action::HostRegisterDependent ||
+       due.begin()->second.issuer!=Simulation::kServerAuthority)
+        throw std::runtime_error("physical child registration requires one host command");
+    const auto cmd=due.begin()->second;
+    const auto check=[&](sqlite3* db){
+        Statement record(db,"SELECT command_id,guardian_id,home_ship,"
+            "family_scope,family_seed FROM sg_colony_physical_child_authority WHERE child_id=?");
+        record.text(1,std::to_string(cmd.transport_id));
+        if(!record.row())throw std::runtime_error("unapproved physical child admission");
+        if(sqlite_str(record.get(),0)!=std::to_string(cmd.id) ||
+           sqlite_str(record.get(),1)!=std::to_string(cmd.passenger_ids.front()) ||
+           sqlite_str(record.get(),2)!=std::to_string(cmd.actor))
+            throw std::runtime_error("physical child guardian receipt mismatch");
+        const auto scope=sqlite_str(record.get(),3);
+        const auto seed=parse_u64(sqlite3_column_text(record.get(),4));
+        if(record.row())throw std::runtime_error("duplicate birth authority");
+        store_->verify_physical_dependent_birth(world_,cmd,scope,seed);
+    };
+    next.step();
+    if(next.events().size()!=before+1 ||
+       next.events().back().command_id!=cmd.id ||
+       next.events().back().result!=Outcome::Applied ||
+       !next.physical_dependents().count(cmd.transport_id))
+        throw std::runtime_error("dependent occupancy was not physically applied");
+    const std::vector<Event> delta(next.events().begin()+
+        static_cast<std::ptrdiff_t>(before),next.events().end());
+    const std::vector<ActivityEvent> activity(next.activity_events().begin()+
+        static_cast<std::ptrdiff_t>(activity_before),next.activity_events().end());
+    const auto effect=[&](sqlite3* db,std::uint64_t){check(db);};
+    store_->commit(next,generation_,resource_origin_,credit_origin_,
+                   nullptr,delta,due,activity,fail,nullptr,nullptr,effect);
+    world_.swap(next);++generation_;
+}
+
 bool PersistentWorld::submit_host_colony_departure(const Command& command,FailPoint fail){
     if(command.action!=Action::HostColonyDeparture ||
        command.issuer!=Simulation::kServerAuthority ||
@@ -7741,6 +7900,8 @@ void PersistentWorld::step(FailPoint fail) {
             throw std::runtime_error("split evacuation requires atomic two-receiver child custody step");
         if(c.action==Action::HostColonyDeparture)
             throw std::runtime_error("colony departure requires atomic full-population host step");
+        if(c.action==Action::HostRegisterDependent)
+            throw std::runtime_error("physical child requires birth-authorized atomic host step");
     }
     for(const auto& [id,c]:due){(void)id;
         if((c.action==Action::HostDisembarkPassengers ||

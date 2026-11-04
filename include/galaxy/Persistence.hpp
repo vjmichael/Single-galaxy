@@ -467,6 +467,13 @@ public:
     bool prepare_host_colony_family_departure(
         const colony_family::DeparturePlan& plan,
         FailPoint fail=FailPoint::None);
+    // D2a: register ART02-authenticated, actually resident child into the
+    // replayable world occupancy ledger. Separate from declaring evacuation.
+    bool submit_host_dependent_registration(const Command& command,
+        const std::string& family_scope,std::uint64_t family_seed,
+        FailPoint fail=FailPoint::None);
+    void step_with_dependent_registration(FailPoint fail=FailPoint::None);
+
 
 
 
