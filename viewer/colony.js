@@ -21,13 +21,21 @@
       return {...e,carried:numeric(v[4],8),launcher:!!numeric(v[5],1)};
     }
     if(t==='SURVEY_PROBE'){
-      if(v.length!==8)throw Error('Malformed deployed survey probe');
+      if(v.length!==8 && v.length!==12)throw Error('Malformed deployed survey probe');
       const id=numeric(v[4],1000000000000000),system=numeric(v[5],100000000);
       const coord=value=>{if(!/^(?:0|-?[1-9][0-9]*)$/.test(value))throw Error('Bad probe coordinate');
         const n=Number(value);if(!Number.isSafeInteger(n)||Math.abs(n)>1000000000)throw Error('Probe coordinate out of range');return n;};
       const x=coord(v[6]),y=coord(v[7]);
       if(!id||!system)throw Error('Invalid deployed probe identity');
-      return {...e,id,system,x,y};
+      if(v.length===12){
+        const phase=numeric(v[8],3),target=numeric(v[9],100000000);
+        const sample=numeric(v[10],1),taxonomy=numeric(v[11],3);
+        if((phase===0 && (target||sample||taxonomy)) ||
+           (phase!==0 && !target) || (sample===0 && taxonomy!==0) ||
+           (sample && !taxonomy))throw Error('Invalid geological drone state');
+        return {...e,id,system,x,y,phase,target,sample,taxonomy};
+      }
+      return {...e,id,system,x,y,phase:0,target:0,sample:0,taxonomy:0};
     }
     if(t==='FITTING'){
       if(v.length!==9)throw Error('Malformed ship fitting telemetry');
@@ -322,7 +330,7 @@
        guide.action==='colonyFabricate'?{amount:4}:{});
  });
  window.GalaxyColony={
-   reset(){deployedProbes.clear();probeCarried=0;probeLauncher=false;probeChoice='';q('probeTarget').replaceChildren(new Option('No probe deployed',''));q('probeLaunch').disabled=true;q('probeSurvey').disabled=true;q('probeRetrieve').disabled=true;q('probeInventory').textContent='Awaiting native probe stock.';q('probeFeedback').textContent='Native equipment required.';q('fittingCapacity').textContent='Awaiting actual ship fittings.';q('proximityStatus').textContent='Proximity safety sensor awaiting contacts.';q('fitScanner').disabled=true;q('unfitScanner').disabled=true;discoveries.clear();q('explorationResults').replaceChildren();q('explorationSummary').textContent='No mapped discoveries yet. Execute a native local scan.';salvageWrecks.clear();q('salvageTarget').replaceChildren(new Option('No recoverable wreck reported',''));q('salvageRecover').disabled=true;q('salvageFeedback').textContent='Waiting for native wreck inventory.';combatTargets.clear();q('combatHull').textContent='—';q('combatCharges').textContent='—';q('combatFire').disabled=true;q('combatFeedback').textContent='Awaiting native combat telemetry.';window.GalaxySelectedRockId=null;window.GalaxyShipHeading=null;window.GalaxyColonyOutpostIds.clear();openingStatus=null;openingScanned=false;refreshOpening();window.GalaxyColonyHomeShipId=null;q('colonySafetyAssess').disabled=true;q('colonySafetyPreflight').disabled=true;policyAudits.clear();geology.clear();small.clear();stocks.clear();outposts.clear();farms.clear();habitats.clear();utilities.clear();communities.clear();clinics.clear();reclaimers.clear();waterworks.clear();log.length=0;q('colonyEvents').textContent='Awaiting colony telemetry…';q('expeditionOutcome').textContent='Awaiting an actual native result';},
+   reset(){q('droneTarget').replaceChildren(new Option('Scan nearby rocks first',''));q('droneLaunch').disabled=true;deployedProbes.clear();probeCarried=0;probeLauncher=false;probeChoice='';q('probeTarget').replaceChildren(new Option('No probe deployed',''));q('probeLaunch').disabled=true;q('probeSurvey').disabled=true;q('probeRetrieve').disabled=true;q('probeInventory').textContent='Awaiting native probe stock.';q('probeFeedback').textContent='Native equipment required.';q('fittingCapacity').textContent='Awaiting actual ship fittings.';q('proximityStatus').textContent='Proximity safety sensor awaiting contacts.';q('fitScanner').disabled=true;q('unfitScanner').disabled=true;discoveries.clear();q('explorationResults').replaceChildren();q('explorationSummary').textContent='No mapped discoveries yet. Execute a native local scan.';salvageWrecks.clear();q('salvageTarget').replaceChildren(new Option('No recoverable wreck reported',''));q('salvageRecover').disabled=true;q('salvageFeedback').textContent='Waiting for native wreck inventory.';combatTargets.clear();q('combatHull').textContent='—';q('combatCharges').textContent='—';q('combatFire').disabled=true;q('combatFeedback').textContent='Awaiting native combat telemetry.';window.GalaxySelectedRockId=null;window.GalaxyShipHeading=null;window.GalaxyColonyOutpostIds.clear();openingStatus=null;openingScanned=false;refreshOpening();window.GalaxyColonyHomeShipId=null;q('colonySafetyAssess').disabled=true;q('colonySafetyPreflight').disabled=true;policyAudits.clear();geology.clear();small.clear();stocks.clear();outposts.clear();farms.clear();habitats.clear();utilities.clear();communities.clear();clinics.clear();reclaimers.clear();waterworks.clear();log.length=0;q('colonyEvents').textContent='Awaiting colony telemetry…';q('expeditionOutcome').textContent='Awaiting an actual native result';},
    accept(raw){const e=window.GalaxyColonyContract.decode(raw);
      if(e.type==='PROBE_RESET'){
         probeChoice=q('probeTarget').value||probeChoice;
@@ -333,7 +341,9 @@
         deployedProbes.delete(e.id);
         const select=q('probeTarget'),current=select.value;
         select.replaceChildren(new Option('Choose deployed probe',''),...[...deployedProbes].map(([id,p])=>
-          new Option('#'+id+' · '+p.x+', '+p.y+' mm',String(id))));
+          new Option('#'+id+' · '+p.x+', '+p.y+' mm'+
+            (p.phase?' · drone '+['','outbound','returning','ready'][p.phase]+
+            ' · sampled '+p.sample+' t':' · stationary probe'),String(id))));
         if([...select.options].some(o=>o.value===current))select.value=current;
         q('probeSurvey').disabled=!probeLauncher||!select.value;
         q('probeRetrieve').disabled=!probeLauncher||!select.value;
@@ -343,6 +353,7 @@
         q('probeInventory').textContent=probeCarried+' aboard · '+(probeLauncher?'launcher fitted':'no launcher fitted')+
           ' · '+deployedProbes.size+' currently deployed';
         q('probeLaunch').disabled=!probeLauncher||probeCarried===0;
+        q('droneLaunch').disabled=!probeLauncher||!probeCarried||!q('droneTarget').value;
         q('probeSurvey').disabled=!probeLauncher||!q('probeTarget').value;
         q('probeRetrieve').disabled=!probeLauncher||!q('probeTarget').value;
       }
@@ -559,6 +570,12 @@
        ...[...geology.values()].map(rock=>({id:rock.id,name:window.GalaxyColonyContract.names[rock.classId]})),
        ...[...small].map(([id,remaining])=>({id,name:'Small asteroid · '+remaining+' t'}))
      ].sort((x,y)=>x.id-y.id);
+     const droneSelect=q('droneTarget'),oldDrone=droneSelect.value;
+     const geologicalTargets=[...geology.values()].filter(rock=>rock.remaining>0);
+     droneSelect.replaceChildren(new Option('Choose geological asteroid',''),
+       ...geologicalTargets.map(rock=>new Option('#'+rock.id+' · '+window.GalaxyColonyContract.names[rock.classId],String(rock.id))));
+     if([...droneSelect.options].some(option=>option.value===oldDrone))droneSelect.value=oldDrone;
+     q('droneLaunch').disabled=!probeLauncher||!probeCarried||!droneSelect.value;
      selected.replaceChildren(new Option('Select a scanned rock',''),...targets.map(rock=>
        new Option(`#${rock.id} · ${rock.name}`,String(rock.id))));
      if(window.GalaxySelectedRockId!==null&&!targets.some(rock=>rock.id===window.GalaxySelectedRockId))
