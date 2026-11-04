@@ -161,19 +161,23 @@ std::vector<SignatureContact> SurveySensors::coarse_signatures(PlayerId owner,
     return results;
 }
 std::optional<RefinementPlan> SurveySensors::plan_refinement(PlayerId owner,
-    std::uint32_t system,std::uint64_t signature,std::int64_t scan_radius_mm,
+    std::uint32_t system,std::uint64_t signature,Vector2 scanner_position,
+    std::int64_t discovery_range_mm,std::int64_t scan_radius_mm,
     int sensor_strength) const {
-    if(!owner||!signature||scan_radius_mm<=0||
+    if(!owner||!signature||!bounded(scanner_position)||discovery_range_mm<=0||
+       discovery_range_mm>Simulation::kWorldBoundMm*2||scan_radius_mm<=0||
        scan_radius_mm>Simulation::kWorldBoundMm*2||
        sensor_strength<1||sensor_strength>100)
         throw std::invalid_argument("invalid signature refinement request");
-    // The caller must have a coarse signature; a guessed ID does not unlock
-    // arbitrary targets. This plan is for the trusted host, never a client map.
+    // A lock requires the actual target to be detectable from the trusted
+    // host's current scanner location and configured range. This plan is for the trusted host, never a client map.
     const auto& sites=map_.sites(system);
     const auto target=std::find_if(sites.begin(),sites.end(),
         [signature](const SpaceSite& s){return s.id==signature;});
     if(target==sites.end()||target->mapped_on_entry||target->probe_difficulty==0||
-       sensor_strength<(target->probe_difficulty+1)/2)
+       sensor_strength<(target->probe_difficulty+1)/2||
+       std::hypot(double(target->position.x)-scanner_position.x,
+                  double(target->position.y)-scanner_position.y)>double(discovery_range_mm))
         return std::nullopt;
     std::vector<std::uint64_t> owned;
     for(const auto& [id,p]:probes_)
