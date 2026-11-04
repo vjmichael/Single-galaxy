@@ -1212,3 +1212,13 @@ if(BUILD_TESTING)
   add_test(NAME galaxy_play13c_frame_visibility
     COMMAND galaxy_play13c_frame_visibility_tests)
 endif()
+
+# PLAY-13C.4: generated deposits are debited from finite existing ore,
+# spatially anchored, exactly persisted, mined, and never reseeded.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13c_local_region_tests
+    tests/PLAY13C_LocalRegionGenerationTests.cpp)
+  target_link_libraries(galaxy_play13c_local_region_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13c_local_region
+    COMMAND galaxy_play13c_local_region_tests)
+endif()
