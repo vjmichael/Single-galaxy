@@ -473,7 +473,14 @@ bool SurveyArchive::record_planetary_region(PlayerId owner,std::uint32_t system,
     Stmt stmt(db_,"INSERT INTO planetary_regions(player,system,body,latitude,longitude,"
         "revision,elevation,ocean,terrain,watercourse,drainage,down_lat,down_lon,observed_tick) "
         "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(player,system,body,latitude,longitude,revision) "
-        "DO UPDATE SET observed_tick=MAX(planetary_regions.observed_tick,excluded.observed_tick)");
+        "DO UPDATE SET observed_tick=MAX(planetary_regions.observed_tick,excluded.observed_tick) "
+        "WHERE planetary_regions.elevation=excluded.elevation "
+        "AND planetary_regions.ocean=excluded.ocean "
+        "AND planetary_regions.terrain=excluded.terrain "
+        "AND planetary_regions.watercourse=excluded.watercourse "
+        "AND planetary_regions.drainage=excluded.drainage "
+        "AND planetary_regions.down_lat=excluded.down_lat "
+        "AND planetary_regions.down_lon=excluded.down_lon");
     sqlite3_bind_int64(stmt.get(),1,sqlite3_int64(owner));
     sqlite3_bind_int(stmt.get(),2,int(system));
     sqlite3_bind_int64(stmt.get(),3,sqlite3_int64(body));
@@ -489,6 +496,10 @@ bool SurveyArchive::record_planetary_region(PlayerId owner,std::uint32_t system,
     sqlite3_bind_int(stmt.get(),13,site.downstream_longitude);
     sqlite3_bind_int64(stmt.get(),14,sqlite3_int64(observed_tick));
     stmt.step();
+    // An existing conflicting revision can never be silently replaced,
+    // including when concurrent survey writers race after an earlier read.
+    if(sqlite3_changes(db_)==0)
+        throw std::runtime_error("planet geography revision conflict at SQLite commit");
     return true;
 }
 SurveyArchive::~SurveyArchive(){if(db_)sqlite3_close(db_);}
