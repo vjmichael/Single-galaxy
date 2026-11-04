@@ -8641,7 +8641,14 @@ bool PersistentWorld::begin_celestial_transit(
     const auto decision=plan_celestial_frame_arrival(world_,owner,ship,body,id);
     if(!decision.plan)return false;
     const auto frame=world_.ship_frames_.find(ship);
-    if(frame==world_.ship_frames_.end())return false;
+    if(frame==world_.ship_frames_.end() || frame->second.anchor_body==body)
+        return false;
+    // Do not strand an ongoing ferry/evacuation voyage by moving its hull
+    // to a different local frame while origin/receiver custody is unresolved.
+    for(const auto& [voyage_id,v]:world_.voyages_){
+        (void)voyage_id;
+        if(v.ferry==ship && (v.status==1 || v.status==3))return false;
+    }
     // No pending ordinary command may race the beginning of transport.
     for(const auto& [when,commands]:world_.commands_) {
         (void)when;
