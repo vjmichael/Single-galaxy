@@ -5306,9 +5306,18 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             if(result.snapshot_version_>=69){
                 p.focus_site=u64(f[14]);
                 p.focus_waypoint={i64(f[15]),i64(f[16])};
-                if((p.focus_site && (p.drone_phase||!result.valid_position(p.focus_waypoint)))||
+                if((p.focus_site && (p.drone_phase||
+                       p.focus_site>=result.next_entity_id_||
+                       !result.valid_position(p.focus_waypoint)))||
                    (!p.focus_site && (p.focus_waypoint.x||p.focus_waypoint.y)))
                     throw std::runtime_error("snapshot: invalid probe focus");
+            }
+            if(p.focus_site){
+                const auto site=result.entities_.find(p.focus_site);
+                if(site!=result.entities_.end() &&
+                   (site->second.type!=EntityType::Asteroid||
+                    site->second.system_id!=system))
+                    throw std::runtime_error("snapshot: focused probe site mismatch");
             }
             if(!p.id || !p.carrier || !p.owner ||
                !system || system>std::numeric_limits<std::uint32_t>::max() ||
