@@ -300,6 +300,7 @@
  const combatTargets=new Map();
  const salvageWrecks=new Map();
  const deployedProbes=new Map();
+ const signatureContacts=new Map();
  let probeCarried=0,probeLauncher=false,probeChoice='';
  const discoveries=new Map();
  window.GalaxySalvageStock=salvageWrecks;
@@ -355,8 +356,30 @@
        guide.action==='colonyFabricate'?{amount:4}:{});
  });
  window.GalaxyColony={
-   reset(){q('droneTarget').replaceChildren(new Option('Scan nearby rocks first',''));q('droneLaunch').disabled=true;deployedProbes.clear();probeCarried=0;probeLauncher=false;probeChoice='';q('probeTarget').replaceChildren(new Option('No probe deployed',''));q('probeLaunch').disabled=true;q('probeSurvey').disabled=true;q('probeRetrieve').disabled=true;q('probeInventory').textContent='Awaiting native probe stock.';q('probeFeedback').textContent='Native equipment required.';q('fittingCapacity').textContent='Awaiting actual ship fittings.';q('proximityStatus').textContent='Proximity safety sensor awaiting contacts.';q('fitScanner').disabled=true;q('unfitScanner').disabled=true;discoveries.clear();q('explorationResults').replaceChildren();q('explorationSummary').textContent='No mapped discoveries yet. Execute a native local scan.';salvageWrecks.clear();q('salvageTarget').replaceChildren(new Option('No recoverable wreck reported',''));q('salvageRecover').disabled=true;q('salvageFeedback').textContent='Waiting for native wreck inventory.';combatTargets.clear();q('combatHull').textContent='—';q('combatCharges').textContent='—';q('combatFire').disabled=true;q('combatFeedback').textContent='Awaiting native combat telemetry.';window.GalaxySelectedRockId=null;window.GalaxyShipHeading=null;window.GalaxyColonyOutpostIds.clear();openingStatus=null;openingScanned=false;refreshOpening();window.GalaxyColonyHomeShipId=null;q('colonySafetyAssess').disabled=true;q('colonySafetyPreflight').disabled=true;policyAudits.clear();geology.clear();small.clear();stocks.clear();outposts.clear();farms.clear();habitats.clear();utilities.clear();communities.clear();clinics.clear();reclaimers.clear();waterworks.clear();log.length=0;q('colonyEvents').textContent='Awaiting colony telemetry…';q('expeditionOutcome').textContent='Awaiting an actual native result';},
+   reset(){signatureContacts.clear();
+     q('signatureTarget').replaceChildren(new Option('Scan to detect signals',''));
+     q('signatureFocus').disabled=true;q('signatureCancel').disabled=true;
+     q('signatureFeedback').textContent='Search for coarse anomaly signatures.';
+     q('droneTarget').replaceChildren(new Option('Scan nearby rocks first',''));q('droneLaunch').disabled=true;deployedProbes.clear();probeCarried=0;probeLauncher=false;probeChoice='';q('probeTarget').replaceChildren(new Option('No probe deployed',''));q('probeLaunch').disabled=true;q('probeSurvey').disabled=true;q('probeRetrieve').disabled=true;q('probeInventory').textContent='Awaiting native probe stock.';q('probeFeedback').textContent='Native equipment required.';q('fittingCapacity').textContent='Awaiting actual ship fittings.';q('proximityStatus').textContent='Proximity safety sensor awaiting contacts.';q('fitScanner').disabled=true;q('unfitScanner').disabled=true;discoveries.clear();q('explorationResults').replaceChildren();q('explorationSummary').textContent='No mapped discoveries yet. Execute a native local scan.';salvageWrecks.clear();q('salvageTarget').replaceChildren(new Option('No recoverable wreck reported',''));q('salvageRecover').disabled=true;q('salvageFeedback').textContent='Waiting for native wreck inventory.';combatTargets.clear();q('combatHull').textContent='—';q('combatCharges').textContent='—';q('combatFire').disabled=true;q('combatFeedback').textContent='Awaiting native combat telemetry.';window.GalaxySelectedRockId=null;window.GalaxyShipHeading=null;window.GalaxyColonyOutpostIds.clear();openingStatus=null;openingScanned=false;refreshOpening();window.GalaxyColonyHomeShipId=null;q('colonySafetyAssess').disabled=true;q('colonySafetyPreflight').disabled=true;policyAudits.clear();geology.clear();small.clear();stocks.clear();outposts.clear();farms.clear();habitats.clear();utilities.clear();communities.clear();clinics.clear();reclaimers.clear();waterworks.clear();log.length=0;q('colonyEvents').textContent='Awaiting colony telemetry…';q('expeditionOutcome').textContent='Awaiting an actual native result';},
    accept(raw){const e=window.GalaxyColonyContract.decode(raw);
+     if(e.type==='SIGNATURE_RESET'){
+       signatureContacts.clear();
+       q('signatureTarget').replaceChildren(new Option('No signatures detected',''));
+       q('signatureFocus').disabled=true;
+     }
+     if(e.type==='SIGNATURE_CONTACT'){
+       signatureContacts.set(e.id,e);
+       const select=q('signatureTarget'),chosen=select.value;
+       select.replaceChildren(new Option('Select signature',''),
+         ...[...signatureContacts].map(([id,p])=>new Option(
+           '#'+id+' · coarse '+p.x+', '+p.y+' mm (±'+p.uncertainty+' mm)',String(id))));
+       if([...select.options].some(option=>option.value===chosen))select.value=chosen;
+       q('signatureFocus').disabled=!select.value||!q('probeTarget').value;
+     }
+     if(e.type==='SIGNATURE_DONE'){
+       q('signatureFeedback').textContent=e.count+
+         ' nearby signatures detected. Select one, choose a deployed probe and lock on.';
+     }
      if(e.type==='PROBE_RESET'){
         probeChoice=q('probeTarget').value||probeChoice;
         deployedProbes.clear();
@@ -395,7 +418,13 @@
         const p=deployedProbes.get(Number(selected.value));
         q('probeRetrieve').disabled=!probeLauncher||!p||
           (p.phase!==0 && p.phase!==3);
-        q('probeSurvey').disabled=!probeLauncher||!p||p.phase!==0;
+        q('probeSurvey').disabled=!probeLauncher||!p||p.phase!==0||!!p.focus;
+        q('signatureFocus').disabled=!probeLauncher||!p||!!p.focus||!q('signatureTarget').value;
+        q('signatureCancel').disabled=!probeLauncher||!p||!p.focus;
+        if(p&&p.focus)
+          q('signatureFeedback').textContent='Probe #'+p.id+
+            ' refining signature #'+p.focus+' · native waypoint progress: '+
+            p.x+', '+p.y+' mm';
         q('probeFeedback').textContent=e.phase?
           'Geological drone #'+e.id+' · '+
           ['','outbound','returning','ready to recover'][e.phase]+
