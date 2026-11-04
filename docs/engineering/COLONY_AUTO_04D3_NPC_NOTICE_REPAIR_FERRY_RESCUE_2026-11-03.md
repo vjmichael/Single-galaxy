@@ -32,7 +32,7 @@ This narrow path does **not** evacuate the source ferry's operating crew, whole 
 
 - `COLONY_AUTO04D3_NpcNoticeTests.cpp`: 4 physically present founding NPCs, three real shortage transitions, 12 durable opportunities, no automatic acks, host acknowledgment, duplicate retry refusal, forged recipient refusal, crash rollback, restart recovery and tamper refusal.
 - `COLONY_AUTO04D3_PhysicalRepairTests.cpp`: initial owner maintenance delegation disabled; actual finite utility spares + onsite technicians + critical state; module consumed, installed mass conserved, repaired condition and persistent state after restart.
-- `COLONY_AUTO04D3_FerryRescueTests.cpp`: real two-ship world, named passenger voyage, refusal while source healthy, forged/incomplete manifest denial, critical shortage, stocked receiver, actual execution and restart preserving disjoint custody.
+- `COLONY_AUTO04D3_FerryRescueTests.cpp`: real two-ship world, named passenger voyage, refusal while source healthy, forged/incomplete manifest denial, refusal of a nearby **understocked** real rescue ship, critical shortage, stocked receiver, actual execution and restart preserving disjoint custody.
 
 `.github/workflows/colony-auto04d3.yml` builds native tests and checks predecessor v69 journal, authenticated relay, and delegated maintenance regression. **A successful commit or PR is not acceptance**; close only after direct CI evidence.
 
@@ -43,3 +43,9 @@ This narrow path does **not** evacuate the source ferry's operating crew, whole 
 3. Integrate actual dependent manifests and legal guardianship, all-or-nothing group rescue and operating crew rehoming; do not split children or duplicate any survivor.
 4. Provide physically routed and debited **inter-colony supply** and evacuation with emergency independent command authority (not player veto), with failure modes where colonists can remain stranded.
 5. Verify cold/detailed mode generation and resource reconciliation and Windows acceptance, plus broaden full suite beyond focused CI.
+
+## Verification evidence
+
+- The first complete focused v70 acceptance run (GitHub Actions run **41749660837**) passed **8 of 8** CTests, including native outbox, stocked emergency repair and three-vessel rescue. Its tested commit was `7b69cecbe795f7c02af1869b155caa085fd812ce`.
+- A subsequent explicit understocked-recipient refusal test is a new change; require its own green run before claiming the latest head is verified.
+- This is a focused Linux acceptance only, not a complete cold/warm, dependent-custody, or Windows acceptance.
