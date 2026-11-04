@@ -2713,15 +2713,26 @@ Event Simulation::execute(const Command& c) {
                         if(e.type!=EntityType::Asteroid || e.system_id!=probe.system)continue;
                         const auto dx=e.position.x-probe.position.x,dy=e.position.y-probe.position.y;
                         if(dx< -r || dx>r || dy< -r || dy>r || dx*dx+dy*dy>r*r)continue;
-                        if(!discoveries_.count({c.issuer,id}))
+                        const auto key=std::make_pair(c.issuer,id);
+                        if(!discoveries_.count(key)&&!pending_probe_discoveries_.count(key))
                             candidates.push_back(DiscoveryRecord{c.issuer,id,e.system_id,e.position,
                                 tick_,geology_.count(id)!=0});
                     }
-                    if(candidates.size()>10000-discoveries_.size()){
+                    if(pending_probe_discoveries_.size()>10000-discoveries_.size()||
+                       candidates.size()>10000-discoveries_.size()-pending_probe_discoveries_.size()||
+                       probe_report_delay_ticks_>std::numeric_limits<std::uint64_t>::max()-tick_){
                         result.result=Outcome::InvalidArgument;return result;
                     }
-                    for(const auto& d:candidates)
-                        discoveries_.emplace(std::make_pair(d.owner,d.site),d);
+                    // Native authority: a probe scan schedules observations,
+                    // not instant player knowledge. A 10-second gameplay
+                    // response is configured in committed simulation ticks.
+                    for(const auto& d:candidates) {
+                        const auto key=std::make_pair(d.owner,d.site);
+                        pending_probe_discoveries_.emplace(key,
+                            PendingProbeDiscovery{d,c.actor,probe.id,
+                                tick_+probe_report_delay_ticks_});
+                    }
+                    snapshot_version_=std::max(snapshot_version_,68);
                     result.transferred=static_cast<std::int64_t>(candidates.size());
                     result.result=Outcome::Applied;
                 }else{
@@ -4562,6 +4573,12 @@ void Simulation::process_storage_links() {
     }
 }
 
+void Simulation::configure_probe_report_tick_ms(std::uint64_t tick_ms) {
+    if(tick_ms<20||tick_ms>5000)
+        throw std::invalid_argument("invalid probe timing period");
+    probe_report_delay_ticks_=(10000ULL+tick_ms-1)/tick_ms;
+    snapshot_version_=std::max(snapshot_version_,68);
+}
 void Simulation::step() {
     if (tick_ == std::numeric_limits<std::uint64_t>::max()) throw std::overflow_error("tick counter exhausted");
     ++tick_;
@@ -4626,6 +4643,37 @@ void Simulation::step() {
             discoveries_.emplace(key,DiscoveryRecord{p.owner,p.drone_target,
                 p.system,position,tick_,true,p.taxonomy});
         }
+    }
+    // v68: release verified discoveries after the ten-second nominal delay.
+    // A disconnected physical probe retains its pending results. Recovery of
+    // that probe into its owning ship does not destroy data custody.
+    if(snapshot_version_>=68)for(auto it=pending_probe_discoveries_.begin();
+       it!=pending_probe_discoveries_.end();) {
+        const auto& pending=it->second;
+        if(tick_<pending.ready_tick){++it;continue;}
+        const auto carrier=entities_.find(pending.carrier);
+        if(carrier==entities_.end()||carrier->second.type!=EntityType::Ship||
+           carrier->second.owner_id!=pending.report.owner||
+           carrier->second.system_id!=pending.report.system) {
+            ++it;continue;
+        }
+        const auto probe=survey_probes_.find(pending.probe_id);
+        if(probe!=survey_probes_.end()) {
+            if(probe->second.owner!=pending.report.owner||
+               probe->second.carrier!=pending.carrier||
+               probe->second.system!=pending.report.system) {
+                ++it;continue;
+            }
+            const auto dx=probe->second.position.x-carrier->second.position.x;
+            const auto dy=probe->second.position.y-carrier->second.position.y;
+            constexpr auto range=kDeepSpaceProbeCommsRangeMm;
+            if(dx<-range||dx>range||dy<-range||dy>range){
+                ++it;continue;
+            }
+        }
+        if(discoveries_.size()<10000 && !discoveries_.count(it->first))
+            discoveries_.emplace(it->first,pending.report);
+        it=pending_probe_discoveries_.erase(it);
     }
     process_gate_maintenance();
     process_utilities();
