@@ -917,6 +917,10 @@ public:
     const std::map<PlanetarySiteKey,PlanetarySiteFacility>& planetary_sites() const {
         return planetary_sites_;
     }
+    // The existing finite body-level oasis reservoir is anchored to one
+    // deterministic exposed surface cell. No worldwide resource teleport.
+    std::optional<planetary::PlanetaryRegionKey> planetary_oasis_source_region(
+        PlayerId owner,EntityId ship,std::uint64_t body) const;
     bool build_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
         std::uint16_t latitude,std::uint16_t longitude);
     // Install only with more real manufactured modules and appropriate ground.
