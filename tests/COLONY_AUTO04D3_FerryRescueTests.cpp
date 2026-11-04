@@ -10,20 +10,22 @@ int main(){
 try{
     const auto path=(std::filesystem::temp_directory_path()/
       ("sg_auto04d3_rescue_"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count())+".sqlite")).string();
-    std::int64_t mass=0;EntityId source=0,origin=0,receiver=0;
+    std::int64_t mass=0;EntityId source=0,origin=0,receiver=0,understocked=0;
     {
         Simulation initial(700433);
         source=initial.add_colony_ship(7,{0,0},100,4);
         origin=initial.add_colony_ship(8,{0,0},100,4);
         receiver=initial.add_colony_ship(9,{0,0},100,4);
+        understocked=initial.add_colony_ship(10,{0,0},100,4);
         CHECK(source!=origin && origin!=receiver);
         initial.provision_colony_genesis(source,100,100,100,200,500);
         initial.provision_colony_genesis(origin,1000,1000,1000,1000,1000);
         initial.provision_colony_genesis(receiver,1000,1000,1000,1000,1000);
+        initial.provision_colony_genesis(understocked,100,100,100,200,500);
         initial.enable_individual_workforce();
         initial.upgrade_assignment_snapshot_format();
         initial.enable_medical_workforce_rules();
-        CHECK(initial.npc_records().size()==12);
+        CHECK(initial.npc_records().size()==16);
         mass=initial.total_material_kg();
         PersistentWorld w(path,std::move(initial));
         Command board{};
@@ -50,6 +52,8 @@ try{
         w.steps(480-w.world().tick());
         CHECK(colony_safety::assess(w.world(),source,source).risk==colony_safety::Risk::Critical);
         rescue.execute_tick=w.world().tick()+1;
+        auto starved_receiver=rescue;starved_receiver.target=understocked;
+        CHECK(!w.submit_host_emergency_ferry_rescue(starved_receiver));
         auto incomplete=rescue;incomplete.passenger_ids={5,6,7};
         CHECK(!w.submit_host_emergency_ferry_rescue(incomplete));
         auto forged=rescue;forged.issuer=7;
@@ -65,7 +69,7 @@ try{
         CHECK(w.world().voyage_status(1003)==1);
         CHECK(w.world().passengers_aboard(source)==0);
         CHECK(w.world().passengers_aboard(receiver)==4);
-        CHECK(w.world().npc_records().size()==12);
+        CHECK(w.world().npc_records().size()==16);
         CHECK(w.world().colony_ship(source)->crew==4); // native ship crew NOT falsely rescued
         CHECK(w.world().total_material_kg()==mass);
     }
@@ -76,7 +80,7 @@ try{
         CHECK(recovered.world().passengers_aboard(source)==0);
         CHECK(recovered.world().passengers_aboard(receiver)==4);
         CHECK(recovered.world().colony_ship(source)->crew==4);
-        CHECK(recovered.world().npc_records().size()==12);
+        CHECK(recovered.world().npc_records().size()==16);
         CHECK(recovered.world().total_material_kg()==mass);
     }
     std::filesystem::remove(path);
