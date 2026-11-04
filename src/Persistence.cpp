@@ -2368,7 +2368,8 @@ public:
         const Simulation& world,std::uint64_t generation,
         std::uint64_t pressure_event,EntityId origin,EntityId destination,
         EntityId ferry,std::uint64_t npc,std::uint64_t transport_id,
-        PlayerId receiving_owner,bool require_current_custody=false) const{
+        PlayerId receiving_owner,bool require_current_custody=false,
+        bool historical_legacy_personal_rule=false) const{
         if(!pressure_event || !origin || !destination || !ferry ||
            origin==destination || ferry==origin || ferry==destination ||
            !npc || !transport_id || !receiving_owner)
@@ -2415,7 +2416,8 @@ public:
         // recovering resident may cease wanting to leave even with a
         // historical critical-shortage witness on file.
         const auto own=personal_outlook_before(origin,npc,generation);
-        if(!own || !own->considering_departure)
+        if(!historical_legacy_personal_rule &&
+           (!own || !own->considering_departure))
             throw std::runtime_error("resident has no active historically grounded decision to depart");
         Statement pressure(db_,"SELECT world_generation,colony,source_owner,npc,"
             "governance_event,risk FROM sg_colony_npc_exit_pressure WHERE event_id=?");
@@ -2432,8 +2434,18 @@ public:
            witnessed!=npc || past_govt<0 ||
            old_risk<2 || old_risk>3 || pressure.row())
             throw std::runtime_error("pressure witness does not belong to this adult/current government");
+        // Read-only backward compatibility: the earlier EXIT-01B issue
+        // required critical scarcity *at the actual permit generation*, not
+        // a personal mood record which did not yet exist.
+        if(historical_legacy_personal_rule &&
+           (static_cast<int>(colony_safety::assess(
+                  world,origin,origin).risk)<
+                static_cast<int>(colony_safety::Risk::Critical) ||
+            static_cast<std::uint64_t>(past_govt)!=govt.event_id))
+            throw std::runtime_error("legacy immigrant had no real crisis at issuance");
         PersistentWorld::VoluntaryImmigrationAdmission a;
         a.exit_pressure_event_id=pressure_event;
+        a.personal_outlook_event_id=historical_legacy_personal_rule?0:own->event_id;
         a.world_generation=generation;
         a.npc_id=npc;a.transport_id=transport_id;
         a.origin=origin;a.destination=destination;a.ferry=ferry;
@@ -2463,15 +2475,31 @@ public:
                 "ferry TEXT NOT NULL,npc TEXT NOT NULL,"
                 "transport TEXT NOT NULL UNIQUE,"
                 "original_owner TEXT NOT NULL,receiving_owner TEXT NOT NULL,"
-                "governance_event INTEGER NOT NULL CHECK(governance_event>=0))");
+                "governance_event INTEGER NOT NULL CHECK(governance_event>=0),"
+                "personal_intent_event INTEGER NOT NULL DEFAULT 0 "
+                "CHECK(personal_intent_event>=0))");
+            // Pre-EXIT01C saves have a 13-column immutable admission table;
+            // preserve all its original records with a typed zero legacy
+            // personal intent, rather than rewriting their historical terms.
+            bool has_intent=false;
+            {Statement info(db_,"PRAGMA table_info(sg_colony_voluntary_immigration)");
+             while(info.row())if(sqlite_str(info.get(),1)=="personal_intent_event")
+                 has_intent=true;}
+            if(!has_intent)
+                run(db_,"ALTER TABLE sg_colony_voluntary_immigration ADD COLUMN "
+                    "personal_intent_event INTEGER NOT NULL DEFAULT 0 "
+                    "CHECK(personal_intent_event>=0)");
             run(db_,"CREATE TRIGGER IF NOT EXISTS sg_voluntary_immigration_no_update "
                 "BEFORE UPDATE ON sg_colony_voluntary_immigration "
                 "BEGIN SELECT RAISE(ABORT,'immutable receiving colony admission'); END");
             run(db_,"CREATE TRIGGER IF NOT EXISTS sg_voluntary_immigration_no_delete "
                 "BEFORE DELETE ON sg_colony_voluntary_immigration "
                 "BEGIN SELECT RAISE(ABORT,'immutable receiving colony admission'); END");
-            Statement ins(db_,"INSERT INTO sg_colony_voluntary_immigration "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)");
+            Statement ins(db_,"INSERT INTO sg_colony_voluntary_immigration ("
+                "event_id,world_generation,world_hash,tick,pressure_event,"
+                "origin,destination,ferry,npc,transport,original_owner,"
+                "receiving_owner,governance_event,personal_intent_event) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
             ins.i64(1,static_cast<sqlite3_int64>(event));
             ins.i64(2,static_cast<sqlite3_int64>(generation));
             ins.text(3,std::to_string(world.state_hash()));
@@ -2486,6 +2514,9 @@ public:
             ins.text(12,std::to_string(receiving_owner));
             ins.i64(13,static_cast<sqlite3_int64>(
                 effective_governance(origin,generation).event_id));
+            ins.i64(14,static_cast<sqlite3_int64>(a.personal_outlook_event_id));
+            if(!a.personal_outlook_event_id)
+                throw std::runtime_error("new admission cannot omit actual personal intent");
             ins.execute();
             run(db_,"COMMIT");
             a.event_id=event;
