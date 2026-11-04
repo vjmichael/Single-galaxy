@@ -5331,13 +5331,19 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                     if(site->second.type!=EntityType::Asteroid||
                        site->second.system_id!=system)
                         throw std::runtime_error("snapshot: focused probe site mismatch");
-                    constexpr std::int64_t quantum=25000;
-                    const auto quant=[](std::int64_t value){
+                    const auto quant=[](std::int64_t value,std::int64_t quantum){
                         return (value>=0 ? (value+quantum/2)/quantum :
                             -((-value+quantum/2)/quantum))*quantum;
                     };
-                    if(p.focus_waypoint.x!=quant(site->second.position.x)||
-                       p.focus_waypoint.y!=quant(site->second.position.y))
+                    const Vector2 coarse{quant(site->second.position.x,5000000),
+                                         quant(site->second.position.y,5000000)};
+                    const Vector2 refined{quant(site->second.position.x,25000),
+                                          quant(site->second.position.y,25000)};
+                    const bool coarse_match=p.focus_waypoint.x==coarse.x&&
+                                            p.focus_waypoint.y==coarse.y;
+                    const bool refined_match=p.focus_waypoint.x==refined.x&&
+                                             p.focus_waypoint.y==refined.y;
+                    if(!coarse_match&&!refined_match)
                         throw std::runtime_error("snapshot: forged probe waypoint");
                 }
             }
