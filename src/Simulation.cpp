@@ -5198,16 +5198,16 @@ bool Simulation::equip_planetary_site(PlayerId owner,EntityId ship,
     const auto site=scan_planetary_geography(owner,ship,body,latitude,longitude);
     const auto frame=ship_frames_.find(ship);
     auto colony=colony_ships_.find(ship);
+    const auto source=farm?std::optional<planetary::PlanetaryRegionKey>{}:
+        planetary_oasis_source_region(owner,ship,body);
     if(!site || !owner || it==planetary_sites_.end() ||
        it->second.owner!=owner || it->second.source_ship!=ship ||
        frame==ship_frames_.end() || frame->second.anchor_body!=body ||
        colony==colony_ships_.end() || colony->second.modules<2 ||
        colony->second.crew<2 || (farm?it->second.farm:it->second.extractor) ||
        (farm && !site->landscape.region.farming_possible) ||
-       (!farm && (!oasis_reserves_.count(body) ||
-          !planetary_oasis_source_region(owner,ship,body) ||
-          planetary_oasis_source_region(owner,ship,body)->latitude!=latitude ||
-          planetary_oasis_source_region(owner,ship,body)->longitude!=longitude)))
+       (!farm && (!oasis_reserves_.count(body) || !source ||
+                  source->latitude!=latitude || source->longitude!=longitude)))
         return false;
     colony->second.modules-=2;
     it->second.embodied_ore+=4;
@@ -5260,13 +5260,13 @@ bool Simulation::extract_planetary_site(PlayerId owner,EntityId ship,
     auto site=planetary_sites_.find(key);
     auto reserve=oasis_reserves_.find(body);
     const auto frame=ship_frames_.find(ship);
+    const auto source_region=planetary_oasis_source_region(owner,ship,body);
     if(!owner || kg<1000 || kg>10000 || kg%1000 ||
        site==planetary_sites_.end() || reserve==oasis_reserves_.end() ||
        site->second.owner!=owner || site->second.source_ship!=ship ||
        !site->second.extractor ||
-       !planetary_oasis_source_region(owner,ship,body) ||
-       planetary_oasis_source_region(owner,ship,body)->latitude!=latitude ||
-       planetary_oasis_source_region(owner,ship,body)->longitude!=longitude ||
+       !source_region || source_region->latitude!=latitude ||
+       source_region->longitude!=longitude ||
        frame==ship_frames_.end() || frame->second.anchor_body!=body)return false;
     auto& source=water?reserve->second.water_kg:reserve->second.nutrients_kg;
     auto& dest=water?site->second.water_kg:site->second.nutrients_kg;
