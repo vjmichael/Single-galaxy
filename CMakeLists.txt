@@ -1077,3 +1077,13 @@ if(BUILD_TESTING)
     add_test(NAME galaxy_colony_exit01b_immigration
         COMMAND galaxy_colony_exit01b_immigration_tests)
 endif()
+
+# EXIT-01C: individual history, directional social appraisal and recovered
+# personal decision; the actual immigrant remains the original ART02 record.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_exit01c_personal_tests
+        tests/COLONY_EXIT01C_PersonalHistoryTests.cpp)
+    target_link_libraries(galaxy_colony_exit01c_personal_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_exit01c_personal
+        COMMAND galaxy_colony_exit01c_personal_tests)
+endif()
