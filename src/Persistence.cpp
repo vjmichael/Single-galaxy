@@ -1154,6 +1154,101 @@ public:
     std::uint64_t colony_notification_acknowledgement_count() const {
         return colony_safety::notice::acknowledgement_count(db_);
     }
+    // AUTO-04D.5A: independent admission provenance. No caller-provided
+    // NPC story or receipt header can bypass the persisted real-world state.
+    void verify_autonomous_dispatch(std::uint64_t max_generation) const{
+        Statement exists(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_npc_autonomous_dispatch'");
+        if(!exists.row())return; // older worlds have no autonomous admissions
+        for(const auto* name:{"sg_colony_npc_auto_no_update",
+                              "sg_colony_npc_auto_no_delete"}){
+            Statement trigger(db_,"SELECT 1 FROM sqlite_master WHERE type='trigger' "
+                "AND name=?");
+            trigger.text(1,name);
+            if(!trigger.row() || trigger.row())
+                throw std::runtime_error("autonomous NPC dispatch immutable guard removed");
+        }
+        Statement all(db_,"SELECT command_id,intent_id,admission_generation,world_hash,"
+            "leader_id,observation_id,source,receiver,family_scope,region_scope,risk "
+            "FROM sg_colony_npc_autonomous_dispatch");
+        while(all.row()){
+            const auto command=parse_u64(sqlite3_column_text(all.get(),0));
+            const auto intent=parse_u64(sqlite3_column_text(all.get(),1));
+            const auto gen=sqlite3_column_int64(all.get(),2);
+            const auto hash=sqlite_str(all.get(),3);
+            const auto npc=parse_u64(sqlite3_column_text(all.get(),4));
+            const auto observation=sqlite3_column_int64(all.get(),5);
+            const auto source=parse_u64(sqlite3_column_text(all.get(),6));
+            const auto receiver=parse_u64(sqlite3_column_text(all.get(),7));
+            const auto family=sqlite_str(all.get(),8);
+            const auto region=sqlite_str(all.get(),9);
+            const auto risk=sqlite3_column_int(all.get(),10);
+            if(!command || !intent || command==intent || gen<2 ||
+               static_cast<std::uint64_t>(gen)>max_generation ||
+               !npc || observation<=0 || !source || !receiver || source==receiver ||
+               family.empty() || region.empty() || (risk!=2 && risk!=3))
+                throw std::runtime_error("autonomous NPC dispatch identity corrupted");
+            Statement snap(db_,"SELECT state,checksum FROM snapshots WHERE generation=?");
+            snap.i64(1,gen);
+            if(!snap.row())
+                throw std::runtime_error("autonomous dispatch admission snapshot pruned");
+            const auto* bytes=sqlite3_column_blob(snap.get(),0);
+            const auto size=sqlite3_column_bytes(snap.get(),0);
+            if(!bytes || size<=0 || size>16*1024*1024)
+                throw std::runtime_error("autonomous dispatch snapshot malformed");
+            const auto admitted=Simulation::from_snapshot(std::string(
+                static_cast<const char*>(bytes),static_cast<std::size_t>(size)));
+            if(admitted.state_hash()!=parse_u64(sqlite3_column_text(snap.get(),1)) ||
+               std::to_string(admitted.state_hash())!=hash || snap.row() ||
+               !admitted.has_command_id(command))
+                throw std::runtime_error("autonomous dispatch lacks real accepted world command");
+            const auto leader=admitted.npc_records().find(npc);
+            if(leader==admitted.npc_records().end() ||
+               leader->second.home_ship!=source ||
+               leader->second.location!=source ||
+               leader->second.transport_id ||
+               static_cast<int>(colony_safety::assess(admitted,source,source).risk)!=risk)
+                throw std::runtime_error("autonomous dispatch was not a local urgent NPC response");
+            Statement op(db_,"SELECT kind,state_hash FROM operation_log WHERE generation=?");
+            op.i64(1,gen);
+            if(!op.row() || sqlite3_column_int(op.get(),0)!=1 ||
+               sqlite_str(op.get(),1)!=hash || op.row())
+                throw std::runtime_error("autonomous dispatch lacks canonical admission journal");
+            Statement planned(db_,"SELECT generation,source,receiver,family_scope,status "
+                "FROM sg_colony_family_departure_prepare WHERE intent_id=?");
+            planned.text(1,std::to_string(intent));
+            if(!planned.row() || sqlite3_column_int64(planned.get(),0)!=gen-1 ||
+               sqlite_str(planned.get(),1)!=std::to_string(source) ||
+               sqlite_str(planned.get(),2)!=std::to_string(receiver) ||
+               sqlite_str(planned.get(),3)!=family ||
+               sqlite3_column_int(planned.get(),4)!=1 || planned.row())
+                throw std::runtime_error("autonomous dispatch lacks prepared real family");
+            Statement notice(db_,"SELECT o.generation,o.tick,o.site,o.risk,"
+                "e.ship,a.delivery_generation "
+                "FROM sg_colony_npc_opportunities o "
+                "JOIN sg_colony_npc_acks a ON a.event_id=o.event_id AND a.npc_id=o.npc_id "
+                "JOIN sg_colony_response_events e ON e.id=o.event_id "
+                "WHERE o.event_id=? AND o.npc_id=?");
+            notice.i64(1,observation);notice.i64(2,static_cast<sqlite3_int64>(npc));
+            if(!notice.row() ||
+               sqlite3_column_int64(notice.get(),0)>gen ||
+               sqlite3_column_int64(notice.get(),1)>
+                   static_cast<sqlite3_int64>(admitted.tick()) ||
+               sqlite3_column_int64(notice.get(),2)!=
+                   static_cast<sqlite3_int64>(source) ||
+               sqlite3_column_int(notice.get(),3)!=risk ||
+               sqlite3_column_int64(notice.get(),4)!=
+                   static_cast<sqlite3_int64>(source) ||
+               sqlite3_column_int64(notice.get(),5)>gen || notice.row())
+                throw std::runtime_error("autonomous dispatch lacks actually delivered NPC notice");
+            Statement newest(db_,"SELECT id FROM sg_colony_response_events "
+                "WHERE site=? AND generation<=? ORDER BY id DESC LIMIT 1");
+            newest.i64(1,static_cast<sqlite3_int64>(source));newest.i64(2,gen);
+            if(!newest.row() ||
+               sqlite3_column_int64(newest.get(),0)!=observation || newest.row())
+                throw std::runtime_error("autonomous dispatch used obsolete warning");
+        }
+    }
     void verify_colony_response(const Simulation& state,std::uint64_t gen) const {
         colony_safety::journal::verify(db_,state,gen);
     }
@@ -6021,6 +6116,7 @@ void PersistentWorld::recover_copy(const std::string& source, const std::string&
         if(!copy.restore(checked,gen,ore,credit))
             throw std::runtime_error("recovery: missing world checkpoint");
         copy.verify_physical_dependent_authority(checked);
+        copy.verify_autonomous_dispatch(gen);
         verify_dependent_stranding_cases(destination,gen);
         verify_split_rescue_intents(destination,gen);
     } catch (...) {
@@ -6054,6 +6150,7 @@ PersistentWorld::PersistentWorld(const std::string& path, Simulation initial_wor
     store_->verify_colony_response(world_,generation_);
     store_->verify_colony_notifications(world_,generation_);
     store_->verify_physical_dependent_authority(world_);
+    store_->verify_autonomous_dispatch(generation_);
 }
 PersistentWorld::~PersistentWorld() = default;
 
@@ -6809,6 +6906,7 @@ bool PersistentWorld::verified_atomic_family_departure(std::uint64_t command_id)
        persisted_generation!=generation_ || reread.state_hash()!=world_.state_hash())
         throw std::runtime_error("family receipt does not match authoritative world");
     store_->verify_physical_dependent_authority(reread);
+    store_->verify_autonomous_dispatch(persisted_generation);
     sqlite3* raw=nullptr;
     if(sqlite3_open_v2(db_path_.c_str(),&raw,SQLITE_OPEN_READONLY,nullptr)!=SQLITE_OK){
         if(raw)sqlite3_close(raw);
