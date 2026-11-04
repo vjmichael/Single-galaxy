@@ -16,7 +16,7 @@ main{max-width:1450px;margin:0 auto;padding:18px;display:grid;gap:14px;grid-temp
 .canvashead{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border)}
 .canvaswrap{position:relative;height:min(66vh,690px);min-height:350px;overflow:hidden;background:#060d1a}
 canvas{display:block;width:100%;height:100%}#toast{position:absolute;left:18px;top:18px;color:#caedff;background:rgba(9,24,44,.86);border:1px solid #2b506a;padding:9px 12px;border-radius:9px;max-width:calc(100% - 36px);pointer-events:none}
-#toast:empty{display:none}#qaPanel[hidden],#colonyPanel[hidden],#interactiveControls[hidden],#surveyPanel[hidden]{display:none}.controls{padding:13px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+#toast:empty{display:none}#flightCameraControls[hidden]{display:none}#qaPanel[hidden],#colonyPanel[hidden],#interactiveControls[hidden],#surveyPanel[hidden]{display:none}.controls{padding:13px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
 button,select,.filebutton{background:#17273c;color:var(--ink);border:1px solid #3b536e;border-radius:8px;padding:9px 12px;cursor:pointer;font:inherit}
 button:hover,select:hover,.filebutton:hover{border-color:#74bacc}button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
 button.primary{background:#175b70;border-color:#2385a2;font-weight:700}button:disabled{opacity:.4;cursor:default}
@@ -56,7 +56,15 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
 <div class="error" id="error" role="alert"></div>
 <div class="card">
 <div class="canvashead"><div><div class="kicker" id="sceneName">10 asteroids</div><div class="muted" id="frameLabel">Loading frames…</div></div><div class="pill" id="tickPill">Tick 0</div></div>
-<div class="canvaswrap" id="canvaswrap"><canvas id="space" aria-label="Top-down visualization of ship, station, and asteroid entities"></canvas><div id="toast" role="status"></div></div>
+<div class="canvaswrap" id="canvaswrap"><canvas id="space" aria-label="Top-down visualization of ship, station, and asteroid entities. Click a scanned asteroid to select it." tabindex="0"></canvas><div id="toast" role="status"></div></div>
+<div id="flightCameraControls" class="controls" hidden style="padding:9px 15px;gap:7px">
+ <button type="button" id="cameraFollow">Follow ship</button>
+ <button type="button" id="cameraOverview">Overview</button>
+ <button type="button" id="cameraZoomIn" aria-label="Zoom in">＋</button>
+ <button type="button" id="cameraZoomOut" aria-label="Zoom out">－</button>
+ <button type="button" id="cameraReset">Reset view</button>
+ <span class="muted" id="cameraStatus" role="status" aria-live="polite">Following colony ship · 1× zoom</span>
+</div>
 <div class="legend"><span><i class="dot ship"></i>Ship</span><span><i class="dot rock"></i>Asteroid</span><span><i class="dot station"></i>Station</span><span style="margin-left:auto">Position unit: mm · Debug scale</span></div>
 <div class="controls"><div class="controller"><button class="primary" id="play">▶ Play</button><button id="back" title="Previous tick">◀</button><button id="next" title="Next tick">▶|</button></div><input type="range" id="progress" min="0" max="10" step="1" value="0" aria-label="Simulation tick"><span id="indexText" class="muted" style="white-space:nowrap">0 / 0</span><select id="speed" aria-label="Replay speed"><option value="0.5">0.5×</option><option selected value="1">1×</option><option value="2">2×</option><option value="4">4×</option></select></div>
 </div>
@@ -92,7 +100,7 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
   <button type="button" id="flightMine" class="primary">Mine nearest 8 t</button>
   <button type="button" id="flightMineSelected">Mine selected scanned rock</button>
  </div>
- <div class="help">Mining range and cargo capacity are enforced by the native world. A queued request does not confirm extraction.</div>
+ <div class="help">Click a scanned asteroid in the space view to target it. Use camera controls below the map to follow your ship or zoom out; steering remains manual. Mining range and cargo capacity are enforced by the native world.</div>
 </section>
 <section aria-labelledby="expeditionTitle" style="border:1px solid #236478;border-radius:10px;padding:12px;margin:10px 0;background:#0c2230">
  <h2 id="expeditionTitle">Mining expedition · Live mission status</h2>
@@ -239,6 +247,7 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
 <script src="survey.js"></script>
 <script src="opening-guide.js"></script>
 <script src="flight-controls.js"></script>
+<script src="flight-camera.js"></script>
 <script src="cargo-return.js"></script>
 <script src="expedition-feedback.js"></script>
 <script src="colony.js"></script>
