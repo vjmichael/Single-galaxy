@@ -56,7 +56,7 @@ static void focus_mission() {
    const auto probe_prefix=std::string("surveyprobe|")+std::to_string(probe)+"|";
    const auto pos=corrupt.find(probe_prefix);
    CHECK(pos!=std::string::npos);
-   const auto line_end=corrupt.find('\\n',pos);
+   const auto line_end=corrupt.find('\n',pos);
    auto line=corrupt.substr(pos,line_end-pos);
    const auto delimiter=line.rfind('|');
    CHECK(delimiter!=std::string::npos);
