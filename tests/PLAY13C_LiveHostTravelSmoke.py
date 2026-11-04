@@ -37,7 +37,7 @@ def main():
         assert "FRAME_TRANSIT_ARRIVED|" in status,status[-2500:]
         state=snapshot(db)
         assert state.startswith("galaxy-kernel-v73|"),state[:100]
-        assert f"localregion|{BODY_ID}\\n" in state
+        assert f"localregion|{BODY_ID}|" in state
         assert state.count("localanchor|")==2
         assert "frametransit_pending|" not in state
         assert "frametransit_done|" in state
