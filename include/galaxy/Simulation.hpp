@@ -206,7 +206,7 @@ struct WaterworksFacility {
 // B7.0n-A/B: bounded, persistent individuals. These are identity/skill records,
 // not 24 expensive autonomous decision processes. Existing headcount and mass
 // accounting remain authoritative until the migration is completed.
-enum class NpcRole : int { Ship=0, Farm=1, Habitat=2 };
+enum class NpcRole : int { Ship=0, Farm=1, Habitat=2, PlanetarySurface=3 };
 struct NpcRecord {
     std::uint64_t id=0;
     EntityId home_ship=0, location=0;
@@ -422,6 +422,16 @@ struct PlanetarySiteFacility {
     bool farm=false, extractor=false;
     std::int64_t water_kg=0, nutrients_kg=0, food_kg=0, wastewater_kg=0;
     std::uint64_t harvest_cycles=0;
+    // PLAY-13D.4: player remains in orbit; only finite NPCs deploy.
+    // 1=surface transfer, 2=construction, 3=operational.
+    std::uint8_t spaceport_phase=1;
+    std::uint64_t construction_progress=0;
+    std::uint64_t construction_required=40;
+    std::uint64_t surface_location=0;
+    std::array<std::uint64_t,2> delegated_npcs{{0,0}};
+    std::int64_t assigned_workers=2; // tied to ship headcount / named roster
+    std::int64_t oxygen_kg=0, co2_kg=0, organic_waste_kg=0;
+    std::uint64_t worker_support_cycles=0;
 };
 using PlanetarySiteKey = std::tuple<std::uint64_t,std::uint16_t,std::uint16_t,std::uint32_t>;
 struct PhysicalOasisReserve {
@@ -923,6 +933,9 @@ public:
         PlayerId owner,EntityId ship,std::uint64_t body) const;
     bool build_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
         std::uint16_t latitude,std::uint16_t longitude);
+    // Host-visible crew dispatch status: no player avatar or surface render.
+    bool planetary_spaceport_operational(std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude) const;
     // Install only with more real manufactured modules and appropriate ground.
     bool equip_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
         std::uint16_t latitude,std::uint16_t longitude,bool farm);
@@ -989,6 +1002,7 @@ private:
     void process_gate_maintenance();
     void process_colony_needs();
     void process_oasis_extractors();
+    void process_planetary_surface_operations();
     void process_farms();
     void move_npc_records(EntityId ship, EntityId site, NpcRole role, std::int64_t delta);
     void award_farm_experience(EntityId site);
