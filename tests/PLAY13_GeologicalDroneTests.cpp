@@ -1,4 +1,5 @@
 #include "galaxy/Persistence.hpp"
+#include "galaxy/Galaxy.hpp"
 #include <chrono>
 #include <filesystem>
 #include <iostream>
@@ -85,6 +86,21 @@ int main(){
    CHECK(w.world().discoveries().count({7,ore})==1);
    CHECK(w.world().discoveries().at({7,ore}).survey_taxonomy==3);
    CHECK(w.world().discoveries().at({7,ore}).geological);
+   // PLAY-13B.3: authoritative v67 world findings survive bridge into
+   // the player's reusable, private B6 survey archive.
+   {
+    SurveyArchive archive((dir/"survey.sqlite").string());
+    CHECK(archive.import_native_discoveries(w.world(),7,1)==1);
+    CHECK(archive.import_native_discoveries(w.world(),7,1)==0);
+    CHECK(archive.known_site(7,1,ore).has_value());
+    CHECK(archive.known_site(7,1,ore)->confidence==100);
+    CHECK(!archive.known_site(8,1,ore).has_value());
+   }
+   {
+    SurveyArchive archive((dir/"survey.sqlite").string());
+    CHECK(archive.known_site(7,1,ore).has_value());
+    CHECK(!archive.known_site(8,1,ore).has_value());
+   }
    CHECK(w.world().total_ore()==original);
    CHECK(execute(w,order(w,7,ship,Action::RecoverSurveyProbe,3))==Outcome::InvalidTarget);
    CHECK(w.world().total_ore()==original);
