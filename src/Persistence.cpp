@@ -162,10 +162,14 @@ Command decode_command(const std::string& record) {
         if (extra != "T31" || !(in >> c.transport_id))
             throw std::runtime_error("recovery: invalid transport envelope");
         std::size_t count=0;
-        const bool colony_departure=action==static_cast<int>(Action::HostColonyDeparture);
-        if (!(in >> count) || count==0 || count>(colony_departure?16U:10000U) ||
-            (colony_departure ? c.transport_id!=0 : c.transport_id==0))
-            throw std::runtime_error("recovery: invalid transport/departure manifest size");
+        const bool colony_departure=action==static_cast<int>(Action::HostColonyDeparture) ||
+            action==static_cast<int>(Action::HostColonyFamilyDeparture);
+        const bool dependent_birth=action==static_cast<int>(Action::HostRegisterDependentBirth);
+        if (!(in >> count) || count==0 ||
+            count>(colony_departure?16U:dependent_birth?1U:10000U) ||
+            ((colony_departure && c.transport_id!=0) ||
+             (!colony_departure && c.transport_id==0)))
+            throw std::runtime_error("recovery: invalid transport/departure/birth manifest size");
         std::set<std::uint64_t> unique;
         for (std::size_t i=0;i<count;++i) {
             std::uint64_t npc=0;
@@ -173,15 +177,19 @@ Command decode_command(const std::string& record) {
                 throw std::runtime_error("recovery: invalid transport passenger");
             c.passenger_ids.push_back(npc);
         }
-        if(colony_departure && !std::is_sorted(c.passenger_ids.begin(),c.passenger_ids.end()))
+        if(colony_departure && (!std::is_sorted(c.passenger_ids.begin(),c.passenger_ids.end()) ||
+            std::adjacent_find(c.passenger_ids.begin(),c.passenger_ids.end())!=c.passenger_ids.end()))
             throw std::runtime_error("recovery: departure IDs not canonical");
+        if(dependent_birth && (c.passenger_ids.front()<(1ULL<<62) ||
+            c.amount<=0 || c.actor!=c.target || !c.actor))
+            throw std::runtime_error("recovery: invalid physical birth identity");
         if(action==static_cast<int>(Action::HostSplitEvacuatePassengers)){
             if(!(in>>extra)||extra!="S48"||!(in>>c.secondary_receiver>>c.secondary_transport)||
                !c.secondary_receiver||!c.secondary_transport)
                 throw std::runtime_error("recovery: malformed split rescue envelope");
         }
     }
-    if (in >> extra || action < 0 || action > static_cast<int>(Action::HostColonyDeparture) || c.id == 0 || c.issuer == 0)
+    if (in >> extra || action < 0 || action > static_cast<int>(Action::HostColonyFamilyDeparture) || c.id == 0 || c.issuer == 0)
         throw std::runtime_error("recovery: invalid command journal values");
     c.action = static_cast<Action>(action);
     if (command_record(c) != record) throw std::runtime_error("recovery: noncanonical command journal");
@@ -1167,6 +1175,39 @@ public:
             const Simulation& world,const colony_family::DeparturePlan& request) const {
         return colony_family::assess(world,db_,request);
     }
+    bool prepared_colony_family_departure(
+            const Simulation& world,std::uint64_t generation,
+            const colony_family::DeparturePlan& plan) const {
+        if(!plan.intent_id||plan.expected_world_generation!=generation)return false;
+        Statement schema(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                             "AND name='sg_colony_family_departure_prepare'");
+        if(!schema.row())return false;
+        std::string adults,children;
+        for(auto id:plan.adult_ids){
+            if(!adults.empty())adults+=',';
+            adults+=std::to_string(id);
+        }
+        for(const auto& ch:plan.children){
+            if(!children.empty())children+=',';
+            children+=std::to_string(ch.child_id)+":"+std::to_string(ch.guardian_id);
+        }
+        Statement q(db_,"SELECT generation,world_hash,source,receiver,family_scope,"
+            "family_seed,adult_roster,child_guardians,status "
+            "FROM sg_colony_family_departure_prepare WHERE intent_id=?");
+        q.text(1,std::to_string(plan.intent_id));
+        if(!q.row())return false;
+        const bool match=
+            sqlite3_column_int64(q.get(),0)==static_cast<sqlite3_int64>(generation) &&
+            sqlite_str(q.get(),1)==std::to_string(world.state_hash()) &&
+            sqlite_str(q.get(),2)==std::to_string(plan.source) &&
+            sqlite_str(q.get(),3)==std::to_string(plan.receiver) &&
+            sqlite_str(q.get(),4)==plan.family_scope &&
+            sqlite_str(q.get(),5)==std::to_string(plan.family_seed) &&
+            sqlite_str(q.get(),6)==adults &&
+            sqlite_str(q.get(),7)==children &&
+            sqlite3_column_int(q.get(),8)==1 && !q.row();
+        return match;
+    }
     bool prepare_colony_family_departure(
             const Simulation& world,std::uint64_t generation,
             const colony_family::DeparturePlan& plan,FailPoint fail){
@@ -1428,8 +1469,13 @@ public:
                     const auto* raw = sqlite3_column_text(steps.get(), 3);
                     if (!raw) continue;
                     const auto type=decode_command(reinterpret_cast<const char*>(raw)).action;
+                    // Only these strictly host-authorized commands publish
+                    // an applied native world step in their own admission
+                    // generation. All other submissions remain pending.
                     if(type!=Action::HostEscrowConstructedStock &&
-                       type!=Action::HostReturnConstructedStock)continue;
+                       type!=Action::HostReturnConstructedStock &&
+                       type!=Action::HostRegisterDependentBirth &&
+                       type!=Action::HostColonyFamilyDeparture)continue;
                 }
                 if (g <= 0 || tick <= 0 || !tick_generation.emplace(static_cast<std::uint64_t>(tick),
                     static_cast<std::uint64_t>(g)).second)
@@ -3170,11 +3216,28 @@ public:
                        restored.npc_records().count(child)!=0 ||
                        restored.npc_casualties().count(child)!=0)
                         throw std::runtime_error("SQLite: malformed atomic dependent birth receipt");
-                    Statement op(db_,"SELECT kind,tick FROM operation_log WHERE generation=?");
+                    Statement op(db_,"SELECT kind,tick,command FROM operation_log WHERE generation=?");
                     op.i64(1,gen);
-                    if(!op.row() || sqlite3_column_int(op.get(),0)!=2 ||
-                       sqlite3_column_int64(op.get(),1)!=tick || op.row())
+                    if(!op.row() || sqlite3_column_int64(op.get(),1)!=tick)
                         throw std::runtime_error("SQLite: dependent birth lacks world step");
+                    const auto kind=sqlite3_column_int(op.get(),0);
+                    bool physically_attested=false;
+                    if(kind==1 && restored.physical_dependents_enabled()){
+                        if(sqlite3_column_type(op.get(),2)!=SQLITE_TEXT)
+                            throw std::runtime_error("SQLite: physical birth missing command");
+                        const auto birthcmd=decode_command(sqlite_str(op.get(),2));
+                        const auto physical=restored.physical_dependents().find(child);
+                        physically_attested=birthcmd.action==Action::HostRegisterDependentBirth &&
+                            birthcmd.id==event_id && birthcmd.actor==home &&
+                            birthcmd.target==home && birthcmd.transport_id==a &&
+                            birthcmd.amount==static_cast<std::int64_t>(b) &&
+                            birthcmd.passenger_ids==std::vector<std::uint64_t>{child} &&
+                            physical!=restored.physical_dependents().end() &&
+                            physical->second.birth_command==event_id &&
+                            physical->second.parent_a==a && physical->second.parent_b==b;
+                    }
+                    if((kind!=2 && !physically_attested) || op.row())
+                        throw std::runtime_error("SQLite: dependent birth lacks verified physical world step");
                     Statement regional(db_,"SELECT revision,actor,request,outcome "
                         "FROM sg_regional_command_receipt WHERE scope=? AND command_id=?");
                     regional.text(1,reg);regional.text(2,std::to_string(event_id));
@@ -3214,6 +3277,24 @@ public:
             Statement table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
                                 "AND name='sg_society_migration'");
             const bool has_migration=table.row();
+            Statement family_execute_table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                       "AND name='sg_colony_family_departure_execute'");
+            const bool has_family_execute=family_execute_table.row();
+            Statement family_member_table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                       "AND name='sg_colony_family_household_member'");
+            const bool has_family_members=family_member_table.row();
+            if(has_family_execute!=has_family_members)
+                throw std::runtime_error("SQLite: incomplete executed family custody schema");
+            // The new family receipt is a distinct authoritative world
+            // transition, never a forged legacy HostSettleMigrant receipt.
+            const auto family_command_exists=[&](const std::string& cmd){
+                if(!has_family_execute)return false;
+                Statement q(db_,"SELECT 1 FROM sg_colony_family_departure_execute WHERE command_id=?");
+                q.text(1,cmd);
+                if(!q.row())return false;
+                if(q.row())throw std::runtime_error("SQLite: duplicate executed family command");
+                return true;
+            };
             for(const auto& [id,c]:journal_commands){
                 if(c.action!=Action::HostSettleMigrant)continue;
                 const auto ev=event_by_id.find(id);
@@ -3231,10 +3312,18 @@ public:
                 Statement receipt(db_,"SELECT command_id FROM sg_regional_command_receipt "
                     "WHERE actor='society-migration-host'");
                 while(receipt.row()){
-                    if(!has_migration)throw std::runtime_error("SQLite: orphaned regional migration");
-                    Statement q(db_,"SELECT 1 FROM sg_society_migration WHERE command_id=?");
-                    q.text(1,sqlite_str(receipt.get(),0));
-                    if(!q.row() || q.row())throw std::runtime_error("SQLite: regional migration unlinked");
+                    const auto command_id=sqlite_str(receipt.get(),0);
+                    const bool linked_family=family_command_exists(command_id);
+                    bool linked_legacy=false;
+                    if(has_migration){
+                        Statement q(db_,"SELECT 1 FROM sg_society_migration WHERE command_id=?");
+                        q.text(1,command_id);
+                        linked_legacy=q.row();
+                        if(linked_legacy && q.row())
+                            throw std::runtime_error("SQLite: duplicated legacy regional migration");
+                    }
+                    if(linked_family==linked_legacy)
+                        throw std::runtime_error("SQLite: regional migration has zero or conflicting world effect");
                 }
             }
             Statement family_table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
@@ -3242,9 +3331,26 @@ public:
             if(family_table.row()){
                 Statement q(db_,"SELECT scope,event_id FROM npc_family_moves");
                 while(q.row()){
+                    const auto event_id=sqlite_str(q.get(),1);
+                    const auto family_scope=sqlite_str(q.get(),0);
+                    // New physically executed complete-family commands carry
+                    // a per-person immutable movement link, not a fake
+                    // generic society-migration row.
+                    bool linked_family_member=false;
+                    if(has_family_members){
+                        Statement f(db_,"SELECT command_id FROM sg_colony_family_household_member "
+                            "WHERE family_scope=? AND event_id=?");
+                        f.text(1,family_scope);f.text(2,event_id);
+                        if(f.row()){
+                            linked_family_member=family_command_exists(sqlite_str(f.get(),0));
+                            if(!linked_family_member || f.row())
+                                throw std::runtime_error("SQLite: invalid executed family member linkage");
+                        }
+                    }
+                    if(linked_family_member)continue;
                     if(!has_migration)throw std::runtime_error("SQLite: family move without world effect");
                     Statement effect(db_,"SELECT 1 FROM sg_society_migration WHERE command_id=?");
-                    effect.text(1,sqlite_str(q.get(),1));
+                    effect.text(1,event_id);
                     if(!effect.row()){
                         Statement co_table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
                             "AND name='sg_society_migration'");
@@ -3518,6 +3624,159 @@ public:
                        child.row())
                         throw std::runtime_error("SQLite: orphaned dependent family move");
                 }
+            }
+            // v59 family relocation has a DISTINCT native world+ART02+ECON03
+            // execution receipt. Verify its exact command, roster, regional
+            // owner revision and each ART02 move; never treat it as a legacy
+            // passenger voyage or an unproven census-only migration.
+            if(has_family_execute){
+                Statement executed(db_,"SELECT command_id,world_generation,tick,intent_id,"
+                    "source,receiver,family_scope,region_scope,region_revision,"
+                    "member_count,adult_count,child_count,origin_colony,destination_colony "
+                    "FROM sg_colony_family_departure_execute");
+                while(executed.row()){
+                    const auto id=parse_u64(sqlite3_column_text(executed.get(),0));
+                    const auto gen=sqlite3_column_int64(executed.get(),1);
+                    const auto tick=sqlite3_column_int64(executed.get(),2);
+                    const auto intent=sqlite_str(executed.get(),3);
+                    const auto src=parse_u64(sqlite3_column_text(executed.get(),4));
+                    const auto dst=parse_u64(sqlite3_column_text(executed.get(),5));
+                    const auto scope=sqlite_str(executed.get(),6);
+                    const auto region_scope=sqlite_str(executed.get(),7);
+                    const auto revision=sqlite3_column_int64(executed.get(),8);
+                    const auto members=sqlite3_column_int64(executed.get(),9);
+                    const auto adults=sqlite3_column_int64(executed.get(),10);
+                    const auto children=sqlite3_column_int64(executed.get(),11);
+                    const auto src_col=sqlite_str(executed.get(),12);
+                    const auto dst_col=sqlite_str(executed.get(),13);
+                    const auto cmd=journal_commands.find(id);
+                    const auto ev=event_by_id.find(id);
+                    const auto dep=restored.colony_departures().find(src);
+                    if(gen<2 || static_cast<std::uint64_t>(gen)>generation ||
+                       tick<1 || src==dst || scope.empty() || region_scope.empty() ||
+                       src_col.empty() || dst_col.empty() || src_col==dst_col ||
+                       adults!=2 || children<1 || members!=adults+children || members>16 ||
+                       revision<2 || cmd==journal_commands.end() ||
+                       cmd->second.action!=Action::HostColonyFamilyDeparture ||
+                       cmd->second.issuer!=Simulation::kServerAuthority ||
+                       cmd->second.actor!=src || cmd->second.target!=dst ||
+                       cmd->second.passenger_ids.size()!=static_cast<std::size_t>(members) ||
+                       ev==event_by_id.end() || ev->second.result!=Outcome::Applied ||
+                       ev->second.tick!=static_cast<std::uint64_t>(tick) ||
+                       ev->second.transferred!=0 ||
+                       dep==restored.colony_departures().end() ||
+                       dep->second.receiver!=dst || dep->second.command_id!=id ||
+                       dep->second.tick!=static_cast<std::uint64_t>(tick) ||
+                       dep->second.relocated_npcs.size()!=static_cast<std::size_t>(adults) ||
+                       dep->second.relocated_children.size()!=static_cast<std::size_t>(children))
+                        throw std::runtime_error("SQLite: forged family world departure receipt");
+                    std::vector<std::uint64_t> expected=dep->second.relocated_npcs;
+                    expected.insert(expected.end(),dep->second.relocated_children.begin(),
+                                    dep->second.relocated_children.end());
+                    if(expected!=cmd->second.passenger_ids)
+                        throw std::runtime_error("SQLite: family native roster differs from command");
+                    Statement region(db_,"SELECT actor,request,revision,outcome "
+                        "FROM sg_regional_command_receipt WHERE scope=? AND command_id=?");
+                    region.text(1,region_scope);region.text(2,std::to_string(id));
+                    if(!region.row() || sqlite_str(region.get(),0)!="society-migration-host" ||
+                       sqlite_str(region.get(),1)!="society-migration-generation:"+
+                            std::to_string(tick)+":"+src_col+":"+dst_col+
+                            ":household:"+std::to_string(members) ||
+                       sqlite3_column_int64(region.get(),2)!=revision ||
+                       sqlite3_column_int64(region.get(),3)!=1 || region.row())
+                        throw std::runtime_error("SQLite: family regional population receipt mismatch");
+                    Statement prep(db_,"SELECT generation,world_hash,source,receiver,family_scope "
+                        "FROM sg_colony_family_departure_prepare WHERE intent_id=?");
+                    prep.text(1,intent);
+                    if(!prep.row() ||
+                       sqlite3_column_int64(prep.get(),0)!=gen-1 ||
+                       sqlite_str(prep.get(),2)!=std::to_string(src) ||
+                       sqlite_str(prep.get(),3)!=std::to_string(dst) ||
+                       sqlite_str(prep.get(),4)!=scope)
+                        throw std::runtime_error("SQLite: executed family lacks exact prepared authority");
+                    const auto expected_prepared_hash=parse_u64(sqlite3_column_text(prep.get(),1));
+                    if(prep.row())
+                        throw std::runtime_error("SQLite: duplicate family preparation receipt");
+                    // Match the PREVIOUS physical world; a prepared intent
+                    // must not be retroactively attached to a different hull.
+                    Statement before_state(db_,"SELECT state FROM snapshots WHERE generation=?");
+                    before_state.i64(1,gen-1);
+                    if(!before_state.row())
+                        throw std::runtime_error("SQLite: missing pre-departure generation "+
+                            std::to_string(gen-1));
+                    // The canonical parser and immutable hash below validate
+                    // both BLOB and legacy text-backed snapshot storage.
+                    if(sqlite3_column_type(before_state.get(),0)!=SQLITE_BLOB &&
+                       sqlite3_column_type(before_state.get(),0)!=SQLITE_TEXT)
+                        throw std::runtime_error("SQLite: invalid pre-departure snapshot representation");
+                    const auto* raw=sqlite3_column_blob(before_state.get(),0);
+                    const auto bytes=sqlite3_column_bytes(before_state.get(),0);
+                    if(!raw || bytes<=0)throw std::runtime_error("SQLite: invalid departure predecessor");
+                    const auto prior=Simulation::from_snapshot(
+                        std::string(static_cast<const char*>(raw),static_cast<std::size_t>(bytes)));
+                    if(prior.state_hash()!=expected_prepared_hash)
+                        throw std::runtime_error("SQLite: prepared family witness not bound to actual predecessor");
+                    if(prior.colony_departures().count(src) || prior.colony_ship(src)==nullptr ||
+                       prior.colony_ship(src)->crew<1 ||
+                       prior.physical_dependents().size()<static_cast<std::size_t>(children))
+                        throw std::runtime_error("SQLite: family departure lacked real initial occupants");
+                    Statement group(db_,"SELECT event_id,npc_id,origin,destination,tick "
+                        "FROM sg_colony_family_household_member WHERE command_id=? "
+                        "AND family_scope=? ORDER BY npc_id");
+                    group.text(1,std::to_string(id));group.text(2,scope);
+                    std::vector<std::uint64_t> actual;
+                    while(group.row()){
+                        const auto move_event=sqlite_str(group.get(),0);
+                        const auto person=parse_u64(sqlite3_column_text(group.get(),1));
+                        if(parse_u64(sqlite3_column_text(group.get(),2))!=src ||
+                           parse_u64(sqlite3_column_text(group.get(),3))!=dst ||
+                           sqlite3_column_int64(group.get(),4)!=tick)
+                            throw std::runtime_error("SQLite: mismatched physical family member route");
+                        Statement art02(db_,"SELECT npc_id,origin,destination,tick "
+                            "FROM npc_family_moves WHERE scope=? AND event_id=?");
+                        art02.text(1,scope);art02.text(2,move_event);
+                        if(!art02.row() ||
+                           parse_u64(sqlite3_column_text(art02.get(),0))!=person ||
+                           parse_u64(sqlite3_column_text(art02.get(),1))!=src ||
+                           parse_u64(sqlite3_column_text(art02.get(),2))!=dst ||
+                           sqlite3_column_int64(art02.get(),3)!=tick || art02.row())
+                            throw std::runtime_error("SQLite: child/guardian ART02 move unlinked");
+                        if(person>=(1ULL<<62)){
+                            auto prior_child=prior.physical_dependents().find(person);
+                            auto now_child=restored.physical_dependents().find(person);
+                            if(prior_child==prior.physical_dependents().end() ||
+                               prior_child->second.home_ship!=src ||
+                               prior_child->second.location!=src ||
+                               now_child==restored.physical_dependents().end() ||
+                               now_child->second.home_ship!=dst ||
+                               now_child->second.location!=dst)
+                                throw std::runtime_error("SQLite: child physical custody not conserved");
+                        }else{
+                            const auto before=prior.npc_records().find(person);
+                            const auto after=restored.npc_records().find(person);
+                            if(before==prior.npc_records().end() ||
+                               before->second.home_ship!=src ||
+                               after==restored.npc_records().end() ||
+                               after->second.home_ship!=dst ||
+                               after->second.location!=dst)
+                                throw std::runtime_error("SQLite: guardian actual custody not conserved");
+                        }
+                        actual.push_back(person);
+                    }
+                    if(actual!=expected)
+                        throw std::runtime_error("SQLite: incomplete or duplicated family custody roster");
+                }
+                // Every new world departure must have exactly one actual
+                // executed ART02 receipt, and no orphaned member table rows.
+                for(const auto& [id,cmd]:journal_commands)
+                    if(cmd.action==Action::HostColonyFamilyDeparture){
+                        if(!family_command_exists(std::to_string(id)))
+                            throw std::runtime_error("SQLite: family world action missing household execution");
+                    }
+                Statement orphans(db_,"SELECT command_id FROM sg_colony_family_household_member");
+                while(orphans.row())
+                    if(!family_command_exists(sqlite_str(orphans.get(),0)))
+                        throw std::runtime_error("SQLite: orphaned family dependent/guardian member");
             }
         }
         // DEMOG-05q6e2: child physical custody is an authoritative sibling
@@ -5590,7 +5849,9 @@ public:
                         // v52's atomic host warehouse escrow advances the real world
                         // in the same SQLite commit as the command submission.
                         if (command.action == Action::HostEscrowConstructedStock ||
-                            command.action == Action::HostReturnConstructedStock) sim.step();
+                            command.action == Action::HostReturnConstructedStock ||
+                            command.action == Action::HostRegisterDependentBirth ||
+                            command.action == Action::HostColonyFamilyDeparture) sim.step();
                     } else if (kind == 2) {
                         sim.step();
                     } else throw std::runtime_error("recovery: invalid journal kind");
@@ -5802,6 +6063,183 @@ bool PersistentWorld::submit_host_colony_departure(const Command& command,FailPo
     world_.swap(next);++generation_;
     return true;
 }
+void PersistentWorld::step_with_atomic_colony_family_departure(
+    const colony_family::ExecutionPlan& plan,FailPoint fail){
+    const auto& req=plan.prepared;
+    if(!world_.physical_dependents_enabled() ||
+       !plan.command_id || plan.command_id>=static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) ||
+       !req.intent_id || req.expected_world_generation!=generation_ ||
+       !plan.expected_region_revision || !plan.expected_owner_generation ||
+       req.adult_ids.size()!=2 || req.children.empty() ||
+       req.adult_ids.size()+req.children.size()>16 ||
+       plan.child_move_events.size()!=req.children.size() ||
+       !plan.co_parent_event_id || plan.region_scope.empty() ||
+       plan.origin_colony.empty() || plan.destination_colony.empty() ||
+       plan.origin_colony==plan.destination_colony)
+        throw std::invalid_argument("invalid bounded complete family departure plan");
+    std::set<std::uint64_t> move_ids{plan.command_id};
+    if(!move_ids.insert(plan.co_parent_event_id).second)
+        throw std::runtime_error("duplicate adult family custody event");
+    std::vector<std::pair<std::uint64_t,std::uint64_t>> moves;
+    for(std::size_t i=0;i<req.children.size();++i){
+        const auto& c=req.children[i];
+        const auto event=plan.child_move_events[i];
+        if(c.guardian_id!=req.adult_ids[0] ||
+           !event || event>=static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) ||
+           !move_ids.insert(event).second)
+            throw std::runtime_error("incomplete or conflicting guardian household event");
+        const auto physical=world_.physical_dependents().find(c.child_id);
+        if(physical==world_.physical_dependents().end() ||
+           physical->second.home_ship!=req.source ||
+           physical->second.location!=req.source ||
+           physical->second.parent_a!=req.adult_ids[0] ||
+           physical->second.parent_b!=req.adult_ids[1])
+            throw std::runtime_error("family departure requires native registered two-parent custody");
+        moves.emplace_back(c.child_id,event);
+    }
+    if(!store_->prepared_colony_family_departure(world_,generation_,req))
+        throw std::runtime_error("missing/stale immutable prepared family roster");
+    const auto audit=store_->audit_colony_family_departure(world_,req);
+    if(!audit.ready_for_transaction)
+        throw std::runtime_error("family physical/ART02 preflight failed: "+audit.refusal);
+    const auto path=store_->sqlite_path();
+    regional_events::CheckpointStore region(path,plan.region_scope);
+    NpcAppearanceStore family(path,req.family_scope,req.family_seed,
+        [&](std::uint64_t id){return world_.npc_records().count(id)!=0;});
+    const auto origin_family=family.family_census(req.source);
+    const auto destination_family=family.family_census(req.receiver);
+    const auto current_region=region.load();
+    if(origin_family.revision!=plan.expected_origin_family_revision ||
+       destination_family.revision!=plan.expected_destination_family_revision ||
+       !current_region || current_region->revision!=plan.expected_region_revision ||
+       current_region->scheduler.colony(plan.origin_colony).population!=origin_family.current_population ||
+       current_region->scheduler.colony(plan.destination_colony).population!=destination_family.current_population)
+        throw std::runtime_error("stale ART02 or regional family population preflight");
+    auto next=world_;
+    const auto before=next.events().size(),activities=next.activity_events().size();
+    if(auto it=next.commands_.find(next.tick()+1);
+       it!=next.commands_.end()&&!it->second.empty())
+        throw std::runtime_error("other queued command conflicts with complete family movement");
+    Command command{};
+    command.id=plan.command_id;command.sequence=plan.command_id;
+    command.execute_tick=next.tick()+1;
+    command.issuer=Simulation::kServerAuthority;
+    command.actor=req.source;command.target=req.receiver;
+    command.action=Action::HostColonyFamilyDeparture;
+    command.passenger_ids=req.adult_ids;
+    for(const auto& ch:req.children)command.passenger_ids.push_back(ch.child_id);
+    if(!next.submit(command))
+        throw std::runtime_error("native physical whole-family departure preflight refused");
+    next.step();
+    if(next.events().size()!=before+1 ||
+       next.events().back().command_id!=plan.command_id ||
+       next.events().back().result!=Outcome::Applied ||
+       !next.colony_departures().count(req.source))
+        throw std::runtime_error("real family movement did not execute atomically");
+    const auto& departure=next.colony_departures().at(req.source);
+    if(departure.relocated_npcs!=req.adult_ids ||
+       departure.relocated_children.size()!=req.children.size())
+        throw std::runtime_error("actual dependent movement differs from prepared household");
+    const std::vector<Event> events(next.events().begin()+
+        static_cast<std::ptrdiff_t>(before),next.events().end());
+    const std::vector<ActivityEvent> activity(next.activity_events().begin()+
+        static_cast<std::ptrdiff_t>(activities),next.activity_events().end());
+    std::map<std::uint64_t,Command> due{{command.id,command}};
+    const auto effect=[&](sqlite3* db,std::uint64_t committed_generation){
+        if(!store_->prepared_colony_family_departure(world_,generation_,req))
+            throw std::runtime_error("prepared family was altered before exclusive commit");
+        const auto inside=colony_family::assess(world_,db,req);
+        if(!inside.ready_for_transaction)
+            throw std::runtime_error("family birth/guardian/physical custody changed under lock: "+inside.refusal);
+        NpcAppearanceStore joined(db,req.family_scope,req.family_seed,
+            [&](std::uint64_t id){return next.npc_records().count(id)!=0;});
+        const auto authorize=[&](std::uint64_t id,std::uint64_t origin,std::uint64_t destination){
+            if(origin!=req.source||destination!=req.receiver ||
+               (id!=req.adult_ids[0]&&id!=req.adult_ids[1]))return false;
+            const auto previous=world_.npc_records().find(id);
+            const auto current=next.npc_records().find(id);
+            return previous!=world_.npc_records().end() &&
+                current!=next.npc_records().end() &&
+                previous->second.home_ship==origin &&
+                current->second.home_ship==destination &&
+                current->second.location==destination && !current->second.transport_id;
+        };
+        const auto recorded=joined.record_guardian_household_moves(
+            plan.command_id,req.adult_ids[0],moves,req.source,req.receiver,
+            next.tick(),plan.expected_origin_family_revision,
+            plan.expected_destination_family_revision,authorize,
+            req.adult_ids[1],plan.co_parent_event_id);
+        if(recorded.size()!=req.adult_ids.size()+req.children.size())
+            throw std::runtime_error("ART02 household residence count differs from physical rescue");
+        const auto revision=region.commit_migration_in_world_transaction(
+            db,plan.expected_region_revision,plan.expected_owner_generation,
+            next.tick(),plan.origin_colony,plan.destination_colony,
+            origin_family.current_population,destination_family.current_population,
+            std::to_string(plan.command_id),recorded.size());
+        run(db,"CREATE TABLE IF NOT EXISTS sg_colony_family_departure_execute("
+               "command_id TEXT PRIMARY KEY,world_generation INTEGER NOT NULL,"
+               "tick INTEGER NOT NULL,intent_id TEXT NOT NULL UNIQUE,"
+               "source TEXT NOT NULL,receiver TEXT NOT NULL,"
+               "family_scope TEXT NOT NULL,region_scope TEXT NOT NULL,"
+               "region_revision INTEGER NOT NULL,member_count INTEGER NOT NULL,"
+               "adult_count INTEGER NOT NULL,child_count INTEGER NOT NULL,"
+               "origin_colony TEXT NOT NULL,destination_colony TEXT NOT NULL)");
+        run(db,"CREATE TRIGGER IF NOT EXISTS sg_colony_family_execute_no_update "
+               "BEFORE UPDATE ON sg_colony_family_departure_execute "
+               "BEGIN SELECT RAISE(ABORT,'executed family custody immutable'); END");
+        run(db,"CREATE TRIGGER IF NOT EXISTS sg_colony_family_execute_no_delete "
+               "BEFORE DELETE ON sg_colony_family_departure_execute "
+               "BEGIN SELECT RAISE(ABORT,'executed family custody immutable'); END");
+        Statement receipt(db,"INSERT INTO sg_colony_family_departure_execute "
+                             "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+        receipt.text(1,std::to_string(plan.command_id));
+        receipt.i64(2,static_cast<std::int64_t>(committed_generation));
+        receipt.i64(3,static_cast<std::int64_t>(next.tick()));
+        receipt.text(4,std::to_string(req.intent_id));
+        receipt.text(5,std::to_string(req.source));
+        receipt.text(6,std::to_string(req.receiver));
+        receipt.text(7,req.family_scope);
+        receipt.text(8,plan.region_scope);
+        receipt.i64(9,static_cast<std::int64_t>(revision));
+        receipt.i64(10,static_cast<std::int64_t>(recorded.size()));
+        receipt.i64(11,static_cast<std::int64_t>(req.adult_ids.size()));
+        receipt.i64(12,static_cast<std::int64_t>(req.children.size()));
+        receipt.text(13,plan.origin_colony);
+        receipt.text(14,plan.destination_colony);
+        receipt.execute();
+        // One independently checkable ART02 move linkage for every physically
+        // rescued person (two parents plus each high-range dependent).
+        run(db,"CREATE TABLE IF NOT EXISTS sg_colony_family_household_member("
+               "command_id TEXT NOT NULL,family_scope TEXT NOT NULL,"
+               "event_id TEXT NOT NULL,npc_id TEXT NOT NULL,"
+               "origin TEXT NOT NULL,destination TEXT NOT NULL,"
+               "tick INTEGER NOT NULL,PRIMARY KEY(family_scope,event_id),"
+               "UNIQUE(command_id,npc_id))");
+        run(db,"CREATE TRIGGER IF NOT EXISTS sg_colony_family_member_no_update "
+               "BEFORE UPDATE ON sg_colony_family_household_member "
+               "BEGIN SELECT RAISE(ABORT,'family custody member receipt immutable'); END");
+        run(db,"CREATE TRIGGER IF NOT EXISTS sg_colony_family_member_no_delete "
+               "BEFORE DELETE ON sg_colony_family_household_member "
+               "BEGIN SELECT RAISE(ABORT,'family custody member receipt immutable'); END");
+        for(const auto& move:recorded){
+            Statement member(db,"INSERT INTO sg_colony_family_household_member "
+                "VALUES(?,?,?,?,?,?,?)");
+            member.text(1,std::to_string(plan.command_id));
+            member.text(2,req.family_scope);
+            member.text(3,std::to_string(move.event_id));
+            member.text(4,std::to_string(move.npc_id));
+            member.text(5,std::to_string(move.origin));
+            member.text(6,std::to_string(move.destination));
+            member.i64(7,static_cast<std::int64_t>(move.tick));
+            member.execute();
+        }
+    };
+    store_->commit(next,generation_,resource_origin_,credit_origin_,&command,
+                   events,due,activity,fail,nullptr,nullptr,effect);
+    world_.swap(next);
+    ++generation_;
+}
+
 void PersistentWorld::step_with_colony_departure(FailPoint fail){
     auto next=world_;
     const auto before=next.events().size();
@@ -6229,9 +6667,33 @@ void PersistentWorld::step_with_atomic_dependent_birth(
     if(pending!=next.commands_.end() && !pending->second.empty())
         throw std::runtime_error("birth world step requires no pending commands");
     const auto before=next.events().size(), activity_before=next.activity_events().size();
+    const bool physical=next.physical_dependents_enabled();
+    Command physical_birth{};
+    std::map<std::uint64_t,Command> due;
+    if(physical){
+        physical_birth.id=plan.event_id;
+        physical_birth.sequence=plan.event_id;
+        physical_birth.execute_tick=next.tick()+1;
+        physical_birth.issuer=Simulation::kServerAuthority;
+        physical_birth.actor=plan.home_ship;
+        physical_birth.target=plan.home_ship;
+        physical_birth.action=Action::HostRegisterDependentBirth;
+        physical_birth.transport_id=plan.parent_a;
+        physical_birth.amount=static_cast<std::int64_t>(plan.parent_b);
+        physical_birth.passenger_ids={plan.child_id};
+        if(!next.submit(physical_birth))
+            throw std::runtime_error("birth rejected by physical-dependent command preflight");
+        due.emplace(physical_birth.id,physical_birth);
+    }
     next.step();
-    if(next.events().size()!=before)
-        throw std::runtime_error("birth step unexpectedly executed a command");
+    if((!physical && next.events().size()!=before) ||
+       (physical && (next.events().size()!=before+1 ||
+          next.events().back().command_id!=plan.event_id ||
+          next.events().back().result!=Outcome::Applied ||
+          !next.physical_dependents().count(plan.child_id))))
+        throw std::runtime_error("birth did not independently create exact physical dependent");
+    const std::vector<Event> delta(next.events().begin()+
+        static_cast<std::ptrdiff_t>(before),next.events().end());
     const std::vector<ActivityEvent> activity(next.activity_events().begin()+
         static_cast<std::ptrdiff_t>(activity_before),next.activity_events().end());
     const auto path=store_->sqlite_path();
@@ -6281,8 +6743,11 @@ void PersistentWorld::step_with_atomic_dependent_birth(
         rec.text(11,std::to_string(birth.parent_a));rec.text(12,std::to_string(birth.parent_b));
         rec.i64(13,static_cast<std::int64_t>(birth.census_revision));rec.execute();
     };
-    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,{},
-                   {},activity,fail,nullptr,nullptr,effect);
+    // v59 birth is itself a replayable native world event and an ART02/ECON03
+    // birth receipt in the SAME authoritative transaction.
+    store_->commit(next,generation_,resource_origin_,credit_origin_,
+                   physical?&physical_birth:nullptr,delta,due,activity,fail,
+                   nullptr,nullptr,effect);
     world_.swap(next);++generation_;
 }
 

@@ -391,6 +391,14 @@ NpcCustodyView Simulation::npc_custody(std::uint64_t id) const {
     const auto& n=it->second;
     return {n.id,n.home_ship,n.location,n.role,n.transport_id,n.transport_id!=0};
 }
+std::size_t Simulation::dependents_physically_at(EntityId place) const {
+    std::size_t count=0;
+    for(const auto& [id,n]:physical_dependents_){
+        (void)id;
+        if(n.location==place)++count;
+    }
+    return count;
+}
 std::size_t Simulation::people_physically_aboard(EntityId ship) const {
     std::size_t count=0;
     for(const auto& [id,n]:npcs_){
@@ -462,6 +470,12 @@ void Simulation::upgrade_passenger_snapshot_format(){
         if(n.transport_id!=0)throw std::logic_error("active passenger migration unsupported");
     }
     snapshot_version_=std::max(snapshot_version_,31);
+}
+void Simulation::enable_physical_dependent_accounting(){
+    if(tick_ || !submitted_ids_.empty() || !commands_.empty() ||
+       snapshot_version_<57 || npcs_.empty() || !physical_dependents_.empty())
+        throw std::invalid_argument("physical child accounting requires new named-crew genesis");
+    snapshot_version_=59; // Explicit opt-in; no retroactive older-world replay changes.
 }
 void Simulation::enable_passenger_life_support(){
     if(tick_ || !submitted_ids_.empty() || !commands_.empty() ||
@@ -866,7 +880,12 @@ Simulation::FerryEmergencyReport Simulation::ferry_emergency_report(std::uint64_
     return report;
 }
 
-bool Simulation::can_depart_colony(const Command& c) const {
+bool Simulation::can_depart_colony(const Command& c,bool within_family) const {
+    if(snapshot_version_>=59 && !within_family)
+        for(const auto& [id,child]:physical_dependents_){
+            (void)id;
+            if(child.home_ship==c.actor)return false;
+        }
     // v58: a bounded all-adult local colony transfer is ONE world command.
     // No passenger voyage, offsite transport, fabricated guardian authority,
     // remote relocation, or supply deficit can be accepted.
@@ -972,12 +991,75 @@ bool Simulation::can_depart_colony(const Command& c) const {
         return false;
     return true;
 }
+bool Simulation::can_record_dependent_birth(const Command& c) const {
+    if(c.action!=Action::HostRegisterDependentBirth || snapshot_version_<59 ||
+       c.issuer!=kServerAuthority || !c.id || c.actor!=c.target || !c.actor ||
+       (c.execute_tick!=tick_+1 && c.execute_tick!=tick_) ||
+       c.passenger_ids.size()!=1 || c.passenger_ids[0]<(1ULL<<62) ||
+       !c.transport_id || c.amount<=0 || c.thrust_x || c.thrust_y ||
+       c.secondary_receiver || c.secondary_transport ||
+       physical_dependents_.count(c.passenger_ids[0]) ||
+       npcs_.count(c.passenger_ids[0]) || casualties_.count(c.passenger_ids[0]) ||
+       !colony_ships_.count(c.actor) || !life_support_.count(c.actor))
+        return false;
+    const auto pa=npcs_.find(c.transport_id);
+    const auto pb=npcs_.find(static_cast<std::uint64_t>(c.amount));
+    if(pa==npcs_.end()||pb==npcs_.end()||pa==pb ||
+       pa->second.home_ship!=c.actor||pb->second.home_ship!=c.actor ||
+       pa->second.location!=c.actor||pb->second.location!=c.actor ||
+       pa->second.transport_id||pb->second.transport_id ||
+       colony_departures_.count(c.actor))return false;
+    return true;
+}
+bool Simulation::can_depart_family(const Command& c) const {
+    if(c.action!=Action::HostColonyFamilyDeparture ||
+       snapshot_version_<59 || c.passenger_ids.size()<3 ||
+       c.passenger_ids.size()>16 || !std::is_sorted(c.passenger_ids.begin(),c.passenger_ids.end()) ||
+       std::adjacent_find(c.passenger_ids.begin(),c.passenger_ids.end())!=c.passenger_ids.end())
+        return false;
+    std::vector<std::uint64_t> adults,children;
+    for(auto id:c.passenger_ids){
+        if(id<(1ULL<<62))adults.push_back(id);
+        else children.push_back(id);
+    }
+    if(adults.empty()||children.empty())return false;
+    Command ordinary=c;
+    ordinary.action=Action::HostColonyDeparture;
+    ordinary.passenger_ids=adults;
+    if(!can_depart_colony(ordinary,true))return false;
+    std::vector<std::uint64_t> exact;
+    for(const auto& [id,d]:physical_dependents_)if(d.home_ship==c.actor){
+        if(d.location!=c.actor)return false; // not already another ferry's child
+        exact.push_back(id);
+        if(!std::binary_search(adults.begin(),adults.end(),d.parent_a) ||
+           !std::binary_search(adults.begin(),adults.end(),d.parent_b))
+            return false;
+    }
+    if(exact!=children)return false;
+    const auto* stocks=life_support(c.target);
+    if(!stocks)return false;
+    const auto current=people_physically_aboard(c.target)+dependents_physically_at(c.target);
+    const auto needed=current+adults.size()+children.size();
+    if(needed>1000 || stocks->food_kg<static_cast<std::int64_t>(2*needed) ||
+       stocks->water_kg<static_cast<std::int64_t>(2*needed) ||
+       stocks->oxygen_kg<static_cast<std::int64_t>(2*needed))
+        return false;
+    return true;
+}
 bool Simulation::submit(const Command& c) {
     if(colony_departures_.count(c.actor) || colony_departures_.count(c.target))return false;
     const bool colony_departure=c.action==Action::HostColonyDeparture;
+    const bool family_departure=c.action==Action::HostColonyFamilyDeparture;
+    const bool physical_birth=c.action==Action::HostRegisterDependentBirth;
     if(colony_departure){
         if(!can_depart_colony(c)||submitted_ids_.count(c.id))return false;
-        snapshot_version_=58;
+        snapshot_version_=std::max(snapshot_version_,58);
+    }
+    if(family_departure){
+        if(!can_depart_family(c)||submitted_ids_.count(c.id))return false;
+    }
+    if(physical_birth){
+        if(!can_record_dependent_birth(c)||submitted_ids_.count(c.id))return false;
     }
     const bool split_action=c.action==Action::HostSplitEvacuatePassengers;
     const bool consigned=c.action==Action::HostTransferConsignedStock;
@@ -1406,9 +1488,9 @@ bool Simulation::submit(const Command& c) {
                 if(it->second.location!=c.target || it->second.transport_id)return false;
             }else if(it->second.location!=c.actor || it->second.transport_id!=c.transport_id)return false;
         }
-    }else if(!medical_action && !migration_action && !colony_departure && (c.transport_id || !c.passenger_ids.empty()))return false;
+    }else if(!medical_action && !migration_action && !colony_departure && !family_departure && !physical_birth && (c.transport_id || !c.passenger_ids.empty()))return false;
     if (c.id == 0 || c.execute_tick <= tick_ || c.issuer == 0 || submitted_ids_.count(c.id)) return false;
-    if (passenger_action || medical_action || migration_action || escrow_action || return_action || consigned || colony_departure) { /* validated host command above */ }
+    if (passenger_action || medical_action || migration_action || escrow_action || return_action || consigned || colony_departure || family_departure || physical_birth) { /* validated host command above */ }
     else if (c.action == Action::HostDestroyShip || c.action == Action::HostCrewLoss) {
         if(c.issuer != kServerAuthority || !c.actor || !c.target ||
            c.thrust_x || c.thrust_y ||
@@ -1683,6 +1765,47 @@ void Simulation::stop_mining(EntityId actor, Outcome reason) {
 
 Event Simulation::execute(const Command& c) {
     Event result{tick_, c.id, Outcome::InvalidActor, 0};
+    if(c.action==Action::HostRegisterDependentBirth){
+        if(!can_record_dependent_birth(c)){
+            result.result=Outcome::InvalidArgument;return result;
+        }
+        const auto child=c.passenger_ids.front();
+        physical_dependents_.emplace(child,PhysicalDependent{
+            child,c.transport_id,static_cast<std::uint64_t>(c.amount),
+            c.id,c.actor,c.actor
+        });
+        result.result=Outcome::Applied;
+        return result;
+    }
+    if(c.action==Action::HostColonyFamilyDeparture){
+        if(!can_depart_family(c)){
+            result.result=Outcome::InvalidArgument;return result;
+        }
+        std::vector<std::uint64_t> adults,children;
+        for(auto id:c.passenger_ids)
+            (id<(1ULL<<62)?adults:children).push_back(id);
+        auto& source=colony_ships_.at(c.actor);
+        auto& receiver=colony_ships_.at(c.target);
+        for(auto id:adults){
+            auto& n=npcs_.at(id);
+            n.home_ship=c.target;n.location=c.target;n.assigned_site=c.target;
+            n.role=NpcRole::Ship;n.transport_id=0;
+        }
+        for(auto id:children){
+            auto& n=physical_dependents_.at(id);
+            n.home_ship=c.target;n.location=c.target;
+        }
+        for(auto& [site,f]:farms_)if(f.source_ship==c.actor)f.workers=0;
+        for(auto& [site,h]:habitats_)if(h.source_ship==c.actor)h.residents=0;
+        source.crew=0;
+        receiver.crew+=static_cast<std::int64_t>(adults.size());
+        colony_departures_.emplace(c.actor,ColonyDeparture{
+            c.actor,c.target,c.id,tick_,adults,children
+        });
+        result.result=Outcome::Applied;
+        result.transferred=0; // persons never enter material ledger
+        return result;
+    }
     if(c.action==Action::HostColonyDeparture){
         if(!can_depart_colony(c)){
             result.result=Outcome::InvalidArgument;return result;
@@ -4023,7 +4146,11 @@ void Simulation::process_colony_needs(){
         // absent people, and transport movement must not create provisions.
         // Legacy aggregate-only worlds have no named passengers to count.
         const auto crew=colony_ships_.at(id).crew;
-        const auto physical=passenger_needs_enabled()?people_physically_aboard(id):0;
+        const auto named=passenger_needs_enabled()?people_physically_aboard(id):0;
+        const auto children=physical_dependents_enabled()?dependents_physically_at(id):0;
+        if(named>std::numeric_limits<std::size_t>::max()-children)
+            throw std::overflow_error("shipborne dependent occupancy overflow");
+        const auto physical=named+children;
         if(crew<0 || physical>static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max()))
             throw std::overflow_error("physical ferry population overflow");
         const auto people=passenger_needs_enabled()?
@@ -4238,7 +4365,7 @@ void Simulation::steps(std::uint64_t count) {
 
 std::string Simulation::canonical_state() const {
     std::ostringstream out;
-    out << (snapshot_version_ >= 58 ? "galaxy-kernel-v58|" : snapshot_version_ >= 57 ? "galaxy-kernel-v57|" : snapshot_version_ >= 53 ? "galaxy-kernel-v53|" : snapshot_version_ >= 52 ? "galaxy-kernel-v52|" : snapshot_version_ >= 49 ? "galaxy-kernel-v49|" : snapshot_version_ >= 48 ? "galaxy-kernel-v48|" : snapshot_version_ >= 44 ? "galaxy-kernel-v44|" : snapshot_version_ >= 41 ? "galaxy-kernel-v41|" : snapshot_version_ >= 40 ? "galaxy-kernel-v40|" : snapshot_version_ >= 39 ? "galaxy-kernel-v39|" : snapshot_version_ >= 38 ? "galaxy-kernel-v38|" : snapshot_version_ >= 37 ? "galaxy-kernel-v37|" : snapshot_version_ >= 36 ? "galaxy-kernel-v36|" : snapshot_version_ >= 35 ? "galaxy-kernel-v35|" : snapshot_version_ >= 34 ? "galaxy-kernel-v34|" : snapshot_version_ >= 33 ? "galaxy-kernel-v33|" : snapshot_version_ >= 32 ? "galaxy-kernel-v32|" : snapshot_version_ >= 31 ? "galaxy-kernel-v31|" : snapshot_version_ >= 30 ? "galaxy-kernel-v30|" : snapshot_version_ >= 29 ? "galaxy-kernel-v29|" : snapshot_version_ >= 28 ? "galaxy-kernel-v28|" : snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
+    out << (snapshot_version_ >= 59 ? "galaxy-kernel-v59|" : snapshot_version_ >= 58 ? "galaxy-kernel-v58|" : snapshot_version_ >= 57 ? "galaxy-kernel-v57|" : snapshot_version_ >= 53 ? "galaxy-kernel-v53|" : snapshot_version_ >= 52 ? "galaxy-kernel-v52|" : snapshot_version_ >= 49 ? "galaxy-kernel-v49|" : snapshot_version_ >= 48 ? "galaxy-kernel-v48|" : snapshot_version_ >= 44 ? "galaxy-kernel-v44|" : snapshot_version_ >= 41 ? "galaxy-kernel-v41|" : snapshot_version_ >= 40 ? "galaxy-kernel-v40|" : snapshot_version_ >= 39 ? "galaxy-kernel-v39|" : snapshot_version_ >= 38 ? "galaxy-kernel-v38|" : snapshot_version_ >= 37 ? "galaxy-kernel-v37|" : snapshot_version_ >= 36 ? "galaxy-kernel-v36|" : snapshot_version_ >= 35 ? "galaxy-kernel-v35|" : snapshot_version_ >= 34 ? "galaxy-kernel-v34|" : snapshot_version_ >= 33 ? "galaxy-kernel-v33|" : snapshot_version_ >= 32 ? "galaxy-kernel-v32|" : snapshot_version_ >= 31 ? "galaxy-kernel-v31|" : snapshot_version_ >= 30 ? "galaxy-kernel-v30|" : snapshot_version_ >= 29 ? "galaxy-kernel-v29|" : snapshot_version_ >= 28 ? "galaxy-kernel-v28|" : snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
         << '|' << rng_state_ << '\n';
     if (snapshot_version_>=5) for(const auto system:systems_)out<<"system|"<<system<<'\n';
     for (const auto& entry : entities_) {
@@ -4457,10 +4584,18 @@ std::string Simulation::canonical_state() const {
             out << '\n';
         }
     }
+    if(snapshot_version_>=59)for(const auto& [id,n]:physical_dependents_){
+        out<<"physicalchild|"<<id<<'|'<<n.home_ship<<'|'<<n.location<<'|'
+           <<n.parent_a<<'|'<<n.parent_b<<'|'<<n.birth_command<<'\n';
+    }
     if(snapshot_version_>=58)for(const auto& [ship,d]:colony_departures_){
         out<<"colonydeparture|"<<ship<<'|'<<d.receiver<<'|'<<d.command_id
            <<'|'<<d.tick<<'|'<<d.relocated_npcs.size();
         for(auto id:d.relocated_npcs)out<<'|'<<id;
+        if(snapshot_version_>=59){
+            out<<'|'<<d.relocated_children.size();
+            for(auto id:d.relocated_children)out<<'|'<<id;
+        }
         out<<'\n';
     }
     if(snapshot_version_>=33)for(const auto& [id,v]:voyages_){
@@ -4596,12 +4731,12 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
     if (!std::getline(in, line)) throw std::runtime_error("snapshot: missing header");
     auto h = fields(line);
     require_fields(h, 5);
-    if (h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27" && h[0] != "galaxy-kernel-v28" && h[0] != "galaxy-kernel-v29" && h[0] != "galaxy-kernel-v30" && h[0] != "galaxy-kernel-v31" && h[0] != "galaxy-kernel-v32" && h[0] != "galaxy-kernel-v33" && h[0] != "galaxy-kernel-v34" && h[0] != "galaxy-kernel-v35" && h[0] != "galaxy-kernel-v36" && h[0] != "galaxy-kernel-v37" && h[0] != "galaxy-kernel-v38" && h[0] != "galaxy-kernel-v39" && h[0] != "galaxy-kernel-v40" && h[0] != "galaxy-kernel-v41" && h[0] != "galaxy-kernel-v44" && h[0] != "galaxy-kernel-v48" && h[0] != "galaxy-kernel-v49" && h[0] != "galaxy-kernel-v52" && h[0] != "galaxy-kernel-v53" && h[0] != "galaxy-kernel-v57" && h[0] != "galaxy-kernel-v58") throw std::runtime_error("snapshot: unsupported version");
+    if (h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27" && h[0] != "galaxy-kernel-v28" && h[0] != "galaxy-kernel-v29" && h[0] != "galaxy-kernel-v30" && h[0] != "galaxy-kernel-v31" && h[0] != "galaxy-kernel-v32" && h[0] != "galaxy-kernel-v33" && h[0] != "galaxy-kernel-v34" && h[0] != "galaxy-kernel-v35" && h[0] != "galaxy-kernel-v36" && h[0] != "galaxy-kernel-v37" && h[0] != "galaxy-kernel-v38" && h[0] != "galaxy-kernel-v39" && h[0] != "galaxy-kernel-v40" && h[0] != "galaxy-kernel-v41" && h[0] != "galaxy-kernel-v44" && h[0] != "galaxy-kernel-v48" && h[0] != "galaxy-kernel-v49" && h[0] != "galaxy-kernel-v52" && h[0] != "galaxy-kernel-v53" && h[0] != "galaxy-kernel-v57" && h[0] != "galaxy-kernel-v58" && h[0] != "galaxy-kernel-v59") throw std::runtime_error("snapshot: unsupported version");
     const auto sys = u64(h[1]);
     if (sys == 0 || sys > std::numeric_limits<std::uint32_t>::max())
         throw std::runtime_error("snapshot: invalid system");
     Simulation result(u64(h[4]), static_cast<std::uint32_t>(sys));
-    result.snapshot_version_ = h[0] == "galaxy-kernel-v58" ? 58 : h[0] == "galaxy-kernel-v57" ? 57 : h[0] == "galaxy-kernel-v53" ? 53 : h[0] == "galaxy-kernel-v52" ? 52 : h[0] == "galaxy-kernel-v49" ? 49 : h[0] == "galaxy-kernel-v48" ? 48 : h[0] == "galaxy-kernel-v44" ? 44 : h[0] == "galaxy-kernel-v41" ? 41 : h[0] == "galaxy-kernel-v40" ? 40 : h[0] == "galaxy-kernel-v39" ? 39 : h[0] == "galaxy-kernel-v38" ? 38 : h[0] == "galaxy-kernel-v37" ? 37 : h[0] == "galaxy-kernel-v36" ? 36 : h[0] == "galaxy-kernel-v35" ? 35 : h[0] == "galaxy-kernel-v34" ? 34 : h[0] == "galaxy-kernel-v33" ? 33 : h[0] == "galaxy-kernel-v32" ? 32 : h[0] == "galaxy-kernel-v31" ? 31 : h[0] == "galaxy-kernel-v30" ? 30 : h[0] == "galaxy-kernel-v29" ? 29 : h[0] == "galaxy-kernel-v28" ? 28 : h[0] == "galaxy-kernel-v27" ? 27 : h[0] == "galaxy-kernel-v26" ? 26 : h[0] == "galaxy-kernel-v25" ? 25 : h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
+    result.snapshot_version_ = h[0] == "galaxy-kernel-v59" ? 59 : h[0] == "galaxy-kernel-v58" ? 58 : h[0] == "galaxy-kernel-v57" ? 57 : h[0] == "galaxy-kernel-v53" ? 53 : h[0] == "galaxy-kernel-v52" ? 52 : h[0] == "galaxy-kernel-v49" ? 49 : h[0] == "galaxy-kernel-v48" ? 48 : h[0] == "galaxy-kernel-v44" ? 44 : h[0] == "galaxy-kernel-v41" ? 41 : h[0] == "galaxy-kernel-v40" ? 40 : h[0] == "galaxy-kernel-v39" ? 39 : h[0] == "galaxy-kernel-v38" ? 38 : h[0] == "galaxy-kernel-v37" ? 37 : h[0] == "galaxy-kernel-v36" ? 36 : h[0] == "galaxy-kernel-v35" ? 35 : h[0] == "galaxy-kernel-v34" ? 34 : h[0] == "galaxy-kernel-v33" ? 33 : h[0] == "galaxy-kernel-v32" ? 32 : h[0] == "galaxy-kernel-v31" ? 31 : h[0] == "galaxy-kernel-v30" ? 30 : h[0] == "galaxy-kernel-v29" ? 29 : h[0] == "galaxy-kernel-v28" ? 28 : h[0] == "galaxy-kernel-v27" ? 27 : h[0] == "galaxy-kernel-v26" ? 26 : h[0] == "galaxy-kernel-v25" ? 25 : h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
     result.tick_ = u64(h[2]);
     result.next_entity_id_ = u64(h[3]);
     if (result.next_entity_id_ == 0) throw std::runtime_error("snapshot: invalid next entity ID");
@@ -5104,15 +5239,37 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                u.stored_energy!=u.generated_energy-u.consumed_energy ||
                !result.utilities_.emplace(id,u).second)
                 throw std::runtime_error("snapshot: invalid utility operation");
+        } else if(f[0]=="physicalchild" && result.snapshot_version_>=59){
+            if(f.size()!=7)throw std::runtime_error("snapshot: malformed physical child");
+            PhysicalDependent d{u64(f[1]),u64(f[4]),u64(f[5]),u64(f[6]),
+                                u64(f[2]),u64(f[3])};
+            if(d.id<(1ULL<<62)||!d.parent_a||!d.parent_b||
+               d.parent_a==d.parent_b||!d.home_ship||!d.location||
+               !d.birth_command||result.npcs_.count(d.id)||
+               !result.physical_dependents_.emplace(d.id,d).second)
+                throw std::runtime_error("snapshot: invalid or duplicate physical child");
         } else if(f[0]=="colonydeparture" && result.snapshot_version_>=58){
             if(f.size()<7)throw std::runtime_error("snapshot: truncated colony departure");
             const auto source=u64(f[1]),receiver=u64(f[2]),cmd=u64(f[3]),tick=u64(f[4]);
             const auto count=u64(f[5]);
             if(!source||!receiver||source==receiver||!cmd||!tick||
-               tick>result.tick_ || count==0 || count>16 || f.size()!=6+count)
+               tick>result.tick_ || count==0 || count>16 || f.size()<6+count)
                 throw std::runtime_error("snapshot: malformed colony departure");
-            ColonyDeparture d{source,receiver,cmd,tick,{}};
+            ColonyDeparture d{source,receiver,cmd,tick,{},{}};
             for(std::size_t i=0;i<count;++i)d.relocated_npcs.push_back(u64(f[6+i]));
+            if(result.snapshot_version_>=59){
+                if(f.size()<7+count)throw std::runtime_error("snapshot: no child count");
+                const auto children=u64(f[6+count]);
+                if(children>16||count+children>16||f.size()!=7+count+children)
+                    throw std::runtime_error("snapshot: malformed child departure count");
+                for(std::size_t i=0;i<children;++i)
+                    d.relocated_children.push_back(u64(f[7+count+i]));
+                if(!std::is_sorted(d.relocated_children.begin(),d.relocated_children.end())||
+                   std::adjacent_find(d.relocated_children.begin(),d.relocated_children.end())!=d.relocated_children.end() ||
+                   (!d.relocated_children.empty()&&d.relocated_children.front()<(1ULL<<62)))
+                    throw std::runtime_error("snapshot: invalid child roster order");
+            }else if(f.size()!=6+count)
+                throw std::runtime_error("snapshot: legacy departure extra fields");
             if(!std::is_sorted(d.relocated_npcs.begin(),d.relocated_npcs.end()) ||
                !d.relocated_npcs.front() ||
                std::adjacent_find(d.relocated_npcs.begin(),d.relocated_npcs.end())!=d.relocated_npcs.end() ||
@@ -5246,7 +5403,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             c.id = u64(f[1]); c.execute_tick = u64(f[2]); c.sequence = u64(f[3]);
             c.issuer = u64(f[4]); c.actor = u64(f[5]); c.target = u64(f[6]);
             auto action = u64(f[7]);
-            if (action > (result.snapshot_version_ >= 58 ? static_cast<unsigned>(Action::HostColonyDeparture) : result.snapshot_version_ >= 56 ? static_cast<unsigned>(Action::HostTransferConsignedStock) : result.snapshot_version_ >= 53 ? static_cast<unsigned>(Action::HostReturnConstructedStock) : result.snapshot_version_ >= 52 ? static_cast<unsigned>(Action::HostEscrowConstructedStock) : result.snapshot_version_ >= 48 ? static_cast<unsigned>(Action::HostSplitEvacuatePassengers) : result.snapshot_version_ >= 41 ? static_cast<unsigned>(Action::HostSettleMigrant) : result.snapshot_version_ >= 39 ? static_cast<unsigned>(Action::HostMobileStabilize) : result.snapshot_version_ >= 38 ? static_cast<unsigned>(Action::HostTreatInjuries) : result.snapshot_version_ >= 37 ? static_cast<unsigned>(Action::HostResolveMixedFerryLoss) : result.snapshot_version_ >= 36 ? static_cast<unsigned>(Action::HostDestroyPassengerFerry) : result.snapshot_version_ >= 35 ? static_cast<unsigned>(Action::HostEvacuatePassengers) : result.snapshot_version_ >= 32 ? static_cast<unsigned>(Action::HostDisembarkPassengers) : result.snapshot_version_ >= 30 ? static_cast<unsigned>(Action::CompleteConveyorRoute) : result.snapshot_version_ >= 29 ? static_cast<unsigned>(Action::PlaceFactoryEquipment) : result.snapshot_version_ >= 28 ? static_cast<unsigned>(Action::ConstructWorkshopLink) : result.snapshot_version_ >= 27 ? static_cast<unsigned>(Action::ConstructStorageLink) : result.snapshot_version_ >= 26 ? static_cast<unsigned>(Action::TransferStorageNodeStack) : result.snapshot_version_ >= 25 ? static_cast<unsigned>(Action::TransferStorageStack) : result.snapshot_version_ >= 24 ? static_cast<unsigned>(Action::TransferWorkshopStack) : result.snapshot_version_ >= 23 ? static_cast<unsigned>(Action::TransferWorkshopFinalOutput) : result.snapshot_version_ >= 22 ? static_cast<unsigned>(Action::TransferWorkshopOutput) : result.snapshot_version_ >= 21 ? static_cast<unsigned>(Action::HostCrewLoss) : result.snapshot_version_ >= 20 ? static_cast<unsigned>(Action::AssignFarmMentor) : result.snapshot_version_ >= 19 ? static_cast<unsigned>(Action::AssignPolicyInspectors) : result.snapshot_version_ >= 18 ? static_cast<unsigned>(Action::TransferWaterworksFeed) : result.snapshot_version_ >= 17 ? static_cast<unsigned>(Action::ConstructReclaimer) : result.snapshot_version_ >= 16 ? static_cast<unsigned>(Action::AssignClinicStaff) : result.snapshot_version_ >= 15 ? static_cast<unsigned>(Action::AssignCommunityStaff) : result.snapshot_version_ >= 14 ? static_cast<unsigned>(Action::SetUtilityMaintenance) : result.snapshot_version_ >= 13 ? static_cast<unsigned>(Action::RepairUtility) : result.snapshot_version_ >= 12 ? static_cast<unsigned>(Action::AssignHabitatResidents) : result.snapshot_version_ >= 11 ? static_cast<unsigned>(Action::AssignFarmWorkers) : result.snapshot_version_ >= 10 ? static_cast<unsigned>(Action::LoadLifeWater) : result.snapshot_version_ >= 9 ? static_cast<unsigned>(Action::FabricateMaterialModule) : result.snapshot_version_ >= 7 ? static_cast<unsigned>(Action::ConstructOutpost) : result.snapshot_version_ >= 6 ? static_cast<unsigned>(Action::DeliverGateSpares) : result.snapshot_version_ >= 5 ? static_cast<unsigned>(Action::SetGatePairOnline) : result.snapshot_version_ >= 4 ? static_cast<unsigned>(Action::SellOre) : static_cast<unsigned>(Action::UnloadOre))) throw std::runtime_error("snapshot: invalid action");
+            if (action > (result.snapshot_version_ >= 59 ? static_cast<unsigned>(Action::HostColonyFamilyDeparture) : result.snapshot_version_ >= 58 ? static_cast<unsigned>(Action::HostColonyDeparture) : result.snapshot_version_ >= 56 ? static_cast<unsigned>(Action::HostTransferConsignedStock) : result.snapshot_version_ >= 53 ? static_cast<unsigned>(Action::HostReturnConstructedStock) : result.snapshot_version_ >= 52 ? static_cast<unsigned>(Action::HostEscrowConstructedStock) : result.snapshot_version_ >= 48 ? static_cast<unsigned>(Action::HostSplitEvacuatePassengers) : result.snapshot_version_ >= 41 ? static_cast<unsigned>(Action::HostSettleMigrant) : result.snapshot_version_ >= 39 ? static_cast<unsigned>(Action::HostMobileStabilize) : result.snapshot_version_ >= 38 ? static_cast<unsigned>(Action::HostTreatInjuries) : result.snapshot_version_ >= 37 ? static_cast<unsigned>(Action::HostResolveMixedFerryLoss) : result.snapshot_version_ >= 36 ? static_cast<unsigned>(Action::HostDestroyPassengerFerry) : result.snapshot_version_ >= 35 ? static_cast<unsigned>(Action::HostEvacuatePassengers) : result.snapshot_version_ >= 32 ? static_cast<unsigned>(Action::HostDisembarkPassengers) : result.snapshot_version_ >= 30 ? static_cast<unsigned>(Action::CompleteConveyorRoute) : result.snapshot_version_ >= 29 ? static_cast<unsigned>(Action::PlaceFactoryEquipment) : result.snapshot_version_ >= 28 ? static_cast<unsigned>(Action::ConstructWorkshopLink) : result.snapshot_version_ >= 27 ? static_cast<unsigned>(Action::ConstructStorageLink) : result.snapshot_version_ >= 26 ? static_cast<unsigned>(Action::TransferStorageNodeStack) : result.snapshot_version_ >= 25 ? static_cast<unsigned>(Action::TransferStorageStack) : result.snapshot_version_ >= 24 ? static_cast<unsigned>(Action::TransferWorkshopStack) : result.snapshot_version_ >= 23 ? static_cast<unsigned>(Action::TransferWorkshopFinalOutput) : result.snapshot_version_ >= 22 ? static_cast<unsigned>(Action::TransferWorkshopOutput) : result.snapshot_version_ >= 21 ? static_cast<unsigned>(Action::HostCrewLoss) : result.snapshot_version_ >= 20 ? static_cast<unsigned>(Action::AssignFarmMentor) : result.snapshot_version_ >= 19 ? static_cast<unsigned>(Action::AssignPolicyInspectors) : result.snapshot_version_ >= 18 ? static_cast<unsigned>(Action::TransferWaterworksFeed) : result.snapshot_version_ >= 17 ? static_cast<unsigned>(Action::ConstructReclaimer) : result.snapshot_version_ >= 16 ? static_cast<unsigned>(Action::AssignClinicStaff) : result.snapshot_version_ >= 15 ? static_cast<unsigned>(Action::AssignCommunityStaff) : result.snapshot_version_ >= 14 ? static_cast<unsigned>(Action::SetUtilityMaintenance) : result.snapshot_version_ >= 13 ? static_cast<unsigned>(Action::RepairUtility) : result.snapshot_version_ >= 12 ? static_cast<unsigned>(Action::AssignHabitatResidents) : result.snapshot_version_ >= 11 ? static_cast<unsigned>(Action::AssignFarmWorkers) : result.snapshot_version_ >= 10 ? static_cast<unsigned>(Action::LoadLifeWater) : result.snapshot_version_ >= 9 ? static_cast<unsigned>(Action::FabricateMaterialModule) : result.snapshot_version_ >= 7 ? static_cast<unsigned>(Action::ConstructOutpost) : result.snapshot_version_ >= 6 ? static_cast<unsigned>(Action::DeliverGateSpares) : result.snapshot_version_ >= 5 ? static_cast<unsigned>(Action::SetGatePairOnline) : result.snapshot_version_ >= 4 ? static_cast<unsigned>(Action::SellOre) : static_cast<unsigned>(Action::UnloadOre))) throw std::runtime_error("snapshot: invalid action");
             c.action = static_cast<Action>(action);
             auto tx = i64(f[8]), ty = i64(f[9]);
             if (tx < std::numeric_limits<int>::min() || tx > std::numeric_limits<int>::max() ||
@@ -6110,6 +6267,22 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             if(counts[{id,static_cast<int>(NpcRole::Habitat)}]!=h.residents)
                 throw std::runtime_error("snapshot: habitat NPC count mismatch");
     }
+    if(result.snapshot_version_>=59){
+        for(const auto& [id,d]:result.physical_dependents_){
+            if(id<(1ULL<<62) || d.id!=id || d.parent_a>= (1ULL<<62) ||
+               d.parent_b>=(1ULL<<62) || d.parent_a==d.parent_b ||
+               !result.colony_ships_.count(d.home_ship) ||
+               !result.colony_ships_.count(d.location) ||
+               result.entities_.at(d.location).type!=EntityType::Ship ||
+               result.npcs_.count(id) || result.casualties_.count(id))
+                throw std::runtime_error("snapshot: dependent physical ownership invalid");
+            const auto birth=std::find_if(result.events_.begin(),result.events_.end(),
+                [&](const Event& e){return e.command_id==d.birth_command &&
+                   e.result==Outcome::Applied;});
+            if(birth==result.events_.end())
+                throw std::runtime_error("snapshot: dependent birth has no applied physical receipt");
+        }
+    }
     // Validate the immutable full-roster handoff against the final physical
     // simulation, not just against a promising event label.
     if(result.snapshot_version_>=58)for(const auto& [ship_id,d]:result.colony_departures_){
@@ -6131,6 +6304,15 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
         for(const auto& [site,ha]:result.habitats_)
             if(ha.source_ship==ship_id && ha.residents)
                 throw std::runtime_error("snapshot: stranded resident workforce");
+        for(const auto& [id,dependent]:result.physical_dependents_)
+            if(dependent.home_ship==ship_id)
+                throw std::runtime_error("snapshot: source still owns a dependent after departure");
+        for(auto id:d.relocated_children){
+            const auto it=result.physical_dependents_.find(id);
+            if(it==result.physical_dependents_.end() ||
+               it->second.home_ship!=d.receiver || it->second.location!=d.receiver)
+                throw std::runtime_error("snapshot: departed dependent not at the actual receiving compartment");
+        }
         for(auto id:d.relocated_npcs){
             const auto n=result.npcs_.find(id);
             if(n==result.npcs_.end() || n->second.home_ship!=d.receiver ||
@@ -6235,6 +6417,7 @@ void Simulation::swap(Simulation& other) noexcept {
     mobile_medical_kits_.swap(other.mobile_medical_kits_);
     crew_rehomes_.swap(other.crew_rehomes_);
     colony_departures_.swap(other.colony_departures_);
+    physical_dependents_.swap(other.physical_dependents_);
     voyages_.swap(other.voyages_);
     farm_team_xp_.swap(other.farm_team_xp_);
     swap(next_npc_id_,other.next_npc_id_);

@@ -42,7 +42,9 @@ Assessment assess(const Simulation& world,EntityId home_ship,EntityId site,
         // compartment stock. Boarding removes the person from their former
         // compartment without silently creating a second consumer.
         population=world.passenger_needs_enabled()?
-            static_cast<std::uint64_t>(world.people_physically_aboard(home_ship)):
+            static_cast<std::uint64_t>(world.people_physically_aboard(home_ship))+
+            static_cast<std::uint64_t>(world.physical_dependents_enabled()?
+                world.dependents_physically_at(home_ship):0):
             static_cast<std::uint64_t>(ship->crew);
     }else if(const auto* habitat=world.habitat(site)){
         if(habitat->source_ship!=home_ship || habitat->residents<0)

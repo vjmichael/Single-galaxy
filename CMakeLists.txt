@@ -952,3 +952,20 @@ if(BUILD_TESTING)
     target_link_libraries(galaxy_colony_auto04d4d_family_tests PRIVATE galaxy_kernel)
     add_test(NAME galaxy_colony_auto04d4d_family_proof COMMAND galaxy_colony_auto04d4d_family_tests)
 endif()
+
+# 04D.4D2: versioned ART02 physical child custody, supplies and whole-family move.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_auto04d4d2_physical_tests
+                   tests/COLONY_AUTO04D4D2_PhysicalFamilyTests.cpp)
+    target_link_libraries(galaxy_colony_auto04d4d2_physical_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_auto04d4d2_physical_family
+             COMMAND galaxy_colony_auto04d4d2_physical_tests)
+endif()
+
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_auto04d4d2_atomic_tests
+                   tests/COLONY_AUTO04D4D2_AtomicFamilyTests.cpp)
+    target_link_libraries(galaxy_colony_auto04d4d2_atomic_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_auto04d4d2_atomic_family
+             COMMAND galaxy_colony_auto04d4d2_atomic_tests)
+endif()

@@ -19,6 +19,19 @@ struct DeparturePlan {
     std::vector<std::uint64_t> adult_ids;  // entire world population, sorted
     std::vector<Dependent> children;      // entire ART02 child population, sorted
 };
+// First executable scope: exactly two physically present parent/guardian
+// adults and ALL their legally and physically accounted children, on one
+// same-owner receiving ship. More complex households fail closed.
+struct ExecutionPlan {
+    DeparturePlan prepared;
+    std::uint64_t command_id=0;
+    std::uint64_t expected_region_revision=0,expected_owner_generation=0;
+    std::uint64_t expected_origin_family_revision=0;
+    std::uint64_t expected_destination_family_revision=0;
+    std::uint64_t co_parent_event_id=0;
+    std::vector<std::uint64_t> child_move_events;
+    std::string region_scope,origin_colony,destination_colony;
+};
 struct Audit {
     std::uint64_t world_tick=0;
     std::uint64_t named_adults=0, dependent_children=0;

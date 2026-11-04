@@ -467,6 +467,12 @@ public:
     bool prepare_host_colony_family_departure(
         const colony_family::DeparturePlan& plan,
         FailPoint fail=FailPoint::None);
+    // v59: physical adults and ART02 dependents must move together through a
+    // single host world-generation transaction that also updates family and
+    // cold-owned regional population journals. No generic player submission.
+    void step_with_atomic_colony_family_departure(
+        const colony_family::ExecutionPlan& plan,
+        FailPoint fail=FailPoint::None);
 
 
 
