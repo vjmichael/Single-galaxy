@@ -8,6 +8,16 @@
   function decode(raw){
     if(typeof raw!=='string'||raw.length>180||!/^COLONY\|1\|/.test(raw)||!/^[A-Za-z0-9_|-]+$/.test(raw))throw Error('Invalid colony telemetry');
     const v=raw.split('|'),tick=numeric(v[2],1200),t=v[3];let e={tick,type:t};
+    if(t==='LOCAL_FRAME'){
+      if(v.length!==6)throw Error('Malformed local frame');
+      return {...e,system:numeric(v[4],4294967295),
+        anchor:numeric(v[5],Number.MAX_SAFE_INTEGER)};
+    }
+    if(t==='FRAME_TRANSIT_STARTED'||t==='FRAME_TRANSIT_ARRIVED'){
+      if(v.length!==6)throw Error('Malformed frame transition');
+      return {...e,request:numeric(v[4],Number.MAX_SAFE_INTEGER),
+        body:numeric(v[5],Number.MAX_SAFE_INTEGER)};
+    }
     if(t==='CELESTIAL_HEADER'){
       if(v.length!==8)throw Error('Malformed celestial catalogue');
       const architecture=numeric(v[4],3),morphology=numeric(v[5],2),
@@ -337,7 +347,7 @@
       if(v.length!==7||!/^\d+$/.test(v[4])||!/^[A-Z_]+$/.test(v[5]))throw Error('Bad action result');
       e.id=numeric(v[4],Number.MAX_SAFE_INTEGER);e.outcome=v[5];e.transferred=numeric(v[6]);
     }else if(t==='ERROR'){
-      if(v.length!==5||!['INVALID_INPUT','INVALID_SAFETY_ORDER','UNAUTHORIZED_PRINCIPAL'].includes(v[4]))throw Error('Bad rejected input');e.error=v[4];
+      if(v.length!==5||!['INVALID_INPUT','INVALID_SAFETY_ORDER','UNAUTHORIZED_PRINCIPAL','FRAME_TRAVEL_DENIED','FRAME_TRANSIT_BLOCKED'].includes(v[4]))throw Error('Bad rejected input');e.error=v[4];
     }else throw Error('Unknown colony event');
     return e;
   }
@@ -430,8 +440,38 @@
            ' · world '+(body.x/1000000).toFixed(0)+', '+
            (body.y/1000000).toFixed(0)+', '+
            (body.z/1000000).toFixed(0)+' km (x/y/z)';
+         const action=document.createElement('button');
+         action.type='button';
+         action.textContent='Travel to local region';
+         action.disabled=body.id===window.GalaxyActiveCelestialBody;
+         action.addEventListener('click',()=>{
+           if(window.GalaxyColonyCommand)
+             window.GalaxyColonyCommand('colonyFrameTravel',{body:body.id});
+           q('signatureFeedback').textContent='Celestial travel requested. Awaiting the authoritative host.';
+         });
+         item.appendChild(action);
          return item;
        }));
+     }
+     if(e.type==='LOCAL_FRAME'){
+       window.GalaxyActiveCelestialBody=e.anchor;
+       q('signatureFeedback').textContent='Current local frame: '+
+         (e.anchor?'celestial body #'+e.anchor:'open-space legacy region')+'.';
+     }
+     if(e.type==='FRAME_TRANSIT_STARTED')
+       q('signatureFeedback').textContent='Transit #'+e.request+
+         ' started for body #'+e.body+'. Local operations are suspended.';
+     if(e.type==='FRAME_TRANSIT_ARRIVED'){
+       window.GalaxyActiveCelestialBody=e.body;
+       signatureContacts.clear();geology.clear();small.clear();
+       q('signatureTarget').replaceChildren(new Option('Rescan new local region',''));
+       q('signatureFocus').disabled=true;
+       q('droneTarget').replaceChildren(new Option('Rescan local targets',''));
+       q('droneLaunch').disabled=true;
+       q('colonyRockTarget').replaceChildren(new Option('Rescan local targets',''));
+       window.GalaxySelectedRockId=null;
+       q('signatureFeedback').textContent='Arrived at body #'+e.body+
+         '. Local sensor contacts were cleared; scan this region.';
      }
      if(e.type==='CELESTIAL_HISTORY')
        q('signatureFeedback').textContent='Previously surveyed on tick '+e.first+
