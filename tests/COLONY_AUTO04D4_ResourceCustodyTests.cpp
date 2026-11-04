@@ -16,10 +16,11 @@ try{
         Simulation initial(7044);
         ferry=initial.add_colony_ship(7,{0,0},100,4);
         home=initial.add_colony_ship(8,{0,0},100,2);
-        initial.provision_colony_genesis(ferry,60,60,60,100,100);
-        initial.provision_colony_genesis(home,60,60,60,100,100);
+        initial.provision_colony_genesis(ferry,100,100,100,200,500);
+        initial.provision_colony_genesis(home,100,100,100,200,500);
         initial.enable_individual_workforce();
         initial.upgrade_assignment_snapshot_format();
+        initial.enable_passenger_life_support();
         material=initial.total_material_kg();
         PersistentWorld w(file,std::move(initial));
         const auto before_ferry=colony_safety::assess(w.world(),ferry,ferry);
@@ -36,10 +37,10 @@ try{
         CHECK(colony_safety::assess(w.world(),ferry,ferry).population==6);
         CHECK(colony_safety::assess(w.world(),home,home).population==2);
         w.steps(20-w.world().tick());
-        CHECK(w.world().life_support(ferry)->food_kg==54);
-        CHECK(w.world().life_support(ferry)->water_kg==54);
-        CHECK(w.world().life_support(ferry)->oxygen_kg==54);
-        CHECK(w.world().life_support(home)->food_kg==58);
+        CHECK(w.world().life_support(ferry)->food_kg==94);
+        CHECK(w.world().life_support(ferry)->water_kg==94);
+        CHECK(w.world().life_support(ferry)->oxygen_kg==94);
+        CHECK(w.world().life_support(home)->food_kg==98);
         CHECK(w.world().total_material_kg()==material);
         Command disembark{};
         disembark.id=1002;disembark.transport_id=1001;disembark.sequence=2;
@@ -57,8 +58,8 @@ try{
         // The destination's returned crew remain its original 2 named ship crew;
         // passengers who disembarked are not a second copy of home crew.
         w.steps(40-w.world().tick());
-        CHECK(w.world().life_support(ferry)->food_kg==50);
-        CHECK(w.world().life_support(home)->food_kg==56);
+        CHECK(w.world().life_support(ferry)->food_kg==90);
+        CHECK(w.world().life_support(home)->food_kg==96);
         CHECK(w.world().total_material_kg()==material);
         const auto generation=w.generation(),tick=w.world().tick();
         bool rolled_back=false;
@@ -71,8 +72,8 @@ try{
         PersistentWorld w(file,Simulation(9999));
         CHECK(w.world().tick()==40);
         CHECK(w.world().passengers_aboard(ferry)==0);
-        CHECK(w.world().life_support(ferry)->food_kg==50);
-        CHECK(w.world().life_support(home)->food_kg==56);
+        CHECK(w.world().life_support(ferry)->food_kg==90);
+        CHECK(w.world().life_support(home)->food_kg==96);
         CHECK(w.world().npc_records().size()==6);
         CHECK(w.world().total_material_kg()==material);
     }
