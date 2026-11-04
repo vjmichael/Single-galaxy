@@ -50,6 +50,11 @@ Decision evaluate_diplomatic(Decision d,int score,std::uint64_t event,
         d.motive=Motive::Security;
         d.posture=Posture::Warn;
     }
+    if(policy==DiplomaticPolicy::SecurityFirst &&
+       d.posture==Posture::Observe && attitude!=Attitude::Allied){
+        d.motive=Motive::Security;
+        d.posture=Posture::Warn;
+    }
     return d;
 }
 Decision evaluate(const Simulation& world,EntityId colony,
