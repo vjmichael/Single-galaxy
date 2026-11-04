@@ -802,6 +802,8 @@ int main(int argc,char** argv){
         world.ensure_physical_celestial_systems();
         // PLAY-13C.2B: migrate current ships to durable legacy-local frames.
         world.ensure_ship_frame_registry();
+        // PLAY-13C.4: durable, idempotent region seeding for pre-v73 arrivals.
+        world.ensure_visited_local_regions();
         if(!world.world().colony_ship(ship)||!world.world().find(ship)||world.world().find(ship)->owner_id!=owner){
             // A populated production world can have stations before its first
             // player-owned colony ship. Do not assume the ship has entity ID 1.
