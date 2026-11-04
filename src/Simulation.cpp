@@ -5061,7 +5061,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 }
                 if(result.snapshot_version_>=65){
                     const auto count=u64(f[34]);
-                    if(count>8 || (e.type!=EntityType::Ship && count))
+                    if(count>8 || (e.type!=EntityType::Ship && e.type!=EntityType::Wreck && count))
                         throw std::runtime_error("snapshot: invalid probe inventory");
                     e.survey_probes_carried=static_cast<std::uint8_t>(count);
                     if(e.fitting.hardpoints[0]==2 && e.fitting.hardpoints[1]==2)
@@ -6680,6 +6680,17 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             throw std::runtime_error("snapshot: activity refers to unknown command");
         if (a.kind == ActivityKind::AsteroidDespawned && !result.depleted_.count(a.target))
             throw std::runtime_error("snapshot: missing depleted tombstone");
+    }
+    if(result.snapshot_version_>=65){
+        for(const auto& [id,p]:result.survey_probes_){
+            const auto it=result.entities_.find(p.carrier);
+            if(id!=p.id || it==result.entities_.end() ||
+               (it->second.type!=EntityType::Ship && it->second.type!=EntityType::Wreck) ||
+               it->second.owner_id!=p.owner || it->second.system_id!=p.system ||
+               !it->second.fitting.probe_launcher() ||
+               !result.submitted_ids_.count(p.id))
+                throw std::runtime_error("snapshot: survey probe has no valid physical carrier");
+        }
     }
     if (result.canonical_state() != bytes)
         throw std::runtime_error("snapshot: noncanonical or out-of-order records");
