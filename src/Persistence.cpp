@@ -3770,9 +3770,7 @@ public:
                     sqlite3_int64 members=0,seen_adults=0,seen_children=0;
                     Statement rows(db_,"SELECT event_id,person_id,guardian_id,kind,"
                         "origin_revision,destination_revision FROM sg_colony_family_evacuation_member "
-                        "WHERE command_id=? ORDER BY kind,CAST(person_id AS INTEGER),person_id");
-                    // Do not sort high-range child IDs as SQLite signed integers:
-                    // map membership is established separately by exact strings.
+                        "WHERE command_id=? ORDER BY kind,LENGTH(person_id),person_id");
                     rows.text(1,std::to_string(id));
                     while(rows.row()){
                         const auto event=sqlite_str(rows.get(),0);
@@ -4856,6 +4854,9 @@ public:
             Statement has_split_execution(db_,"SELECT 1 FROM sqlite_master "
                 "WHERE type='table' AND name='sg_split_rescue_execution'");
             const bool split_execution_exists=has_split_execution.row();
+            Statement family_evacuation(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='sg_colony_family_evacuation'");
+            const bool has_family_evacuation=family_evacuation.row();
             const std::string prune_sql=std::string(
                 "DELETE FROM snapshots WHERE generation > 1 AND generation < ?")+
                 (incident_cases_exist ? " AND generation NOT IN "
@@ -4871,7 +4872,11 @@ public:
                 (split_exists ? " AND generation NOT IN "
                     "(SELECT world_generation FROM sg_split_rescue_intent)" : "")+
                 (split_execution_exists ? " AND generation NOT IN "
-                    "(SELECT world_generation FROM sg_split_rescue_execution)" : "");
+                    "(SELECT world_generation FROM sg_split_rescue_execution)" : "")+
+                (has_family_evacuation ? " AND generation NOT IN "
+                    "(SELECT world_generation FROM sg_colony_family_evacuation)"
+                    " AND generation NOT IN "
+                    "(SELECT world_generation-1 FROM sg_colony_family_evacuation)" : "");
             Statement prune(db_,prune_sql.c_str());
             prune.i64(1, static_cast<std::int64_t>(next > 2 ? next - 2 : 1));
             prune.execute();
@@ -6014,6 +6019,7 @@ void PersistentWorld::recover_copy(const std::string& source, const std::string&
         Simulation checked(1);std::uint64_t gen=0;std::int64_t ore=0,credit=0;
         if(!copy.restore(checked,gen,ore,credit))
             throw std::runtime_error("recovery: missing world checkpoint");
+        copy.verify_physical_dependent_authority(checked);
         verify_dependent_stranding_cases(destination,gen);
         verify_split_rescue_intents(destination,gen);
     } catch (...) {
