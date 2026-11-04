@@ -567,6 +567,7 @@ public:
     static constexpr std::int64_t kDroneControlRangeMm = 10000000;
     // 0.5 AU long-range probe uplink, reserved for galaxy-scale coordinate work.
     static constexpr std::int64_t kDeepSpaceProbeCommsRangeMm = 74798935350000LL;
+    static bool within_deep_probe_link(std::int64_t dx_mm,std::int64_t dy_mm);
     static constexpr std::int64_t kProximitySafetyRangeMm = 5000;
     static constexpr std::int64_t kTrainingWeaponDamage = 15;
     static constexpr std::uint64_t kTrainingWeaponCooldownTicks = 2;
