@@ -5144,6 +5144,31 @@ std::vector<PhysicalCelestialBody> Simulation::scan_physical_celestials(
 // PLAY-13D.3: these native game operations use existing canonical module,
 // life-support and oasis custody. A survey is informational; no resource is
 // allocated merely because terrain resembles a river or fertile ground.
+std::optional<planetary::PlanetaryRegionKey>
+Simulation::planetary_oasis_source_region(PlayerId owner,EntityId ship,
+    std::uint64_t body_id) const {
+    if(!oasis_reserves_.count(body_id))return std::nullopt;
+    const auto body=celestial_navigation_anchor(owner,ship,body_id);
+    if(!body || (body->kind!=CelestialKind::Planet &&
+                 body->kind!=CelestialKind::Moon))return std::nullopt;
+    const auto env=planetary_envelope_for_body(*body);
+    const planetary::PlanetaryWorldKey key{
+        kAstronomicalGalaxySeed,body->system,body_id,1};
+    const auto map=planetary::generate_watersheds(key,env);
+    // The seeded index yields a deterministic location on this physical
+    // body, not a source on every tile. Open land is required for rig placement.
+    const auto start=std::size_t(astronomy_mix(body_id^
+        kAstronomicalGalaxySeed^0x4F41534953534F55ULL)%planetary::kWatershedCells);
+    for(std::size_t n=0;n<planetary::kWatershedCells;++n) {
+        const auto index=(start+n)%planetary::kWatershedCells;
+        if(map.cells[index].ocean)continue;
+        return planetary::PlanetaryRegionKey{
+            body_id,1,
+            std::uint16_t(index/planetary::kWatershedColumns),
+            std::uint16_t(index%planetary::kWatershedColumns)};
+    }
+    return std::nullopt; // all-ocean world requires future underwater rigs
+}
 bool Simulation::build_planetary_site(PlayerId owner,EntityId ship,
     std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude) {
     const auto site=scan_planetary_geography(owner,ship,body,latitude,longitude);
@@ -5179,7 +5204,10 @@ bool Simulation::equip_planetary_site(PlayerId owner,EntityId ship,
        colony==colony_ships_.end() || colony->second.modules<2 ||
        colony->second.crew<2 || (farm?it->second.farm:it->second.extractor) ||
        (farm && !site->landscape.region.farming_possible) ||
-       (!farm && !oasis_reserves_.count(body)))
+       (!farm && (!oasis_reserves_.count(body) ||
+          !planetary_oasis_source_region(owner,ship,body) ||
+          planetary_oasis_source_region(owner,ship,body)->latitude!=latitude ||
+          planetary_oasis_source_region(owner,ship,body)->longitude!=longitude)))
         return false;
     colony->second.modules-=2;
     it->second.embodied_ore+=4;
@@ -5236,6 +5264,9 @@ bool Simulation::extract_planetary_site(PlayerId owner,EntityId ship,
        site==planetary_sites_.end() || reserve==oasis_reserves_.end() ||
        site->second.owner!=owner || site->second.source_ship!=ship ||
        !site->second.extractor ||
+       !planetary_oasis_source_region(owner,ship,body) ||
+       planetary_oasis_source_region(owner,ship,body)->latitude!=latitude ||
+       planetary_oasis_source_region(owner,ship,body)->longitude!=longitude ||
        frame==ship_frames_.end() || frame->second.anchor_body!=body)return false;
     auto& source=water?reserve->second.water_kg:reserve->second.nutrients_kg;
     auto& dest=water?site->second.water_kg:site->second.nutrients_kg;
