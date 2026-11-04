@@ -112,6 +112,18 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
  </div>
  <div id="assistStatus" class="help" role="status" aria-live="polite">Manual flight. Select an asteroid or your home outpost to engage travel assist.</div>
 </section>
+<section aria-labelledby="combatTitle" style="border:1px solid #7b4752;border-radius:10px;padding:12px;margin:10px 0">
+ <h2 id="combatTitle">Ship combat · Training weapons</h2>
+ <div class="help">An uncrewed practice drone starts nearby. Rotate with Q/E to aim; the native weapon checks a 12 km range, 90° forward cone, finite charges and a two-tick cooldown. No civilian or colony attacks in this first slice.</div>
+ <div class="metric"><span>Ship hull</span><strong id="combatHull">—</strong></div>
+ <div class="metric"><span>Training weapon charges</span><strong id="combatCharges">—</strong></div>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <label>Target <select id="combatTarget"><option value="">Awaiting native combat target</option></select></label>
+  <button type="button" id="combatFire" class="primary" disabled>Fire training weapon</button>
+ </div>
+ <div id="combatFeedback" role="status" aria-live="polite" class="help">Awaiting native weapon and target status.</div>
+ <div class="help">Each shot is resolved and saved by the C++ world. A queued command does not confirm a hit. Destroyed drones become persistent physical wrecks; salvage recovery is not yet enabled.</div>
+</section>
 <section aria-labelledby="expeditionTitle" style="border:1px solid #236478;border-radius:10px;padding:12px;margin:10px 0;background:#0c2230">
  <h2 id="expeditionTitle">Mining expedition · Live mission status</h2>
  <div id="expeditionStatus" role="status" aria-live="polite" class="help">Waiting for committed ship and outpost state.</div>
