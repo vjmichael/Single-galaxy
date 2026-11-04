@@ -555,6 +555,29 @@ public:
     // Host restart does not need to remember command IDs or transfer details:
     // look up the one admitted due plan in SQLite and execute it precisely once.
     bool resume_next_pending_autonomous_rescue(FailPoint fail=FailPoint::None);
+    // AUTO-04D.5C1: an already-present NPC may autonomously deliver ONLY
+    // real onboard food/water/oxygen to an occupied nearby habitat during an
+    // actual critical/emergency shortage. No magical supply, cross-owner
+    // hauling, or fabricated technician repair.
+    enum class NpcLocalSupplyStatus : int {
+        NoEmergency=0, NoResponder=1, NoUsableStock=2, Accepted=3
+    };
+    struct NpcLocalSupplyResult {
+        NpcLocalSupplyStatus status=NpcLocalSupplyStatus::NoEmergency;
+        std::uint64_t notice_id=0,npc_id=0,command_id=0;
+        int resource_selector=0; // 1=food, 2=water, 3=oxygen
+        std::int64_t amount_kg=0;
+        std::string reason;
+    };
+    // The trusted host allocates command IDs and invokes this scheduler
+    // callback. The host delivers the exact local NPC notification, and
+    // records the native owner-authorized supply command in one writer commit.
+    NpcLocalSupplyResult supervise_npc_habitat_resupply(
+        EntityId source_ship,EntityId occupied_habitat,
+        std::uint64_t command_id,FailPoint fail=FailPoint::None);
+    // Positive only after a genuinely executed world command with an Applied
+    // event, its real material transfer, and independent SQLite provenance.
+    bool verified_npc_habitat_resupply(std::uint64_t command_id) const;
     // D2a: register ART02-authenticated, actually resident child into the
     // replayable world occupancy ledger. Separate from declaring evacuation.
     bool submit_host_dependent_registration(const Command& command,
