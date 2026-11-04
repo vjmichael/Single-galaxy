@@ -131,12 +131,18 @@ Audit assess(const Simulation& world,sqlite3* db,const DeparturePlan& request){
                 throw std::runtime_error("duplicate child identity");
             source_children.insert(child);
         }
-        Query sources(db,"SELECT child_id FROM sg_med_society_birth "
-                         "WHERE home_ship=? AND family_scope=?");
+        // Examine ALL world-authoritative births at the source, not merely
+        // those in the caller-selected family scope. A second family scope
+        // must never become an invisible, abandoned dependent.
+        Query sources(db,"SELECT child_id,family_scope FROM sg_med_society_birth "
+                         "WHERE home_ship=?");
         sources.bind(1,std::to_string(request.source));
-        sources.bind(2,request.family_scope);
-        while(sources.row())if(!source_children.count(parse(sources.get(0))))
-            throw std::runtime_error("recorded child has left source; split-family move unsupported");
+        while(sources.row()){
+            const auto child=parse(sources.get(0));
+            if(sources.get(1)!=request.family_scope ||
+               !source_children.count(child))
+                throw std::runtime_error("unlisted family scope or split child custody at source");
+        }
         std::vector<std::uint64_t> requested_ids;
         std::uint64_t previous=0;
         for(const auto& ch:request.children){
