@@ -1587,6 +1587,9 @@ public:
         }
     }
     bool npc_habitat_supply_applied(std::uint64_t command_id,std::uint64_t gen) const{
+        Statement exists(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_npc_emergency_supply'");
+        if(!exists.row())return false;
         verify_npc_habitat_supplies(gen);
         Statement q(db_,"SELECT 1 FROM sg_colony_npc_emergency_supply s "
             "JOIN historical_events e ON e.command_id=s.command_id "
@@ -5302,6 +5305,9 @@ public:
             Statement npc_dispatch(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
                 "AND name='sg_colony_npc_autonomous_dispatch'");
             const bool has_npc_dispatch=npc_dispatch.row();
+            Statement npc_supply(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='sg_colony_npc_emergency_supply'");
+            const bool has_npc_supply=npc_supply.row();
             const std::string prune_sql=std::string(
                 "DELETE FROM snapshots WHERE generation > 1 AND generation < ?")+
                 (incident_cases_exist ? " AND generation NOT IN "
@@ -5326,6 +5332,14 @@ public:
                 // exact original accepted world snapshot at every restart.
                 (has_npc_dispatch ? " AND generation NOT IN "
                     "(SELECT admission_generation FROM sg_colony_npc_autonomous_dispatch)"
+                    : "")+
+                // Native delivery may occur many generations after admission.
+                // Retain the two exact proof snapshots needed for replay.
+                (has_npc_supply ? " AND generation NOT IN "
+                    "(SELECT generation FROM sg_colony_npc_emergency_supply)"
+                    " AND generation NOT IN "
+                    "(SELECT e.generation FROM historical_events e "
+                    "JOIN sg_colony_npc_emergency_supply s ON s.command_id=e.command_id)"
                     : "");
             Statement prune(db_,prune_sql.c_str());
             prune.i64(1, static_cast<std::int64_t>(next > 2 ? next - 2 : 1));
