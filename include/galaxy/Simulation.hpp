@@ -397,6 +397,12 @@ struct AsteroidGeology {
 // geological class, not claimed as lab measurements of a specific asteroid.
 struct MineralFraction { const char* name; int permille; };
 // PLAY-13C.5: descriptive environment; hazards are not yet physics damage.
+// PLAY-13C.6B: read-only prospect, NOT resource inventories, shelter or safety.
+struct CelestialOasisProspect {
+    std::uint64_t body=0;
+    std::uint8_t water=0,energy=0,nutrients=0,shelter=0;
+    bool candidate=false;
+};
 struct LocalCelestialEnvironment {
     std::uint8_t zone=0; // 1 stellar, 2 debris, 3 rocky, 4 icy, 5 lunar
     std::uint8_t hazard=0; // observational severity 0..3, not applied damage
@@ -825,6 +831,12 @@ public:
         return local_environments_;
     }
     std::optional<AsteroidClass> local_deposit_taxonomy(EntityId rock) const;
+    // Derived solely from the saved physical catalogue and fixed galaxy seed.
+    // Rare prospects require all four ecological prerequisites.
+    std::optional<CelestialOasisProspect> celestial_oasis_prospect(
+        std::uint64_t body_id) const;
+    std::vector<CelestialOasisProspect> survey_oasis_prospects(
+        PlayerId authenticated_owner,EntityId ship) const;
     // PLAY-13C.6A: observation only. No production, travel, or free supplies.
     struct ExpeditionProspect {
         std::uint64_t body=0;
