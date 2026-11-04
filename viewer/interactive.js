@@ -203,6 +203,11 @@ el('probeTarget').addEventListener('change',()=>{
  const selected=el('probeTarget').value!=='';
  el('probeSurvey').disabled=!selected;
  el('probeRetrieve').disabled=!selected;
+ el('signatureFocus').disabled=!selected||!el('signatureTarget').value;
+ el('signatureCancel').disabled=!selected;
+});
+el('signatureTarget').addEventListener('change',()=>{
+ el('signatureFocus').disabled=!el('probeTarget').value||!el('signatureTarget').value;
 });
 el('probeSurvey').addEventListener('click',()=>{
  const probe=Number(el('probeTarget').value);
