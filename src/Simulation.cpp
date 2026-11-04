@@ -4782,6 +4782,66 @@ bool same_local_profile(const LocalCelestialEnvironment& a,
         a.first==b.first&&a.second==b.second;
 }
 }
+std::optional<CelestialOasisProspect> Simulation::celestial_oasis_prospect(
+    std::uint64_t body_id) const {
+    const auto* b=body_for_local_environment(physical_celestial_systems_,body_id);
+    if(!b)return std::nullopt;
+    CelestialOasisProspect o{};
+    o.body=body_id;
+    // Conditions reflect potential resources and shelter, NOT constructed
+    // infrastructure or initialized usable water/food/energy inventory.
+    if(b->kind==CelestialKind::Planet) {
+        o.water= b->orbital_radius_milli_au>10000?1:0;
+        o.energy= b->orbital_radius_milli_au<160000?1:0;
+        o.nutrients=1;
+        o.shelter=1; // prospects for subsurface/radiation protection
+    }else if(b->kind==CelestialKind::Moon) {
+        o.water= b->orbital_radius_milli_au>30000?1:0;
+        o.energy= b->orbital_radius_milli_au<100000?1:0;
+        o.nutrients=1;
+        o.shelter=1;
+    }else if(b->kind==CelestialKind::DebrisRegion) {
+        o.water=1;o.energy=1;o.nutrients=0;o.shelter=0;
+    }
+    if(!(o.water&&o.energy&&o.nutrients&&o.shelter))return o;
+    // A rare SYSTEM-level draw prevents multiple guaranteed oases in
+    // one remote region. No frontier wealth/mineral class is consulted.
+    const auto system=static_cast<std::uint32_t>(body_id>>32);
+    if(astronomy_mix(std::uint64_t(system)^0x0A515500ULL)%10000 >= 200)
+        return o; // nominal 2% eligible systems, NOT two percent of bodies
+    const auto it=physical_celestial_systems_.find(system);
+    if(it==physical_celestial_systems_.end())return o;
+    // At most one eligible body in the rare system; prefer planets over moons.
+    const PhysicalCelestialBody* selected=nullptr;
+    for(const auto& c:it->second) {
+        if(c.kind!=CelestialKind::Planet)continue;
+        if(c.orbital_radius_milli_au<=10000 ||
+           c.orbital_radius_milli_au>=160000)continue;
+        selected=&c;break;
+    }
+    if(!selected)for(const auto& c:it->second) {
+        if(c.kind!=CelestialKind::Moon)continue;
+        if(c.orbital_radius_milli_au<=30000 ||
+           c.orbital_radius_milli_au>=100000)continue;
+        selected=&c;break;
+    }
+    o.candidate=selected&&selected->id==body_id;
+    return o;
+}
+std::vector<CelestialOasisProspect> Simulation::survey_oasis_prospects(
+    PlayerId authenticated_owner,EntityId ship) const {
+    if(!scan_celestial_profile(authenticated_owner,ship))return {};
+    const auto carrier=find(ship);
+    if(!carrier)return {};
+    const auto system=physical_celestial_systems_.find(carrier->system_id);
+    if(system==physical_celestial_systems_.end())return {};
+    std::vector<CelestialOasisProspect> out;
+    for(const auto& body:system->second) {
+        if(const auto p=celestial_oasis_prospect(body.id))
+            if(p->candidate)out.push_back(*p);
+    }
+    return out;
+}
 void Simulation::ensure_local_environment_profiles() {
     if(snapshot_version_<73)return;
     for(const auto& [body_id,manifest]:generated_local_regions_) {
