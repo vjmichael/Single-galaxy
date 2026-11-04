@@ -207,6 +207,7 @@
 (function(){'use strict';if(typeof document==='undefined')return;
  const q=id=>document.getElementById(id), policyAudits=new Map(), geology=new Map(),small=new Map(),log=[],stocks=new Map(),outposts=new Map(),farms=new Map(),habitats=new Map(),utilities=new Map(),communities=new Map(),clinics=new Map(),reclaimers=new Map(),waterworks=new Map();
  window.GalaxyColonyGeology=geology;
+ window.GalaxyColonyOutpostIds=new Set();
  const guideStorage=(()=>{try{return window.localStorage;}catch{return null;}})();
  let skippedOpening=window.GalaxyFlightControls?.guideSkipped(guideStorage)||false;
  q('openingGuide').hidden=skippedOpening;
@@ -242,7 +243,7 @@
        guide.action==='colonyFabricate'?{amount:4}:{});
  });
  window.GalaxyColony={
-   reset(){openingStatus=null;openingScanned=false;refreshOpening();window.GalaxyColonyHomeShipId=null;q('colonySafetyAssess').disabled=true;q('colonySafetyPreflight').disabled=true;policyAudits.clear();geology.clear();small.clear();stocks.clear();outposts.clear();farms.clear();habitats.clear();utilities.clear();communities.clear();clinics.clear();reclaimers.clear();waterworks.clear();log.length=0;q('colonyEvents').textContent='Awaiting colony telemetry…';},
+   reset(){window.GalaxyColonyOutpostIds.clear();openingStatus=null;openingScanned=false;refreshOpening();window.GalaxyColonyHomeShipId=null;q('colonySafetyAssess').disabled=true;q('colonySafetyPreflight').disabled=true;policyAudits.clear();geology.clear();small.clear();stocks.clear();outposts.clear();farms.clear();habitats.clear();utilities.clear();communities.clear();clinics.clear();reclaimers.clear();waterworks.clear();log.length=0;q('colonyEvents').textContent='Awaiting colony telemetry…';},
    accept(raw){const e=window.GalaxyColonyContract.decode(raw);
      if(e.type==='HEADING'){
        q('flightHeading').textContent=e.heading+'°';
@@ -265,7 +266,7 @@
          ['lifeReserves',e.reserves]])q(name).textContent=val.toLocaleString();
        q('lifeStage').textContent=e.stage.replaceAll('_',' ');
        q('lifeStage').title=e.stage==='STABLE'?'Supplies have met crew needs for multiple cycles. This is not self-sufficiency.':'Colony viability based on current reserves and recent shortages.';
-     }else if(e.type==='OUTPOST')outposts.set(e.id,e.farm);
+     }else if(e.type==='OUTPOST'){outposts.set(e.id,e.farm);window.GalaxyColonyOutpostIds.add(e.id);}
      else if(e.type==='FARM')farms.set(e.id,e);
      else if(e.type==='HABITAT')habitats.set(e.id,e);
      else if(e.type==='COMMUNITY')communities.set(e.id,e);
