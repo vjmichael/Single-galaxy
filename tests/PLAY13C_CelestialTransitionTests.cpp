@@ -26,7 +26,7 @@ int main() {
     assert(result.rejection==FrameTransitionRejection::None && result.plan);
     const auto& p=*result.plan;
     assert(p.ship_id==own && p.owner==21 && p.destination_body==body);
-    assert(p.completed_transit_id==888 && p.arrival_position.x==0 &&
+    assert(p.transit_request_id==888 && p.arrival_position.x==0 &&
            p.arrival_position.y==0 && p.arrival_velocity.x==0);
     auto arrival=local_to_cosmic(p.destination_frame,{0,0,0});
     assert(arrival && arrival->x_mm==bodies.front().position.x_mm+
