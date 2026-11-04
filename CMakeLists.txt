@@ -1276,3 +1276,10 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_play13d_planetary_regions_tests PRIVATE galaxy_kernel)
   add_test(NAME galaxy_play13d_planetary_regions COMMAND galaxy_play13d_planetary_regions_tests)
 endif()
+
+# PLAY-13D.2C dryland landforms, arroyos, rivers, canyons and caverns.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13d_planetary_landscape_tests tests/PLAY13D_PlanetaryLandscapeTests.cpp)
+  target_link_libraries(galaxy_play13d_planetary_landscape_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_planetary_landscape COMMAND galaxy_play13d_planetary_landscape_tests)
+endif()
