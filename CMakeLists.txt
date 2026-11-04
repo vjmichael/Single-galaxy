@@ -17,7 +17,7 @@ else()
     find_package(SQLite3 REQUIRED)
     message(STATUS "Using OS SQLite SDK (amalgamation not present)")
 endif()
-add_library(galaxy_kernel STATIC src/Simulation.cpp src/ColonyResilience.cpp
+add_library(galaxy_kernel STATIC src/PlanetaryAgriculture.cpp src/Simulation.cpp src/ColonyResilience.cpp
   src/ColonyRecovery.cpp src/ColonyPolicy.cpp src/PopulationCohorts.cpp
     src/ColonyWaterSupply.cpp src/Persistence.cpp src/EconomyPrototype.cpp src/QuantifiedProduction.cpp src/Inventory.cpp src/InventoryLogistics.cpp src/FactoryLayout.cpp src/BlueprintConstruction.cpp src/HostBlueprintRegistry.cpp src/ClientContract.cpp src/Galaxy.cpp src/Navigation.cpp src/GateTransit.cpp src/Region.cpp
   src/ColdColonyNeeds.cpp src/MacroNeeds.cpp src/ColonySafety.cpp src/ColonySafetyJournal.cpp src/ColonySafetyNotice.cpp src/ColonyDefense.cpp src/ColonyConflict.cpp src/ColonyEvacuation.cpp src/ColonyFamilyDeparture.cpp src/NpcAppearanceGenome.cpp src/MedicalSocietyBridge.cpp src/DependentIncidentAccounting.cpp src/DependentIncidentJournal.cpp src/DependentGuardianship.cpp src/SplitRescueIntent.cpp src/RegionalCheckpointStore.cpp src/RegionalPopulationAudit.cpp src/RegionalEventScheduler.cpp src/RegionalModeAuthority.cpp src/RegionalFactoryHandoff.cpp src/RegionalProductionNetwork.cpp src/RegionalShipmentReconciliation.cpp src/ShipmentManifest.cpp src/ThirdPartyShipment.cpp src/CanonicalShippingHost.cpp src/ShipmentStatusView.cpp
@@ -1259,4 +1259,13 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_play13c_physical_oasis_tests PRIVATE galaxy_kernel)
   add_test(NAME galaxy_play13c_physical_oasis
     COMMAND galaxy_play13c_physical_oasis_tests)
+endif()
+
+# PLAY-13D.1 physical planetary agriculture custody kernel, first native gate.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13d_planetary_agriculture_tests
+    tests/PLAY13D_PlanetaryAgricultureTests.cpp)
+  target_link_libraries(galaxy_play13d_planetary_agriculture_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_planetary_agriculture
+    COMMAND galaxy_play13d_planetary_agriculture_tests)
 endif()
