@@ -77,6 +77,8 @@ try{
         CHECK(regional_owner.enroll().generation==1);
         w.establish_colony_conflict_agenda(
             8501,origin,1,colony_conflict::Agenda::Predatory);
+        w.establish_colony_conflict_agenda(
+            8502,dest,13,colony_conflict::Agenda::Cooperative);
         // The receiving owner physically relocates its own colony to system 2.
         CHECK(w.submit(command(w,100,10,dest,gate,Action::RequestJump)));
         executed(w,100);
@@ -206,6 +208,16 @@ try{
         CHECK(region.load()->scheduler.colony("origin").population==5);
         CHECK(region.load()->scheduler.colony("destination").population==7);
         CHECK(w.colony_governance(origin).leader_id==1);
+        // Immigration does not erase a resident's life history. The new
+        // stable colony relieves the old-home escape intention, but the
+        // individual's underlying discontent fades by normal observations.
+        const auto newcomer=w.record_personal_outlook(8615,dest,2);
+        CHECK(newcomer.prior_event_id==8613);
+        CHECK(newcomer.leader_id==13);
+        CHECK(newcomer.discontent<second.discontent);
+        CHECK(!newcomer.considering_departure);
+        CHECK(w.colony_personal_outlook(origin,2)->event_id==8613);
+        CHECK(w.colony_personal_outlook(dest,2)->event_id==8615);
         CHECK(w.world().npc_casualties().empty());
         refused([&]{w.step_with_voluntary_immigration(8701,plan);});
     }
@@ -216,6 +228,8 @@ try{
         CHECK(w.world().colony_ship(origin)->crew==5);
         CHECK(w.world().colony_ship(dest)->crew==7);
         CHECK(w.colony_governance(origin).leader_id==1);
+        CHECK(w.colony_personal_outlook(dest,2)->prior_event_id==8613);
+        CHECK(!w.colony_personal_outlook(dest,2)->considering_departure);
         CHECK(w.world().npc_casualties().empty());
     }
     PersistentWorld::recover_copy(db,recovered);
@@ -223,6 +237,7 @@ try{
         PersistentWorld w(recovered,Simulation(8703));
         CHECK(w.verified_voluntary_immigration(8701));
         CHECK(w.world().npc_records().at(2).home_ship==dest);
+        CHECK(w.colony_personal_outlook(dest,2)->event_id==8615);
         NpcAppearanceStore family(recovered,"voluntary",8701,[&](auto id){
             return w.world().npc_records().count(id)!=0;});
         CHECK(family.current_residence(2)==dest);
