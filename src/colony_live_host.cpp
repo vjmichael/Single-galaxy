@@ -160,7 +160,8 @@ void status(const Simulation& w,EntityId ship,bool replay_discoveries=false){
         if(key.first!=s->owner_id)continue;
         announce(w,"DISCOVERY|"+std::to_string(d.site)+"|"+std::to_string(d.system)+"|"+
             std::to_string(d.location.x)+"|"+std::to_string(d.location.y)+"|"+
-            std::to_string(d.first_tick)+"|"+std::to_string(d.geological?1:0));
+            std::to_string(d.first_tick)+"|"+std::to_string(d.geological?1:0)+"|"+
+            std::to_string(d.survey_taxonomy));
     }
     for(const auto& [id,e]:w.entities()){
         if(e.type==EntityType::Wreck && e.owner_id==8 &&
