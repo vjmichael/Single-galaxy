@@ -8,6 +8,16 @@
   function decode(raw){
     if(typeof raw!=='string'||raw.length>180||!/^COLONY\|1\|/.test(raw)||!/^[A-Za-z0-9_|-]+$/.test(raw))throw Error('Invalid colony telemetry');
     const v=raw.split('|'),tick=numeric(v[2],1200),t=v[3];let e={tick,type:t};
+    if(t==='LOCAL_FRAME'){
+      if(v.length!==6)throw Error('Malformed local frame');
+      return {...e,system:numeric(v[4],4294967295),
+        anchor:numeric(v[5],Number.MAX_SAFE_INTEGER)};
+    }
+    if(t==='FRAME_TRANSIT_STARTED'||t==='FRAME_TRANSIT_ARRIVED'){
+      if(v.length!==6)throw Error('Malformed frame transition');
+      return {...e,request:numeric(v[4],Number.MAX_SAFE_INTEGER),
+        body:numeric(v[5],Number.MAX_SAFE_INTEGER)};
+    }
     if(t==='CELESTIAL_HEADER'){
       if(v.length!==8)throw Error('Malformed celestial catalogue');
       const architecture=numeric(v[4],3),morphology=numeric(v[5],2),
@@ -44,6 +54,15 @@
       if(!id||!radius||(kind===0&&parent!==0)||
          (kind!==0&&parent===0))throw Error('Invalid celestial parent/body');
       return {...e,id,parent,kind,orbit,x,y,z,radius};
+    }
+    if(t==='OASIS_PROSPECT'){
+      if(v.length!==9)throw Error('Malformed oasis prospect');
+      const id=numeric(v[4],Number.MAX_SAFE_INTEGER);
+      const water=numeric(v[5],1),energy=numeric(v[6],1),
+            nutrients=numeric(v[7],1),shelter=numeric(v[8],1);
+      if(!id||!water||!energy||!nutrients||!shelter)
+        throw Error('Invalid oasis prerequisite');
+      return {...e,id,water,energy,nutrients,shelter};
     }
     if(t==='CELESTIAL_DONE'){
       if(v.length!==5)throw Error('Malformed orbital catalogue count');
@@ -329,6 +348,50 @@
       if(v.length!==7)throw Error('Bad mineral');
       e.id=numeric(v[4]);e.name=v[5];e.share=numeric(v[6],1000);
       if(!minerals.has(e.name)||e.id<1||e.share<1)throw Error('Unknown mineral');
+    }else if(t==='EXPEDITION'){
+      if(v.length!==13)throw Error('Malformed native expedition assessment');
+      e.body=numeric(v[4],Number.MAX_SAFE_INTEGER);
+      e.ore=numeric(v[5],1e12);
+      e.nickel=numeric(v[6],1e15);
+      e.plagioclase=numeric(v[7],1e15);
+      e.food=numeric(v[8],1e12);
+      e.water=numeric(v[9],1e12);
+      e.oxygen=numeric(v[10],1e12);
+      e.hazard=numeric(v[11],3);
+      e.support=numeric(v[12],1);
+      if(!e.body)throw Error('Invalid expedition body');
+    }else if(t==='OASIS_EXTRACTOR'){
+      if(v.length!==9)throw Error('Malformed oasis extractor');
+      e.ship=numeric(v[4],100000000);
+      e.body=numeric(v[5],Number.MAX_SAFE_INTEGER);
+      e.energy=numeric(v[6],120);
+      e.workers=numeric(v[7],2);
+      e.condition=numeric(v[8],100);
+      if(!e.ship||!e.body||e.workers!==2)throw Error('Invalid oasis extractor');
+    }else if(t==='OASIS_INSTALLED'){
+      if(v.length!==5)throw Error('Malformed oasis installation');
+      e.body=numeric(v[4],Number.MAX_SAFE_INTEGER);
+      if(!e.body)throw Error('Invalid oasis installation body');
+    }else if(t==='OASIS_SOURCE'){
+      if(v.length!==7)throw Error('Malformed physical oasis reserve');
+      e.body=numeric(v[4],Number.MAX_SAFE_INTEGER);
+      e.waterKg=numeric(v[5],100000000);e.nutrientsKg=numeric(v[6],100000000);
+      if(!e.body)throw Error('Invalid oasis body ID');
+    }else if(t==='OASIS_COLLECTED'){
+      if(v.length!==7)throw Error('Malformed oasis collection receipt');
+      e.body=numeric(v[4],Number.MAX_SAFE_INTEGER);
+      e.material=v[5];e.kg=numeric(v[6],10000);
+      if(!e.body || !['WATER','NUTRIENTS'].includes(e.material) || !e.kg)
+        throw Error('Invalid oasis collection receipt');
+    }else if(t==='LOCAL_ENVIRONMENT'){
+      if(v.length!==7)throw Error('Malformed celestial environment');
+      e.body=numeric(v[4],Number.MAX_SAFE_INTEGER);
+      e.zone=numeric(v[5],5);e.hazard=numeric(v[6],3);
+      if(!e.body||!e.zone)throw Error('Invalid celestial environment');
+    }else if(t==='LOCAL_DEPOSIT'){
+      if(v.length!==6)throw Error('Malformed local ore taxonomy');
+      e.id=numeric(v[4],100000000);e.classId=numeric(v[5],2);
+      if(!e.id)throw Error('Invalid local deposit ID');
     }else if(t==='SMALL_ROCK'){
       if(v.length!==6)throw Error('Bad small rock');e.id=numeric(v[4]);e.remaining=numeric(v[5]);
     }else if(t==='SCAN_DONE'){
@@ -337,7 +400,7 @@
       if(v.length!==7||!/^\d+$/.test(v[4])||!/^[A-Z_]+$/.test(v[5]))throw Error('Bad action result');
       e.id=numeric(v[4],Number.MAX_SAFE_INTEGER);e.outcome=v[5];e.transferred=numeric(v[6]);
     }else if(t==='ERROR'){
-      if(v.length!==5||!['INVALID_INPUT','INVALID_SAFETY_ORDER','UNAUTHORIZED_PRINCIPAL'].includes(v[4]))throw Error('Bad rejected input');e.error=v[4];
+      if(v.length!==5||!['INVALID_INPUT','INVALID_SAFETY_ORDER','UNAUTHORIZED_PRINCIPAL','FRAME_TRAVEL_DENIED','FRAME_TRANSIT_BLOCKED'].includes(v[4]))throw Error('Bad rejected input');e.error=v[4];
     }else throw Error('Unknown colony event');
     return e;
   }
@@ -349,7 +412,7 @@
  const salvageWrecks=new Map();
  const deployedProbes=new Map();
  const signatureContacts=new Map();
- const celestialBodies=new Map();
+ const celestialBodies=new Map(), localOreTaxonomy=new Map(),oasises=new Map();
  let probeCarried=0,probeLauncher=false,probeChoice='';
  const discoveries=new Map();
  window.GalaxySalvageStock=salvageWrecks;
@@ -387,6 +450,7 @@
  });
  q('showOpening').hidden=!skippedOpening;
  let openingStatus=null,openingScanned=false;
+ let expeditionAssessment=null;
  function refreshOpening(){
    const guide=window.GalaxyOpeningGuide?.progress(openingStatus,openingScanned);
    if(!guide)return;
@@ -405,7 +469,7 @@
        guide.action==='colonyFabricate'?{amount:4}:{});
  });
  window.GalaxyColony={
-   reset(){signatureContacts.clear();celestialBodies.clear();
+   reset(){signatureContacts.clear();celestialBodies.clear();oasises.clear();localOreTaxonomy.clear();expeditionAssessment=null;
      q('celestialBodyList').textContent='No physical celestial bodies surveyed yet.';
      q('signatureTarget').replaceChildren(new Option('Scan to detect signals',''));
      q('signatureFocus').disabled=true;q('signatureCancel').disabled=true;
@@ -413,7 +477,7 @@
      q('droneTarget').replaceChildren(new Option('Scan nearby rocks first',''));q('droneLaunch').disabled=true;deployedProbes.clear();probeCarried=0;probeLauncher=false;probeChoice='';q('probeTarget').replaceChildren(new Option('No probe deployed',''));q('probeLaunch').disabled=true;q('probeSurvey').disabled=true;q('probeRetrieve').disabled=true;q('probeInventory').textContent='Awaiting native probe stock.';q('probeFeedback').textContent='Native equipment required.';q('fittingCapacity').textContent='Awaiting actual ship fittings.';q('proximityStatus').textContent='Proximity safety sensor awaiting contacts.';q('fitScanner').disabled=true;q('unfitScanner').disabled=true;discoveries.clear();q('explorationResults').replaceChildren();q('explorationSummary').textContent='No mapped discoveries yet. Execute a native local scan.';salvageWrecks.clear();q('salvageTarget').replaceChildren(new Option('No recoverable wreck reported',''));q('salvageRecover').disabled=true;q('salvageFeedback').textContent='Waiting for native wreck inventory.';combatTargets.clear();q('combatHull').textContent='—';q('combatCharges').textContent='—';q('combatFire').disabled=true;q('combatFeedback').textContent='Awaiting native combat telemetry.';window.GalaxySelectedRockId=null;window.GalaxyShipHeading=null;window.GalaxyColonyOutpostIds.clear();openingStatus=null;openingScanned=false;refreshOpening();window.GalaxyColonyHomeShipId=null;q('colonySafetyAssess').disabled=true;q('colonySafetyPreflight').disabled=true;policyAudits.clear();geology.clear();small.clear();stocks.clear();outposts.clear();farms.clear();habitats.clear();utilities.clear();communities.clear();clinics.clear();reclaimers.clear();waterworks.clear();log.length=0;q('colonyEvents').textContent='Awaiting colony telemetry…';q('expeditionOutcome').textContent='Awaiting an actual native result';},
    accept(raw){const e=window.GalaxyColonyContract.decode(raw);
      if(e.type==='CELESTIAL_HEADER'){
-       celestialBodies.clear();
+       celestialBodies.clear();oasises.clear();
        q('celestialBodyList').textContent='Receiving authoritative physical bodies…';
      }
      if(e.type==='CELESTIAL_BODY'){
@@ -430,8 +494,54 @@
            ' · world '+(body.x/1000000).toFixed(0)+', '+
            (body.y/1000000).toFixed(0)+', '+
            (body.z/1000000).toFixed(0)+' km (x/y/z)';
+         const action=document.createElement('button');
+         action.type='button';
+         action.textContent='Travel to local region';
+         action.disabled=body.id===window.GalaxyActiveCelestialBody;
+         action.addEventListener('click',()=>{
+           if(window.GalaxyColonyCommand)
+             window.GalaxyColonyCommand('colonyFrameTravel',{body:body.id});
+           q('signatureFeedback').textContent='Celestial travel requested. Awaiting the authoritative host.';
+         });
+         item.appendChild(action);
          return item;
        }));
+     }
+     if(e.type==='OASIS_PROSPECT'){
+       if(celestialBodies.has(e.id)){
+         oasises.set(e.id,e);
+         const rows=[...celestialBodies.keys()];
+         const index=rows.indexOf(e.id);
+         const card=q('celestialBodyList').children[index];
+         if(card && !card.dataset.oasis){
+           card.dataset.oasis='1';
+           const note=document.createElement('div');
+           note.textContent='Rare oasis prospect: local water, accessible energy, nutrients and possible radiation shelter. No free supplies, buildings, oxygen or guaranteed safety; development required.';
+           card.appendChild(note);
+         }
+       }
+     }
+     if(e.type==='LOCAL_FRAME'){
+       if(window.GalaxyActiveCelestialBody!==e.anchor){
+         window.GalaxyActiveCelestialBody=e.anchor;
+         q('signatureFeedback').textContent='Current local frame: '+
+           (e.anchor?'celestial body #'+e.anchor:'open-space legacy region')+'.';
+       }
+     }
+     if(e.type==='FRAME_TRANSIT_STARTED')
+       q('signatureFeedback').textContent='Transit #'+e.request+
+         ' started for body #'+e.body+'. Local operations are suspended.';
+     if(e.type==='FRAME_TRANSIT_ARRIVED'){
+       window.GalaxyActiveCelestialBody=e.body;
+       signatureContacts.clear();geology.clear();small.clear();localOreTaxonomy.clear();
+       q('signatureTarget').replaceChildren(new Option('Rescan new local region',''));
+       q('signatureFocus').disabled=true;
+       q('droneTarget').replaceChildren(new Option('Rescan local targets',''));
+       q('droneLaunch').disabled=true;
+       q('colonyRockTarget').replaceChildren(new Option('Rescan local targets',''));
+       window.GalaxySelectedRockId=null;
+       q('signatureFeedback').textContent='Arrived at body #'+e.body+
+         '. Local sensor contacts were cleared; scan this region.';
      }
      if(e.type==='CELESTIAL_HISTORY')
        q('signatureFeedback').textContent='Previously surveyed on tick '+e.first+
@@ -587,7 +697,8 @@
        window.GalaxyColonyHomeShipId=e.site;
        const states=['STABLE','FORECAST SHORTAGE','CRITICAL BUFFER','EMERGENCY'];
        q('colonySafetyRisk').textContent=states[e.risk];
-       q('colonySafetyRunway').textContent=`${e.pop} colonists · food ${e.food}, water ${e.water}, oxygen ${e.oxygen} consumption periods remaining · physical supplies only, not promised imports.`;
+       q('colonySafetyRunway').textContent=`${e.pop} colonists · food ${e.food}, water ${e.water}, oxygen ${e.oxygen} consumption periods remaining · physical supplies only, not promised imports.`+
+         (expeditionAssessment?` Frontier survey: ${expeditionAssessment.ore} t reachable regional ore, ${expeditionAssessment.nickel.toLocaleString()} kg nickel-iron and ${expeditionAssessment.plagioclase.toLocaleString()} kg plagioclase in existing deposits. Supply runway: ${Math.min(expeditionAssessment.food,expeditionAssessment.water,expeditionAssessment.oxygen)} consumption periods. Local supply site: ${expeditionAssessment.support?'yes':'none'}.`:'');
        q('colonySafetyAssess').disabled=false;
        q('colonySafetyPreflight').disabled=false;
      }else if(e.type==='LIFE'){
@@ -640,6 +751,32 @@
      else if(e.type==='MINERAL'){
        const rock=geology.get(e.id);if(!rock)throw Error('Mineral without scanned rock');rock.minerals.set(e.name,e.share);
      }else if(e.type==='SMALL_ROCK')small.set(e.id,e.remaining);
+     else if(e.type==='LOCAL_DEPOSIT')localOreTaxonomy.set(e.id,e.classId);
+     else if(e.type==='OASIS_EXTRACTOR'){
+       q('signatureFeedback').textContent='Deployed oasis extractor at #'+e.body+
+         ': '+e.energy+'/120 stored solar power units, '+e.workers+
+         ' assigned onboard crew, condition '+e.condition+'/100.';
+     }
+     else if(e.type==='OASIS_INSTALLED'){
+       q('signatureFeedback').textContent='Installed a physical two-module oasis extractor at #'+e.body+
+         '. Requires actual crew, food, water, oxygen and solar charge before resource collection.';
+     }
+     else if(e.type==='OASIS_SOURCE'){
+       q('signatureFeedback').textContent='Physical oasis reserves at body #'+e.body+
+         ': '+e.waterKg.toLocaleString()+' kg water and '+
+         e.nutrientsKg.toLocaleString()+' kg nutrients. These are finite deposits, not free food or oxygen.';
+     }
+     else if(e.type==='OASIS_COLLECTED'){
+       q('signatureFeedback').textContent='Collected '+e.kg.toLocaleString()+
+         ' kg '+e.material.toLowerCase()+' from real oasis #'+e.body+
+         ' into the ship life-support inventory.';
+     }
+     else if(e.type==='EXPEDITION')expeditionAssessment=e;
+     else if(e.type==='LOCAL_ENVIRONMENT'){
+       const names=['','Stellar radiation zone','Debris region','Rocky planetary region','Outer icy planetary region','Lunar region'];
+       q('signatureFeedback').textContent=names[e.zone]+
+         ' · environmental severity '+e.hazard+'/3 (survey indicator only; not simulated damage).';
+     }
      else if(e.type==='SCAN_DONE'){openingScanned=e.count>0;refreshOpening();}
      else if(e.type==='SAFETY_CHECK'||e.type==='SAFETY_ORDER'){
        const msg=e.type==='SAFETY_CHECK'?`Site ${e.site}: safety assessment requested; current runway shown above.`:
@@ -667,6 +804,11 @@
        const items=[...g.minerals].sort((a,b)=>b[1]-a[1]).slice(0,4).map(([n,v])=>`${n.replaceAll('_','-')} ${v/10}%`).join(' · ');
        return `#${g.id} ${window.GalaxyColonyContract.names[g.classId]} · radius ${g.radius} m · density ${g.density} kg/m³ · ${g.remaining.toLocaleString()} tonnes remaining\n${items}`;
      });
+     for(const [id,tax] of localOreTaxonomy){
+       if(small.has(id))rows.push('#'+id+' · local '+
+         window.GalaxyColonyContract.names[tax]+
+         ' mineral profile · '+small.get(id)+' tonnes remaining');
+     }
      q('colonyGeology').replaceChildren(...rows.map(x=>{const div=document.createElement('div');div.className='entry';div.textContent=x;div.style.whiteSpace='pre-wrap';return div;}));
      q('colonyStocks').textContent=[...stocks].map(([n,kg])=>`${n}: ${kg.toLocaleString()} kg`).join('\n')||'No separated mineral cargo yet.';
      const farmsOut=[...outposts].sort((a,b)=>a[0]-b[0]);

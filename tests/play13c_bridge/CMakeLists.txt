@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.16)
+project(play13c_bridge LANGUAGES CXX)
+enable_testing()
+add_executable(play13c_bridge ../PLAY13C_CosmicLocalFrameTests.cpp)
+target_include_directories(play13c_bridge PRIVATE ${CMAKE_CURRENT_LIST_DIR}/../../include)
+target_compile_features(play13c_bridge PRIVATE cxx_std_17)
+add_test(NAME play13c_coordinate_roundtrip COMMAND play13c_bridge)

@@ -1174,3 +1174,89 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_play13_drone_tests PRIVATE galaxy_kernel)
   add_test(NAME galaxy_play13_drones COMMAND galaxy_play13_drone_tests)
 endif()
+
+# PLAY-13C.2: host-custody celestial arrival preflight, built against real kernel.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13c_celestial_transition_tests
+    tests/PLAY13C_CelestialTransitionTests.cpp)
+  target_link_libraries(galaxy_play13c_celestial_transition_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13c_celestial_transition
+    COMMAND galaxy_play13c_celestial_transition_tests)
+endif()
+
+# PLAY-13C.2B: persisted v71 per-ship frame custody, strict restore and recover-copy.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13c_durable_frames_tests
+    tests/PLAY13C_DurableShipFramesTests.cpp)
+  target_link_libraries(galaxy_play13c_durable_frames_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13c_durable_frames
+    COMMAND galaxy_play13c_durable_frames_tests)
+endif()
+
+# PLAY-13C.2C: actual authority-scoped ship frame migration with SQLite
+# durable pending/completed receipts, cross-frame isolation and restart.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13c_actual_transit_tests
+    tests/PLAY13C_ActualFrameTransitTests.cpp)
+  target_link_libraries(galaxy_play13c_actual_transit_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13c_actual_transit
+    COMMAND galaxy_play13c_actual_transit_tests)
+endif()
+
+# PLAY-13C.3: frame-local owner projections, client deltas, scanner visibility
+# and SQLite restart isolation across physical celestial arrivals.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13c_frame_visibility_tests
+    tests/PLAY13C_FrameVisibilityTests.cpp)
+  target_link_libraries(galaxy_play13c_frame_visibility_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13c_frame_visibility
+    COMMAND galaxy_play13c_frame_visibility_tests)
+endif()
+
+# PLAY-13C.4: generated deposits are debited from finite existing ore,
+# spatially anchored, exactly persisted, mined, and never reseeded.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13c_local_region_tests
+    tests/PLAY13C_LocalRegionGenerationTests.cpp)
+  target_link_libraries(galaxy_play13c_local_region_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13c_local_region
+    COMMAND galaxy_play13c_local_region_tests)
+endif()
+
+# PLAY-13C.5: independently verified persistent geology, deterministic
+# environment identity and mass-conserving mineral separation.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13c_local_environment_tests
+    tests/PLAY13C_LocalEnvironmentTests.cpp)
+  target_link_libraries(galaxy_play13c_local_environment_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13c_local_environment
+    COMMAND galaxy_play13c_local_environment_tests)
+endif()
+
+# PLAY-13C.6A read-only frontier resource and life-support viability acceptance.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13c_expedition_assessment_tests
+    tests/PLAY13C_ExpeditionAssessmentTests.cpp)
+  target_link_libraries(galaxy_play13c_expedition_assessment_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13c_expedition_assessment
+    COMMAND galaxy_play13c_expedition_assessment_tests)
+endif()
+
+# PLAY-13C.6B: sparse, physically unbuilt oasis prospects, discovery privacy
+# and no free resource/infrastructure injection.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13c_rare_oasis_tests
+    tests/PLAY13C_RareOasisTests.cpp)
+  target_link_libraries(galaxy_play13c_rare_oasis_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13c_rare_oasis
+    COMMAND galaxy_play13c_rare_oasis_tests)
+endif()
+
+# PLAY-13C.6C durable source-backed water/nutrients, no free oasis matter.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13c_physical_oasis_tests
+    tests/PLAY13C_PhysicalOasisResourcesTests.cpp)
+  target_link_libraries(galaxy_play13c_physical_oasis_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13c_physical_oasis
+    COMMAND galaxy_play13c_physical_oasis_tests)
+endif()

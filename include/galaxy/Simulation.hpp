@@ -26,6 +26,32 @@ struct Vector2 {
 // Persistent astronomical world-space coordinates in real millimeters,
 // separate from short-range physics simulation coordinates (±1000 km).
 struct CosmicPosition {std::int64_t x_mm=0,y_mm=0,z_mm=0;};
+// v71: authoritative local-space frame custody per ship. An anchor of zero
+// identifies the preexisting unanchored legacy-local world with origin (0,0,0).
+struct ShipFrameCustody {
+    std::uint32_t system=0;
+    std::uint64_t anchor_body=0;
+    CosmicPosition origin{};
+};
+// v72: host-registered transit request; IDs are single-use and journaled.
+// The player chooses a destination, but the host validates ownership and
+// computes final placement from authoritative celestial geometry.
+struct PendingCelestialTransit {
+    PlayerId owner=0;
+    EntityId ship=0;
+    std::uint32_t system=0;
+    std::uint64_t source_anchor=0;
+    std::uint64_t destination_body=0;
+    std::uint64_t started_tick=0;
+    std::uint64_t due_tick=0;
+};
+struct CompletedCelestialTransit {
+    PlayerId owner=0;
+    EntityId ship=0;
+    std::uint32_t system=0;
+    std::uint64_t destination_body=0;
+    std::uint64_t completed_tick=0;
+};
 enum class CelestialKind {Star=0,Planet=1,Moon=2,DebrisRegion=3};
 struct PhysicalCelestialBody {
     std::uint64_t id=0,parent_id=0;
@@ -370,6 +396,34 @@ struct AsteroidGeology {
 // Fixed illustrative per-thousand mass shares; derived deterministically from
 // geological class, not claimed as lab measurements of a specific asteroid.
 struct MineralFraction { const char* name; int permille; };
+// PLAY-13C.5: descriptive environment; hazards are not yet physics damage.
+// PLAY-13C.6B: read-only prospect, NOT resource inventories, shelter or safety.
+// Deployed *from* an existing ship: consumes two real manufactured modules.
+// No extra NPCs are spawned and no free water/nutrient sources are created.
+struct OasisExtractor {
+    EntityId ship=0;
+    std::uint64_t body=0;
+    std::int64_t embodied_ore=4; // tonnes of installed modules
+    std::uint8_t assigned_workers=2; // actual aboard colony crew, not new residents
+    std::uint8_t condition=100;
+    std::uint16_t energy_units=0; // bounded harvested local solar energy
+    std::uint64_t cycles=0;
+};
+struct PhysicalOasisReserve {
+    std::int64_t water_kg=0,nutrients_kg=0;
+    std::int64_t initial_water_kg=0,initial_nutrients_kg=0;
+};
+struct CelestialOasisProspect {
+    std::uint64_t body=0;
+    std::uint8_t water=0,energy=0,nutrients=0,shelter=0;
+    bool candidate=false;
+};
+struct LocalCelestialEnvironment {
+    std::uint8_t zone=0; // 1 stellar, 2 debris, 3 rocky, 4 icy, 5 lunar
+    std::uint8_t hazard=0; // observational severity 0..3, not applied damage
+    AsteroidClass first=AsteroidClass::Carbonaceous;
+    AsteroidClass second=AsteroidClass::Silicate;
+};
 std::vector<MineralFraction> mineral_profile(AsteroidClass taxonomy);
 // Stable command codes: target=phase ID on RefineMineral, target=1 for
 // structural-alloy or target=2 for aluminum on FabricateMaterialModule.
@@ -765,6 +819,66 @@ public:
     // v70: deterministic physical celestial bodies with stable world IDs.
     // Init never consumes ship resources, and cannot run twice with new geometry.
     void ensure_physical_celestial_systems();
+    // Explicit atomic migration, NOT a travel command.
+    void ensure_ship_frame_registry();
+    const std::map<EntityId,ShipFrameCustody>& ship_frames() const {return ship_frames_;}
+    const std::map<std::uint64_t,PendingCelestialTransit>& pending_celestial_transits() const {
+        return pending_celestial_transits_;
+    }
+    const std::map<std::uint64_t,CompletedCelestialTransit>& completed_celestial_transits() const {
+        return completed_celestial_transits_;
+    }
+    // Different local frames never share ordinary spatial interactions.
+    bool same_local_frame(EntityId a,EntityId b) const;
+    // PLAY-13C.4: finite existing mineral stock may be redistributed into
+    // native local deposits; this never creates material from nothing.
+    void seed_celestial_local_region(std::uint64_t body_id);
+    const std::map<std::uint64_t,std::array<EntityId,2>>& generated_local_regions() const {
+        return generated_local_regions_;
+    }
+    const std::map<EntityId,std::uint64_t>& local_entity_anchors() const {
+        return local_entity_anchors_;
+    }
+    // Deterministic profiles derived from persistent astronomical body IDs;
+    // v74 snapshots store and independently cross-validate these records.
+    void ensure_local_environment_profiles();
+    const std::map<std::uint64_t,LocalCelestialEnvironment>& local_environments() const {
+        return local_environments_;
+    }
+    std::optional<AsteroidClass> local_deposit_taxonomy(EntityId rock) const;
+    // Derived solely from the saved physical catalogue and fixed galaxy seed.
+    // Rare prospects require all four ecological prerequisites.
+    // PLAY-13C.6C: finite explicitly supplied world-genesis material.
+    // No oasis generates resources when discovered or visited.
+    void provision_oasis_reserve_genesis(std::uint64_t body,
+        std::int64_t water_kg,std::int64_t nutrients_kg);
+    const std::map<std::uint64_t,PhysicalOasisReserve>& oasis_reserves() const {
+        return oasis_reserves_;
+    }
+    // A deliberately bounded manual collection action; uninstalled automatic
+    // production, planetary mining rigs and farming remain future gates.
+    bool collect_oasis_resource(PlayerId owner,EntityId ship,
+        std::uint64_t body,bool water,std::int64_t kilograms);
+    bool install_oasis_extractor(PlayerId owner,EntityId ship,std::uint64_t body);
+    const std::map<EntityId,OasisExtractor>& oasis_extractors() const {
+        return oasis_extractors_;
+    }
+    std::optional<CelestialOasisProspect> celestial_oasis_prospect(
+        std::uint64_t body_id) const;
+    std::vector<CelestialOasisProspect> survey_oasis_prospects(
+        PlayerId authenticated_owner,EntityId ship) const;
+    // PLAY-13C.6A: observation only. No production, travel, or free supplies.
+    struct ExpeditionProspect {
+        std::uint64_t body=0;
+        std::uint64_t ore_tonnes=0;
+        std::uint64_t nickel_iron_kg=0;
+        std::uint64_t plagioclase_kg=0;
+        std::uint64_t food_periods=0,water_periods=0,oxygen_periods=0;
+        std::uint8_t hazard=0;
+        bool local_supply_site=false;
+    };
+    std::optional<ExpeditionProspect> assess_expedition(
+        PlayerId authenticated_owner,EntityId ship) const;
     std::uint64_t probe_report_delay_ticks() const {return probe_report_delay_ticks_;}
 
     std::uint64_t tick() const { return tick_; }
@@ -831,6 +945,7 @@ private:
     void process_jump_transitions();
     void process_gate_maintenance();
     void process_colony_needs();
+    void process_oasis_extractors();
     void process_farms();
     void move_npc_records(EntityId ship, EntityId site, NpcRole role, std::int64_t delta);
     void award_farm_experience(EntityId site);
@@ -849,6 +964,14 @@ private:
     std::uint64_t next_entity_id_ = 1;
     std::uint64_t rng_state_;
     std::map<EntityId, Entity> entities_; // stable deterministic iteration
+    std::map<EntityId,ShipFrameCustody> ship_frames_; // durable v71 local-space custody
+    std::map<std::uint64_t,std::array<EntityId,2>> generated_local_regions_; // v73 immutable site manifest
+    std::map<EntityId,std::uint64_t> local_entity_anchors_; // v73 nonship frame custody
+    std::map<std::uint64_t,LocalCelestialEnvironment> local_environments_; // v74
+    std::map<std::uint64_t,PhysicalOasisReserve> oasis_reserves_; // v75 explicit finite sources
+    std::map<EntityId,OasisExtractor> oasis_extractors_; // v76 real installed machinery
+    std::map<std::uint64_t,PendingCelestialTransit> pending_celestial_transits_;
+    std::map<std::uint64_t,CompletedCelestialTransit> completed_celestial_transits_;
     std::map<std::uint32_t,std::vector<PhysicalCelestialBody>> physical_celestial_systems_;
     std::set<EntityId> depleted_;
     std::map<EntityId, AutoMining> mining_;

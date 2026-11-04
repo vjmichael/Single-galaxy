@@ -1,0 +1,62 @@
+name: PLAY-13C cosmic/local coordinate acceptance
+on:
+  push:
+    branches: [integration/play13c-cosmic-local-frame-20261104]
+  pull_request:
+    paths:
+      - 'include/galaxy/CosmicLocalFrame.hpp'
+      - 'include/galaxy/CelestialFrameTransition.hpp'
+      - 'CMakeLists.txt'
+      - 'tests/PLAY13C_CelestialTransitionTests.cpp'
+      - 'include/galaxy/Simulation.hpp'
+      - 'include/galaxy/Persistence.hpp'
+      - 'src/Simulation.cpp'
+      - 'src/Persistence.cpp'
+      - 'src/colony_live_host.cpp'
+      - 'tests/PLAY13C_DurableShipFramesTests.cpp'
+      - 'tests/PLAY13C_ActualFrameTransitTests.cpp'
+      - 'tests/PLAY13C_LiveHostTravelSmoke.py'
+      - 'tests/PLAY13C_FrameVisibilityTests.cpp'
+      - 'tests/PLAY13C_LocalRegionGenerationTests.cpp'
+      - 'tests/PLAY13C_LocalEnvironmentTests.cpp'
+      - 'tests/PLAY13C_ExpeditionAssessmentTests.cpp'
+      - 'tests/PLAY13C_RareOasisTests.cpp'
+      - 'tests/PLAY13C_PhysicalOasisResourcesTests.cpp'
+      - 'src/ClientContract.cpp'
+      - 'viewer/colony.js'
+      - 'include/galaxy/Persistence.hpp'
+      - 'tests/PLAY13C_CosmicLocalFrameTests.cpp'
+      - 'tests/play13c_bridge/CMakeLists.txt'
+      - '.github/workflows/play13c.yml'
+jobs:
+  coordinate-bridge:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure C++17 bridge test
+        run: cmake -S tests/play13c_bridge -B build/play13c -DCMAKE_BUILD_TYPE=Release
+      - name: Compile native bridge test
+        run: cmake --build build/play13c --config Release
+      - name: Run coordinate acceptance
+        run: ctest --test-dir build/play13c -C Release --output-on-failure
+  ship-transition-preflight:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure native galaxy kernel
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+      - name: Build transition regression with authoritative Simulation
+        run: cmake --build build --config Release --target galaxy_play13c_celestial_transition_tests galaxy_play13c_durable_frames_tests galaxy_play13c_actual_transit_tests galaxy_play13c_frame_visibility_tests galaxy_play13c_local_region_tests galaxy_play13c_local_environment_tests galaxy_play13c_expedition_assessment_tests galaxy_play13c_rare_oasis_tests galaxy_play13c_physical_oasis_tests galaxy_colony_live_host
+      - name: Verify owner and travel evidence gates
+        run: ctest --test-dir build -C Release -R "^galaxy_play13c_(celestial_transition|durable_frames|actual_transit|frame_visibility|local_region|local_environment|expedition_assessment|rare_oasis|physical_oasis)$" --output-on-failure
+      - name: Real native host celestial journey and saved restart
+        if: runner.os == 'Linux'
+        run: python3 tests/PLAY13C_LiveHostTravelSmoke.py build/galaxy_colony_live_host

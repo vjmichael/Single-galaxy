@@ -832,6 +832,23 @@ public:
     void steps(std::uint64_t n);
     void configure_probe_report_tick_ms(std::uint64_t tick_ms);
     void ensure_physical_celestial_systems();
+    void ensure_ship_frame_registry();
+    void ensure_visited_local_regions();
+    void ensure_local_environment_profiles();
+    // Authenticated-host-only entrypoint: pending request is journaled at
+    // departure. Completion uses this exact record, never client coordinates.
+    bool begin_celestial_transit(PlayerId authenticated_owner, EntityId ship,
+        std::uint64_t destination_body, std::uint64_t request_id,
+        FailPoint fail=FailPoint::None);
+    // The host advances this after elapsed committed world ticks. Replay
+    // is idempotent: a completed request never moves the ship twice.
+    bool complete_celestial_transit(std::uint64_t request_id,
+        FailPoint fail=FailPoint::None);
+    // Real finite resource collection, committed atomically before publication.
+    bool install_oasis_extractor(PlayerId owner,EntityId ship,
+        std::uint64_t body,FailPoint fail=FailPoint::None);
+    bool collect_oasis_resource(PlayerId owner,EntityId ship,std::uint64_t body,
+        bool water,std::int64_t kilograms,FailPoint fail=FailPoint::None);
     const Simulation& world() const noexcept { return world_; }
     std::int64_t resource_origin() const noexcept { return resource_origin_; }
     std::uint64_t generation() const noexcept { return generation_; }

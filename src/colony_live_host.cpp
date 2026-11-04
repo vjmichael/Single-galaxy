@@ -118,6 +118,38 @@ void announce(const Simulation& w,const std::string& text){
 void status(const Simulation& w,EntityId ship,bool replay_discoveries=false){
     const auto* s=w.find(ship);const auto* c=w.colony_ship(ship);
     if(!s || !c)throw std::runtime_error("colony ship missing");
+    if(const auto f=w.ship_frames().find(ship);f!=w.ship_frames().end())
+        announce(w,"LOCAL_FRAME|"+std::to_string(f->second.system)+"|"+
+            std::to_string(f->second.anchor_body));
+    if(const auto p=w.assess_expedition(s->owner_id,ship)) {
+        // Read-only local opportunity and *existing* life-support buffer.
+        // Each period is exactly one 20-tick consumption cycle, not ETA.
+        announce(w,"EXPEDITION|"+std::to_string(p->body)+"|"+
+            std::to_string(p->ore_tonnes)+"|"+
+            std::to_string(p->nickel_iron_kg)+"|"+
+            std::to_string(p->plagioclase_kg)+"|"+
+            std::to_string(p->food_periods)+"|"+
+            std::to_string(p->water_periods)+"|"+
+            std::to_string(p->oxygen_periods)+"|"+
+            std::to_string(unsigned(p->hazard))+"|"+
+            std::to_string(p->local_supply_site?1:0));
+    }
+    if(const auto frame=w.ship_frames().find(ship);
+       frame!=w.ship_frames().end()&&frame->second.anchor_body) {
+        const auto reserve=w.oasis_reserves().find(frame->second.anchor_body);
+        if(reserve!=w.oasis_reserves().end())
+            announce(w,"OASIS_SOURCE|"+std::to_string(reserve->first)+"|"+
+                std::to_string(reserve->second.water_kg)+"|"+
+                std::to_string(reserve->second.nutrients_kg));
+    }
+    if(const auto rig=w.oasis_extractors().find(ship);
+        rig!=w.oasis_extractors().end()) {
+        const auto& e=rig->second;
+        announce(w,"OASIS_EXTRACTOR|"+std::to_string(e.ship)+"|"+
+            std::to_string(e.body)+"|"+std::to_string(e.energy_units)+"|"+
+            std::to_string(unsigned(e.assigned_workers))+"|"+
+            std::to_string(unsigned(e.condition)));
+    }
     announce(w,"HEADING|"+std::to_string(s->heading_deg));
     announce(w,"PROBE_RESET");
     for(const auto& [id,p]:w.survey_probes()){
@@ -366,9 +398,20 @@ void status(const Simulation& w,EntityId ship,bool replay_discoveries=false){
 }
 void scan(const Simulation& w,EntityId ship){
     const auto* s=w.find(ship);if(!s)return;
+    const auto frame=w.ship_frames().find(ship);
+    if(frame!=w.ship_frames().end() && frame->second.anchor_body) {
+        const auto region=w.local_environments().find(frame->second.anchor_body);
+        if(region!=w.local_environments().end()) {
+            const auto& e=region->second;
+            announce(w,"LOCAL_ENVIRONMENT|"+std::to_string(frame->second.anchor_body)+
+                "|"+std::to_string(unsigned(e.zone))+
+                "|"+std::to_string(unsigned(e.hazard)));
+        }
+    }
     int found=0;
     for(const auto& [id,e]:w.entities()){
-        if(e.type!=EntityType::Asteroid || e.system_id!=s->system_id)continue;
+        if(e.type!=EntityType::Asteroid || e.system_id!=s->system_id ||
+           !w.same_local_frame(ship,id))continue;
         auto dx=e.position.x-s->position.x,dy=e.position.y-s->position.y;
         if(dx*dx+dy*dy>sensor_mm*sensor_mm)continue;
         ++found;
@@ -378,14 +421,20 @@ void scan(const Simulation& w,EntityId ship){
                 std::to_string(g->original_tonnes)+"|"+std::to_string(e.ore));
             for(const auto& mineral:mineral_profile(g->taxonomy))
                 announce(w,"MINERAL|"+std::to_string(id)+"|"+mineral.name+"|"+std::to_string(mineral.permille));
-        }else announce(w,"SMALL_ROCK|"+std::to_string(id)+"|"+std::to_string(e.ore));
+        }else {
+            announce(w,"SMALL_ROCK|"+std::to_string(id)+"|"+std::to_string(e.ore));
+            if(const auto taxonomy=w.local_deposit_taxonomy(id))
+                announce(w,"LOCAL_DEPOSIT|"+std::to_string(id)+"|"+
+                    std::to_string(unsigned(*taxonomy)));
+        }
     }
     announce(w,"SCAN_DONE|"+std::to_string(found));
 }
 EntityId nearest(const Simulation& w, EntityId ship){
     const auto* s=w.find(ship);if(!s)return 0;
     EntityId chosen=0;std::int64_t best=std::numeric_limits<std::int64_t>::max();
-    for(const auto& [id,e]:w.entities())if(e.type==EntityType::Asteroid){
+    for(const auto& [id,e]:w.entities())if(e.type==EntityType::Asteroid &&
+        w.same_local_frame(ship,id)){
         auto dx=e.position.x-s->position.x,dy=e.position.y-s->position.y;
         const auto dist=dx*dx+dy*dy;
         if(dist<best){best=dist;chosen=id;}
@@ -400,6 +449,57 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
         c.issuer=principal;c.actor=ship;c.action=Action::SurveyLocal;
         if(world.submit(c))pending_scans.insert(c.id);
         else announce(world.world(),"ERROR|INVALID_INPUT");
+        return;
+    }
+    if(v.size()==2 && v[0]=="OASIS_INSTALL") {
+        try {
+            const auto id=integer(v[1]);
+            if(id<=0 || !world.install_oasis_extractor(principal,ship,
+                static_cast<std::uint64_t>(id)))
+                announce(world.world(),"ERROR|INVALID_INPUT");
+            else {
+                announce(world.world(),"OASIS_INSTALLED|"+std::to_string(id));
+                status(world.world(),ship);
+            }
+        }catch(const std::exception&) {
+            announce(world.world(),"ERROR|INVALID_INPUT");
+        }
+        return;
+    }
+    if(v.size()==4 && v[0]=="OASIS_COLLECT") {
+        try {
+            const auto id=integer(v[1]);
+            const auto kg=integer(v[3]);
+            if(id<=0 || kg<=0 || (v[2]!="WATER" && v[2]!="NUTRIENTS"))
+                throw std::invalid_argument("bad native oasis collection");
+            if(!world.collect_oasis_resource(principal,ship,
+                static_cast<std::uint64_t>(id),v[2]=="WATER",kg)) {
+                announce(world.world(),"ERROR|INVALID_INPUT");
+            }else {
+                announce(world.world(),"OASIS_COLLECTED|"+std::to_string(id)+"|"+
+                    v[2]+"|"+std::to_string(kg));
+                status(world.world(),ship);
+            }
+        }catch(const std::exception&) {
+            announce(world.world(),"ERROR|INVALID_INPUT");
+        }
+        return;
+    }
+    if(v.size()==2 && v[0]=="FRAME_TRAVEL") {
+        try {
+            // The client supplies only a known body ID. The host resolves
+            // the authenticated player/ship and allocates its own request ID.
+            const auto raw=integer(v[1]);
+            if(raw<=0)throw std::invalid_argument("invalid celestial target");
+            const auto body=static_cast<std::uint64_t>(raw);
+            const auto request=++nonce;
+            if(!world.begin_celestial_transit(principal,ship,body,request))
+                announce(world.world(),"ERROR|FRAME_TRAVEL_DENIED");
+            else announce(world.world(),"FRAME_TRANSIT_STARTED|"+
+                std::to_string(request)+"|"+std::to_string(body));
+        }catch(const std::exception&) {
+            announce(world.world(),"ERROR|FRAME_TRAVEL_DENIED");
+        }
         return;
     }
     if(v.size()==1 && v[0]=="SYSTEM_CELESTIAL"){
@@ -439,6 +539,13 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
                 std::to_string(body.position.y_mm)+"|"+
                 std::to_string(body.position.z_mm)+"|"+
                 std::to_string(body.physical_radius_mm));
+        // Rare viable *prospects*, not free supplies or a guarantee of safety.
+        for(const auto& oasis:world.world().survey_oasis_prospects(principal,ship))
+            announce(world.world(),"OASIS_PROSPECT|"+std::to_string(oasis.body)+"|"+
+                std::to_string(unsigned(oasis.water))+"|"+
+                std::to_string(unsigned(oasis.energy))+"|"+
+                std::to_string(unsigned(oasis.nutrients))+"|"+
+                std::to_string(unsigned(oasis.shelter)));
         announce(world.world(),"CELESTIAL_DONE|"+
             std::to_string(profile->orbital_bands.size()));
         return;
@@ -778,6 +885,12 @@ int main(int argc,char** argv){
         world.configure_probe_report_tick_ms(static_cast<std::uint64_t>(ms));
         // Existing saves are upgraded atomically on first new-host start.
         world.ensure_physical_celestial_systems();
+        // PLAY-13C.2B: migrate current ships to durable legacy-local frames.
+        world.ensure_ship_frame_registry();
+        // PLAY-13C.4: durable, idempotent region seeding for pre-v73 arrivals.
+        world.ensure_visited_local_regions();
+        // PLAY-13C.5: v73 worlds migrate to validated v74 mineral profiles.
+        world.ensure_local_environment_profiles();
         if(!world.world().colony_ship(ship)||!world.world().find(ship)||world.world().find(ship)->owner_id!=owner){
             // A populated production world can have stations before its first
             // player-owned colony ship. Do not assume the ship has entity ID 1.
@@ -851,6 +964,26 @@ int main(int argc,char** argv){
             }
             const auto old=world.world().events().size();
             world.step();
+            // Mature transit requests are committed separately; no half-
+            // applied position is ever published. Catch-up on restart is
+            // automatic because due requests live in the world snapshot.
+            std::vector<std::uint64_t> due_frame_transits;
+            for(const auto& [request,p]:world.world().pending_celestial_transits())
+                if(p.due_tick<=world.world().tick())due_frame_transits.push_back(request);
+            for(const auto request:due_frame_transits) {
+                const auto pending=world.world().pending_celestial_transits().at(request);
+                if(world.complete_celestial_transit(request)) {
+                    announce(world.world(),"FRAME_TRANSIT_ARRIVED|"+
+                        std::to_string(request)+"|"+
+                        std::to_string(pending.destination_body));
+                    // Refresh frame-specific local sensors and inventory only
+                    // after the destination is durably committed.
+                    status(world.world(),ship,true);
+                    scan(world.world(),ship);
+                }
+                else
+                    announce(world.world(),"ERROR|FRAME_TRANSIT_BLOCKED");
+            }
             sync_survey_knowledge(); // only after durable native world step
             // EXIT-01D: every eighth committed world tick, host (not the
             // player input UI) automatically observes a bounded rotation of
