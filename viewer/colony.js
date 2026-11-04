@@ -361,12 +361,21 @@
         deployedProbes.set(e.id,e);
         const selected=q('probeTarget'),current=selected.value;
         selected.replaceChildren(new Option('Choose deployed probe',''),...[...deployedProbes].map(([id,p])=>
-          new Option('#'+id+' · '+p.x+', '+p.y+' mm',String(id))));
+          new Option('#'+id+' · '+p.x+', '+p.y+' mm'+
+            (p.phase?' · drone '+['','outbound','returning','ready to recover'][p.phase]+
+            ' · sample '+p.sample+' t':' · stationary probe'),String(id))));
         if([...selected.options].some(o=>o.value===current))selected.value=current;
         else if([...selected.options].some(o=>o.value===probeChoice))selected.value=probeChoice;
         q('probeSurvey').disabled=!probeLauncher||!selected.value;
-        q('probeRetrieve').disabled=!probeLauncher||!selected.value;
-        q('probeFeedback').textContent='Probe #'+e.id+' remains at '+e.x+', '+e.y+' mm';
+        const p=deployedProbes.get(Number(selected.value));
+        q('probeRetrieve').disabled=!probeLauncher||!p||
+          (p.phase!==0 && p.phase!==3);
+        q('probeSurvey').disabled=!probeLauncher||!p||p.phase!==0;
+        q('probeFeedback').textContent=e.phase?
+          'Geological drone #'+e.id+' · '+
+          ['','outbound','returning','ready to recover'][e.phase]+
+          ' · real ore sample '+e.sample+' t · mineral class '+e.taxonomy:
+          'Probe #'+e.id+' remains at '+e.x+', '+e.y+' mm';
       }
       if(e.type==='FITTING'){
        q('fittingCapacity').textContent=
