@@ -759,7 +759,8 @@ public:
     std::size_t pending_probe_report_count() const {return pending_probe_discoveries_.size();}
     // Coarse, scan-range-limited contacts for the authenticated player only.
     struct SignatureHint { EntityId id=0;Vector2 coarse{};std::int64_t uncertainty_mm=5000000; };
-    std::vector<SignatureHint> coarse_probe_signatures(PlayerId owner,EntityId ship) const;
+    std::vector<SignatureHint> coarse_probe_signatures(PlayerId owner,EntityId ship,
+        std::int64_t range_mm=500000000) const;
     const std::map<std::uint64_t,DeployedSurveyProbe>& survey_probes() const {return survey_probes_;}
     bool was_depleted(EntityId id) const { return depleted_.count(id) != 0; }
     const Entity* find(EntityId id) const;
