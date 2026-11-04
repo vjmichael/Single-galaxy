@@ -602,6 +602,14 @@ public:
     colony_conflict::Decision record_colony_conflict_intent(
         std::uint64_t decision_event_id,EntityId source_colony,
         std::uint64_t observed_contact_event_id);
+    // CONFLICT-01B2: new, append-only nonviolent strategic intents may use
+    // ONLY relationship revisions committed before the observed generation.
+    // Existing 01A intents remain forever evaluated under their old rules.
+    colony_conflict::Decision assess_colony_diplomatic_intent(
+        EntityId source_colony,std::uint64_t observed_contact_event_id) const;
+    colony_conflict::Decision record_colony_diplomatic_intent(
+        std::uint64_t decision_event_id,EntityId source_colony,
+        std::uint64_t observed_contact_event_id);
     // CONFLICT-01B1: actual ship destruction + a real NPC's delivered GRSM
     // interpretation produces a subjective, directed diplomatic revision.
     // The incident's real attacker owner is independently reconstructed;
