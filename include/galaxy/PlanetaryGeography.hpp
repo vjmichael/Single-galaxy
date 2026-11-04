@@ -159,4 +159,29 @@ inline GeographicSite survey_geographic_site(
     }
     return site;
 }
+// Authoritative PGF survey overload. The old three-argument
+// survey_planetary_world() is retained for legacy prototype tests only.
+// Game-facing PGF-01B.2 callers must supply the validated watershed map.
+inline PlanetarySurvey survey_planetary_world(
+    const WatershedMap& map,const PlanetaryWorldKey& key,
+    const PlanetaryEnvelope& envelope,
+    std::uint16_t latitude,std::uint16_t longitude) {
+    const auto site=survey_geographic_site(map,key,envelope,latitude,longitude);
+    PlanetarySurvey result;
+    result.key=site.key;
+    result.surface=site.landscape.region;
+    result.biosphere_present=envelope.biosphere_present;
+    result.land_supports_farming=result.surface.farming_possible;
+    // Candidate climate is not actual free biomass or harvestable water.
+    result.environment_might_support_life=
+        envelope.climate!=WorldClimate::AirlessRock &&
+        (site.landscape.local_water_potential>0 ||
+         result.surface.farming_possible);
+    result.has_candidate_liquid_water=
+        envelope.climate!=WorldClimate::Frozen &&
+        envelope.climate!=WorldClimate::AirlessRock &&
+        (result.surface.surface_water ||
+         site.landscape.watercourse==Watercourse::PerennialRiver);
+    return result;
+}
 } // namespace galaxy::planetary
