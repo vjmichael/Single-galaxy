@@ -2667,7 +2667,10 @@ Event Simulation::execute(const Command& c) {
                 }
                 const auto& asteroid=target->second;
                 if(asteroid.system_id!=actor.system_id){result.result=Outcome::WrongSystem;return result;}
-                constexpr auto range=50000LL;
+                // Geological drones require a 10 km ship-to-target operating
+                // envelope. The device finishes its assigned mission autonomously
+                // if the carrier subsequently flies away.
+                constexpr auto range=kDroneControlRangeMm;
                 const auto dx=asteroid.position.x-actor.position.x;
                 const auto dy=asteroid.position.y-actor.position.y;
                 if(dx<-range||dx>range||dy<-range||dy>range||dx*dx+dy*dy>range*range){
@@ -2725,11 +2728,9 @@ Event Simulation::execute(const Command& c) {
                     if(actor.survey_probes_carried>=8){
                         result.result=Outcome::CargoFull;return result;
                     }
-                    const auto sample=probe.sample_ore;
-                    if(sample && (actor.cargo_capacity*1000-loaded_cargo_liters(actor)<sample*1000)){
-                        result.result=Outcome::CargoFull;return result;
-                    }
-                    actor.cargo+=sample;
+                    // Geological survey results are data, not ore or cargo.
+                    // Probes return exactly one device; the geological report
+                    // remains in the owner-scoped durable survey ledger.
                     ++actor.survey_probes_carried;
                     survey_probes_.erase(it);
                     result.transferred=1;result.result=Outcome::Applied;
@@ -4569,10 +4570,10 @@ void Simulation::step() {
         if(p.drone_phase==2){p.drone_phase=3;continue;}
         const auto it=entities_.find(p.drone_target);
         if(it!=entities_.end() && it->second.type==EntityType::Asteroid &&
-           it->second.system_id==p.system && it->second.ore>0 &&
-           geology_.count(p.drone_target)){
-            --it->second.ore;
-            p.sample_ore=1;
+           it->second.system_id==p.system && geology_.count(p.drone_target)){
+            // Non-destructive geological characterization. No simulated ore
+            // extraction, mass transfer, or cargo creation is authorized.
+            p.sample_ore=0;
             p.taxonomy=1+static_cast<std::uint8_t>(geology_.at(p.drone_target).taxonomy);
             const auto key=std::make_pair(p.owner,p.drone_target);
             if(!discoveries_.count(key) && discoveries_.size()<10000)
@@ -5048,7 +5049,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 const auto phase=u64(f[8]),sample=u64(f[12]),taxonomy=u64(f[13]);
                 p.drone_target=u64(f[9]);
                 p.drone_home={i64(f[10]),i64(f[11])};
-                if(phase>3 || sample>1 || taxonomy>3)
+                if(phase>3 || sample>0 || taxonomy>3)
                     throw std::runtime_error("snapshot: invalid geological drone state");
                 p.sample_ore=static_cast<std::int64_t>(sample);
                 p.drone_phase=static_cast<std::uint8_t>(phase);
@@ -6857,12 +6858,8 @@ std::int64_t Simulation::total_ore() const {
         const auto installed=(eq.fitting.exploration_scanner()?1:0)+(eq.fitting.probe_launcher()?1:0);
         const auto deployed=std::count_if(survey_probes_.begin(),survey_probes_.end(),
             [id](const auto& row){return row.second.carrier==id;});
-        const auto drone_ore=std::accumulate(survey_probes_.begin(),survey_probes_.end(),
-            std::int64_t{0},[id](std::int64_t sum,const auto& row){
-                return sum+(row.second.carrier==id?row.second.sample_ore:0);
-            });
         const auto mass=c.refined+2*(c.modules+installed+eq.survey_probes_carried+
-            static_cast<std::int64_t>(deployed))+drone_ore;
+            static_cast<std::int64_t>(deployed));
         if(mass<0 || mass>std::numeric_limits<std::int64_t>::max()-total)
             throw std::overflow_error("invalid colony ore equivalent");
         total+=mass;
