@@ -389,7 +389,7 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
                !world.world().built_outposts().count(site)))
                 throw std::invalid_argument("not docked at owned outpost");
             c.target=v[0]=="UNDOCK_BASE"?0:site;
-            c.amount=1000; // native unload/load honors finite hold and bay limits
+            c.amount=v[0]=="UNDOCK_BASE"?0:1000; // load/unload only; native custody limits
             c.action=v[0]=="UNDOCK_BASE"?Action::RequestUndock:
                      v[0]=="UNLOAD_BASE"?Action::UnloadOre:Action::LoadOre;
         }else if(v.size()==2 && v[0]=="YAW"){
