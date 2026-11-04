@@ -76,6 +76,19 @@ for(const [id,action] of [['colonySafetyAssess','colonySafetyAssess'],['colonySa
 for(const [id,x,y] of [['flightLeft',-1,0],['flightRight',1,0],
   ['flightUp',0,-1],['flightDown',0,1],['flightDrift',0,0]])
  el(id).addEventListener('click',()=>command('thrust',{x,y}));
+el('flightYawLeft').addEventListener('click',()=>command('yaw',{delta:-15}));
+el('flightYawRight').addEventListener('click',()=>command('yaw',{delta:15}));
+for(const [id,act] of [
+ ['returnDock','colonyDockBase'],['returnUnload','colonyUnloadBase'],
+ ['returnLoad','colonyLoadBase'],['returnUndock','colonyUndockBase']
+])el(id).addEventListener('click',()=>command(act));
+let lastReturnShip=null;
+el('returnBrake').addEventListener('click',()=>{
+ if(!lastReturnShip)return;
+ const x=Math.sign(lastReturnShip.vx||0),y=Math.sign(lastReturnShip.vy||0);
+ if(!x&&!y){message('Ship already at zero velocity.');return;}
+ command('thrust',{x:-x,y:-y});
+});
 el('flightScan').addEventListener('click',()=>command('colonyScan'));
 el('flightMine').addEventListener('click',()=>command('colonyMine',{amount:8}));
 el('flightMineSelected').addEventListener('click',()=>{
@@ -108,6 +121,18 @@ window.onGalaxyLiveProjection=function(state){
    ' · speed '+speed.toFixed(0)+' mm/tick'+
    (first?' · nearest visible asteroid #'+first.rock.id+
       ' at '+first.range.toFixed(0)+' mm':' · no asteroid currently visible');
+ const cargo=window.GalaxyCargoReturn?.plan(state,7);
+ lastReturnShip=ship;
+ if(cargo){
+   el('returnTelemetry').textContent=cargo.message+
+     (cargo.site?' Direction to home: ΔX '+cargo.dx.toFixed(0)+' mm, ΔY '+cargo.dy.toFixed(0)+' mm.':'');
+   el('returnHold').textContent=cargo.ready?ship.cargo+' t':'—';
+   el('returnBay').textContent=cargo.site?cargo.bayOre+' t':'—';
+   for(const [id,ready] of [['returnDock',cargo.canDock],
+     ['returnUnload',cargo.canUnload],['returnLoad',cargo.canLoad],
+     ['returnUndock',cargo.canUndock]])el(id).disabled=!colonyMode||!ready;
+   el('returnBrake').disabled=!colonyMode||!(ship.vx||ship.vy)||cargo.dockState!==0;
+ }
  const docking=state.docks.get(ship.id)?.state||0;
  el('undock').disabled=docking!==1;
  // Leave Dock enabled in open space, even when distant/moving, so authoritative
@@ -129,6 +154,7 @@ window.onGalaxyLiveProjection=function(state){
 window.GalaxyColonyCommand=command;
 window.GalaxyReconnect=connect;
 window.GalaxyDisconnect=()=>{
+ lastReturnShip=null;
  if(source){source.close();source=null;}token=null;
  window.GalaxyLiveBridge?.reset();window.GalaxyColony?.reset();window.GalaxySurveyBridge?.reset();
  el('interactiveControls').hidden=true;el('colonyPanel').hidden=true;el('surveyPanel').hidden=true;
