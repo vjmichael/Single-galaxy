@@ -1097,3 +1097,13 @@ if(BUILD_TESTING)
     add_test(NAME galaxy_colony_exit01d_scheduler
         COMMAND galaxy_colony_exit01d_scheduler_tests)
 endif()
+
+# EXIT-01D second regression: fixed 8-tick host cadence, bounded rotating
+# roster, duplicate suppression and conservative no-governor/no-offer refusal.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_exit01d_bounded_tests
+        tests/COLONY_EXIT01D_BoundedSchedulerTests.cpp)
+    target_link_libraries(galaxy_colony_exit01d_bounded_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_exit01d_bounded
+        COMMAND galaxy_colony_exit01d_bounded_tests)
+endif()
