@@ -2703,7 +2703,6 @@ Event Simulation::execute(const Command& c) {
                     // so this limit will become meaningful with cosmic scaling.
                     const auto dx=probe.position.x-actor.position.x;
                     const auto dy=probe.position.y-actor.position.y;
-                    constexpr auto link=kDeepSpaceProbeCommsRangeMm;
                     if(!within_deep_probe_link(dx,dy)){
                         result.result=Outcome::OutOfRange;return result;
                     }
@@ -4671,7 +4670,6 @@ void Simulation::step() {
             }
             const auto dx=probe->second.position.x-carrier->second.position.x;
             const auto dy=probe->second.position.y-carrier->second.position.y;
-            constexpr auto range=kDeepSpaceProbeCommsRangeMm;
             if(!within_deep_probe_link(dx,dy)){
                 ++it;continue;
             }
