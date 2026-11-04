@@ -92,6 +92,38 @@ try{
     try{PersistentWorld corrupt(path,genesis());(void)corrupt;}
     catch(const std::runtime_error&){refused=true;}
     CHECK(refused);
+    // An occupied world disappearing MUST NOT be mislabeled as a safe rescue.
+    // Construct a minimal canonical-writer SQLite transaction to exercise the
+    // journal gate directly, without making up an NPC death or ferry receipt.
+    sqlite3* isolated=nullptr;
+    CHECK(sqlite3_open(":memory:",&isolated)==SQLITE_OK);
+    sql(isolated,"CREATE TABLE snapshots(generation INTEGER PRIMARY KEY,state BLOB NOT NULL)");
+    const auto starting=genesis();
+    const auto put_snapshot=[&](int generation,const Simulation& w){
+        sqlite3_stmt* q=nullptr;
+        CHECK(sqlite3_prepare_v2(isolated,"INSERT INTO snapshots VALUES(?,?)",-1,&q,nullptr)==SQLITE_OK);
+        const auto bytes=w.canonical_state();
+        CHECK(sqlite3_bind_int(q,1,generation)==SQLITE_OK);
+        CHECK(sqlite3_bind_blob(q,2,bytes.data(),static_cast<int>(bytes.size()),SQLITE_TRANSIENT)==SQLITE_OK);
+        CHECK(sqlite3_step(q)==SQLITE_DONE);
+        CHECK(sqlite3_finalize(q)==SQLITE_OK);
+    };
+    sql(isolated,"BEGIN IMMEDIATE");
+    put_snapshot(1,starting);
+    colony_safety::journal::record_world_commit(isolated,starting,0,1);
+    sql(isolated,"COMMIT");
+    CHECK(colony_safety::journal::event_count(isolated)==0);
+    sql(isolated,"BEGIN IMMEDIATE");
+    const Simulation vanished(104692); // no custody/death receipts, no ship
+    put_snapshot(2,vanished);
+    bool missing_refused=false;
+    try{colony_safety::journal::record_world_commit(isolated,vanished,1,2);}
+    catch(const std::runtime_error&){missing_refused=true;}
+    CHECK(missing_refused);
+    sql(isolated,"ROLLBACK");
+    colony_safety::journal::verify(isolated,starting,1);
+    CHECK(colony_safety::journal::event_count(isolated)==0);
+    CHECK(sqlite3_close(isolated)==SQLITE_OK);
     std::filesystem::remove(path);
     std::filesystem::remove(path+"-wal");
     std::filesystem::remove(path+"-shm");
