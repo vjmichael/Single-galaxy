@@ -29,6 +29,8 @@ async function connect(){
    el('interactiveControls').hidden=colonyMode;
    el('surveyPanel').hidden=colonyMode;
    el('colonyPanel').hidden=!colonyMode;
+   el('flightCameraControls').hidden=!colonyMode;
+   if(colonyMode)window.GalaxyFlightCameraActions?.reset();
    document.querySelector('.view .help').textContent=colonyMode?
      'Colony start: one ship, 24 colonists, no prebuilt infrastructure. Scan, mine, refine, fabricate, and construct your first outpost.':
      'Legacy gated region: developer-only scenario fixtures.';
@@ -103,6 +105,12 @@ el('returnBrake').addEventListener('click',()=>{
  if(!x&&!y){message('Ship already at zero velocity.');return;}
  command('thrust',{x:-x,y:-y});
 });
+for(const [id,method,arg] of [
+ ['cameraFollow','follow'],['cameraOverview','overview'],
+ ['cameraZoomIn','zoom',1.2],['cameraZoomOut','zoom',1/1.2],
+ ['cameraReset','reset']
+])el(id).addEventListener('click',()=>window.GalaxyFlightCameraActions?.[method]?.(arg));
+window.GalaxyTargetFeedback=text=>message(text);
 el('flightScan').addEventListener('click',()=>command('colonyScan'));
 el('flightMine').addEventListener('click',()=>command('colonyMine',{amount:8}));
 el('flightMineSelected').addEventListener('click',()=>{
@@ -135,8 +143,10 @@ window.onGalaxyLiveProjection=function(state){
    ' · speed '+speed.toFixed(0)+' mm/tick'+
    (first?' · nearest visible asteroid #'+first.rock.id+
       ' at '+first.range.toFixed(0)+' mm':' · no asteroid currently visible');
- const chosen=Number(el('colonyRockTarget').value);
- const selected=Number.isSafeInteger(chosen)&&chosen>0?chosen:null;
+ const chosen=window.GalaxySelectedRockId;
+  const chosen=Number(el('colonyRockTarget').value);
+ const selected=Number.isSafeInteger(window.GalaxySelectedRockId)&&window.GalaxySelectedRockId>0?
+   window.GalaxySelectedRockId:(Number.isSafeInteger(chosen)&&chosen>0?chosen:null);
  const mine=window.GalaxyExpeditionFeedback?.target(ship,nearby,selected);
  el('expeditionTarget').textContent=mine?
    '#'+mine.id+' · '+Math.ceil(mine.distance).toLocaleString()+' mm · '+mine.ore.toLocaleString()+' t visible ore':
@@ -195,6 +205,7 @@ window.GalaxyDisconnect=()=>{
  colonyMode=false;window.GalaxyColonyMode=false;
  window.GalaxyLiveBridge?.reset();window.GalaxyColony?.reset();window.GalaxySurveyBridge?.reset();
  el('interactiveControls').hidden=true;el('colonyPanel').hidden=true;el('surveyPanel').hidden=true;
+ el('flightCameraControls').hidden=true;
  el('qaPanel').hidden=true;
  message('Signed out. Colony world data is no longer available in this session.');
 };
