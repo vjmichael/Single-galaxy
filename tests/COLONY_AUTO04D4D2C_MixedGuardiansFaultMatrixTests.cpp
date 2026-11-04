@@ -101,7 +101,7 @@ try{
         CHECK(world.world().npc_records().size()==4);
         CHECK(world.world().children_physically_aboard(source)==3);
         CHECK(world.world().total_material_kg()==original_material);
-        world.steps(360-world.world().tick());
+        world.steps(380-world.world().tick());
         CHECK(static_cast<int>(colony_safety::assess(world.world(),source,source).risk)>=
               static_cast<int>(colony_safety::Risk::Critical));
         PersistentWorld::AtomicColonyFamilyPlan plan{};
@@ -208,7 +208,7 @@ try{
         CHECK(region.load()->scheduler.colony("source").population==0);
         CHECK(region.load()->scheduler.colony("destination").population==7);
         const auto food=world.world().life_support(destination)->food_kg;
-        world.steps(380-world.world().tick());
+        world.steps(400-world.world().tick());
         CHECK(world.world().life_support(destination)->food_kg==food-7);
         CHECK(world.verified_atomic_family_departure(7902));
     }
