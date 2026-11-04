@@ -24,3 +24,17 @@ jobs:
         run: cmake --build build/play13c --config Release
       - name: Run coordinate acceptance
         run: ctest --test-dir build/play13c -C Release --output-on-failure
+  ship-transition-preflight:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure native galaxy kernel
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+      - name: Build transition regression with authoritative Simulation
+        run: cmake --build build --config Release --target galaxy_play13c_celestial_transition_tests
+      - name: Verify owner and travel evidence gates
+        run: ctest --test-dir build -C Release -R "^galaxy_play13c_celestial_transition$" --output-on-failure
