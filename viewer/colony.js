@@ -8,6 +8,23 @@
   function decode(raw){
     if(typeof raw!=='string'||raw.length>180||!/^COLONY\|1\|/.test(raw)||!/^[A-Za-z0-9_|-]+$/.test(raw))throw Error('Invalid colony telemetry');
     const v=raw.split('|'),tick=numeric(v[2],1200),t=v[3];let e={tick,type:t};
+    if(t==='SIGNATURE_RESET'){
+      if(v.length!==4)throw Error('Malformed signature reset');
+      return e;
+    }
+    if(t==='SIGNATURE_DONE'){
+      if(v.length!==5)throw Error('Malformed signature count');
+      return {...e,count:numeric(v[4],128)};
+    }
+    if(t==='SIGNATURE_CONTACT'){
+      if(v.length!==8)throw Error('Malformed coarse signature');
+      const coord=x=>{if(!/^(?:0|-?[1-9][0-9]*)$/.test(x))throw Error('Invalid coarse coordinate');
+        const n=Number(x);if(!Number.isSafeInteger(n)||Math.abs(n)>1000000000)throw Error('Signature coordinate overflow');return n;};
+      const id=numeric(v[4],100000000),x=coord(v[5]),y=coord(v[6]);
+      const uncertainty=numeric(v[7],500000000);
+      if(!id||!uncertainty)throw Error('Invalid signature');
+      return {...e,id,x,y,uncertainty};
+    }
     if(t==='PROBE_RESET'){
       if(v.length!==4)throw Error('Malformed probe roster reset');
       return e;
@@ -21,20 +38,24 @@
       return {...e,carried:numeric(v[4],8),launcher:!!numeric(v[5],1)};
     }
     if(t==='SURVEY_PROBE'){
-      if(v.length!==8 && v.length!==12)throw Error('Malformed deployed survey probe');
+      if(v.length!==8 && v.length!==12 && v.length!==15)throw Error('Malformed deployed survey probe');
       const id=numeric(v[4],1000000000000000),system=numeric(v[5],100000000);
       const coord=value=>{if(!/^(?:0|-?[1-9][0-9]*)$/.test(value))throw Error('Bad probe coordinate');
         const n=Number(value);if(!Number.isSafeInteger(n)||Math.abs(n)>1000000000)throw Error('Probe coordinate out of range');return n;};
       const x=coord(v[6]),y=coord(v[7]);
       if(!id||!system)throw Error('Invalid deployed probe identity');
-      if(v.length===12){
+      if(v.length>=12){
         const phase=numeric(v[8],3),target=numeric(v[9],100000000);
         const sample=numeric(v[10],0),taxonomy=numeric(v[11],3);
         if((phase===0 && (target||sample||taxonomy)) ||
            (phase!==0 && !target) || sample!==0)throw Error('Invalid geological drone state');
-        return {...e,id,system,x,y,phase,target,sample,taxonomy};
+        const focus=v.length===15?numeric(v[12],100000000):0;
+        const fx=v.length===15?coord(v[13]):0,fy=v.length===15?coord(v[14]):0;
+        if(focus && phase)throw Error('Invalid focused geological drone');
+        if(!focus && (fx||fy))throw Error('Unowned focus waypoint');
+        return {...e,id,system,x,y,phase,target,sample,taxonomy,focus,fx,fy};
       }
-      return {...e,id,system,x,y,phase:0,target:0,sample:0,taxonomy:0};
+      return {...e,id,system,x,y,phase:0,target:0,sample:0,taxonomy:0,focus:0,fx:0,fy:0};
     }
     if(t==='FITTING'){
       if(v.length!==9)throw Error('Malformed ship fitting telemetry');
