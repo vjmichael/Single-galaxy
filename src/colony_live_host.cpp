@@ -402,6 +402,23 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
         else announce(world.world(),"ERROR|INVALID_INPUT");
         return;
     }
+    if(v.size()==2 && v[0]=="FRAME_TRAVEL") {
+        try {
+            // The client supplies only a known body ID. The host resolves
+            // the authenticated player/ship and allocates its own request ID.
+            const auto raw=integer(v[1]);
+            if(raw<=0)throw std::invalid_argument("invalid celestial target");
+            const auto body=static_cast<std::uint64_t>(raw);
+            const auto request=++nonce;
+            if(!world.begin_celestial_transit(principal,ship,body,request))
+                announce(world.world(),"ERROR|FRAME_TRAVEL_DENIED");
+            else announce(world.world(),"FRAME_TRANSIT_STARTED|"+
+                std::to_string(request)+"|"+std::to_string(body));
+        }catch(const std::exception&) {
+            announce(world.world(),"ERROR|FRAME_TRAVEL_DENIED");
+        }
+        return;
+    }
     if(v.size()==1 && v[0]=="SYSTEM_CELESTIAL"){
         const auto profile=world.world().scan_celestial_profile(principal,ship);
         if(!profile){announce(world.world(),"ERROR|INVALID_INPUT");return;}
@@ -853,6 +870,21 @@ int main(int argc,char** argv){
             }
             const auto old=world.world().events().size();
             world.step();
+            // Mature transit requests are committed separately; no half-
+            // applied position is ever published. Catch-up on restart is
+            // automatic because due requests live in the world snapshot.
+            std::vector<std::uint64_t> due_frame_transits;
+            for(const auto& [request,p]:world.world().pending_celestial_transits())
+                if(p.due_tick<=world.world().tick())due_frame_transits.push_back(request);
+            for(const auto request:due_frame_transits) {
+                const auto pending=world.world().pending_celestial_transits().at(request);
+                if(world.complete_celestial_transit(request))
+                    announce(world.world(),"FRAME_TRANSIT_ARRIVED|"+
+                        std::to_string(request)+"|"+
+                        std::to_string(pending.destination_body));
+                else
+                    announce(world.world(),"ERROR|FRAME_TRANSIT_BLOCKED");
+            }
             sync_survey_knowledge(); // only after durable native world step
             // EXIT-01D: every eighth committed world tick, host (not the
             // player input UI) automatically observes a bounded rotation of
