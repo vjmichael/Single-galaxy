@@ -462,6 +462,12 @@ public:
     // This audit is NOT an authorization to commit population departure.
     colony_family::Audit audit_colony_family_departure(
         const colony_family::DeparturePlan& plan) const;
+    // Durable generation-bound PREPARATION ONLY. A returned true means the
+    // complete manifest was checked and journaled, not that a child moved.
+    bool prepare_host_colony_family_departure(
+        const colony_family::DeparturePlan& plan,
+        FailPoint fail=FailPoint::None);
+
 
 
     // q6e3b: only the trusted host can queue a rescue from a child-occupied
