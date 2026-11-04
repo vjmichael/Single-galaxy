@@ -1175,6 +1175,39 @@ public:
             const Simulation& world,const colony_family::DeparturePlan& request) const {
         return colony_family::assess(world,db_,request);
     }
+    bool prepared_colony_family_departure(
+            const Simulation& world,std::uint64_t generation,
+            const colony_family::DeparturePlan& plan) const {
+        if(!plan.intent_id||plan.expected_world_generation!=generation)return false;
+        Statement schema(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                             "AND name='sg_colony_family_departure_prepare'");
+        if(!schema.row())return false;
+        std::string adults,children;
+        for(auto id:plan.adult_ids){
+            if(!adults.empty())adults+=',';
+            adults+=std::to_string(id);
+        }
+        for(const auto& ch:plan.children){
+            if(!children.empty())children+=',';
+            children+=std::to_string(ch.child_id)+":"+std::to_string(ch.guardian_id);
+        }
+        Statement q(db_,"SELECT generation,world_hash,source,receiver,family_scope,"
+            "family_seed,adult_roster,child_guardians,status "
+            "FROM sg_colony_family_departure_prepare WHERE intent_id=?");
+        q.text(1,std::to_string(plan.intent_id));
+        if(!q.row())return false;
+        const bool match=
+            sqlite3_column_int64(q.get(),0)==static_cast<sqlite3_int64>(generation) &&
+            sqlite_str(q.get(),1)==std::to_string(world.state_hash()) &&
+            sqlite_str(q.get(),2)==std::to_string(plan.source) &&
+            sqlite_str(q.get(),3)==std::to_string(plan.receiver) &&
+            sqlite_str(q.get(),4)==plan.family_scope &&
+            sqlite_str(q.get(),5)==std::to_string(plan.family_seed) &&
+            sqlite_str(q.get(),6)==adults &&
+            sqlite_str(q.get(),7)==children &&
+            sqlite3_column_int(q.get(),8)==1 && !q.row();
+        return match;
+    }
     bool prepare_colony_family_departure(
             const Simulation& world,std::uint64_t generation,
             const colony_family::DeparturePlan& plan,FailPoint fail){
