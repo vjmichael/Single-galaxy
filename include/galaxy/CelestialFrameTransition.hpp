@@ -1,5 +1,5 @@
 #pragma once
-// PLAY-13C.2 — preflight ONLY for a host-authorized completed interplanetary transit.
+// PLAY-13C.2 — deterministic geometry preflight for a proposed/committed transit.
 // A plan does not grant travel, does not mutate Simulation, and is not a receipt.
 // The caller must validate durable transit provenance and commit the world atomically.
 #include "galaxy/CosmicLocalFrame.hpp"
@@ -35,7 +35,7 @@ struct FrameTransitionDecision {
 inline FrameTransitionDecision plan_celestial_frame_arrival(
     const Simulation& world,PlayerId owner,EntityId ship_id,
     std::uint64_t body_id,std::uint64_t transit_request_id) {
-    if(!verified_transit_request_id)
+    if(!transit_request_id)
         return {FrameTransitionRejection::MissingTransit,{}};
     const auto* ship=world.find(ship_id);
     if(!ship || ship->type!=EntityType::Ship)
@@ -87,7 +87,7 @@ inline FrameTransitionDecision plan_celestial_frame_arrival(
     plan.destination_frame=frame;
     plan.arrival_position={0,0};
     plan.arrival_velocity={0,0};
-    plan.transit_request_id=verified_transit_request_id;
+    plan.transit_request_id=transit_request_id;
     return {FrameTransitionRejection::None,plan};
 }
 } // namespace galaxy
