@@ -1,0 +1,27 @@
+name: Colony EXIT-01A physical survival departure pressure
+on:
+  push:
+    branches:
+      - integration/colony-exit01a-survival-disengagement-v86-20261103
+  pull_request:
+    paths:
+      - 'src/Persistence.cpp'
+      - 'include/galaxy/Persistence.hpp'
+      - 'include/galaxy/ColonyConflict.hpp'
+      - 'tests/COLONY_EXIT01A*'
+      - 'CMakeLists.txt'
+  workflow_dispatch:
+jobs:
+  native-exit-pressure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SQLite
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+      - name: Build real pressure and historical government regression
+        run: cmake --build build --target galaxy_colony_exit01a_survival_tests galaxy_colony_conflict01b3_governance_tests galaxy_colony_conflict01b2_diplomacy_epoch_tests galaxy_colony_conflict01b1_grievance_tests galaxy_colony_conflict01a_aggressive_intent_tests galaxy_colony_defense01a_watch_tests -j 2
+      - name: Native verified exit pressure and historical lineage
+        run: ctest --test-dir build --output-on-failure -R 'galaxy_colony_(exit01a_survival|conflict01b3_governance|conflict01b2_diplomacy_epoch|conflict01b1_grievance|conflict01a_aggressive_intent|defense01a_local_watch)'
