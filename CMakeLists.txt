@@ -1299,3 +1299,12 @@ if(BUILD_TESTING)
   add_test(NAME galaxy_play13d_planetary_watershed
     COMMAND galaxy_play13d_planetary_watershed_tests)
 endif()
+
+# PGF-01B.2 single-source planetary geography over authoritative watershed cells.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13d_planetary_geography_tests
+    tests/PLAY13D_PlanetaryGeographyTests.cpp)
+  target_link_libraries(galaxy_play13d_planetary_geography_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_planetary_geography
+    COMMAND galaxy_play13d_planetary_geography_tests)
+endif()
