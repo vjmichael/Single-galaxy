@@ -115,6 +115,12 @@ void status(const Simulation& w,EntityId ship){
     const auto* s=w.find(ship);const auto* c=w.colony_ship(ship);
     if(!s || !c)throw std::runtime_error("colony ship missing");
     announce(w,"HEADING|"+std::to_string(s->heading_deg));
+    for(const auto& [id,e]:w.entities()){
+        if(e.type==EntityType::Wreck && e.owner_id==8 &&
+           e.system_id==s->system_id && !w.colony_ship(id)){
+            announce(w,"SALVAGE_WRECK|"+std::to_string(id)+"|"+std::to_string(e.cargo));
+        }
+    }
     announce(w,"COMBAT_SHIP|"+std::to_string(s->hull)+"|"+
         std::to_string(s->weapon_charges));
     for(const auto& [id,e]:w.entities()){
@@ -369,6 +375,12 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
             auto x=integer(v[1]),y=integer(v[2]);
             if(x<-1||x>1||y<-1||y>1)throw std::invalid_argument("bad thrust");
             c.action=Action::Thrust;c.thrust_x=static_cast<int>(x);c.thrust_y=static_cast<int>(y);
+        }else if(v.size()==3 && v[0]=="SALVAGE_WRECK"){
+            const auto target=integer(v[1]),amount=integer(v[2]);
+            if(target<=0 || target>100000000 || amount<1 || amount>10)
+                throw std::invalid_argument("invalid wreck salvage");
+            c.action=Action::SalvageWreck;
+            c.target=static_cast<EntityId>(target);c.amount=amount;
         }else if(v.size()==2 && v[0]=="FIRE_TRAINING"){
             const auto id=integer(v[1]);
             if(id<=0||id>100000000)throw std::invalid_argument("invalid combat target");
