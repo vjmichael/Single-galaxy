@@ -162,8 +162,10 @@ Command decode_command(const std::string& record) {
         if (extra != "T31" || !(in >> c.transport_id))
             throw std::runtime_error("recovery: invalid transport envelope");
         std::size_t count=0;
-        if (!(in >> count) || !c.transport_id || count==0 || count>10000)
-            throw std::runtime_error("recovery: invalid transport manifest size");
+        const bool colony_departure=action==static_cast<int>(Action::HostColonyDeparture);
+        if (!(in >> count) || count==0 || count>(colony_departure?16U:10000U) ||
+            (colony_departure ? c.transport_id!=0 : c.transport_id==0))
+            throw std::runtime_error("recovery: invalid transport/departure manifest size");
         std::set<std::uint64_t> unique;
         for (std::size_t i=0;i<count;++i) {
             std::uint64_t npc=0;
@@ -171,13 +173,15 @@ Command decode_command(const std::string& record) {
                 throw std::runtime_error("recovery: invalid transport passenger");
             c.passenger_ids.push_back(npc);
         }
+        if(colony_departure && !std::is_sorted(c.passenger_ids.begin(),c.passenger_ids.end()))
+            throw std::runtime_error("recovery: departure IDs not canonical");
         if(action==static_cast<int>(Action::HostSplitEvacuatePassengers)){
             if(!(in>>extra)||extra!="S48"||!(in>>c.secondary_receiver>>c.secondary_transport)||
                !c.secondary_receiver||!c.secondary_transport)
                 throw std::runtime_error("recovery: malformed split rescue envelope");
         }
     }
-    if (in >> extra || action < 0 || action > static_cast<int>(Action::HostTransferConsignedStock) || c.id == 0 || c.issuer == 0)
+    if (in >> extra || action < 0 || action > static_cast<int>(Action::HostColonyDeparture) || c.id == 0 || c.issuer == 0)
         throw std::runtime_error("recovery: invalid command journal values");
     c.action = static_cast<Action>(action);
     if (command_record(c) != record) throw std::runtime_error("recovery: noncanonical command journal");
@@ -1163,6 +1167,26 @@ public:
         Statement t(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
                         "AND name='sg_dependent_travel'");
         return t.row();
+    }
+    // Whole-colony adult departure cannot silently orphan any known ART02
+    // dependent or world-recorded birth. Historical child links are refused
+    // conservatively until a complete guardian+births closure adapter exists.
+    bool has_child_or_dependent_link(EntityId scope) const {
+        const auto key=std::to_string(scope);
+        if(has_dependent_table()){
+            Statement child(db_,"SELECT 1 FROM sg_dependent_travel "
+                                 "WHERE ferry=? OR origin=? OR destination=? LIMIT 1");
+            child.text(1,key);child.text(2,key);child.text(3,key);
+            if(child.row())return true;
+        }
+        Statement table(db_,"SELECT 1 FROM sqlite_master "
+                             "WHERE type='table' AND name='sg_med_society_birth'");
+        if(table.row()){
+            Statement birth(db_,"SELECT 1 FROM sg_med_society_birth WHERE home_ship=? LIMIT 1");
+            birth.text(1,key);
+            if(birth.row())return true;
+        }
+        return false;
     }
     std::int64_t active_dependent_berths(EntityId ferry) const {
         if(!has_dependent_table())return 0;
@@ -5645,6 +5669,76 @@ bool PersistentWorld::submit_host_medical_action(const Command& command, FailPoi
     return submit_host_passenger_action(command,fail);
 }
 
+// COLONY-AUTO-04D.4C: one canonical world writer; no secondary population
+// table, orphaned station crew, or player-facing shortcut. This operation is
+// adult-only until independent ART02 dependent-custody settlement is available.
+bool PersistentWorld::submit_host_colony_departure(const Command& command,FailPoint fail){
+    if(command.action!=Action::HostColonyDeparture ||
+       command.issuer!=Simulation::kServerAuthority ||
+       command.execute_tick!=world_.tick()+1 ||
+       !command.actor || !command.target)return false;
+    const auto no_child_links=[&](){
+        if(store_->has_child_or_dependent_link(command.actor) ||
+           store_->has_child_or_dependent_link(command.target))return false;
+        for(const auto& [site,outpost]:world_.built_outposts())
+            if(outpost.source_colony_ship==command.actor &&
+               store_->has_child_or_dependent_link(site))return false;
+        return true;
+    };
+    if(!no_child_links())return false;
+    auto next=world_;
+    if(!next.submit(command))return false;
+    // Recheck under BEGIN IMMEDIATE, not only before it, so another writer
+    // cannot insert a guardian/dependent between admission and publication.
+    const auto locked_guard=[&](sqlite3*,std::uint64_t){
+        if(!no_child_links())throw std::runtime_error("birth/guardian custody changed during departure admission");
+    };
+    store_->commit(next,generation_,resource_origin_,credit_origin_,
+                   &command,{},{},{},fail,nullptr,nullptr,locked_guard);
+    world_.swap(next);++generation_;
+    return true;
+}
+void PersistentWorld::step_with_colony_departure(FailPoint fail){
+    auto next=world_;
+    const auto before=next.events().size();
+    const auto before_activity=next.activity_events().size();
+    std::map<std::uint64_t,Command> due;
+    if(auto it=next.commands_.find(next.tick()+1);it!=next.commands_.end())
+        for(const auto& c:it->second)due.emplace(c.id,c);
+    if(due.size()!=1 ||
+       due.begin()->second.action!=Action::HostColonyDeparture ||
+       due.begin()->second.issuer!=Simulation::kServerAuthority)
+        throw std::runtime_error("colony departure requires one authorized due command");
+    const auto cmd=due.begin()->second;
+    const auto no_child_links=[&](){
+        if(store_->has_child_or_dependent_link(cmd.actor) ||
+           store_->has_child_or_dependent_link(cmd.target))return false;
+        for(const auto& [site,outpost]:world_.built_outposts())
+            if(outpost.source_colony_ship==cmd.actor &&
+               store_->has_child_or_dependent_link(site))return false;
+        return true;
+    };
+    if(!no_child_links())
+        throw std::runtime_error("colony departure conflicts with recorded dependent or birth custody");
+    next.step();
+    if(next.events().size()!=before+1 ||
+       next.events().back().command_id!=cmd.id ||
+       next.events().back().result!=Outcome::Applied ||
+       !next.colony_departures_.count(cmd.actor))
+        throw std::runtime_error("departure failed physical execution; original world unchanged");
+    const std::vector<Event> events(next.events().begin()+
+        static_cast<std::ptrdiff_t>(before),next.events().end());
+    const std::vector<ActivityEvent> activity(next.activity_events().begin()+
+        static_cast<std::ptrdiff_t>(before_activity),next.activity_events().end());
+    const auto locked_guard=[&](sqlite3*,std::uint64_t){
+        if(!no_child_links())throw std::runtime_error("dependent custody changed during atomic world publication");
+    };
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   events,due,activity,fail,nullptr,nullptr,locked_guard);
+    world_.swap(next);
+    ++generation_;
+}
+
 bool PersistentWorld::submit_host_emergency_ferry_rescue(
         const Command& command,FailPoint fail){
     // This gate is deliberately limited to EXISTING ferry passengers in one
@@ -7541,6 +7635,8 @@ void PersistentWorld::step(FailPoint fail) {
             throw std::runtime_error("migration needs host atomic society step");
         if(c.action==Action::HostSplitEvacuatePassengers)
             throw std::runtime_error("split evacuation requires atomic two-receiver child custody step");
+        if(c.action==Action::HostColonyDeparture)
+            throw std::runtime_error("colony departure requires atomic full-population host step");
     }
     for(const auto& [id,c]:due){(void)id;
         if((c.action==Action::HostDisembarkPassengers ||

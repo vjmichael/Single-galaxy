@@ -866,7 +866,119 @@ Simulation::FerryEmergencyReport Simulation::ferry_emergency_report(std::uint64_
     return report;
 }
 
+bool Simulation::can_depart_colony(const Command& c) const {
+    // v58: a bounded all-adult local colony transfer is ONE world command.
+    // No passenger voyage, offsite transport, fabricated guardian authority,
+    // remote relocation, or supply deficit can be accepted.
+    if(c.action!=Action::HostColonyDeparture ||
+       c.issuer!=kServerAuthority || snapshot_version_<57 ||
+       !c.actor || !c.target || c.actor==c.target || !c.id ||
+       (c.execute_tick!=tick_+1 && c.execute_tick!=tick_) || c.amount || c.transport_id ||
+       c.secondary_receiver || c.secondary_transport || c.thrust_x || c.thrust_y ||
+       c.passenger_ids.empty() || c.passenger_ids.size()>16 ||
+       !std::is_sorted(c.passenger_ids.begin(),c.passenger_ids.end()) ||
+       std::adjacent_find(c.passenger_ids.begin(),c.passenger_ids.end())!=c.passenger_ids.end() ||
+       !c.passenger_ids.front() || colony_departures_.count(c.actor) ||
+       colony_departures_.count(c.target))return false;
+    const auto* source=find(c.actor);const auto* receiver=find(c.target);
+    const auto from=colony_ships_.find(c.actor),to=colony_ships_.find(c.target);
+    const auto* receiver_life=life_support(c.target);
+    if(!source||!receiver||from==colony_ships_.end()||to==colony_ships_.end()||
+       !receiver_life || source->type!=EntityType::Ship ||
+       receiver->type!=EntityType::Ship ||
+       source->owner_id!=receiver->owner_id ||
+       source->system_id!=receiver->system_id ||
+       source->jump_state!=ShipJumpState::Ready ||
+       receiver->jump_state!=ShipJumpState::Ready ||
+       source->dock_state!=DockState::InSpace ||
+       receiver->dock_state!=DockState::InSpace ||
+       from->second.crew<1 || to->second.crew<1 ||
+       to->second.crew>1000-static_cast<std::int64_t>(c.passenger_ids.size()) ||
+       passengers_aboard(c.actor) || passengers_aboard(c.target))return false;
+    const auto near=[&](const Entity* origin){
+        if(!origin || origin->system_id!=receiver->system_id)return false;
+        const auto dx=origin->position.x-receiver->position.x;
+        const auto dy=origin->position.y-receiver->position.y;
+        return dx>=-kDockingRangeMm && dx<=kDockingRangeMm &&
+               dy>=-kDockingRangeMm && dy<=kDockingRangeMm &&
+               dx*dx+dy*dy<=kDockingRangeMm*kDockingRangeMm;
+    };
+    if(!near(source))return false;
+    // The source owner cannot suppress urgent life preservation, but a
+    // healthy colony cannot be forcibly stripped of its crew by this API.
+    bool danger=false;
+    if(life_support(c.actor)){
+        const auto risk=colony_safety::assess(*this,c.actor,c.actor).risk;
+        danger=static_cast<int>(risk)>=static_cast<int>(colony_safety::Risk::Critical);
+    }
+    std::uint64_t declared=static_cast<std::uint64_t>(from->second.crew);
+    for(const auto& [site,h]:habitats_)if(h.source_ship==c.actor){
+        if(h.residents<0 || !near(find(site)))return false;
+        declared+=static_cast<std::uint64_t>(h.residents);
+        if(h.residents &&
+           static_cast<int>(colony_safety::assess(*this,c.actor,site).risk)>=
+           static_cast<int>(colony_safety::Risk::Critical))danger=true;
+    }
+    for(const auto& [site,f]:farms_)if(f.source_ship==c.actor){
+        if(f.workers<0 || !near(find(site)))return false;
+        declared+=static_cast<std::uint64_t>(f.workers);
+        if(f.workers && !habitats_.count(site) &&
+           static_cast<int>(colony_safety::assess(*this,c.actor,site).risk)>=
+           static_cast<int>(colony_safety::Risk::Critical))danger=true;
+    }
+    if(!danger || declared!=c.passenger_ids.size())return false;
+    // Fail closed on staffed services and specialist jobs for which departure
+    // needs an independent social/employment/clinical settlement adapter.
+    for(const auto& [site,u]:utilities_)
+        if(u.source_ship==c.actor && u.technicians)return false;
+    for(const auto& [site,cmt]:communities_)
+        if(cmt.source_ship==c.actor && cmt.attendants)return false;
+    for(const auto& [site,cl]:clinics_)
+        if(cl.source_ship==c.actor && (cl.medics||cl.active_cases))return false;
+    for(const auto& [site,w]:workshops_)
+        if(w.source_ship==c.actor && (w.operator_npc_id||w.finisher_npc_id))return false;
+    for(const auto& [site,policy]:policy_sites_)if(policy.source_ship==c.actor)
+        for(const auto& d:policy.domains)if(d.inspectors)return false;
+    for(const auto& [command,shift]:medic_shifts_){
+        (void)command;
+        const auto n=npcs_.find(shift.medic_id);
+        if(n!=npcs_.end() && n->second.home_ship==c.actor &&
+           shift.end_tick>tick_)return false;
+    }
+    for(const auto& [ship,job]:mining_)if(ship==c.actor)return false;
+    for(const auto& [tick,cmds]:commands_)for(const auto& cmd:cmds){
+        (void)tick;
+        if(cmd.id==c.id)continue; // the executing command is still in the due batch
+        if(cmd.actor==c.actor || cmd.actor==c.target ||
+           cmd.target==c.actor || cmd.target==c.target)
+            return false;
+    }
+    std::vector<std::uint64_t> exact;
+    for(const auto& [id,n]:npcs_)if(n.home_ship==c.actor){
+        // No preexisting voyage, detached employment or unverified mentor link.
+        if(n.transport_id||n.location!=n.assigned_site||n.mentor_id||
+           named_medics_.count(id)||!near(find(n.location)))return false;
+        exact.push_back(id);
+    }
+    if(exact!=c.passenger_ids)return false;
+    // All persons are rehomed as real ship operating crew, not incorrectly
+    // left in an active voyage or simultaneously on the old station payroll.
+    const auto present=people_physically_aboard(c.target);
+    const auto count=present+exact.size();
+    if(count>1000 ||
+       receiver_life->food_kg<static_cast<std::int64_t>(2*count) ||
+       receiver_life->water_kg<static_cast<std::int64_t>(2*count) ||
+       receiver_life->oxygen_kg<static_cast<std::int64_t>(2*count))
+        return false;
+    return true;
+}
 bool Simulation::submit(const Command& c) {
+    if(colony_departures_.count(c.actor) || colony_departures_.count(c.target))return false;
+    const bool colony_departure=c.action==Action::HostColonyDeparture;
+    if(colony_departure){
+        if(!can_depart_colony(c)||submitted_ids_.count(c.id))return false;
+        snapshot_version_=58;
+    }
     const bool split_action=c.action==Action::HostSplitEvacuatePassengers;
     const bool consigned=c.action==Action::HostTransferConsignedStock;
     if(consigned){
@@ -1294,9 +1406,9 @@ bool Simulation::submit(const Command& c) {
                 if(it->second.location!=c.target || it->second.transport_id)return false;
             }else if(it->second.location!=c.actor || it->second.transport_id!=c.transport_id)return false;
         }
-    }else if(!medical_action && !migration_action && (c.transport_id || !c.passenger_ids.empty()))return false;
+    }else if(!medical_action && !migration_action && !colony_departure && (c.transport_id || !c.passenger_ids.empty()))return false;
     if (c.id == 0 || c.execute_tick <= tick_ || c.issuer == 0 || submitted_ids_.count(c.id)) return false;
-    if (passenger_action || medical_action || migration_action || escrow_action || return_action || consigned) { /* validated host command above */ }
+    if (passenger_action || medical_action || migration_action || escrow_action || return_action || consigned || colony_departure) { /* validated host command above */ }
     else if (c.action == Action::HostDestroyShip || c.action == Action::HostCrewLoss) {
         if(c.issuer != kServerAuthority || !c.actor || !c.target ||
            c.thrust_x || c.thrust_y ||
@@ -1571,6 +1683,34 @@ void Simulation::stop_mining(EntityId actor, Outcome reason) {
 
 Event Simulation::execute(const Command& c) {
     Event result{tick_, c.id, Outcome::InvalidActor, 0};
+    if(c.action==Action::HostColonyDeparture){
+        if(!can_depart_colony(c)){
+            result.result=Outcome::InvalidArgument;return result;
+        }
+        // Every identity and receiver supply has passed preflight at the
+        // actual execution tick. No mutation occurs until ALL are verified.
+        auto& source=colony_ships_.at(c.actor);
+        auto& receiver=colony_ships_.at(c.target);
+        for(const auto id:c.passenger_ids){
+            auto& n=npcs_.at(id);
+            n.home_ship=c.target;
+            n.location=c.target;
+            n.assigned_site=c.target;
+            n.role=NpcRole::Ship;
+            n.transport_id=0;
+        }
+        for(auto& [site,f]:farms_)if(f.source_ship==c.actor)f.workers=0;
+        for(auto& [site,h]:habitats_)if(h.source_ship==c.actor)h.residents=0;
+        source.crew=0;
+        receiver.crew+=static_cast<std::int64_t>(c.passenger_ids.size());
+        // An intact source hull stays physically present and retains all
+        // untouched inventory, but can never be operated with zero crew.
+        colony_departures_.emplace(c.actor,ColonyDeparture{
+            c.actor,c.target,c.id,tick_,c.passenger_ids});
+        result.result=Outcome::Applied;
+        result.transferred=0; // Reserved for MATERIAL ledger transfers, never people.
+        return result;
+    }
     // A separate host-authorized action: never relax ordinary owner-bound
     // TransferStorageStack. Permission and immutable order are checked by the
     // SQLite world writer before a command can reach this deterministic replay.
@@ -4098,7 +4238,7 @@ void Simulation::steps(std::uint64_t count) {
 
 std::string Simulation::canonical_state() const {
     std::ostringstream out;
-    out << (snapshot_version_ >= 57 ? "galaxy-kernel-v57|" : snapshot_version_ >= 53 ? "galaxy-kernel-v53|" : snapshot_version_ >= 52 ? "galaxy-kernel-v52|" : snapshot_version_ >= 49 ? "galaxy-kernel-v49|" : snapshot_version_ >= 48 ? "galaxy-kernel-v48|" : snapshot_version_ >= 44 ? "galaxy-kernel-v44|" : snapshot_version_ >= 41 ? "galaxy-kernel-v41|" : snapshot_version_ >= 40 ? "galaxy-kernel-v40|" : snapshot_version_ >= 39 ? "galaxy-kernel-v39|" : snapshot_version_ >= 38 ? "galaxy-kernel-v38|" : snapshot_version_ >= 37 ? "galaxy-kernel-v37|" : snapshot_version_ >= 36 ? "galaxy-kernel-v36|" : snapshot_version_ >= 35 ? "galaxy-kernel-v35|" : snapshot_version_ >= 34 ? "galaxy-kernel-v34|" : snapshot_version_ >= 33 ? "galaxy-kernel-v33|" : snapshot_version_ >= 32 ? "galaxy-kernel-v32|" : snapshot_version_ >= 31 ? "galaxy-kernel-v31|" : snapshot_version_ >= 30 ? "galaxy-kernel-v30|" : snapshot_version_ >= 29 ? "galaxy-kernel-v29|" : snapshot_version_ >= 28 ? "galaxy-kernel-v28|" : snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
+    out << (snapshot_version_ >= 58 ? "galaxy-kernel-v58|" : snapshot_version_ >= 57 ? "galaxy-kernel-v57|" : snapshot_version_ >= 53 ? "galaxy-kernel-v53|" : snapshot_version_ >= 52 ? "galaxy-kernel-v52|" : snapshot_version_ >= 49 ? "galaxy-kernel-v49|" : snapshot_version_ >= 48 ? "galaxy-kernel-v48|" : snapshot_version_ >= 44 ? "galaxy-kernel-v44|" : snapshot_version_ >= 41 ? "galaxy-kernel-v41|" : snapshot_version_ >= 40 ? "galaxy-kernel-v40|" : snapshot_version_ >= 39 ? "galaxy-kernel-v39|" : snapshot_version_ >= 38 ? "galaxy-kernel-v38|" : snapshot_version_ >= 37 ? "galaxy-kernel-v37|" : snapshot_version_ >= 36 ? "galaxy-kernel-v36|" : snapshot_version_ >= 35 ? "galaxy-kernel-v35|" : snapshot_version_ >= 34 ? "galaxy-kernel-v34|" : snapshot_version_ >= 33 ? "galaxy-kernel-v33|" : snapshot_version_ >= 32 ? "galaxy-kernel-v32|" : snapshot_version_ >= 31 ? "galaxy-kernel-v31|" : snapshot_version_ >= 30 ? "galaxy-kernel-v30|" : snapshot_version_ >= 29 ? "galaxy-kernel-v29|" : snapshot_version_ >= 28 ? "galaxy-kernel-v28|" : snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
         << '|' << rng_state_ << '\n';
     if (snapshot_version_>=5) for(const auto system:systems_)out<<"system|"<<system<<'\n';
     for (const auto& entry : entities_) {
@@ -4317,6 +4457,12 @@ std::string Simulation::canonical_state() const {
             out << '\n';
         }
     }
+    if(snapshot_version_>=58)for(const auto& [ship,d]:colony_departures_){
+        out<<"colonydeparture|"<<ship<<'|'<<d.receiver<<'|'<<d.command_id
+           <<'|'<<d.tick<<'|'<<d.relocated_npcs.size();
+        for(auto id:d.relocated_npcs)out<<'|'<<id;
+        out<<'\n';
+    }
     if(snapshot_version_>=33)for(const auto& [id,v]:voyages_){
         out<<"voyage|"<<id<<'|'<<v.ferry<<'|'<<v.origin<<'|'<<v.status<<'|'<<v.passengers.size();
         if(snapshot_version_>=34)out<<'|'<<v.destination;
@@ -4450,12 +4596,12 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
     if (!std::getline(in, line)) throw std::runtime_error("snapshot: missing header");
     auto h = fields(line);
     require_fields(h, 5);
-    if (h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27" && h[0] != "galaxy-kernel-v28" && h[0] != "galaxy-kernel-v29" && h[0] != "galaxy-kernel-v30" && h[0] != "galaxy-kernel-v31" && h[0] != "galaxy-kernel-v32" && h[0] != "galaxy-kernel-v33" && h[0] != "galaxy-kernel-v34" && h[0] != "galaxy-kernel-v35" && h[0] != "galaxy-kernel-v36" && h[0] != "galaxy-kernel-v37" && h[0] != "galaxy-kernel-v38" && h[0] != "galaxy-kernel-v39" && h[0] != "galaxy-kernel-v40" && h[0] != "galaxy-kernel-v41" && h[0] != "galaxy-kernel-v44" && h[0] != "galaxy-kernel-v48" && h[0] != "galaxy-kernel-v49" && h[0] != "galaxy-kernel-v52" && h[0] != "galaxy-kernel-v53" && h[0] != "galaxy-kernel-v57") throw std::runtime_error("snapshot: unsupported version");
+    if (h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27" && h[0] != "galaxy-kernel-v28" && h[0] != "galaxy-kernel-v29" && h[0] != "galaxy-kernel-v30" && h[0] != "galaxy-kernel-v31" && h[0] != "galaxy-kernel-v32" && h[0] != "galaxy-kernel-v33" && h[0] != "galaxy-kernel-v34" && h[0] != "galaxy-kernel-v35" && h[0] != "galaxy-kernel-v36" && h[0] != "galaxy-kernel-v37" && h[0] != "galaxy-kernel-v38" && h[0] != "galaxy-kernel-v39" && h[0] != "galaxy-kernel-v40" && h[0] != "galaxy-kernel-v41" && h[0] != "galaxy-kernel-v44" && h[0] != "galaxy-kernel-v48" && h[0] != "galaxy-kernel-v49" && h[0] != "galaxy-kernel-v52" && h[0] != "galaxy-kernel-v53" && h[0] != "galaxy-kernel-v57" && h[0] != "galaxy-kernel-v58") throw std::runtime_error("snapshot: unsupported version");
     const auto sys = u64(h[1]);
     if (sys == 0 || sys > std::numeric_limits<std::uint32_t>::max())
         throw std::runtime_error("snapshot: invalid system");
     Simulation result(u64(h[4]), static_cast<std::uint32_t>(sys));
-    result.snapshot_version_ = h[0] == "galaxy-kernel-v57" ? 57 : h[0] == "galaxy-kernel-v53" ? 53 : h[0] == "galaxy-kernel-v52" ? 52 : h[0] == "galaxy-kernel-v49" ? 49 : h[0] == "galaxy-kernel-v48" ? 48 : h[0] == "galaxy-kernel-v44" ? 44 : h[0] == "galaxy-kernel-v41" ? 41 : h[0] == "galaxy-kernel-v40" ? 40 : h[0] == "galaxy-kernel-v39" ? 39 : h[0] == "galaxy-kernel-v38" ? 38 : h[0] == "galaxy-kernel-v37" ? 37 : h[0] == "galaxy-kernel-v36" ? 36 : h[0] == "galaxy-kernel-v35" ? 35 : h[0] == "galaxy-kernel-v34" ? 34 : h[0] == "galaxy-kernel-v33" ? 33 : h[0] == "galaxy-kernel-v32" ? 32 : h[0] == "galaxy-kernel-v31" ? 31 : h[0] == "galaxy-kernel-v30" ? 30 : h[0] == "galaxy-kernel-v29" ? 29 : h[0] == "galaxy-kernel-v28" ? 28 : h[0] == "galaxy-kernel-v27" ? 27 : h[0] == "galaxy-kernel-v26" ? 26 : h[0] == "galaxy-kernel-v25" ? 25 : h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
+    result.snapshot_version_ = h[0] == "galaxy-kernel-v58" ? 58 : h[0] == "galaxy-kernel-v57" ? 57 : h[0] == "galaxy-kernel-v53" ? 53 : h[0] == "galaxy-kernel-v52" ? 52 : h[0] == "galaxy-kernel-v49" ? 49 : h[0] == "galaxy-kernel-v48" ? 48 : h[0] == "galaxy-kernel-v44" ? 44 : h[0] == "galaxy-kernel-v41" ? 41 : h[0] == "galaxy-kernel-v40" ? 40 : h[0] == "galaxy-kernel-v39" ? 39 : h[0] == "galaxy-kernel-v38" ? 38 : h[0] == "galaxy-kernel-v37" ? 37 : h[0] == "galaxy-kernel-v36" ? 36 : h[0] == "galaxy-kernel-v35" ? 35 : h[0] == "galaxy-kernel-v34" ? 34 : h[0] == "galaxy-kernel-v33" ? 33 : h[0] == "galaxy-kernel-v32" ? 32 : h[0] == "galaxy-kernel-v31" ? 31 : h[0] == "galaxy-kernel-v30" ? 30 : h[0] == "galaxy-kernel-v29" ? 29 : h[0] == "galaxy-kernel-v28" ? 28 : h[0] == "galaxy-kernel-v27" ? 27 : h[0] == "galaxy-kernel-v26" ? 26 : h[0] == "galaxy-kernel-v25" ? 25 : h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
     result.tick_ = u64(h[2]);
     result.next_entity_id_ = u64(h[3]);
     if (result.next_entity_id_ == 0) throw std::runtime_error("snapshot: invalid next entity ID");
@@ -4958,6 +5104,20 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                u.stored_energy!=u.generated_energy-u.consumed_energy ||
                !result.utilities_.emplace(id,u).second)
                 throw std::runtime_error("snapshot: invalid utility operation");
+        } else if(f[0]=="colonydeparture" && result.snapshot_version_>=58){
+            if(f.size()<7)throw std::runtime_error("snapshot: truncated colony departure");
+            const auto source=u64(f[1]),receiver=u64(f[2]),cmd=u64(f[3]),tick=u64(f[4]);
+            const auto count=u64(f[5]);
+            if(!source||!receiver||source==receiver||!cmd||!tick||
+               tick>result.tick_ || count==0 || count>16 || f.size()!=6+count)
+                throw std::runtime_error("snapshot: malformed colony departure");
+            ColonyDeparture d{source,receiver,cmd,tick,{}};
+            for(std::size_t i=0;i<count;++i)d.relocated_npcs.push_back(u64(f[6+i]));
+            if(!std::is_sorted(d.relocated_npcs.begin(),d.relocated_npcs.end()) ||
+               !d.relocated_npcs.front() ||
+               std::adjacent_find(d.relocated_npcs.begin(),d.relocated_npcs.end())!=d.relocated_npcs.end() ||
+               !result.colony_departures_.emplace(source,d).second)
+                throw std::runtime_error("snapshot: duplicate or unordered colony departure");
         } else if(f[0]=="voyage" && result.snapshot_version_>=33){
             if(f.size()<7)throw std::runtime_error("snapshot: truncated voyage");
             const auto id=u64(f[1]),ferry=u64(f[2]),origin=u64(f[3]);
@@ -5086,7 +5246,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             c.id = u64(f[1]); c.execute_tick = u64(f[2]); c.sequence = u64(f[3]);
             c.issuer = u64(f[4]); c.actor = u64(f[5]); c.target = u64(f[6]);
             auto action = u64(f[7]);
-            if (action > (result.snapshot_version_ >= 56 ? static_cast<unsigned>(Action::HostTransferConsignedStock) : result.snapshot_version_ >= 53 ? static_cast<unsigned>(Action::HostReturnConstructedStock) : result.snapshot_version_ >= 52 ? static_cast<unsigned>(Action::HostEscrowConstructedStock) : result.snapshot_version_ >= 48 ? static_cast<unsigned>(Action::HostSplitEvacuatePassengers) : result.snapshot_version_ >= 41 ? static_cast<unsigned>(Action::HostSettleMigrant) : result.snapshot_version_ >= 39 ? static_cast<unsigned>(Action::HostMobileStabilize) : result.snapshot_version_ >= 38 ? static_cast<unsigned>(Action::HostTreatInjuries) : result.snapshot_version_ >= 37 ? static_cast<unsigned>(Action::HostResolveMixedFerryLoss) : result.snapshot_version_ >= 36 ? static_cast<unsigned>(Action::HostDestroyPassengerFerry) : result.snapshot_version_ >= 35 ? static_cast<unsigned>(Action::HostEvacuatePassengers) : result.snapshot_version_ >= 32 ? static_cast<unsigned>(Action::HostDisembarkPassengers) : result.snapshot_version_ >= 30 ? static_cast<unsigned>(Action::CompleteConveyorRoute) : result.snapshot_version_ >= 29 ? static_cast<unsigned>(Action::PlaceFactoryEquipment) : result.snapshot_version_ >= 28 ? static_cast<unsigned>(Action::ConstructWorkshopLink) : result.snapshot_version_ >= 27 ? static_cast<unsigned>(Action::ConstructStorageLink) : result.snapshot_version_ >= 26 ? static_cast<unsigned>(Action::TransferStorageNodeStack) : result.snapshot_version_ >= 25 ? static_cast<unsigned>(Action::TransferStorageStack) : result.snapshot_version_ >= 24 ? static_cast<unsigned>(Action::TransferWorkshopStack) : result.snapshot_version_ >= 23 ? static_cast<unsigned>(Action::TransferWorkshopFinalOutput) : result.snapshot_version_ >= 22 ? static_cast<unsigned>(Action::TransferWorkshopOutput) : result.snapshot_version_ >= 21 ? static_cast<unsigned>(Action::HostCrewLoss) : result.snapshot_version_ >= 20 ? static_cast<unsigned>(Action::AssignFarmMentor) : result.snapshot_version_ >= 19 ? static_cast<unsigned>(Action::AssignPolicyInspectors) : result.snapshot_version_ >= 18 ? static_cast<unsigned>(Action::TransferWaterworksFeed) : result.snapshot_version_ >= 17 ? static_cast<unsigned>(Action::ConstructReclaimer) : result.snapshot_version_ >= 16 ? static_cast<unsigned>(Action::AssignClinicStaff) : result.snapshot_version_ >= 15 ? static_cast<unsigned>(Action::AssignCommunityStaff) : result.snapshot_version_ >= 14 ? static_cast<unsigned>(Action::SetUtilityMaintenance) : result.snapshot_version_ >= 13 ? static_cast<unsigned>(Action::RepairUtility) : result.snapshot_version_ >= 12 ? static_cast<unsigned>(Action::AssignHabitatResidents) : result.snapshot_version_ >= 11 ? static_cast<unsigned>(Action::AssignFarmWorkers) : result.snapshot_version_ >= 10 ? static_cast<unsigned>(Action::LoadLifeWater) : result.snapshot_version_ >= 9 ? static_cast<unsigned>(Action::FabricateMaterialModule) : result.snapshot_version_ >= 7 ? static_cast<unsigned>(Action::ConstructOutpost) : result.snapshot_version_ >= 6 ? static_cast<unsigned>(Action::DeliverGateSpares) : result.snapshot_version_ >= 5 ? static_cast<unsigned>(Action::SetGatePairOnline) : result.snapshot_version_ >= 4 ? static_cast<unsigned>(Action::SellOre) : static_cast<unsigned>(Action::UnloadOre))) throw std::runtime_error("snapshot: invalid action");
+            if (action > (result.snapshot_version_ >= 58 ? static_cast<unsigned>(Action::HostColonyDeparture) : result.snapshot_version_ >= 56 ? static_cast<unsigned>(Action::HostTransferConsignedStock) : result.snapshot_version_ >= 53 ? static_cast<unsigned>(Action::HostReturnConstructedStock) : result.snapshot_version_ >= 52 ? static_cast<unsigned>(Action::HostEscrowConstructedStock) : result.snapshot_version_ >= 48 ? static_cast<unsigned>(Action::HostSplitEvacuatePassengers) : result.snapshot_version_ >= 41 ? static_cast<unsigned>(Action::HostSettleMigrant) : result.snapshot_version_ >= 39 ? static_cast<unsigned>(Action::HostMobileStabilize) : result.snapshot_version_ >= 38 ? static_cast<unsigned>(Action::HostTreatInjuries) : result.snapshot_version_ >= 37 ? static_cast<unsigned>(Action::HostResolveMixedFerryLoss) : result.snapshot_version_ >= 36 ? static_cast<unsigned>(Action::HostDestroyPassengerFerry) : result.snapshot_version_ >= 35 ? static_cast<unsigned>(Action::HostEvacuatePassengers) : result.snapshot_version_ >= 32 ? static_cast<unsigned>(Action::HostDisembarkPassengers) : result.snapshot_version_ >= 30 ? static_cast<unsigned>(Action::CompleteConveyorRoute) : result.snapshot_version_ >= 29 ? static_cast<unsigned>(Action::PlaceFactoryEquipment) : result.snapshot_version_ >= 28 ? static_cast<unsigned>(Action::ConstructWorkshopLink) : result.snapshot_version_ >= 27 ? static_cast<unsigned>(Action::ConstructStorageLink) : result.snapshot_version_ >= 26 ? static_cast<unsigned>(Action::TransferStorageNodeStack) : result.snapshot_version_ >= 25 ? static_cast<unsigned>(Action::TransferStorageStack) : result.snapshot_version_ >= 24 ? static_cast<unsigned>(Action::TransferWorkshopStack) : result.snapshot_version_ >= 23 ? static_cast<unsigned>(Action::TransferWorkshopFinalOutput) : result.snapshot_version_ >= 22 ? static_cast<unsigned>(Action::TransferWorkshopOutput) : result.snapshot_version_ >= 21 ? static_cast<unsigned>(Action::HostCrewLoss) : result.snapshot_version_ >= 20 ? static_cast<unsigned>(Action::AssignFarmMentor) : result.snapshot_version_ >= 19 ? static_cast<unsigned>(Action::AssignPolicyInspectors) : result.snapshot_version_ >= 18 ? static_cast<unsigned>(Action::TransferWaterworksFeed) : result.snapshot_version_ >= 17 ? static_cast<unsigned>(Action::ConstructReclaimer) : result.snapshot_version_ >= 16 ? static_cast<unsigned>(Action::AssignClinicStaff) : result.snapshot_version_ >= 15 ? static_cast<unsigned>(Action::AssignCommunityStaff) : result.snapshot_version_ >= 14 ? static_cast<unsigned>(Action::SetUtilityMaintenance) : result.snapshot_version_ >= 13 ? static_cast<unsigned>(Action::RepairUtility) : result.snapshot_version_ >= 12 ? static_cast<unsigned>(Action::AssignHabitatResidents) : result.snapshot_version_ >= 11 ? static_cast<unsigned>(Action::AssignFarmWorkers) : result.snapshot_version_ >= 10 ? static_cast<unsigned>(Action::LoadLifeWater) : result.snapshot_version_ >= 9 ? static_cast<unsigned>(Action::FabricateMaterialModule) : result.snapshot_version_ >= 7 ? static_cast<unsigned>(Action::ConstructOutpost) : result.snapshot_version_ >= 6 ? static_cast<unsigned>(Action::DeliverGateSpares) : result.snapshot_version_ >= 5 ? static_cast<unsigned>(Action::SetGatePairOnline) : result.snapshot_version_ >= 4 ? static_cast<unsigned>(Action::SellOre) : static_cast<unsigned>(Action::UnloadOre))) throw std::runtime_error("snapshot: invalid action");
             c.action = static_cast<Action>(action);
             auto tx = i64(f[8]), ty = i64(f[9]);
             if (tx < std::numeric_limits<int>::min() || tx > std::numeric_limits<int>::max() ||
@@ -5144,7 +5304,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                              (c.amount>0 && static_cast<std::uint64_t>(c.amount)<c.passenger_ids.size() &&
                               !std::is_sorted(c.passenger_ids.begin()+c.amount,c.passenger_ids.end()))) :
                         (c.target==c.actor || c.amount<=0)) : (c.actor==c.target || c.amount))) :
-                    (!medical && !pending_migration && !pending_split && (c.transport_id || count)))
+                    (!medical && !pending_migration && !pending_split && c.action!=Action::HostColonyDeparture && (c.transport_id || count)))
                     throw std::runtime_error("snapshot: invalid pending transport action");
                 if(pending_migration && (result.snapshot_version_<41 ||
                    c.issuer!=Simulation::kServerAuthority || c.actor==c.target ||
@@ -5167,6 +5327,14 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                     (result.snapshot_version_<39 || !count || c.transport_id!=c.target || c.amount)) ))
                     throw std::runtime_error("snapshot: invalid pending medical action");
             }
+            if(c.action==Action::HostColonyDeparture &&
+               (result.snapshot_version_<58 || c.issuer!=Simulation::kServerAuthority ||
+                !c.actor || !c.target || c.actor==c.target ||
+                c.passenger_ids.empty() || c.passenger_ids.size()>16 || c.amount || c.thrust_x || c.thrust_y ||
+                c.transport_id || c.secondary_receiver || c.secondary_transport ||
+                !std::is_sorted(c.passenger_ids.begin(),c.passenger_ids.end()) ||
+                std::adjacent_find(c.passenger_ids.begin(),c.passenger_ids.end())!=c.passenger_ids.end()))
+                throw std::runtime_error("snapshot: invalid pending colony departure");
             if (c.id == 0 || c.issuer == 0 || c.execute_tick <= result.tick_ ||
                 ((c.action==Action::HostDestroyShip || c.action==Action::HostCrewLoss) &&
                  (result.snapshot_version_<21 || c.issuer!=Simulation::kServerAuthority ||
@@ -5196,6 +5364,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                  c.action!=Action::HostMobileStabilize &&
                  c.action!=Action::HostSettleMigrant &&
                  c.action!=Action::HostSplitEvacuatePassengers &&
+                 c.action!=Action::HostColonyDeparture &&
                  c.issuer==Simulation::kServerAuthority) ||
                 ((c.action==Action::RefineOre || c.action==Action::FabricateModule ||
                   c.action==Action::ConstructOutpost) && (c.target!=0 || c.thrust_x || c.thrust_y ||
@@ -5941,6 +6110,41 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             if(counts[{id,static_cast<int>(NpcRole::Habitat)}]!=h.residents)
                 throw std::runtime_error("snapshot: habitat NPC count mismatch");
     }
+    // Validate the immutable full-roster handoff against the final physical
+    // simulation, not just against a promising event label.
+    if(result.snapshot_version_>=58)for(const auto& [ship_id,d]:result.colony_departures_){
+        const auto from=result.colony_ships_.find(ship_id);
+        const auto to=result.colony_ships_.find(d.receiver);
+        if(from==result.colony_ships_.end()||to==result.colony_ships_.end()||
+           from->second.crew!=0||to->second.crew<static_cast<std::int64_t>(d.relocated_npcs.size())||
+           !result.entities_.count(ship_id) ||
+           result.entities_.at(ship_id).type!=EntityType::Ship ||
+           !result.entities_.count(d.receiver) ||
+           result.entities_.at(d.receiver).type!=EntityType::Ship)
+            throw std::runtime_error("snapshot: invalid evacuated intact colony hull");
+        for(const auto& [id,n]:result.npcs_)
+            if(n.home_ship==ship_id)
+                throw std::runtime_error("snapshot: colony still owns living people after departure");
+        for(const auto& [site,fr]:result.farms_)
+            if(fr.source_ship==ship_id && fr.workers)
+                throw std::runtime_error("snapshot: stranded farming workforce");
+        for(const auto& [site,ha]:result.habitats_)
+            if(ha.source_ship==ship_id && ha.residents)
+                throw std::runtime_error("snapshot: stranded resident workforce");
+        for(auto id:d.relocated_npcs){
+            const auto n=result.npcs_.find(id);
+            if(n==result.npcs_.end() || n->second.home_ship!=d.receiver ||
+               n->second.location!=d.receiver || n->second.assigned_site!=d.receiver ||
+               n->second.role!=NpcRole::Ship || n->second.transport_id)
+                throw std::runtime_error("snapshot: departed person not under receiving crew custody");
+        }
+        const auto receipt=std::find_if(result.events_.begin(),result.events_.end(),
+            [&](const Event& e){return e.command_id==d.command_id &&
+                e.tick==d.tick && e.result==Outcome::Applied &&
+                e.transferred==0;});
+        if(receipt==result.events_.end())
+            throw std::runtime_error("snapshot: departed colony lacks applied world event");
+    }
     for(const auto& [ship_id,c]:result.colony_ships_){
         std::int64_t crew=c.crew;
         for(const auto& [id,f]:result.farms_){(void)id;
@@ -5949,7 +6153,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
         for(const auto& [id,h]:result.habitats_){(void)id;
             if(h.source_ship==ship_id)crew+=h.residents;
         }
-        if((crew<1 && !(result.snapshot_version_>=36 && !crew &&
+        if((crew<1 && !(result.snapshot_version_>=58 && !crew && result.colony_departures_.count(ship_id) && result.entities_.at(ship_id).type==EntityType::Ship) && !(result.snapshot_version_>=36 && !crew &&
             result.entities_.count(ship_id) && result.entities_.at(ship_id).type==EntityType::Wreck)) ||
            crew>1000)throw std::runtime_error("snapshot: invalid total crew");
     }
@@ -6030,6 +6234,7 @@ void Simulation::swap(Simulation& other) noexcept {
     medic_shifts_.swap(other.medic_shifts_);
     mobile_medical_kits_.swap(other.mobile_medical_kits_);
     crew_rehomes_.swap(other.crew_rehomes_);
+    colony_departures_.swap(other.colony_departures_);
     voyages_.swap(other.voyages_);
     farm_team_xp_.swap(other.farm_team_xp_);
     swap(next_npc_id_,other.next_npc_id_);
