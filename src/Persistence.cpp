@@ -8713,6 +8713,119 @@ bool PersistentWorld::complete_celestial_transit(std::uint64_t id,FailPoint fail
     ++generation_;
     return true;
 }
+bool PersistentWorld::build_planetary_site(PlayerId owner,EntityId ship,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,FailPoint fail) {
+    // Every mutation happens on an isolated candidate. Commit succeeds before
+    // world publication; injected SQLite failures preserve the old world.
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.build_planetary_site(owner,ship,body,latitude,longitude))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("planetary regional operation changed world material origin");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::equip_planetary_site(PlayerId owner,EntityId ship,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,bool farm,FailPoint fail) {
+    // Every mutation happens on an isolated candidate. Commit succeeds before
+    // world publication; injected SQLite failures preserve the old world.
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.equip_planetary_site(owner,ship,body,latitude,longitude,farm))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("planetary regional operation changed world material origin");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::supply_planetary_site(PlayerId owner,EntityId ship,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,bool water,std::int64_t kg,FailPoint fail) {
+    // Every mutation happens on an isolated candidate. Commit succeeds before
+    // world publication; injected SQLite failures preserve the old world.
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.supply_planetary_site(owner,ship,body,latitude,longitude,water,kg))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("planetary regional operation changed world material origin");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::cultivate_planetary_site(PlayerId owner,EntityId ship,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,std::int64_t batches,FailPoint fail) {
+    // Every mutation happens on an isolated candidate. Commit succeeds before
+    // world publication; injected SQLite failures preserve the old world.
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.cultivate_planetary_site(owner,ship,body,latitude,longitude,batches))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("planetary regional operation changed world material origin");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::extract_planetary_site(PlayerId owner,EntityId ship,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,bool water,std::int64_t kg,FailPoint fail) {
+    // Every mutation happens on an isolated candidate. Commit succeeds before
+    // world publication; injected SQLite failures preserve the old world.
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.extract_planetary_site(owner,ship,body,latitude,longitude,water,kg))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("planetary regional operation changed world material origin");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::retrieve_planetary_site(PlayerId owner,EntityId ship,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,bool food,std::int64_t kg,FailPoint fail) {
+    // Every mutation happens on an isolated candidate. Commit succeeds before
+    // world publication; injected SQLite failures preserve the old world.
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.retrieve_planetary_site(owner,ship,body,latitude,longitude,food,kg))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("planetary regional operation changed world material origin");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
 bool PersistentWorld::install_oasis_extractor(PlayerId owner,EntityId ship,
     std::uint64_t body,FailPoint fail) {
     for(const auto& [id,p]:world_.pending_celestial_transits_) {
