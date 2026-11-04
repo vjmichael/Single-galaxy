@@ -5,6 +5,9 @@ on:
   pull_request:
     paths:
       - 'include/galaxy/CosmicLocalFrame.hpp'
+      - 'include/galaxy/CelestialFrameTransition.hpp'
+      - 'CMakeLists.txt'
+      - 'tests/PLAY13C_CelestialTransitionTests.cpp'
       - 'include/galaxy/Simulation.hpp'
       - 'tests/PLAY13C_CosmicLocalFrameTests.cpp'
       - 'tests/play13c_bridge/CMakeLists.txt'
