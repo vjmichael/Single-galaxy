@@ -19,6 +19,7 @@ The new journal is not a competing world store, and is not an authorization to e
 - On a **preexisting save with no response journal**, the first new committed generation uses its previous physical snapshot as the baseline, without fabricating alerts for history before installation.
 - Every successful generation, including command acceptance without a tick, updates the anchor. This is required to avoid a 'latest world generation vs journal generation' split on restart.
 - The journal is verified before the transaction is allowed to commit and again when the game opens the save.
+- A previously occupied compartment that vanishes is **rejected**, not journaled as a fictitious safe/evacuated site. A later explicitly verified death/transport/custody closure adapter must authorize that removal; this may block legacy destruction paths until integrated.
 
 **Important:** FNV-based chained checksums detect accidental corruption and naive tampering but are **not an independent cryptographic signature** against a privileged attacker who can rewrite all database rows and recompute hashes.
 
