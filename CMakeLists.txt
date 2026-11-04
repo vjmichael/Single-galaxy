@@ -1160,3 +1160,10 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_play11_fitting_tests PRIVATE galaxy_kernel)
   add_test(NAME galaxy_play11_fitting COMMAND galaxy_play11_fitting_tests)
 endif()
+
+# PLAY-12 owner-authorized physical survey probes, accounting and durable recovery.
+if(BUILD_TESTING)
+  add_executable(galaxy_play12_probe_tests tests/PLAY12_ProbeLifecycleTests.cpp)
+  target_link_libraries(galaxy_play12_probe_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play12_probes COMMAND galaxy_play12_probe_tests)
+endif()
