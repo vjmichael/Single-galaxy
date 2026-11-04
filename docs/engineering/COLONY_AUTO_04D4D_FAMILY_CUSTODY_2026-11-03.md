@@ -27,7 +27,7 @@ The FNV witness is a deterministic integrity identifier, **not cryptographic pro
 
 ## Native tests
 
-`COLONY_AUTO04D4D_FamilyProofTests.cpp` builds real named ship crews, registers ART02 founding population, records a genuine ART02 reserved-ID child birth, mirrors the world-birth bridge as a controlled fixture, and verifies complete adult/child closure. It checks missing/forged/duplicate children, wrong guardian, incomplete adults, unlisted second family scope, corrupted independent birth bridge, immutable receipt trigger, crash-rollback, duplicate prepared manifest idempotence, reused/stale intent refusal and explicitly **no rescued children**. The synthetic birth bridge fixture is deliberately distinguished from a production regional birth transaction.
+`COLONY_AUTO04D4D_FamilyProofTests.cpp` builds real named ship crews, registers ART02 founding population, records a genuine ART02 reserved-ID child birth, mirrors the world-birth bridge as a controlled fixture, and verifies complete adult/child closure. It checks missing/forged/duplicate children, wrong guardian, incomplete adults, active child ferry voyage despite unchanged family residence, unlisted second family scope, corrupted independent birth bridge, immutable receipt trigger, crash-rollback, duplicate prepared manifest idempotence, reused/stale intent refusal and explicitly **no rescued children**. The synthetic birth bridge fixture is deliberately distinguished from a production regional birth transaction.
 
 `.github/workflows/colony-auto04d4d.yml` builds and runs this proof alongside v72 actual adult-departure and life-support acceptance.
 
