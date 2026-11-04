@@ -945,10 +945,13 @@ bool Simulation::can_depart_colony(const Command& c) const {
            shift.end_tick>tick_)return false;
     }
     for(const auto& [ship,job]:mining_)if(ship==c.actor)return false;
-    for(const auto& [tick,cmds]:commands_)for(const auto& cmd:cmds)
+    for(const auto& [tick,cmds]:commands_)for(const auto& cmd:cmds){
+        (void)tick;
+        if(cmd.id==c.id)continue; // the executing command is still in the due batch
         if(cmd.actor==c.actor || cmd.actor==c.target ||
-           (cmd.target==c.actor && cmd.action!=Action::HostColonyDeparture))
+           cmd.target==c.actor || cmd.target==c.target)
             return false;
+    }
     std::vector<std::uint64_t> exact;
     for(const auto& [id,n]:npcs_)if(n.home_ship==c.actor){
         // No preexisting voyage, detached employment or unverified mentor link.
