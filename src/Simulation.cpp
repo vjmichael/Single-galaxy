@@ -1037,6 +1037,14 @@ bool Simulation::can_depart_colony(const Command& c) const {
 bool Simulation::submit(const Command& c) {
     if(colony_departures_.count(c.actor) || colony_departures_.count(c.target))return false;
 
+    if(c.action==Action::FocusSurveyProbe||c.action==Action::CancelSurveyFocus){
+        if(!c.id||!c.actor||!c.target||c.thrust_x||c.thrust_y||
+           c.transport_id||!c.passenger_ids.empty()||
+           c.secondary_receiver||c.secondary_transport||
+           (c.action==Action::FocusSurveyProbe ? c.amount<=0 : c.amount!=0))
+            return false;
+        snapshot_version_=std::max(snapshot_version_,69);
+    }
     if(c.action==Action::LaunchGeologicalDrone){
         if(!c.id || !c.actor || !c.target || c.amount || c.thrust_x || c.thrust_y ||
            c.transport_id || !c.passenger_ids.empty() ||
@@ -2650,6 +2658,8 @@ Event Simulation::execute(const Command& c) {
     Entity& actor = actor_it->second;
     if (actor.owner_id != c.issuer) { result.result = Outcome::Unauthorized; return result; }
     switch (c.action) {
+        case Action::FocusSurveyProbe:
+        case Action::CancelSurveyFocus:
         case Action::LaunchGeologicalDrone:
         case Action::DeploySurveyProbe:
         case Action::ScanSurveyProbe:
@@ -2681,6 +2691,36 @@ Event Simulation::execute(const Command& c) {
                 survey_probes_.emplace(c.id,drone);
                 --actor.survey_probes_carried;
                 result.transferred=1;result.result=Outcome::Applied;
+            }else if(c.action==Action::FocusSurveyProbe ||
+                     c.action==Action::CancelSurveyFocus){
+                const auto probe_it=survey_probes_.find(c.target);
+                if(probe_it==survey_probes_.end()||
+                   probe_it->second.owner!=c.issuer||
+                   probe_it->second.carrier!=c.actor||
+                   probe_it->second.system!=actor.system_id||
+                   probe_it->second.drone_phase!=0){
+                    result.result=Outcome::InvalidTarget;return result;
+                }
+                auto& survey=probe_it->second;
+                if(c.action==Action::CancelSurveyFocus){
+                    survey.focus_site=0;survey.focus_waypoint={};
+                    result.result=Outcome::Applied;return result;
+                }
+                if(survey.focus_site){
+                    result.result=Outcome::InTransition;return result;
+                }
+                // Only a current coarse sensor contact is lockable.
+                // Clients may submit an ID but never an oracle waypoint.
+                const auto candidates=coarse_probe_signatures(c.issuer,c.actor);
+                const auto found=std::find_if(candidates.begin(),candidates.end(),
+                    [&](const SignatureHint& h){return h.id==static_cast<EntityId>(c.amount);});
+                if(found==candidates.end()){
+                    result.result=Outcome::InvalidTarget;return result;
+                }
+                survey.focus_site=found->id;
+                survey.focus_waypoint=found->coarse;
+                snapshot_version_=std::max(snapshot_version_,69);
+                result.result=Outcome::Applied;
             }else if(c.action==Action::DeploySurveyProbe){
                 if(!actor.survey_probes_carried){result.result=Outcome::NoResources;return result;}
                 if(survey_probes_.size()>=1000){result.result=Outcome::InvalidArgument;return result;}
