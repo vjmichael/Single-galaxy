@@ -1,0 +1,26 @@
+name: Colony AUTO-04D5B durable NPC emergency supervisor
+on:
+  push:
+    branches:
+      - integration/colony-auto04d5b-durable-npc-supervisor-v79-20261103
+  pull_request:
+    paths:
+      - 'src/Persistence.cpp'
+      - 'include/galaxy/Persistence.hpp'
+      - 'tests/COLONY_AUTO04D5B_*'
+      - 'CMakeLists.txt'
+  workflow_dispatch:
+jobs:
+  supervisor-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SQLite
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+      - name: Build real durable NPC supervisor and family regressions
+        run: cmake --build build --target galaxy_colony_auto04d5b_durable_supervisor_tests galaxy_colony_auto04d5a_autonomous_emergency_tests galaxy_colony_auto04d4d2c_mixed_guardians_tests galaxy_colony_auto04d4d2b2_atomic_family_tests -j 2
+      - name: Test host loop restart and atomic family custody
+        run: ctest --test-dir build --output-on-failure -R 'galaxy_colony_auto04(d5b_durable_supervisor|d5a_autonomous_emergency|d4d2c_mixed_guardians|d4d2b2_atomic_family)'
