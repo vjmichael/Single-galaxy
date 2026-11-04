@@ -3679,7 +3679,8 @@ public:
                     const auto count=sqlite3_column_int64(all.get(),13);
                     const auto adults=sqlite3_column_int64(all.get(),14);
                     const auto children=sqlite3_column_int64(all.get(),15);
-                    const auto cmd=journal_commands.find(id),ev=event_by_id.find(id);
+                    const auto cmd=journal_commands.find(id);
+                    const auto ev=event_by_id.find(id);
                     const auto departure=restored.colony_departures().find(source);
                     if(!id || !intent || id==intent || gen<3 ||
                        static_cast<std::uint64_t>(gen)>generation || at<1 ||
@@ -6559,6 +6560,9 @@ bool PersistentWorld::verified_atomic_family_departure(std::uint64_t command_id)
         throw std::runtime_error("cannot verify family evacuation database");
     }
     std::unique_ptr<sqlite3,decltype(&sqlite3_close)> db(raw,sqlite3_close);
+    Statement present(db.get(),"SELECT 1 FROM sqlite_master "
+        "WHERE type='table' AND name='sg_colony_family_evacuation'");
+    if(!present.row())return false;
     Statement witness(db.get(),"SELECT receiver,member_count,child_count "
         "FROM sg_colony_family_evacuation WHERE command_id=?");
     witness.text(1,std::to_string(command_id));
