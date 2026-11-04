@@ -83,6 +83,14 @@
       return {...e,id,latitude,longitude,elevation,ocean:!!ocean,
         terrain,watercourse,runoff,downLatitude,downLongitude,revision};
     }
+    if(t==='OASIS_REGION'){
+      if(v.length!==8)throw Error('Malformed finite oasis region waypoint');
+      const id=numeric(v[4],Number.MAX_SAFE_INTEGER),
+        latitude=numeric(v[5],35),longitude=numeric(v[6],71),
+        revision=numeric(v[7],100000);
+      if(!id||!revision)throw Error('Invalid finite oasis region waypoint');
+      return {...e,id,latitude,longitude,revision};
+    }
     if(t==='OASIS_PROSPECT'){
       if(v.length!==9)throw Error('Malformed oasis prospect');
       const id=numeric(v[4],Number.MAX_SAFE_INTEGER);
@@ -613,6 +621,25 @@
          ' · '+channels[e.watercourse]+' · watershed runoff score '+e.runoff+
          ' · geographic version '+e.revision+
          ' (survey potential, not extractable water).';
+     }
+     if(e.type==='OASIS_REGION'){
+       if(celestialBodies.has(e.id)){
+         const rows=[...celestialBodies.keys()];
+         const card=q('celestialBodyList').children[rows.indexOf(e.id)];
+         if(card && !card.dataset.oasisRegion){
+           card.dataset.oasisRegion='1';
+           const note=document.createElement('div');
+           note.textContent='Finite oasis source waypoint: region ('+
+             e.latitude+','+e.longitude+') · version '+e.revision+
+             '. Survey and physically arrive before construction or extraction.';
+           card.appendChild(note);
+           const inputs=card.querySelectorAll('input[type="number"]');
+           if(inputs.length>=2){
+             inputs[0].value=String(e.latitude);
+             inputs[1].value=String(e.longitude);
+           }
+         }
+       }
      }
      if(e.type==='OASIS_PROSPECT'){
        if(celestialBodies.has(e.id)){
