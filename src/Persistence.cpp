@@ -3686,7 +3686,8 @@ public:
                        sqlite3_column_int64(region.get(),2)!=revision ||
                        sqlite3_column_int64(region.get(),3)!=1 || region.row())
                         throw std::runtime_error("SQLite: family regional population receipt mismatch");
-                    Statement prep(db_,"SELECT generation,world_hash,source,receiver,family_scope "
+                    Statement prep(db_,"SELECT generation,world_hash,source,receiver,"
+                        "family_scope,family_seed,adult_roster,child_guardians,status "
                         "FROM sg_colony_family_departure_prepare WHERE intent_id=?");
                     prep.text(1,intent);
                     if(!prep.row() ||
@@ -3696,8 +3697,12 @@ public:
                        sqlite_str(prep.get(),4)!=scope)
                         throw std::runtime_error("SQLite: executed family lacks exact prepared authority");
                     const auto expected_prepared_hash=parse_u64(sqlite3_column_text(prep.get(),1));
-                    if(prep.row())
-                        throw std::runtime_error("SQLite: duplicate family preparation receipt");
+                    const auto prepared_seed=parse_u64(sqlite3_column_text(prep.get(),5));
+                    const auto prepared_adults=sqlite_str(prep.get(),6);
+                    const auto prepared_children=sqlite_str(prep.get(),7);
+                    const auto preparation_status=sqlite3_column_int(prep.get(),8);
+                    if(!prepared_seed || preparation_status!=1 || prep.row())
+                        throw std::runtime_error("SQLite: malformed or duplicate family preparation receipt");
                     // Match the PREVIOUS physical world; a prepared intent
                     // must not be retroactively attached to a different hull.
                     Statement before_state(db_,"SELECT state FROM snapshots WHERE generation=?");
@@ -3717,6 +3722,25 @@ public:
                         std::string(static_cast<const char*>(raw),static_cast<std::size_t>(bytes)));
                     if(prior.state_hash()!=expected_prepared_hash)
                         throw std::runtime_error("SQLite: prepared family witness not bound to actual predecessor");
+                    // v78: verify the EXACT immutable prepared roster instead
+                    // of trusting only totals. Executable v74/v77 rescues use
+                    // birth parent_a as guardian and move BOTH parents.
+                    std::string original_adults,original_guardians;
+                    for(const auto adult:dep->second.relocated_npcs){
+                        if(!original_adults.empty())original_adults+=',';
+                        original_adults+=std::to_string(adult);
+                    }
+                    for(const auto child:dep->second.relocated_children){
+                        const auto identified=prior.physical_dependents().find(child);
+                        if(identified==prior.physical_dependents().end())
+                            throw std::runtime_error("SQLite: prepared child had no physical predecessor");
+                        if(!original_guardians.empty())original_guardians+=',';
+                        original_guardians+=std::to_string(child)+":"+
+                            std::to_string(identified->second.parent_a);
+                    }
+                    if(prepared_adults!=original_adults ||
+                       prepared_children!=original_guardians)
+                        throw std::runtime_error("SQLite: prepared guardian/adult roster changed after family departure");
                     if(prior.colony_departures().count(src) || prior.colony_ship(src)==nullptr ||
                        prior.colony_ship(src)->crew<1 ||
                        prior.physical_dependents().size()<static_cast<std::size_t>(children))
