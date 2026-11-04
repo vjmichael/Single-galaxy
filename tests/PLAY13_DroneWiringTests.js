@@ -5,7 +5,7 @@ const {decode}=require('../viewer/colony.js');
 test('strict native geological drone status including sample and flight phase',()=>{
  const row=decode('COLONY|1|15|SURVEY_PROBE|900000000003|1|15000|0|2|8|0|3');
  assert.deepEqual(row,{tick:15,type:'SURVEY_PROBE',id:900000000003,system:1,
-   x:15000,y:0,phase:2,target:8,sample:0,taxonomy:3});
+   x:15000,y:0,phase:2,target:8,sample:0,taxonomy:3,focus:0,fx:0,fy:0});
  assert.equal(decode('COLONY|1|15|SURVEY_PROBE|3|1|0|0|3|8|0|3').phase,3);
  for(const bad of ['COLONY|1|15|SURVEY_PROBE|3|1|0|0|4|8|0|0',
     'COLONY|1|15|SURVEY_PROBE|3|1|0|0|1|0|0|0',
