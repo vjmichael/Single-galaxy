@@ -339,6 +339,15 @@
       if(v.length!==7)throw Error('Bad mineral');
       e.id=numeric(v[4]);e.name=v[5];e.share=numeric(v[6],1000);
       if(!minerals.has(e.name)||e.id<1||e.share<1)throw Error('Unknown mineral');
+    }else if(t==='LOCAL_ENVIRONMENT'){
+      if(v.length!==7)throw Error('Malformed celestial environment');
+      e.body=numeric(v[4],Number.MAX_SAFE_INTEGER);
+      e.zone=numeric(v[5],5);e.hazard=numeric(v[6],3);
+      if(!e.body||!e.zone)throw Error('Invalid celestial environment');
+    }else if(t==='LOCAL_DEPOSIT'){
+      if(v.length!==6)throw Error('Malformed local ore taxonomy');
+      e.id=numeric(v[4],100000000);e.classId=numeric(v[5],2);
+      if(!e.id)throw Error('Invalid local deposit ID');
     }else if(t==='SMALL_ROCK'){
       if(v.length!==6)throw Error('Bad small rock');e.id=numeric(v[4]);e.remaining=numeric(v[5]);
     }else if(t==='SCAN_DONE'){
@@ -359,7 +368,7 @@
  const salvageWrecks=new Map();
  const deployedProbes=new Map();
  const signatureContacts=new Map();
- const celestialBodies=new Map();
+ const celestialBodies=new Map(), localOreTaxonomy=new Map();
  let probeCarried=0,probeLauncher=false,probeChoice='';
  const discoveries=new Map();
  window.GalaxySalvageStock=salvageWrecks;
@@ -415,7 +424,7 @@
        guide.action==='colonyFabricate'?{amount:4}:{});
  });
  window.GalaxyColony={
-   reset(){signatureContacts.clear();celestialBodies.clear();
+   reset(){signatureContacts.clear();celestialBodies.clear();localOreTaxonomy.clear();
      q('celestialBodyList').textContent='No physical celestial bodies surveyed yet.';
      q('signatureTarget').replaceChildren(new Option('Scan to detect signals',''));
      q('signatureFocus').disabled=true;q('signatureCancel').disabled=true;
@@ -465,7 +474,7 @@
          ' started for body #'+e.body+'. Local operations are suspended.';
      if(e.type==='FRAME_TRANSIT_ARRIVED'){
        window.GalaxyActiveCelestialBody=e.body;
-       signatureContacts.clear();geology.clear();small.clear();
+       signatureContacts.clear();geology.clear();small.clear();localOreTaxonomy.clear();
        q('signatureTarget').replaceChildren(new Option('Rescan new local region',''));
        q('signatureFocus').disabled=true;
        q('droneTarget').replaceChildren(new Option('Rescan local targets',''));
@@ -682,6 +691,12 @@
      else if(e.type==='MINERAL'){
        const rock=geology.get(e.id);if(!rock)throw Error('Mineral without scanned rock');rock.minerals.set(e.name,e.share);
      }else if(e.type==='SMALL_ROCK')small.set(e.id,e.remaining);
+     else if(e.type==='LOCAL_DEPOSIT')localOreTaxonomy.set(e.id,e.classId);
+     else if(e.type==='LOCAL_ENVIRONMENT'){
+       const names=['','Stellar radiation zone','Debris region','Rocky planetary region','Outer icy planetary region','Lunar region'];
+       q('signatureFeedback').textContent=names[e.zone]+
+         ' · environmental severity '+e.hazard+'/3 (survey indicator only; not simulated damage).';
+     }
      else if(e.type==='SCAN_DONE'){openingScanned=e.count>0;refreshOpening();}
      else if(e.type==='SAFETY_CHECK'||e.type==='SAFETY_ORDER'){
        const msg=e.type==='SAFETY_CHECK'?`Site ${e.site}: safety assessment requested; current runway shown above.`:
@@ -709,6 +724,11 @@
        const items=[...g.minerals].sort((a,b)=>b[1]-a[1]).slice(0,4).map(([n,v])=>`${n.replaceAll('_','-')} ${v/10}%`).join(' · ');
        return `#${g.id} ${window.GalaxyColonyContract.names[g.classId]} · radius ${g.radius} m · density ${g.density} kg/m³ · ${g.remaining.toLocaleString()} tonnes remaining\n${items}`;
      });
+     for(const [id,tax] of localOreTaxonomy){
+       if(small.has(id))rows.push('#'+id+' · local '+
+         window.GalaxyColonyContract.names[tax]+
+         ' mineral profile · '+small.get(id)+' tonnes remaining');
+     }
      q('colonyGeology').replaceChildren(...rows.map(x=>{const div=document.createElement('div');div.className='entry';div.textContent=x;div.style.whiteSpace='pre-wrap';return div;}));
      q('colonyStocks').textContent=[...stocks].map(([n,kg])=>`${n}: ${kg.toLocaleString()} kg`).join('\n')||'No separated mineral cargo yet.';
      const farmsOut=[...outposts].sort((a,b)=>a[0]-b[0]);
