@@ -8638,6 +8638,11 @@ bool PersistentWorld::begin_celestial_transit(
     }
     // The authenticated host passes owner; this is not exposed as a raw
     // client-facing "receipt" or unchecked destination position command.
+    // Celestial coordinates are not an implicit travel permission. A ship
+    // must possess the existing fitted exploration scanner to select an
+    // astronomical destination; future survey-history gates can narrow this.
+    const auto* carrier=world_.find(ship);
+    if(!carrier || !carrier->fitting.exploration_scanner())return false;
     const auto decision=plan_celestial_frame_arrival(world_,owner,ship,body,id);
     if(!decision.plan)return false;
     const auto frame=world_.ship_frames_.find(ship);
