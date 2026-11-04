@@ -1163,6 +1163,10 @@ public:
     Store(const Store&) = delete;
     Store& operator=(const Store&) = delete;
 
+    colony_family::Audit audit_colony_family_departure(
+            const Simulation& world,const colony_family::DeparturePlan& request) const {
+        return colony_family::assess(world,db_,request);
+    }
     bool has_dependent_table() const {
         Statement t(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
                         "AND name='sg_dependent_travel'");
@@ -5672,6 +5676,10 @@ bool PersistentWorld::submit_host_medical_action(const Command& command, FailPoi
 // COLONY-AUTO-04D.4C: one canonical world writer; no secondary population
 // table, orphaned station crew, or player-facing shortcut. This operation is
 // adult-only until independent ART02 dependent-custody settlement is available.
+colony_family::Audit PersistentWorld::audit_colony_family_departure(
+        const colony_family::DeparturePlan& plan) const{
+    return store_->audit_colony_family_departure(world_,plan);
+}
 bool PersistentWorld::submit_host_colony_departure(const Command& command,FailPoint fail){
     if(command.action!=Action::HostColonyDeparture ||
        command.issuer!=Simulation::kServerAuthority ||
