@@ -23,13 +23,18 @@ int main(){
   fs::create_directories(dir);
   const auto db=(dir/"world.sqlite").string();
   const auto copy=(dir/"recovered.sqlite").string();
-  EntityId ship=0,drone=0;
+  EntityId ship=0,drone=0,farDrone=0,behindDrone=0;
   {
    Simulation genesis(808);ship=genesis.add_colony_ship(7,{0,0},60,24);
    drone=genesis.add_training_drone({8000,0});
+   farDrone=genesis.add_training_drone({80000,0});
+   behindDrone=genesis.add_training_drone({-8000,0});
    CHECK(genesis.find(ship)->weapon_charges==12);
    CHECK(genesis.find(drone)->hull==45);
    PersistentWorld w(db,std::move(genesis));
+   CHECK(execute(w,fire(w,100,ship,farDrone))==Outcome::OutOfRange);
+   CHECK(execute(w,fire(w,101,ship,behindDrone))==Outcome::OutOfRange);
+   CHECK(w.world().find(ship)->weapon_charges==12);
    CHECK(execute(w,fire(w,1,ship,drone,8))==Outcome::Unauthorized);
    CHECK(w.world().find(ship)->weapon_charges==12);
    CHECK(execute(w,fire(w,2,ship,ship))==Outcome::InvalidTarget);
