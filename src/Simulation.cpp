@@ -5329,7 +5329,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             if(c.action==Action::HostColonyDeparture &&
                (result.snapshot_version_<58 || c.issuer!=Simulation::kServerAuthority ||
                 !c.actor || !c.target || c.actor==c.target ||
-                !count || count>16 || c.amount || c.thrust_x || c.thrust_y ||
+                c.passenger_ids.empty() || c.passenger_ids.size()>16 || c.amount || c.thrust_x || c.thrust_y ||
                 c.transport_id || c.secondary_receiver || c.secondary_transport ||
                 !std::is_sorted(c.passenger_ids.begin(),c.passenger_ids.end()) ||
                 std::adjacent_find(c.passenger_ids.begin(),c.passenger_ids.end())!=c.passenger_ids.end()))
