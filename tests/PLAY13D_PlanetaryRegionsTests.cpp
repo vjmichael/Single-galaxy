@@ -24,10 +24,25 @@ int main(){
         deep |= r.terrain==Terrain::DeepOcean;
     }
     CHECK(shallow && deep);
+    // An arid living planet contains drought-adapted plants without becoming
+    // uniformly fertile; rain pulses awaken some dormant wildflower communities.
+    PlanetProfile arid{45,919,WorldClimate::Arid,8,27};
+    bool desert_life=false,dormant=false,bloom=false,sterile=false;
+    for(int y=0;y<36;++y)for(int x=0;x<72;++x){
+        auto r=survey_region(arid,y,x);
+        if(r.terrain==Terrain::Desert || r.terrain==Terrain::Dryland){
+            desert_life |= r.vegetation!=Vegetation::None && !r.farming_possible;
+            dormant |= r.dormant_seed_bank;
+            bloom |= arid_bloom_active(r,1,80) && !arid_bloom_active(r,1,10);
+            sterile |= r.vegetation==Vegetation::None;
+        }
+    }
+    CHECK(desert_life && dormant && bloom && sterile);
     PlanetProfile rock{44,919,WorldClimate::AirlessRock,0,-5};
     for(int y=0;y<36;++y)for(int x=0;x<72;++x){
         auto r=survey_region(rock,y,x);
         CHECK(!r.farming_possible && r.fertility==0 && r.terrain==Terrain::BareRock);
+        CHECK(r.vegetation==Vegetation::None && !r.episodic_bloom_potential);
     }
     bool reject=false;try{(void)survey_region(temperate,36,0);}catch(const std::invalid_argument&){reject=true;}
     CHECK(reject);
