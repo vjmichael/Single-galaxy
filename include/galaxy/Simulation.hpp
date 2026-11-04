@@ -932,7 +932,8 @@ public:
     std::optional<planetary::PlanetaryRegionKey> planetary_oasis_source_region(
         PlayerId owner,EntityId ship,std::uint64_t body) const;
     bool build_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
-        std::uint16_t latitude,std::uint16_t longitude);
+        std::uint16_t latitude,std::uint16_t longitude,
+        std::uint64_t first_npc=0,std::uint64_t second_npc=0);
     // Host-visible crew dispatch status: no player avatar or surface render.
     bool planetary_spaceport_operational(std::uint64_t body,
         std::uint16_t latitude,std::uint16_t longitude) const;
