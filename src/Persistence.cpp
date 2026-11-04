@@ -3216,11 +3216,28 @@ public:
                        restored.npc_records().count(child)!=0 ||
                        restored.npc_casualties().count(child)!=0)
                         throw std::runtime_error("SQLite: malformed atomic dependent birth receipt");
-                    Statement op(db_,"SELECT kind,tick FROM operation_log WHERE generation=?");
+                    Statement op(db_,"SELECT kind,tick,command FROM operation_log WHERE generation=?");
                     op.i64(1,gen);
-                    if(!op.row() || sqlite3_column_int(op.get(),0)!=2 ||
-                       sqlite3_column_int64(op.get(),1)!=tick || op.row())
+                    if(!op.row() || sqlite3_column_int64(op.get(),1)!=tick)
                         throw std::runtime_error("SQLite: dependent birth lacks world step");
+                    const auto kind=sqlite3_column_int(op.get(),0);
+                    bool physically_attested=false;
+                    if(kind==1 && restored.physical_dependents_enabled()){
+                        if(sqlite3_column_type(op.get(),2)!=SQLITE_TEXT)
+                            throw std::runtime_error("SQLite: physical birth missing command");
+                        const auto birthcmd=decode_command(sqlite_str(op.get(),2));
+                        const auto physical=restored.physical_dependents().find(child);
+                        physically_attested=birthcmd.action==Action::HostRegisterDependentBirth &&
+                            birthcmd.id==event_id && birthcmd.actor==home &&
+                            birthcmd.target==home && birthcmd.transport_id==a &&
+                            birthcmd.amount==static_cast<std::int64_t>(b) &&
+                            birthcmd.passenger_ids==std::vector<std::uint64_t>{child} &&
+                            physical!=restored.physical_dependents().end() &&
+                            physical->second.birth_command==event_id &&
+                            physical->second.parent_a==a && physical->second.parent_b==b;
+                    }
+                    if((kind!=2 && !physically_attested) || op.row())
+                        throw std::runtime_error("SQLite: dependent birth lacks verified physical world step");
                     Statement regional(db_,"SELECT revision,actor,request,outcome "
                         "FROM sg_regional_command_receipt WHERE scope=? AND command_id=?");
                     regional.text(1,reg);regional.text(2,std::to_string(event_id));
