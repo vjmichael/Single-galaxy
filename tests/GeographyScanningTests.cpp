@@ -54,6 +54,11 @@ static void scanning_and_probes() {
     CHECK(sensors.probe_scan(8,3,4,1000,90).empty());
     CHECK(sensors.deploy(100,7,3,{9000,2000}));
     CHECK(sensors.probe_scan(7,3,5,1000,40)[0].confidence==first[0].confidence);
+    auto env=sensors.scan_mode(7,3,5,1000,40,ScanMode::Environmental);
+    CHECK(env.size()==1 && env[0].site==104);
+    CHECK(sensors.scan_mode(7,3,5,1000,40,ScanMode::Celestial).empty());
+    CHECK(sensors.scan_mode(7,3,5,1000,40,ScanMode::Anomaly).empty());
+    CHECK(sensors.scan_mode(8,3,5,1000,40,ScanMode::Environmental).empty());
     CHECK(sensors.recover(100,7,3));
     CHECK(sensors.deploy(100,7,3,{9500,2000}));
     auto second=sensors.probe_scan(7,3,5,1000,40);
@@ -66,6 +71,9 @@ static void scanning_and_probes() {
     CHECK(sensors.deploy(99,7,3,{-9000,0}));
     CHECK(sensors.probe_scan(7,3,8,1000,70).empty());
     CHECK(sensors.probe_scan(7,3,9,1000,85).size()==1);
+    auto anomaly=sensors.scan_mode(7,3,9,1000,85,ScanMode::Anomaly);
+    CHECK(anomaly.size()==1 && anomaly[0].site==105);
+    CHECK(sensors.scan_mode(7,3,9,1000,85,ScanMode::Environmental).empty());
     std::cout<<"PASS directional geometry, ownership, strength, probe recovery and hidden wormhole\n";
 }
 static void archive_persistence() {
@@ -79,6 +87,11 @@ static void archive_persistence() {
             CHECK(archive.history(7,3).size()==1);
             CHECK(archive.history(7,3)[0].observed_tick==11);
             CHECK(archive.personal(7,3).size()==1 && archive.published(3).empty());
+            CHECK(archive.known_site(7,3,104).has_value());
+            CHECK(!archive.known_site(8,3,104).has_value());
+            CHECK(!archive.known_site(7,3,105).has_value());
+            CHECK(archive.known_sites(7,3,56).empty());
+            CHECK(archive.known_sites(7,3,55).size()==1);
             p.observed_tick=10;p.confidence=95;p.published=true;
             CHECK(!archive.record(p)); // stale data cannot overwrite newer truth
             p.observed_tick=12;p.confidence=70;p.published=true;
@@ -111,6 +124,11 @@ static void archive_persistence() {
         {
             SurveyArchive restored(file.string());
             CHECK(restored.personal(7,3).size()==1);
+            CHECK(restored.known_site(7,3,104).has_value());
+            CHECK(restored.known_site(7,3,104)->observed_tick==14);
+            CHECK(restored.known_site(7,3,104)->published);
+            CHECK(restored.known_sites(7,3,71).empty()); // latest private snapshot confidence is 70
+            CHECK(!restored.known_site(10,3,104).has_value());
             CHECK(restored.personal(7,3)[0].observed_tick==14);
             CHECK(restored.history(7,3).size()==3);
             CHECK(restored.history(7,3)[1].observed_tick==12);
