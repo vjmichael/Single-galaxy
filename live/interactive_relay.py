@@ -30,6 +30,7 @@ STATIC={
     '/viewer/recordings.js':'viewer/recordings.js',
     '/viewer/viewer.js':'viewer/viewer.js',
     '/viewer/colony.js':'viewer/colony.js',
+    '/viewer/opening-guide.js':'viewer/opening-guide.js',
     '/viewer/colony-shipping.js':'viewer/colony-shipping.js',
 }
 MIME={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8'}
