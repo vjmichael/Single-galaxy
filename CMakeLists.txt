@@ -932,3 +932,10 @@ if(BUILD_TESTING)
     target_link_libraries(galaxy_colony_auto04d4_manifest_tests PRIVATE galaxy_kernel)
     add_test(NAME galaxy_colony_auto04d4_departure_manifest COMMAND galaxy_colony_auto04d4_manifest_tests)
 endif()
+
+# AUTO-04D.4C: full bounded-adult colony departure, durable v58 replay.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_auto04d4c_departure_tests tests/COLONY_AUTO04D4C_AtomicDepartureTests.cpp)
+    target_link_libraries(galaxy_colony_auto04d4c_departure_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_auto04d4c_atomic_departure COMMAND galaxy_colony_auto04d4c_departure_tests)
+endif()
