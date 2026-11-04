@@ -524,6 +524,12 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
                 static_cast<std::uint16_t>(latitude),
                 static_cast<std::uint16_t>(longitude));
             if(!site){announce(world.world(),"ERROR|PLANET_SURVEY_DENIED");return;}
+            // A region is reported as discovered only after its private
+            // immutable geography is written to the durable survey index.
+            if(!knowledge){announce(world.world(),"ERROR|PLANET_SURVEY_ARCHIVE_UNAVAILABLE");return;}
+            knowledge->record_planetary_region(principal,
+                static_cast<std::uint32_t>(body>>32),*site,
+                world.world().tick()+1);
             const auto& r=site->landscape.region;
             announce(world.world(),"PLANET_REGION|"+std::to_string(body)+"|"+
                 std::to_string(latitude)+"|"+std::to_string(longitude)+"|"+
