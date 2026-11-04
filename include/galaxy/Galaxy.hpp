@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <sqlite3.h>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -56,6 +57,8 @@ struct ScanObservation {
     int confidence=0; // integer 1..100
     bool published=false;
 };
+// PLAY-13B.1: different scan intentions share the trusted sensor implementation.
+enum class ScanMode { Environmental, Celestial, Anomaly };
 struct DirectionalContact {
     std::uint64_t site=0;
     SiteKind kind=SiteKind::Ship;
@@ -76,6 +79,9 @@ public:
     std::vector<ScanObservation> probe_scan(PlayerId owner,std::uint32_t system,
         std::uint64_t tick,std::int64_t radius_mm,int sensor_strength) const;
     std::size_t deployed_count(PlayerId owner) const;
+    // Filter actual native probe evidence by scan intent; no client-supplied sightings.
+    std::vector<ScanObservation> scan_mode(PlayerId owner,std::uint32_t system,
+        std::uint64_t tick,std::int64_t radius_mm,int sensor_strength,ScanMode mode) const;
 private:
     const GalaxyMap& map_;
     std::map<std::uint64_t,Probe> probes_;
@@ -100,6 +106,12 @@ public:
         int independent_surveyors=0;int confidence=0;std::uint64_t latest_tick=0;
         Vector2 estimated_position{}; };
     std::vector<PublicRecord> published(std::uint32_t system) const;
+    // Reusable, owner-private map knowledge for navigation/survey/construction.
+    // Not proof that the object still exists; callers must revalidate world state.
+    std::optional<ScanObservation> known_site(PlayerId owner,std::uint32_t system,
+        std::uint64_t site) const;
+    std::vector<ScanObservation> known_sites(PlayerId owner,std::uint32_t system,
+        int minimum_confidence=1) const;
 private:
     ::sqlite3* db_=nullptr;
 };
