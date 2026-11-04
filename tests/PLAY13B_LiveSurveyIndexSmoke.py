@@ -27,6 +27,11 @@ def main():
             assert db.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='observations'"
             ).fetchone(), "discovery table missing"
+        with sqlite3.connect(world) as db:
+            rows=db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+            assert rows, "world save has no native tables"
         run_host(executable, world)
         with sqlite3.connect(index) as db:
             assert db.execute("PRAGMA integrity_check").fetchone()[0] == "ok"

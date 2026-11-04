@@ -17,6 +17,74 @@ static Outcome run(PersistentWorld& w,const Command& c){
  CHECK(w.world().events().back().command_id==c.id);
  return w.world().events().back().result;
 }
+static void physical_celestial_world() {
+ const auto dir=fs::temp_directory_path()/
+   ("sg_play13b_cosmos_"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+ fs::create_directories(dir);
+ const auto db=(dir/"world.sqlite").string();
+ try {
+  std::string original_snapshot;
+  std::uint64_t original_ore=0;
+  {
+   Simulation seed(71337);
+   seed.add_system(2);
+   const auto ship=seed.add_colony_ship(7,{0,0},60,24);
+   seed.provision_starter_exploration_scanner(ship);
+   seed.add_asteroid({2000,0},50);
+   original_ore=static_cast<std::uint64_t>(seed.total_ore());
+   CHECK(seed.physical_celestial_systems().empty());
+   PersistentWorld w(db,std::move(seed));
+   CHECK(w.world().scan_physical_celestials(7,ship).empty());
+   w.ensure_physical_celestial_systems(); // durable upgrade from old world
+   CHECK(w.world().canonical_state().find("galaxy-kernel-v70|")==0);
+   CHECK(w.world().physical_celestial_systems().size()==2);
+   const auto bodies=w.world().scan_physical_celestials(7,ship);
+   CHECK(!bodies.empty());
+   CHECK(w.world().scan_physical_celestials(8,ship).empty());
+   CHECK(w.world().total_ore()==static_cast<std::int64_t>(original_ore));
+   const auto& second=w.world().physical_celestial_systems().at(2);
+   CHECK(!second.empty()&&second.front().system==2);
+   std::set<std::uint64_t> all_ids;
+   for(const auto& [system,world_bodies]:w.world().physical_celestial_systems()){
+    CHECK(!world_bodies.empty()&&world_bodies.size()<=50);
+    for(const auto& body:world_bodies){
+     CHECK(body.system==system&&body.id!=0&&body.physical_radius_mm>0);
+     CHECK(all_ids.insert(body.id).second);
+     if(body.kind!=CelestialKind::Star){
+       CHECK(body.parent_id!=0);
+       CHECK(all_ids.count(body.parent_id)==1);
+     }
+    }
+   }
+   const auto generation=w.generation();
+   w.ensure_physical_celestial_systems();
+   CHECK(w.generation()==generation);
+   original_snapshot=w.world().canonical_state();
+   CHECK(Simulation::from_snapshot(original_snapshot).canonical_state()==original_snapshot);
+   auto invalid=original_snapshot;
+   const auto at=invalid.find("celestial|");
+   CHECK(at!=std::string::npos);
+   const auto end=invalid.find('\n',at);
+   CHECK(end!=std::string::npos);
+   auto line=invalid.substr(at,end-at);
+   const auto pos=line.rfind('|');
+   CHECK(pos!=std::string::npos);
+   line.replace(pos+1,line.size()-pos-1,"12345");
+   invalid.replace(at,end-at,line);
+   bool rejected=false;
+   try {(void)Simulation::from_snapshot(invalid);}
+   catch(const std::exception&){rejected=true;}
+   CHECK(rejected);
+  }
+  {
+   PersistentWorld restored(db,Simulation(1));
+   CHECK(restored.world().canonical_state()==original_snapshot);
+   CHECK(restored.world().physical_celestial_systems().size()==2);
+   CHECK(restored.world().total_ore()==static_cast<std::int64_t>(original_ore));
+  }
+  fs::remove_all(dir);
+ }catch(...){std::error_code ec;fs::remove_all(dir,ec);throw;}
+}
 static void focus_mission() {
  const auto dir=fs::temp_directory_path()/
    ("sg_play13b_focus_"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -119,6 +187,7 @@ int main(){
  const auto dir=fs::temp_directory_path()/
   ("sg_play12_"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
  try{
+  physical_celestial_world();
   focus_mission();
   fs::create_directories(dir);
   const auto db=(dir/"world.sqlite").string(),copy=(dir/"recovered.sqlite").string();
