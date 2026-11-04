@@ -17,6 +17,22 @@ enum class Posture : int {
     Observe=0, Warn=1, RequestAid=2, DemandSupplies=3,
     PrepareRaid=4
 };
+// CONFLICT-01B3: published governance changes require a real resident leader.
+enum class DiplomaticPolicy : int {
+    Pragmatic=0, Reconciliatory=1, SecurityFirst=2
+};
+enum class TransitionKind : int {
+    Appointment=0, EmergencyVacancy=1, PolicyRevision=2
+};
+struct GovernanceEpoch {
+    std::uint64_t event_id=0,prior_event_id=0,ordinal=0;
+    std::uint64_t founding_event_id=0;
+    EntityId colony=0;
+    std::uint64_t leader_id=0;
+    Agenda agenda=Agenda::Cooperative;
+    DiplomaticPolicy policy=DiplomaticPolicy::Pragmatic;
+    TransitionKind kind=TransitionKind::Appointment;
+};
 // CONFLICT-01B1: a colony's subjective attitude toward an identifiable
 // foreign owner; distinct from any criminal verdict or physical attack fact.
 enum class Attitude : int {
