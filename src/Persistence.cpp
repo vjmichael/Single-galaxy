@@ -2574,6 +2574,71 @@ public:
         if(q.row())throw std::runtime_error("duplicate immigrant admission");
         return a;
     }
+    // EXIT-01D: host supervisor helpers read only the authoritative SQLite
+    // journals. Auto allocated IDs come from the committed real ledger, not
+    // from untrusted client arguments or guessed world timestamps.
+    std::uint64_t next_personal_outlook_event_id() const{
+        Statement t(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_npc_personal_outlook'");
+        if(!t.row())return 1;
+        Statement q(db_,"SELECT COALESCE(MAX(event_id),0) "
+            "FROM sg_colony_npc_personal_outlook");
+        if(!q.row())throw std::runtime_error("missing personal history counter");
+        const auto old=sqlite3_column_int64(q.get(),0);
+        if(old<0 || old==std::numeric_limits<sqlite3_int64>::max())
+            throw std::overflow_error("personal history event IDs exhausted");
+        return static_cast<std::uint64_t>(old)+1;
+    }
+    bool personal_outlook_recorded_at(EntityId origin,std::uint64_t npc,
+                                      std::uint64_t generation) const{
+        Statement t(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_npc_personal_outlook'");
+        if(!t.row())return false;
+        Statement q(db_,"SELECT 1 FROM sg_colony_npc_personal_outlook "
+            "WHERE colony=? AND npc=? AND world_generation=?");
+        q.text(1,std::to_string(origin));
+        q.text(2,std::to_string(npc));
+        q.i64(3,static_cast<sqlite3_int64>(generation));
+        return q.row();
+    }
+    std::optional<std::uint64_t> existing_exit_pressure(
+        EntityId origin,std::uint64_t npc) const{
+        Statement t(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_npc_exit_pressure'");
+        if(!t.row())return std::nullopt;
+        Statement q(db_,"SELECT event_id FROM sg_colony_npc_exit_pressure "
+            "WHERE colony=? AND npc=? ORDER BY world_generation DESC LIMIT 1");
+        q.text(1,std::to_string(origin));
+        q.text(2,std::to_string(npc));
+        if(!q.row())return std::nullopt;
+        const auto v=sqlite3_column_int64(q.get(),0);
+        if(v<=0 || q.row())throw std::runtime_error("invalid past scarcity witness");
+        return static_cast<std::uint64_t>(v);
+    }
+    std::optional<PersistentWorld::VoluntaryImmigrationAdmission>
+    outstanding_voluntary_admission(EntityId origin,std::uint64_t npc) const{
+        Statement t(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_voluntary_immigration'");
+        if(!t.row())return std::nullopt;
+        Statement settled(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_voluntary_immigration_settled'");
+        const bool has_receipts=settled.row();
+        const std::string sql=std::string(
+            "SELECT a.event_id FROM sg_colony_voluntary_immigration a ")+
+            (has_receipts?
+             "LEFT JOIN sg_colony_voluntary_immigration_settled s "
+             "ON s.admission_event=a.event_id ":"")+
+            "WHERE a.origin=? AND a.npc=? "+
+            (has_receipts?"AND s.admission_event IS NULL ":"")+
+            "ORDER BY a.event_id DESC LIMIT 1";
+        Statement q(db_,sql.c_str());
+        q.text(1,std::to_string(origin));q.text(2,std::to_string(npc));
+        if(!q.row())return std::nullopt;
+        const auto event=sqlite3_column_int64(q.get(),0);
+        if(event<=0 || q.row())throw std::runtime_error("invalid outstanding immigration");
+        return immigration_admission(static_cast<std::uint64_t>(event));
+    }
+
     bool immigration_pending_for_transport(
         std::uint64_t npc,std::uint64_t transport) const{
         Statement table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
