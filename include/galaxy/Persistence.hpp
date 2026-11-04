@@ -845,6 +845,8 @@ public:
     bool complete_celestial_transit(std::uint64_t request_id,
         FailPoint fail=FailPoint::None);
     // Real finite resource collection, committed atomically before publication.
+    bool install_oasis_extractor(PlayerId owner,EntityId ship,
+        std::uint64_t body,FailPoint fail=FailPoint::None);
     bool collect_oasis_resource(PlayerId owner,EntityId ship,std::uint64_t body,
         bool water,std::int64_t kilograms,FailPoint fail=FailPoint::None);
     const Simulation& world() const noexcept { return world_; }
