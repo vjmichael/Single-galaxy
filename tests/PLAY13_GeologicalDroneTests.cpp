@@ -23,7 +23,7 @@ int main(){
  try {
   fs::create_directories(dir);
   const auto db=(dir/"world.sqlite").string(),copy=(dir/"recovered.sqlite").string();
-  EntityId ship=0,ore=0,ordinary=0;std::int64_t original=0;
+  EntityId ship=0,ore=0,ordinary=0,far=0;std::int64_t original=0;
   {
    Simulation seed(1313);
    ship=seed.add_colony_ship(7,{0,0},60,24);
@@ -32,6 +32,7 @@ int main(){
    seed.provision_starter_probe_kit(ship);
    ore=seed.add_geological_asteroid({20000,0},AsteroidClass::Metallic,55,5700);
    ordinary=seed.add_asteroid({2000,0},40);
+   far=seed.add_geological_asteroid({11000000,0},AsteroidClass::Silicate,10,2000);
    original=seed.total_ore();
    PersistentWorld w(db,std::move(seed));
    CHECK(execute(w,order(w,1,ship,Action::LaunchGeologicalDrone,ore,8))==Outcome::Unauthorized);
@@ -40,6 +41,9 @@ int main(){
    // The full 10 km drone control radius is native millimetres, not 10,000 mm.
    CHECK(Simulation::kDroneControlRangeMm==10000000LL);
    CHECK(Simulation::kDeepSpaceProbeCommsRangeMm==74798935350000LL);
+   CHECK(w.world().survey_probes().empty());
+   CHECK(execute(w,order(w,101,ship,Action::LaunchGeologicalDrone,far))==Outcome::OutOfRange);
+   CHECK(w.world().find(ship)->survey_probes_carried==1);
    CHECK(w.world().survey_probes().empty());
    CHECK(execute(w,order(w,3,ship,Action::LaunchGeologicalDrone,ore))==Outcome::Applied);
    CHECK(w.world().find(ship)->survey_probes_carried==0);
