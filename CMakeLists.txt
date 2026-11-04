@@ -1222,3 +1222,13 @@ if(BUILD_TESTING)
   add_test(NAME galaxy_play13c_local_region
     COMMAND galaxy_play13c_local_region_tests)
 endif()
+
+# PLAY-13C.5: independently verified persistent geology, deterministic
+# environment identity and mass-conserving mineral separation.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13c_local_environment_tests
+    tests/PLAY13C_LocalEnvironmentTests.cpp)
+  target_link_libraries(galaxy_play13c_local_environment_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13c_local_environment
+    COMMAND galaxy_play13c_local_environment_tests)
+endif()
