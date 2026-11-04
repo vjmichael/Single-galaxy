@@ -1,20 +1,81 @@
 /* B4.3 live browser: no player IDs, target IDs or authority supplied by UI. */
 (function(){'use strict';
 let source=null,token=null, colonyMode=false;
+let assist=null,assistPending=false,latestProjection=null;
+function assistMessage(mode,description='destination'){
+ const label=el('assistStatus');
+ if(label)label.textContent=window.GalaxyTravelAssist?.statusText(mode,description)||mode;
+ if(el('assistCancel'))el('assistCancel').disabled=!assist;
+}
+window.GalaxyAssistNativeOutcome=outcome=>{if(assist&&outcome!=='APPLIED')cancelAssist('paused');};
+function cancelAssist(mode='cancelled'){
+ const old=assist;assist=null;assistPending=false;
+ if(old)assistMessage(mode,old.description);
+ else if(mode!=='cancelled')assistMessage(mode);
+}
+function startAssist(kind){
+ const frame=latestProjection;
+ if(!colonyMode||!token||!frame){message('Waiting for a verified live world frame.');return;}
+ const player=[...frame.entities.values()].find(e=>e.entityType===0&&e.owner===7);
+ if(!player){message('Colony ship is not in this system.');return;}
+ let id,description;
+ if(kind==='rock'){
+   id=window.GalaxySelectedRockId;
+   if(!Number.isSafeInteger(id)||id<1){message('Scan and select an asteroid first.');return;}
+   description='scanned asteroid #'+id;
+ }else{
+   const cargo=window.GalaxyCargoReturn?.plan(frame,7,window.GalaxyColonyOutpostIds);
+   id=cargo?.site?.id;description='outpost #'+id;
+ }
+ const target=window.GalaxyTravelAssist?.target(frame,kind,id,window.GalaxyColonyOutpostIds);
+ if(!target||target.system!==player.system){
+   message('Travel target is not a verified, visible destination in this system.');return;
+ }
+ const dock=frame.docks.get(player.id)?.state??0;
+ if(dock!==0){message('Undock before using travel assist.');return;}
+ assist={kind,id,description,startedTick:frame.tick,lastTick:-1,sessionToken:token,shipId:player.id};
+ assistMessage('travel',description);
+}
+async function updateAssist(frame){
+ const current=assist;
+ if(!current||assistPending||!token||current.sessionToken!==token)return;
+ const player=frame.entities.get(current.shipId);
+ const dest=window.GalaxyTravelAssist?.target(frame,current.kind,current.id,window.GalaxyColonyOutpostIds);
+ if(!player||!dest||player.owner!==7||player.system!==dest.system||
+    frame.tick-current.startedTick>window.GalaxyTravelAssist.MAX_TICKS){
+    cancelAssist('paused');return;
+ }
+ const dock=frame.docks.get(player.id)?.state??0;
+ const instruction=window.GalaxyTravelAssist.plan(player,dest,{
+   dockState:dock,jumpActive:!!frame.jumps?.get(player.id),tolerance:500
+ });
+ if(instruction.status==='arrived'){cancelAssist('arrived');return;}
+ if(instruction.status!=='thrust'){cancelAssist('paused');return;}
+ if(frame.tick<=current.lastTick)return;
+ // At most one queued native acceleration request for each committed frame.
+ current.lastTick=frame.tick;assistPending=true;
+ const accepted=await command('thrust',instruction.command.extra,true);
+ assistPending=false;
+ if(assist!==current)return;
+ if(!accepted)cancelAssist('paused');
+}
 window.GalaxyColonyMode=false;
 const el=id=>document.getElementById(id);
 const message=text=>{el('commandMessage').textContent=text;};
-async function command(action,extra={}){
- if(!token){message('No local session available');return;}
+async function command(action,extra={},assisted=false){
+ if(!assisted&&assist)cancelAssist('cancelled');
+ if(!token){message('No local session available');return false;}
  try{
    const response=await fetch('/command',{method:'POST',headers:{'Content-Type':'application/json'},
      body:JSON.stringify({token,action,...extra})});
    const result=await response.json();
    if(!response.ok)throw new Error(result.error||'Command rejected');
-   message('Command queued (not yet committed); next simulation tick will decide.');
- }catch(ex){message('Command not accepted: '+ex.message);}
+   if(!assisted)message('Command queued (not yet committed); next simulation tick will decide.');
+   return true;
+ }catch(ex){message('Command not accepted: '+ex.message);return false;}
 }
 async function connect(){
+ cancelAssist('paused');latestProjection=null;
  if(source){source.close();source=null;}
  window.GalaxyColonyMode=false;
  window.GalaxyResetExpedition?.();
@@ -48,9 +109,9 @@ async function connect(){
      try{bridge.accept(atob(e.data));}
      catch(ex){source.close();source=null;bridge.fail('Frame rejected: '+ex.message);}
    });
-   source.addEventListener('complete',()=>{bridge.complete();message('Run completed. Reconnect to review the finished world.');source.close();source=null;});
-   source.addEventListener('failed',e=>{bridge.fail('Host failed: '+e.data);source.close();source=null;if(e.data==='Session expired')window.GalaxyDisconnect?.();});
-   source.addEventListener('error',()=>{if(source){source.close();source=null;bridge.fail('Stream lost. Use Reconnect to replay and catch up.');}});
+   source.addEventListener('complete',()=>{cancelAssist('paused');bridge.complete();message('Run completed. Reconnect to review the finished world.');source.close();source=null;});
+   source.addEventListener('failed',e=>{cancelAssist('paused');bridge.fail('Host failed: '+e.data);source.close();source=null;if(e.data==='Session expired')window.GalaxyDisconnect?.();});
+   source.addEventListener('error',()=>{if(source){cancelAssist('paused');source.close();source=null;bridge.fail('Stream lost. Use Reconnect to replay and catch up.');}});
    message(colonyMode?'Connected: colony ship in open space; no stations or gates.':'Connected: developer legacy world.');
  }catch(ex){bridge.fail(ex.message);message('Connection failed: '+ex.message);}
 }
@@ -88,8 +149,7 @@ for(const [id,act] of [
  ['returnDock','colonyDockBase'],['returnUnload','colonyUnloadBase'],
  ['returnLoad','colonyLoadBase'],['returnUndock','colonyUndockBase']
 ])el(id).addEventListener('click',()=>command(act));
-let window.GalaxyResetExpedition?.();
- lastReturnShip=null;
+let lastReturnShip=null;
 let expedition=window.GalaxyExpeditionFeedback?.initial();
 window.GalaxyResetExpedition=()=>{
  expedition=window.GalaxyExpeditionFeedback?.initial();
@@ -111,6 +171,9 @@ for(const [id,method,arg] of [
  ['cameraReset','reset']
 ])el(id).addEventListener('click',()=>window.GalaxyFlightCameraActions?.[method]?.(arg));
 window.GalaxyTargetFeedback=text=>message(text);
+el('assistRock').addEventListener('click',()=>startAssist('rock'));
+el('assistHome').addEventListener('click',()=>startAssist('home'));
+el('assistCancel').addEventListener('click',()=>cancelAssist());
 el('flightScan').addEventListener('click',()=>command('colonyScan'));
 el('flightMine').addEventListener('click',()=>command('colonyMine',{amount:8}));
 el('flightMineSelected').addEventListener('click',()=>{
@@ -130,6 +193,8 @@ document.addEventListener('keydown',event=>{
  command(mapped.action,mapped.extra);
 });
 window.onGalaxyLiveProjection=function(state){
+ latestProjection=state;
+ if(colonyMode&&assist)void updateAssist(state);
  const ship=[...state.entities.values()].find(e=>e.entityType===0&&e.owner===7);
  if(!ship)return;
  const nearby=[...state.entities.values()].filter(e=>
@@ -147,6 +212,11 @@ window.onGalaxyLiveProjection=function(state){
  const selected=Number.isSafeInteger(window.GalaxySelectedRockId)&&window.GalaxySelectedRockId>0?
    window.GalaxySelectedRockId:(Number.isSafeInteger(chosen)&&chosen>0?chosen:null);
  const mine=window.GalaxyExpeditionFeedback?.target(ship,nearby,selected);
+ el('assistRock').disabled=!colonyMode||!selected||!window.GalaxyTravelAssist?.target(
+    state,'rock',selected,window.GalaxyColonyOutpostIds);
+ const docked=state.docks.get(ship.id)?.state??0;
+ const home=window.GalaxyCargoReturn?.plan(state,7,window.GalaxyColonyOutpostIds)?.site;
+ el('assistHome').disabled=!colonyMode||!home||docked!==0;
  el('expeditionTarget').textContent=mine?
    '#'+mine.id+' · '+Math.ceil(mine.distance).toLocaleString()+' mm · '+mine.ore.toLocaleString()+' t visible ore':
    'No mineable asteroid currently visible';
@@ -199,6 +269,7 @@ window.onGalaxyLiveProjection=function(state){
 window.GalaxyColonyCommand=command;
 window.GalaxyReconnect=connect;
 window.GalaxyDisconnect=()=>{
+ cancelAssist('paused');latestProjection=null;
  lastReturnShip=null;
  if(source){source.close();source=null;}token=null;
  colonyMode=false;window.GalaxyColonyMode=false;
@@ -208,6 +279,6 @@ window.GalaxyDisconnect=()=>{
  el('qaPanel').hidden=true;
  message('Signed out. Colony world data is no longer available in this session.');
 };
-window.addEventListener('beforeunload',()=>{if(source)source.close();});
+window.addEventListener('beforeunload',()=>{cancelAssist('paused');if(source)source.close();});
 connect();
 })();

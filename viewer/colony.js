@@ -333,6 +333,7 @@
      }
      else if(e.type==='RESULT'||e.type==='ERROR'||e.type==='SCAN_DONE'||e.type==='NEW_COLONY'||e.type==='RESUMED'){
        if(e.type==='RESULT'){
+         window.GalaxyAssistNativeOutcome?.(e.outcome);
          const detail=window.GalaxyExpeditionFeedback?.diagnostic(e.outcome,e.transferred);
          if(detail)q('expeditionOutcome').textContent='Command #'+e.id+': '+detail;
        }else if(e.type==='ERROR'){
