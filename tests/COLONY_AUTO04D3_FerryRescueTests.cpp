@@ -19,6 +19,7 @@ try{
         initial.provision_colony_genesis(source,100,100,100,200,500);
         initial.provision_colony_genesis(receiver,1000,1000,1000,1000,1000);
         initial.enable_individual_workforce();
+        initial.upgrade_assignment_snapshot_format();
         initial.enable_medical_workforce_rules();
         CHECK(initial.npc_records().size()==8);
         mass=initial.total_material_kg();
