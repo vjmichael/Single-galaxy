@@ -1,0 +1,36 @@
+name: PLAY-09 conserved physical wreck salvage
+on:
+  push:
+    branches:
+      - integration/play09-physical-wreck-salvage-20261104
+  pull_request:
+    paths:
+      - 'include/galaxy/Simulation.hpp'
+      - 'src/Simulation.cpp'
+      - 'src/colony_live_host.cpp'
+      - 'viewer/colony.js'
+      - 'viewer/interactive.js'
+      - 'viewer/interactive.html'
+      - 'live/interactive_relay.py'
+      - 'tests/PLAY09_WreckSalvageTests.cpp'
+      - 'tests/PLAY09_SalvageWiringTests.js'
+      - '.github/workflows/play09.yml'
+jobs:
+  salvage-acceptance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure native game kernel
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+      - name: Build native salvage, combat and live host
+        run: cmake --build build --target galaxy_play09_wreck_salvage_tests galaxy_play08_training_combat_tests galaxy_colony_live_host -j2
+      - name: Verify durable wreck and combat actions
+        run: ctest --test-dir build -R 'galaxy_play0(8_training_combat|9_wreck_salvage)' --output-on-failure
+      - name: Verify client wiring and prior gameplay
+        run: node --test tests/PLAY09_SalvageWiringTests.js tests/PLAY08_CombatWiringTests.js tests/TravelAssistTests.js tests/Play07WiringTests.js tests/FlightCameraTests.js tests/Play06WiringTests.js tests/ExpeditionFeedbackTests.js tests/ExpeditionWiringTests.js tests/CargoReturnTests.js tests/FlightControlsTests.js tests/OpeningGuideTests.js
+      - name: Parse browser and relay
+        run: |
+          node --check viewer/interactive.js
+          node --check viewer/colony.js
+          node --check viewer/viewer.js
+          python3 -m py_compile live/interactive_relay.py
