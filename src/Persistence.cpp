@@ -5843,6 +5843,154 @@ bool PersistentWorld::submit_host_colony_departure(const Command& command,FailPo
     world_.swap(next);++generation_;
     return true;
 }
+void PersistentWorld::step_with_atomic_colony_family_departure(
+    const colony_family::ExecutionPlan& plan,FailPoint fail){
+    const auto& req=plan.prepared;
+    if(!world_.physical_dependents_enabled() ||
+       !plan.command_id || plan.command_id>=static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) ||
+       !req.intent_id || req.expected_world_generation!=generation_ ||
+       !plan.expected_region_revision || !plan.expected_owner_generation ||
+       req.adult_ids.size()!=2 || req.children.empty() ||
+       req.adult_ids.size()+req.children.size()>16 ||
+       plan.child_move_events.size()!=req.children.size() ||
+       !plan.co_parent_event_id || plan.region_scope.empty() ||
+       plan.origin_colony.empty() || plan.destination_colony.empty() ||
+       plan.origin_colony==plan.destination_colony)
+        throw std::invalid_argument("invalid bounded complete family departure plan");
+    std::set<std::uint64_t> move_ids{plan.command_id};
+    if(!move_ids.insert(plan.co_parent_event_id).second)
+        throw std::runtime_error("duplicate adult family custody event");
+    std::vector<std::pair<std::uint64_t,std::uint64_t>> moves;
+    for(std::size_t i=0;i<req.children.size();++i){
+        const auto& c=req.children[i];
+        const auto event=plan.child_move_events[i];
+        if(c.guardian_id!=req.adult_ids[0] ||
+           !event || event>=static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) ||
+           !move_ids.insert(event).second)
+            throw std::runtime_error("incomplete or conflicting guardian household event");
+        const auto physical=world_.physical_dependents().find(c.child_id);
+        if(physical==world_.physical_dependents().end() ||
+           physical->second.home_ship!=req.source ||
+           physical->second.location!=req.source ||
+           physical->second.parent_a!=req.adult_ids[0] ||
+           physical->second.parent_b!=req.adult_ids[1])
+            throw std::runtime_error("family departure requires native registered two-parent custody");
+        moves.emplace_back(c.child_id,event);
+    }
+    if(!store_->prepared_colony_family_departure(world_,generation_,req))
+        throw std::runtime_error("missing/stale immutable prepared family roster");
+    const auto audit=store_->audit_colony_family_departure(world_,req);
+    if(!audit.ready_for_transaction)
+        throw std::runtime_error("family physical/ART02 preflight failed: "+audit.refusal);
+    const auto path=store_->sqlite_path();
+    regional_events::CheckpointStore region(path,plan.region_scope);
+    NpcAppearanceStore family(path,req.family_scope,req.family_seed,
+        [&](std::uint64_t id){return world_.npc_records().count(id)!=0;});
+    const auto origin_family=family.family_census(req.source);
+    const auto destination_family=family.family_census(req.receiver);
+    const auto current_region=region.load();
+    if(origin_family.revision!=plan.expected_origin_family_revision ||
+       destination_family.revision!=plan.expected_destination_family_revision ||
+       !current_region || current_region->revision!=plan.expected_region_revision ||
+       current_region->scheduler.colony(plan.origin_colony).population!=origin_family.current_population ||
+       current_region->scheduler.colony(plan.destination_colony).population!=destination_family.current_population)
+        throw std::runtime_error("stale ART02 or regional family population preflight");
+    auto next=world_;
+    const auto before=next.events().size(),activities=next.activity_events().size();
+    if(auto it=next.commands_.find(next.tick()+1);
+       it!=next.commands_.end()&&!it->second.empty())
+        throw std::runtime_error("other queued command conflicts with complete family movement");
+    Command command{};
+    command.id=plan.command_id;command.sequence=plan.command_id;
+    command.execute_tick=next.tick()+1;
+    command.issuer=Simulation::kServerAuthority;
+    command.actor=req.source;command.target=req.receiver;
+    command.action=Action::HostColonyFamilyDeparture;
+    command.passenger_ids=req.adult_ids;
+    for(const auto& ch:req.children)command.passenger_ids.push_back(ch.child_id);
+    if(!next.submit(command))
+        throw std::runtime_error("native physical whole-family departure preflight refused");
+    next.step();
+    if(next.events().size()!=before+1 ||
+       next.events().back().command_id!=plan.command_id ||
+       next.events().back().result!=Outcome::Applied ||
+       !next.colony_departures().count(req.source))
+        throw std::runtime_error("real family movement did not execute atomically");
+    const auto& departure=next.colony_departures().at(req.source);
+    if(departure.relocated_npcs!=req.adult_ids ||
+       departure.relocated_children.size()!=req.children.size())
+        throw std::runtime_error("actual dependent movement differs from prepared household");
+    const std::vector<Event> events(next.events().begin()+
+        static_cast<std::ptrdiff_t>(before),next.events().end());
+    const std::vector<ActivityEvent> activity(next.activity_events().begin()+
+        static_cast<std::ptrdiff_t>(activities),next.activity_events().end());
+    std::map<std::uint64_t,Command> due{{command.id,command}};
+    const auto effect=[&](sqlite3* db,std::uint64_t committed_generation){
+        if(!store_->prepared_colony_family_departure(world_,generation_,req))
+            throw std::runtime_error("prepared family was altered before exclusive commit");
+        const auto inside=colony_family::assess(world_,db,req);
+        if(!inside.ready_for_transaction)
+            throw std::runtime_error("family birth/guardian/physical custody changed under lock: "+inside.refusal);
+        NpcAppearanceStore joined(db,req.family_scope,req.family_seed,
+            [&](std::uint64_t id){return next.npc_records().count(id)!=0;});
+        const auto authorize=[&](std::uint64_t id,std::uint64_t origin,std::uint64_t destination){
+            if(origin!=req.source||destination!=req.receiver ||
+               (id!=req.adult_ids[0]&&id!=req.adult_ids[1]))return false;
+            const auto previous=world_.npc_records().find(id);
+            const auto current=next.npc_records().find(id);
+            return previous!=world_.npc_records().end() &&
+                current!=next.npc_records().end() &&
+                previous->second.home_ship==origin &&
+                current->second.home_ship==destination &&
+                current->second.location==destination && !current->second.transport_id;
+        };
+        const auto recorded=joined.record_guardian_household_moves(
+            plan.command_id,req.adult_ids[0],moves,req.source,req.receiver,
+            next.tick(),plan.expected_origin_family_revision,
+            plan.expected_destination_family_revision,authorize,
+            req.adult_ids[1],plan.co_parent_event_id);
+        if(recorded.size()!=req.adult_ids.size()+req.children.size())
+            throw std::runtime_error("ART02 household residence count differs from physical rescue");
+        const auto revision=region.commit_migration_in_world_transaction(
+            db,plan.expected_region_revision,plan.expected_owner_generation,
+            next.tick(),plan.origin_colony,plan.destination_colony,
+            origin_family.current_population,destination_family.current_population,
+            std::to_string(plan.command_id),recorded.size());
+        run(db,"CREATE TABLE IF NOT EXISTS sg_colony_family_departure_execute("
+               "command_id TEXT PRIMARY KEY,world_generation INTEGER NOT NULL,"
+               "tick INTEGER NOT NULL,intent_id TEXT NOT NULL UNIQUE,"
+               "source TEXT NOT NULL,receiver TEXT NOT NULL,"
+               "family_scope TEXT NOT NULL,region_scope TEXT NOT NULL,"
+               "region_revision INTEGER NOT NULL,member_count INTEGER NOT NULL,"
+               "adult_count INTEGER NOT NULL,child_count INTEGER NOT NULL)");
+        run(db,"CREATE TRIGGER IF NOT EXISTS sg_colony_family_execute_no_update "
+               "BEFORE UPDATE ON sg_colony_family_departure_execute "
+               "BEGIN SELECT RAISE(ABORT,'executed family custody immutable'); END");
+        run(db,"CREATE TRIGGER IF NOT EXISTS sg_colony_family_execute_no_delete "
+               "BEFORE DELETE ON sg_colony_family_departure_execute "
+               "BEGIN SELECT RAISE(ABORT,'executed family custody immutable'); END");
+        Statement receipt(db,"INSERT INTO sg_colony_family_departure_execute "
+                             "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)");
+        receipt.text(1,std::to_string(plan.command_id));
+        receipt.i64(2,static_cast<std::int64_t>(committed_generation));
+        receipt.i64(3,static_cast<std::int64_t>(next.tick()));
+        receipt.text(4,std::to_string(req.intent_id));
+        receipt.text(5,std::to_string(req.source));
+        receipt.text(6,std::to_string(req.receiver));
+        receipt.text(7,req.family_scope);
+        receipt.text(8,plan.region_scope);
+        receipt.i64(9,static_cast<std::int64_t>(revision));
+        receipt.i64(10,static_cast<std::int64_t>(recorded.size()));
+        receipt.i64(11,static_cast<std::int64_t>(req.adult_ids.size()));
+        receipt.i64(12,static_cast<std::int64_t>(req.children.size()));
+        receipt.execute();
+    };
+    store_->commit(next,generation_,resource_origin_,credit_origin_,&command,
+                   events,due,activity,fail,nullptr,nullptr,effect);
+    world_.swap(next);
+    ++generation_;
+}
+
 void PersistentWorld::step_with_colony_departure(FailPoint fail){
     auto next=world_;
     const auto before=next.events().size();
