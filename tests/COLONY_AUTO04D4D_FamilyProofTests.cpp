@@ -124,6 +124,19 @@ try{
         // A real child is never a fabricated world NPC or a free rescue action.
         CHECK(host.world().npc_records().size()==4);
         CHECK(host.world().colony_departures().empty());
+        // ART02 residence alone is not physical custody: an active ferry
+        // voyage takes precedence over the child's last census address.
+        CHECK(sqlite3_open(path.c_str(),&db)==SQLITE_OK);
+        sql(db,"CREATE TABLE sg_dependent_travel (child_id TEXT NOT NULL,"
+               "status INTEGER NOT NULL,destination TEXT NOT NULL,"
+               "board_generation INTEGER NOT NULL)");
+        sql(db,"INSERT INTO sg_dependent_travel VALUES ('"+
+               std::to_string(child)+"',1,'"+std::to_string(dest)+"',2)");
+        sqlite3_close(db);
+        CHECK(!host.audit_colony_family_departure(plan).ready_for_transaction);
+        CHECK(sqlite3_open(path.c_str(),&db)==SQLITE_OK);
+        sql(db,"DROP TABLE sg_dependent_travel");
+        sqlite3_close(db);
         // Even a child linked to ANOTHER family scope at this colony must
         // block all-family claims rather than be silently abandoned.
         CHECK(sqlite3_open(path.c_str(),&db)==SQLITE_OK);
