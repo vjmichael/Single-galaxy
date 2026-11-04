@@ -1757,9 +1757,247 @@ public:
             sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;
         }
     }
+
+    // CONFLICT-01B3: effective diplomacy is an as-of-generation lookup.
+    // A transition published at generation N first controls generation N+1.
+    // This preserves the meaning of every already-accepted old decision.
+    colony_conflict::GovernanceEpoch effective_governance(
+        EntityId source,std::uint64_t decision_generation) const{
+        if(!source || !decision_generation)
+            throw std::invalid_argument("governance lookup needs a physical colony and generation");
+        Statement foundation(db_,"SELECT event_id,leader,agenda,world_generation "
+            "FROM sg_colony_conflict_agenda WHERE colony=?");
+        foundation.text(1,std::to_string(source));
+        if(!foundation.row())throw std::runtime_error("no founded colony government");
+        colony_conflict::GovernanceEpoch out;
+        out.colony=source;
+        const auto founding_id=sqlite3_column_int64(foundation.get(),0);
+        out.leader_id=parse_u64(sqlite3_column_text(foundation.get(),1));
+        const int first_agenda=sqlite3_column_int(foundation.get(),2);
+        const auto established=sqlite3_column_int64(foundation.get(),3);
+        if(founding_id<1 || !out.leader_id ||
+           first_agenda<0 || first_agenda>3 || established<1 ||
+           static_cast<std::uint64_t>(established)>decision_generation ||
+           foundation.row())
+            throw std::runtime_error("invalid founding leadership history");
+        out.founding_event_id=static_cast<std::uint64_t>(founding_id);
+        out.agenda=static_cast<colony_conflict::Agenda>(first_agenda);
+        Statement exists(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_governance_epochs'");
+        if(!exists.row())return out;
+        Statement epoch(db_,"SELECT event_id,prior_event,ordinal,leader,agenda,"
+            "policy,kind,world_generation FROM sg_colony_governance_epochs "
+            "WHERE colony=? AND world_generation<? "
+            "ORDER BY ordinal DESC LIMIT 1");
+        epoch.text(1,std::to_string(source));
+        epoch.i64(2,static_cast<sqlite3_int64>(decision_generation));
+        if(epoch.row()){
+            const auto event=sqlite3_column_int64(epoch.get(),0);
+            const auto prev=sqlite3_column_int64(epoch.get(),1);
+            const auto ordinal=sqlite3_column_int64(epoch.get(),2);
+            const auto leader=parse_u64(sqlite3_column_text(epoch.get(),3));
+            const auto agenda=sqlite3_column_int(epoch.get(),4);
+            const auto policy=sqlite3_column_int(epoch.get(),5);
+            const auto kind=sqlite3_column_int(epoch.get(),6);
+            const auto born=sqlite3_column_int64(epoch.get(),7);
+            if(event<1 || prev<0 || ordinal<1 || !leader ||
+               agenda<0 || agenda>3 || policy<0 || policy>2 ||
+               kind<0 || kind>2 || born<1 ||
+               static_cast<std::uint64_t>(born)>=decision_generation ||
+               epoch.row())
+                throw std::runtime_error("historical leadership epoch malformed");
+            out.event_id=static_cast<std::uint64_t>(event);
+            out.prior_event_id=static_cast<std::uint64_t>(prev);
+            out.ordinal=static_cast<std::uint64_t>(ordinal);
+            out.leader_id=leader;
+            out.agenda=static_cast<colony_conflict::Agenda>(agenda);
+            out.policy=static_cast<colony_conflict::DiplomaticPolicy>(policy);
+            out.kind=static_cast<colony_conflict::TransitionKind>(kind);
+        }
+        return out;
+    }
+    void validate_governance_handoff(const Simulation& world,
+        EntityId source,const colony_conflict::GovernanceEpoch& prior,
+        std::uint64_t successor,colony_conflict::Agenda agenda,
+        colony_conflict::DiplomaticPolicy policy,
+        colony_conflict::TransitionKind kind,PlayerId approving_owner) const{
+        const auto* entity=world.find(source);
+        if(!entity || entity->type!=EntityType::Ship ||
+           !world.colony_ship(source) || !entity->owner_id ||
+           entity->owner_id!=approving_owner ||
+           static_cast<int>(agenda)<0 || static_cast<int>(agenda)>3 ||
+           static_cast<int>(policy)<0 || static_cast<int>(policy)>2 ||
+           static_cast<int>(kind)<0 || static_cast<int>(kind)>2)
+            throw std::runtime_error("unauthorized or invalid colony constitutional handoff");
+        const auto next=world.npc_records().find(successor);
+        if(!successor || next==world.npc_records().end() ||
+           next->second.home_ship!=source ||
+           next->second.location!=source ||
+           next->second.transport_id ||
+           !world.npc_available_for_duty(successor))
+            throw std::runtime_error("successor not an available resident adult NPC");
+        const auto prior_person=world.npc_records().find(prior.leader_id);
+        const bool incumbent_present=prior_person!=world.npc_records().end() &&
+            prior_person->second.home_ship==source &&
+            prior_person->second.location==source &&
+            !prior_person->second.transport_id &&
+            world.npc_available_for_duty(prior.leader_id);
+        const bool replacement=successor!=prior.leader_id;
+        if((kind==colony_conflict::TransitionKind::Appointment &&
+            (!replacement || !incumbent_present)) ||
+           (kind==colony_conflict::TransitionKind::EmergencyVacancy &&
+            (!replacement || incumbent_present)) ||
+           (kind==colony_conflict::TransitionKind::PolicyRevision &&
+            (replacement || !incumbent_present ||
+             (agenda==prior.agenda && policy==prior.policy))))
+            throw std::runtime_error("succession cause does not match physical authority");
+    }
+    colony_conflict::GovernanceEpoch record_governance_transition(
+        const Simulation& world,std::uint64_t generation,
+        std::uint64_t event,EntityId source,std::uint64_t successor,
+        colony_conflict::Agenda agenda,colony_conflict::DiplomaticPolicy policy,
+        colony_conflict::TransitionKind kind,PlayerId approving_owner){
+        if(!event || event>static_cast<std::uint64_t>(
+             std::numeric_limits<sqlite3_int64>::max()))
+            throw std::invalid_argument("invalid durable governance event");
+        run(db_,"BEGIN IMMEDIATE");
+        try{
+            if(latest_generation(db_)!=generation)
+                throw std::runtime_error("stale generation for leadership succession");
+            const auto previous=effective_governance(source,generation);
+            validate_governance_handoff(
+                world,source,previous,successor,agenda,policy,kind,approving_owner);
+            run(db_,"CREATE TABLE IF NOT EXISTS sg_colony_governance_epochs("
+                "event_id INTEGER PRIMARY KEY CHECK(event_id>0),"
+                "world_generation INTEGER NOT NULL CHECK(world_generation>0),"
+                "world_hash TEXT NOT NULL,tick INTEGER NOT NULL,"
+                "colony TEXT NOT NULL,owner TEXT NOT NULL,"
+                "ordinal INTEGER NOT NULL CHECK(ordinal>0),"
+                "prior_event INTEGER NOT NULL CHECK(prior_event>=0),"
+                "prior_leader TEXT NOT NULL,"
+                "prior_agenda INTEGER NOT NULL CHECK(prior_agenda BETWEEN 0 AND 3),"
+                "prior_policy INTEGER NOT NULL CHECK(prior_policy BETWEEN 0 AND 2),"
+                "leader TEXT NOT NULL,"
+                "agenda INTEGER NOT NULL CHECK(agenda BETWEEN 0 AND 3),"
+                "policy INTEGER NOT NULL CHECK(policy BETWEEN 0 AND 2),"
+                "kind INTEGER NOT NULL CHECK(kind BETWEEN 0 AND 2),"
+                "UNIQUE(colony,ordinal),UNIQUE(colony,world_generation))");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_colony_governance_no_update "
+                "BEFORE UPDATE ON sg_colony_governance_epochs "
+                "BEGIN SELECT RAISE(ABORT,'immutable constitutional epoch'); END");
+            run(db_,"CREATE TRIGGER IF NOT EXISTS sg_colony_governance_no_delete "
+                "BEFORE DELETE ON sg_colony_governance_epochs "
+                "BEGIN SELECT RAISE(ABORT,'immutable constitutional epoch'); END");
+            Statement insert(db_,"INSERT INTO sg_colony_governance_epochs "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+            insert.i64(1,static_cast<sqlite3_int64>(event));
+            insert.i64(2,static_cast<sqlite3_int64>(generation));
+            insert.text(3,std::to_string(world.state_hash()));
+            insert.i64(4,static_cast<sqlite3_int64>(world.tick()));
+            insert.text(5,std::to_string(source));
+            insert.text(6,std::to_string(approving_owner));
+            insert.i64(7,static_cast<sqlite3_int64>(previous.ordinal+1));
+            insert.i64(8,static_cast<sqlite3_int64>(previous.event_id));
+            insert.text(9,std::to_string(previous.leader_id));
+            insert.i64(10,static_cast<int>(previous.agenda));
+            insert.i64(11,static_cast<int>(previous.policy));
+            insert.text(12,std::to_string(successor));
+            insert.i64(13,static_cast<int>(agenda));
+            insert.i64(14,static_cast<int>(policy));
+            insert.i64(15,static_cast<int>(kind));
+            insert.execute();
+            run(db_,"COMMIT");
+            colony_conflict::GovernanceEpoch out=previous;
+            out.prior_event_id=previous.event_id;
+            out.event_id=event;
+            ++out.ordinal;
+            out.leader_id=successor;
+            out.agenda=agenda;
+            out.policy=policy;
+            out.kind=kind;
+            return out; // published now, effective strictly next generation
+        }catch(...){
+            sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;
+        }
+    }
+    void verify_colony_governance(std::uint64_t max_generation) const{
+        Statement exists(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_colony_governance_epochs'");
+        if(!exists.row())return;
+        for(const auto* name:{"sg_colony_governance_no_update",
+                              "sg_colony_governance_no_delete"}){
+            Statement guard(db_,"SELECT 1 FROM sqlite_master "
+                "WHERE type='trigger' AND name=?");
+            guard.text(1,name);
+            if(!guard.row() || guard.row())
+                throw std::runtime_error("governance immutable guard absent");
+        }
+        Statement rows(db_,"SELECT event_id,world_generation,world_hash,tick,"
+            "colony,owner,ordinal,prior_event,prior_leader,prior_agenda,"
+            "prior_policy,leader,agenda,policy,kind "
+            "FROM sg_colony_governance_epochs "
+            "ORDER BY colony,ordinal");
+        std::map<EntityId,std::uint64_t> previous_generation;
+        while(rows.row()){
+            const auto id=sqlite3_column_int64(rows.get(),0);
+            const auto gen=sqlite3_column_int64(rows.get(),1);
+            const auto hash=sqlite_str(rows.get(),2);
+            const auto tick=sqlite3_column_int64(rows.get(),3);
+            const auto source=parse_u64(sqlite3_column_text(rows.get(),4));
+            const auto owner=parse_u64(sqlite3_column_text(rows.get(),5));
+            const auto ordinal=sqlite3_column_int64(rows.get(),6);
+            const auto previous_event=sqlite3_column_int64(rows.get(),7);
+            const auto previous_leader=parse_u64(sqlite3_column_text(rows.get(),8));
+            const auto previous_agenda=sqlite3_column_int(rows.get(),9);
+            const auto previous_policy=sqlite3_column_int(rows.get(),10);
+            const auto successor=parse_u64(sqlite3_column_text(rows.get(),11));
+            const auto agenda=sqlite3_column_int(rows.get(),12);
+            const auto policy=sqlite3_column_int(rows.get(),13);
+            const auto kind=sqlite3_column_int(rows.get(),14);
+            if(id<1 || gen<1 || static_cast<std::uint64_t>(gen)>max_generation ||
+               tick<0 || !source || !owner || ordinal<1 || previous_event<0 ||
+               !previous_leader || !successor ||
+               previous_agenda<0 || previous_agenda>3 ||
+               previous_policy<0 || previous_policy>2 ||
+               agenda<0 || agenda>3 || policy<0 || policy>2 ||
+               kind<0 || kind>2 ||
+               previous_generation[source]>=static_cast<std::uint64_t>(gen))
+                throw std::runtime_error("invalid dated leadership succession chronology");
+            Statement snap(db_,"SELECT state,checksum FROM snapshots "
+                "WHERE generation=?");
+            snap.i64(1,gen);
+            if(!snap.row())throw std::runtime_error("governance origin snapshot pruned");
+            const auto* bytes=sqlite3_column_blob(snap.get(),0);
+            const auto len=sqlite3_column_bytes(snap.get(),0);
+            if(!bytes || len<=0 || len>16*1024*1024)
+                throw std::runtime_error("governance origin snapshot malformed");
+            const auto original=Simulation::from_snapshot(std::string(
+                static_cast<const char*>(bytes),static_cast<std::size_t>(len)));
+            if(original.state_hash()!=parse_u64(sqlite3_column_text(snap.get(),1)) ||
+               std::to_string(original.state_hash())!=hash ||
+               original.tick()!=static_cast<std::uint64_t>(tick) || snap.row())
+                throw std::runtime_error("governance original world rewritten");
+            const auto previous=effective_governance(
+                source,static_cast<std::uint64_t>(gen));
+            if(previous.event_id!=static_cast<std::uint64_t>(previous_event) ||
+               previous.ordinal+1!=static_cast<std::uint64_t>(ordinal) ||
+               previous.leader_id!=previous_leader ||
+               static_cast<int>(previous.agenda)!=previous_agenda ||
+               static_cast<int>(previous.policy)!=previous_policy)
+                throw std::runtime_error("governance epoch ancestry forged");
+            validate_governance_handoff(
+                original,source,previous,successor,
+                static_cast<colony_conflict::Agenda>(agenda),
+                static_cast<colony_conflict::DiplomaticPolicy>(policy),
+                static_cast<colony_conflict::TransitionKind>(kind),owner);
+            previous_generation[source]=static_cast<std::uint64_t>(gen);
+        }
+    }
+
     colony_conflict::Decision assess_colony_aggression(
         const Simulation& world,std::uint64_t generation,
-        EntityId source,std::uint64_t contact_event_id) const{
+        EntityId source,std::uint64_t contact_event_id,
+        bool governed=false) const{
         if(!source || !contact_event_id || contact_event_id>
            static_cast<std::uint64_t>(std::numeric_limits<sqlite3_int64>::max()))
             throw std::invalid_argument("missing physical aggression provenance");
@@ -1767,10 +2005,16 @@ public:
             "sg_colony_conflict_agenda WHERE colony=?");
         agenda.text(1,std::to_string(source));
         if(!agenda.row())throw std::runtime_error("colony has no durable leadership agenda");
-        const auto leader=parse_u64(sqlite3_column_text(agenda.get(),1));
-        const int disposition=sqlite3_column_int(agenda.get(),2);
+        auto leader=parse_u64(sqlite3_column_text(agenda.get(),1));
+        int disposition=sqlite3_column_int(agenda.get(),2);
         if(!leader || disposition<0 || disposition>3 || agenda.row())
             throw std::runtime_error("invalid founding colony agenda");
+        colony_conflict::GovernanceEpoch epoch;
+        if(governed){
+            epoch=effective_governance(source,generation);
+            leader=epoch.leader_id;
+            disposition=static_cast<int>(epoch.agenda);
+        }
         Statement contact(db_,"SELECT world_generation,tick,source,observer,"
             "foreign_ship,foreign_owner,system,distance_squared "
             "FROM sg_colony_watch_contacts WHERE event_id=?");
@@ -1792,8 +2036,13 @@ public:
            seen.source!=source || seen.world_tick!=world.tick() ||
            !seen.foreign_ship || contact.row())
             throw std::runtime_error("stale/wrong-colony contact cannot motivate action");
-        return colony_conflict::evaluate(world,source,leader,
+        auto d=colony_conflict::evaluate(world,source,leader,
             static_cast<colony_conflict::Agenda>(disposition),seen,contact_event_id);
+        if(governed){
+            d.governance_event_id=epoch.event_id;
+            d.diplomatic_policy=epoch.policy;
+        }
+        return d;
     }
     colony_conflict::Decision record_colony_aggression(
         const Simulation& world,std::uint64_t generation,
@@ -1815,6 +2064,10 @@ public:
                 if(used.row())throw std::runtime_error(
                     "contact already consumed by a dated strategic intent");
             }
+            // After an epoch takes effect, the legacy founder-only API may
+            // not bypass the newly resident representative's political rules.
+            if(effective_governance(source,generation).event_id)
+                throw std::runtime_error("founder-only strategy retired after succession");
             const auto choice=assess_colony_aggression(world,generation,source,contact_id);
             Statement agenda(db_,"SELECT event_id FROM sg_colony_conflict_agenda "
                 "WHERE colony=?");
@@ -1988,15 +2241,13 @@ public:
         EntityId source,std::uint64_t knowledge_id) const{
         if(!source || !knowledge_id)throw std::invalid_argument(
             "colony interpretation requires real source and NPC knowledge");
-        Statement leadership(db_,"SELECT event_id,leader FROM "
-            "sg_colony_conflict_agenda WHERE colony=?");
-        leadership.text(1,std::to_string(source));
-        if(!leadership.row())throw std::runtime_error("colony has no founding leadership");
+        // A newly appointed leader can now receive and interpret genuine
+        // GRSM claims. Earlier revisions still re-evaluate under the founder
+        // when audited against their original generation.
+        const auto epoch=effective_governance(source,generation);
         GrievanceEvidence proof;
-        proof.agenda_event=static_cast<std::uint64_t>(
-            sqlite3_column_int64(leadership.get(),0));
-        proof.leader=parse_u64(sqlite3_column_text(leadership.get(),1));
-        if(leadership.row())throw std::runtime_error("duplicate founding leadership");
+        proof.agenda_event=epoch.event_id?epoch.event_id:epoch.founding_event_id;
+        proof.leader=epoch.leader_id;
         const auto* entity=present.find(source);
         const auto leader=present.npc_records().find(proof.leader);
         if(!entity || !present.colony_ship(source) || !entity->owner_id ||
@@ -2308,11 +2559,12 @@ public:
     colony_conflict::Decision assess_colony_diplomacy(
         const Simulation& world,std::uint64_t generation,
         EntityId source,std::uint64_t contact) const{
-        const auto base=assess_colony_aggression(world,generation,source,contact);
+        const auto base=assess_colony_aggression(
+            world,generation,source,contact,true);
         const auto opinion=relation_before_generation(
             source,base.target_owner,generation);
         return colony_conflict::evaluate_diplomatic(
-            base,opinion.new_score,opinion.event_id);
+            base,opinion.new_score,opinion.event_id,base.diplomatic_policy);
     }
     colony_conflict::Decision record_colony_diplomacy(
         const Simulation& world,std::uint64_t generation,
@@ -2334,13 +2586,13 @@ public:
                     "contact already consumed by original strategic intent");
             }
             const auto d=assess_colony_diplomacy(world,generation,source,contact);
-            Statement leader(db_,"SELECT event_id FROM sg_colony_conflict_agenda "
-                "WHERE colony=? AND leader=?");
-            leader.text(1,std::to_string(source));
-            leader.text(2,std::to_string(d.leader_id));
-            if(!leader.row())throw std::runtime_error("no original colony leader");
-            const auto agenda=sqlite3_column_int64(leader.get(),0);
-            if(leader.row())throw std::runtime_error("ambiguous original leader");
+            const auto govt=effective_governance(source,generation);
+            if(d.leader_id!=govt.leader_id ||
+               d.governance_event_id!=govt.event_id ||
+               d.agenda!=govt.agenda)
+                throw std::runtime_error("dated intent did not use active government");
+            const auto agenda=static_cast<sqlite3_int64>(
+                govt.event_id?govt.event_id:govt.founding_event_id);
             run(db_,"CREATE TABLE IF NOT EXISTS sg_colony_diplomatic_intent("
                 "event_id INTEGER PRIMARY KEY CHECK(event_id>0),"
                 "world_generation INTEGER NOT NULL CHECK(world_generation>0),"
@@ -2413,12 +2665,12 @@ public:
                tick<0 || !colony || !leader || agenda<1 || contact<1 ||
                !target || !owner || relation<0 || score< -100 || score>100)
                 throw std::runtime_error("malformed historical diplomatic intent");
-            Statement original(db_,"SELECT event_id FROM sg_colony_conflict_agenda "
-                "WHERE colony=? AND leader=?");
-            original.text(1,std::to_string(colony));original.text(2,std::to_string(leader));
-            if(!original.row() || sqlite3_column_int64(original.get(),0)!=agenda ||
-               original.row())
-                throw std::runtime_error("diplomatic decision forged leader");
+            const auto past=effective_governance(
+                colony,static_cast<std::uint64_t>(gen));
+            const auto original_agenda=static_cast<sqlite3_int64>(
+                past.event_id?past.event_id:past.founding_event_id);
+            if(past.leader_id!=leader || original_agenda!=agenda)
+                throw std::runtime_error("diplomatic decision forged former government");
             Statement old(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
                 "AND name='sg_colony_conflict_intent'");
             if(old.row()){
@@ -6179,6 +6431,9 @@ public:
             Statement dated_intents(db_,"SELECT 1 FROM sqlite_master "
                 "WHERE type='table' AND name='sg_colony_diplomatic_intent'");
             const bool has_dated_intents=dated_intents.row();
+            Statement governance_epochs(db_,"SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='sg_colony_governance_epochs'");
+            const bool has_governance_epochs=governance_epochs.row();
             const std::string prune_sql=std::string(
                 "DELETE FROM snapshots WHERE generation > 1 AND generation < ?")+
                 (incident_cases_exist ? " AND generation NOT IN "
@@ -6223,6 +6478,9 @@ public:
                     : "")+
                 (has_dated_intents ? " AND generation NOT IN "
                     "(SELECT world_generation FROM sg_colony_diplomatic_intent)"
+                    : "")+
+                (has_governance_epochs ? " AND generation NOT IN "
+                    "(SELECT world_generation FROM sg_colony_governance_epochs)"
                     : "")+
                 // Bind subjective diplomacy to BOTH the original physical
                 // incident and the later real NPC belief/decision generation.
@@ -7379,6 +7637,7 @@ void PersistentWorld::recover_copy(const std::string& source, const std::string&
         copy.verify_npc_habitat_supplies(gen);
         copy.verify_colony_watch_contacts(gen);
         copy.verify_colony_conflicts(gen);
+        copy.verify_colony_governance(gen);
         copy.verify_colony_relationships(gen);
         copy.verify_colony_diplomatic_intents(gen);
         verify_dependent_stranding_cases(destination,gen);
@@ -7419,6 +7678,7 @@ PersistentWorld::PersistentWorld(const std::string& path, Simulation initial_wor
     store_->verify_npc_habitat_supplies(generation_);
     store_->verify_colony_watch_contacts(generation_);
     store_->verify_colony_conflicts(generation_);
+    store_->verify_colony_governance(generation_);
     store_->verify_colony_relationships(generation_);
     store_->verify_colony_diplomatic_intents(generation_);
 }
@@ -8451,6 +8711,18 @@ PersistentWorld::colony_relationship(EntityId source,PlayerId owner) const{
     if(!source || !owner)
         throw std::invalid_argument("colony diplomacy needs source and foreign owner");
     return store_->latest_colony_relationship(source,owner);
+}
+
+colony_conflict::GovernanceEpoch PersistentWorld::record_colony_governance_transition(
+    std::uint64_t event,EntityId colony,std::uint64_t successor,
+    colony_conflict::Agenda agenda,colony_conflict::DiplomaticPolicy policy,
+    colony_conflict::TransitionKind kind,PlayerId approving_owner){
+    return store_->record_governance_transition(
+        world_,generation_,event,colony,successor,agenda,policy,kind,approving_owner);
+}
+colony_conflict::GovernanceEpoch PersistentWorld::colony_governance(
+    EntityId colony) const{
+    return store_->effective_governance(colony,generation_);
 }
 
 colony_conflict::Decision PersistentWorld::assess_colony_diplomatic_intent(

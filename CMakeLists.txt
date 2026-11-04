@@ -1048,3 +1048,12 @@ if(BUILD_TESTING)
     add_test(NAME galaxy_colony_conflict01b2_diplomacy_epoch
         COMMAND galaxy_colony_conflict01b2_diplomacy_epoch_tests)
 endif()
+
+# CONFLICT-01B3: physical NPC governance succession and historical intent replay.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_conflict01b3_governance_tests
+        tests/COLONY_CONFLICT01B3_GovernanceEpochTests.cpp)
+    target_link_libraries(galaxy_colony_conflict01b3_governance_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_conflict01b3_governance
+        COMMAND galaxy_colony_conflict01b3_governance_tests)
+endif()

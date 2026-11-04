@@ -20,13 +20,22 @@ Attitude attitude_for_score(int score){
     if(score>=15)return Attitude::Friendly;
     return Attitude::Neutral;
 }
-Decision evaluate_diplomatic(Decision d,int score,std::uint64_t event){
+Decision evaluate_diplomatic(Decision d,int score,std::uint64_t event,
+                           DiplomaticPolicy policy){
+    if(static_cast<int>(policy)<0 || static_cast<int>(policy)>2)
+        throw std::invalid_argument("unrecognized historical colony diplomacy policy");
+    d.diplomatic_policy=policy;
     d.relation_score=score;
     d.relation_event_id=event;
     const auto attitude=attitude_for_score(score);
     if(d.source_risk==colony_safety::Risk::Critical ||
        d.source_risk==colony_safety::Risk::Emergency)
         return d; // real habitat shortages take precedence over opinions
+    // Leaders can seek talks with an adversary without falsifying negative
+    // GRSM history. This is restraint, not a real treaty or absolution.
+    if(policy==DiplomaticPolicy::Reconciliatory &&
+       (attitude==Attitude::Hostile || attitude==Attitude::Wary) &&
+       d.posture==Posture::Observe)return d;
     if(attitude==Attitude::Allied){
         // Admiration suppresses *preparation*, not a binding treaty or
         // permanent disarmament. Actual actions still require separate gates.
@@ -38,6 +47,11 @@ Decision evaluate_diplomatic(Decision d,int score,std::uint64_t event){
         d.posture=Posture::Warn;
     }else if((attitude==Attitude::Hostile || attitude==Attitude::Wary) &&
              d.posture==Posture::Observe){
+        d.motive=Motive::Security;
+        d.posture=Posture::Warn;
+    }
+    if(policy==DiplomaticPolicy::SecurityFirst &&
+       d.posture==Posture::Observe && attitude!=Attitude::Allied){
         d.motive=Motive::Security;
         d.posture=Posture::Warn;
     }
