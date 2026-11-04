@@ -34,6 +34,20 @@ struct GovernanceEpoch {
     DiplomaticPolicy policy=DiplomaticPolicy::Pragmatic;
     TransitionKind kind=TransitionKind::Appointment;
 };
+// CONFLICT-01B4A: a real material crisis can generate a nonbinding,
+// independently reconstructed NPC political *petition*. Present adults are
+// verified participants in a caucus, NOT invented ballots or automatic votes.
+struct PoliticalPetition {
+    std::uint64_t event_id=0,world_generation=0,governance_event_id=0;
+    EntityId colony=0;
+    std::uint64_t incumbent_id=0,nominee_id=0;
+    Agenda incumbent_agenda=Agenda::Cooperative;
+    DiplomaticPolicy incumbent_policy=DiplomaticPolicy::Pragmatic;
+    colony_safety::Risk source_risk=colony_safety::Risk::Safe;
+    std::vector<std::uint64_t> present_caucus;
+    Agenda requested_agenda=Agenda::Cooperative;
+    DiplomaticPolicy requested_policy=DiplomaticPolicy::Pragmatic;
+};
 // CONFLICT-01B1: a colony's subjective attitude toward an identifiable
 // foreign owner; distinct from any criminal verdict or physical attack fact.
 enum class Attitude : int {
