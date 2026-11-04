@@ -226,8 +226,8 @@ bool SurveySensors::advance_refinement(PlayerId owner,std::uint32_t system,
         } else {
             // No teleportation: movement never exceeds a single scheduled
             // host-tick step. Minimum one millimetre of progress.
-            auto mx=std::int64_t(std::llround(double(max_step_mm)*dx/length));
-            auto my=std::int64_t(std::llround(double(max_step_mm)*dy/length));
+            auto mx=std::int64_t(std::copysign(std::floor(double(max_step_mm)*std::abs(dx)/length),dx));
+            auto my=std::int64_t(std::copysign(std::floor(double(max_step_mm)*std::abs(dy)/length),dy));
             if(mx==0&&my==0) {
                 if(std::abs(dx)>=std::abs(dy))mx=dx>0?1:-1;
                 else my=dy>0?1:-1;
