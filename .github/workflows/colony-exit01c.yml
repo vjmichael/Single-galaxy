@@ -1,0 +1,28 @@
+name: Colony EXIT-01C individual memory to physical migration
+on:
+  push:
+    branches:
+      - integration/colony-exit01c-personal-history-v88-20261103
+  pull_request:
+    paths:
+      - 'src/Persistence.cpp'
+      - 'include/galaxy/Persistence.hpp'
+      - 'include/galaxy/ColonyConflict.hpp'
+      - 'tests/COLONY_EXIT01B*'
+      - 'tests/COLONY_EXIT01C*'
+      - 'CMakeLists.txt'
+  workflow_dispatch:
+jobs:
+  personal-memories-physical-immigration-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SQLite
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+      - name: Build real personal, social and immigration regression suite
+        run: cmake --build build --target galaxy_colony_exit01c_personal_tests galaxy_colony_exit01b_immigration_tests galaxy_colony_exit01a_survival_tests v59_atomic_migration v59_household_migration galaxy_grsm03c3_relationship_tests galaxy_colony_conflict01b3_governance_tests -j 2
+      - name: Verify dated personal grievances and physical immigration
+        run: ctest --test-dir build --output-on-failure -R 'galaxy_colony_(exit01c_personal|exit01b_immigration|exit01a_survival|conflict01b3_governance)|v59_(atomic_migration|household_migration)|grsm03c3'
