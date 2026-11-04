@@ -2134,7 +2134,7 @@ public:
         const Simulation& world,std::uint64_t generation,
         std::uint64_t pressure_event,EntityId origin,EntityId destination,
         EntityId ferry,std::uint64_t npc,std::uint64_t transport_id,
-        PlayerId receiving_owner) const{
+        PlayerId receiving_owner,bool require_current_custody=false) const{
         if(!pressure_event || !origin || !destination || !ferry ||
            origin==destination || ferry==origin || ferry==destination ||
            !npc || !transport_id || !receiving_owner)
@@ -2155,7 +2155,7 @@ public:
            (carrier->owner_id!=source->owner_id &&
             carrier->owner_id!=receiving_owner) ||
            carrier->system_id!=source->system_id ||
-           !person || person==world.npc_records().end() ||
+           person==world.npc_records().end() ||
            person->second.home_ship!=origin ||
            person->second.location!=origin ||
            person->second.transport_id ||
@@ -2163,12 +2163,11 @@ public:
            person->second.role!=NpcRole::Ship ||
            !world.npc_available_for_duty(npc) ||
            world.named_medics().count(npc) || from->crew<=1 ||
-           to->crew>=1000 || world.voyage_status(transport_id)!=0 ||
-           !world.physical_dependents().empty() && false)
+           to->crew>=1000 || world.voyage_status(transport_id)!=0)
             throw std::runtime_error("immigration admission lacks eligible real person or receiving colony");
         // The current solo-adult entry gate is deliberately conservative:
         // family closure needs the existing two-parent/child migration path.
-        if(has_child_or_dependent_link(origin))
+        if(require_current_custody && has_child_or_dependent_link(origin))
             throw std::runtime_error("adult immigration must not bypass ART02 child custody");
         if(colony_safety::assess(world,destination,destination).risk!=
                colony_safety::Risk::Safe)
@@ -2216,7 +2215,7 @@ public:
                 throw std::runtime_error("stale world for immigrant admission");
             auto a=assess_voluntary_admission(
                 world,generation,pressure,origin,destination,ferry,npc,
-                transport,receiving_owner);
+                transport,receiving_owner,true);
             run(db_,"CREATE TABLE IF NOT EXISTS sg_colony_voluntary_immigration("
                 "event_id INTEGER PRIMARY KEY CHECK(event_id>0),"
                 "world_generation INTEGER NOT NULL CHECK(world_generation>0),"
@@ -2354,22 +2353,24 @@ public:
                effective_governance(origin,static_cast<std::uint64_t>(gen)).event_id!=
                    static_cast<std::uint64_t>(gov))
                 throw std::runtime_error("immigration consent or former government forged");
-            Statement migration(db_,"SELECT command_id,world_generation "
-                "FROM sg_society_migration WHERE npc_id=? AND transport_id=? "
-                "AND origin=? AND destination=?");
-            migration.text(1,std::to_string(npc));migration.text(2,std::to_string(transport));
-            migration.text(3,std::to_string(origin));migration.text(4,std::to_string(dest));
             bool moved=false;
             std::string command;
             std::uint64_t committed=0;
             // If not yet migrated, admission remains pending after a restart.
             Statement migrate_table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
                 "AND name='sg_society_migration'");
-            if(migrate_table.row() && migration.row()){
-                moved=true;command=sqlite_str(migration.get(),0);
-                committed=static_cast<std::uint64_t>(sqlite3_column_int64(migration.get(),1));
-                if(migration.row() || committed<=static_cast<std::uint64_t>(gen))
-                    throw std::runtime_error("migration time-traveled before acceptance");
+            if(migrate_table.row()){
+                Statement migration(db_,"SELECT command_id,world_generation "
+                    "FROM sg_society_migration WHERE npc_id=? AND transport_id=? "
+                    "AND origin=? AND destination=?");
+                migration.text(1,std::to_string(npc));migration.text(2,std::to_string(transport));
+                migration.text(3,std::to_string(origin));migration.text(4,std::to_string(dest));
+                if(migration.row()){
+                    moved=true;command=sqlite_str(migration.get(),0);
+                    committed=static_cast<std::uint64_t>(sqlite3_column_int64(migration.get(),1));
+                    if(migration.row() || committed<=static_cast<std::uint64_t>(gen))
+                        throw std::runtime_error("migration time-traveled before acceptance");
+                }
             }
             if(moved && !have_settled)
                 throw std::runtime_error("voluntary immigration lost settlement receipt");
