@@ -12,6 +12,8 @@ struct Dependent {
 };
 struct DeparturePlan {
     EntityId source=0, receiver=0;
+    // These are for durable host preparation, not the read-only audit.
+    std::uint64_t intent_id=0, expected_world_generation=0;
     std::string family_scope;
     std::uint64_t family_seed=0;
     std::vector<std::uint64_t> adult_ids;  // entire world population, sorted
