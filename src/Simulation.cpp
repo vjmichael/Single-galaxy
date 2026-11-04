@@ -4618,12 +4618,14 @@ bool Simulation::within_deep_probe_link(std::int64_t dx_mm,
            double(kDeepSpaceProbeCommsRangeMm);
 }
 std::vector<Simulation::SignatureHint> Simulation::coarse_probe_signatures(
-    PlayerId owner,EntityId ship) const {
+    PlayerId owner,EntityId ship,std::int64_t range_mm) const {
+    if(range_mm<5000000||range_mm>500000000)
+        throw std::invalid_argument("invalid signature survey radius");
     const auto carrier=entities_.find(ship);
     if(!owner||carrier==entities_.end()||carrier->second.type!=EntityType::Ship||
        carrier->second.owner_id!=owner)return {};
     constexpr std::int64_t q=25000; // 25 m bins; no secret exact coordinates
-    constexpr double radius=500000000.0; // 500 km coarse discovery envelope
+    const double radius=double(range_mm); // host-enforced discovery envelope
     std::vector<SignatureHint> result;
     for(const auto& [id,e]:entities_) {
         if(e.type!=EntityType::Asteroid||e.system_id!=carrier->second.system_id||
