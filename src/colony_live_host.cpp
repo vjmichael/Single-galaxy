@@ -106,11 +106,18 @@ std::vector<std::string> split(const std::string& s){
     return parts;
 }
 std::int64_t integer(const std::string& s){
-    if(s.empty()||s.size()>9||s[0]=='+' || s[0]=='-' && s.size()==1)
+    // Body IDs use the entire positive signed-64 range, not the old
+    // nine-digit parser limit. Every command still validates its own bounds.
+    if(s.empty()||s.size()>20||s[0]=='+'||
+       (s[0]=='-' && (s.size()==1||s[1]=='0'))||
+       (s.size()>1 && s[0]=='0'))
         throw std::invalid_argument("bad number");
     for(std::size_t i=s[0]=='-'?1:0;i<s.size();++i)
         if(s[i]<'0'||s[i]>'9')throw std::invalid_argument("bad number");
-    return std::stoll(s);
+    std::size_t consumed=0;
+    const auto value=std::stoll(s,&consumed,10);
+    if(consumed!=s.size())throw std::invalid_argument("bad number");
+    return value;
 }
 void announce(const Simulation& w,const std::string& text){
     std::cerr<<"COLONY|1|"<<w.tick()<<'|'<<text<<'\n'<<std::flush;
