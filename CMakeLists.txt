@@ -1183,3 +1183,12 @@ if(BUILD_TESTING)
   add_test(NAME galaxy_play13c_celestial_transition
     COMMAND galaxy_play13c_celestial_transition_tests)
 endif()
+
+# PLAY-13C.2B: persisted v71 per-ship frame custody, strict restore and recover-copy.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13c_durable_frames_tests
+    tests/PLAY13C_DurableShipFramesTests.cpp)
+  target_link_libraries(galaxy_play13c_durable_frames_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13c_durable_frames
+    COMMAND galaxy_play13c_durable_frames_tests)
+endif()
