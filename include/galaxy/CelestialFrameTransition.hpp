@@ -16,8 +16,8 @@ struct CelestialFrameTransition {
     LocalSpaceFrame destination_frame{};
     Vector2 arrival_position{};
     Vector2 arrival_velocity{};
-    // A transit receipt ID is mandatory; this is not itself a verified receipt.
-    std::uint64_t completed_transit_id=0;
+    // A nonzero request ID is mandatory; its presence is NOT completion proof.
+    std::uint64_t transit_request_id=0;
 };
 enum class FrameTransitionRejection {
     None, MissingTransit, InvalidActor, Unauthorized, WrongSystem,
@@ -29,13 +29,13 @@ struct FrameTransitionDecision {
     std::optional<CelestialFrameTransition> plan{};
 };
 
-// Host must supply a *verified*, single-use, completed-transit identifier.
-// This function intentionally cannot verify a transport journal; it prepares
-// a deterministic outcome only after the trusted caller has verified it.
+// Host supplies a request ID that must exist in the durable transit journal.
+// This pure geometry planner cannot establish departure or completion. The
+// PersistentWorld journal alone authorizes and commits a real arrival.
 inline FrameTransitionDecision plan_celestial_frame_arrival(
     const Simulation& world,PlayerId owner,EntityId ship_id,
-    std::uint64_t body_id,std::uint64_t verified_completed_transit_id) {
-    if(!verified_completed_transit_id)
+    std::uint64_t body_id,std::uint64_t transit_request_id) {
+    if(!verified_transit_request_id)
         return {FrameTransitionRejection::MissingTransit,{}};
     const auto* ship=world.find(ship_id);
     if(!ship || ship->type!=EntityType::Ship)
@@ -87,7 +87,7 @@ inline FrameTransitionDecision plan_celestial_frame_arrival(
     plan.destination_frame=frame;
     plan.arrival_position={0,0};
     plan.arrival_velocity={0,0};
-    plan.completed_transit_id=verified_completed_transit_id;
+    plan.transit_request_id=verified_transit_request_id;
     return {FrameTransitionRejection::None,plan};
 }
 } // namespace galaxy
