@@ -1,0 +1,30 @@
+name: PLAY-07 travel assist gameplay controls
+on:
+  push:
+    branches:
+      - integration/play07-travel-assist-20261104
+  pull_request:
+    paths:
+      - 'viewer/travel-assist.js'
+      - 'viewer/interactive.js'
+      - 'viewer/interactive.html'
+      - 'live/interactive_relay.py'
+      - 'tests/TravelAssistTests.js'
+      - 'tests/Play07WiringTests.js'
+      - '.github/workflows/play07.yml'
+jobs:
+  travel-assist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify travel assist and previous browser gameplay
+        run: node --test tests/TravelAssistTests.js tests/Play07WiringTests.js tests/FlightCameraTests.js tests/Play06WiringTests.js tests/ExpeditionFeedbackTests.js tests/ExpeditionWiringTests.js tests/CargoReturnTests.js tests/FlightControlsTests.js tests/OpeningGuideTests.js
+      - name: Parse live client and relay code
+        run: |
+          node --check viewer/travel-assist.js
+          node --check viewer/interactive.js
+          node --check viewer/colony.js
+          node --check viewer/viewer.js
+          node --check viewer/flight-camera.js
+          node --check viewer/expedition-feedback.js
+          python3 -m py_compile live/interactive_relay.py
