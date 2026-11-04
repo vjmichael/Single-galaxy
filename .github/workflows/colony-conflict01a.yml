@@ -1,0 +1,27 @@
+name: Colony CONFLICT-01A observed NPC offensive intent
+on:
+  push:
+    branches:
+      - integration/colony-conflict01a-aggressive-intent-v82-20261103
+  pull_request:
+    paths:
+      - 'src/ColonyConflict.cpp'
+      - 'include/galaxy/ColonyConflict.hpp'
+      - 'src/Persistence.cpp'
+      - 'tests/COLONY_CONFLICT01A_*'
+      - 'CMakeLists.txt'
+  workflow_dispatch:
+jobs:
+  emerging-colony-intent:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SQLite
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+      - name: Build NPC strategic intent and native local watch
+        run: cmake --build build --target galaxy_colony_conflict01a_aggressive_intent_tests galaxy_colony_defense01a_watch_tests -j 2
+      - name: Verify real colony agendas, foreign contacts and historical replay
+        run: ctest --test-dir build --output-on-failure -R 'galaxy_colony_(conflict01a_aggressive_intent|defense01a_local_watch)'

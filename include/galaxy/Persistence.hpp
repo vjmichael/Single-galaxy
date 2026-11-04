@@ -2,6 +2,7 @@
 #include "galaxy/Simulation.hpp"
 #include "galaxy/ColonySafety.hpp"
 #include "galaxy/ColonyDefense.hpp"
+#include "galaxy/ColonyConflict.hpp"
 #include "galaxy/ColonySafetyNotice.hpp"
 #include "galaxy/ColonyFamilyDeparture.hpp"
 #include <cstdint>
@@ -589,6 +590,18 @@ public:
     colony_defense::Contact record_colony_watch_contact(
         std::uint64_t event_id,EntityId colony_ship,std::uint64_t observer_npc,
         EntityId foreign_ship);
+    // CONFLICT-01A: real colony agendas are durable host-approved leadership
+    // decisions, NOT fake historical aggression attributed to other players.
+    // An expansionist/predatory colony may initiate a confrontation even
+    // when the player has done nothing wrong. Weapon fire is a later gate.
+    void establish_colony_conflict_agenda(std::uint64_t agenda_event_id,
+        EntityId source_colony,std::uint64_t leader_npc,
+        colony_conflict::Agenda agenda);
+    colony_conflict::Decision assess_colony_conflict_intent(
+        EntityId source_colony,std::uint64_t observed_contact_event_id) const;
+    colony_conflict::Decision record_colony_conflict_intent(
+        std::uint64_t decision_event_id,EntityId source_colony,
+        std::uint64_t observed_contact_event_id);
     // D2a: register ART02-authenticated, actually resident child into the
     // replayable world occupancy ledger. Separate from declaring evacuation.
     bool submit_host_dependent_registration(const Command& command,
