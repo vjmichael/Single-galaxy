@@ -31,7 +31,10 @@ inline GeographicSite survey_geographic_site(
     validate_planetary_envelope(key,envelope);
     if(key.galaxy_seed!=map.key.galaxy_seed ||
        key.system!=map.key.system || key.body!=map.key.body ||
-       key.generator_revision!=map.key.generator_revision)
+       key.generator_revision!=map.key.generator_revision ||
+       envelope.climate!=map.climate ||
+       envelope.water_coverage!=map.water_coverage ||
+       envelope.average_celsius!=map.average_celsius)
         throw std::invalid_argument("watershed world identity mismatch");
     const auto& source=map.at(latitude,longitude);
     const auto profile=derive_region_profile(key,envelope);
