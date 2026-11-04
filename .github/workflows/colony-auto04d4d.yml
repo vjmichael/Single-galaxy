@@ -3,11 +3,14 @@ on:
   push:
     branches:
       - integration/colony-auto04d4d-family-custody-v73-20261103
+      - integration/colony-auto04d4d2a-exec-fences-v74-20261103
   pull_request:
     paths:
       - 'src/ColonyFamilyDeparture.cpp'
       - 'include/galaxy/ColonyFamilyDeparture.hpp'
       - 'src/Persistence.cpp'
+      - 'src/RegionalCheckpointStore.cpp'
+      - 'include/galaxy/RegionalCheckpointStore.hpp'
       - 'tests/COLONY_AUTO04D4D_*'
       - 'CMakeLists.txt'
   workflow_dispatch:

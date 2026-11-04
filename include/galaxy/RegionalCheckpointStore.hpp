@@ -59,6 +59,14 @@ public:
         const std::string& origin,const std::string& destination,
         std::uint64_t origin_population,std::uint64_t destination_population,
         const std::string& command_id,std::uint64_t person_count=1) const;
+    // AUTO-04D.4D2A: read-only check within the canonical writer's active
+    // BEGIN IMMEDIATE. Uses the same regional owner/revision/population
+    // predicates as migration; grants NO right to move a dependent.
+    void verify_migration_fence_in_world_transaction(
+        sqlite3* active_world_db,std::uint64_t expected_revision,
+        std::uint64_t expected_owner_generation,std::uint64_t next_tick,
+        const std::string& origin,const std::string& destination,
+        std::uint64_t origin_population,std::uint64_t destination_population) const;
     // Host-only primitive: apply a purely in-memory operation and write the
     // region checkpoint AND immutable command receipt in the SAME SQLite txn.
     // Caller must have already authenticated/authorized request via host policy.

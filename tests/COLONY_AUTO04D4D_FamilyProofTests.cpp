@@ -1,5 +1,6 @@
 #include "galaxy/Persistence.hpp"
 #include "galaxy/NpcAppearanceGenome.hpp"
+#include "galaxy/RegionalModeAuthority.hpp"
 #include <sqlite3.h>
 #include <chrono>
 #include <filesystem>
@@ -103,6 +104,50 @@ try{
         }
         sqlite3_close(db);
         CHECK(host.prepare_host_colony_family_departure(plan));
+        // 04D.4D2A: the next atomic executor may ONLY use this frozen
+        // family manifest when the independently owned ECON03 region agrees.
+        namespace re=galaxy::regional_events;
+        re::CheckpointStore region(path,"family-execution-v74");
+        re::Scheduler scheduler;
+        cold_colony::State origin{};origin.population=3; // two adults + ART02 child
+        cold_colony::State receiving{};receiving.population=2;
+        scheduler.add_colony("origin",origin);
+        scheduler.add_colony("receiving",receiving);
+        CHECK(region.save(scheduler,0)==1);
+        re::RegionalModeAuthority ownership(region);
+        CHECK(ownership.enroll().generation==1);
+        colony_family::ExecutionFence fence{};
+        fence.region_scope="family-execution-v74";
+        fence.origin_colony="origin";
+        fence.destination_colony="receiving";
+        fence.expected_region_revision=1;
+        fence.expected_owner_generation=1;
+        fence.expected_origin_family_revision=1;
+        fence.expected_destination_family_revision=0;
+        CHECK(host.verify_prepared_colony_family_execution(plan,fence));
+        auto bad_fence=fence;bad_fence.expected_region_revision=2;
+        CHECK(!host.verify_prepared_colony_family_execution(plan,bad_fence));
+        bad_fence=fence;bad_fence.expected_owner_generation=2;
+        CHECK(!host.verify_prepared_colony_family_execution(plan,bad_fence));
+        bad_fence=fence;bad_fence.expected_origin_family_revision=0;
+        CHECK(!host.verify_prepared_colony_family_execution(plan,bad_fence));
+        bad_fence=fence;bad_fence.destination_colony="origin";
+        CHECK(!host.verify_prepared_colony_family_execution(plan,bad_fence));
+        auto unprepared=plan;unprepared.intent_id=50002;
+        CHECK(!host.verify_prepared_colony_family_execution(unprepared,fence));
+        // Prepared cold->detailed transition is a hard freeze, not a soft hint.
+        const auto promotion=ownership.prepare("family-heat-v74",
+            re::SimulationOwner::Detailed,1,1,0);
+        CHECK(promotion.phase==re::TransitionPhase::ToDetailed);
+        CHECK(!host.verify_prepared_colony_family_execution(plan,fence));
+        const auto thaw=ownership.abort("family-heat-v74",1);
+        CHECK(thaw.generation==2 && thaw.phase==re::TransitionPhase::Stable);
+        CHECK(!host.verify_prepared_colony_family_execution(plan,fence));
+        fence.expected_owner_generation=2;
+        CHECK(host.verify_prepared_colony_family_execution(plan,fence));
+        CHECK(region.load()->revision==1); // verification never mutates ECON03
+        CHECK(host.world().npc_records().size()==4);
+        CHECK(host.world().colony_departures().empty()); // admission is not a rescue
         CHECK(host.prepare_host_colony_family_departure(plan)); // identical retry
         auto reused=plan;reused.receiver=source;
         CHECK(!host.prepare_host_colony_family_departure(reused));

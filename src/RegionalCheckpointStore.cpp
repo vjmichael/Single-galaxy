@@ -412,6 +412,46 @@ std::uint64_t CheckpointStore::commit_birth_in_world_transaction(
     return expected_revision+1;
 }
 
+void CheckpointStore::verify_migration_fence_in_world_transaction(
+    sqlite3* active,std::uint64_t expected_revision,
+    std::uint64_t expected_owner_generation,std::uint64_t next_tick,
+    const std::string& origin,const std::string& destination,
+    std::uint64_t origin_pop,std::uint64_t destination_pop) const {
+    if(!active || sqlite3_get_autocommit(active)!=0 || active==db_ ||
+       !expected_revision || expected_revision>=max_sqlint ||
+       !expected_owner_generation || expected_owner_generation>max_sqlint ||
+       !next_tick || next_tick>max_sqlint ||
+       origin.empty() || destination.empty() || origin==destination ||
+       origin_pop==0 || origin_pop>max_records || destination_pop>max_records)
+        throw std::invalid_argument("family departure requires an active bounded regional fence");
+    const auto* a=sqlite3_db_filename(active,"main"),*b=sqlite3_db_filename(db_,"main");
+    if(!a || !b || std::string(a)!=b)
+        throw std::runtime_error("family departure cannot use a detached regional database");
+    reject_uncoordinated_factory(active,scope_);
+    Statement owner(active,"SELECT owner,phase,generation,checkpoint_revision FROM "
+        "sg_regional_mode_authority WHERE scope=?1");
+    owner.bind_text(1,scope_);
+    if(sqlite3_step(owner.stmt)!=SQLITE_ROW || sqlite3_column_int(owner.stmt,0)!=0 ||
+       sqlite3_column_int(owner.stmt,1)!=0 ||
+       sqlite3_column_int64(owner.stmt,2)!=static_cast<sqlite3_int64>(expected_owner_generation) ||
+       sqlite3_column_int64(owner.stmt,3)!=static_cast<sqlite3_int64>(expected_revision))
+        throw std::runtime_error("family departure requires stable cold-region ownership");
+    Statement old(active,"SELECT revision,payload FROM sg_regional_checkpoint WHERE scope=?1");
+    old.bind_text(1,scope_);
+    if(sqlite3_step(old.stmt)!=SQLITE_ROW ||
+       sqlite3_column_int64(old.stmt,0)!=static_cast<sqlite3_int64>(expected_revision))
+        throw std::runtime_error("family departure regional revision is stale");
+    const auto* blob=sqlite3_column_blob(old.stmt,1);
+    const int len=sqlite3_column_bytes(old.stmt,1);
+    if(!blob || len<16 || static_cast<std::size_t>(len)>max_bytes)
+        throw std::runtime_error("family departure has no valid regional checkpoint");
+    const auto s=decode(std::string(static_cast<const char*>(blob),static_cast<std::size_t>(len)));
+    if(s.pending_events()!=0 || s.tick()>=next_tick ||
+       s.colony(origin).population!=origin_pop ||
+       s.colony(destination).population!=destination_pop)
+        throw std::runtime_error("family departure regional headcounts, events or tick diverged");
+}
+
 std::uint64_t CheckpointStore::commit_migration_in_world_transaction(
     sqlite3* active,std::uint64_t expected_revision,std::uint64_t expected_owner_generation,
     std::uint64_t tick,const std::string& origin,const std::string& destination,

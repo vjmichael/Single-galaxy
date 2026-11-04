@@ -1259,6 +1259,71 @@ public:
             throw;
         }
     }
+    bool verify_prepared_family_execution(
+            const Simulation& world,std::uint64_t generation,
+            const colony_family::DeparturePlan& plan,
+            const colony_family::ExecutionFence& fence){
+        if(!plan.intent_id || !plan.expected_world_generation ||
+           plan.expected_world_generation!=generation ||
+           fence.region_scope.empty() || fence.origin_colony.empty() ||
+           fence.destination_colony.empty() ||
+           fence.origin_colony==fence.destination_colony ||
+           !fence.expected_region_revision || !fence.expected_owner_generation)
+            return false;
+        // Construct before acquiring the canonical world writer lock: the
+        // CheckpointStore constructor is allowed to initialize regional schema.
+        regional_events::CheckpointStore region(sqlite_path(),fence.region_scope);
+        std::string adults,children;
+        for(const auto id:plan.adult_ids){
+            if(!adults.empty())adults+=',';
+            adults+=std::to_string(id);
+        }
+        for(const auto& member:plan.children){
+            if(!children.empty())children+=',';
+            children+=std::to_string(member.child_id)+":"+
+                      std::to_string(member.guardian_id);
+        }
+        run(db_,"BEGIN IMMEDIATE");
+        try{
+            if(latest_generation(db_)!=generation ||
+               !colony_family::assess(world,db_,plan).ready_for_transaction)
+                throw std::runtime_error("family evidence changed after preparation");
+            Statement frozen(db_,"SELECT generation,world_hash,source,receiver,"
+                "family_scope,family_seed,adult_roster,child_guardians,status "
+                "FROM sg_colony_family_departure_prepare WHERE intent_id=?");
+            frozen.text(1,std::to_string(plan.intent_id));
+            if(!frozen.row() ||
+               sqlite3_column_int64(frozen.get(),0)!=static_cast<sqlite3_int64>(generation) ||
+               sqlite_str(frozen.get(),1)!=std::to_string(world.state_hash()) ||
+               sqlite_str(frozen.get(),2)!=std::to_string(plan.source) ||
+               sqlite_str(frozen.get(),3)!=std::to_string(plan.receiver) ||
+               sqlite_str(frozen.get(),4)!=plan.family_scope ||
+               sqlite_str(frozen.get(),5)!=std::to_string(plan.family_seed) ||
+               sqlite_str(frozen.get(),6)!=adults ||
+               sqlite_str(frozen.get(),7)!=children ||
+               sqlite3_column_int(frozen.get(),8)!=1 || frozen.row())
+                throw std::runtime_error("prepared immutable departure intent differs");
+            NpcAppearanceStore family(db_,plan.family_scope,plan.family_seed,
+                [&](std::uint64_t id){return world.npc_records().count(id)!=0;});
+            const auto src=family.family_census(plan.source);
+            const auto dest=family.family_census(plan.receiver);
+            if(src.revision!=fence.expected_origin_family_revision ||
+               dest.revision!=fence.expected_destination_family_revision ||
+               src.current_population!=plan.adult_ids.size()+plan.children.size() ||
+               dest.current_population!=world.people_physically_aboard(plan.receiver))
+                throw std::runtime_error("stale family census CAS before execution");
+            region.verify_migration_fence_in_world_transaction(
+                db_,fence.expected_region_revision,fence.expected_owner_generation,
+                world.tick()+1,fence.origin_colony,fence.destination_colony,
+                src.current_population,dest.current_population);
+            // This method has no world command or resource effect to commit.
+            run(db_,"ROLLBACK");
+            return true;
+        }catch(const std::exception&){
+            sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);
+            return false;
+        }
+    }
     bool has_dependent_table() const {
         Statement t(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
                         "AND name='sg_dependent_travel'");
@@ -5775,6 +5840,11 @@ colony_family::Audit PersistentWorld::audit_colony_family_departure(
 bool PersistentWorld::prepare_host_colony_family_departure(
         const colony_family::DeparturePlan& plan,FailPoint fail){
     return store_->prepare_colony_family_departure(world_,generation_,plan,fail);
+}
+bool PersistentWorld::verify_prepared_colony_family_execution(
+        const colony_family::DeparturePlan& plan,
+        const colony_family::ExecutionFence& fence) const {
+    return store_->verify_prepared_family_execution(world_,generation_,plan,fence);
 }
 bool PersistentWorld::submit_host_colony_departure(const Command& command,FailPoint fail){
     if(command.action!=Action::HostColonyDeparture ||
