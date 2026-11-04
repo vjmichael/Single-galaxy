@@ -9,6 +9,7 @@
 #include <vector>
 #include <cstddef>
 #include <functional>
+#include <optional>
 #include <sqlite3.h>
 
 namespace galaxy {
@@ -520,6 +521,36 @@ public:
     // decision witness. No family member moves until the existing v76
     // step_with_atomic_family_departure executes with decision.transfer.
     bool submit_autonomous_colony_rescue(const AutonomousRescueRequest& request,
+        FailPoint fail=FailPoint::None);
+    // AUTO-04D.5B: server scheduler entry point. It discovers a current
+    // local NPC warning opportunity and delivers the observation as a trusted
+    // host action, then selects and durably queues an authorized family plan.
+    // Routing and unique event IDs are supplied by the trusted region broker.
+    struct AutonomousSupervisorRoute {
+        EntityId source=0;
+        std::uint64_t family_seed=0,intent_id=0,command_id=0;
+        std::string family_scope,region_scope,origin_colony;
+        std::vector<AutonomousRescueDestination> destinations;
+        std::vector<std::uint64_t> member_event_ids;
+    };
+    enum class SupervisorStatus {
+        NoCurrentEmergency=0, NoLocalNpc=1, AwaitingPhysicalRescue=2,
+        RescueQueued=3, RescuePending=4, RescueCompleted=5
+    };
+    struct SupervisorTick {
+        SupervisorStatus status=SupervisorStatus::NoCurrentEmergency;
+        std::uint64_t leader_id=0,notice_id=0,command_id=0;
+        EntityId receiver=0;
+        std::string reason;
+    };
+    SupervisorTick supervise_autonomous_colony_emergency(
+        const AutonomousSupervisorRoute& route,FailPoint fail=FailPoint::None);
+    // Full immutable v79 transfer plan is published *atomically* with the
+    // accepted host command. A restart can independently load and execute it.
+    // An old v78 admission without this plan is intentionally not resumable.
+    std::optional<AtomicColonyFamilyPlan> pending_autonomous_family_rescue(
+        std::uint64_t command_id) const;
+    bool resume_autonomous_family_rescue(std::uint64_t command_id,
         FailPoint fail=FailPoint::None);
     // D2a: register ART02-authenticated, actually resident child into the
     // replayable world occupancy ledger. Separate from declaring evacuation.
