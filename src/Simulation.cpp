@@ -873,7 +873,7 @@ bool Simulation::can_depart_colony(const Command& c) const {
     if(c.action!=Action::HostColonyDeparture ||
        c.issuer!=kServerAuthority || snapshot_version_<57 ||
        !c.actor || !c.target || c.actor==c.target || !c.id ||
-       c.execute_tick!=tick_+1 || c.amount || c.transport_id ||
+       (c.execute_tick!=tick_+1 && c.execute_tick!=tick_) || c.amount || c.transport_id ||
        c.secondary_receiver || c.secondary_transport || c.thrust_x || c.thrust_y ||
        c.passenger_ids.empty() || c.passenger_ids.size()>16 ||
        !std::is_sorted(c.passenger_ids.begin(),c.passenger_ids.end()) ||
