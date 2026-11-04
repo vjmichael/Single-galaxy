@@ -832,6 +832,7 @@ public:
     void steps(std::uint64_t n);
     void configure_probe_report_tick_ms(std::uint64_t tick_ms);
     void ensure_physical_celestial_systems();
+    void ensure_ship_frame_registry();
     const Simulation& world() const noexcept { return world_; }
     std::int64_t resource_origin() const noexcept { return resource_origin_; }
     std::uint64_t generation() const noexcept { return generation_; }
