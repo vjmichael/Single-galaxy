@@ -454,9 +454,11 @@
        }));
      }
      if(e.type==='LOCAL_FRAME'){
-       window.GalaxyActiveCelestialBody=e.anchor;
-       q('signatureFeedback').textContent='Current local frame: '+
-         (e.anchor?'celestial body #'+e.anchor:'open-space legacy region')+'.';
+       if(window.GalaxyActiveCelestialBody!==e.anchor){
+         window.GalaxyActiveCelestialBody=e.anchor;
+         q('signatureFeedback').textContent='Current local frame: '+
+           (e.anchor?'celestial body #'+e.anchor:'open-space legacy region')+'.';
+       }
      }
      if(e.type==='FRAME_TRANSIT_STARTED')
        q('signatureFeedback').textContent='Transit #'+e.request+
