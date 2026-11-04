@@ -243,7 +243,7 @@
        guide.action==='colonyFabricate'?{amount:4}:{});
  });
  window.GalaxyColony={
-   reset(){window.GalaxyShipHeading=null;window.GalaxyColonyOutpostIds.clear();openingStatus=null;openingScanned=false;refreshOpening();window.GalaxyColonyHomeShipId=null;q('colonySafetyAssess').disabled=true;q('colonySafetyPreflight').disabled=true;policyAudits.clear();geology.clear();small.clear();stocks.clear();outposts.clear();farms.clear();habitats.clear();utilities.clear();communities.clear();clinics.clear();reclaimers.clear();waterworks.clear();log.length=0;q('colonyEvents').textContent='Awaiting colony telemetry…';},
+   reset(){window.GalaxyShipHeading=null;window.GalaxyColonyOutpostIds.clear();openingStatus=null;openingScanned=false;refreshOpening();window.GalaxyColonyHomeShipId=null;q('colonySafetyAssess').disabled=true;q('colonySafetyPreflight').disabled=true;policyAudits.clear();geology.clear();small.clear();stocks.clear();outposts.clear();farms.clear();habitats.clear();utilities.clear();communities.clear();clinics.clear();reclaimers.clear();waterworks.clear();log.length=0;q('colonyEvents').textContent='Awaiting colony telemetry…';q('expeditionOutcome').textContent='Awaiting an actual native result';},
    accept(raw){const e=window.GalaxyColonyContract.decode(raw);
      if(e.type==='HEADING'){
        window.GalaxyShipHeading=e.heading;
@@ -317,6 +317,12 @@
        log.push(msg);q('colonyEvents').textContent=log.slice(-5).reverse().join('\n');
      }
      else if(e.type==='RESULT'||e.type==='ERROR'||e.type==='SCAN_DONE'||e.type==='NEW_COLONY'||e.type==='RESUMED'){
+       if(e.type==='RESULT'){
+         const detail=window.GalaxyExpeditionFeedback?.diagnostic(e.outcome,e.transferred);
+         if(detail)q('expeditionOutcome').textContent='Command #'+e.id+': '+detail;
+       }else if(e.type==='ERROR'){
+         q('expeditionOutcome').textContent='Host refused command input: '+e.error;
+       }
        const msg=e.type==='RESULT'?`Command ${e.id}: ${e.outcome} (${e.transferred} t)`:
          e.type==='ERROR'?`Rejected ${e.error}`:e.type==='SCAN_DONE'?`Scan returned ${e.count} asteroids`:
          e.type==='RESUMED'?'Existing colony resumed':'New colony founded';
