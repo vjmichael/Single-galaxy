@@ -1192,3 +1192,13 @@ if(BUILD_TESTING)
   add_test(NAME galaxy_play13c_durable_frames
     COMMAND galaxy_play13c_durable_frames_tests)
 endif()
+
+# PLAY-13C.2C: actual authority-scoped ship frame migration with SQLite
+# durable pending/completed receipts, cross-frame isolation and restart.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13c_actual_transit_tests
+    tests/PLAY13C_ActualFrameTransitTests.cpp)
+  target_link_libraries(galaxy_play13c_actual_transit_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13c_actual_transit
+    COMMAND galaxy_play13c_actual_transit_tests)
+endif()
