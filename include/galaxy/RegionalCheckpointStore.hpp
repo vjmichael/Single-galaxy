@@ -58,7 +58,8 @@ public:
         std::uint64_t expected_owner_generation,std::uint64_t tick,
         const std::string& origin,const std::string& destination,
         std::uint64_t origin_population,std::uint64_t destination_population,
-        const std::string& command_id,std::uint64_t person_count=1) const;
+        const std::string& command_id,std::uint64_t person_count=1,
+        const std::string& receipt_actor="society-migration-host") const;
     // Host-only primitive: apply a purely in-memory operation and write the
     // region checkpoint AND immutable command receipt in the SAME SQLite txn.
     // Caller must have already authenticated/authorized request via host policy.

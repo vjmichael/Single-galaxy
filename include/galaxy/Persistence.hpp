@@ -467,6 +467,24 @@ public:
     bool prepare_host_colony_family_departure(
         const colony_family::DeparturePlan& plan,
         FailPoint fail=FailPoint::None);
+    // 04D.4D2B2: preparation and command admission never move a person.
+    // The dedicated execution commits world+ART02+ECON03 under ONE writer lock.
+    struct AtomicColonyFamilyPlan {
+        colony_family::DeparturePlan family;
+        std::uint64_t command_id=0;
+        std::uint64_t expected_region_revision=0, expected_owner_generation=0;
+        std::uint64_t expected_origin_family_revision=0, expected_receiver_family_revision=0;
+        std::string region_scope, origin_colony, receiver_colony;
+        // Unique immutable ART02 event IDs: one for every sorted adult, then
+        // one for every sorted physical dependent in family.children.
+        std::vector<std::uint64_t> member_event_ids;
+    };
+    bool submit_host_atomic_family_departure(const AtomicColonyFamilyPlan& plan,
+        FailPoint fail=FailPoint::None);
+    void step_with_atomic_family_departure(const AtomicColonyFamilyPlan& plan,
+        FailPoint fail=FailPoint::None);
+    // A completed receipt is not a prepared manifest or a narrative claim.
+    bool verified_atomic_family_departure(std::uint64_t command_id) const;
     // D2a: register ART02-authenticated, actually resident child into the
     // replayable world occupancy ledger. Separate from declaring evacuation.
     bool submit_host_dependent_registration(const Command& command,
