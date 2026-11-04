@@ -1,5 +1,8 @@
 // PLAY-13C.1 standalone C++ assertions (no modifications to legacy physics).
 #include "galaxy/CosmicLocalFrame.hpp"
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <cstdint>
 #include <limits>
