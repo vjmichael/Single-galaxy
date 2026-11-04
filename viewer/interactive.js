@@ -72,9 +72,42 @@ for(const [id,action] of [['colonySafetyAssess','colonySafetyAssess'],['colonySa
    if(!Number.isSafeInteger(site)||site<1){message('Waiting for verified ship telemetry');return;}
    command(action,{site});
  });
+// PLAY-03: optional pilot shortcuts and mouse controls. Native host handles physics.
+for(const [id,x,y] of [['flightLeft',-1,0],['flightRight',1,0],
+  ['flightUp',0,-1],['flightDown',0,1],['flightDrift',0,0]])
+ el(id).addEventListener('click',()=>command('thrust',{x,y}));
+el('flightScan').addEventListener('click',()=>command('colonyScan'));
+el('flightMine').addEventListener('click',()=>command('colonyMine',{amount:8}));
+el('flightMineSelected').addEventListener('click',()=>{
+ const id=Number(el('colonyRockTarget').value);
+ if(!Number.isSafeInteger(id)||id<=0){message('Scan and select a real asteroid first.');return;}
+ command('colonyMineTarget',{target:id,amount:8});
+});
+document.addEventListener('keydown',event=>{
+ if(!colonyMode||!token)return;
+ const active=document.activeElement;
+ const editable=!!active&&(active.isContentEditable||
+  ['INPUT','TEXTAREA','SELECT','BUTTON'].includes(active.tagName));
+ const mapped=window.GalaxyFlightControls?.flightInput(
+   event.key,editable,event.repeat,event.altKey,event.ctrlKey,event.metaKey);
+ if(!mapped)return;
+ event.preventDefault();
+ command(mapped.action,mapped.extra);
+});
 window.onGalaxyLiveProjection=function(state){
  const ship=[...state.entities.values()].find(e=>e.entityType===0&&e.owner===7);
  if(!ship)return;
+ const nearby=[...state.entities.values()].filter(e=>
+   e.entityType===1 && e.system===ship.system);
+ const sorted=nearby.map(rock=>({rock,range:window.GalaxyFlightControls?.rockRange(ship,rock)}))
+   .filter(item=>item.range!==null).sort((a,b)=>a.range-b.range);
+ const first=sorted[0];
+ const speed=Math.hypot(ship.vx||0,ship.vy||0);
+ el('flightTelemetry').textContent=
+   'Position '+ship.x.toLocaleString()+', '+ship.y.toLocaleString()+
+   ' · speed '+speed.toFixed(0)+' mm/tick'+
+   (first?' · nearest visible asteroid #'+first.rock.id+
+      ' at '+first.range.toFixed(0)+' mm':' · no asteroid currently visible');
  const docking=state.docks.get(ship.id)?.state||0;
  el('undock').disabled=docking!==1;
  // Leave Dock enabled in open space, even when distant/moving, so authoritative
