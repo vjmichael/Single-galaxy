@@ -5703,7 +5703,15 @@ std::string Simulation::canonical_state() const {
                 site.owner<<'|'<<site.source_ship<<'|'<<site.embodied_ore<<'|'<<
                 unsigned(site.farm)<<'|'<<unsigned(site.extractor)<<'|'<<
                 site.water_kg<<'|'<<site.nutrients_kg<<'|'<<site.food_kg<<'|'<<
-                site.wastewater_kg<<'|'<<site.harvest_cycles<<'\n';
+                site.wastewater_kg<<'|'<<site.harvest_cycles;
+            if(snapshot_version_>=78)
+                out<<'|'<<unsigned(site.spaceport_phase)<<'|'<<
+                    site.construction_progress<<'|'<<site.construction_required<<'|'<<
+                    site.surface_location<<'|'<<site.delegated_npcs[0]<<'|'<<
+                    site.delegated_npcs[1]<<'|'<<site.assigned_workers<<'|'<<
+                    site.oxygen_kg<<'|'<<site.co2_kg<<'|'<<site.organic_waste_kg<<'|'<<
+                    site.worker_support_cycles;
+            out<<'\n';
         }
     if(snapshot_version_>=76)
         for(const auto& [ship,r]:oasis_extractors_)
@@ -7957,6 +7965,17 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                   result.farms_.at(n.assigned_site).source_ship!=n.home_ship)) ||
                 (n.role==NpcRole::Habitat && (!result.habitats_.count(n.assigned_site) ||
                   result.habitats_.at(n.assigned_site).source_ship!=n.home_ship)) ||
+                (n.role==NpcRole::PlanetarySurface && ![&](){
+                    if(result.snapshot_version_<78)return false;
+                    for(const auto& [key,facility]:result.planetary_sites_){
+                        (void)key;
+                        if(facility.surface_location==n.assigned_site &&
+                           facility.source_ship==n.home_ship &&
+                           (facility.delegated_npcs[0]==id ||
+                            facility.delegated_npcs[1]==id))return true;
+                    }
+                    return false;
+                }()) ||
                 (!n.transport_id && n.location!=n.assigned_site &&
                  ![&](){for(const auto& [voyage_id,v]:result.voyages_){(void)voyage_id;
                      if((v.status==2 || v.status==5) && v.destination==n.location &&
@@ -7985,6 +8004,16 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
         for(const auto& [id,h]:result.habitats_)
             if(counts[{id,static_cast<int>(NpcRole::Habitat)}]!=h.residents)
                 throw std::runtime_error("snapshot: habitat NPC count mismatch");
+        if(result.snapshot_version_>=78)for(const auto& [key,facility]:result.planetary_sites_){
+            (void)key;
+            if(facility.delegated_npcs[0]) {
+                if(counts[{facility.surface_location,
+                           static_cast<int>(NpcRole::PlanetarySurface)}]!=
+                           facility.assigned_workers)
+                    throw std::runtime_error("snapshot: planetary NPC count mismatch");
+            } else if(!result.npcs_.empty() && facility.assigned_workers)
+                throw std::runtime_error("snapshot: named planetary NPC missing");
+        }
     }
     if(result.snapshot_version_>=59)for(const auto& [id,d]:result.physical_dependents_){
         const auto g=result.npcs_.find(d.guardian_id);
@@ -8119,13 +8148,23 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                !site.owner || !site.source_ship ||
                (source_ship && source_ship->owner_id!=site.owner))
                 throw std::runtime_error("snapshot: orphan planetary facility");
-            if(!site.farm && (site.food_kg>0 || site.harvest_cycles>0))
+            if(!site.farm && site.harvest_cycles>0)
                 throw std::runtime_error("snapshot: unbuilt farm produced food");
             if(site.embodied_ore!=4+4*(std::int64_t(site.farm)+
                                         std::int64_t(site.extractor)))
                 throw std::runtime_error("snapshot: invalid regional module custody");
             if(site.extractor && !result.oasis_reserves_.count(site.region.body))
                 throw std::runtime_error("snapshot: extractor has no physical source");
+            if(result.snapshot_version_>=78) {
+                if(site.surface_location!=surface_custody_id(key) ||
+                   !site.assigned_workers || site.assigned_workers!=2 ||
+                   site.spaceport_phase<1 || site.spaceport_phase>3 ||
+                   site.construction_required!=40 ||
+                   site.construction_progress>40 ||
+                   (site.spaceport_phase==3 && site.construction_progress!=40) ||
+                   (site.spaceport_phase!=3 && (site.farm || site.extractor)))
+                    throw std::runtime_error("snapshot: invalid surface port custody");
+            }
         }
     }
     if(result.snapshot_version_>=76) {
