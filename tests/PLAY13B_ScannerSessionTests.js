@@ -108,3 +108,11 @@ test('celestial and environmental modes route only to native survey endpoints',(
  assert.ok(host.includes('scan_celestial_profile(principal,ship)'));
  assert.ok(host.includes('scan_environment(principal,ship)'));
 });
+
+test('private celestial survey history uses strict provenance fields',()=>{
+ const {decode}=require('../viewer/colony.js');
+ assert.deepEqual(decode('COLONY|1|15|CELESTIAL_HISTORY|4|12'),
+   {tick:15,type:'CELESTIAL_HISTORY',first:4,last:12});
+ assert.throws(()=>decode('COLONY|1|15|CELESTIAL_HISTORY|20|10'));
+ assert.throws(()=>decode('COLONY|1|15|CELESTIAL_HISTORY|0|10'));
+});

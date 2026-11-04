@@ -406,8 +406,15 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
         const auto profile=world.world().scan_celestial_profile(principal,ship);
         if(!profile){announce(world.world(),"ERROR|INVALID_INPUT");return;}
         if(knowledge)try {
-            knowledge->record_system_catalogue(principal,world.world().system_id(),
-                world.world().tick()+1,*profile);
+            const auto* carrier=world.world().find(ship);
+            const auto system=carrier?carrier->system_id:0;
+            if(!system)throw std::runtime_error("missing active survey system");
+            knowledge->record_system_catalogue(principal,system,world.world().tick()+1,*profile);
+            const auto history=knowledge->known_system_catalogue(principal,system);
+            if(history)
+                announce(world.world(),"CELESTIAL_HISTORY|"+
+                    std::to_string(history->first_tick)+"|"+
+                    std::to_string(history->last_tick));
         }catch(const std::exception& ex){
             std::cerr<<"PLAY13B_CATALOGUE_WRITE_ERROR "<<ex.what()<<'\n';
         }

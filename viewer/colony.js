@@ -22,6 +22,12 @@
       if(!ordinal||!radius)throw Error('Invalid orbital band');
       return {...e,ordinal,radius,eccentricity,zone};
     }
+    if(t==='CELESTIAL_HISTORY'){
+      if(v.length!==6)throw Error('Malformed celestial survey history');
+      const first=numeric(v[4],1201),last=numeric(v[5],1201);
+      if(!first||last<first)throw Error('Invalid celestial survey history');
+      return {...e,first,last};
+    }
     if(t==='CELESTIAL_DONE'){
       if(v.length!==5)throw Error('Malformed orbital catalogue count');
       return {...e,count:numeric(v[4],9)};
@@ -387,6 +393,9 @@
      q('signatureFeedback').textContent='Search for coarse anomaly signatures.';
      q('droneTarget').replaceChildren(new Option('Scan nearby rocks first',''));q('droneLaunch').disabled=true;deployedProbes.clear();probeCarried=0;probeLauncher=false;probeChoice='';q('probeTarget').replaceChildren(new Option('No probe deployed',''));q('probeLaunch').disabled=true;q('probeSurvey').disabled=true;q('probeRetrieve').disabled=true;q('probeInventory').textContent='Awaiting native probe stock.';q('probeFeedback').textContent='Native equipment required.';q('fittingCapacity').textContent='Awaiting actual ship fittings.';q('proximityStatus').textContent='Proximity safety sensor awaiting contacts.';q('fitScanner').disabled=true;q('unfitScanner').disabled=true;discoveries.clear();q('explorationResults').replaceChildren();q('explorationSummary').textContent='No mapped discoveries yet. Execute a native local scan.';salvageWrecks.clear();q('salvageTarget').replaceChildren(new Option('No recoverable wreck reported',''));q('salvageRecover').disabled=true;q('salvageFeedback').textContent='Waiting for native wreck inventory.';combatTargets.clear();q('combatHull').textContent='—';q('combatCharges').textContent='—';q('combatFire').disabled=true;q('combatFeedback').textContent='Awaiting native combat telemetry.';window.GalaxySelectedRockId=null;window.GalaxyShipHeading=null;window.GalaxyColonyOutpostIds.clear();openingStatus=null;openingScanned=false;refreshOpening();window.GalaxyColonyHomeShipId=null;q('colonySafetyAssess').disabled=true;q('colonySafetyPreflight').disabled=true;policyAudits.clear();geology.clear();small.clear();stocks.clear();outposts.clear();farms.clear();habitats.clear();utilities.clear();communities.clear();clinics.clear();reclaimers.clear();waterworks.clear();log.length=0;q('colonyEvents').textContent='Awaiting colony telemetry…';q('expeditionOutcome').textContent='Awaiting an actual native result';},
    accept(raw){const e=window.GalaxyColonyContract.decode(raw);
+     if(e.type==='CELESTIAL_HISTORY')
+       q('signatureFeedback').textContent='Previously surveyed on tick '+e.first+
+         ' (most recent survey tick '+e.last+'). ';
      if(e.type==='CELESTIAL_HEADER'){
        const names=['Single star','Wide binary','Circumbinary','Hierarchical triple'];
        q('signatureFeedback').textContent=
