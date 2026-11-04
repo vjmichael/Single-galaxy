@@ -142,6 +142,15 @@ try{
         const auto pending=reopened.pending_autonomous_family_rescue(route.command_id);
         CHECK(pending.has_value());
         CHECK(pending->family.receiver==near);
+        // A supervisor polling another source/region must never seize this
+        // family's in-flight command just because the SQL queue is global.
+        auto wrong_colony=route;
+        wrong_colony.source=far;
+        const auto fenced=reopened.supervise_autonomous_colony_emergency(wrong_colony);
+        CHECK(fenced.status==PersistentWorld::SupervisorStatus::RescuePending);
+        CHECK(fenced.command_id==route.command_id);
+        CHECK(reopened.world().children_physically_aboard(source)==1);
+        CHECK(reopened.pending_autonomous_family_rescue(route.command_id).has_value());
         bool crashed=false;
         try{(void)reopened.resume_next_pending_autonomous_rescue(
             FailPoint::AfterSnapshotWrite);}
