@@ -124,8 +124,23 @@ try{
         // A real child is never a fabricated world NPC or a free rescue action.
         CHECK(host.world().npc_records().size()==4);
         CHECK(host.world().colony_departures().empty());
-        // Corrupt the independent bridge: ART02 birth alone cannot authorize a move.
+        // Even a child linked to ANOTHER family scope at this colony must
+        // block all-family claims rather than be silently abandoned.
         CHECK(sqlite3_open(path.c_str(),&db)==SQLITE_OK);
+        const std::string unlisted="INSERT INTO sg_med_society_birth VALUES "
+          "('911',1,1,'other-family','region-73',1,1,'"+std::to_string(source)+
+          "','origin','"+std::to_string(child+1)+"','1','2',1)";
+        sql(db,unlisted);
+        sqlite3_close(db);
+        CHECK(!host.audit_colony_family_departure(plan).ready_for_transaction);
+        CHECK(sqlite3_open(path.c_str(),&db)==SQLITE_OK);
+        sql(db,"DELETE FROM sg_med_society_birth WHERE event_id='911'");
+        // Preparation evidence is immutable even if somebody has a raw DB handle.
+        bool protected_row=false;
+        try{sql(db,"DELETE FROM sg_colony_family_departure_prepare");}
+        catch(const std::runtime_error&){protected_row=true;}
+        CHECK(protected_row);
+        // Corrupt the independent bridge: ART02 birth alone cannot authorize a move.
         sql(db,"DELETE FROM sg_med_society_birth WHERE event_id='910'");
         sqlite3_close(db);
         const auto mismatch=host.audit_colony_family_departure(plan);
