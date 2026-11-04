@@ -4641,7 +4641,10 @@ CosmicPosition celestial_point(std::uint64_t radius_mm,std::uint64_t selector){
         default:dx=diag;dy=-diag;break;
     }
     const auto radius=static_cast<std::int64_t>(radius_mm);
-    return {radius*dx/scale,radius*dy/scale};
+    const auto component=[&](std::int64_t direction){
+        return (radius/scale)*direction+((radius%scale)*direction)/scale;
+    };
+    return {component(dx),component(dy)};
 }
 std::vector<PhysicalCelestialBody> physical_bodies_for_system(std::uint32_t system){
     const auto profile=generate_astronomical_profile(kAstronomicalGalaxySeed,system);
