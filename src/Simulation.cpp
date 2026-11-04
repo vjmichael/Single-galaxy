@@ -6109,6 +6109,41 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             if(counts[{id,static_cast<int>(NpcRole::Habitat)}]!=h.residents)
                 throw std::runtime_error("snapshot: habitat NPC count mismatch");
     }
+    // Validate the immutable full-roster handoff against the final physical
+    // simulation, not just against a promising event label.
+    if(result.snapshot_version_>=58)for(const auto& [ship_id,d]:result.colony_departures_){
+        const auto from=result.colony_ships_.find(ship_id);
+        const auto to=result.colony_ships_.find(d.receiver);
+        if(from==result.colony_ships_.end()||to==result.colony_ships_.end()||
+           from->second.crew!=0||to->second.crew<static_cast<std::int64_t>(d.relocated_npcs.size())||
+           !result.entities_.count(ship_id) ||
+           result.entities_.at(ship_id).type!=EntityType::Ship ||
+           !result.entities_.count(d.receiver) ||
+           result.entities_.at(d.receiver).type!=EntityType::Ship)
+            throw std::runtime_error("snapshot: invalid evacuated intact colony hull");
+        for(const auto& [id,n]:result.npcs_)
+            if(n.home_ship==ship_id)
+                throw std::runtime_error("snapshot: colony still owns living people after departure");
+        for(const auto& [site,fr]:result.farms_)
+            if(fr.source_ship==ship_id && fr.workers)
+                throw std::runtime_error("snapshot: stranded farming workforce");
+        for(const auto& [site,ha]:result.habitats_)
+            if(ha.source_ship==ship_id && ha.residents)
+                throw std::runtime_error("snapshot: stranded resident workforce");
+        for(auto id:d.relocated_npcs){
+            const auto n=result.npcs_.find(id);
+            if(n==result.npcs_.end() || n->second.home_ship!=d.receiver ||
+               n->second.location!=d.receiver || n->second.assigned_site!=d.receiver ||
+               n->second.role!=NpcRole::Ship || n->second.transport_id)
+                throw std::runtime_error("snapshot: departed person not under receiving crew custody");
+        }
+        const auto receipt=std::find_if(result.events_.begin(),result.events_.end(),
+            [&](const Event& e){return e.command_id==d.command_id &&
+                e.tick==d.tick && e.result==Outcome::Applied &&
+                e.transferred==static_cast<std::int64_t>(d.relocated_npcs.size());});
+        if(receipt==result.events_.end())
+            throw std::runtime_error("snapshot: departed colony lacks applied world event");
+    }
     for(const auto& [ship_id,c]:result.colony_ships_){
         std::int64_t crew=c.crew;
         for(const auto& [id,f]:result.farms_){(void)id;
