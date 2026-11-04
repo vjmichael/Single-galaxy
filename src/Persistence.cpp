@@ -2532,10 +2532,12 @@ public:
         {Statement cols(db_,"PRAGMA table_info(sg_colony_voluntary_immigration)");
          while(cols.row())if(sqlite_str(cols.get(),1)=="personal_intent_event")
              has_intent=true;}
-        Statement q(db_,std::string("SELECT world_generation,pressure_event,origin,")+
+        const std::string read_sql=std::string(
+            "SELECT world_generation,pressure_event,origin,")+
             "destination,ferry,npc,transport,original_owner,receiving_owner,"+
-            (has_intent?"personal_intent_event":"0")+" "
-            "FROM sg_colony_voluntary_immigration WHERE event_id=?");
+            (has_intent?"personal_intent_event":"0")+
+            " FROM sg_colony_voluntary_immigration WHERE event_id=?";
+        Statement q(db_,read_sql.c_str());
         q.i64(1,static_cast<sqlite3_int64>(event));
         if(!q.row())throw std::runtime_error("unknown immigrant admission");
         PersistentWorld::VoluntaryImmigrationAdmission a;
@@ -2592,11 +2594,13 @@ public:
         {Statement cols(db_,"PRAGMA table_info(sg_colony_voluntary_immigration)");
          while(cols.row())if(sqlite_str(cols.get(),1)=="personal_intent_event")
              has_intent=true;}
-        Statement rows(db_,std::string("SELECT event_id,world_generation,world_hash,tick,")+
+        const std::string verify_sql=std::string(
+            "SELECT event_id,world_generation,world_hash,tick,")+
             "pressure_event,origin,destination,ferry,npc,transport,"+
             "original_owner,receiving_owner,governance_event,"+
             (has_intent?"personal_intent_event":"0")+
-            " FROM sg_colony_voluntary_immigration");
+            " FROM sg_colony_voluntary_immigration";
+        Statement rows(db_,verify_sql.c_str());
         while(rows.row()){
             const auto id=sqlite3_column_int64(rows.get(),0);
             const auto gen=sqlite3_column_int64(rows.get(),1);
