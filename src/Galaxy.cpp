@@ -167,6 +167,24 @@ std::vector<ScanObservation> SurveySensors::probe_scan(PlayerId owner,std::uint3
     }
     return found;
 }
+std::vector<ScanObservation> SurveySensors::scan_mode(PlayerId owner,std::uint32_t system,
+    std::uint64_t tick,std::int64_t radius_mm,int sensor_strength,ScanMode mode) const {
+    // Classification is evaluated on genuine native probe readings. This
+    // prototype cannot conjure hidden information from client-selected pixels.
+    const auto observations=probe_scan(owner,system,tick,radius_mm,sensor_strength);
+    std::vector<ScanObservation> selected;
+    for(const auto& o:observations) {
+        const bool environmental=o.kind==SiteKind::GasCloud;
+        const bool celestial=o.kind==SiteKind::Star||o.kind==SiteKind::Planet||
+            o.kind==SiteKind::Moon||o.kind==SiteKind::AsteroidDeposit;
+        const bool anomaly=o.kind==SiteKind::Anomaly||o.kind==SiteKind::Wormhole||
+            o.kind==SiteKind::Structure;
+        if((mode==ScanMode::Environmental&&environmental)||
+           (mode==ScanMode::Celestial&&celestial)||
+           (mode==ScanMode::Anomaly&&anomaly))selected.push_back(o);
+    }
+    return selected;
+}
 SurveyArchive::SurveyArchive(const std::string& path) {
     if(sqlite3_open_v2(path.c_str(),&db_,SQLITE_OPEN_READWRITE|SQLITE_OPEN_CREATE|SQLITE_OPEN_FULLMUTEX,nullptr)!=SQLITE_OK) {
         std::string err=db_?sqlite3_errmsg(db_):"opening SQLite failed";
@@ -284,4 +302,41 @@ std::vector<SurveyArchive::PublicRecord> SurveyArchive::published(std::uint32_t 
     }
     return out;
 }
+std::optional<ScanObservation> SurveyArchive::known_site(PlayerId owner,
+    std::uint32_t system,std::uint64_t site) const {
+    if(!owner||!system||!site||
+       owner>std::uint64_t(std::numeric_limits<std::int64_t>::max())||
+       site>std::uint64_t(std::numeric_limits<std::int64_t>::max()))
+        throw std::invalid_argument("invalid known-site selector");
+    Stmt stmt(db_,"SELECT kind,x,y,tick,confidence,published FROM observations "
+        "WHERE player=? AND system=? AND site=?");
+    sqlite3_bind_int64(stmt.get(),1,sqlite3_int64(owner));
+    sqlite3_bind_int(stmt.get(),2,int(system));
+    sqlite3_bind_int64(stmt.get(),3,sqlite3_int64(site));
+    if(stmt.step()!=SQLITE_ROW)return std::nullopt;
+    return ScanObservation{owner,system,site,SiteKind(sqlite3_column_int(stmt.get(),0)),
+        {sqlite3_column_int64(stmt.get(),1),sqlite3_column_int64(stmt.get(),2)},
+        std::uint64_t(sqlite3_column_int64(stmt.get(),3)),
+        sqlite3_column_int(stmt.get(),4),sqlite3_column_int(stmt.get(),5)!=0};
+}
+std::vector<ScanObservation> SurveyArchive::known_sites(PlayerId owner,
+    std::uint32_t system,int minimum_confidence) const {
+    if(!owner||!system||owner>std::uint64_t(std::numeric_limits<std::int64_t>::max())||
+       minimum_confidence<1||minimum_confidence>100)
+        throw std::invalid_argument("invalid known-sites selector");
+    Stmt stmt(db_,"SELECT site,kind,x,y,tick,confidence,published FROM observations "
+        "WHERE player=? AND system=? AND confidence>=? ORDER BY site");
+    sqlite3_bind_int64(stmt.get(),1,sqlite3_int64(owner));
+    sqlite3_bind_int(stmt.get(),2,int(system));
+    sqlite3_bind_int(stmt.get(),3,minimum_confidence);
+    std::vector<ScanObservation> result;
+    while(stmt.step()==SQLITE_ROW)
+        result.push_back({owner,system,std::uint64_t(sqlite3_column_int64(stmt.get(),0)),
+            SiteKind(sqlite3_column_int(stmt.get(),1)),
+            {sqlite3_column_int64(stmt.get(),2),sqlite3_column_int64(stmt.get(),3)},
+            std::uint64_t(sqlite3_column_int64(stmt.get(),4)),
+            sqlite3_column_int(stmt.get(),5),sqlite3_column_int(stmt.get(),6)!=0});
+    return result;
+}
+
 } // namespace galaxy
