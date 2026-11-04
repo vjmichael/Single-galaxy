@@ -5844,6 +5844,83 @@ bool PersistentWorld::submit_host_medical_action(const Command& command, FailPoi
     return submit_host_passenger_action(command,fail);
 }
 
+// Dedicated fail-closed witness for a PREPARED manifest. Preparation and
+// queueing do not move anyone; only the execution transaction can do that.
+static void verify_atomic_colony_family_preparation(
+    sqlite3* db,const Simulation& before,
+    const PersistentWorld::AtomicColonyFamilyPlan& p){
+    if(!p.command_id || !p.family.intent_id || p.command_id==p.family.intent_id ||
+       !p.family.expected_world_generation || p.family.family_scope.empty() ||
+       !p.family.family_seed || p.region_scope.empty() ||
+       p.origin_colony.empty() || p.receiver_colony.empty() ||
+       p.origin_colony==p.receiver_colony ||
+       !p.expected_region_revision || !p.expected_owner_generation ||
+       p.family.adult_ids.empty() || p.family.children.empty() ||
+       p.member_event_ids.size()!=p.family.adult_ids.size()+p.family.children.size() ||
+       p.member_event_ids.size()>16)
+        throw std::runtime_error("incomplete whole-family evacuation admission");
+    std::set<std::uint64_t> events{p.command_id,p.family.intent_id};
+    for(auto event:p.member_event_ids)if(!event || !events.insert(event).second)
+        throw std::runtime_error("duplicate or zero household event identifier");
+    const auto audited=colony_family::assess(before,db,p.family);
+    if(!audited.ready_for_transaction)
+        throw std::runtime_error("whole-family authoritative audit refused: "+audited.refusal);
+    std::string adults,children;
+    for(const auto id:p.family.adult_ids){
+        if(!adults.empty())adults.push_back(',');
+        adults+=std::to_string(id);
+    }
+    for(const auto& child:p.family.children){
+        if(!children.empty())children.push_back(',');
+        children+=std::to_string(child.child_id)+":"+std::to_string(child.guardian_id);
+        const auto it=before.physical_dependents().find(child.child_id);
+        if(it==before.physical_dependents().end() ||
+           it->second.guardian_id!=child.guardian_id ||
+           it->second.home_ship!=p.family.source ||
+           it->second.location!=p.family.source)
+            throw std::runtime_error("unregistered, wrong-guardian or nonresident physical dependent");
+        Statement auth(db,"SELECT guardian_id,home_ship,family_scope,family_seed "
+            "FROM sg_colony_physical_child_authority WHERE child_id=?");
+        auth.text(1,std::to_string(child.child_id));
+        if(!auth.row() || sqlite_str(auth.get(),0)!=std::to_string(child.guardian_id) ||
+           sqlite_str(auth.get(),1)!=std::to_string(p.family.source) ||
+           sqlite_str(auth.get(),2)!=p.family.family_scope ||
+           sqlite_str(auth.get(),3)!=std::to_string(p.family.family_seed) || auth.row())
+            throw std::runtime_error("physical dependent lacks immutable ART02 registration authority");
+    }
+    std::size_t physical_at_source=0;
+    for(const auto& [id,child]:before.physical_dependents()){
+        (void)id;
+        if(child.location==p.family.source || child.home_ship==p.family.source)
+            ++physical_at_source;
+    }
+    if(physical_at_source!=p.family.children.size())
+        throw std::runtime_error("unlisted physical dependent at evacuation source");
+    Statement prepared(db,"SELECT generation,world_hash,source,receiver,family_scope,"
+        "family_seed,adult_roster,child_guardians,status "
+        "FROM sg_colony_family_departure_prepare WHERE intent_id=?");
+    prepared.text(1,std::to_string(p.family.intent_id));
+    if(!prepared.row())
+        throw std::runtime_error("family evacuation has no durable prepared manifest");
+    const bool matched=
+        sqlite3_column_int64(prepared.get(),0)==
+            static_cast<sqlite3_int64>(p.family.expected_world_generation) &&
+        sqlite_str(prepared.get(),2)==std::to_string(p.family.source) &&
+        sqlite_str(prepared.get(),3)==std::to_string(p.family.receiver) &&
+        sqlite_str(prepared.get(),4)==p.family.family_scope &&
+        sqlite_str(prepared.get(),5)==std::to_string(p.family.family_seed) &&
+        sqlite_str(prepared.get(),6)==adults &&
+        sqlite_str(prepared.get(),7)==children &&
+        sqlite3_column_int(prepared.get(),8)==1;
+    const auto prep_hash=sqlite_str(prepared.get(),1);
+    if(!matched || prepared.row())
+        throw std::runtime_error("prepared manifest is stale or mismatched");
+    Statement original(db,"SELECT state_hash FROM operation_log WHERE generation=?");
+    original.i64(1,static_cast<sqlite3_int64>(p.family.expected_world_generation));
+    if(!original.row() || sqlite_str(original.get(),0)!=prep_hash || original.row())
+        throw std::runtime_error("prepared world hash does not match committed generation");
+}
+
 // COLONY-AUTO-04D.4C: one canonical world writer; no secondary population
 // table, orphaned station crew, or player-facing shortcut. This operation is
 // adult-only until independent ART02 dependent-custody settlement is available.
