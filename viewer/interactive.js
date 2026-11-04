@@ -203,18 +203,21 @@ el('probeTarget').addEventListener('change',()=>{
  const selected=el('probeTarget').value!=='';
  el('probeSurvey').disabled=!selected;
  el('probeRetrieve').disabled=!selected;
- el('signatureFocus').disabled=!selected||!el('signatureTarget').value;
+ el('signatureFocus').disabled=el('signatureMode').value!=='anomaly'||!selected||!el('signatureTarget').value;
  el('signatureCancel').disabled=!selected;
 });
 el('signatureTarget').addEventListener('change',()=>{
- el('signatureFocus').disabled=!el('probeTarget').value||!el('signatureTarget').value;
+ el('signatureFocus').disabled=el('signatureMode').value!=='anomaly'||!el('probeTarget').value||!el('signatureTarget').value;
 });
 el('probeSurvey').addEventListener('click',()=>{
  const probe=Number(el('probeTarget').value);
  if(Number.isSafeInteger(probe)&&probe>0)command('colonyProbeScan',{probe});
 });
 el('signatureMode').addEventListener('change',()=>{
- if(el('signatureMode').value!=='anomaly')
+ const preview=el('signatureMode').value!=='anomaly';
+ el('signatureScan').disabled=preview;
+ el('signatureFocus').disabled=preview||!el('probeTarget').value||!el('signatureTarget').value;
+ if(preview)
    message('This scan mode needs native live-host integration. Anomaly search is available.');
 });
 el('signatureScan').addEventListener('click',()=>{
@@ -224,6 +227,9 @@ el('signatureScan').addEventListener('click',()=>{
  command('colonySignatureScan',{rangeMm:Number(el('signatureRange').value)});
 });
 el('signatureFocus').addEventListener('click',()=>{
+ if(el('signatureMode').value!=='anomaly'){
+   message('Only anomaly focus is implemented in the native host.');return;
+ }
  const probe=Number(el('probeTarget').value);
  const signature=Number(el('signatureTarget').value);
  if(!Number.isSafeInteger(probe)||probe<=0||

@@ -74,3 +74,10 @@ test('the live scanner exposes radius and does not fake unfinished modes',()=>{
  assert.ok(relay.includes("command=f'SIGNATURES|{radius}'"));
  assert.ok(host.includes('coarse_probe_signatures(principal,ship,radius)'));
 });
+
+test('preview-only modes cannot submit unsupported anomaly refinement',()=>{
+ const fs=require('node:fs'),path=require('node:path');
+ const ui=fs.readFileSync(path.resolve(__dirname,'../viewer/interactive.js'),'utf8');
+ assert.ok(ui.includes("if(el('signatureMode').value!=='anomaly'){"));
+ assert.ok(ui.includes('Only anomaly focus is implemented in the native host'));
+});
