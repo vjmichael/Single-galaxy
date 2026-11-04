@@ -993,3 +993,12 @@ if(BUILD_TESTING)
     add_test(NAME galaxy_colony_auto04d5a_autonomous_emergency
         COMMAND galaxy_colony_auto04d5a_autonomous_emergency_tests)
 endif()
+
+# AUTO-04D.5B: host-loop NPC alert consumption and SQLite-only rescue replay.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_auto04d5b_durable_supervisor_tests
+        tests/COLONY_AUTO04D5B_DurableSupervisorTests.cpp)
+    target_link_libraries(galaxy_colony_auto04d5b_durable_supervisor_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_auto04d5b_durable_supervisor
+        COMMAND galaxy_colony_auto04d5b_durable_supervisor_tests)
+endif()
