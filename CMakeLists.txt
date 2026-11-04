@@ -891,3 +891,10 @@ if(BUILD_TESTING)
     set_tests_properties(galaxy_colony_auto04b_authenticated_relay PROPERTIES TIMEOUT 35)
   endif()
 endif()
+
+# COLONY-AUTO-04D.2: threshold notices share the single durable world writer.
+if(BUILD_TESTING)
+    add_executable(galaxy_colony_auto04d2_tests tests/COLONY_AUTO04D2_DurableResponseTests.cpp)
+    target_link_libraries(galaxy_colony_auto04d2_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_colony_auto04d2_durable_response COMMAND galaxy_colony_auto04d2_tests)
+endif()
