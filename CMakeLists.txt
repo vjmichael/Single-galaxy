@@ -1143,3 +1143,11 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_play09_wreck_salvage_tests PRIVATE galaxy_kernel)
   add_test(NAME galaxy_play09_wreck_salvage COMMAND galaxy_play09_wreck_salvage_tests)
 endif()
+
+# PLAY-10 authoritative durable local surveying and first-discovery records.
+if(BUILD_TESTING)
+  add_executable(galaxy_play10_exploration_tests
+    tests/PLAY10_ExplorationPersistenceTests.cpp)
+  target_link_libraries(galaxy_play10_exploration_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play10_exploration COMMAND galaxy_play10_exploration_tests)
+endif()
