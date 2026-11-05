@@ -5388,10 +5388,52 @@ bool Simulation::assign_planetary_shuttle_pilot(PlayerId owner,EntityId ship,
         (void)child;
         if(dependent.guardian_id==npc)return false;
     }
+    if(std::binary_search(shuttle->second.passenger_ids.begin(),
+                          shuttle->second.passenger_ids.end(),npc))return false;
     for(const auto& [other,record]:planetary_shuttles_)
-        if(other!=key && record.pilot_npc==npc)return false;
+        if(record.pilot_npc==npc && other!=key ||
+           std::binary_search(record.passenger_ids.begin(),
+                              record.passenger_ids.end(),npc))return false;
     shuttle->second.pilot_npc=npc;
     return true; // no boarding or NPC transfer before flight scheduler
+}
+
+
+bool Simulation::book_planetary_shuttle_passenger(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc,bool board) {
+    auto sh=planetary_shuttles_.find(key);
+    auto site=planetary_sites_.find(key);
+    auto person=npcs_.find(npc);
+    if(!owner || !npc || sh==planetary_shuttles_.end() ||
+       site==planetary_sites_.end() || person==npcs_.end() ||
+       sh->second.owner!=owner || sh->second.source_ship!=ship ||
+       site->second.owner!=owner || site->second.source_ship!=ship ||
+       sh->second.flight_phase!=0 ||
+       person->second.home_ship!=ship || person->second.location!=ship ||
+       person->second.role!=NpcRole::Ship ||
+       person->second.assigned_site!=ship || person->second.transport_id ||
+       npc==sh->second.pilot_npc)return false;
+    auto& ids=sh->second.passenger_ids;
+    auto at=std::lower_bound(ids.begin(),ids.end(),npc);
+    if(!board) {
+        if(at==ids.end() || *at!=npc)return false;
+        ids.erase(at);
+        snapshot_version_=std::max(snapshot_version_,82);
+        return true;
+    }
+    if(ids.size()>=3 || (at!=ids.end() && *at==npc) ||
+       !npc_available_for_duty(npc))return false;
+    for(const auto& [id,child]:physical_dependents_) {
+        (void)id;
+        if(child.guardian_id==npc)return false;
+    }
+    for(const auto& [other,flight]:planetary_shuttles_)
+        if(other!=key && (flight.pilot_npc==npc ||
+            std::binary_search(flight.passenger_ids.begin(),
+                               flight.passenger_ids.end(),npc)))return false;
+    ids.insert(at,npc);
+    snapshot_version_=std::max(snapshot_version_,82);
+    return true;
 }
 
 
@@ -5446,6 +5488,18 @@ bool Simulation::launch_planetary_shuttle(PlayerId owner,EntityId ship,
        pilot->second.assigned_site!=ship || pilot->second.transport_id ||
        pilot->second.location!=(ascend?site->second.surface_location:ship))
         return false;
+    // Shared transport manifest discipline: passengers are named existing
+    // NPCs, distinct from the pilot, with no competing ferry or shuttle berth.
+    if(sh->second.passenger_ids.size()>3)return false;
+    for(auto passenger_id:sh->second.passenger_ids) {
+        const auto it=npcs_.find(passenger_id);
+        if(it==npcs_.end() || passenger_id==sh->second.pilot_npc ||
+           it->second.home_ship!=ship || it->second.role!=NpcRole::Ship ||
+           it->second.assigned_site!=ship || it->second.transport_id ||
+           it->second.location!=(ascend?site->second.surface_location:ship))
+            return false;
+        if(!ascend && !npc_available_for_duty(passenger_id))return false;
+    }
     // One kg of physically loaded water is the simplified water propellant
     // per trip; spent propellant remains wastewater at the departure endpoint.
     auto& residue=ascend?site->second.wastewater_kg:life->second.wastewater_kg;
@@ -5468,6 +5522,8 @@ bool Simulation::launch_planetary_shuttle(PlayerId owner,EntityId ship,
     if(ascend)sh->second.ascent_receipt=request_id;
     else sh->second.descent_receipt=request_id;
     pilot->second.location=transit;
+    for(const auto passenger_id:sh->second.passenger_ids)
+        npcs_.at(passenger_id).location=transit;
     shuttle_flight_request_ids_.insert(request_id);
     snapshot_version_=std::max(snapshot_version_,81);
     return true;
@@ -5483,6 +5539,13 @@ void Simulation::process_planetary_shuttle_flights() {
             throw std::logic_error("missing committed shuttle or pilot custody");
         npc->second.location=sh.flight_phase==1?
             site->second.surface_location:sh.source_ship;
+        for(const auto passenger_id:sh.passenger_ids) {
+            auto& passenger=npcs_.at(passenger_id);
+            if(passenger.location!=shuttle_transit_custody_id(key))
+                throw std::logic_error("shuttle manifest passenger missing custody");
+            passenger.location=sh.flight_phase==1?
+                site->second.surface_location:sh.source_ship;
+        }
         sh.flight_phase=sh.flight_phase==1?2:0;
         sh.flight_request=0;
         sh.arrival_tick=0;
