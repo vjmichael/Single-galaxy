@@ -616,9 +616,12 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
                       v.size()==7) {
                 command.action=action=="LOAD"?OrbitalShuttleAction::Load:
                     OrbitalShuttleAction::Unload;
-                if(v[5]!="WATER" && v[5]!="FOOD")
+                if(v[5]!="WATER" && v[5]!="FOOD" && v[5]!="NUTRIENTS")
                     throw std::invalid_argument("invalid cargo");
                 command.water=v[5]=="WATER";
+                command.cargo=v[5]=="NUTRIENTS"?
+                    ShuttleCargo::Nutrients:
+                    (command.water?ShuttleCargo::Water:ShuttleCargo::Food);
                 command.kilograms=integer(v[6]);
             } else if((action=="DESCEND" || action=="ASCEND") &&
                       v.size()==6) {
@@ -651,7 +654,8 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
                     std::to_string(sh.flight_request)+"|"+
                     std::to_string(sh.descent_receipt)+"|"+
                     std::to_string(sh.ascent_receipt)+"|"+
-                    std::to_string(result.generation));
+                    std::to_string(result.generation)+
+                    (sh.nutrients_kg>0?"|"+std::to_string(sh.nutrients_kg):""));
             }
             // Canonical sorted manifest of real NPC identities, not an
             // invented second passenger roster in the temporary UI.
@@ -1336,7 +1340,8 @@ int main(int argc,char** argv){
                     std::to_string(sh.flight_request)+"|"+
                     std::to_string(sh.descent_receipt)+"|"+
                     std::to_string(sh.ascent_receipt)+"|"+
-                    std::to_string(world.generation()));
+                    std::to_string(world.generation())+
+                    (sh.nutrients_kg>0?"|"+std::to_string(sh.nutrients_kg):""));
             }
             // Mature transit requests are committed separately; no half-
             // applied position is ever published. Catch-up on restart is
