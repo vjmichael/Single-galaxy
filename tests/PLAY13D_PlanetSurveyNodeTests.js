@@ -144,7 +144,7 @@ test('orbital shuttle telemetry, receipts and UI are bounded by native schema',(
   assert.match(ui,/colonyPlanetShuttle/);
   assert.match(ui,/Descend to surface/);
   assert.match(relay,/PLANET_SHUTTLE/);
-  assert.match(host,/launch_planetary_shuttle/);
+  assert.match(host,/execute_orbital_shuttle\(/);
 });
 
 test('PLAY-13D recovered nutrients remain bounded native cargo',()=>{
