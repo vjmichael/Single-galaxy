@@ -858,6 +858,10 @@ public:
     bool supply_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
         std::uint16_t latitude,std::uint16_t longitude,bool water,std::int64_t kg,
         FailPoint fail=FailPoint::None);
+    // Owner-controlled remote work directive: no ship inventory teleportation.
+    bool set_planetary_workforce_policy(PlayerId owner,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,std::uint8_t policy,
+        FailPoint fail=FailPoint::None);
     bool support_planetary_crew(PlayerId owner,EntityId ship,std::uint64_t body,
         std::uint16_t latitude,std::uint16_t longitude,bool oxygen,std::int64_t kg,
         FailPoint fail=FailPoint::None);
