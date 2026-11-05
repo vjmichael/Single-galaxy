@@ -1,4 +1,5 @@
 #include "galaxy/TransportIdentity.hpp"
+#include "galaxy/NpcTransport.hpp"
 #include <cassert>
 using namespace galaxy::transport;
 int main() {
@@ -32,4 +33,15 @@ int main() {
     assert(completed_arrival(ground,11,planet,site));
     assert(!completed_arrival(ground,11,site,planet));
     assert(!completed_arrival(ground,11,Endpoint{LocationKind::PlanetarySite,0},site));
+    const NpcTransport ferry_vehicle{900,Mode::Ferry,ship,colony,3,{11,12},TransportState::Arrived};
+    const NpcTransport shuttle_vehicle{901,Mode::PlanetaryShuttle,ship,planet,3,{11,12},TransportState::Arrived};
+    const NpcTransport ground_vehicle{902,Mode::SurfaceVehicle,planet,site,3,{11,12},TransportState::Arrived};
+    assert(completed_transport(ferry_vehicle,11));
+    assert(completed_transport(shuttle_vehicle,12));
+    assert(completed_transport(ground_vehicle,11));
+    assert(!completed_transport(ground_vehicle,13));
+    assert(!completed_transport(NpcTransport{902,Mode::SurfaceVehicle,planet,site,1,{11,12},TransportState::Arrived},11));
+    assert(!completed_transport(NpcTransport{902,Mode::SurfaceVehicle,planet,site,3,{11,11},TransportState::Arrived},11));
+    assert(!completed_transport(NpcTransport{902,Mode::SurfaceVehicle,planet,site,3,{11},TransportState::InTransit},11));
+    assert(!completed_transport(NpcTransport{0,Mode::Ferry,ship,colony,3,{11},TransportState::Arrived},11));
 }
