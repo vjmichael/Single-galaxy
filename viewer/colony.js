@@ -73,6 +73,34 @@
       if(!id || !generation)throw Error('Invalid planetary policy receipt');
       return {...e,id,latitude,longitude,policy,generation};
     }
+    if(t==='PLANET_SHUTTLE_STATUS'){
+      if(v.length!==17)throw Error('Malformed shuttle status');
+      const id=numeric(v[4],Number.MAX_SAFE_INTEGER),latitude=numeric(v[5],35),
+       longitude=numeric(v[6],71),present=numeric(v[7],1),phase=numeric(v[8],3),
+       pilot=numeric(v[9],Number.MAX_SAFE_INTEGER),water=numeric(v[10],1000),
+       food=numeric(v[11],1000),arrival=numeric(v[12],Number.MAX_SAFE_INTEGER),
+       request=numeric(v[13],Number.MAX_SAFE_INTEGER),
+       descent=numeric(v[14],Number.MAX_SAFE_INTEGER),
+       ascent=numeric(v[15],Number.MAX_SAFE_INTEGER),
+       generation=numeric(v[16],Number.MAX_SAFE_INTEGER);
+      if(!id||!generation||water+food>1000||
+         (!present&&(phase||pilot||water||food||arrival||request||descent||ascent))||
+         (present&&phase>0&&!pilot)||
+         ((phase===1||phase===3)!==(request>0))||
+         ((phase===1||phase===3)!==(arrival>0)))
+        throw Error('Invalid authoritative shuttle state');
+      return {...e,id,latitude,longitude,present:!!present,phase,pilot,
+        water,food,arrival,request,descent,ascent,generation};
+    }
+    if(t==='PLANET_SHUTTLE_COMMITTED'){
+      if(v.length!==9)throw Error('Malformed shuttle commit');
+      const id=numeric(v[4],Number.MAX_SAFE_INTEGER),latitude=numeric(v[5],35),
+       longitude=numeric(v[6],71),operation=v[7],
+       generation=numeric(v[8],Number.MAX_SAFE_INTEGER);
+      if(!id||!generation||!new Set(['BUILD','PILOT','LOAD','UNLOAD','DESCEND','ASCEND']).has(operation))
+        throw Error('Invalid shuttle operation receipt');
+      return {...e,id,latitude,longitude,operation,generation};
+    }
     if(t==='PLANET_SITE_STATUS'){
       if(v.length!==22)throw Error('Malformed planetary spaceport status');
       const id=numeric(v[4],Number.MAX_SAFE_INTEGER),
@@ -688,6 +716,63 @@
                'Operation requested. A native survey of this exact region is required.';
            });
            actions.append(caption,choice,firstNpc,secondNpc,crewButton,statusButton,policySelect,policyButton,perform);
+           const shuttlePanel=document.createElement('details');
+           const shuttleTitle=document.createElement('summary');
+           shuttleTitle.textContent='Orbital shuttle / surface logistics';
+           const shuttleChoice=document.createElement('select');
+           shuttleChoice.setAttribute('aria-label','Shuttle command');
+           const shuttleOperations=[
+             ['Check shuttle status','STATUS'],['Fabricate shuttle (2 modules)','BUILD'],
+             ['Assign named pilot','PILOT'],['Load supplies','LOAD'],
+             ['Unload at current berth','UNLOAD'],['Descend to surface','DESCEND'],
+             ['Return to orbit','ASCEND']
+           ];
+           shuttleOperations.forEach(([name,code])=>shuttleChoice.add(new Option(name,code)));
+           const shuttleNpc=document.createElement('input');
+           shuttleNpc.type='number';shuttleNpc.min='1';shuttleNpc.step='1';
+           shuttleNpc.placeholder='Pilot NPC ID';shuttleNpc.setAttribute('aria-label','Shuttle pilot NPC ID');
+           const shuttleResource=document.createElement('select');
+           shuttleResource.setAttribute('aria-label','Shuttle cargo material');
+           shuttleResource.add(new Option('Water','WATER'),new Option('Food','FOOD'));
+           const shuttleKg=document.createElement('input');
+           shuttleKg.type='number';shuttleKg.min='1';shuttleKg.max='1000';
+           shuttleKg.step='1';shuttleKg.value='50';shuttleKg.setAttribute('aria-label','Shuttle cargo kilograms');
+           const shuttleState=document.createElement('output');
+           shuttleState.textContent='Request status to see committed shuttle progress.';
+           const shuttleSend=document.createElement('button');
+           shuttleSend.type='button';shuttleSend.textContent='Send shuttle order';
+           shuttleSend.addEventListener('click',()=>{
+             const lat=Number(latitude.value),lon=Number(longitude.value);
+             if(!Number.isSafeInteger(lat)||lat<0||lat>=36||
+                !Number.isSafeInteger(lon)||lon<0||lon>=72)return;
+             const operation=shuttleChoice.value;
+             const payload={body:body.id,latitude:lat,longitude:lon,operation};
+             if(operation==='PILOT'){
+               const npc=Number(shuttleNpc.value);
+               if(!Number.isSafeInteger(npc)||npc<=0)return;
+               payload.npc=npc;
+             }else if(operation==='LOAD'||operation==='UNLOAD'){
+               const kg=Number(shuttleKg.value);
+               if(!Number.isInteger(kg)||kg<=0||kg>1000)return;
+               payload.resource=shuttleResource.value;payload.kg=kg;
+             }else if(operation==='DESCEND'||operation==='ASCEND'){
+               // Stable within one click; new requests use a fresh millisecond ID.
+               const request=Date.now()*1000+Math.floor(Math.random()*1000);
+               if(!Number.isSafeInteger(request))return;
+               payload.request=request;
+             }
+             window.GalaxyColonyCommand?.('colonyPlanetShuttle',payload);
+             shuttleState.textContent='Shuttle order submitted; awaiting native receipt.';
+           });
+           shuttlePanel.append(shuttleTitle,shuttleChoice,shuttleNpc,
+               shuttleResource,shuttleKg,shuttleSend,shuttleState);
+           shuttlePanel.dataset.shuttleBody=String(body.id);
+           shuttlePanel.dataset.shuttleRegion='';
+           const updateRegion=()=>{shuttlePanel.dataset.shuttleRegion=latitude.value+','+longitude.value;};
+           latitude.addEventListener('change',updateRegion);
+           longitude.addEventListener('change',updateRegion);updateRegion();
+           actions.append(shuttlePanel);
+
            item.append(latitude,longitude,survey,actions);
          }
          return item;
@@ -703,6 +788,28 @@
          'Ready NPCs (assign two by ID): '+roster.join(', '):
          'No individually available NPC records. Legacy finite crew can be auto-delegated.';
        window.GalaxyAvailableSurfaceNpcIds=[];
+     }
+     if(e.type==='PLANET_SHUTTLE_STATUS'||e.type==='PLANET_SHUTTLE_COMMITTED'){
+       const cards=q('celestialBodyList').querySelectorAll('[data-shuttle-body]');
+       cards.forEach(panel=>{
+         if(panel.dataset.shuttleBody!==String(e.id)||
+            panel.dataset.shuttleRegion!==e.latitude+','+e.longitude)return;
+         const out=panel.querySelector('output');
+         if(!out)return;
+         if(e.type==='PLANET_SHUTTLE_COMMITTED'){
+           out.textContent='Committed '+e.operation+' · generation '+e.generation;
+         }else{
+           const phases=['Docked in orbit','Descending','Landed at surface','Ascending'];
+           out.textContent=e.present?
+             phases[e.phase]+' · pilot #'+e.pilot+' · water '+e.water+
+             ' kg · food '+e.food+' kg · due tick '+e.arrival+
+             ' · active request '+e.request+' · generation '+e.generation:
+             'No shuttle built at this planetary region.';
+         }
+       });
+       q('signatureFeedback').textContent=e.type==='PLANET_SHUTTLE_COMMITTED'?
+         'Shuttle '+e.operation+' committed for body #'+e.id+'.':
+         'Orbital shuttle status received from the native world.';
      }
      if(e.type==='PLANET_SITE_STATUS'){
        const names={1:'NPC descent / equipment unloading',
