@@ -518,7 +518,9 @@ struct LocalDeliveryOrder {
 // completed surface-to-orbit job. The cargo physically resides in the
 // carrier ColonyShip::goods_kg compartment while Loaded, never in this
 // receipt. The second ship cannot deliver without its own committed flight.
-enum class IntercolonyFreightStage : std::uint8_t { Loaded=1, Delivered=2 };
+enum class IntercolonyFreightStage : std::uint8_t {
+    AwaitingPickup=0, Loaded=1, Delivered=2
+};
 struct IntercolonyFreightLeg {
     std::uint64_t order_id=0;
     PlayerId owner=0;
@@ -1095,6 +1097,8 @@ public:
     const std::map<std::uint64_t,IntercolonyFreightLeg>& intercolony_freight() const noexcept {
         return intercolony_freight_;
     }
+    bool plan_intercolony_freight(PlayerId owner,std::uint64_t local_order_id,
+        EntityId carrier,EntityId destination);
     bool load_intercolony_freight(PlayerId owner,std::uint64_t local_order_id,
         EntityId carrier,EntityId destination);
     bool deliver_intercolony_freight(PlayerId owner,std::uint64_t local_order_id);
