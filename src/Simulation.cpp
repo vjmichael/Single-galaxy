@@ -5202,8 +5202,8 @@ bool Simulation::build_planetary_site(PlayerId owner,EntityId ship,
        vessel->jump_state!=ShipJumpState::Ready ||
        colony==colony_ships_.end() || colony->second.modules<2 ||
        colony->second.crew<3 || support==life_support_.end() ||
-       support->second.food_kg<50 || support->second.water_kg<50 ||
-       support->second.oxygen_kg<50 ||
+       support->second.food_kg<60 || support->second.water_kg<60 ||
+       support->second.oxygen_kg<60 ||
        planetary_sites_.count(key) || planetary_sites_.size()>=10000 ||
        site->landscape.region.surface_water ||
        entities_.count(surface_location) || npcs_.empty())
@@ -5249,9 +5249,9 @@ bool Simulation::build_planetary_site(PlayerId owner,EntityId ship,
     // This does not create a player landing or a rendered planetary scene.
     colony->second.modules-=2;
     colony->second.crew-=2;
-    support->second.food_kg-=50;
-    support->second.water_kg-=50;
-    support->second.oxygen_kg-=50;
+    support->second.food_kg-=60;
+    support->second.water_kg-=60;
+    support->second.oxygen_kg-=60;
     for(auto id:assigned)if(id) {
         auto& n=npcs_.at(id);
         n.location=surface_location;
@@ -5262,14 +5262,14 @@ bool Simulation::build_planetary_site(PlayerId owner,EntityId ship,
     }
     PlanetarySiteFacility facility{
         site->key,owner,ship,4,false,false,
-        50,0,50,0,0};
+        60,0,60,0,0};
     facility.spaceport_phase=1;
     facility.construction_progress=0;
     facility.construction_required=240;
     facility.surface_location=surface_location;
     facility.delegated_npcs=assigned;
     facility.assigned_workers=2;
-    facility.oxygen_kg=50;
+    facility.oxygen_kg=60;
     // Preserve version-77 already-completed outposts while upgrading the
     // world's canonical snapshot format. No NPCs are fabricated for them.
     for(auto& [legacy_key,legacy]:planetary_sites_) {
