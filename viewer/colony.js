@@ -2,7 +2,7 @@
 (function(root,factory){'use strict';const api=factory();if(typeof module!=='undefined'&&module.exports)module.exports=api;root.GalaxyColonyContract=api;})(typeof window!=='undefined'?window:globalThis,function(){
   'use strict';
   const names=['Carbonaceous','Silicate','Metal-rich'];
-  const goods=new Set(['structural_alloy','aluminum','ceramic','glass','water','sulfur','carbon_feed']);
+  const goods=new Set(['structural_alloy','aluminum','ceramic','glass','water','sulfur','carbon_feed','freight_water','freight_food','freight_nutrients']);
   const minerals=new Set(['serpentine','saponite','magnetite','pyrrhotite','carbonates','olivine','pyroxene','nickel_iron','other','plagioclase','troilite']);
   function numeric(x,max=1e12){if(!/^(0|[1-9][0-9]*)$/.test(x))throw Error('Noncanonical number');const n=Number(x);if(!Number.isSafeInteger(n)||n>max)throw Error('Numeric overflow');return n;}
   function decode(raw){
