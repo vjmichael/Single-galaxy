@@ -128,16 +128,25 @@
         throw Error('Invalid physical intercolony shipment');
       return {...e,order,carrier,destination,resource,kg,stage,receipt};
     }
-    if(t==='INTERFREIGHT_LOADED'||t==='INTERFREIGHT_DEPARTED'){
-      if(v.length!==8)throw Error('Malformed freight carrier receipt');
+    if(t==='INTERFREIGHT_LOADED'){
+      if(v.length!==8)throw Error('Malformed loaded freight receipt');
       const order=numeric(v[4],Number.MAX_SAFE_INTEGER),
-       second=numeric(v[5],Number.MAX_SAFE_INTEGER),
+       carrier=numeric(v[5],Number.MAX_SAFE_INTEGER),
+       destination=numeric(v[6],Number.MAX_SAFE_INTEGER),
+       generation=numeric(v[7],Number.MAX_SAFE_INTEGER);
+      if(!order||!carrier||!destination||carrier===destination||!generation)
+        throw Error('Invalid loaded freight receipt');
+      return {...e,order,carrier,destination,generation};
+    }
+    if(t==='INTERFREIGHT_DEPARTED'){
+      if(v.length!==8)throw Error('Malformed departed freight receipt');
+      const order=numeric(v[4],Number.MAX_SAFE_INTEGER),
+       request=numeric(v[5],Number.MAX_SAFE_INTEGER),
        carrier=numeric(v[6],Number.MAX_SAFE_INTEGER),
        destination=numeric(v[7],Number.MAX_SAFE_INTEGER);
-      if(!order||!second||!carrier||!destination||carrier===destination)
-        throw Error('Invalid freight carrier receipt');
-      return {...e,order,carrier,destination,
-         ...(t==='INTERFREIGHT_LOADED'?{generation:numeric(v[7],Number.MAX_SAFE_INTEGER)}:{request:second})};
+      if(!order||!request||!carrier||!destination||carrier===destination)
+        throw Error('Invalid departed freight receipt');
+      return {...e,order,request,carrier,destination};
     }
     if(t==='INTERFREIGHT_DELIVERED'){
       if(v.length!==6)throw Error('Malformed intercolony delivery');
