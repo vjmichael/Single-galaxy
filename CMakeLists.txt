@@ -1320,6 +1320,12 @@ endif()
 
 # PLAY-13D.3 source-backed planetary site construction/farm/extraction persistence.
 if(BUILD_TESTING)
+  # PLAY-13D.4C.9B: verify a proposed canonical migration transition.
+  add_executable(galaxy_play13d_settlement_transition_tests
+    tests/PLAY13D_PlanetarySettlementTransitionTests.cpp)
+  target_link_libraries(galaxy_play13d_settlement_transition_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_settlement_transition
+    COMMAND galaxy_play13d_settlement_transition_tests)
   # PLAY-13D.4C.9A: pure fail-closed permanent residency admission policy.
   add_executable(galaxy_play13d_settlement_admission_tests
     tests/PLAY13D_PlanetarySettlementAdmissionTests.cpp)
