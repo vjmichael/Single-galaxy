@@ -217,11 +217,20 @@ def main(fixture,host,relay):
                     {**base,"operation":"DESCEND","request":81001})
                 assert status==202,status
                 reader.wait("ERROR",cursor,lambda f:f[4]=="PLANET_SHUTTLE_DENIED")
+                with reader.condition:
+                    until=time.monotonic()+8
+                    while not reader.finished and time.monotonic()<until:
+                        reader.condition.wait(.1)
+                assert reader.finished and not reader.error,reader.error
             finally:reader.close()
         finally:
             proc.terminate()
             try:proc.communicate(timeout=4)
             except subprocess.TimeoutExpired:proc.kill();proc.communicate()
+        native=subprocess.run([str(fixture),"--verify",str(db),str(body),
+            str(latitude),str(longitude),str(pilot),str(initial_mass),str(ship)],
+            capture_output=True,text=True,timeout=30,check=True)
+        assert "PASS native committed shuttle" in native.stdout,native.stdout
         print("PASS PLAY-13D.4C.5 real native host/relay shuttle delivery, return, and SQLite restart")
 
 if __name__=="__main__":
