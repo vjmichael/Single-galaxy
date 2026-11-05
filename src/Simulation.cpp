@@ -5622,6 +5622,7 @@ bool Simulation::load_intercolony_freight(PlayerId owner,
        c->second.owner_id!=owner || source==colony_ships_.end() ||
        freighter==colony_ships_.end() || receiving==colony_ships_.end() ||
        !freighter->second.crew || !b->second.fitting.exploration_scanner() ||
+       (snapshot_version_>=20 && people_physically_aboard(carrier)==0) ||
        from==life_support_.end() || to==life_support_.end() ||
        !life_support_.count(carrier) ||
        af==ship_frames_.end() || bf==ship_frames_.end() ||
@@ -5633,6 +5634,12 @@ bool Simulation::load_intercolony_freight(PlayerId owner,
     for(const auto& [id,p]:pending_celestial_transits_) {
         (void)id;
         if(p.ship==origin || p.ship==carrier || p.ship==destination)return false;
+    }
+    // A ship already committed to a passenger voyage is not an available
+    // NPC freight carrier: do not hijack or strand its real passenger manifest.
+    for(const auto& [id,v]:voyages_) {
+        (void)id;
+        if(v.ferry==carrier && (v.status==1 || v.status==3))return false;
     }
     for(const auto& [id,other]:intercolony_freight_)
         if(other.stage==IntercolonyFreightStage::Loaded &&
