@@ -186,7 +186,7 @@ static void scenario(const fs::path& db, bool farming){
         const auto reserve_before=!farming?
             w.world().oasis_reserves().at(chosen.body).water_kg:0;
         w.steps(100);
-        const auto& after_site=w.world().planetary_sites().at(key);
+        const auto after_site=w.world().planetary_sites().at(key);
         CHECK(after_site.autonomous_cycles>=before_site.autonomous_cycles+4);
         CHECK(after_site.equipment_condition<100);
         if(farming){
