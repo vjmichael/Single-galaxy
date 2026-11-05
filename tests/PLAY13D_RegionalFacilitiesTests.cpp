@@ -155,6 +155,64 @@ static void scenario(const fs::path& db, bool farming){
             CHECK(w.world().oasis_reserves().at(chosen.body).water_kg==7000);
         }
         CHECK(w.world().total_ore()==origin);
+        // PLAY-13D.4B: the named NPC team works without repeated production
+        // clicks, but cannot synthesize raw water or abandon matter custody.
+        CHECK(!w.set_planetary_workforce_policy(8,chosen.body,
+            chosen.latitude,chosen.longitude,1));
+        CHECK(!w.set_planetary_workforce_policy(7,chosen.body,
+            chosen.latitude,chosen.longitude,5));
+        CHECK(!w.set_planetary_workforce_policy(7,chosen.body,
+            chosen.latitude,chosen.longitude,farming?2:1));
+        CHECK(w.supply_planetary_site(7,ship,chosen.body,
+            chosen.latitude,chosen.longitude,true,350));
+        CHECK(w.supply_planetary_site(7,ship,chosen.body,
+            chosen.latitude,chosen.longitude,false,100));
+        CHECK(w.support_planetary_crew(7,ship,chosen.body,
+            chosen.latitude,chosen.longitude,false,150));
+        CHECK(w.support_planetary_crew(7,ship,chosen.body,
+            chosen.latitude,chosen.longitude,true,150));
+        CHECK(w.world().total_ore()==origin);
+        const auto policy=std::uint8_t(farming?1:2);
+        const auto before_policy=w.world().canonical_state();
+        bool policy_failed=false;
+        try{(void)w.set_planetary_workforce_policy(7,chosen.body,
+            chosen.latitude,chosen.longitude,policy,FailPoint::AfterSnapshotWrite);}
+        catch(const std::exception&){policy_failed=true;}
+        CHECK(policy_failed);
+        CHECK(w.world().canonical_state()==before_policy);
+        CHECK(w.set_planetary_workforce_policy(7,chosen.body,
+            chosen.latitude,chosen.longitude,policy));
+        const auto before_site=w.world().planetary_sites().at(key);
+        const auto reserve_before=!farming?
+            w.world().oasis_reserves().at(chosen.body).water_kg:0;
+        w.steps(100);
+        const auto& after_site=w.world().planetary_sites().at(key);
+        CHECK(after_site.autonomous_cycles>=before_site.autonomous_cycles+4);
+        CHECK(after_site.equipment_condition<100);
+        if(farming){
+            CHECK(after_site.harvest_cycles>before_site.harvest_cycles);
+            CHECK(after_site.nutrients_kg<before_site.nutrients_kg);
+        }else{
+            CHECK(after_site.auto_extracted_kg>=4000);
+            CHECK(w.world().oasis_reserves().at(chosen.body).water_kg<
+                  reserve_before);
+            CHECK(reserve_before-w.world().oasis_reserves().at(chosen.body).water_kg==
+                  std::int64_t(after_site.auto_extracted_kg));
+        }
+        CHECK(w.world().total_ore()==origin);
+        CHECK(w.set_planetary_workforce_policy(7,chosen.body,
+            chosen.latitude,chosen.longitude,4));
+        const auto repairs_before=after_site.repair_cycles;
+        w.steps(20);
+        CHECK(w.world().planetary_sites().at(key).repair_cycles>repairs_before);
+        CHECK(w.world().planetary_sites().at(key).equipment_condition==100);
+        CHECK(w.world().total_ore()==origin);
+        CHECK(w.set_planetary_workforce_policy(7,chosen.body,
+            chosen.latitude,chosen.longitude,0));
+        const auto stopped=w.world().planetary_sites().at(key).autonomous_cycles;
+        w.steps(40);
+        CHECK(w.world().planetary_sites().at(key).autonomous_cycles==stopped);
+        CHECK(w.world().total_ore()==origin);
         // Leaving the planet must neither delete its completed structure
         // nor permit remote inventory use from another celestial frame.
         const auto& system_bodies=w.world().physical_celestial_systems().at(chosen.system);
@@ -170,7 +228,7 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(w.world().planetary_sites().size()==1);
         CHECK(w.world().total_ore()==origin);
         durable=w.world().canonical_state();
-        CHECK(durable.rfind("galaxy-kernel-v78|",0)==0);
+        CHECK(durable.rfind("galaxy-kernel-v79|",0)==0);
         CHECK(Simulation::from_snapshot(durable).canonical_state()==durable);
     }
     {
