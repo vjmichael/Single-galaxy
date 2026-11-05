@@ -976,16 +976,26 @@ static void scenario(const fs::path& db, bool farming, bool manufactured=false){
         }
     }
 }
-int main(){
+int main(int argc,char** argv){
+    const bool manufactured_only=argc==2 && std::string(argv[1])=="--manufactured-only";
+    if(argc>2 || (argc==2 && !manufactured_only)){
+        std::cerr<<"Unknown test selection: only --manufactured-only is supported\n";
+        return 2;
+    }
     const auto dir=fs::temp_directory_path()/
       ("sg_play13d3_"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     try{
         fs::create_directories(dir);
-        scenario(dir/"farm.sqlite",true);
-        scenario(dir/"extract.sqlite",false);
-        scenario(dir/"manufactured-freight.sqlite",false,true);
+        if(!manufactured_only){
+            scenario(dir/"farm.sqlite",true);
+            scenario(dir/"extract.sqlite",false);
+        }else{
+            scenario(dir/"manufactured-freight.sqlite",false,true);
+        }
         fs::remove_all(dir);
-        std::cout<<"PASS PLAY13D3 regional farm and finite extraction, physical custody, mass, rollback, SQLite restart\n";
+        std::cout<<(manufactured_only?
+            "PASS SHIP-01C: physically manufactured, commissioned freighter completes Planet A -> Colony B cargo delivery, SQLite restart\n":
+            "PASS PLAY13D3 regional farm and finite extraction, physical custody, mass, rollback, SQLite restart\n");
     }catch(const std::exception& e){
         std::error_code ec;fs::remove_all(dir,ec);
         std::cerr<<"FAIL PLAY13D3 "<<e.what()<<'\n';
