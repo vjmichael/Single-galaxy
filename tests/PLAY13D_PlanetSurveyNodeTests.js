@@ -428,3 +428,36 @@ test('SHIP-01B.2 commissioning receipt is bounded, authenticated and visible',()
   assert.match(relay,/FREIGHTER_COMMISSION/);
   assert.match(host,/commission_shipyard_freighter/);
 });
+
+test('SHIP-01C commissioned freighter cockpit reads real physical receipts only',()=>{
+  const e=decode('COLONY|1|43|FREIGHTER_PILOT_ITEM|92001|8|90|-1000|2000|4294967300|2|237|238|239|180');
+  assert.equal(e.order,92001);
+  assert.equal(e.hull,8);
+  assert.equal(e.x,-1000);
+  assert.equal(e.body,4294967300);
+  assert.equal(e.crew,2);
+  assert.equal(e.food,237);
+  const thrust=decode('COLONY|1|44|FREIGHTER_PILOT_QUEUED|92001|8|900000000123|181');
+  assert.equal(thrust.command,900000000123);
+  const flight=decode('COLONY|1|45|FREIGHTER_TRANSIT_STARTED|92001|8|900000000124|4294967300|182');
+  assert.equal(flight.body,4294967300);
+  for(const bad of [
+    'COLONY|1|43|FREIGHTER_PILOT_ITEM|92001|8|360|-1000|2000|4294967300|2|237|238|239|180',
+    'COLONY|1|43|FREIGHTER_PILOT_ITEM|92001|8|90|+1000|2000|4294967300|2|237|238|239|180',
+    'COLONY|1|43|FREIGHTER_PILOT_ITEM|92001|8|90|-0|2000|4294967300|2|237|238|239|180',
+    'COLONY|1|43|FREIGHTER_PILOT_ITEM|92001|8|90|-1000|2000|4294967300|0|237|238|239|180',
+    'COLONY|1|43|FREIGHTER_PILOT_ITEM|92001|8|90|-1000|2000|4294967300|2|237|238|239|0',
+    'COLONY|1|44|FREIGHTER_PILOT_QUEUED|92001|8|0|181',
+    'COLONY|1|44|FREIGHTER_PILOT_QUEUED|92001|8|900000000123|0',
+    'COLONY|1|45|FREIGHTER_TRANSIT_STARTED|92001|8|900000000124|0|182'
+  ])assert.throws(()=>decode(bad),Error,bad);
+  const ui=fs.readFileSync(path.join(root,'viewer/colony.js'),'utf8');
+  const relay=fs.readFileSync(path.join(root,'live/interactive_relay.py'),'utf8');
+  const host=fs.readFileSync(path.join(root,'src/colony_live_host.cpp'),'utf8');
+  assert.match(ui,/colonyFreighterThrust/);
+  assert.match(ui,/colonyFreighterYaw/);
+  assert.match(ui,/colonyFreighterTravel/);
+  assert.match(host,/FREIGHTER_TRAVEL/);
+  assert.match(host,/manufactured_order_id!=order_id/);
+  assert.match(relay,/FREIGHTER_PILOT_STATUS/);
+});
