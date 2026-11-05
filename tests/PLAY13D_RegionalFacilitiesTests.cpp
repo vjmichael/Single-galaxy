@@ -306,15 +306,16 @@ static void scenario(const fs::path& db, bool farming){
         // v86 legal residence is an independent persistent address, not an
         // alias for physical shuttle presence or a temporary work duty.
         auto upgraded_residence=Simulation::from_snapshot(visitor_state);
+        const transport::Endpoint expected_home{
+            transport::LocationKind::ColonyShip,ship};
         CHECK(upgraded_residence.npc_records().at(passenger).legal_residence()==
-              transport::Endpoint{transport::LocationKind::ColonyShip,ship});
+              expected_home);
         upgraded_residence.upgrade_legal_residence_snapshot_format();
         const auto v86_state=upgraded_residence.canonical_state();
         CHECK(v86_state.rfind("galaxy-kernel-v86|",0)==0);
         CHECK(Simulation::from_snapshot(v86_state).canonical_state()==v86_state);
         CHECK(Simulation::from_snapshot(v86_state).npc_records().at(passenger)
-              .legal_residence()==transport::Endpoint{
-                  transport::LocationKind::ColonyShip,ship});
+              .legal_residence()==expected_home);
 
         // Temporary work is an explicit separate order, not a side effect
         // of arriving at a planetary spaceport.
