@@ -87,7 +87,7 @@
       const latitude=numeric(v[5],35),longitude=numeric(v[6],71);
       const action=v[7],generation=numeric(v[8],Number.MAX_SAFE_INTEGER);
       const permitted=new Set(['PLANET_BUILD','PLANET_EQUIP','PLANET_SUPPLY',
-         'PLANET_GROW','PLANET_EXTRACT','PLANET_RETRIEVE']);
+         'PLANET_GROW','PLANET_EXTRACT','PLANET_RETRIEVE','PLANET_SUPPORT']);
       if(!id||!permitted.has(action)||!generation)
         throw Error('Invalid planetary operation receipt');
       return {...e,id,latitude,longitude,action,generation};
@@ -603,6 +603,8 @@
              ['Install extractor (two modules)','colonyPlanetEquip',{equipment:'EXTRACT'}],
              ['Supply 100 kg water','colonyPlanetSupply',{resource:'WATER',kg:100}],
              ['Supply 50 kg nutrients','colonyPlanetSupply',{resource:'NUTRIENTS',kg:50}],
+             ['Resupply surface NPCs with 50 kg food','colonyPlanetSupport',{resource:'FOOD',kg:50}],
+             ['Resupply surface NPCs with 50 kg oxygen','colonyPlanetSupport',{resource:'OXYGEN',kg:50}],
              ['Grow two farm batches','colonyPlanetGrow',{batches:2}],
              ['Extract 1000 kg water','colonyPlanetExtract',{resource:'WATER',kg:1000}],
              ['Extract 1000 kg nutrients','colonyPlanetExtract',{resource:'NUTRIENTS',kg:1000}],
