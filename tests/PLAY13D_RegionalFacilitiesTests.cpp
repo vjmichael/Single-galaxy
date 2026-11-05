@@ -198,6 +198,7 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(return_boarding.shuttle.passenger_ids==
               std::vector<std::uint64_t>{passenger});
         CHECK(return_boarding.shuttle.disembarked_ids.empty());
+        CHECK(return_boarding.shuttle.duty_ids.empty());
         CHECK(!w.transfer_planetary_shuttle_visitor(7,ship,key,passenger,true));
         CHECK(w.launch_planetary_shuttle(7,ship,key,81005,true));
         CHECK(w.world().npc_custody(passenger).active_transport_id==81005);
@@ -323,6 +324,22 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(w.world().canonical_state().rfind("galaxy-kernel-v83|",0)==0);
         const auto visitor_state=w.world().canonical_state();
         CHECK(Simulation::from_snapshot(visitor_state).canonical_state()==visitor_state);
+        // Temporary work is an explicit separate order, not a side effect
+        // of arriving at a planetary spaceport.
+        CHECK(!w.assign_planetary_shuttle_visitor_duty(8,ship,key,passenger,true));
+        CHECK(w.assign_planetary_shuttle_visitor_duty(7,ship,key,passenger,true));
+        CHECK(!w.assign_planetary_shuttle_visitor_duty(7,ship,key,passenger,true));
+        CHECK(w.world().planetary_shuttles().at(key).duty_ids==
+              std::vector<std::uint64_t>{passenger});
+        CHECK(w.world().canonical_state().rfind("galaxy-kernel-v84|",0)==0);
+        const auto assigned=w.world().canonical_state();
+        CHECK(Simulation::from_snapshot(assigned).canonical_state()==assigned);
+        const auto failed_duty_before=w.world().canonical_state();
+        bool duty_failed=false;
+        try{(void)w.assign_planetary_shuttle_visitor_duty(
+            7,ship,key,passenger,false,FailPoint::AfterSnapshotWrite);}
+        catch(const std::exception&){duty_failed=true;}
+        CHECK(duty_failed && w.world().canonical_state()==failed_duty_before);
         const auto failed_transfer_before=w.world().canonical_state();
         bool failed_transfer=false;
         try{(void)w.transfer_planetary_shuttle_visitor(
