@@ -208,6 +208,37 @@ test('PLAY-13D.4C.8 work duty is not implied by planetary disembarkation',()=>{
   ])assert.throws(()=>decode(raw),Error,raw);
 });
 
+test('PLAY-13D.4F local work-board contract telemetry uses real NPC delivery stages',()=>{
+  const posted=decode('COLONY|1|20|LOCAL_WORK_POSTED|77003|443');
+  assert.equal(posted.order,77003);
+  assert.equal(posted.generation,443);
+  const listed=decode('COLONY|1|20|LOCAL_WORK_ITEM|77003|4294967300|17|36|NUTRIENTS|500|4|42');
+  assert.equal(listed.order,77003);
+  assert.equal(listed.kg,500);
+  assert.equal(listed.stage,4);
+  assert.equal(listed.pilot,42);
+  assert.equal(decode('COLONY|1|20|LOCAL_WORK_DONE|1').count,1);
+  assert.equal(decode('COLONY|1|20|LOCAL_WORK_CANCELLED|77004|445').order,77004);
+  for(const raw of [
+    'COLONY|1|20|LOCAL_WORK_ITEM|77003|4294967300|17|36|NUTRIENTS|500|7|42',
+    'COLONY|1|20|LOCAL_WORK_ITEM|77003|4294967300|17|36|NUTRIENTS|500|2|0',
+    'COLONY|1|20|LOCAL_WORK_ITEM|77003|4294967300|17|36|GOLD|500|1|42',
+    'COLONY|1|20|LOCAL_WORK_ITEM|77003|4294967300|17|36|NUTRIENTS|1001|1|42',
+    'COLONY|1|20|LOCAL_WORK_POSTED|0|443',
+    'COLONY|1|20|LOCAL_WORK_DONE|65'
+  ]) assert.throws(()=>decode(raw),Error,raw);
+  const ui=fs.readFileSync(path.join(root,'viewer/colony.js'),'utf8');
+  const relay=fs.readFileSync(path.join(root,'live/interactive_relay.py'),'utf8');
+  const host=fs.readFileSync(path.join(root,'src/colony_live_host.cpp'),'utf8');
+  assert.match(ui,/Post resource pickup for NPC pilot/);
+  assert.match(ui,/colonyLocalWorkPost/);
+  assert.match(ui,/colonyLocalWorkStatus/);
+  assert.match(ui,/colonyLocalWorkCancel/);
+  assert.match(relay,/LOCAL_WORK_POST/);
+  assert.match(relay,/LOCAL_WORK_CANCEL/);
+  assert.match(host,/process_local_delivery_board|local_delivery_board/);
+});
+
 test('PLAY-13D shuttle UI separates booked passengers, landed visitors and temporary duty',()=>{
   const t=makeShuttleRosterTracker();
   const e=(type,value)=>decode(
