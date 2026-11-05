@@ -8817,6 +8817,21 @@ bool PersistentWorld::cancel_local_delivery_order(
     return true;
 }
 
+bool PersistentWorld::post_intercolony_work_order(PlayerId owner,EntityId origin,
+        const PlanetarySiteKey& site,ShuttleCargo cargo,std::int64_t kg,
+        std::uint64_t id,EntityId carrier,EntityId destination,FailPoint fail) {
+    auto next=world_;
+    if(!next.post_local_delivery_order(owner,origin,site,cargo,kg,id) ||
+       !next.plan_intercolony_freight(owner,id,carrier,destination))
+        return false; // neither plan nor local instruction is published
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("intercolony plan allocated non-existent goods");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
 bool PersistentWorld::load_intercolony_freight(PlayerId owner,
         std::uint64_t id,EntityId carrier,EntityId destination,FailPoint fail) {
     for(const auto& [request,p]:world_.pending_celestial_transits_) {
