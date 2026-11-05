@@ -515,7 +515,7 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
     // SHIP-01B.1: real finite-hull production, separate from free genesis.
     // The client can request an existing player's yard but cannot assert
     // completion, choose an entity ID, or claim a crew and cargo.
-    if(!v.empty() && (v[0]=="FREIGHTER_BUILD" || v[0]=="FREIGHTER_STATUS")){
+    if(!v.empty() && (v[0]=="FREIGHTER_BUILD" || v[0]=="FREIGHTER_COMMISSION" || v[0]=="FREIGHTER_STATUS")){
         try{
             if(v[0]=="FREIGHTER_BUILD" && v.size()==3){
                 const auto yard=integer(v[1]),order=integer(v[2]);
@@ -532,6 +532,22 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
                 announce(world.world(),"FREIGHTER_QUEUED|"+
                     std::to_string(order)+"|"+std::to_string(yard)+"|"+
                     std::to_string(world.generation()));
+            }else if(v[0]=="FREIGHTER_COMMISSION" && v.size()==5){
+                const auto order=integer(v[1]),one=integer(v[2]),
+                    two=integer(v[3]),kg=integer(v[4]);
+                const auto build=world.world().freighter_build_orders().find(
+                    std::uint64_t(order>0?order:0));
+                if(order<=0 || order>=(std::int64_t{1}<<50) ||
+                   one<=0 || two<=0 || one==two ||
+                   kg<10 || kg>1000 ||
+                   build==world.world().freighter_build_orders().end() ||
+                   build->second.owner!=principal ||
+                   build->second.source_ship!=ship ||
+                   !world.commission_shipyard_freighter(principal,
+                       std::uint64_t(order),
+                       {{std::uint64_t(one),std::uint64_t(two)}},kg)){
+                    announce(world.world(),"ERROR|FREIGHTER_DENIED");return;
+                }
             }else if(v[0]!="FREIGHTER_STATUS" || v.size()!=1){
                 announce(world.world(),"ERROR|FREIGHTER_DENIED");return;
             }
@@ -545,6 +561,14 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
                     std::to_string(order.required)+"|"+
                     std::to_string(order.launched_ship)+"|"+
                     std::to_string(world.generation()));
+                if(order.commissioned())
+                    announce(world.world(),"FREIGHTER_COMMISSIONED|"+
+                        std::to_string(id)+"|"+
+                        std::to_string(order.launched_ship)+"|"+
+                        std::to_string(order.commissioning_crew[0])+"|"+
+                        std::to_string(order.commissioning_crew[1])+"|"+
+                        std::to_string(order.provisions_kg_each)+"|"+
+                        std::to_string(world.generation()));
                 ++count;
             }
             announce(world.world(),"FREIGHTER_DONE|"+std::to_string(count));
