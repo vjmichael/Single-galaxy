@@ -363,6 +363,10 @@ static void scenario(const fs::path& db, bool farming){
         // not the later unrelated 81004 shuttle flight.
         CHECK(!w.world().npc_transport_arrival(81004,passenger));
         CHECK(w.world().npc_transport_arrival(81001,passenger));
+        // A later landing must not invalidate the original visitor's
+        // temporary duty. Both revocation and reassignment still work.
+        CHECK(w.assign_planetary_shuttle_visitor_duty(7,ship,key,passenger,false));
+        CHECK(w.assign_planetary_shuttle_visitor_duty(7,ship,key,passenger,true));
         native.action=OrbitalShuttleAction::Reboard;
         native.npc=passenger;native.request_id=0;
         const auto return_boarding=execute_orbital_shuttle(w,native);
