@@ -50,6 +50,14 @@ int main(int argc,char** argv) {
                     shuttle.ascent_receipt==81002);
             REQUIRE(saved.world().npc_custody(pilot).physical_location==ship);
             REQUIRE(shuttle.passenger_ids==std::vector<std::uint64_t>{passenger});
+            const auto goods=saved.world().planetary_transport_manifest(key);
+            REQUIRE(goods && goods->valid());
+            REQUIRE(transport::contains_good(*goods,transport::GoodKind::Npc,
+                passenger,1));
+            REQUIRE(transport::contains_good(*goods,transport::GoodKind::Resource,
+                static_cast<std::uint8_t>(transport::ResourceGood::Water),138));
+            REQUIRE(transport::contains_good(*goods,transport::GoodKind::Resource,
+                static_cast<std::uint8_t>(transport::ResourceGood::Food),80));
             REQUIRE(saved.world().npc_custody(passenger).physical_location==ship);
             REQUIRE(!saved.world().npc_available_for_duty(passenger));
             REQUIRE(saved.world().planetary_spaceport_operational(
