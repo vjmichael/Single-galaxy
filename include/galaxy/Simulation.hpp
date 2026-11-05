@@ -764,6 +764,9 @@ public:
         const std::vector<LegacyVoyageManifest>& verified_manifests);
     void upgrade_passenger_snapshot_format();
     void upgrade_assignment_snapshot_format();
+    // Explicit offline/host-staged compatibility upgrade. The caller must
+    // commit the resulting snapshot via the existing world journal.
+    void upgrade_legal_residence_snapshot_format();
     // AUTO-04D.4/v57: genesis-only opt-in for physically accountable onboard
     // passengers. Preexisting worlds keep their historical needs semantics
     // until a separately journaled and verified migration is implemented.
