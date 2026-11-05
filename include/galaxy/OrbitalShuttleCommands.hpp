@@ -8,7 +8,7 @@
 namespace galaxy {
 
 enum class OrbitalShuttleAction : std::uint8_t {
-    Status, Build, AssignPilot, BookPassenger, ReleasePassenger, Disembark, Reboard, Load, Unload, Descend, Ascend
+    Status, Build, AssignPilot, BookPassenger, ReleasePassenger, Disembark, Reboard, AssignVisitorDuty, ReleaseVisitorDuty, Load, Unload, Descend, Ascend
 };
 
 struct OrbitalShuttleCommand {
@@ -75,6 +75,13 @@ inline OrbitalShuttleReply execute_orbital_shuttle(
             accepted=world.transfer_planetary_shuttle_visitor(
                 cmd.owner,cmd.ship,cmd.site,cmd.npc,
                 cmd.action==OrbitalShuttleAction::Reboard);
+            break;
+        case OrbitalShuttleAction::AssignVisitorDuty:
+        case OrbitalShuttleAction::ReleaseVisitorDuty:
+            if(!cmd.npc || cmd.request_id || cmd.kilograms)break;
+            accepted=world.assign_planetary_shuttle_visitor_duty(
+                cmd.owner,cmd.ship,cmd.site,cmd.npc,
+                cmd.action==OrbitalShuttleAction::AssignVisitorDuty);
             break;
         case OrbitalShuttleAction::Load:
         case OrbitalShuttleAction::Unload:
