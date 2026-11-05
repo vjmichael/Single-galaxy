@@ -8,6 +8,8 @@
 
 The player initiates one construction order for an existing, player-owned colony ship, with two distinct available named NPC workers. The existing `industry::inspect_shipyard_build` preflight verifies authorization, colony stock and named workers. A **single authoritative world mutation** removes four real fabricated construction modules from `ColonyShip::modules` and creates a `ShipyardConstruction` record containing **eight ore-equivalent units of embodied structure**, making `Simulation::total_ore()` unchanged. It cannot allocate a new entity ID, spawn NPCs, or create a ready freighter.
 
+An unfinished project can reassign its two named builders through an owner-authenticated and **separately committed** `PersistentWorld::assign_shipyard_builders` transaction; the material escrow remains embodied in the same physical yard. It rejects missing, unavailable, duplicate, wrong-owner or already-completed reassignment. A failure injection cannot partially replace worker identities. The native CTest asserts worker replacement survives SQLite restart and that construction resumes with the new roster.
+
 One shipyard construction project per existing colony ship at this initial stage. Orders are keyed by unique, idempotent finite IDs; wrong owner, missing modules, unavailable/duplicate workers or an already-claimed colony are rejected. A vessel currently engaged in celestial transit cannot start construction. This first playable gate is colony-ship-associated infrastructure and will require a dedicated orbital footprint/entity and power model in subsequent work before claiming a complete shipyard.
 
 `Simulation::step()` alone advances work. It takes eight successful committed ticks with the two original workers physically on the colony ship, assigned to that ship, available for duty and with the colony maintaining actual food/water/oxygen stock. Missing people, life support or a ship in transit **stalls** progress, not conjures an NPC or a completed facility. Completed projects retain their immutable construction receipts and cease accumulating progress. The nonpublic `process_shipyard_construction` is not a caller-writable progress lever.
@@ -18,7 +20,7 @@ Snapshot **v90** serializes the exact project owner/ship, two named IDs, embedde
 
 `PersistentWorld::start_shipyard_construction` uses the existing **copy → validate physical materials → SQLite commit → swap** transaction, including already-existing `FailPoint` hooks. A failed commit cannot debit modules or publish the yard. Existing journaled world ticks atomically advance labor and preserve restart consistency.
 
-Live host commands: `SHIPYARD_BUILD|order|firstNpc|secondNpc`, `SHIPYARD_STATUS`. Client never supplies owner or colony ID; both come from authenticated session and world context. `SHIPYARD_STARTED`, `SHIPYARD_ITEM`, `SHIPYARD_DONE` telemetry derives only from committed authoritative state. Python HTTP relay rejects extra fields, bool-as-int, duplicate workers and invalid IDs. JS displays one global shipyard panel and never owns construction progress.
+Live host commands: `SHIPYARD_BUILD|order|firstNpc|secondNpc`, `SHIPYARD_ASSIGN|order|firstNpc|secondNpc`, `SHIPYARD_STATUS`. Client never supplies owner or colony ID; both come from authenticated session and world context. `SHIPYARD_STARTED`, `SHIPYARD_ASSIGNED`, `SHIPYARD_ITEM`, `SHIPYARD_DONE` telemetry derives only from committed authoritative state. Python HTTP relay rejects extra fields, bool-as-int, duplicate workers and invalid IDs. JS displays one global shipyard panel and never owns construction progress.
 
 ## Test gate added (not yet native-run at exact branch head)
 
@@ -29,7 +31,7 @@ Live host commands: `SHIPYARD_BUILD|order|firstNpc|secondNpc`, `SHIPYARD_STATUS`
 4. Inject SQLite failure into `start_shipyard_construction`; assert identical generation/canonical state and unchanged module inventory.
 5. Commit the build, verify **4 modules → 8 embodied ore** without world-matter drift.
 6. Inject world-step SQLite failure; ensure no phantom tick, labor or generation.
-7. Commit 3 work ticks, close process, reopen actual SQLite database, and verify exact saved v90 state and progress.
+7. Commit 3 work ticks, inject failed workforce reassignment and verify rollback, commit a valid replacement, close process, reopen actual SQLite database, and verify the exact saved v90 worker roster and progress.
 8. Reject forged v90 mass records, then progress five further ticks until operational. Verify no extra progress, free material or duplication on subsequent ticks.
 
 New Node/HTTP relay tests check trusted telemetry framing and command authorization. **A green JS test does not validate the C++ world.**
