@@ -29,7 +29,76 @@ struct OrbitalShuttleReply {
     std::uint64_t generation=0;
     bool present=false;
     PlanetaryShuttleState shuttle{};
+    std::optional<transport::Manifest> goods_manifest; // authoritative mixed cargo view
 };
+
+// A single authenticated, single-item pickup/delivery *step*. It does not
+// teleport cargo or schedule a flight. The native vehicle must already be at
+// the requested physical berth, and every mutation runs through the existing
+// SQLite-authoritative world command. Passenger custody and resource stock
+// remain owned exclusively by Simulation.
+inline OrbitalShuttleReply execute_shuttle_transport_instruction(
+    PersistentWorld& world,PlayerId authenticated,EntityId ship,
+    const PlanetarySiteKey& key,const transport::Instruction& instruction) {
+    OrbitalShuttleReply reply{};
+    reply.generation=world.generation();
+    if(!authenticated || authenticated==Simulation::kServerAuthority ||
+       instruction.owner!=authenticated || !ship || instruction.goods.size()!=1)
+        return reply;
+    const auto site=world.world().planetary_sites().find(key);
+    if(site==world.world().planetary_sites().end() ||
+       site->second.owner!=authenticated || site->second.source_ship!=ship ||
+       !world.world().colony_ship(ship))return reply;
+    const auto manifest=world.world().planetary_transport_manifest(key);
+    if(!manifest || !transport::serves(*manifest,instruction) ||
+       manifest->in_transit)return reply;
+    const auto& item=instruction.goods.front();
+    const bool pickup=instruction.pickup==manifest->berth &&
+                      instruction.delivery==manifest->other_end;
+    const bool deliver=instruction.delivery==manifest->berth &&
+                       instruction.pickup==manifest->other_end;
+    if(!pickup && !deliver)return reply;
+    bool accepted=false;
+    const auto shuttle=world.world().planetary_shuttles().find(key);
+    if(shuttle==world.world().planetary_shuttles().end())return reply;
+    if(item.kind==transport::GoodKind::Resource) {
+        if(item.amount>1000)return reply;
+        galaxy::ShuttleCargo good{};
+        switch(static_cast<transport::ResourceGood>(item.id)){
+        case transport::ResourceGood::Water: good=ShuttleCargo::Water;break;
+        case transport::ResourceGood::Food: good=ShuttleCargo::Food;break;
+        case transport::ResourceGood::Nutrients: good=ShuttleCargo::Nutrients;break;
+        default:return reply;
+        }
+        accepted=pickup?
+            world.load_planetary_shuttle(authenticated,ship,key,good,
+                static_cast<std::int64_t>(item.amount)):
+            world.unload_planetary_shuttle(authenticated,ship,key,good,
+                static_cast<std::int64_t>(item.amount));
+    }else if(item.kind==transport::GoodKind::Npc){
+        // No direct roster editing. Reuse named passenger booking / physical
+        // disembarkation and their existing custody/guardian checks.
+        if(shuttle->second.flight_phase==0)
+            accepted=world.book_planetary_shuttle_passenger(
+                authenticated,ship,key,item.id,pickup);
+        else if(shuttle->second.flight_phase==2)
+            accepted=world.transfer_planetary_shuttle_visitor(
+                authenticated,ship,key,item.id,pickup);
+    }
+    // Equipment lines have a typed shape but no live physical vehicle adapter
+    // yet. Fail closed rather than fabricate a piece of equipment.
+    if(!accepted)return reply;
+    reply.accepted=true;
+    reply.mutated=true;
+    reply.generation=world.generation();
+    const auto current=world.world().planetary_shuttles().find(key);
+    reply.present=current!=world.world().planetary_shuttles().end();
+    if(reply.present) {
+        reply.shuttle=current->second;
+        reply.goods_manifest=world.world().planetary_transport_manifest(key);
+    }
+    return reply;
+}
 
 // Host-authenticated principal and ship are supplied by the trusted desktop
 // process/transport, never inferred from user-provided NPC IDs or region text.
@@ -115,6 +184,7 @@ inline OrbitalShuttleReply execute_orbital_shuttle(
     if(current!=world.world().planetary_shuttles().end()) {
         reply.present=true;
         reply.shuttle=current->second;
+        reply.goods_manifest=world.world().planetary_transport_manifest(cmd.site);
     }
     return reply;
 }
