@@ -31,7 +31,7 @@ int main(){
         ("single-galaxy-ship01a1-"+std::to_string(
             std::chrono::steady_clock::now().time_since_epoch().count())+".sqlite");
     EntityId ship=0;
-    std::array<std::uint64_t,2> workers{};
+    std::array<std::uint64_t,2> workers{},replacement{};
     std::int64_t original=0;
     std::uint64_t before_restart_tick=0;
     std::string committed;
@@ -44,10 +44,12 @@ int main(){
             seed.enable_individual_workforce();
             seed.ensure_physical_celestial_systems();
             seed.ensure_ship_frame_registry();
+            std::vector<std::uint64_t> people;
             for(const auto& [id,n]:seed.npc_records())
-                if(n.home_ship==ship && !workers[0])workers[0]=id;
-                else if(n.home_ship==ship && !workers[1])workers[1]=id;
-            CHECK(workers[0] && workers[1] && workers[0]!=workers[1]);
+                if(n.home_ship==ship)people.push_back(id);
+            CHECK(people.size()==6);
+            workers={{people[0],people[1]}};
+            replacement={{people[2],people[3]}};
             original=seed.total_ore();
             PersistentWorld w(db.string(),std::move(seed));
             CHECK(!w.start_shipyard_construction(8,ship,99001,workers));
@@ -90,6 +92,21 @@ int main(){
             CHECK(w.generation()==prior_generation);
             w.steps(3);
             CHECK(w.world().shipyard_constructions().at(99001).progress==3);
+            CHECK(!w.assign_shipyard_builders(8,99001,replacement));
+            CHECK(!w.assign_shipyard_builders(7,99001,
+                {{replacement[0],replacement[0]}}));
+            CHECK(!w.assign_shipyard_builders(7,99001,
+                {{replacement[0],999999999}}));
+            const auto before_reassign=w.world().canonical_state();
+            bool reassign_failed=false;
+            try{(void)w.assign_shipyard_builders(7,99001,replacement,
+                FailPoint::AfterSnapshotWrite);}
+            catch(const std::exception&){reassign_failed=true;}
+            CHECK(reassign_failed &&
+                  w.world().canonical_state()==before_reassign);
+            CHECK(w.assign_shipyard_builders(7,99001,replacement));
+            CHECK(!w.assign_shipyard_builders(7,99001,replacement));
+            CHECK(w.world().shipyard_constructions().at(99001).workers==replacement);
             CHECK(w.world().total_ore()==original);
             before_restart_tick=w.world().tick();
             committed=w.world().canonical_state();
@@ -114,10 +131,12 @@ int main(){
             CHECK(w.world().canonical_state()==committed);
             CHECK(w.world().tick()==before_restart_tick);
             CHECK(w.world().shipyard_constructions().at(99001).progress==3);
+            CHECK(w.world().shipyard_constructions().at(99001).workers==replacement);
             CHECK(w.world().colony_ship(ship)->modules==0);
             w.steps(5);
             const auto& finished=w.world().shipyard_constructions().at(99001);
             CHECK(finished.operational());
+            CHECK(!w.assign_shipyard_builders(7,99001,workers));
             CHECK(finished.progress==8);
             CHECK(finished.last_progress_tick==w.world().tick());
             CHECK(w.world().total_ore()==original);
