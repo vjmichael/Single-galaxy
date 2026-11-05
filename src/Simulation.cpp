@@ -2798,6 +2798,10 @@ Event Simulation::execute(const Command& c) {
             // Cargo remains on the persistent wreck; there is no magical
             // deletion, addition, or instant looting of physical ore.
             ship.type=EntityType::Wreck;
+            // A manufactured vessel keeps its immutable hull provenance as
+            // physical wreckage; it is no longer a navigable ship frame.
+            if(snapshot_version_>=91 && ship.manufactured_order_id)
+                ship_frames_.erase(ship.id);
             ship.hull=0;ship.weapon_charges=0;ship.last_weapon_tick=0;ship.training_drone=false;
             // Preserve former ship owner for salvage claims and victim attribution.
             // The Wreck entity is never an executable player ship.
@@ -10123,12 +10127,16 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 const auto frame=result.ship_frames_.find(job.launched_ship);
                 if(!manufactured_hulls.insert(job.launched_ship).second ||
                    made==result.entities_.end() ||
-                   made->second.type!=EntityType::Ship ||
+                   (made->second.type!=EntityType::Ship &&
+                    made->second.type!=EntityType::Wreck) ||
                    !made->second.owner_id ||
                    made->second.cargo_capacity!=100 ||
                    made->second.manufactured_order_id!=job.order_id ||
-                   frame==result.ship_frames_.end() ||
-                   frame->second.system!=made->second.system_id)
+                   (made->second.type==EntityType::Ship &&
+                    (frame==result.ship_frames_.end() ||
+                     frame->second.system!=made->second.system_id)) ||
+                   (made->second.type==EntityType::Wreck &&
+                    frame!=result.ship_frames_.end()))
                     throw std::runtime_error("snapshot: forged manufactured hull");
             }
         }
