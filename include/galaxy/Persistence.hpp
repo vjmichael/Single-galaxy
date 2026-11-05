@@ -860,6 +860,9 @@ public:
     bool book_planetary_shuttle_passenger(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,std::uint64_t npc,bool board,
         FailPoint fail=FailPoint::None);
+    bool assign_planetary_shuttle_visitor_duty(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc,bool assign,
+        FailPoint fail=FailPoint::None);
     bool transfer_planetary_shuttle_visitor(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,std::uint64_t npc,bool reboard,
         FailPoint fail=FailPoint::None);
