@@ -87,3 +87,20 @@ The orbital UI displays each vehicle's destination, pilot, passengers, load/seat
 - **4C.5:** full crash-injection, restart and Windows/Linux gameplay acceptance.
 
 Do not mark 4C complete on the basis of unit tests alone. Keep PR #48 draft until exact-head native acceptance is green. Do not change 4B's remote workforce policy into remote cargo transportation.
+
+## PLAY-13D.4C.3 native integration checkpoint
+
+Implemented on draft PR #48, pending exact-head Windows/Linux acceptance. This is a **first bounded shuttle flight slice**, not the full general multi-passenger, multi-cargo vehicle system described above.
+
+- The existing v80 player-fabricated shuttle is extended to a v81 canonical flight record, with four phases: orbital (0), descending (1), landed (2), ascending (3).
+- An authorized launch uses the real committed `PersistentWorld` copy/validate/SQLite-commit/publish path. Successful launch schedules a deterministic three-tick journey in `Simulation::step`; arrival is host-driven, not browser-driven.
+- The pilot is one **existing named `NpcRecord`** (the same finite NPC identity/custody framework used for migration and ferries). A dedicated shuttle transit custody location represents the pilot during flight, and landing changes that exact record to the actual region's surface custody location. Neither launch nor landing creates a second NPC. This first slice does **not** reuse ferry `VoyageRecord` directly because it models ship-to-surface shuttle states rather than ship-to-ship passenger ferries; a common transport receipt abstraction remains a future consolidation opportunity.
+- The 1,000 kg shuttle's water/food manifest stays inside the vehicle during flight. Loading and unloading use ship inventory while orbital and site inventory while landed. No automatic or remote transfer happens at arrival.
+- Simplified trip propulsion uses 1 kg of **already-loaded water per launch** and converts it to wastewater at the *departure* endpoint (ship or site); all existing matter is conserved. This is deliberately a provisional water-propellant gameplay recipe, not a real thruster/fuel engineering model.
+- While landed, the pilot consumes one unit each of local food, water and oxygen every 20 committed ticks; resulting organic waste, wastewater and CO₂ remain on site. The existing ship physical-headcount consumption excludes the absent pilot.
+- Flight request IDs are persisted in a bounded, nonreusable registry, plus per-shuttle descent/ascent receipts. Replays are rejected without mutation. Future wire-level request lookup can return the original receipt without a second commit.
+- A parent ship cannot begin a celestial transit while its shuttle is descending, landed or ascending. Future independently supplied orbital landing platforms may relax this constraint.
+- Snapshot parser validates v81 phase, due tick, pilot identity, receipt linkage and region coordinates. Legacy v80 worlds remain readable.
+- Added tests for authorization, failure-injected takeoff rollback, custody while in flight, unsupported midair load/unload, phase progression, in-memory snapshot reconstruction, cargo delivered to the actual site, return flight, request replay rejection and committed SQLite restart of final state.
+
+**Still outstanding:** full crew/passenger manifest and capacity, boarding of additional NPCs, worker recall and task reassignment, richer local fuel and flight failure outcomes, robust crash injection at every SQLite stage with a separate process restart *during* the flight, host/relay/browser commands (4C.4), and exact-head Windows/Linux CI verification. Do not label this first slice as production-complete until those are closed.
