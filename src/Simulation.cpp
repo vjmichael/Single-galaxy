@@ -5490,6 +5490,22 @@ bool Simulation::set_planetary_workforce_policy(PlayerId owner,std::uint64_t bod
     return true;
 }
 void Simulation::process_planetary_surface_operations() {
+    // A shuttle pilot resident on the surface is not aboard the parent ship.
+    // Use the existing physical NPC record; local provisions become local
+    // waste, never a second crew instance or free consumable.
+    if(snapshot_version_>=81 && tick_%20==0)
+        for(const auto& [key,sh]:planetary_shuttles_) {
+            if(sh.flight_phase!=2 || !sh.pilot_npc)continue;
+            auto site=planetary_sites_.find(key);
+            if(site==planetary_sites_.end())continue;
+            auto& ground=site->second;
+            if(ground.food_kg<1 || ground.water_kg<1 || ground.oxygen_kg<1) {
+                ++ground.stalled_cycles;
+                continue; // shortage, never synthesize supplies
+            }
+            --ground.food_kg;--ground.water_kg;--ground.oxygen_kg;
+            ++ground.organic_waste_kg;++ground.wastewater_kg;++ground.co2_kg;
+        }
     for(auto& [key,site]:planetary_sites_) {
         (void)key;
         if(site.spaceport_phase==0 || site.assigned_workers==0)continue;
