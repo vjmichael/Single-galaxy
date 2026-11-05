@@ -604,6 +604,14 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
                 const auto npc=integer(v[5]);
                 if(npc<=0)throw std::invalid_argument("invalid surface visitor");
                 command.npc=std::uint64_t(npc);
+            } else if((action=="DUTY_ON" || action=="DUTY_OFF") &&
+                      v.size()==6) {
+                command.action=action=="DUTY_ON"?
+                    OrbitalShuttleAction::AssignVisitorDuty:
+                    OrbitalShuttleAction::ReleaseVisitorDuty;
+                const auto npc=integer(v[5]);
+                if(npc<=0)throw std::invalid_argument("invalid visitor duty");
+                command.npc=std::uint64_t(npc);
             } else if((action=="LOAD" || action=="UNLOAD") &&
                       v.size()==7) {
                 command.action=action=="LOAD"?OrbitalShuttleAction::Load:
@@ -664,6 +672,14 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
                     std::to_string(body)+"|"+std::to_string(lat)+"|"+
                     std::to_string(lon)+"|"+
                     std::to_string(result.shuttle.disembarked_ids.size()));
+                for(const auto id:result.shuttle.duty_ids)
+                    announce(world.world(),"PLANET_SHUTTLE_WORKER|"+
+                        std::to_string(body)+"|"+std::to_string(lat)+"|"+
+                        std::to_string(lon)+"|"+std::to_string(id));
+                announce(world.world(),"PLANET_SHUTTLE_WORKERS_DONE|"+
+                    std::to_string(body)+"|"+std::to_string(lat)+"|"+
+                    std::to_string(lon)+"|"+
+                    std::to_string(result.shuttle.duty_ids.size()));
             }
         }catch(const std::exception&){
             announce(world.world(),"ERROR|PLANET_SHUTTLE_DENIED");
