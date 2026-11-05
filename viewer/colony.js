@@ -115,6 +115,30 @@
         throw Error('Invalid shuttle operation receipt');
       return {...e,id,latitude,longitude,operation,generation};
     }
+    if(t==='LOCAL_WORK_ITEM'){
+      if(v.length!==12)throw Error('Malformed local delivery contract');
+      const order=numeric(v[4],Number.MAX_SAFE_INTEGER),
+        id=numeric(v[5],Number.MAX_SAFE_INTEGER),
+        latitude=numeric(v[6],35),longitude=numeric(v[7],71),
+        resource=v[8],kg=numeric(v[9],1000),
+        stage=numeric(v[10],6),pilot=numeric(v[11],Number.MAX_SAFE_INTEGER);
+      if(!order||!id||!kg||
+         !['WATER','FOOD','NUTRIENTS'].includes(resource)||
+         (stage>0&&stage<5&&!pilot))
+        throw Error('Invalid local delivery job');
+      return {...e,order,id,latitude,longitude,resource,kg,stage,pilot};
+    }
+    if(t==='LOCAL_WORK_POSTED'||t==='LOCAL_WORK_CANCELLED'){
+      if(v.length!==6)throw Error('Malformed local delivery receipt');
+      const order=numeric(v[4],Number.MAX_SAFE_INTEGER),
+        generation=numeric(v[5],Number.MAX_SAFE_INTEGER);
+      if(!order||!generation)throw Error('Invalid local delivery receipt');
+      return {...e,order,generation};
+    }
+    if(t==='LOCAL_WORK_DONE'){
+      if(v.length!==5)throw Error('Malformed local delivery board terminator');
+      return {...e,count:numeric(v[4],64)};
+    }
     if(t==='PLANET_SITE_STATUS'){
       if(v.length!==22&&v.length!==23)throw Error('Malformed planetary spaceport status');
       const id=numeric(v[4],Number.MAX_SAFE_INTEGER),
