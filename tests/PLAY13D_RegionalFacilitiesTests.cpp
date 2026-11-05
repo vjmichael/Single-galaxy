@@ -181,6 +181,11 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(!w.assign_planetary_shuttle_pilot(7,ship,key,9999999));
         CHECK(w.assign_planetary_shuttle_pilot(7,ship,key,available[2]));
         CHECK(w.world().npc_custody(available[2]).physical_location==ship);
+        CHECK(w.world().npc_custody(passenger).physical_location==ship);
+        CHECK(w.world().planetary_shuttles().at(key).passenger_ids==
+              std::vector<std::uint64_t>{passenger});
+        CHECK(w.book_planetary_shuttle_passenger(7,ship,key,passenger,false));
+        CHECK(w.world().npc_available_for_duty(passenger));
         CHECK(!w.load_planetary_shuttle(8,ship,key,true,10));
         CHECK(!w.load_planetary_shuttle(7,ship,key,true,1001));
         const auto load_before=w.world().canonical_state();
@@ -209,6 +214,37 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(Simulation::from_snapshot(w.world().canonical_state())
               .canonical_state()==w.world().canonical_state());
 
+        // PLAY-13D.4C.7: reserve real named ferry-style passengers in
+        // the SAME NPC roster. Booking and cancellation are atomic SQLite
+        // mutations and cannot invent a second physical worker.
+        CHECK(available.size()>=5);
+        const auto passenger=available[3];
+        CHECK(!w.book_planetary_shuttle_passenger(8,ship,key,passenger,true));
+        CHECK(!w.book_planetary_shuttle_passenger(7,ship,key,available[2],true));
+        CHECK(w.book_planetary_shuttle_passenger(7,ship,key,passenger,true));
+        CHECK(!w.book_planetary_shuttle_passenger(7,ship,key,passenger,true));
+        CHECK(!w.world().npc_available_for_duty(passenger));
+        CHECK(w.world().planetary_shuttles().at(key).passenger_ids==
+              std::vector<std::uint64_t>{passenger});
+        CHECK(w.world().canonical_state().rfind("galaxy-kernel-v82|",0)==0);
+        const auto booked=w.world().canonical_state();
+        CHECK(Simulation::from_snapshot(booked).canonical_state()==booked);
+        CHECK(w.book_planetary_shuttle_passenger(7,ship,key,passenger,false));
+        CHECK(w.world().planetary_shuttles().at(key).passenger_ids.empty());
+        const auto reservation_before=w.world().canonical_state();
+        bool reservation_failed=false;
+        try{(void)w.book_planetary_shuttle_passenger(
+                7,ship,key,passenger,true,FailPoint::AfterSnapshotWrite);}
+        catch(const std::exception&){reservation_failed=true;}
+        CHECK(reservation_failed);
+        CHECK(w.world().canonical_state()==reservation_before);
+        native.action=OrbitalShuttleAction::BookPassenger;
+        native.kilograms=0;native.npc=passenger;
+        const auto booked_native=execute_orbital_shuttle(w,native);
+        CHECK(booked_native.accepted && booked_native.mutated &&
+              booked_native.shuttle.passenger_ids.size()==1);
+        native.npc=0;
+
         // PLAY-13D.4C.3: the named pilot moves using the SAME NPC roster
         // as migration and ferry operations, never a shadow shuttle person.
         CHECK(!w.launch_planetary_shuttle(8,ship,key,81001,false));
@@ -232,12 +268,16 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(w.world().npc_custody(available[2]).physical_location!=ship);
         CHECK(w.world().npc_custody(available[2]).passenger);
         CHECK(w.world().npc_custody(available[2]).active_transport_id==81001);
+        CHECK(w.world().npc_custody(passenger).physical_location!=ship);
+        CHECK(w.world().npc_custody(passenger).passenger);
+        CHECK(w.world().npc_custody(passenger).active_transport_id==81001);
+        CHECK(!w.book_planetary_shuttle_passenger(7,ship,key,passenger,false));
         CHECK(!w.unload_planetary_shuttle(7,ship,key,true,1));
         CHECK(!w.load_planetary_shuttle(7,ship,key,false,1));
         CHECK(!w.begin_celestial_transit(7,ship,chosen.body,81002));
         CHECK(w.world().total_ore()==origin);
         const auto in_flight=w.world().canonical_state();
-        CHECK(in_flight.rfind("galaxy-kernel-v81|",0)==0);
+        CHECK(in_flight.rfind("galaxy-kernel-v82|",0)==0);
         CHECK(Simulation::from_snapshot(in_flight).canonical_state()==in_flight);
         w.steps(3);
         CHECK(w.world().planetary_shuttles().at(key).flight_phase==2);
@@ -246,6 +286,9 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(w.world().planetary_shuttles().at(key).descent_receipt==81001);
         CHECK(w.world().npc_custody(available[2]).physical_location==
               w.world().planetary_sites().at(key).surface_location);
+        CHECK(w.world().npc_custody(passenger).physical_location==
+              w.world().planetary_sites().at(key).surface_location);
+        CHECK(!w.world().npc_available_for_duty(passenger));
         CHECK(!w.launch_planetary_shuttle(7,ship,key,81001,true));
         CHECK(w.unload_planetary_shuttle(7,ship,key,true,60));
         CHECK(w.unload_planetary_shuttle(7,ship,key,false,20));
