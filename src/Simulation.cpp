@@ -5650,6 +5650,35 @@ bool Simulation::start_shipyard_construction(PlayerId owner,EntityId colony,
     snapshot_version_=std::max(snapshot_version_,90);
     return true;
 }
+bool Simulation::assign_shipyard_builders(PlayerId owner,std::uint64_t id,
+        std::array<std::uint64_t,2> replacement) {
+    const auto it=shipyard_constructions_.find(id);
+    if(!owner || owner==kServerAuthority ||
+       it==shipyard_constructions_.end() ||
+       it->second.owner!=owner || it->second.operational() ||
+       !replacement[0] || !replacement[1] ||
+       replacement[0]==replacement[1] ||
+       it->second.workers==replacement)return false;
+    const auto ship=it->second.colony_ship;
+    const auto entity=entities_.find(ship);
+    if(entity==entities_.end() || entity->second.owner_id!=owner ||
+       entity->second.type!=EntityType::Ship)return false;
+    for(const auto worker:replacement) {
+        const auto n=npcs_.find(worker);
+        if(n==npcs_.end() || n->second.home_ship!=ship ||
+           n->second.location!=ship || n->second.assigned_site!=ship ||
+           n->second.role!=NpcRole::Ship || n->second.transport_id ||
+           !npc_available_for_duty(worker))return false;
+    }
+    for(const auto& [other,project]:shipyard_constructions_) {
+        if(other==id || project.operational())continue;
+        for(const auto worker:replacement)
+            if(worker==project.workers[0] ||
+               worker==project.workers[1])return false;
+    }
+    it->second.workers=replacement;
+    return true;
+}
 void Simulation::process_shipyard_construction(){
     for(auto& [id,build]:shipyard_constructions_){
         (void)id;
