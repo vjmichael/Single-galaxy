@@ -1382,7 +1382,27 @@ int main(int argc,char** argv){
             std::map<PlanetarySiteKey,std::uint8_t> prior_shuttle_phases;
             for(const auto& [key,sh]:world.world().planetary_shuttles())
                 prior_shuttle_phases.emplace(key,sh.flight_phase);
+            std::map<std::uint64_t,LocalDeliveryStage> prior_work;
+            for(const auto& [id,job]:world.world().local_delivery_board())
+                if(job.owner==owner && job.board_ship==ship)
+                    prior_work.emplace(id,job.stage);
             world.step();
+            // Published only after atomic world-step commit. Each status
+            // comes from the real work board; no guessed completion.
+            for(const auto& [id,job]:world.world().local_delivery_board()) {
+                const auto prev=prior_work.find(id);
+                if(job.owner!=owner || job.board_ship!=ship ||
+                   (prev!=prior_work.end() && prev->second==job.stage))continue;
+                const auto good=job.cargo==ShuttleCargo::Water?"WATER":
+                    job.cargo==ShuttleCargo::Food?"FOOD":"NUTRIENTS";
+                announce(world.world(),"LOCAL_WORK_ITEM|"+std::to_string(id)+"|"+
+                    std::to_string(std::get<0>(job.site))+"|"+
+                    std::to_string(std::get<1>(job.site))+"|"+
+                    std::to_string(std::get<2>(job.site))+"|"+good+"|"+
+                    std::to_string(job.kilograms)+"|"+
+                    std::to_string(unsigned(job.stage))+"|"+
+                    std::to_string(job.assigned_pilot));
+            }
             // Native world ticks complete shuttle flights automatically.
             // Publish only the committed phase transition to the owning player.
             for(const auto& [key,sh]:world.world().planetary_shuttles()) {
