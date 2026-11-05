@@ -1437,14 +1437,12 @@ bool Simulation::submit(const Command& c) {
         const auto id=c.passenger_ids[0];
         const auto n=npcs_.find(id);
         const auto v=voyages_.find(c.transport_id);
+        const auto arrival=npc_transport_arrival(c.transport_id,id);
         if(n==npcs_.end() || v==voyages_.end() || v->second.status!=2 ||
-           (v->second.origin!=c.actor || v->second.destination!=c.target ||
-            !transport::completed_transport(
-                transport::NpcTransport{c.transport_id,transport::Mode::Ferry,
-                    {transport::LocationKind::ColonyShip,v->second.origin},
-                    {transport::LocationKind::ColonyShip,v->second.destination},
-                    v->second.passengers.size(),v->second.passengers,
-                    transport::TransportState::Arrived},id)) ||
+           (!arrival || arrival->mode()!=transport::Mode::Ferry ||
+            arrival->source().id!=c.actor ||
+            arrival->destination().id!=c.target ||
+            !transport::completed_transport(*arrival,id)) ||
            n->second.home_ship!=c.actor || n->second.location!=c.target ||
            n->second.assigned_site!=c.actor || n->second.transport_id ||
            n->second.role!=NpcRole::Ship || n->second.mentor_id ||
@@ -2340,18 +2338,16 @@ Event Simulation::execute(const Command& c) {
         const auto id=c.passenger_ids.empty()?0:c.passenger_ids.front();
         auto n=npcs_.find(id);
         const auto v=voyages_.find(c.transport_id);
+        const auto arrival=npc_transport_arrival(c.transport_id,id);
         if(c.issuer!=kServerAuthority || c.passenger_ids.empty() ||
            c.passenger_ids.size()>2 || !id ||
            (c.passenger_ids.size()==2 && (c.passenger_ids[1]<=id ||
              snapshot_version_<41)) ||
            n==npcs_.end() || v==voyages_.end() || v->second.status!=2 ||
-           (v->second.origin!=c.actor || v->second.destination!=c.target ||
-            !transport::completed_transport(
-                transport::NpcTransport{c.transport_id,transport::Mode::Ferry,
-                    {transport::LocationKind::ColonyShip,v->second.origin},
-                    {transport::LocationKind::ColonyShip,v->second.destination},
-                    v->second.passengers.size(),v->second.passengers,
-                    transport::TransportState::Arrived},id)) ||
+           (!arrival || arrival->mode()!=transport::Mode::Ferry ||
+            arrival->source().id!=c.actor ||
+            arrival->destination().id!=c.target ||
+            !transport::completed_transport(*arrival,id)) ||
            n->second.home_ship!=c.actor || n->second.assigned_site!=c.actor ||
            n->second.location!=c.target || n->second.transport_id ||
            n->second.role!=NpcRole::Ship || n->second.mentor_id ||
@@ -5518,14 +5514,7 @@ bool Simulation::assign_planetary_shuttle_visitor_duty(PlayerId owner,EntityId s
        sh->second.owner!=owner || sh->second.source_ship!=ship ||
        site->second.owner!=owner || site->second.source_ship!=ship ||
        site->second.spaceport_phase!=3 ||
-       !transport::completed_transport(
-           transport::NpcTransport{sh->second.descent_receipt,
-             transport::Mode::PlanetaryShuttle,
-             {transport::LocationKind::ColonyShip,ship},
-             {transport::LocationKind::PlanetarySite,
-              site->second.surface_location},
-             64,sh->second.disembarked_ids,
-             transport::TransportState::Arrived},npc) ||
+       !npc_transport_arrival(sh->second.descent_receipt,npc) ||
        person->second.home_ship!=ship ||
        person->second.location!=site->second.surface_location ||
        person->second.assigned_site!=ship ||
@@ -5572,13 +5561,8 @@ bool Simulation::transfer_planetary_shuttle_visitor(PlayerId owner,EntityId ship
     auto& visitors=sh->second.disembarked_ids;
     if(reboard) {
         auto at=std::lower_bound(visitors.begin(),visitors.end(),npc);
-        if(!transport::completed_transport(
-                transport::NpcTransport{sh->second.descent_receipt,
-                    transport::Mode::PlanetaryShuttle,
-                    {transport::LocationKind::ColonyShip,ship},
-                    {transport::LocationKind::PlanetarySite,
-                     site->second.surface_location},
-                    64,visitors,transport::TransportState::Arrived},npc) || aboard.size()>=3 ||
+        if(!npc_transport_arrival(sh->second.descent_receipt,npc) ||
+           at==visitors.end() || *at!=npc || aboard.size()>=3 ||
            std::binary_search(aboard.begin(),aboard.end(),npc))
             return false;
         auto place=std::lower_bound(aboard.begin(),aboard.end(),npc);
