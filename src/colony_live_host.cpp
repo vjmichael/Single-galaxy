@@ -549,9 +549,39 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
                 std::to_string(site.water_kg)+"|"+
                 std::to_string(site.oxygen_kg)+"|"+
                 std::to_string(site.delegated_npcs[0])+"|"+
-                std::to_string(site.delegated_npcs[1]));
+                std::to_string(site.delegated_npcs[1])+"|"+
+                std::to_string(unsigned(site.workforce_policy))+"|"+
+                std::to_string(unsigned(site.equipment_condition))+"|"+
+                std::to_string(site.autonomous_cycles)+"|"+
+                std::to_string(site.stalled_cycles)+"|"+
+                std::to_string(site.auto_extracted_kg)+"|"+
+                std::to_string(site.repair_cycles));
         }catch(const std::exception&){
             announce(world.world(),"ERROR|PLANET_SITE_STATUS_DENIED");
+        }
+        return;
+    }
+    // PLAY-13D.4B: owner administrative policy; unlike a physical transfer
+    // it remains available after the ship leaves this planet.
+    if(v.size()==5 && v[0]=="PLANET_POLICY") {
+        try {
+            const auto body=integer(v[1]),lat=integer(v[2]),
+                       lon=integer(v[3]),policy=integer(v[4]);
+            if(body<=0 || lat<0 || lat>=36 || lon<0 || lon>=72 ||
+               policy<0 || policy>4)
+                throw std::invalid_argument("invalid planetary policy");
+            if(!world.set_planetary_workforce_policy(
+                principal,std::uint64_t(body),std::uint16_t(lat),
+                std::uint16_t(lon),std::uint8_t(policy))) {
+                announce(world.world(),"ERROR|PLANET_POLICY_DENIED");
+                return;
+            }
+            announce(world.world(),"PLANET_POLICY_COMMITTED|"+
+                std::to_string(body)+"|"+std::to_string(lat)+"|"+
+                std::to_string(lon)+"|"+std::to_string(policy)+"|"+
+                std::to_string(world.generation()));
+        }catch(const std::exception&){
+            announce(world.world(),"ERROR|PLANET_POLICY_DENIED");
         }
         return;
     }
