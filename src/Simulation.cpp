@@ -888,6 +888,15 @@ bool Simulation::npc_available_for_duty(std::uint64_t npc_id) const {
     if(it==npcs_.end())return false;
     const auto& n=it->second;
     if(n.location!=n.assigned_site || n.transport_id)return false;
+    // A booked seat reserves the very same NPC for an actual transport leg.
+    // Prevent a concurrently issued workforce order from assigning this
+    // physical person to two destinations.
+    for(const auto& [key,sh]:planetary_shuttles_) {
+        (void)key;
+        if(sh.pilot_npc==npc_id ||
+           std::binary_search(sh.passenger_ids.begin(),
+                              sh.passenger_ids.end(),npc_id))return false;
+    }
     const auto status=npc_health_status(npc_id);
     return status==NpcHealthStatus::Healthy || status==NpcHealthStatus::Treated ||
            status==NpcHealthStatus::Recovered;
@@ -5466,7 +5475,9 @@ bool Simulation::launch_planetary_shuttle(PlayerId owner,EntityId ship,
        hull->second.jump_state!=ShipJumpState::Ready ||
        frame==ship_frames_.end() || frame->second.anchor_body!=std::get<0>(key) ||
        life==life_support_.end() ||
-       (!ascend && !npc_available_for_duty(sh->second.pilot_npc)) ||
+       (!ascend && npc_health_status(sh->second.pilot_npc)!=NpcHealthStatus::Healthy &&
+        npc_health_status(sh->second.pilot_npc)!=NpcHealthStatus::Treated &&
+        npc_health_status(sh->second.pilot_npc)!=NpcHealthStatus::Recovered) ||
        (ascend && npc_health_status(sh->second.pilot_npc)!=NpcHealthStatus::Healthy &&
         npc_health_status(sh->second.pilot_npc)!=NpcHealthStatus::Treated &&
         npc_health_status(sh->second.pilot_npc)!=NpcHealthStatus::Recovered))
@@ -5501,7 +5512,9 @@ bool Simulation::launch_planetary_shuttle(PlayerId owner,EntityId ship,
            it->second.assigned_site!=ship || it->second.transport_id ||
            it->second.location!=(ascend?site->second.surface_location:ship))
             return false;
-        if(!ascend && !npc_available_for_duty(passenger_id))return false;
+        if(!ascend && npc_health_status(passenger_id)!=NpcHealthStatus::Healthy &&
+           npc_health_status(passenger_id)!=NpcHealthStatus::Treated &&
+           npc_health_status(passenger_id)!=NpcHealthStatus::Recovered)return false;
     }
     // One kg of physically loaded water is the simplified water propellant
     // per trip; spent propellant remains wastewater at the departure endpoint.
