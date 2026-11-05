@@ -126,3 +126,13 @@ A previously hidden blocker was fixed: the relay's advertised planetary actions 
 `.github/workflows/play13d.yml` now compiles the native fixture on **Windows and Linux** and runs the real E2E script on both operating systems, in addition to existing CTest, Node frame parser and HTTP validation.
 
 **Acceptance condition:** exact-head native Windows and Linux CI must actually finish successfully, the E2E must show native commitment rather than mere relay queuing, and the independent restart/mass audit must pass. No completion claim is made while the jobs are still queued. Remaining functional limits of v81 (single named pilot, provisional water propellant, water/food cargo, no general passenger manifest or crash injection at each native SQLite boundary) are unchanged.
+
+## PLAY-13D.4C.6 — Desktop-native shuttle command boundary
+
+The browser remains a **temporary development and test harness**, not the planned shipped PC game UI.
+
+The new header-only `include/galaxy/OrbitalShuttleCommands.hpp` defines a typed, in-process `OrbitalShuttleCommand`/`OrbitalShuttleReply` service for the future standalone desktop client. The service accepts a trusted host-authenticated principal, ship, exact `PlanetarySiteKey`, operation, and bounded arguments. It checks the existing canonical site ownership and delegates every mutation to `PersistentWorld`; it does not own another simulation, SQLite database, cargo ledger, or NPC roster. Status reads report real committed phase, NPC identity and cargo via `PlanetaryShuttleState`.
+
+The temporary `colony_live_host.cpp` wire parser now adapts validated `PLANET_SHUTTLE` commands into that **same native service**, and existing Web/HTTP telemetry only serializes its result. Direct `PLAY13D_RegionalFacilitiesTests.cpp` tests exercise the typed service without HTTP, including owner/region denial, invalid cargo, real committed cargo loading and descent. A custody defect was additionally closed: the pilot cannot be reassigned unless the shuttle is docked in orbit.
+
+This is a game-core integration boundary for a future desktop renderer/UI, **not a completed standalone desktop window**. No browser rendering dependencies were added to the game kernel. Keep the exact-head Windows/Linux native CI acceptance open pending real results.
