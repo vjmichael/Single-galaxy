@@ -8790,6 +8790,33 @@ bool PersistentWorld::launch_planetary_shuttle(PlayerId owner,EntityId ship,
     return true;
 }
 
+bool PersistentWorld::post_local_delivery_order(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& site,ShuttleCargo cargo,
+        std::int64_t kilograms,std::uint64_t order_id,FailPoint fail) {
+    auto next=world_;
+    if(!next.post_local_delivery_order(owner,ship,site,cargo,kilograms,order_id))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("local contract posting changed conserved mass");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::cancel_local_delivery_order(
+        PlayerId owner,std::uint64_t order_id,FailPoint fail) {
+    auto next=world_;
+    if(!next.cancel_local_delivery_order(owner,order_id))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("local contract cancellation changed conserved mass");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
 bool PersistentWorld::build_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,FailPoint fail) {
     for(const auto& [id,p]:world_.pending_celestial_transits_) {
         (void)id;
