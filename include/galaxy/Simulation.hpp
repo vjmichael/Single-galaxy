@@ -4,6 +4,7 @@
 #include "galaxy/Astronomy.hpp"
 #include "galaxy/PlanetaryGeography.hpp"
 #include "galaxy/NpcTransport.hpp"
+#include "galaxy/UniversalTransport.hpp"
 #include <array>
 #include <cstdint>
 #include <limits>
@@ -1037,6 +1038,10 @@ public:
         const PlanetarySiteKey& key,std::uint64_t request_id,bool ascend);
     void process_planetary_shuttle_flights();
     const std::map<PlanetarySiteKey,PlanetaryShuttleState>& planetary_shuttles() const noexcept {return planetary_shuttles_;}
+    // One read-only mixed NPC/resource manifest generated from the SAME
+    // physical shuttle and canonical NPC roster. Not an inventory copy.
+    std::optional<transport::Manifest> planetary_transport_manifest(
+        const PlanetarySiteKey& key) const;
     bool equip_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
         std::uint16_t latitude,std::uint16_t longitude,bool farm);
     // Ship and site remain in identical anchored celestial frame.
