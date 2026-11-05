@@ -544,6 +544,21 @@ struct ShipyardConstruction {
     std::uint64_t posted_tick=0,last_progress_tick=0,stalled_ticks=0;
     bool operational() const noexcept {return progress==required;}
 };
+// SHIP-01B.1: one real six-module hull at a built yard. This is a
+// manufacturing record, NOT a carrier inventory or an invented vessel.
+// The finished hull is its own regular Entity (no crew, stock, free scanner,
+// or colony_ship record until an explicitly authorized commissioning gate).
+struct FreighterBuildOrder {
+    std::uint64_t order_id=0,yard_order=0;
+    PlayerId owner=0;
+    EntityId source_ship=0,launched_ship=0;
+    std::int64_t embodied_ore=12; // 6 manufactured modules x 2 ore-equivalent
+    std::uint64_t progress=0,required=12;
+    std::uint64_t posted_tick=0,last_progress_tick=0,launched_tick=0;
+    std::uint32_t system=0;
+    std::uint64_t anchor_body=0;
+    bool finished() const noexcept {return launched_ship!=0;}
+};
 struct PhysicalOasisReserve {
     std::int64_t water_kg=0,nutrients_kg=0;
     std::int64_t initial_water_kg=0,initial_nutrients_kg=0;
@@ -1119,6 +1134,15 @@ public:
         std::uint64_t order_id,std::array<std::uint64_t,2> workers);
     bool assign_shipyard_builders(PlayerId owner,std::uint64_t order_id,
         std::array<std::uint64_t,2> replacement);
+    // Real first cargo hull. No ship may be created except by the world's
+    // committed twelve-tick factory progression after six modules are paid.
+    const std::map<std::uint64_t,FreighterBuildOrder>& freighter_build_orders() const noexcept {
+        return freighter_build_orders_;
+    }
+    bool queue_shipyard_freighter(PlayerId owner,std::uint64_t yard_order,
+        std::uint64_t build_order);
+    // Finished order references an actual Entity with an empty physical hold.
+    // New hull starts uncommissioned and is not a crewed colony vessel.
     bool plan_intercolony_freight(PlayerId owner,std::uint64_t local_order_id,
         EntityId carrier,EntityId destination);
     bool load_intercolony_freight(PlayerId owner,std::uint64_t local_order_id,
@@ -1198,6 +1222,7 @@ private:
     void process_oasis_extractors();
     void process_planetary_surface_operations();
     void process_shipyard_construction(); // only Simulation::step advances labor
+    void process_freighter_builds(); // only the committed world tick may launch
     void process_farms();
     void move_npc_records(EntityId ship, EntityId site, NpcRole role, std::int64_t delta);
     void award_farm_experience(EntityId site);
@@ -1227,6 +1252,7 @@ private:
     std::map<std::uint64_t,LocalDeliveryOrder> local_delivery_orders_; // v88
     std::map<std::uint64_t,IntercolonyFreightLeg> intercolony_freight_; // v89
     std::map<std::uint64_t,ShipyardConstruction> shipyard_constructions_; // v90
+    std::map<std::uint64_t,FreighterBuildOrder> freighter_build_orders_; // v91
     std::set<std::uint64_t> shuttle_flight_request_ids_; // v81 replay rejection
     std::map<std::uint64_t,PendingCelestialTransit> pending_celestial_transits_;
     std::map<std::uint64_t,CompletedCelestialTransit> completed_celestial_transits_;
