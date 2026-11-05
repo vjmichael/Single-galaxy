@@ -866,6 +866,11 @@ public:
         FailPoint fail=FailPoint::None);
     bool cancel_local_delivery_order(PlayerId owner,std::uint64_t order_id,
         FailPoint fail=FailPoint::None);
+    // Exactly one canonical SQLite commit per real sealed-carrier stock transfer.
+    bool load_intercolony_freight(PlayerId owner,std::uint64_t order_id,
+        EntityId carrier,EntityId destination,FailPoint fail=FailPoint::None);
+    bool deliver_intercolony_freight(PlayerId owner,std::uint64_t order_id,
+        FailPoint fail=FailPoint::None);
     bool load_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,bool water,std::int64_t kg,FailPoint fail=FailPoint::None);
     bool unload_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,bool water,std::int64_t kg,FailPoint fail=FailPoint::None);
     bool load_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,ShuttleCargo cargo,std::int64_t kg,FailPoint fail=FailPoint::None);
