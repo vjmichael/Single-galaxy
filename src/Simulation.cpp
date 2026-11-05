@@ -5455,6 +5455,40 @@ bool Simulation::book_planetary_shuttle_passenger(PlayerId owner,EntityId ship,
 }
 
 
+bool Simulation::assign_planetary_shuttle_visitor_duty(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc,bool assign) {
+    auto sh=planetary_shuttles_.find(key);
+    auto site=planetary_sites_.find(key);
+    auto person=npcs_.find(npc);
+    if(!owner || !npc || sh==planetary_shuttles_.end() ||
+       site==planetary_sites_.end() || person==npcs_.end() ||
+       sh->second.owner!=owner || sh->second.source_ship!=ship ||
+       site->second.owner!=owner || site->second.source_ship!=ship ||
+       site->second.spaceport_phase!=3 ||
+       !std::binary_search(sh->second.disembarked_ids.begin(),
+                           sh->second.disembarked_ids.end(),npc) ||
+       person->second.home_ship!=ship ||
+       person->second.location!=site->second.surface_location ||
+       person->second.assigned_site!=ship ||
+       person->second.role!=NpcRole::Ship || person->second.transport_id)
+        return false;
+    auto& duty=sh->second.duty_ids;
+    auto at=std::lower_bound(duty.begin(),duty.end(),npc);
+    if(assign) {
+        if(at!=duty.end() && *at==npc)return false;
+        const auto health=npc_health_status(npc);
+        if(health!=NpcHealthStatus::Healthy &&
+           health!=NpcHealthStatus::Treated &&
+           health!=NpcHealthStatus::Recovered)return false;
+        duty.insert(at,npc);
+    }else {
+        if(at==duty.end() || *at!=npc)return false;
+        duty.erase(at);
+    }
+    snapshot_version_=std::max(snapshot_version_,84);
+    return true;
+}
+
 bool Simulation::transfer_planetary_shuttle_visitor(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,std::uint64_t npc,bool reboard) {
     auto sh=planetary_shuttles_.find(key);
@@ -5485,6 +5519,10 @@ bool Simulation::transfer_planetary_shuttle_visitor(PlayerId owner,EntityId ship
         auto place=std::lower_bound(aboard.begin(),aboard.end(),npc);
         aboard.insert(place,npc);
         visitors.erase(at);
+        const auto duty=std::lower_bound(sh->second.duty_ids.begin(),
+                                         sh->second.duty_ids.end(),npc);
+        if(duty!=sh->second.duty_ids.end() && *duty==npc)
+            sh->second.duty_ids.erase(duty);
     }else {
         auto at=std::lower_bound(aboard.begin(),aboard.end(),npc);
         if(at==aboard.end() || *at!=npc || visitors.size()>=64 ||
@@ -5684,7 +5722,7 @@ void Simulation::process_planetary_surface_operations() {
         // workers. No permanent employment or immigration is inferred.
         const auto sh=planetary_shuttles_.find(key);
         if(sh!=planetary_shuttles_.end())
-            for(const auto npc:sh->second.disembarked_ids) {
+            for(const auto npc:sh->second.duty_ids) {
                 const auto person=npcs_.find(npc);
                 if(person==npcs_.end() ||
                    person->second.location!=site.surface_location ||
