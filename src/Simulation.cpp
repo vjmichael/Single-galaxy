@@ -5379,6 +5379,7 @@ bool Simulation::assign_planetary_shuttle_pilot(PlayerId owner,EntityId ship,
     const auto crew=npcs_.find(npc);
     if(!owner || shuttle==planetary_shuttles_.end() ||
        shuttle->second.owner!=owner || shuttle->second.source_ship!=ship ||
+       shuttle->second.flight_phase!=0 || // pilot changes only at orbital berth
        !npc || crew==npcs_.end() || crew->second.home_ship!=ship ||
        crew->second.location!=ship || crew->second.role!=NpcRole::Ship ||
        crew->second.assigned_site!=ship || crew->second.transport_id ||
