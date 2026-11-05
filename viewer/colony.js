@@ -875,6 +875,54 @@
              line.append(choices);
              shuttlePanel.append(line);
            }
+           // Local work board: one simple instruction. The native world
+           // decides pilot, flight and stock.
+           const workTitle=document.createElement('strong');
+           workTitle.textContent='Local NPC delivery contracts';
+           const workPost=document.createElement('button');
+           workPost.type='button';
+           workPost.textContent='Post resource pickup for NPC pilot';
+           const workRefresh=document.createElement('button');
+           workRefresh.type='button';workRefresh.textContent='Check work board';
+           const workCancelId=document.createElement('input');
+           workCancelId.type='number';workCancelId.step='1';workCancelId.min='1';
+           workCancelId.placeholder='Posted contract ID';
+           workCancelId.setAttribute('aria-label','Cancel contract ID');
+           const workCancel=document.createElement('button');
+           workCancel.type='button';workCancel.textContent='Cancel posted order';
+           const workStatus=document.createElement('output');
+           workStatus.dataset.localWorkStatus='1';
+           workStatus.textContent='Choose a resource and quantity above to post pickup.';
+           const workList=document.createElement('div');
+           workList.dataset.localWorkList='1';
+           const workCoords=()=>{
+             const lat=Number(latitude.value),lon=Number(longitude.value);
+             return Number.isSafeInteger(lat)&&lat>=0&&lat<36&&
+               Number.isSafeInteger(lon)&&lon>=0&&lon<72?{lat,lon}:null;
+           };
+           workPost.addEventListener('click',()=>{
+             const coords=workCoords(),kg=Number(shuttleKg.value);
+             const order=Date.now()*1000+Math.floor(Math.random()*1000);
+             if(!coords||!Number.isSafeInteger(kg)||kg<1||kg>1000||
+                !Number.isSafeInteger(order)||order<=0)return;
+             window.GalaxyColonyCommand?.('colonyLocalWorkPost',{
+               body:body.id,latitude:coords.lat,longitude:coords.lon,
+               resource:shuttleResource.value,kg,order});
+             workCancelId.value=String(order);
+             workStatus.textContent='Pickup contract submitted; awaiting native receipt.';
+           });
+           workRefresh.addEventListener('click',()=>{
+             window.GalaxyColonyCommand?.('colonyLocalWorkStatus',{});
+             workStatus.textContent='Requesting authoritative local work board.';
+           });
+           workCancel.addEventListener('click',()=>{
+             const order=Number(workCancelId.value);
+             if(!Number.isSafeInteger(order)||order<=0)return;
+             window.GalaxyColonyCommand?.('colonyLocalWorkCancel',{order});
+             workStatus.textContent='Cancellation requested; awaiting native receipt.';
+           });
+           shuttlePanel.append(workTitle,workPost,workRefresh,
+               workCancelId,workCancel,workStatus,workList);
            shuttlePanel._shuttleRoster=makeShuttleRosterTracker();
            shuttlePanel.dataset.shuttleBody=String(body.id);
            shuttlePanel.dataset.shuttleRegion='';
@@ -886,6 +934,8 @@
              shuttlePanel.querySelectorAll('[data-shuttle-roster]').forEach(
                slot=>{slot.textContent='Check status';});
              shuttleState.textContent='Request status for this surface region.';
+             workList.replaceChildren();
+             workStatus.textContent='Check local work board for this region.';
            };
            latitude.addEventListener('change',updateRegion);
            longitude.addEventListener('change',updateRegion);updateRegion();
@@ -964,6 +1014,37 @@
        q('signatureFeedback').textContent=e.type==='PLANET_SHUTTLE_COMMITTED'?
          'Shuttle '+e.operation+' committed for body #'+e.id+'.':
          'Orbital shuttle status received from the native world.';
+     }
+     if(e.type==='LOCAL_WORK_ITEM'){
+       q('celestialBodyList').querySelectorAll('[data-shuttle-body]').forEach(panel=>{
+         if(panel.dataset.shuttleBody!==String(e.id)||
+            panel.dataset.shuttleRegion!==e.latitude+','+e.longitude)return;
+         const list=panel.querySelector('[data-local-work-list]');
+         if(!list)return;
+         let entry=[...list.children].find(node=>
+           node.dataset.workOrder===String(e.order));
+         if(!entry){
+           entry=document.createElement('div');
+           entry.dataset.workOrder=String(e.order);
+           list.append(entry);
+         }
+         const stages=['Posted — awaiting NPC pilot/resources','Descending',
+           'Loading on surface','Ascending','Delivering to ship',
+           'Completed','Cancelled'];
+         entry.textContent='Contract #'+e.order+': '+e.kg+
+           ' kg '+e.resource+' · '+stages[e.stage]+
+           (e.pilot?' · NPC pilot #'+e.pilot:'');
+       });
+     }
+     if(e.type==='LOCAL_WORK_POSTED'||e.type==='LOCAL_WORK_CANCELLED'){
+       q('signatureFeedback').textContent=
+         'Local transport contract #'+e.order+
+         (e.type==='LOCAL_WORK_POSTED'?' posted.':' cancelled.')+
+         ' World generation '+e.generation+'.';
+     }
+     if(e.type==='LOCAL_WORK_DONE'){
+       q('signatureFeedback').textContent='Local work board returned '+
+         e.count+' contracts (up to 64 shown).';
      }
      if(e.type==='PLANET_SITE_STATUS'){
        const names={1:'NPC descent / equipment unloading',
