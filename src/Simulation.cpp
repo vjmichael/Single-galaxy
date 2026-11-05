@@ -5363,6 +5363,27 @@ bool Simulation::supply_planetary_site(PlayerId owner,EntityId ship,
     origin-=kg;dest+=kg;
     return true;
 }
+bool Simulation::support_planetary_crew(PlayerId owner,EntityId ship,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,
+    bool oxygen,std::int64_t kg) {
+    const auto key=PlanetarySiteKey{body,latitude,longitude,1};
+    auto site=planetary_sites_.find(key);
+    auto life=life_support_.find(ship);
+    const auto frame=ship_frames_.find(ship);
+    const auto* hull=find(ship);
+    if(!owner || kg<=0 || kg>10000 ||
+       site==planetary_sites_.end() || site->second.owner!=owner ||
+       site->second.source_ship!=ship ||
+       frame==ship_frames_.end() || frame->second.anchor_body!=body ||
+       !hull || hull->owner_id!=owner || hull->dock_state!=DockState::InSpace ||
+       hull->jump_state!=ShipJumpState::Ready ||
+       life==life_support_.end())return false;
+    auto& origin=oxygen?life->second.oxygen_kg:life->second.food_kg;
+    auto& dest=oxygen?site->second.oxygen_kg:site->second.food_kg;
+    if(origin<kg || dest>1000000-kg)return false;
+    origin-=kg;dest+=kg;
+    return true;
+}
 bool Simulation::cultivate_planetary_site(PlayerId owner,EntityId ship,
     std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,
     std::int64_t batches) {
@@ -5372,6 +5393,9 @@ bool Simulation::cultivate_planetary_site(PlayerId owner,EntityId ship,
     if(!owner || batches<1 || batches>100 || site==planetary_sites_.end() ||
        site->second.owner!=owner || site->second.spaceport_phase!=3 || site->second.source_ship!=ship ||
        !site->second.farm ||
+       (site->second.assigned_workers==2 &&
+        (site->second.food_kg<2 || site->second.water_kg<2 ||
+         site->second.oxygen_kg<2)) ||
        frame==ship_frames_.end() || frame->second.anchor_body!=body)
         return false;
     auto& facility=site->second;
@@ -5397,6 +5421,9 @@ bool Simulation::extract_planetary_site(PlayerId owner,EntityId ship,
        site==planetary_sites_.end() || reserve==oasis_reserves_.end() ||
        site->second.owner!=owner || site->second.spaceport_phase!=3 || site->second.source_ship!=ship ||
        !site->second.extractor ||
+       (site->second.assigned_workers==2 &&
+        (site->second.food_kg<2 || site->second.water_kg<2 ||
+         site->second.oxygen_kg<2)) ||
        !source_region || source_region->latitude!=latitude ||
        source_region->longitude!=longitude ||
        frame==ship_frames_.end() || frame->second.anchor_body!=body)return false;
