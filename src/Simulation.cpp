@@ -5442,6 +5442,11 @@ bool Simulation::launch_planetary_shuttle(PlayerId owner,EntityId ship,
     if(residue>=1000000)return false;
     const auto transit=shuttle_transit_custody_id(key);
     if(!transit || entities_.count(transit))return false;
+    // Every physical custody address must identify exactly one location.
+    for(const auto& [other,facility]:planetary_sites_) {
+        (void)other;
+        if(facility.surface_location==transit)return false;
+    }
     for(const auto& [other,r]:planetary_shuttles_)
         if(other!=key && r.flight_phase%2==1 &&
            transit==shuttle_transit_custody_id(other))return false;
@@ -6545,6 +6550,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                      state.arrival_tick>result.tick_+3)) ||
                    ((phase==0 || phase==2) &&
                      (state.flight_request || state.arrival_tick)) ||
+                   (phase>=1 && !pilot) ||
                    (phase>=1 && !state.descent_receipt) ||
                    (phase>=2 && !state.descent_receipt) ||
                    (phase==3 && !state.ascent_receipt) ||
