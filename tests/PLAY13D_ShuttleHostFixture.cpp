@@ -29,7 +29,7 @@ static SiteChoice choose() {
 }
 int main(int argc,char** argv) {
     try {
-        if(argc==9 && std::string(argv[1])=="--verify") {
+        if(argc==10 && std::string(argv[1])=="--verify") {
             // Independent native reopening of the SQLite save after BOTH host
             // processes have ended. No browser or Python mass approximation.
             const std::string database=argv[2];
@@ -38,6 +38,7 @@ int main(int argc,char** argv) {
             const auto pilot=std::stoull(argv[6]);
             const auto mass=std::stoll(argv[7]);
             const auto ship=std::stoull(argv[8]);
+            const auto passenger=std::stoull(argv[9]);
             REQUIRE(lat<36 && lon<72);
             PersistentWorld saved(database,Simulation(2));
             const PlanetarySiteKey key{body,std::uint16_t(lat),std::uint16_t(lon),1};
@@ -48,10 +49,13 @@ int main(int argc,char** argv) {
                     shuttle.food_kg==80 && shuttle.descent_receipt==81001 &&
                     shuttle.ascent_receipt==81002);
             REQUIRE(saved.world().npc_custody(pilot).physical_location==ship);
+            REQUIRE(shuttle.passenger_ids==std::vector<std::uint64_t>{passenger});
+            REQUIRE(saved.world().npc_custody(passenger).physical_location==ship);
+            REQUIRE(!saved.world().npc_available_for_duty(passenger));
             REQUIRE(saved.world().planetary_spaceport_operational(
                 body,std::uint16_t(lat),std::uint16_t(lon)));
             const auto snapshot=saved.world().canonical_state();
-            REQUIRE(snapshot.rfind("galaxy-kernel-v81|",0)==0);
+            REQUIRE(snapshot.rfind("galaxy-kernel-v82|",0)==0);
             REQUIRE(Simulation::from_snapshot(snapshot).canonical_state()==snapshot);
             std::cout<<"PASS native committed shuttle stock, NPC custody, receipts, mass and snapshot\n";
             return 0;
@@ -90,7 +94,7 @@ int main(int argc,char** argv) {
         for(const auto& [id,n]:world.world().npc_records())
             if(n.home_ship==ship && n.location==ship && n.role==NpcRole::Ship)
                 roster.push_back(id);
-        REQUIRE(roster.size()>=3);
+        REQUIRE(roster.size()>=4);
         REQUIRE(world.build_planetary_site(7,ship,selected.body,
             selected.lat,selected.lon,roster[0],roster[1]));
         world.steps(4);
@@ -106,7 +110,7 @@ int main(int argc,char** argv) {
         // The fixture is a real authoritative SQLite world, not a test stub.
         // The player must still build a shuttle, choose its pilot and load it.
         std::cout<<selected.body<<' '<<selected.lat<<' '<<selected.lon
-                 <<' '<<ship<<' '<<roster[2]<<' '<<initial_mass<<'\n';
+                 <<' '<<ship<<' '<<roster[2]<<' '<<initial_mass<<' '<<roster[3]<<'\n';
     }catch(const std::exception& e) {
         std::cerr<<"PLAY13D4C5 fixture failure: "<<e.what()<<'\n';
         return 1;
