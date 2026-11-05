@@ -444,6 +444,47 @@ void Simulation::enable_individual_workforce(){
     if(npcs_.empty())throw std::invalid_argument("no colony population to materialize");
     snapshot_version_=31;
 }
+std::optional<transport::NpcTransport> Simulation::npc_transport_arrival(
+        std::uint64_t receipt,std::uint64_t npc_id) const {
+    if(!receipt || !npc_id)return std::nullopt;
+    const auto person=npcs_.find(npc_id);
+    if(person==npcs_.end() || person->second.transport_id)return std::nullopt;
+    if(const auto voyage=voyages_.find(receipt);voyage!=voyages_.end()) {
+        const auto& v=voyage->second;
+        if(v.status!=2 || !v.origin || !v.destination ||
+           person->second.location!=v.destination ||
+           !transport::contains_person(v.passengers,npc_id))
+            return std::nullopt;
+        transport::NpcTransport arrival{receipt,transport::Mode::Ferry,
+            {transport::LocationKind::ColonyShip,v.origin},
+            {transport::LocationKind::ColonyShip,v.destination},
+            v.passengers.size(),v.passengers,transport::TransportState::Arrived};
+        if(transport::completed_transport(arrival,npc_id))return arrival;
+        return std::nullopt;
+    }
+    // An NPC who has physically disembarked stays at the surface, even
+    // after the vehicle has returned to orbit. A currently boarded
+    // passenger/pilot is NOT settlement-arrived.
+    for(const auto& [key,sh]:planetary_shuttles_) {
+        if(sh.descent_receipt!=receipt ||
+           !transport::contains_person(sh.disembarked_ids,npc_id))continue;
+        const auto site=planetary_sites_.find(key);
+        if(site==planetary_sites_.end() ||
+           person->second.home_ship!=sh.source_ship ||
+           person->second.assigned_site!=sh.source_ship ||
+           person->second.role!=NpcRole::Ship ||
+           person->second.location!=site->second.surface_location)
+            return std::nullopt;
+        transport::NpcTransport arrival{receipt,transport::Mode::PlanetaryShuttle,
+            {transport::LocationKind::ColonyShip,sh.source_ship},
+            {transport::LocationKind::PlanetarySite,site->second.surface_location},
+            64,sh.disembarked_ids,transport::TransportState::Arrived};
+        if(transport::completed_transport(arrival,npc_id))return arrival;
+        return std::nullopt;
+    }
+    return std::nullopt;
+}
+
 NpcCustodyView Simulation::npc_custody(std::uint64_t id) const {
     const auto it=npcs_.find(id);
     if(it==npcs_.end())throw std::out_of_range("npc custody: unknown identity");
