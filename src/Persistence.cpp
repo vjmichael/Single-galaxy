@@ -11178,6 +11178,19 @@ void PersistentWorld::step_with_atomic_migration(const SocietyMigrationPlan& pla
            !plan.co_parent_event_id || plan.co_parent_event_id==plan.command_id)) ||
        (!plan.co_parent_id && plan.co_parent_event_id))
         throw std::runtime_error("migration plan does not match authenticated passenger command");
+    // Resolve from the live authoritative Simulation, not a caller-created
+    // ArrivalEvidence: the same identity contract covers ferries and shuttles.
+    const auto arrival=world_.npc_transport_arrival(plan.transport_id,plan.npc_id);
+    if(!arrival || !transport::completed_transport(*arrival,plan.npc_id) ||
+       arrival->source().id!=plan.origin ||
+       arrival->destination().id!=plan.destination)
+        throw std::runtime_error("migration lacks authenticated completed NPC transport");
+    // Existing HostSettleMigrant still mutates only colony-ship endpoints.
+    // Never route a planetary arrival into this legacy ship writer.
+    if(arrival->mode()!=transport::Mode::Ferry ||
+       arrival->source().kind!=transport::LocationKind::ColonyShip ||
+       arrival->destination().kind!=transport::LocationKind::ColonyShip)
+        throw std::runtime_error("non-ship endpoint needs universal residency transaction");
     const auto old=world_.npc_records().find(plan.npc_id);
     if(old==world_.npc_records().end() || old->second.home_ship!=plan.origin ||
        old->second.location!=plan.destination || old->second.transport_id!=0)
@@ -11199,15 +11212,18 @@ void PersistentWorld::step_with_atomic_migration(const SocietyMigrationPlan& pla
     const auto initial_named=world_.npc_records().size();
     if(plan.co_parent_id){
         const auto co=world_.npc_records().find(plan.co_parent_id);
-        const auto voy=world_.voyages_.find(plan.transport_id);
+        const auto coparent_arrival=world_.npc_transport_arrival(
+            plan.transport_id,plan.co_parent_id);
         if(co==world_.npc_records().end() ||
            co->second.home_ship!=plan.origin ||
            co->second.assigned_site!=plan.origin ||
            co->second.location!=plan.destination || co->second.transport_id ||
            family.current_residence(plan.co_parent_id)!=plan.origin ||
-           voy==world_.voyages_.end() || voy->second.status!=2 ||
-           !std::binary_search(voy->second.passengers.begin(),
-               voy->second.passengers.end(),plan.co_parent_id))
+           !coparent_arrival ||
+           coparent_arrival->mode()!=arrival->mode() ||
+           coparent_arrival->source()!=arrival->source() ||
+           coparent_arrival->destination()!=arrival->destination() ||
+           !transport::completed_transport(*coparent_arrival,plan.co_parent_id))
             throw std::runtime_error("second parent has no completed physical arrival");
     }
     if(plan.dependents.size()>32)
