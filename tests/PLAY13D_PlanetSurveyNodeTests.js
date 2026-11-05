@@ -135,6 +135,25 @@ test('orbital shuttle telemetry, receipts and UI are bounded by native schema',(
   assert.match(host,/launch_planetary_shuttle/);
 });
 
+test('PLAY-13D recovered nutrients remain bounded native cargo',()=>{
+  const extended=decode('COLONY|1|12|PLANET_SHUTTLE_STATUS|4294967300|17|36|1|2|42|149|50|0|0|101|0|77|500');
+  assert.equal(extended.nutrients,500);
+  assert.equal(extended.phase,2);
+  const legacy=decode('COLONY|1|12|PLANET_SHUTTLE_STATUS|4294967300|17|36|1|2|42|149|50|0|0|101|0|77');
+  assert.equal(legacy.nutrients,0);
+  for(const bad of [
+    'COLONY|1|12|PLANET_SHUTTLE_STATUS|4294967300|17|36|1|2|42|600|100|0|0|101|0|77|400',
+    'COLONY|1|12|PLANET_SHUTTLE_STATUS|4294967300|17|36|1|2|42|149|50|0|0|101|0|77|1001',
+    'COLONY|1|12|PLANET_SHUTTLE_STATUS|4294967300|17|36|0|0|0|0|0|0|0|0|0|77|1'
+  ])assert.throws(()=>decode(bad),Error,bad);
+  const ui=fs.readFileSync(path.join(root,'viewer/colony.js'),'utf8');
+  const relay=fs.readFileSync(path.join(root,'live/interactive_relay.py'),'utf8');
+  const host=fs.readFileSync(path.join(root,'src/colony_live_host.cpp'),'utf8');
+  assert.match(ui,/Nutrients \(planetary output\)/);
+  assert.match(relay,/resource not in \('FOOD','WATER','NUTRIENTS'\)/);
+  assert.match(host,/ShuttleCargo::Nutrients/);
+});
+
 test('PLAY-13D.4C.7 shuttle manifest carries finite named NPC IDs',()=>{
   const named=decode('COLONY|1|14|PLANET_SHUTTLE_PASSENGER|4294967300|17|36|84');
   assert.equal(named.npc,84);
