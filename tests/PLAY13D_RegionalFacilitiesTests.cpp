@@ -75,6 +75,16 @@ static void scenario(const fs::path& db, bool farming){
         w.steps(4);
         CHECK(w.complete_celestial_transit(90001));
         CHECK(w.world().total_ore()==origin);
+        std::vector<std::uint64_t> available;
+        for(const auto& [id,n]:w.world().npc_records())
+            if(n.home_ship==ship && n.location==ship && n.role==NpcRole::Ship)
+                available.push_back(id);
+        CHECK(available.size()>=3);
+        const auto first_npc=available[0],second_npc=available[1];
+        CHECK(!w.build_planetary_site(7,ship,chosen.body,
+            chosen.latitude,chosen.longitude,first_npc,first_npc));
+        CHECK(!w.build_planetary_site(7,ship,chosen.body,
+            chosen.latitude,chosen.longitude,first_npc,999999999));
         CHECK(!w.build_planetary_site(8,ship,chosen.body,chosen.latitude,chosen.longitude));
         auto pre=w.world().canonical_state();
         bool failed=false;
@@ -83,7 +93,8 @@ static void scenario(const fs::path& db, bool farming){
         catch(const std::exception&){failed=true;}
         CHECK(failed);
         CHECK(w.world().canonical_state()==pre);
-        CHECK(w.build_planetary_site(7,ship,chosen.body,chosen.latitude,chosen.longitude));
+        CHECK(w.build_planetary_site(7,ship,chosen.body,chosen.latitude,chosen.longitude,
+                                     first_npc,second_npc));
         CHECK(!w.build_planetary_site(7,ship,chosen.body,chosen.latitude,chosen.longitude));
         const auto key=PlanetarySiteKey{chosen.body,chosen.latitude,chosen.longitude,1};
         CHECK(!w.world().planetary_spaceport_operational(chosen.body,chosen.latitude,chosen.longitude));
@@ -91,6 +102,7 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(w.world().planetary_sites().at(key).assigned_workers==2);
         const auto& workers=w.world().planetary_sites().at(key).delegated_npcs;
         CHECK(workers[0] && workers[1] && workers[0]!=workers[1]);
+        CHECK(workers[0]==first_npc && workers[1]==second_npc);
         for(const auto npc:workers){
             const auto custody=w.world().npc_custody(npc);
             CHECK(custody.home_ship==ship);
@@ -101,6 +113,13 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(w.world().colony_ship(ship)->crew==6);
         w.steps(4);
         CHECK(w.world().planetary_sites().at(key).spaceport_phase==2);
+        CHECK(!w.support_planetary_crew(8,ship,chosen.body,
+            chosen.latitude,chosen.longitude,false,10));
+        CHECK(w.support_planetary_crew(7,ship,chosen.body,
+            chosen.latitude,chosen.longitude,false,10));
+        CHECK(w.support_planetary_crew(7,ship,chosen.body,
+            chosen.latitude,chosen.longitude,true,10));
+        CHECK(w.world().total_ore()==origin);
         w.steps(239);
         CHECK(!w.world().planetary_spaceport_operational(chosen.body,chosen.latitude,chosen.longitude));
         w.step();
@@ -162,6 +181,13 @@ static void scenario(const fs::path& db, bool farming){
         // No material or facility exists at an arbitrary neighboring tile.
         CHECK(!w.supply_planetary_site(7,ship,chosen.body,
             chosen.latitude,std::uint16_t((chosen.longitude+1)%72),true,1));
+        CHECK(!w.support_planetary_crew(7,ship,chosen.body,
+            chosen.latitude,chosen.longitude,true,-1));
+        CHECK(w.world().planetary_spaceport_operational(
+            chosen.body,chosen.latitude,chosen.longitude));
+        CHECK(w.world().planetary_sites().at(
+            PlanetarySiteKey{chosen.body,chosen.latitude,chosen.longitude,1})
+              .delegated_npcs[0]==first_npc);
     }
 }
 int main(){
