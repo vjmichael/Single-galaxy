@@ -912,8 +912,11 @@
              workStatus.textContent='Pickup order submitted. NPCs will queue it when confirmed.';
            });
            workRefresh.addEventListener('click',()=>{
+             // Replace the bounded status window, not the authoritative board.
+             // Stale terminal rows must not remain visible after refresh.
+             workList.replaceChildren();
              window.GalaxyColonyCommand?.('colonyLocalWorkStatus',{});
-             workStatus.textContent='Requesting authoritative local work board.';
+             workStatus.textContent='Checking queued jobs and recent history.';
            });
            workCancel.addEventListener('click',()=>{
              const order=Number(workCancelId.value);
