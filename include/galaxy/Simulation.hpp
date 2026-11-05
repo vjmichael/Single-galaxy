@@ -230,6 +230,14 @@ struct NpcRecord {
 // This view is read-only until the world-owned transfer journal is implemented.
 // v36: immutable tombstone with the full NPC identity/assignment snapshot.
 // The original live record is removed only after committing an explicit death.
+// Recomputed directly from canonical named NPCs; not a second census ledger.
+// A temporarily traveling worker stays a resident of the same colony.
+struct NpcResidenceAudit {
+    std::map<transport::Endpoint,std::uint64_t> living_by_residence;
+    std::map<EntityId,std::uint64_t> physically_present;
+    std::uint64_t total_living=0;
+    bool reconciled=true;
+};
 struct NpcCasualty {
     NpcRecord identity{};
     std::uint64_t death_tick=0, command_id=0;
@@ -746,6 +754,7 @@ public:
     const std::map<std::uint64_t,MedicShift>& medic_shifts() const {return medic_shifts_;}
     const std::map<EntityId,MobileMedicalKit>& mobile_medical_kits() const {return mobile_medical_kits_;}
     ColonyMedicalAudit assess_medical_population() const;
+    NpcResidenceAudit assess_npc_residence() const;
     // A canonical, read-only job dispatch check. The caller remains responsible
     // for role qualification, schedules and facility-specific requirements.
     bool npc_available_for_duty(std::uint64_t npc_id) const;
