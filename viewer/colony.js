@@ -74,7 +74,7 @@
       return {...e,id,latitude,longitude,policy,generation};
     }
     if(t==='PLANET_SHUTTLE_STATUS'){
-      if(v.length!==17)throw Error('Malformed shuttle status');
+      if(v.length!==17&&v.length!==18)throw Error('Malformed shuttle status');
       const id=numeric(v[4],Number.MAX_SAFE_INTEGER),latitude=numeric(v[5],35),
        longitude=numeric(v[6],71),present=numeric(v[7],1),phase=numeric(v[8],3),
        pilot=numeric(v[9],Number.MAX_SAFE_INTEGER),water=numeric(v[10],1000),
@@ -82,15 +82,16 @@
        request=numeric(v[13],Number.MAX_SAFE_INTEGER),
        descent=numeric(v[14],Number.MAX_SAFE_INTEGER),
        ascent=numeric(v[15],Number.MAX_SAFE_INTEGER),
-       generation=numeric(v[16],Number.MAX_SAFE_INTEGER);
-      if(!id||!generation||water+food>1000||
-         (!present&&(phase||pilot||water||food||arrival||request||descent||ascent))||
+       generation=numeric(v[16],Number.MAX_SAFE_INTEGER),
+       nutrients=v.length===18?numeric(v[17],1000):0;
+      if(!id||!generation||water+food+nutrients>1000||
+         (!present&&(phase||pilot||water||food||nutrients||arrival||request||descent||ascent))||
          (present&&phase>0&&!pilot)||
          ((phase===1||phase===3)!==(request>0))||
          ((phase===1||phase===3)!==(arrival>0)))
         throw Error('Invalid authoritative shuttle state');
       return {...e,id,latitude,longitude,present:!!present,phase,pilot,
-        water,food,arrival,request,descent,ascent,generation};
+        water,food,nutrients,arrival,request,descent,ascent,generation};
     }
     if(t==='PLANET_SHUTTLE_PASSENGER'||t==='PLANET_SHUTTLE_MANIFEST_DONE'||
        t==='PLANET_SHUTTLE_VISITOR'||t==='PLANET_SHUTTLE_VISITORS_DONE'||
@@ -800,7 +801,8 @@
            shuttleNpc.placeholder='Pilot NPC ID';shuttleNpc.setAttribute('aria-label','Shuttle pilot NPC ID');
            const shuttleResource=document.createElement('select');
            shuttleResource.setAttribute('aria-label','Shuttle cargo material');
-           shuttleResource.add(new Option('Water','WATER'),new Option('Food','FOOD'));
+           shuttleResource.add(new Option('Water','WATER'),
+             new Option('Food','FOOD'),new Option('Nutrients (planetary output)','NUTRIENTS'));
            const shuttleKg=document.createElement('input');
            shuttleKg.type='number';shuttleKg.min='1';shuttleKg.max='1000';
            shuttleKg.step='1';shuttleKg.value='50';shuttleKg.setAttribute('aria-label','Shuttle cargo kilograms');
@@ -928,7 +930,8 @@
            const phases=['Docked in orbit','Descending','Landed at surface','Ascending'];
            out.textContent=e.present?
              phases[e.phase]+' · pilot #'+e.pilot+' · water '+e.water+
-             ' kg · food '+e.food+' kg · due tick '+e.arrival+
+             ' kg · food '+e.food+' kg · nutrients '+e.nutrients+
+             ' kg · due tick '+e.arrival+
              ' · active request '+e.request+' · generation '+e.generation:
              'No shuttle built at this planetary region.';
          }
