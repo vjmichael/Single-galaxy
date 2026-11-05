@@ -1098,6 +1098,9 @@ public:
     bool load_intercolony_freight(PlayerId owner,std::uint64_t local_order_id,
         EntityId carrier,EntityId destination);
     bool deliver_intercolony_freight(PlayerId owner,std::uint64_t local_order_id);
+    // Typed universal transport view, derived from real sealed ship inventory.
+    std::optional<transport::Manifest> intercolony_transport_manifest(
+        std::uint64_t local_order_id) const;
     bool equip_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
         std::uint16_t latitude,std::uint16_t longitude,bool farm);
     // Ship and site remain in identical anchored celestial frame.
