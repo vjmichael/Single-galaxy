@@ -5515,7 +5515,8 @@ void Simulation::process_local_delivery_board() {
                 }
                 // Pilot assignment is itself an actual NPC reservation.
                 // Avoid launching in the same step as a new assignment.
-                if(sh.pilot_npc){work.assigned_pilot=sh.pilot_npc;}
+                // A posted order has no final assignment until a real
+                // departure is committed. The pilot may still be changed.
                 break;
             }
             if(launch_planetary_shuttle(work.owner,work.board_ship,work.site,
@@ -9484,8 +9485,8 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             if(!active_jobs.insert(job.site).second)
                 throw std::runtime_error("snapshot: competing local delivery contracts");
             if(job.stage==LocalDeliveryStage::Posted) {
-                if(job.assigned_pilot && job.assigned_pilot!=shuttle->second.pilot_npc)
-                    throw std::runtime_error("snapshot: invalid posted job pilot");
+                if(job.assigned_pilot)
+                    throw std::runtime_error("snapshot: premature courier assignment");
                 continue;
             }
             const auto pilot=result.npcs_.find(job.assigned_pilot);
