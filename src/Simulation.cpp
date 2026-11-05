@@ -5440,7 +5440,7 @@ bool Simulation::post_local_delivery_order(PlayerId owner,EntityId board_ship,
     const auto shuttle=planetary_shuttles_.find(key);
     const auto ship=entities_.find(board_ship);
     if(!owner || owner==kServerAuthority || !board_ship || !order_id ||
-       order_id>=(std::uint64_t{1}<<61)-1 ||
+       order_id>=(std::uint64_t{1}<<50) ||
        kilograms<=0 || kilograms>1000 || cargo>ShuttleCargo::Nutrients ||
        site==planetary_sites_.end() ||
        shuttle==planetary_shuttles_.end() ||
@@ -5487,7 +5487,7 @@ void Simulation::process_local_delivery_board() {
            site->second.source_ship!=work.board_ship ||
            site->second.spaceport_phase!=3)continue;
         const auto flight_id=[id](bool ascend) {
-            return 0xC000000000000000ULL | (id<<1) |
+            return 0x10000000000000ULL | (id<<1) |
                    std::uint64_t(ascend?1:0);
         };
         const auto source_stock=[&]()->std::int64_t {
@@ -7193,7 +7193,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             const auto body=u64(f[4]),lat=u64(f[5]),lon=u64(f[6]),rev=u64(f[7]);
             const auto cargo=u64(f[8]),kg=i64(f[9]),pilot=u64(f[10]);
             const auto stage=u64(f[11]),created=u64(f[12]);
-            if(!id || id>=(std::uint64_t{1}<<61)-1 ||
+            if(!id || id>=(std::uint64_t{1}<<50) ||
                !owner || owner==kServerAuthority || !ship || !body ||
                lat>=36 || lon>=72 || rev!=1 || cargo>2 ||
                kg<=0 || kg>1000 || stage>6 || created>result.tick_ ||
@@ -9495,7 +9495,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                shuttle->second.pilot_npc!=job.assigned_pilot)
                 throw std::runtime_error("snapshot: missing assigned courier NPC");
             const auto flight_id=[id](bool return_leg) {
-                return 0xC000000000000000ULL | (id<<1) |
+                return 0x10000000000000ULL | (id<<1) |
                        std::uint64_t(return_leg?1:0);
             };
             if((job.stage==LocalDeliveryStage::Descending &&
