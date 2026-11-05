@@ -63,6 +63,8 @@ def main(executable,relay):
                                       "firstNpc":21,"secondNpc":22}),
                 ("colonyPlanetSupport",{**valid,"action":"colonyPlanetSupport",
                                         "resource":"FOOD","kg":10}),
+                ("colonyPlanetPolicy",{**valid,"action":"colonyPlanetPolicy",
+                                       "policy":1}),
             ]:
                 assert action in session["commands"],action
                 status,_=request(port,"POST","/command",payload)
@@ -106,6 +108,10 @@ def main(executable,relay):
                 {**valid,"action":"colonyPlanetBuild","firstNpc":42,"secondNpc":42},
                 {**valid,"action":"colonyPlanetBuild","firstNpc":True,"secondNpc":43},
                 {**valid,"action":"colonyPlanetStatus","latitude":-1},
+                {**valid,"action":"colonyPlanetPolicy","policy":-1},
+                {**valid,"action":"colonyPlanetPolicy","policy":True},
+                {**valid,"action":"colonyPlanetPolicy","policy":5},
+                {**valid,"action":"colonyPlanetPolicy","policy":2,"kg":1},
                 {**valid,"action":"colonyPlanetSupport","resource":"NUTRIENTS","kg":10},
                 {**valid,"action":"colonyPlanetRetrieve","resource":"NUTRIENTS","kg":1}
             ]:
