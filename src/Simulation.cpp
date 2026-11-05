@@ -5698,6 +5698,44 @@ bool Simulation::deliver_intercolony_freight(PlayerId owner,
     return true;
 }
 
+std::optional<transport::Manifest> Simulation::intercolony_transport_manifest(
+        std::uint64_t id) const {
+    const auto it=intercolony_freight_.find(id);
+    if(it==intercolony_freight_.end())return std::nullopt;
+    const auto& leg=it->second;
+    const auto actual=entities_.find(leg.carrier_ship);
+    const auto ship=colony_ships_.find(leg.carrier_ship);
+    if(actual==entities_.end() || ship==colony_ships_.end())return std::nullopt;
+    transport::Manifest view{};
+    view.vehicle=leg.carrier_ship;view.owner=leg.owner;
+    view.mode=transport::Mode::OtherVehicle;
+    view.berth={transport::LocationKind::ColonyShip,leg.source_ship};
+    view.other_end={transport::LocationKind::ColonyShip,leg.destination_ship};
+    view.seat_capacity=0;
+    view.cargo_capacity_kg=std::uint64_t(actual->second.cargo_capacity)*1000;
+    for(const auto& [request,p]:pending_celestial_transits_)
+        if(p.ship==leg.carrier_ship){
+            view.in_transit=true;
+            view.flight_receipt=request;
+            break;
+        }
+    if(leg.stage==IntercolonyFreightStage::Loaded){
+        const auto code=sealed_freight_code(leg.cargo);
+        if(!code)return std::nullopt;
+        const auto goods=ship->second.goods_kg.find(code);
+        if(goods==ship->second.goods_kg.end() ||
+           goods->second!=leg.kilograms)return std::nullopt;
+        const auto resource=leg.cargo==ShuttleCargo::Water?
+            transport::ResourceGood::Water:
+            leg.cargo==ShuttleCargo::Food?
+            transport::ResourceGood::Food:transport::ResourceGood::Nutrients;
+        view.contents.push_back({transport::GoodKind::Resource,
+            static_cast<std::uint8_t>(resource),
+            std::uint64_t(leg.kilograms),std::uint64_t(leg.kilograms)});
+    }
+    return view.valid()?std::optional<transport::Manifest>(view):std::nullopt;
+}
+
 std::optional<transport::Manifest> Simulation::planetary_transport_manifest(
        const PlanetarySiteKey& key) const {
     const auto sh=planetary_shuttles_.find(key);
