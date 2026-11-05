@@ -144,7 +144,7 @@ test('orbital shuttle telemetry, receipts and UI are bounded by native schema',(
   assert.match(ui,/colonyPlanetShuttle/);
   assert.match(ui,/Descend to surface/);
   assert.match(relay,/PLANET_SHUTTLE/);
-  assert.match(host,/launch_planetary_shuttle/);
+  assert.match(host,/execute_orbital_shuttle\(/);
 });
 
 test('PLAY-13D recovered nutrients remain bounded native cargo',()=>{
@@ -283,6 +283,40 @@ test('PLAY-13D.4G real intercolony carrier telemetry is strict',()=>{
   assert.match(ui,/Existing carrier ship ID/);
   assert.match(host,/deliver_intercolony_freight/);
   assert.match(host,/begin_celestial_transit/);
+});
+
+test('SHIP-01A native shipyard construction progress and UI are bounded by receipts',()=>{
+  const assigned=decode('COLONY|1|20|SHIPYARD_ASSIGNED|99001|124');
+  assert.equal(assigned.generation,124);
+  const started=decode('COLONY|1|20|SHIPYARD_STARTED|99001|123');
+  assert.equal(started.order,99001);
+  const awaiting=decode('COLONY|1|20|SHIPYARD_ITEM|99001|1|101|102|0|8|0|123');
+  assert.equal(awaiting.progress,0);
+  assert.equal(awaiting.required,8);
+  assert.equal(decode('COLONY|1|28|SHIPYARD_ITEM|99001|1|101|102|8|8|2|131').progress,8);
+  assert.equal(decode('COLONY|1|20|SHIPYARD_DONE|1').count,1);
+  for(const bad of [
+    'COLONY|1|20|SHIPYARD_ITEM|99001|1|101|102|9|8|0|123',
+    'COLONY|1|20|SHIPYARD_ITEM|99001|1|101|102|3|9|0|123',
+    'COLONY|1|20|SHIPYARD_ITEM|99001|1|101|101|3|8|0|123',
+    'COLONY|1|20|SHIPYARD_ITEM|0|1|101|102|3|8|0|123',
+    'COLONY|1|20|SHIPYARD_ITEM|99001|1|101|102|3|8|0|0',
+    'COLONY|1|20|SHIPYARD_STARTED|0|123',
+    'COLONY|1|20|SHIPYARD_STARTED|99001|0',
+    'COLONY|1|20|SHIPYARD_DONE|65'
+  ])assert.throws(()=>decode(bad),Error,bad);
+  const ui=fs.readFileSync(path.join(root,'viewer/colony.js'),'utf8');
+  const relay=fs.readFileSync(path.join(root,'live/interactive_relay.py'),'utf8');
+  const host=fs.readFileSync(path.join(root,'src/colony_live_host.cpp'),'utf8');
+  assert.match(ui,/Build orbital shipyard/);
+  assert.match(ui,/colonyShipyardBuild/);
+  assert.match(ui,/colonyShipyardAssign/);
+  assert.match(ui,/colonyShipyardStatus/);
+  assert.match(relay,/SHIPYARD_BUILD/);
+  assert.match(relay,/SHIPYARD_ASSIGN/);
+  assert.match(relay,/SHIPYARD_STATUS/);
+  assert.match(host,/start_shipyard_construction/);
+  assert.match(host,/shipyard_constructions/);
 });
 
 test('PLAY-13D shuttle UI separates booked passengers, landed visitors and temporary duty',()=>{

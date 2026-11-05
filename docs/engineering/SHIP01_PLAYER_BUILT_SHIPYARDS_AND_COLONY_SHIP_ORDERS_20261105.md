@@ -1,6 +1,6 @@
 # SHIP-01 — Player-built shipyards, NPC shipbuilding, and intercolony ship orders
 **Design decision:** 2026-11-05  
-**Status:** SHIP-01A.0 read-only preflight implemented and locally verified against the archived v66 native kernel. Full shipyard construction/production and integration into the newer v89 kernel are NOT implemented or verified.  
+**Status:** SHIP-01A.0 read-only preflight locally verified on archived v66. SHIP-01A.1 authoritative construction, embodied materials, native timed labor, SQLite v90 persistence, host commands, relay and UI are implemented on the next draft PR, but exact-source C++ acceptance remains OPEN. Dedicated assembly berth, power, ship production, crew commissioning and contracts are NOT implemented.  
 **Dependency:** PLAY-13D.4G PR #50 (physical intercolony freight); PLAY-13D.4F PR #49 (local NPC work board).  
 **Purpose:** Close the missing ship-availability and industrial-economy part of the freight gameplay loop, without conflating implementation with validation.
 
@@ -48,6 +48,10 @@ Delegation levels, separately authorized by colony policy:
 - **Expand facilities:** manager may propose or, only if separately delegated, post a *real funded construction* order for another yard/slip after sustained backlog and feasibility checks. A proposal is informational; it cannot spawn infrastructure.
 
 The opportunity metric should be explainable: current backlog ship-build hours vs available slip-hours, expected input deliveries, NPC workforce, existing utilization, spare funds and expected demand. A shipyard is not always profitable; low demand, limited power and worker scarcity can make an expansion irrational. NPCs should have no infinite-money, infinite-parts, automatic-construction or self-granted authority loopholes.
+
+## SHIP-01A.1 — authoritative construction implementation in progress
+
+See [SHIP01A1_AUTHORITATIVE_CONSTRUCTION_20261105.md](SHIP01A1_AUTHORITATIVE_CONSTRUCTION_20261105.md). A draft branch now has exact-material module debit, canonical 8-unit embodied yard structure, eight native committed construction ticks by two named NPCs, v90 snapshot and SQLite fault/restart test, and the authenticated native/HTTP/JS UI. The test target has been committed but NOT compiled against the exact v90 source in this local environment. Do not call this verified.
 
 ## SHIP-01A.0 — first native test implemented on branch
 

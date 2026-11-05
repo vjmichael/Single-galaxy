@@ -531,6 +531,19 @@ struct IntercolonyFreightLeg {
     std::uint64_t arrival_receipt=0; // 0 until proved delivered
     IntercolonyFreightStage stage=IntercolonyFreightStage::Loaded;
 };
+// SHIP-01A.1: physical construction lives in the canonical world, not a
+// separate shipyard economy or fabricated station. Embodied ore is the four
+// actual construction modules consumed at commencement (2 ore per module).
+struct ShipyardConstruction {
+    std::uint64_t order_id=0;
+    PlayerId owner=0;
+    EntityId colony_ship=0;
+    std::array<std::uint64_t,2> workers{};
+    std::int64_t embodied_ore=8;
+    std::uint64_t progress=0,required=8;
+    std::uint64_t posted_tick=0,last_progress_tick=0,stalled_ticks=0;
+    bool operational() const noexcept {return progress==required;}
+};
 struct PhysicalOasisReserve {
     std::int64_t water_kg=0,nutrients_kg=0;
     std::int64_t initial_water_kg=0,initial_nutrients_kg=0;
@@ -1097,6 +1110,15 @@ public:
     const std::map<std::uint64_t,IntercolonyFreightLeg>& intercolony_freight() const noexcept {
         return intercolony_freight_;
     }
+    // Player-funded orbital assembly yard, backed by existing colony inventory
+    // and real NPC work. v90 journaled projects stay world-owned forever.
+    const std::map<std::uint64_t,ShipyardConstruction>& shipyard_constructions() const noexcept {
+        return shipyard_constructions_;
+    }
+    bool start_shipyard_construction(PlayerId owner,EntityId colony,
+        std::uint64_t order_id,std::array<std::uint64_t,2> workers);
+    bool assign_shipyard_builders(PlayerId owner,std::uint64_t order_id,
+        std::array<std::uint64_t,2> replacement);
     bool plan_intercolony_freight(PlayerId owner,std::uint64_t local_order_id,
         EntityId carrier,EntityId destination);
     bool load_intercolony_freight(PlayerId owner,std::uint64_t local_order_id,
@@ -1175,6 +1197,7 @@ private:
     void process_colony_needs();
     void process_oasis_extractors();
     void process_planetary_surface_operations();
+    void process_shipyard_construction(); // only Simulation::step advances labor
     void process_farms();
     void move_npc_records(EntityId ship, EntityId site, NpcRole role, std::int64_t delta);
     void award_farm_experience(EntityId site);
@@ -1203,6 +1226,7 @@ private:
     std::map<PlanetarySiteKey,PlanetaryShuttleState> planetary_shuttles_; // v80
     std::map<std::uint64_t,LocalDeliveryOrder> local_delivery_orders_; // v88
     std::map<std::uint64_t,IntercolonyFreightLeg> intercolony_freight_; // v89
+    std::map<std::uint64_t,ShipyardConstruction> shipyard_constructions_; // v90
     std::set<std::uint64_t> shuttle_flight_request_ids_; // v81 replay rejection
     std::map<std::uint64_t,PendingCelestialTransit> pending_celestial_transits_;
     std::map<std::uint64_t,CompletedCelestialTransit> completed_celestial_transits_;

@@ -254,6 +254,31 @@ def main(executable,relay):
             ):
                 status,_=request(port,'POST','/command',payload)
                 assert status==400,(payload,status)
+            for action in ('colonyShipyardBuild','colonyShipyardAssign',
+                           'colonyShipyardStatus'):
+                assert action in session['commands'],action
+            yard={'token':token,'action':'colonyShipyardBuild',
+                  'order':99001,'firstNpc':101,'secondNpc':102}
+            for payload in (yard,
+                            {**yard,'action':'colonyShipyardAssign'},
+                            {'token':token,'action':'colonyShipyardStatus'}):
+                status,_=request(port,'POST','/command',payload)
+                assert status==202,(payload,status)
+                status,_=request(port,'POST','/command',
+                                 {**payload,'token':'forged'})
+                assert status==403,(payload,status)
+            for payload in (
+                {**yard,'order':True},
+                {**yard,'order':0},
+                {**yard,'order':1<<50},
+                {**yard,'firstNpc':True},
+                {**yard,'secondNpc':0},
+                {**yard,'secondNpc':101},
+                {**yard,'unexpected':'scope'},
+                {'token':token,'action':'colonyShipyardStatus','order':99001}
+            ):
+                status,_=request(port,'POST','/command',payload)
+                assert status==400,(payload,status)
             print("PASS PGF01B2 HTTP relay accepts valid geography and rejects forged inputs")
         finally:
             proc.terminate()

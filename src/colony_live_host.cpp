@@ -460,6 +460,58 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
         else announce(world.world(),"ERROR|INVALID_INPUT");
         return;
     }
+    // SHIP-01A.1 player-built real shipyard; never trust the UI to claim
+    // ownership, worker identity, resource consumption or completion.
+    if(!v.empty() && (v[0]=="SHIPYARD_BUILD" ||
+                     v[0]=="SHIPYARD_ASSIGN" || v[0]=="SHIPYARD_STATUS")){
+        try{
+            if(v[0]=="SHIPYARD_BUILD" && v.size()==4){
+                const auto order=integer(v[1]),a=integer(v[2]),b=integer(v[3]);
+                if(order<=0 || order>=(std::int64_t{1}<<50) ||
+                   a<=0 || b<=0 || a==b ||
+                   !world.start_shipyard_construction(principal,ship,
+                       std::uint64_t(order),
+                       {{std::uint64_t(a),std::uint64_t(b)}})){
+                    announce(world.world(),"ERROR|SHIPYARD_DENIED");
+                    return;
+                }
+                announce(world.world(),"SHIPYARD_STARTED|"+
+                    std::to_string(order)+"|"+std::to_string(world.generation()));
+            }else if(v[0]=="SHIPYARD_ASSIGN" && v.size()==4){
+                const auto order=integer(v[1]),a=integer(v[2]),b=integer(v[3]);
+                if(order<=0 || order>=(std::int64_t{1}<<50) ||
+                   a<=0 || b<=0 || a==b ||
+                   !world.assign_shipyard_builders(principal,
+                       std::uint64_t(order),
+                       {{std::uint64_t(a),std::uint64_t(b)}})){
+                    announce(world.world(),"ERROR|SHIPYARD_DENIED");
+                    return;
+                }
+                announce(world.world(),"SHIPYARD_ASSIGNED|"+
+                    std::to_string(order)+"|"+std::to_string(world.generation()));
+            }else if(v[0]!="SHIPYARD_STATUS" || v.size()!=1){
+                announce(world.world(),"ERROR|SHIPYARD_DENIED");return;
+            }
+            std::uint64_t count=0;
+            for(const auto& [id,yard]:world.world().shipyard_constructions()){
+                if(yard.owner!=principal || yard.colony_ship!=ship || count>=64)
+                    continue;
+                announce(world.world(),"SHIPYARD_ITEM|"+
+                    std::to_string(id)+"|"+std::to_string(yard.colony_ship)+"|"+
+                    std::to_string(yard.workers[0])+"|"+
+                    std::to_string(yard.workers[1])+"|"+
+                    std::to_string(yard.progress)+"|"+
+                    std::to_string(yard.required)+"|"+
+                    std::to_string(yard.stalled_ticks)+"|"+
+                    std::to_string(world.generation()));
+                ++count;
+            }
+            announce(world.world(),"SHIPYARD_DONE|"+std::to_string(count));
+        }catch(const std::exception&){
+            announce(world.world(),"ERROR|SHIPYARD_DENIED");
+        }
+        return;
+    }
     if(v.size()==2 && v[0]=="OASIS_INSTALL") {
         try {
             const auto id=integer(v[1]);
@@ -1510,6 +1562,10 @@ int main(int argc,char** argv){
             std::map<PlanetarySiteKey,std::uint8_t> prior_shuttle_phases;
             for(const auto& [key,sh]:world.world().planetary_shuttles())
                 prior_shuttle_phases.emplace(key,sh.flight_phase);
+            std::map<std::uint64_t,std::uint64_t> prior_yard;
+            for(const auto& [id,yard]:world.world().shipyard_constructions())
+                if(yard.owner==owner && yard.colony_ship==ship)
+                    prior_yard.emplace(id,yard.progress);
             std::map<std::uint64_t,LocalDeliveryStage> prior_work;
             for(const auto& [id,job]:world.world().local_delivery_board())
                 if(job.owner==owner && job.board_ship==ship)
@@ -1556,6 +1612,22 @@ int main(int argc,char** argv){
                         std::to_string(id)+"|"+std::to_string(leg.carrier_ship)+"|"+
                         std::to_string(leg.destination_ship)+"|"+
                         std::to_string(world.generation()));
+            }
+            // Shipyard construction progress comes only from the committed
+            // native tick, never from a guessed GUI progress timer.
+            for(const auto& [id,yard]:world.world().shipyard_constructions()){
+                const auto old=prior_yard.find(id);
+                if(yard.owner!=owner || yard.colony_ship!=ship ||
+                   (old!=prior_yard.end() && old->second==yard.progress))
+                    continue;
+                announce(world.world(),"SHIPYARD_ITEM|"+
+                    std::to_string(id)+"|"+std::to_string(yard.colony_ship)+"|"+
+                    std::to_string(yard.workers[0])+"|"+
+                    std::to_string(yard.workers[1])+"|"+
+                    std::to_string(yard.progress)+"|"+
+                    std::to_string(yard.required)+"|"+
+                    std::to_string(yard.stalled_ticks)+"|"+
+                    std::to_string(world.generation()));
             }
             // Native world ticks complete shuttle flights automatically.
             // Publish only the committed phase transition to the owning player.
