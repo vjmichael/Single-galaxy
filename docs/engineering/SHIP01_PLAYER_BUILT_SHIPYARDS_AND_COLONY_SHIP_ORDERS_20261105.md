@@ -1,6 +1,6 @@
 # SHIP-01 — Player-built shipyards, NPC shipbuilding, and intercolony ship orders
 **Design decision:** 2026-11-05  
-**Status:** Accepted design direction; NOT implemented or native-verified.  
+**Status:** SHIP-01A.0 read-only preflight implemented and locally verified against the archived v66 native kernel. Full shipyard construction/production and integration into the newer v89 kernel are NOT implemented or verified.  
 **Dependency:** PLAY-13D.4G PR #50 (physical intercolony freight); PLAY-13D.4F PR #49 (local NPC work board).  
 **Purpose:** Close the missing ship-availability and industrial-economy part of the freight gameplay loop, without conflating implementation with validation.
 
@@ -48,6 +48,28 @@ Delegation levels, separately authorized by colony policy:
 - **Expand facilities:** manager may propose or, only if separately delegated, post a *real funded construction* order for another yard/slip after sustained backlog and feasibility checks. A proposal is informational; it cannot spawn infrastructure.
 
 The opportunity metric should be explainable: current backlog ship-build hours vs available slip-hours, expected input deliveries, NPC workforce, existing utilization, spare funds and expected demand. A shipyard is not always profitable; low demand, limited power and worker scarcity can make an expansion irrational. NPCs should have no infinite-money, infinite-parts, automatic-construction or self-granted authority loopholes.
+
+## SHIP-01A.0 — first native test implemented on branch
+
+`include/galaxy/ShipyardConstructionPreflight.hpp` provides a **pure read-only** construction admission check against the real `Simulation`: authenticated colony ownership, existing live colony ship, populated life-support, **four pre-fabricated construction modules** from the colony's authoritative inventory, and two distinct named, physically available NPC workers. No construction components are manufactured or deducted by this preflight and no shipyard entity is created. The provisional 4-module cost is a first native test fixture, not the final production recipe; a real power/assembly/workforce and bill-of-materials implementation is still required.
+
+`tests/SHIP01A_PreflightTests.cpp` actually mines ore, refines it, and fabricates modules through real Simulation commands rather than seeding the desired output. It checks missing stock, wrong owner, invalid colony, duplicate worker IDs, unknown and foreign workers, unchanged canonical state after preflight, and read-only restart parity. This is registered as `galaxy_ship01a_preflight` in CTest.
+
+**Local verification (2026-11-05):** an archived `SingleGalaxy_COLONY_AUTO04B_v66_2026-11-03.zip` native checkout was configured and compiled on Linux with GCC and SQLite, adding the new preflight source and test. `ctest -R '^(galaxy_ship01a_preflight|galaxy_kernel_tests|galaxy_colony_auto04b_authenticated_relay)
+
+- **SHIP-01A:** Real player-funded orbital shipyard construction and persistence on a chosen colony; reject unauthorized, underfunded and duplicate builds.
+- **SHIP-01B:** Real freighter build from consumed materials through worker/power stages; one exact new ship entity with finite hold, known ID and no created NPCs; crash injections across each SQLite/filesystem boundary.
+- **SHIP-01C:** Assign actual crew, commission that freighter, then run the PLAY-13D.4G nutrient delivery entirely with player-manufactured hulls. Verify same physical resources, transit, partial shortages and restart.
+- **SHIP-01D:** Colony B places a build commission at Colony A's shipyard; A accepts; production completes; hull is delivered physically; ownership and payment settle exactly once; forged orders/receipts and cross-owner privilege escalations rejected.
+- **SHIP-01E:** Delegated NPC scheduling and budget-limited acceptance/expansion recommendation; a second yard exists only after materials, labor and time are actually spent. Multiple yard queues must not double-book worker IDs or materials.
+- **SHIP-01F:** Linux/Windows native, SQLite restart/rollback, live host/UI, single-player interactive acceptance; documentation ledger updated with exact PR/SHA and actual pass/fail evidence. No pending/queued job is a verified pass.
+
+## Scope boundaries and architectural rules
+
+Use the authoritative Simulation, existing manufacturing/refining and durable SQLite journal, local work board, universal transport contracts and NPC registry; **do not** build a parallel economy, shipping or crew database. Finite materials, construction time and individual NPC work must remain causal. Avoid a browser-only solution; viewer is a temporary test UI for a native desktop game. No on-screen planetary landing is required for the player.
+
+**Current scope checkpoint:** No shipyard, buildable dedicated freight hull, intercolony ship sales or NPC self-expansion are represented as implemented here. This document preserves approved future behavior separately from PLAY-13D.4G's unverified code.
+` gave **3/3 PASS**. The new preflight test also passed a standalone `-fsanitize=address,undefined` build against the old kernel. These are **v66 compatibility and SHIP-01A.0 results only**, not native acceptance of stacked freight PR #50 at the latest v89 SHA. No exact-head v89 checkout existed in the local archive. The authoritative final SHIP-01A integration gate stays open.
 
 ## Acceptance sequence — not yet verified
 
