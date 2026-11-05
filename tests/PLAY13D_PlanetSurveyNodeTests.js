@@ -239,6 +239,9 @@ test('PLAY-13D.4F local work-board contract telemetry uses real NPC delivery sta
   assert.match(relay,/LOCAL_WORK_POST/);
   assert.match(relay,/LOCAL_WORK_CANCEL/);
   assert.match(host,/process_local_delivery_board|local_delivery_board/);
+  assert.match(host,/else if\(count<64\)emit\(id,job\)/);
+  assert.match(host,/std::sort\(history.begin\(\),history.end\(\)/);
+  assert.match(ui,/workList.replaceChildren\(\)/);
 });
 
 test('PLAY-13D shuttle UI separates booked passengers, landed visitors and temporary duty',()=>{
