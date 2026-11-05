@@ -181,33 +181,6 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(!w.assign_planetary_shuttle_pilot(7,ship,key,9999999));
         CHECK(w.assign_planetary_shuttle_pilot(7,ship,key,available[2]));
         CHECK(w.world().npc_custody(available[2]).physical_location==ship);
-        CHECK(w.world().npc_custody(passenger).physical_location==
-              w.world().planetary_sites().at(key).surface_location);
-        CHECK(w.world().planetary_shuttles().at(key).disembarked_ids==
-              std::vector<std::uint64_t>{passenger});
-        // The shuttle can return to its standing surface port to collect
-        // the exact passenger later; there is no teleport or free return.
-        CHECK(!w.transfer_planetary_shuttle_visitor(7,ship,key,passenger,true));
-        CHECK(w.launch_planetary_shuttle(7,ship,key,81004,false));
-        w.steps(3);
-        CHECK(w.world().planetary_shuttles().at(key).flight_phase==2);
-        native.action=OrbitalShuttleAction::Reboard;
-        native.npc=passenger;native.request_id=0;
-        const auto return_boarding=execute_orbital_shuttle(w,native);
-        CHECK(return_boarding.accepted && return_boarding.mutated);
-        CHECK(return_boarding.shuttle.passenger_ids==
-              std::vector<std::uint64_t>{passenger});
-        CHECK(return_boarding.shuttle.disembarked_ids.empty());
-        CHECK(return_boarding.shuttle.duty_ids.empty());
-        CHECK(!w.transfer_planetary_shuttle_visitor(7,ship,key,passenger,true));
-        CHECK(w.launch_planetary_shuttle(7,ship,key,81005,true));
-        CHECK(w.world().npc_custody(passenger).active_transport_id==81005);
-        w.steps(3);
-        CHECK(w.world().npc_custody(passenger).physical_location==ship);
-        CHECK(w.world().planetary_shuttles().at(key).passenger_ids==
-              std::vector<std::uint64_t>{passenger});
-        CHECK(w.book_planetary_shuttle_passenger(7,ship,key,passenger,false));
-        CHECK(w.world().npc_available_for_duty(passenger));
         CHECK(!w.load_planetary_shuttle(8,ship,key,true,10));
         CHECK(!w.load_planetary_shuttle(7,ship,key,true,1001));
         const auto load_before=w.world().canonical_state();
@@ -322,6 +295,11 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(w.world().npc_custody(passenger).physical_location==
               w.world().planetary_sites().at(key).surface_location);
         CHECK(w.world().canonical_state().rfind("galaxy-kernel-v83|",0)==0);
+        const auto verified_arrival=w.world().npc_transport_arrival(81001,passenger);
+        CHECK(verified_arrival && verified_arrival->mode()==transport::Mode::PlanetaryShuttle);
+        CHECK(transport::completed_transport(*verified_arrival,passenger));
+        CHECK(!w.world().npc_transport_arrival(81001,available[2]));
+        CHECK(!w.world().npc_transport_arrival(81001,9999999));
         const auto visitor_state=w.world().canonical_state();
         CHECK(Simulation::from_snapshot(visitor_state).canonical_state()==visitor_state);
         // Temporary work is an explicit separate order, not a side effect
@@ -370,6 +348,35 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(Simulation::from_snapshot(w.world().canonical_state())
               .canonical_state()==w.world().canonical_state());
 
+        CHECK(w.world().npc_custody(passenger).physical_location==
+              w.world().planetary_sites().at(key).surface_location);
+        CHECK(w.world().planetary_shuttles().at(key).disembarked_ids==
+              std::vector<std::uint64_t>{passenger});
+        // The shuttle can return to its standing surface port to collect
+        // the exact passenger later; there is no teleport or free return.
+        CHECK(!w.transfer_planetary_shuttle_visitor(7,ship,key,passenger,true));
+        CHECK(w.launch_planetary_shuttle(7,ship,key,81004,false));
+        w.steps(3);
+        CHECK(w.world().planetary_shuttles().at(key).flight_phase==2);
+        CHECK(w.world().npc_transport_arrival(81004,passenger));
+        CHECK(!w.world().npc_transport_arrival(81001,passenger));
+        native.action=OrbitalShuttleAction::Reboard;
+        native.npc=passenger;native.request_id=0;
+        const auto return_boarding=execute_orbital_shuttle(w,native);
+        CHECK(return_boarding.accepted && return_boarding.mutated);
+        CHECK(return_boarding.shuttle.passenger_ids==
+              std::vector<std::uint64_t>{passenger});
+        CHECK(return_boarding.shuttle.disembarked_ids.empty());
+        CHECK(return_boarding.shuttle.duty_ids.empty());
+        CHECK(!w.transfer_planetary_shuttle_visitor(7,ship,key,passenger,true));
+        CHECK(w.launch_planetary_shuttle(7,ship,key,81005,true));
+        CHECK(w.world().npc_custody(passenger).active_transport_id==81005);
+        w.steps(3);
+        CHECK(w.world().npc_custody(passenger).physical_location==ship);
+        CHECK(w.world().planetary_shuttles().at(key).passenger_ids==
+              std::vector<std::uint64_t>{passenger});
+        CHECK(w.book_planetary_shuttle_passenger(7,ship,key,passenger,false));
+        CHECK(w.world().npc_available_for_duty(passenger));
         if(!farming) {
             const auto source=w.world().planetary_oasis_source_region(7,ship,chosen.body);
             CHECK(source && source->latitude==chosen.latitude &&
