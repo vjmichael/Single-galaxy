@@ -5313,10 +5313,9 @@ bool Simulation::build_planetary_shuttle(PlayerId owner,EntityId ship,const Plan
 }
 bool Simulation::load_planetary_shuttle(PlayerId owner,EntityId ship,
        const PlanetarySiteKey& key,bool water,std::int64_t kg) {
-    const auto shuttle=planetary_shuttles_.find(key);
-    const auto site=planetary_sites_.find(key);
-    const auto frame=ship_frames_.find(ship);
-    const auto hull=entities_.find(ship);
+    auto shuttle=planetary_shuttles_.find(key);
+    auto site=planetary_sites_.find(key);
+    const auto frame=ship_frames_.find(ship),hull=entities_.find(ship);
     auto life=life_support_.find(ship);
     if(!owner || std::get<3>(key)!=1 ||
        shuttle==planetary_shuttles_.end() || site==planetary_sites_.end() ||
@@ -5326,9 +5325,13 @@ bool Simulation::load_planetary_shuttle(PlayerId owner,EntityId ship,
        hull==entities_.end() || hull->second.owner_id!=owner ||
        hull->second.dock_state!=DockState::InSpace ||
        hull->second.jump_state!=ShipJumpState::Ready ||
-       life==life_support_.end() || kg<=0 || kg>1000)return false;
+       life==life_support_.end() || kg<=0 || kg>1000 ||
+       (shuttle->second.flight_phase!=0 && shuttle->second.flight_phase!=2))
+       return false;
     auto& held=water?shuttle->second.water_kg:shuttle->second.food_kg;
-    auto& from=water?life->second.water_kg:life->second.food_kg;
+    auto& from=shuttle->second.flight_phase==0?
+        (water?life->second.water_kg:life->second.food_kg):
+        (water?site->second.water_kg:site->second.food_kg);
     if(from<kg || held>1000-kg ||
        shuttle->second.water_kg+shuttle->second.food_kg>1000-kg)return false;
     from-=kg;held+=kg;
@@ -5336,10 +5339,9 @@ bool Simulation::load_planetary_shuttle(PlayerId owner,EntityId ship,
 }
 bool Simulation::unload_planetary_shuttle(PlayerId owner,EntityId ship,
        const PlanetarySiteKey& key,bool water,std::int64_t kg) {
-    const auto shuttle=planetary_shuttles_.find(key);
-    const auto site=planetary_sites_.find(key);
-    const auto frame=ship_frames_.find(ship);
-    const auto hull=entities_.find(ship);
+    auto shuttle=planetary_shuttles_.find(key);
+    auto site=planetary_sites_.find(key);
+    const auto frame=ship_frames_.find(ship),hull=entities_.find(ship);
     auto life=life_support_.find(ship);
     if(!owner || std::get<3>(key)!=1 ||
        shuttle==planetary_shuttles_.end() || site==planetary_sites_.end() ||
@@ -5349,9 +5351,13 @@ bool Simulation::unload_planetary_shuttle(PlayerId owner,EntityId ship,
        hull==entities_.end() || hull->second.owner_id!=owner ||
        hull->second.dock_state!=DockState::InSpace ||
        hull->second.jump_state!=ShipJumpState::Ready ||
-       life==life_support_.end() || kg<=0 || kg>1000)return false;
+       life==life_support_.end() || kg<=0 || kg>1000 ||
+       (shuttle->second.flight_phase!=0 && shuttle->second.flight_phase!=2))
+       return false;
     auto& held=water?shuttle->second.water_kg:shuttle->second.food_kg;
-    auto& to=water?life->second.water_kg:life->second.food_kg;
+    auto& to=shuttle->second.flight_phase==0?
+        (water?life->second.water_kg:life->second.food_kg):
+        (water?site->second.water_kg:site->second.food_kg);
     if(held<kg || to>1000000-kg)return false;
     held-=kg;to+=kg;
     return true;
