@@ -456,6 +456,9 @@ struct PlanetaryShuttleState {
     std::uint8_t flight_phase=0;
     std::uint64_t flight_request=0, arrival_tick=0;
     std::uint64_t descent_receipt=0, ascent_receipt=0;
+    // v82: exact sorted finite NPC transport manifest (pilot excluded), 3 seats.
+    // Uses the same authoritative NpcRecord, never copies passengers.
+    std::vector<std::uint64_t> passenger_ids;
 };
 struct PhysicalOasisReserve {
     std::int64_t water_kg=0,nutrients_kg=0;
@@ -970,6 +973,10 @@ public:
     bool load_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,bool water,std::int64_t kg);
     bool unload_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,bool water,std::int64_t kg);
     bool assign_planetary_shuttle_pilot(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,std::uint64_t npc);
+    // Book/release actual named NPCs against the shuttle transport manifest.
+    // Only orbital berth modifications; voyage departures move all occupants.
+    bool book_planetary_shuttle_passenger(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc,bool board);
     // One named pilot in authoritative NPC custody; cargo stays on the shuttle
     // until unloading after committed arrival. Requests are single use per leg.
     bool launch_planetary_shuttle(PlayerId owner,EntityId ship,
