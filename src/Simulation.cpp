@@ -9828,7 +9828,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                from==result.ship_frames_.end() ||
                frame==result.ship_frames_.end() ||
                from->second.system!=frame->second.system ||
-               leg.origin_body==0)
+               leg.origin_body!=std::get<0>(order->second.site))
                 throw std::runtime_error("snapshot: orphaned freight and origin");
             const auto code=sealed_freight_code(leg.cargo);
             if(!code)throw std::runtime_error("snapshot: unknown sealed goods");
