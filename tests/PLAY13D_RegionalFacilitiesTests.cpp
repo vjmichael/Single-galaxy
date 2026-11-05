@@ -220,6 +220,8 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(w.world().planetary_shuttles().at(key).flight_phase==0);
         CHECK(w.world().planetary_shuttles().at(key).ascent_receipt==81003);
         CHECK(w.world().npc_custody(available[2]).physical_location==ship);
+        CHECK(!w.launch_planetary_shuttle(7,ship,key,81001,false));
+        CHECK(!w.launch_planetary_shuttle(7,ship,key,81003,false));
         CHECK(w.unload_planetary_shuttle(7,ship,key,true,50));
         CHECK(w.world().total_ore()==origin);
         CHECK(Simulation::from_snapshot(w.world().canonical_state())
@@ -351,7 +353,7 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(w.world().planetary_sites().size()==1);
         CHECK(w.world().total_ore()==origin);
         durable=w.world().canonical_state();
-        CHECK(durable.rfind("galaxy-kernel-v79|",0)==0);
+        CHECK(durable.rfind("galaxy-kernel-v81|",0)==0);
         CHECK(Simulation::from_snapshot(durable).canonical_state()==durable);
     }
     {
@@ -359,6 +361,12 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(w.world().canonical_state()==durable);
         CHECK(w.world().total_ore()==origin);
         CHECK(w.world().planetary_sites().size()==1);
+        CHECK(w.world().planetary_shuttles().at(
+            PlanetarySiteKey{chosen.body,chosen.latitude,chosen.longitude,1})
+              .ascent_receipt==81003);
+        CHECK(!w.launch_planetary_shuttle(7,ship,
+            PlanetarySiteKey{chosen.body,chosen.latitude,chosen.longitude,1},
+            81001,false));
         CHECK(!w.retrieve_planetary_site(8,ship,chosen.body,chosen.latitude,chosen.longitude,false,1));
         // No material or facility exists at an arbitrary neighboring tile.
         CHECK(!w.supply_planetary_site(7,ship,chosen.body,
