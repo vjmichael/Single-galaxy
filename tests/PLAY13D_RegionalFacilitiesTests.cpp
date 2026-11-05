@@ -131,6 +131,57 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(w.equip_planetary_site(7,ship,chosen.body,chosen.latitude,chosen.longitude,farming));
         CHECK(!w.equip_planetary_site(7,ship,chosen.body,chosen.latitude,chosen.longitude,farming));
         CHECK(w.world().colony_ship(ship)->modules==0);
+
+        // PLAY-13D.4C.2: fabricate another two modules from physical ore,
+        // then construct one orbit-docked shuttle with no free dry mass.
+        auto shuttle_apply=[&](std::uint64_t id,Action action,std::int64_t amount,
+                               EntityId target=0){
+            Command cmd{};cmd.id=id;cmd.sequence=id;
+            cmd.execute_tick=w.world().tick()+1;cmd.issuer=7;cmd.actor=ship;
+            cmd.action=action;cmd.amount=amount;cmd.target=target;
+            CHECK(w.submit(cmd));w.step();
+            CHECK(w.world().events().back().result==Outcome::Applied);
+        };
+        shuttle_apply(4301,Action::Mine,4,ship+1);
+        shuttle_apply(4302,Action::RefineOre,4);
+        shuttle_apply(4303,Action::FabricateModule,2);
+        CHECK(w.world().colony_ship(ship)->modules==2);
+        CHECK(!w.build_planetary_shuttle(8,ship,key));
+        const auto shuttle_before=w.world().canonical_state();
+        bool shuttle_failed=false;
+        try{(void)w.build_planetary_shuttle(7,ship,key,FailPoint::AfterSnapshotWrite);}
+        catch(const std::exception&){shuttle_failed=true;}
+        CHECK(shuttle_failed);
+        CHECK(w.world().canonical_state()==shuttle_before);
+        CHECK(w.build_planetary_shuttle(7,ship,key));
+        CHECK(!w.build_planetary_shuttle(7,ship,key));
+        CHECK(w.world().colony_ship(ship)->modules==0);
+        CHECK(w.world().planetary_shuttles().at(key).dry_mass_ore==4);
+        CHECK(!w.assign_planetary_shuttle_pilot(7,ship,key,first_npc));
+        CHECK(!w.assign_planetary_shuttle_pilot(7,ship,key,9999999));
+        CHECK(w.assign_planetary_shuttle_pilot(7,ship,key,available[2]));
+        CHECK(w.world().npc_custody(available[2]).physical_location==ship);
+        CHECK(!w.load_planetary_shuttle(8,ship,key,true,10));
+        CHECK(!w.load_planetary_shuttle(7,ship,key,true,1001));
+        const auto load_before=w.world().canonical_state();
+        bool load_failed=false;
+        try{(void)w.load_planetary_shuttle(7,ship,key,true,200,
+                                          FailPoint::AfterSnapshotWrite);}
+        catch(const std::exception&){load_failed=true;}
+        CHECK(load_failed);
+        CHECK(w.world().canonical_state()==load_before);
+        CHECK(w.load_planetary_shuttle(7,ship,key,true,200));
+        CHECK(w.load_planetary_shuttle(7,ship,key,false,100));
+        CHECK(w.world().planetary_shuttles().at(key).water_kg==200);
+        CHECK(w.world().planetary_shuttles().at(key).food_kg==100);
+        CHECK(!w.unload_planetary_shuttle(7,ship,key,true,201));
+        CHECK(w.unload_planetary_shuttle(7,ship,key,true,50));
+        CHECK(w.world().planetary_shuttles().at(key).water_kg==150);
+        CHECK(w.world().total_ore()==origin);
+        CHECK(w.world().canonical_state().rfind("galaxy-kernel-v80|",0)==0);
+        CHECK(Simulation::from_snapshot(w.world().canonical_state())
+              .canonical_state()==w.world().canonical_state());
+
         if(!farming) {
             const auto source=w.world().planetary_oasis_source_region(7,ship,chosen.body);
             CHECK(source && source->latitude==chosen.latitude &&
