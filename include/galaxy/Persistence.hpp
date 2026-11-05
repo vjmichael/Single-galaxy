@@ -872,6 +872,10 @@ public:
     // Simulation::step can subsequently mint the physical hull entity.
     bool queue_shipyard_freighter(PlayerId owner,std::uint64_t yard_id,
         std::uint64_t build_id,FailPoint fail=FailPoint::None);
+    // SQLite-atomic named NPC and finite-material transfer at an actual berth.
+    bool commission_shipyard_freighter(PlayerId owner,std::uint64_t build_id,
+        std::array<std::uint64_t,2> crew,std::int64_t provisions_kg_each,
+        FailPoint fail=FailPoint::None);
     bool post_local_delivery_order(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& site,ShuttleCargo cargo,
         std::int64_t kilograms,std::uint64_t order_id,
