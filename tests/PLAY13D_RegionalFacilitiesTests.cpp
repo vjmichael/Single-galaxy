@@ -329,7 +329,7 @@ static void scenario(const fs::path& db, bool farming){
         const auto npc_line=forged_residence.find(
             "npc|"+std::to_string(passenger)+"|");
         CHECK(npc_line!=std::string::npos);
-        const auto npc_end=forged_residence.find('\\n',npc_line);
+        const auto npc_end=forged_residence.find('\n',npc_line);
         CHECK(npc_end!=std::string::npos);
         const auto last_bar=forged_residence.rfind('|',npc_end);
         const auto kind_bar=forged_residence.rfind('|',last_bar-1);
