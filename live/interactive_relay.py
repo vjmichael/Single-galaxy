@@ -402,7 +402,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 elif operation in ('LOAD','UNLOAD'):
                     expected.update(('resource','kg'))
                     resource,kg=doc.get('resource'),doc.get('kg')
-                    if (type(resource)!=str or resource not in ('FOOD','WATER') or
+                    if (type(resource)!=str or resource not in ('FOOD','WATER','NUTRIENTS') or
                         type(kg)!=int or not 1<=kg<=1000):
                         raise ValueError('Invalid shuttle cargo')
                     suffix=f'|{resource}|{kg}'
