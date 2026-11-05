@@ -79,3 +79,13 @@ The existing `Simulation` ferry migration checks and planetary shuttle visitor-d
 The class is an immutable **projection from authoritative vehicle records**. Legacy `VoyageRecord` and `PlanetaryShuttleState` remain the actual persisted host state and are not replaced by a second competing manifest. Rebuilding one typed transport from committed records is safe; accepting one constructed by the client as authoritative evidence is forbidden. Vehicle operation, fuel, landing and navigation remain vehicle-specific.
 
 **Still open:** generalized migration writer and typed persistence for migration from arbitrary NPC locations, family/dependent custody over shuttles, capacity reservations for permanent nonworking residents, and exact-head native Windows/Linux acceptance. Do not claim all travel uses the new class as its sole writer yet.
+
+## Canonical arrival lookup checkpoint — host state only
+
+`Simulation::npc_transport_arrival(receipt,npc_id)` now projects a shared `NpcTransport` from actual completed ferry voyages or a shuttle's physically disembarked roster and recorded descent. `Simulation` now uses this host-derived proof in both legacy `HostSettleMigrant` checks and shuttle visitor duty/reboarding; clients cannot forge an authoritative `NpcTransport` merely by providing a syntactically valid manifest. Existing ferry-specific destination and family checks deliberately remain active until the universal migration writer is ready.
+
+A native regional-facilities scenario was repaired: its second shuttle descent/reboarding block had been accidentally placed before the passenger was declared and before the first journey. The block now follows the first ascent and verifies an NPC's current surface presence against the actual arrival lookup.
+
+**Important limitation discovered:** the shuttle currently stores only a site-level *latest descent receipt*, not an immutable per-passenger disembarkation receipt. A visitor staying on the planet across subsequent shuttle trips can be present in the current visitor roster even though the latest descent receipt belongs to a different passenger journey. This is adequate for the current physical-presence/return-pickup checks, but **not** sufficient legal/administrative migration proof. Before accepting a shuttle arrival into `step_with_atomic_migration`, introduce durable per-person arrival receipts (plus a historical transport journal) and bind the actual individual, source, destination, transport and completion generation. Do not treat the latest site descent ID as that person's original immigration receipt.
+
+Native Windows/Linux workflow acceptance is still required; repository commits alone do not constitute execution.
