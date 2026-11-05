@@ -169,6 +169,36 @@ def main(executable,relay):
             ]:
                 status,_=request(port,"POST","/command",payload)
                 assert status==400,(payload,status)
+            # Local NPC delivery-board contracts have narrow typed inputs.
+            for action in ('colonyLocalWorkPost','colonyLocalWorkStatus',
+                           'colonyLocalWorkCancel'):
+                assert action in session['commands'],action
+            posted={'token':token,'action':'colonyLocalWorkPost',
+                    'body':4294967300,'latitude':17,'longitude':36,
+                    'resource':'NUTRIENTS','kg':500,'order':77003}
+            for payload in [
+                posted,
+                {'token':token,'action':'colonyLocalWorkStatus'},
+                {'token':token,'action':'colonyLocalWorkCancel','order':77003}
+            ]:
+                status,_=request(port,'POST','/command',payload)
+                assert status==202,(payload,status)
+                status,_=request(port,'POST','/command',
+                                 {**payload,'token':'forged'})
+                assert status==403,(payload,status)
+            for payload in [
+                {**posted,'resource':'GOLD'},
+                {**posted,'kg':1001},
+                {**posted,'kg':True},
+                {**posted,'order':0},
+                {**posted,'order':1<<50},
+                {**posted,'latitude':36},
+                {**posted,'nonce':777},
+                {'token':token,'action':'colonyLocalWorkCancel','order':True},
+                {'token':token,'action':'colonyLocalWorkStatus','extra':1}
+            ]:
+                status,_=request(port,'POST','/command',payload)
+                assert status==400,(payload,status)
             print("PASS PGF01B2 HTTP relay accepts valid geography and rejects forged inputs")
         finally:
             proc.terminate()
