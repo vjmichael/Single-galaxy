@@ -557,7 +557,8 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
                 std::to_string(site.autonomous_cycles)+"|"+
                 std::to_string(site.stalled_cycles)+"|"+
                 std::to_string(site.auto_extracted_kg)+"|"+
-                std::to_string(site.repair_cycles));
+                std::to_string(site.repair_cycles)+
+                (site.nutrients_kg>0?"|"+std::to_string(site.nutrients_kg):""));
         }catch(const std::exception&){
             announce(world.world(),"ERROR|PLANET_SITE_STATUS_DENIED");
         }
