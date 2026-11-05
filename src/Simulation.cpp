@@ -8065,6 +8065,9 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 const bool mineral=f[0]=="mineral";
                 if(!id || kg<1 || kg>1000000000000LL || !result.colony_ships_.count(id) ||
                    !(mineral?is_known_mineral(f[2]):is_known_good(f[2])) ||
+                   (result.snapshot_version_<89 &&
+                    (f[2]=="freight_water" || f[2]=="freight_food" ||
+                     f[2]=="freight_nutrients")) ||
                    !(mineral?result.colony_ships_.at(id).minerals_kg:result.colony_ships_.at(id).goods_kg).emplace(f[2],kg).second)
                     throw std::runtime_error("snapshot: invalid mineral/product inventory");
             }
@@ -9829,7 +9832,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 throw std::runtime_error("snapshot: orphaned freight and origin");
             const auto code=sealed_freight_code(leg.cargo);
             if(!code)throw std::runtime_error("snapshot: unknown sealed goods");
-            const auto goods=result.colony_ships_.at(leg.carrier_ship).goods_kg;
+            const auto& goods=result.colony_ships_.at(leg.carrier_ship).goods_kg;
             const auto found=goods.find(code);
             if(leg.stage==IntercolonyFreightStage::AwaitingPickup) {
                 if(!loaded_carriers.insert(leg.carrier_ship).second ||
@@ -9850,6 +9853,24 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                     throw std::runtime_error("snapshot: freight without proven arrival");
             }
         }
+        // Every sealed freight stack must be justified by exactly one
+        // active physical carrier assignment. Historical Delivered jobs
+        // cannot silently leave unclaimed sealed cargo in a ship hold.
+        for(const auto& [ship,colony]:result.colony_ships_)
+            for(const auto& [code,kg]:colony.goods_kg) {
+                if(code!="freight_water" && code!="freight_food" &&
+                   code!="freight_nutrients")continue;
+                std::size_t witnesses=0;
+                for(const auto& [id,leg]:result.intercolony_freight_) {
+                    (void)id;
+                    if(leg.stage==IntercolonyFreightStage::Loaded &&
+                       leg.carrier_ship==ship &&
+                       code==sealed_freight_code(leg.cargo) &&
+                       leg.kilograms==kg)++witnesses;
+                }
+                if(witnesses!=1)
+                    throw std::runtime_error("snapshot: unclaimed sealed intercolony goods");
+            }
     }
     if(result.snapshot_version_>=86) {
         const auto legal_address_is_registered=[&](const NpcRecord& n) {
