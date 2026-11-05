@@ -514,6 +514,21 @@ struct LocalDeliveryOrder {
     LocalDeliveryStage stage=LocalDeliveryStage::Posted;
     std::uint64_t created_tick=0;
 };
+// PLAY-13D.4G: one real shipped cargo lot linked to a successfully
+// completed surface-to-orbit job. The cargo physically resides in the
+// carrier ColonyShip::goods_kg compartment while Loaded, never in this
+// receipt. The second ship cannot deliver without its own committed flight.
+enum class IntercolonyFreightStage : std::uint8_t { Loaded=1, Delivered=2 };
+struct IntercolonyFreightLeg {
+    std::uint64_t order_id=0;
+    PlayerId owner=0;
+    EntityId source_ship=0,carrier_ship=0,destination_ship=0;
+    ShuttleCargo cargo=ShuttleCargo::Nutrients;
+    std::int64_t kilograms=0;
+    std::uint64_t origin_body=0,loaded_tick=0;
+    std::uint64_t arrival_receipt=0; // 0 until proved delivered
+    IntercolonyFreightStage stage=IntercolonyFreightStage::Loaded;
+};
 struct PhysicalOasisReserve {
     std::int64_t water_kg=0,nutrients_kg=0;
     std::int64_t initial_water_kg=0,initial_nutrients_kg=0;
@@ -1073,6 +1088,16 @@ public:
         std::int64_t kilograms,std::uint64_t order_id);
     bool cancel_local_delivery_order(PlayerId owner,std::uint64_t order_id);
     void process_local_delivery_board();
+    // Real intercolony carrier adapter: no remote stock edits. Loading requires
+    // origin berthing within 2.5km, a completed site pickup and free cargo hold.
+    // Unloading requires the same hull's committed celestial-arrival receipt
+    // and proximity to an existing distinct destination colony ship.
+    const std::map<std::uint64_t,IntercolonyFreightLeg>& intercolony_freight() const noexcept {
+        return intercolony_freight_;
+    }
+    bool load_intercolony_freight(PlayerId owner,std::uint64_t local_order_id,
+        EntityId carrier,EntityId destination);
+    bool deliver_intercolony_freight(PlayerId owner,std::uint64_t local_order_id);
     bool equip_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
         std::uint16_t latitude,std::uint16_t longitude,bool farm);
     // Ship and site remain in identical anchored celestial frame.
@@ -1170,6 +1195,7 @@ private:
     std::map<PlanetarySiteKey,PlanetarySiteFacility> planetary_sites_; // v76 real installed machinery
     std::map<PlanetarySiteKey,PlanetaryShuttleState> planetary_shuttles_; // v80
     std::map<std::uint64_t,LocalDeliveryOrder> local_delivery_orders_; // v88
+    std::map<std::uint64_t,IntercolonyFreightLeg> intercolony_freight_; // v89
     std::set<std::uint64_t> shuttle_flight_request_ids_; // v81 replay rejection
     std::map<std::uint64_t,PendingCelestialTransit> pending_celestial_transits_;
     std::map<std::uint64_t,CompletedCelestialTransit> completed_celestial_transits_;
