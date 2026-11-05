@@ -902,6 +902,13 @@ ColonyMedicalAudit Simulation::assess_medical_population() const {
         if(counted[{id,static_cast<int>(NpcRole::Farm)}]!=c.workers)a.reconciled=false;
     for(const auto& [id,c]:habitats_)
         if(counted[{id,static_cast<int>(NpcRole::Habitat)}]!=c.residents)a.reconciled=false;
+    for(const auto& [site_key,facility]:planetary_sites_) {
+        (void)site_key;
+        if(facility.assigned_workers &&
+           counted[{facility.surface_location,
+                    static_cast<int>(NpcRole::PlanetarySurface)}]!=
+                    facility.assigned_workers)a.reconciled=false;
+    }
     for(const auto& [id,c]:a.by_home_ship){(void)id;
         if(c.living!=c.fit+c.injured+c.stabilized+c.recovering ||
            c.living!=c.on_duty+c.unavailable || c.in_transit>c.unavailable)
