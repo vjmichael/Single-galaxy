@@ -11156,6 +11156,13 @@ void PersistentWorld::step_with_atomic_migration(const SocietyMigrationPlan& pla
        plan.origin_colony==plan.destination_colony ||
        plan.family_scope.empty() || plan.region_scope.empty())
         throw std::invalid_argument("stale or incomplete host migration plan");
+    // Typed endpoints prevent a raw numeric surface ID from being mistaken
+    // for a colony ship. The existing census bridge cannot yet account for
+    // planetary residences; reject rather than corrupt family population.
+    if(plan.origin_kind!=transport::LocationKind::ColonyShip ||
+       plan.destination_kind!=transport::LocationKind::ColonyShip)
+        throw std::invalid_argument(
+            "planetary migration requires typed regional/census residency support");
     if(plan.voluntary_admission_event_id)
         store_->validate_voluntary_settlement(world_,generation_,plan);
     else if(store_->immigration_pending_for_transport(plan.npc_id,plan.transport_id))
@@ -11218,8 +11225,8 @@ void PersistentWorld::step_with_atomic_migration(const SocietyMigrationPlan& pla
     migration::Admission admission{};
     admission.command_id=plan.command_id;
     admission.npc_id=plan.npc_id;
-    admission.origin=arrival->source();
-    admission.destination=arrival->destination();
+    admission.origin={plan.origin_kind,plan.origin};
+    admission.destination={plan.destination_kind,plan.destination};
     admission.expected_generation=plan.expected_world_generation;
     admission.current_generation=generation_;
     admission.physical_custody_at_destination=
