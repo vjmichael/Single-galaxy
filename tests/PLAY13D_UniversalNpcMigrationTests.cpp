@@ -43,6 +43,17 @@ int main(){
     assert(preflight(bad,shuttle)==Denial::InvalidRequest);
     bad=base;bad.consent_required=false;bad.verified_consent=false;
     assert(preflight(bad,shuttle)==Denial::None); // historical host-only moves
+    // The pre-v85 ship migration path had a crew limit, not explicit
+    // durable housing/life-support reservations. Keep legacy semantics
+    // separate from modern planetary residency without forging resources.
+    bad=space;bad.consent_required=false;bad.verified_consent=false;
+    bad.housing_required=false;bad.life_support_required=false;
+    bad.housing_reserved=false;bad.life_support_reserved=false;
+    assert(preflight(bad,ferry)==Denial::None);
+    bad.housing_required=true;
+    assert(preflight(bad,ferry)==Denial::NoHousing);
+    bad.housing_reserved=true;bad.life_support_required=true;
+    assert(preflight(bad,ferry)==Denial::NoLifeSupport);
     const NpcTransport not_arrived{55,Mode::PlanetaryShuttle,ship,planet,3,
                                    {100},TransportState::InTransit};
     assert(preflight(base,not_arrived)==Denial::InvalidTransport);
