@@ -234,6 +234,18 @@ static void scenario(const fs::path& db, bool farming){
         const auto remote_before=w.world().planetary_sites().at(key).autonomous_cycles;
         w.steps(40);
         CHECK(w.world().planetary_sites().at(key).autonomous_cycles>remote_before);
+        if(!farming) {
+            // Once the finite reserve is emptied, no further kilograms
+            // appear, even while the NPC extraction policy remains active.
+            CHECK(w.world().oasis_reserves().at(chosen.body).water_kg==0);
+            const auto extracted=w.world().planetary_sites().at(key).auto_extracted_kg;
+            const auto stalls=w.world().planetary_sites().at(key).stalled_cycles;
+            w.steps(40);
+            CHECK(w.world().planetary_sites().at(key).auto_extracted_kg==extracted);
+            CHECK(w.world().planetary_sites().at(key).stalled_cycles>stalls);
+            CHECK(w.world().oasis_reserves().at(chosen.body).water_kg==0);
+            CHECK(w.world().total_ore()==origin);
+        }
         CHECK(w.set_planetary_workforce_policy(7,chosen.body,
             chosen.latitude,chosen.longitude,0));
         CHECK(w.world().planetary_sites().size()==1);
