@@ -100,7 +100,7 @@
       const id=numeric(v[4],Number.MAX_SAFE_INTEGER),
        latitude=numeric(v[5],35),longitude=numeric(v[6],71),
        value=numeric(v[7],(t==='PLANET_SHUTTLE_PASSENGER'||t==='PLANET_SHUTTLE_VISITOR'||t==='PLANET_SHUTTLE_WORKER')?
-         Number.MAX_SAFE_INTEGER:64);
+         Number.MAX_SAFE_INTEGER:(t==='PLANET_SHUTTLE_MANIFEST_DONE'?3:64));
       if(!id||((t==='PLANET_SHUTTLE_PASSENGER'||t==='PLANET_SHUTTLE_VISITOR'||t==='PLANET_SHUTTLE_WORKER')&&!value))
         throw Error('Invalid named shuttle passenger manifest');
       return {...e,id,latitude,longitude,
