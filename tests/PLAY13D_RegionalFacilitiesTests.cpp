@@ -925,6 +925,37 @@ static void scenario(const fs::path& db, bool farming, bool manufactured=false){
             CHECK(w.world().intercolony_freight().at(77007).arrival_receipt==99023);
             CHECK(w.world().life_support(receiver)->nutrients_kg==to_before+300);
             CHECK(w.world().total_ore()==origin);
+            if(manufactured){
+                // The same minted hull is also an ordinary piloted ship:
+                // actual owner-issued yaw and thrust must commit. Neither
+                // command is routed through the founding colony's actor ID.
+                const auto prior_heading=w.world().find(freighter)->heading_deg;
+                Command turn{};
+                turn.id=99024;turn.sequence=turn.id;
+                turn.execute_tick=w.world().tick()+1;
+                turn.issuer=7;turn.actor=freighter;
+                turn.action=Action::Thrust;turn.amount=15;
+                CHECK(w.submit(turn));
+                w.step();
+                CHECK(w.world().events().back().result==Outcome::Applied);
+                CHECK(w.world().find(freighter)->heading_deg==
+                      (prior_heading+15)%360);
+                const auto before_move=*w.world().find(freighter);
+                Command thrust{};
+                thrust.id=99025;thrust.sequence=thrust.id;
+                thrust.execute_tick=w.world().tick()+1;
+                thrust.issuer=7;thrust.actor=freighter;
+                thrust.action=Action::Thrust;thrust.thrust_x=1;
+                CHECK(w.submit(thrust));
+                w.step();
+                CHECK(w.world().events().back().result==Outcome::Applied);
+                const auto after_move=*w.world().find(freighter);
+                CHECK(after_move.velocity.x!=before_move.velocity.x ||
+                      after_move.velocity.y!=before_move.velocity.y ||
+                      after_move.position.x!=before_move.position.x ||
+                      after_move.position.y!=before_move.position.y);
+                CHECK(w.world().total_ore()==origin);
+            }
             durable=w.world().canonical_state();
             CHECK(durable.rfind((manufactured?"galaxy-kernel-v92|":"galaxy-kernel-v89|"),0)==0);
             CHECK(Simulation::from_snapshot(durable).canonical_state()==durable);
