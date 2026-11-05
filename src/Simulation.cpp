@@ -446,6 +446,15 @@ NpcCustodyView Simulation::npc_custody(std::uint64_t id) const {
     const auto it=npcs_.find(id);
     if(it==npcs_.end())throw std::out_of_range("npc custody: unknown identity");
     const auto& n=it->second;
+    // Reuse the existing transport-facing NPC custody projection. The stored
+    // NpcRecord remains a single authoritative person; its ferry transport_id
+    // is not overloaded with an unrelated shuttle voyage identity.
+    if(snapshot_version_>=81)
+        for(const auto& [key,sh]:planetary_shuttles_) {
+            (void)key;
+            if(sh.pilot_npc==id && (sh.flight_phase==1 || sh.flight_phase==3))
+                return {n.id,n.home_ship,n.location,n.role,sh.flight_request,true};
+        }
     return {n.id,n.home_ship,n.location,n.role,n.transport_id,n.transport_id!=0};
 }
 std::size_t Simulation::children_physically_aboard(EntityId ship) const {
