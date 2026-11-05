@@ -9462,6 +9462,56 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 throw std::runtime_error("snapshot: survey probe has no valid physical carrier");
         }
     }
+    if(result.snapshot_version_>=88) {
+        std::set<PlanetarySiteKey> active_jobs;
+        for(const auto& [id,job]:result.local_delivery_orders_) {
+            const auto site=result.planetary_sites_.find(job.site);
+            const auto shuttle=result.planetary_shuttles_.find(job.site);
+            const auto ship=result.entities_.find(job.board_ship);
+            if(site==result.planetary_sites_.end() ||
+               shuttle==result.planetary_shuttles_.end() ||
+               ship==result.entities_.end() ||
+               ship->second.owner_id!=job.owner ||
+               site->second.owner!=job.owner ||
+               site->second.source_ship!=job.board_ship ||
+               site->second.spaceport_phase!=3 ||
+               shuttle->second.owner!=job.owner ||
+               shuttle->second.source_ship!=job.board_ship ||
+               !result.colony_ships_.count(job.board_ship))
+                throw std::runtime_error("snapshot: orphaned local delivery contract");
+            if(job.stage==LocalDeliveryStage::Complete ||
+               job.stage==LocalDeliveryStage::Cancelled)continue;
+            if(!active_jobs.insert(job.site).second)
+                throw std::runtime_error("snapshot: competing local delivery contracts");
+            if(job.stage==LocalDeliveryStage::Posted) {
+                if(job.assigned_pilot && job.assigned_pilot!=shuttle->second.pilot_npc)
+                    throw std::runtime_error("snapshot: invalid posted job pilot");
+                continue;
+            }
+            const auto pilot=result.npcs_.find(job.assigned_pilot);
+            if(!job.assigned_pilot || pilot==result.npcs_.end() ||
+               pilot->second.home_ship!=job.board_ship ||
+               shuttle->second.pilot_npc!=job.assigned_pilot)
+                throw std::runtime_error("snapshot: missing assigned courier NPC");
+            const auto flight_id=[id](bool return_leg) {
+                return 0xC000000000000000ULL | (id<<1) |
+                       std::uint64_t(return_leg?1:0);
+            };
+            if((job.stage==LocalDeliveryStage::Descending &&
+                (shuttle->second.descent_receipt!=flight_id(false) ||
+                 (shuttle->second.flight_phase!=1 &&
+                  shuttle->second.flight_phase!=2))) ||
+               ((job.stage==LocalDeliveryStage::Loading ||
+                 job.stage==LocalDeliveryStage::Ascending) &&
+                (shuttle->second.flight_phase!=2 ||
+                 shuttle->second.descent_receipt!=flight_id(false))) ||
+               (job.stage==LocalDeliveryStage::Delivering &&
+                (shuttle->second.ascent_receipt!=flight_id(true) ||
+                 (shuttle->second.flight_phase!=3 &&
+                  shuttle->second.flight_phase!=0))))
+                throw std::runtime_error("snapshot: invalid courier flight phase");
+        }
+    }
     if(result.snapshot_version_>=86) {
         const auto legal_address_is_registered=[&](const NpcRecord& n) {
             const auto residence=n.legal_residence();
