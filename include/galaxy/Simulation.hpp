@@ -216,6 +216,15 @@ struct NpcRecord {
     // Zero for legacy assigned custody; future passenger transfers require a voyage.
     std::uint64_t transport_id=0;
     EntityId assigned_site=0; // v32: permanent assignment, independent of physical location
+    // v86: legal residence is neither physical custody nor job assignment.
+    // A zero residence ID is the legacy compatibility alias for home_ship.
+    // The historical home_ship still identifies the original resource/crew
+    // authority and must not be silently treated as planetary residency.
+    transport::LocationKind residence_kind=transport::LocationKind::ColonyShip;
+    EntityId residence_id=0;
+    constexpr transport::Endpoint legal_residence() const noexcept {
+        return {residence_kind,residence_id?residence_id:home_ship};
+    }
 };
 // Distinguish permanent workforce assignment from physical custody.
 // This view is read-only until the world-owned transfer journal is implemented.
