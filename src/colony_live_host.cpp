@@ -1514,6 +1514,10 @@ int main(int argc,char** argv){
             for(const auto& [id,job]:world.world().local_delivery_board())
                 if(job.owner==owner && job.board_ship==ship)
                     prior_work.emplace(id,job.stage);
+            std::map<std::uint64_t,IntercolonyFreightStage> prior_freight;
+            for(const auto& [id,leg]:world.world().intercolony_freight())
+                if(leg.owner==owner && leg.source_ship==ship)
+                    prior_freight.emplace(id,leg.stage);
             world.step();
             // Published only after atomic world-step commit. Each status
             // comes from the real work board; no guessed completion.
@@ -1530,6 +1534,28 @@ int main(int argc,char** argv){
                     std::to_string(job.kilograms)+"|"+
                     std::to_string(unsigned(job.stage))+"|"+
                     std::to_string(job.assigned_pilot));
+            }
+            // Publish the actual sealed-hold transfer only after the
+            // atomic authoritative world-step has committed. A planned job
+            // is not itself proof of cargo custody or an arrival receipt.
+            for(const auto& [id,leg]:world.world().intercolony_freight()) {
+                const auto prev=prior_freight.find(id);
+                if(leg.owner!=owner || leg.source_ship!=ship ||
+                   (prev!=prior_freight.end() && prev->second==leg.stage))
+                    continue;
+                const auto good=leg.cargo==ShuttleCargo::Water?"WATER":
+                    leg.cargo==ShuttleCargo::Food?"FOOD":"NUTRIENTS";
+                announce(world.world(),"INTERFREIGHT_ITEM|"+
+                    std::to_string(id)+"|"+std::to_string(leg.carrier_ship)+"|"+
+                    std::to_string(leg.destination_ship)+"|"+good+"|"+
+                    std::to_string(leg.kilograms)+"|"+
+                    std::to_string(unsigned(leg.stage))+"|"+
+                    std::to_string(leg.arrival_receipt));
+                if(leg.stage==IntercolonyFreightStage::Loaded)
+                    announce(world.world(),"INTERFREIGHT_LOADED|"+
+                        std::to_string(id)+"|"+std::to_string(leg.carrier_ship)+"|"+
+                        std::to_string(leg.destination_ship)+"|"+
+                        std::to_string(world.generation()));
             }
             // Native world ticks complete shuttle flights automatically.
             // Publish only the committed phase transition to the owning player.
