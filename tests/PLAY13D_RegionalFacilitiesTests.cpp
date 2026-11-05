@@ -98,6 +98,10 @@ static void scenario(const fs::path& db, bool farming, bool manufactured=false){
         seed.enable_individual_workforce();
         seed.provision_starter_exploration_scanner(ship);
         if(!manufactured)seed.provision_starter_exploration_scanner(freighter);
+        // PLAY-13C arrival never bypasses the actual fitted-scanner gate:
+        // Colony B's pre-existing receiving ship must carry its own survey
+        // module before the test may move it to a remote celestial frame.
+        seed.provision_starter_exploration_scanner(receiver);
         seed.ensure_physical_celestial_systems();
         for(const auto& body:seed.physical_celestial_systems().at(chosen.system))
             if(body.id!=chosen.body &&
