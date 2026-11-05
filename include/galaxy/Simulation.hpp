@@ -443,6 +443,15 @@ struct PlanetarySiteFacility {
     std::uint64_t repair_cycles=0;
 };
 using PlanetarySiteKey = std::tuple<std::uint64_t,std::uint16_t,std::uint16_t,std::uint32_t>;
+// 4C.2: docked-orbit shuttle, fabricated from real ship modules.
+// The captain is assigned but stays aboard the parent ship until 4C.3.
+struct PlanetaryShuttleState {
+    PlayerId owner=0;
+    EntityId source_ship=0;
+    std::uint64_t pilot_npc=0;
+    std::int64_t dry_mass_ore=4;
+    std::int64_t water_kg=0, food_kg=0;
+};
 struct PhysicalOasisReserve {
     std::int64_t water_kg=0,nutrients_kg=0;
     std::int64_t initial_water_kg=0,initial_nutrients_kg=0;
@@ -952,6 +961,11 @@ public:
         std::uint16_t latitude,std::uint16_t longitude,std::uint8_t policy);
 
     // Install only with more real manufactured modules and appropriate ground.
+    bool build_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key);
+    bool load_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,bool water,std::int64_t kg);
+    bool unload_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,bool water,std::int64_t kg);
+    bool assign_planetary_shuttle_pilot(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,std::uint64_t npc);
+    const std::map<PlanetarySiteKey,PlanetaryShuttleState>& planetary_shuttles() const noexcept {return planetary_shuttles_;}
     bool equip_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
         std::uint16_t latitude,std::uint16_t longitude,bool farm);
     // Ship and site remain in identical anchored celestial frame.
@@ -1047,6 +1061,7 @@ private:
     std::map<std::uint64_t,PhysicalOasisReserve> oasis_reserves_; // v75 explicit finite sources
     std::map<EntityId,OasisExtractor> oasis_extractors_;
     std::map<PlanetarySiteKey,PlanetarySiteFacility> planetary_sites_; // v76 real installed machinery
+    std::map<PlanetarySiteKey,PlanetaryShuttleState> planetary_shuttles_; // v80
     std::map<std::uint64_t,PendingCelestialTransit> pending_celestial_transits_;
     std::map<std::uint64_t,CompletedCelestialTransit> completed_celestial_transits_;
     std::map<std::uint32_t,std::vector<PhysicalCelestialBody>> physical_celestial_systems_;
