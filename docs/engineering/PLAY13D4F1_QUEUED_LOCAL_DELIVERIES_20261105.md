@@ -8,6 +8,10 @@ The authoritative host processes a deterministic job-ID ordered board every worl
 
 A posted order that cannot execute (missing source stock, fuel, pilot, or berth) remains on the work board, but does not prevent a different posted and physically fulfillable order from advancing. Only a job's **real committed unload** establishes completion. Cancel is permitted only while Posted; an already claimed flight cannot be dismissed to erase cargo, receipts, or NPC custody. Repeating an order ID is rejected even after completion.
 
+## Player-facing queue status
+
+The existing `LOCAL_WORK_STATUS` command remains an owner-scoped, read-only projection of the canonical board. Its maximum of 64 visible jobs prioritizes unfinished contracts, then displays the most recently **posted** terminal contracts, so a long completion history cannot hide work the NPCs still need to do. Refresh replaces stale rows; progress signals still come only from actual committed world steps. The interface labels the physical shuttle phases in ordinary language rather than exposing numeric codes alone.
+
 ## Restart, authority, and mass
 
 All jobs continue to use the canonical v88 snapshot and the existing `PersistentWorld` SQLite commit/rollback. On load, any number of unclaimed Posted jobs are permitted, but two simultaneous active jobs for the same site are rejected as corrupt. Each claimed job still requires its actual assigned NPC pilot and matching shuttle flight receipts. No parallel transport database has been introduced.
