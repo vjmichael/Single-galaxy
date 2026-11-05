@@ -462,7 +462,8 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
     }
     // SHIP-01A.1 player-built real shipyard; never trust the UI to claim
     // ownership, worker identity, resource consumption or completion.
-    if(!v.empty() && (v[0]=="SHIPYARD_BUILD" || v[0]=="SHIPYARD_STATUS")){
+    if(!v.empty() && (v[0]=="SHIPYARD_BUILD" ||
+                     v[0]=="SHIPYARD_ASSIGN" || v[0]=="SHIPYARD_STATUS")){
         try{
             if(v[0]=="SHIPYARD_BUILD" && v.size()==4){
                 const auto order=integer(v[1]),a=integer(v[2]),b=integer(v[3]);
@@ -475,6 +476,18 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
                     return;
                 }
                 announce(world.world(),"SHIPYARD_STARTED|"+
+                    std::to_string(order)+"|"+std::to_string(world.generation()));
+            }else if(v[0]=="SHIPYARD_ASSIGN" && v.size()==4){
+                const auto order=integer(v[1]),a=integer(v[2]),b=integer(v[3]);
+                if(order<=0 || order>=(std::int64_t{1}<<50) ||
+                   a<=0 || b<=0 || a==b ||
+                   !world.assign_shipyard_builders(principal,
+                       std::uint64_t(order),
+                       {{std::uint64_t(a),std::uint64_t(b)}})){
+                    announce(world.world(),"ERROR|SHIPYARD_DENIED");
+                    return;
+                }
+                announce(world.world(),"SHIPYARD_ASSIGNED|"+
                     std::to_string(order)+"|"+std::to_string(world.generation()));
             }else if(v[0]!="SHIPYARD_STATUS" || v.size()!=1){
                 announce(world.world(),"ERROR|SHIPYARD_DENIED");return;
