@@ -2,7 +2,7 @@
 (function(root,factory){'use strict';const api=factory();if(typeof module!=='undefined'&&module.exports)module.exports=api;root.GalaxyColonyContract=api;})(typeof window!=='undefined'?window:globalThis,function(){
   'use strict';
   const names=['Carbonaceous','Silicate','Metal-rich'];
-  const goods=new Set(['structural_alloy','aluminum','ceramic','glass','water','sulfur','carbon_feed']);
+  const goods=new Set(['structural_alloy','aluminum','ceramic','glass','water','sulfur','carbon_feed','freight_water','freight_food','freight_nutrients']);
   const minerals=new Set(['serpentine','saponite','magnetite','pyrrhotite','carbonates','olivine','pyroxene','nickel_iron','other','plagioclase','troilite']);
   function numeric(x,max=1e12){if(!/^(0|[1-9][0-9]*)$/.test(x))throw Error('Noncanonical number');const n=Number(x);if(!Number.isSafeInteger(n)||n>max)throw Error('Numeric overflow');return n;}
   function decode(raw){
@@ -100,7 +100,7 @@
       const id=numeric(v[4],Number.MAX_SAFE_INTEGER),
        latitude=numeric(v[5],35),longitude=numeric(v[6],71),
        value=numeric(v[7],(t==='PLANET_SHUTTLE_PASSENGER'||t==='PLANET_SHUTTLE_VISITOR'||t==='PLANET_SHUTTLE_WORKER')?
-         Number.MAX_SAFE_INTEGER:64);
+         Number.MAX_SAFE_INTEGER:(t==='PLANET_SHUTTLE_MANIFEST_DONE'?3:64));
       if(!id||((t==='PLANET_SHUTTLE_PASSENGER'||t==='PLANET_SHUTTLE_VISITOR'||t==='PLANET_SHUTTLE_WORKER')&&!value))
         throw Error('Invalid named shuttle passenger manifest');
       return {...e,id,latitude,longitude,
@@ -114,6 +114,50 @@
       if(!id||!generation||!new Set(['BUILD','PILOT','BOARD','RELEASE','DISEMBARK','REBOARD','DUTY_ON','DUTY_OFF','LOAD','UNLOAD','DESCEND','ASCEND']).has(operation))
         throw Error('Invalid shuttle operation receipt');
       return {...e,id,latitude,longitude,operation,generation};
+    }
+    if(t==='INTERFREIGHT_ITEM'){
+      if(v.length!==11)throw Error('Malformed sealed intercolony manifest');
+      const order=numeric(v[4],Number.MAX_SAFE_INTEGER),
+       carrier=numeric(v[5],Number.MAX_SAFE_INTEGER),
+       destination=numeric(v[6],Number.MAX_SAFE_INTEGER),
+       resource=v[7],kg=numeric(v[8],1000),
+       stage=numeric(v[9],2),receipt=numeric(v[10],Number.MAX_SAFE_INTEGER);
+      if(!order||!carrier||!destination||carrier===destination||!kg||
+         !['WATER','FOOD','NUTRIENTS'].includes(resource)||
+         stage>2||(stage<2&&receipt)||(stage===2&&!receipt))
+        throw Error('Invalid physical intercolony shipment');
+      return {...e,order,carrier,destination,resource,kg,stage,receipt};
+    }
+    if(t==='INTERFREIGHT_PLANNED'||t==='INTERFREIGHT_LOADED'){
+      if(v.length!==8)throw Error('Malformed freight plan/load receipt');
+      const order=numeric(v[4],Number.MAX_SAFE_INTEGER),
+       carrier=numeric(v[5],Number.MAX_SAFE_INTEGER),
+       destination=numeric(v[6],Number.MAX_SAFE_INTEGER),
+       generation=numeric(v[7],Number.MAX_SAFE_INTEGER);
+      if(!order||!carrier||!destination||carrier===destination||!generation)
+        throw Error('Invalid freight plan/load receipt');
+      return {...e,order,carrier,destination,generation};
+    }
+    if(t==='INTERFREIGHT_DEPARTED'){
+      if(v.length!==8)throw Error('Malformed departed freight receipt');
+      const order=numeric(v[4],Number.MAX_SAFE_INTEGER),
+       request=numeric(v[5],Number.MAX_SAFE_INTEGER),
+       carrier=numeric(v[6],Number.MAX_SAFE_INTEGER),
+       destination=numeric(v[7],Number.MAX_SAFE_INTEGER);
+      if(!order||!request||!carrier||!destination||carrier===destination)
+        throw Error('Invalid departed freight receipt');
+      return {...e,order,request,carrier,destination};
+    }
+    if(t==='INTERFREIGHT_DELIVERED'){
+      if(v.length!==6)throw Error('Malformed intercolony delivery');
+      const order=numeric(v[4],Number.MAX_SAFE_INTEGER),
+       generation=numeric(v[5],Number.MAX_SAFE_INTEGER);
+      if(!order||!generation)throw Error('Invalid intercolony delivery');
+      return {...e,order,generation};
+    }
+    if(t==='INTERFREIGHT_DONE'){
+      if(v.length!==5)throw Error('Malformed freight board terminator');
+      return {...e,count:numeric(v[4],64)};
     }
     if(t==='LOCAL_WORK_ITEM'){
       if(v.length!==12)throw Error('Malformed local delivery contract');
@@ -926,6 +970,88 @@
            });
            shuttlePanel.append(workTitle,workPost,workRefresh,
                workCancelId,workCancel,workStatus,workList);
+           // Real second vessel: this UI supplies existing physical entity
+           // IDs only. The native host checks owner, available hold, berths,
+           // crew and finished planetary pickup before moving any material.
+           const freightTitle=document.createElement('strong');
+           freightTitle.textContent='Intercolony freight — real second vessel';
+           const freightCarrier=document.createElement('input');
+           freightCarrier.type='number';freightCarrier.step='1';freightCarrier.min='1';
+           freightCarrier.placeholder='Existing carrier ship ID';
+           freightCarrier.setAttribute('aria-label','Existing physical carrier ship ID');
+           const freightDestination=document.createElement('input');
+           freightDestination.type='number';freightDestination.step='1';
+           freightDestination.min='1';freightDestination.placeholder='Colony B ship ID';
+           freightDestination.setAttribute('aria-label','Receiving colony ship ID');
+           const freightPost=document.createElement('button');
+           freightPost.type='button';
+           freightPost.textContent='Queue Planet A → Colony B NPC delivery';
+           const freightLoad=document.createElement('button');
+           freightLoad.type='button';
+           freightLoad.textContent='Transfer completed pickup to carrier';
+           const freightDispatch=document.createElement('button');
+           freightDispatch.type='button';
+           freightDispatch.textContent='Dispatch real carrier to Colony B';
+           const freightDeliver=document.createElement('button');
+           freightDeliver.type='button';freightDeliver.textContent='Verify delivery berth';
+           const freightRefresh=document.createElement('button');
+           freightRefresh.type='button';freightRefresh.textContent='Check freight';
+           const freightState=document.createElement('output');
+           freightState.dataset.freightStatus='1';
+           freightState.textContent='Complete a pickup contract and assign an existing crewed ship.';
+           const freightList=document.createElement('div');
+           freightList.dataset.freightList='1';
+           const freightOrder=()=>{
+             const order=Number(workCancelId.value);
+             return Number.isSafeInteger(order)&&order>0?order:null;
+           };
+           freightPost.addEventListener('click',()=>{
+             const coords=workCoords(),kg=Number(shuttleKg.value);
+             const carrier=Number(freightCarrier.value),
+               destination=Number(freightDestination.value);
+             const order=Date.now()*100+Math.floor(Math.random()*100);
+             if(!coords||!Number.isSafeInteger(order)||order<=0||
+                !Number.isSafeInteger(kg)||kg<1||kg>1000||
+                !Number.isSafeInteger(carrier)||carrier<=0||
+                !Number.isSafeInteger(destination)||destination<=0||
+                carrier===destination)return;
+             window.GalaxyColonyCommand?.('colonyLocalWorkPostToColony',{
+               body:body.id,latitude:coords.lat,longitude:coords.lon,
+               resource:shuttleResource.value,kg,order,carrier,destination});
+             workCancelId.value=String(order);
+             freightState.textContent='One contract submitted: NPC shuttle pickup, physical carrier transit and Colony B delivery.';
+           });
+           freightLoad.addEventListener('click',()=>{
+             const order=freightOrder(),carrier=Number(freightCarrier.value),
+               destination=Number(freightDestination.value);
+             if(!order||!Number.isSafeInteger(carrier)||carrier<=0||
+                !Number.isSafeInteger(destination)||destination<=0||
+                carrier===destination)return;
+             window.GalaxyColonyCommand?.('colonyFreightLoad',{
+               order,carrier,destination});
+             freightState.textContent='Requesting physically verified cargo handoff.';
+           });
+           freightDispatch.addEventListener('click',()=>{
+             const order=freightOrder();
+             if(!order)return;
+             window.GalaxyColonyCommand?.('colonyFreightDispatch',{order});
+             freightState.textContent='Requesting carrier departure in native simulation.';
+           });
+           freightDeliver.addEventListener('click',()=>{
+             const order=freightOrder();
+             if(!order)return;
+             window.GalaxyColonyCommand?.('colonyFreightDeliver',{order});
+             freightState.textContent='Checking real arrival receipt and destination berth.';
+           });
+           freightRefresh.addEventListener('click',()=>{
+             freightList.replaceChildren();
+             window.GalaxyColonyCommand?.('colonyFreightStatus',{});
+             freightState.textContent='Reading actual carrier cargo and delivery receipts.';
+           });
+           shuttlePanel.append(freightTitle,freightCarrier,freightDestination,
+             freightPost,freightLoad,freightDispatch,freightDeliver,freightRefresh,
+             freightState,freightList);
+
            shuttlePanel._shuttleRoster=makeShuttleRosterTracker();
            shuttlePanel.dataset.shuttleBody=String(body.id);
            shuttlePanel.dataset.shuttleRegion='';
@@ -1017,6 +1143,38 @@
        q('signatureFeedback').textContent=e.type==='PLANET_SHUTTLE_COMMITTED'?
          'Shuttle '+e.operation+' committed for body #'+e.id+'.':
          'Orbital shuttle status received from the native world.';
+     }
+     if(e.type==='INTERFREIGHT_ITEM'){
+       q('celestialBodyList').querySelectorAll('[data-shuttle-body]').forEach(panel=>{
+         const list=panel.querySelector('[data-freight-list]');
+         if(!list)return;
+         let entry=[...list.children].find(node=>
+           node.dataset.freightOrder===String(e.order));
+         if(!entry){
+           entry=document.createElement('div');
+           entry.dataset.freightOrder=String(e.order);
+           list.append(entry);
+         }
+         entry.textContent='Shipment #'+e.order+': '+e.kg+' kg '+e.resource+
+           ' · vessel #'+e.carrier+' → Colony B #'+e.destination+
+           (e.stage===2?' · Delivered (flight #'+e.receipt+')':
+             e.stage===0?' · Assigned to NPC work board; awaiting physical pickup':
+             ' · Sealed cargo aboard — waiting for verified arrival');
+       });
+     }
+     if(e.type==='INTERFREIGHT_PLANNED'||e.type==='INTERFREIGHT_LOADED'||
+        e.type==='INTERFREIGHT_DEPARTED'||
+        e.type==='INTERFREIGHT_DELIVERED'){
+       const message=e.type==='INTERFREIGHT_PLANNED'?'Carrier assigned to NPC contract':
+         e.type==='INTERFREIGHT_LOADED'?'Loaded onto actual carrier':
+         e.type==='INTERFREIGHT_DEPARTED'?'Carrier departure committed':
+         'Unloaded into destination colony';
+       q('signatureFeedback').textContent=
+         'Shipment #'+e.order+': '+message+'.';
+     }
+     if(e.type==='INTERFREIGHT_DONE'){
+       q('signatureFeedback').textContent=
+         'Authoritative intercolony freight: '+e.count+' shipments shown.';
      }
      if(e.type==='LOCAL_WORK_ITEM'){
        q('celestialBodyList').querySelectorAll('[data-shuttle-body]').forEach(panel=>{

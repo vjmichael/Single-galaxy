@@ -144,7 +144,7 @@ test('orbital shuttle telemetry, receipts and UI are bounded by native schema',(
   assert.match(ui,/colonyPlanetShuttle/);
   assert.match(ui,/Descend to surface/);
   assert.match(relay,/PLANET_SHUTTLE/);
-  assert.match(host,/launch_planetary_shuttle/);
+  assert.match(host,/execute_orbital_shuttle\(/);
 });
 
 test('PLAY-13D recovered nutrients remain bounded native cargo',()=>{
@@ -242,6 +242,47 @@ test('PLAY-13D.4F local work-board contract telemetry uses real NPC delivery sta
   assert.match(host,/else if\(count<64\)emit\(id,job\)/);
   assert.match(host,/std::sort\(history.begin\(\),history.end\(\)/);
   assert.match(ui,/workList.replaceChildren\(\)/);
+});
+
+test('PLAY-13D.4G real intercolony carrier telemetry is strict',()=>{
+  const planned=decode('COLONY|1|20|INTERFREIGHT_ITEM|77003|3|4|NUTRIENTS|200|0|0');
+  assert.equal(planned.stage,0);
+  assert.equal(decode('COLONY|1|20|INTERFREIGHT_PLANNED|77003|3|4|444').generation,444);
+  const aboard=decode('COLONY|1|20|INTERFREIGHT_ITEM|77003|3|4|NUTRIENTS|200|1|0');
+  assert.equal(aboard.carrier,3);
+  assert.equal(aboard.destination,4);
+  assert.equal(aboard.kg,200);
+  assert.equal(aboard.stage,1);
+  const delivered=decode('COLONY|1|20|INTERFREIGHT_ITEM|77003|3|4|NUTRIENTS|200|2|99021');
+  assert.equal(delivered.receipt,99021);
+  assert.equal(delivered.stage,2);
+  assert.equal(decode('COLONY|1|20|INTERFREIGHT_LOADED|77003|3|4|445').generation,445);
+  assert.equal(decode('COLONY|1|20|INTERFREIGHT_DEPARTED|77003|99021|3|4').request,99021);
+  assert.equal(decode('COLONY|1|20|INTERFREIGHT_DELIVERED|77003|447').order,77003);
+  assert.equal(decode('COLONY|1|20|INTERFREIGHT_DONE|1').count,1);
+  for(const bad of [
+    'COLONY|1|20|INTERFREIGHT_ITEM|77003|3|4|NUTRIENTS|200|2|0',
+    'COLONY|1|20|INTERFREIGHT_ITEM|77003|3|4|NUTRIENTS|200|1|99021',
+    'COLONY|1|20|INTERFREIGHT_ITEM|77003|3|3|NUTRIENTS|200|1|0',
+    'COLONY|1|20|INTERFREIGHT_ITEM|77003|3|4|GOLD|200|1|0',
+    'COLONY|1|20|INTERFREIGHT_ITEM|77003|3|4|NUTRIENTS|1001|1|0',
+    'COLONY|1|20|INTERFREIGHT_LOADED|77003|3|4|0',
+    'COLONY|1|20|INTERFREIGHT_DEPARTED|77003|0|3|4',
+    'COLONY|1|20|INTERFREIGHT_DELIVERED|77003|0',
+    'COLONY|1|20|INTERFREIGHT_DONE|65'
+  ])assert.throws(()=>decode(bad),Error,bad);
+  const ui=fs.readFileSync(path.join(root,'viewer/colony.js'),'utf8');
+  const relay=fs.readFileSync(path.join(root,'live/interactive_relay.py'),'utf8');
+  const host=fs.readFileSync(path.join(root,'src/colony_live_host.cpp'),'utf8');
+  for(const action of ['colonyFreightLoad','colonyFreightDispatch',
+                        'colonyFreightDeliver','colonyFreightStatus',
+                        'colonyLocalWorkPostToColony']){
+    assert.match(ui,new RegExp(action));
+    assert.match(relay,new RegExp(action));
+  }
+  assert.match(ui,/Existing carrier ship ID/);
+  assert.match(host,/deliver_intercolony_freight/);
+  assert.match(host,/begin_celestial_transit/);
 });
 
 test('PLAY-13D shuttle UI separates booked passengers, landed visitors and temporary duty',()=>{

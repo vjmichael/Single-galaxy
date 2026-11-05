@@ -564,10 +564,88 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
         }
         return;
     }
+    // PLAY-13D.4G. Physical source -> existing crewed carrier -> destination.
+    // These commands move NO goods except through the actual native
+    // PersistentWorld load/unload transactions. The celestial leg reuses
+    // authenticated ship transit and its independently committed arrival.
+    if(!v.empty() && (v[0]=="INTERFREIGHT_LOAD" ||
+                      v[0]=="INTERFREIGHT_DISPATCH" ||
+                      v[0]=="INTERFREIGHT_DELIVER" ||
+                      v[0]=="INTERFREIGHT_STATUS")) {
+        try {
+            const auto& records=world.world().intercolony_freight();
+            if(v[0]=="INTERFREIGHT_STATUS" && v.size()==1) {
+                std::uint64_t count=0;
+                for(const auto& [id,leg]:records) {
+                    if(leg.owner!=principal || leg.source_ship!=ship || count>=64)continue;
+                    const auto good=leg.cargo==ShuttleCargo::Water?"WATER":
+                        leg.cargo==ShuttleCargo::Food?"FOOD":"NUTRIENTS";
+                    announce(world.world(),"INTERFREIGHT_ITEM|"+
+                        std::to_string(id)+"|"+std::to_string(leg.carrier_ship)+"|"+
+                        std::to_string(leg.destination_ship)+"|"+good+"|"+
+                        std::to_string(leg.kilograms)+"|"+
+                        std::to_string(unsigned(leg.stage))+"|"+
+                        std::to_string(leg.arrival_receipt));
+                    ++count;
+                }
+                announce(world.world(),"INTERFREIGHT_DONE|"+std::to_string(count));
+            }else if(v[0]=="INTERFREIGHT_LOAD" && v.size()==4) {
+                const auto order=integer(v[1]),carrier=integer(v[2]),
+                           destination=integer(v[3]);
+                const auto job=world.world().local_delivery_board().find(
+                    std::uint64_t(order>0?order:0));
+                if(order<=0 || order>=(std::int64_t{1}<<50) ||
+                   carrier<=0 || destination<=0 ||
+                   job==world.world().local_delivery_board().end() ||
+                   job->second.board_ship!=ship ||
+                   !world.load_intercolony_freight(principal,
+                       std::uint64_t(order),EntityId(carrier),
+                       EntityId(destination)))
+                    announce(world.world(),"ERROR|INTERFREIGHT_DENIED");
+                else announce(world.world(),"INTERFREIGHT_LOADED|"+
+                    std::to_string(order)+"|"+std::to_string(carrier)+"|"+
+                    std::to_string(destination)+"|"+std::to_string(world.generation()));
+            }else if(v[0]=="INTERFREIGHT_DISPATCH" && v.size()==2) {
+                const auto order=integer(v[1]);
+                const auto it=records.find(std::uint64_t(order>0?order:0));
+                if(order<=0 || it==records.end() ||
+                   it->second.owner!=principal || it->second.source_ship!=ship ||
+                   it->second.stage!=IntercolonyFreightStage::Loaded) {
+                    announce(world.world(),"ERROR|INTERFREIGHT_DENIED");
+                }else{
+                    const auto carrier=it->second.carrier_ship;
+                    const auto dest=it->second.destination_ship;
+                    const auto at=world.world().ship_frames().find(dest);
+                    const auto request=++nonce;
+                    if(at==world.world().ship_frames().end() ||
+                       !at->second.anchor_body ||
+                       !world.begin_celestial_transit(
+                           principal,carrier,at->second.anchor_body,request))
+                        announce(world.world(),"ERROR|INTERFREIGHT_DENIED");
+                    else announce(world.world(),"INTERFREIGHT_DEPARTED|"+
+                        std::to_string(order)+"|"+std::to_string(request)+"|"+
+                        std::to_string(carrier)+"|"+std::to_string(dest));
+                }
+            }else if(v[0]=="INTERFREIGHT_DELIVER" && v.size()==2) {
+                const auto order=integer(v[1]);
+                const auto it=records.find(std::uint64_t(order>0?order:0));
+                if(order<=0 || it==records.end() ||
+                   it->second.source_ship!=ship ||
+                   !world.deliver_intercolony_freight(principal,std::uint64_t(order)))
+                    announce(world.world(),"ERROR|INTERFREIGHT_DENIED");
+                else announce(world.world(),"INTERFREIGHT_DELIVERED|"+
+                    std::to_string(order)+"|"+std::to_string(world.generation()));
+            }else announce(world.world(),"ERROR|INTERFREIGHT_DENIED");
+        }catch(const std::exception&) {
+            announce(world.world(),"ERROR|INTERFREIGHT_DENIED");
+        }
+        return;
+    }
     // The owner's LOCAL work board: player posts a finite pickup contract;
     // the named NPC pilot then fulfills it via existing physical shuttle
     // flights and stock transfers on committed simulation ticks.
     if(!v.empty() && (v[0]=="LOCAL_WORK_POST" ||
+                       v[0]=="LOCAL_WORK_POST_INTERCOLONY" ||
                        v[0]=="LOCAL_WORK_CANCEL" ||
                        v[0]=="LOCAL_WORK_STATUS")) {
         try {
@@ -611,6 +689,33 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
                     emit(id,*job);
                 }
                 announce(world.world(),"LOCAL_WORK_DONE|"+std::to_string(count));
+            }else if(v[0]=="LOCAL_WORK_POST_INTERCOLONY" && v.size()==9) {
+                const auto body=integer(v[1]),lat=integer(v[2]),lon=integer(v[3]);
+                const auto kg=integer(v[5]),id=integer(v[6]),
+                           carrier=integer(v[7]),destination=integer(v[8]);
+                if(body<=0 || lat<0 || lat>=36 || lon<0 || lon>=72 ||
+                   kg<=0 || kg>1000 || id<=0 ||
+                   id>=(std::int64_t{1}<<50) ||
+                   carrier<=0 || destination<=0)
+                    throw std::invalid_argument("invalid intercolony work contract");
+                ShuttleCargo cargo{};
+                if(v[4]=="WATER")cargo=ShuttleCargo::Water;
+                else if(v[4]=="FOOD")cargo=ShuttleCargo::Food;
+                else if(v[4]=="NUTRIENTS")cargo=ShuttleCargo::Nutrients;
+                else throw std::invalid_argument("unsupported freight resource");
+                if(!world.post_intercolony_work_order(principal,ship,
+                    PlanetarySiteKey{std::uint64_t(body),std::uint16_t(lat),
+                                     std::uint16_t(lon),1},
+                    cargo,kg,std::uint64_t(id),EntityId(carrier),
+                    EntityId(destination))) {
+                    announce(world.world(),"ERROR|LOCAL_WORK_DENIED");
+                    return;
+                }
+                announce(world.world(),"LOCAL_WORK_POSTED|"+std::to_string(id)+"|"+
+                         std::to_string(world.generation()));
+                announce(world.world(),"INTERFREIGHT_PLANNED|"+
+                    std::to_string(id)+"|"+std::to_string(carrier)+"|"+
+                    std::to_string(destination)+"|"+std::to_string(world.generation()));
             }else if(v[0]=="LOCAL_WORK_POST" && v.size()==7) {
                 const auto body=integer(v[1]),lat=integer(v[2]),lon=integer(v[3]);
                 const auto kg=integer(v[5]),id=integer(v[6]);
@@ -1409,6 +1514,10 @@ int main(int argc,char** argv){
             for(const auto& [id,job]:world.world().local_delivery_board())
                 if(job.owner==owner && job.board_ship==ship)
                     prior_work.emplace(id,job.stage);
+            std::map<std::uint64_t,IntercolonyFreightStage> prior_freight;
+            for(const auto& [id,leg]:world.world().intercolony_freight())
+                if(leg.owner==owner && leg.source_ship==ship)
+                    prior_freight.emplace(id,leg.stage);
             world.step();
             // Published only after atomic world-step commit. Each status
             // comes from the real work board; no guessed completion.
@@ -1425,6 +1534,28 @@ int main(int argc,char** argv){
                     std::to_string(job.kilograms)+"|"+
                     std::to_string(unsigned(job.stage))+"|"+
                     std::to_string(job.assigned_pilot));
+            }
+            // Publish the actual sealed-hold transfer only after the
+            // atomic authoritative world-step has committed. A planned job
+            // is not itself proof of cargo custody or an arrival receipt.
+            for(const auto& [id,leg]:world.world().intercolony_freight()) {
+                const auto prev=prior_freight.find(id);
+                if(leg.owner!=owner || leg.source_ship!=ship ||
+                   (prev!=prior_freight.end() && prev->second==leg.stage))
+                    continue;
+                const auto good=leg.cargo==ShuttleCargo::Water?"WATER":
+                    leg.cargo==ShuttleCargo::Food?"FOOD":"NUTRIENTS";
+                announce(world.world(),"INTERFREIGHT_ITEM|"+
+                    std::to_string(id)+"|"+std::to_string(leg.carrier_ship)+"|"+
+                    std::to_string(leg.destination_ship)+"|"+good+"|"+
+                    std::to_string(leg.kilograms)+"|"+
+                    std::to_string(unsigned(leg.stage))+"|"+
+                    std::to_string(leg.arrival_receipt));
+                if(leg.stage==IntercolonyFreightStage::Loaded)
+                    announce(world.world(),"INTERFREIGHT_LOADED|"+
+                        std::to_string(id)+"|"+std::to_string(leg.carrier_ship)+"|"+
+                        std::to_string(leg.destination_ship)+"|"+
+                        std::to_string(world.generation()));
             }
             // Native world ticks complete shuttle flights automatically.
             // Publish only the committed phase transition to the owning player.
@@ -1447,6 +1578,40 @@ int main(int argc,char** argv){
                     std::to_string(world.generation())+
                     (sh.nutrients_kg>0?"|"+std::to_string(sh.nutrients_kg):""));
             }
+            // Autonomy for explicitly authorized, actual carrier assignments:
+            // no route is attempted until the finite planetary pickup is
+            // unloaded into the origin ship and physically loaded on the
+            // existing freighter. Every subsequent departure uses the same
+            // native journal as the player's manual celestial navigation.
+            std::vector<std::uint64_t> ready_freight;
+            for(const auto& [order,leg]:world.world().intercolony_freight()){
+                if(leg.owner!=owner || leg.source_ship!=ship ||
+                   leg.stage!=IntercolonyFreightStage::Loaded)continue;
+                const auto at=world.world().ship_frames().find(leg.carrier_ship);
+                if(at==world.world().ship_frames().end() ||
+                   at->second.anchor_body!=leg.origin_body)continue;
+                bool has_flight=false;
+                for(const auto& [id,p]:world.world().pending_celestial_transits()){
+                    (void)id;
+                    if(p.ship==leg.carrier_ship){has_flight=true;break;}
+                }
+                if(!has_flight)ready_freight.push_back(order);
+            }
+            for(const auto order:ready_freight){
+                const auto it=world.world().intercolony_freight().find(order);
+                if(it==world.world().intercolony_freight().end())continue;
+                const auto carrier=it->second.carrier_ship;
+                const auto destination=it->second.destination_ship;
+                const auto target=world.world().ship_frames().find(destination);
+                if(target==world.world().ship_frames().end() ||
+                   !target->second.anchor_body)continue;
+                const auto request=++nonce;
+                if(world.begin_celestial_transit(
+                        owner,carrier,target->second.anchor_body,request))
+                    announce(world.world(),"INTERFREIGHT_DEPARTED|"+
+                        std::to_string(order)+"|"+std::to_string(request)+"|"+
+                        std::to_string(carrier)+"|"+std::to_string(destination));
+            }
             // Mature transit requests are committed separately; no half-
             // applied position is ever published. Catch-up on restart is
             // automatic because due requests live in the world snapshot.
@@ -1467,6 +1632,18 @@ int main(int argc,char** argv){
                 else
                     announce(world.world(),"ERROR|FRAME_TRANSIT_BLOCKED");
             }
+            // Intercolony freight only completes after a separate, committed
+            // transit and actual destination berth. If a target moved away,
+            // the cargo stays sealed aboard its real carrier until recovered.
+            std::vector<std::uint64_t> landed_freight;
+            for(const auto& [order,leg]:world.world().intercolony_freight())
+                if(leg.owner==owner && leg.source_ship==ship &&
+                   leg.stage==IntercolonyFreightStage::Loaded)
+                    landed_freight.push_back(order);
+            for(const auto order:landed_freight)
+                if(world.deliver_intercolony_freight(owner,order))
+                    announce(world.world(),"INTERFREIGHT_DELIVERED|"+
+                        std::to_string(order)+"|"+std::to_string(world.generation()));
             sync_survey_knowledge(); // only after durable native world step
             // EXIT-01D: every eighth committed world tick, host (not the
             // player input UI) automatically observes a bounded rotation of

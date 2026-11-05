@@ -288,7 +288,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if self.server.accounts and (not principal or principal['playerId']!=7):
                 self._json(403,{'error':'Colony owner session required'});return
             self._json(200,{'token':principal['csrf'] if self.server.accounts else self.server.runtime.token,'qa_mode':self.server.qa_mode,'colony_mode':self.server.colony_mode,'tick_ms':self.server.tick_ms,
-                'max_ticks':self.server.max_ticks,'commands':(['thrust','yaw','colonyFireTraining','colonySalvageWreck','colonyDockBase','colonyUndockBase','colonyUnloadBase','colonyLoadBase','colonyScan','colonyConfigureScanner','colonyProbeDeploy','colonyProbeScan','colonyProbeRecover','colonySignatureScan','colonyCelestialScan','colonyPlanetSurvey','colonyPlanetCrew','colonyPlanetStatus','colonyPlanetPolicy','colonyPlanetShuttle','colonyLocalWorkPost','colonyLocalWorkStatus','colonyLocalWorkCancel','colonyPlanetBuild','colonyPlanetEquip','colonyPlanetSupply','colonyPlanetGrow','colonyPlanetExtract','colonyPlanetRetrieve','colonyPlanetSupport','colonyEnvironmentScan','colonyProbeFocus','colonyProbeCancel','colonyDroneLaunch','colonyMine','colonyRefine','colonyFabricate','colonyBuild','colonyMineTarget','colonyProcess','colonyFabricateMaterial','colonyPlant','colonyHarvest','colonyRecycleWater','colonyRecycleCompost','colonyOxygen','colonyLifeWater','colonyFarmBuild','colonyFarmStaff','colonyFarmStock','colonyHabBuild','colonyHabResidents','colonyHabStock','colonyUtilityBuild','colonyUtilityRepair','colonyUtilitySpares','colonyUtilityStaff','colonyUtilityAuto','colonyCommunityBuild','colonyCommunityStaff','colonyCommunityStock','colonyClinicBuild','colonyClinicStaff','colonyClinicStock','colonyReclaimerBuild','colonyWaterworksBuild','colonyWaterworksFeed','colonyPolicySet','colonyPolicyStaff','colonySafetyAssess','colonySafetyPreflight'] if self.server.colony_mode else ['thrust','mine','stop','undock','dock','unload','load','sell','travelA','travelB','travelGate','travelHop','jump','jumpHop','directional','probeDeploy','probeScan','probeRecover','surveyArchive','surveyHistory','surveyPublish','planRoute'])});return
+                'max_ticks':self.server.max_ticks,'commands':(['thrust','yaw','colonyFireTraining','colonySalvageWreck','colonyDockBase','colonyUndockBase','colonyUnloadBase','colonyLoadBase','colonyScan','colonyConfigureScanner','colonyProbeDeploy','colonyProbeScan','colonyProbeRecover','colonySignatureScan','colonyCelestialScan','colonyPlanetSurvey','colonyPlanetCrew','colonyPlanetStatus','colonyPlanetPolicy','colonyPlanetShuttle','colonyLocalWorkPost','colonyLocalWorkStatus','colonyLocalWorkCancel','colonyFreightLoad','colonyFreightDispatch','colonyFreightDeliver','colonyFreightStatus','colonyLocalWorkPostToColony','colonyPlanetBuild','colonyPlanetEquip','colonyPlanetSupply','colonyPlanetGrow','colonyPlanetExtract','colonyPlanetRetrieve','colonyPlanetSupport','colonyEnvironmentScan','colonyProbeFocus','colonyProbeCancel','colonyDroneLaunch','colonyMine','colonyRefine','colonyFabricate','colonyBuild','colonyMineTarget','colonyProcess','colonyFabricateMaterial','colonyPlant','colonyHarvest','colonyRecycleWater','colonyRecycleCompost','colonyOxygen','colonyLifeWater','colonyFarmBuild','colonyFarmStaff','colonyFarmStock','colonyHabBuild','colonyHabResidents','colonyHabStock','colonyUtilityBuild','colonyUtilityRepair','colonyUtilitySpares','colonyUtilityStaff','colonyUtilityAuto','colonyCommunityBuild','colonyCommunityStaff','colonyCommunityStock','colonyClinicBuild','colonyClinicStaff','colonyClinicStock','colonyReclaimerBuild','colonyWaterworksBuild','colonyWaterworksFeed','colonyPolicySet','colonyPolicyStaff','colonySafetyAssess','colonySafetyPreflight'] if self.server.colony_mode else ['thrust','mine','stop','undock','dock','unload','load','sell','travelA','travelB','travelGate','travelHop','jump','jumpHop','directional','probeDeploy','probeScan','probeRecover','surveyArchive','surveyHistory','surveyPublish','planRoute'])});return
         if url.path in STATIC:
             file=ROOT/STATIC[url.path]
             self._send(200,file.read_bytes(),MIME[file.suffix]);return
@@ -360,7 +360,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self._json(403,{'error':'Invalid session token'});return
             action=doc.get('action')
             if self.server.colony_mode:
-                if action not in ('thrust','yaw','colonyDockBase','colonyUndockBase','colonyUnloadBase','colonyLoadBase','colonyScan','colonyMine','colonyRefine','colonyFabricate','colonyBuild','colonyMineTarget','colonyProcess','colonyFabricateMaterial','colonyPlant','colonyHarvest','colonyRecycleWater','colonyRecycleCompost','colonyOxygen','colonyLifeWater','colonyFarmBuild','colonyFarmStaff','colonyFarmStock','colonyHabBuild','colonyHabResidents','colonyHabStock','colonyUtilityBuild','colonyUtilityRepair','colonyUtilitySpares','colonyUtilityStaff','colonyUtilityAuto','colonyCommunityBuild','colonyCommunityStaff','colonyCommunityStock','colonyClinicBuild','colonyClinicStaff','colonyClinicStock','colonyReclaimerBuild','colonyWaterworksBuild','colonyWaterworksFeed','colonyPolicySet','colonyPolicyStaff','colonySafetyAssess','colonySafetyPreflight','colonyPlanetSurvey','colonyPlanetCrew','colonyPlanetStatus','colonyPlanetPolicy','colonyPlanetShuttle','colonyLocalWorkPost','colonyLocalWorkStatus','colonyLocalWorkCancel','colonyPlanetBuild','colonyPlanetEquip','colonyPlanetSupply','colonyPlanetGrow','colonyPlanetExtract','colonyPlanetRetrieve','colonyPlanetSupport','colonyCelestialScan','colonyEnvironmentScan','colonyProbeDeploy','colonyProbeScan','colonyProbeRecover','colonySignatureScan','colonyProbeFocus','colonyProbeCancel','colonyDroneLaunch','colonyFrameTravel'):
+                if action not in ('thrust','yaw','colonyDockBase','colonyUndockBase','colonyUnloadBase','colonyLoadBase','colonyScan','colonyMine','colonyRefine','colonyFabricate','colonyBuild','colonyMineTarget','colonyProcess','colonyFabricateMaterial','colonyPlant','colonyHarvest','colonyRecycleWater','colonyRecycleCompost','colonyOxygen','colonyLifeWater','colonyFarmBuild','colonyFarmStaff','colonyFarmStock','colonyHabBuild','colonyHabResidents','colonyHabStock','colonyUtilityBuild','colonyUtilityRepair','colonyUtilitySpares','colonyUtilityStaff','colonyUtilityAuto','colonyCommunityBuild','colonyCommunityStaff','colonyCommunityStock','colonyClinicBuild','colonyClinicStaff','colonyClinicStock','colonyReclaimerBuild','colonyWaterworksBuild','colonyWaterworksFeed','colonyPolicySet','colonyPolicyStaff','colonySafetyAssess','colonySafetyPreflight','colonyPlanetSurvey','colonyPlanetCrew','colonyPlanetStatus','colonyPlanetPolicy','colonyPlanetShuttle','colonyLocalWorkPost','colonyLocalWorkStatus','colonyLocalWorkCancel','colonyFreightLoad','colonyFreightDispatch','colonyFreightDeliver','colonyFreightStatus','colonyLocalWorkPostToColony','colonyPlanetBuild','colonyPlanetEquip','colonyPlanetSupply','colonyPlanetGrow','colonyPlanetExtract','colonyPlanetRetrieve','colonyPlanetSupport','colonyCelestialScan','colonyEnvironmentScan','colonyProbeDeploy','colonyProbeScan','colonyProbeRecover','colonySignatureScan','colonyProbeFocus','colonyProbeCancel','colonyDroneLaunch','colonyFrameTravel'):
                     self._json(403,{'error':'Unavailable in colony-first mode'});return
             elif action in ('colonyScan','colonyMine','colonyRefine','colonyFabricate','colonyBuild','colonyMineTarget','colonyProcess','colonyFabricateMaterial','colonyPlant','colonyHarvest','colonyRecycleWater','colonyRecycleCompost','colonyOxygen','colonyLifeWater','colonyFarmBuild','colonyFarmStaff','colonyFarmStock','colonyHabBuild','colonyHabResidents','colonyHabStock','colonyUtilityBuild','colonyUtilityRepair','colonyUtilitySpares','colonyUtilityStaff','colonyUtilityAuto','colonyCommunityBuild','colonyCommunityStaff','colonyCommunityStock','colonyClinicBuild','colonyClinicStaff','colonyClinicStock','colonyReclaimerBuild','colonyWaterworksBuild','colonyWaterworksFeed','colonyPolicySet','colonyPolicyStaff','colonySafetyAssess','colonySafetyPreflight'):
                 self._json(403,{'error':'Colony mode disabled'});return
@@ -380,6 +380,42 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 command=f'DRONE_LAUNCH|{target}'
             elif action=='colonyPlanetCrew' and set(doc)=={'token','action'}:
                 command='PLANET_CREW'
+            elif action=='colonyLocalWorkPostToColony' and set(doc)=={
+                'token','action','body','latitude','longitude','resource','kg',
+                'order','carrier','destination'}:
+                body,lat,lon=doc['body'],doc['latitude'],doc['longitude']
+                resource,kg,order=doc['resource'],doc['kg'],doc['order']
+                carrier,destination=doc['carrier'],doc['destination']
+                if (type(body)!=int or not 1<=body<=9007199254740991 or
+                    type(lat)!=int or not 0<=lat<36 or
+                    type(lon)!=int or not 0<=lon<72 or
+                    type(resource)!=str or resource not in ('WATER','FOOD','NUTRIENTS') or
+                    type(kg)!=int or not 1<=kg<=1000 or
+                    type(order)!=int or not 1<=order<(1<<50) or
+                    type(carrier)!=int or not 1<=carrier<=9007199254740991 or
+                    type(destination)!=int or not 1<=destination<=9007199254740991 or
+                    carrier==destination):
+                    raise ValueError('Invalid connected intercolony work order')
+                command=(f'LOCAL_WORK_POST_INTERCOLONY|{body}|{lat}|{lon}|{resource}|'
+                         f'{kg}|{order}|{carrier}|{destination}')
+            elif action=='colonyFreightStatus' and set(doc)=={'token','action'}:
+                command='INTERFREIGHT_STATUS'
+            elif action=='colonyFreightLoad' and set(doc)=={
+                'token','action','order','carrier','destination'}:
+                order,carrier,destination=doc['order'],doc['carrier'],doc['destination']
+                if (type(order)!=int or not 1<=order<(1<<50) or
+                    type(carrier)!=int or not 1<=carrier<=9007199254740991 or
+                    type(destination)!=int or not 1<=destination<=9007199254740991 or
+                    carrier==destination):
+                    raise ValueError('Invalid physical freight carrier and destination')
+                command=f'INTERFREIGHT_LOAD|{order}|{carrier}|{destination}'
+            elif action in ('colonyFreightDispatch','colonyFreightDeliver') and set(doc)=={
+                'token','action','order'}:
+                order=doc['order']
+                if type(order)!=int or not 1<=order<(1<<50):
+                    raise ValueError('Invalid freight work order')
+                command=('INTERFREIGHT_DISPATCH' if action=='colonyFreightDispatch'
+                         else 'INTERFREIGHT_DELIVER')+f'|{order}'
             elif action=='colonyLocalWorkStatus' and set(doc)=={'token','action'}:
                 command='LOCAL_WORK_STATUS'
             elif action=='colonyLocalWorkCancel' and set(doc)=={'token','action','order'}:

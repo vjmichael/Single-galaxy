@@ -199,6 +199,61 @@ def main(executable,relay):
             ]:
                 status,_=request(port,'POST','/command',payload)
                 assert status==400,(payload,status)
+            # One player instruction plans the local NPC pickup AND the
+            # real second-carrier assignment atomically in native SQLite.
+            combined={'token':token,'action':'colonyLocalWorkPostToColony',
+                      'body':4294967300,'latitude':17,'longitude':36,
+                      'resource':'NUTRIENTS','kg':200,'order':77007,
+                      'carrier':3,'destination':4}
+            assert 'colonyLocalWorkPostToColony' in session['commands']
+            status,_=request(port,'POST','/command',combined)
+            assert status==202
+            status,_=request(port,'POST','/command',
+                             {**combined,'token':'forged'})
+            assert status==403
+            for bad in (
+                {**combined,'carrier':True},
+                {**combined,'destination':3},
+                {**combined,'resource':'GOLD'},
+                {**combined,'kg':0},
+                {**combined,'order':1<<50},
+                {**combined,'longitude':72},
+                {**combined,'nonce':1}
+            ):
+                status,_=request(port,'POST','/command',bad)
+                assert status==400,(bad,status)
+            # Real intercolony carriage has strict typed identities. HTTP
+            # acknowledgement queues a native command; it is not delivery.
+            for action in ('colonyFreightLoad','colonyFreightDispatch',
+                           'colonyFreightDeliver','colonyFreightStatus'):
+                assert action in session['commands'],action
+            shipment={'token':token,'action':'colonyFreightLoad',
+                      'order':77003,'carrier':3,'destination':4}
+            for payload in (
+                shipment,
+                {'token':token,'action':'colonyFreightDispatch','order':77003},
+                {'token':token,'action':'colonyFreightDeliver','order':77003},
+                {'token':token,'action':'colonyFreightStatus'}
+            ):
+                status,_=request(port,'POST','/command',payload)
+                assert status==202,(payload,status)
+                status,_=request(port,'POST','/command',
+                                 {**payload,'token':'forged'})
+                assert status==403,(payload,status)
+            for payload in (
+                {**shipment,'carrier':4},
+                {**shipment,'carrier':True},
+                {**shipment,'carrier':0},
+                {**shipment,'order':1<<50},
+                {**shipment,'destination':0},
+                {**shipment,'destination':True},
+                {**shipment,'extra':1},
+                {'token':token,'action':'colonyFreightDispatch','order':True},
+                {'token':token,'action':'colonyFreightDeliver','order':0},
+                {'token':token,'action':'colonyFreightStatus','order':77003}
+            ):
+                status,_=request(port,'POST','/command',payload)
+                assert status==400,(payload,status)
             print("PASS PGF01B2 HTTP relay accepts valid geography and rejects forged inputs")
         finally:
             proc.terminate()

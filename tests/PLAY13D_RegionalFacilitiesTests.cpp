@@ -61,7 +61,8 @@ static void fabricate(PersistentWorld& w,EntityId ship) {
 }
 static void scenario(const fs::path& db, bool farming){
     const auto chosen=select_site(farming);
-    EntityId ship=0;
+    EntityId ship=0,freighter=0,receiver=0;
+    std::uint64_t receiver_body=0;
     std::uint64_t first_npc=0,second_npc=0;
     std::int64_t origin=0;
     std::string durable;
@@ -69,10 +70,25 @@ static void scenario(const fs::path& db, bool farming){
         Simulation seed(613,chosen.system);
         ship=seed.add_colony_ship(7,{0,0},60,8);
         seed.provision_colony_genesis(ship,2000,2000,2000,2000,2000);
+        // Keep the preexisting mineral target exactly ship+1, then add two
+        // real crewed hulls. The second hull is the intercolony carrier;
+        // the third is Colony B's physical receiving inventory.
+        seed.add_asteroid({2000,0},60);
+        freighter=seed.add_colony_ship(7,{0,0},60,3);
+        receiver=seed.add_colony_ship(7,{0,0},60,3);
+        seed.provision_colony_genesis(freighter,1000,1000,1000,1000,1000);
+        seed.provision_colony_genesis(receiver,1000,1000,1000,1000,1000);
         seed.enable_individual_workforce();
         seed.provision_starter_exploration_scanner(ship);
-        seed.add_asteroid({2000,0},60);
+        seed.provision_starter_exploration_scanner(freighter);
         seed.ensure_physical_celestial_systems();
+        for(const auto& body:seed.physical_celestial_systems().at(chosen.system))
+            if(body.id!=chosen.body &&
+               (body.kind==CelestialKind::Planet ||
+                body.kind==CelestialKind::Moon)) {
+                receiver_body=body.id;break;
+            }
+        CHECK(receiver_body!=0);
         if(!farming)seed.provision_oasis_reserve_genesis(chosen.body,8000,4000);
         seed.ensure_ship_frame_registry();
         origin=seed.total_ore();
@@ -81,6 +97,14 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(w.begin_celestial_transit(7,ship,chosen.body,90001));
         w.steps(4);
         CHECK(w.complete_celestial_transit(90001));
+        // Both vessels physically navigate via the existing journaled frame
+        // transit. The destination remains in a *different* celestial frame.
+        CHECK(w.begin_celestial_transit(7,freighter,chosen.body,90012));
+        w.steps(4);
+        CHECK(w.complete_celestial_transit(90012));
+        CHECK(w.begin_celestial_transit(7,receiver,receiver_body,90013));
+        w.steps(4);
+        CHECK(w.complete_celestial_transit(90013));
         CHECK(w.world().total_ore()==origin);
         std::vector<std::uint64_t> available;
         for(const auto& [id,n]:w.world().npc_records())
@@ -734,8 +758,114 @@ static void scenario(const fs::path& db, bool farming){
             CHECK(w.world().planetary_sites().at(key).nutrients_kg==waiting_stock-100);
             CHECK(w.world().life_support(ship)->nutrients_kg==ship_prior+400);
             CHECK(w.world().total_ore()==origin);
+            // PLAY-13D.4G: the completed planetary pickup becomes one real
+            // sealed shipment on an independently existing crewed freighter.
+            const auto from_before=w.world().life_support(ship)->nutrients_kg;
+            const auto to_before=w.world().life_support(receiver)->nutrients_kg;
+            CHECK(!w.load_intercolony_freight(8,77003,freighter,receiver));
+            CHECK(!w.load_intercolony_freight(7,77004,freighter,receiver));
+            CHECK(!w.load_intercolony_freight(7,77003,ship,receiver));
+            CHECK(!w.load_intercolony_freight(7,77003,freighter,ship));
+            const auto before_seal=w.world().canonical_state();
+            bool seal_failed=false;
+            try{(void)w.load_intercolony_freight(7,77003,freighter,receiver,
+                FailPoint::AfterSnapshotWrite);}
+            catch(const std::exception&){seal_failed=true;}
+            CHECK(seal_failed && w.world().canonical_state()==before_seal);
+            CHECK(w.load_intercolony_freight(7,77003,freighter,receiver));
+            CHECK(!w.load_intercolony_freight(7,77003,freighter,receiver));
+            CHECK(w.world().life_support(ship)->nutrients_kg==from_before-200);
+            CHECK(w.world().colony_ship(freighter)->goods_kg.at("freight_nutrients")==200);
+            const auto freight_manifest=w.world().intercolony_transport_manifest(77003);
+            CHECK(freight_manifest && freight_manifest->valid());
+            CHECK(freight_manifest->vehicle==freighter);
+            CHECK(freight_manifest->mode==transport::Mode::OtherVehicle);
+            CHECK(transport::contains_good(*freight_manifest,
+                  transport::GoodKind::Resource,
+                  static_cast<std::uint8_t>(transport::ResourceGood::Nutrients),200));
+            CHECK(w.world().life_support(receiver)->nutrients_kg==to_before);
+            CHECK(w.world().intercolony_freight().at(77003).stage==
+                  IntercolonyFreightStage::Loaded);
+            CHECK(!w.deliver_intercolony_freight(7,77003)); // wrong frame
+            const auto aboard=w.world().canonical_state();
+            CHECK(aboard.rfind("galaxy-kernel-v89|",0)==0);
+            CHECK(Simulation::from_snapshot(aboard).canonical_state()==aboard);
+            // A snapshot with sealed physical cargo but no matching order
+            // is rejected; nobody can resurrect phantom freight by deleting
+            // the delivery manifest while leaving its kg in the hold.
+            auto orphan=aboard;
+            const auto row=orphan.find("interfreight|77003|");
+            CHECK(row!=std::string::npos);
+            const auto row_end=orphan.find('\n',row);
+            CHECK(row_end!=std::string::npos);
+            orphan.erase(row,row_end-row+1);
+            bool rejected_orphan=false;
+            try{(void)Simulation::from_snapshot(orphan);}
+            catch(const std::exception&){rejected_orphan=true;}
+            CHECK(rejected_orphan);
+            CHECK(w.begin_celestial_transit(7,freighter,receiver_body,99021));
+            CHECK(!w.deliver_intercolony_freight(7,77003)); // in flight
+            w.steps(4);
+            CHECK(!w.deliver_intercolony_freight(7,77003)); // no arrival receipt
+            CHECK(w.complete_celestial_transit(99021));
+            const auto before_unload=w.world().canonical_state();
+            bool unload_failed=false;
+            try{(void)w.deliver_intercolony_freight(7,77003,
+                FailPoint::AfterSnapshotWrite);}
+            catch(const std::exception&){unload_failed=true;}
+            CHECK(unload_failed && w.world().canonical_state()==before_unload);
+            CHECK(!w.deliver_intercolony_freight(8,77003));
+            CHECK(w.deliver_intercolony_freight(7,77003));
+            CHECK(!w.deliver_intercolony_freight(7,77003)); // no duplication
+            CHECK(w.world().life_support(receiver)->nutrients_kg==to_before+200);
+            CHECK(w.world().life_support(ship)->nutrients_kg==from_before-200);
+            CHECK(w.world().colony_ship(freighter)->goods_kg.count("freight_nutrients")==0);
+            const auto delivered_manifest=w.world().intercolony_transport_manifest(77003);
+            CHECK(delivered_manifest && delivered_manifest->valid());
+            CHECK(delivered_manifest->contents.empty());
+            CHECK(w.world().intercolony_freight().at(77003).arrival_receipt==99021);
+            CHECK(w.world().intercolony_freight().at(77003).stage==
+                  IntercolonyFreightStage::Delivered);
+            CHECK(w.world().total_ore()==origin);
+            // Single-contract path: player assigns a REAL returning carrier
+            // to an unfinished NPC surface pickup. Native ticks load the
+            // carrier automatically after actual shuttle delivery, never at
+            // posting time. The same carrier makes a second physical trip.
+            CHECK(w.begin_celestial_transit(7,freighter,chosen.body,99022));
+            w.steps(4);
+            CHECK(w.complete_celestial_transit(99022));
+            const auto fuel_for_next=w.world().planetary_shuttles().at(key).water_kg;
+            if(fuel_for_next<2)CHECK(w.load_planetary_shuttle(
+                7,ship,key,ShuttleCargo::Water,2-fuel_for_next));
+            const auto before_plan=w.world().canonical_state();
+            bool plan_failed=false;
+            try{(void)w.post_intercolony_work_order(7,ship,key,
+                ShuttleCargo::Nutrients,100,77007,freighter,receiver,
+                FailPoint::AfterSnapshotWrite);}
+            catch(const std::exception&){plan_failed=true;}
+            CHECK(plan_failed && w.world().canonical_state()==before_plan);
+            CHECK(!w.post_intercolony_work_order(8,ship,key,
+                ShuttleCargo::Nutrients,100,77007,freighter,receiver));
+            CHECK(w.post_intercolony_work_order(7,ship,key,
+                ShuttleCargo::Nutrients,100,77007,freighter,receiver));
+            CHECK(w.world().intercolony_freight().at(77007).stage==
+                  IntercolonyFreightStage::AwaitingPickup);
+            CHECK(w.world().colony_ship(freighter)->goods_kg.count("freight_nutrients")==0);
+            w.steps(22);
+            CHECK(w.world().local_delivery_board().at(77007).stage==
+                  LocalDeliveryStage::Complete);
+            CHECK(w.world().intercolony_freight().at(77007).stage==
+                  IntercolonyFreightStage::Loaded);
+            CHECK(w.world().colony_ship(freighter)->goods_kg.at("freight_nutrients")==100);
+            CHECK(w.begin_celestial_transit(7,freighter,receiver_body,99023));
+            w.steps(4);
+            CHECK(w.complete_celestial_transit(99023));
+            CHECK(w.deliver_intercolony_freight(7,77007));
+            CHECK(w.world().intercolony_freight().at(77007).arrival_receipt==99023);
+            CHECK(w.world().life_support(receiver)->nutrients_kg==to_before+300);
+            CHECK(w.world().total_ore()==origin);
             durable=w.world().canonical_state();
-            CHECK(durable.rfind("galaxy-kernel-v88|",0)==0);
+            CHECK(durable.rfind("galaxy-kernel-v89|",0)==0);
             CHECK(Simulation::from_snapshot(durable).canonical_state()==durable);
         }
     }
@@ -747,7 +877,7 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(w.world().planetary_shuttles().at(
             PlanetarySiteKey{chosen.body,chosen.latitude,chosen.longitude,1})
               .ascent_receipt==(farming?81003:
-                 (0x10000000000000ULL | (77003ULL<<1) | 1ULL)));
+                 (0x10000000000000ULL | (77007ULL<<1) | 1ULL)));
         CHECK(!w.launch_planetary_shuttle(7,ship,
             PlanetarySiteKey{chosen.body,chosen.latitude,chosen.longitude,1},
             81001,false));
@@ -775,6 +905,14 @@ static void scenario(const fs::path& db, bool farming){
                   LocalDeliveryStage::Complete);
             CHECK(w.world().local_delivery_board().at(77004).stage==
                   LocalDeliveryStage::Cancelled);
+            CHECK(w.world().intercolony_freight().at(77003).stage==
+                  IntercolonyFreightStage::Delivered);
+            CHECK(w.world().intercolony_freight().at(77003).arrival_receipt==99021);
+            CHECK(w.world().intercolony_freight().at(77007).stage==
+                  IntercolonyFreightStage::Delivered);
+            CHECK(w.world().intercolony_freight().at(77007).arrival_receipt==99023);
+            CHECK(w.world().life_support(receiver)->nutrients_kg>=1200);
+            CHECK(!w.deliver_intercolony_freight(7,77003));
             CHECK(!w.post_local_delivery_order(7,ship,
                 PlanetarySiteKey{chosen.body,chosen.latitude,chosen.longitude,1},
                 ShuttleCargo::Nutrients,100,77003));

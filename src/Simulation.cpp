@@ -129,7 +129,9 @@ bool is_known_mineral(const std::string& name) {
     return false;
 }
 bool is_known_good(const std::string& name) {
-    return name=="structural_alloy" || name=="aluminum" || name=="aluminum_panels" || name=="aluminum_scrap" || name=="aluminum_frames" || name=="ceramic" ||
+    return name=="freight_water" || name=="freight_food" ||
+           name=="freight_nutrients" ||
+           name=="structural_alloy" || name=="aluminum" || name=="aluminum_panels" || name=="aluminum_scrap" || name=="aluminum_frames" || name=="ceramic" ||
            name=="glass" || name=="water" || name=="sulfur" || name=="carbon_feed";
 }
 // Physical prototype recipes. The yields are deliberately playable estimates,
@@ -5468,6 +5470,12 @@ bool Simulation::cancel_local_delivery_order(PlayerId owner,std::uint64_t order_
     // Once a real flight begins, cargo and pilot remain physically in the
     // shuttle. An in-flight contract cannot erase or teleport either.
     it->second.stage=LocalDeliveryStage::Cancelled;
+    // Cancellation of an unstarted pickup releases only its *plan*. It
+    // never removes material that has already entered a physical carrier.
+    const auto leg=intercolony_freight_.find(order_id);
+    if(leg!=intercolony_freight_.end() &&
+       leg->second.stage==IntercolonyFreightStage::AwaitingPickup)
+        intercolony_freight_.erase(leg);
     return true;
 }
 void Simulation::process_local_delivery_board() {
@@ -5566,6 +5574,241 @@ void Simulation::process_local_delivery_board() {
             break;
         }
     }
+    // Same committed simulation tick: only after the planetary shuttle has
+    // actually unloaded may a planned second-leg carrier claim real stock.
+    // A missing carrier, pilot, berth or source inventory leaves the order
+    // awaiting pickup rather than fabricating or teleporting a shipment.
+    if(snapshot_version_>=89)
+        for(auto& [id,leg]:intercolony_freight_)
+            if(leg.stage==IntercolonyFreightStage::AwaitingPickup)
+                (void)load_intercolony_freight(
+                    leg.owner,id,leg.carrier_ship,leg.destination_ship);
+}
+
+namespace {
+const char* sealed_freight_code(ShuttleCargo cargo) noexcept {
+    switch(cargo) {
+    case ShuttleCargo::Water: return "freight_water";
+    case ShuttleCargo::Food: return "freight_food";
+    case ShuttleCargo::Nutrients: return "freight_nutrients";
+    }
+    return nullptr;
+}
+std::int64_t& supply_stack(ColonyLifeSupport& life,ShuttleCargo cargo) {
+    switch(cargo) {
+    case ShuttleCargo::Water: return life.water_kg;
+    case ShuttleCargo::Food: return life.food_kg;
+    case ShuttleCargo::Nutrients: return life.nutrients_kg;
+    }
+    throw std::logic_error("unknown freight resource");
+}
+bool freight_berth(const Entity& a,const Entity& b) {
+    if(a.type!=EntityType::Ship || b.type!=EntityType::Ship ||
+       a.dock_state!=DockState::InSpace || b.dock_state!=DockState::InSpace ||
+       a.jump_state!=ShipJumpState::Ready || b.jump_state!=ShipJumpState::Ready ||
+       a.system_id!=b.system_id)return false;
+    const auto dx=a.position.x-b.position.x;
+    const auto dy=a.position.y-b.position.y;
+    constexpr auto limit=Simulation::kDockingRangeMm;
+    return dx>=-limit && dx<=limit && dy>=-limit && dy<=limit &&
+           dx*dx+dy*dy<=limit*limit;
+}
+}
+bool Simulation::plan_intercolony_freight(PlayerId owner,
+        std::uint64_t local_order_id,EntityId carrier,EntityId destination) {
+    const auto job=local_delivery_orders_.find(local_order_id);
+    if(!owner || owner==kServerAuthority || job==local_delivery_orders_.end() ||
+       job->second.owner!=owner ||
+       job->second.stage==LocalDeliveryStage::Cancelled ||
+       !carrier || !destination || carrier==destination ||
+       carrier==job->second.board_ship || destination==job->second.board_ship ||
+       intercolony_freight_.count(local_order_id) ||
+       intercolony_freight_.size()>=10000)return false;
+    const auto origin=job->second.board_ship;
+    const auto a=entities_.find(origin),b=entities_.find(carrier),
+               c=entities_.find(destination);
+    const auto af=ship_frames_.find(origin),cf=ship_frames_.find(destination);
+    if(a==entities_.end() || b==entities_.end() || c==entities_.end() ||
+       a->second.type!=EntityType::Ship ||
+       b->second.type!=EntityType::Ship ||
+       c->second.type!=EntityType::Ship ||
+       a->second.owner_id!=owner || b->second.owner_id!=owner ||
+       c->second.owner_id!=owner || !colony_ships_.count(origin) ||
+       !colony_ships_.count(carrier) || !colony_ships_.count(destination) ||
+       !life_support_.count(origin) || !life_support_.count(carrier) ||
+       !life_support_.count(destination) ||
+       !colony_ships_.at(carrier).crew ||
+       !b->second.fitting.exploration_scanner() ||
+       (snapshot_version_>=20 && people_physically_aboard(carrier)==0) ||
+       af==ship_frames_.end() || cf==ship_frames_.end() ||
+       af->second.anchor_body!=std::get<0>(job->second.site) ||
+       !cf->second.anchor_body ||
+       af->second.anchor_body==cf->second.anchor_body ||
+       af->second.system!=cf->second.system)return false;
+    for(const auto& [id,other]:intercolony_freight_)
+        if(other.carrier_ship==carrier &&
+           other.stage!=IntercolonyFreightStage::Delivered)return false;
+    intercolony_freight_.emplace(local_order_id,IntercolonyFreightLeg{
+        local_order_id,owner,origin,carrier,destination,job->second.cargo,
+        job->second.kilograms,af->second.anchor_body,0,0,
+        IntercolonyFreightStage::AwaitingPickup});
+    snapshot_version_=std::max(snapshot_version_,89);
+    return true;
+}
+bool Simulation::load_intercolony_freight(PlayerId owner,
+        std::uint64_t local_order_id,EntityId carrier,EntityId destination) {
+    const auto job=local_delivery_orders_.find(local_order_id);
+    if(!owner || owner==kServerAuthority || job==local_delivery_orders_.end() ||
+       job->second.owner!=owner || job->second.stage!=LocalDeliveryStage::Complete ||
+       !carrier || !destination || carrier==destination ||
+       carrier==job->second.board_ship || destination==job->second.board_ship)
+        return false;
+    auto planned=intercolony_freight_.find(local_order_id);
+    if(planned!=intercolony_freight_.end() &&
+       (planned->second.stage!=IntercolonyFreightStage::AwaitingPickup ||
+        planned->second.owner!=owner ||
+        planned->second.carrier_ship!=carrier ||
+        planned->second.destination_ship!=destination))return false;
+    if(planned==intercolony_freight_.end() &&
+       intercolony_freight_.size()>=10000)return false;
+    const auto& pickup=job->second;
+    const EntityId origin=pickup.board_ship;
+    const auto a=entities_.find(origin),b=entities_.find(carrier),
+               c=entities_.find(destination);
+    const auto af=ship_frames_.find(origin),bf=ship_frames_.find(carrier),
+               cf=ship_frames_.find(destination);
+    const auto from=life_support_.find(origin),to=life_support_.find(destination);
+    const auto source=colony_ships_.find(origin),freighter=colony_ships_.find(carrier);
+    const auto receiving=colony_ships_.find(destination);
+    if(a==entities_.end() || b==entities_.end() || c==entities_.end() ||
+       a->second.owner_id!=owner || b->second.owner_id!=owner ||
+       c->second.owner_id!=owner || source==colony_ships_.end() ||
+       freighter==colony_ships_.end() || receiving==colony_ships_.end() ||
+       !freighter->second.crew || !b->second.fitting.exploration_scanner() ||
+       (snapshot_version_>=20 && people_physically_aboard(carrier)==0) ||
+       from==life_support_.end() || to==life_support_.end() ||
+       !life_support_.count(carrier) ||
+       af==ship_frames_.end() || bf==ship_frames_.end() ||
+       cf==ship_frames_.end() || !af->second.anchor_body ||
+       af->second.anchor_body==cf->second.anchor_body ||
+       af->second.system!=cf->second.system ||
+       !same_local_frame(origin,carrier) ||
+       !freight_berth(a->second,b->second))return false;
+    for(const auto& [id,p]:pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==origin || p.ship==carrier || p.ship==destination)return false;
+    }
+    // A ship already committed to a passenger voyage is not an available
+    // NPC freight carrier: do not hijack or strand its real passenger manifest.
+    for(const auto& [id,v]:voyages_) {
+        (void)id;
+        if(v.ferry==carrier && (v.status==1 || v.status==3))return false;
+    }
+    for(const auto& [id,other]:intercolony_freight_)
+        if(id!=local_order_id &&
+           other.stage!=IntercolonyFreightStage::Delivered &&
+           other.carrier_ship==carrier)return false; // one claimed hull
+    const char* code=sealed_freight_code(pickup.cargo);
+    if(!code || pickup.kilograms<1 || pickup.kilograms>1000 ||
+       supply_stack(from->second,pickup.cargo)<pickup.kilograms ||
+       freighter->second.goods_kg.count(code))return false;
+    // Carrier's real finite cargo bay, not life-support stock or a parallel ledger.
+    if(ship_inventory_snapshot(carrier).free_liters()<pickup.kilograms)return false;
+    supply_stack(from->second,pickup.cargo)-=pickup.kilograms;
+    freighter->second.goods_kg.emplace(code,pickup.kilograms);
+    if(planned!=intercolony_freight_.end()) {
+        planned->second.loaded_tick=tick_;
+        planned->second.stage=IntercolonyFreightStage::Loaded;
+    }else
+        intercolony_freight_.emplace(local_order_id,IntercolonyFreightLeg{
+            local_order_id,owner,origin,carrier,destination,
+            pickup.cargo,pickup.kilograms,af->second.anchor_body,tick_,0,
+            IntercolonyFreightStage::Loaded});
+    snapshot_version_=std::max(snapshot_version_,89);
+    return true;
+}
+bool Simulation::deliver_intercolony_freight(PlayerId owner,
+        std::uint64_t local_order_id) {
+    auto it=intercolony_freight_.find(local_order_id);
+    if(!owner || owner==kServerAuthority || it==intercolony_freight_.end() ||
+       it->second.owner!=owner ||
+       it->second.stage!=IntercolonyFreightStage::Loaded)return false;
+    auto& leg=it->second;
+    auto carrier=colony_ships_.find(leg.carrier_ship);
+    auto recipient=life_support_.find(leg.destination_ship);
+    const auto actual=entities_.find(leg.carrier_ship),
+               destination=entities_.find(leg.destination_ship);
+    const auto frame=ship_frames_.find(leg.carrier_ship),
+               dest_frame=ship_frames_.find(leg.destination_ship);
+    if(carrier==colony_ships_.end() || recipient==life_support_.end() ||
+       actual==entities_.end() || destination==entities_.end() ||
+       actual->second.owner_id!=owner || destination->second.owner_id!=owner ||
+       frame==ship_frames_.end() || dest_frame==ship_frames_.end() ||
+       !frame->second.anchor_body ||
+       frame->second.anchor_body==leg.origin_body ||
+       frame->second.anchor_body!=dest_frame->second.anchor_body ||
+       !same_local_frame(leg.carrier_ship,leg.destination_ship) ||
+       !freight_berth(actual->second,destination->second))return false;
+    for(const auto& [id,p]:pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==leg.carrier_ship || p.ship==leg.destination_ship)return false;
+    }
+    // An actual completed voyage of THIS hull to THIS physical destination
+    // must postdate the source-to-carrier material handoff.
+    std::uint64_t receipt=0;
+    for(const auto& [id,p]:completed_celestial_transits_)
+        if(p.ship==leg.carrier_ship && p.owner==owner &&
+           p.destination_body==frame->second.anchor_body &&
+           p.completed_tick>=leg.loaded_tick)receipt=id;
+    const auto code=sealed_freight_code(leg.cargo);
+    if(!receipt || !code)return false;
+    const auto held=carrier->second.goods_kg.find(code);
+    auto& stock=supply_stack(recipient->second,leg.cargo);
+    if(held==carrier->second.goods_kg.end() ||
+       held->second!=leg.kilograms || stock>1000000-leg.kilograms)return false;
+    carrier->second.goods_kg.erase(held);
+    stock+=leg.kilograms;
+    leg.arrival_receipt=receipt;
+    leg.stage=IntercolonyFreightStage::Delivered;
+    return true;
+}
+
+std::optional<transport::Manifest> Simulation::intercolony_transport_manifest(
+        std::uint64_t id) const {
+    const auto it=intercolony_freight_.find(id);
+    if(it==intercolony_freight_.end())return std::nullopt;
+    const auto& leg=it->second;
+    const auto actual=entities_.find(leg.carrier_ship);
+    const auto ship=colony_ships_.find(leg.carrier_ship);
+    if(actual==entities_.end() || ship==colony_ships_.end())return std::nullopt;
+    transport::Manifest view{};
+    view.vehicle=leg.carrier_ship;view.owner=leg.owner;
+    view.mode=transport::Mode::OtherVehicle;
+    view.berth={transport::LocationKind::ColonyShip,leg.source_ship};
+    view.other_end={transport::LocationKind::ColonyShip,leg.destination_ship};
+    view.seat_capacity=0;
+    view.cargo_capacity_kg=std::uint64_t(actual->second.cargo_capacity)*1000;
+    for(const auto& [request,p]:pending_celestial_transits_)
+        if(p.ship==leg.carrier_ship){
+            view.in_transit=true;
+            view.flight_receipt=request;
+            break;
+        }
+    if(leg.stage==IntercolonyFreightStage::Loaded){
+        const auto code=sealed_freight_code(leg.cargo);
+        if(!code)return std::nullopt;
+        const auto goods=ship->second.goods_kg.find(code);
+        if(goods==ship->second.goods_kg.end() ||
+           goods->second!=leg.kilograms)return std::nullopt;
+        const auto resource=leg.cargo==ShuttleCargo::Water?
+            transport::ResourceGood::Water:
+            leg.cargo==ShuttleCargo::Food?
+            transport::ResourceGood::Food:transport::ResourceGood::Nutrients;
+        view.contents.push_back({transport::GoodKind::Resource,
+            static_cast<std::uint8_t>(resource),
+            std::uint64_t(leg.kilograms),std::uint64_t(leg.kilograms)});
+    }
+    return view.valid()?std::optional<transport::Manifest>(view):std::nullopt;
 }
 
 std::optional<transport::Manifest> Simulation::planetary_transport_manifest(
@@ -6541,7 +6784,7 @@ void Simulation::steps(std::uint64_t count) {
 
 std::string Simulation::canonical_state() const {
     std::ostringstream out;
-    out << (snapshot_version_ >= 88 ? "galaxy-kernel-v88|" : snapshot_version_ >= 87 ? "galaxy-kernel-v87|" : snapshot_version_ >= 86 ? "galaxy-kernel-v86|" : snapshot_version_ >= 85 ? "galaxy-kernel-v85|" : snapshot_version_ >= 84 ? "galaxy-kernel-v84|" : snapshot_version_ >= 83 ? "galaxy-kernel-v83|" : snapshot_version_ >= 82 ? "galaxy-kernel-v82|" : snapshot_version_ >= 81 ? "galaxy-kernel-v81|" : snapshot_version_ >= 80 ? "galaxy-kernel-v80|" : snapshot_version_ >= 79 ? "galaxy-kernel-v79|" : snapshot_version_ >= 78 ? "galaxy-kernel-v78|" : snapshot_version_ >= 77 ? "galaxy-kernel-v77|" : snapshot_version_ >= 76 ? "galaxy-kernel-v76|" : snapshot_version_ >= 75 ? "galaxy-kernel-v75|" : snapshot_version_ >= 74 ? "galaxy-kernel-v74|" : snapshot_version_ >= 73 ? "galaxy-kernel-v73|" : snapshot_version_ >= 72 ? "galaxy-kernel-v72|" : snapshot_version_ >= 71 ? "galaxy-kernel-v71|" : snapshot_version_ >= 70 ? "galaxy-kernel-v70|" : snapshot_version_ >= 69 ? "galaxy-kernel-v69|" : snapshot_version_ >= 68 ? "galaxy-kernel-v68|" : snapshot_version_ >= 67 ? "galaxy-kernel-v67|" : snapshot_version_ >= 66 ? "galaxy-kernel-v66|" : snapshot_version_ >= 65 ? "galaxy-kernel-v65|" : snapshot_version_ >= 64 ? "galaxy-kernel-v64|" : snapshot_version_ >= 63 ? "galaxy-kernel-v63|" : snapshot_version_ >= 62 ? "galaxy-kernel-v62|" : snapshot_version_ >= 61 ? "galaxy-kernel-v61|" : snapshot_version_ >= 60 ? "galaxy-kernel-v60|" : snapshot_version_ >= 59 ? "galaxy-kernel-v59|" : snapshot_version_ >= 58 ? "galaxy-kernel-v58|" : snapshot_version_ >= 57 ? "galaxy-kernel-v57|" : snapshot_version_ >= 53 ? "galaxy-kernel-v53|" : snapshot_version_ >= 52 ? "galaxy-kernel-v52|" : snapshot_version_ >= 49 ? "galaxy-kernel-v49|" : snapshot_version_ >= 48 ? "galaxy-kernel-v48|" : snapshot_version_ >= 44 ? "galaxy-kernel-v44|" : snapshot_version_ >= 41 ? "galaxy-kernel-v41|" : snapshot_version_ >= 40 ? "galaxy-kernel-v40|" : snapshot_version_ >= 39 ? "galaxy-kernel-v39|" : snapshot_version_ >= 38 ? "galaxy-kernel-v38|" : snapshot_version_ >= 37 ? "galaxy-kernel-v37|" : snapshot_version_ >= 36 ? "galaxy-kernel-v36|" : snapshot_version_ >= 35 ? "galaxy-kernel-v35|" : snapshot_version_ >= 34 ? "galaxy-kernel-v34|" : snapshot_version_ >= 33 ? "galaxy-kernel-v33|" : snapshot_version_ >= 32 ? "galaxy-kernel-v32|" : snapshot_version_ >= 31 ? "galaxy-kernel-v31|" : snapshot_version_ >= 30 ? "galaxy-kernel-v30|" : snapshot_version_ >= 29 ? "galaxy-kernel-v29|" : snapshot_version_ >= 28 ? "galaxy-kernel-v28|" : snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
+    out << ( snapshot_version_ >= 89 ? "galaxy-kernel-v89|" : snapshot_version_ >= 88 ? "galaxy-kernel-v88|" : snapshot_version_ >= 87 ? "galaxy-kernel-v87|" : snapshot_version_ >= 86 ? "galaxy-kernel-v86|" : snapshot_version_ >= 85 ? "galaxy-kernel-v85|" : snapshot_version_ >= 84 ? "galaxy-kernel-v84|" : snapshot_version_ >= 83 ? "galaxy-kernel-v83|" : snapshot_version_ >= 82 ? "galaxy-kernel-v82|" : snapshot_version_ >= 81 ? "galaxy-kernel-v81|" : snapshot_version_ >= 80 ? "galaxy-kernel-v80|" : snapshot_version_ >= 79 ? "galaxy-kernel-v79|" : snapshot_version_ >= 78 ? "galaxy-kernel-v78|" : snapshot_version_ >= 77 ? "galaxy-kernel-v77|" : snapshot_version_ >= 76 ? "galaxy-kernel-v76|" : snapshot_version_ >= 75 ? "galaxy-kernel-v75|" : snapshot_version_ >= 74 ? "galaxy-kernel-v74|" : snapshot_version_ >= 73 ? "galaxy-kernel-v73|" : snapshot_version_ >= 72 ? "galaxy-kernel-v72|" : snapshot_version_ >= 71 ? "galaxy-kernel-v71|" : snapshot_version_ >= 70 ? "galaxy-kernel-v70|" : snapshot_version_ >= 69 ? "galaxy-kernel-v69|" : snapshot_version_ >= 68 ? "galaxy-kernel-v68|" : snapshot_version_ >= 67 ? "galaxy-kernel-v67|" : snapshot_version_ >= 66 ? "galaxy-kernel-v66|" : snapshot_version_ >= 65 ? "galaxy-kernel-v65|" : snapshot_version_ >= 64 ? "galaxy-kernel-v64|" : snapshot_version_ >= 63 ? "galaxy-kernel-v63|" : snapshot_version_ >= 62 ? "galaxy-kernel-v62|" : snapshot_version_ >= 61 ? "galaxy-kernel-v61|" : snapshot_version_ >= 60 ? "galaxy-kernel-v60|" : snapshot_version_ >= 59 ? "galaxy-kernel-v59|" : snapshot_version_ >= 58 ? "galaxy-kernel-v58|" : snapshot_version_ >= 57 ? "galaxy-kernel-v57|" : snapshot_version_ >= 53 ? "galaxy-kernel-v53|" : snapshot_version_ >= 52 ? "galaxy-kernel-v52|" : snapshot_version_ >= 49 ? "galaxy-kernel-v49|" : snapshot_version_ >= 48 ? "galaxy-kernel-v48|" : snapshot_version_ >= 44 ? "galaxy-kernel-v44|" : snapshot_version_ >= 41 ? "galaxy-kernel-v41|" : snapshot_version_ >= 40 ? "galaxy-kernel-v40|" : snapshot_version_ >= 39 ? "galaxy-kernel-v39|" : snapshot_version_ >= 38 ? "galaxy-kernel-v38|" : snapshot_version_ >= 37 ? "galaxy-kernel-v37|" : snapshot_version_ >= 36 ? "galaxy-kernel-v36|" : snapshot_version_ >= 35 ? "galaxy-kernel-v35|" : snapshot_version_ >= 34 ? "galaxy-kernel-v34|" : snapshot_version_ >= 33 ? "galaxy-kernel-v33|" : snapshot_version_ >= 32 ? "galaxy-kernel-v32|" : snapshot_version_ >= 31 ? "galaxy-kernel-v31|" : snapshot_version_ >= 30 ? "galaxy-kernel-v30|" : snapshot_version_ >= 29 ? "galaxy-kernel-v29|" : snapshot_version_ >= 28 ? "galaxy-kernel-v28|" : snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
         << '|' << rng_state_ << '\n';
     if (snapshot_version_>=5) for(const auto system:systems_)out<<"system|"<<system<<'\n';
     if(snapshot_version_>=68)out<<"probelatency|"<<probe_report_delay_ticks_<<'\n';
@@ -6620,6 +6863,13 @@ std::string Simulation::canonical_state() const {
                 work.assigned_pilot<<'|'<<unsigned(work.stage)<<'|'<<
                 work.created_tick<<'\n';
         }
+    if(snapshot_version_>=89)
+        for(const auto& [id,leg]:intercolony_freight_)
+            out<<"interfreight|"<<id<<'|'<<leg.owner<<'|'<<leg.source_ship
+               <<'|'<<leg.carrier_ship<<'|'<<leg.destination_ship
+               <<'|'<<unsigned(leg.cargo)<<'|'<<leg.kilograms
+               <<'|'<<leg.origin_body<<'|'<<leg.loaded_tick
+               <<'|'<<leg.arrival_receipt<<'|'<<unsigned(leg.stage)<<'\n';
     if(snapshot_version_>=81)
         for(const auto id:shuttle_flight_request_ids_)
             out<<"planetflightreceipt|"<<id<<'\n';
@@ -7059,12 +7309,12 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
     if (!std::getline(in, line)) throw std::runtime_error("snapshot: missing header");
     auto h = fields(line);
     require_fields(h, 5);
-    if (h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27" && h[0] != "galaxy-kernel-v28" && h[0] != "galaxy-kernel-v29" && h[0] != "galaxy-kernel-v30" && h[0] != "galaxy-kernel-v31" && h[0] != "galaxy-kernel-v32" && h[0] != "galaxy-kernel-v33" && h[0] != "galaxy-kernel-v34" && h[0] != "galaxy-kernel-v35" && h[0] != "galaxy-kernel-v36" && h[0] != "galaxy-kernel-v37" && h[0] != "galaxy-kernel-v38" && h[0] != "galaxy-kernel-v39" && h[0] != "galaxy-kernel-v40" && h[0] != "galaxy-kernel-v41" && h[0] != "galaxy-kernel-v44" && h[0] != "galaxy-kernel-v48" && h[0] != "galaxy-kernel-v49" && h[0] != "galaxy-kernel-v52" && h[0] != "galaxy-kernel-v53" && h[0] != "galaxy-kernel-v57" && h[0] != "galaxy-kernel-v58" && h[0] != "galaxy-kernel-v59" && h[0] != "galaxy-kernel-v60" && h[0] != "galaxy-kernel-v61" && h[0] != "galaxy-kernel-v62" && h[0] != "galaxy-kernel-v63" && h[0] != "galaxy-kernel-v64" && h[0] != "galaxy-kernel-v65" && h[0] != "galaxy-kernel-v66" && h[0] != "galaxy-kernel-v67" && h[0] != "galaxy-kernel-v68" && h[0] != "galaxy-kernel-v69" && h[0] != "galaxy-kernel-v70" && h[0] != "galaxy-kernel-v71" && h[0] != "galaxy-kernel-v72" && h[0] != "galaxy-kernel-v73" && h[0] != "galaxy-kernel-v74" && h[0] != "galaxy-kernel-v75" && h[0] != "galaxy-kernel-v76" && h[0] != "galaxy-kernel-v77" && h[0] != "galaxy-kernel-v78" && h[0] != "galaxy-kernel-v79" && h[0] != "galaxy-kernel-v80" && h[0] != "galaxy-kernel-v81" && h[0] != "galaxy-kernel-v82" && h[0] != "galaxy-kernel-v83" && h[0] != "galaxy-kernel-v84" && h[0] != "galaxy-kernel-v85" && h[0] != "galaxy-kernel-v86" && h[0] != "galaxy-kernel-v87" && h[0] != "galaxy-kernel-v88") throw std::runtime_error("snapshot: unsupported version");
+    if (h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27" && h[0] != "galaxy-kernel-v28" && h[0] != "galaxy-kernel-v29" && h[0] != "galaxy-kernel-v30" && h[0] != "galaxy-kernel-v31" && h[0] != "galaxy-kernel-v32" && h[0] != "galaxy-kernel-v33" && h[0] != "galaxy-kernel-v34" && h[0] != "galaxy-kernel-v35" && h[0] != "galaxy-kernel-v36" && h[0] != "galaxy-kernel-v37" && h[0] != "galaxy-kernel-v38" && h[0] != "galaxy-kernel-v39" && h[0] != "galaxy-kernel-v40" && h[0] != "galaxy-kernel-v41" && h[0] != "galaxy-kernel-v44" && h[0] != "galaxy-kernel-v48" && h[0] != "galaxy-kernel-v49" && h[0] != "galaxy-kernel-v52" && h[0] != "galaxy-kernel-v53" && h[0] != "galaxy-kernel-v57" && h[0] != "galaxy-kernel-v58" && h[0] != "galaxy-kernel-v59" && h[0] != "galaxy-kernel-v60" && h[0] != "galaxy-kernel-v61" && h[0] != "galaxy-kernel-v62" && h[0] != "galaxy-kernel-v63" && h[0] != "galaxy-kernel-v64" && h[0] != "galaxy-kernel-v65" && h[0] != "galaxy-kernel-v66" && h[0] != "galaxy-kernel-v67" && h[0] != "galaxy-kernel-v68" && h[0] != "galaxy-kernel-v69" && h[0] != "galaxy-kernel-v70" && h[0] != "galaxy-kernel-v71" && h[0] != "galaxy-kernel-v72" && h[0] != "galaxy-kernel-v73" && h[0] != "galaxy-kernel-v74" && h[0] != "galaxy-kernel-v75" && h[0] != "galaxy-kernel-v76" && h[0] != "galaxy-kernel-v77" && h[0] != "galaxy-kernel-v78" && h[0] != "galaxy-kernel-v79" && h[0] != "galaxy-kernel-v80" && h[0] != "galaxy-kernel-v81" && h[0] != "galaxy-kernel-v82" && h[0] != "galaxy-kernel-v83" && h[0] != "galaxy-kernel-v84" && h[0] != "galaxy-kernel-v85" && h[0] != "galaxy-kernel-v86" && h[0] != "galaxy-kernel-v87" && h[0] != "galaxy-kernel-v88" && h[0] != "galaxy-kernel-v89") throw std::runtime_error("snapshot: unsupported version");
     const auto sys = u64(h[1]);
     if (sys == 0 || sys > std::numeric_limits<std::uint32_t>::max())
         throw std::runtime_error("snapshot: invalid system");
     Simulation result(u64(h[4]), static_cast<std::uint32_t>(sys));
-    result.snapshot_version_ = h[0] == "galaxy-kernel-v88" ? 88 : h[0] == "galaxy-kernel-v87" ? 87 : h[0] == "galaxy-kernel-v86" ? 86 : h[0] == "galaxy-kernel-v85" ? 85 : h[0] == "galaxy-kernel-v84" ? 84 : h[0] == "galaxy-kernel-v83" ? 83 : h[0] == "galaxy-kernel-v82" ? 82 : h[0] == "galaxy-kernel-v81" ? 81 : h[0] == "galaxy-kernel-v80" ? 80 : h[0] == "galaxy-kernel-v79" ? 79 : h[0] == "galaxy-kernel-v78" ? 78 : h[0] == "galaxy-kernel-v77" ? 77 : h[0] == "galaxy-kernel-v76" ? 76 : h[0] == "galaxy-kernel-v75" ? 75 : h[0] == "galaxy-kernel-v74" ? 74 : h[0] == "galaxy-kernel-v73" ? 73 : h[0] == "galaxy-kernel-v72" ? 72 : h[0] == "galaxy-kernel-v71" ? 71 : h[0] == "galaxy-kernel-v70" ? 70 : h[0] == "galaxy-kernel-v69" ? 69 : h[0] == "galaxy-kernel-v68" ? 68 : h[0] == "galaxy-kernel-v67" ? 67 : h[0] == "galaxy-kernel-v66" ? 66 : h[0] == "galaxy-kernel-v65" ? 65 : h[0] == "galaxy-kernel-v64" ? 64 : h[0] == "galaxy-kernel-v63" ? 63 : h[0] == "galaxy-kernel-v62" ? 62 : h[0] == "galaxy-kernel-v61" ? 61 : h[0] == "galaxy-kernel-v60" ? 60 : h[0] == "galaxy-kernel-v59" ? 59 : h[0] == "galaxy-kernel-v58" ? 58 : h[0] == "galaxy-kernel-v57" ? 57 : h[0] == "galaxy-kernel-v53" ? 53 : h[0] == "galaxy-kernel-v52" ? 52 : h[0] == "galaxy-kernel-v49" ? 49 : h[0] == "galaxy-kernel-v48" ? 48 : h[0] == "galaxy-kernel-v44" ? 44 : h[0] == "galaxy-kernel-v41" ? 41 : h[0] == "galaxy-kernel-v40" ? 40 : h[0] == "galaxy-kernel-v39" ? 39 : h[0] == "galaxy-kernel-v38" ? 38 : h[0] == "galaxy-kernel-v37" ? 37 : h[0] == "galaxy-kernel-v36" ? 36 : h[0] == "galaxy-kernel-v35" ? 35 : h[0] == "galaxy-kernel-v34" ? 34 : h[0] == "galaxy-kernel-v33" ? 33 : h[0] == "galaxy-kernel-v32" ? 32 : h[0] == "galaxy-kernel-v31" ? 31 : h[0] == "galaxy-kernel-v30" ? 30 : h[0] == "galaxy-kernel-v29" ? 29 : h[0] == "galaxy-kernel-v28" ? 28 : h[0] == "galaxy-kernel-v27" ? 27 : h[0] == "galaxy-kernel-v26" ? 26 : h[0] == "galaxy-kernel-v25" ? 25 : h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
+    result.snapshot_version_ = h[0] == "galaxy-kernel-v89" ? 89 : h[0] == "galaxy-kernel-v88" ? 88 : h[0] == "galaxy-kernel-v87" ? 87 : h[0] == "galaxy-kernel-v86" ? 86 : h[0] == "galaxy-kernel-v85" ? 85 : h[0] == "galaxy-kernel-v84" ? 84 : h[0] == "galaxy-kernel-v83" ? 83 : h[0] == "galaxy-kernel-v82" ? 82 : h[0] == "galaxy-kernel-v81" ? 81 : h[0] == "galaxy-kernel-v80" ? 80 : h[0] == "galaxy-kernel-v79" ? 79 : h[0] == "galaxy-kernel-v78" ? 78 : h[0] == "galaxy-kernel-v77" ? 77 : h[0] == "galaxy-kernel-v76" ? 76 : h[0] == "galaxy-kernel-v75" ? 75 : h[0] == "galaxy-kernel-v74" ? 74 : h[0] == "galaxy-kernel-v73" ? 73 : h[0] == "galaxy-kernel-v72" ? 72 : h[0] == "galaxy-kernel-v71" ? 71 : h[0] == "galaxy-kernel-v70" ? 70 : h[0] == "galaxy-kernel-v69" ? 69 : h[0] == "galaxy-kernel-v68" ? 68 : h[0] == "galaxy-kernel-v67" ? 67 : h[0] == "galaxy-kernel-v66" ? 66 : h[0] == "galaxy-kernel-v65" ? 65 : h[0] == "galaxy-kernel-v64" ? 64 : h[0] == "galaxy-kernel-v63" ? 63 : h[0] == "galaxy-kernel-v62" ? 62 : h[0] == "galaxy-kernel-v61" ? 61 : h[0] == "galaxy-kernel-v60" ? 60 : h[0] == "galaxy-kernel-v59" ? 59 : h[0] == "galaxy-kernel-v58" ? 58 : h[0] == "galaxy-kernel-v57" ? 57 : h[0] == "galaxy-kernel-v53" ? 53 : h[0] == "galaxy-kernel-v52" ? 52 : h[0] == "galaxy-kernel-v49" ? 49 : h[0] == "galaxy-kernel-v48" ? 48 : h[0] == "galaxy-kernel-v44" ? 44 : h[0] == "galaxy-kernel-v41" ? 41 : h[0] == "galaxy-kernel-v40" ? 40 : h[0] == "galaxy-kernel-v39" ? 39 : h[0] == "galaxy-kernel-v38" ? 38 : h[0] == "galaxy-kernel-v37" ? 37 : h[0] == "galaxy-kernel-v36" ? 36 : h[0] == "galaxy-kernel-v35" ? 35 : h[0] == "galaxy-kernel-v34" ? 34 : h[0] == "galaxy-kernel-v33" ? 33 : h[0] == "galaxy-kernel-v32" ? 32 : h[0] == "galaxy-kernel-v31" ? 31 : h[0] == "galaxy-kernel-v30" ? 30 : h[0] == "galaxy-kernel-v29" ? 29 : h[0] == "galaxy-kernel-v28" ? 28 : h[0] == "galaxy-kernel-v27" ? 27 : h[0] == "galaxy-kernel-v26" ? 26 : h[0] == "galaxy-kernel-v25" ? 25 : h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
     result.tick_ = u64(h[2]);
     result.next_entity_id_ = u64(h[3]);
     if (result.next_entity_id_ == 0) throw std::runtime_error("snapshot: invalid next entity ID");
@@ -7215,6 +7465,25 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                     static_cast<ShuttleCargo>(cargo),kg,pilot,
                     static_cast<LocalDeliveryStage>(stage),created}).second)
                 throw std::runtime_error("snapshot: invalid local delivery order");
+        } else if(f[0]=="interfreight" && result.snapshot_version_>=89) {
+            require_fields(f,12);
+            const auto id=u64(f[1]),owner=u64(f[2]),src=u64(f[3]),
+                       carrier=u64(f[4]),dst=u64(f[5]),cargo=u64(f[6]),
+                       origin=u64(f[8]),loaded=u64(f[9]),receipt=u64(f[10]),
+                       stage=u64(f[11]);
+            const auto kg=i64(f[7]);
+            if(!id || id>=(std::uint64_t{1}<<50) || !owner ||
+               owner==kServerAuthority || !src || !carrier || !dst ||
+               src==carrier || src==dst || carrier==dst || cargo>2 ||
+               kg<1 || kg>1000 || !origin || loaded>result.tick_ ||
+               stage>2 || (stage==0 && (loaded || receipt)) ||
+               (stage==1 && receipt) || (stage==2 && !receipt) ||
+               result.intercolony_freight_.size()>=10000 ||
+               !result.intercolony_freight_.emplace(id,IntercolonyFreightLeg{
+                   id,owner,src,carrier,dst,static_cast<ShuttleCargo>(cargo),
+                   kg,origin,loaded,receipt,
+                   static_cast<IntercolonyFreightStage>(stage)}).second)
+                throw std::runtime_error("snapshot: invalid intercolony freight record");
         } else if(f[0]=="planetflightreceipt" && result.snapshot_version_>=81) {
             require_fields(f,2);
             const auto id=u64(f[1]);
@@ -7796,6 +8065,9 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 const bool mineral=f[0]=="mineral";
                 if(!id || kg<1 || kg>1000000000000LL || !result.colony_ships_.count(id) ||
                    !(mineral?is_known_mineral(f[2]):is_known_good(f[2])) ||
+                   (result.snapshot_version_<89 &&
+                    (f[2]=="freight_water" || f[2]=="freight_food" ||
+                     f[2]=="freight_nutrients")) ||
                    !(mineral?result.colony_ships_.at(id).minerals_kg:result.colony_ships_.at(id).goods_kg).emplace(f[2],kg).second)
                     throw std::runtime_error("snapshot: invalid mineral/product inventory");
             }
@@ -9524,6 +9796,82 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 throw std::runtime_error("snapshot: invalid courier flight phase");
         }
     }
+    if(result.snapshot_version_>=89) {
+        std::set<EntityId> loaded_carriers;
+        for(const auto& [id,leg]:result.intercolony_freight_) {
+            const auto order=result.local_delivery_orders_.find(id);
+            const auto origin=result.entities_.find(leg.source_ship);
+            const auto freighter=result.entities_.find(leg.carrier_ship);
+            const auto destination=result.entities_.find(leg.destination_ship);
+            const auto frame=result.ship_frames_.find(leg.carrier_ship);
+            const auto from=result.ship_frames_.find(leg.source_ship);
+            if(order==result.local_delivery_orders_.end() ||
+               order->second.owner!=leg.owner ||
+               order->second.board_ship!=leg.source_ship ||
+               (leg.stage==IntercolonyFreightStage::AwaitingPickup ?
+                    order->second.stage==LocalDeliveryStage::Cancelled :
+                    order->second.stage!=LocalDeliveryStage::Complete) ||
+               order->second.kilograms!=leg.kilograms ||
+               order->second.cargo!=leg.cargo ||
+               origin==result.entities_.end() ||
+               freighter==result.entities_.end() ||
+               destination==result.entities_.end() ||
+               origin->second.owner_id!=leg.owner ||
+               freighter->second.owner_id!=leg.owner ||
+               destination->second.owner_id!=leg.owner ||
+               !result.colony_ships_.count(leg.source_ship) ||
+               !result.colony_ships_.count(leg.carrier_ship) ||
+               !result.colony_ships_.count(leg.destination_ship) ||
+               !result.life_support_.count(leg.source_ship) ||
+               !result.life_support_.count(leg.carrier_ship) ||
+               !result.life_support_.count(leg.destination_ship) ||
+               from==result.ship_frames_.end() ||
+               frame==result.ship_frames_.end() ||
+               from->second.system!=frame->second.system ||
+               leg.origin_body!=std::get<0>(order->second.site))
+                throw std::runtime_error("snapshot: orphaned freight and origin");
+            const auto code=sealed_freight_code(leg.cargo);
+            if(!code)throw std::runtime_error("snapshot: unknown sealed goods");
+            const auto& goods=result.colony_ships_.at(leg.carrier_ship).goods_kg;
+            const auto found=goods.find(code);
+            if(leg.stage==IntercolonyFreightStage::AwaitingPickup) {
+                if(!loaded_carriers.insert(leg.carrier_ship).second ||
+                   found!=goods.end())
+                    throw std::runtime_error("snapshot: planned carrier already holds freight");
+            }else if(leg.stage==IntercolonyFreightStage::Loaded) {
+                if(!loaded_carriers.insert(leg.carrier_ship).second ||
+                   found==goods.end() || found->second!=leg.kilograms)
+                    throw std::runtime_error("snapshot: physical freight missing or duplicate");
+            }else{
+                const auto receipt=result.completed_celestial_transits_.find(
+                    leg.arrival_receipt);
+                if(receipt==result.completed_celestial_transits_.end() ||
+                   receipt->second.owner!=leg.owner ||
+                   receipt->second.ship!=leg.carrier_ship ||
+                   receipt->second.completed_tick<leg.loaded_tick ||
+                   receipt->second.destination_body==leg.origin_body)
+                    throw std::runtime_error("snapshot: freight without proven arrival");
+            }
+        }
+        // Every sealed freight stack must be justified by exactly one
+        // active physical carrier assignment. Historical Delivered jobs
+        // cannot silently leave unclaimed sealed cargo in a ship hold.
+        for(const auto& [ship,colony]:result.colony_ships_)
+            for(const auto& [code,kg]:colony.goods_kg) {
+                if(code!="freight_water" && code!="freight_food" &&
+                   code!="freight_nutrients")continue;
+                std::size_t witnesses=0;
+                for(const auto& [id,leg]:result.intercolony_freight_) {
+                    (void)id;
+                    if(leg.stage==IntercolonyFreightStage::Loaded &&
+                       leg.carrier_ship==ship &&
+                       code==sealed_freight_code(leg.cargo) &&
+                       leg.kilograms==kg)++witnesses;
+                }
+                if(witnesses!=1)
+                    throw std::runtime_error("snapshot: unclaimed sealed intercolony goods");
+            }
+    }
     if(result.snapshot_version_>=86) {
         const auto legal_address_is_registered=[&](const NpcRecord& n) {
             const auto residence=n.legal_residence();
@@ -9580,6 +9928,7 @@ void Simulation::swap(Simulation& other) noexcept {
     planetary_sites_.swap(other.planetary_sites_);
     planetary_shuttles_.swap(other.planetary_shuttles_);
     local_delivery_orders_.swap(other.local_delivery_orders_);
+    intercolony_freight_.swap(other.intercolony_freight_);
     shuttle_flight_request_ids_.swap(other.shuttle_flight_request_ids_);
     pending_celestial_transits_.swap(other.pending_celestial_transits_);
     completed_celestial_transits_.swap(other.completed_celestial_transits_);
