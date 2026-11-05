@@ -1072,6 +1072,7 @@ private:
     std::map<EntityId,OasisExtractor> oasis_extractors_;
     std::map<PlanetarySiteKey,PlanetarySiteFacility> planetary_sites_; // v76 real installed machinery
     std::map<PlanetarySiteKey,PlanetaryShuttleState> planetary_shuttles_; // v80
+    std::set<std::uint64_t> shuttle_flight_request_ids_; // v81 replay rejection
     std::map<std::uint64_t,PendingCelestialTransit> pending_celestial_transits_;
     std::map<std::uint64_t,CompletedCelestialTransit> completed_celestial_transits_;
     std::map<std::uint32_t,std::vector<PhysicalCelestialBody>> physical_celestial_systems_;
