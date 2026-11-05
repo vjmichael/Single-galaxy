@@ -225,6 +225,17 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(w.complete_celestial_transit(90002));
         CHECK(!w.supply_planetary_site(7,ship,chosen.body,
             chosen.latitude,chosen.longitude,true,1));
+        CHECK(!w.support_planetary_crew(7,ship,chosen.body,
+            chosen.latitude,chosen.longitude,true,1));
+        // Administrative policy can be changed remotely, while the same
+        // finite NPC workforce continues working on its original planet.
+        CHECK(w.set_planetary_workforce_policy(7,chosen.body,
+            chosen.latitude,chosen.longitude,policy));
+        const auto remote_before=w.world().planetary_sites().at(key).autonomous_cycles;
+        w.steps(40);
+        CHECK(w.world().planetary_sites().at(key).autonomous_cycles>remote_before);
+        CHECK(w.set_planetary_workforce_policy(7,chosen.body,
+            chosen.latitude,chosen.longitude,0));
         CHECK(w.world().planetary_sites().size()==1);
         CHECK(w.world().total_ore()==origin);
         durable=w.world().canonical_state();
