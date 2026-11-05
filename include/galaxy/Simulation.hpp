@@ -1117,6 +1117,8 @@ public:
     }
     bool start_shipyard_construction(PlayerId owner,EntityId colony,
         std::uint64_t order_id,std::array<std::uint64_t,2> workers);
+    bool assign_shipyard_builders(PlayerId owner,std::uint64_t order_id,
+        std::array<std::uint64_t,2> replacement);
     bool plan_intercolony_freight(PlayerId owner,std::uint64_t local_order_id,
         EntityId carrier,EntityId destination);
     bool load_intercolony_freight(PlayerId owner,std::uint64_t local_order_id,
