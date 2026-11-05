@@ -115,6 +115,39 @@
         throw Error('Invalid shuttle operation receipt');
       return {...e,id,latitude,longitude,operation,generation};
     }
+    if(t==='FREIGHTER_ITEM'){
+      if(v.length!==10)throw Error('Malformed physical freighter build');
+      const order=numeric(v[4],Number.MAX_SAFE_INTEGER),
+        yard=numeric(v[5],Number.MAX_SAFE_INTEGER),
+        progress=numeric(v[6],12),required=numeric(v[7],12),
+        hull=numeric(v[8],Number.MAX_SAFE_INTEGER),
+        generation=numeric(v[9],Number.MAX_SAFE_INTEGER);
+      if(!order||!yard||order===yard||required!==12||!generation||
+         ((progress===12)!==(hull>0)))throw Error('Invalid real hull build');
+      return {...e,order,yard,progress,required,hull,generation};
+    }
+    if(t==='FREIGHTER_QUEUED'){
+      if(v.length!==7)throw Error('Malformed freighter queue receipt');
+      const order=numeric(v[4],Number.MAX_SAFE_INTEGER),
+        yard=numeric(v[5],Number.MAX_SAFE_INTEGER),
+        generation=numeric(v[6],Number.MAX_SAFE_INTEGER);
+      if(!order||!yard||order===yard||!generation)
+        throw Error('Invalid freighter queue');
+      return {...e,order,yard,generation};
+    }
+    if(t==='FREIGHTER_LAUNCHED'){
+      if(v.length!==7)throw Error('Malformed physical ship launch');
+      const order=numeric(v[4],Number.MAX_SAFE_INTEGER),
+        hull=numeric(v[5],Number.MAX_SAFE_INTEGER),
+        generation=numeric(v[6],Number.MAX_SAFE_INTEGER);
+      if(!order||!hull||!generation)
+        throw Error('Invalid real ship launch');
+      return {...e,order,hull,generation};
+    }
+    if(t==='FREIGHTER_DONE'){
+      if(v.length!==5)throw Error('Malformed freighter status terminator');
+      return {...e,count:numeric(v[4],64)};
+    }
     if(t==='SHIPYARD_ITEM'){
       if(v.length!==12)throw Error('Malformed real shipyard construction');
       const order=numeric(v[4],Number.MAX_SAFE_INTEGER),
@@ -783,6 +816,39 @@
  });
  shipyardPanel.append(shipyardTitle,shipyardHint,yardNpc1,yardNpc2,
    yardStart,yardOrder,yardAssign,yardRefresh,yardReceipt,yardList);
+ const freighterTitle=document.createElement('strong');
+ freighterTitle.textContent='Manufacture first real freighter (SHIP-01B)';
+ const freighterHint=document.createElement('p');
+ freighterHint.textContent='Requires an operational shipyard, 6 real modules and 12 committed construction ticks. New hull launches without crew or scanner.';
+ const freighterOrder=document.createElement('input');
+ freighterOrder.type='number';freighterOrder.min='1';freighterOrder.step='1';
+ freighterOrder.placeholder='Production order ID';
+ freighterOrder.setAttribute('aria-label','New freighter production order ID');
+ const freighterStart=document.createElement('button');
+ freighterStart.type='button';freighterStart.textContent='Manufacture cargo freighter';
+ const freighterRefresh=document.createElement('button');
+ freighterRefresh.type='button';freighterRefresh.textContent='Check manufactured ships';
+ const freighterState=document.createElement('output');
+ freighterState.textContent='No confirmed freighter orders yet.';
+ const freighterList=document.createElement('div');
+ freighterList.dataset.freighterList='1';
+ freighterStart.addEventListener('click',()=>{
+   const yard=Number(yardOrder.value);
+   const order=Number(freighterOrder.value)||
+     (Date.now()*100+Math.floor(Math.random()*100));
+   if(!Number.isSafeInteger(yard)||yard<=0||
+      !Number.isSafeInteger(order)||order<=0||order===yard)return;
+   window.GalaxyColonyCommand?.('colonyFreighterBuild',{yard,order});
+   freighterOrder.value=String(order);
+   freighterState.textContent='Order submitted; awaiting real material debit receipt.';
+ });
+ freighterRefresh.addEventListener('click',()=>{
+   freighterList.replaceChildren();
+   window.GalaxyColonyCommand?.('colonyFreighterStatus',{});
+   freighterState.textContent='Loading actual persistent shipbuilding orders.';
+ });
+ shipyardPanel.append(freighterTitle,freighterHint,freighterOrder,
+   freighterStart,freighterRefresh,freighterState,freighterList);
  q('celestialBodyList').parentNode.insertBefore(
    shipyardPanel,q('celestialBodyList'));
  window.GalaxyColony={
@@ -1227,6 +1293,33 @@
          'Shuttle '+e.operation+' committed for body #'+e.id+'.':
          'Orbital shuttle status received from the native world.';
      }
+     if(e.type==='FREIGHTER_ITEM'){
+       let row=[...freighterList.children].find(node=>
+         node.dataset.freighterOrder===String(e.order));
+       if(!row){
+         row=document.createElement('div');
+         row.dataset.freighterOrder=String(e.order);
+         freighterList.append(row);
+       }
+       row.textContent='Build #'+e.order+' at yard #'+e.yard+
+         ' · '+e.progress+'/'+e.required+' committed ticks'+
+         (e.hull?' · Actual ship #'+e.hull+' constructed (uncrewed)':
+            ' · Hull not yet launched');
+       freighterState.textContent='Native manufacturing generation '+e.generation;
+     }
+     if(e.type==='FREIGHTER_QUEUED'){
+       freighterState.textContent='Freighter order #'+e.order+
+         ' accepted at generation '+e.generation+
+         '; finite materials moved into yard.';
+       window.GalaxyColonyCommand?.('colonyFreighterStatus',{});
+     }
+     if(e.type==='FREIGHTER_LAUNCHED'){
+       freighterState.textContent='Actual freighter ship #'+e.hull+
+         ' built under order #'+e.order+' — needs real crew and equipment.';
+       window.GalaxyColonyCommand?.('colonyFreighterStatus',{});
+     }
+     if(e.type==='FREIGHTER_DONE'&&!e.count)
+       freighterState.textContent='No shipbuilding orders posted yet.';
      if(e.type==='SHIPYARD_ITEM'){
        let entry=[...yardList.children].find(node=>
          node.dataset.shipyardOrder===String(e.order));
