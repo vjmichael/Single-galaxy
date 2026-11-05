@@ -3,6 +3,7 @@
 // stdout SGVIEW frames; stderr bounded COLONY telemetry for the local relay.
 #include "galaxy/Simulation.hpp"
 #include "galaxy/Persistence.hpp"
+#include "galaxy/OrbitalShuttleCommands.hpp"
 #include "galaxy/Galaxy.hpp"
 #include "galaxy/ClientContract.hpp"
 #include "galaxy/ColonySafety.hpp"
@@ -573,52 +574,51 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
                 throw std::invalid_argument("invalid shuttle region");
             const PlanetarySiteKey key{std::uint64_t(body),std::uint16_t(lat),
                 std::uint16_t(lon),1};
-            const auto site=world.world().planetary_sites().find(key);
-            if(site==world.world().planetary_sites().end() ||
-               site->second.owner!=principal || site->second.source_ship!=ship)
-                throw std::invalid_argument("shuttle site not owned");
+            OrbitalShuttleCommand command{};
+            command.owner=principal;
+            command.ship=ship;
+            command.site=key;
             const auto action=v[4];
-            if(action=="STATUS") {
-                if(v.size()!=5)throw std::invalid_argument("status fields");
-            } else {
-                bool ok=false;
-                if(action=="BUILD" && v.size()==5)
-                    ok=world.build_planetary_shuttle(principal,ship,key);
-                else if(action=="PILOT" && v.size()==6) {
-                    const auto npc=integer(v[5]);
-                    if(npc>0)ok=world.assign_planetary_shuttle_pilot(
-                        principal,ship,key,std::uint64_t(npc));
-                } else if((action=="LOAD" || action=="UNLOAD") &&
-                          v.size()==7) {
-                    if(v[5]!="WATER" && v[5]!="FOOD")
-                        throw std::invalid_argument("shuttle material");
-                    const auto kg=integer(v[6]);
-                    if(kg>0 && kg<=1000)ok=action=="LOAD"?
-                        world.load_planetary_shuttle(principal,ship,key,
-                            v[5]=="WATER",kg):
-                        world.unload_planetary_shuttle(principal,ship,key,
-                            v[5]=="WATER",kg);
-                } else if((action=="DESCEND" || action=="ASCEND") &&
-                          v.size()==6) {
-                    const auto request=integer(v[5]);
-                    if(request>0)ok=world.launch_planetary_shuttle(
-                        principal,ship,key,std::uint64_t(request),
-                        action=="ASCEND");
-                } else throw std::invalid_argument("shuttle action");
-                if(!ok)throw std::invalid_argument("shuttle mutation denied");
+            if(action=="STATUS" && v.size()==5)
+                command.action=OrbitalShuttleAction::Status;
+            else if(action=="BUILD" && v.size()==5)
+                command.action=OrbitalShuttleAction::Build;
+            else if(action=="PILOT" && v.size()==6) {
+                command.action=OrbitalShuttleAction::AssignPilot;
+                const auto npc=integer(v[5]);
+                if(npc<=0)throw std::invalid_argument("invalid pilot");
+                command.npc=std::uint64_t(npc);
+            } else if((action=="LOAD" || action=="UNLOAD") &&
+                      v.size()==7) {
+                command.action=action=="LOAD"?OrbitalShuttleAction::Load:
+                    OrbitalShuttleAction::Unload;
+                if(v[5]!="WATER" && v[5]!="FOOD")
+                    throw std::invalid_argument("invalid cargo");
+                command.water=v[5]=="WATER";
+                command.kilograms=integer(v[6]);
+            } else if((action=="DESCEND" || action=="ASCEND") &&
+                      v.size()==6) {
+                command.action=action=="DESCEND"?OrbitalShuttleAction::Descend:
+                    OrbitalShuttleAction::Ascend;
+                const auto request=integer(v[5]);
+                if(request<=0)throw std::invalid_argument("invalid flight ID");
+                command.request_id=std::uint64_t(request);
+            } else throw std::invalid_argument("invalid shuttle action");
+            const auto result=execute_orbital_shuttle(world,command);
+            if(!result.accepted)
+                throw std::invalid_argument("shuttle refused");
+            if(result.mutated)
                 announce(world.world(),"PLANET_SHUTTLE_COMMITTED|"+
                     std::to_string(body)+"|"+std::to_string(lat)+"|"+
                     std::to_string(lon)+"|"+action+"|"+
-                    std::to_string(world.generation()));
-            }
-            const auto current=world.world().planetary_shuttles().find(key);
-            if(current==world.world().planetary_shuttles().end()) {
+                    std::to_string(result.generation));
+            if(!result.present) {
                 announce(world.world(),"PLANET_SHUTTLE_STATUS|"+
                     std::to_string(body)+"|"+std::to_string(lat)+"|"+
                     std::to_string(lon)+"|0|0|0|0|0|0|0|0|0|"+
-                    std::to_string(world.generation()));
+                    std::to_string(result.generation));
             } else {
-                const auto& sh=current->second;
+                const auto& sh=result.shuttle;
                 announce(world.world(),"PLANET_SHUTTLE_STATUS|"+
                     std::to_string(body)+"|"+std::to_string(lat)+"|"+
                     std::to_string(lon)+"|1|"+std::to_string(sh.flight_phase)+"|"+
@@ -627,7 +627,7 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
                     std::to_string(sh.flight_request)+"|"+
                     std::to_string(sh.descent_receipt)+"|"+
                     std::to_string(sh.ascent_receipt)+"|"+
-                    std::to_string(world.generation()));
+                    std::to_string(result.generation));
             }
         }catch(const std::exception&){
             announce(world.world(),"ERROR|PLANET_SHUTTLE_DENIED");
