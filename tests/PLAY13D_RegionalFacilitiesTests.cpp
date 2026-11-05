@@ -316,6 +316,13 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(Simulation::from_snapshot(v86_state).canonical_state()==v86_state);
         CHECK(Simulation::from_snapshot(v86_state).npc_records().at(passenger)
               .legal_residence()==expected_home);
+        const auto census_v86=upgraded_residence.assess_npc_residence();
+        CHECK(census_v86.reconciled);
+        CHECK(census_v86.total_living==upgraded_residence.npc_records().size());
+        CHECK(census_v86.living_by_residence.at(expected_home)>=1);
+        const auto surface_id=w.world().planetary_sites().at(key).surface_location;
+        CHECK(census_v86.physically_present.at(surface_id)>=1);
+        CHECK(Simulation::from_snapshot(v86_state).assess_npc_residence().reconciled);
 
         // Temporary work is an explicit separate order, not a side effect
         // of arriving at a planetary spaceport.
