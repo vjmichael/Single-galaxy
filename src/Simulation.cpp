@@ -5315,7 +5315,8 @@ bool Simulation::load_planetary_shuttle(PlayerId owner,EntityId ship,
        const PlanetarySiteKey& key,bool water,std::int64_t kg) {
     auto shuttle=planetary_shuttles_.find(key);
     auto site=planetary_sites_.find(key);
-    const auto frame=ship_frames_.find(ship),hull=entities_.find(ship);
+    const auto frame=ship_frames_.find(ship);
+    const auto hull=entities_.find(ship);
     auto life=life_support_.find(ship);
     if(!owner || std::get<3>(key)!=1 ||
        shuttle==planetary_shuttles_.end() || site==planetary_sites_.end() ||
@@ -5341,7 +5342,8 @@ bool Simulation::unload_planetary_shuttle(PlayerId owner,EntityId ship,
        const PlanetarySiteKey& key,bool water,std::int64_t kg) {
     auto shuttle=planetary_shuttles_.find(key);
     auto site=planetary_sites_.find(key);
-    const auto frame=ship_frames_.find(ship),hull=entities_.find(ship);
+    const auto frame=ship_frames_.find(ship);
+    const auto hull=entities_.find(ship);
     auto life=life_support_.find(ship);
     if(!owner || std::get<3>(key)!=1 ||
        shuttle==planetary_shuttles_.end() || site==planetary_sites_.end() ||
@@ -5380,6 +5382,83 @@ bool Simulation::assign_planetary_shuttle_pilot(PlayerId owner,EntityId ship,
         if(other!=key && record.pilot_npc==npc)return false;
     shuttle->second.pilot_npc=npc;
     return true; // no boarding or NPC transfer before flight scheduler
+}
+
+
+namespace {
+EntityId shuttle_transit_custody_id(const PlanetarySiteKey& key) {
+    // Distinct from every named surface custody location; collisions rejected
+    // against real entities and all other shuttle transit locations.
+    return surface_custody_id(key) ^ (std::uint64_t{1}<<62);
+}
+}
+bool Simulation::launch_planetary_shuttle(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t request_id,bool ascend) {
+    auto sh=planetary_shuttles_.find(key);
+    auto site=planetary_sites_.find(key);
+    auto hull=entities_.find(ship);
+    auto frame=ship_frames_.find(ship);
+    auto life=life_support_.find(ship);
+    if(!owner || !request_id || request_id==std::numeric_limits<std::uint64_t>::max() ||
+       sh==planetary_shuttles_.end() || site==planetary_sites_.end() ||
+       site->second.owner!=owner || site->second.source_ship!=ship ||
+       site->second.spaceport_phase!=3 || sh->second.owner!=owner ||
+       sh->second.source_ship!=ship || !sh->second.pilot_npc ||
+       sh->second.flight_phase!=(ascend?2:0) ||
+       sh->second.water_kg<1 || tick_>std::numeric_limits<std::uint64_t>::max()-3 ||
+       hull==entities_.end() || hull->second.owner_id!=owner ||
+       hull->second.dock_state!=DockState::InSpace ||
+       hull->second.jump_state!=ShipJumpState::Ready ||
+       frame==ship_frames_.end() || frame->second.anchor_body!=std::get<0>(key) ||
+       life==life_support_.end() || !npc_available_for_duty(sh->second.pilot_npc))
+        return false;
+    // Request IDs and pilot identities cannot be reused across shuttles/legs.
+    for(const auto& [other,r]:planetary_shuttles_) {
+        (void)other;
+        if(r.flight_request==request_id || r.descent_receipt==request_id ||
+           r.ascent_receipt==request_id)return false;
+    }
+    auto pilot=npcs_.find(sh->second.pilot_npc);
+    if(pilot==npcs_.end() || pilot->second.home_ship!=ship ||
+       pilot->second.role!=NpcRole::Ship ||
+       pilot->second.assigned_site!=ship || pilot->second.transport_id ||
+       pilot->second.location!=(ascend?site->second.surface_location:ship))
+        return false;
+    // One kg of physically loaded water is the simplified water propellant
+    // per trip; spent propellant remains wastewater at the departure endpoint.
+    auto& residue=ascend?site->second.wastewater_kg:life->second.wastewater_kg;
+    if(residue>=1000000)return false;
+    const auto transit=shuttle_transit_custody_id(key);
+    if(!transit || entities_.count(transit))return false;
+    for(const auto& [other,r]:planetary_shuttles_)
+        if(other!=key && r.flight_phase%2==1 &&
+           transit==shuttle_transit_custody_id(other))return false;
+    --sh->second.water_kg;
+    ++residue;
+    sh->second.flight_phase=ascend?3:1;
+    sh->second.flight_request=request_id;
+    sh->second.arrival_tick=tick_+3;
+    if(ascend)sh->second.ascent_receipt=request_id;
+    else sh->second.descent_receipt=request_id;
+    pilot->second.location=transit;
+    snapshot_version_=std::max(snapshot_version_,81);
+    return true;
+}
+void Simulation::process_planetary_shuttle_flights() {
+    for(auto& [key,sh]:planetary_shuttles_) {
+        if((sh.flight_phase!=1 && sh.flight_phase!=3) ||
+           tick_<sh.arrival_tick)continue;
+        auto site=planetary_sites_.find(key);
+        auto npc=npcs_.find(sh.pilot_npc);
+        if(site==planetary_sites_.end() || npc==npcs_.end() ||
+           npc->second.location!=shuttle_transit_custody_id(key))
+            throw std::logic_error("missing committed shuttle or pilot custody");
+        npc->second.location=sh.flight_phase==1?
+            site->second.surface_location:sh.source_ship;
+        sh.flight_phase=sh.flight_phase==1?2:0;
+        sh.flight_request=0;
+        sh.arrival_tick=0;
+    }
 }
 
 bool Simulation::planetary_spaceport_operational(std::uint64_t body,
@@ -5871,6 +5950,7 @@ void Simulation::step() {
     process_waterworks();
     process_colony_needs();
     process_oasis_extractors();
+    process_planetary_shuttle_flights();
     process_planetary_surface_operations();
     process_farms();
     process_habitats();
