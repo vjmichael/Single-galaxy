@@ -553,7 +553,8 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
     // previously observed this exact region/revision in the private archive.
     if(!v.empty() && (v[0]=="PLANET_BUILD" || v[0]=="PLANET_EQUIP" ||
        v[0]=="PLANET_SUPPLY" || v[0]=="PLANET_GROW" ||
-       v[0]=="PLANET_EXTRACT" || v[0]=="PLANET_RETRIEVE")) {
+       v[0]=="PLANET_EXTRACT" || v[0]=="PLANET_RETRIEVE" ||
+       v[0]=="PLANET_SUPPORT")) {
         try {
             const auto type=v[0];
             const bool build=type=="PLANET_BUILD";
@@ -608,7 +609,13 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
                     std::uint16_t(longitude),integer(v[4]));
             } else {
                 const auto kind=v[4],kg=integer(v[5]);
-                if(type=="PLANET_SUPPLY") {
+                if(type=="PLANET_SUPPORT") {
+                    if(kind!="FOOD" && kind!="OXYGEN")
+                        throw std::invalid_argument("invalid surface crew supply material");
+                    success=world.support_planetary_crew(principal,ship,
+                        std::uint64_t(body),std::uint16_t(latitude),
+                        std::uint16_t(longitude),kind=="OXYGEN",kg);
+                } else if(type=="PLANET_SUPPLY") {
                     if(kind!="WATER" && kind!="NUTRIENTS")
                         throw std::invalid_argument("invalid supply material");
                     success=world.supply_planetary_site(principal,ship,
