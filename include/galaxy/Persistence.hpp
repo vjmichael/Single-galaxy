@@ -868,6 +868,10 @@ public:
     bool assign_shipyard_builders(PlayerId owner,std::uint64_t order_id,
         std::array<std::uint64_t,2> replacement,
         FailPoint fail=FailPoint::None);
+    // One committed six-module debit + real assembly order; only
+    // Simulation::step can subsequently mint the physical hull entity.
+    bool queue_shipyard_freighter(PlayerId owner,std::uint64_t yard_id,
+        std::uint64_t build_id,FailPoint fail=FailPoint::None);
     bool post_local_delivery_order(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& site,ShuttleCargo cargo,
         std::int64_t kilograms,std::uint64_t order_id,
