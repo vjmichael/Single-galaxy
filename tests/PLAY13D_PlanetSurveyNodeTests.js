@@ -149,3 +149,18 @@ test('PLAY-13D.4C.7 shuttle manifest carries finite named NPC IDs',()=>{
     'COLONY|1|14|PLANET_SHUTTLE_MANIFEST_DONE|4294967300|36|36|1'
   ])assert.throws(()=>decode(raw),Error,raw);
 });
+
+test('PLAY-13D.4C.8 surface visitors have canonical named custody frames',()=>{
+  const npc=decode('COLONY|1|14|PLANET_SHUTTLE_VISITOR|4294967300|17|36|84');
+  assert.equal(npc.npc,84);
+  const complete=decode('COLONY|1|14|PLANET_SHUTTLE_VISITORS_DONE|4294967300|17|36|1');
+  assert.equal(complete.count,1);
+  assert.equal(decode('COLONY|1|14|PLANET_SHUTTLE_COMMITTED|4294967300|17|36|DISEMBARK|35').operation,'DISEMBARK');
+  assert.equal(decode('COLONY|1|14|PLANET_SHUTTLE_COMMITTED|4294967300|17|36|REBOARD|36').operation,'REBOARD');
+  for(const raw of [
+    'COLONY|1|14|PLANET_SHUTTLE_VISITOR|4294967300|17|36|0',
+    'COLONY|1|14|PLANET_SHUTTLE_VISITORS_DONE|4294967300|17|36|65',
+    'COLONY|1|14|PLANET_SHUTTLE_VISITOR|4294967300|17|36',
+    'COLONY|1|14|PLANET_SHUTTLE_VISITORS_DONE|4294967300|36|36|1'
+  ])assert.throws(()=>decode(raw),Error,raw);
+});
