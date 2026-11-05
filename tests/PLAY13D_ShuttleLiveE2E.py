@@ -115,6 +115,25 @@ def send(port,reader,base,action,details=None,timeout=8):
         lambda f:len(f)==17 and int(f[4])==base["body"],timeout)
     return status_record
 
+def assert_rosters(reader,after,booked,visitors,workers):
+    """Read the authoritative native manifest, not a guessed UI headcount."""
+    expected={
+        "PLANET_SHUTTLE_MANIFEST_DONE":("PLANET_SHUTTLE_PASSENGER",booked),
+        "PLANET_SHUTTLE_VISITORS_DONE":("PLANET_SHUTTLE_VISITOR",visitors),
+        "PLANET_SHUTTLE_WORKERS_DONE":("PLANET_SHUTTLE_WORKER",workers),
+    }
+    for done_type,(item_type,ids) in expected.items():
+        marker=reader.wait(done_type,after,timeout=8)
+        with reader.condition:
+            records=list(reader.records[after:])
+        end=next((i for i,row in enumerate(records) if row is marker),None)
+        assert end is not None,(done_type,records[-12:])
+        observed=[int(row[7]) for row in records[:end]
+                  if len(row)==8 and row[3]==item_type]
+        assert observed==ids,(item_type,ids,observed)
+        assert int(marker[7])==len(ids),(done_type,marker,ids)
+
+
 def wait_phase(port,reader,base,phase,timeout=8):
     end=time.monotonic()+timeout
     while time.monotonic()<end:
@@ -158,8 +177,10 @@ def main(fixture,host,relay):
                 assert built[7]=="1" and built[8]=="0",built
                 selected=send(port,reader,base,"PILOT",{"npc":pilot})
                 assert int(selected[9])==pilot,selected
+                cursor=reader.cursor()
                 booked=send(port,reader,base,"BOARD",{"npc":passenger})
                 assert int(booked[9])==pilot,booked
+                assert_rosters(reader,cursor,[passenger],[],[])
                 loaded=send(port,reader,base,"LOAD",{"resource":"WATER","kg":200})
                 assert int(loaded[10])==200,loaded
                 loaded=send(port,reader,base,"LOAD",{"resource":"FOOD","kg":100})
@@ -168,15 +189,23 @@ def main(fixture,host,relay):
                 assert int(descent[14])==81001,descent
                 arrived=wait_phase(port,reader,base,2)
                 assert int(arrived[14])==81001,arrived
+                cursor=reader.cursor()
                 visit=send(port,reader,base,"DISEMBARK",{"npc":passenger})
                 assert int(visit[8])==2,visit
+                assert_rosters(reader,cursor,[],[passenger],[])
+                cursor=reader.cursor()
                 duty=send(port,reader,base,"DUTY_ON",{"npc":passenger})
                 assert int(duty[8])==2,duty
+                assert_rosters(reader,cursor,[],[passenger],[passenger])
+                cursor=reader.cursor()
                 released=send(port,reader,base,"DUTY_OFF",{"npc":passenger})
                 assert int(released[8])==2,released
+                assert_rosters(reader,cursor,[],[passenger],[])
                 # A real physical reboarding precedes the return launch.
+                cursor=reader.cursor()
                 boarded_again=send(port,reader,base,"REBOARD",{"npc":passenger})
                 assert int(boarded_again[8])==2,boarded_again
+                assert_rosters(reader,cursor,[passenger],[],[])
                 unloaded=send(port,reader,base,"UNLOAD",{"resource":"WATER","kg":60})
                 assert int(unloaded[10])==139,unloaded # 1 kg launch fuel
                 unloaded=send(port,reader,base,"UNLOAD",{"resource":"FOOD","kg":20})
@@ -219,7 +248,9 @@ def main(fixture,host,relay):
             base["token"]=info["token"]
             reader=EventReader(port)
             try:
+                roster_cursor=reader.cursor()
                 restored=send(port,reader,base,"STATUS")
+                assert_rosters(reader,roster_cursor,[passenger],[],[])
                 assert int(restored[8])==0 and int(restored[9])==pilot,restored
                 assert int(restored[10])==138 and int(restored[11])==80,restored
                 assert int(restored[14])==81001 and int(restored[15])==81002,restored
