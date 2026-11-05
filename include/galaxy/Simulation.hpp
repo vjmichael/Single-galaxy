@@ -451,6 +451,11 @@ struct PlanetaryShuttleState {
     std::uint64_t pilot_npc=0;
     std::int64_t dry_mass_ore=4;
     std::int64_t water_kg=0, food_kg=0;
+    // v81 committed flight lifecycle: 0 docked orbit, 1 descending,
+    // 2 landed, 3 ascending. No external real-time worker required.
+    std::uint8_t flight_phase=0;
+    std::uint64_t flight_request=0, arrival_tick=0;
+    std::uint64_t descent_receipt=0, ascent_receipt=0;
 };
 struct PhysicalOasisReserve {
     std::int64_t water_kg=0,nutrients_kg=0;
@@ -965,6 +970,11 @@ public:
     bool load_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,bool water,std::int64_t kg);
     bool unload_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,bool water,std::int64_t kg);
     bool assign_planetary_shuttle_pilot(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,std::uint64_t npc);
+    // One named pilot in authoritative NPC custody; cargo stays on the shuttle
+    // until unloading after committed arrival. Requests are single use per leg.
+    bool launch_planetary_shuttle(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t request_id,bool ascend);
+    void process_planetary_shuttle_flights();
     const std::map<PlanetarySiteKey,PlanetaryShuttleState>& planetary_shuttles() const noexcept {return planetary_shuttles_;}
     bool equip_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
         std::uint16_t latitude,std::uint16_t longitude,bool farm);
