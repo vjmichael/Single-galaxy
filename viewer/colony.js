@@ -686,9 +686,13 @@
          ' kg, oxygen '+e.oxygen+' kg.';
      }
      if(e.type==='PLANET_OPERATION_COMMITTED'){
-       q('signatureFeedback').textContent='Planetary action committed: '+
-          e.action+' at body #'+e.id+' region ('+e.latitude+','+e.longitude+
-          '), world generation '+e.generation+'.';
+       q('signatureFeedback').textContent=
+          (e.action==='PLANET_BUILD'?
+           'NPC surface delegation accepted; spaceport construction is underway. ':
+           'Planetary operation committed: '+e.action+'. ')+
+          'Body #'+e.id+' region ('+e.latitude+','+e.longitude+
+          '), world generation '+e.generation+
+          '. Use Check spaceport progress for the current state.';
      }
      if(e.type==='PLANET_REGION'){
        const terrains=['Deep ocean','Shallow sea','Coast','Wetland','Grassland',
