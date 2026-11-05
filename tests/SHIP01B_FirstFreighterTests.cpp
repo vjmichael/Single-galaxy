@@ -189,12 +189,23 @@ int main(){
             CHECK(w.world().freighter_build_orders().at(92001).launched_ship==
                   created_id);
             CHECK(w.world().total_ore()==original);
+            // An unfortunate but legal loss must leave one real wreck
+            // retaining the unique hull provenance and its embodied mass.
+            CHECK(w.submit_testing_destroy_ship(colony,created_id,880002));
+            w.step();
+            CHECK(w.world().find(created_id)->type==EntityType::Wreck);
+            CHECK(w.world().ship_frames().count(created_id)==0);
+            CHECK(w.world().total_ore()==original);
+            const auto damaged=w.world().canonical_state();
+            CHECK(Simulation::from_snapshot(damaged).canonical_state()==damaged);
         }
         {
             PersistentWorld w(db.string(),Simulation(881));
             const auto& order=w.world().freighter_build_orders().at(92001);
             CHECK(order.finished());
             CHECK(w.world().find(order.launched_ship)!=nullptr);
+            CHECK(w.world().find(order.launched_ship)->type==EntityType::Wreck);
+            CHECK(w.world().find(order.launched_ship)->manufactured_order_id==92001);
             CHECK(w.world().total_ore()==original);
         }
         fs::remove(db);
