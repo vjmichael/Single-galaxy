@@ -5416,6 +5416,14 @@ bool Simulation::launch_planetary_shuttle(PlayerId owner,EntityId ship,
         npc_health_status(sh->second.pilot_npc)!=NpcHealthStatus::Treated &&
         npc_health_status(sh->second.pilot_npc)!=NpcHealthStatus::Recovered))
         return false;
+    // Preserve the complete accepted ID set across restart and future flights.
+    // Existing ferry, celestial transit and queued commands own their IDs too.
+    if(shuttle_flight_request_ids_.size()>=100000 ||
+       shuttle_flight_request_ids_.count(request_id) ||
+       voyages_.count(request_id) ||
+       submitted_ids_.count(request_id) ||
+       pending_celestial_transits_.count(request_id) ||
+       completed_celestial_transits_.count(request_id))return false;
     // Request IDs and pilot identities cannot be reused across shuttles/legs.
     for(const auto& [other,r]:planetary_shuttles_) {
         (void)other;
@@ -5445,6 +5453,7 @@ bool Simulation::launch_planetary_shuttle(PlayerId owner,EntityId ship,
     if(ascend)sh->second.ascent_receipt=request_id;
     else sh->second.descent_receipt=request_id;
     pilot->second.location=transit;
+    shuttle_flight_request_ids_.insert(request_id);
     snapshot_version_=std::max(snapshot_version_,81);
     return true;
 }
@@ -6062,6 +6071,9 @@ std::string Simulation::canonical_state() const {
                      std::to_string(v.arrival_tick)+"|"+
                      std::to_string(v.descent_receipt)+"|"+
                      std::to_string(v.ascent_receipt)):"")<<'\n';
+    if(snapshot_version_>=81)
+        for(const auto id:shuttle_flight_request_ids_)
+            out<<"planetflightreceipt|"<<id<<'\n';
     if(snapshot_version_>=76)
         for(const auto& [ship,r]:oasis_extractors_)
             out<<"oasisextractor|"<<ship<<'|'<<r.body<<'|'<<r.embodied_ore<<'|'<<
@@ -6545,6 +6557,12 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                food>1000-water || result.planetary_shuttles_.size()>=10000 ||
                !result.planetary_shuttles_.emplace(key,state).second)
                 throw std::runtime_error("snapshot: invalid shuttle custody");
+        } else if(f[0]=="planetflightreceipt" && result.snapshot_version_>=81) {
+            require_fields(f,2);
+            const auto id=u64(f[1]);
+            if(!id || result.shuttle_flight_request_ids_.size()>=100000 ||
+               !result.shuttle_flight_request_ids_.insert(id).second)
+                throw std::runtime_error("snapshot: invalid shuttle flight receipt");
         } else if(f[0]=="planetsite" && result.snapshot_version_>=77) {
             require_fields(f,result.snapshot_version_>=79?33:(result.snapshot_version_>=78?26:15));
             const auto body=u64(f[1]),lat=u64(f[2]),lon=u64(f[3]),
@@ -8794,6 +8812,7 @@ void Simulation::swap(Simulation& other) noexcept {
     oasis_extractors_.swap(other.oasis_extractors_);
     planetary_sites_.swap(other.planetary_sites_);
     planetary_shuttles_.swap(other.planetary_shuttles_);
+    shuttle_flight_request_ids_.swap(other.shuttle_flight_request_ids_);
     pending_celestial_transits_.swap(other.pending_celestial_transits_);
     completed_celestial_transits_.swap(other.completed_celestial_transits_);
     physical_celestial_systems_.swap(other.physical_celestial_systems_);
@@ -9025,6 +9044,11 @@ std::int64_t Simulation::total_ore() const {
            v.food_kg>1000-v.water_kg || !colony_ships_.count(v.source_ship) ||
            total>std::numeric_limits<std::int64_t>::max()-v.dry_mass_ore)
             throw std::overflow_error("invalid source-backed shuttle");
+        if(snapshot_version_>=81 &&
+           ((v.descent_receipt && !shuttle_flight_request_ids_.count(v.descent_receipt)) ||
+            (v.ascent_receipt && !shuttle_flight_request_ids_.count(v.ascent_receipt)) ||
+            (v.flight_request && !shuttle_flight_request_ids_.count(v.flight_request))))
+            throw std::overflow_error("shuttle references missing flight receipt");
         if(v.pilot_npc) {
             if(!assigned_shuttle_pilots.insert(v.pilot_npc).second)
                 throw std::overflow_error("pilot assigned to multiple shuttles");
