@@ -173,7 +173,7 @@ inline OrbitalShuttleReply execute_orbital_shuttle(
                 cmd.action==OrbitalShuttleAction::AssignVisitorDuty);
             break;
         case OrbitalShuttleAction::Load:
-        case OrbitalShuttleAction::Unload:
+        case OrbitalShuttleAction::Unload: {
             if(cmd.npc || cmd.request_id || cmd.kilograms<1 ||
                cmd.kilograms>1000)break;
             const auto kind=cmd.cargo==ShuttleCargo::Nutrients?
@@ -199,6 +199,7 @@ inline OrbitalShuttleReply execute_orbital_shuttle(
                 return execute_shuttle_transport_instruction(
                     world,cmd.owner,cmd.ship,cmd.site,order);
             }
+        }
         case OrbitalShuttleAction::Descend:
         case OrbitalShuttleAction::Ascend:
             if(cmd.npc || cmd.kilograms || !cmd.request_id)break;
