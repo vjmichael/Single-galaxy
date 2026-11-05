@@ -65,22 +65,35 @@
       if(v.length!==4)throw Error('Malformed surface crew terminator');
       return e;
     }
+    if(t==='PLANET_POLICY_COMMITTED'){
+      if(v.length!==9)throw Error('Malformed planetary policy receipt');
+      const id=numeric(v[4],Number.MAX_SAFE_INTEGER),
+       latitude=numeric(v[5],35),longitude=numeric(v[6],71),
+       policy=numeric(v[7],4),generation=numeric(v[8],Number.MAX_SAFE_INTEGER);
+      if(!id || !generation)throw Error('Invalid planetary policy receipt');
+      return {...e,id,latitude,longitude,policy,generation};
+    }
     if(t==='PLANET_SITE_STATUS'){
-      if(v.length!==16)throw Error('Malformed planetary spaceport status');
+      if(v.length!==22)throw Error('Malformed planetary spaceport status');
       const id=numeric(v[4],Number.MAX_SAFE_INTEGER),
        latitude=numeric(v[5],35),longitude=numeric(v[6],71),
        phase=numeric(v[7],3),progress=numeric(v[8],240),
        required=numeric(v[9],240),workers=numeric(v[10],2),
        food=numeric(v[11],1000000),water=numeric(v[12],1000000),
        oxygen=numeric(v[13],1000000),npc1=numeric(v[14],Number.MAX_SAFE_INTEGER),
-       npc2=numeric(v[15],Number.MAX_SAFE_INTEGER);
+       npc2=numeric(v[15],Number.MAX_SAFE_INTEGER),
+       policy=numeric(v[16],4),condition=numeric(v[17],100),
+       cycles=numeric(v[18],Number.MAX_SAFE_INTEGER),
+       stalled=numeric(v[19],Number.MAX_SAFE_INTEGER),
+       extracted=numeric(v[20],Number.MAX_SAFE_INTEGER),
+       repairs=numeric(v[21],Number.MAX_SAFE_INTEGER);
       if(!id || phase<1 || required!==240 ||
          (workers!==2 && !(workers===0 && phase===3 && npc1===0 && npc2===0)) ||
           (npc1===npc2 && npc1!==0) ||
           (phase===3 && progress!==240))
         throw Error('Invalid surface spaceport status');
       return {...e,id,latitude,longitude,phase,progress,required,workers,
-              food,water,oxygen,npc1,npc2};
+              food,water,oxygen,npc1,npc2,policy,condition,cycles,stalled,extracted,repairs};
     }
     if(t==='PLANET_OPERATION_COMMITTED'){
       if(v.length!==9)throw Error('Malformed planetary operation receipt');
@@ -632,6 +645,22 @@
                window.GalaxyColonyCommand?.('colonyPlanetStatus',
                  {body:body.id,latitude:lat,longitude:lon});
            });
+           const policySelect=document.createElement('select');
+           policySelect.setAttribute('aria-label','Autonomous NPC planetary work policy');
+           [['Pause autonomous work',0],['Run farm',1],
+             ['Extract water',2],['Extract nutrients',3],
+             ['Maintain equipment',4]].forEach(([label,value])=>
+               policySelect.add(new Option(label,String(value))));
+           const policyButton=document.createElement('button');
+           policyButton.type='button';policyButton.textContent='Assign NPC work policy';
+           policyButton.addEventListener('click',()=>{
+             const lat=Number(latitude.value),lon=Number(longitude.value);
+             if(!Number.isInteger(lat)||lat<0||lat>=36||
+                !Number.isInteger(lon)||lon<0||lon>=72)return;
+             window.GalaxyColonyCommand?.('colonyPlanetPolicy',
+               {body:body.id,latitude:lat,longitude:lon,
+                policy:Number(policySelect.value)});
+           });
            const perform=document.createElement('button');
            perform.type='button';perform.textContent='Send orbital order';
            perform.addEventListener('click',()=>{
@@ -658,7 +687,7 @@
              q('signatureFeedback').textContent=
                'Operation requested. A native survey of this exact region is required.';
            });
-           actions.append(caption,choice,firstNpc,secondNpc,crewButton,statusButton,perform);
+           actions.append(caption,choice,firstNpc,secondNpc,crewButton,statusButton,policySelect,policyButton,perform);
            item.append(latitude,longitude,survey,actions);
          }
          return item;
@@ -684,7 +713,19 @@
          ' progress ticks · '+e.workers+' delegated NPCs '+
          (e.npc1?'#'+e.npc1+' and #'+e.npc2:'(legacy finite crew)')+
          ' · surface food '+e.food+' kg, water '+e.water+
-         ' kg, oxygen '+e.oxygen+' kg.';
+         ' kg, oxygen '+e.oxygen+' kg. Autonomous policy '+e.policy+
+         ' · condition '+e.condition+'% · work cycles '+e.cycles+
+         ' · paused/stalled cycles '+e.stalled+' · extracted '+
+         e.extracted+' kg · repairs '+e.repairs+'.';
+     }
+     if(e.type==='PLANET_POLICY_COMMITTED'){
+       const names=['Paused','Farming','Water extraction','Nutrient extraction',
+                    'Maintenance'];
+       q('signatureFeedback').textContent=
+         'NPC planetary policy committed: '+names[e.policy]+
+         ' at body #'+e.id+' region ('+e.latitude+','+e.longitude+
+         '). Autonomous work now follows simulation ticks; generation '+
+         e.generation+'.';
      }
      if(e.type==='PLANET_OPERATION_COMMITTED'){
        q('signatureFeedback').textContent=
