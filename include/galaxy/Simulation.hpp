@@ -495,6 +495,24 @@ struct PlanetaryShuttleState {
     // aggregate construction and v80-v86 snapshot compatibility.
     std::int64_t nutrients_kg=0;
 };
+// PLAY-13D.4F: finite local work board at the player's existing colony ship.
+// One assigned real shuttle/NPC executes one site-to-orbit job at a time.
+// Contracts hold NO stock: actual inventories remain in Simulation.
+enum class LocalDeliveryStage : std::uint8_t {
+    Posted=0, Descending=1, Loading=2, Ascending=3,
+    Delivering=4, Complete=5, Cancelled=6
+};
+struct LocalDeliveryOrder {
+    std::uint64_t id=0;
+    PlayerId owner=0;
+    EntityId board_ship=0;
+    PlanetarySiteKey site{};
+    ShuttleCargo cargo=ShuttleCargo::Nutrients;
+    std::int64_t kilograms=0;
+    std::uint64_t assigned_pilot=0;
+    LocalDeliveryStage stage=LocalDeliveryStage::Posted;
+    std::uint64_t created_tick=0;
+};
 struct PhysicalOasisReserve {
     std::int64_t water_kg=0,nutrients_kg=0;
     std::int64_t initial_water_kg=0,initial_nutrients_kg=0;
@@ -1042,6 +1060,17 @@ public:
     // physical shuttle and canonical NPC roster. Not an inventory copy.
     std::optional<transport::Manifest> planetary_transport_manifest(
         const PlanetarySiteKey& key) const;
+    // Authoritative player-created local work board. The first executable
+    // route is one planetary site -> its existing orbiting colony ship.
+    // Other colonies require an actual onward ship/route; no teleport.
+    const std::map<std::uint64_t,LocalDeliveryOrder>& local_delivery_board() const noexcept {
+        return local_delivery_orders_;
+    }
+    bool post_local_delivery_order(PlayerId owner,EntityId board_ship,
+        const PlanetarySiteKey& site,ShuttleCargo cargo,
+        std::int64_t kilograms,std::uint64_t order_id);
+    bool cancel_local_delivery_order(PlayerId owner,std::uint64_t order_id);
+    void process_local_delivery_board();
     bool equip_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
         std::uint16_t latitude,std::uint16_t longitude,bool farm);
     // Ship and site remain in identical anchored celestial frame.
@@ -1138,6 +1167,7 @@ private:
     std::map<EntityId,OasisExtractor> oasis_extractors_;
     std::map<PlanetarySiteKey,PlanetarySiteFacility> planetary_sites_; // v76 real installed machinery
     std::map<PlanetarySiteKey,PlanetaryShuttleState> planetary_shuttles_; // v80
+    std::map<std::uint64_t,LocalDeliveryOrder> local_delivery_orders_; // v88
     std::set<std::uint64_t> shuttle_flight_request_ids_; // v81 replay rejection
     std::map<std::uint64_t,PendingCelestialTransit> pending_celestial_transits_;
     std::map<std::uint64_t,CompletedCelestialTransit> completed_celestial_transits_;
