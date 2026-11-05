@@ -1320,6 +1320,12 @@ endif()
 
 # PLAY-13D.3 source-backed planetary site construction/farm/extraction persistence.
 if(BUILD_TESTING)
+  # Shared identity/arrival evidence for ferry and planetary shuttle adapters.
+  add_executable(galaxy_play13d_shared_transport_tests
+    tests/PLAY13D_SharedTransportIdentityTests.cpp)
+  target_link_libraries(galaxy_play13d_shared_transport_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_shared_transport
+    COMMAND galaxy_play13d_shared_transport_tests)
   # PLAY-13D.4C.9B: verify a proposed canonical migration transition.
   add_executable(galaxy_play13d_settlement_transition_tests
     tests/PLAY13D_PlanetarySettlementTransitionTests.cpp)
