@@ -74,7 +74,8 @@
        food=numeric(v[11],1000000),water=numeric(v[12],1000000),
        oxygen=numeric(v[13],1000000),npc1=numeric(v[14],Number.MAX_SAFE_INTEGER),
        npc2=numeric(v[15],Number.MAX_SAFE_INTEGER);
-      if(!id || phase<1 || required!==240 || workers!==2 ||
+      if(!id || phase<1 || required!==240 ||
+         (workers!==2 && !(workers===0 && phase===3 && npc1===0 && npc2===0)) ||
           (npc1===npc2 && npc1!==0) ||
           (phase===3 && progress!==240))
         throw Error('Invalid surface spaceport status');
