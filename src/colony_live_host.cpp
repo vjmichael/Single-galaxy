@@ -564,6 +564,66 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
         }
         return;
     }
+    // The owner's LOCAL work board: player posts a finite pickup contract;
+    // the named NPC pilot then fulfills it via existing physical shuttle
+    // flights and stock transfers on committed simulation ticks.
+    if(!v.empty() && (v[0]=="LOCAL_WORK_POST" ||
+                       v[0]=="LOCAL_WORK_CANCEL" ||
+                       v[0]=="LOCAL_WORK_STATUS")) {
+        try {
+            if(v[0]=="LOCAL_WORK_STATUS" && v.size()==1) {
+                std::uint64_t count=0;
+                for(const auto& [id,job]:world.world().local_delivery_board()) {
+                    if(job.owner!=principal || job.board_ship!=ship)continue;
+                    if(count>=64)break; // bounded display, not a second ledger
+                    const auto kind=job.cargo==ShuttleCargo::Water?"WATER":
+                                    job.cargo==ShuttleCargo::Food?"FOOD":"NUTRIENTS";
+                    announce(world.world(),"LOCAL_WORK_ITEM|"+std::to_string(id)+"|"+
+                        std::to_string(std::get<0>(job.site))+"|"+
+                        std::to_string(std::get<1>(job.site))+"|"+
+                        std::to_string(std::get<2>(job.site))+"|"+kind+"|"+
+                        std::to_string(job.kilograms)+"|"+
+                        std::to_string(unsigned(job.stage))+"|"+
+                        std::to_string(job.assigned_pilot));
+                    ++count;
+                }
+                announce(world.world(),"LOCAL_WORK_DONE|"+std::to_string(count));
+            }else if(v[0]=="LOCAL_WORK_POST" && v.size()==7) {
+                const auto body=integer(v[1]),lat=integer(v[2]),lon=integer(v[3]);
+                const auto kg=integer(v[5]),id=integer(v[6]);
+                if(body<=0 || lat<0 || lat>=36 || lon<0 || lon>=72 ||
+                   kg<=0 || kg>1000 || id<=0 ||
+                   id>=(std::int64_t{1}<<61)-1)
+                    throw std::invalid_argument("invalid local transport contract");
+                ShuttleCargo cargo{};
+                if(v[4]=="WATER")cargo=ShuttleCargo::Water;
+                else if(v[4]=="FOOD")cargo=ShuttleCargo::Food;
+                else if(v[4]=="NUTRIENTS")cargo=ShuttleCargo::Nutrients;
+                else throw std::invalid_argument("unsupported contract resource");
+                if(!world.post_local_delivery_order(principal,ship,
+                    PlanetarySiteKey{std::uint64_t(body),std::uint16_t(lat),
+                                     std::uint16_t(lon),1},
+                    cargo,kg,std::uint64_t(id))) {
+                    announce(world.world(),"ERROR|LOCAL_WORK_DENIED");
+                    return;
+                }
+                announce(world.world(),"LOCAL_WORK_POSTED|"+std::to_string(id)+"|"+
+                         std::to_string(world.generation()));
+            }else if(v[0]=="LOCAL_WORK_CANCEL" && v.size()==2) {
+                const auto id=integer(v[1]);
+                if(id<=0 || !world.cancel_local_delivery_order(
+                    principal,std::uint64_t(id))) {
+                    announce(world.world(),"ERROR|LOCAL_WORK_DENIED");
+                    return;
+                }
+                announce(world.world(),"LOCAL_WORK_CANCELLED|"+std::to_string(id)+"|"+
+                         std::to_string(world.generation()));
+            }else throw std::invalid_argument("bad local transport command");
+        }catch(const std::exception&){
+            announce(world.world(),"ERROR|LOCAL_WORK_DENIED");
+        }
+        return;
+    }
     // PLAY-13D.4C.4: authenticated, owner-scoped native orbital shuttle
     // commands. The relay supplies strictly typed fields; native validates again.
     if(!v.empty() && v[0]=="PLANET_SHUTTLE") {
