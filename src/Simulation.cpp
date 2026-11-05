@@ -5568,7 +5568,12 @@ bool Simulation::transfer_planetary_shuttle_visitor(PlayerId owner,EntityId ship
     auto& visitors=sh->second.disembarked_ids;
     if(reboard) {
         auto at=std::lower_bound(visitors.begin(),visitors.end(),npc);
-        if(!npc_transport_arrival(sh->second.descent_receipt,npc) ||
+        const auto individual=sh->second.visitor_arrival_receipts.find(npc);
+        // Pre-v85 visitors have no individual receipt; retain their physical
+        // return-pickup capability, but do not grant immigration proof.
+        const bool legacy_visitor=individual==sh->second.visitor_arrival_receipts.end();
+        if((!legacy_visitor &&
+            !npc_transport_arrival(individual->second,npc)) ||
            at==visitors.end() || *at!=npc || aboard.size()>=3 ||
            std::binary_search(aboard.begin(),aboard.end(),npc))
             return false;
