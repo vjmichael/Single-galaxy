@@ -281,7 +281,7 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(w.world().canonical_state()==before_policy);
         CHECK(w.set_planetary_workforce_policy(7,chosen.body,
             chosen.latitude,chosen.longitude,policy));
-        CHECK(w.world().canonical_state().rfind("galaxy-kernel-v79|",0)==0);
+        CHECK(w.world().canonical_state().rfind("galaxy-kernel-v81|",0)==0);
         CHECK(Simulation::from_snapshot(w.world().canonical_state())
               .planetary_sites().at(key).workforce_policy==policy);
         const auto before_site=w.world().planetary_sites().at(key);
