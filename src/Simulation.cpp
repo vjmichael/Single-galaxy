@@ -5443,7 +5443,7 @@ std::optional<transport::Manifest> Simulation::planetary_transport_manifest(
     const transport::Endpoint ground{transport::LocationKind::PlanetarySite,
                                       site->second.surface_location};
     transport::Manifest manifest{};
-    manifest.vehicle=vessel.source_ship; // existing owner ship / shuttle adapter
+    manifest.vehicle=shuttle_transit_custody_id(key); // stable per physical shuttle
     manifest.owner=vessel.owner;
     manifest.mode=transport::Mode::PlanetaryShuttle;
     manifest.berth=returning?ground:orbit;
