@@ -551,6 +551,59 @@ static void scenario(const fs::path& db, bool farming){
         durable=w.world().canonical_state();
         CHECK(durable.rfind("galaxy-kernel-v81|",0)==0);
         CHECK(Simulation::from_snapshot(durable).canonical_state()==durable);
+        if(!farming) {
+            // Actual player-ordered planetary output recovery. The ship has
+            // already left this body: loading there must fail before the
+            // player returns, and nutrient stock cannot teleport to orbit.
+            CHECK(!w.load_planetary_shuttle(7,ship,key,
+                ShuttleCargo::Nutrients,500));
+            CHECK(w.begin_celestial_transit(7,ship,chosen.body,90003));
+            w.steps(4);
+            CHECK(w.complete_celestial_transit(90003));
+            CHECK(w.extract_planetary_site(7,ship,chosen.body,
+                chosen.latitude,chosen.longitude,false,1000));
+            CHECK(w.world().oasis_reserves().at(chosen.body).nutrients_kg==3000);
+            const auto site_before=w.world().planetary_sites().at(key).nutrients_kg;
+            const auto ship_before=w.world().life_support(ship)->nutrients_kg;
+            CHECK(!w.load_planetary_shuttle(8,ship,key,
+                ShuttleCargo::Nutrients,500));
+            CHECK(!w.load_planetary_shuttle(7,ship,key,
+                ShuttleCargo::Nutrients,500)); // still docked in orbit
+            CHECK(w.launch_planetary_shuttle(7,ship,key,81006,false));
+            w.steps(3);
+            CHECK(w.world().planetary_shuttles().at(key).flight_phase==2);
+            const auto before_failed_load=w.world().canonical_state();
+            bool nutrient_failed=false;
+            try {(void)w.load_planetary_shuttle(7,ship,key,
+                ShuttleCargo::Nutrients,500,FailPoint::AfterSnapshotWrite);}
+            catch(const std::exception&){nutrient_failed=true;}
+            CHECK(nutrient_failed && w.world().canonical_state()==before_failed_load);
+            CHECK(w.load_planetary_shuttle(7,ship,key,
+                ShuttleCargo::Nutrients,500));
+            CHECK(w.world().planetary_sites().at(key).nutrients_kg==site_before-500);
+            CHECK(w.world().planetary_shuttles().at(key).nutrients_kg==500);
+            CHECK(!w.load_planetary_shuttle(7,ship,key,
+                ShuttleCargo::Nutrients,1000));
+            CHECK(w.world().canonical_state().rfind("galaxy-kernel-v87|",0)==0);
+            CHECK(Simulation::from_snapshot(w.world().canonical_state())
+                  .planetary_shuttles().at(key).nutrients_kg==500);
+            CHECK(!w.unload_planetary_shuttle(7,ship,key,
+                ShuttleCargo::Nutrients,501));
+            CHECK(w.launch_planetary_shuttle(7,ship,key,81007,true));
+            CHECK(!w.unload_planetary_shuttle(7,ship,key,
+                ShuttleCargo::Nutrients,500)); // no unloading in transit
+            w.steps(3);
+            CHECK(w.world().planetary_shuttles().at(key).flight_phase==0);
+            CHECK(w.unload_planetary_shuttle(7,ship,key,
+                ShuttleCargo::Nutrients,500));
+            CHECK(w.world().life_support(ship)->nutrients_kg==ship_before+500);
+            CHECK(w.world().planetary_shuttles().at(key).nutrients_kg==0);
+            CHECK(w.world().planetary_sites().at(key).nutrients_kg==site_before-500);
+            CHECK(w.world().total_ore()==origin);
+            durable=w.world().canonical_state();
+            CHECK(durable.rfind("galaxy-kernel-v87|",0)==0);
+            CHECK(Simulation::from_snapshot(durable).canonical_state()==durable);
+        }
     }
     {
         PersistentWorld w(db.string(),Simulation(2));
@@ -574,6 +627,12 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(w.world().planetary_sites().at(
             PlanetarySiteKey{chosen.body,chosen.latitude,chosen.longitude,1})
               .delegated_npcs[0]==first_npc);
+        if(!farming) {
+            CHECK(w.world().planetary_shuttles().at(
+                PlanetarySiteKey{chosen.body,chosen.latitude,chosen.longitude,1})
+                .nutrients_kg==0);
+            CHECK(w.world().oasis_reserves().at(chosen.body).nutrients_kg==3000);
+        }
     }
 }
 int main(){
