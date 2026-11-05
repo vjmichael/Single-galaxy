@@ -61,16 +61,16 @@ test('orbit-only NPC roster and spaceport construction status decode',()=>{
   const crew=decode('COLONY|1|13|PLANET_CREW_AVAILABLE|42');
   assert.equal(crew.id,42);
   assert.equal(decode('COLONY|1|13|PLANET_CREW_DONE').type,'PLANET_CREW_DONE');
-  const status=decode('COLONY|1|13|PLANET_SITE_STATUS|4294967300|17|36|2|19|240|2|35|28|26|42|43');
+  const status=decode('COLONY|1|13|PLANET_SITE_STATUS|4294967300|17|36|2|19|240|2|35|28|26|42|43|0|100|0|0|0|0');
   assert.equal(status.phase,2);
   assert.equal(status.progress,19);
   assert.equal(status.required,240);
   assert.equal(status.npc1,42);
   assert.equal(status.npc2,43);
   for(const bad of [
-    'COLONY|1|13|PLANET_SITE_STATUS|4294967300|17|36|4|19|240|2|35|28|26|42|43',
-    'COLONY|1|13|PLANET_SITE_STATUS|4294967300|17|36|3|19|240|2|35|28|26|42|43',
-    'COLONY|1|13|PLANET_SITE_STATUS|4294967300|17|36|2|19|240|2|35|28|26|42|42',
+    'COLONY|1|13|PLANET_SITE_STATUS|4294967300|17|36|4|19|240|2|35|28|26|42|43|0|100|0|0|0|0',
+    'COLONY|1|13|PLANET_SITE_STATUS|4294967300|17|36|3|19|240|2|35|28|26|42|43|0|100|0|0|0|0',
+    'COLONY|1|13|PLANET_SITE_STATUS|4294967300|17|36|2|19|240|2|35|28|26|42|42|0|100|0|0|0|0',
     'COLONY|1|13|PLANET_SITE_STATUS|4294967300|17|36|2|19|240|2|35|28|26|42',
     'COLONY|1|13|PLANET_CREW_AVAILABLE|0'
   ]) assert.throws(()=>decode(bad),Error,bad);
@@ -85,4 +85,24 @@ test('surface construction controls remain native and have no surface viewer',()
   assert.match(relay,/secondNpc/);
   assert.match(relay,/PLANET_SITE_STATUS/);
   assert.match(relay,/PLANET_SUPPORT/);
+});
+
+test('owner-scoped planetary NPC policies and work telemetry are validated',()=>{
+  const receipt=decode('COLONY|1|10|PLANET_POLICY_COMMITTED|4294967300|17|36|2|44');
+  assert.equal(receipt.policy,2);
+  const report=decode('COLONY|1|12|PLANET_SITE_STATUS|4294967300|17|36|3|240|240|2|77|85|67|42|43|2|99|5|1|5000|0');
+  assert.equal(report.policy,2);
+  assert.equal(report.cycles,5);
+  assert.equal(report.extracted,5000);
+  assert.equal(report.condition,99);
+  for(const raw of [
+    'COLONY|1|10|PLANET_POLICY_COMMITTED|4294967300|17|36|5|44',
+    'COLONY|1|10|PLANET_POLICY_COMMITTED|4294967300|17|36|2|0',
+    'COLONY|1|12|PLANET_SITE_STATUS|4294967300|17|36|3|240|240|2|77|85|67|42|43|5|99|5|1|5000|0',
+    'COLONY|1|12|PLANET_SITE_STATUS|4294967300|17|36|3|240|240|2|77|85|67|42|43|2|101|5|1|5000|0',
+    'COLONY|1|12|PLANET_SITE_STATUS|4294967300|17|36|3|240|240|2|77|85|67|42|43|2|99|5|1|5000'
+  ])assert.throws(()=>decode(raw),Error,raw);
+  const relay=fs.readFileSync(path.join(root,'live/interactive_relay.py'),'utf8');
+  assert.match(relay,/action=='colonyPlanetPolicy'/);
+  assert.match(relay,/PLANET_POLICY/);
 });
