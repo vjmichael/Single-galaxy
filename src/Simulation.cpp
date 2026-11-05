@@ -967,6 +967,25 @@ bool Simulation::npc_available_for_duty(std::uint64_t npc_id) const {
            status==NpcHealthStatus::Recovered;
 }
 
+NpcResidenceAudit Simulation::assess_npc_residence() const {
+    NpcResidenceAudit view{};
+    for(const auto& [id,n]:npcs_) {
+        (void)id;
+        const auto address=n.legal_residence();
+        if(!address.id || !n.location ||
+           view.total_living==std::numeric_limits<std::uint64_t>::max()) {
+            view.reconciled=false;
+            continue;
+        }
+        ++view.living_by_residence[address];
+        ++view.physically_present[n.location];
+        ++view.total_living;
+    }
+    if(view.total_living!=npcs_.size())
+        view.reconciled=false;
+    return view;
+}
+
 ColonyMedicalAudit Simulation::assess_medical_population() const {
     ColonyMedicalAudit a;std::map<std::pair<EntityId,int>,std::int64_t> counted;
     for(const auto& [id,n]:npcs_){
