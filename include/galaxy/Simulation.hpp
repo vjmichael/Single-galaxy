@@ -3,6 +3,7 @@
 #include "galaxy/Inventory.hpp"
 #include "galaxy/Astronomy.hpp"
 #include "galaxy/PlanetaryGeography.hpp"
+#include "galaxy/NpcTransport.hpp"
 #include <array>
 #include <cstdint>
 #include <limits>
@@ -759,6 +760,10 @@ public:
     // their original behavior unless an explicit journaled migration is built.
     void enable_medical_workforce_rules();
     NpcCustodyView npc_custody(std::uint64_t npc_id) const;
+    // Read-only proof resolved from canonical ferry/shuttle vehicle state.
+    // The caller never constructs its own authoritative arrival evidence.
+    std::optional<transport::NpcTransport> npc_transport_arrival(
+        std::uint64_t receipt,std::uint64_t npc) const;
     std::size_t passengers_aboard(EntityId ship) const;
     // Physical compartment occupancy, including native crew and real travelers.
     // Required by v57; no double-charge for crew who boarded another ship.
