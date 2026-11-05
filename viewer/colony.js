@@ -93,23 +93,24 @@
         water,food,arrival,request,descent,ascent,generation};
     }
     if(t==='PLANET_SHUTTLE_PASSENGER'||t==='PLANET_SHUTTLE_MANIFEST_DONE'||
-       t==='PLANET_SHUTTLE_VISITOR'||t==='PLANET_SHUTTLE_VISITORS_DONE'){
+       t==='PLANET_SHUTTLE_VISITOR'||t==='PLANET_SHUTTLE_VISITORS_DONE'||
+       t==='PLANET_SHUTTLE_WORKER'||t==='PLANET_SHUTTLE_WORKERS_DONE'){
       if(v.length!==8)throw Error('Malformed shuttle passenger manifest');
       const id=numeric(v[4],Number.MAX_SAFE_INTEGER),
        latitude=numeric(v[5],35),longitude=numeric(v[6],71),
-       value=numeric(v[7],(t==='PLANET_SHUTTLE_PASSENGER'||t==='PLANET_SHUTTLE_VISITOR')?
-         Number.MAX_SAFE_INTEGER:(t==='PLANET_SHUTTLE_VISITOR' ? 64 : 64));
-      if(!id||((t==='PLANET_SHUTTLE_PASSENGER'||t==='PLANET_SHUTTLE_VISITOR')&&!value))
+       value=numeric(v[7],(t==='PLANET_SHUTTLE_PASSENGER'||t==='PLANET_SHUTTLE_VISITOR'||t==='PLANET_SHUTTLE_WORKER')?
+         Number.MAX_SAFE_INTEGER:64);
+      if(!id||((t==='PLANET_SHUTTLE_PASSENGER'||t==='PLANET_SHUTTLE_VISITOR'||t==='PLANET_SHUTTLE_WORKER')&&!value))
         throw Error('Invalid named shuttle passenger manifest');
       return {...e,id,latitude,longitude,
-        ...((t==='PLANET_SHUTTLE_PASSENGER'||t==='PLANET_SHUTTLE_VISITOR')?{npc:value}:{count:value})};
+        ...((t==='PLANET_SHUTTLE_PASSENGER'||t==='PLANET_SHUTTLE_VISITOR'||t==='PLANET_SHUTTLE_WORKER')?{npc:value}:{count:value})};
     }
     if(t==='PLANET_SHUTTLE_COMMITTED'){
       if(v.length!==9)throw Error('Malformed shuttle commit');
       const id=numeric(v[4],Number.MAX_SAFE_INTEGER),latitude=numeric(v[5],35),
        longitude=numeric(v[6],71),operation=v[7],
        generation=numeric(v[8],Number.MAX_SAFE_INTEGER);
-      if(!id||!generation||!new Set(['BUILD','PILOT','BOARD','RELEASE','DISEMBARK','REBOARD','LOAD','UNLOAD','DESCEND','ASCEND']).has(operation))
+      if(!id||!generation||!new Set(['BUILD','PILOT','BOARD','RELEASE','DISEMBARK','REBOARD','DUTY_ON','DUTY_OFF','LOAD','UNLOAD','DESCEND','ASCEND']).has(operation))
         throw Error('Invalid shuttle operation receipt');
       return {...e,id,latitude,longitude,operation,generation};
     }
@@ -740,6 +741,8 @@
              ['Release booked passenger','RELEASE'],
              ['Disembark visiting NPC','DISEMBARK'],
              ['Reboard surface visitor','REBOARD'],
+             ['Assign temporary surface duty','DUTY_ON'],
+             ['Release temporary surface duty','DUTY_OFF'],
              ['Load supplies','LOAD'],
              ['Unload at current berth','UNLOAD'],['Descend to surface','DESCEND'],
              ['Return to orbit','ASCEND']
@@ -764,7 +767,7 @@
                 !Number.isSafeInteger(lon)||lon<0||lon>=72)return;
              const operation=shuttleChoice.value;
              const payload={body:body.id,latitude:lat,longitude:lon,operation};
-             if(operation==='PILOT'||operation==='BOARD'||operation==='RELEASE'||operation==='DISEMBARK'||operation==='REBOARD'){
+             if(operation==='PILOT'||operation==='BOARD'||operation==='RELEASE'||operation==='DISEMBARK'||operation==='REBOARD'||operation==='DUTY_ON'||operation==='DUTY_OFF'){
                const npc=Number(shuttleNpc.value);
                if(!Number.isSafeInteger(npc)||npc<=0)return;
                payload.npc=npc;
@@ -807,12 +810,13 @@
        window.GalaxyAvailableSurfaceNpcIds=[];
      }
      if(e.type==='PLANET_SHUTTLE_PASSENGER'||e.type==='PLANET_SHUTTLE_MANIFEST_DONE'||
-        e.type==='PLANET_SHUTTLE_VISITOR'||e.type==='PLANET_SHUTTLE_VISITORS_DONE'){
+        e.type==='PLANET_SHUTTLE_VISITOR'||e.type==='PLANET_SHUTTLE_VISITORS_DONE'||
+        e.type==='PLANET_SHUTTLE_WORKER'||e.type==='PLANET_SHUTTLE_WORKERS_DONE'){
        const cards=q('celestialBodyList').querySelectorAll('[data-shuttle-body]');
        cards.forEach(panel=>{
          if(panel.dataset.shuttleBody!==String(e.id)||
             panel.dataset.shuttleRegion!==e.latitude+','+e.longitude)return;
-         if(e.type==='PLANET_SHUTTLE_PASSENGER'||e.type==='PLANET_SHUTTLE_VISITOR'){
+         if(e.type==='PLANET_SHUTTLE_PASSENGER'||e.type==='PLANET_SHUTTLE_VISITOR'||e.type==='PLANET_SHUTTLE_WORKER'){
            const current=panel.dataset.shuttlePassengers?
              panel.dataset.shuttlePassengers.split(','):[];
            current.push(String(e.npc));
