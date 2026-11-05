@@ -8720,6 +8720,23 @@ bool PersistentWorld::complete_celestial_transit(std::uint64_t id,FailPoint fail
     ++generation_;
     return true;
 }
+bool PersistentWorld::assign_planetary_shuttle_visitor_duty(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc,bool assign,FailPoint fail) {
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.assign_planetary_shuttle_visitor_duty(owner,ship,key,npc,assign))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("visitor duty assignment changed conserved matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
 bool PersistentWorld::transfer_planetary_shuttle_visitor(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,std::uint64_t npc,bool reboard,FailPoint fail) {
     for(const auto& [id,p]:world_.pending_celestial_transits_) {
