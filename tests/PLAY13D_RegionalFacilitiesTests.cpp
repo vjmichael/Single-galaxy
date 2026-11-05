@@ -790,6 +790,19 @@ static void scenario(const fs::path& db, bool farming){
             const auto aboard=w.world().canonical_state();
             CHECK(aboard.rfind("galaxy-kernel-v89|",0)==0);
             CHECK(Simulation::from_snapshot(aboard).canonical_state()==aboard);
+            // A snapshot with sealed physical cargo but no matching order
+            // is rejected; nobody can resurrect phantom freight by deleting
+            // the delivery manifest while leaving its kg in the hold.
+            auto orphan=aboard;
+            const auto row=orphan.find("interfreight|77003|");
+            CHECK(row!=std::string::npos);
+            const auto row_end=orphan.find('\n',row);
+            CHECK(row_end!=std::string::npos);
+            orphan.erase(row,row_end-row+1);
+            bool rejected_orphan=false;
+            try{(void)Simulation::from_snapshot(orphan);}
+            catch(const std::exception&){rejected_orphan=true;}
+            CHECK(rejected_orphan);
             CHECK(w.begin_celestial_transit(7,freighter,receiver_body,99021));
             CHECK(!w.deliver_intercolony_freight(7,77003)); // in flight
             w.steps(4);
