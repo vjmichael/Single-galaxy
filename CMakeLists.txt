@@ -1326,6 +1326,12 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_play13d_ship_control_tests PRIVATE galaxy_kernel)
   add_test(NAME galaxy_play13d_ship_control
     COMMAND galaxy_play13d_ship_control_tests)
+  # A single transport-mode-independent NPC migration admission policy.
+  add_executable(galaxy_play13d_universal_migration_tests
+    tests/PLAY13D_UniversalNpcMigrationTests.cpp)
+  target_link_libraries(galaxy_play13d_universal_migration_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_universal_migration
+    COMMAND galaxy_play13d_universal_migration_tests)
   # Shared identity/arrival evidence for ferry and planetary shuttle adapters.
   add_executable(galaxy_play13d_shared_transport_tests
     tests/PLAY13D_SharedTransportIdentityTests.cpp)
