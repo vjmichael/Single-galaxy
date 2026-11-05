@@ -9240,6 +9240,40 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 throw std::runtime_error("snapshot: survey probe has no valid physical carrier");
         }
     }
+    if(result.snapshot_version_>=86) {
+        const auto legal_address_is_registered=[&](const NpcRecord& n) {
+            const auto residence=n.legal_residence();
+            if(!residence.id)return false;
+            switch(residence.kind) {
+                case transport::LocationKind::ColonyShip:
+                    return residence.id==n.home_ship &&
+                           result.colony_ships_.count(residence.id)!=0;
+                case transport::LocationKind::SpaceColony:
+                    return result.built_outposts_.count(residence.id)!=0 &&
+                           result.habitats_.count(residence.id)!=0;
+                case transport::LocationKind::PlanetarySite:
+                    for(const auto& [key,site]:result.planetary_sites_) {
+                        (void)key;
+                        if(site.surface_location==residence.id &&
+                           site.spaceport_phase==3)return true;
+                    }
+                    return false;
+                case transport::LocationKind::OtherNpcLocation:
+                    return false; // no registered housing authority yet
+            }
+            return false;
+        };
+        for(const auto& [id,n]:result.npcs_) {
+            (void)id;
+            if(!legal_address_is_registered(n))
+                throw std::runtime_error("snapshot: orphaned NPC legal residence");
+        }
+        for(const auto& [id,d]:result.casualties_) {
+            (void)id;
+            if(!legal_address_is_registered(d.identity))
+                throw std::runtime_error("snapshot: orphaned deceased legal residence");
+        }
+    }
     if (result.canonical_state() != bytes)
         throw std::runtime_error("snapshot: noncanonical or out-of-order records");
     return result;
