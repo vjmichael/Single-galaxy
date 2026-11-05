@@ -5470,6 +5470,12 @@ bool Simulation::cancel_local_delivery_order(PlayerId owner,std::uint64_t order_
     // Once a real flight begins, cargo and pilot remain physically in the
     // shuttle. An in-flight contract cannot erase or teleport either.
     it->second.stage=LocalDeliveryStage::Cancelled;
+    // Cancellation of an unstarted pickup releases only its *plan*. It
+    // never removes material that has already entered a physical carrier.
+    const auto leg=intercolony_freight_.find(order_id);
+    if(leg!=intercolony_freight_.end() &&
+       leg->second.stage==IntercolonyFreightStage::AwaitingPickup)
+        intercolony_freight_.erase(leg);
     return true;
 }
 void Simulation::process_local_delivery_board() {
@@ -5568,6 +5574,15 @@ void Simulation::process_local_delivery_board() {
             break;
         }
     }
+    // Same committed simulation tick: only after the planetary shuttle has
+    // actually unloaded may a planned second-leg carrier claim real stock.
+    // A missing carrier, pilot, berth or source inventory leaves the order
+    // awaiting pickup rather than fabricating or teleporting a shipment.
+    if(snapshot_version_>=89)
+        for(auto& [id,leg]:intercolony_freight_)
+            if(leg.stage==IntercolonyFreightStage::AwaitingPickup)
+                (void)load_intercolony_freight(
+                    leg.owner,id,leg.carrier_ship,leg.destination_ship);
 }
 
 namespace {
@@ -5599,14 +5614,62 @@ bool freight_berth(const Entity& a,const Entity& b) {
            dx*dx+dy*dy<=limit*limit;
 }
 }
+bool Simulation::plan_intercolony_freight(PlayerId owner,
+        std::uint64_t local_order_id,EntityId carrier,EntityId destination) {
+    const auto job=local_delivery_orders_.find(local_order_id);
+    if(!owner || owner==kServerAuthority || job==local_delivery_orders_.end() ||
+       job->second.owner!=owner ||
+       job->second.stage==LocalDeliveryStage::Cancelled ||
+       !carrier || !destination || carrier==destination ||
+       carrier==job->second.board_ship || destination==job->second.board_ship ||
+       intercolony_freight_.count(local_order_id) ||
+       intercolony_freight_.size()>=10000)return false;
+    const auto origin=job->second.board_ship;
+    const auto a=entities_.find(origin),b=entities_.find(carrier),
+               c=entities_.find(destination);
+    const auto af=ship_frames_.find(origin),cf=ship_frames_.find(destination);
+    if(a==entities_.end() || b==entities_.end() || c==entities_.end() ||
+       a->second.type!=EntityType::Ship ||
+       b->second.type!=EntityType::Ship ||
+       c->second.type!=EntityType::Ship ||
+       a->second.owner_id!=owner || b->second.owner_id!=owner ||
+       c->second.owner_id!=owner || !colony_ships_.count(origin) ||
+       !colony_ships_.count(carrier) || !colony_ships_.count(destination) ||
+       !life_support_.count(origin) || !life_support_.count(carrier) ||
+       !life_support_.count(destination) ||
+       !colony_ships_.at(carrier).crew ||
+       !b->second.fitting.exploration_scanner() ||
+       (snapshot_version_>=20 && people_physically_aboard(carrier)==0) ||
+       af==ship_frames_.end() || cf==ship_frames_.end() ||
+       af->second.anchor_body!=std::get<0>(job->second.site) ||
+       !cf->second.anchor_body ||
+       af->second.anchor_body==cf->second.anchor_body ||
+       af->second.system!=cf->second.system)return false;
+    for(const auto& [id,other]:intercolony_freight_)
+        if(other.carrier_ship==carrier &&
+           other.stage!=IntercolonyFreightStage::Delivered)return false;
+    intercolony_freight_.emplace(local_order_id,IntercolonyFreightLeg{
+        local_order_id,owner,origin,carrier,destination,job->second.cargo,
+        job->second.kilograms,af->second.anchor_body,0,0,
+        IntercolonyFreightStage::AwaitingPickup});
+    snapshot_version_=std::max(snapshot_version_,89);
+    return true;
+}
 bool Simulation::load_intercolony_freight(PlayerId owner,
         std::uint64_t local_order_id,EntityId carrier,EntityId destination) {
     const auto job=local_delivery_orders_.find(local_order_id);
     if(!owner || owner==kServerAuthority || job==local_delivery_orders_.end() ||
        job->second.owner!=owner || job->second.stage!=LocalDeliveryStage::Complete ||
        !carrier || !destination || carrier==destination ||
-       carrier==job->second.board_ship || destination==job->second.board_ship ||
-       intercolony_freight_.count(local_order_id) ||
+       carrier==job->second.board_ship || destination==job->second.board_ship)
+        return false;
+    auto planned=intercolony_freight_.find(local_order_id);
+    if(planned!=intercolony_freight_.end() &&
+       (planned->second.stage!=IntercolonyFreightStage::AwaitingPickup ||
+        planned->second.owner!=owner ||
+        planned->second.carrier_ship!=carrier ||
+        planned->second.destination_ship!=destination))return false;
+    if(planned==intercolony_freight_.end() &&
        intercolony_freight_.size()>=10000)return false;
     const auto& pickup=job->second;
     const EntityId origin=pickup.board_ship;
@@ -5642,8 +5705,9 @@ bool Simulation::load_intercolony_freight(PlayerId owner,
         if(v.ferry==carrier && (v.status==1 || v.status==3))return false;
     }
     for(const auto& [id,other]:intercolony_freight_)
-        if(other.stage==IntercolonyFreightStage::Loaded &&
-           other.carrier_ship==carrier)return false; // one sealed lot per hull
+        if(id!=local_order_id &&
+           other.stage!=IntercolonyFreightStage::Delivered &&
+           other.carrier_ship==carrier)return false; // one claimed hull
     const char* code=sealed_freight_code(pickup.cargo);
     if(!code || pickup.kilograms<1 || pickup.kilograms>1000 ||
        supply_stack(from->second,pickup.cargo)<pickup.kilograms ||
@@ -5652,10 +5716,14 @@ bool Simulation::load_intercolony_freight(PlayerId owner,
     if(ship_inventory_snapshot(carrier).free_liters()<pickup.kilograms)return false;
     supply_stack(from->second,pickup.cargo)-=pickup.kilograms;
     freighter->second.goods_kg.emplace(code,pickup.kilograms);
-    intercolony_freight_.emplace(local_order_id,IntercolonyFreightLeg{
-        local_order_id,owner,origin,carrier,destination,
-        pickup.cargo,pickup.kilograms,af->second.anchor_body,tick_,0,
-        IntercolonyFreightStage::Loaded});
+    if(planned!=intercolony_freight_.end()) {
+        planned->second.loaded_tick=tick_;
+        planned->second.stage=IntercolonyFreightStage::Loaded;
+    }else
+        intercolony_freight_.emplace(local_order_id,IntercolonyFreightLeg{
+            local_order_id,owner,origin,carrier,destination,
+            pickup.cargo,pickup.kilograms,af->second.anchor_body,tick_,0,
+            IntercolonyFreightStage::Loaded});
     snapshot_version_=std::max(snapshot_version_,89);
     return true;
 }
@@ -7408,8 +7476,8 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                owner==kServerAuthority || !src || !carrier || !dst ||
                src==carrier || src==dst || carrier==dst || cargo>2 ||
                kg<1 || kg>1000 || !origin || loaded>result.tick_ ||
-               (stage!=1 && stage!=2) || (stage==1 && receipt) ||
-               (stage==2 && !receipt) ||
+               stage>2 || (stage==0 && (loaded || receipt)) ||
+               (stage==1 && receipt) || (stage==2 && !receipt) ||
                result.intercolony_freight_.size()>=10000 ||
                !result.intercolony_freight_.emplace(id,IntercolonyFreightLeg{
                    id,owner,src,carrier,dst,static_cast<ShuttleCargo>(cargo),
@@ -9737,7 +9805,9 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             if(order==result.local_delivery_orders_.end() ||
                order->second.owner!=leg.owner ||
                order->second.board_ship!=leg.source_ship ||
-               order->second.stage!=LocalDeliveryStage::Complete ||
+               (leg.stage==IntercolonyFreightStage::AwaitingPickup ?
+                    order->second.stage==LocalDeliveryStage::Cancelled :
+                    order->second.stage!=LocalDeliveryStage::Complete) ||
                order->second.kilograms!=leg.kilograms ||
                order->second.cargo!=leg.cargo ||
                origin==result.entities_.end() ||
@@ -9761,7 +9831,11 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             if(!code)throw std::runtime_error("snapshot: unknown sealed goods");
             const auto goods=result.colony_ships_.at(leg.carrier_ship).goods_kg;
             const auto found=goods.find(code);
-            if(leg.stage==IntercolonyFreightStage::Loaded) {
+            if(leg.stage==IntercolonyFreightStage::AwaitingPickup) {
+                if(!loaded_carriers.insert(leg.carrier_ship).second ||
+                   found!=goods.end())
+                    throw std::runtime_error("snapshot: planned carrier already holds freight");
+            }else if(leg.stage==IntercolonyFreightStage::Loaded) {
                 if(!loaded_carriers.insert(leg.carrier_ship).second ||
                    found==goods.end() || found->second!=leg.kilograms)
                     throw std::runtime_error("snapshot: physical freight missing or duplicate");
