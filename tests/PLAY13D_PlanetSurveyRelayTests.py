@@ -254,11 +254,14 @@ def main(executable,relay):
             ):
                 status,_=request(port,'POST','/command',payload)
                 assert status==400,(payload,status)
-            for action in ('colonyShipyardBuild','colonyShipyardStatus'):
+            for action in ('colonyShipyardBuild','colonyShipyardAssign',
+                           'colonyShipyardStatus'):
                 assert action in session['commands'],action
             yard={'token':token,'action':'colonyShipyardBuild',
                   'order':99001,'firstNpc':101,'secondNpc':102}
-            for payload in (yard,{'token':token,'action':'colonyShipyardStatus'}):
+            for payload in (yard,
+                            {**yard,'action':'colonyShipyardAssign'},
+                            {'token':token,'action':'colonyShipyardStatus'}):
                 status,_=request(port,'POST','/command',payload)
                 assert status==202,(payload,status)
                 status,_=request(port,'POST','/command',
