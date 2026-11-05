@@ -134,3 +134,18 @@ test('orbital shuttle telemetry, receipts and UI are bounded by native schema',(
   assert.match(relay,/PLANET_SHUTTLE/);
   assert.match(host,/launch_planetary_shuttle/);
 });
+
+test('PLAY-13D.4C.7 shuttle manifest carries finite named NPC IDs',()=>{
+  const named=decode('COLONY|1|14|PLANET_SHUTTLE_PASSENGER|4294967300|17|36|84');
+  assert.equal(named.npc,84);
+  const done=decode('COLONY|1|14|PLANET_SHUTTLE_MANIFEST_DONE|4294967300|17|36|1');
+  assert.equal(done.count,1);
+  assert.equal(decode('COLONY|1|14|PLANET_SHUTTLE_COMMITTED|4294967300|17|36|BOARD|33').operation,'BOARD');
+  assert.equal(decode('COLONY|1|14|PLANET_SHUTTLE_COMMITTED|4294967300|17|36|RELEASE|34').operation,'RELEASE');
+  for(const raw of [
+    'COLONY|1|14|PLANET_SHUTTLE_PASSENGER|4294967300|17|36|0',
+    'COLONY|1|14|PLANET_SHUTTLE_MANIFEST_DONE|4294967300|17|36|4',
+    'COLONY|1|14|PLANET_SHUTTLE_PASSENGER|4294967300|17|36',
+    'COLONY|1|14|PLANET_SHUTTLE_MANIFEST_DONE|4294967300|36|36|1'
+  ])assert.throws(()=>decode(raw),Error,raw);
+});
