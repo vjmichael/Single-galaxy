@@ -59,7 +59,23 @@ static void fabricate(PersistentWorld& w,EntityId ship) {
     apply(2009,Action::FabricateModule,2);
     CHECK(w.world().colony_ship(ship)->modules>=6);
 }
-static void scenario(const fs::path& db, bool farming){
+// SHIP-01C: each batch is a real asteroid -> refinery -> module transfer.
+static void fabricate_six_more_batches(PersistentWorld& w,EntityId ship,
+                                        EntityId asteroid) {
+    std::uint64_t id=2100;
+    auto work=[&](Action action,std::int64_t amount,EntityId target=0){
+        Command c{};c.id=++id;c.sequence=c.id;c.execute_tick=w.world().tick()+1;
+        c.issuer=7;c.actor=ship;c.action=action;c.amount=amount;c.target=target;
+        CHECK(w.submit(c));w.step();
+        CHECK(w.world().events().back().result==Outcome::Applied);
+    };
+    for(int i=0;i<6;++i) {
+        work(Action::Mine,4,asteroid);
+        work(Action::RefineOre,4);
+        work(Action::FabricateModule,2);
+    }
+}
+static void scenario(const fs::path& db, bool farming, bool manufactured=false){
     const auto chosen=select_site(farming);
     EntityId ship=0,freighter=0,receiver=0;
     std::uint64_t receiver_body=0;
@@ -68,19 +84,20 @@ static void scenario(const fs::path& db, bool farming){
     std::string durable;
     {
         Simulation seed(613,chosen.system);
-        ship=seed.add_colony_ship(7,{0,0},60,8);
+        ship=seed.add_colony_ship(7,{0,0},60,manufactured?10:8);
         seed.provision_colony_genesis(ship,2000,2000,2000,2000,2000);
-        // Keep the preexisting mineral target exactly ship+1, then add two
-        // real crewed hulls. The second hull is the intercolony carrier;
-        // the third is Colony B's physical receiving inventory.
-        seed.add_asteroid({2000,0},60);
-        freighter=seed.add_colony_ship(7,{0,0},60,3);
+        // Ordinary PLAY-13D tests retain the preexisting crewed carrier.
+        // SHIP-01C instead builds its one freighter from the initial asteroid.
+        seed.add_asteroid({2000,0},manufactured?120:60);
+        if(!manufactured)
+            freighter=seed.add_colony_ship(7,{0,0},60,3);
         receiver=seed.add_colony_ship(7,{0,0},60,3);
-        seed.provision_colony_genesis(freighter,1000,1000,1000,1000,1000);
+        if(!manufactured)
+            seed.provision_colony_genesis(freighter,1000,1000,1000,1000,1000);
         seed.provision_colony_genesis(receiver,1000,1000,1000,1000,1000);
         seed.enable_individual_workforce();
         seed.provision_starter_exploration_scanner(ship);
-        seed.provision_starter_exploration_scanner(freighter);
+        if(!manufactured)seed.provision_starter_exploration_scanner(freighter);
         seed.ensure_physical_celestial_systems();
         for(const auto& body:seed.physical_celestial_systems().at(chosen.system))
             if(body.id!=chosen.body &&
@@ -94,6 +111,46 @@ static void scenario(const fs::path& db, bool farming){
         origin=seed.total_ore();
         PersistentWorld w(db.string(),std::move(seed));
         fabricate(w,ship);
+        if(manufactured){
+            std::vector<std::uint64_t> people;
+            for(const auto& [id,n]:w.world().npc_records())
+                if(n.home_ship==ship && n.location==ship &&
+                   n.role==NpcRole::Ship)people.push_back(id);
+            CHECK(people.size()==10);
+            const std::array<std::uint64_t,2> builders{{people[0],people[1]}};
+            const std::array<std::uint64_t,2> operating{{people[2],people[3]}};
+            const auto initial_people=w.world().npc_records().size();
+            CHECK(w.start_shipyard_construction(7,ship,91001,builders));
+            w.steps(8);
+            CHECK(w.world().shipyard_constructions().at(91001).operational());
+            fabricate_six_more_batches(w,ship,ship+1);
+            CHECK(w.queue_shipyard_freighter(7,91001,92001));
+            CHECK(!w.queue_shipyard_freighter(7,91001,92002));
+            w.steps(12);
+            const auto& built=w.world().freighter_build_orders().at(92001);
+            CHECK(built.finished());
+            freighter=built.launched_ship;
+            CHECK(freighter && freighter!=ship && freighter!=receiver);
+            CHECK(w.world().find(freighter)->manufactured_order_id==92001);
+            CHECK(w.world().find(freighter)->cargo_capacity==100);
+            CHECK(!w.world().colony_ship(freighter));
+            CHECK(!w.world().find(freighter)->fitting.exploration_scanner());
+            CHECK(!w.begin_celestial_transit(7,freighter,chosen.body,92004));
+            CHECK(w.commission_shipyard_freighter(7,92001,operating,20));
+            CHECK(w.world().freighter_build_orders().at(92001).commissioned());
+            CHECK(w.world().colony_ship(freighter)->crew==2);
+            CHECK(w.world().life_support(freighter)->food_kg==20);
+            CHECK(w.world().life_support(freighter)->water_kg==20);
+            CHECK(w.world().life_support(freighter)->oxygen_kg==20);
+            CHECK(w.world().find(freighter)->fitting.exploration_scanner());
+            CHECK(w.world().npc_records().size()==initial_people);
+            CHECK(w.world().npc_records().at(operating[0]).home_ship==freighter);
+            CHECK(w.world().npc_records().at(operating[1]).home_ship==freighter);
+            CHECK(w.world().total_ore()==origin);
+            const auto commissioned=w.world().canonical_state();
+            CHECK(commissioned.rfind("galaxy-kernel-v92|",0)==0);
+            CHECK(Simulation::from_snapshot(commissioned).canonical_state()==commissioned);
+        }
         CHECK(w.begin_celestial_transit(7,ship,chosen.body,90001));
         w.steps(4);
         CHECK(w.complete_celestial_transit(90001));
@@ -160,11 +217,11 @@ static void scenario(const fs::path& db, bool farming){
               ==w.world().canonical_state());
         CHECK(w.equip_planetary_site(7,ship,chosen.body,chosen.latitude,chosen.longitude,farming));
         CHECK(!w.equip_planetary_site(7,ship,chosen.body,chosen.latitude,chosen.longitude,farming));
-        CHECK(w.world().colony_ship(ship)->modules==2);
+        CHECK(w.world().colony_ship(ship)->modules==(manufactured?3:2));
 
         // PLAY-13D.4C.2: the extra modules were fabricated before
         // departure, not mined from an asteroid in a different local frame.
-        CHECK(w.world().colony_ship(ship)->modules==2);
+        CHECK(w.world().colony_ship(ship)->modules==(manufactured?3:2));
         CHECK(!w.build_planetary_shuttle(8,ship,key));
         const auto shuttle_before=w.world().canonical_state();
         bool shuttle_failed=false;
@@ -174,7 +231,7 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(w.world().canonical_state()==shuttle_before);
         CHECK(w.build_planetary_shuttle(7,ship,key));
         CHECK(!w.build_planetary_shuttle(7,ship,key));
-        CHECK(w.world().colony_ship(ship)->modules==0);
+        CHECK(w.world().colony_ship(ship)->modules==(manufactured?1:0));
         CHECK(w.world().planetary_shuttles().at(key).dry_mass_ore==4);
         // PLAY-13D.4C.6: the standalone desktop client can issue typed native
         // commands without HTTP, relay JSON, or a second gameplay authority.
@@ -239,7 +296,7 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(w.unload_planetary_shuttle(7,ship,key,true,50));
         CHECK(w.world().planetary_shuttles().at(key).water_kg==150);
         CHECK(w.world().total_ore()==origin);
-        CHECK(w.world().canonical_state().rfind("galaxy-kernel-v80|",0)==0);
+        CHECK(w.world().canonical_state().rfind((manufactured?"galaxy-kernel-v92|":"galaxy-kernel-v80|"),0)==0);
         CHECK(Simulation::from_snapshot(w.world().canonical_state())
               .canonical_state()==w.world().canonical_state());
 
@@ -255,7 +312,7 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(!w.world().npc_available_for_duty(passenger));
         CHECK(w.world().planetary_shuttles().at(key).passenger_ids==
               std::vector<std::uint64_t>{passenger});
-        CHECK(w.world().canonical_state().rfind("galaxy-kernel-v82|",0)==0);
+        CHECK(w.world().canonical_state().rfind((manufactured?"galaxy-kernel-v92|":"galaxy-kernel-v82|"),0)==0);
         const auto booked=w.world().canonical_state();
         CHECK(Simulation::from_snapshot(booked).canonical_state()==booked);
         CHECK(w.book_planetary_shuttle_passenger(7,ship,key,passenger,false));
@@ -309,7 +366,7 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(!w.begin_celestial_transit(7,ship,chosen.body,81002));
         CHECK(w.world().total_ore()==origin);
         const auto in_flight=w.world().canonical_state();
-        CHECK(in_flight.rfind("galaxy-kernel-v82|",0)==0);
+        CHECK(in_flight.rfind((manufactured?"galaxy-kernel-v92|":"galaxy-kernel-v82|"),0)==0);
         CHECK(Simulation::from_snapshot(in_flight).canonical_state()==in_flight);
         w.steps(3);
         CHECK(w.world().planetary_shuttles().at(key).flight_phase==2);
@@ -331,7 +388,7 @@ static void scenario(const fs::path& db, bool farming){
               std::vector<std::uint64_t>{passenger});
         CHECK(w.world().npc_custody(passenger).physical_location==
               w.world().planetary_sites().at(key).surface_location);
-        CHECK(w.world().canonical_state().rfind("galaxy-kernel-v85|",0)==0);
+        CHECK(w.world().canonical_state().rfind((manufactured?"galaxy-kernel-v92|":"galaxy-kernel-v85|"),0)==0);
         CHECK(w.world().planetary_shuttles().at(key).visitor_arrival_receipts.at(passenger)==81001);
         const auto verified_arrival=w.world().npc_transport_arrival(81001,passenger);
         CHECK(verified_arrival && verified_arrival->mode()==transport::Mode::PlanetaryShuttle);
@@ -349,7 +406,7 @@ static void scenario(const fs::path& db, bool farming){
               expected_home);
         upgraded_residence.upgrade_legal_residence_snapshot_format();
         const auto v86_state=upgraded_residence.canonical_state();
-        CHECK(v86_state.rfind("galaxy-kernel-v86|",0)==0);
+        CHECK(v86_state.rfind((manufactured?"galaxy-kernel-v92|":"galaxy-kernel-v86|"),0)==0);
         CHECK(Simulation::from_snapshot(v86_state).canonical_state()==v86_state);
         CHECK(Simulation::from_snapshot(v86_state).npc_records().at(passenger)
               .legal_residence()==expected_home);
@@ -384,7 +441,7 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(!w.assign_planetary_shuttle_visitor_duty(7,ship,key,passenger,true));
         CHECK(w.world().planetary_shuttles().at(key).duty_ids==
               std::vector<std::uint64_t>{passenger});
-        CHECK(w.world().canonical_state().rfind("galaxy-kernel-v85|",0)==0);
+        CHECK(w.world().canonical_state().rfind((manufactured?"galaxy-kernel-v92|":"galaxy-kernel-v85|"),0)==0);
         const auto assigned=w.world().canonical_state();
         CHECK(Simulation::from_snapshot(assigned).canonical_state()==assigned);
         const auto failed_duty_before=w.world().canonical_state();
@@ -514,7 +571,7 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(w.world().canonical_state()==before_policy);
         CHECK(w.set_planetary_workforce_policy(7,chosen.body,
             chosen.latitude,chosen.longitude,policy));
-        CHECK(w.world().canonical_state().rfind("galaxy-kernel-v85|",0)==0);
+        CHECK(w.world().canonical_state().rfind((manufactured?"galaxy-kernel-v92|":"galaxy-kernel-v85|"),0)==0);
         CHECK(Simulation::from_snapshot(w.world().canonical_state())
               .planetary_sites().at(key).workforce_policy==policy);
         const auto before_site=w.world().planetary_sites().at(key);
@@ -586,7 +643,7 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(w.world().planetary_sites().size()==1);
         CHECK(w.world().total_ore()==origin);
         durable=w.world().canonical_state();
-        CHECK(durable.rfind("galaxy-kernel-v85|",0)==0);
+        CHECK(durable.rfind((manufactured?"galaxy-kernel-v92|":"galaxy-kernel-v85|"),0)==0);
         CHECK(Simulation::from_snapshot(durable).canonical_state()==durable);
         if(!farming) {
             // Actual player-ordered planetary output recovery. The ship has
@@ -647,7 +704,7 @@ static void scenario(const fs::path& db, bool farming){
             // other 500 kg plus remaining fuel/food exceed shuttle capacity.
             CHECK(!w.load_planetary_shuttle(7,ship,key,
                 ShuttleCargo::Nutrients,500));
-            CHECK(w.world().canonical_state().rfind("galaxy-kernel-v87|",0)==0);
+            CHECK(w.world().canonical_state().rfind((manufactured?"galaxy-kernel-v92|":"galaxy-kernel-v87|"),0)==0);
             CHECK(Simulation::from_snapshot(w.world().canonical_state())
                   .planetary_shuttles().at(key).nutrients_kg==500);
             CHECK(!w.unload_planetary_shuttle(7,ship,key,
@@ -703,7 +760,7 @@ static void scenario(const fs::path& db, bool farming){
                   LocalDeliveryStage::Posted);
             CHECK(w.world().local_delivery_board().at(77005).stage==
                   LocalDeliveryStage::Posted);
-            CHECK(w.world().canonical_state().rfind("galaxy-kernel-v88|",0)==0);
+            CHECK(w.world().canonical_state().rfind((manufactured?"galaxy-kernel-v92|":"galaxy-kernel-v88|"),0)==0);
             CHECK(Simulation::from_snapshot(w.world().canonical_state())
                   .canonical_state()==w.world().canonical_state());
             w.steps(3);
@@ -788,7 +845,7 @@ static void scenario(const fs::path& db, bool farming){
                   IntercolonyFreightStage::Loaded);
             CHECK(!w.deliver_intercolony_freight(7,77003)); // wrong frame
             const auto aboard=w.world().canonical_state();
-            CHECK(aboard.rfind("galaxy-kernel-v89|",0)==0);
+            CHECK(aboard.rfind((manufactured?"galaxy-kernel-v92|":"galaxy-kernel-v89|"),0)==0);
             CHECK(Simulation::from_snapshot(aboard).canonical_state()==aboard);
             // A snapshot with sealed physical cargo but no matching order
             // is rejected; nobody can resurrect phantom freight by deleting
@@ -865,7 +922,7 @@ static void scenario(const fs::path& db, bool farming){
             CHECK(w.world().life_support(receiver)->nutrients_kg==to_before+300);
             CHECK(w.world().total_ore()==origin);
             durable=w.world().canonical_state();
-            CHECK(durable.rfind("galaxy-kernel-v89|",0)==0);
+            CHECK(durable.rfind((manufactured?"galaxy-kernel-v92|":"galaxy-kernel-v89|"),0)==0);
             CHECK(Simulation::from_snapshot(durable).canonical_state()==durable);
         }
     }
@@ -926,6 +983,7 @@ int main(){
         fs::create_directories(dir);
         scenario(dir/"farm.sqlite",true);
         scenario(dir/"extract.sqlite",false);
+        scenario(dir/"manufactured-freight.sqlite",false,true);
         fs::remove_all(dir);
         std::cout<<"PASS PLAY13D3 regional farm and finite extraction, physical custody, mass, rollback, SQLite restart\n";
     }catch(const std::exception& e){
