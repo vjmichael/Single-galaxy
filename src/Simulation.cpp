@@ -5430,6 +5430,132 @@ bool Simulation::build_planetary_shuttle(PlayerId owner,EntityId ship,const Plan
     snapshot_version_=std::max(snapshot_version_,80);
     return true;
 }
+bool Simulation::post_local_delivery_order(PlayerId owner,EntityId board_ship,
+       const PlanetarySiteKey& key,ShuttleCargo cargo,
+       std::int64_t kilograms,std::uint64_t order_id) {
+    // This initial job adapter executes only a physical planetary-site ->
+    // orbiting parent ship route. Unbuilt facilities and unrelated colony
+    // destinations do not get phantom transport capacity.
+    const auto site=planetary_sites_.find(key);
+    const auto shuttle=planetary_shuttles_.find(key);
+    const auto ship=entities_.find(board_ship);
+    if(!owner || owner==kServerAuthority || !board_ship || !order_id ||
+       order_id>=(std::uint64_t{1}<<61)-1 ||
+       kilograms<=0 || kilograms>1000 || cargo>ShuttleCargo::Nutrients ||
+       site==planetary_sites_.end() ||
+       shuttle==planetary_shuttles_.end() ||
+       site->second.owner!=owner || site->second.source_ship!=board_ship ||
+       site->second.spaceport_phase!=3 ||
+       shuttle->second.owner!=owner || shuttle->second.source_ship!=board_ship ||
+       ship==entities_.end() || ship->second.owner_id!=owner ||
+       !colony_ships_.count(board_ship) ||
+       local_delivery_orders_.count(order_id) ||
+       local_delivery_orders_.size()>=10000)
+        return false;
+    for(const auto& [id,work]:local_delivery_orders_) {
+        (void)id;
+        if(work.site==key && work.stage!=LocalDeliveryStage::Complete &&
+           work.stage!=LocalDeliveryStage::Cancelled)return false;
+    }
+    local_delivery_orders_.emplace(order_id,LocalDeliveryOrder{
+        order_id,owner,board_ship,key,cargo,kilograms,0,
+        LocalDeliveryStage::Posted,tick_});
+    snapshot_version_=std::max(snapshot_version_,88);
+    return true;
+}
+bool Simulation::cancel_local_delivery_order(PlayerId owner,std::uint64_t order_id) {
+    auto it=local_delivery_orders_.find(order_id);
+    if(!owner || it==local_delivery_orders_.end() ||
+       it->second.owner!=owner ||
+       it->second.stage!=LocalDeliveryStage::Posted)return false;
+    // Once a real flight begins, cargo and pilot remain physically in the
+    // shuttle. An in-flight contract cannot erase or teleport either.
+    it->second.stage=LocalDeliveryStage::Cancelled;
+    return true;
+}
+void Simulation::process_local_delivery_board() {
+    for(auto& [id,work]:local_delivery_orders_) {
+        if(work.stage==LocalDeliveryStage::Complete ||
+           work.stage==LocalDeliveryStage::Cancelled)continue;
+        const auto site=planetary_sites_.find(work.site);
+        const auto shuttle=planetary_shuttles_.find(work.site);
+        if(site==planetary_sites_.end() || shuttle==planetary_shuttles_.end())
+            continue;
+        auto& sh=shuttle->second;
+        if(sh.owner!=work.owner || sh.source_ship!=work.board_ship ||
+           site->second.owner!=work.owner ||
+           site->second.source_ship!=work.board_ship ||
+           site->second.spaceport_phase!=3)continue;
+        const auto flight_id=[id](bool ascend) {
+            return 0xC000000000000000ULL | (id<<1) |
+                   std::uint64_t(ascend?1:0);
+        };
+        const auto source_stock=[&]()->std::int64_t {
+            return work.cargo==ShuttleCargo::Water?site->second.water_kg:
+                   (work.cargo==ShuttleCargo::Food?site->second.food_kg:
+                    site->second.nutrients_kg);
+        };
+        switch(work.stage) {
+        case LocalDeliveryStage::Posted: {
+            // Only the locally assigned physical shuttle and its NPC pilot
+            // may claim this order. No separate transport NPC is invented.
+            if(sh.flight_phase!=0 || !sh.passenger_ids.empty() ||
+               sh.water_kg<2 || source_stock()<work.kilograms ||
+               sh.water_kg+sh.food_kg+sh.nutrients_kg>
+                   1000-work.kilograms)break;
+            if(!sh.pilot_npc) {
+                for(const auto& [npc,person]:npcs_) {
+                    if(person.home_ship!=work.board_ship ||
+                       person.role!=NpcRole::Ship ||
+                       person.location!=work.board_ship ||
+                       person.assigned_site!=work.board_ship ||
+                       !npc_available_for_duty(npc))continue;
+                    if(assign_planetary_shuttle_pilot(
+                        work.owner,work.board_ship,work.site,npc))break;
+                }
+                // Pilot assignment is itself an actual NPC reservation.
+                // Avoid launching in the same step as a new assignment.
+                if(sh.pilot_npc){work.assigned_pilot=sh.pilot_npc;}
+                break;
+            }
+            if(launch_planetary_shuttle(work.owner,work.board_ship,work.site,
+                    flight_id(false),false)) {
+                work.assigned_pilot=sh.pilot_npc;
+                work.stage=LocalDeliveryStage::Descending;
+            }
+            break;
+        }
+        case LocalDeliveryStage::Descending:
+            if(sh.flight_phase==2 && sh.descent_receipt==flight_id(false))
+                work.stage=LocalDeliveryStage::Loading;
+            break;
+        case LocalDeliveryStage::Loading:
+            // Actual source stock and physical berth are checked by the
+            // existing shuttle load operation. No speculative debits.
+            if(sh.flight_phase==2 && sh.descent_receipt==flight_id(false) &&
+               load_planetary_shuttle(work.owner,work.board_ship,work.site,
+                    work.cargo,work.kilograms))
+                work.stage=LocalDeliveryStage::Ascending;
+            break;
+        case LocalDeliveryStage::Ascending:
+            if(sh.flight_phase==2 &&
+               launch_planetary_shuttle(work.owner,work.board_ship,work.site,
+                    flight_id(true),true))
+                work.stage=LocalDeliveryStage::Delivering;
+            break;
+        case LocalDeliveryStage::Delivering:
+            if(sh.flight_phase==0 && sh.ascent_receipt==flight_id(true) &&
+               unload_planetary_shuttle(work.owner,work.board_ship,work.site,
+                    work.cargo,work.kilograms))
+                work.stage=LocalDeliveryStage::Complete;
+            break;
+        case LocalDeliveryStage::Complete:
+        case LocalDeliveryStage::Cancelled:
+            break;
+        }
+    }
+}
+
 std::optional<transport::Manifest> Simulation::planetary_transport_manifest(
        const PlanetarySiteKey& key) const {
     const auto sh=planetary_shuttles_.find(key);
@@ -6362,6 +6488,7 @@ void Simulation::step() {
     process_oasis_extractors();
     process_planetary_shuttle_flights();
     process_planetary_surface_operations();
+    if(snapshot_version_>=88)process_local_delivery_board();
     process_farms();
     process_habitats();
     process_communities();
