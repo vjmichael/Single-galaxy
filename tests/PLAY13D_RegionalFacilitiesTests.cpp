@@ -56,6 +56,7 @@ static void fabricate(PersistentWorld& w,EntityId ship) {
 static void scenario(const fs::path& db, bool farming){
     const auto chosen=select_site(farming);
     EntityId ship=0;
+    std::uint64_t first_npc=0,second_npc=0;
     std::int64_t origin=0;
     std::string durable;
     {
@@ -80,7 +81,7 @@ static void scenario(const fs::path& db, bool farming){
             if(n.home_ship==ship && n.location==ship && n.role==NpcRole::Ship)
                 available.push_back(id);
         CHECK(available.size()>=3);
-        const auto first_npc=available[0],second_npc=available[1];
+        first_npc=available[0];second_npc=available[1];
         CHECK(!w.build_planetary_site(7,ship,chosen.body,
             chosen.latitude,chosen.longitude,first_npc,first_npc));
         CHECK(!w.build_planetary_site(7,ship,chosen.body,
