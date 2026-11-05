@@ -521,7 +521,53 @@
     }else throw Error('Unknown colony event');
     return e;
   }
-  return {decode,names};
+
+  // Read-only UI projection. The native host owns every NPC; never derive
+  // population from this status display or alter its manifest.
+  function makeShuttleRosterTracker(){
+    const codes={
+      PLANET_SHUTTLE_PASSENGER:['passengers',false,3],
+      PLANET_SHUTTLE_MANIFEST_DONE:['passengers',true,3],
+      PLANET_SHUTTLE_VISITOR:['visitors',false,64],
+      PLANET_SHUTTLE_VISITORS_DONE:['visitors',true,64],
+      PLANET_SHUTTLE_WORKER:['workers',false,64],
+      PLANET_SHUTTLE_WORKERS_DONE:['workers',true,64]
+    };
+    const pending={passengers:[],visitors:[],workers:[]};
+    const committed={passengers:[],visitors:[],workers:[]};
+    return {
+      accept(e){
+        const spec=codes[e.type];
+        if(!spec)throw Error('Unknown shuttle roster telemetry');
+        const [kind,done,limit]=spec;
+        if(!done){
+          const ids=pending[kind];
+          if(!Number.isSafeInteger(e.npc)||e.npc<=0||ids.length>=limit||
+             (ids.length&&e.npc<=ids[ids.length-1]))
+            throw Error('Noncanonical shuttle '+kind+' manifest');
+          ids.push(e.npc);
+          return null;
+        }
+        const ids=pending[kind];
+        if(e.count!==ids.length) {
+          pending[kind]=[];
+          throw Error('Incomplete shuttle '+kind+' manifest');
+        }
+        if(kind==='workers' && ids.some(id=>!committed.visitors.includes(id))){
+          pending[kind]=[];
+          throw Error('Surface duty has no physically disembarked visitor');
+        }
+        committed[kind]=ids.slice();
+        pending[kind]=[];
+        return {kind,ids:committed[kind].slice()};
+      },
+      snapshot(){
+        return {passengers:committed.passengers.slice(),
+          visitors:committed.visitors.slice(),workers:committed.workers.slice()};
+      }
+    };
+  }
+  return {decode,names,makeShuttleRosterTracker};
 });
 (function(){'use strict';if(typeof document==='undefined')return;
  const q=id=>document.getElementById(id), policyAudits=new Map(), geology=new Map(),small=new Map(),log=[],stocks=new Map(),outposts=new Map(),farms=new Map(),habitats=new Map(),utilities=new Map(),communities=new Map(),clinics=new Map(),reclaimers=new Map(),waterworks=new Map();
@@ -784,11 +830,35 @@
              window.GalaxyColonyCommand?.('colonyPlanetShuttle',payload);
              shuttleState.textContent='Shuttle order submitted; awaiting native receipt.';
            });
+           shuttleNpc.dataset.shuttleNpcInput='1';
            shuttlePanel.append(shuttleTitle,shuttleChoice,shuttleNpc,
                shuttleResource,shuttleKg,shuttleSend,shuttleState);
+           const rosterTitles=[
+             ['passengers','Booked aboard (max 3)'],
+             ['visitors','Visitors on surface'],
+             ['workers','Visitors on temporary duty']
+           ];
+           for(const [kind,title] of rosterTitles){
+             const line=document.createElement('div');
+             line.textContent=title+': ';
+             const choices=document.createElement('span');
+             choices.dataset.shuttleRoster=kind;
+             choices.textContent='Check status';
+             line.append(choices);
+             shuttlePanel.append(line);
+           }
+           shuttlePanel._shuttleRoster=makeShuttleRosterTracker();
            shuttlePanel.dataset.shuttleBody=String(body.id);
            shuttlePanel.dataset.shuttleRegion='';
-           const updateRegion=()=>{shuttlePanel.dataset.shuttleRegion=latitude.value+','+longitude.value;};
+           const updateRegion=()=>{
+             const region=latitude.value+','+longitude.value;
+             if(shuttlePanel.dataset.shuttleRegion===region)return;
+             shuttlePanel.dataset.shuttleRegion=region;
+             shuttlePanel._shuttleRoster=makeShuttleRosterTracker();
+             shuttlePanel.querySelectorAll('[data-shuttle-roster]').forEach(
+               slot=>{slot.textContent='Check status';});
+             shuttleState.textContent='Request status for this surface region.';
+           };
            latitude.addEventListener('change',updateRegion);
            longitude.addEventListener('change',updateRegion);updateRegion();
            actions.append(shuttlePanel);
@@ -816,17 +886,26 @@
        cards.forEach(panel=>{
          if(panel.dataset.shuttleBody!==String(e.id)||
             panel.dataset.shuttleRegion!==e.latitude+','+e.longitude)return;
-         if(e.type==='PLANET_SHUTTLE_PASSENGER'||e.type==='PLANET_SHUTTLE_VISITOR'||e.type==='PLANET_SHUTTLE_WORKER'){
-           const current=panel.dataset.shuttlePassengers?
-             panel.dataset.shuttlePassengers.split(','):[];
-           current.push(String(e.npc));
-           panel.dataset.shuttlePassengers=current.join(',');
-         }else{
+         try{
+           const updated=panel._shuttleRoster.accept(e);
+           if(!updated)return; // Only publish a complete native roster.
+           const slot=panel.querySelector('[data-shuttle-roster="'+updated.kind+'"]');
+           if(!slot)return;
+           slot.replaceChildren();
+           if(!updated.ids.length){slot.textContent='None';return;}
+           for(const id of updated.ids){
+             const button=document.createElement('button');
+             button.type='button';button.textContent='#'+id;
+             button.setAttribute('aria-label','Select NPC '+id+' for shuttle order');
+             button.addEventListener('click',()=>{
+               const input=panel.querySelector('[data-shuttle-npc-input]');
+               if(input){input.value=String(id);input.focus();}
+             });
+             slot.append(button);
+           }
+         }catch(err){
            const output=panel.querySelector('output');
-           const shown=(panel.dataset.shuttlePassengers||'').split(',').filter(Boolean);
-           if(output)output.textContent+=' · '+e.count+' booked passengers'+
-             (shown.length?' (NPC #'+shown.join(', #')+')':'');
-           panel.dataset.shuttlePassengers='';
+           if(output)output.textContent='Shuttle roster incomplete — request status again.';
          }
        });
      }
@@ -840,6 +919,11 @@
          if(e.type==='PLANET_SHUTTLE_COMMITTED'){
            out.textContent='Committed '+e.operation+' · generation '+e.generation;
          }else{
+           if(!e.present){
+             panel._shuttleRoster=makeShuttleRosterTracker();
+             panel.querySelectorAll('[data-shuttle-roster]').forEach(
+               slot=>{slot.textContent='None';});
+           }
            const phases=['Docked in orbit','Descending','Landed at surface','Ascending'];
            out.textContent=e.present?
              phases[e.phase]+' · pilot #'+e.pilot+' · water '+e.water+
