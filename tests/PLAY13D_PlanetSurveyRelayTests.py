@@ -56,6 +56,19 @@ def main(executable,relay):
             assert status==403,status
             status,_=request(port,"POST","/command",valid,origin=False)
             assert status==403,status
+            for action,payload in [
+                ("colonyPlanetCrew",{"token":token,"action":"colonyPlanetCrew"}),
+                ("colonyPlanetStatus",{**valid,"action":"colonyPlanetStatus"}),
+                ("colonyPlanetBuild",{**valid,"action":"colonyPlanetBuild",
+                                      "firstNpc":21,"secondNpc":22}),
+                ("colonyPlanetSupport",{**valid,"action":"colonyPlanetSupport",
+                                        "resource":"FOOD","kg":10}),
+            ]:
+                assert action in session["commands"],action
+                status,_=request(port,"POST","/command",payload)
+                assert status==202,(action,status)
+                status,_=request(port,"POST","/command",{**payload,"token":"forged"})
+                assert status==403,(action,status)
             operations=[
                 ("colonyPlanetBuild",{}),
                 ("colonyPlanetEquip",{"equipment":"FARM"}),
@@ -64,6 +77,7 @@ def main(executable,relay):
                 ("colonyPlanetGrow",{"batches":2}),
                 ("colonyPlanetExtract",{"resource":"NUTRIENTS","kg":1000}),
                 ("colonyPlanetRetrieve",{"resource":"FOOD","kg":12}),
+                ("colonyPlanetSupport",{"resource":"OXYGEN","kg":10}),
             ]
             for action,details in operations:
                 assert action in session["commands"],action
@@ -88,6 +102,11 @@ def main(executable,relay):
                 {**valid,"action":"colonyPlanetGrow","batches":101},
                 {**valid,"action":"colonyPlanetSupply","resource":"FOOD","kg":1},
                 {**valid,"action":"colonyPlanetExtract","resource":"WATER","kg":500},
+                {**valid,"action":"colonyPlanetBuild","firstNpc":42},
+                {**valid,"action":"colonyPlanetBuild","firstNpc":42,"secondNpc":42},
+                {**valid,"action":"colonyPlanetBuild","firstNpc":True,"secondNpc":43},
+                {**valid,"action":"colonyPlanetStatus","latitude":-1},
+                {**valid,"action":"colonyPlanetSupport","resource":"NUTRIENTS","kg":10},
                 {**valid,"action":"colonyPlanetRetrieve","resource":"NUTRIENTS","kg":1}
             ]:
                 status,_=request(port,"POST","/command",payload)
