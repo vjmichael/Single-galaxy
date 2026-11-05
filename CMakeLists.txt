@@ -1326,3 +1326,12 @@ if(BUILD_TESTING)
   add_test(NAME galaxy_play13d_regional_facilities
     COMMAND galaxy_play13d_regional_facilities_tests)
 endif()
+
+# PLAY-13D.4C.1: isolated physical planetary shuttle manifest/NPC custody domain.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13d_shuttle_custody_tests
+    tests/PLAY13D_ShuttleCustodyTests.cpp)
+  target_link_libraries(galaxy_play13d_shuttle_custody_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_shuttle_custody
+    COMMAND galaxy_play13d_shuttle_custody_tests)
+endif()
