@@ -303,6 +303,19 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(!w.world().npc_transport_arrival(81001,9999999));
         const auto visitor_state=w.world().canonical_state();
         CHECK(Simulation::from_snapshot(visitor_state).canonical_state()==visitor_state);
+        // v86 legal residence is an independent persistent address, not an
+        // alias for physical shuttle presence or a temporary work duty.
+        auto upgraded_residence=Simulation::from_snapshot(visitor_state);
+        CHECK(upgraded_residence.npc_records().at(passenger).legal_residence()==
+              transport::Endpoint{transport::LocationKind::ColonyShip,ship});
+        upgraded_residence.upgrade_legal_residence_snapshot_format();
+        const auto v86_state=upgraded_residence.canonical_state();
+        CHECK(v86_state.rfind("galaxy-kernel-v86|",0)==0);
+        CHECK(Simulation::from_snapshot(v86_state).canonical_state()==v86_state);
+        CHECK(Simulation::from_snapshot(v86_state).npc_records().at(passenger)
+              .legal_residence()==transport::Endpoint{
+                  transport::LocationKind::ColonyShip,ship});
+
         // Temporary work is an explicit separate order, not a side effect
         // of arriving at a planetary spaceport.
         CHECK(!w.assign_planetary_shuttle_visitor_duty(8,ship,key,passenger,true));
