@@ -24,6 +24,10 @@ struct Endpoint {
     friend constexpr bool operator!=(Endpoint a,Endpoint b) noexcept {
         return !(a==b);
     }
+    friend constexpr bool operator<(Endpoint a,Endpoint b) noexcept {
+        return a.kind==b.kind ? a.id<b.id :
+            static_cast<std::uint8_t>(a.kind)<static_cast<std::uint8_t>(b.kind);
+    }
 };
 enum class Mode : std::uint8_t {
     Ferry=1, PlanetaryShuttle=2, SurfaceVehicle=3, OtherVehicle=4
