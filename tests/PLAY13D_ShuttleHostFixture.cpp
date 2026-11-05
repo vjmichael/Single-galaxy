@@ -55,7 +55,7 @@ int main(int argc,char** argv) {
             REQUIRE(saved.world().planetary_spaceport_operational(
                 body,std::uint16_t(lat),std::uint16_t(lon)));
             const auto snapshot=saved.world().canonical_state();
-            REQUIRE(snapshot.rfind("galaxy-kernel-v84|",0)==0);
+            REQUIRE(snapshot.rfind("galaxy-kernel-v85|",0)==0);
             REQUIRE(Simulation::from_snapshot(snapshot).canonical_state()==snapshot);
             std::cout<<"PASS native committed shuttle stock, NPC custody, receipts, mass and snapshot\n";
             return 0;
