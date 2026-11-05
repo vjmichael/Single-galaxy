@@ -9551,8 +9551,10 @@ std::int64_t Simulation::total_ore() const {
         const auto site=planetary_sites_.find(key);
         if(site==planetary_sites_.end() || v.owner!=site->second.owner ||
            v.source_ship!=site->second.source_ship || v.dry_mass_ore!=4 ||
-           v.water_kg<0 || v.food_kg<0 || v.water_kg>1000 ||
-           v.food_kg>1000-v.water_kg || !colony_ships_.count(v.source_ship) ||
+           v.water_kg<0 || v.food_kg<0 || v.nutrients_kg<0 || v.water_kg>1000 ||
+           v.food_kg>1000-v.water_kg ||
+           v.nutrients_kg>1000-v.water_kg-v.food_kg ||
+           !colony_ships_.count(v.source_ship) ||
            total>std::numeric_limits<std::int64_t>::max()-v.dry_mass_ore)
             throw std::overflow_error("invalid source-backed shuttle");
         if(snapshot_version_>=81 &&
@@ -9628,9 +9630,10 @@ std::int64_t Simulation::total_ore() const {
                 throw std::overflow_error("invalid shuttle pilot custody");
         }
         total+=v.dry_mass_ore;
-        if(v.water_kg+v.food_kg>1000000000LL-life_mass_kg)
+        const auto held=v.water_kg+v.food_kg+v.nutrients_kg;
+        if(held>1000000000LL-life_mass_kg)
             throw std::overflow_error("invalid shuttle held stock");
-        life_mass_kg+=v.water_kg+v.food_kg;
+        life_mass_kg+=held;
     }
     // PLAY-13C.6D constructed extraction equipment retains its source modules.
     for(const auto& [ship,rig]:oasis_extractors_) {
