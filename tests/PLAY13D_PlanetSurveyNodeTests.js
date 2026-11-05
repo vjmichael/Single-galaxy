@@ -404,3 +404,27 @@ test('PLAY-13D shuttle UI exposes named NPC selection instead of mislabeling all
   assert.match(ui,/makeShuttleRosterTracker/);
   assert.doesNotMatch(ui,/dataset\.shuttlePassengers/);
 });
+
+test('SHIP-01B.2 commissioning receipt is bounded, authenticated and visible',()=>{
+  const c=decode('COLONY|1|42|FREIGHTER_COMMISSIONED|92001|8|103|104|20|155');
+  assert.equal(c.hull,8);
+  assert.equal(c.firstNpc,103);
+  assert.equal(c.secondNpc,104);
+  assert.equal(c.provisionsKg,20);
+  assert.equal(c.generation,155);
+  for(const bad of [
+    'COLONY|1|42|FREIGHTER_COMMISSIONED|92001|8|103|103|20|155',
+    'COLONY|1|42|FREIGHTER_COMMISSIONED|92001|8|103|104|9|155',
+    'COLONY|1|42|FREIGHTER_COMMISSIONED|92001|8|103|104|1001|155',
+    'COLONY|1|42|FREIGHTER_COMMISSIONED|92001|0|103|104|20|155',
+    'COLONY|1|42|FREIGHTER_COMMISSIONED|92001|8|103|104|20|0',
+    'COLONY|1|42|FREIGHTER_COMMISSIONED|92001|8|103|104|20|155|extra'
+  ])assert.throws(()=>decode(bad),Error,bad);
+  const ui=fs.readFileSync(path.join(root,'viewer/colony.js'),'utf8');
+  const relay=fs.readFileSync(path.join(root,'live/interactive_relay.py'),'utf8');
+  const host=fs.readFileSync(path.join(root,'src/colony_live_host.cpp'),'utf8');
+  assert.match(ui,/Commission freighter with real crew/);
+  assert.match(ui,/colonyFreighterCommission/);
+  assert.match(relay,/FREIGHTER_COMMISSION/);
+  assert.match(host,/commission_shipyard_freighter/);
+});
