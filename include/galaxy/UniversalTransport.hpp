@@ -10,6 +10,10 @@
 #include <vector>
 
 namespace galaxy::transport {
+inline bool valid_transport_endpoint(Endpoint e) noexcept {
+    const auto kind=static_cast<std::uint8_t>(e.kind);
+    return e.id && kind>=1 && kind<=4;
+}
 enum class GoodKind : std::uint8_t { Npc=1, Resource=2, Equipment=3 };
 enum class ResourceGood : std::uint8_t { Water=1, Food=2, Nutrients=3 };
 struct Good {
@@ -56,7 +60,8 @@ struct Manifest {
     std::uint64_t seat_capacity=0,cargo_capacity_kg=0;
     std::vector<Good> contents; // projection, never an independent inventory
     bool valid() const noexcept {
-        if(!vehicle || !owner || !berth.id || !other_end.id ||
+        if(!vehicle || !owner || !valid_transport_endpoint(berth) ||
+           !valid_transport_endpoint(other_end) ||
            berth==other_end || seat_capacity>10000 ||
            cargo_capacity_kg>1000000000000ULL ||
            static_cast<unsigned>(mode)<1 || static_cast<unsigned>(mode)>4 ||
@@ -86,7 +91,9 @@ struct Instruction {
     Endpoint pickup{},delivery{};
     std::vector<Good> goods;
     bool valid() const noexcept {
-        return command_id && owner && vehicle && pickup.id && delivery.id &&
+        return command_id && owner && vehicle &&
+               valid_transport_endpoint(pickup) &&
+               valid_transport_endpoint(delivery) &&
                pickup!=delivery && canonical_goods(goods);
     }
 };
