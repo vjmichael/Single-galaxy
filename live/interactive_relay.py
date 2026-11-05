@@ -389,11 +389,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     type(latitude)!=int or not 0<=latitude<36 or
                     type(longitude)!=int or not 0<=longitude<72 or
                     type(operation)!=str or operation not in
-                    ('STATUS','BUILD','PILOT','BOARD','RELEASE','LOAD','UNLOAD','DESCEND','ASCEND')):
+                    ('STATUS','BUILD','PILOT','BOARD','RELEASE','DISEMBARK','REBOARD','LOAD','UNLOAD','DESCEND','ASCEND')):
                     raise ValueError('Invalid shuttle region or operation')
                 expected=set(base)
                 suffix=''
-                if operation in ('PILOT','BOARD','RELEASE'):
+                if operation in ('PILOT','BOARD','RELEASE','DISEMBARK','REBOARD'):
                     expected.add('npc')
                     npc=doc.get('npc')
                     if type(npc)!=int or not 1<=npc<=9223372036854775807:
