@@ -652,8 +652,61 @@ static void scenario(const fs::path& db, bool farming){
             CHECK(w.world().planetary_shuttles().at(key).nutrients_kg==0);
             CHECK(w.world().planetary_sites().at(key).nutrients_kg==site_before-500);
             CHECK(w.world().total_ore()==origin);
+            // PLAY-13D.4F: player posts a real local contract, named pilot
+            // handles two flight legs, stock moves only at physical berths.
+            const auto site_prior=w.world().planetary_sites().at(key).nutrients_kg;
+            const auto ship_prior=w.world().life_support(ship)->nutrients_kg;
+            CHECK(!w.post_local_delivery_order(8,ship,key,
+                ShuttleCargo::Nutrients,200,77003));
+            const auto precontract=w.world().canonical_state();
+            bool posting_failed=false;
+            try{(void)w.post_local_delivery_order(7,ship,key,
+                ShuttleCargo::Nutrients,200,77003,FailPoint::AfterSnapshotWrite);}
+            catch(const std::exception&){posting_failed=true;}
+            CHECK(posting_failed && w.world().canonical_state()==precontract);
+            CHECK(w.post_local_delivery_order(7,ship,key,
+                ShuttleCargo::Nutrients,200,77003));
+            CHECK(!w.post_local_delivery_order(7,ship,key,
+                ShuttleCargo::Nutrients,100,77005));
+            CHECK(w.world().local_delivery_board().at(77003).stage==
+                  LocalDeliveryStage::Posted);
+            CHECK(w.world().canonical_state().rfind("galaxy-kernel-v88|",0)==0);
+            CHECK(Simulation::from_snapshot(w.world().canonical_state())
+                  .canonical_state()==w.world().canonical_state());
+            w.steps(15);
+            const auto completed=w.world().local_delivery_board().at(77003);
+            CHECK(completed.stage==LocalDeliveryStage::Complete);
+            CHECK(completed.assigned_pilot==available[2]);
+            CHECK(w.world().planetary_sites().at(key).nutrients_kg==site_prior-200);
+            CHECK(w.world().life_support(ship)->nutrients_kg==ship_prior+200);
+            CHECK(w.world().planetary_shuttles().at(key).nutrients_kg==0);
+            CHECK(w.world().planetary_shuttles().at(key).flight_phase==0);
+            CHECK(w.world().total_ore()==origin);
+            // Insufficient stock never becomes a fabricated delivery.
+            CHECK(w.post_local_delivery_order(7,ship,key,
+                ShuttleCargo::Nutrients,400,77004));
+            const auto waiting_stock=w.world().planetary_sites().at(key).nutrients_kg;
+            w.steps(15);
+            CHECK(w.world().local_delivery_board().at(77004).stage==
+                  LocalDeliveryStage::Posted);
+            CHECK(w.world().planetary_sites().at(key).nutrients_kg==waiting_stock);
+            CHECK(!w.cancel_local_delivery_order(8,77004));
+            const auto pre_cancel=w.world().canonical_state();
+            bool cancel_failed=false;
+            try{(void)w.cancel_local_delivery_order(
+                7,77004,FailPoint::AfterSnapshotWrite);}
+            catch(const std::exception&){cancel_failed=true;}
+            CHECK(cancel_failed && w.world().canonical_state()==pre_cancel);
+            CHECK(w.cancel_local_delivery_order(7,77004));
+            CHECK(w.world().local_delivery_board().at(77004).stage==
+                  LocalDeliveryStage::Cancelled);
+            CHECK(!w.cancel_local_delivery_order(7,77003));
+            w.steps(12);
+            CHECK(w.world().planetary_sites().at(key).nutrients_kg==waiting_stock);
+            CHECK(w.world().life_support(ship)->nutrients_kg==ship_prior+200);
+            CHECK(w.world().total_ore()==origin);
             durable=w.world().canonical_state();
-            CHECK(durable.rfind("galaxy-kernel-v87|",0)==0);
+            CHECK(durable.rfind("galaxy-kernel-v88|",0)==0);
             CHECK(Simulation::from_snapshot(durable).canonical_state()==durable);
         }
     }
@@ -664,7 +717,8 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(w.world().planetary_sites().size()==1);
         CHECK(w.world().planetary_shuttles().at(
             PlanetarySiteKey{chosen.body,chosen.latitude,chosen.longitude,1})
-              .ascent_receipt==81003);
+              .ascent_receipt==(farming?81003:
+                 (0xC000000000000000ULL | (77003ULL<<1) | 1ULL)));
         CHECK(!w.launch_planetary_shuttle(7,ship,
             PlanetarySiteKey{chosen.body,chosen.latitude,chosen.longitude,1},
             81001,false));
@@ -684,6 +738,13 @@ static void scenario(const fs::path& db, bool farming){
                 PlanetarySiteKey{chosen.body,chosen.latitude,chosen.longitude,1})
                 .nutrients_kg==0);
             CHECK(w.world().oasis_reserves().at(chosen.body).nutrients_kg==3000);
+            CHECK(w.world().local_delivery_board().at(77003).stage==
+                  LocalDeliveryStage::Complete);
+            CHECK(w.world().local_delivery_board().at(77004).stage==
+                  LocalDeliveryStage::Cancelled);
+            CHECK(!w.post_local_delivery_order(7,ship,
+                PlanetarySiteKey{chosen.body,chosen.latitude,chosen.longitude,1},
+                ShuttleCargo::Nutrients,100,77003));
         }
     }
 }
