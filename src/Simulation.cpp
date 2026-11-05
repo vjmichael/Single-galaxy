@@ -5295,7 +5295,8 @@ bool Simulation::build_planetary_site(PlayerId owner,EntityId ship,
 
 bool Simulation::build_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key) {
     const auto site=planetary_sites_.find(key);
-    const auto hull=entities_.find(ship),frame=ship_frames_.find(ship);
+    const auto hull=entities_.find(ship);
+    const auto frame=ship_frames_.find(ship);
     auto colony=colony_ships_.find(ship);
     if(!owner || std::get<3>(key)!=1 || site==planetary_sites_.end() ||
        site->second.owner!=owner || site->second.source_ship!=ship ||
@@ -5312,8 +5313,10 @@ bool Simulation::build_planetary_shuttle(PlayerId owner,EntityId ship,const Plan
 }
 bool Simulation::load_planetary_shuttle(PlayerId owner,EntityId ship,
        const PlanetarySiteKey& key,bool water,std::int64_t kg) {
-    const auto shuttle=planetary_shuttles_.find(key),site=planetary_sites_.find(key);
-    const auto frame=ship_frames_.find(ship),hull=entities_.find(ship);
+    const auto shuttle=planetary_shuttles_.find(key);
+    const auto site=planetary_sites_.find(key);
+    const auto frame=ship_frames_.find(ship);
+    const auto hull=entities_.find(ship);
     auto life=life_support_.find(ship);
     if(!owner || std::get<3>(key)!=1 ||
        shuttle==planetary_shuttles_.end() || site==planetary_sites_.end() ||
@@ -5333,8 +5336,10 @@ bool Simulation::load_planetary_shuttle(PlayerId owner,EntityId ship,
 }
 bool Simulation::unload_planetary_shuttle(PlayerId owner,EntityId ship,
        const PlanetarySiteKey& key,bool water,std::int64_t kg) {
-    const auto shuttle=planetary_shuttles_.find(key),site=planetary_sites_.find(key);
-    const auto frame=ship_frames_.find(ship),hull=entities_.find(ship);
+    const auto shuttle=planetary_shuttles_.find(key);
+    const auto site=planetary_sites_.find(key);
+    const auto frame=ship_frames_.find(ship);
+    const auto hull=entities_.find(ship);
     auto life=life_support_.find(ship);
     if(!owner || std::get<3>(key)!=1 ||
        shuttle==planetary_shuttles_.end() || site==planetary_sites_.end() ||
