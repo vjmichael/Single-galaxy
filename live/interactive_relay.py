@@ -384,7 +384,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 command='LOCAL_WORK_STATUS'
             elif action=='colonyLocalWorkCancel' and set(doc)=={'token','action','order'}:
                 order=doc['order']
-                if type(order)!=int or not 1<=order<=9007199254740991:
+                if type(order)!=int or not 1<=order<(1<<50):
                     raise ValueError('Invalid local work contract ID')
                 command=f'LOCAL_WORK_CANCEL|{order}'
             elif action=='colonyLocalWorkPost' and set(doc)=={
@@ -396,7 +396,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     type(lon)!=int or not 0<=lon<72 or
                     type(resource)!=str or resource not in ('WATER','FOOD','NUTRIENTS') or
                     type(kg)!=int or not 1<=kg<=1000 or
-                    type(order)!=int or not 1<=order<=9007199254740991):
+                    type(order)!=int or not 1<=order<(1<<50)):
                     raise ValueError('Invalid local delivery contract')
                 command=f'LOCAL_WORK_POST|{body}|{lat}|{lon}|{resource}|{kg}|{order}'
             elif action=='colonyPlanetShuttle':
