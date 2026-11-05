@@ -858,6 +858,14 @@ public:
         std::uint64_t first_npc,std::uint64_t second_npc,
         FailPoint fail=FailPoint::None);
     bool build_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,FailPoint fail=FailPoint::None);
+    // Player's finite local logistics work board. NPC fulfillment advances
+    // only within the existing atomic world step; no parallel job database.
+    bool post_local_delivery_order(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& site,ShuttleCargo cargo,
+        std::int64_t kilograms,std::uint64_t order_id,
+        FailPoint fail=FailPoint::None);
+    bool cancel_local_delivery_order(PlayerId owner,std::uint64_t order_id,
+        FailPoint fail=FailPoint::None);
     bool load_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,bool water,std::int64_t kg,FailPoint fail=FailPoint::None);
     bool unload_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,bool water,std::int64_t kg,FailPoint fail=FailPoint::None);
     bool load_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,ShuttleCargo cargo,std::int64_t kg,FailPoint fail=FailPoint::None);
