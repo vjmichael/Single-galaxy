@@ -290,6 +290,15 @@ ColonyViability Simulation::assess_colony(EntityId ship) const {
     if(!c || !l)return r;
     r.crew_total=c->crew;
     std::int64_t total_food=l->food_kg,total_water=l->water_kg,total_oxygen=l->oxygen_kg;
+    // Surface-delegated adults remain real colonists, not missing crew.
+    for(const auto& [key,site]:planetary_sites_) {
+        (void)key;
+        if(site.source_ship!=ship)continue;
+        r.crew_total+=site.assigned_workers;
+        total_food+=site.food_kg;
+        total_water+=site.water_kg;
+        total_oxygen+=site.oxygen_kg;
+    }
     for(const auto& [id,f]:farms_){(void)id;
         if(f.source_ship!=ship)continue;
         r.farm_workers+=f.workers;r.crew_total+=f.workers;
