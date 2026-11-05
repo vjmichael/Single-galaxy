@@ -561,6 +561,78 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
         }
         return;
     }
+    // PLAY-13D.4C.4: authenticated, owner-scoped native orbital shuttle
+    // commands. The relay supplies strictly typed fields; native validates again.
+    if(!v.empty() && v[0]=="PLANET_SHUTTLE") {
+        try {
+            if(v.size()<5 || v.size()>8)
+                throw std::invalid_argument("invalid shuttle command arity");
+            const auto body=integer(v[1]),lat=integer(v[2]),lon=integer(v[3]);
+            if(body<=0 || lat<0 || lat>=36 || lon<0 || lon>=72)
+                throw std::invalid_argument("invalid shuttle region");
+            const PlanetarySiteKey key{std::uint64_t(body),std::uint16_t(lat),
+                std::uint16_t(lon),1};
+            const auto site=world.world().planetary_sites().find(key);
+            if(site==world.world().planetary_sites().end() ||
+               site->second.owner!=principal || site->second.source_ship!=ship)
+                throw std::invalid_argument("shuttle site not owned");
+            const auto action=v[4];
+            if(action=="STATUS") {
+                if(v.size()!=5)throw std::invalid_argument("status fields");
+            } else {
+                bool ok=false;
+                if(action=="BUILD" && v.size()==5)
+                    ok=world.build_planetary_shuttle(principal,ship,key);
+                else if(action=="PILOT" && v.size()==6) {
+                    const auto npc=integer(v[5]);
+                    if(npc>0)ok=world.assign_planetary_shuttle_pilot(
+                        principal,ship,key,std::uint64_t(npc));
+                } else if((action=="LOAD" || action=="UNLOAD") &&
+                          v.size()==7) {
+                    if(v[5]!="WATER" && v[5]!="FOOD")
+                        throw std::invalid_argument("shuttle material");
+                    const auto kg=integer(v[6]);
+                    if(kg>0 && kg<=1000)ok=action=="LOAD"?
+                        world.load_planetary_shuttle(principal,ship,key,
+                            v[5]=="WATER",kg):
+                        world.unload_planetary_shuttle(principal,ship,key,
+                            v[5]=="WATER",kg);
+                } else if((action=="DESCEND" || action=="ASCEND") &&
+                          v.size()==6) {
+                    const auto request=integer(v[5]);
+                    if(request>0)ok=world.launch_planetary_shuttle(
+                        principal,ship,key,std::uint64_t(request),
+                        action=="ASCEND");
+                } else throw std::invalid_argument("shuttle action");
+                if(!ok)throw std::invalid_argument("shuttle mutation denied");
+                announce(world.world(),"PLANET_SHUTTLE_COMMITTED|"+
+                    std::to_string(body)+"|"+std::to_string(lat)+"|"+
+                    std::to_string(lon)+"|"+action+"|"+
+                    std::to_string(world.generation()));
+            }
+            const auto current=world.world().planetary_shuttles().find(key);
+            if(current==world.world().planetary_shuttles().end()) {
+                announce(world.world(),"PLANET_SHUTTLE_STATUS|"+
+                    std::to_string(body)+"|"+std::to_string(lat)+"|"+
+                    std::to_string(lon)+"|0|0|0|0|0|0|0|0|0|0|"+
+                    std::to_string(world.generation()));
+            } else {
+                const auto& sh=current->second;
+                announce(world.world(),"PLANET_SHUTTLE_STATUS|"+
+                    std::to_string(body)+"|"+std::to_string(lat)+"|"+
+                    std::to_string(lon)+"|1|"+std::to_string(sh.flight_phase)+"|"+
+                    std::to_string(sh.pilot_npc)+"|"+std::to_string(sh.water_kg)+"|"+
+                    std::to_string(sh.food_kg)+"|"+std::to_string(sh.arrival_tick)+"|"+
+                    std::to_string(sh.flight_request)+"|"+
+                    std::to_string(sh.descent_receipt)+"|"+
+                    std::to_string(sh.ascent_receipt)+"|"+
+                    std::to_string(world.generation()));
+            }
+        }catch(const std::exception&){
+            announce(world.world(),"ERROR|PLANET_SHUTTLE_DENIED");
+        }
+        return;
+    }
     // PLAY-13D.4B: owner administrative policy; unlike a physical transfer
     // it remains available after the ship leaves this planet.
     if(v.size()==5 && v[0]=="PLANET_POLICY") {
