@@ -10086,13 +10086,12 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                source->second.type!=EntityType::Ship ||
                source->second.owner_id!=job.owner ||
                source_frame==result.ship_frames_.end() ||
-               source->second.system_id!=job.system ||
-               source_frame->second.system!=job.system ||
-               // A completed source vessel may legitimately navigate away;
-               // the recorded frame anchor stays as immutable build history.
+               source_frame->second.system!=source->second.system_id ||
+               // A source vessel can physically depart after posting: the
+               // build must stall, not make the saved world unrecoverable.
+               // Immutable original frame is retained as build provenance.
                (!job.finished() &&
-                (source_frame->second.anchor_body!=job.anchor_body ||
-                 !active_slips.insert(job.yard_order).second)))
+                 !active_slips.insert(job.yard_order).second))
                 throw std::runtime_error("snapshot: invalid freighter yard custody");
             if(job.finished()){
                 const auto made=result.entities_.find(job.launched_ship);
@@ -10100,11 +10099,10 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 if(!manufactured_hulls.insert(job.launched_ship).second ||
                    made==result.entities_.end() ||
                    made->second.type!=EntityType::Ship ||
-                   made->second.owner_id!=job.owner ||
+                   !made->second.owner_id ||
                    made->second.cargo_capacity!=100 ||
-                   made->second.system_id!=job.system ||
                    frame==result.ship_frames_.end() ||
-                   frame->second.system!=job.system)
+                   frame->second.system!=made->second.system_id)
                     throw std::runtime_error("snapshot: forged manufactured hull");
             }
         }
