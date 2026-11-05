@@ -49,6 +49,10 @@ Delegation levels, separately authorized by colony policy:
 
 The opportunity metric should be explainable: current backlog ship-build hours vs available slip-hours, expected input deliveries, NPC workforce, existing utilization, spare funds and expected demand. A shipyard is not always profitable; low demand, limited power and worker scarcity can make an expansion irrational. NPCs should have no infinite-money, infinite-parts, automatic-construction or self-granted authority loopholes.
 
+## SHIP-01B.1 — First finite manufactured freighter (draft)
+
+The first physical freighter hull implementation is now in a stacked draft branch; see [SHIP01B1_FIRST_PLAYER_MANUFACTURED_FREIGHTER_20261105.md](SHIP01B1_FIRST_PLAYER_MANUFACTURED_FREIGHTER_20261105.md). A real operational SHIP-01A yard debits six manufactured modules, uses its named workers for twelve committed ticks, then creates one new canonical uncrewed Entity with a 100 m³ cargo hold in the exact parent local frame. A v91 immutable manufacturing receipt links the order to the hull, and SQLite failpoint/restart tests have been written. The actual new C++ native test has **not yet passed at exact head**; the finished hull is **not yet crewed, fitted, or authorized to transport cargo** until a real commissioning gate. No station-grade power/slip or ship market is being claimed complete.
+
 ## SHIP-01A.1 — authoritative construction implementation in progress
 
 See [SHIP01A1_AUTHORITATIVE_CONSTRUCTION_20261105.md](SHIP01A1_AUTHORITATIVE_CONSTRUCTION_20261105.md). A draft branch now has exact-material module debit, canonical 8-unit embodied yard structure, eight native committed construction ticks by two named NPCs, v90 snapshot and SQLite fault/restart test, and the authenticated native/HTTP/JS UI. The test target has been committed but NOT compiled against the exact v90 source in this local environment. Do not call this verified.
