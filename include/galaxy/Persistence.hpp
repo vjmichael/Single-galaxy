@@ -867,6 +867,12 @@ public:
     bool cancel_local_delivery_order(PlayerId owner,std::uint64_t order_id,
         FailPoint fail=FailPoint::None);
     // Exactly one canonical SQLite commit per real sealed-carrier stock transfer.
+    // One atomic player work-order posting + real carrier assignment. The
+    // host will only load the hull once its planetary pickup has completed.
+    bool post_intercolony_work_order(PlayerId owner,EntityId origin,
+        const PlanetarySiteKey& site,ShuttleCargo cargo,
+        std::int64_t kilograms,std::uint64_t order_id,
+        EntityId carrier,EntityId destination,FailPoint fail=FailPoint::None);
     bool load_intercolony_freight(PlayerId owner,std::uint64_t order_id,
         EntityId carrier,EntityId destination,FailPoint fail=FailPoint::None);
     bool deliver_intercolony_freight(PlayerId owner,std::uint64_t order_id,
