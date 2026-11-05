@@ -45,3 +45,11 @@ Add explicit `SETTLE` (admission) and `ASSIGN_PERMANENT_WORK` (employment) to th
 - Exact-head Windows and Linux native CTest + real host/relay E2E + independent SQLite custody and inventory audit.
 
 **Gate close rule:** 4C.9A alone is not a completed transfer. Keep 4C.9 and 4C.8 native acceptance unverified until their exact-head build/test results pass.
+
+## 4C.9B checkpoint — candidate transition invariants committed (2026-11-04)
+
+`include/galaxy/PlanetarySettlementTransition.hpp` introduces a strictly read-only **postcondition** guard, `valid_settlement_transition`. The proposed single adult transfer must retain the same named identity, keep physical position on the exact surface, reduce parent ship crew by one, increase permanent surface workers by one, remove shuttle visitor custody and temporary duty, preserve global population and physical material mass, and require independently verified consent and resource/household reservations. Unresolved guardianship and active transport fail closed. `tests/PLAY13D_PlanetarySettlementTransitionTests.cpp` covers valid and invalid projections; CMake registers the test.
+
+**Not yet implemented:** no calling code currently obtains authenticated consent or real finite housing reservations, invokes this guard on a candidate `Simulation`, changes `NpcRecord` roles, updates `PlanetarySiteFacility` workforce capacity, publishes a SQLite migration receipt or exposes a `SETTLE` action. The existing colony migration writer requires ferry transportation and colony-ship destinations. It must **not** be tricked with invented ferry arrivals or colony ship identities to process a planetary shuttle visitor. We need a new settlement adapter over the existing authoritative family/census transaction with real site-level capacity and versioned persistence; until then, these checks are safety prerequisites, not a working settlement feature.
+
+The current postcondition guard only models **employment-bound single-adult** moves. Separate non-working permanent residency and atomic dependent co-moves remain required before treating the broader 4C.9 gate as complete.
