@@ -8790,6 +8790,18 @@ bool PersistentWorld::launch_planetary_shuttle(PlayerId owner,EntityId ship,
     return true;
 }
 
+bool PersistentWorld::assign_shipyard_builders(PlayerId owner,std::uint64_t id,
+        std::array<std::uint64_t,2> replacement,FailPoint fail) {
+    auto next=world_;
+    if(!next.assign_shipyard_builders(owner,id,replacement))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("shipyard worker reassignment changed matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
 bool PersistentWorld::start_shipyard_construction(
         PlayerId owner,EntityId colony,std::uint64_t order,
         std::array<std::uint64_t,2> workers,FailPoint fail) {
