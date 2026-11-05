@@ -1320,6 +1320,12 @@ endif()
 
 # PLAY-13D.3 source-backed planetary site construction/farm/extraction persistence.
 if(BUILD_TESTING)
+  # PLAY-13D: control roles share one physical ship and inventory model.
+  add_executable(galaxy_play13d_ship_control_tests
+    tests/PLAY13D_ShipControlTests.cpp)
+  target_link_libraries(galaxy_play13d_ship_control_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_ship_control
+    COMMAND galaxy_play13d_ship_control_tests)
   # Shared identity/arrival evidence for ferry and planetary shuttle adapters.
   add_executable(galaxy_play13d_shared_transport_tests
     tests/PLAY13D_SharedTransportIdentityTests.cpp)
