@@ -190,13 +190,14 @@ static void scenario(const fs::path& db, bool farming){
         catch(const std::exception&){load_failed=true;}
         CHECK(load_failed);
         CHECK(w.world().canonical_state()==load_before);
+        const auto before_native_load=w.generation();
         native.action=OrbitalShuttleAction::Load;
         native.kilograms=200;
         native.water=true;
         const auto native_load=execute_orbital_shuttle(w,native);
         CHECK(native_load.accepted && native_load.mutated &&
               native_load.shuttle.water_kg==200 &&
-              native_load.generation==native_generation+1);
+              native_load.generation==before_native_load+1);
         CHECK(w.load_planetary_shuttle(7,ship,key,false,100));
         CHECK(w.world().planetary_shuttles().at(key).water_kg==200);
         CHECK(w.world().planetary_shuttles().at(key).food_kg==100);
