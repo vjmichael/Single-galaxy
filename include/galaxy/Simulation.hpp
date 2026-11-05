@@ -465,6 +465,11 @@ struct PlanetaryShuttleState {
     std::vector<std::uint64_t> disembarked_ids;
     // v84: subset of surface visitors explicitly delegated temporary work.
     std::vector<std::uint64_t> duty_ids;
+    // v85: each physically disembarked visitor retains THEIR OWN descent
+    // receipt even if this shuttle later makes unrelated flights.
+    // Legacy v84 visitors remain readable but are not certified migration
+    // arrivals without a new authenticated journey.
+    std::map<std::uint64_t,std::uint64_t> visitor_arrival_receipts;
 };
 struct PhysicalOasisReserve {
     std::int64_t water_kg=0,nutrients_kg=0;
