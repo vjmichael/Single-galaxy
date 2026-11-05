@@ -6725,7 +6725,12 @@ std::string Simulation::canonical_state() const {
         out<<"deceased|"<<id<<'|'<<n.home_ship<<'|'<<n.location<<'|'
            <<static_cast<unsigned>(n.role)<<'|'<<n.farm_xp<<'|'<<n.mentor_id<<'|'
            <<n.transport_id<<'|'<<n.assigned_site<<'|'<<record.death_tick<<'|'
-           <<record.command_id<<'|'<<record.ferry<<'\n';
+           <<record.command_id<<'|'<<record.ferry;
+        if(snapshot_version_>=86){
+            const auto residence=n.legal_residence();
+            out<<'|'<<unsigned(residence.kind)<<'|'<<residence.id;
+        }
+        out<<'\n';
     }
     for (auto id : submitted_ids_) out << "accepted|" << id << '\n';
     for (const auto& ev : events_) {
@@ -7874,13 +7879,21 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             if(!result.voyages_.emplace(id,std::move(v)).second)
                 throw std::runtime_error("snapshot: duplicate voyage ID");
         } else if(f[0]=="deceased" && result.snapshot_version_>=36){
-            require_fields(f,12);
+            require_fields(f,result.snapshot_version_>=86?14:12);
             NpcCasualty d{};auto& n=d.identity;n.id=u64(f[1]);
             n.home_ship=u64(f[2]);n.location=u64(f[3]);
             const auto role=u64(f[4]);n.role=static_cast<NpcRole>(role);
             n.farm_xp=u64(f[5]);n.mentor_id=u64(f[6]);
             n.transport_id=u64(f[7]);n.assigned_site=u64(f[8]);
             d.death_tick=u64(f[9]);d.command_id=u64(f[10]);d.ferry=u64(f[11]);
+            if(result.snapshot_version_>=86){
+                const auto kind=u64(f[12]);
+                n.residence_id=u64(f[13]);
+                if(kind<1 || kind>4 || !n.residence_id ||
+                   (kind==1 && n.residence_id!=n.home_ship))
+                    throw std::runtime_error("snapshot: invalid deceased legal residence");
+                n.residence_kind=static_cast<transport::LocationKind>(kind);
+            }
             if(!n.id || n.id>=result.next_npc_id_ || role!=static_cast<unsigned>(NpcRole::Ship) ||
                n.assigned_site!=n.home_ship || n.farm_xp>1000000 ||
                !n.home_ship || !n.location || !n.assigned_site || n.mentor_id==n.id ||
