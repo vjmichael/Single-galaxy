@@ -69,14 +69,14 @@
       if(v.length!==16)throw Error('Malformed planetary spaceport status');
       const id=numeric(v[4],Number.MAX_SAFE_INTEGER),
        latitude=numeric(v[5],35),longitude=numeric(v[6],71),
-       phase=numeric(v[7],3),progress=numeric(v[8],40),
-       required=numeric(v[9],40),workers=numeric(v[10],2),
+       phase=numeric(v[7],3),progress=numeric(v[8],240),
+       required=numeric(v[9],240),workers=numeric(v[10],2),
        food=numeric(v[11],1000000),water=numeric(v[12],1000000),
        oxygen=numeric(v[13],1000000),npc1=numeric(v[14],Number.MAX_SAFE_INTEGER),
        npc2=numeric(v[15],Number.MAX_SAFE_INTEGER);
-      if(!id || phase<1 || required!==40 || workers!==2 ||
+      if(!id || phase<1 || required!==240 || workers!==2 ||
           (npc1===npc2 && npc1!==0) ||
-          (phase===3 && progress!==40))
+          (phase===3 && progress!==240))
         throw Error('Invalid surface spaceport status');
       return {...e,id,latitude,longitude,phase,progress,required,workers,
               food,water,oxygen,npc1,npc2};
