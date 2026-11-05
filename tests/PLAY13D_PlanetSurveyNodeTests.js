@@ -230,13 +230,18 @@ test('PLAY-13D.4F local work-board contract telemetry uses real NPC delivery sta
   const ui=fs.readFileSync(path.join(root,'viewer/colony.js'),'utf8');
   const relay=fs.readFileSync(path.join(root,'live/interactive_relay.py'),'utf8');
   const host=fs.readFileSync(path.join(root,'src/colony_live_host.cpp'),'utf8');
-  assert.match(ui,/Post resource pickup for NPC pilot/);
+  assert.match(ui,/Queue resource pickup for NPC pilot/);
+  assert.match(ui,/Queued — waiting for available shuttle, fuel, and stock/);
+  assert.match(ui,/Unloading into colony ship/);
   assert.match(ui,/colonyLocalWorkPost/);
   assert.match(ui,/colonyLocalWorkStatus/);
   assert.match(ui,/colonyLocalWorkCancel/);
   assert.match(relay,/LOCAL_WORK_POST/);
   assert.match(relay,/LOCAL_WORK_CANCEL/);
   assert.match(host,/process_local_delivery_board|local_delivery_board/);
+  assert.match(host,/else if\(count<64\)emit\(id,job\)/);
+  assert.match(host,/std::sort\(history.begin\(\),history.end\(\)/);
+  assert.match(ui,/workList.replaceChildren\(\)/);
 });
 
 test('PLAY-13D shuttle UI separates booked passengers, landed visitors and temporary duty',()=>{

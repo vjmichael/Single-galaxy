@@ -5452,11 +5452,8 @@ bool Simulation::post_local_delivery_order(PlayerId owner,EntityId board_ship,
        local_delivery_orders_.count(order_id) ||
        local_delivery_orders_.size()>=10000)
         return false;
-    for(const auto& [id,work]:local_delivery_orders_) {
-        (void)id;
-        if(work.site==key && work.stage!=LocalDeliveryStage::Complete &&
-           work.stage!=LocalDeliveryStage::Cancelled)return false;
-    }
+    // Multiple finite jobs may wait at the same local board. Only the
+    // actual shuttle execution is exclusive; pending orders hold no stock.
     local_delivery_orders_.emplace(order_id,LocalDeliveryOrder{
         order_id,owner,board_ship,key,cargo,kilograms,0,
         LocalDeliveryStage::Posted,tick_});
@@ -5474,6 +5471,16 @@ bool Simulation::cancel_local_delivery_order(PlayerId owner,std::uint64_t order_
     return true;
 }
 void Simulation::process_local_delivery_board() {
+    // Pre-index claimed physical shuttles once per tick. Do not search all
+    // jobs for each pending instruction (quadratic at large work boards).
+    std::set<PlanetarySiteKey> occupied_sites;
+    for(const auto& [id,work]:local_delivery_orders_) {
+        (void)id;
+        if(work.stage!=LocalDeliveryStage::Posted &&
+           work.stage!=LocalDeliveryStage::Complete &&
+           work.stage!=LocalDeliveryStage::Cancelled)
+            occupied_sites.insert(work.site);
+    }
     for(auto& [id,work]:local_delivery_orders_) {
         if(work.stage==LocalDeliveryStage::Complete ||
            work.stage==LocalDeliveryStage::Cancelled)continue;
@@ -5497,6 +5504,9 @@ void Simulation::process_local_delivery_board() {
         };
         switch(work.stage) {
         case LocalDeliveryStage::Posted: {
+            // A claimed job owns the single physical shuttle until it
+            // completes. An understocked unclaimed job does not block another.
+            if(occupied_sites.count(work.site))break;
             // Only the locally assigned physical shuttle and its NPC pilot
             // may claim this order. No separate transport NPC is invented.
             if(sh.flight_phase!=0 || !sh.passenger_ids.empty() ||
@@ -5523,6 +5533,7 @@ void Simulation::process_local_delivery_board() {
                     flight_id(false),false)) {
                 work.assigned_pilot=sh.pilot_npc;
                 work.stage=LocalDeliveryStage::Descending;
+                occupied_sites.insert(work.site); // exclusive for this tick
             }
             break;
         }
@@ -9482,13 +9493,13 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 throw std::runtime_error("snapshot: orphaned local delivery contract");
             if(job.stage==LocalDeliveryStage::Complete ||
                job.stage==LocalDeliveryStage::Cancelled)continue;
-            if(!active_jobs.insert(job.site).second)
-                throw std::runtime_error("snapshot: competing local delivery contracts");
             if(job.stage==LocalDeliveryStage::Posted) {
                 if(job.assigned_pilot)
                     throw std::runtime_error("snapshot: premature courier assignment");
-                continue;
+                continue; // any number of unclaimed, non-custodial orders
             }
+            if(!active_jobs.insert(job.site).second)
+                throw std::runtime_error("snapshot: competing active local deliveries");
             const auto pilot=result.npcs_.find(job.assigned_pilot);
             if(!job.assigned_pilot || pilot==result.npcs_.end() ||
                pilot->second.home_ship!=job.board_ship ||

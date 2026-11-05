@@ -572,10 +572,13 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
                        v[0]=="LOCAL_WORK_STATUS")) {
         try {
             if(v[0]=="LOCAL_WORK_STATUS" && v.size()==1) {
+                // Show unfinished player orders first; durable old history
+                // must not displace the actual work the NPCs still have to do.
+                // No second job ledger: only references to canonical records.
+                const auto& board=world.world().local_delivery_board();
                 std::uint64_t count=0;
-                for(const auto& [id,job]:world.world().local_delivery_board()) {
-                    if(job.owner!=principal || job.board_ship!=ship)continue;
-                    if(count>=64)break; // bounded display, not a second ledger
+                const auto emit=[&](std::uint64_t id,
+                                    const LocalDeliveryOrder& job) {
                     const auto kind=job.cargo==ShuttleCargo::Water?"WATER":
                                     job.cargo==ShuttleCargo::Food?"FOOD":"NUTRIENTS";
                     announce(world.world(),"LOCAL_WORK_ITEM|"+std::to_string(id)+"|"+
@@ -586,6 +589,26 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
                         std::to_string(unsigned(job.stage))+"|"+
                         std::to_string(job.assigned_pilot));
                     ++count;
+                };
+                std::vector<std::pair<std::uint64_t,const LocalDeliveryOrder*>> history;
+                for(const auto& [id,job]:board) {
+                    if(job.owner!=principal || job.board_ship!=ship)continue;
+                    if(job.stage==LocalDeliveryStage::Complete ||
+                       job.stage==LocalDeliveryStage::Cancelled)
+                        history.emplace_back(id,&job);
+                    else if(count<64)emit(id,job);
+                }
+                // The newest *posted* completed jobs take remaining display
+                // slots; active orders cannot be hidden behind old history.
+                std::sort(history.begin(),history.end(),
+                    [](const auto& a,const auto& b) {
+                        if(a.second->created_tick!=b.second->created_tick)
+                            return a.second->created_tick>b.second->created_tick;
+                        return a.first>b.first;
+                    });
+                for(const auto& [id,job]:history) {
+                    if(count>=64)break;
+                    emit(id,*job);
                 }
                 announce(world.world(),"LOCAL_WORK_DONE|"+std::to_string(count));
             }else if(v[0]=="LOCAL_WORK_POST" && v.size()==7) {

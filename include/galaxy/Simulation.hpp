@@ -496,8 +496,9 @@ struct PlanetaryShuttleState {
     std::int64_t nutrients_kg=0;
 };
 // PLAY-13D.4F: finite local work board at the player's existing colony ship.
-// One assigned real shuttle/NPC executes one site-to-orbit job at a time.
-// Contracts hold NO stock: actual inventories remain in Simulation.
+// Multiple jobs may be posted, with only one claimed site-to-orbit delivery
+// executing on a real shuttle/NPC at a time. Contracts hold NO stock:
+// actual inventories remain in Simulation.
 enum class LocalDeliveryStage : std::uint8_t {
     Posted=0, Descending=1, Loading=2, Ascending=3,
     Delivering=4, Complete=5, Cancelled=6
@@ -1060,8 +1061,9 @@ public:
     // physical shuttle and canonical NPC roster. Not an inventory copy.
     std::optional<transport::Manifest> planetary_transport_manifest(
         const PlanetarySiteKey& key) const;
-    // Authoritative player-created local work board. The first executable
-    // route is one planetary site -> its existing orbiting colony ship.
+    // Authoritative player-created local work board. Multiple finite jobs
+    // can wait for a single local shuttle; only one may actively carry cargo.
+    // The first executable route is one planetary site -> its orbiting ship.
     // Other colonies require an actual onward ship/route; no teleport.
     const std::map<std::uint64_t,LocalDeliveryOrder>& local_delivery_board() const noexcept {
         return local_delivery_orders_;
