@@ -432,6 +432,15 @@ struct PlanetarySiteFacility {
     std::int64_t assigned_workers=2; // tied to ship headcount / named roster
     std::int64_t oxygen_kg=0, co2_kg=0, organic_waste_kg=0;
     std::uint64_t worker_support_cycles=0;
+    // PLAY-13D.4B policy 0=paused, 1=farm, 2=water, 3=nutrients,
+    // 4=maintenance. All output is physically debited/credited in world state.
+    std::uint8_t workforce_policy=0;
+    std::uint8_t equipment_condition=100;
+    std::uint64_t last_work_tick=0;
+    std::uint64_t autonomous_cycles=0;
+    std::uint64_t stalled_cycles=0;
+    std::uint64_t auto_extracted_kg=0;
+    std::uint64_t repair_cycles=0;
 };
 using PlanetarySiteKey = std::tuple<std::uint64_t,std::uint16_t,std::uint16_t,std::uint32_t>;
 struct PhysicalOasisReserve {
@@ -937,6 +946,11 @@ public:
     // Host-visible crew dispatch status: no player avatar or surface render.
     bool planetary_spaceport_operational(std::uint64_t body,
         std::uint16_t latitude,std::uint16_t longitude) const;
+    // Policy is an administrative command, not remote physical cargo transfer.
+    // Owner may update it from orbit after site commissioning.
+    bool set_planetary_workforce_policy(PlayerId owner,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,std::uint8_t policy);
+
     // Install only with more real manufactured modules and appropriate ground.
     bool equip_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
         std::uint16_t latitude,std::uint16_t longitude,bool farm);
