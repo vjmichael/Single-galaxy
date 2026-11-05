@@ -75,6 +75,18 @@ test('orbit-only NPC roster and spaceport construction status decode',()=>{
     'COLONY|1|13|PLANET_CREW_AVAILABLE|0'
   ]) assert.throws(()=>decode(bad),Error,bad);
 });
+test('PLAY-13D planetary site reports exact nutrient inventory without inferred extraction',()=>{
+  const stocked=decode('COLONY|1|13|PLANET_SITE_STATUS|4294967300|17|36|3|240|240|2|35|28|26|42|43|3|100|5|1|1000|0|750');
+  assert.equal(stocked.nutrients,750);
+  assert.equal(stocked.policy,3);
+  const legacy=decode('COLONY|1|13|PLANET_SITE_STATUS|4294967300|17|36|3|240|240|2|35|28|26|42|43|3|100|5|1|1000|0');
+  assert.equal(legacy.nutrients,0);
+  for(const bad of [
+    'COLONY|1|13|PLANET_SITE_STATUS|4294967300|17|36|3|240|240|2|35|28|26|42|43|3|100|5|1|1000|0|1000001',
+    'COLONY|1|13|PLANET_SITE_STATUS|4294967300|17|36|3|240|240|2|35|28|26|42|43|3|100|5|1|1000|0|-1'
+  ])assert.throws(()=>decode(bad),Error,bad);
+});
+
 test('surface construction controls remain native and have no surface viewer',()=>{
   const ui=fs.readFileSync(path.join(root,'viewer/colony.js'),'utf8');
   const relay=fs.readFileSync(path.join(root,'live/interactive_relay.py'),'utf8');
