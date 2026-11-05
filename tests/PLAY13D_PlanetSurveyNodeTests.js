@@ -2,7 +2,7 @@ const test=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const path=require('node:path');
-const {decode}=require('../viewer/colony.js');
+const {decode,makeShuttleRosterTracker}=require('../viewer/colony.js');
 const root=path.resolve(__dirname,'..');
 test('planet region decodes verified authoritative geography',()=>{
   const value=decode('COLONY|1|5|PLANET_REGION|4294967300|17|36|-120|0|7|2|1800|18|36|1');
@@ -175,4 +175,57 @@ test('PLAY-13D.4C.8 work duty is not implied by planetary disembarkation',()=>{
     'COLONY|1|14|PLANET_SHUTTLE_WORKERS_DONE|4294967300|17|36|65',
     'COLONY|1|14|PLANET_SHUTTLE_WORKER|4294967300|17|36',
   ])assert.throws(()=>decode(raw),Error,raw);
+});
+
+test('PLAY-13D shuttle UI separates booked passengers, landed visitors and temporary duty',()=>{
+  const t=makeShuttleRosterTracker();
+  const e=(type,value)=>decode(
+    'COLONY|1|14|'+type+'|4294967300|17|36|'+value);
+  assert.equal(t.accept(e('PLANET_SHUTTLE_PASSENGER',41)),null);
+  assert.equal(t.accept(e('PLANET_SHUTTLE_PASSENGER',42)),null);
+  assert.deepEqual(t.accept(e('PLANET_SHUTTLE_MANIFEST_DONE',2)),
+    {kind:'passengers',ids:[41,42]});
+  assert.deepEqual(t.snapshot(),{passengers:[41,42],visitors:[],workers:[]});
+  assert.equal(t.accept(e('PLANET_SHUTTLE_VISITOR',84)),null);
+  assert.deepEqual(t.accept(e('PLANET_SHUTTLE_VISITORS_DONE',1)),
+    {kind:'visitors',ids:[84]});
+  assert.equal(t.accept(e('PLANET_SHUTTLE_WORKER',84)),null);
+  assert.deepEqual(t.accept(e('PLANET_SHUTTLE_WORKERS_DONE',1)),
+    {kind:'workers',ids:[84]});
+  assert.deepEqual(t.snapshot(),{passengers:[41,42],visitors:[84],workers:[84]});
+  // An empty manifest replaces the previous view; it never appends stale IDs.
+  assert.deepEqual(t.accept(e('PLANET_SHUTTLE_MANIFEST_DONE',0)),
+    {kind:'passengers',ids:[]});
+  assert.deepEqual(t.snapshot().passengers,[]);
+  assert.deepEqual(t.snapshot().visitors,[84]);
+  // A separate world/region panel starts with no stale transport identities.
+  assert.deepEqual(makeShuttleRosterTracker().snapshot(),
+    {passengers:[],visitors:[],workers:[]});
+});
+
+test('PLAY-13D shuttle UI rejects incomplete, duplicate and unsorted native manifests',()=>{
+  const e=(type,value)=>decode(
+    'COLONY|1|14|'+type+'|4294967300|17|36|'+value);
+  const t=makeShuttleRosterTracker();
+  t.accept(e('PLANET_SHUTTLE_PASSENGER',13));
+  assert.throws(()=>t.accept(e('PLANET_SHUTTLE_PASSENGER',13)),/Noncanonical/);
+  assert.throws(()=>t.accept(e('PLANET_SHUTTLE_MANIFEST_DONE',2)),/Incomplete/);
+  assert.deepEqual(t.snapshot().passengers,[]);
+  t.accept(e('PLANET_SHUTTLE_VISITOR',40));
+  assert.throws(()=>t.accept(e('PLANET_SHUTTLE_VISITOR',39)),/Noncanonical/);
+  assert.deepEqual(t.accept(e('PLANET_SHUTTLE_VISITORS_DONE',1)),
+    {kind:'visitors',ids:[40]});
+  t.accept(e('PLANET_SHUTTLE_WORKER',42));
+  assert.throws(()=>t.accept(e('PLANET_SHUTTLE_WORKERS_DONE',1)),/no physically disembarked visitor/);
+  assert.deepEqual(t.snapshot().workers,[]);
+});
+
+test('PLAY-13D shuttle UI exposes named NPC selection instead of mislabeling all as booked',()=>{
+  const ui=fs.readFileSync(path.join(root,'viewer/colony.js'),'utf8');
+  assert.match(ui,/Booked aboard \(max 3\)/);
+  assert.match(ui,/Visitors on surface/);
+  assert.match(ui,/Visitors on temporary duty/);
+  assert.match(ui,/Select NPC.*for shuttle order/);
+  assert.match(ui,/makeShuttleRosterTracker/);
+  assert.doesNotMatch(ui,/dataset\.shuttlePassengers/);
 });
