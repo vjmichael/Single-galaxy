@@ -245,6 +245,9 @@ test('PLAY-13D.4F local work-board contract telemetry uses real NPC delivery sta
 });
 
 test('PLAY-13D.4G real intercolony carrier telemetry is strict',()=>{
+  const planned=decode('COLONY|1|20|INTERFREIGHT_ITEM|77003|3|4|NUTRIENTS|200|0|0');
+  assert.equal(planned.stage,0);
+  assert.equal(decode('COLONY|1|20|INTERFREIGHT_PLANNED|77003|3|4|444').generation,444);
   const aboard=decode('COLONY|1|20|INTERFREIGHT_ITEM|77003|3|4|NUTRIENTS|200|1|0');
   assert.equal(aboard.carrier,3);
   assert.equal(aboard.destination,4);
@@ -272,7 +275,8 @@ test('PLAY-13D.4G real intercolony carrier telemetry is strict',()=>{
   const relay=fs.readFileSync(path.join(root,'live/interactive_relay.py'),'utf8');
   const host=fs.readFileSync(path.join(root,'src/colony_live_host.cpp'),'utf8');
   for(const action of ['colonyFreightLoad','colonyFreightDispatch',
-                        'colonyFreightDeliver','colonyFreightStatus']){
+                        'colonyFreightDeliver','colonyFreightStatus',
+                        'colonyLocalWorkPostToColony']){
     assert.match(ui,new RegExp(action));
     assert.match(relay,new RegExp(action));
   }
