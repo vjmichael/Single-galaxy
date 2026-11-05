@@ -614,7 +614,7 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
             if(current==world.world().planetary_shuttles().end()) {
                 announce(world.world(),"PLANET_SHUTTLE_STATUS|"+
                     std::to_string(body)+"|"+std::to_string(lat)+"|"+
-                    std::to_string(lon)+"|0|0|0|0|0|0|0|0|0|0|"+
+                    std::to_string(lon)+"|0|0|0|0|0|0|0|0|0|"+
                     std::to_string(world.generation()));
             } else {
                 const auto& sh=current->second;
