@@ -645,6 +645,7 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
     // the named NPC pilot then fulfills it via existing physical shuttle
     // flights and stock transfers on committed simulation ticks.
     if(!v.empty() && (v[0]=="LOCAL_WORK_POST" ||
+                       v[0]=="LOCAL_WORK_POST_INTERCOLONY" ||
                        v[0]=="LOCAL_WORK_CANCEL" ||
                        v[0]=="LOCAL_WORK_STATUS")) {
         try {
@@ -688,6 +689,33 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
                     emit(id,*job);
                 }
                 announce(world.world(),"LOCAL_WORK_DONE|"+std::to_string(count));
+            }else if(v[0]=="LOCAL_WORK_POST_INTERCOLONY" && v.size()==9) {
+                const auto body=integer(v[1]),lat=integer(v[2]),lon=integer(v[3]);
+                const auto kg=integer(v[5]),id=integer(v[6]),
+                           carrier=integer(v[7]),destination=integer(v[8]);
+                if(body<=0 || lat<0 || lat>=36 || lon<0 || lon>=72 ||
+                   kg<=0 || kg>1000 || id<=0 ||
+                   id>=(std::int64_t{1}<<50) ||
+                   carrier<=0 || destination<=0)
+                    throw std::invalid_argument("invalid intercolony work contract");
+                ShuttleCargo cargo{};
+                if(v[4]=="WATER")cargo=ShuttleCargo::Water;
+                else if(v[4]=="FOOD")cargo=ShuttleCargo::Food;
+                else if(v[4]=="NUTRIENTS")cargo=ShuttleCargo::Nutrients;
+                else throw std::invalid_argument("unsupported freight resource");
+                if(!world.post_intercolony_work_order(principal,ship,
+                    PlanetarySiteKey{std::uint64_t(body),std::uint16_t(lat),
+                                     std::uint16_t(lon),1},
+                    cargo,kg,std::uint64_t(id),EntityId(carrier),
+                    EntityId(destination))) {
+                    announce(world.world(),"ERROR|LOCAL_WORK_DENIED");
+                    return;
+                }
+                announce(world.world(),"LOCAL_WORK_POSTED|"+std::to_string(id)+"|"+
+                         std::to_string(world.generation()));
+                announce(world.world(),"INTERFREIGHT_PLANNED|"+
+                    std::to_string(id)+"|"+std::to_string(carrier)+"|"+
+                    std::to_string(destination)+"|"+std::to_string(world.generation()));
             }else if(v[0]=="LOCAL_WORK_POST" && v.size()==7) {
                 const auto body=integer(v[1]),lat=integer(v[2]),lon=integer(v[3]);
                 const auto kg=integer(v[5]),id=integer(v[6]);
@@ -1523,6 +1551,40 @@ int main(int argc,char** argv){
                     std::to_string(sh.ascent_receipt)+"|"+
                     std::to_string(world.generation())+
                     (sh.nutrients_kg>0?"|"+std::to_string(sh.nutrients_kg):""));
+            }
+            // Autonomy for explicitly authorized, actual carrier assignments:
+            // no route is attempted until the finite planetary pickup is
+            // unloaded into the origin ship and physically loaded on the
+            // existing freighter. Every subsequent departure uses the same
+            // native journal as the player's manual celestial navigation.
+            std::vector<std::uint64_t> ready_freight;
+            for(const auto& [order,leg]:world.world().intercolony_freight()){
+                if(leg.owner!=owner || leg.source_ship!=ship ||
+                   leg.stage!=IntercolonyFreightStage::Loaded)continue;
+                const auto at=world.world().ship_frames().find(leg.carrier_ship);
+                if(at==world.world().ship_frames().end() ||
+                   at->second.anchor_body!=leg.origin_body)continue;
+                bool has_flight=false;
+                for(const auto& [id,p]:world.world().pending_celestial_transits()){
+                    (void)id;
+                    if(p.ship==leg.carrier_ship){has_flight=true;break;}
+                }
+                if(!has_flight)ready_freight.push_back(order);
+            }
+            for(const auto order:ready_freight){
+                const auto it=world.world().intercolony_freight().find(order);
+                if(it==world.world().intercolony_freight().end())continue;
+                const auto carrier=it->second.carrier_ship;
+                const auto destination=it->second.destination_ship;
+                const auto target=world.world().ship_frames().find(destination);
+                if(target==world.world().ship_frames().end() ||
+                   !target->second.anchor_body)continue;
+                const auto request=++nonce;
+                if(world.begin_celestial_transit(
+                        owner,carrier,target->second.anchor_body,request))
+                    announce(world.world(),"INTERFREIGHT_DEPARTED|"+
+                        std::to_string(order)+"|"+std::to_string(request)+"|"+
+                        std::to_string(carrier)+"|"+std::to_string(destination));
             }
             // Mature transit requests are committed separately; no half-
             // applied position is ever published. Catch-up on restart is
