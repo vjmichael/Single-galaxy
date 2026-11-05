@@ -1,0 +1,52 @@
+name: SHIP-01C first manufactured freighter physical delivery
+
+on:
+  pull_request:
+    paths:
+      - 'src/Simulation.cpp'
+      - 'src/Persistence.cpp'
+      - 'include/galaxy/Simulation.hpp'
+      - 'include/galaxy/Persistence.hpp'
+      - 'tests/PLAY13D_RegionalFacilitiesTests.cpp'
+      - 'tests/SHIP01B2_CommissionFreighterTests.cpp'
+      - 'CMakeLists.txt'
+      - '.github/workflows/ship01c-manufactured-freight.yml'
+  workflow_dispatch:
+
+jobs:
+  manufactured-freighter-e2e:
+    name: Shipyard to Planet A pickup to Colony B (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SQLite (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlite3-dev
+      - name: Install SQLite (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vcpkg = Join-Path $env:VCPKG_INSTALLATION_ROOT "vcpkg.exe"
+          if (-not (Test-Path $vcpkg)) { throw "Windows vcpkg not available" }
+          & $vcpkg install sqlite3:x64-windows --clean-after-build
+          if ($LASTEXITCODE -ne 0) { throw "SQLite SDK failed" }
+      - name: Configure CMake (Linux)
+        if: runner.os == 'Linux'
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+      - name: Configure CMake (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $toolchain = Join-Path $env:VCPKG_INSTALLATION_ROOT "scripts/buildsystems/vcpkg.cmake"
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$toolchain" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+          if ($LASTEXITCODE -ne 0) { throw "Configure failed" }
+      - name: Build real simulation and planetary freight acceptance executables
+        run: cmake --build build --config Release --parallel 2 --target galaxy_ship01b_first_freighter_tests galaxy_ship01b2_commission_freighter_tests galaxy_play13d_regional_facilities_tests
+      - name: Run exact HEAD ship building, commissioning and manufactured physical freight
+        run: ctest --test-dir build -C Release --output-on-failure -R "^galaxy_(ship01b_first_freighter|ship01b2_commission_freighter|ship01c_manufactured_freight)$"
