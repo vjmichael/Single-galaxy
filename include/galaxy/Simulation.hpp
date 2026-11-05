@@ -462,6 +462,8 @@ struct PlanetaryShuttleState {
     // v83: named visitors physically disembarked at this site, retained in
     // the shuttle transport ledger until explicitly reboarded. No new NPCs.
     std::vector<std::uint64_t> disembarked_ids;
+    // v84: subset of surface visitors explicitly delegated temporary work.
+    std::vector<std::uint64_t> duty_ids;
 };
 struct PhysicalOasisReserve {
     std::int64_t water_kg=0,nutrients_kg=0;
@@ -984,6 +986,10 @@ public:
     // previously disembarked visitor into an available physical passenger seat.
     bool transfer_planetary_shuttle_visitor(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,std::uint64_t npc,bool reboard);
+    // Explicitly authorize/revoke temporary surface work for a disembarked
+    // visitor. This is not immigration or a permanent workforce transfer.
+    bool assign_planetary_shuttle_visitor_duty(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc,bool assign);
     // One named pilot in authoritative NPC custody; cargo stays on the shuttle
     // until unloading after committed arrival. Requests are single use per leg.
     bool launch_planetary_shuttle(PlayerId owner,EntityId ship,
