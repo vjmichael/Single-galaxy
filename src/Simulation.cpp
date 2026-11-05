@@ -5648,15 +5648,20 @@ void Simulation::process_planetary_surface_operations() {
     // waste, never a second crew instance or free consumable.
     if(snapshot_version_>=81 && tick_%20==0)
         for(const auto& [key,sh]:planetary_shuttles_) {
-            if(sh.flight_phase!=2 || !sh.pilot_npc)continue;
             auto site=planetary_sites_.find(key);
             if(site==planetary_sites_.end())continue;
             auto& ground=site->second;
-            const std::int64_t people=1+static_cast<std::int64_t>(sh.passenger_ids.size());
+            // Disembarked visitors remain physically on the surface even
+            // while the shuttle returns to orbit or makes another trip.
+            const auto locals=std::int64_t(sh.disembarked_ids.size());
+            const auto landing=sh.flight_phase==2?
+                1+std::int64_t(sh.passenger_ids.size()):0;
+            const std::int64_t people=locals+landing;
+            if(!people)continue;
             if(ground.food_kg<people || ground.water_kg<people ||
                ground.oxygen_kg<people) {
                 ++ground.stalled_cycles;
-                continue; // shortage, never synthesize supplies
+                continue; // shortage; never synthesize supplies
             }
             ground.food_kg-=people;ground.water_kg-=people;
             ground.oxygen_kg-=people;
@@ -5675,6 +5680,22 @@ void Simulation::process_planetary_surface_operations() {
                it->second.role==NpcRole::PlanetarySurface &&
                npc_available_for_duty(npc))++ready;
         }
+        // Temporary NPC visitors supplement the two permanent delegated
+        // workers. No permanent employment or immigration is inferred.
+        const auto sh=planetary_shuttles_.find(key);
+        if(sh!=planetary_shuttles_.end())
+            for(const auto npc:sh->second.disembarked_ids) {
+                const auto person=npcs_.find(npc);
+                if(person==npcs_.end() ||
+                   person->second.location!=site.surface_location ||
+                   person->second.home_ship!=site.source_ship ||
+                   person->second.role!=NpcRole::Ship ||
+                   person->second.assigned_site!=site.source_ship)continue;
+                const auto health=npc_health_status(npc);
+                if(health==NpcHealthStatus::Healthy ||
+                   health==NpcHealthStatus::Treated ||
+                   health==NpcHealthStatus::Recovered)++ready;
+            }
         if(ready<2) {
             if(site.spaceport_phase==3 && site.workforce_policy &&
                tick_%20==0){++site.stalled_cycles;site.last_work_tick=tick_;}
