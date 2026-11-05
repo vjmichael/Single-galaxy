@@ -1,4 +1,5 @@
 #include "galaxy/Simulation.hpp"
+#include "galaxy/TransportIdentity.hpp"
 #include "galaxy/ColonySafety.hpp"
 #include "galaxy/QuantifiedProduction.hpp"
 #include "galaxy/FactoryLayout.hpp"
@@ -1395,8 +1396,9 @@ bool Simulation::submit(const Command& c) {
         const auto n=npcs_.find(id);
         const auto v=voyages_.find(c.transport_id);
         if(n==npcs_.end() || v==voyages_.end() || v->second.status!=2 ||
-           v->second.origin!=c.actor || v->second.destination!=c.target ||
-           !std::binary_search(v->second.passengers.begin(),v->second.passengers.end(),id) ||
+           !transport::completed_arrival({transport::Mode::Ferry,transport::Phase::Arrived,
+                c.transport_id,v->second.origin,v->second.destination,
+                v->second.passengers},id,c.actor,c.target) ||
            n->second.home_ship!=c.actor || n->second.location!=c.target ||
            n->second.assigned_site!=c.actor || n->second.transport_id ||
            n->second.role!=NpcRole::Ship || n->second.mentor_id ||
@@ -2297,8 +2299,9 @@ Event Simulation::execute(const Command& c) {
            (c.passenger_ids.size()==2 && (c.passenger_ids[1]<=id ||
              snapshot_version_<41)) ||
            n==npcs_.end() || v==voyages_.end() || v->second.status!=2 ||
-           v->second.origin!=c.actor || v->second.destination!=c.target ||
-           !std::binary_search(v->second.passengers.begin(),v->second.passengers.end(),id) ||
+           !transport::completed_arrival({transport::Mode::Ferry,transport::Phase::Arrived,
+                c.transport_id,v->second.origin,v->second.destination,
+                v->second.passengers},id,c.actor,c.target) ||
            n->second.home_ship!=c.actor || n->second.assigned_site!=c.actor ||
            n->second.location!=c.target || n->second.transport_id ||
            n->second.role!=NpcRole::Ship || n->second.mentor_id ||
@@ -5465,8 +5468,8 @@ bool Simulation::assign_planetary_shuttle_visitor_duty(PlayerId owner,EntityId s
        sh->second.owner!=owner || sh->second.source_ship!=ship ||
        site->second.owner!=owner || site->second.source_ship!=ship ||
        site->second.spaceport_phase!=3 ||
-       !std::binary_search(sh->second.disembarked_ids.begin(),
-                           sh->second.disembarked_ids.end(),npc) ||
+       !transport::completed_shuttle_visit(sh->second.descent_receipt,
+           true,sh->second.disembarked_ids,npc) ||
        person->second.home_ship!=ship ||
        person->second.location!=site->second.surface_location ||
        person->second.assigned_site!=ship ||
@@ -5513,7 +5516,8 @@ bool Simulation::transfer_planetary_shuttle_visitor(PlayerId owner,EntityId ship
     auto& visitors=sh->second.disembarked_ids;
     if(reboard) {
         auto at=std::lower_bound(visitors.begin(),visitors.end(),npc);
-        if(at==visitors.end() || *at!=npc || aboard.size()>=3 ||
+        if(!transport::completed_shuttle_visit(sh->second.descent_receipt,
+                true,visitors,npc) || aboard.size()>=3 ||
            std::binary_search(aboard.begin(),aboard.end(),npc))
             return false;
         auto place=std::lower_bound(aboard.begin(),aboard.end(),npc);
