@@ -5430,6 +5430,47 @@ bool Simulation::build_planetary_shuttle(PlayerId owner,EntityId ship,const Plan
     snapshot_version_=std::max(snapshot_version_,80);
     return true;
 }
+std::optional<transport::Manifest> Simulation::planetary_transport_manifest(
+       const PlanetarySiteKey& key) const {
+    const auto sh=planetary_shuttles_.find(key);
+    const auto site=planetary_sites_.find(key);
+    if(sh==planetary_shuttles_.end() || site==planetary_sites_.end())
+        return std::nullopt;
+    const auto& vessel=sh->second;
+    const bool returning=vessel.flight_phase==2 || vessel.flight_phase==3;
+    const transport::Endpoint orbit{transport::LocationKind::ColonyShip,
+                                     vessel.source_ship};
+    const transport::Endpoint ground{transport::LocationKind::PlanetarySite,
+                                      site->second.surface_location};
+    transport::Manifest manifest{};
+    manifest.vehicle=vessel.source_ship; // existing owner ship / shuttle adapter
+    manifest.owner=vessel.owner;
+    manifest.mode=transport::Mode::PlanetaryShuttle;
+    manifest.berth=returning?ground:orbit;
+    manifest.other_end=returning?orbit:ground;
+    manifest.pilot=vessel.pilot_npc;
+    manifest.in_transit=vessel.flight_phase==1 || vessel.flight_phase==3;
+    manifest.flight_receipt=manifest.in_transit?vessel.flight_request:
+        (returning?vessel.descent_receipt:vessel.ascent_receipt);
+    manifest.seat_capacity=3;
+    manifest.cargo_capacity_kg=1000;
+    for(const auto id:vessel.passenger_ids)
+        manifest.contents.push_back({transport::GoodKind::Npc,id,1,0});
+    const auto add_stock=[&](transport::ResourceGood kind,std::int64_t kilograms){
+        if(kilograms>0)manifest.contents.push_back({
+            transport::GoodKind::Resource,static_cast<std::uint8_t>(kind),
+            static_cast<std::uint64_t>(kilograms),
+            static_cast<std::uint64_t>(kilograms)});
+    };
+    add_stock(transport::ResourceGood::Water,vessel.water_kg);
+    add_stock(transport::ResourceGood::Food,vessel.food_kg);
+    add_stock(transport::ResourceGood::Nutrients,vessel.nutrients_kg);
+    // The order in which canonical inventories are enumerated is fixed.
+    // No separate NPC roster, cargo stock or delivery receipt is created.
+    return manifest.valid()?std::optional<transport::Manifest>(std::move(manifest)):
+                            std::nullopt;
+}
+
 bool Simulation::load_planetary_shuttle(PlayerId owner,EntityId ship,
        const PlanetarySiteKey& key,bool water,std::int64_t kg) {
     return load_planetary_shuttle(owner,ship,key,
