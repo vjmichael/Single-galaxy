@@ -116,7 +116,7 @@
       return {...e,id,latitude,longitude,operation,generation};
     }
     if(t==='PLANET_SITE_STATUS'){
-      if(v.length!==22)throw Error('Malformed planetary spaceport status');
+      if(v.length!==22&&v.length!==23)throw Error('Malformed planetary spaceport status');
       const id=numeric(v[4],Number.MAX_SAFE_INTEGER),
        latitude=numeric(v[5],35),longitude=numeric(v[6],71),
        phase=numeric(v[7],3),progress=numeric(v[8],240),
@@ -128,14 +128,15 @@
        cycles=numeric(v[18],Number.MAX_SAFE_INTEGER),
        stalled=numeric(v[19],Number.MAX_SAFE_INTEGER),
        extracted=numeric(v[20],Number.MAX_SAFE_INTEGER),
-       repairs=numeric(v[21],Number.MAX_SAFE_INTEGER);
+       repairs=numeric(v[21],Number.MAX_SAFE_INTEGER),
+       nutrients=v.length===23?numeric(v[22],1000000):0;
       if(!id || phase<1 || required!==240 ||
          (workers!==2 && !(workers===0 && phase===3 && npc1===0 && npc2===0)) ||
           (npc1===npc2 && npc1!==0) ||
           (phase===3 && progress!==240))
         throw Error('Invalid surface spaceport status');
       return {...e,id,latitude,longitude,phase,progress,required,workers,
-              food,water,oxygen,npc1,npc2,policy,condition,cycles,stalled,extracted,repairs};
+              food,water,oxygen,nutrients,npc1,npc2,policy,condition,cycles,stalled,extracted,repairs};
     }
     if(t==='PLANET_OPERATION_COMMITTED'){
       if(v.length!==9)throw Error('Malformed planetary operation receipt');
@@ -791,8 +792,8 @@
              ['Reboard surface visitor','REBOARD'],
              ['Assign temporary surface duty','DUTY_ON'],
              ['Release temporary surface duty','DUTY_OFF'],
-             ['Load supplies','LOAD'],
-             ['Unload at current berth','UNLOAD'],['Descend to surface','DESCEND'],
+             ['Load cargo at current berth','LOAD'],
+             ['Unload cargo at current berth','UNLOAD'],['Descend to surface','DESCEND'],
              ['Return to orbit','ASCEND']
            ];
            shuttleOperations.forEach(([name,code])=>shuttleChoice.add(new Option(name,code)));
@@ -949,7 +950,8 @@
          ' progress ticks · '+e.workers+' delegated NPCs '+
          (e.npc1?'#'+e.npc1+' and #'+e.npc2:'(legacy finite crew)')+
          ' · surface food '+e.food+' kg, water '+e.water+
-         ' kg, oxygen '+e.oxygen+' kg. Autonomous policy '+e.policy+
+         ' kg, oxygen '+e.oxygen+' kg, recovered nutrients '+e.nutrients+
+         ' kg. Autonomous policy '+e.policy+
          ' · condition '+e.condition+'% · work cycles '+e.cycles+
          ' · paused/stalled cycles '+e.stalled+' · extracted '+
          e.extracted+' kg · repairs '+e.repairs+'.';
