@@ -241,6 +241,8 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(Simulation::from_snapshot(in_flight).canonical_state()==in_flight);
         w.steps(3);
         CHECK(w.world().planetary_shuttles().at(key).flight_phase==2);
+        if(available.size()>3)
+            CHECK(!w.assign_planetary_shuttle_pilot(7,ship,key,available[3]));
         CHECK(w.world().planetary_shuttles().at(key).descent_receipt==81001);
         CHECK(w.world().npc_custody(available[2]).physical_location==
               w.world().planetary_sites().at(key).surface_location);
