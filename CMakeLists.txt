@@ -1398,3 +1398,13 @@ if(BUILD_TESTING)
   add_test(NAME galaxy_ship01a_construction
     COMMAND galaxy_ship01a_construction_tests)
 endif()
+
+# SHIP-01B.1 — real six-module, twelve-tick freighter hull construction,
+# committed entity creation, same-frame launch and SQLite restart/failpoints.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship01b_first_freighter_tests
+    tests/SHIP01B_FirstFreighterTests.cpp)
+  target_link_libraries(galaxy_ship01b_first_freighter_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship01b_first_freighter
+    COMMAND galaxy_ship01b_first_freighter_tests)
+endif()
