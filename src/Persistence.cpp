@@ -8790,6 +8790,20 @@ bool PersistentWorld::launch_planetary_shuttle(PlayerId owner,EntityId ship,
     return true;
 }
 
+bool PersistentWorld::start_shipyard_construction(
+        PlayerId owner,EntityId colony,std::uint64_t order,
+        std::array<std::uint64_t,2> workers,FailPoint fail) {
+    auto next=world_;
+    if(!next.start_shipyard_construction(owner,colony,order,workers))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("shipyard construction changed conserved matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
 bool PersistentWorld::post_local_delivery_order(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& site,ShuttleCargo cargo,
         std::int64_t kilograms,std::uint64_t order_id,FailPoint fail) {
