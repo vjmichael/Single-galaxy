@@ -8802,6 +8802,19 @@ bool PersistentWorld::assign_shipyard_builders(PlayerId owner,std::uint64_t id,
     ++generation_;
     return true;
 }
+bool PersistentWorld::queue_shipyard_freighter(
+        PlayerId owner,std::uint64_t yard_id,std::uint64_t build_id,
+        FailPoint fail) {
+    auto next=world_;
+    if(!next.queue_shipyard_freighter(owner,yard_id,build_id))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("freighter build material escrow altered total matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
 bool PersistentWorld::start_shipyard_construction(
         PlayerId owner,EntityId colony,std::uint64_t order,
         std::array<std::uint64_t,2> workers,FailPoint fail) {

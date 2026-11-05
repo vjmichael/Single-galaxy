@@ -319,6 +319,39 @@ test('SHIP-01A native shipyard construction progress and UI are bounded by recei
   assert.match(host,/shipyard_constructions/);
 });
 
+test('SHIP-01B native real freighter hull manufacturing events are bounded',()=>{
+  const queued=decode('COLONY|1|20|FREIGHTER_QUEUED|92001|91001|123');
+  assert.equal(queued.order,92001);
+  const awaiting=decode('COLONY|1|20|FREIGHTER_ITEM|92001|91001|0|12|0|123');
+  assert.equal(awaiting.hull,0);
+  assert.equal(awaiting.required,12);
+  const launched=decode('COLONY|1|35|FREIGHTER_ITEM|92001|91001|12|12|8|155');
+  assert.equal(launched.hull,8);
+  assert.equal(launched.progress,12);
+  assert.equal(decode('COLONY|1|35|FREIGHTER_LAUNCHED|92001|8|155').hull,8);
+  assert.equal(decode('COLONY|1|35|FREIGHTER_DONE|1').count,1);
+  for(const bad of [
+    'COLONY|1|20|FREIGHTER_ITEM|92001|91001|12|12|0|123',
+    'COLONY|1|20|FREIGHTER_ITEM|92001|91001|11|12|8|123',
+    'COLONY|1|20|FREIGHTER_ITEM|92001|91001|13|12|8|123',
+    'COLONY|1|20|FREIGHTER_ITEM|92001|91001|11|10|0|123',
+    'COLONY|1|20|FREIGHTER_ITEM|91001|91001|0|12|0|123',
+    'COLONY|1|20|FREIGHTER_QUEUED|92001|91001|0',
+    'COLONY|1|20|FREIGHTER_LAUNCHED|92001|0|123',
+    'COLONY|1|20|FREIGHTER_DONE|65'
+  ])assert.throws(()=>decode(bad),Error,bad);
+  const ui=fs.readFileSync(path.join(root,'viewer/colony.js'),'utf8');
+  const relay=fs.readFileSync(path.join(root,'live/interactive_relay.py'),'utf8');
+  const host=fs.readFileSync(path.join(root,'src/colony_live_host.cpp'),'utf8');
+  assert.match(ui,/Manufacture cargo freighter/);
+  assert.match(ui,/colonyFreighterBuild/);
+  assert.match(ui,/colonyFreighterStatus/);
+  assert.match(relay,/FREIGHTER_BUILD/);
+  assert.match(relay,/FREIGHTER_STATUS/);
+  assert.match(host,/queue_shipyard_freighter/);
+  assert.match(host,/freighter_build_orders/);
+});
+
 test('PLAY-13D shuttle UI separates booked passengers, landed visitors and temporary duty',()=>{
   const t=makeShuttleRosterTracker();
   const e=(type,value)=>decode(

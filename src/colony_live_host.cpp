@@ -512,6 +512,47 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
         }
         return;
     }
+    // SHIP-01B.1: real finite-hull production, separate from free genesis.
+    // The client can request an existing player's yard but cannot assert
+    // completion, choose an entity ID, or claim a crew and cargo.
+    if(!v.empty() && (v[0]=="FREIGHTER_BUILD" || v[0]=="FREIGHTER_STATUS")){
+        try{
+            if(v[0]=="FREIGHTER_BUILD" && v.size()==3){
+                const auto yard=integer(v[1]),order=integer(v[2]);
+                const auto site=world.world().shipyard_constructions().find(
+                    std::uint64_t(yard>0?yard:0));
+                if(yard<=0 || order<=0 || order>=(std::int64_t{1}<<50) ||
+                   site==world.world().shipyard_constructions().end() ||
+                   site->second.owner!=principal ||
+                   site->second.colony_ship!=ship ||
+                   !world.queue_shipyard_freighter(principal,
+                       std::uint64_t(yard),std::uint64_t(order))){
+                    announce(world.world(),"ERROR|FREIGHTER_DENIED");return;
+                }
+                announce(world.world(),"FREIGHTER_QUEUED|"+
+                    std::to_string(order)+"|"+std::to_string(yard)+"|"+
+                    std::to_string(world.generation()));
+            }else if(v[0]!="FREIGHTER_STATUS" || v.size()!=1){
+                announce(world.world(),"ERROR|FREIGHTER_DENIED");return;
+            }
+            std::uint64_t count=0;
+            for(const auto& [id,order]:world.world().freighter_build_orders()){
+                if(order.owner!=principal || order.source_ship!=ship ||
+                   count>=64)continue;
+                announce(world.world(),"FREIGHTER_ITEM|"+
+                    std::to_string(id)+"|"+std::to_string(order.yard_order)+"|"+
+                    std::to_string(order.progress)+"|"+
+                    std::to_string(order.required)+"|"+
+                    std::to_string(order.launched_ship)+"|"+
+                    std::to_string(world.generation()));
+                ++count;
+            }
+            announce(world.world(),"FREIGHTER_DONE|"+std::to_string(count));
+        }catch(const std::exception&){
+            announce(world.world(),"ERROR|FREIGHTER_DENIED");
+        }
+        return;
+    }
     if(v.size()==2 && v[0]=="OASIS_INSTALL") {
         try {
             const auto id=integer(v[1]);
@@ -1562,6 +1603,11 @@ int main(int argc,char** argv){
             std::map<PlanetarySiteKey,std::uint8_t> prior_shuttle_phases;
             for(const auto& [key,sh]:world.world().planetary_shuttles())
                 prior_shuttle_phases.emplace(key,sh.flight_phase);
+            std::map<std::uint64_t,std::pair<std::uint64_t,EntityId>> prior_build;
+            for(const auto& [id,order]:world.world().freighter_build_orders())
+                if(order.owner==owner && order.source_ship==ship)
+                    prior_build.emplace(id,std::make_pair(
+                        order.progress,order.launched_ship));
             std::map<std::uint64_t,std::uint64_t> prior_yard;
             for(const auto& [id,yard]:world.world().shipyard_constructions())
                 if(yard.owner==owner && yard.colony_ship==ship)
@@ -1611,6 +1657,26 @@ int main(int argc,char** argv){
                     announce(world.world(),"INTERFREIGHT_LOADED|"+
                         std::to_string(id)+"|"+std::to_string(leg.carrier_ship)+"|"+
                         std::to_string(leg.destination_ship)+"|"+
+                        std::to_string(world.generation()));
+            }
+            // Status is published only after this exact world.step's durable
+            // SQLite commit. A new hull ID is evidence of a created Entity,
+            // not a speculative construction bar in the temporary browser.
+            for(const auto& [id,order]:world.world().freighter_build_orders()){
+                if(order.owner!=owner || order.source_ship!=ship)continue;
+                const auto old=prior_build.find(id);
+                if(old!=prior_build.end() && old->second.first==order.progress &&
+                   old->second.second==order.launched_ship)continue;
+                announce(world.world(),"FREIGHTER_ITEM|"+
+                    std::to_string(id)+"|"+std::to_string(order.yard_order)+"|"+
+                    std::to_string(order.progress)+"|"+
+                    std::to_string(order.required)+"|"+
+                    std::to_string(order.launched_ship)+"|"+
+                    std::to_string(world.generation()));
+                if(order.finished())
+                    announce(world.world(),"FREIGHTER_LAUNCHED|"+
+                        std::to_string(id)+"|"+
+                        std::to_string(order.launched_ship)+"|"+
                         std::to_string(world.generation()));
             }
             // Shipyard construction progress comes only from the committed

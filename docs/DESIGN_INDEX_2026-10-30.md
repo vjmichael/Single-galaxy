@@ -1,3 +1,9 @@
+## 2026-11-05 — First manufactured cargo freighter (SHIP-01B.1)
+
+[SHIP-01B.1 — first real freighter build](engineering/SHIP01B1_FIRST_PLAYER_MANUFACTURED_FREIGHTER_20261105.md): one finite manufactured hull from six actual construction modules and a completed local yard, with named NPC fabrication, twelve game ticks, v91 immutable ship ID, native SQLite journal, and no free crew or scanner. **Code committed, 21/21 source-based UI tests passed, exact-head C++ and SQLite acceptance pending.** Ship commissioning, powered orbital slips, and intercolony shipbuilding contracts remain open.
+
+---
+
 ## 2026-11-05 — Shipyard economy design (future work)
 
 **SHIP-01 decision:** [Player-built shipyards, NPC shipbuilding, and intercolony orders](engineering/SHIP01_PLAYER_BUILT_SHIPYARDS_AND_COLONY_SHIP_ORDERS_20261105.md). The player must construct functioning shipyards using real materials, NPC labor, power and time. Authorized NPC managers may operate production and accept other colonies' orders; expanding yard capacity must require a real separately authorized build and finite inputs. **SHIP-01A.0 preflight locally passed on v66. SHIP-01A.1 construction is now coded on a stacked draft PR (v90; exact-head native acceptance still pending). Dedicated orbital yard, powered machinery and freighter production remain open.**
