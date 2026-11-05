@@ -20,7 +20,11 @@ struct Admission {
     bool household_reconciled=false;
     bool consent_required=true;
     bool verified_consent=false;
+    // Legacy v41 ship moves enforce an existing headcount limit rather than
+    // a new housing/support reservation. New planetary moves REQUIRE both.
+    bool housing_required=true;
     bool housing_reserved=false;
+    bool life_support_required=true;
     bool life_support_reserved=false;
     bool no_competing_residence=false;
 };
@@ -42,9 +46,9 @@ inline Denial preflight(const Admission& a,const transport::NpcTransport& t) {
         return Denial::UnresolvedHousehold;
     if(a.consent_required && !a.verified_consent)
         return Denial::ConsentRequired;
-    if(!a.housing_reserved)
+    if(a.housing_required && !a.housing_reserved)
         return Denial::NoHousing;
-    if(!a.life_support_reserved)
+    if(a.life_support_required && !a.life_support_reserved)
         return Denial::NoLifeSupport;
     if(!a.no_competing_residence)
         return Denial::CompetingResidence;
