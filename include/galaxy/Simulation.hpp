@@ -669,6 +669,7 @@ struct Entity {
     std::int64_t weapon_charges = 0; // finite starter training-weapon shots
     std::uint64_t last_weapon_tick = 0; // cooldown persists through restart
     bool training_drone = false; // explicit non-crew practice target; never a colony ship
+    std::uint64_t manufactured_order_id=0; // v91 immutable source build receipt
     ShipFitting fitting{};
     std::uint8_t survey_probes_carried=0; // physically onboard probes, 2t-equivalent each
     std::int64_t ore = 0;
