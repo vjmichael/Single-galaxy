@@ -131,7 +131,7 @@ def main(fixture,host,relay):
         db=Path(tmp)/"world.sqlite"
         prep=subprocess.run([str(fixture),str(db)],capture_output=True,text=True,
                             timeout=45,check=True)
-        body,latitude,longitude,ship,pilot,initial_mass=map(int,prep.stdout.strip().split())
+        body,latitude,longitude,ship,pilot,initial_mass,passenger=map(int,prep.stdout.strip().split())
         assert body>0 and pilot>0 and initial_mass>0
         port=choose_port()
         proc=launch(relay,host,db,port)
@@ -158,6 +158,8 @@ def main(fixture,host,relay):
                 assert built[7]=="1" and built[8]=="0",built
                 selected=send(port,reader,base,"PILOT",{"npc":pilot})
                 assert int(selected[9])==pilot,selected
+                booked=send(port,reader,base,"BOARD",{"npc":passenger})
+                assert int(booked[9])==pilot,booked
                 loaded=send(port,reader,base,"LOAD",{"resource":"WATER","kg":200})
                 assert int(loaded[10])==200,loaded
                 loaded=send(port,reader,base,"LOAD",{"resource":"FOOD","kg":100})
@@ -228,7 +230,7 @@ def main(fixture,host,relay):
             try:proc.communicate(timeout=4)
             except subprocess.TimeoutExpired:proc.kill();proc.communicate()
         native=subprocess.run([str(fixture),"--verify",str(db),str(body),
-            str(latitude),str(longitude),str(pilot),str(initial_mass),str(ship)],
+            str(latitude),str(longitude),str(pilot),str(initial_mass),str(ship),str(passenger)],
             capture_output=True,text=True,timeout=30,check=True)
         assert "PASS native committed shuttle" in native.stdout,native.stdout
         print("PASS PLAY-13D.4C.5 real native host/relay shuttle delivery, return, and SQLite restart")
