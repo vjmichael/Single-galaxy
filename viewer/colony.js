@@ -875,21 +875,21 @@
              line.append(choices);
              shuttlePanel.append(line);
            }
-           // Local work board: one simple instruction. The native world
-           // decides pilot, flight and stock.
+           // Local work board: queue finite instructions; the native world
+           // controls the physical pilot, shuttle, fuel and source stock.
            const workTitle=document.createElement('strong');
            workTitle.textContent='Local NPC delivery contracts';
            const workPost=document.createElement('button');
            workPost.type='button';
-           workPost.textContent='Post resource pickup for NPC pilot';
+           workPost.textContent='Queue resource pickup for NPC pilot';
            const workRefresh=document.createElement('button');
            workRefresh.type='button';workRefresh.textContent='Check work board';
            const workCancelId=document.createElement('input');
            workCancelId.type='number';workCancelId.step='1';workCancelId.min='1';
-           workCancelId.placeholder='Posted contract ID';
+           workCancelId.placeholder='Queued contract ID';
            workCancelId.setAttribute('aria-label','Cancel contract ID');
            const workCancel=document.createElement('button');
-           workCancel.type='button';workCancel.textContent='Cancel posted order';
+           workCancel.type='button';workCancel.textContent='Cancel queued order';
            const workStatus=document.createElement('output');
            workStatus.dataset.localWorkStatus='1';
            workStatus.textContent='Choose a resource and quantity above to post pickup.';
@@ -909,7 +909,7 @@
                body:body.id,latitude:coords.lat,longitude:coords.lon,
                resource:shuttleResource.value,kg,order});
              workCancelId.value=String(order);
-             workStatus.textContent='Pickup contract submitted; awaiting native receipt.';
+             workStatus.textContent='Pickup order submitted. NPCs will queue it when confirmed.';
            });
            workRefresh.addEventListener('click',()=>{
              window.GalaxyColonyCommand?.('colonyLocalWorkStatus',{});
@@ -1028,9 +1028,10 @@
            entry.dataset.workOrder=String(e.order);
            list.append(entry);
          }
-         const stages=['Posted — awaiting NPC pilot/resources','Descending',
-           'Loading on surface','Ascending','Delivering to ship',
-           'Completed','Cancelled'];
+         const stages=['Queued — waiting for available shuttle, fuel, and stock',
+           'Shuttle descending','Loading at the surface',
+           'Shuttle returning to orbit','Unloading into colony ship',
+           'Delivered','Cancelled'];
          entry.textContent='Contract #'+e.order+': '+e.kg+
            ' kg '+e.resource+' · '+stages[e.stage]+
            (e.pilot?' · NPC pilot #'+e.pilot:'');
