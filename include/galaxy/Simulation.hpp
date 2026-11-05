@@ -461,6 +461,9 @@ struct PlanetarySiteFacility {
     std::uint64_t repair_cycles=0;
 };
 using PlanetarySiteKey = std::tuple<std::uint64_t,std::uint16_t,std::uint16_t,std::uint32_t>;
+// PLAY-13D: cargo identity is independent of player/NPC transport roles.
+// Nutrients are a finite, potentially planet-specific resource, not food.
+enum class ShuttleCargo : std::uint8_t { Water=0, Food=1, Nutrients=2 };
 // 4C.2: docked-orbit shuttle, fabricated from real ship modules.
 // The captain is assigned but stays aboard the parent ship until 4C.3.
 struct PlanetaryShuttleState {
@@ -487,6 +490,9 @@ struct PlanetaryShuttleState {
     // Legacy v84 visitors remain readable but are not certified migration
     // arrivals without a new authenticated journey.
     std::map<std::uint64_t,std::uint64_t> visitor_arrival_receipts;
+    // v87: finite third cargo type. Appended to retain all old positional
+    // aggregate construction and v80-v86 snapshot compatibility.
+    std::int64_t nutrients_kg=0;
 };
 struct PhysicalOasisReserve {
     std::int64_t water_kg=0,nutrients_kg=0;
@@ -1008,6 +1014,10 @@ public:
     bool build_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key);
     bool load_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,bool water,std::int64_t kg);
     bool unload_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,bool water,std::int64_t kg);
+    // Typed manifest: water, food and extracted nutrients use one physical
+    // 1,000 kg capacity and the same committed ship/site transfer path.
+    bool load_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,ShuttleCargo cargo,std::int64_t kg);
+    bool unload_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,ShuttleCargo cargo,std::int64_t kg);
     bool assign_planetary_shuttle_pilot(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,std::uint64_t npc);
     // Book/release actual named NPCs against the shuttle transport manifest.
     // Only orbital berth modifications; voyage departures move all occupants.
