@@ -199,6 +199,29 @@ def main(executable,relay):
             ]:
                 status,_=request(port,'POST','/command',payload)
                 assert status==400,(payload,status)
+            # One player instruction plans the local NPC pickup AND the
+            # real second-carrier assignment atomically in native SQLite.
+            combined={'token':token,'action':'colonyLocalWorkPostToColony',
+                      'body':4294967300,'latitude':17,'longitude':36,
+                      'resource':'NUTRIENTS','kg':200,'order':77007,
+                      'carrier':3,'destination':4}
+            assert 'colonyLocalWorkPostToColony' in session['commands']
+            status,_=request(port,'POST','/command',combined)
+            assert status==202
+            status,_=request(port,'POST','/command',
+                             {**combined,'token':'forged'})
+            assert status==403
+            for bad in (
+                {**combined,'carrier':True},
+                {**combined,'destination':3},
+                {**combined,'resource':'GOLD'},
+                {**combined,'kg':0},
+                {**combined,'order':1<<50},
+                {**combined,'longitude':72},
+                {**combined,'nonce':1}
+            ):
+                status,_=request(port,'POST','/command',bad)
+                assert status==400,(bad,status)
             # Real intercolony carriage has strict typed identities. HTTP
             # acknowledgement queues a native command; it is not delivery.
             for action in ('colonyFreightLoad','colonyFreightDispatch',
