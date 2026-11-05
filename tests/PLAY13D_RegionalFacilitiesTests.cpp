@@ -140,12 +140,12 @@ static void scenario(const fs::path& db, bool farming, bool manufactured=false){
             CHECK(!w.world().colony_ship(freighter));
             CHECK(!w.world().find(freighter)->fitting.exploration_scanner());
             CHECK(!w.begin_celestial_transit(7,freighter,chosen.body,92004));
-            CHECK(w.commission_shipyard_freighter(7,92001,operating,20));
+            CHECK(w.commission_shipyard_freighter(7,92001,operating,250));
             CHECK(w.world().freighter_build_orders().at(92001).commissioned());
             CHECK(w.world().colony_ship(freighter)->crew==2);
-            CHECK(w.world().life_support(freighter)->food_kg==20);
-            CHECK(w.world().life_support(freighter)->water_kg==20);
-            CHECK(w.world().life_support(freighter)->oxygen_kg==20);
+            CHECK(w.world().life_support(freighter)->food_kg==250);
+            CHECK(w.world().life_support(freighter)->water_kg==250);
+            CHECK(w.world().life_support(freighter)->oxygen_kg==250);
             CHECK(w.world().find(freighter)->fitting.exploration_scanner());
             CHECK(w.world().npc_records().size()==initial_people);
             CHECK(w.world().npc_records().at(operating[0]).home_ship==freighter);
@@ -973,6 +973,16 @@ static void scenario(const fs::path& db, bool farming, bool manufactured=false){
                   IntercolonyFreightStage::Delivered);
             CHECK(w.world().intercolony_freight().at(77007).arrival_receipt==99023);
             CHECK(w.world().life_support(receiver)->nutrients_kg>=1200);
+            // The manufactured ship has an actual 2-person life support
+            // budget throughout long planetary production and two voyages.
+            // Its transferred reserves, rather than free fuel/food, support
+            // the crew; no shortages may be hidden behind successful cargo.
+            if(manufactured) {
+                CHECK(w.world().colony_ship(freighter)->crew==2);
+                CHECK(w.world().life_support(freighter)->shortages==0);
+                CHECK(w.world().freighter_build_orders().at(92001).commissioned());
+                CHECK(w.world().find(freighter)->manufactured_order_id==92001);
+            }
             CHECK(!w.deliver_intercolony_freight(7,77003));
             CHECK(!w.post_local_delivery_order(7,ship,
                 PlanetarySiteKey{chosen.body,chosen.latitude,chosen.longitude,1},
