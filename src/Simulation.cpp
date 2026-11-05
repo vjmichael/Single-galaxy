@@ -5468,8 +5468,13 @@ bool Simulation::assign_planetary_shuttle_visitor_duty(PlayerId owner,EntityId s
        sh->second.owner!=owner || sh->second.source_ship!=ship ||
        site->second.owner!=owner || site->second.source_ship!=ship ||
        site->second.spaceport_phase!=3 ||
-       !transport::completed_shuttle_visit(sh->second.descent_receipt,
-           true,sh->second.disembarked_ids,npc) ||
+       !transport::completed_arrival(
+           {transport::Mode::PlanetaryShuttle,transport::Phase::Arrived,
+            sh->second.descent_receipt,ship,site->second.surface_location,
+            sh->second.disembarked_ids},npc,
+           transport::Endpoint{transport::LocationKind::ColonyShip,ship},
+           transport::Endpoint{transport::LocationKind::PlanetarySite,
+                               site->second.surface_location}) ||
        person->second.home_ship!=ship ||
        person->second.location!=site->second.surface_location ||
        person->second.assigned_site!=ship ||
@@ -5516,8 +5521,13 @@ bool Simulation::transfer_planetary_shuttle_visitor(PlayerId owner,EntityId ship
     auto& visitors=sh->second.disembarked_ids;
     if(reboard) {
         auto at=std::lower_bound(visitors.begin(),visitors.end(),npc);
-        if(!transport::completed_shuttle_visit(sh->second.descent_receipt,
-                true,visitors,npc) || aboard.size()>=3 ||
+        if(!transport::completed_arrival(
+                {transport::Mode::PlanetaryShuttle,transport::Phase::Arrived,
+                 sh->second.descent_receipt,ship,site->second.surface_location,
+                 visitors},npc,
+                transport::Endpoint{transport::LocationKind::ColonyShip,ship},
+                transport::Endpoint{transport::LocationKind::PlanetarySite,
+                                    site->second.surface_location}) || aboard.size()>=3 ||
            std::binary_search(aboard.begin(),aboard.end(),npc))
             return false;
         auto place=std::lower_bound(aboard.begin(),aboard.end(),npc);
