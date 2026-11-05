@@ -452,7 +452,10 @@ NpcCustodyView Simulation::npc_custody(std::uint64_t id) const {
     if(snapshot_version_>=81)
         for(const auto& [key,sh]:planetary_shuttles_) {
             (void)key;
-            if(sh.pilot_npc==id && (sh.flight_phase==1 || sh.flight_phase==3))
+            if((sh.pilot_npc==id ||
+                std::binary_search(sh.passenger_ids.begin(),
+                                   sh.passenger_ids.end(),id)) &&
+                (sh.flight_phase==1 || sh.flight_phase==3))
                 return {n.id,n.home_ship,n.location,n.role,sh.flight_request,true};
         }
     return {n.id,n.home_ship,n.location,n.role,n.transport_id,n.transport_id!=0};
@@ -5586,12 +5589,16 @@ void Simulation::process_planetary_surface_operations() {
             auto site=planetary_sites_.find(key);
             if(site==planetary_sites_.end())continue;
             auto& ground=site->second;
-            if(ground.food_kg<1 || ground.water_kg<1 || ground.oxygen_kg<1) {
+            const std::int64_t people=1+static_cast<std::int64_t>(sh.passenger_ids.size());
+            if(ground.food_kg<people || ground.water_kg<people ||
+               ground.oxygen_kg<people) {
                 ++ground.stalled_cycles;
                 continue; // shortage, never synthesize supplies
             }
-            --ground.food_kg;--ground.water_kg;--ground.oxygen_kg;
-            ++ground.organic_waste_kg;++ground.wastewater_kg;++ground.co2_kg;
+            ground.food_kg-=people;ground.water_kg-=people;
+            ground.oxygen_kg-=people;
+            ground.organic_waste_kg+=people;
+            ground.wastewater_kg+=people;ground.co2_kg+=people;
         }
     for(auto& [key,site]:planetary_sites_) {
         (void)key;
