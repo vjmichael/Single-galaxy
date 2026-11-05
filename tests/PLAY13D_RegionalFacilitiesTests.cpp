@@ -51,7 +51,12 @@ static void fabricate(PersistentWorld& w,EntityId ship) {
     apply(2004,Action::Mine,4,ship+1);
     apply(2005,Action::RefineOre,4);
     apply(2006,Action::FabricateModule,2);
-    CHECK(w.world().colony_ship(ship)->modules>=4);
+    // Third batch is fabricated before departure: the asteroid stays in
+    // the original celestial frame and cannot be mined remotely from orbit.
+    apply(2007,Action::Mine,4,ship+1);
+    apply(2008,Action::RefineOre,4);
+    apply(2009,Action::FabricateModule,2);
+    CHECK(w.world().colony_ship(ship)->modules>=6);
 }
 static void scenario(const fs::path& db, bool farming){
     const auto chosen=select_site(farming);
@@ -130,21 +135,10 @@ static void scenario(const fs::path& db, bool farming){
               ==w.world().canonical_state());
         CHECK(w.equip_planetary_site(7,ship,chosen.body,chosen.latitude,chosen.longitude,farming));
         CHECK(!w.equip_planetary_site(7,ship,chosen.body,chosen.latitude,chosen.longitude,farming));
-        CHECK(w.world().colony_ship(ship)->modules==0);
+        CHECK(w.world().colony_ship(ship)->modules==2);
 
-        // PLAY-13D.4C.2: fabricate another two modules from physical ore,
-        // then construct one orbit-docked shuttle with no free dry mass.
-        auto shuttle_apply=[&](std::uint64_t id,Action action,std::int64_t amount,
-                               EntityId target=0){
-            Command cmd{};cmd.id=id;cmd.sequence=id;
-            cmd.execute_tick=w.world().tick()+1;cmd.issuer=7;cmd.actor=ship;
-            cmd.action=action;cmd.amount=amount;cmd.target=target;
-            CHECK(w.submit(cmd));w.step();
-            CHECK(w.world().events().back().result==Outcome::Applied);
-        };
-        shuttle_apply(4301,Action::Mine,4,ship+1);
-        shuttle_apply(4302,Action::RefineOre,4);
-        shuttle_apply(4303,Action::FabricateModule,2);
+        // PLAY-13D.4C.2: the extra modules were fabricated before
+        // departure, not mined from an asteroid in a different local frame.
         CHECK(w.world().colony_ship(ship)->modules==2);
         CHECK(!w.build_planetary_shuttle(8,ship,key));
         const auto shuttle_before=w.world().canonical_state();
