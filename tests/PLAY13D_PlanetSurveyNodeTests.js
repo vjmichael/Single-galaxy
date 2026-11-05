@@ -230,7 +230,9 @@ test('PLAY-13D.4F local work-board contract telemetry uses real NPC delivery sta
   const ui=fs.readFileSync(path.join(root,'viewer/colony.js'),'utf8');
   const relay=fs.readFileSync(path.join(root,'live/interactive_relay.py'),'utf8');
   const host=fs.readFileSync(path.join(root,'src/colony_live_host.cpp'),'utf8');
-  assert.match(ui,/Post resource pickup for NPC pilot/);
+  assert.match(ui,/Queue resource pickup for NPC pilot/);
+  assert.match(ui,/Queued — waiting for available shuttle, fuel, and stock/);
+  assert.match(ui,/Unloading into colony ship/);
   assert.match(ui,/colonyLocalWorkPost/);
   assert.match(ui,/colonyLocalWorkStatus/);
   assert.match(ui,/colonyLocalWorkCancel/);
