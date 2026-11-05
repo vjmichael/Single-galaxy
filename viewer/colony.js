@@ -570,6 +570,7 @@
   return {decode,names,makeShuttleRosterTracker};
 });
 (function(){'use strict';if(typeof document==='undefined')return;
+ const {makeShuttleRosterTracker}=window.GalaxyColonyContract;
  const q=id=>document.getElementById(id), policyAudits=new Map(), geology=new Map(),small=new Map(),log=[],stocks=new Map(),outposts=new Map(),farms=new Map(),habitats=new Map(),utilities=new Map(),communities=new Map(),clinics=new Map(),reclaimers=new Map(),waterworks=new Map();
  const combatTargets=new Map();
  const salvageWrecks=new Map();
