@@ -92,12 +92,23 @@
       return {...e,id,latitude,longitude,present:!!present,phase,pilot,
         water,food,arrival,request,descent,ascent,generation};
     }
+    if(t==='PLANET_SHUTTLE_PASSENGER'||t==='PLANET_SHUTTLE_MANIFEST_DONE'){
+      if(v.length!==8)throw Error('Malformed shuttle passenger manifest');
+      const id=numeric(v[4],Number.MAX_SAFE_INTEGER),
+       latitude=numeric(v[5],35),longitude=numeric(v[6],71),
+       value=numeric(v[7],t==='PLANET_SHUTTLE_PASSENGER'?
+         Number.MAX_SAFE_INTEGER:3);
+      if(!id||(t==='PLANET_SHUTTLE_PASSENGER'&&!value))
+        throw Error('Invalid named shuttle passenger manifest');
+      return {...e,id,latitude,longitude,
+        ...(t==='PLANET_SHUTTLE_PASSENGER'?{npc:value}:{count:value})};
+    }
     if(t==='PLANET_SHUTTLE_COMMITTED'){
       if(v.length!==9)throw Error('Malformed shuttle commit');
       const id=numeric(v[4],Number.MAX_SAFE_INTEGER),latitude=numeric(v[5],35),
        longitude=numeric(v[6],71),operation=v[7],
        generation=numeric(v[8],Number.MAX_SAFE_INTEGER);
-      if(!id||!generation||!new Set(['BUILD','PILOT','LOAD','UNLOAD','DESCEND','ASCEND']).has(operation))
+      if(!id||!generation||!new Set(['BUILD','PILOT','BOARD','RELEASE','LOAD','UNLOAD','DESCEND','ASCEND']).has(operation))
         throw Error('Invalid shuttle operation receipt');
       return {...e,id,latitude,longitude,operation,generation};
     }
@@ -723,7 +734,10 @@
            shuttleChoice.setAttribute('aria-label','Shuttle command');
            const shuttleOperations=[
              ['Check shuttle status','STATUS'],['Fabricate shuttle (2 modules)','BUILD'],
-             ['Assign named pilot','PILOT'],['Load supplies','LOAD'],
+             ['Assign named pilot','PILOT'],
+             ['Book named NPC passenger','BOARD'],
+             ['Release booked passenger','RELEASE'],
+             ['Load supplies','LOAD'],
              ['Unload at current berth','UNLOAD'],['Descend to surface','DESCEND'],
              ['Return to orbit','ASCEND']
            ];
@@ -747,7 +761,7 @@
                 !Number.isSafeInteger(lon)||lon<0||lon>=72)return;
              const operation=shuttleChoice.value;
              const payload={body:body.id,latitude:lat,longitude:lon,operation};
-             if(operation==='PILOT'){
+             if(operation==='PILOT'||operation==='BOARD'||operation==='RELEASE'){
                const npc=Number(shuttleNpc.value);
                if(!Number.isSafeInteger(npc)||npc<=0)return;
                payload.npc=npc;
@@ -788,6 +802,25 @@
          'Ready NPCs (assign two by ID): '+roster.join(', '):
          'No individually available NPC records. Legacy finite crew can be auto-delegated.';
        window.GalaxyAvailableSurfaceNpcIds=[];
+     }
+     if(e.type==='PLANET_SHUTTLE_PASSENGER'||e.type==='PLANET_SHUTTLE_MANIFEST_DONE'){
+       const cards=q('celestialBodyList').querySelectorAll('[data-shuttle-body]');
+       cards.forEach(panel=>{
+         if(panel.dataset.shuttleBody!==String(e.id)||
+            panel.dataset.shuttleRegion!==e.latitude+','+e.longitude)return;
+         if(e.type==='PLANET_SHUTTLE_PASSENGER'){
+           const current=panel.dataset.shuttlePassengers?
+             panel.dataset.shuttlePassengers.split(','):[];
+           current.push(String(e.npc));
+           panel.dataset.shuttlePassengers=current.join(',');
+         }else{
+           const output=panel.querySelector('output');
+           const shown=(panel.dataset.shuttlePassengers||'').split(',').filter(Boolean);
+           if(output)output.textContent+=' · '+e.count+' booked passengers'+
+             (shown.length?' (NPC #'+shown.join(', #')+')':'');
+           panel.dataset.shuttlePassengers='';
+         }
+       });
      }
      if(e.type==='PLANET_SHUTTLE_STATUS'||e.type==='PLANET_SHUTTLE_COMMITTED'){
        const cards=q('celestialBodyList').querySelectorAll('[data-shuttle-body]');
