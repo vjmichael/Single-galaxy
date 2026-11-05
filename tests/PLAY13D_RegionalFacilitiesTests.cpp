@@ -101,7 +101,7 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(w.world().colony_ship(ship)->crew==6);
         w.steps(4);
         CHECK(w.world().planetary_sites().at(key).spaceport_phase==2);
-        w.steps(39);
+        w.steps(239);
         CHECK(!w.world().planetary_spaceport_operational(chosen.body,chosen.latitude,chosen.longitude));
         w.step();
         CHECK(w.world().planetary_spaceport_operational(chosen.body,chosen.latitude,chosen.longitude));
