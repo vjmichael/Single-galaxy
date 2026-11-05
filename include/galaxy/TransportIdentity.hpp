@@ -1,7 +1,7 @@
 #pragma once
-// Shared identity and arrival proof for all physical NPC transport.
-// A transport adapter supplies the actual authoritative vehicle state;
-// migration must not forge a ferry to represent a planetary shuttle.
+// Shared named-NPC movement contract. Historical "ferry" is now a vehicle
+// adapter, not a restriction on which NPC locations can communicate.
+// A caller must derive evidence from committed authoritative vehicle records.
 #include <algorithm>
 #include <cstdint>
 #include <vector>
@@ -9,9 +9,26 @@
 namespace galaxy::transport {
 using PersonId=std::uint64_t;
 using LocationId=std::uint64_t;
-enum class Mode : std::uint8_t { Ferry=1, PlanetaryShuttle=2 };
+
+// A location can be a colony ship, a persistent station/colony, or an exact
+// planetary surface custody address. Never infer its kind from the number.
+enum class LocationKind : std::uint8_t {
+    ColonyShip=1, SpaceColony=2, PlanetarySite=3, OtherNpcLocation=4
+};
+struct Endpoint {
+    LocationKind kind=LocationKind::OtherNpcLocation;
+    LocationId id=0;
+    friend constexpr bool operator==(Endpoint a,Endpoint b) noexcept {
+        return a.kind==b.kind && a.id==b.id;
+    }
+};
+enum class Mode : std::uint8_t {
+    Ferry=1, PlanetaryShuttle=2, SurfaceVehicle=3, OtherVehicle=4
+};
 enum class Phase : std::uint8_t { Booked=0, InTransit=1, Arrived=2, Interrupted=3 };
 
+// Legacy ferry receipts remain valid. Versioning the location *kind* in a
+// future unified journal must be additive and not rewrite old snapshots.
 struct ArrivalEvidence {
     Mode mode=Mode::Ferry;
     Phase phase=Phase::Booked;
@@ -28,9 +45,10 @@ inline bool canonical_manifest(const std::vector<PersonId>& ids) {
 inline bool contains_person(const std::vector<PersonId>& ids,PersonId id) {
     return id!=0 && std::binary_search(ids.begin(),ids.end(),id);
 }
-// The vehicle adapter must verify the evidence was sourced from committed
-// flight/voyage state. This helper intentionally cannot attest consent,
-// immigration policy, dependent custody, or capacity.
+// This is the one mode-independent identity/arrival validator.
+// Neither vehicle type nor location kind decides immigration eligibility.
+// The authority must still authenticate the source receipt and the physical
+// custody against canonical world state before calling it.
 inline bool completed_arrival(const ArrivalEvidence& a,PersonId npc,
                               LocationId origin,LocationId destination) {
     return a.transport_id!=0 && a.phase==Phase::Arrived &&
@@ -39,14 +57,9 @@ inline bool completed_arrival(const ArrivalEvidence& a,PersonId npc,
            canonical_manifest(a.manifest) &&
            contains_person(a.manifest,npc);
 }
-// A landed shuttle visitor has an actual surface custody ledger.
-// Unlike a completed ferry voyage, its flight_request may already be cleared;
-// use the durable descent receipt rather than inventing a ferry voyage.
-inline bool completed_shuttle_visit(std::uint64_t descent_receipt,
-                                    bool landed_or_disembarked,
-                                    const std::vector<PersonId>& visitors,
-                                    PersonId npc) {
-    return descent_receipt!=0 && landed_or_disembarked &&
-           canonical_manifest(visitors) && contains_person(visitors,npc);
+inline bool completed_arrival(const ArrivalEvidence& a,PersonId npc,
+                              Endpoint origin,Endpoint destination) {
+    return origin.id!=0 && destination.id!=0 && !(origin==destination) &&
+           completed_arrival(a,npc,origin.id,destination.id);
 }
 } // namespace galaxy::transport
