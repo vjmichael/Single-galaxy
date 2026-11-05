@@ -5298,6 +5298,24 @@ bool Simulation::planetary_spaceport_operational(std::uint64_t body,
         PlanetarySiteKey{body,latitude,longitude,1});
     return it!=planetary_sites_.end() && it->second.spaceport_phase==3;
 }
+bool Simulation::set_planetary_workforce_policy(PlayerId owner,std::uint64_t body,
+    std::uint16_t latitude,std::uint16_t longitude,std::uint8_t policy) {
+    const auto key=PlanetarySiteKey{body,latitude,longitude,1};
+    const auto it=planetary_sites_.find(key);
+    if(!owner || policy>4 || it==planetary_sites_.end() ||
+       it->second.owner!=owner || it->second.spaceport_phase!=3)
+        return false;
+    auto& site=it->second;
+    if(policy==1 && !site.farm)return false;
+    if((policy==2 || policy==3) && (!site.extractor ||
+       !oasis_reserves_.count(body)))return false;
+    // A grandfathered v77 site without named NPCs cannot operate itself.
+    if(policy && (site.assigned_workers!=2 ||
+        !site.delegated_npcs[0] || !site.delegated_npcs[1]))return false;
+    site.workforce_policy=policy;
+    snapshot_version_=std::max(snapshot_version_,79);
+    return true;
+}
 void Simulation::process_planetary_surface_operations() {
     for(auto& [key,site]:planetary_sites_) {
         (void)key;
@@ -5312,8 +5330,11 @@ void Simulation::process_planetary_surface_operations() {
                npc_available_for_duty(npc))++ready;
         }
         if(ready<2)continue; // injured, missing or unavailable crew pause work
-        if(site.food_kg<2 || site.water_kg<2 || site.oxygen_kg<2)
-            continue; // resupply before construction can resume
+        if(site.food_kg<2 || site.water_kg<2 || site.oxygen_kg<2) {
+            if(site.spaceport_phase==3 && site.workforce_policy &&
+               tick_%20==0){++site.stalled_cycles;site.last_work_tick=tick_;}
+            continue; // resupply before construction or work can resume
+        }
         if(tick_%10==0) {
             site.food_kg-=2;
             site.organic_waste_kg+=2;
@@ -5323,7 +5344,58 @@ void Simulation::process_planetary_surface_operations() {
             site.co2_kg+=2;
             ++site.worker_support_cycles;
         }
-        if(site.spaceport_phase==3)continue; // operational; workers still need supplies
+        if(site.spaceport_phase==3) {
+            // Autonomous policies run on a bounded world-tick cadence. No
+            // ship proximity is required; only the actually deployed NPCs
+            // and the local physical inventories can sustain work.
+            if(site.workforce_policy==0 || tick_%20!=0)continue;
+            const auto old_works=site.autonomous_cycles;
+            bool worked=false;
+            if(site.workforce_policy==1 && site.farm &&
+               site.equipment_condition>0 &&
+               site.water_kg>=10 && site.nutrients_kg>=5 &&
+               site.food_kg<=1000000-12 &&
+               site.wastewater_kg<=1000000-3) {
+                site.water_kg-=10;site.nutrients_kg-=5;
+                site.food_kg+=12;site.wastewater_kg+=3;
+                ++site.harvest_cycles;worked=true;
+            } else if((site.workforce_policy==2 || site.workforce_policy==3) &&
+                      site.extractor && site.equipment_condition>0) {
+                auto r=oasis_reserves_.find(site.region.body);
+                if(r!=oasis_reserves_.end()){
+                    auto& source=site.workforce_policy==2?r->second.water_kg:
+                                                      r->second.nutrients_kg;
+                    auto& dest=site.workforce_policy==2?site.water_kg:
+                                                    site.nutrients_kg;
+                    if(source>=1000 && dest<=1000000-1000){
+                        source-=1000;dest+=1000;
+                        site.auto_extracted_kg+=1000;worked=true;
+                    }
+                }
+            } else if(site.workforce_policy==4 &&
+                      site.equipment_condition<100 &&
+                      site.nutrients_kg>=1 &&
+                      site.wastewater_kg<1000000) {
+                // Finite consumable repair stock, not free healing:
+                // nutrients are converted into local material waste.
+                --site.nutrients_kg;++site.wastewater_kg;
+                site.equipment_condition=std::uint8_t(
+                    std::min(100,int(site.equipment_condition)+10));
+                ++site.repair_cycles;worked=true;
+            }
+            site.last_work_tick=tick_;
+            if(worked) {
+                ++site.autonomous_cycles;
+                if(site.workforce_policy!=4 &&
+                   site.autonomous_cycles%5==0 && site.equipment_condition>0)
+                    --site.equipment_condition;
+            } else {
+                ++site.stalled_cycles;
+            }
+            (void)old_works;
+            continue;
+        } // operational NPC workforce still consumes supplies
+
         // First four committed ticks represent the abstract NPC descent and
         // equipment emplacement; building then advances on actual world ticks.
         if(site.spaceport_phase==1) {
