@@ -1,4 +1,5 @@
 #include "galaxy/UniversalNpcMigration.hpp"
+#include "galaxy/Persistence.hpp"
 #include <cassert>
 using namespace galaxy;
 using namespace galaxy::migration;
@@ -19,6 +20,12 @@ int main(){
     base.housing_reserved=true;base.life_support_reserved=true;
     base.no_competing_residence=true;
     assert(preflight(base,shuttle)==Denial::None);
+    SocietyMigrationPlan legacy{};
+    assert(legacy.origin_kind==LocationKind::ColonyShip);
+    assert(legacy.destination_kind==LocationKind::ColonyShip);
+    legacy.origin_kind=LocationKind::ColonyShip;
+    legacy.destination_kind=LocationKind::PlanetarySite;
+    assert(legacy.destination_kind!=LocationKind::ColonyShip);
     auto space=base;space.destination=colony;
     assert(preflight(space,ferry)==Denial::None);
     auto bad=base;bad.verified_consent=false;
