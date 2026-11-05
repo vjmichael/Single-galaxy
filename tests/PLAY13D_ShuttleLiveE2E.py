@@ -112,7 +112,7 @@ def send(port,reader,base,action,details=None,timeout=8):
     if action!="STATUS":
         reader.wait("PLANET_SHUTTLE_COMMITTED",cursor,lambda f:f[7]==action,timeout)
     status_record=reader.wait("PLANET_SHUTTLE_STATUS",cursor,
-        lambda f:len(f)==17 and int(f[4])==base["body"],timeout)
+        lambda f:len(f) in (17,18) and int(f[4])==base["body"],timeout)
     return status_record
 
 def assert_rosters(reader,after,booked,visitors,workers):
@@ -181,6 +181,15 @@ def main(fixture,host,relay):
                 booked=send(port,reader,base,"BOARD",{"npc":passenger})
                 assert int(booked[9])==pilot,booked
                 assert_rosters(reader,cursor,[passenger],[],[])
+                # A finite third resource shares the 1,000-kg berth capacity.
+                # Load and unload at the same berth to verify native framing
+                # without changing the established water/food round-trip.
+                nutrient=send(port,reader,base,"LOAD",
+                              {"resource":"NUTRIENTS","kg":500})
+                assert len(nutrient)==18 and int(nutrient[17])==500,nutrient
+                nutrient=send(port,reader,base,"UNLOAD",
+                              {"resource":"NUTRIENTS","kg":500})
+                assert len(nutrient)==17 and int(nutrient[10])==0,nutrient
                 loaded=send(port,reader,base,"LOAD",{"resource":"WATER","kg":200})
                 assert int(loaded[10])==200,loaded
                 loaded=send(port,reader,base,"LOAD",{"resource":"FOOD","kg":100})
