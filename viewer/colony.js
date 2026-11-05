@@ -129,7 +129,7 @@
         throw Error('Invalid shipyard material/labor receipt');
       return {...e,order,colony,firstNpc,secondNpc,progress,required,stalled,generation};
     }
-    if(t==='SHIPYARD_STARTED'){
+    if(t==='SHIPYARD_STARTED'||t==='SHIPYARD_ASSIGNED'){
       if(v.length!==6)throw Error('Malformed shipyard start receipt');
       const order=numeric(v[4],Number.MAX_SAFE_INTEGER),
         generation=numeric(v[5],Number.MAX_SAFE_INTEGER);
@@ -742,6 +742,12 @@
  yardNpc2.type='number';yardNpc2.min='1';yardNpc2.step='1';
  yardNpc2.placeholder='Second NPC worker ID';
  yardNpc2.setAttribute('aria-label','Second real shipyard construction NPC');
+ const yardOrder=document.createElement('input');
+ yardOrder.type='number';yardOrder.min='1';yardOrder.step='1';
+ yardOrder.placeholder='Existing yard order ID';
+ yardOrder.setAttribute('aria-label','Existing shipyard order to assign new workers');
+ const yardAssign=document.createElement('button');
+ yardAssign.type='button';yardAssign.textContent='Replace construction workers';
  const yardStart=document.createElement('button');
  yardStart.type='button';yardStart.textContent='Build orbital shipyard';
  const yardRefresh=document.createElement('button');
@@ -760,13 +766,23 @@
    window.GalaxyColonyCommand?.('colonyShipyardBuild',{order,firstNpc,secondNpc});
    yardReceipt.textContent='Construction requested. Waiting for native confirmation.';
  });
+ yardAssign.addEventListener('click',()=>{
+   const order=Number(yardOrder.value);
+   const firstNpc=Number(yardNpc1.value),secondNpc=Number(yardNpc2.value);
+   if(!Number.isSafeInteger(order)||order<=0||
+      !Number.isSafeInteger(firstNpc)||firstNpc<=0||
+      !Number.isSafeInteger(secondNpc)||secondNpc<=0||
+      firstNpc===secondNpc)return;
+   window.GalaxyColonyCommand?.('colonyShipyardAssign',{order,firstNpc,secondNpc});
+   yardReceipt.textContent='Worker replacement requested. Awaiting native receipt.';
+ });
  yardRefresh.addEventListener('click',()=>{
    yardList.replaceChildren();
    window.GalaxyColonyCommand?.('colonyShipyardStatus',{});
    yardReceipt.textContent='Reading saved construction state.';
  });
  shipyardPanel.append(shipyardTitle,shipyardHint,yardNpc1,yardNpc2,
-   yardStart,yardRefresh,yardReceipt,yardList);
+   yardStart,yardOrder,yardAssign,yardRefresh,yardReceipt,yardList);
  q('celestialBodyList').parentNode.insertBefore(
    shipyardPanel,q('celestialBodyList'));
  window.GalaxyColony={
@@ -1219,6 +1235,7 @@
          entry.dataset.shipyardOrder=String(e.order);
          yardList.append(entry);
        }
+       yardOrder.value=String(e.order);
        entry.textContent='Yard #'+e.order+' at colony ship #'+e.colony+
          ' · NPCs #'+e.firstNpc+', #'+e.secondNpc+
          ' · '+e.progress+'/'+e.required+' committed build ticks'+
@@ -1227,9 +1244,10 @@
          ' · stalled '+e.stalled;
        yardReceipt.textContent='Committed shipyard generation '+e.generation;
      }
-     if(e.type==='SHIPYARD_STARTED'){
-       yardReceipt.textContent='Real construction order #'+e.order+
-         ' accepted at generation '+e.generation;
+     if(e.type==='SHIPYARD_STARTED'||e.type==='SHIPYARD_ASSIGNED'){
+       yardReceipt.textContent=(e.type==='SHIPYARD_STARTED'?
+         'Real construction order #':'Replacement construction workforce for order #')+
+         e.order+' committed at generation '+e.generation;
        window.GalaxyColonyCommand?.('colonyShipyardStatus',{});
      }
      if(e.type==='SHIPYARD_DONE' && !e.count)
