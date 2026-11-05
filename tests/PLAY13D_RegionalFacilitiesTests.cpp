@@ -62,6 +62,7 @@ static void scenario(const fs::path& db, bool farming){
         Simulation seed(613,chosen.system);
         ship=seed.add_colony_ship(7,{0,0},60,8);
         seed.provision_colony_genesis(ship,2000,2000,2000,2000,2000);
+        seed.enable_individual_workforce();
         seed.provision_starter_exploration_scanner(ship);
         seed.add_asteroid({2000,0},60);
         seed.ensure_physical_celestial_systems();
@@ -88,6 +89,15 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(!w.world().planetary_spaceport_operational(chosen.body,chosen.latitude,chosen.longitude));
         CHECK(!w.equip_planetary_site(7,ship,chosen.body,chosen.latitude,chosen.longitude,farming));
         CHECK(w.world().planetary_sites().at(key).assigned_workers==2);
+        const auto& workers=w.world().planetary_sites().at(key).delegated_npcs;
+        CHECK(workers[0] && workers[1] && workers[0]!=workers[1]);
+        for(const auto npc:workers){
+            const auto custody=w.world().npc_custody(npc);
+            CHECK(custody.home_ship==ship);
+            CHECK(custody.physical_location==
+                  w.world().planetary_sites().at(key).surface_location);
+            CHECK(custody.assigned_role==NpcRole::PlanetarySurface);
+        }
         CHECK(w.world().colony_ship(ship)->crew==6);
         w.steps(4);
         CHECK(w.world().planetary_sites().at(key).spaceport_phase==2);
