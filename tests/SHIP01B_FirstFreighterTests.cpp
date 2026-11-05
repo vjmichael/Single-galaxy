@@ -129,6 +129,15 @@ int main(){
             CHECK(w.world().colony_ship(vessel->id)==nullptr); // no free crew
             CHECK(w.world().life_support(vessel->id)==nullptr);
             CHECK(w.world().npc_records().size()==npcs);
+            Command unauthorized_pilot{};
+            unauthorized_pilot.id=880001;
+            unauthorized_pilot.sequence=880001;
+            unauthorized_pilot.execute_tick=w.world().tick()+1;
+            unauthorized_pilot.issuer=7;
+            unauthorized_pilot.actor=vessel->id;
+            unauthorized_pilot.action=Action::Thrust;
+            unauthorized_pilot.thrust_x=1;
+            CHECK(!w.submit(unauthorized_pilot)); // no ghost pilot
             CHECK(w.world().ship_frames().at(vessel->id).system==
                   w.world().ship_frames().at(colony).system);
             CHECK(w.world().ship_frames().at(vessel->id).anchor_body==
