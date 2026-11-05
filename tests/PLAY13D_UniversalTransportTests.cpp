@@ -35,6 +35,8 @@ int main(){
     assert(!serves(shuttle,wrong));
     wrong=outbound;wrong.pickup=wrong.delivery;
     assert(!wrong.valid());
+    wrong=outbound;wrong.pickup.kind=static_cast<LocationKind>(99);
+    assert(!wrong.valid());
     wrong=outbound;wrong.command_id=0;
     assert(!wrong.valid());
     wrong=outbound;wrong.goods.push_back({GoodKind::Resource,3,2,2});
@@ -51,6 +53,8 @@ int main(){
     assert(!valid_good({GoodKind::Resource,99,1,1}));
     assert(!valid_good({GoodKind::Resource,1,1,0}));
     auto invalid=shuttle;
+    invalid.other_end.kind=static_cast<LocationKind>(99);
+    assert(!invalid.valid());
     invalid.contents.push_back({GoodKind::Resource,3,5,5});
     assert(!invalid.valid());
     invalid=shuttle;
