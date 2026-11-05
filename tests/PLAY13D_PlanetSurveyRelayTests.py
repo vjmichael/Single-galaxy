@@ -98,6 +98,45 @@ def main(executable,relay):
                 status,_=request(port,"POST","/command",
                                  {**payload,"token":"forged"})
                 assert status==403,(action,status)
+            shuttle_base={'token':token,'action':'colonyPlanetShuttle',
+                          'body':4294967300,'latitude':17,'longitude':36}
+            assert 'colonyPlanetShuttle' in session['commands']
+            shuttle_valid=[
+                {'operation':'STATUS'}, {'operation':'BUILD'},
+                {'operation':'PILOT','npc':42},
+                {'operation':'LOAD','resource':'WATER','kg':100},
+                {'operation':'UNLOAD','resource':'FOOD','kg':25},
+                {'operation':'DESCEND','request':987654321},
+                {'operation':'ASCEND','request':987654322}
+            ]
+            for details in shuttle_valid:
+                payload={**shuttle_base,**details}
+                status,_=request(port,'POST','/command',payload)
+                assert status==202,(details,status)
+                status,_=request(port,'POST','/command',
+                    {**payload,'token':'forged'})
+                assert status==403,(details,status)
+            invalid_shuttles=[
+                {'operation':'LOAD','resource':'WATER','kg':True},
+                {'operation':'LOAD','resource':'OXYGEN','kg':100},
+                {'operation':'LOAD','resource':'WATER','kg':1001},
+                {'operation':'UNLOAD','resource':'FOOD','kg':-1},
+                {'operation':'DESCEND','request':0},
+                {'operation':'ASCEND','request':True},
+                {'operation':'ASCEND','request':9007199254740992},
+                {'operation':'BUILD','kg':1},
+                {'operation':'STATUS','pilot':42},
+                {'operation':'PILOT','npc':False},
+                {'operation':'PILOT','npc':42,'extra':1},
+                {'operation':'FREE'},
+                {'operation':'STATUS','latitude':36},
+                {'operation':'STATUS','longitude':72},
+                {'operation':'STATUS','body':True}
+            ]
+            for details in invalid_shuttles:
+                payload={**shuttle_base,**details}
+                status,_=request(port,'POST','/command',payload)
+                assert status==400,(details,status)
             for payload in [
                 {**valid,"action":"colonyPlanetEquip","equipment":"SHUTTLE"},
                 {**valid,"action":"colonyPlanetGrow","batches":True},
