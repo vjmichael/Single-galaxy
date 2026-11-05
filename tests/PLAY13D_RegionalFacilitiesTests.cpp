@@ -162,6 +162,10 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(native_status.accepted && !native_status.mutated);
         CHECK(native_status.present && native_status.shuttle.dry_mass_ore==4);
         CHECK(native_status.generation==native_generation);
+        CHECK(native_status.goods_manifest && native_status.goods_manifest->valid());
+        CHECK(native_status.goods_manifest->contents.empty());
+        const transport::Endpoint orbit_endpoint{transport::LocationKind::ColonyShip,ship};
+        CHECK(native_status.goods_manifest->berth==orbit_endpoint);
         native.owner=8;
         CHECK(!execute_orbital_shuttle(w,native).accepted);
         native.owner=7;
@@ -201,6 +205,12 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(w.load_planetary_shuttle(7,ship,key,false,100));
         CHECK(w.world().planetary_shuttles().at(key).water_kg==200);
         CHECK(w.world().planetary_shuttles().at(key).food_kg==100);
+        const auto mixed=w.world().planetary_transport_manifest(key);
+        CHECK(mixed && mixed->valid());
+        CHECK(transport::contains_good(*mixed,transport::GoodKind::Resource,
+            static_cast<std::uint8_t>(transport::ResourceGood::Water),200));
+        CHECK(transport::contains_good(*mixed,transport::GoodKind::Resource,
+            static_cast<std::uint8_t>(transport::ResourceGood::Food),100));
         CHECK(!w.unload_planetary_shuttle(7,ship,key,true,201));
         CHECK(w.unload_planetary_shuttle(7,ship,key,true,50));
         CHECK(w.world().planetary_shuttles().at(key).water_kg==150);
@@ -238,6 +248,9 @@ static void scenario(const fs::path& db, bool farming){
         const auto booked_native=execute_orbital_shuttle(w,native);
         CHECK(booked_native.accepted && booked_native.mutated &&
               booked_native.shuttle.passenger_ids.size()==1);
+        CHECK(booked_native.goods_manifest && booked_native.goods_manifest->valid());
+        CHECK(transport::contains_good(*booked_native.goods_manifest,
+            transport::GoodKind::Npc,passenger,1));
         native.npc=0;
 
         // PLAY-13D.4C.3: the named pilot moves using the SAME NPC roster
@@ -578,8 +591,32 @@ static void scenario(const fs::path& db, bool farming){
                 ShuttleCargo::Nutrients,500,FailPoint::AfterSnapshotWrite);}
             catch(const std::exception&){nutrient_failed=true;}
             CHECK(nutrient_failed && w.world().canonical_state()==before_failed_load);
-            CHECK(w.load_planetary_shuttle(7,ship,key,
-                ShuttleCargo::Nutrients,500));
+            const auto surface_manifest=w.world().planetary_transport_manifest(key);
+            CHECK(surface_manifest && surface_manifest->valid());
+            const transport::Instruction pickup{
+                77001,7,surface_manifest->vehicle,
+                surface_manifest->berth,surface_manifest->other_end,
+                {{transport::GoodKind::Resource,
+                    static_cast<std::uint8_t>(transport::ResourceGood::Nutrients),
+                    500,500}}};
+            CHECK(transport::serves(*surface_manifest,pickup));
+            auto foreign_pickup=pickup;foreign_pickup.owner=8;
+            const auto blocked_generation=w.generation();
+            CHECK(!execute_shuttle_transport_instruction(
+                w,7,ship,key,foreign_pickup).accepted);
+            CHECK(w.generation()==blocked_generation);
+            auto equipment_request=pickup;
+            equipment_request.goods={{transport::GoodKind::Equipment,550,1,10}};
+            CHECK(!execute_shuttle_transport_instruction(
+                w,7,ship,key,equipment_request).accepted);
+            CHECK(w.generation()==blocked_generation);
+            const auto loaded_order=execute_shuttle_transport_instruction(
+                w,7,ship,key,pickup);
+            CHECK(loaded_order.accepted && loaded_order.mutated);
+            CHECK(loaded_order.goods_manifest && loaded_order.goods_manifest->valid());
+            CHECK(transport::contains_good(*loaded_order.goods_manifest,
+                transport::GoodKind::Resource,
+                static_cast<std::uint8_t>(transport::ResourceGood::Nutrients),500));
             CHECK(w.world().planetary_sites().at(key).nutrients_kg==site_before-500);
             CHECK(w.world().planetary_shuttles().at(key).nutrients_kg==500);
             // Five hundred more kg really exist on the ground, but the
@@ -596,8 +633,21 @@ static void scenario(const fs::path& db, bool farming){
                 ShuttleCargo::Nutrients,500)); // no unloading in transit
             w.steps(3);
             CHECK(w.world().planetary_shuttles().at(key).flight_phase==0);
-            CHECK(w.unload_planetary_shuttle(7,ship,key,
-                ShuttleCargo::Nutrients,500));
+            const auto orbital_manifest=w.world().planetary_transport_manifest(key);
+            CHECK(orbital_manifest && orbital_manifest->valid());
+            const transport::Instruction delivery{
+                77002,7,orbital_manifest->vehicle,
+                orbital_manifest->other_end,orbital_manifest->berth,
+                {{transport::GoodKind::Resource,
+                    static_cast<std::uint8_t>(transport::ResourceGood::Nutrients),
+                    500,500}}};
+            const auto delivered_order=execute_shuttle_transport_instruction(
+                w,7,ship,key,delivery);
+            CHECK(delivered_order.accepted && delivered_order.mutated);
+            CHECK(delivered_order.goods_manifest && delivered_order.goods_manifest->valid());
+            CHECK(!transport::contains_good(*delivered_order.goods_manifest,
+                transport::GoodKind::Resource,
+                static_cast<std::uint8_t>(transport::ResourceGood::Nutrients),1));
             CHECK(w.world().life_support(ship)->nutrients_kg==ship_before+500);
             CHECK(w.world().planetary_shuttles().at(key).nutrients_kg==0);
             CHECK(w.world().planetary_sites().at(key).nutrients_kg==site_before-500);
