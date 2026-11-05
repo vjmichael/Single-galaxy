@@ -669,7 +669,6 @@ struct Entity {
     std::int64_t weapon_charges = 0; // finite starter training-weapon shots
     std::uint64_t last_weapon_tick = 0; // cooldown persists through restart
     bool training_drone = false; // explicit non-crew practice target; never a colony ship
-    std::uint64_t manufactured_order_id=0; // v91 immutable source build receipt
     ShipFitting fitting{};
     std::uint8_t survey_probes_carried=0; // physically onboard probes, 2t-equivalent each
     std::int64_t ore = 0;
@@ -687,6 +686,8 @@ struct Entity {
     std::uint32_t gate_destination = 0;
     Vector2 gate_arrival{};
     bool gate_online = false;
+    // Appended at end to keep legacy aggregate entity initializers stable.
+    std::uint64_t manufactured_order_id=0; // v91 immutable build receipt
 };
 
 // PLAY-10: first observation is a durable owner-scoped fact; the source entity
