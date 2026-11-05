@@ -5292,6 +5292,85 @@ bool Simulation::build_planetary_site(PlayerId owner,EntityId ship,
     snapshot_version_=std::max(snapshot_version_,78);
     return true;
 }
+
+bool Simulation::build_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key) {
+    const auto site=planetary_sites_.find(key);
+    const auto hull=entities_.find(ship),frame=ship_frames_.find(ship);
+    auto colony=colony_ships_.find(ship);
+    if(!owner || std::get<3>(key)!=1 || site==planetary_sites_.end() ||
+       site->second.owner!=owner || site->second.source_ship!=ship ||
+       site->second.spaceport_phase!=3 || planetary_shuttles_.count(key) ||
+       planetary_shuttles_.size()>=10000 || hull==entities_.end() ||
+       hull->second.owner_id!=owner || hull->second.dock_state!=DockState::InSpace ||
+       hull->second.jump_state!=ShipJumpState::Ready || frame==ship_frames_.end() ||
+       frame->second.anchor_body!=std::get<0>(key) ||
+       colony==colony_ships_.end() || colony->second.modules<2)return false;
+    colony->second.modules-=2;
+    planetary_shuttles_.emplace(key,PlanetaryShuttleState{owner,ship,0,4,0,0});
+    snapshot_version_=std::max(snapshot_version_,80);
+    return true;
+}
+bool Simulation::load_planetary_shuttle(PlayerId owner,EntityId ship,
+       const PlanetarySiteKey& key,bool water,std::int64_t kg) {
+    const auto shuttle=planetary_shuttles_.find(key),site=planetary_sites_.find(key);
+    const auto frame=ship_frames_.find(ship),hull=entities_.find(ship);
+    auto life=life_support_.find(ship);
+    if(!owner || std::get<3>(key)!=1 ||
+       shuttle==planetary_shuttles_.end() || site==planetary_sites_.end() ||
+       site->second.spaceport_phase!=3 ||
+       shuttle->second.source_ship!=ship || shuttle->second.owner!=owner ||
+       frame==ship_frames_.end() || frame->second.anchor_body!=std::get<0>(key) ||
+       hull==entities_.end() || hull->second.owner_id!=owner ||
+       hull->second.dock_state!=DockState::InSpace ||
+       hull->second.jump_state!=ShipJumpState::Ready ||
+       life==life_support_.end() || kg<=0 || kg>1000)return false;
+    auto& held=water?shuttle->second.water_kg:shuttle->second.food_kg;
+    auto& from=water?life->second.water_kg:life->second.food_kg;
+    if(from<kg || held>1000-kg ||
+       shuttle->second.water_kg+shuttle->second.food_kg>1000-kg)return false;
+    from-=kg;held+=kg;
+    return true;
+}
+bool Simulation::unload_planetary_shuttle(PlayerId owner,EntityId ship,
+       const PlanetarySiteKey& key,bool water,std::int64_t kg) {
+    const auto shuttle=planetary_shuttles_.find(key),site=planetary_sites_.find(key);
+    const auto frame=ship_frames_.find(ship),hull=entities_.find(ship);
+    auto life=life_support_.find(ship);
+    if(!owner || std::get<3>(key)!=1 ||
+       shuttle==planetary_shuttles_.end() || site==planetary_sites_.end() ||
+       site->second.spaceport_phase!=3 ||
+       shuttle->second.source_ship!=ship || shuttle->second.owner!=owner ||
+       frame==ship_frames_.end() || frame->second.anchor_body!=std::get<0>(key) ||
+       hull==entities_.end() || hull->second.owner_id!=owner ||
+       hull->second.dock_state!=DockState::InSpace ||
+       hull->second.jump_state!=ShipJumpState::Ready ||
+       life==life_support_.end() || kg<=0 || kg>1000)return false;
+    auto& held=water?shuttle->second.water_kg:shuttle->second.food_kg;
+    auto& to=water?life->second.water_kg:life->second.food_kg;
+    if(held<kg || to>1000000-kg)return false;
+    held-=kg;to+=kg;
+    return true;
+}
+bool Simulation::assign_planetary_shuttle_pilot(PlayerId owner,EntityId ship,
+       const PlanetarySiteKey& key,std::uint64_t npc) {
+    auto shuttle=planetary_shuttles_.find(key);
+    const auto crew=npcs_.find(npc);
+    if(!owner || shuttle==planetary_shuttles_.end() ||
+       shuttle->second.owner!=owner || shuttle->second.source_ship!=ship ||
+       !npc || crew==npcs_.end() || crew->second.home_ship!=ship ||
+       crew->second.location!=ship || crew->second.role!=NpcRole::Ship ||
+       crew->second.assigned_site!=ship || crew->second.transport_id ||
+       !npc_available_for_duty(npc))return false;
+    for(const auto& [child,dependent]:physical_dependents_) {
+        (void)child;
+        if(dependent.guardian_id==npc)return false;
+    }
+    for(const auto& [other,record]:planetary_shuttles_)
+        if(other!=key && record.pilot_npc==npc)return false;
+    shuttle->second.pilot_npc=npc;
+    return true; // no boarding or NPC transfer before flight scheduler
+}
+
 bool Simulation::planetary_spaceport_operational(std::uint64_t body,
     std::uint16_t latitude,std::uint16_t longitude) const {
     const auto it=planetary_sites_.find(
@@ -5822,7 +5901,7 @@ void Simulation::steps(std::uint64_t count) {
 
 std::string Simulation::canonical_state() const {
     std::ostringstream out;
-    out << (snapshot_version_ >= 79 ? "galaxy-kernel-v79|" : snapshot_version_ >= 78 ? "galaxy-kernel-v78|" : snapshot_version_ >= 77 ? "galaxy-kernel-v77|" : snapshot_version_ >= 76 ? "galaxy-kernel-v76|" : snapshot_version_ >= 75 ? "galaxy-kernel-v75|" : snapshot_version_ >= 74 ? "galaxy-kernel-v74|" : snapshot_version_ >= 73 ? "galaxy-kernel-v73|" : snapshot_version_ >= 72 ? "galaxy-kernel-v72|" : snapshot_version_ >= 71 ? "galaxy-kernel-v71|" : snapshot_version_ >= 70 ? "galaxy-kernel-v70|" : snapshot_version_ >= 69 ? "galaxy-kernel-v69|" : snapshot_version_ >= 68 ? "galaxy-kernel-v68|" : snapshot_version_ >= 67 ? "galaxy-kernel-v67|" : snapshot_version_ >= 66 ? "galaxy-kernel-v66|" : snapshot_version_ >= 65 ? "galaxy-kernel-v65|" : snapshot_version_ >= 64 ? "galaxy-kernel-v64|" : snapshot_version_ >= 63 ? "galaxy-kernel-v63|" : snapshot_version_ >= 62 ? "galaxy-kernel-v62|" : snapshot_version_ >= 61 ? "galaxy-kernel-v61|" : snapshot_version_ >= 60 ? "galaxy-kernel-v60|" : snapshot_version_ >= 59 ? "galaxy-kernel-v59|" : snapshot_version_ >= 58 ? "galaxy-kernel-v58|" : snapshot_version_ >= 57 ? "galaxy-kernel-v57|" : snapshot_version_ >= 53 ? "galaxy-kernel-v53|" : snapshot_version_ >= 52 ? "galaxy-kernel-v52|" : snapshot_version_ >= 49 ? "galaxy-kernel-v49|" : snapshot_version_ >= 48 ? "galaxy-kernel-v48|" : snapshot_version_ >= 44 ? "galaxy-kernel-v44|" : snapshot_version_ >= 41 ? "galaxy-kernel-v41|" : snapshot_version_ >= 40 ? "galaxy-kernel-v40|" : snapshot_version_ >= 39 ? "galaxy-kernel-v39|" : snapshot_version_ >= 38 ? "galaxy-kernel-v38|" : snapshot_version_ >= 37 ? "galaxy-kernel-v37|" : snapshot_version_ >= 36 ? "galaxy-kernel-v36|" : snapshot_version_ >= 35 ? "galaxy-kernel-v35|" : snapshot_version_ >= 34 ? "galaxy-kernel-v34|" : snapshot_version_ >= 33 ? "galaxy-kernel-v33|" : snapshot_version_ >= 32 ? "galaxy-kernel-v32|" : snapshot_version_ >= 31 ? "galaxy-kernel-v31|" : snapshot_version_ >= 30 ? "galaxy-kernel-v30|" : snapshot_version_ >= 29 ? "galaxy-kernel-v29|" : snapshot_version_ >= 28 ? "galaxy-kernel-v28|" : snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
+    out << (snapshot_version_ >= 80 ? "galaxy-kernel-v80|" : snapshot_version_ >= 79 ? "galaxy-kernel-v79|" : snapshot_version_ >= 78 ? "galaxy-kernel-v78|" : snapshot_version_ >= 77 ? "galaxy-kernel-v77|" : snapshot_version_ >= 76 ? "galaxy-kernel-v76|" : snapshot_version_ >= 75 ? "galaxy-kernel-v75|" : snapshot_version_ >= 74 ? "galaxy-kernel-v74|" : snapshot_version_ >= 73 ? "galaxy-kernel-v73|" : snapshot_version_ >= 72 ? "galaxy-kernel-v72|" : snapshot_version_ >= 71 ? "galaxy-kernel-v71|" : snapshot_version_ >= 70 ? "galaxy-kernel-v70|" : snapshot_version_ >= 69 ? "galaxy-kernel-v69|" : snapshot_version_ >= 68 ? "galaxy-kernel-v68|" : snapshot_version_ >= 67 ? "galaxy-kernel-v67|" : snapshot_version_ >= 66 ? "galaxy-kernel-v66|" : snapshot_version_ >= 65 ? "galaxy-kernel-v65|" : snapshot_version_ >= 64 ? "galaxy-kernel-v64|" : snapshot_version_ >= 63 ? "galaxy-kernel-v63|" : snapshot_version_ >= 62 ? "galaxy-kernel-v62|" : snapshot_version_ >= 61 ? "galaxy-kernel-v61|" : snapshot_version_ >= 60 ? "galaxy-kernel-v60|" : snapshot_version_ >= 59 ? "galaxy-kernel-v59|" : snapshot_version_ >= 58 ? "galaxy-kernel-v58|" : snapshot_version_ >= 57 ? "galaxy-kernel-v57|" : snapshot_version_ >= 53 ? "galaxy-kernel-v53|" : snapshot_version_ >= 52 ? "galaxy-kernel-v52|" : snapshot_version_ >= 49 ? "galaxy-kernel-v49|" : snapshot_version_ >= 48 ? "galaxy-kernel-v48|" : snapshot_version_ >= 44 ? "galaxy-kernel-v44|" : snapshot_version_ >= 41 ? "galaxy-kernel-v41|" : snapshot_version_ >= 40 ? "galaxy-kernel-v40|" : snapshot_version_ >= 39 ? "galaxy-kernel-v39|" : snapshot_version_ >= 38 ? "galaxy-kernel-v38|" : snapshot_version_ >= 37 ? "galaxy-kernel-v37|" : snapshot_version_ >= 36 ? "galaxy-kernel-v36|" : snapshot_version_ >= 35 ? "galaxy-kernel-v35|" : snapshot_version_ >= 34 ? "galaxy-kernel-v34|" : snapshot_version_ >= 33 ? "galaxy-kernel-v33|" : snapshot_version_ >= 32 ? "galaxy-kernel-v32|" : snapshot_version_ >= 31 ? "galaxy-kernel-v31|" : snapshot_version_ >= 30 ? "galaxy-kernel-v30|" : snapshot_version_ >= 29 ? "galaxy-kernel-v29|" : snapshot_version_ >= 28 ? "galaxy-kernel-v28|" : snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
         << '|' << rng_state_ << '\n';
     if (snapshot_version_>=5) for(const auto system:systems_)out<<"system|"<<system<<'\n';
     if(snapshot_version_>=68)out<<"probelatency|"<<probe_report_delay_ticks_<<'\n';
@@ -8540,6 +8619,7 @@ void Simulation::swap(Simulation& other) noexcept {
     oasis_reserves_.swap(other.oasis_reserves_);
     oasis_extractors_.swap(other.oasis_extractors_);
     planetary_sites_.swap(other.planetary_sites_);
+    planetary_shuttles_.swap(other.planetary_shuttles_);
     pending_celestial_transits_.swap(other.pending_celestial_transits_);
     completed_celestial_transits_.swap(other.completed_celestial_transits_);
     physical_celestial_systems_.swap(other.physical_celestial_systems_);
@@ -8758,6 +8838,28 @@ std::int64_t Simulation::total_ore() const {
         if(kg<0 || kg>1000000000LL-life_mass_kg)
             throw std::overflow_error("invalid regional supplies mass");
         life_mass_kg+=kg;
+    }
+
+    // PLAY-13D.4C.2: source modules became the shuttle's physical dry mass;
+    // manifest kilograms move out of ship storage exactly once.
+    for(const auto& [key,v]:planetary_shuttles_) {
+        const auto site=planetary_sites_.find(key);
+        if(site==planetary_sites_.end() || v.owner!=site->second.owner ||
+           v.source_ship!=site->second.source_ship || v.dry_mass_ore!=4 ||
+           v.water_kg<0 || v.food_kg<0 || v.water_kg>1000 ||
+           v.food_kg>1000-v.water_kg || !colony_ships_.count(v.source_ship) ||
+           total>std::numeric_limits<std::int64_t>::max()-v.dry_mass_ore)
+            throw std::overflow_error("invalid source-backed shuttle");
+        if(v.pilot_npc) {
+            const auto npc=npcs_.find(v.pilot_npc);
+            if(npc==npcs_.end() || npc->second.home_ship!=v.source_ship ||
+               npc->second.location!=v.source_ship || npc->second.role!=NpcRole::Ship)
+                throw std::overflow_error("invalid shuttle pilot");
+        }
+        total+=v.dry_mass_ore;
+        if(v.water_kg+v.food_kg>1000000000LL-life_mass_kg)
+            throw std::overflow_error("invalid shuttle held stock");
+        life_mass_kg+=v.water_kg+v.food_kg;
     }
     // PLAY-13C.6D constructed extraction equipment retains its source modules.
     for(const auto& [ship,rig]:oasis_extractors_) {
