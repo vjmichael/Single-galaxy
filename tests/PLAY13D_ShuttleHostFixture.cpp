@@ -29,6 +29,33 @@ static SiteChoice choose() {
 }
 int main(int argc,char** argv) {
     try {
+        if(argc==9 && std::string(argv[1])=="--verify") {
+            // Independent native reopening of the SQLite save after BOTH host
+            // processes have ended. No browser or Python mass approximation.
+            const std::string database=argv[2];
+            const auto body=std::stoull(argv[3]);
+            const auto lat=std::stoull(argv[4]),lon=std::stoull(argv[5]);
+            const auto pilot=std::stoull(argv[6]);
+            const auto mass=std::stoll(argv[7]);
+            const auto ship=std::stoull(argv[8]);
+            REQUIRE(lat<36 && lon<72);
+            PersistentWorld saved(database,Simulation(2));
+            const PlanetarySiteKey key{body,std::uint16_t(lat),std::uint16_t(lon),1};
+            REQUIRE(saved.world().total_ore()==mass);
+            const auto& shuttle=saved.world().planetary_shuttles().at(key);
+            REQUIRE(shuttle.flight_phase==0 && shuttle.pilot_npc==pilot);
+            REQUIRE(shuttle.source_ship==ship && shuttle.water_kg==138 &&
+                    shuttle.food_kg==80 && shuttle.descent_receipt==81001 &&
+                    shuttle.ascent_receipt==81002);
+            REQUIRE(saved.world().npc_custody(pilot).physical_location==ship);
+            REQUIRE(saved.world().planetary_spaceport_operational(
+                body,std::uint16_t(lat),std::uint16_t(lon)));
+            const auto snapshot=saved.world().canonical_state();
+            REQUIRE(snapshot.rfind("galaxy-kernel-v81|",0)==0);
+            REQUIRE(Simulation::from_snapshot(snapshot).canonical_state()==snapshot);
+            std::cout<<"PASS native committed shuttle stock, NPC custody, receipts, mass and snapshot\n";
+            return 0;
+        }
         if(argc!=2)throw std::runtime_error("usage: shuttle_fixture SAVE.sqlite");
         auto selected=choose();
         Simulation seed(613,selected.system);
