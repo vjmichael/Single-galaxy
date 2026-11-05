@@ -120,6 +120,7 @@ int main(){
             CHECK(vessel->type==EntityType::Ship);
             CHECK(vessel->owner_id==7);
             CHECK(vessel->cargo_capacity==100);
+            CHECK(vessel->manufactured_order_id==92001);
             CHECK(vessel->hull==100);
             CHECK(vessel->ore==0 && vessel->cargo==0);
             CHECK(vessel->weapon_charges==0);
@@ -155,6 +156,24 @@ int main(){
             try{(void)Simulation::from_snapshot(forged);}
             catch(const std::exception&){rejected=true;}
             CHECK(rejected);
+            // The real Entity carries the immutable manufacturing order ID;
+            // replacing that witness is rejected even if the forged body
+            // retains the correct mass and cargo capacity.
+            auto altered=built;
+            const auto entity_prefix="entity|"+std::to_string(result.launched_ship)+"|";
+            const auto e_at=altered.find(entity_prefix);
+            CHECK(e_at!=std::string::npos);
+            const auto e_end=altered.find('\n',e_at);
+            CHECK(e_end!=std::string::npos);
+            const auto expected_suffix="|92001";
+            CHECK(altered.compare(e_end-expected_suffix.size(),
+                expected_suffix.size(),expected_suffix)==0);
+            altered.replace(e_end-expected_suffix.size(),
+                expected_suffix.size(),"|0");
+            bool fake_maker=false;
+            try{(void)Simulation::from_snapshot(altered);}
+            catch(const std::exception&){fake_maker=true;}
+            CHECK(fake_maker);
             const auto created_id=result.launched_ship;
             w.steps(3);
             CHECK(w.world().entities().size()==before+1);
