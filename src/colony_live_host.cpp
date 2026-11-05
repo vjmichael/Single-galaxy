@@ -593,7 +593,7 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
                 const auto kg=integer(v[5]),id=integer(v[6]);
                 if(body<=0 || lat<0 || lat>=36 || lon<0 || lon>=72 ||
                    kg<=0 || kg>1000 || id<=0 ||
-                   id>=(std::int64_t{1}<<61)-1)
+                   id>=(std::int64_t{1}<<50))
                     throw std::invalid_argument("invalid local transport contract");
                 ShuttleCargo cargo{};
                 if(v[4]=="WATER")cargo=ShuttleCargo::Water;
