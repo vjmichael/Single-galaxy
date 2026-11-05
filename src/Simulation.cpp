@@ -5521,7 +5521,10 @@ bool Simulation::assign_planetary_shuttle_visitor_duty(PlayerId owner,EntityId s
        sh->second.owner!=owner || sh->second.source_ship!=ship ||
        site->second.owner!=owner || site->second.source_ship!=ship ||
        site->second.spaceport_phase!=3 ||
-       !npc_transport_arrival(sh->second.descent_receipt,npc) ||
+       !std::binary_search(sh->second.disembarked_ids.begin(),
+                           sh->second.disembarked_ids.end(),npc) ||
+       (sh->second.visitor_arrival_receipts.count(npc) &&
+        !npc_transport_arrival(sh->second.visitor_arrival_receipts.at(npc),npc)) ||
        person->second.home_ship!=ship ||
        person->second.location!=site->second.surface_location ||
        person->second.assigned_site!=ship ||
