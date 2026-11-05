@@ -1178,6 +1178,14 @@ bool Simulation::can_depart_colony(const Command& c) const {
 }
 bool Simulation::submit(const Command& c) {
     if(colony_departures_.count(c.actor) || colony_departures_.count(c.target))return false;
+    // Building a hull never creates a pilot. A manufactured uncommissioned
+    // vessel is physically present but not authorized to run ship commands.
+    if(snapshot_version_>=91){
+        const auto actor=entities_.find(c.actor);
+        if(actor!=entities_.end() && actor->second.manufactured_order_id &&
+           (!colony_ships_.count(c.actor) ||
+            colony_ships_.at(c.actor).crew<1))return false;
+    }
 
     if(c.action==Action::FocusSurveyProbe||c.action==Action::CancelSurveyFocus){
         if(!c.id||!c.actor||!c.target||c.thrust_x||c.thrust_y||
@@ -1966,6 +1974,14 @@ void Simulation::stop_mining(EntityId actor, Outcome reason) {
 
 Event Simulation::execute(const Command& c) {
     Event result{tick_, c.id, Outcome::InvalidActor, 0};
+    if(snapshot_version_>=91){
+        const auto actor=entities_.find(c.actor);
+        if(actor!=entities_.end() && actor->second.manufactured_order_id &&
+           (!colony_ships_.count(c.actor) ||
+            colony_ships_.at(c.actor).crew<1)){
+            result.result=Outcome::InsufficientCrew;return result;
+        }
+    }
     if(snapshot_version_>=72) {
         // Note that native survey commands and combat must not escape their
         // ship's local frame even when both regions share one star system.
