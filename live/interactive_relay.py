@@ -288,7 +288,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if self.server.accounts and (not principal or principal['playerId']!=7):
                 self._json(403,{'error':'Colony owner session required'});return
             self._json(200,{'token':principal['csrf'] if self.server.accounts else self.server.runtime.token,'qa_mode':self.server.qa_mode,'colony_mode':self.server.colony_mode,'tick_ms':self.server.tick_ms,
-                'max_ticks':self.server.max_ticks,'commands':(['thrust','yaw','colonyFireTraining','colonySalvageWreck','colonyDockBase','colonyUndockBase','colonyUnloadBase','colonyLoadBase','colonyScan','colonyConfigureScanner','colonyProbeDeploy','colonyProbeScan','colonyProbeRecover','colonySignatureScan','colonyCelestialScan','colonyPlanetSurvey','colonyPlanetCrew','colonyPlanetStatus','colonyPlanetBuild','colonyPlanetEquip','colonyPlanetSupply','colonyPlanetGrow','colonyPlanetExtract','colonyPlanetRetrieve','colonyEnvironmentScan','colonyProbeFocus','colonyProbeCancel','colonyDroneLaunch','colonyMine','colonyRefine','colonyFabricate','colonyBuild','colonyMineTarget','colonyProcess','colonyFabricateMaterial','colonyPlant','colonyHarvest','colonyRecycleWater','colonyRecycleCompost','colonyOxygen','colonyLifeWater','colonyFarmBuild','colonyFarmStaff','colonyFarmStock','colonyHabBuild','colonyHabResidents','colonyHabStock','colonyUtilityBuild','colonyUtilityRepair','colonyUtilitySpares','colonyUtilityStaff','colonyUtilityAuto','colonyCommunityBuild','colonyCommunityStaff','colonyCommunityStock','colonyClinicBuild','colonyClinicStaff','colonyClinicStock','colonyReclaimerBuild','colonyWaterworksBuild','colonyWaterworksFeed','colonyPolicySet','colonyPolicyStaff','colonySafetyAssess','colonySafetyPreflight'] if self.server.colony_mode else ['thrust','mine','stop','undock','dock','unload','load','sell','travelA','travelB','travelGate','travelHop','jump','jumpHop','directional','probeDeploy','probeScan','probeRecover','surveyArchive','surveyHistory','surveyPublish','planRoute'])});return
+                'max_ticks':self.server.max_ticks,'commands':(['thrust','yaw','colonyFireTraining','colonySalvageWreck','colonyDockBase','colonyUndockBase','colonyUnloadBase','colonyLoadBase','colonyScan','colonyConfigureScanner','colonyProbeDeploy','colonyProbeScan','colonyProbeRecover','colonySignatureScan','colonyCelestialScan','colonyPlanetSurvey','colonyPlanetCrew','colonyPlanetStatus','colonyPlanetBuild','colonyPlanetEquip','colonyPlanetSupply','colonyPlanetGrow','colonyPlanetExtract','colonyPlanetRetrieve','colonyPlanetSupport','colonyEnvironmentScan','colonyProbeFocus','colonyProbeCancel','colonyDroneLaunch','colonyMine','colonyRefine','colonyFabricate','colonyBuild','colonyMineTarget','colonyProcess','colonyFabricateMaterial','colonyPlant','colonyHarvest','colonyRecycleWater','colonyRecycleCompost','colonyOxygen','colonyLifeWater','colonyFarmBuild','colonyFarmStaff','colonyFarmStock','colonyHabBuild','colonyHabResidents','colonyHabStock','colonyUtilityBuild','colonyUtilityRepair','colonyUtilitySpares','colonyUtilityStaff','colonyUtilityAuto','colonyCommunityBuild','colonyCommunityStaff','colonyCommunityStock','colonyClinicBuild','colonyClinicStaff','colonyClinicStock','colonyReclaimerBuild','colonyWaterworksBuild','colonyWaterworksFeed','colonyPolicySet','colonyPolicyStaff','colonySafetyAssess','colonySafetyPreflight'] if self.server.colony_mode else ['thrust','mine','stop','undock','dock','unload','load','sell','travelA','travelB','travelGate','travelHop','jump','jumpHop','directional','probeDeploy','probeScan','probeRecover','surveyArchive','surveyHistory','surveyPublish','planRoute'])});return
         if url.path in STATIC:
             file=ROOT/STATIC[url.path]
             self._send(200,file.read_bytes(),MIME[file.suffix]);return
@@ -388,7 +388,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     raise ValueError('Invalid planetary status coordinates')
                 command=f'PLANET_SITE_STATUS|{body}|{latitude}|{longitude}'
             elif action in ('colonyPlanetBuild','colonyPlanetEquip','colonyPlanetSupply',
-                            'colonyPlanetGrow','colonyPlanetExtract','colonyPlanetRetrieve'):
+                            'colonyPlanetGrow','colonyPlanetExtract','colonyPlanetRetrieve',
+                            'colonyPlanetSupport'):
                 base={'token','action','body','latitude','longitude'}
                 expected=(base if action=='colonyPlanetBuild' else
                           base|({'equipment'} if action=='colonyPlanetEquip' else
@@ -427,6 +428,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 else:
                     resource,kg=doc['resource'],doc['kg']
                     allowed=(('FOOD','WATER') if action=='colonyPlanetRetrieve'
+                             else ('FOOD','OXYGEN') if action=='colonyPlanetSupport'
                              else ('WATER','NUTRIENTS'))
                     if type(resource)!=str or resource not in allowed or
                        type(kg)!=int or not 1<=kg<=10000 or
@@ -435,7 +437,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     operation={
                         'colonyPlanetSupply':'PLANET_SUPPLY',
                         'colonyPlanetExtract':'PLANET_EXTRACT',
-                        'colonyPlanetRetrieve':'PLANET_RETRIEVE'}[action]
+                        'colonyPlanetRetrieve':'PLANET_RETRIEVE',
+                        'colonyPlanetSupport':'PLANET_SUPPORT'}[action]
                     command=f'{operation}|{prefix}|{resource}|{kg}'
             elif action=='colonyPlanetSurvey' and set(doc)=={'token','action','body','latitude','longitude'}:
                 body,latitude,longitude=doc['body'],doc['latitude'],doc['longitude']
