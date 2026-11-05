@@ -294,7 +294,8 @@ static void scenario(const fs::path& db, bool farming){
               std::vector<std::uint64_t>{passenger});
         CHECK(w.world().npc_custody(passenger).physical_location==
               w.world().planetary_sites().at(key).surface_location);
-        CHECK(w.world().canonical_state().rfind("galaxy-kernel-v83|",0)==0);
+        CHECK(w.world().canonical_state().rfind("galaxy-kernel-v85|",0)==0);
+        CHECK(w.world().planetary_shuttles().at(key).visitor_arrival_receipts.at(passenger)==81001);
         const auto verified_arrival=w.world().npc_transport_arrival(81001,passenger);
         CHECK(verified_arrival && verified_arrival->mode()==transport::Mode::PlanetaryShuttle);
         CHECK(transport::completed_transport(*verified_arrival,passenger));
@@ -309,7 +310,7 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(!w.assign_planetary_shuttle_visitor_duty(7,ship,key,passenger,true));
         CHECK(w.world().planetary_shuttles().at(key).duty_ids==
               std::vector<std::uint64_t>{passenger});
-        CHECK(w.world().canonical_state().rfind("galaxy-kernel-v84|",0)==0);
+        CHECK(w.world().canonical_state().rfind("galaxy-kernel-v85|",0)==0);
         const auto assigned=w.world().canonical_state();
         CHECK(Simulation::from_snapshot(assigned).canonical_state()==assigned);
         const auto failed_duty_before=w.world().canonical_state();
@@ -358,8 +359,10 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(w.launch_planetary_shuttle(7,ship,key,81004,false));
         w.steps(3);
         CHECK(w.world().planetary_shuttles().at(key).flight_phase==2);
-        CHECK(w.world().npc_transport_arrival(81004,passenger));
-        CHECK(!w.world().npc_transport_arrival(81001,passenger));
+        // Individual custody remains bound to the original 81001 descent,
+        // not the later unrelated 81004 shuttle flight.
+        CHECK(!w.world().npc_transport_arrival(81004,passenger));
+        CHECK(w.world().npc_transport_arrival(81001,passenger));
         native.action=OrbitalShuttleAction::Reboard;
         native.npc=passenger;native.request_id=0;
         const auto return_boarding=execute_orbital_shuttle(w,native);
@@ -368,6 +371,8 @@ static void scenario(const fs::path& db, bool farming){
               std::vector<std::uint64_t>{passenger});
         CHECK(return_boarding.shuttle.disembarked_ids.empty());
         CHECK(return_boarding.shuttle.duty_ids.empty());
+        CHECK(return_boarding.shuttle.visitor_arrival_receipts.empty());
+        CHECK(!w.world().npc_transport_arrival(81001,passenger));
         CHECK(!w.transfer_planetary_shuttle_visitor(7,ship,key,passenger,true));
         CHECK(w.launch_planetary_shuttle(7,ship,key,81005,true));
         CHECK(w.world().npc_custody(passenger).active_transport_id==81005);
