@@ -8788,6 +8788,24 @@ bool PersistentWorld::supply_planetary_site(PlayerId owner,EntityId ship,
     return true;
 }
 
+bool PersistentWorld::support_planetary_crew(PlayerId owner,EntityId ship,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,
+    bool oxygen,std::int64_t kg,FailPoint fail) {
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.support_planetary_crew(owner,ship,body,latitude,longitude,oxygen,kg))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("surface crew resupply changed matter origin");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
 bool PersistentWorld::cultivate_planetary_site(PlayerId owner,EntityId ship,
     std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,std::int64_t batches,FailPoint fail) {
     // Every mutation happens on an isolated candidate. Commit succeeds before
