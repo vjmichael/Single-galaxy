@@ -323,6 +323,22 @@ static void scenario(const fs::path& db, bool farming){
         const auto surface_id=w.world().planetary_sites().at(key).surface_location;
         CHECK(census_v86.physically_present.at(surface_id)>=1);
         CHECK(Simulation::from_snapshot(v86_state).assess_npc_residence().reconciled);
+        // A syntactically valid v86 address with no registered settlement
+        // cannot be smuggled in by editing a save.
+        auto forged_residence=v86_state;
+        const auto npc_line=forged_residence.find(
+            "npc|"+std::to_string(passenger)+"|");
+        CHECK(npc_line!=std::string::npos);
+        const auto npc_end=forged_residence.find('\\n',npc_line);
+        CHECK(npc_end!=std::string::npos);
+        const auto last_bar=forged_residence.rfind('|',npc_end);
+        const auto kind_bar=forged_residence.rfind('|',last_bar-1);
+        CHECK(kind_bar!=std::string::npos);
+        forged_residence.replace(kind_bar+1,last_bar-kind_bar-1,"4");
+        bool unknown_residence_rejected=false;
+        try{(void)Simulation::from_snapshot(forged_residence);}
+        catch(const std::exception&){unknown_residence_rejected=true;}
+        CHECK(unknown_residence_rejected);
 
         // Temporary work is an explicit separate order, not a side effect
         // of arriving at a planetary spaceport.
