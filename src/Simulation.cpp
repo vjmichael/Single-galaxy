@@ -5451,6 +5451,7 @@ bool Simulation::retrieve_planetary_site(PlayerId owner,EntityId ship,
     const auto frame=ship_frames_.find(ship);
     if(!owner || kg<=0 || kg>10000 || site==planetary_sites_.end() ||
        site->second.owner!=owner || site->second.source_ship!=ship ||
+       site->second.spaceport_phase!=3 ||
        frame==ship_frames_.end() || frame->second.anchor_body!=body ||
        life==life_support_.end())return false;
     auto& origin=food?site->second.food_kg:site->second.water_kg;
