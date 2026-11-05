@@ -459,6 +459,9 @@ struct PlanetaryShuttleState {
     // v82: exact sorted finite NPC transport manifest (pilot excluded), 3 seats.
     // Uses the same authoritative NpcRecord, never copies passengers.
     std::vector<std::uint64_t> passenger_ids;
+    // v83: named visitors physically disembarked at this site, retained in
+    // the shuttle transport ledger until explicitly reboarded. No new NPCs.
+    std::vector<std::uint64_t> disembarked_ids;
 };
 struct PhysicalOasisReserve {
     std::int64_t water_kg=0,nutrients_kg=0;
@@ -977,6 +980,10 @@ public:
     // Only orbital berth modifications; voyage departures move all occupants.
     bool book_planetary_shuttle_passenger(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,std::uint64_t npc,bool board);
+    // At surface: release a booked visitor from the shuttle, or rebook a
+    // previously disembarked visitor into an available physical passenger seat.
+    bool transfer_planetary_shuttle_visitor(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc,bool reboard);
     // One named pilot in authoritative NPC custody; cargo stays on the shuttle
     // until unloading after committed arrival. Requests are single use per leg.
     bool launch_planetary_shuttle(PlayerId owner,EntityId ship,
