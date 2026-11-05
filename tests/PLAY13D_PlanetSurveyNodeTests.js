@@ -286,6 +286,8 @@ test('PLAY-13D.4G real intercolony carrier telemetry is strict',()=>{
 });
 
 test('SHIP-01A native shipyard construction progress and UI are bounded by receipts',()=>{
+  const assigned=decode('COLONY|1|20|SHIPYARD_ASSIGNED|99001|124');
+  assert.equal(assigned.generation,124);
   const started=decode('COLONY|1|20|SHIPYARD_STARTED|99001|123');
   assert.equal(started.order,99001);
   const awaiting=decode('COLONY|1|20|SHIPYARD_ITEM|99001|1|101|102|0|8|0|123');
@@ -308,8 +310,10 @@ test('SHIP-01A native shipyard construction progress and UI are bounded by recei
   const host=fs.readFileSync(path.join(root,'src/colony_live_host.cpp'),'utf8');
   assert.match(ui,/Build orbital shipyard/);
   assert.match(ui,/colonyShipyardBuild/);
+  assert.match(ui,/colonyShipyardAssign/);
   assert.match(ui,/colonyShipyardStatus/);
   assert.match(relay,/SHIPYARD_BUILD/);
+  assert.match(relay,/SHIPYARD_ASSIGN/);
   assert.match(relay,/SHIPYARD_STATUS/);
   assert.match(host,/start_shipyard_construction/);
   assert.match(host,/shipyard_constructions/);
