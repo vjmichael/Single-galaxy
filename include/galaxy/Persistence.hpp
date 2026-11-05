@@ -860,6 +860,11 @@ public:
     bool build_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,FailPoint fail=FailPoint::None);
     // Player's finite local logistics work board. NPC fulfillment advances
     // only within the existing atomic world step; no parallel job database.
+    // One atomic construction admission: the same committed world debits
+    // four manufactured modules and records their embodied structural mass.
+    bool start_shipyard_construction(PlayerId owner,EntityId colony,
+        std::uint64_t order_id,std::array<std::uint64_t,2> workers,
+        FailPoint fail=FailPoint::None);
     bool post_local_delivery_order(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& site,ShuttleCargo cargo,
         std::int64_t kilograms,std::uint64_t order_id,
