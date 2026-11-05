@@ -74,29 +74,55 @@ SocietyMedicalProjection reconcile_medical_society(
     require(p.world_generation==expected_world_generation,"stale world generation");
     p.world_tick=world.world().tick();
     const auto& sim=world.world();
-    require(sim.colony_ship(home_ship)!=nullptr,"missing actual home colony");
+    transport::Endpoint address{transport::LocationKind::ColonyShip,home_ship};
+    if(!sim.colony_ship(home_ship)) {
+        bool registered_surface=false;
+        for(const auto& [key,site]:sim.planetary_sites()) {
+            (void)key;
+            if(site.surface_location==home_ship && site.spaceport_phase==3)
+                registered_surface=true;
+        }
+        if(registered_surface)
+            address.kind=transport::LocationKind::PlanetarySite;
+        else if(sim.built_outposts().count(home_ship) &&
+                sim.habitat(home_ship))
+            address.kind=transport::LocationKind::SpaceColony;
+        else
+            throw std::runtime_error("missing authoritative settlement location");
+    }
     const auto audit=sim.assess_medical_population();
-    require(audit.reconciled,"world workforce and medical records fail reconciliation");
-    const auto home_counts=audit.by_home_ship.find(home_ship);
-    require(home_counts!=audit.by_home_ship.end(),"home has no world census");
-    require(home_counts->second.living>=0 && home_counts->second.deceased>=0,
-            "invalid world population totals");
-    p.living_named=static_cast<std::uint64_t>(home_counts->second.living);
-    p.dead_named=static_cast<std::uint64_t>(home_counts->second.deceased);
-    p.unavailable=static_cast<std::uint64_t>(home_counts->second.unavailable);
-    p.traveling=static_cast<std::uint64_t>(home_counts->second.in_transit);
+    const auto legal=sim.assess_npc_residence();
+    require(audit.reconciled && legal.reconciled,
+            "world workforce or legal residence census fails reconciliation");
+    const auto residents=legal.living_by_residence.find(address);
+    if(residents!=legal.living_by_residence.end())
+        p.living_named=residents->second;
     for(const auto& [id,n]:sim.npc_records()){
-        if(n.home_ship!=home_ship)continue;
+        if(n.legal_residence()!=address)continue;
         const auto role=static_cast<unsigned>(n.role);
-        require(role<p.assigned_workers.size(),"unknown named role");
-        ++p.assigned_workers[role];
-        if(sim.npc_available_for_duty(id))++p.ready_workers[role];
+        require(role<=static_cast<unsigned>(NpcRole::PlanetarySurface),
+                "unknown named role");
+        const bool ready=sim.npc_available_for_duty(id);
+        if(role==static_cast<unsigned>(NpcRole::PlanetarySurface)) {
+            ++p.assigned_planetary_workers;
+            if(ready)++p.ready_planetary_workers;
+        }else{
+            ++p.assigned_workers[role];
+            if(ready)++p.ready_workers[role];
+        }
+        if(!ready)++p.unavailable;
+        if(n.transport_id || n.location!=n.assigned_site)++p.traveling;
         const auto status=sim.npc_health_status(id);
         if(status==NpcHealthStatus::Injured || status==NpcHealthStatus::Stabilized ||
            status==NpcHealthStatus::Recovering)++p.medically_unavailable;
     }
-    require(p.ready_workers[0]+p.ready_workers[1]+p.ready_workers[2]+p.unavailable==p.living_named,
-            "job readiness does not partition actual named residents");
+    for(const auto& [id,death]:sim.npc_casualties()){
+        (void)id;
+        if(death.identity.legal_residence()==address)++p.dead_named;
+    }
+    require(p.ready_workers[0]+p.ready_workers[1]+p.ready_workers[2]+
+            p.ready_planetary_workers+p.unavailable==p.living_named,
+            "job readiness does not partition actual legal residents");
 
     Connection conn(family_sqlite_path);
     // BEGIN holds one consistent SQLite WAL reader snapshot, without writing.
@@ -131,7 +157,7 @@ SocietyMedicalProjection reconcile_medical_society(
             const auto tick=static_cast<std::uint64_t>(sqlite3_column_int64(q.stmt,2));
             require(family_deaths.insert(npc).second,"duplicate family death");
             const auto d=sim.npc_casualties().find(npc);
-            require(d!=sim.npc_casualties().end() && d->second.identity.home_ship==home_ship &&
+            require(d!=sim.npc_casualties().end() && d->second.identity.legal_residence()==address &&
                     d->second.death_tick==tick,"family death lacks matching canonical casualty");
             const auto canonical=family.get_death(event);
             require(canonical.npc_id==npc && canonical.settlement==home_ship &&
@@ -140,7 +166,7 @@ SocietyMedicalProjection reconcile_medical_society(
         }
     }
     for(const auto& [id,d]:sim.npc_casualties())
-        if(d.identity.home_ship==home_ship)
+        if(d.identity.legal_residence()==address)
             require(family_deaths.count(id)!=0,"canonical NPC death missing from family ledger");
     require(family_deaths.size()==p.dead_named,"family deaths do not exhaust canonical casualties");
     std::set<std::uint64_t> children;

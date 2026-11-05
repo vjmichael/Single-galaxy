@@ -1,4 +1,6 @@
 #include "galaxy/Simulation.hpp"
+#include "galaxy/TransportIdentity.hpp"
+#include "galaxy/NpcTransport.hpp"
 #include "galaxy/ColonySafety.hpp"
 #include "galaxy/QuantifiedProduction.hpp"
 #include "galaxy/FactoryLayout.hpp"
@@ -290,6 +292,15 @@ ColonyViability Simulation::assess_colony(EntityId ship) const {
     if(!c || !l)return r;
     r.crew_total=c->crew;
     std::int64_t total_food=l->food_kg,total_water=l->water_kg,total_oxygen=l->oxygen_kg;
+    // Surface-delegated adults remain real colonists, not missing crew.
+    for(const auto& [key,site]:planetary_sites_) {
+        (void)key;
+        if(site.source_ship!=ship)continue;
+        r.crew_total+=site.assigned_workers;
+        total_food+=site.food_kg;
+        total_water+=site.water_kg;
+        total_oxygen+=site.oxygen_kg;
+    }
     for(const auto& [id,f]:farms_){(void)id;
         if(f.source_ship!=ship)continue;
         r.farm_workers+=f.workers;r.crew_total+=f.workers;
@@ -433,10 +444,70 @@ void Simulation::enable_individual_workforce(){
     if(npcs_.empty())throw std::invalid_argument("no colony population to materialize");
     snapshot_version_=31;
 }
+std::optional<transport::NpcTransport> Simulation::npc_transport_arrival(
+        std::uint64_t receipt,std::uint64_t npc_id) const {
+    if(!receipt || !npc_id)return std::nullopt;
+    const auto person=npcs_.find(npc_id);
+    if(person==npcs_.end() || person->second.transport_id)return std::nullopt;
+    if(const auto voyage=voyages_.find(receipt);voyage!=voyages_.end()) {
+        const auto& v=voyage->second;
+        if(v.status!=2 || !v.origin || !v.destination ||
+           person->second.location!=v.destination ||
+           !transport::contains_person(v.passengers,npc_id))
+            return std::nullopt;
+        transport::NpcTransport arrival{receipt,transport::Mode::Ferry,
+            {transport::LocationKind::ColonyShip,v.origin},
+            {transport::LocationKind::ColonyShip,v.destination},
+            v.passengers.size(),v.passengers,transport::TransportState::Arrived};
+        if(transport::completed_transport(arrival,npc_id))return arrival;
+        return std::nullopt;
+    }
+    // An NPC who has physically disembarked stays at the surface, even
+    // after the vehicle has returned to orbit. A currently boarded
+    // passenger/pilot is NOT settlement-arrived.
+    for(const auto& [key,sh]:planetary_shuttles_) {
+        const auto individual=sh.visitor_arrival_receipts.find(npc_id);
+        // Legacy v84 visitor arrivals have no immutable personal receipt.
+        // They are allowed to reboard, but a migration writer must reject
+        // the legacy fallback until a new descent has been attested.
+        const auto prior_receipt=individual==sh.visitor_arrival_receipts.end()?
+            (snapshot_version_<85?sh.descent_receipt:0):individual->second;
+        if(prior_receipt!=receipt ||
+           !shuttle_flight_request_ids_.count(receipt) ||
+           !transport::contains_person(sh.disembarked_ids,npc_id))continue;
+        const auto site=planetary_sites_.find(key);
+        if(site==planetary_sites_.end() ||
+           person->second.home_ship!=sh.source_ship ||
+           person->second.assigned_site!=sh.source_ship ||
+           person->second.role!=NpcRole::Ship ||
+           person->second.location!=site->second.surface_location)
+            return std::nullopt;
+        transport::NpcTransport arrival{receipt,transport::Mode::PlanetaryShuttle,
+            {transport::LocationKind::ColonyShip,sh.source_ship},
+            {transport::LocationKind::PlanetarySite,site->second.surface_location},
+            64,sh.disembarked_ids,transport::TransportState::Arrived};
+        if(transport::completed_transport(arrival,npc_id))return arrival;
+        return std::nullopt;
+    }
+    return std::nullopt;
+}
+
 NpcCustodyView Simulation::npc_custody(std::uint64_t id) const {
     const auto it=npcs_.find(id);
     if(it==npcs_.end())throw std::out_of_range("npc custody: unknown identity");
     const auto& n=it->second;
+    // Reuse the existing transport-facing NPC custody projection. The stored
+    // NpcRecord remains a single authoritative person; its ferry transport_id
+    // is not overloaded with an unrelated shuttle voyage identity.
+    if(snapshot_version_>=81)
+        for(const auto& [key,sh]:planetary_shuttles_) {
+            (void)key;
+            if((sh.pilot_npc==id ||
+                std::binary_search(sh.passenger_ids.begin(),
+                                   sh.passenger_ids.end(),id)) &&
+                (sh.flight_phase==1 || sh.flight_phase==3))
+                return {n.id,n.home_ship,n.location,n.role,sh.flight_request,true};
+        }
     return {n.id,n.home_ship,n.location,n.role,n.transport_id,n.transport_id!=0};
 }
 std::size_t Simulation::children_physically_aboard(EntityId ship) const {
@@ -529,6 +600,19 @@ void Simulation::upgrade_assignment_snapshot_format(){
     if(snapshot_version_<20)throw std::logic_error("individual NPC records required");
     for(auto& [id,n]:npcs_){(void)id;if(!n.assigned_site)n.assigned_site=n.location;}
     snapshot_version_=std::max(snapshot_version_,32);
+}
+void Simulation::upgrade_legal_residence_snapshot_format(){
+    if(snapshot_version_<85 || snapshot_version_>86 || npcs_.empty())
+        throw std::logic_error("legal residence upgrade requires v85 named population");
+    if(snapshot_version_==86)return;
+    for(auto& [id,n]:npcs_) {
+        (void)id;
+        if(!n.home_ship || (n.residence_id && n.residence_id!=n.home_ship) ||
+           n.residence_kind!=transport::LocationKind::ColonyShip)
+            throw std::logic_error("legal residence upgrade requires canonical ship homes");
+        n.residence_id=n.home_ship;
+    }
+    snapshot_version_=86;
 }
 void Simulation::enable_medical_workforce_rules(){
     if(tick_ || !submitted_ids_.empty() || !commands_.empty() ||
@@ -867,9 +951,39 @@ bool Simulation::npc_available_for_duty(std::uint64_t npc_id) const {
     if(it==npcs_.end())return false;
     const auto& n=it->second;
     if(n.location!=n.assigned_site || n.transport_id)return false;
+    // A booked seat reserves the very same NPC for an actual transport leg.
+    // Prevent a concurrently issued workforce order from assigning this
+    // physical person to two destinations.
+    for(const auto& [key,sh]:planetary_shuttles_) {
+        (void)key;
+        if(sh.pilot_npc==npc_id ||
+           std::binary_search(sh.passenger_ids.begin(),
+                              sh.passenger_ids.end(),npc_id) ||
+           std::binary_search(sh.disembarked_ids.begin(),
+                              sh.disembarked_ids.end(),npc_id))return false;
+    }
     const auto status=npc_health_status(npc_id);
     return status==NpcHealthStatus::Healthy || status==NpcHealthStatus::Treated ||
            status==NpcHealthStatus::Recovered;
+}
+
+NpcResidenceAudit Simulation::assess_npc_residence() const {
+    NpcResidenceAudit view{};
+    for(const auto& [id,n]:npcs_) {
+        (void)id;
+        const auto address=n.legal_residence();
+        if(!address.id || !n.location ||
+           view.total_living==std::numeric_limits<std::uint64_t>::max()) {
+            view.reconciled=false;
+            continue;
+        }
+        ++view.living_by_residence[address];
+        ++view.physically_present[n.location];
+        ++view.total_living;
+    }
+    if(view.total_living!=npcs_.size())
+        view.reconciled=false;
+    return view;
 }
 
 ColonyMedicalAudit Simulation::assess_medical_population() const {
@@ -893,6 +1007,13 @@ ColonyMedicalAudit Simulation::assess_medical_population() const {
         if(counted[{id,static_cast<int>(NpcRole::Farm)}]!=c.workers)a.reconciled=false;
     for(const auto& [id,c]:habitats_)
         if(counted[{id,static_cast<int>(NpcRole::Habitat)}]!=c.residents)a.reconciled=false;
+    for(const auto& [site_key,facility]:planetary_sites_) {
+        (void)site_key;
+        if(facility.assigned_workers &&
+           counted[{facility.surface_location,
+                    static_cast<int>(NpcRole::PlanetarySurface)}]!=
+                    facility.assigned_workers)a.reconciled=false;
+    }
     for(const auto& [id,c]:a.by_home_ship){(void)id;
         if(c.living!=c.fit+c.injured+c.stabilized+c.recovering ||
            c.living!=c.on_duty+c.unavailable || c.in_transit>c.unavailable)
@@ -1355,9 +1476,12 @@ bool Simulation::submit(const Command& c) {
         const auto id=c.passenger_ids[0];
         const auto n=npcs_.find(id);
         const auto v=voyages_.find(c.transport_id);
+        const auto arrival=npc_transport_arrival(c.transport_id,id);
         if(n==npcs_.end() || v==voyages_.end() || v->second.status!=2 ||
-           v->second.origin!=c.actor || v->second.destination!=c.target ||
-           !std::binary_search(v->second.passengers.begin(),v->second.passengers.end(),id) ||
+           (!arrival || arrival->mode()!=transport::Mode::Ferry ||
+            arrival->source().id!=c.actor ||
+            arrival->destination().id!=c.target ||
+            !transport::completed_transport(*arrival,id)) ||
            n->second.home_ship!=c.actor || n->second.location!=c.target ||
            n->second.assigned_site!=c.actor || n->second.transport_id ||
            n->second.role!=NpcRole::Ship || n->second.mentor_id ||
@@ -1896,6 +2020,8 @@ Event Simulation::execute(const Command& c) {
         for(const auto id:c.passenger_ids){
             auto& n=npcs_.at(id);
             n.home_ship=c.target;
+            if(n.residence_kind==transport::LocationKind::ColonyShip)
+                n.residence_id=c.target;
             n.location=c.target;
             n.assigned_site=c.target;
             n.role=NpcRole::Ship;
@@ -2253,13 +2379,16 @@ Event Simulation::execute(const Command& c) {
         const auto id=c.passenger_ids.empty()?0:c.passenger_ids.front();
         auto n=npcs_.find(id);
         const auto v=voyages_.find(c.transport_id);
+        const auto arrival=npc_transport_arrival(c.transport_id,id);
         if(c.issuer!=kServerAuthority || c.passenger_ids.empty() ||
            c.passenger_ids.size()>2 || !id ||
            (c.passenger_ids.size()==2 && (c.passenger_ids[1]<=id ||
              snapshot_version_<41)) ||
            n==npcs_.end() || v==voyages_.end() || v->second.status!=2 ||
-           v->second.origin!=c.actor || v->second.destination!=c.target ||
-           !std::binary_search(v->second.passengers.begin(),v->second.passengers.end(),id) ||
+           (!arrival || arrival->mode()!=transport::Mode::Ferry ||
+            arrival->source().id!=c.actor ||
+            arrival->destination().id!=c.target ||
+            !transport::completed_transport(*arrival,id)) ||
            n->second.home_ship!=c.actor || n->second.assigned_site!=c.actor ||
            n->second.location!=c.target || n->second.transport_id ||
            n->second.role!=NpcRole::Ship || n->second.mentor_id ||
@@ -2284,11 +2413,15 @@ Event Simulation::execute(const Command& c) {
             --colony_ships_.at(c.actor).crew;
             ++colony_ships_.at(c.target).crew;
             co->second.home_ship=c.target;
+            if(co->second.residence_kind==transport::LocationKind::ColonyShip)
+                co->second.residence_id=c.target;
             co->second.assigned_site=c.target;
         }
         --colony_ships_.at(c.actor).crew;
         ++colony_ships_.at(c.target).crew;
         n->second.home_ship=c.target;
+        if(n->second.residence_kind==transport::LocationKind::ColonyShip)
+            n->second.residence_id=c.target;
         n->second.assigned_site=c.target;
         snapshot_version_=std::max(snapshot_version_,
             c.passenger_ids.size()==2 ? 44:41);
@@ -2543,6 +2676,8 @@ Event Simulation::execute(const Command& c) {
                         if(n.home_ship==c.actor){
                             crew_rehomes_.emplace(npc,CrewRehome{c.actor,c.target,c.id,tick_});
                             n.home_ship=c.target;n.assigned_site=c.target;
+                            if(n.residence_kind==transport::LocationKind::ColonyShip)
+                                n.residence_id=c.target;
                             --colony_ships_.at(c.actor).crew;
                             ++colony_ships_.at(c.target).crew;
                         }
@@ -4678,6 +4813,37 @@ bool Simulation::within_deep_probe_link(std::int64_t dx_mm,
 }
 namespace {
 constexpr std::uint64_t kAstronomicalGalaxySeed=0x53475F415354524FULL;
+planetary::PlanetaryEnvelope planetary_envelope_for_body(
+    const PhysicalCelestialBody& body) {
+    const auto selector=astronomy_mix(kAstronomicalGalaxySeed^body.id);
+    planetary::PlanetaryEnvelope env{};
+    if(body.orbital_radius_milli_au>12000) {
+        env.climate=planetary::WorldClimate::Frozen;
+        env.water_coverage=std::uint8_t(20+(selector%70));
+        env.average_celsius=-25;
+    } else if(body.orbital_radius_milli_au<2200) {
+        env.climate=planetary::WorldClimate::AirlessRock;
+        env.water_coverage=0;
+        env.average_celsius=50;
+    } else if(selector%5==0) {
+        env.climate=planetary::WorldClimate::Arid;
+        env.water_coverage=std::uint8_t(2+(selector%15));
+        env.average_celsius=27;
+    } else if(selector%5==1) {
+        env.climate=planetary::WorldClimate::Ocean;
+        env.water_coverage=std::uint8_t(75+(selector%21));
+        env.average_celsius=16;
+    } else {
+        env.climate=planetary::WorldClimate::LifeSupporting;
+        env.water_coverage=std::uint8_t(25+(selector%45));
+        env.average_celsius=17;
+    }
+    // PGF biosphere genesis has NOT been integrated. Never claim discovered
+    // native vegetation merely from a favorable climate classification.
+    env.biosphere_present=false;
+    return env;
+}
+
 constexpr std::uint64_t kAuMm=149597870700000ULL;
 constexpr std::uint64_t kCosmicLimitMm=50000000000000000ULL; // 334 AU
 // Fixed-point directional placements avoid libc trig drift across OS builds.
@@ -5110,6 +5276,994 @@ std::vector<PhysicalCelestialBody> Simulation::scan_physical_celestials(
     return found==physical_celestial_systems_.end()?
         std::vector<PhysicalCelestialBody>{}:found->second;
 }
+// PLAY-13D.3: these native game operations use existing canonical module,
+// life-support and oasis custody. A survey is informational; no resource is
+// allocated merely because terrain resembles a river or fertile ground.
+std::optional<planetary::PlanetaryRegionKey>
+Simulation::planetary_oasis_source_region(PlayerId owner,EntityId ship,
+    std::uint64_t body_id) const {
+    if(!oasis_reserves_.count(body_id))return std::nullopt;
+    const auto body=celestial_navigation_anchor(owner,ship,body_id);
+    if(!body || (body->kind!=CelestialKind::Planet &&
+                 body->kind!=CelestialKind::Moon))return std::nullopt;
+    const auto env=planetary_envelope_for_body(*body);
+    const planetary::PlanetaryWorldKey key{
+        kAstronomicalGalaxySeed,body->system,body_id,1};
+    const auto map=planetary::generate_watersheds(key,env);
+    // The seeded index yields a deterministic location on this physical
+    // body, not a source on every tile. Open land is required for rig placement.
+    const auto start=std::size_t(astronomy_mix(body_id^
+        kAstronomicalGalaxySeed^0x4F41534953534F55ULL)%planetary::kWatershedCells);
+    for(std::size_t n=0;n<planetary::kWatershedCells;++n) {
+        const auto index=(start+n)%planetary::kWatershedCells;
+        if(map.cells[index].ocean)continue;
+        return planetary::PlanetaryRegionKey{
+            body_id,1,
+            std::uint16_t(index/planetary::kWatershedColumns),
+            std::uint16_t(index%planetary::kWatershedColumns)};
+    }
+    return std::nullopt; // all-ocean world requires future underwater rigs
+}
+namespace {
+EntityId surface_custody_id(const PlanetarySiteKey& key) {
+    const auto [body,lat,lon,revision]=key;
+    return astronomy_mix(body ^ (std::uint64_t(lat)<<32) ^
+         (std::uint64_t(lon)<<16) ^ revision ^
+         0x5355524641434543ULL) | (1ULL<<63);
+}
+}
+bool Simulation::build_planetary_site(PlayerId owner,EntityId ship,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,
+    std::uint64_t first_npc,std::uint64_t second_npc) {
+    const auto site=scan_planetary_geography(owner,ship,body,latitude,longitude);
+    const auto frame=ship_frames_.find(ship);
+    const auto* vessel=find(ship);
+    auto colony=colony_ships_.find(ship);
+    auto support=life_support_.find(ship);
+    const auto key=PlanetarySiteKey{body,latitude,longitude,1};
+    const auto surface_location=surface_custody_id(key);
+    if(!site || !vessel || !owner || owner==kServerAuthority ||
+       frame==ship_frames_.end() || frame->second.anchor_body!=body ||
+       vessel->dock_state!=DockState::InSpace ||
+       vessel->jump_state!=ShipJumpState::Ready ||
+       colony==colony_ships_.end() || colony->second.modules<2 ||
+       colony->second.crew<3 || support==life_support_.end() ||
+       support->second.food_kg<60 || support->second.water_kg<60 ||
+       support->second.oxygen_kg<60 ||
+       planetary_sites_.count(key) || planetary_sites_.size()>=10000 ||
+       site->landscape.region.surface_water ||
+       entities_.count(surface_location) || npcs_.empty())
+        return false;
+    // Collision-resistant deterministic custody handle; reject collisions
+    // rather than allowing two cells to share their workforce.
+    for(const auto& [existing,facility]:planetary_sites_) {
+        (void)existing;
+        if(facility.surface_location==surface_location)return false;
+    }
+    std::array<std::uint64_t,2> assigned{{0,0}};
+    if((first_npc==0)!=(second_npc==0) ||
+       (first_npc && first_npc==second_npc))return false;
+    if(snapshot_version_>=20) {
+        const auto eligible=[&](std::uint64_t id)->bool {
+            const auto it=npcs_.find(id);
+            if(it==npcs_.end())return false;
+            const auto& n=it->second;
+            if(n.home_ship!=ship || n.location!=ship ||
+               n.assigned_site!=ship || n.role!=NpcRole::Ship ||
+               !npc_available_for_duty(id))return false;
+            for(const auto& [child,d]:physical_dependents_) {
+                (void)child;
+                if(d.guardian_id==id)return false;
+            }
+            return true;
+        };
+        if(first_npc) {
+            if(!eligible(first_npc) || !eligible(second_npc))return false;
+            assigned={{first_npc,second_npc}};
+        } else {
+            std::size_t ready=0;
+            for(const auto& [id,n]:npcs_) {
+                (void)n;
+                if(!eligible(id))continue;
+                assigned[ready++]=id;
+                if(ready==2)break;
+            }
+            if(ready!=2)return false;
+        }
+    }
+    // Two physical named NPCs and manufactured modules leave the ship.
+    // This does not create a player landing or a rendered planetary scene.
+    colony->second.modules-=2;
+    colony->second.crew-=2;
+    support->second.food_kg-=60;
+    support->second.water_kg-=60;
+    support->second.oxygen_kg-=60;
+    for(auto id:assigned)if(id) {
+        auto& n=npcs_.at(id);
+        n.location=surface_location;
+        n.assigned_site=surface_location;
+        n.role=NpcRole::PlanetarySurface;
+        n.transport_id=0;
+        n.mentor_id=0;
+    }
+    PlanetarySiteFacility facility{
+        site->key,owner,ship,4,false,false,
+        60,0,60,0,0};
+    facility.spaceport_phase=1;
+    facility.construction_progress=0;
+    facility.construction_required=240;
+    facility.surface_location=surface_location;
+    facility.delegated_npcs=assigned;
+    facility.assigned_workers=2;
+    facility.oxygen_kg=60;
+    // Preserve version-77 already-completed outposts while upgrading the
+    // world's canonical snapshot format. No NPCs are fabricated for them.
+    for(auto& [legacy_key,legacy]:planetary_sites_) {
+        if(legacy.surface_location)continue;
+        legacy.surface_location=surface_custody_id(legacy_key);
+        legacy.delegated_npcs={{0,0}};
+        legacy.assigned_workers=0;
+        legacy.spaceport_phase=3;
+        legacy.construction_progress=40;
+        legacy.construction_required=40;
+    }
+    planetary_sites_.emplace(key,facility);
+    snapshot_version_=std::max(snapshot_version_,78);
+    return true;
+}
+
+bool Simulation::build_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key) {
+    const auto site=planetary_sites_.find(key);
+    const auto hull=entities_.find(ship);
+    const auto frame=ship_frames_.find(ship);
+    auto colony=colony_ships_.find(ship);
+    if(!owner || std::get<3>(key)!=1 || site==planetary_sites_.end() ||
+       site->second.owner!=owner || site->second.source_ship!=ship ||
+       site->second.spaceport_phase!=3 || planetary_shuttles_.count(key) ||
+       planetary_shuttles_.size()>=10000 || hull==entities_.end() ||
+       hull->second.owner_id!=owner || hull->second.dock_state!=DockState::InSpace ||
+       hull->second.jump_state!=ShipJumpState::Ready || frame==ship_frames_.end() ||
+       frame->second.anchor_body!=std::get<0>(key) ||
+       colony==colony_ships_.end() || colony->second.modules<2)return false;
+    colony->second.modules-=2;
+    planetary_shuttles_.emplace(key,PlanetaryShuttleState{owner,ship,0,4,0,0});
+    snapshot_version_=std::max(snapshot_version_,80);
+    return true;
+}
+bool Simulation::post_local_delivery_order(PlayerId owner,EntityId board_ship,
+       const PlanetarySiteKey& key,ShuttleCargo cargo,
+       std::int64_t kilograms,std::uint64_t order_id) {
+    // This initial job adapter executes only a physical planetary-site ->
+    // orbiting parent ship route. Unbuilt facilities and unrelated colony
+    // destinations do not get phantom transport capacity.
+    const auto site=planetary_sites_.find(key);
+    const auto shuttle=planetary_shuttles_.find(key);
+    const auto ship=entities_.find(board_ship);
+    if(!owner || owner==kServerAuthority || !board_ship || !order_id ||
+       order_id>=(std::uint64_t{1}<<50) ||
+       kilograms<=0 || kilograms>1000 || cargo>ShuttleCargo::Nutrients ||
+       site==planetary_sites_.end() ||
+       shuttle==planetary_shuttles_.end() ||
+       site->second.owner!=owner || site->second.source_ship!=board_ship ||
+       site->second.spaceport_phase!=3 ||
+       shuttle->second.owner!=owner || shuttle->second.source_ship!=board_ship ||
+       ship==entities_.end() || ship->second.owner_id!=owner ||
+       !colony_ships_.count(board_ship) ||
+       local_delivery_orders_.count(order_id) ||
+       local_delivery_orders_.size()>=10000)
+        return false;
+    for(const auto& [id,work]:local_delivery_orders_) {
+        (void)id;
+        if(work.site==key && work.stage!=LocalDeliveryStage::Complete &&
+           work.stage!=LocalDeliveryStage::Cancelled)return false;
+    }
+    local_delivery_orders_.emplace(order_id,LocalDeliveryOrder{
+        order_id,owner,board_ship,key,cargo,kilograms,0,
+        LocalDeliveryStage::Posted,tick_});
+    snapshot_version_=std::max(snapshot_version_,88);
+    return true;
+}
+bool Simulation::cancel_local_delivery_order(PlayerId owner,std::uint64_t order_id) {
+    auto it=local_delivery_orders_.find(order_id);
+    if(!owner || it==local_delivery_orders_.end() ||
+       it->second.owner!=owner ||
+       it->second.stage!=LocalDeliveryStage::Posted)return false;
+    // Once a real flight begins, cargo and pilot remain physically in the
+    // shuttle. An in-flight contract cannot erase or teleport either.
+    it->second.stage=LocalDeliveryStage::Cancelled;
+    return true;
+}
+void Simulation::process_local_delivery_board() {
+    for(auto& [id,work]:local_delivery_orders_) {
+        if(work.stage==LocalDeliveryStage::Complete ||
+           work.stage==LocalDeliveryStage::Cancelled)continue;
+        const auto site=planetary_sites_.find(work.site);
+        const auto shuttle=planetary_shuttles_.find(work.site);
+        if(site==planetary_sites_.end() || shuttle==planetary_shuttles_.end())
+            continue;
+        auto& sh=shuttle->second;
+        if(sh.owner!=work.owner || sh.source_ship!=work.board_ship ||
+           site->second.owner!=work.owner ||
+           site->second.source_ship!=work.board_ship ||
+           site->second.spaceport_phase!=3)continue;
+        const auto flight_id=[id](bool ascend) {
+            return 0x10000000000000ULL | (id<<1) |
+                   std::uint64_t(ascend?1:0);
+        };
+        const auto source_stock=[&]()->std::int64_t {
+            return work.cargo==ShuttleCargo::Water?site->second.water_kg:
+                   (work.cargo==ShuttleCargo::Food?site->second.food_kg:
+                    site->second.nutrients_kg);
+        };
+        switch(work.stage) {
+        case LocalDeliveryStage::Posted: {
+            // Only the locally assigned physical shuttle and its NPC pilot
+            // may claim this order. No separate transport NPC is invented.
+            if(sh.flight_phase!=0 || !sh.passenger_ids.empty() ||
+               sh.water_kg<2 || source_stock()<work.kilograms ||
+               sh.water_kg+sh.food_kg+sh.nutrients_kg>
+                   1000-work.kilograms)break;
+            if(!sh.pilot_npc) {
+                for(const auto& [npc,person]:npcs_) {
+                    if(person.home_ship!=work.board_ship ||
+                       person.role!=NpcRole::Ship ||
+                       person.location!=work.board_ship ||
+                       person.assigned_site!=work.board_ship ||
+                       !npc_available_for_duty(npc))continue;
+                    if(assign_planetary_shuttle_pilot(
+                        work.owner,work.board_ship,work.site,npc))break;
+                }
+                // Pilot assignment is itself an actual NPC reservation.
+                // Avoid launching in the same step as a new assignment.
+                // A posted order has no final assignment until a real
+                // departure is committed. The pilot may still be changed.
+                break;
+            }
+            if(launch_planetary_shuttle(work.owner,work.board_ship,work.site,
+                    flight_id(false),false)) {
+                work.assigned_pilot=sh.pilot_npc;
+                work.stage=LocalDeliveryStage::Descending;
+            }
+            break;
+        }
+        case LocalDeliveryStage::Descending:
+            if(sh.flight_phase==2 && sh.descent_receipt==flight_id(false))
+                work.stage=LocalDeliveryStage::Loading;
+            break;
+        case LocalDeliveryStage::Loading:
+            // Actual source stock and physical berth are checked by the
+            // existing shuttle load operation. No speculative debits.
+            if(sh.flight_phase==2 && sh.descent_receipt==flight_id(false) &&
+               load_planetary_shuttle(work.owner,work.board_ship,work.site,
+                    work.cargo,work.kilograms))
+                work.stage=LocalDeliveryStage::Ascending;
+            break;
+        case LocalDeliveryStage::Ascending:
+            if(sh.flight_phase==2 &&
+               launch_planetary_shuttle(work.owner,work.board_ship,work.site,
+                    flight_id(true),true))
+                work.stage=LocalDeliveryStage::Delivering;
+            break;
+        case LocalDeliveryStage::Delivering:
+            if(sh.flight_phase==0 && sh.ascent_receipt==flight_id(true) &&
+               unload_planetary_shuttle(work.owner,work.board_ship,work.site,
+                    work.cargo,work.kilograms))
+                work.stage=LocalDeliveryStage::Complete;
+            break;
+        case LocalDeliveryStage::Complete:
+        case LocalDeliveryStage::Cancelled:
+            break;
+        }
+    }
+}
+
+std::optional<transport::Manifest> Simulation::planetary_transport_manifest(
+       const PlanetarySiteKey& key) const {
+    const auto sh=planetary_shuttles_.find(key);
+    const auto site=planetary_sites_.find(key);
+    if(sh==planetary_shuttles_.end() || site==planetary_sites_.end())
+        return std::nullopt;
+    const auto& vessel=sh->second;
+    const bool returning=vessel.flight_phase==2 || vessel.flight_phase==3;
+    const transport::Endpoint orbit{transport::LocationKind::ColonyShip,
+                                     vessel.source_ship};
+    const transport::Endpoint ground{transport::LocationKind::PlanetarySite,
+                                      site->second.surface_location};
+    transport::Manifest manifest{};
+    manifest.vehicle=shuttle_transit_custody_id(key); // stable per physical shuttle
+    manifest.owner=vessel.owner;
+    manifest.mode=transport::Mode::PlanetaryShuttle;
+    manifest.berth=returning?ground:orbit;
+    manifest.other_end=returning?orbit:ground;
+    manifest.pilot=vessel.pilot_npc;
+    manifest.in_transit=vessel.flight_phase==1 || vessel.flight_phase==3;
+    manifest.flight_receipt=manifest.in_transit?vessel.flight_request:
+        (returning?vessel.descent_receipt:vessel.ascent_receipt);
+    manifest.seat_capacity=3;
+    manifest.cargo_capacity_kg=1000;
+    for(const auto id:vessel.passenger_ids)
+        manifest.contents.push_back({transport::GoodKind::Npc,id,1,0});
+    const auto add_stock=[&](transport::ResourceGood kind,std::int64_t kilograms){
+        if(kilograms>0)manifest.contents.push_back({
+            transport::GoodKind::Resource,static_cast<std::uint8_t>(kind),
+            static_cast<std::uint64_t>(kilograms),
+            static_cast<std::uint64_t>(kilograms)});
+    };
+    add_stock(transport::ResourceGood::Water,vessel.water_kg);
+    add_stock(transport::ResourceGood::Food,vessel.food_kg);
+    add_stock(transport::ResourceGood::Nutrients,vessel.nutrients_kg);
+    // The order in which canonical inventories are enumerated is fixed.
+    // No separate NPC roster, cargo stock or delivery receipt is created.
+    return manifest.valid()?std::optional<transport::Manifest>(std::move(manifest)):
+                            std::nullopt;
+}
+
+bool Simulation::load_planetary_shuttle(PlayerId owner,EntityId ship,
+       const PlanetarySiteKey& key,bool water,std::int64_t kg) {
+    return load_planetary_shuttle(owner,ship,key,
+        water?ShuttleCargo::Water:ShuttleCargo::Food,kg);
+}
+bool Simulation::load_planetary_shuttle(PlayerId owner,EntityId ship,
+       const PlanetarySiteKey& key,ShuttleCargo cargo,std::int64_t kg) {
+    auto shuttle=planetary_shuttles_.find(key);
+    auto site=planetary_sites_.find(key);
+    const auto frame=ship_frames_.find(ship);
+    const auto hull=entities_.find(ship);
+    auto life=life_support_.find(ship);
+    if(!owner || std::get<3>(key)!=1 ||
+       shuttle==planetary_shuttles_.end() || site==planetary_sites_.end() ||
+       site->second.spaceport_phase!=3 ||
+       shuttle->second.source_ship!=ship || shuttle->second.owner!=owner ||
+       frame==ship_frames_.end() || frame->second.anchor_body!=std::get<0>(key) ||
+       hull==entities_.end() || hull->second.owner_id!=owner ||
+       hull->second.dock_state!=DockState::InSpace ||
+       hull->second.jump_state!=ShipJumpState::Ready ||
+       life==life_support_.end() || kg<=0 || kg>1000 ||
+       cargo>ShuttleCargo::Nutrients ||
+       (shuttle->second.flight_phase!=0 && shuttle->second.flight_phase!=2))
+       return false;
+    auto& held=cargo==ShuttleCargo::Water?shuttle->second.water_kg:
+        (cargo==ShuttleCargo::Food?shuttle->second.food_kg:shuttle->second.nutrients_kg);
+    auto& from=shuttle->second.flight_phase==0?
+        (cargo==ShuttleCargo::Water?life->second.water_kg:
+         (cargo==ShuttleCargo::Food?life->second.food_kg:life->second.nutrients_kg)):
+        (cargo==ShuttleCargo::Water?site->second.water_kg:
+         (cargo==ShuttleCargo::Food?site->second.food_kg:site->second.nutrients_kg));
+    const auto& state=shuttle->second;
+    if(from<kg || held>1000-kg ||
+       state.water_kg+state.food_kg+state.nutrients_kg>1000-kg)return false;
+    from-=kg;held+=kg;
+    if(cargo==ShuttleCargo::Nutrients)
+        snapshot_version_=std::max(snapshot_version_,87);
+    return true;
+}
+bool Simulation::unload_planetary_shuttle(PlayerId owner,EntityId ship,
+       const PlanetarySiteKey& key,bool water,std::int64_t kg) {
+    return unload_planetary_shuttle(owner,ship,key,
+        water?ShuttleCargo::Water:ShuttleCargo::Food,kg);
+}
+bool Simulation::unload_planetary_shuttle(PlayerId owner,EntityId ship,
+       const PlanetarySiteKey& key,ShuttleCargo cargo,std::int64_t kg) {
+    auto shuttle=planetary_shuttles_.find(key);
+    auto site=planetary_sites_.find(key);
+    const auto frame=ship_frames_.find(ship);
+    const auto hull=entities_.find(ship);
+    auto life=life_support_.find(ship);
+    if(!owner || std::get<3>(key)!=1 ||
+       shuttle==planetary_shuttles_.end() || site==planetary_sites_.end() ||
+       site->second.spaceport_phase!=3 ||
+       shuttle->second.source_ship!=ship || shuttle->second.owner!=owner ||
+       frame==ship_frames_.end() || frame->second.anchor_body!=std::get<0>(key) ||
+       hull==entities_.end() || hull->second.owner_id!=owner ||
+       hull->second.dock_state!=DockState::InSpace ||
+       hull->second.jump_state!=ShipJumpState::Ready ||
+       life==life_support_.end() || kg<=0 || kg>1000 ||
+       cargo>ShuttleCargo::Nutrients ||
+       (shuttle->second.flight_phase!=0 && shuttle->second.flight_phase!=2))
+       return false;
+    auto& held=cargo==ShuttleCargo::Water?shuttle->second.water_kg:
+        (cargo==ShuttleCargo::Food?shuttle->second.food_kg:shuttle->second.nutrients_kg);
+    auto& to=shuttle->second.flight_phase==0?
+        (cargo==ShuttleCargo::Water?life->second.water_kg:
+         (cargo==ShuttleCargo::Food?life->second.food_kg:life->second.nutrients_kg)):
+        (cargo==ShuttleCargo::Water?site->second.water_kg:
+         (cargo==ShuttleCargo::Food?site->second.food_kg:site->second.nutrients_kg));
+    if(held<kg || to>1000000-kg)return false;
+    held-=kg;to+=kg;
+    if(cargo==ShuttleCargo::Nutrients)
+        snapshot_version_=std::max(snapshot_version_,87);
+    return true;
+}
+bool Simulation::assign_planetary_shuttle_pilot(PlayerId owner,EntityId ship,
+       const PlanetarySiteKey& key,std::uint64_t npc) {
+    auto shuttle=planetary_shuttles_.find(key);
+    const auto crew=npcs_.find(npc);
+    if(!owner || shuttle==planetary_shuttles_.end() ||
+       shuttle->second.owner!=owner || shuttle->second.source_ship!=ship ||
+       shuttle->second.flight_phase!=0 || // pilot changes only at orbital berth
+       !npc || crew==npcs_.end() || crew->second.home_ship!=ship ||
+       crew->second.location!=ship || crew->second.role!=NpcRole::Ship ||
+       crew->second.assigned_site!=ship || crew->second.transport_id ||
+       !npc_available_for_duty(npc))return false;
+    for(const auto& [child,dependent]:physical_dependents_) {
+        (void)child;
+        if(dependent.guardian_id==npc)return false;
+    }
+    if(std::binary_search(shuttle->second.passenger_ids.begin(),
+                          shuttle->second.passenger_ids.end(),npc))return false;
+    for(const auto& [other,record]:planetary_shuttles_)
+        if(record.pilot_npc==npc && other!=key ||
+           std::binary_search(record.passenger_ids.begin(),
+                              record.passenger_ids.end(),npc) ||
+           std::binary_search(record.disembarked_ids.begin(),
+                              record.disembarked_ids.end(),npc))return false;
+    shuttle->second.pilot_npc=npc;
+    return true; // no boarding or NPC transfer before flight scheduler
+}
+
+
+bool Simulation::book_planetary_shuttle_passenger(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc,bool board) {
+    auto sh=planetary_shuttles_.find(key);
+    auto site=planetary_sites_.find(key);
+    auto person=npcs_.find(npc);
+    if(!owner || !npc || sh==planetary_shuttles_.end() ||
+       site==planetary_sites_.end() || person==npcs_.end() ||
+       sh->second.owner!=owner || sh->second.source_ship!=ship ||
+       site->second.owner!=owner || site->second.source_ship!=ship ||
+       sh->second.flight_phase!=0 ||
+       person->second.home_ship!=ship || person->second.location!=ship ||
+       person->second.role!=NpcRole::Ship ||
+       person->second.assigned_site!=ship || person->second.transport_id ||
+       npc==sh->second.pilot_npc)return false;
+    auto& ids=sh->second.passenger_ids;
+    auto at=std::lower_bound(ids.begin(),ids.end(),npc);
+    if(!board) {
+        if(at==ids.end() || *at!=npc)return false;
+        ids.erase(at);
+        snapshot_version_=std::max(snapshot_version_,82);
+        return true;
+    }
+    if(ids.size()>=3 || (at!=ids.end() && *at==npc) ||
+       !npc_available_for_duty(npc))return false;
+    for(const auto& [id,child]:physical_dependents_) {
+        (void)id;
+        if(child.guardian_id==npc)return false;
+    }
+    for(const auto& [other,flight]:planetary_shuttles_)
+        if(other!=key && (flight.pilot_npc==npc ||
+            std::binary_search(flight.passenger_ids.begin(),
+                               flight.passenger_ids.end(),npc) ||
+            std::binary_search(flight.disembarked_ids.begin(),
+                               flight.disembarked_ids.end(),npc)))return false;
+    ids.insert(at,npc);
+    snapshot_version_=std::max(snapshot_version_,82);
+    return true;
+}
+
+
+bool Simulation::assign_planetary_shuttle_visitor_duty(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc,bool assign) {
+    auto sh=planetary_shuttles_.find(key);
+    auto site=planetary_sites_.find(key);
+    auto person=npcs_.find(npc);
+    if(!owner || !npc || sh==planetary_shuttles_.end() ||
+       site==planetary_sites_.end() || person==npcs_.end() ||
+       sh->second.owner!=owner || sh->second.source_ship!=ship ||
+       site->second.owner!=owner || site->second.source_ship!=ship ||
+       site->second.spaceport_phase!=3 ||
+       !std::binary_search(sh->second.disembarked_ids.begin(),
+                           sh->second.disembarked_ids.end(),npc) ||
+       (sh->second.visitor_arrival_receipts.count(npc) &&
+        !npc_transport_arrival(sh->second.visitor_arrival_receipts.at(npc),npc)) ||
+       person->second.home_ship!=ship ||
+       person->second.location!=site->second.surface_location ||
+       person->second.assigned_site!=ship ||
+       person->second.role!=NpcRole::Ship || person->second.transport_id)
+        return false;
+    auto& duty=sh->second.duty_ids;
+    auto at=std::lower_bound(duty.begin(),duty.end(),npc);
+    if(assign) {
+        if(at!=duty.end() && *at==npc)return false;
+        const auto health=npc_health_status(npc);
+        if(health!=NpcHealthStatus::Healthy &&
+           health!=NpcHealthStatus::Treated &&
+           health!=NpcHealthStatus::Recovered)return false;
+        duty.insert(at,npc);
+    }else {
+        if(at==duty.end() || *at!=npc)return false;
+        duty.erase(at);
+    }
+    snapshot_version_=std::max(snapshot_version_,84);
+    return true;
+}
+
+bool Simulation::transfer_planetary_shuttle_visitor(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc,bool reboard) {
+    auto sh=planetary_shuttles_.find(key);
+    auto site=planetary_sites_.find(key);
+    auto person=npcs_.find(npc);
+    if(!owner || !npc || sh==planetary_shuttles_.end() ||
+       site==planetary_sites_.end() || person==npcs_.end() ||
+       sh->second.owner!=owner || sh->second.source_ship!=ship ||
+       site->second.owner!=owner || site->second.source_ship!=ship ||
+       site->second.spaceport_phase!=3 || sh->second.flight_phase!=2 ||
+       person->second.home_ship!=ship ||
+       person->second.location!=site->second.surface_location ||
+       person->second.assigned_site!=ship ||
+       person->second.role!=NpcRole::Ship ||
+       person->second.transport_id || npc==sh->second.pilot_npc)
+        return false;
+    for(const auto& [child,dependent]:physical_dependents_) {
+        (void)child;
+        if(dependent.guardian_id==npc)return false;
+    }
+    auto& aboard=sh->second.passenger_ids;
+    auto& visitors=sh->second.disembarked_ids;
+    if(reboard) {
+        auto at=std::lower_bound(visitors.begin(),visitors.end(),npc);
+        const auto individual=sh->second.visitor_arrival_receipts.find(npc);
+        // Pre-v85 visitors have no individual receipt; retain their physical
+        // return-pickup capability, but do not grant immigration proof.
+        const bool legacy_visitor=individual==sh->second.visitor_arrival_receipts.end();
+        if((!legacy_visitor &&
+            !npc_transport_arrival(individual->second,npc)) ||
+           at==visitors.end() || *at!=npc || aboard.size()>=3 ||
+           std::binary_search(aboard.begin(),aboard.end(),npc))
+            return false;
+        auto place=std::lower_bound(aboard.begin(),aboard.end(),npc);
+        aboard.insert(place,npc);
+        visitors.erase(at);
+        sh->second.visitor_arrival_receipts.erase(npc);
+        const auto duty=std::lower_bound(sh->second.duty_ids.begin(),
+                                         sh->second.duty_ids.end(),npc);
+        if(duty!=sh->second.duty_ids.end() && *duty==npc)
+            sh->second.duty_ids.erase(duty);
+    }else {
+        auto at=std::lower_bound(aboard.begin(),aboard.end(),npc);
+        if(at==aboard.end() || *at!=npc || visitors.size()>=64 ||
+           std::binary_search(visitors.begin(),visitors.end(),npc))
+            return false;
+        auto place=std::lower_bound(visitors.begin(),visitors.end(),npc);
+        visitors.insert(place,npc);
+        aboard.erase(at);
+        if(!sh->second.descent_receipt ||
+           !shuttle_flight_request_ids_.count(sh->second.descent_receipt))
+            throw std::logic_error("missing durable disembarkation flight receipt");
+        sh->second.visitor_arrival_receipts.emplace(npc,sh->second.descent_receipt);
+        snapshot_version_=std::max(snapshot_version_,85);
+    }
+    snapshot_version_=std::max(snapshot_version_,83);
+    return true;
+}
+
+
+namespace {
+EntityId shuttle_transit_custody_id(const PlanetarySiteKey& key) {
+    // Distinct from every named surface custody location; collisions rejected
+    // against real entities and all other shuttle transit locations.
+    return surface_custody_id(key) ^ (std::uint64_t{1}<<62);
+}
+}
+bool Simulation::launch_planetary_shuttle(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t request_id,bool ascend) {
+    auto sh=planetary_shuttles_.find(key);
+    auto site=planetary_sites_.find(key);
+    auto hull=entities_.find(ship);
+    auto frame=ship_frames_.find(ship);
+    auto life=life_support_.find(ship);
+    if(!owner || !request_id || request_id==std::numeric_limits<std::uint64_t>::max() ||
+       sh==planetary_shuttles_.end() || site==planetary_sites_.end() ||
+       site->second.owner!=owner || site->second.source_ship!=ship ||
+       site->second.spaceport_phase!=3 || sh->second.owner!=owner ||
+       sh->second.source_ship!=ship || !sh->second.pilot_npc ||
+       sh->second.flight_phase!=(ascend?2:0) ||
+       sh->second.water_kg<1 || tick_>std::numeric_limits<std::uint64_t>::max()-3 ||
+       hull==entities_.end() || hull->second.owner_id!=owner ||
+       hull->second.dock_state!=DockState::InSpace ||
+       hull->second.jump_state!=ShipJumpState::Ready ||
+       frame==ship_frames_.end() || frame->second.anchor_body!=std::get<0>(key) ||
+       life==life_support_.end() ||
+       (!ascend && npc_health_status(sh->second.pilot_npc)!=NpcHealthStatus::Healthy &&
+        npc_health_status(sh->second.pilot_npc)!=NpcHealthStatus::Treated &&
+        npc_health_status(sh->second.pilot_npc)!=NpcHealthStatus::Recovered) ||
+       (ascend && npc_health_status(sh->second.pilot_npc)!=NpcHealthStatus::Healthy &&
+        npc_health_status(sh->second.pilot_npc)!=NpcHealthStatus::Treated &&
+        npc_health_status(sh->second.pilot_npc)!=NpcHealthStatus::Recovered))
+        return false;
+    // Preserve the complete accepted ID set across restart and future flights.
+    // Existing ferry, celestial transit and queued commands own their IDs too.
+    if(shuttle_flight_request_ids_.size()>=100000 ||
+       shuttle_flight_request_ids_.count(request_id) ||
+       voyages_.count(request_id) ||
+       submitted_ids_.count(request_id) ||
+       pending_celestial_transits_.count(request_id) ||
+       completed_celestial_transits_.count(request_id))return false;
+    // Request IDs and pilot identities cannot be reused across shuttles/legs.
+    for(const auto& [other,r]:planetary_shuttles_) {
+        (void)other;
+        if(r.flight_request==request_id || r.descent_receipt==request_id ||
+           r.ascent_receipt==request_id)return false;
+    }
+    auto pilot=npcs_.find(sh->second.pilot_npc);
+    if(pilot==npcs_.end() || pilot->second.home_ship!=ship ||
+       pilot->second.role!=NpcRole::Ship ||
+       pilot->second.assigned_site!=ship || pilot->second.transport_id ||
+       pilot->second.location!=(ascend?site->second.surface_location:ship))
+        return false;
+    // Shared transport manifest discipline: passengers are named existing
+    // NPCs, distinct from the pilot, with no competing ferry or shuttle berth.
+    if(sh->second.passenger_ids.size()>3)return false;
+    for(auto passenger_id:sh->second.passenger_ids) {
+        const auto it=npcs_.find(passenger_id);
+        if(it==npcs_.end() || passenger_id==sh->second.pilot_npc ||
+           it->second.home_ship!=ship || it->second.role!=NpcRole::Ship ||
+           it->second.assigned_site!=ship || it->second.transport_id ||
+           it->second.location!=(ascend?site->second.surface_location:ship))
+            return false;
+        if(!ascend && npc_health_status(passenger_id)!=NpcHealthStatus::Healthy &&
+           npc_health_status(passenger_id)!=NpcHealthStatus::Treated &&
+           npc_health_status(passenger_id)!=NpcHealthStatus::Recovered)return false;
+    }
+    // One kg of physically loaded water is the simplified water propellant
+    // per trip; spent propellant remains wastewater at the departure endpoint.
+    auto& residue=ascend?site->second.wastewater_kg:life->second.wastewater_kg;
+    if(residue>=1000000)return false;
+    const auto transit=shuttle_transit_custody_id(key);
+    if(!transit || entities_.count(transit))return false;
+    // Every physical custody address must identify exactly one location.
+    for(const auto& [other,facility]:planetary_sites_) {
+        (void)other;
+        if(facility.surface_location==transit)return false;
+    }
+    for(const auto& [other,r]:planetary_shuttles_)
+        if(other!=key && r.flight_phase%2==1 &&
+           transit==shuttle_transit_custody_id(other))return false;
+    --sh->second.water_kg;
+    ++residue;
+    sh->second.flight_phase=ascend?3:1;
+    sh->second.flight_request=request_id;
+    sh->second.arrival_tick=tick_+3;
+    if(ascend)sh->second.ascent_receipt=request_id;
+    else sh->second.descent_receipt=request_id;
+    pilot->second.location=transit;
+    for(const auto passenger_id:sh->second.passenger_ids)
+        npcs_.at(passenger_id).location=transit;
+    shuttle_flight_request_ids_.insert(request_id);
+    snapshot_version_=std::max(snapshot_version_,81);
+    return true;
+}
+void Simulation::process_planetary_shuttle_flights() {
+    for(auto& [key,sh]:planetary_shuttles_) {
+        if((sh.flight_phase!=1 && sh.flight_phase!=3) ||
+           tick_<sh.arrival_tick)continue;
+        auto site=planetary_sites_.find(key);
+        auto npc=npcs_.find(sh.pilot_npc);
+        if(site==planetary_sites_.end() || npc==npcs_.end() ||
+           npc->second.location!=shuttle_transit_custody_id(key))
+            throw std::logic_error("missing committed shuttle or pilot custody");
+        npc->second.location=sh.flight_phase==1?
+            site->second.surface_location:sh.source_ship;
+        for(const auto passenger_id:sh.passenger_ids) {
+            auto& passenger=npcs_.at(passenger_id);
+            if(passenger.location!=shuttle_transit_custody_id(key))
+                throw std::logic_error("shuttle manifest passenger missing custody");
+            passenger.location=sh.flight_phase==1?
+                site->second.surface_location:sh.source_ship;
+        }
+        sh.flight_phase=sh.flight_phase==1?2:0;
+        sh.flight_request=0;
+        sh.arrival_tick=0;
+    }
+}
+
+bool Simulation::planetary_spaceport_operational(std::uint64_t body,
+    std::uint16_t latitude,std::uint16_t longitude) const {
+    const auto it=planetary_sites_.find(
+        PlanetarySiteKey{body,latitude,longitude,1});
+    return it!=planetary_sites_.end() && it->second.spaceport_phase==3;
+}
+bool Simulation::set_planetary_workforce_policy(PlayerId owner,std::uint64_t body,
+    std::uint16_t latitude,std::uint16_t longitude,std::uint8_t policy) {
+    const auto key=PlanetarySiteKey{body,latitude,longitude,1};
+    const auto it=planetary_sites_.find(key);
+    if(!owner || policy>4 || it==planetary_sites_.end() ||
+       it->second.owner!=owner || it->second.spaceport_phase!=3)
+        return false;
+    auto& site=it->second;
+    if(policy==1 && !site.farm)return false;
+    if((policy==2 || policy==3) && (!site.extractor ||
+       !oasis_reserves_.count(body)))return false;
+    // A grandfathered v77 site without named NPCs cannot operate itself.
+    if(policy && (site.assigned_workers!=2 ||
+        !site.delegated_npcs[0] || !site.delegated_npcs[1]))return false;
+    site.workforce_policy=policy;
+    snapshot_version_=std::max(snapshot_version_,79);
+    return true;
+}
+void Simulation::process_planetary_surface_operations() {
+    // A shuttle pilot resident on the surface is not aboard the parent ship.
+    // Use the existing physical NPC record; local provisions become local
+    // waste, never a second crew instance or free consumable.
+    if(snapshot_version_>=81 && tick_%20==0)
+        for(const auto& [key,sh]:planetary_shuttles_) {
+            auto site=planetary_sites_.find(key);
+            if(site==planetary_sites_.end())continue;
+            auto& ground=site->second;
+            // Disembarked visitors remain physically on the surface even
+            // while the shuttle returns to orbit or makes another trip.
+            const auto locals=std::int64_t(sh.disembarked_ids.size());
+            const auto landing=sh.flight_phase==2?
+                1+std::int64_t(sh.passenger_ids.size()):0;
+            const std::int64_t people=locals+landing;
+            if(!people)continue;
+            if(ground.food_kg<people || ground.water_kg<people ||
+               ground.oxygen_kg<people) {
+                ++ground.stalled_cycles;
+                continue; // shortage; never synthesize supplies
+            }
+            ground.food_kg-=people;ground.water_kg-=people;
+            ground.oxygen_kg-=people;
+            ground.organic_waste_kg+=people;
+            ground.wastewater_kg+=people;ground.co2_kg+=people;
+        }
+    for(auto& [key,site]:planetary_sites_) {
+        (void)key;
+        if(site.spaceport_phase==0 || site.assigned_workers==0)continue;
+        std::int64_t ready=0;
+        for(auto npc:site.delegated_npcs) {
+            const auto it=npcs_.find(npc);
+            if(it!=npcs_.end() && it->second.home_ship==site.source_ship &&
+               it->second.location==site.surface_location &&
+               it->second.assigned_site==site.surface_location &&
+               it->second.role==NpcRole::PlanetarySurface &&
+               npc_available_for_duty(npc))++ready;
+        }
+        // Temporary NPC visitors supplement the two permanent delegated
+        // workers. No permanent employment or immigration is inferred.
+        const auto sh=planetary_shuttles_.find(key);
+        if(sh!=planetary_shuttles_.end())
+            for(const auto npc:sh->second.duty_ids) {
+                const auto person=npcs_.find(npc);
+                if(person==npcs_.end() ||
+                   person->second.location!=site.surface_location ||
+                   person->second.home_ship!=site.source_ship ||
+                   person->second.role!=NpcRole::Ship ||
+                   person->second.assigned_site!=site.source_ship)continue;
+                const auto health=npc_health_status(npc);
+                if(health==NpcHealthStatus::Healthy ||
+                   health==NpcHealthStatus::Treated ||
+                   health==NpcHealthStatus::Recovered)++ready;
+            }
+        if(ready<2) {
+            if(site.spaceport_phase==3 && site.workforce_policy &&
+               tick_%20==0){++site.stalled_cycles;site.last_work_tick=tick_;}
+            continue; // injured, missing or unavailable crew pause work
+        }
+        if(site.food_kg<2 || site.water_kg<2 || site.oxygen_kg<2) {
+            if(site.spaceport_phase==3 && site.workforce_policy &&
+               tick_%20==0){++site.stalled_cycles;site.last_work_tick=tick_;}
+            continue; // resupply before construction or work can resume
+        }
+        if(tick_%10==0) {
+            site.food_kg-=2;
+            site.organic_waste_kg+=2;
+            site.water_kg-=2;
+            site.wastewater_kg+=2;
+            site.oxygen_kg-=2;
+            site.co2_kg+=2;
+            ++site.worker_support_cycles;
+        }
+        if(site.spaceport_phase==3) {
+            // Autonomous policies run on a bounded world-tick cadence. No
+            // ship proximity is required; only the actually deployed NPCs
+            // and the local physical inventories can sustain work.
+            if(site.workforce_policy==0 || tick_%20!=0)continue;
+            bool worked=false;
+            if(site.workforce_policy==1 && site.farm &&
+               site.equipment_condition>0 &&
+               site.water_kg>=10 && site.nutrients_kg>=5 &&
+               site.food_kg<=1000000-12 &&
+               site.wastewater_kg<=1000000-3) {
+                site.water_kg-=10;site.nutrients_kg-=5;
+                site.food_kg+=12;site.wastewater_kg+=3;
+                ++site.harvest_cycles;worked=true;
+            } else if((site.workforce_policy==2 || site.workforce_policy==3) &&
+                      site.extractor && site.equipment_condition>0) {
+                auto r=oasis_reserves_.find(site.region.body);
+                if(r!=oasis_reserves_.end()){
+                    auto& source=site.workforce_policy==2?r->second.water_kg:
+                                                      r->second.nutrients_kg;
+                    auto& dest=site.workforce_policy==2?site.water_kg:
+                                                    site.nutrients_kg;
+                    if(source>=1000 && dest<=1000000-1000){
+                        source-=1000;dest+=1000;
+                        site.auto_extracted_kg+=1000;worked=true;
+                    }
+                }
+            } else if(site.workforce_policy==4 &&
+                      site.equipment_condition<100 &&
+                      site.nutrients_kg>=1 &&
+                      site.wastewater_kg<1000000) {
+                // Finite consumable repair stock, not free healing:
+                // nutrients are converted into local material waste.
+                --site.nutrients_kg;++site.wastewater_kg;
+                site.equipment_condition=std::uint8_t(
+                    std::min(100,int(site.equipment_condition)+10));
+                ++site.repair_cycles;worked=true;
+            }
+            site.last_work_tick=tick_;
+            if(worked) {
+                ++site.autonomous_cycles;
+                if(site.workforce_policy!=4 &&
+                   site.autonomous_cycles%5==0 && site.equipment_condition>0)
+                    --site.equipment_condition;
+            } else {
+                ++site.stalled_cycles;
+            }
+            continue;
+        } // operational NPC workforce still consumes supplies
+
+        // First four committed ticks represent the abstract NPC descent and
+        // equipment emplacement; building then advances on actual world ticks.
+        if(site.spaceport_phase==1) {
+            if(++site.construction_progress>=4) {
+                site.spaceport_phase=2;
+                site.construction_progress=0;
+            }
+        } else if(site.spaceport_phase==2) {
+            if(++site.construction_progress>=site.construction_required) {
+                site.construction_progress=site.construction_required;
+                site.spaceport_phase=3;
+            }
+        }
+    }
+}
+bool Simulation::equip_planetary_site(PlayerId owner,EntityId ship,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,bool farm) {
+    const auto key=PlanetarySiteKey{body,latitude,longitude,1};
+    auto it=planetary_sites_.find(key);
+    const auto site=scan_planetary_geography(owner,ship,body,latitude,longitude);
+    const auto frame=ship_frames_.find(ship);
+    auto colony=colony_ships_.find(ship);
+    const auto source=farm?std::optional<planetary::PlanetaryRegionKey>{}:
+        planetary_oasis_source_region(owner,ship,body);
+    if(!site || !owner || it==planetary_sites_.end() ||
+       it->second.owner!=owner || it->second.spaceport_phase!=3 || it->second.source_ship!=ship ||
+       frame==ship_frames_.end() || frame->second.anchor_body!=body ||
+       colony==colony_ships_.end() || colony->second.modules<2 ||
+       colony->second.crew<2 || (farm?it->second.farm:it->second.extractor) ||
+       (farm && !site->landscape.region.farming_possible) ||
+       (!farm && (!oasis_reserves_.count(body) || !source ||
+                  source->latitude!=latitude || source->longitude!=longitude)))
+        return false;
+    colony->second.modules-=2;
+    it->second.embodied_ore+=4;
+    if(farm)it->second.farm=true;else it->second.extractor=true;
+    return true;
+}
+bool Simulation::supply_planetary_site(PlayerId owner,EntityId ship,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,
+    bool water,std::int64_t kg) {
+    const auto key=PlanetarySiteKey{body,latitude,longitude,1};
+    auto site=planetary_sites_.find(key);
+    auto life=life_support_.find(ship);
+    const auto frame=ship_frames_.find(ship);
+    if(!owner || kg<=0 || kg>10000 || site==planetary_sites_.end() ||
+       site->second.owner!=owner || site->second.source_ship!=ship ||
+       frame==ship_frames_.end() || frame->second.anchor_body!=body ||
+       life==life_support_.end())return false;
+    auto& origin=water?life->second.water_kg:life->second.nutrients_kg;
+    auto& dest=water?site->second.water_kg:site->second.nutrients_kg;
+    if(origin<kg || dest>1000000-kg)return false;
+    origin-=kg;dest+=kg;
+    return true;
+}
+bool Simulation::support_planetary_crew(PlayerId owner,EntityId ship,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,
+    bool oxygen,std::int64_t kg) {
+    const auto key=PlanetarySiteKey{body,latitude,longitude,1};
+    auto site=planetary_sites_.find(key);
+    auto life=life_support_.find(ship);
+    const auto frame=ship_frames_.find(ship);
+    const auto* hull=find(ship);
+    if(!owner || kg<=0 || kg>10000 ||
+       site==planetary_sites_.end() || site->second.owner!=owner ||
+       site->second.source_ship!=ship ||
+       frame==ship_frames_.end() || frame->second.anchor_body!=body ||
+       !hull || hull->owner_id!=owner || hull->dock_state!=DockState::InSpace ||
+       hull->jump_state!=ShipJumpState::Ready ||
+       life==life_support_.end())return false;
+    auto& origin=oxygen?life->second.oxygen_kg:life->second.food_kg;
+    auto& dest=oxygen?site->second.oxygen_kg:site->second.food_kg;
+    if(origin<kg || dest>1000000-kg)return false;
+    origin-=kg;dest+=kg;
+    return true;
+}
+bool Simulation::cultivate_planetary_site(PlayerId owner,EntityId ship,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,
+    std::int64_t batches) {
+    const auto key=PlanetarySiteKey{body,latitude,longitude,1};
+    auto site=planetary_sites_.find(key);
+    const auto frame=ship_frames_.find(ship);
+    if(!owner || batches<1 || batches>100 || site==planetary_sites_.end() ||
+       site->second.owner!=owner || site->second.spaceport_phase!=3 || site->second.source_ship!=ship ||
+       !site->second.farm ||
+       (site->second.assigned_workers==2 &&
+        (site->second.food_kg<2 || site->second.water_kg<2 ||
+         site->second.oxygen_kg<2)) ||
+       frame==ship_frames_.end() || frame->second.anchor_body!=body)
+        return false;
+    auto& facility=site->second;
+    if(facility.water_kg<10*batches || facility.nutrients_kg<5*batches ||
+       facility.food_kg>1000000-12*batches ||
+       facility.wastewater_kg>1000000-3*batches)return false;
+    facility.water_kg-=10*batches;
+    facility.nutrients_kg-=5*batches;
+    facility.food_kg+=12*batches;
+    facility.wastewater_kg+=3*batches;
+    facility.harvest_cycles+=std::uint64_t(batches);
+    return true;
+}
+bool Simulation::extract_planetary_site(PlayerId owner,EntityId ship,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,
+    bool water,std::int64_t kg) {
+    const auto key=PlanetarySiteKey{body,latitude,longitude,1};
+    auto site=planetary_sites_.find(key);
+    auto reserve=oasis_reserves_.find(body);
+    const auto frame=ship_frames_.find(ship);
+    const auto source_region=planetary_oasis_source_region(owner,ship,body);
+    if(!owner || kg<1000 || kg>10000 || kg%1000 ||
+       site==planetary_sites_.end() || reserve==oasis_reserves_.end() ||
+       site->second.owner!=owner || site->second.spaceport_phase!=3 || site->second.source_ship!=ship ||
+       !site->second.extractor ||
+       (site->second.assigned_workers==2 &&
+        (site->second.food_kg<2 || site->second.water_kg<2 ||
+         site->second.oxygen_kg<2)) ||
+       !source_region || source_region->latitude!=latitude ||
+       source_region->longitude!=longitude ||
+       frame==ship_frames_.end() || frame->second.anchor_body!=body)return false;
+    auto& source=water?reserve->second.water_kg:reserve->second.nutrients_kg;
+    auto& dest=water?site->second.water_kg:site->second.nutrients_kg;
+    if(source<kg || dest>1000000-kg)return false;
+    source-=kg;dest+=kg;
+    return true;
+}
+bool Simulation::retrieve_planetary_site(PlayerId owner,EntityId ship,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,
+    bool food,std::int64_t kg) {
+    const auto key=PlanetarySiteKey{body,latitude,longitude,1};
+    auto site=planetary_sites_.find(key);
+    auto life=life_support_.find(ship);
+    const auto frame=ship_frames_.find(ship);
+    if(!owner || kg<=0 || kg>10000 || site==planetary_sites_.end() ||
+       site->second.owner!=owner || site->second.source_ship!=ship ||
+       site->second.spaceport_phase!=3 ||
+       frame==ship_frames_.end() || frame->second.anchor_body!=body ||
+       life==life_support_.end())return false;
+    auto& origin=food?site->second.food_kg:site->second.water_kg;
+    auto& dest=food?life->second.food_kg:life->second.water_kg;
+    if(origin<kg || dest>1000000-kg)return false;
+    origin-=kg;dest+=kg;
+    return true;
+}
+std::optional<planetary::GeographicSite> Simulation::scan_planetary_geography(
+    PlayerId owner,EntityId ship,std::uint64_t body_id,
+    std::uint16_t latitude,std::uint16_t longitude) const {
+    // Reuse native ship ownership + fitted scanner authority, never a standalone
+    // client-generated body. Only physical planets and moons have surfaces.
+    const auto body=celestial_navigation_anchor(owner,ship,body_id);
+    if(!body || (body->kind!=CelestialKind::Planet &&
+                 body->kind!=CelestialKind::Moon) ||
+       latitude>=planetary::kWatershedRows ||
+       longitude>=planetary::kWatershedColumns) return std::nullopt;
+    const auto env=planetary_envelope_for_body(*body);
+    const planetary::PlanetaryWorldKey key{
+        kAstronomicalGalaxySeed,body->system,body->id,1};
+    const auto terrain=planetary::generate_watersheds(key,env);
+    return planetary::survey_geographic_site(
+        terrain,key,env,latitude,longitude);
+}
 std::optional<PhysicalCelestialBody> Simulation::celestial_navigation_anchor(
     PlayerId owner,EntityId ship,std::uint64_t body_id) const {
     if(!body_id)return std::nullopt;
@@ -5333,6 +6487,9 @@ void Simulation::step() {
     process_waterworks();
     process_colony_needs();
     process_oasis_extractors();
+    process_planetary_shuttle_flights();
+    process_planetary_surface_operations();
+    if(snapshot_version_>=88)process_local_delivery_board();
     process_farms();
     process_habitats();
     process_communities();
@@ -5373,7 +6530,7 @@ void Simulation::steps(std::uint64_t count) {
 
 std::string Simulation::canonical_state() const {
     std::ostringstream out;
-    out << (snapshot_version_ >= 76 ? "galaxy-kernel-v76|" : snapshot_version_ >= 75 ? "galaxy-kernel-v75|" : snapshot_version_ >= 74 ? "galaxy-kernel-v74|" : snapshot_version_ >= 73 ? "galaxy-kernel-v73|" : snapshot_version_ >= 72 ? "galaxy-kernel-v72|" : snapshot_version_ >= 71 ? "galaxy-kernel-v71|" : snapshot_version_ >= 70 ? "galaxy-kernel-v70|" : snapshot_version_ >= 69 ? "galaxy-kernel-v69|" : snapshot_version_ >= 68 ? "galaxy-kernel-v68|" : snapshot_version_ >= 67 ? "galaxy-kernel-v67|" : snapshot_version_ >= 66 ? "galaxy-kernel-v66|" : snapshot_version_ >= 65 ? "galaxy-kernel-v65|" : snapshot_version_ >= 64 ? "galaxy-kernel-v64|" : snapshot_version_ >= 63 ? "galaxy-kernel-v63|" : snapshot_version_ >= 62 ? "galaxy-kernel-v62|" : snapshot_version_ >= 61 ? "galaxy-kernel-v61|" : snapshot_version_ >= 60 ? "galaxy-kernel-v60|" : snapshot_version_ >= 59 ? "galaxy-kernel-v59|" : snapshot_version_ >= 58 ? "galaxy-kernel-v58|" : snapshot_version_ >= 57 ? "galaxy-kernel-v57|" : snapshot_version_ >= 53 ? "galaxy-kernel-v53|" : snapshot_version_ >= 52 ? "galaxy-kernel-v52|" : snapshot_version_ >= 49 ? "galaxy-kernel-v49|" : snapshot_version_ >= 48 ? "galaxy-kernel-v48|" : snapshot_version_ >= 44 ? "galaxy-kernel-v44|" : snapshot_version_ >= 41 ? "galaxy-kernel-v41|" : snapshot_version_ >= 40 ? "galaxy-kernel-v40|" : snapshot_version_ >= 39 ? "galaxy-kernel-v39|" : snapshot_version_ >= 38 ? "galaxy-kernel-v38|" : snapshot_version_ >= 37 ? "galaxy-kernel-v37|" : snapshot_version_ >= 36 ? "galaxy-kernel-v36|" : snapshot_version_ >= 35 ? "galaxy-kernel-v35|" : snapshot_version_ >= 34 ? "galaxy-kernel-v34|" : snapshot_version_ >= 33 ? "galaxy-kernel-v33|" : snapshot_version_ >= 32 ? "galaxy-kernel-v32|" : snapshot_version_ >= 31 ? "galaxy-kernel-v31|" : snapshot_version_ >= 30 ? "galaxy-kernel-v30|" : snapshot_version_ >= 29 ? "galaxy-kernel-v29|" : snapshot_version_ >= 28 ? "galaxy-kernel-v28|" : snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
+    out << (snapshot_version_ >= 88 ? "galaxy-kernel-v88|" : snapshot_version_ >= 87 ? "galaxy-kernel-v87|" : snapshot_version_ >= 86 ? "galaxy-kernel-v86|" : snapshot_version_ >= 85 ? "galaxy-kernel-v85|" : snapshot_version_ >= 84 ? "galaxy-kernel-v84|" : snapshot_version_ >= 83 ? "galaxy-kernel-v83|" : snapshot_version_ >= 82 ? "galaxy-kernel-v82|" : snapshot_version_ >= 81 ? "galaxy-kernel-v81|" : snapshot_version_ >= 80 ? "galaxy-kernel-v80|" : snapshot_version_ >= 79 ? "galaxy-kernel-v79|" : snapshot_version_ >= 78 ? "galaxy-kernel-v78|" : snapshot_version_ >= 77 ? "galaxy-kernel-v77|" : snapshot_version_ >= 76 ? "galaxy-kernel-v76|" : snapshot_version_ >= 75 ? "galaxy-kernel-v75|" : snapshot_version_ >= 74 ? "galaxy-kernel-v74|" : snapshot_version_ >= 73 ? "galaxy-kernel-v73|" : snapshot_version_ >= 72 ? "galaxy-kernel-v72|" : snapshot_version_ >= 71 ? "galaxy-kernel-v71|" : snapshot_version_ >= 70 ? "galaxy-kernel-v70|" : snapshot_version_ >= 69 ? "galaxy-kernel-v69|" : snapshot_version_ >= 68 ? "galaxy-kernel-v68|" : snapshot_version_ >= 67 ? "galaxy-kernel-v67|" : snapshot_version_ >= 66 ? "galaxy-kernel-v66|" : snapshot_version_ >= 65 ? "galaxy-kernel-v65|" : snapshot_version_ >= 64 ? "galaxy-kernel-v64|" : snapshot_version_ >= 63 ? "galaxy-kernel-v63|" : snapshot_version_ >= 62 ? "galaxy-kernel-v62|" : snapshot_version_ >= 61 ? "galaxy-kernel-v61|" : snapshot_version_ >= 60 ? "galaxy-kernel-v60|" : snapshot_version_ >= 59 ? "galaxy-kernel-v59|" : snapshot_version_ >= 58 ? "galaxy-kernel-v58|" : snapshot_version_ >= 57 ? "galaxy-kernel-v57|" : snapshot_version_ >= 53 ? "galaxy-kernel-v53|" : snapshot_version_ >= 52 ? "galaxy-kernel-v52|" : snapshot_version_ >= 49 ? "galaxy-kernel-v49|" : snapshot_version_ >= 48 ? "galaxy-kernel-v48|" : snapshot_version_ >= 44 ? "galaxy-kernel-v44|" : snapshot_version_ >= 41 ? "galaxy-kernel-v41|" : snapshot_version_ >= 40 ? "galaxy-kernel-v40|" : snapshot_version_ >= 39 ? "galaxy-kernel-v39|" : snapshot_version_ >= 38 ? "galaxy-kernel-v38|" : snapshot_version_ >= 37 ? "galaxy-kernel-v37|" : snapshot_version_ >= 36 ? "galaxy-kernel-v36|" : snapshot_version_ >= 35 ? "galaxy-kernel-v35|" : snapshot_version_ >= 34 ? "galaxy-kernel-v34|" : snapshot_version_ >= 33 ? "galaxy-kernel-v33|" : snapshot_version_ >= 32 ? "galaxy-kernel-v32|" : snapshot_version_ >= 31 ? "galaxy-kernel-v31|" : snapshot_version_ >= 30 ? "galaxy-kernel-v30|" : snapshot_version_ >= 29 ? "galaxy-kernel-v29|" : snapshot_version_ >= 28 ? "galaxy-kernel-v28|" : snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
         << '|' << rng_state_ << '\n';
     if (snapshot_version_>=5) for(const auto system:systems_)out<<"system|"<<system<<'\n';
     if(snapshot_version_>=68)out<<"probelatency|"<<probe_report_delay_ticks_<<'\n';
@@ -5387,6 +6544,74 @@ std::string Simulation::canonical_state() const {
         out<<"shipframe|"<<ship<<'|'<<frame.system<<'|'<<frame.anchor_body<<'|'
            <<frame.origin.x_mm<<'|'<<frame.origin.y_mm<<'|'
            <<frame.origin.z_mm<<'\n';
+    if(snapshot_version_>=77)
+        for(const auto& [key,site]:planetary_sites_) {
+            (void)key;
+            out<<"planetsite|"<<site.region.body<<'|'<<site.region.latitude<<'|'<<
+                site.region.longitude<<'|'<<site.region.revision<<'|'<<
+                site.owner<<'|'<<site.source_ship<<'|'<<site.embodied_ore<<'|'<<
+                unsigned(site.farm)<<'|'<<unsigned(site.extractor)<<'|'<<
+                site.water_kg<<'|'<<site.nutrients_kg<<'|'<<site.food_kg<<'|'<<
+                site.wastewater_kg<<'|'<<site.harvest_cycles;
+            if(snapshot_version_>=78)
+                out<<'|'<<unsigned(site.spaceport_phase)<<'|'<<
+                    site.construction_progress<<'|'<<site.construction_required<<'|'<<
+                    site.surface_location<<'|'<<site.delegated_npcs[0]<<'|'<<
+                    site.delegated_npcs[1]<<'|'<<site.assigned_workers<<'|'<<
+                    site.oxygen_kg<<'|'<<site.co2_kg<<'|'<<site.organic_waste_kg<<'|'<<
+                    site.worker_support_cycles;
+            if(snapshot_version_>=79)
+                out<<'|'<<unsigned(site.workforce_policy)<<'|'<<
+                    unsigned(site.equipment_condition)<<'|'<<
+                    site.last_work_tick<<'|'<<site.autonomous_cycles<<'|'<<
+                    site.stalled_cycles<<'|'<<site.auto_extracted_kg<<'|'<<
+                    site.repair_cycles;
+            out<<'\n';
+        }
+    if(snapshot_version_>=80)
+        for(const auto& [key,v]:planetary_shuttles_) {
+            out<<"planetshuttle|"<<std::get<0>(key)<<'|'<<std::get<1>(key)<<'|'<<
+                std::get<2>(key)<<'|'<<std::get<3>(key)<<'|'<<v.owner<<'|'<<
+                v.source_ship<<'|'<<v.pilot_npc<<'|'<<v.dry_mass_ore<<'|'<<
+                v.water_kg<<'|'<<v.food_kg<<
+                (snapshot_version_>=81?
+                    ("|"+std::to_string(unsigned(v.flight_phase))+"|"+
+                     std::to_string(v.flight_request)+"|"+
+                     std::to_string(v.arrival_tick)+"|"+
+                     std::to_string(v.descent_receipt)+"|"+
+                     std::to_string(v.ascent_receipt)):"");
+            if(snapshot_version_>=82) {
+                out<<'|'<<v.passenger_ids.size();
+                for(const auto id:v.passenger_ids)out<<'|'<<id;
+            }
+            if(snapshot_version_>=83) {
+                out<<'|'<<v.disembarked_ids.size();
+                for(const auto id:v.disembarked_ids)out<<'|'<<id;
+            }
+            if(snapshot_version_>=84) {
+                out<<'|'<<v.duty_ids.size();
+                for(const auto id:v.duty_ids)out<<'|'<<id;
+            }
+            if(snapshot_version_>=85) {
+                out<<'|'<<v.visitor_arrival_receipts.size();
+                for(const auto& [npc,receipt]:v.visitor_arrival_receipts)
+                    out<<'|'<<npc<<'|'<<receipt;
+            }
+            if(snapshot_version_>=87)out<<'|'<<v.nutrients_kg;
+            out<<'\n';
+        }
+    if(snapshot_version_>=88)
+        for(const auto& [id,work]:local_delivery_orders_) {
+            out<<"localdelivery|"<<id<<'|'<<work.owner<<'|'<<work.board_ship<<'|'<<
+                std::get<0>(work.site)<<'|'<<std::get<1>(work.site)<<'|'<<
+                std::get<2>(work.site)<<'|'<<std::get<3>(work.site)<<'|'<<
+                unsigned(work.cargo)<<'|'<<work.kilograms<<'|'<<
+                work.assigned_pilot<<'|'<<unsigned(work.stage)<<'|'<<
+                work.created_tick<<'\n';
+        }
+    if(snapshot_version_>=81)
+        for(const auto id:shuttle_flight_request_ids_)
+            out<<"planetflightreceipt|"<<id<<'\n';
     if(snapshot_version_>=76)
         for(const auto& [ship,r]:oasis_extractors_)
             out<<"oasisextractor|"<<ship<<'|'<<r.body<<'|'<<r.embodied_ore<<'|'<<
@@ -5582,6 +6807,10 @@ std::string Simulation::canonical_state() const {
                <<static_cast<int>(n.role)<<'|'<<n.farm_xp<<'|'<<n.mentor_id;
             if(snapshot_version_>=31)out<<'|'<<n.transport_id;
             if(snapshot_version_>=32)out<<'|'<<n.assigned_site;
+            if(snapshot_version_>=86) {
+                const auto residence=n.legal_residence();
+                out<<'|'<<unsigned(residence.kind)<<'|'<<residence.id;
+            }
             out<<'\n';
         }
         for(const auto& [site,xp]:farm_team_xp_)
@@ -5717,7 +6946,12 @@ std::string Simulation::canonical_state() const {
         out<<"deceased|"<<id<<'|'<<n.home_ship<<'|'<<n.location<<'|'
            <<static_cast<unsigned>(n.role)<<'|'<<n.farm_xp<<'|'<<n.mentor_id<<'|'
            <<n.transport_id<<'|'<<n.assigned_site<<'|'<<record.death_tick<<'|'
-           <<record.command_id<<'|'<<record.ferry<<'\n';
+           <<record.command_id<<'|'<<record.ferry;
+        if(snapshot_version_>=86){
+            const auto residence=n.legal_residence();
+            out<<'|'<<unsigned(residence.kind)<<'|'<<residence.id;
+        }
+        out<<'\n';
     }
     for (auto id : submitted_ids_) out << "accepted|" << id << '\n';
     for (const auto& ev : events_) {
@@ -5814,12 +7048,12 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
     if (!std::getline(in, line)) throw std::runtime_error("snapshot: missing header");
     auto h = fields(line);
     require_fields(h, 5);
-    if (h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27" && h[0] != "galaxy-kernel-v28" && h[0] != "galaxy-kernel-v29" && h[0] != "galaxy-kernel-v30" && h[0] != "galaxy-kernel-v31" && h[0] != "galaxy-kernel-v32" && h[0] != "galaxy-kernel-v33" && h[0] != "galaxy-kernel-v34" && h[0] != "galaxy-kernel-v35" && h[0] != "galaxy-kernel-v36" && h[0] != "galaxy-kernel-v37" && h[0] != "galaxy-kernel-v38" && h[0] != "galaxy-kernel-v39" && h[0] != "galaxy-kernel-v40" && h[0] != "galaxy-kernel-v41" && h[0] != "galaxy-kernel-v44" && h[0] != "galaxy-kernel-v48" && h[0] != "galaxy-kernel-v49" && h[0] != "galaxy-kernel-v52" && h[0] != "galaxy-kernel-v53" && h[0] != "galaxy-kernel-v57" && h[0] != "galaxy-kernel-v58" && h[0] != "galaxy-kernel-v59" && h[0] != "galaxy-kernel-v60" && h[0] != "galaxy-kernel-v61" && h[0] != "galaxy-kernel-v62" && h[0] != "galaxy-kernel-v63" && h[0] != "galaxy-kernel-v64" && h[0] != "galaxy-kernel-v65" && h[0] != "galaxy-kernel-v66" && h[0] != "galaxy-kernel-v67" && h[0] != "galaxy-kernel-v68" && h[0] != "galaxy-kernel-v69" && h[0] != "galaxy-kernel-v70" && h[0] != "galaxy-kernel-v71" && h[0] != "galaxy-kernel-v72" && h[0] != "galaxy-kernel-v73" && h[0] != "galaxy-kernel-v74" && h[0] != "galaxy-kernel-v75" && h[0] != "galaxy-kernel-v76") throw std::runtime_error("snapshot: unsupported version");
+    if (h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27" && h[0] != "galaxy-kernel-v28" && h[0] != "galaxy-kernel-v29" && h[0] != "galaxy-kernel-v30" && h[0] != "galaxy-kernel-v31" && h[0] != "galaxy-kernel-v32" && h[0] != "galaxy-kernel-v33" && h[0] != "galaxy-kernel-v34" && h[0] != "galaxy-kernel-v35" && h[0] != "galaxy-kernel-v36" && h[0] != "galaxy-kernel-v37" && h[0] != "galaxy-kernel-v38" && h[0] != "galaxy-kernel-v39" && h[0] != "galaxy-kernel-v40" && h[0] != "galaxy-kernel-v41" && h[0] != "galaxy-kernel-v44" && h[0] != "galaxy-kernel-v48" && h[0] != "galaxy-kernel-v49" && h[0] != "galaxy-kernel-v52" && h[0] != "galaxy-kernel-v53" && h[0] != "galaxy-kernel-v57" && h[0] != "galaxy-kernel-v58" && h[0] != "galaxy-kernel-v59" && h[0] != "galaxy-kernel-v60" && h[0] != "galaxy-kernel-v61" && h[0] != "galaxy-kernel-v62" && h[0] != "galaxy-kernel-v63" && h[0] != "galaxy-kernel-v64" && h[0] != "galaxy-kernel-v65" && h[0] != "galaxy-kernel-v66" && h[0] != "galaxy-kernel-v67" && h[0] != "galaxy-kernel-v68" && h[0] != "galaxy-kernel-v69" && h[0] != "galaxy-kernel-v70" && h[0] != "galaxy-kernel-v71" && h[0] != "galaxy-kernel-v72" && h[0] != "galaxy-kernel-v73" && h[0] != "galaxy-kernel-v74" && h[0] != "galaxy-kernel-v75" && h[0] != "galaxy-kernel-v76" && h[0] != "galaxy-kernel-v77" && h[0] != "galaxy-kernel-v78" && h[0] != "galaxy-kernel-v79" && h[0] != "galaxy-kernel-v80" && h[0] != "galaxy-kernel-v81" && h[0] != "galaxy-kernel-v82" && h[0] != "galaxy-kernel-v83" && h[0] != "galaxy-kernel-v84" && h[0] != "galaxy-kernel-v85" && h[0] != "galaxy-kernel-v86" && h[0] != "galaxy-kernel-v87" && h[0] != "galaxy-kernel-v88") throw std::runtime_error("snapshot: unsupported version");
     const auto sys = u64(h[1]);
     if (sys == 0 || sys > std::numeric_limits<std::uint32_t>::max())
         throw std::runtime_error("snapshot: invalid system");
     Simulation result(u64(h[4]), static_cast<std::uint32_t>(sys));
-    result.snapshot_version_ = h[0] == "galaxy-kernel-v76" ? 76 : h[0] == "galaxy-kernel-v75" ? 75 : h[0] == "galaxy-kernel-v74" ? 74 : h[0] == "galaxy-kernel-v73" ? 73 : h[0] == "galaxy-kernel-v72" ? 72 : h[0] == "galaxy-kernel-v71" ? 71 : h[0] == "galaxy-kernel-v70" ? 70 : h[0] == "galaxy-kernel-v69" ? 69 : h[0] == "galaxy-kernel-v68" ? 68 : h[0] == "galaxy-kernel-v67" ? 67 : h[0] == "galaxy-kernel-v66" ? 66 : h[0] == "galaxy-kernel-v65" ? 65 : h[0] == "galaxy-kernel-v64" ? 64 : h[0] == "galaxy-kernel-v63" ? 63 : h[0] == "galaxy-kernel-v62" ? 62 : h[0] == "galaxy-kernel-v61" ? 61 : h[0] == "galaxy-kernel-v60" ? 60 : h[0] == "galaxy-kernel-v59" ? 59 : h[0] == "galaxy-kernel-v58" ? 58 : h[0] == "galaxy-kernel-v57" ? 57 : h[0] == "galaxy-kernel-v53" ? 53 : h[0] == "galaxy-kernel-v52" ? 52 : h[0] == "galaxy-kernel-v49" ? 49 : h[0] == "galaxy-kernel-v48" ? 48 : h[0] == "galaxy-kernel-v44" ? 44 : h[0] == "galaxy-kernel-v41" ? 41 : h[0] == "galaxy-kernel-v40" ? 40 : h[0] == "galaxy-kernel-v39" ? 39 : h[0] == "galaxy-kernel-v38" ? 38 : h[0] == "galaxy-kernel-v37" ? 37 : h[0] == "galaxy-kernel-v36" ? 36 : h[0] == "galaxy-kernel-v35" ? 35 : h[0] == "galaxy-kernel-v34" ? 34 : h[0] == "galaxy-kernel-v33" ? 33 : h[0] == "galaxy-kernel-v32" ? 32 : h[0] == "galaxy-kernel-v31" ? 31 : h[0] == "galaxy-kernel-v30" ? 30 : h[0] == "galaxy-kernel-v29" ? 29 : h[0] == "galaxy-kernel-v28" ? 28 : h[0] == "galaxy-kernel-v27" ? 27 : h[0] == "galaxy-kernel-v26" ? 26 : h[0] == "galaxy-kernel-v25" ? 25 : h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
+    result.snapshot_version_ = h[0] == "galaxy-kernel-v88" ? 88 : h[0] == "galaxy-kernel-v87" ? 87 : h[0] == "galaxy-kernel-v86" ? 86 : h[0] == "galaxy-kernel-v85" ? 85 : h[0] == "galaxy-kernel-v84" ? 84 : h[0] == "galaxy-kernel-v83" ? 83 : h[0] == "galaxy-kernel-v82" ? 82 : h[0] == "galaxy-kernel-v81" ? 81 : h[0] == "galaxy-kernel-v80" ? 80 : h[0] == "galaxy-kernel-v79" ? 79 : h[0] == "galaxy-kernel-v78" ? 78 : h[0] == "galaxy-kernel-v77" ? 77 : h[0] == "galaxy-kernel-v76" ? 76 : h[0] == "galaxy-kernel-v75" ? 75 : h[0] == "galaxy-kernel-v74" ? 74 : h[0] == "galaxy-kernel-v73" ? 73 : h[0] == "galaxy-kernel-v72" ? 72 : h[0] == "galaxy-kernel-v71" ? 71 : h[0] == "galaxy-kernel-v70" ? 70 : h[0] == "galaxy-kernel-v69" ? 69 : h[0] == "galaxy-kernel-v68" ? 68 : h[0] == "galaxy-kernel-v67" ? 67 : h[0] == "galaxy-kernel-v66" ? 66 : h[0] == "galaxy-kernel-v65" ? 65 : h[0] == "galaxy-kernel-v64" ? 64 : h[0] == "galaxy-kernel-v63" ? 63 : h[0] == "galaxy-kernel-v62" ? 62 : h[0] == "galaxy-kernel-v61" ? 61 : h[0] == "galaxy-kernel-v60" ? 60 : h[0] == "galaxy-kernel-v59" ? 59 : h[0] == "galaxy-kernel-v58" ? 58 : h[0] == "galaxy-kernel-v57" ? 57 : h[0] == "galaxy-kernel-v53" ? 53 : h[0] == "galaxy-kernel-v52" ? 52 : h[0] == "galaxy-kernel-v49" ? 49 : h[0] == "galaxy-kernel-v48" ? 48 : h[0] == "galaxy-kernel-v44" ? 44 : h[0] == "galaxy-kernel-v41" ? 41 : h[0] == "galaxy-kernel-v40" ? 40 : h[0] == "galaxy-kernel-v39" ? 39 : h[0] == "galaxy-kernel-v38" ? 38 : h[0] == "galaxy-kernel-v37" ? 37 : h[0] == "galaxy-kernel-v36" ? 36 : h[0] == "galaxy-kernel-v35" ? 35 : h[0] == "galaxy-kernel-v34" ? 34 : h[0] == "galaxy-kernel-v33" ? 33 : h[0] == "galaxy-kernel-v32" ? 32 : h[0] == "galaxy-kernel-v31" ? 31 : h[0] == "galaxy-kernel-v30" ? 30 : h[0] == "galaxy-kernel-v29" ? 29 : h[0] == "galaxy-kernel-v28" ? 28 : h[0] == "galaxy-kernel-v27" ? 27 : h[0] == "galaxy-kernel-v26" ? 26 : h[0] == "galaxy-kernel-v25" ? 25 : h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
     result.tick_ = u64(h[2]);
     result.next_entity_id_ = u64(h[3]);
     if (result.next_entity_id_ == 0) throw std::runtime_error("snapshot: invalid next entity ID");
@@ -5836,6 +7070,225 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                !parsed_systems.insert(static_cast<std::uint32_t>(id)).second)
                 throw std::runtime_error("snapshot: invalid system registry");
             result.systems_.insert(static_cast<std::uint32_t>(id));
+        } else if(f[0]=="planetshuttle" && result.snapshot_version_>=80) {
+            if(result.snapshot_version_>=82) {
+                if(f.size()<17)throw std::runtime_error("snapshot: short shuttle manifest");
+                const auto count=u64(f[16]);
+                if(count>3)throw std::runtime_error("snapshot: shuttle seating overflow");
+                if(result.snapshot_version_>=83) {
+                    const auto offset=17+static_cast<std::size_t>(count);
+                    if(f.size()<=offset)
+                        throw std::runtime_error("snapshot: missing visitor roster");
+                    const auto visitors=u64(f[offset]);
+                    if(visitors>64)
+                        throw std::runtime_error("snapshot: too many surface visitors");
+                    if(result.snapshot_version_>=84) {
+                        const auto duty_offset=offset+1+static_cast<std::size_t>(visitors);
+                        if(f.size()<=duty_offset)
+                            throw std::runtime_error("snapshot: missing visitor duty roster");
+                        const auto duty=u64(f[duty_offset]);
+                        if(duty>visitors)
+                            throw std::runtime_error("snapshot: excess visitor duties");
+                        if(result.snapshot_version_>=85) {
+                            const auto receipts_offset=duty_offset+1+static_cast<std::size_t>(duty);
+                            if(f.size()<=receipts_offset)
+                                throw std::runtime_error("snapshot: missing individual arrival receipts");
+                            const auto receipts=u64(f[receipts_offset]);
+                            if(receipts>visitors)
+                                throw std::runtime_error("snapshot: too many visitor receipts");
+                            require_fields(f,receipts_offset+1+2*static_cast<std::size_t>(receipts)+
+                                (result.snapshot_version_>=87?1:0));
+                        }else require_fields(f,duty_offset+1+static_cast<std::size_t>(duty));
+                    }else require_fields(f,offset+1+static_cast<std::size_t>(visitors));
+                }else require_fields(f,17+static_cast<std::size_t>(count));
+            }else require_fields(f,result.snapshot_version_>=81?16:11);
+            const auto body=u64(f[1]),lat=u64(f[2]),lon=u64(f[3]),rev=u64(f[4]);
+            const auto owner=u64(f[5]),ship=u64(f[6]),pilot=u64(f[7]);
+            const auto mass=i64(f[8]),water=i64(f[9]),food=i64(f[10]);
+            const PlanetarySiteKey key{body,std::uint16_t(lat),std::uint16_t(lon),
+                                       std::uint32_t(rev)};
+            PlanetaryShuttleState state{owner,ship,pilot,mass,water,food};
+            if(result.snapshot_version_>=87)state.nutrients_kg=i64(f.back());
+            if(result.snapshot_version_>=81) {
+                const auto phase=u64(f[11]);
+                if(phase>3)throw std::runtime_error("snapshot: invalid flight phase");
+                state.flight_phase=std::uint8_t(phase);
+                state.flight_request=u64(f[12]);
+                state.arrival_tick=u64(f[13]);
+                state.descent_receipt=u64(f[14]);
+                state.ascent_receipt=u64(f[15]);
+                if(((phase==1 || phase==3) &&
+                    (!pilot || !state.flight_request ||
+                     state.arrival_tick<=result.tick_ ||
+                     state.arrival_tick>result.tick_+3)) ||
+                   ((phase==0 || phase==2) &&
+                     (state.flight_request || state.arrival_tick)) ||
+                   (phase>=1 && !pilot) ||
+                   (phase>=1 && !state.descent_receipt) ||
+                   (phase>=2 && !state.descent_receipt) ||
+                   (phase==3 && !state.ascent_receipt) ||
+                   (state.flight_request &&
+                    state.flight_request!=(phase==1?state.descent_receipt:state.ascent_receipt)))
+                    throw std::runtime_error("snapshot: incoherent shuttle flight");
+            }
+            if(result.snapshot_version_>=82) {
+                const auto count=u64(f[16]);
+                for(std::size_t j=0;j<count;++j) {
+                    const auto id=u64(f[17+j]);
+                    if(!id || id==pilot || (!state.passenger_ids.empty() &&
+                       id<=state.passenger_ids.back()))
+                        throw std::runtime_error("snapshot: invalid ordered shuttle roster");
+                    state.passenger_ids.push_back(id);
+                }
+                if(result.snapshot_version_>=83) {
+                    const auto offset=17+static_cast<std::size_t>(count);
+                    const auto visitors=u64(f[offset]);
+                    for(std::size_t j=0;j<visitors;++j) {
+                        const auto id=u64(f[offset+1+j]);
+                        if(!id || id==pilot ||
+                           std::binary_search(state.passenger_ids.begin(),
+                                              state.passenger_ids.end(),id) ||
+                           (!state.disembarked_ids.empty() &&
+                            id<=state.disembarked_ids.back()))
+                            throw std::runtime_error("snapshot: invalid surface visitor");
+                        state.disembarked_ids.push_back(id);
+                    }
+                    if(result.snapshot_version_>=84) {
+                        const auto duty_offset=offset+1+static_cast<std::size_t>(visitors);
+                        const auto count_duty=u64(f[duty_offset]);
+                        for(std::size_t j=0;j<count_duty;++j) {
+                            const auto id=u64(f[duty_offset+1+j]);
+                            if(!id || !std::binary_search(state.disembarked_ids.begin(),
+                                                           state.disembarked_ids.end(),id) ||
+                               (!state.duty_ids.empty() && id<=state.duty_ids.back()))
+                                throw std::runtime_error("snapshot: invalid visiting worker");
+                            state.duty_ids.push_back(id);
+                        }
+                        if(result.snapshot_version_>=85) {
+                            const auto receipt_offset=duty_offset+1+static_cast<std::size_t>(count_duty);
+                            const auto receipt_count=u64(f[receipt_offset]);
+                            for(std::size_t j=0;j<receipt_count;++j) {
+                                const auto id=u64(f[receipt_offset+1+2*j]);
+                                const auto receipt=u64(f[receipt_offset+2+2*j]);
+                                if(!id || !receipt ||
+                                   !std::binary_search(state.disembarked_ids.begin(),
+                                                       state.disembarked_ids.end(),id) ||
+                                   !state.visitor_arrival_receipts.emplace(id,receipt).second)
+                                    throw std::runtime_error("snapshot: invalid individual arrival receipt");
+                            }
+                        }
+                    }
+                }
+            }
+            if(!body || lat>=36 || lon>=72 || rev!=1 || !owner || !ship ||
+               mass!=4 || water<0 || food<0 || state.nutrients_kg<0 ||
+               water>1000 || food>1000-water ||
+               state.nutrients_kg>1000-water-food ||
+               result.planetary_shuttles_.size()>=10000 ||
+               !result.planetary_shuttles_.emplace(key,state).second)
+                throw std::runtime_error("snapshot: invalid shuttle custody");
+        } else if(f[0]=="localdelivery" && result.snapshot_version_>=88) {
+            require_fields(f,13);
+            const auto id=u64(f[1]),owner=u64(f[2]),ship=u64(f[3]);
+            const auto body=u64(f[4]),lat=u64(f[5]),lon=u64(f[6]),rev=u64(f[7]);
+            const auto cargo=u64(f[8]),kg=i64(f[9]),pilot=u64(f[10]);
+            const auto stage=u64(f[11]),created=u64(f[12]);
+            if(!id || id>=(std::uint64_t{1}<<50) ||
+               !owner || owner==kServerAuthority || !ship || !body ||
+               lat>=36 || lon>=72 || rev!=1 || cargo>2 ||
+               kg<=0 || kg>1000 || stage>6 || created>result.tick_ ||
+               result.local_delivery_orders_.size()>=10000 ||
+               !result.local_delivery_orders_.emplace(id,LocalDeliveryOrder{
+                    id,owner,ship,PlanetarySiteKey{body,
+                        std::uint16_t(lat),std::uint16_t(lon),1},
+                    static_cast<ShuttleCargo>(cargo),kg,pilot,
+                    static_cast<LocalDeliveryStage>(stage),created}).second)
+                throw std::runtime_error("snapshot: invalid local delivery order");
+        } else if(f[0]=="planetflightreceipt" && result.snapshot_version_>=81) {
+            require_fields(f,2);
+            const auto id=u64(f[1]);
+            if(!id || result.shuttle_flight_request_ids_.size()>=100000 ||
+               !result.shuttle_flight_request_ids_.insert(id).second)
+                throw std::runtime_error("snapshot: invalid shuttle flight receipt");
+        } else if(f[0]=="planetsite" && result.snapshot_version_>=77) {
+            require_fields(f,result.snapshot_version_>=79?33:(result.snapshot_version_>=78?26:15));
+            const auto body=u64(f[1]),lat=u64(f[2]),lon=u64(f[3]),
+                       rev=u64(f[4]),owner=u64(f[5]),ship=u64(f[6]);
+            const auto mass=i64(f[7]),farm=u64(f[8]),extractor=u64(f[9]);
+            const auto water=i64(f[10]),nutrients=i64(f[11]),
+                       food=i64(f[12]),wastewater=i64(f[13]);
+            const auto cycles=u64(f[14]);
+            if(!body || !owner || !ship || rev!=1 || lat>=36 || lon>=72 ||
+               farm>1 || extractor>1 || mass!=4+4*std::int64_t(farm+extractor) ||
+               water<0 || nutrients<0 || food<0 || wastewater<0 ||
+               water>1000000 || nutrients>1000000 || food>1000000 ||
+               wastewater>1000000 || result.planetary_sites_.size()>=10000 ||
+               !result.planetary_sites_.emplace(
+                   PlanetarySiteKey{body,std::uint16_t(lat),std::uint16_t(lon),1},
+                   PlanetarySiteFacility{
+                       planetary::PlanetaryRegionKey{body,1,std::uint16_t(lat),std::uint16_t(lon)},
+                       owner,ship,mass,bool(farm),bool(extractor),
+                       water,nutrients,food,wastewater,cycles}).second)
+                throw std::runtime_error("snapshot: invalid planetary site");
+            if(result.snapshot_version_>=78) {
+                auto& site=result.planetary_sites_.at(
+                    PlanetarySiteKey{body,std::uint16_t(lat),std::uint16_t(lon),1});
+                const auto phase=u64(f[15]),progress=u64(f[16]),needed=u64(f[17]),
+                           location=u64(f[18]),npc1=u64(f[19]),npc2=u64(f[20]),
+                           workers=i64(f[21]),oxygen=i64(f[22]),co2=i64(f[23]),
+                           organic=i64(f[24]),support=u64(f[25]);
+                if(phase<1 || phase>3 || needed!=240 || progress>240 ||
+                   !location || (workers!=2 && !(workers==0 && phase==3 &&
+                     npc1==0 && npc2==0)) || oxygen<0 || co2<0 ||
+                   organic<0 || oxygen>1000000 || co2>1000000 ||
+                   organic>1000000 || (npc1==npc2 && npc1!=0) ||
+                   ((npc1==0)!=(npc2==0)) ||
+                   (workers==2 && (!npc1 || !npc2)) ||
+                   (phase==3 && progress!=240))
+                    throw std::runtime_error("snapshot: invalid planetary crew construction state");
+                site.spaceport_phase=std::uint8_t(phase);
+                site.construction_progress=progress;
+                site.construction_required=needed;
+                site.surface_location=location;
+                site.delegated_npcs={{npc1,npc2}};
+                site.assigned_workers=workers;
+                site.oxygen_kg=oxygen;
+                site.co2_kg=co2;
+                site.organic_waste_kg=organic;
+                site.worker_support_cycles=support;
+                if(result.snapshot_version_>=79) {
+                    const auto policy=u64(f[26]),condition=u64(f[27]),
+                        last=u64(f[28]),done=u64(f[29]),stalled=u64(f[30]),
+                        extracted=u64(f[31]),repaired=u64(f[32]);
+                    if(policy>4 || condition>100 || last>result.tick_ ||
+                       done>result.tick_ || stalled>result.tick_ ||
+                       extracted%1000 || extracted/1000>done ||
+                       repaired>done ||
+                       ((policy==1 && !site.farm) ||
+                        ((policy==2 || policy==3) && !site.extractor)) ||
+                       (policy && (!site.delegated_npcs[0] ||
+                                   !site.delegated_npcs[1] ||
+                                   site.spaceport_phase!=3)))
+                        throw std::runtime_error("snapshot: invalid NPC workforce policy");
+                    site.workforce_policy=std::uint8_t(policy);
+                    site.equipment_condition=std::uint8_t(condition);
+                    site.last_work_tick=last;
+                    site.autonomous_cycles=done;
+                    site.stalled_cycles=stalled;
+                    site.auto_extracted_kg=extracted;
+                    site.repair_cycles=repaired;
+                }
+            } else {
+                // Existing v77 instant facilities retain old constructed
+                // behavior; never retroactively strand legacy sites.
+                auto& site=result.planetary_sites_.at(
+                    PlanetarySiteKey{body,std::uint16_t(lat),std::uint16_t(lon),1});
+                site.spaceport_phase=3;
+                site.construction_progress=240;
+                site.assigned_workers=0;
+                site.surface_location=surface_custody_id(
+                    PlanetarySiteKey{body,std::uint16_t(lat),std::uint16_t(lon),1});
+            }
         } else if(f[0]=="oasisextractor" && result.snapshot_version_>=76) {
             require_fields(f,8);
             const auto ship=u64(f[1]),body=u64(f[2]),mass=i64(f[3]);
@@ -6521,15 +7974,25 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                     (result.snapshot_version_<63 && !result.colony_ships_.empty()))))
                 throw std::runtime_error("snapshot: invalid NPC counter");
         } else if(f[0]=="npc" && result.snapshot_version_>=20){
-            require_fields(f,result.snapshot_version_>=32 ? 9 : result.snapshot_version_>=31 ? 8 : 7);
+            require_fields(f,result.snapshot_version_>=86 ? 11 :
+                result.snapshot_version_>=32 ? 9 : result.snapshot_version_>=31 ? 8 : 7);
             NpcRecord n{};n.id=u64(f[1]);n.home_ship=u64(f[2]);n.location=u64(f[3]);
             const auto role=u64(f[4]);n.farm_xp=u64(f[5]);n.mentor_id=u64(f[6]);
             if(result.snapshot_version_>=31)n.transport_id=u64(f[7]);
             n.assigned_site=result.snapshot_version_>=32 ? u64(f[8]) : n.location;
-            if(!n.id || role>2 || n.farm_xp>1000000 || n.mentor_id==n.id ||
+            if(result.snapshot_version_>=86){
+                const auto kind=u64(f[9]);
+                n.residence_id=u64(f[10]);
+                if(kind<1 || kind>4 || !n.residence_id ||
+                   (kind==1 && n.residence_id!=n.home_ship))
+                    throw std::runtime_error("snapshot: invalid legal residence");
+                n.residence_kind=static_cast<transport::LocationKind>(kind);
+            }
+            if(!n.id || role>(result.snapshot_version_>=78?3ULL:2ULL) || n.farm_xp>1000000 || n.mentor_id==n.id ||
                !result.npc_next_seen_ || n.id>=result.next_npc_id_ ||
                !result.npcs_.emplace(n.id,NpcRecord{n.id,n.home_ship,n.location,
-                                            static_cast<NpcRole>(role),n.farm_xp,n.mentor_id,n.transport_id,n.assigned_site}).second)
+                                            static_cast<NpcRole>(role),n.farm_xp,n.mentor_id,n.transport_id,n.assigned_site,
+                                            n.residence_kind,n.residence_id}).second)
                 throw std::runtime_error("snapshot: invalid NPC identity");
         } else if(f[0]=="teamxp" && result.snapshot_version_>=20){
             require_fields(f,3);
@@ -6658,13 +8121,21 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             if(!result.voyages_.emplace(id,std::move(v)).second)
                 throw std::runtime_error("snapshot: duplicate voyage ID");
         } else if(f[0]=="deceased" && result.snapshot_version_>=36){
-            require_fields(f,12);
+            require_fields(f,result.snapshot_version_>=86?14:12);
             NpcCasualty d{};auto& n=d.identity;n.id=u64(f[1]);
             n.home_ship=u64(f[2]);n.location=u64(f[3]);
             const auto role=u64(f[4]);n.role=static_cast<NpcRole>(role);
             n.farm_xp=u64(f[5]);n.mentor_id=u64(f[6]);
             n.transport_id=u64(f[7]);n.assigned_site=u64(f[8]);
             d.death_tick=u64(f[9]);d.command_id=u64(f[10]);d.ferry=u64(f[11]);
+            if(result.snapshot_version_>=86){
+                const auto kind=u64(f[12]);
+                n.residence_id=u64(f[13]);
+                if(kind<1 || kind>4 || !n.residence_id ||
+                   (kind==1 && n.residence_id!=n.home_ship))
+                    throw std::runtime_error("snapshot: invalid deceased legal residence");
+                n.residence_kind=static_cast<transport::LocationKind>(kind);
+            }
             if(!n.id || n.id>=result.next_npc_id_ || role!=static_cast<unsigned>(NpcRole::Ship) ||
                n.assigned_site!=n.home_ship || n.farm_xp>1000000 ||
                !n.home_ship || !n.location || !n.assigned_site || n.mentor_id==n.id ||
@@ -7577,6 +9048,29 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
         std::map<std::pair<EntityId,int>,std::int64_t> counts;
         std::map<std::uint64_t,int> mentor_occupancy;
         for(const auto& [id,n]:result.npcs_){
+            // A 4C.3 pilot remains a single existing NPC, with its only
+            // physical custody linked to a versioned shuttle flight state.
+            const bool shuttle_custody=result.snapshot_version_>=81 && [&](){
+                for(const auto& [key,sh]:result.planetary_shuttles_) {
+                    if(sh.pilot_npc!=id &&
+                       !std::binary_search(sh.passenger_ids.begin(),
+                                           sh.passenger_ids.end(),id) &&
+                       !std::binary_search(sh.disembarked_ids.begin(),
+                                           sh.disembarked_ids.end(),id))continue;
+                    const auto site=result.planetary_sites_.find(key);
+                    if(site==result.planetary_sites_.end())return false;
+                    const bool visitor=std::binary_search(
+                        sh.disembarked_ids.begin(),sh.disembarked_ids.end(),id);
+                    const auto expected=visitor?site->second.surface_location:
+                        ((sh.flight_phase==1 || sh.flight_phase==3)?
+                        shuttle_transit_custody_id(key):
+                        (sh.flight_phase==2?site->second.surface_location:sh.source_ship));
+                    return n.location==expected && n.home_ship==sh.source_ship &&
+                           n.role==NpcRole::Ship && n.assigned_site==sh.source_ship &&
+                           !n.transport_id;
+                }
+                return false;
+            }();
             if(n.transport_id && (result.snapshot_version_<32 || !result.colony_ships_.count(n.location) ||
                 (n.location==n.assigned_site && !result.crew_rehomes_.count(n.id))))
                 throw std::runtime_error("snapshot: invalid active passenger custody");
@@ -7587,7 +9081,19 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                   result.farms_.at(n.assigned_site).source_ship!=n.home_ship)) ||
                 (n.role==NpcRole::Habitat && (!result.habitats_.count(n.assigned_site) ||
                   result.habitats_.at(n.assigned_site).source_ship!=n.home_ship)) ||
+                (n.role==NpcRole::PlanetarySurface && ![&](){
+                    if(result.snapshot_version_<78)return false;
+                    for(const auto& [key,facility]:result.planetary_sites_){
+                        (void)key;
+                        if(facility.surface_location==n.assigned_site &&
+                           facility.source_ship==n.home_ship &&
+                           (facility.delegated_npcs[0]==id ||
+                            facility.delegated_npcs[1]==id))return true;
+                    }
+                    return false;
+                }()) ||
                 (!n.transport_id && n.location!=n.assigned_site &&
+                 !shuttle_custody &&
                  ![&](){for(const auto& [voyage_id,v]:result.voyages_){(void)voyage_id;
                      if((v.status==2 || v.status==5) && v.destination==n.location &&
                         std::binary_search(v.passengers.begin(),v.passengers.end(),id))return true;}
@@ -7615,6 +9121,16 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
         for(const auto& [id,h]:result.habitats_)
             if(counts[{id,static_cast<int>(NpcRole::Habitat)}]!=h.residents)
                 throw std::runtime_error("snapshot: habitat NPC count mismatch");
+        if(result.snapshot_version_>=78)for(const auto& [key,facility]:result.planetary_sites_){
+            (void)key;
+            if(facility.delegated_npcs[0]) {
+                if(counts[{facility.surface_location,
+                           static_cast<int>(NpcRole::PlanetarySurface)}]!=
+                           facility.assigned_workers)
+                    throw std::runtime_error("snapshot: planetary NPC count mismatch");
+            } else if(!result.npcs_.empty() && facility.assigned_workers)
+                throw std::runtime_error("snapshot: named planetary NPC missing");
+        }
     }
     if(result.snapshot_version_>=59)for(const auto& [id,d]:result.physical_dependents_){
         const auto g=result.npcs_.find(d.guardian_id);
@@ -7735,6 +9251,40 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             throw std::runtime_error("snapshot: activity refers to unknown command");
         if (a.kind == ActivityKind::AsteroidDespawned && !result.depleted_.count(a.target))
             throw std::runtime_error("snapshot: missing depleted tombstone");
+    }
+    if(result.snapshot_version_>=77) {
+        for(const auto& [key,site]:result.planetary_sites_) {
+            if(key!=PlanetarySiteKey{site.region.body,site.region.latitude,
+                                    site.region.longitude,site.region.revision})
+                throw std::runtime_error("snapshot: planetary cell key mismatch");
+            const auto* body=body_for_local_environment(
+                result.physical_celestial_systems_,site.region.body);
+            const auto* source_ship=result.find(site.source_ship);
+            if(!body || (body->kind!=CelestialKind::Planet &&
+                         body->kind!=CelestialKind::Moon) ||
+               !site.owner || !site.source_ship ||
+               (source_ship && source_ship->owner_id!=site.owner))
+                throw std::runtime_error("snapshot: orphan planetary facility");
+            if(!site.farm && site.harvest_cycles>0)
+                throw std::runtime_error("snapshot: unbuilt farm produced food");
+            if(site.embodied_ore!=4+4*(std::int64_t(site.farm)+
+                                        std::int64_t(site.extractor)))
+                throw std::runtime_error("snapshot: invalid regional module custody");
+            if(site.extractor && !result.oasis_reserves_.count(site.region.body))
+                throw std::runtime_error("snapshot: extractor has no physical source");
+            if(result.snapshot_version_>=78) {
+                if(site.surface_location!=surface_custody_id(key) ||
+                   (site.assigned_workers!=2 &&
+                    !(site.assigned_workers==0 && site.spaceport_phase==3 &&
+                      !site.delegated_npcs[0] && !site.delegated_npcs[1])) ||
+                   site.spaceport_phase<1 || site.spaceport_phase>3 ||
+                   site.construction_required!=240 ||
+                   site.construction_progress>240 ||
+                   (site.spaceport_phase==3 && site.construction_progress!=240) ||
+                   (site.spaceport_phase!=3 && (site.farm || site.extractor)))
+                    throw std::runtime_error("snapshot: invalid surface port custody");
+            }
+        }
     }
     if(result.snapshot_version_>=76) {
         for(const auto& [ship,rig]:result.oasis_extractors_) {
@@ -7913,6 +9463,90 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 throw std::runtime_error("snapshot: survey probe has no valid physical carrier");
         }
     }
+    if(result.snapshot_version_>=88) {
+        std::set<PlanetarySiteKey> active_jobs;
+        for(const auto& [id,job]:result.local_delivery_orders_) {
+            const auto site=result.planetary_sites_.find(job.site);
+            const auto shuttle=result.planetary_shuttles_.find(job.site);
+            const auto ship=result.entities_.find(job.board_ship);
+            if(site==result.planetary_sites_.end() ||
+               shuttle==result.planetary_shuttles_.end() ||
+               ship==result.entities_.end() ||
+               ship->second.owner_id!=job.owner ||
+               site->second.owner!=job.owner ||
+               site->second.source_ship!=job.board_ship ||
+               site->second.spaceport_phase!=3 ||
+               shuttle->second.owner!=job.owner ||
+               shuttle->second.source_ship!=job.board_ship ||
+               !result.colony_ships_.count(job.board_ship))
+                throw std::runtime_error("snapshot: orphaned local delivery contract");
+            if(job.stage==LocalDeliveryStage::Complete ||
+               job.stage==LocalDeliveryStage::Cancelled)continue;
+            if(!active_jobs.insert(job.site).second)
+                throw std::runtime_error("snapshot: competing local delivery contracts");
+            if(job.stage==LocalDeliveryStage::Posted) {
+                if(job.assigned_pilot)
+                    throw std::runtime_error("snapshot: premature courier assignment");
+                continue;
+            }
+            const auto pilot=result.npcs_.find(job.assigned_pilot);
+            if(!job.assigned_pilot || pilot==result.npcs_.end() ||
+               pilot->second.home_ship!=job.board_ship ||
+               shuttle->second.pilot_npc!=job.assigned_pilot)
+                throw std::runtime_error("snapshot: missing assigned courier NPC");
+            const auto flight_id=[id](bool return_leg) {
+                return 0x10000000000000ULL | (id<<1) |
+                       std::uint64_t(return_leg?1:0);
+            };
+            if((job.stage==LocalDeliveryStage::Descending &&
+                (shuttle->second.descent_receipt!=flight_id(false) ||
+                 (shuttle->second.flight_phase!=1 &&
+                  shuttle->second.flight_phase!=2))) ||
+               ((job.stage==LocalDeliveryStage::Loading ||
+                 job.stage==LocalDeliveryStage::Ascending) &&
+                (shuttle->second.flight_phase!=2 ||
+                 shuttle->second.descent_receipt!=flight_id(false))) ||
+               (job.stage==LocalDeliveryStage::Delivering &&
+                (shuttle->second.ascent_receipt!=flight_id(true) ||
+                 (shuttle->second.flight_phase!=3 &&
+                  shuttle->second.flight_phase!=0))))
+                throw std::runtime_error("snapshot: invalid courier flight phase");
+        }
+    }
+    if(result.snapshot_version_>=86) {
+        const auto legal_address_is_registered=[&](const NpcRecord& n) {
+            const auto residence=n.legal_residence();
+            if(!residence.id)return false;
+            switch(residence.kind) {
+                case transport::LocationKind::ColonyShip:
+                    return residence.id==n.home_ship &&
+                           result.colony_ships_.count(residence.id)!=0;
+                case transport::LocationKind::SpaceColony:
+                    return result.built_outposts_.count(residence.id)!=0 &&
+                           result.habitats_.count(residence.id)!=0;
+                case transport::LocationKind::PlanetarySite:
+                    for(const auto& [key,site]:result.planetary_sites_) {
+                        (void)key;
+                        if(site.surface_location==residence.id &&
+                           site.spaceport_phase==3)return true;
+                    }
+                    return false;
+                case transport::LocationKind::OtherNpcLocation:
+                    return false; // no registered housing authority yet
+            }
+            return false;
+        };
+        for(const auto& [id,n]:result.npcs_) {
+            (void)id;
+            if(!legal_address_is_registered(n))
+                throw std::runtime_error("snapshot: orphaned NPC legal residence");
+        }
+        for(const auto& [id,d]:result.casualties_) {
+            (void)id;
+            if(!legal_address_is_registered(d.identity))
+                throw std::runtime_error("snapshot: orphaned deceased legal residence");
+        }
+    }
     if (result.canonical_state() != bytes)
         throw std::runtime_error("snapshot: noncanonical or out-of-order records");
     return result;
@@ -7932,6 +9566,10 @@ void Simulation::swap(Simulation& other) noexcept {
     local_environments_.swap(other.local_environments_);
     oasis_reserves_.swap(other.oasis_reserves_);
     oasis_extractors_.swap(other.oasis_extractors_);
+    planetary_sites_.swap(other.planetary_sites_);
+    planetary_shuttles_.swap(other.planetary_shuttles_);
+    local_delivery_orders_.swap(other.local_delivery_orders_);
+    shuttle_flight_request_ids_.swap(other.shuttle_flight_request_ids_);
     pending_celestial_transits_.swap(other.pending_celestial_transits_);
     completed_celestial_transits_.swap(other.completed_celestial_transits_);
     physical_celestial_systems_.swap(other.physical_celestial_systems_);
@@ -8134,6 +9772,114 @@ std::int64_t Simulation::total_ore() const {
         if(qty>std::numeric_limits<std::int64_t>::max()-life_mass_kg)
             throw std::overflow_error("invalid storage material total");
         life_mass_kg+=qty;
+    }
+    // PLAY-13D.3: installed regional modules and each kilogram of site
+    // stocks remain counted exactly once in world total matter.
+    for(const auto& [key,site]:planetary_sites_) {
+        (void)key;
+        if(site.embodied_ore!=4+4*(std::int64_t(site.farm)+
+                                   std::int64_t(site.extractor)) ||
+           site.embodied_ore>std::numeric_limits<std::int64_t>::max()-total)
+            throw std::overflow_error("invalid planetary installation mass");
+        total+=site.embodied_ore;
+        const auto kg=site.water_kg+site.nutrients_kg+site.food_kg+
+                      site.wastewater_kg+site.oxygen_kg+site.co2_kg+
+                      site.organic_waste_kg;
+        if(kg<0 || kg>1000000000LL-life_mass_kg)
+            throw std::overflow_error("invalid regional supplies mass");
+        life_mass_kg+=kg;
+    }
+
+    // PLAY-13D.4C.2: source modules became the shuttle's physical dry mass;
+    // manifest kilograms move out of ship storage exactly once.
+    std::set<std::uint64_t> assigned_shuttle_pilots;
+    for(const auto& [key,v]:planetary_shuttles_) {
+        const auto site=planetary_sites_.find(key);
+        if(site==planetary_sites_.end() || v.owner!=site->second.owner ||
+           v.source_ship!=site->second.source_ship || v.dry_mass_ore!=4 ||
+           v.water_kg<0 || v.food_kg<0 || v.nutrients_kg<0 || v.water_kg>1000 ||
+           v.food_kg>1000-v.water_kg ||
+           v.nutrients_kg>1000-v.water_kg-v.food_kg ||
+           !colony_ships_.count(v.source_ship) ||
+           total>std::numeric_limits<std::int64_t>::max()-v.dry_mass_ore)
+            throw std::overflow_error("invalid source-backed shuttle");
+        if(snapshot_version_>=81 &&
+           ((v.descent_receipt && !shuttle_flight_request_ids_.count(v.descent_receipt)) ||
+            (v.ascent_receipt && !shuttle_flight_request_ids_.count(v.ascent_receipt)) ||
+            (v.flight_request && !shuttle_flight_request_ids_.count(v.flight_request))))
+            throw std::overflow_error("shuttle references missing flight receipt");
+        if(v.duty_ids.size()>v.disembarked_ids.size() ||
+           !std::is_sorted(v.duty_ids.begin(),v.duty_ids.end()))
+            throw std::overflow_error("invalid temporary visitor duties");
+        for(const auto worker:v.duty_ids)
+            if(!std::binary_search(v.disembarked_ids.begin(),
+                                   v.disembarked_ids.end(),worker))
+                throw std::overflow_error("temporary worker not on surface");
+        if(v.disembarked_ids.size()>64 ||
+           !std::is_sorted(v.disembarked_ids.begin(),v.disembarked_ids.end()))
+            throw std::overflow_error("noncanonical surface visitor ledger");
+        if(v.visitor_arrival_receipts.size()>v.disembarked_ids.size())
+            throw std::overflow_error("excess individual transport receipts");
+        for(const auto& [visitor,receipt]:v.visitor_arrival_receipts)
+            if(!visitor || !receipt ||
+               !std::binary_search(v.disembarked_ids.begin(),v.disembarked_ids.end(),visitor) ||
+               !shuttle_flight_request_ids_.count(receipt))
+                throw std::overflow_error("unbacked individual visitor arrival");
+        for(const auto visitor_id:v.disembarked_ids) {
+            if(!visitor_id || visitor_id==v.pilot_npc ||
+               !assigned_shuttle_pilots.insert(visitor_id).second)
+                throw std::overflow_error("duplicate or conflicting shuttle visitor");
+            const auto person=npcs_.find(visitor_id);
+            if(person==npcs_.end() ||
+               person->second.location!=site->second.surface_location ||
+               person->second.home_ship!=v.source_ship ||
+               person->second.assigned_site!=v.source_ship ||
+               person->second.role!=NpcRole::Ship ||
+               person->second.transport_id)
+                throw std::overflow_error("surface visitor custody divergence");
+        }
+        for(const auto passenger_id:v.passenger_ids) {
+            if(!passenger_id || passenger_id==v.pilot_npc ||
+               !assigned_shuttle_pilots.insert(passenger_id).second)
+                throw std::overflow_error("duplicate or pilot shuttle passenger");
+            const auto passenger=npcs_.find(passenger_id);
+            const auto where=(v.flight_phase==1 || v.flight_phase==3)?
+                shuttle_transit_custody_id(key):
+                (v.flight_phase==2?site->second.surface_location:v.source_ship);
+            if(passenger==npcs_.end() || passenger->second.location!=where ||
+               passenger->second.home_ship!=v.source_ship ||
+               passenger->second.assigned_site!=v.source_ship ||
+               passenger->second.role!=NpcRole::Ship ||
+               passenger->second.transport_id)
+                throw std::overflow_error("invalid named shuttle passenger custody");
+        }
+        if(v.passenger_ids.size()>3 ||
+           !std::is_sorted(v.passenger_ids.begin(),v.passenger_ids.end()))
+            throw std::overflow_error("noncanonical shuttle passenger manifest");
+        if(v.pilot_npc) {
+            if(!assigned_shuttle_pilots.insert(v.pilot_npc).second)
+                throw std::overflow_error("pilot assigned to multiple shuttles");
+            const auto npc=npcs_.find(v.pilot_npc);
+            const auto facility=planetary_sites_.find(key);
+            const auto destination=facility==planetary_sites_.end()?EntityId{0}:
+                facility->second.surface_location;
+            const auto expected=(v.flight_phase==1 || v.flight_phase==3)?
+                shuttle_transit_custody_id(key):
+                (v.flight_phase==2?destination:v.source_ship);
+            if(npc==npcs_.end() || npc->second.home_ship!=v.source_ship ||
+               npc->second.assigned_site!=v.source_ship ||
+               npc->second.location!=expected || npc->second.transport_id ||
+               npc->second.role!=NpcRole::Ship ||
+               ((v.flight_phase==1 || v.flight_phase==3) &&
+                (!v.flight_request || !v.arrival_tick)) ||
+               (v.flight_phase>3))
+                throw std::overflow_error("invalid shuttle pilot custody");
+        }
+        total+=v.dry_mass_ore;
+        const auto held=v.water_kg+v.food_kg+v.nutrients_kg;
+        if(held>1000000000LL-life_mass_kg)
+            throw std::overflow_error("invalid shuttle held stock");
+        life_mass_kg+=held;
     }
     // PLAY-13C.6D constructed extraction equipment retains its source modules.
     for(const auto& [ship,rig]:oasis_extractors_) {

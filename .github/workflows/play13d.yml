@@ -1,0 +1,86 @@
+name: PLAY-13D planetary agriculture native acceptance
+on:
+  push:
+    branches: [feature/play13d-planetary-agriculture-20261104]
+  pull_request:
+    paths:
+      - 'include/galaxy/PlanetaryAgriculture.hpp'
+      - 'src/PlanetaryAgriculture.cpp'
+      - 'tests/PLAY13D_PlanetaryAgricultureTests.cpp'
+      - 'include/galaxy/PlanetaryRegions.hpp'
+      - 'tests/PLAY13D_PlanetaryRegionsTests.cpp'
+      - 'include/galaxy/PlanetaryLandscape.hpp'
+      - 'tests/PLAY13D_PlanetaryLandscapeTests.cpp'
+      - 'include/galaxy/PlanetaryGenerationFramework.hpp'
+      - 'tests/PLAY13D_PlanetaryFrameworkTests.cpp'
+      - 'include/galaxy/PlanetaryWatershed.hpp'
+      - 'tests/PLAY13D_PlanetaryWatershedTests.cpp'
+      - 'include/galaxy/PlanetaryGeography.hpp'
+      - 'tests/PLAY13D_PlanetaryGeographyTests.cpp'
+      - 'src/Simulation.cpp'
+      - 'include/galaxy/Simulation.hpp'
+      - 'include/galaxy/NpcTransport.hpp'
+      - 'include/galaxy/UniversalTransport.hpp'
+      - 'tests/PLAY13D_UniversalTransportTests.cpp'
+      - 'include/galaxy/UniversalNpcMigration.hpp'
+      - 'tests/PLAY13D_UniversalNpcMigrationTests.cpp'
+      - 'include/galaxy/TransportIdentity.hpp'
+      - 'include/galaxy/ShipControl.hpp'
+      - 'tests/PLAY13D_SharedTransportIdentityTests.cpp'
+      - 'tests/PLAY13D_ShipControlTests.cpp'
+      - 'tests/PLAY13D_PlanetarySettlementAdmissionTests.cpp'
+      - 'tests/PLAY13D_PlanetarySettlementTransitionTests.cpp'
+      - 'src/colony_live_host.cpp'
+      - 'tests/PLAY13D_LivePlanetSurveyTests.cpp'
+      - 'live/interactive_relay.py'
+      - 'viewer/colony.js'
+      - 'tests/PLAY13D_LiveHostPlanetSurveySmoke.py'
+      - 'tests/PLAY13D_PlanetSurveyNodeTests.js'
+      - 'tests/PLAY13D_PlanetSurveyRelayTests.py'
+      - 'src/Galaxy.cpp'
+      - 'include/galaxy/Galaxy.hpp'
+      - 'tests/PLAY13D_RegionalFacilitiesTests.cpp'
+      - 'tests/PLAY13D_ShuttleHostFixture.cpp'
+      - 'tests/PLAY13D_ShuttleLiveE2E.py'
+      - 'src/Persistence.cpp'
+      - 'include/galaxy/Persistence.hpp'
+      - 'CMakeLists.txt'
+      - '.github/workflows/play13d.yml'
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+      - name: Build real galaxy kernel and planetary test
+        run: cmake --build build --config Release --target galaxy_play13d_planetary_agriculture_tests galaxy_play13d_planetary_regions_tests galaxy_play13d_planetary_landscape_tests galaxy_play13d_planetary_framework_tests galaxy_play13d_planetary_watershed_tests galaxy_play13d_planetary_geography_tests galaxy_play13d_live_planet_survey_tests galaxy_play13d_regional_facilities_tests galaxy_play13d_shuttle_host_fixture galaxy_play13d_shared_transport_tests galaxy_play13d_universal_transport_tests galaxy_play13d_universal_migration_tests galaxy_play13d_ship_control_tests galaxy_play13d_settlement_admission_tests galaxy_play13d_settlement_transition_tests galaxy_colony_live_host
+      - name: Native mass conservation and return logistics
+        run: ctest --test-dir build -C Release -R "^galaxy_play13d_(planetary_(agriculture|regions|landscape|framework|watershed|geography)|live_planet_survey|regional_facilities|shared_transport|universal_transport|universal_migration|ship_control|settlement_admission|settlement_transition)$" --output-on-failure
+
+      - name: Browser native telemetry validation
+        run: node --test tests/PLAY13D_PlanetSurveyNodeTests.js
+      - name: Real native planetary host scan and restart (Linux)
+        if: runner.os == 'Linux'
+        run: python3 tests/PLAY13D_LiveHostPlanetSurveySmoke.py build/galaxy_colony_live_host
+      - name: Real native planetary host scan and restart (Windows)
+        if: runner.os == 'Windows'
+        run: python tests/PLAY13D_LiveHostPlanetSurveySmoke.py build/Release/galaxy_colony_live_host.exe
+
+      - name: Authenticated native planetary survey HTTP relay (Linux)
+        if: runner.os == 'Linux'
+        run: python3 tests/PLAY13D_PlanetSurveyRelayTests.py --host build/galaxy_colony_live_host --relay live/interactive_relay.py
+      - name: Authenticated native planetary survey HTTP relay (Windows)
+        if: runner.os == 'Windows'
+        run: python tests/PLAY13D_PlanetSurveyRelayTests.py --host build/Release/galaxy_colony_live_host.exe --relay live/interactive_relay.py
+
+      - name: Real authenticated shuttle mission and SQLite restart (Linux)
+        if: runner.os == 'Linux'
+        run: python3 tests/PLAY13D_ShuttleLiveE2E.py --fixture build/galaxy_play13d_shuttle_host_fixture --host build/galaxy_colony_live_host --relay live/interactive_relay.py
+      - name: Real authenticated shuttle mission and SQLite restart (Windows)
+        if: runner.os == 'Windows'
+        run: python tests/PLAY13D_ShuttleLiveE2E.py --fixture build/Release/galaxy_play13d_shuttle_host_fixture.exe --host build/Release/galaxy_colony_live_host.exe --relay live/interactive_relay.py

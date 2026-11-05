@@ -55,6 +55,149 @@
          (kind!==0&&parent===0))throw Error('Invalid celestial parent/body');
       return {...e,id,parent,kind,orbit,x,y,z,radius};
     }
+    if(t==='PLANET_CREW_AVAILABLE'){
+      if(v.length!==5)throw Error('Malformed available surface NPC');
+      const id=numeric(v[4],Number.MAX_SAFE_INTEGER);
+      if(!id)throw Error('Invalid surface NPC');
+      return {...e,id};
+    }
+    if(t==='PLANET_CREW_DONE'){
+      if(v.length!==4)throw Error('Malformed surface crew terminator');
+      return e;
+    }
+    if(t==='PLANET_POLICY_COMMITTED'){
+      if(v.length!==9)throw Error('Malformed planetary policy receipt');
+      const id=numeric(v[4],Number.MAX_SAFE_INTEGER),
+       latitude=numeric(v[5],35),longitude=numeric(v[6],71),
+       policy=numeric(v[7],4),generation=numeric(v[8],Number.MAX_SAFE_INTEGER);
+      if(!id || !generation)throw Error('Invalid planetary policy receipt');
+      return {...e,id,latitude,longitude,policy,generation};
+    }
+    if(t==='PLANET_SHUTTLE_STATUS'){
+      if(v.length!==17&&v.length!==18)throw Error('Malformed shuttle status');
+      const id=numeric(v[4],Number.MAX_SAFE_INTEGER),latitude=numeric(v[5],35),
+       longitude=numeric(v[6],71),present=numeric(v[7],1),phase=numeric(v[8],3),
+       pilot=numeric(v[9],Number.MAX_SAFE_INTEGER),water=numeric(v[10],1000),
+       food=numeric(v[11],1000),arrival=numeric(v[12],Number.MAX_SAFE_INTEGER),
+       request=numeric(v[13],Number.MAX_SAFE_INTEGER),
+       descent=numeric(v[14],Number.MAX_SAFE_INTEGER),
+       ascent=numeric(v[15],Number.MAX_SAFE_INTEGER),
+       generation=numeric(v[16],Number.MAX_SAFE_INTEGER),
+       nutrients=v.length===18?numeric(v[17],1000):0;
+      if(!id||!generation||water+food+nutrients>1000||
+         (!present&&(phase||pilot||water||food||nutrients||arrival||request||descent||ascent))||
+         (present&&phase>0&&!pilot)||
+         ((phase===1||phase===3)!==(request>0))||
+         ((phase===1||phase===3)!==(arrival>0)))
+        throw Error('Invalid authoritative shuttle state');
+      return {...e,id,latitude,longitude,present:!!present,phase,pilot,
+        water,food,nutrients,arrival,request,descent,ascent,generation};
+    }
+    if(t==='PLANET_SHUTTLE_PASSENGER'||t==='PLANET_SHUTTLE_MANIFEST_DONE'||
+       t==='PLANET_SHUTTLE_VISITOR'||t==='PLANET_SHUTTLE_VISITORS_DONE'||
+       t==='PLANET_SHUTTLE_WORKER'||t==='PLANET_SHUTTLE_WORKERS_DONE'){
+      if(v.length!==8)throw Error('Malformed shuttle passenger manifest');
+      const id=numeric(v[4],Number.MAX_SAFE_INTEGER),
+       latitude=numeric(v[5],35),longitude=numeric(v[6],71),
+       value=numeric(v[7],(t==='PLANET_SHUTTLE_PASSENGER'||t==='PLANET_SHUTTLE_VISITOR'||t==='PLANET_SHUTTLE_WORKER')?
+         Number.MAX_SAFE_INTEGER:64);
+      if(!id||((t==='PLANET_SHUTTLE_PASSENGER'||t==='PLANET_SHUTTLE_VISITOR'||t==='PLANET_SHUTTLE_WORKER')&&!value))
+        throw Error('Invalid named shuttle passenger manifest');
+      return {...e,id,latitude,longitude,
+        ...((t==='PLANET_SHUTTLE_PASSENGER'||t==='PLANET_SHUTTLE_VISITOR'||t==='PLANET_SHUTTLE_WORKER')?{npc:value}:{count:value})};
+    }
+    if(t==='PLANET_SHUTTLE_COMMITTED'){
+      if(v.length!==9)throw Error('Malformed shuttle commit');
+      const id=numeric(v[4],Number.MAX_SAFE_INTEGER),latitude=numeric(v[5],35),
+       longitude=numeric(v[6],71),operation=v[7],
+       generation=numeric(v[8],Number.MAX_SAFE_INTEGER);
+      if(!id||!generation||!new Set(['BUILD','PILOT','BOARD','RELEASE','DISEMBARK','REBOARD','DUTY_ON','DUTY_OFF','LOAD','UNLOAD','DESCEND','ASCEND']).has(operation))
+        throw Error('Invalid shuttle operation receipt');
+      return {...e,id,latitude,longitude,operation,generation};
+    }
+    if(t==='LOCAL_WORK_ITEM'){
+      if(v.length!==12)throw Error('Malformed local delivery contract');
+      const order=numeric(v[4],Number.MAX_SAFE_INTEGER),
+        id=numeric(v[5],Number.MAX_SAFE_INTEGER),
+        latitude=numeric(v[6],35),longitude=numeric(v[7],71),
+        resource=v[8],kg=numeric(v[9],1000),
+        stage=numeric(v[10],6),pilot=numeric(v[11],Number.MAX_SAFE_INTEGER);
+      if(!order||!id||!kg||
+         !['WATER','FOOD','NUTRIENTS'].includes(resource)||
+         (stage>0&&stage<5&&!pilot))
+        throw Error('Invalid local delivery job');
+      return {...e,order,id,latitude,longitude,resource,kg,stage,pilot};
+    }
+    if(t==='LOCAL_WORK_POSTED'||t==='LOCAL_WORK_CANCELLED'){
+      if(v.length!==6)throw Error('Malformed local delivery receipt');
+      const order=numeric(v[4],Number.MAX_SAFE_INTEGER),
+        generation=numeric(v[5],Number.MAX_SAFE_INTEGER);
+      if(!order||!generation)throw Error('Invalid local delivery receipt');
+      return {...e,order,generation};
+    }
+    if(t==='LOCAL_WORK_DONE'){
+      if(v.length!==5)throw Error('Malformed local delivery board terminator');
+      return {...e,count:numeric(v[4],64)};
+    }
+    if(t==='PLANET_SITE_STATUS'){
+      if(v.length!==22&&v.length!==23)throw Error('Malformed planetary spaceport status');
+      const id=numeric(v[4],Number.MAX_SAFE_INTEGER),
+       latitude=numeric(v[5],35),longitude=numeric(v[6],71),
+       phase=numeric(v[7],3),progress=numeric(v[8],240),
+       required=numeric(v[9],240),workers=numeric(v[10],2),
+       food=numeric(v[11],1000000),water=numeric(v[12],1000000),
+       oxygen=numeric(v[13],1000000),npc1=numeric(v[14],Number.MAX_SAFE_INTEGER),
+       npc2=numeric(v[15],Number.MAX_SAFE_INTEGER),
+       policy=numeric(v[16],4),condition=numeric(v[17],100),
+       cycles=numeric(v[18],Number.MAX_SAFE_INTEGER),
+       stalled=numeric(v[19],Number.MAX_SAFE_INTEGER),
+       extracted=numeric(v[20],Number.MAX_SAFE_INTEGER),
+       repairs=numeric(v[21],Number.MAX_SAFE_INTEGER),
+       nutrients=v.length===23?numeric(v[22],1000000):0;
+      if(!id || phase<1 || required!==240 ||
+         (workers!==2 && !(workers===0 && phase===3 && npc1===0 && npc2===0)) ||
+          (npc1===npc2 && npc1!==0) ||
+          (phase===3 && progress!==240))
+        throw Error('Invalid surface spaceport status');
+      return {...e,id,latitude,longitude,phase,progress,required,workers,
+              food,water,oxygen,nutrients,npc1,npc2,policy,condition,cycles,stalled,extracted,repairs};
+    }
+    if(t==='PLANET_OPERATION_COMMITTED'){
+      if(v.length!==9)throw Error('Malformed planetary operation receipt');
+      const id=numeric(v[4],Number.MAX_SAFE_INTEGER);
+      const latitude=numeric(v[5],35),longitude=numeric(v[6],71);
+      const action=v[7],generation=numeric(v[8],Number.MAX_SAFE_INTEGER);
+      const permitted=new Set(['PLANET_BUILD','PLANET_EQUIP','PLANET_SUPPLY',
+         'PLANET_GROW','PLANET_EXTRACT','PLANET_RETRIEVE','PLANET_SUPPORT']);
+      if(!id||!permitted.has(action)||!generation)
+        throw Error('Invalid planetary operation receipt');
+      return {...e,id,latitude,longitude,action,generation};
+    }
+    if(t==='PLANET_REGION'){
+      if(v.length!==15)throw Error('Malformed native planet region');
+      const signed=x=>{if(!/^(0|-?[1-9][0-9]*)$/.test(x))throw Error('Invalid signed region value');
+        const n=Number(x);if(!Number.isSafeInteger(n))throw Error('Region integer overflow');return n;};
+      const id=numeric(v[4],Number.MAX_SAFE_INTEGER);
+      const latitude=numeric(v[5],35),longitude=numeric(v[6],71);
+      const elevation=signed(v[7]),ocean=numeric(v[8],1),
+            terrain=numeric(v[9],10),watercourse=numeric(v[10],3),
+            runoff=numeric(v[11],Number.MAX_SAFE_INTEGER),
+            downLatitude=signed(v[12]),downLongitude=signed(v[13]),
+            revision=numeric(v[14],100000);
+      if(!id || !revision || (downLatitude===-1)!==(downLongitude===-1) ||
+         downLatitude>35 || downLongitude>71 || downLatitude< -1 || downLongitude< -1)
+        throw Error('Invalid planetary region geography');
+      return {...e,id,latitude,longitude,elevation,ocean:!!ocean,
+        terrain,watercourse,runoff,downLatitude,downLongitude,revision};
+    }
+    if(t==='OASIS_REGION'){
+      if(v.length!==8)throw Error('Malformed finite oasis region waypoint');
+      const id=numeric(v[4],Number.MAX_SAFE_INTEGER),
+        latitude=numeric(v[5],35),longitude=numeric(v[6],71),
+        revision=numeric(v[7],100000);
+      if(!id||!revision)throw Error('Invalid finite oasis region waypoint');
+      return {...e,id,latitude,longitude,revision};
+    }
     if(t==='OASIS_PROSPECT'){
       if(v.length!==9)throw Error('Malformed oasis prospect');
       const id=numeric(v[4],Number.MAX_SAFE_INTEGER);
@@ -404,9 +547,56 @@
     }else throw Error('Unknown colony event');
     return e;
   }
-  return {decode,names};
+
+  // Read-only UI projection. The native host owns every NPC; never derive
+  // population from this status display or alter its manifest.
+  function makeShuttleRosterTracker(){
+    const codes={
+      PLANET_SHUTTLE_PASSENGER:['passengers',false,3],
+      PLANET_SHUTTLE_MANIFEST_DONE:['passengers',true,3],
+      PLANET_SHUTTLE_VISITOR:['visitors',false,64],
+      PLANET_SHUTTLE_VISITORS_DONE:['visitors',true,64],
+      PLANET_SHUTTLE_WORKER:['workers',false,64],
+      PLANET_SHUTTLE_WORKERS_DONE:['workers',true,64]
+    };
+    const pending={passengers:[],visitors:[],workers:[]};
+    const committed={passengers:[],visitors:[],workers:[]};
+    return {
+      accept(e){
+        const spec=codes[e.type];
+        if(!spec)throw Error('Unknown shuttle roster telemetry');
+        const [kind,done,limit]=spec;
+        if(!done){
+          const ids=pending[kind];
+          if(!Number.isSafeInteger(e.npc)||e.npc<=0||ids.length>=limit||
+             (ids.length&&e.npc<=ids[ids.length-1]))
+            throw Error('Noncanonical shuttle '+kind+' manifest');
+          ids.push(e.npc);
+          return null;
+        }
+        const ids=pending[kind];
+        if(e.count!==ids.length) {
+          pending[kind]=[];
+          throw Error('Incomplete shuttle '+kind+' manifest');
+        }
+        if(kind==='workers' && ids.some(id=>!committed.visitors.includes(id))){
+          pending[kind]=[];
+          throw Error('Surface duty has no physically disembarked visitor');
+        }
+        committed[kind]=ids.slice();
+        pending[kind]=[];
+        return {kind,ids:committed[kind].slice()};
+      },
+      snapshot(){
+        return {passengers:committed.passengers.slice(),
+          visitors:committed.visitors.slice(),workers:committed.workers.slice()};
+      }
+    };
+  }
+  return {decode,names,makeShuttleRosterTracker};
 });
 (function(){'use strict';if(typeof document==='undefined')return;
+ const {makeShuttleRosterTracker}=window.GalaxyColonyContract;
  const q=id=>document.getElementById(id), policyAudits=new Map(), geology=new Map(),small=new Map(),log=[],stocks=new Map(),outposts=new Map(),farms=new Map(),habitats=new Map(),utilities=new Map(),communities=new Map(),clinics=new Map(),reclaimers=new Map(),waterworks=new Map();
  const combatTargets=new Map();
  const salvageWrecks=new Map();
@@ -504,8 +694,420 @@
            q('signatureFeedback').textContent='Celestial travel requested. Awaiting the authoritative host.';
          });
          item.appendChild(action);
+         if(body.kind===1 || body.kind===2) {
+           // Coordinates are logical coarse surface cells, not a claim of
+           // exact landing position. Native Simulation validates them again.
+           const latitude=document.createElement('input');
+           latitude.type='number';latitude.min='0';latitude.max='35';
+           latitude.step='1';latitude.value='17';
+           latitude.setAttribute('aria-label','Region latitude cell 0–35');
+           const longitude=document.createElement('input');
+           longitude.type='number';longitude.min='0';longitude.max='71';
+           longitude.step='1';longitude.value='36';
+           longitude.setAttribute('aria-label','Region longitude cell 0–71');
+           const survey=document.createElement('button');
+           survey.type='button';
+           survey.textContent='Survey region';
+           survey.addEventListener('click',()=>{
+             const lat=Number(latitude.value),lon=Number(longitude.value);
+             if(!Number.isSafeInteger(lat)||lat<0||lat>=36||
+                !Number.isSafeInteger(lon)||lon<0||lon>=72) {
+               q('signatureFeedback').textContent='Select valid region cells: latitude 0–35 and longitude 0–71.';
+               return;
+             }
+             window.GalaxyColonyCommand?.('colonyPlanetSurvey',
+               {body:body.id,latitude:lat,longitude:lon});
+             q('signatureFeedback').textContent=
+               'Planetary region requested from authoritative native geography.';
+           });
+           const actions=document.createElement('details');
+           const caption=document.createElement('summary');
+           caption.textContent='Regional construction / farming / extraction';
+           const choice=document.createElement('select');
+           choice.setAttribute('aria-label','Planetary region operation');
+           const operations=[
+             ['Delegate NPCs — build surface spaceport','colonyPlanetBuild',{}],
+             ['Install farm (two modules)','colonyPlanetEquip',{equipment:'FARM'}],
+             ['Install extractor (two modules)','colonyPlanetEquip',{equipment:'EXTRACT'}],
+             ['Supply 100 kg water','colonyPlanetSupply',{resource:'WATER',kg:100}],
+             ['Supply 50 kg nutrients','colonyPlanetSupply',{resource:'NUTRIENTS',kg:50}],
+             ['Resupply surface NPCs with 50 kg food','colonyPlanetSupport',{resource:'FOOD',kg:50}],
+             ['Resupply surface NPCs with 50 kg oxygen','colonyPlanetSupport',{resource:'OXYGEN',kg:50}],
+             ['Grow two farm batches','colonyPlanetGrow',{batches:2}],
+             ['Extract 1000 kg water','colonyPlanetExtract',{resource:'WATER',kg:1000}],
+             ['Extract 1000 kg nutrients','colonyPlanetExtract',{resource:'NUTRIENTS',kg:1000}],
+             ['Retrieve 12 kg food','colonyPlanetRetrieve',{resource:'FOOD',kg:12}],
+             ['Retrieve 1000 kg water','colonyPlanetRetrieve',{resource:'WATER',kg:1000}]
+           ];
+           operations.forEach(([label],index)=>choice.add(new Option(label,String(index))));
+           const firstNpc=document.createElement('input');
+           const secondNpc=document.createElement('input');
+           for(const [input,label] of [[firstNpc,'First NPC ID (optional)'],
+                                       [secondNpc,'Second NPC ID (optional)']]){
+             input.type='number';input.min='1';input.step='1';
+             input.placeholder=label;
+             input.setAttribute('aria-label',label);
+           }
+           const crewButton=document.createElement('button');
+           crewButton.type='button';crewButton.textContent='List available NPCs';
+           crewButton.addEventListener('click',()=>window.GalaxyColonyCommand?.('colonyPlanetCrew',{}));
+           const statusButton=document.createElement('button');
+           statusButton.type='button';statusButton.textContent='Check spaceport progress';
+           statusButton.addEventListener('click',()=>{
+             const lat=Number(latitude.value),lon=Number(longitude.value);
+             if(Number.isInteger(lat)&&lat>=0&&lat<36&&Number.isInteger(lon)&&lon>=0&&lon<72)
+               window.GalaxyColonyCommand?.('colonyPlanetStatus',
+                 {body:body.id,latitude:lat,longitude:lon});
+           });
+           const policySelect=document.createElement('select');
+           policySelect.setAttribute('aria-label','Autonomous NPC planetary work policy');
+           [['Pause autonomous work',0],['Run farm',1],
+             ['Extract water',2],['Extract nutrients',3],
+             ['Maintain equipment',4]].forEach(([label,value])=>
+               policySelect.add(new Option(label,String(value))));
+           const policyButton=document.createElement('button');
+           policyButton.type='button';policyButton.textContent='Assign NPC work policy';
+           policyButton.addEventListener('click',()=>{
+             const lat=Number(latitude.value),lon=Number(longitude.value);
+             if(!Number.isInteger(lat)||lat<0||lat>=36||
+                !Number.isInteger(lon)||lon<0||lon>=72)return;
+             window.GalaxyColonyCommand?.('colonyPlanetPolicy',
+               {body:body.id,latitude:lat,longitude:lon,
+                policy:Number(policySelect.value)});
+           });
+           const perform=document.createElement('button');
+           perform.type='button';perform.textContent='Send orbital order';
+           perform.addEventListener('click',()=>{
+             const lat=Number(latitude.value),lon=Number(longitude.value);
+             if(!Number.isSafeInteger(lat)||lat<0||lat>=36||
+                !Number.isSafeInteger(lon)||lon<0||lon>=72){
+               q('signatureFeedback').textContent='Invalid planetary region coordinates.';
+               return;
+             }
+             const selected=operations[Number(choice.value)];
+             if(!selected)return;
+             const payload={body:body.id,latitude:lat,longitude:lon,...selected[2]};
+             if(selected[1]==='colonyPlanetBuild' &&
+                (firstNpc.value||secondNpc.value)){
+               const first=Number(firstNpc.value),second=Number(secondNpc.value);
+               if(!Number.isSafeInteger(first)||first<=0||
+                  !Number.isSafeInteger(second)||second<=0||first===second){
+                 q('signatureFeedback').textContent='Select two distinct valid NPC IDs.';
+                 return;
+               }
+               payload.firstNpc=first;payload.secondNpc=second;
+             }
+             window.GalaxyColonyCommand?.(selected[1],payload);
+             q('signatureFeedback').textContent=
+               'Operation requested. A native survey of this exact region is required.';
+           });
+           actions.append(caption,choice,firstNpc,secondNpc,crewButton,statusButton,policySelect,policyButton,perform);
+           const shuttlePanel=document.createElement('details');
+           const shuttleTitle=document.createElement('summary');
+           shuttleTitle.textContent='Orbital shuttle / surface logistics';
+           const shuttleChoice=document.createElement('select');
+           shuttleChoice.setAttribute('aria-label','Shuttle command');
+           const shuttleOperations=[
+             ['Check shuttle status','STATUS'],['Fabricate shuttle (2 modules)','BUILD'],
+             ['Assign named pilot','PILOT'],
+             ['Book named NPC passenger','BOARD'],
+             ['Release booked passenger','RELEASE'],
+             ['Disembark visiting NPC','DISEMBARK'],
+             ['Reboard surface visitor','REBOARD'],
+             ['Assign temporary surface duty','DUTY_ON'],
+             ['Release temporary surface duty','DUTY_OFF'],
+             ['Load cargo at current berth','LOAD'],
+             ['Unload cargo at current berth','UNLOAD'],['Descend to surface','DESCEND'],
+             ['Return to orbit','ASCEND']
+           ];
+           shuttleOperations.forEach(([name,code])=>shuttleChoice.add(new Option(name,code)));
+           const shuttleNpc=document.createElement('input');
+           shuttleNpc.type='number';shuttleNpc.min='1';shuttleNpc.step='1';
+           shuttleNpc.placeholder='Pilot NPC ID';shuttleNpc.setAttribute('aria-label','Shuttle pilot NPC ID');
+           const shuttleResource=document.createElement('select');
+           shuttleResource.setAttribute('aria-label','Shuttle cargo material');
+           shuttleResource.add(new Option('Water','WATER'),
+             new Option('Food','FOOD'),new Option('Nutrients (planetary output)','NUTRIENTS'));
+           const shuttleKg=document.createElement('input');
+           shuttleKg.type='number';shuttleKg.min='1';shuttleKg.max='1000';
+           shuttleKg.step='1';shuttleKg.value='50';shuttleKg.setAttribute('aria-label','Shuttle cargo kilograms');
+           const shuttleState=document.createElement('output');
+           shuttleState.textContent='Request status to see committed shuttle progress.';
+           const shuttleSend=document.createElement('button');
+           shuttleSend.type='button';shuttleSend.textContent='Send shuttle order';
+           shuttleSend.addEventListener('click',()=>{
+             const lat=Number(latitude.value),lon=Number(longitude.value);
+             if(!Number.isSafeInteger(lat)||lat<0||lat>=36||
+                !Number.isSafeInteger(lon)||lon<0||lon>=72)return;
+             const operation=shuttleChoice.value;
+             const payload={body:body.id,latitude:lat,longitude:lon,operation};
+             if(operation==='PILOT'||operation==='BOARD'||operation==='RELEASE'||operation==='DISEMBARK'||operation==='REBOARD'||operation==='DUTY_ON'||operation==='DUTY_OFF'){
+               const npc=Number(shuttleNpc.value);
+               if(!Number.isSafeInteger(npc)||npc<=0)return;
+               payload.npc=npc;
+             }else if(operation==='LOAD'||operation==='UNLOAD'){
+               const kg=Number(shuttleKg.value);
+               if(!Number.isInteger(kg)||kg<=0||kg>1000)return;
+               payload.resource=shuttleResource.value;payload.kg=kg;
+             }else if(operation==='DESCEND'||operation==='ASCEND'){
+               // Stable within one click; new requests use a fresh millisecond ID.
+               const request=Date.now()*1000+Math.floor(Math.random()*1000);
+               if(!Number.isSafeInteger(request))return;
+               payload.request=request;
+             }
+             window.GalaxyColonyCommand?.('colonyPlanetShuttle',payload);
+             shuttleState.textContent='Shuttle order submitted; awaiting native receipt.';
+           });
+           shuttleNpc.dataset.shuttleNpcInput='1';
+           shuttlePanel.append(shuttleTitle,shuttleChoice,shuttleNpc,
+               shuttleResource,shuttleKg,shuttleSend,shuttleState);
+           const rosterTitles=[
+             ['passengers','Booked aboard (max 3)'],
+             ['visitors','Visitors on surface'],
+             ['workers','Visitors on temporary duty']
+           ];
+           for(const [kind,title] of rosterTitles){
+             const line=document.createElement('div');
+             line.textContent=title+': ';
+             const choices=document.createElement('span');
+             choices.dataset.shuttleRoster=kind;
+             choices.textContent='Check status';
+             line.append(choices);
+             shuttlePanel.append(line);
+           }
+           // Local work board: one simple instruction. The native world
+           // decides pilot, flight and stock.
+           const workTitle=document.createElement('strong');
+           workTitle.textContent='Local NPC delivery contracts';
+           const workPost=document.createElement('button');
+           workPost.type='button';
+           workPost.textContent='Post resource pickup for NPC pilot';
+           const workRefresh=document.createElement('button');
+           workRefresh.type='button';workRefresh.textContent='Check work board';
+           const workCancelId=document.createElement('input');
+           workCancelId.type='number';workCancelId.step='1';workCancelId.min='1';
+           workCancelId.placeholder='Posted contract ID';
+           workCancelId.setAttribute('aria-label','Cancel contract ID');
+           const workCancel=document.createElement('button');
+           workCancel.type='button';workCancel.textContent='Cancel posted order';
+           const workStatus=document.createElement('output');
+           workStatus.dataset.localWorkStatus='1';
+           workStatus.textContent='Choose a resource and quantity above to post pickup.';
+           const workList=document.createElement('div');
+           workList.dataset.localWorkList='1';
+           const workCoords=()=>{
+             const lat=Number(latitude.value),lon=Number(longitude.value);
+             return Number.isSafeInteger(lat)&&lat>=0&&lat<36&&
+               Number.isSafeInteger(lon)&&lon>=0&&lon<72?{lat,lon}:null;
+           };
+           workPost.addEventListener('click',()=>{
+             const coords=workCoords(),kg=Number(shuttleKg.value);
+             const order=Date.now()*100+Math.floor(Math.random()*100);
+             if(!coords||!Number.isSafeInteger(kg)||kg<1||kg>1000||
+                !Number.isSafeInteger(order)||order<=0)return;
+             window.GalaxyColonyCommand?.('colonyLocalWorkPost',{
+               body:body.id,latitude:coords.lat,longitude:coords.lon,
+               resource:shuttleResource.value,kg,order});
+             workCancelId.value=String(order);
+             workStatus.textContent='Pickup contract submitted; awaiting native receipt.';
+           });
+           workRefresh.addEventListener('click',()=>{
+             window.GalaxyColonyCommand?.('colonyLocalWorkStatus',{});
+             workStatus.textContent='Requesting authoritative local work board.';
+           });
+           workCancel.addEventListener('click',()=>{
+             const order=Number(workCancelId.value);
+             if(!Number.isSafeInteger(order)||order<=0)return;
+             window.GalaxyColonyCommand?.('colonyLocalWorkCancel',{order});
+             workStatus.textContent='Cancellation requested; awaiting native receipt.';
+           });
+           shuttlePanel.append(workTitle,workPost,workRefresh,
+               workCancelId,workCancel,workStatus,workList);
+           shuttlePanel._shuttleRoster=makeShuttleRosterTracker();
+           shuttlePanel.dataset.shuttleBody=String(body.id);
+           shuttlePanel.dataset.shuttleRegion='';
+           const updateRegion=()=>{
+             const region=latitude.value+','+longitude.value;
+             if(shuttlePanel.dataset.shuttleRegion===region)return;
+             shuttlePanel.dataset.shuttleRegion=region;
+             shuttlePanel._shuttleRoster=makeShuttleRosterTracker();
+             shuttlePanel.querySelectorAll('[data-shuttle-roster]').forEach(
+               slot=>{slot.textContent='Check status';});
+             shuttleState.textContent='Request status for this surface region.';
+             workList.replaceChildren();
+             workStatus.textContent='Check local work board for this region.';
+           };
+           latitude.addEventListener('change',updateRegion);
+           longitude.addEventListener('change',updateRegion);updateRegion();
+           actions.append(shuttlePanel);
+
+           item.append(latitude,longitude,survey,actions);
+         }
          return item;
        }));
+     }
+     if(e.type==='PLANET_CREW_AVAILABLE'){
+       if(!window.GalaxyAvailableSurfaceNpcIds)window.GalaxyAvailableSurfaceNpcIds=[];
+       window.GalaxyAvailableSurfaceNpcIds.push(e.id);
+     }
+     if(e.type==='PLANET_CREW_DONE'){
+       const roster=window.GalaxyAvailableSurfaceNpcIds||[];
+       q('signatureFeedback').textContent=roster.length?
+         'Ready NPCs (assign two by ID): '+roster.join(', '):
+         'No individually available NPC records. Legacy finite crew can be auto-delegated.';
+       window.GalaxyAvailableSurfaceNpcIds=[];
+     }
+     if(e.type==='PLANET_SHUTTLE_PASSENGER'||e.type==='PLANET_SHUTTLE_MANIFEST_DONE'||
+        e.type==='PLANET_SHUTTLE_VISITOR'||e.type==='PLANET_SHUTTLE_VISITORS_DONE'||
+        e.type==='PLANET_SHUTTLE_WORKER'||e.type==='PLANET_SHUTTLE_WORKERS_DONE'){
+       const cards=q('celestialBodyList').querySelectorAll('[data-shuttle-body]');
+       cards.forEach(panel=>{
+         if(panel.dataset.shuttleBody!==String(e.id)||
+            panel.dataset.shuttleRegion!==e.latitude+','+e.longitude)return;
+         try{
+           const updated=panel._shuttleRoster.accept(e);
+           if(!updated)return; // Only publish a complete native roster.
+           const slot=panel.querySelector('[data-shuttle-roster="'+updated.kind+'"]');
+           if(!slot)return;
+           slot.replaceChildren();
+           if(!updated.ids.length){slot.textContent='None';return;}
+           for(const id of updated.ids){
+             const button=document.createElement('button');
+             button.type='button';button.textContent='#'+id;
+             button.setAttribute('aria-label','Select NPC '+id+' for shuttle order');
+             button.addEventListener('click',()=>{
+               const input=panel.querySelector('[data-shuttle-npc-input]');
+               if(input){input.value=String(id);input.focus();}
+             });
+             slot.append(button);
+           }
+         }catch(err){
+           const output=panel.querySelector('output');
+           if(output)output.textContent='Shuttle roster incomplete — request status again.';
+         }
+       });
+     }
+     if(e.type==='PLANET_SHUTTLE_STATUS'||e.type==='PLANET_SHUTTLE_COMMITTED'){
+       const cards=q('celestialBodyList').querySelectorAll('[data-shuttle-body]');
+       cards.forEach(panel=>{
+         if(panel.dataset.shuttleBody!==String(e.id)||
+            panel.dataset.shuttleRegion!==e.latitude+','+e.longitude)return;
+         const out=panel.querySelector('output');
+         if(!out)return;
+         if(e.type==='PLANET_SHUTTLE_COMMITTED'){
+           out.textContent='Committed '+e.operation+' · generation '+e.generation;
+         }else{
+           if(!e.present){
+             panel._shuttleRoster=makeShuttleRosterTracker();
+             panel.querySelectorAll('[data-shuttle-roster]').forEach(
+               slot=>{slot.textContent='None';});
+           }
+           const phases=['Docked in orbit','Descending','Landed at surface','Ascending'];
+           out.textContent=e.present?
+             phases[e.phase]+' · pilot #'+e.pilot+' · water '+e.water+
+             ' kg · food '+e.food+' kg · nutrients '+e.nutrients+
+             ' kg · due tick '+e.arrival+
+             ' · active request '+e.request+' · generation '+e.generation:
+             'No shuttle built at this planetary region.';
+         }
+       });
+       q('signatureFeedback').textContent=e.type==='PLANET_SHUTTLE_COMMITTED'?
+         'Shuttle '+e.operation+' committed for body #'+e.id+'.':
+         'Orbital shuttle status received from the native world.';
+     }
+     if(e.type==='LOCAL_WORK_ITEM'){
+       q('celestialBodyList').querySelectorAll('[data-shuttle-body]').forEach(panel=>{
+         if(panel.dataset.shuttleBody!==String(e.id)||
+            panel.dataset.shuttleRegion!==e.latitude+','+e.longitude)return;
+         const list=panel.querySelector('[data-local-work-list]');
+         if(!list)return;
+         let entry=[...list.children].find(node=>
+           node.dataset.workOrder===String(e.order));
+         if(!entry){
+           entry=document.createElement('div');
+           entry.dataset.workOrder=String(e.order);
+           list.append(entry);
+         }
+         const stages=['Posted — awaiting NPC pilot/resources','Descending',
+           'Loading on surface','Ascending','Delivering to ship',
+           'Completed','Cancelled'];
+         entry.textContent='Contract #'+e.order+': '+e.kg+
+           ' kg '+e.resource+' · '+stages[e.stage]+
+           (e.pilot?' · NPC pilot #'+e.pilot:'');
+       });
+     }
+     if(e.type==='LOCAL_WORK_POSTED'||e.type==='LOCAL_WORK_CANCELLED'){
+       q('signatureFeedback').textContent=
+         'Local transport contract #'+e.order+
+         (e.type==='LOCAL_WORK_POSTED'?' posted.':' cancelled.')+
+         ' World generation '+e.generation+'.';
+     }
+     if(e.type==='LOCAL_WORK_DONE'){
+       q('signatureFeedback').textContent='Local work board returned '+
+         e.count+' contracts (up to 64 shown).';
+     }
+     if(e.type==='PLANET_SITE_STATUS'){
+       const names={1:'NPC descent / equipment unloading',
+                    2:'Spaceport under construction',3:'Spaceport operational'};
+       q('signatureFeedback').textContent=
+         'Orbital site '+e.id+' ('+e.latitude+','+e.longitude+'): '+
+         names[e.phase]+' · '+e.progress+'/'+e.required+
+         ' progress ticks · '+e.workers+' delegated NPCs '+
+         (e.npc1?'#'+e.npc1+' and #'+e.npc2:'(legacy finite crew)')+
+         ' · surface food '+e.food+' kg, water '+e.water+
+         ' kg, oxygen '+e.oxygen+' kg, recovered nutrients '+e.nutrients+
+         ' kg. Autonomous policy '+e.policy+
+         ' · condition '+e.condition+'% · work cycles '+e.cycles+
+         ' · paused/stalled cycles '+e.stalled+' · extracted '+
+         e.extracted+' kg · repairs '+e.repairs+'.';
+     }
+     if(e.type==='PLANET_POLICY_COMMITTED'){
+       const names=['Paused','Farming','Water extraction','Nutrient extraction',
+                    'Maintenance'];
+       q('signatureFeedback').textContent=
+         'NPC planetary policy committed: '+names[e.policy]+
+         ' at body #'+e.id+' region ('+e.latitude+','+e.longitude+
+         '). Autonomous work now follows simulation ticks; generation '+
+         e.generation+'.';
+     }
+     if(e.type==='PLANET_OPERATION_COMMITTED'){
+       q('signatureFeedback').textContent=
+          (e.action==='PLANET_BUILD'?
+           'NPC surface delegation accepted; spaceport construction is underway. ':
+           'Planetary operation committed: '+e.action+'. ')+
+          'Body #'+e.id+' region ('+e.latitude+','+e.longitude+
+          '), world generation '+e.generation+
+          '. Use Check spaceport progress for the current state.';
+     }
+     if(e.type==='PLANET_REGION'){
+       const terrains=['Deep ocean','Shallow sea','Coast','Wetland','Grassland',
+         'Forest','Dryland','Desert','Mountain','Ice','Bare rock'];
+       const channels=['No channel','Dry arroyo','Seasonal stream','Perennial river'];
+       q('signatureFeedback').textContent=
+         'Planet #'+e.id+' region ('+e.latitude+','+e.longitude+') · '+
+         terrains[e.terrain]+' · elevation '+e.elevation+
+         ' · '+channels[e.watercourse]+' · watershed runoff score '+e.runoff+
+         ' · geographic version '+e.revision+
+         ' (survey potential, not extractable water).';
+     }
+     if(e.type==='OASIS_REGION'){
+       if(celestialBodies.has(e.id)){
+         const rows=[...celestialBodies.keys()];
+         const card=q('celestialBodyList').children[rows.indexOf(e.id)];
+         if(card && !card.dataset.oasisRegion){
+           card.dataset.oasisRegion='1';
+           const note=document.createElement('div');
+           note.textContent='Finite oasis source waypoint: region ('+
+             e.latitude+','+e.longitude+') · version '+e.revision+
+             '. Survey and physically arrive before construction or extraction.';
+           card.appendChild(note);
+           const inputs=card.querySelectorAll('input[type="number"]');
+           if(inputs.length>=2){
+             inputs[0].value=String(e.latitude);
+             inputs[1].value=String(e.longitude);
+           }
+         }
+       }
      }
      if(e.type==='OASIS_PROSPECT'){
        if(celestialBodies.has(e.id)){

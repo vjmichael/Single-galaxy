@@ -355,7 +355,23 @@ SurveyArchive::SurveyArchive(const std::string& path) {
             "architecture INTEGER NOT NULL CHECK(architecture BETWEEN 0 AND 3),"
             "star_count INTEGER NOT NULL CHECK(star_count BETWEEN 1 AND 3),"
             "band_count INTEGER NOT NULL CHECK(band_count BETWEEN 1 AND 20),"
-            "PRIMARY KEY(player,system));",
+            "PRIMARY KEY(player,system));"
+            "CREATE TABLE IF NOT EXISTS planetary_regions("
+            "player INTEGER NOT NULL CHECK(player>0),"
+            "system INTEGER NOT NULL CHECK(system>0),"
+            "body INTEGER NOT NULL CHECK(body>0),"
+            "latitude INTEGER NOT NULL CHECK(latitude BETWEEN 0 AND 35),"
+            "longitude INTEGER NOT NULL CHECK(longitude BETWEEN 0 AND 71),"
+            "revision INTEGER NOT NULL CHECK(revision>0),"
+            "elevation INTEGER NOT NULL,"
+            "ocean INTEGER NOT NULL CHECK(ocean IN (0,1)),"
+            "terrain INTEGER NOT NULL CHECK(terrain BETWEEN 0 AND 10),"
+            "watercourse INTEGER NOT NULL CHECK(watercourse BETWEEN 0 AND 3),"
+            "drainage INTEGER NOT NULL CHECK(drainage>=0),"
+            "down_lat INTEGER NOT NULL CHECK(down_lat BETWEEN -1 AND 35),"
+            "down_lon INTEGER NOT NULL CHECK(down_lon BETWEEN -1 AND 71),"
+            "observed_tick INTEGER NOT NULL CHECK(observed_tick>0),"
+            "PRIMARY KEY(player,system,body,latitude,longitude,revision));",
             nullptr,nullptr,nullptr),db_,"create survey archive");
     } catch(...) {sqlite3_close(db_);db_=nullptr;throw;}
 }
@@ -401,6 +417,90 @@ SurveyArchive::known_system_catalogue(PlayerId owner,std::uint32_t system) const
         StellarArchitecture(sqlite3_column_int(query.get(),3)),
         std::uint8_t(sqlite3_column_int(query.get(),4)),
         std::uint32_t(sqlite3_column_int(query.get(),5))};
+}
+std::optional<SurveyArchive::PlanetRegionRecord>
+SurveyArchive::known_planetary_region(PlayerId owner,std::uint32_t system,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,
+    std::uint32_t revision) const {
+    if(!owner || !system || !body || !revision || latitude>=36 ||
+       longitude>=72 || owner>std::uint64_t(std::numeric_limits<std::int64_t>::max()) ||
+       body>std::uint64_t(std::numeric_limits<std::int64_t>::max()))
+        throw std::invalid_argument("invalid planetary region knowledge selector");
+    Stmt query(db_,"SELECT elevation,ocean,terrain,watercourse,drainage,"
+        "down_lat,down_lon,observed_tick FROM planetary_regions WHERE "
+        "player=? AND system=? AND body=? AND latitude=? AND longitude=? AND revision=?");
+    sqlite3_bind_int64(query.get(),1,sqlite3_int64(owner));
+    sqlite3_bind_int(query.get(),2,int(system));
+    sqlite3_bind_int64(query.get(),3,sqlite3_int64(body));
+    sqlite3_bind_int(query.get(),4,int(latitude));
+    sqlite3_bind_int(query.get(),5,int(longitude));
+    sqlite3_bind_int64(query.get(),6,sqlite3_int64(revision));
+    if(query.step()!=SQLITE_ROW)return std::nullopt;
+    PlanetRegionRecord result{};
+    result.body=body;result.latitude=latitude;result.longitude=longitude;
+    result.revision=revision;
+    result.elevation=sqlite3_column_int(query.get(),0);
+    result.ocean=std::uint8_t(sqlite3_column_int(query.get(),1));
+    result.terrain=std::uint8_t(sqlite3_column_int(query.get(),2));
+    result.watercourse=std::uint8_t(sqlite3_column_int(query.get(),3));
+    result.drainage=std::uint64_t(sqlite3_column_int64(query.get(),4));
+    result.down_latitude=sqlite3_column_int(query.get(),5);
+    result.down_longitude=sqlite3_column_int(query.get(),6);
+    result.observed_tick=std::uint64_t(sqlite3_column_int64(query.get(),7));
+    return result;
+}
+bool SurveyArchive::record_planetary_region(PlayerId owner,std::uint32_t system,
+    const planetary::GeographicSite& site,std::uint64_t observed_tick) {
+    const auto body=site.key.body;
+    const auto latitude=site.key.latitude,longitude=site.key.longitude;
+    const auto revision=site.key.revision;
+    const auto& r=site.landscape.region;
+    if(!owner || !system || !body || !revision || !observed_tick ||
+       owner>std::uint64_t(std::numeric_limits<std::int64_t>::max()) ||
+       body>std::uint64_t(std::numeric_limits<std::int64_t>::max()) ||
+       observed_tick>std::uint64_t(std::numeric_limits<std::int64_t>::max()) ||
+       latitude>=36 || longitude>=72 || site.catchment_runoff>
+       std::uint64_t(std::numeric_limits<std::int64_t>::max()))
+        throw std::invalid_argument("invalid authoritative planetary survey");
+    const auto old=known_planetary_region(owner,system,body,latitude,longitude,revision);
+    if(old && (old->elevation!=r.elevation || old->ocean!=std::uint8_t(r.surface_water) ||
+       old->terrain!=std::uint8_t(r.terrain) ||
+       old->watercourse!=std::uint8_t(site.landscape.watercourse) ||
+       old->drainage!=site.catchment_runoff ||
+       old->down_latitude!=site.downstream_latitude ||
+       old->down_longitude!=site.downstream_longitude))
+        throw std::runtime_error("planet geography changed within saved generator revision");
+    Stmt stmt(db_,"INSERT INTO planetary_regions(player,system,body,latitude,longitude,"
+        "revision,elevation,ocean,terrain,watercourse,drainage,down_lat,down_lon,observed_tick) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(player,system,body,latitude,longitude,revision) "
+        "DO UPDATE SET observed_tick=MAX(planetary_regions.observed_tick,excluded.observed_tick) "
+        "WHERE planetary_regions.elevation=excluded.elevation "
+        "AND planetary_regions.ocean=excluded.ocean "
+        "AND planetary_regions.terrain=excluded.terrain "
+        "AND planetary_regions.watercourse=excluded.watercourse "
+        "AND planetary_regions.drainage=excluded.drainage "
+        "AND planetary_regions.down_lat=excluded.down_lat "
+        "AND planetary_regions.down_lon=excluded.down_lon");
+    sqlite3_bind_int64(stmt.get(),1,sqlite3_int64(owner));
+    sqlite3_bind_int(stmt.get(),2,int(system));
+    sqlite3_bind_int64(stmt.get(),3,sqlite3_int64(body));
+    sqlite3_bind_int(stmt.get(),4,int(latitude));
+    sqlite3_bind_int(stmt.get(),5,int(longitude));
+    sqlite3_bind_int64(stmt.get(),6,sqlite3_int64(revision));
+    sqlite3_bind_int(stmt.get(),7,r.elevation);
+    sqlite3_bind_int(stmt.get(),8,r.surface_water?1:0);
+    sqlite3_bind_int(stmt.get(),9,int(r.terrain));
+    sqlite3_bind_int(stmt.get(),10,int(site.landscape.watercourse));
+    sqlite3_bind_int64(stmt.get(),11,sqlite3_int64(site.catchment_runoff));
+    sqlite3_bind_int(stmt.get(),12,site.downstream_latitude);
+    sqlite3_bind_int(stmt.get(),13,site.downstream_longitude);
+    sqlite3_bind_int64(stmt.get(),14,sqlite3_int64(observed_tick));
+    stmt.step();
+    // An existing conflicting revision can never be silently replaced,
+    // including when concurrent survey writers race after an earlier read.
+    if(sqlite3_changes(db_)==0)
+        throw std::runtime_error("planet geography revision conflict at SQLite commit");
+    return true;
 }
 SurveyArchive::~SurveyArchive(){if(db_)sqlite3_close(db_);}
 bool SurveyArchive::record(const ScanObservation& o) {

@@ -242,6 +242,10 @@ struct SocietyMigrationPlan {
     std::vector<DependentMove> dependents;
     EntityId origin=0,destination=0;
     std::string family_scope,region_scope,origin_colony,destination_colony;
+    // Universal migration endpoints: append only to preserve all existing
+    // aggregate initialization call sites and legacy ship-to-ship plans.
+    transport::LocationKind origin_kind=transport::LocationKind::ColonyShip;
+    transport::LocationKind destination_kind=transport::LocationKind::ColonyShip;
 };
 
 // DEMOG-05q6e2: ART02 dependent identity has physical custody in the
@@ -845,6 +849,61 @@ public:
     bool complete_celestial_transit(std::uint64_t request_id,
         FailPoint fail=FailPoint::None);
     // Real finite resource collection, committed atomically before publication.
+    // PLAY-13D.3: atomic source-backed player site actions. These reuse
+    // Simulation's exact geography and the existing world SQLite journal.
+    bool build_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,FailPoint fail=FailPoint::None);
+    bool build_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,
+        std::uint64_t first_npc,std::uint64_t second_npc,
+        FailPoint fail=FailPoint::None);
+    bool build_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,FailPoint fail=FailPoint::None);
+    // Player's finite local logistics work board. NPC fulfillment advances
+    // only within the existing atomic world step; no parallel job database.
+    bool post_local_delivery_order(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& site,ShuttleCargo cargo,
+        std::int64_t kilograms,std::uint64_t order_id,
+        FailPoint fail=FailPoint::None);
+    bool cancel_local_delivery_order(PlayerId owner,std::uint64_t order_id,
+        FailPoint fail=FailPoint::None);
+    bool load_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,bool water,std::int64_t kg,FailPoint fail=FailPoint::None);
+    bool unload_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,bool water,std::int64_t kg,FailPoint fail=FailPoint::None);
+    bool load_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,ShuttleCargo cargo,std::int64_t kg,FailPoint fail=FailPoint::None);
+    bool unload_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,ShuttleCargo cargo,std::int64_t kg,FailPoint fail=FailPoint::None);
+    bool assign_planetary_shuttle_pilot(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,std::uint64_t npc,FailPoint fail=FailPoint::None);
+    bool book_planetary_shuttle_passenger(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc,bool board,
+        FailPoint fail=FailPoint::None);
+    bool assign_planetary_shuttle_visitor_duty(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc,bool assign,
+        FailPoint fail=FailPoint::None);
+    bool transfer_planetary_shuttle_visitor(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc,bool reboard,
+        FailPoint fail=FailPoint::None);
+    bool launch_planetary_shuttle(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t request_id,bool ascend,
+        FailPoint fail=FailPoint::None);
+    bool equip_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,bool farm,FailPoint fail=FailPoint::None);
+    bool supply_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,bool water,std::int64_t kg,
+        FailPoint fail=FailPoint::None);
+    // Owner-controlled remote work directive: no ship inventory teleportation.
+    bool set_planetary_workforce_policy(PlayerId owner,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,std::uint8_t policy,
+        FailPoint fail=FailPoint::None);
+    bool support_planetary_crew(PlayerId owner,EntityId ship,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,bool oxygen,std::int64_t kg,
+        FailPoint fail=FailPoint::None);
+    bool cultivate_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,std::int64_t batches,
+        FailPoint fail=FailPoint::None);
+    bool extract_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,bool water,std::int64_t kg,
+        FailPoint fail=FailPoint::None);
+    bool retrieve_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,bool food,std::int64_t kg,
+        FailPoint fail=FailPoint::None);
     bool install_oasis_extractor(PlayerId owner,EntityId ship,
         std::uint64_t body,FailPoint fail=FailPoint::None);
     bool collect_oasis_resource(PlayerId owner,EntityId ship,std::uint64_t body,

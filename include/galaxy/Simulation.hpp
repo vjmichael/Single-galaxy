@@ -2,6 +2,9 @@
 
 #include "galaxy/Inventory.hpp"
 #include "galaxy/Astronomy.hpp"
+#include "galaxy/PlanetaryGeography.hpp"
+#include "galaxy/NpcTransport.hpp"
+#include "galaxy/UniversalTransport.hpp"
 #include <array>
 #include <cstdint>
 #include <limits>
@@ -9,6 +12,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace galaxy {
@@ -204,7 +208,7 @@ struct WaterworksFacility {
 // B7.0n-A/B: bounded, persistent individuals. These are identity/skill records,
 // not 24 expensive autonomous decision processes. Existing headcount and mass
 // accounting remain authoritative until the migration is completed.
-enum class NpcRole : int { Ship=0, Farm=1, Habitat=2 };
+enum class NpcRole : int { Ship=0, Farm=1, Habitat=2, PlanetarySurface=3 };
 struct NpcRecord {
     std::uint64_t id=0;
     EntityId home_ship=0, location=0;
@@ -213,11 +217,28 @@ struct NpcRecord {
     // Zero for legacy assigned custody; future passenger transfers require a voyage.
     std::uint64_t transport_id=0;
     EntityId assigned_site=0; // v32: permanent assignment, independent of physical location
+    // v86: legal residence is neither physical custody nor job assignment.
+    // A zero residence ID is the legacy compatibility alias for home_ship.
+    // The historical home_ship still identifies the original resource/crew
+    // authority and must not be silently treated as planetary residency.
+    transport::LocationKind residence_kind=transport::LocationKind::ColonyShip;
+    EntityId residence_id=0;
+    constexpr transport::Endpoint legal_residence() const noexcept {
+        return {residence_kind,residence_id?residence_id:home_ship};
+    }
 };
 // Distinguish permanent workforce assignment from physical custody.
 // This view is read-only until the world-owned transfer journal is implemented.
 // v36: immutable tombstone with the full NPC identity/assignment snapshot.
 // The original live record is removed only after committing an explicit death.
+// Recomputed directly from canonical named NPCs; not a second census ledger.
+// A temporarily traveling worker stays a resident of the same colony.
+struct NpcResidenceAudit {
+    std::map<transport::Endpoint,std::uint64_t> living_by_residence;
+    std::map<EntityId,std::uint64_t> physically_present;
+    std::uint64_t total_living=0;
+    bool reconciled=true;
+};
 struct NpcCasualty {
     NpcRecord identity{};
     std::uint64_t death_tick=0, command_id=0;
@@ -408,6 +429,89 @@ struct OasisExtractor {
     std::uint8_t condition=100;
     std::uint16_t energy_units=0; // bounded harvested local solar energy
     std::uint64_t cycles=0;
+};
+// PLAY-13D.3: one persistent facility per physical body+surface cell.
+// All module tonnage is retained in embodied_ore. All stored resources are kg.
+// The ship remains the physical logistics origin; no free settlement population.
+struct PlanetarySiteFacility {
+    planetary::PlanetaryRegionKey region{};
+    PlayerId owner=0;
+    EntityId source_ship=0;
+    std::int64_t embodied_ore=4;
+    bool farm=false, extractor=false;
+    std::int64_t water_kg=0, nutrients_kg=0, food_kg=0, wastewater_kg=0;
+    std::uint64_t harvest_cycles=0;
+    // PLAY-13D.4: player remains in orbit; only finite NPCs deploy.
+    // 1=surface transfer, 2=construction, 3=operational.
+    std::uint8_t spaceport_phase=1;
+    std::uint64_t construction_progress=0;
+    std::uint64_t construction_required=240;
+    std::uint64_t surface_location=0;
+    std::array<std::uint64_t,2> delegated_npcs{{0,0}};
+    std::int64_t assigned_workers=2; // tied to ship headcount / named roster
+    std::int64_t oxygen_kg=0, co2_kg=0, organic_waste_kg=0;
+    std::uint64_t worker_support_cycles=0;
+    // PLAY-13D.4B policy 0=paused, 1=farm, 2=water, 3=nutrients,
+    // 4=maintenance. All output is physically debited/credited in world state.
+    std::uint8_t workforce_policy=0;
+    std::uint8_t equipment_condition=100;
+    std::uint64_t last_work_tick=0;
+    std::uint64_t autonomous_cycles=0;
+    std::uint64_t stalled_cycles=0;
+    std::uint64_t auto_extracted_kg=0;
+    std::uint64_t repair_cycles=0;
+};
+using PlanetarySiteKey = std::tuple<std::uint64_t,std::uint16_t,std::uint16_t,std::uint32_t>;
+// PLAY-13D: cargo identity is independent of player/NPC transport roles.
+// Nutrients are a finite, potentially planet-specific resource, not food.
+enum class ShuttleCargo : std::uint8_t { Water=0, Food=1, Nutrients=2 };
+// 4C.2: docked-orbit shuttle, fabricated from real ship modules.
+// The captain is assigned but stays aboard the parent ship until 4C.3.
+struct PlanetaryShuttleState {
+    PlayerId owner=0;
+    EntityId source_ship=0;
+    std::uint64_t pilot_npc=0;
+    std::int64_t dry_mass_ore=4;
+    std::int64_t water_kg=0, food_kg=0;
+    // v81 committed flight lifecycle: 0 docked orbit, 1 descending,
+    // 2 landed, 3 ascending. No external real-time worker required.
+    std::uint8_t flight_phase=0;
+    std::uint64_t flight_request=0, arrival_tick=0;
+    std::uint64_t descent_receipt=0, ascent_receipt=0;
+    // v82: exact sorted finite NPC transport manifest (pilot excluded), 3 seats.
+    // Uses the same authoritative NpcRecord, never copies passengers.
+    std::vector<std::uint64_t> passenger_ids;
+    // v83: named visitors physically disembarked at this site, retained in
+    // the shuttle transport ledger until explicitly reboarded. No new NPCs.
+    std::vector<std::uint64_t> disembarked_ids;
+    // v84: subset of surface visitors explicitly delegated temporary work.
+    std::vector<std::uint64_t> duty_ids;
+    // v85: each physically disembarked visitor retains THEIR OWN descent
+    // receipt even if this shuttle later makes unrelated flights.
+    // Legacy v84 visitors remain readable but are not certified migration
+    // arrivals without a new authenticated journey.
+    std::map<std::uint64_t,std::uint64_t> visitor_arrival_receipts;
+    // v87: finite third cargo type. Appended to retain all old positional
+    // aggregate construction and v80-v86 snapshot compatibility.
+    std::int64_t nutrients_kg=0;
+};
+// PLAY-13D.4F: finite local work board at the player's existing colony ship.
+// One assigned real shuttle/NPC executes one site-to-orbit job at a time.
+// Contracts hold NO stock: actual inventories remain in Simulation.
+enum class LocalDeliveryStage : std::uint8_t {
+    Posted=0, Descending=1, Loading=2, Ascending=3,
+    Delivering=4, Complete=5, Cancelled=6
+};
+struct LocalDeliveryOrder {
+    std::uint64_t id=0;
+    PlayerId owner=0;
+    EntityId board_ship=0;
+    PlanetarySiteKey site{};
+    ShuttleCargo cargo=ShuttleCargo::Nutrients;
+    std::int64_t kilograms=0;
+    std::uint64_t assigned_pilot=0;
+    LocalDeliveryStage stage=LocalDeliveryStage::Posted;
+    std::uint64_t created_tick=0;
 };
 struct PhysicalOasisReserve {
     std::int64_t water_kg=0,nutrients_kg=0;
@@ -675,6 +779,7 @@ public:
     const std::map<std::uint64_t,MedicShift>& medic_shifts() const {return medic_shifts_;}
     const std::map<EntityId,MobileMedicalKit>& mobile_medical_kits() const {return mobile_medical_kits_;}
     ColonyMedicalAudit assess_medical_population() const;
+    NpcResidenceAudit assess_npc_residence() const;
     // A canonical, read-only job dispatch check. The caller remains responsible
     // for role qualification, schedules and facility-specific requirements.
     bool npc_available_for_duty(std::uint64_t npc_id) const;
@@ -693,6 +798,9 @@ public:
         const std::vector<LegacyVoyageManifest>& verified_manifests);
     void upgrade_passenger_snapshot_format();
     void upgrade_assignment_snapshot_format();
+    // Explicit offline/host-staged compatibility upgrade. The caller must
+    // commit the resulting snapshot via the existing world journal.
+    void upgrade_legal_residence_snapshot_format();
     // AUTO-04D.4/v57: genesis-only opt-in for physically accountable onboard
     // passengers. Preexisting worlds keep their historical needs semantics
     // until a separately journaled and verified migration is implemented.
@@ -703,6 +811,10 @@ public:
     // their original behavior unless an explicit journaled migration is built.
     void enable_medical_workforce_rules();
     NpcCustodyView npc_custody(std::uint64_t npc_id) const;
+    // Read-only proof resolved from canonical ferry/shuttle vehicle state.
+    // The caller never constructs its own authoritative arrival evidence.
+    std::optional<transport::NpcTransport> npc_transport_arrival(
+        std::uint64_t receipt,std::uint64_t npc) const;
     std::size_t passengers_aboard(EntityId ship) const;
     // Physical compartment occupancy, including native crew and real travelers.
     // Required by v57; no double-charge for crew who boarded another ship.
@@ -896,6 +1008,88 @@ public:
     // Read-only survey of deterministic system metadata; no fabricated physical bodies.
     std::optional<AstronomicalProfile> scan_celestial_profile(PlayerId owner,EntityId ship) const;
     std::vector<PhysicalCelestialBody> scan_physical_celestials(PlayerId owner,EntityId ship) const;
+    // PGF-01B.2: authenticated, read-only planetary geography survey. The
+    // returned site and surface projection originate from one watershed map.
+    // Body IDs must already exist in the authoritative physical catalogue.
+    const std::map<PlanetarySiteKey,PlanetarySiteFacility>& planetary_sites() const {
+        return planetary_sites_;
+    }
+    // The existing finite body-level oasis reservoir is anchored to one
+    // deterministic exposed surface cell. No worldwide resource teleport.
+    std::optional<planetary::PlanetaryRegionKey> planetary_oasis_source_region(
+        PlayerId owner,EntityId ship,std::uint64_t body) const;
+    bool build_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,
+        std::uint64_t first_npc=0,std::uint64_t second_npc=0);
+    // Host-visible crew dispatch status: no player avatar or surface render.
+    bool planetary_spaceport_operational(std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude) const;
+    // Policy is an administrative command, not remote physical cargo transfer.
+    // Owner may update it from orbit after site commissioning.
+    bool set_planetary_workforce_policy(PlayerId owner,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,std::uint8_t policy);
+
+    // Install only with more real manufactured modules and appropriate ground.
+    bool build_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key);
+    bool load_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,bool water,std::int64_t kg);
+    bool unload_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,bool water,std::int64_t kg);
+    // Typed manifest: water, food and extracted nutrients use one physical
+    // 1,000 kg capacity and the same committed ship/site transfer path.
+    bool load_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,ShuttleCargo cargo,std::int64_t kg);
+    bool unload_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,ShuttleCargo cargo,std::int64_t kg);
+    bool assign_planetary_shuttle_pilot(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,std::uint64_t npc);
+    // Book/release actual named NPCs against the shuttle transport manifest.
+    // Only orbital berth modifications; voyage departures move all occupants.
+    bool book_planetary_shuttle_passenger(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc,bool board);
+    // At surface: release a booked visitor from the shuttle, or rebook a
+    // previously disembarked visitor into an available physical passenger seat.
+    bool transfer_planetary_shuttle_visitor(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc,bool reboard);
+    // Explicitly authorize/revoke temporary surface work for a disembarked
+    // visitor. This is not immigration or a permanent workforce transfer.
+    bool assign_planetary_shuttle_visitor_duty(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc,bool assign);
+    // One named pilot in authoritative NPC custody; cargo stays on the shuttle
+    // until unloading after committed arrival. Requests are single use per leg.
+    bool launch_planetary_shuttle(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t request_id,bool ascend);
+    void process_planetary_shuttle_flights();
+    const std::map<PlanetarySiteKey,PlanetaryShuttleState>& planetary_shuttles() const noexcept {return planetary_shuttles_;}
+    // One read-only mixed NPC/resource manifest generated from the SAME
+    // physical shuttle and canonical NPC roster. Not an inventory copy.
+    std::optional<transport::Manifest> planetary_transport_manifest(
+        const PlanetarySiteKey& key) const;
+    // Authoritative player-created local work board. The first executable
+    // route is one planetary site -> its existing orbiting colony ship.
+    // Other colonies require an actual onward ship/route; no teleport.
+    const std::map<std::uint64_t,LocalDeliveryOrder>& local_delivery_board() const noexcept {
+        return local_delivery_orders_;
+    }
+    bool post_local_delivery_order(PlayerId owner,EntityId board_ship,
+        const PlanetarySiteKey& site,ShuttleCargo cargo,
+        std::int64_t kilograms,std::uint64_t order_id);
+    bool cancel_local_delivery_order(PlayerId owner,std::uint64_t order_id);
+    void process_local_delivery_board();
+    bool equip_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,bool farm);
+    // Ship and site remain in identical anchored celestial frame.
+    bool supply_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,bool water,std::int64_t kilograms);
+    // Orbital resupply of the real surface NPC team. Water resupply shares the
+    // existing site water stock; these calls transfer food or breathable oxygen.
+    bool support_planetary_crew(PlayerId owner,EntityId ship,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,bool oxygen,std::int64_t kg);
+    bool cultivate_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,std::int64_t batches);
+    // Finite, explicitly genesis-funded oasis matter moves to a SITE stock.
+    bool extract_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,bool water,std::int64_t kilograms);
+    bool retrieve_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,bool food,std::int64_t kilograms);
+    std::optional<planetary::GeographicSite> scan_planetary_geography(
+        PlayerId owner, EntityId ship, std::uint64_t body_id,
+        std::uint16_t latitude, std::uint16_t longitude) const;
     // A persistent celestial body can be addressed by ID as a future navigation
     // anchor; this does not authorize warp, construction or landing.
     std::optional<PhysicalCelestialBody> celestial_navigation_anchor(
@@ -946,6 +1140,7 @@ private:
     void process_gate_maintenance();
     void process_colony_needs();
     void process_oasis_extractors();
+    void process_planetary_surface_operations();
     void process_farms();
     void move_npc_records(EntityId ship, EntityId site, NpcRole role, std::int64_t delta);
     void award_farm_experience(EntityId site);
@@ -969,7 +1164,11 @@ private:
     std::map<EntityId,std::uint64_t> local_entity_anchors_; // v73 nonship frame custody
     std::map<std::uint64_t,LocalCelestialEnvironment> local_environments_; // v74
     std::map<std::uint64_t,PhysicalOasisReserve> oasis_reserves_; // v75 explicit finite sources
-    std::map<EntityId,OasisExtractor> oasis_extractors_; // v76 real installed machinery
+    std::map<EntityId,OasisExtractor> oasis_extractors_;
+    std::map<PlanetarySiteKey,PlanetarySiteFacility> planetary_sites_; // v76 real installed machinery
+    std::map<PlanetarySiteKey,PlanetaryShuttleState> planetary_shuttles_; // v80
+    std::map<std::uint64_t,LocalDeliveryOrder> local_delivery_orders_; // v88
+    std::set<std::uint64_t> shuttle_flight_request_ids_; // v81 replay rejection
     std::map<std::uint64_t,PendingCelestialTransit> pending_celestial_transits_;
     std::map<std::uint64_t,CompletedCelestialTransit> completed_celestial_transits_;
     std::map<std::uint32_t,std::vector<PhysicalCelestialBody>> physical_celestial_systems_;

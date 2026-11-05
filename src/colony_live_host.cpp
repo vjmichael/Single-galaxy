@@ -3,6 +3,7 @@
 // stdout SGVIEW frames; stderr bounded COLONY telemetry for the local relay.
 #include "galaxy/Simulation.hpp"
 #include "galaxy/Persistence.hpp"
+#include "galaxy/OrbitalShuttleCommands.hpp"
 #include "galaxy/Galaxy.hpp"
 #include "galaxy/ClientContract.hpp"
 #include "galaxy/ColonySafety.hpp"
@@ -14,6 +15,7 @@
 #include <stdexcept>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <memory>
 #include <random>
 #include <set>
@@ -106,11 +108,18 @@ std::vector<std::string> split(const std::string& s){
     return parts;
 }
 std::int64_t integer(const std::string& s){
-    if(s.empty()||s.size()>9||s[0]=='+' || s[0]=='-' && s.size()==1)
+    // Body IDs use the entire positive signed-64 range, not the old
+    // nine-digit parser limit. Every command still validates its own bounds.
+    if(s.empty()||s.size()>20||s[0]=='+'||
+       (s[0]=='-' && (s.size()==1||s[1]=='0'))||
+       (s.size()>1 && s[0]=='0'))
         throw std::invalid_argument("bad number");
     for(std::size_t i=s[0]=='-'?1:0;i<s.size();++i)
         if(s[i]<'0'||s[i]>'9')throw std::invalid_argument("bad number");
-    return std::stoll(s);
+    std::size_t consumed=0;
+    const auto value=std::stoll(s,&consumed,10);
+    if(consumed!=s.size())throw std::invalid_argument("bad number");
+    return value;
 }
 void announce(const Simulation& w,const std::string& text){
     std::cerr<<"COLONY|1|"<<w.tick()<<'|'<<text<<'\n'<<std::flush;
@@ -502,6 +511,402 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
         }
         return;
     }
+    // Orbital NPC delegation: player never descends. Crew and project status
+    // are native read-models; construction advances only in committed ticks.
+    if(v.size()==1 && v[0]=="PLANET_CREW"){
+        for(const auto& [id,n]:world.world().npc_records()){
+            if(n.home_ship!=ship || n.location!=ship ||
+               n.role!=NpcRole::Ship || n.assigned_site!=ship ||
+               !world.world().npc_available_for_duty(id))continue;
+            bool guardian=false;
+            for(const auto& [dependent,child]:world.world().physical_dependents()){
+                (void)dependent;
+                if(child.guardian_id==id){guardian=true;break;}
+            }
+            if(!guardian)announce(world.world(),
+                "PLANET_CREW_AVAILABLE|"+std::to_string(id));
+        }
+        announce(world.world(),"PLANET_CREW_DONE");
+        return;
+    }
+    if(v.size()==4 && v[0]=="PLANET_SITE_STATUS"){
+        try{
+            const auto body=integer(v[1]),lat=integer(v[2]),lon=integer(v[3]);
+            if(body<=0 || lat<0 || lat>=36 || lon<0 || lon>=72)
+                throw std::invalid_argument("invalid planet site status");
+            const auto key=PlanetarySiteKey{
+                std::uint64_t(body),std::uint16_t(lat),std::uint16_t(lon),1};
+            const auto it=world.world().planetary_sites().find(key);
+            if(it==world.world().planetary_sites().end() ||
+               it->second.owner!=principal)
+                throw std::invalid_argument("planet site not owned");
+            const auto& site=it->second;
+            announce(world.world(),"PLANET_SITE_STATUS|"+
+                std::to_string(body)+"|"+std::to_string(lat)+"|"+
+                std::to_string(lon)+"|"+std::to_string(site.spaceport_phase)+"|"+
+                std::to_string(site.construction_progress)+"|"+
+                std::to_string(site.construction_required)+"|"+
+                std::to_string(site.assigned_workers)+"|"+
+                std::to_string(site.food_kg)+"|"+
+                std::to_string(site.water_kg)+"|"+
+                std::to_string(site.oxygen_kg)+"|"+
+                std::to_string(site.delegated_npcs[0])+"|"+
+                std::to_string(site.delegated_npcs[1])+"|"+
+                std::to_string(unsigned(site.workforce_policy))+"|"+
+                std::to_string(unsigned(site.equipment_condition))+"|"+
+                std::to_string(site.autonomous_cycles)+"|"+
+                std::to_string(site.stalled_cycles)+"|"+
+                std::to_string(site.auto_extracted_kg)+"|"+
+                std::to_string(site.repair_cycles)+
+                (site.nutrients_kg>0?"|"+std::to_string(site.nutrients_kg):""));
+        }catch(const std::exception&){
+            announce(world.world(),"ERROR|PLANET_SITE_STATUS_DENIED");
+        }
+        return;
+    }
+    // The owner's LOCAL work board: player posts a finite pickup contract;
+    // the named NPC pilot then fulfills it via existing physical shuttle
+    // flights and stock transfers on committed simulation ticks.
+    if(!v.empty() && (v[0]=="LOCAL_WORK_POST" ||
+                       v[0]=="LOCAL_WORK_CANCEL" ||
+                       v[0]=="LOCAL_WORK_STATUS")) {
+        try {
+            if(v[0]=="LOCAL_WORK_STATUS" && v.size()==1) {
+                std::uint64_t count=0;
+                for(const auto& [id,job]:world.world().local_delivery_board()) {
+                    if(job.owner!=principal || job.board_ship!=ship)continue;
+                    if(count>=64)break; // bounded display, not a second ledger
+                    const auto kind=job.cargo==ShuttleCargo::Water?"WATER":
+                                    job.cargo==ShuttleCargo::Food?"FOOD":"NUTRIENTS";
+                    announce(world.world(),"LOCAL_WORK_ITEM|"+std::to_string(id)+"|"+
+                        std::to_string(std::get<0>(job.site))+"|"+
+                        std::to_string(std::get<1>(job.site))+"|"+
+                        std::to_string(std::get<2>(job.site))+"|"+kind+"|"+
+                        std::to_string(job.kilograms)+"|"+
+                        std::to_string(unsigned(job.stage))+"|"+
+                        std::to_string(job.assigned_pilot));
+                    ++count;
+                }
+                announce(world.world(),"LOCAL_WORK_DONE|"+std::to_string(count));
+            }else if(v[0]=="LOCAL_WORK_POST" && v.size()==7) {
+                const auto body=integer(v[1]),lat=integer(v[2]),lon=integer(v[3]);
+                const auto kg=integer(v[5]),id=integer(v[6]);
+                if(body<=0 || lat<0 || lat>=36 || lon<0 || lon>=72 ||
+                   kg<=0 || kg>1000 || id<=0 ||
+                   id>=(std::int64_t{1}<<50))
+                    throw std::invalid_argument("invalid local transport contract");
+                ShuttleCargo cargo{};
+                if(v[4]=="WATER")cargo=ShuttleCargo::Water;
+                else if(v[4]=="FOOD")cargo=ShuttleCargo::Food;
+                else if(v[4]=="NUTRIENTS")cargo=ShuttleCargo::Nutrients;
+                else throw std::invalid_argument("unsupported contract resource");
+                if(!world.post_local_delivery_order(principal,ship,
+                    PlanetarySiteKey{std::uint64_t(body),std::uint16_t(lat),
+                                     std::uint16_t(lon),1},
+                    cargo,kg,std::uint64_t(id))) {
+                    announce(world.world(),"ERROR|LOCAL_WORK_DENIED");
+                    return;
+                }
+                announce(world.world(),"LOCAL_WORK_POSTED|"+std::to_string(id)+"|"+
+                         std::to_string(world.generation()));
+            }else if(v[0]=="LOCAL_WORK_CANCEL" && v.size()==2) {
+                const auto id=integer(v[1]);
+                if(id<=0 || !world.cancel_local_delivery_order(
+                    principal,std::uint64_t(id))) {
+                    announce(world.world(),"ERROR|LOCAL_WORK_DENIED");
+                    return;
+                }
+                announce(world.world(),"LOCAL_WORK_CANCELLED|"+std::to_string(id)+"|"+
+                         std::to_string(world.generation()));
+            }else throw std::invalid_argument("bad local transport command");
+        }catch(const std::exception&){
+            announce(world.world(),"ERROR|LOCAL_WORK_DENIED");
+        }
+        return;
+    }
+    // PLAY-13D.4C.4: authenticated, owner-scoped native orbital shuttle
+    // commands. The relay supplies strictly typed fields; native validates again.
+    if(!v.empty() && v[0]=="PLANET_SHUTTLE") {
+        try {
+            if(v.size()<5 || v.size()>8)
+                throw std::invalid_argument("invalid shuttle command arity");
+            const auto body=integer(v[1]),lat=integer(v[2]),lon=integer(v[3]);
+            if(body<=0 || lat<0 || lat>=36 || lon<0 || lon>=72)
+                throw std::invalid_argument("invalid shuttle region");
+            const PlanetarySiteKey key{std::uint64_t(body),std::uint16_t(lat),
+                std::uint16_t(lon),1};
+            OrbitalShuttleCommand command{};
+            command.owner=principal;
+            command.ship=ship;
+            command.site=key;
+            const auto action=v[4];
+            if(action=="STATUS" && v.size()==5)
+                command.action=OrbitalShuttleAction::Status;
+            else if(action=="BUILD" && v.size()==5)
+                command.action=OrbitalShuttleAction::Build;
+            else if(action=="PILOT" && v.size()==6) {
+                command.action=OrbitalShuttleAction::AssignPilot;
+                const auto npc=integer(v[5]);
+                if(npc<=0)throw std::invalid_argument("invalid pilot");
+                command.npc=std::uint64_t(npc);
+            } else if((action=="BOARD" || action=="RELEASE") &&
+                      v.size()==6) {
+                command.action=action=="BOARD"?
+                    OrbitalShuttleAction::BookPassenger:
+                    OrbitalShuttleAction::ReleasePassenger;
+                const auto npc=integer(v[5]);
+                if(npc<=0)throw std::invalid_argument("invalid passenger");
+                command.npc=std::uint64_t(npc);
+            } else if((action=="DISEMBARK" || action=="REBOARD") &&
+                      v.size()==6) {
+                command.action=action=="DISEMBARK"?
+                    OrbitalShuttleAction::Disembark:
+                    OrbitalShuttleAction::Reboard;
+                const auto npc=integer(v[5]);
+                if(npc<=0)throw std::invalid_argument("invalid surface visitor");
+                command.npc=std::uint64_t(npc);
+            } else if((action=="DUTY_ON" || action=="DUTY_OFF") &&
+                      v.size()==6) {
+                command.action=action=="DUTY_ON"?
+                    OrbitalShuttleAction::AssignVisitorDuty:
+                    OrbitalShuttleAction::ReleaseVisitorDuty;
+                const auto npc=integer(v[5]);
+                if(npc<=0)throw std::invalid_argument("invalid visitor duty");
+                command.npc=std::uint64_t(npc);
+            } else if((action=="LOAD" || action=="UNLOAD") &&
+                      v.size()==7) {
+                command.action=action=="LOAD"?OrbitalShuttleAction::Load:
+                    OrbitalShuttleAction::Unload;
+                if(v[5]!="WATER" && v[5]!="FOOD" && v[5]!="NUTRIENTS")
+                    throw std::invalid_argument("invalid cargo");
+                command.water=v[5]=="WATER";
+                command.cargo=v[5]=="NUTRIENTS"?
+                    ShuttleCargo::Nutrients:
+                    (command.water?ShuttleCargo::Water:ShuttleCargo::Food);
+                command.kilograms=integer(v[6]);
+            } else if((action=="DESCEND" || action=="ASCEND") &&
+                      v.size()==6) {
+                command.action=action=="DESCEND"?OrbitalShuttleAction::Descend:
+                    OrbitalShuttleAction::Ascend;
+                const auto request=integer(v[5]);
+                if(request<=0)throw std::invalid_argument("invalid flight ID");
+                command.request_id=std::uint64_t(request);
+            } else throw std::invalid_argument("invalid shuttle action");
+            const auto result=execute_orbital_shuttle(world,command);
+            if(!result.accepted)
+                throw std::invalid_argument("shuttle refused");
+            if(result.mutated)
+                announce(world.world(),"PLANET_SHUTTLE_COMMITTED|"+
+                    std::to_string(body)+"|"+std::to_string(lat)+"|"+
+                    std::to_string(lon)+"|"+action+"|"+
+                    std::to_string(result.generation));
+            if(!result.present) {
+                announce(world.world(),"PLANET_SHUTTLE_STATUS|"+
+                    std::to_string(body)+"|"+std::to_string(lat)+"|"+
+                    std::to_string(lon)+"|0|0|0|0|0|0|0|0|0|"+
+                    std::to_string(result.generation));
+            } else {
+                const auto& sh=result.shuttle;
+                announce(world.world(),"PLANET_SHUTTLE_STATUS|"+
+                    std::to_string(body)+"|"+std::to_string(lat)+"|"+
+                    std::to_string(lon)+"|1|"+std::to_string(sh.flight_phase)+"|"+
+                    std::to_string(sh.pilot_npc)+"|"+std::to_string(sh.water_kg)+"|"+
+                    std::to_string(sh.food_kg)+"|"+std::to_string(sh.arrival_tick)+"|"+
+                    std::to_string(sh.flight_request)+"|"+
+                    std::to_string(sh.descent_receipt)+"|"+
+                    std::to_string(sh.ascent_receipt)+"|"+
+                    std::to_string(result.generation)+
+                    (sh.nutrients_kg>0?"|"+std::to_string(sh.nutrients_kg):""));
+            }
+            // Canonical sorted manifest of real NPC identities, not an
+            // invented second passenger roster in the temporary UI.
+            if(result.present) {
+                for(const auto id:result.shuttle.passenger_ids)
+                    announce(world.world(),"PLANET_SHUTTLE_PASSENGER|"+
+                        std::to_string(body)+"|"+std::to_string(lat)+"|"+
+                        std::to_string(lon)+"|"+std::to_string(id));
+                announce(world.world(),"PLANET_SHUTTLE_MANIFEST_DONE|"+
+                    std::to_string(body)+"|"+std::to_string(lat)+"|"+
+                    std::to_string(lon)+"|"+
+                    std::to_string(result.shuttle.passenger_ids.size()));
+                for(const auto id:result.shuttle.disembarked_ids)
+                    announce(world.world(),"PLANET_SHUTTLE_VISITOR|"+
+                        std::to_string(body)+"|"+std::to_string(lat)+"|"+
+                        std::to_string(lon)+"|"+std::to_string(id));
+                announce(world.world(),"PLANET_SHUTTLE_VISITORS_DONE|"+
+                    std::to_string(body)+"|"+std::to_string(lat)+"|"+
+                    std::to_string(lon)+"|"+
+                    std::to_string(result.shuttle.disembarked_ids.size()));
+                for(const auto id:result.shuttle.duty_ids)
+                    announce(world.world(),"PLANET_SHUTTLE_WORKER|"+
+                        std::to_string(body)+"|"+std::to_string(lat)+"|"+
+                        std::to_string(lon)+"|"+std::to_string(id));
+                announce(world.world(),"PLANET_SHUTTLE_WORKERS_DONE|"+
+                    std::to_string(body)+"|"+std::to_string(lat)+"|"+
+                    std::to_string(lon)+"|"+
+                    std::to_string(result.shuttle.duty_ids.size()));
+            }
+        }catch(const std::exception&){
+            announce(world.world(),"ERROR|PLANET_SHUTTLE_DENIED");
+        }
+        return;
+    }
+    // PLAY-13D.4B: owner administrative policy; unlike a physical transfer
+    // it remains available after the ship leaves this planet.
+    if(v.size()==5 && v[0]=="PLANET_POLICY") {
+        try {
+            const auto body=integer(v[1]),lat=integer(v[2]),
+                       lon=integer(v[3]),policy=integer(v[4]);
+            if(body<=0 || lat<0 || lat>=36 || lon<0 || lon>=72 ||
+               policy<0 || policy>4)
+                throw std::invalid_argument("invalid planetary policy");
+            if(!world.set_planetary_workforce_policy(
+                principal,std::uint64_t(body),std::uint16_t(lat),
+                std::uint16_t(lon),std::uint8_t(policy))) {
+                announce(world.world(),"ERROR|PLANET_POLICY_DENIED");
+                return;
+            }
+            announce(world.world(),"PLANET_POLICY_COMMITTED|"+
+                std::to_string(body)+"|"+std::to_string(lat)+"|"+
+                std::to_string(lon)+"|"+std::to_string(policy)+"|"+
+                std::to_string(world.generation()));
+        }catch(const std::exception&){
+            announce(world.world(),"ERROR|PLANET_POLICY_DENIED");
+        }
+        return;
+    }
+    // PLAY-13D.3: region-scoped physical actions. Player must have
+    // previously observed this exact region/revision in the private archive.
+    if(!v.empty() && (v[0]=="PLANET_BUILD" || v[0]=="PLANET_EQUIP" ||
+       v[0]=="PLANET_SUPPLY" || v[0]=="PLANET_GROW" ||
+       v[0]=="PLANET_EXTRACT" || v[0]=="PLANET_RETRIEVE" ||
+       v[0]=="PLANET_SUPPORT")) {
+        try {
+            const auto type=v[0];
+            const bool build=type=="PLANET_BUILD";
+            const bool equip=type=="PLANET_EQUIP";
+            const bool grow=type=="PLANET_GROW";
+            if(v.size()!=(build?(v.size()==6?6:4):(equip||grow)?5:6))
+                throw std::invalid_argument("planet operation arity");
+            const auto body=integer(v[1]);
+            const auto latitude=integer(v[2]),longitude=integer(v[3]);
+            if(body<=0 || latitude<0 || latitude>=planetary::kWatershedRows ||
+               longitude<0 || longitude>=planetary::kWatershedColumns ||
+               !knowledge)
+                throw std::invalid_argument("planet operation coordinates");
+            const auto site=world.world().scan_planetary_geography(
+                principal,ship,std::uint64_t(body),
+                std::uint16_t(latitude),std::uint16_t(longitude));
+            if(!site)throw std::invalid_argument("planet operation unauthorized");
+            const auto known=knowledge->known_planetary_region(
+                principal,std::uint32_t(std::uint64_t(body)>>32),
+                std::uint64_t(body),std::uint16_t(latitude),
+                std::uint16_t(longitude),site->key.revision);
+            if(!known || known->elevation!=site->landscape.region.elevation ||
+               known->ocean!=std::uint8_t(site->landscape.region.surface_water) ||
+               known->terrain!=std::uint8_t(site->landscape.region.terrain) ||
+               known->watercourse!=std::uint8_t(site->landscape.watercourse) ||
+               known->drainage!=site->catchment_runoff)
+                throw std::invalid_argument("unsurveyed planetary region");
+            bool success=false;
+            if(build) {
+                if(v.size()==6) {
+                    const auto first=integer(v[4]),second=integer(v[5]);
+                    if(first<=0 || second<=0)
+                        throw std::invalid_argument("invalid worker selection");
+                    success=world.build_planetary_site(
+                        principal,ship,std::uint64_t(body),
+                        std::uint16_t(latitude),std::uint16_t(longitude),
+                        std::uint64_t(first),std::uint64_t(second));
+                } else success=world.build_planetary_site(
+                    principal,ship,std::uint64_t(body),
+                    std::uint16_t(latitude),std::uint16_t(longitude));
+            }
+            else if(equip) {
+                if(v[4]!="FARM" && v[4]!="EXTRACT")
+                    throw std::invalid_argument("invalid equipment");
+                success=world.equip_planetary_site(
+                    principal,ship,std::uint64_t(body),
+                    std::uint16_t(latitude),std::uint16_t(longitude),
+                    v[4]=="FARM");
+            } else if(grow) {
+                success=world.cultivate_planetary_site(principal,ship,
+                    std::uint64_t(body),std::uint16_t(latitude),
+                    std::uint16_t(longitude),integer(v[4]));
+            } else {
+                const auto kind=v[4],kg=integer(v[5]);
+                if(type=="PLANET_SUPPORT") {
+                    if(kind!="FOOD" && kind!="OXYGEN")
+                        throw std::invalid_argument("invalid surface crew supply material");
+                    success=world.support_planetary_crew(principal,ship,
+                        std::uint64_t(body),std::uint16_t(latitude),
+                        std::uint16_t(longitude),kind=="OXYGEN",kg);
+                } else if(type=="PLANET_SUPPLY") {
+                    if(kind!="WATER" && kind!="NUTRIENTS")
+                        throw std::invalid_argument("invalid supply material");
+                    success=world.supply_planetary_site(principal,ship,
+                        std::uint64_t(body),std::uint16_t(latitude),
+                        std::uint16_t(longitude),kind=="WATER",kg);
+                } else if(type=="PLANET_EXTRACT") {
+                    if(kind!="WATER" && kind!="NUTRIENTS")
+                        throw std::invalid_argument("invalid extraction material");
+                    success=world.extract_planetary_site(principal,ship,
+                        std::uint64_t(body),std::uint16_t(latitude),
+                        std::uint16_t(longitude),kind=="WATER",kg);
+                } else {
+                    if(kind!="FOOD" && kind!="WATER")
+                        throw std::invalid_argument("invalid retrieval material");
+                    success=world.retrieve_planetary_site(principal,ship,
+                        std::uint64_t(body),std::uint16_t(latitude),
+                        std::uint16_t(longitude),kind=="FOOD",kg);
+                }
+            }
+            if(!success){announce(world.world(),"ERROR|PLANET_OPERATION_DENIED");return;}
+            announce(world.world(),"PLANET_OPERATION_COMMITTED|"+
+                std::to_string(body)+"|"+std::to_string(latitude)+"|"+
+                std::to_string(longitude)+"|"+type+"|"+
+                std::to_string(world.generation()));
+        }catch(const std::exception&){
+            announce(world.world(),"ERROR|PLANET_OPERATION_DENIED");
+        }
+        return;
+    }
+    // PGF-01B.2: native authorized planetary regional survey; map-backed
+    // terrain is the same result exposed by Simulation to other consumers.
+    if(v.size()==4 && v[0]=="PLANET_SURVEY"){
+        try{
+            const auto body=integer(v[1]);
+            const auto latitude=integer(v[2]);
+            const auto longitude=integer(v[3]);
+            if(body<=0 || latitude<0 || latitude>=planetary::kWatershedRows ||
+               longitude<0 || longitude>=planetary::kWatershedColumns)
+                throw std::invalid_argument("invalid planetary region");
+            const auto site=world.world().scan_planetary_geography(
+                principal,ship,static_cast<std::uint64_t>(body),
+                static_cast<std::uint16_t>(latitude),
+                static_cast<std::uint16_t>(longitude));
+            if(!site){announce(world.world(),"ERROR|PLANET_SURVEY_DENIED");return;}
+            // A region is reported as discovered only after its private
+            // immutable geography is written to the durable survey index.
+            if(!knowledge){announce(world.world(),"ERROR|PLANET_SURVEY_ARCHIVE_UNAVAILABLE");return;}
+            knowledge->record_planetary_region(principal,
+                static_cast<std::uint32_t>(body>>32),*site,
+                world.world().tick()+1);
+            const auto& r=site->landscape.region;
+            announce(world.world(),"PLANET_REGION|"+std::to_string(body)+"|"+
+                std::to_string(latitude)+"|"+std::to_string(longitude)+"|"+
+                std::to_string(r.elevation)+"|"+std::to_string(r.surface_water?1:0)+"|"+
+                std::to_string(static_cast<unsigned>(r.terrain))+"|"+
+                std::to_string(static_cast<unsigned>(site->landscape.watercourse))+"|"+
+                std::to_string(site->catchment_runoff)+"|"+
+                std::to_string(site->downstream_latitude)+"|"+
+                std::to_string(site->downstream_longitude)+"|"+
+                std::to_string(site->key.revision));
+        }catch(const std::exception&){
+            announce(world.world(),"ERROR|PLANET_SURVEY_DENIED");
+        }
+        return;
+    }
     if(v.size()==1 && v[0]=="SYSTEM_CELESTIAL"){
         const auto profile=world.world().scan_celestial_profile(principal,ship);
         if(!profile){announce(world.world(),"ERROR|INVALID_INPUT");return;}
@@ -546,6 +951,17 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
                 std::to_string(unsigned(oasis.energy))+"|"+
                 std::to_string(unsigned(oasis.nutrients))+"|"+
                 std::to_string(unsigned(oasis.shelter)));
+        // A fitted scanner can locate a finite reserve's surface waypoint.
+        // This is exploration metadata, never authorization to harvest.
+        for(const auto& oasis:world.world().survey_oasis_prospects(principal,ship)){
+            const auto source=world.world().planetary_oasis_source_region(
+                principal,ship,oasis.body);
+            if(source)announce(world.world(),"OASIS_REGION|"+
+                std::to_string(oasis.body)+"|"+
+                std::to_string(source->latitude)+"|"+
+                std::to_string(source->longitude)+"|"+
+                std::to_string(source->revision));
+        }
         announce(world.world(),"CELESTIAL_DONE|"+
             std::to_string(profile->orbital_bands.size()));
         return;
@@ -963,7 +1379,51 @@ int main(int argc,char** argv){
                 }catch(const std::exception&){announce(world.world(),"ERROR|UNAUTHORIZED_PRINCIPAL");}
             }
             const auto old=world.world().events().size();
+            std::map<PlanetarySiteKey,std::uint8_t> prior_shuttle_phases;
+            for(const auto& [key,sh]:world.world().planetary_shuttles())
+                prior_shuttle_phases.emplace(key,sh.flight_phase);
+            std::map<std::uint64_t,LocalDeliveryStage> prior_work;
+            for(const auto& [id,job]:world.world().local_delivery_board())
+                if(job.owner==owner && job.board_ship==ship)
+                    prior_work.emplace(id,job.stage);
             world.step();
+            // Published only after atomic world-step commit. Each status
+            // comes from the real work board; no guessed completion.
+            for(const auto& [id,job]:world.world().local_delivery_board()) {
+                const auto prev=prior_work.find(id);
+                if(job.owner!=owner || job.board_ship!=ship ||
+                   (prev!=prior_work.end() && prev->second==job.stage))continue;
+                const auto good=job.cargo==ShuttleCargo::Water?"WATER":
+                    job.cargo==ShuttleCargo::Food?"FOOD":"NUTRIENTS";
+                announce(world.world(),"LOCAL_WORK_ITEM|"+std::to_string(id)+"|"+
+                    std::to_string(std::get<0>(job.site))+"|"+
+                    std::to_string(std::get<1>(job.site))+"|"+
+                    std::to_string(std::get<2>(job.site))+"|"+good+"|"+
+                    std::to_string(job.kilograms)+"|"+
+                    std::to_string(unsigned(job.stage))+"|"+
+                    std::to_string(job.assigned_pilot));
+            }
+            // Native world ticks complete shuttle flights automatically.
+            // Publish only the committed phase transition to the owning player.
+            for(const auto& [key,sh]:world.world().planetary_shuttles()) {
+                const auto prior=prior_shuttle_phases.find(key);
+                if(prior==prior_shuttle_phases.end() ||
+                   prior->second==sh.flight_phase || sh.owner!=owner)continue;
+                announce(world.world(),"PLANET_SHUTTLE_STATUS|"+
+                    std::to_string(std::get<0>(key))+"|"+
+                    std::to_string(std::get<1>(key))+"|"+
+                    std::to_string(std::get<2>(key))+"|1|"+
+                    std::to_string(sh.flight_phase)+"|"+
+                    std::to_string(sh.pilot_npc)+"|"+
+                    std::to_string(sh.water_kg)+"|"+
+                    std::to_string(sh.food_kg)+"|"+
+                    std::to_string(sh.arrival_tick)+"|"+
+                    std::to_string(sh.flight_request)+"|"+
+                    std::to_string(sh.descent_receipt)+"|"+
+                    std::to_string(sh.ascent_receipt)+"|"+
+                    std::to_string(world.generation())+
+                    (sh.nutrients_kg>0?"|"+std::to_string(sh.nutrients_kg):""));
+            }
             // Mature transit requests are committed separately; no half-
             // applied position is ever published. Catch-up on restart is
             // automatic because due requests live in the world snapshot.

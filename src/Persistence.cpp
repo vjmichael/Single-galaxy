@@ -1,4 +1,5 @@
 #include "galaxy/Persistence.hpp"
+#include "galaxy/UniversalNpcMigration.hpp"
 #include "galaxy/CelestialFrameTransition.hpp"
 #include "galaxy/ColonySafety.hpp"
 #include "galaxy/ColonyDefense.hpp"
@@ -8625,6 +8626,13 @@ PersistentWorld::PersistentWorld(const std::string& path, Simulation initial_wor
 PersistentWorld::~PersistentWorld() = default;
 bool PersistentWorld::begin_celestial_transit(
     PlayerId owner,EntityId ship,std::uint64_t body,std::uint64_t id,FailPoint fail) {
+    // Do not permit parent ship to abandon a shuttle pilot/cargo at the
+    // surface or in atmospheric transit; the original frame stays authoritative.
+    for(const auto& [key,sh]:world_.planetary_shuttles_) {
+        (void)key;
+        if(sh.source_ship==ship && sh.flight_phase!=0)return false;
+    }
+
     if(!id || !owner || owner==Simulation::kServerAuthority ||
        world_.ship_frames_.size()==0 || world_.snapshot_version_<71 ||
        world_.pending_celestial_transits_.size()>=10000 ||
@@ -8707,6 +8715,339 @@ bool PersistentWorld::complete_celestial_transit(std::uint64_t id,FailPoint fail
     next.completed_celestial_transits_.emplace(id,CompletedCelestialTransit{
         p.owner,p.ship,p.system,p.destination_body,next.tick_});
     next.snapshot_version_=std::max(next.snapshot_version_,72);
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::assign_planetary_shuttle_visitor_duty(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc,bool assign,FailPoint fail) {
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.assign_planetary_shuttle_visitor_duty(owner,ship,key,npc,assign))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("visitor duty assignment changed conserved matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::transfer_planetary_shuttle_visitor(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc,bool reboard,FailPoint fail) {
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.transfer_planetary_shuttle_visitor(owner,ship,key,npc,reboard))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("planetary visitor transfer changed conserved matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::book_planetary_shuttle_passenger(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc,bool board,FailPoint fail) {
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.book_planetary_shuttle_passenger(owner,ship,key,npc,board))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("shuttle passenger booking changed conserved matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::launch_planetary_shuttle(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t request_id,bool ascend,FailPoint fail) {
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.launch_planetary_shuttle(owner,ship,key,request_id,ascend))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("shuttle takeoff altered conserved resources");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::post_local_delivery_order(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& site,ShuttleCargo cargo,
+        std::int64_t kilograms,std::uint64_t order_id,FailPoint fail) {
+    auto next=world_;
+    if(!next.post_local_delivery_order(owner,ship,site,cargo,kilograms,order_id))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("local contract posting changed conserved mass");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::cancel_local_delivery_order(
+        PlayerId owner,std::uint64_t order_id,FailPoint fail) {
+    auto next=world_;
+    if(!next.cancel_local_delivery_order(owner,order_id))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("local contract cancellation changed conserved mass");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::build_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,FailPoint fail) {
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.build_planetary_shuttle(owner,ship,key))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("shuttle operation changed conserved material");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::load_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,bool water,std::int64_t kg,FailPoint fail) {
+    return load_planetary_shuttle(owner,ship,key,
+        water?ShuttleCargo::Water:ShuttleCargo::Food,kg,fail);
+}
+bool PersistentWorld::load_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,ShuttleCargo cargo,std::int64_t kg,FailPoint fail) {
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.load_planetary_shuttle(owner,ship,key,cargo,kg))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("shuttle operation changed conserved material");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::unload_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,bool water,std::int64_t kg,FailPoint fail) {
+    return unload_planetary_shuttle(owner,ship,key,
+        water?ShuttleCargo::Water:ShuttleCargo::Food,kg,fail);
+}
+bool PersistentWorld::unload_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,ShuttleCargo cargo,std::int64_t kg,FailPoint fail) {
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.unload_planetary_shuttle(owner,ship,key,cargo,kg))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("shuttle operation changed conserved material");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::assign_planetary_shuttle_pilot(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,std::uint64_t npc,FailPoint fail) {
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.assign_planetary_shuttle_pilot(owner,ship,key,npc))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("shuttle operation changed conserved material");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::build_planetary_site(PlayerId owner,EntityId ship,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,FailPoint fail) {
+    // Every mutation happens on an isolated candidate. Commit succeeds before
+    // world publication; injected SQLite failures preserve the old world.
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.build_planetary_site(owner,ship,body,latitude,longitude))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("planetary regional operation changed world material origin");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::build_planetary_site(PlayerId owner,EntityId ship,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,
+    std::uint64_t first_npc,std::uint64_t second_npc,FailPoint fail) {
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.build_planetary_site(owner,ship,body,latitude,longitude,
+                                 first_npc,second_npc))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("surface delegation changed world resource origin");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::equip_planetary_site(PlayerId owner,EntityId ship,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,bool farm,FailPoint fail) {
+    // Every mutation happens on an isolated candidate. Commit succeeds before
+    // world publication; injected SQLite failures preserve the old world.
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.equip_planetary_site(owner,ship,body,latitude,longitude,farm))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("planetary regional operation changed world material origin");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::supply_planetary_site(PlayerId owner,EntityId ship,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,bool water,std::int64_t kg,FailPoint fail) {
+    // Every mutation happens on an isolated candidate. Commit succeeds before
+    // world publication; injected SQLite failures preserve the old world.
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.supply_planetary_site(owner,ship,body,latitude,longitude,water,kg))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("planetary regional operation changed world material origin");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::set_planetary_workforce_policy(PlayerId owner,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,
+    std::uint8_t policy,FailPoint fail) {
+    // A command changes supervisory policy only. All inventory movements
+    // remain tied to source-backed simulation ticks and SQLite generations.
+    auto next=world_;
+    if(!next.set_planetary_workforce_policy(owner,body,latitude,longitude,
+                                            policy))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("planetary workforce policy created material");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::support_planetary_crew(PlayerId owner,EntityId ship,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,
+    bool oxygen,std::int64_t kg,FailPoint fail) {
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.support_planetary_crew(owner,ship,body,latitude,longitude,oxygen,kg))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("surface crew resupply changed matter origin");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::cultivate_planetary_site(PlayerId owner,EntityId ship,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,std::int64_t batches,FailPoint fail) {
+    // Every mutation happens on an isolated candidate. Commit succeeds before
+    // world publication; injected SQLite failures preserve the old world.
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.cultivate_planetary_site(owner,ship,body,latitude,longitude,batches))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("planetary regional operation changed world material origin");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::extract_planetary_site(PlayerId owner,EntityId ship,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,bool water,std::int64_t kg,FailPoint fail) {
+    // Every mutation happens on an isolated candidate. Commit succeeds before
+    // world publication; injected SQLite failures preserve the old world.
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.extract_planetary_site(owner,ship,body,latitude,longitude,water,kg))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("planetary regional operation changed world material origin");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::retrieve_planetary_site(PlayerId owner,EntityId ship,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,bool food,std::int64_t kg,FailPoint fail) {
+    // Every mutation happens on an isolated candidate. Commit succeeds before
+    // world publication; injected SQLite failures preserve the old world.
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.retrieve_planetary_site(owner,ship,body,latitude,longitude,food,kg))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("planetary regional operation changed world material origin");
     store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
                    {},{},{},fail);
     world_.swap(next);
@@ -10850,6 +11191,13 @@ void PersistentWorld::step_with_atomic_migration(const SocietyMigrationPlan& pla
        plan.origin_colony==plan.destination_colony ||
        plan.family_scope.empty() || plan.region_scope.empty())
         throw std::invalid_argument("stale or incomplete host migration plan");
+    // Typed endpoints prevent a raw numeric surface ID from being mistaken
+    // for a colony ship. The existing census bridge cannot yet account for
+    // planetary residences; reject rather than corrupt family population.
+    if(plan.origin_kind!=transport::LocationKind::ColonyShip ||
+       plan.destination_kind!=transport::LocationKind::ColonyShip)
+        throw std::invalid_argument(
+            "planetary migration requires typed regional/census residency support");
     if(plan.voluntary_admission_event_id)
         store_->validate_voluntary_settlement(world_,generation_,plan);
     else if(store_->immigration_pending_for_transport(plan.npc_id,plan.transport_id))
@@ -10873,6 +11221,19 @@ void PersistentWorld::step_with_atomic_migration(const SocietyMigrationPlan& pla
            !plan.co_parent_event_id || plan.co_parent_event_id==plan.command_id)) ||
        (!plan.co_parent_id && plan.co_parent_event_id))
         throw std::runtime_error("migration plan does not match authenticated passenger command");
+    // Resolve from the live authoritative Simulation, not a caller-created
+    // ArrivalEvidence: the same identity contract covers ferries and shuttles.
+    const auto arrival=world_.npc_transport_arrival(plan.transport_id,plan.npc_id);
+    if(!arrival || !transport::completed_transport(*arrival,plan.npc_id) ||
+       arrival->source().id!=plan.origin ||
+       arrival->destination().id!=plan.destination)
+        throw std::runtime_error("migration lacks authenticated completed NPC transport");
+    // Existing HostSettleMigrant still mutates only colony-ship endpoints.
+    // Never route a planetary arrival into this legacy ship writer.
+    if(arrival->mode()!=transport::Mode::Ferry ||
+       arrival->source().kind!=transport::LocationKind::ColonyShip ||
+       arrival->destination().kind!=transport::LocationKind::ColonyShip)
+        throw std::runtime_error("non-ship endpoint needs universal residency transaction");
     const auto old=world_.npc_records().find(plan.npc_id);
     if(old==world_.npc_records().end() || old->second.home_ship!=plan.origin ||
        old->second.location!=plan.destination || old->second.transport_id!=0)
@@ -10891,18 +11252,45 @@ void PersistentWorld::step_with_atomic_migration(const SocietyMigrationPlan& pla
        family.current_residence(plan.npc_id)!=plan.origin ||
        src.family_population==0)
         throw std::runtime_error("migration family or regional population preflight failed");
+    // The same admission contract now runs inside the existing real SQLite
+    // migration path. All values are derived from trusted host state. Legacy
+    // v41 ship-to-ship migrations retain their historical crew-capacity and
+    // support semantics; new planetary settlements must reserve real housing
+    // and life support before entering the universal writer.
+    migration::Admission admission{};
+    admission.command_id=plan.command_id;
+    admission.npc_id=plan.npc_id;
+    admission.origin={plan.origin_kind,plan.origin};
+    admission.destination={plan.destination_kind,plan.destination};
+    admission.expected_generation=plan.expected_world_generation;
+    admission.current_generation=generation_;
+    admission.physical_custody_at_destination=
+        old->second.location==plan.destination && !old->second.transport_id;
+    admission.household_reconciled=src.reconciled && dst.reconciled &&
+        family.current_residence(plan.npc_id)==plan.origin;
+    admission.consent_required=plan.voluntary_admission_event_id!=0;
+    admission.verified_consent=plan.voluntary_admission_event_id!=0;
+    admission.housing_required=false; // grandfathered colony crew limit
+    admission.life_support_required=false; // legacy migration baseline
+    admission.no_competing_residence=
+        old->second.assigned_site==plan.origin;
+    if(migration::preflight(admission,*arrival)!=migration::Denial::None)
+        throw std::runtime_error("universal migration admission rejected authenticated host move");
     const auto initial_named=world_.npc_records().size();
     if(plan.co_parent_id){
         const auto co=world_.npc_records().find(plan.co_parent_id);
-        const auto voy=world_.voyages_.find(plan.transport_id);
+        const auto coparent_arrival=world_.npc_transport_arrival(
+            plan.transport_id,plan.co_parent_id);
         if(co==world_.npc_records().end() ||
            co->second.home_ship!=plan.origin ||
            co->second.assigned_site!=plan.origin ||
            co->second.location!=plan.destination || co->second.transport_id ||
            family.current_residence(plan.co_parent_id)!=plan.origin ||
-           voy==world_.voyages_.end() || voy->second.status!=2 ||
-           !std::binary_search(voy->second.passengers.begin(),
-               voy->second.passengers.end(),plan.co_parent_id))
+           !coparent_arrival ||
+           coparent_arrival->mode()!=arrival->mode() ||
+           coparent_arrival->source()!=arrival->source() ||
+           coparent_arrival->destination()!=arrival->destination() ||
+           !transport::completed_transport(*coparent_arrival,plan.co_parent_id))
             throw std::runtime_error("second parent has no completed physical arrival");
     }
     if(plan.dependents.size()>32)

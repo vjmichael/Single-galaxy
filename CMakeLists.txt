@@ -17,7 +17,7 @@ else()
     find_package(SQLite3 REQUIRED)
     message(STATUS "Using OS SQLite SDK (amalgamation not present)")
 endif()
-add_library(galaxy_kernel STATIC src/Simulation.cpp src/ColonyResilience.cpp
+add_library(galaxy_kernel STATIC src/PlanetaryAgriculture.cpp src/Simulation.cpp src/ColonyResilience.cpp
   src/ColonyRecovery.cpp src/ColonyPolicy.cpp src/PopulationCohorts.cpp
     src/ColonyWaterSupply.cpp src/Persistence.cpp src/EconomyPrototype.cpp src/QuantifiedProduction.cpp src/Inventory.cpp src/InventoryLogistics.cpp src/FactoryLayout.cpp src/BlueprintConstruction.cpp src/HostBlueprintRegistry.cpp src/ClientContract.cpp src/Galaxy.cpp src/Navigation.cpp src/GateTransit.cpp src/Region.cpp
   src/ColdColonyNeeds.cpp src/MacroNeeds.cpp src/ColonySafety.cpp src/ColonySafetyJournal.cpp src/ColonySafetyNotice.cpp src/ColonyDefense.cpp src/ColonyConflict.cpp src/ColonyEvacuation.cpp src/ColonyFamilyDeparture.cpp src/NpcAppearanceGenome.cpp src/MedicalSocietyBridge.cpp src/DependentIncidentAccounting.cpp src/DependentIncidentJournal.cpp src/DependentGuardianship.cpp src/SplitRescueIntent.cpp src/RegionalCheckpointStore.cpp src/RegionalPopulationAudit.cpp src/RegionalEventScheduler.cpp src/RegionalModeAuthority.cpp src/RegionalFactoryHandoff.cpp src/RegionalProductionNetwork.cpp src/RegionalShipmentReconciliation.cpp src/ShipmentManifest.cpp src/ThirdPartyShipment.cpp src/CanonicalShippingHost.cpp src/ShipmentStatusView.cpp
@@ -1259,4 +1259,122 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_play13c_physical_oasis_tests PRIVATE galaxy_kernel)
   add_test(NAME galaxy_play13c_physical_oasis
     COMMAND galaxy_play13c_physical_oasis_tests)
+endif()
+
+# PLAY-13D.1 physical planetary agriculture custody kernel, first native gate.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13d_planetary_agriculture_tests
+    tests/PLAY13D_PlanetaryAgricultureTests.cpp)
+  target_link_libraries(galaxy_play13d_planetary_agriculture_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_planetary_agriculture
+    COMMAND galaxy_play13d_planetary_agriculture_tests)
+endif()
+
+# PLAY-13D.2A multi-region planetary environment survey acceptance.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13d_planetary_regions_tests tests/PLAY13D_PlanetaryRegionsTests.cpp)
+  target_link_libraries(galaxy_play13d_planetary_regions_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_planetary_regions COMMAND galaxy_play13d_planetary_regions_tests)
+endif()
+
+# PLAY-13D.2C dryland landforms, arroyos, rivers, canyons and caverns.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13d_planetary_landscape_tests tests/PLAY13D_PlanetaryLandscapeTests.cpp)
+  target_link_libraries(galaxy_play13d_planetary_landscape_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_planetary_landscape COMMAND galaxy_play13d_planetary_landscape_tests)
+endif()
+
+# PLAY-13D PGF-01A: versioned procedural generator adapter contract.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13d_planetary_framework_tests tests/PLAY13D_PlanetaryFrameworkTests.cpp)
+  target_link_libraries(galaxy_play13d_planetary_framework_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_planetary_framework COMMAND galaxy_play13d_planetary_framework_tests)
+endif()
+
+# PGF-01B: connected planetary terrain and watershed acceptance.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13d_planetary_watershed_tests
+    tests/PLAY13D_PlanetaryWatershedTests.cpp)
+  target_link_libraries(galaxy_play13d_planetary_watershed_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_planetary_watershed
+    COMMAND galaxy_play13d_planetary_watershed_tests)
+endif()
+
+# PGF-01B.2 single-source planetary geography over authoritative watershed cells.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13d_planetary_geography_tests
+    tests/PLAY13D_PlanetaryGeographyTests.cpp)
+  target_link_libraries(galaxy_play13d_planetary_geography_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_planetary_geography
+    COMMAND galaxy_play13d_planetary_geography_tests)
+endif()
+
+# PGF-01B.2: authenticated real host planetary survey and saved restart.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13d_live_planet_survey_tests
+    tests/PLAY13D_LivePlanetSurveyTests.cpp)
+  target_link_libraries(galaxy_play13d_live_planet_survey_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_live_planet_survey
+    COMMAND galaxy_play13d_live_planet_survey_tests)
+endif()
+
+# PLAY-13D.3 source-backed planetary site construction/farm/extraction persistence.
+if(BUILD_TESTING)
+  # PLAY-13D: control roles share one physical ship and inventory model.
+  add_executable(galaxy_play13d_ship_control_tests
+    tests/PLAY13D_ShipControlTests.cpp)
+  target_link_libraries(galaxy_play13d_ship_control_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_ship_control
+    COMMAND galaxy_play13d_ship_control_tests)
+  # One canonical goods manifest for named NPCs, resources and equipment.
+  add_executable(galaxy_play13d_universal_transport_tests
+    tests/PLAY13D_UniversalTransportTests.cpp)
+  target_link_libraries(galaxy_play13d_universal_transport_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_universal_transport
+    COMMAND galaxy_play13d_universal_transport_tests)
+  # A single transport-mode-independent NPC migration admission policy.
+  add_executable(galaxy_play13d_universal_migration_tests
+    tests/PLAY13D_UniversalNpcMigrationTests.cpp)
+  target_link_libraries(galaxy_play13d_universal_migration_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_universal_migration
+    COMMAND galaxy_play13d_universal_migration_tests)
+  # Shared identity/arrival evidence for ferry and planetary shuttle adapters.
+  add_executable(galaxy_play13d_shared_transport_tests
+    tests/PLAY13D_SharedTransportIdentityTests.cpp)
+  target_link_libraries(galaxy_play13d_shared_transport_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_shared_transport
+    COMMAND galaxy_play13d_shared_transport_tests)
+  # PLAY-13D.4C.9B: verify a proposed canonical migration transition.
+  add_executable(galaxy_play13d_settlement_transition_tests
+    tests/PLAY13D_PlanetarySettlementTransitionTests.cpp)
+  target_link_libraries(galaxy_play13d_settlement_transition_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_settlement_transition
+    COMMAND galaxy_play13d_settlement_transition_tests)
+  # PLAY-13D.4C.9A: pure fail-closed permanent residency admission policy.
+  add_executable(galaxy_play13d_settlement_admission_tests
+    tests/PLAY13D_PlanetarySettlementAdmissionTests.cpp)
+  target_link_libraries(galaxy_play13d_settlement_admission_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_settlement_admission
+    COMMAND galaxy_play13d_settlement_admission_tests)
+  add_executable(galaxy_play13d_regional_facilities_tests
+    tests/PLAY13D_RegionalFacilitiesTests.cpp)
+  target_link_libraries(galaxy_play13d_regional_facilities_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_regional_facilities
+    COMMAND galaxy_play13d_regional_facilities_tests)
+endif()
+
+# PLAY-13D.4C.1: isolated physical planetary shuttle manifest/NPC custody domain.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13d_shuttle_custody_tests
+    tests/PLAY13D_ShuttleCustodyTests.cpp)
+  target_link_libraries(galaxy_play13d_shuttle_custody_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play13d_shuttle_custody
+    COMMAND galaxy_play13d_shuttle_custody_tests)
+endif()
+
+# PLAY-13D.4C.5: real authoritative SQLite fixture for HTTP live-host E2E.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13d_shuttle_host_fixture
+    tests/PLAY13D_ShuttleHostFixture.cpp)
+  target_link_libraries(galaxy_play13d_shuttle_host_fixture PRIVATE galaxy_kernel)
 endif()
