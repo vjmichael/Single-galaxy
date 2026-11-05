@@ -191,6 +191,8 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(!w.launch_planetary_shuttle(7,ship,key,81001,false));
         CHECK(w.world().planetary_shuttles().at(key).flight_phase==1);
         CHECK(w.world().npc_custody(available[2]).physical_location!=ship);
+        CHECK(w.world().npc_custody(available[2]).in_transit);
+        CHECK(w.world().npc_custody(available[2]).transport_id==81001);
         CHECK(!w.unload_planetary_shuttle(7,ship,key,true,1));
         CHECK(!w.load_planetary_shuttle(7,ship,key,false,1));
         CHECK(!w.begin_celestial_transit(7,ship,chosen.body,81002));
