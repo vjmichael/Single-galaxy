@@ -325,6 +325,36 @@ def main(executable,relay):
             ):
                 status,_=request(port,'POST','/command',payload)
                 assert status==400,(payload,status)
+            pilot={'token':token,'action':'colonyFreighterPilotStatus','order':92001}
+            thrust={'token':token,'action':'colonyFreighterThrust',
+                    'order':92001,'x':1,'y':0}
+            yaw={'token':token,'action':'colonyFreighterYaw',
+                 'order':92001,'delta':15}
+            travel={'token':token,'action':'colonyFreighterTravel',
+                    'order':92001,'body':4294967300}
+            for payload in (pilot,thrust,yaw,travel):
+                status,_=request(port,'POST','/command',payload)
+                assert status==202,(payload,status)
+                status,_=request(port,'POST','/command',
+                                 {**payload,'token':'forged'})
+                assert status==403,(payload,status)
+            for payload in (
+                {**pilot,'order':True},
+                {**pilot,'order':1<<50},
+                {**pilot,'extra':1},
+                {**thrust,'x':True},
+                {**thrust,'x':2},
+                {**thrust,'y':-2},
+                {**thrust,'extra':1},
+                {**yaw,'delta':True},
+                {**yaw,'delta':90},
+                {**travel,'body':False},
+                {**travel,'body':0},
+                {**travel,'body':1<<53},
+                {**travel,'extra':1},
+            ):
+                status,_=request(port,'POST','/command',payload)
+                assert status==400,(payload,status)
             print("PASS PGF01B2 HTTP relay accepts valid geography and rejects forged inputs")
         finally:
             proc.terminate()
