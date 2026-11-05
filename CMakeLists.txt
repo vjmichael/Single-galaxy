@@ -1335,3 +1335,10 @@ if(BUILD_TESTING)
   add_test(NAME galaxy_play13d_shuttle_custody
     COMMAND galaxy_play13d_shuttle_custody_tests)
 endif()
+
+# PLAY-13D.4C.5: real authoritative SQLite fixture for HTTP live-host E2E.
+if(BUILD_TESTING)
+  add_executable(galaxy_play13d_shuttle_host_fixture
+    tests/PLAY13D_ShuttleHostFixture.cpp)
+  target_link_libraries(galaxy_play13d_shuttle_host_fixture PRIVATE galaxy_kernel)
+endif()
