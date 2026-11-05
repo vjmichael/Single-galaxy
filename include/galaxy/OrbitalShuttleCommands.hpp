@@ -18,8 +18,9 @@ struct OrbitalShuttleCommand {
     OrbitalShuttleAction action=OrbitalShuttleAction::Status;
     std::uint64_t npc=0;
     std::uint64_t request_id=0;
-    bool water=true;
+    bool water=true; // legacy native callers: true water, false food
     std::int64_t kilograms=0;
+    ShuttleCargo cargo=ShuttleCargo::Water; // explicit nutrients only
 };
 
 struct OrbitalShuttleReply {
@@ -87,11 +88,14 @@ inline OrbitalShuttleReply execute_orbital_shuttle(
         case OrbitalShuttleAction::Unload:
             if(cmd.npc || cmd.request_id || cmd.kilograms<1 ||
                cmd.kilograms>1000)break;
+            const auto kind=cmd.cargo==ShuttleCargo::Nutrients?
+                ShuttleCargo::Nutrients:
+                (cmd.water?ShuttleCargo::Water:ShuttleCargo::Food);
             accepted=cmd.action==OrbitalShuttleAction::Load?
                 world.load_planetary_shuttle(cmd.owner,cmd.ship,cmd.site,
-                    cmd.water,cmd.kilograms):
+                    kind,cmd.kilograms):
                 world.unload_planetary_shuttle(cmd.owner,cmd.ship,cmd.site,
-                    cmd.water,cmd.kilograms);
+                    kind,cmd.kilograms);
             break;
         case OrbitalShuttleAction::Descend:
         case OrbitalShuttleAction::Ascend:
