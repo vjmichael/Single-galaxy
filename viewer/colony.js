@@ -124,18 +124,18 @@
        stage=numeric(v[9],2),receipt=numeric(v[10],Number.MAX_SAFE_INTEGER);
       if(!order||!carrier||!destination||carrier===destination||!kg||
          !['WATER','FOOD','NUTRIENTS'].includes(resource)||
-         (stage!==1&&stage!==2)||(stage===1&&receipt)||(stage===2&&!receipt))
+         stage>2||(stage<2&&receipt)||(stage===2&&!receipt))
         throw Error('Invalid physical intercolony shipment');
       return {...e,order,carrier,destination,resource,kg,stage,receipt};
     }
-    if(t==='INTERFREIGHT_LOADED'){
-      if(v.length!==8)throw Error('Malformed loaded freight receipt');
+    if(t==='INTERFREIGHT_PLANNED'||t==='INTERFREIGHT_LOADED'){
+      if(v.length!==8)throw Error('Malformed freight plan/load receipt');
       const order=numeric(v[4],Number.MAX_SAFE_INTEGER),
        carrier=numeric(v[5],Number.MAX_SAFE_INTEGER),
        destination=numeric(v[6],Number.MAX_SAFE_INTEGER),
        generation=numeric(v[7],Number.MAX_SAFE_INTEGER);
       if(!order||!carrier||!destination||carrier===destination||!generation)
-        throw Error('Invalid loaded freight receipt');
+        throw Error('Invalid freight plan/load receipt');
       return {...e,order,carrier,destination,generation};
     }
     if(t==='INTERFREIGHT_DEPARTED'){
@@ -983,6 +983,9 @@
            freightDestination.type='number';freightDestination.step='1';
            freightDestination.min='1';freightDestination.placeholder='Colony B ship ID';
            freightDestination.setAttribute('aria-label','Receiving colony ship ID');
+           const freightPost=document.createElement('button');
+           freightPost.type='button';
+           freightPost.textContent='Queue Planet A → Colony B NPC delivery';
            const freightLoad=document.createElement('button');
            freightLoad.type='button';
            freightLoad.textContent='Transfer completed pickup to carrier';
@@ -1002,6 +1005,22 @@
              const order=Number(workCancelId.value);
              return Number.isSafeInteger(order)&&order>0?order:null;
            };
+           freightPost.addEventListener('click',()=>{
+             const coords=workCoords(),kg=Number(shuttleKg.value);
+             const carrier=Number(freightCarrier.value),
+               destination=Number(freightDestination.value);
+             const order=Date.now()*100+Math.floor(Math.random()*100);
+             if(!coords||!Number.isSafeInteger(order)||order<=0||
+                !Number.isSafeInteger(kg)||kg<1||kg>1000||
+                !Number.isSafeInteger(carrier)||carrier<=0||
+                !Number.isSafeInteger(destination)||destination<=0||
+                carrier===destination)return;
+             window.GalaxyColonyCommand?.('colonyLocalWorkPostToColony',{
+               body:body.id,latitude:coords.lat,longitude:coords.lon,
+               resource:shuttleResource.value,kg,order,carrier,destination});
+             workCancelId.value=String(order);
+             freightState.textContent='One contract submitted: NPC shuttle pickup, physical carrier transit and Colony B delivery.';
+           });
            freightLoad.addEventListener('click',()=>{
              const order=freightOrder(),carrier=Number(freightCarrier.value),
                destination=Number(freightDestination.value);
@@ -1030,7 +1049,7 @@
              freightState.textContent='Reading actual carrier cargo and delivery receipts.';
            });
            shuttlePanel.append(freightTitle,freightCarrier,freightDestination,
-             freightLoad,freightDispatch,freightDeliver,freightRefresh,
+             freightPost,freightLoad,freightDispatch,freightDeliver,freightRefresh,
              freightState,freightList);
 
            shuttlePanel._shuttleRoster=makeShuttleRosterTracker();
@@ -1139,12 +1158,15 @@
          entry.textContent='Shipment #'+e.order+': '+e.kg+' kg '+e.resource+
            ' · vessel #'+e.carrier+' → Colony B #'+e.destination+
            (e.stage===2?' · Delivered (flight #'+e.receipt+')':
+             e.stage===0?' · Assigned to NPC work board; awaiting physical pickup':
              ' · Sealed cargo aboard — waiting for verified arrival');
        });
      }
-     if(e.type==='INTERFREIGHT_LOADED'||e.type==='INTERFREIGHT_DEPARTED'||
+     if(e.type==='INTERFREIGHT_PLANNED'||e.type==='INTERFREIGHT_LOADED'||
+        e.type==='INTERFREIGHT_DEPARTED'||
         e.type==='INTERFREIGHT_DELIVERED'){
-       const message=e.type==='INTERFREIGHT_LOADED'?'Loaded onto actual carrier':
+       const message=e.type==='INTERFREIGHT_PLANNED'?'Carrier assigned to NPC contract':
+         e.type==='INTERFREIGHT_LOADED'?'Loaded onto actual carrier':
          e.type==='INTERFREIGHT_DEPARTED'?'Carrier departure committed':
          'Unloaded into destination colony';
        q('signatureFeedback').textContent=
