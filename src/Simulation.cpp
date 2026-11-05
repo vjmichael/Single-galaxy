@@ -5329,7 +5329,11 @@ void Simulation::process_planetary_surface_operations() {
                it->second.role==NpcRole::PlanetarySurface &&
                npc_available_for_duty(npc))++ready;
         }
-        if(ready<2)continue; // injured, missing or unavailable crew pause work
+        if(ready<2) {
+            if(site.spaceport_phase==3 && site.workforce_policy &&
+               tick_%20==0){++site.stalled_cycles;site.last_work_tick=tick_;}
+            continue; // injured, missing or unavailable crew pause work
+        }
         if(site.food_kg<2 || site.water_kg<2 || site.oxygen_kg<2) {
             if(site.spaceport_phase==3 && site.workforce_policy &&
                tick_%20==0){++site.stalled_cycles;site.last_work_tick=tick_;}
@@ -5349,7 +5353,6 @@ void Simulation::process_planetary_surface_operations() {
             // ship proximity is required; only the actually deployed NPCs
             // and the local physical inventories can sustain work.
             if(site.workforce_policy==0 || tick_%20!=0)continue;
-            const auto old_works=site.autonomous_cycles;
             bool worked=false;
             if(site.workforce_policy==1 && site.farm &&
                site.equipment_condition>0 &&
@@ -5392,7 +5395,6 @@ void Simulation::process_planetary_surface_operations() {
             } else {
                 ++site.stalled_cycles;
             }
-            (void)old_works;
             continue;
         } // operational NPC workforce still consumes supplies
 
