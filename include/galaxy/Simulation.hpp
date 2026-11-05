@@ -943,6 +943,10 @@ public:
     // Ship and site remain in identical anchored celestial frame.
     bool supply_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
         std::uint16_t latitude,std::uint16_t longitude,bool water,std::int64_t kilograms);
+    // Orbital resupply of the real surface NPC team. Water resupply shares the
+    // existing site water stock; these calls transfer food or breathable oxygen.
+    bool support_planetary_crew(PlayerId owner,EntityId ship,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,bool oxygen,std::int64_t kg);
     bool cultivate_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
         std::uint16_t latitude,std::uint16_t longitude,std::int64_t batches);
     // Finite, explicitly genesis-funded oasis matter moves to a SITE stock.
