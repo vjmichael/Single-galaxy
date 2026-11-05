@@ -8788,6 +8788,23 @@ bool PersistentWorld::supply_planetary_site(PlayerId owner,EntityId ship,
     return true;
 }
 
+bool PersistentWorld::set_planetary_workforce_policy(PlayerId owner,
+    std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,
+    std::uint8_t policy,FailPoint fail) {
+    // A command changes supervisory policy only. All inventory movements
+    // remain tied to source-backed simulation ticks and SQLite generations.
+    auto next=world_;
+    if(!next.set_planetary_workforce_policy(owner,body,latitude,longitude,
+                                            policy))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("planetary workforce policy created material");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
 bool PersistentWorld::support_planetary_crew(PlayerId owner,EntityId ship,
     std::uint64_t body,std::uint16_t latitude,std::uint16_t longitude,
     bool oxygen,std::int64_t kg,FailPoint fail) {
