@@ -6274,6 +6274,9 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                     PlanetarySiteKey{body,std::uint16_t(lat),std::uint16_t(lon),1});
                 site.spaceport_phase=3;
                 site.construction_progress=40;
+                site.assigned_workers=0;
+                site.surface_location=surface_custody_id(
+                    PlanetarySiteKey{body,std::uint16_t(lat),std::uint16_t(lon),1});
             }
         } else if(f[0]=="oasisextractor" && result.snapshot_version_>=76) {
             require_fields(f,8);
