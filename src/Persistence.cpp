@@ -1,4 +1,5 @@
 #include "galaxy/Persistence.hpp"
+#include "galaxy/UniversalNpcMigration.hpp"
 #include "galaxy/CelestialFrameTransition.hpp"
 #include "galaxy/ColonySafety.hpp"
 #include "galaxy/ColonyDefense.hpp"
@@ -11209,6 +11210,30 @@ void PersistentWorld::step_with_atomic_migration(const SocietyMigrationPlan& pla
        family.current_residence(plan.npc_id)!=plan.origin ||
        src.family_population==0)
         throw std::runtime_error("migration family or regional population preflight failed");
+    // The same admission contract now runs inside the existing real SQLite
+    // migration path. All values are derived from trusted host state. Legacy
+    // v41 ship-to-ship migrations retain their historical crew-capacity and
+    // support semantics; new planetary settlements must reserve real housing
+    // and life support before entering the universal writer.
+    migration::Admission admission{};
+    admission.command_id=plan.command_id;
+    admission.npc_id=plan.npc_id;
+    admission.origin=arrival->source();
+    admission.destination=arrival->destination();
+    admission.expected_generation=plan.expected_world_generation;
+    admission.current_generation=generation_;
+    admission.physical_custody_at_destination=
+        old->second.location==plan.destination && !old->second.transport_id;
+    admission.household_reconciled=src.reconciled && dst.reconciled &&
+        family.current_residence(plan.npc_id)==plan.origin;
+    admission.consent_required=plan.voluntary_admission_event_id!=0;
+    admission.verified_consent=plan.voluntary_admission_event_id!=0;
+    admission.housing_required=false; // grandfathered colony crew limit
+    admission.life_support_required=false; // legacy migration baseline
+    admission.no_competing_residence=
+        old->second.assigned_site==plan.origin;
+    if(migration::preflight(admission,*arrival)!=migration::Denial::None)
+        throw std::runtime_error("universal migration admission rejected authenticated host move");
     const auto initial_named=world_.npc_records().size();
     if(plan.co_parent_id){
         const auto co=world_.npc_records().find(plan.co_parent_id);
