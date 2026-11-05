@@ -176,6 +176,55 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(Simulation::from_snapshot(w.world().canonical_state())
               .canonical_state()==w.world().canonical_state());
 
+        // PLAY-13D.4C.3: the named pilot moves using the SAME NPC roster
+        // as migration and ferry operations, never a shadow shuttle person.
+        CHECK(!w.launch_planetary_shuttle(8,ship,key,81001,false));
+        CHECK(!w.launch_planetary_shuttle(7,ship,key,0,false));
+        const auto departure_before=w.world().canonical_state();
+        bool departure_failed=false;
+        try{(void)w.launch_planetary_shuttle(7,ship,key,81001,false,
+                                             FailPoint::AfterSnapshotWrite);}
+        catch(const std::exception&){departure_failed=true;}
+        CHECK(departure_failed);
+        CHECK(w.world().canonical_state()==departure_before);
+        CHECK(w.launch_planetary_shuttle(7,ship,key,81001,false));
+        CHECK(!w.launch_planetary_shuttle(7,ship,key,81001,false));
+        CHECK(w.world().planetary_shuttles().at(key).flight_phase==1);
+        CHECK(w.world().npc_custody(available[2]).physical_location!=ship);
+        CHECK(!w.unload_planetary_shuttle(7,ship,key,true,1));
+        CHECK(!w.load_planetary_shuttle(7,ship,key,false,1));
+        CHECK(!w.begin_celestial_transit(7,ship,chosen.body,81002));
+        CHECK(w.world().total_ore()==origin);
+        const auto in_flight=w.world().canonical_state();
+        CHECK(in_flight.rfind("galaxy-kernel-v81|",0)==0);
+        CHECK(Simulation::from_snapshot(in_flight).canonical_state()==in_flight);
+        w.steps(3);
+        CHECK(w.world().planetary_shuttles().at(key).flight_phase==2);
+        CHECK(w.world().planetary_shuttles().at(key).descent_receipt==81001);
+        CHECK(w.world().npc_custody(available[2]).physical_location==
+              w.world().planetary_sites().at(key).surface_location);
+        CHECK(!w.launch_planetary_shuttle(7,ship,key,81001,true));
+        CHECK(w.unload_planetary_shuttle(7,ship,key,true,60));
+        CHECK(w.unload_planetary_shuttle(7,ship,key,false,20));
+        CHECK(w.load_planetary_shuttle(7,ship,key,true,50));
+        CHECK(w.world().total_ore()==origin);
+        const auto land_snapshot=w.world().canonical_state();
+        CHECK(Simulation::from_snapshot(land_snapshot).canonical_state()==land_snapshot);
+        CHECK(w.launch_planetary_shuttle(7,ship,key,81003,true));
+        CHECK(!w.launch_planetary_shuttle(7,ship,key,81003,true));
+        CHECK(w.world().planetary_shuttles().at(key).flight_phase==3);
+        CHECK(w.world().total_ore()==origin);
+        CHECK(Simulation::from_snapshot(w.world().canonical_state())
+              .canonical_state()==w.world().canonical_state());
+        w.steps(3);
+        CHECK(w.world().planetary_shuttles().at(key).flight_phase==0);
+        CHECK(w.world().planetary_shuttles().at(key).ascent_receipt==81003);
+        CHECK(w.world().npc_custody(available[2]).physical_location==ship);
+        CHECK(w.unload_planetary_shuttle(7,ship,key,true,50));
+        CHECK(w.world().total_ore()==origin);
+        CHECK(Simulation::from_snapshot(w.world().canonical_state())
+              .canonical_state()==w.world().canonical_state());
+
         if(!farming) {
             const auto source=w.world().planetary_oasis_source_region(7,ship,chosen.body);
             CHECK(source && source->latitude==chosen.latitude &&
