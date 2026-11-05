@@ -5197,7 +5197,7 @@ bool Simulation::build_planetary_site(PlayerId owner,EntityId ship,
        support->second.oxygen_kg<50 ||
        planetary_sites_.count(key) || planetary_sites_.size()>=10000 ||
        site->landscape.region.surface_water ||
-       entities_.count(surface_location))
+       entities_.count(surface_location) || npcs_.empty())
         return false;
     // Collision-resistant deterministic custody handle; reject collisions
     // rather than allowing two cells to share their workforce.
@@ -5235,8 +5235,8 @@ bool Simulation::build_planetary_site(PlayerId owner,EntityId ship,
             }
             if(ready!=2)return false;
         }
-    } else if(first_npc) return false;
-    // A materialized transport kit and two adult workers leave the ship.
+    }
+    // Two physical named NPCs and manufactured modules leave the ship.
     // This does not create a player landing or a rendered planetary scene.
     colony->second.modules-=2;
     colony->second.crew-=2;
@@ -5261,6 +5261,17 @@ bool Simulation::build_planetary_site(PlayerId owner,EntityId ship,
     facility.delegated_npcs=assigned;
     facility.assigned_workers=2;
     facility.oxygen_kg=50;
+    // Preserve version-77 already-completed outposts while upgrading the
+    // world's canonical snapshot format. No NPCs are fabricated for them.
+    for(auto& [legacy_key,legacy]:planetary_sites_) {
+        if(legacy.surface_location)continue;
+        legacy.surface_location=surface_custody_id(legacy_key);
+        legacy.delegated_npcs={{0,0}};
+        legacy.assigned_workers=0;
+        legacy.spaceport_phase=3;
+        legacy.construction_progress=40;
+        legacy.construction_required=40;
+    }
     planetary_sites_.emplace(key,facility);
     snapshot_version_=std::max(snapshot_version_,78);
     return true;
@@ -5274,18 +5285,15 @@ bool Simulation::planetary_spaceport_operational(std::uint64_t body,
 void Simulation::process_planetary_surface_operations() {
     for(auto& [key,site]:planetary_sites_) {
         (void)key;
-        if(site.spaceport_phase==0 || site.spaceport_phase==3)continue;
-        std::int64_t ready=site.assigned_workers;
-        if(snapshot_version_>=20) {
-            ready=0;
-            for(auto npc:site.delegated_npcs) {
-                const auto it=npcs_.find(npc);
-                if(it!=npcs_.end() && it->second.home_ship==site.source_ship &&
-                   it->second.location==site.surface_location &&
-                   it->second.assigned_site==site.surface_location &&
-                   it->second.role==NpcRole::PlanetarySurface &&
-                   npc_available_for_duty(npc))++ready;
-            }
+        if(site.spaceport_phase==0 || site.assigned_workers==0)continue;
+        std::int64_t ready=0;
+        for(auto npc:site.delegated_npcs) {
+            const auto it=npcs_.find(npc);
+            if(it!=npcs_.end() && it->second.home_ship==site.source_ship &&
+               it->second.location==site.surface_location &&
+               it->second.assigned_site==site.surface_location &&
+               it->second.role==NpcRole::PlanetarySurface &&
+               npc_available_for_duty(npc))++ready;
         }
         if(ready<2)continue; // injured, missing or unavailable crew pause work
         if(site.food_kg<2 || site.water_kg<2 || site.oxygen_kg<2)
@@ -5299,6 +5307,7 @@ void Simulation::process_planetary_surface_operations() {
             site.co2_kg+=2;
             ++site.worker_support_cycles;
         }
+        if(site.spaceport_phase==3)continue; // operational; workers still need supplies
         // First four committed ticks represent the abstract NPC descent and
         // equipment emplacement; building then advances on actual world ticks.
         if(site.spaceport_phase==1) {
@@ -6204,10 +6213,12 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                            workers=i64(f[21]),oxygen=i64(f[22]),co2=i64(f[23]),
                            organic=i64(f[24]),support=u64(f[25]);
                 if(phase<1 || phase>3 || needed!=40 || progress>40 ||
-                   !location || workers!=2 || oxygen<0 || co2<0 ||
+                   !location || (workers!=2 && !(workers==0 && phase==3 &&
+                     npc1==0 && npc2==0)) || oxygen<0 || co2<0 ||
                    organic<0 || oxygen>1000000 || co2>1000000 ||
                    organic>1000000 || (npc1==npc2 && npc1!=0) ||
                    ((npc1==0)!=(npc2==0)) ||
+                   (workers==2 && (!npc1 || !npc2)) ||
                    (phase==3 && progress!=40))
                     throw std::runtime_error("snapshot: invalid planetary crew construction state");
                 site.spaceport_phase=std::uint8_t(phase);
@@ -8171,7 +8182,9 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 throw std::runtime_error("snapshot: extractor has no physical source");
             if(result.snapshot_version_>=78) {
                 if(site.surface_location!=surface_custody_id(key) ||
-                   !site.assigned_workers || site.assigned_workers!=2 ||
+                   (site.assigned_workers!=2 &&
+                    !(site.assigned_workers==0 && site.spaceport_phase==3 &&
+                      !site.delegated_npcs[0] && !site.delegated_npcs[1])) ||
                    site.spaceport_phase<1 || site.spaceport_phase>3 ||
                    site.construction_required!=40 ||
                    site.construction_progress>40 ||
