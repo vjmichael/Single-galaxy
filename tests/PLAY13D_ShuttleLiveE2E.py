@@ -170,6 +170,10 @@ def main(fixture,host,relay):
                 assert int(arrived[14])==81001,arrived
                 visit=send(port,reader,base,"DISEMBARK",{"npc":passenger})
                 assert int(visit[8])==2,visit
+                duty=send(port,reader,base,"DUTY_ON",{"npc":passenger})
+                assert int(duty[8])==2,duty
+                released=send(port,reader,base,"DUTY_OFF",{"npc":passenger})
+                assert int(released[8])==2,released
                 # A real physical reboarding precedes the return launch.
                 boarded_again=send(port,reader,base,"REBOARD",{"npc":passenger})
                 assert int(boarded_again[8])==2,boarded_again
