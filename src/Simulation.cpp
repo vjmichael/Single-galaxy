@@ -601,6 +601,19 @@ void Simulation::upgrade_assignment_snapshot_format(){
     for(auto& [id,n]:npcs_){(void)id;if(!n.assigned_site)n.assigned_site=n.location;}
     snapshot_version_=std::max(snapshot_version_,32);
 }
+void Simulation::upgrade_legal_residence_snapshot_format(){
+    if(snapshot_version_<85 || snapshot_version_>86 || npcs_.empty())
+        throw std::logic_error("legal residence upgrade requires v85 named population");
+    if(snapshot_version_==86)return;
+    for(auto& [id,n]:npcs_) {
+        (void)id;
+        if(!n.home_ship || (n.residence_id && n.residence_id!=n.home_ship) ||
+           n.residence_kind!=transport::LocationKind::ColonyShip)
+            throw std::logic_error("legal residence upgrade requires canonical ship homes");
+        n.residence_id=n.home_ship;
+    }
+    snapshot_version_=86;
+}
 void Simulation::enable_medical_workforce_rules(){
     if(tick_ || !submitted_ids_.empty() || !commands_.empty() ||
        snapshot_version_<32 || npcs_.empty())
