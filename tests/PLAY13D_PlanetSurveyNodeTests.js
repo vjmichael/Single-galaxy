@@ -106,3 +106,31 @@ test('owner-scoped planetary NPC policies and work telemetry are validated',()=>
   assert.match(relay,/action=='colonyPlanetPolicy'/);
   assert.match(relay,/PLANET_POLICY/);
 });
+
+test('orbital shuttle telemetry, receipts and UI are bounded by native schema',()=>{
+  const report=decode('COLONY|1|12|PLANET_SHUTTLE_STATUS|4294967300|17|36|1|1|42|149|50|45|101|101|0|77');
+  assert.equal(report.phase,1);
+  assert.equal(report.pilot,42);
+  assert.equal(report.water,149);
+  assert.equal(report.request,101);
+  const empty=decode('COLONY|1|12|PLANET_SHUTTLE_STATUS|4294967300|17|36|0|0|0|0|0|0|0|0|0|77');
+  assert.equal(empty.present,false);
+  const receipt=decode('COLONY|1|12|PLANET_SHUTTLE_COMMITTED|4294967300|17|36|DESCEND|88');
+  assert.equal(receipt.operation,'DESCEND');
+  for(const raw of [
+    'COLONY|1|12|PLANET_SHUTTLE_STATUS|4294967300|17|36|1|4|42|149|50|45|101|101|0|77',
+    'COLONY|1|12|PLANET_SHUTTLE_STATUS|4294967300|17|36|1|1|42|1000|50|45|101|101|0|77',
+    'COLONY|1|12|PLANET_SHUTTLE_STATUS|4294967300|17|36|1|1|0|149|50|45|101|101|0|77',
+    'COLONY|1|12|PLANET_SHUTTLE_STATUS|4294967300|17|36|1|1|42|149|50|0|101|101|0|77',
+    'COLONY|1|12|PLANET_SHUTTLE_STATUS|4294967300|17|36|0|1|42|149|50|45|101|101|0|77',
+    'COLONY|1|12|PLANET_SHUTTLE_COMMITTED|4294967300|17|36|FREE|88',
+    'COLONY|1|12|PLANET_SHUTTLE_COMMITTED|4294967300|17|36|LOAD|0'
+  ])assert.throws(()=>decode(raw),Error,raw);
+  const ui=fs.readFileSync(path.join(root,'viewer/colony.js'),'utf8');
+  const relay=fs.readFileSync(path.join(root,'live/interactive_relay.py'),'utf8');
+  const host=fs.readFileSync(path.join(root,'src/colony_live_host.cpp'),'utf8');
+  assert.match(ui,/colonyPlanetShuttle/);
+  assert.match(ui,/Descend to surface/);
+  assert.match(relay,/PLANET_SHUTTLE/);
+  assert.match(host,/launch_planetary_shuttle/);
+});
