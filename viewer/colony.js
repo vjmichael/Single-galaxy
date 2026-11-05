@@ -115,6 +115,31 @@
         throw Error('Invalid shuttle operation receipt');
       return {...e,id,latitude,longitude,operation,generation};
     }
+    if(t==='SHIPYARD_ITEM'){
+      if(v.length!==12)throw Error('Malformed real shipyard construction');
+      const order=numeric(v[4],Number.MAX_SAFE_INTEGER),
+        colony=numeric(v[5],Number.MAX_SAFE_INTEGER),
+        firstNpc=numeric(v[6],Number.MAX_SAFE_INTEGER),
+        secondNpc=numeric(v[7],Number.MAX_SAFE_INTEGER),
+        progress=numeric(v[8],8),required=numeric(v[9],8),
+        stalled=numeric(v[10],Number.MAX_SAFE_INTEGER),
+        generation=numeric(v[11],Number.MAX_SAFE_INTEGER);
+      if(!order||!colony||!firstNpc||!secondNpc||
+         firstNpc===secondNpc||required!==8||!generation)
+        throw Error('Invalid shipyard material/labor receipt');
+      return {...e,order,colony,firstNpc,secondNpc,progress,required,stalled,generation};
+    }
+    if(t==='SHIPYARD_STARTED'){
+      if(v.length!==6)throw Error('Malformed shipyard start receipt');
+      const order=numeric(v[4],Number.MAX_SAFE_INTEGER),
+        generation=numeric(v[5],Number.MAX_SAFE_INTEGER);
+      if(!order||!generation)throw Error('Invalid shipyard start');
+      return {...e,order,generation};
+    }
+    if(t==='SHIPYARD_DONE'){
+      if(v.length!==5)throw Error('Malformed shipyard status end');
+      return {...e,count:numeric(v[4],64)};
+    }
     if(t==='INTERFREIGHT_ITEM'){
       if(v.length!==11)throw Error('Malformed sealed intercolony manifest');
       const order=numeric(v[4],Number.MAX_SAFE_INTEGER),
@@ -702,6 +727,48 @@
        guide.action==='colonyMine'||guide.action==='colonyRefine'?{amount:8}:
        guide.action==='colonyFabricate'?{amount:4}:{});
  });
+ // First shipyard construction test UI: one global control, not
+ // repeated once for every planet. Only native SQLite receipts change state.
+ const shipyardPanel=document.createElement('details');
+ const shipyardTitle=document.createElement('summary');
+ shipyardTitle.textContent='Colony shipyard construction (SHIP-01A)';
+ const shipyardHint=document.createElement('p');
+ shipyardHint.textContent='Fabricate 4 modules, then assign two existing available crew IDs. Construction takes 8 committed ticks.';
+ const yardNpc1=document.createElement('input');
+ yardNpc1.type='number';yardNpc1.min='1';yardNpc1.step='1';
+ yardNpc1.placeholder='First NPC worker ID';
+ yardNpc1.setAttribute('aria-label','First real shipyard construction NPC');
+ const yardNpc2=document.createElement('input');
+ yardNpc2.type='number';yardNpc2.min='1';yardNpc2.step='1';
+ yardNpc2.placeholder='Second NPC worker ID';
+ yardNpc2.setAttribute('aria-label','Second real shipyard construction NPC');
+ const yardStart=document.createElement('button');
+ yardStart.type='button';yardStart.textContent='Build orbital shipyard';
+ const yardRefresh=document.createElement('button');
+ yardRefresh.type='button';yardRefresh.textContent='Check shipyard construction';
+ const yardReceipt=document.createElement('output');
+ yardReceipt.textContent='No committed shipyard construction receipt yet.';
+ const yardList=document.createElement('div');
+ yardList.dataset.shipyardList='1';
+ yardStart.addEventListener('click',()=>{
+   const firstNpc=Number(yardNpc1.value),secondNpc=Number(yardNpc2.value);
+   const order=Date.now()*100+Math.floor(Math.random()*100);
+   if(!Number.isSafeInteger(order)||order<=0||
+      !Number.isSafeInteger(firstNpc)||firstNpc<=0||
+      !Number.isSafeInteger(secondNpc)||secondNpc<=0||
+      firstNpc===secondNpc)return;
+   window.GalaxyColonyCommand?.('colonyShipyardBuild',{order,firstNpc,secondNpc});
+   yardReceipt.textContent='Construction requested. Waiting for native confirmation.';
+ });
+ yardRefresh.addEventListener('click',()=>{
+   yardList.replaceChildren();
+   window.GalaxyColonyCommand?.('colonyShipyardStatus',{});
+   yardReceipt.textContent='Reading saved construction state.';
+ });
+ shipyardPanel.append(shipyardTitle,shipyardHint,yardNpc1,yardNpc2,
+   yardStart,yardRefresh,yardReceipt,yardList);
+ q('celestialBodyList').parentNode.insertBefore(
+   shipyardPanel,q('celestialBodyList'));
  window.GalaxyColony={
    reset(){signatureContacts.clear();celestialBodies.clear();oasises.clear();localOreTaxonomy.clear();expeditionAssessment=null;
      q('celestialBodyList').textContent='No physical celestial bodies surveyed yet.';
@@ -1144,6 +1211,29 @@
          'Shuttle '+e.operation+' committed for body #'+e.id+'.':
          'Orbital shuttle status received from the native world.';
      }
+     if(e.type==='SHIPYARD_ITEM'){
+       let entry=[...yardList.children].find(node=>
+         node.dataset.shipyardOrder===String(e.order));
+       if(!entry){
+         entry=document.createElement('div');
+         entry.dataset.shipyardOrder=String(e.order);
+         yardList.append(entry);
+       }
+       entry.textContent='Yard #'+e.order+' at colony ship #'+e.colony+
+         ' · NPCs #'+e.firstNpc+', #'+e.secondNpc+
+         ' · '+e.progress+'/'+e.required+' committed build ticks'+
+         (e.progress===e.required?' · Operational':
+           ' · Under construction')+
+         ' · stalled '+e.stalled;
+       yardReceipt.textContent='Committed shipyard generation '+e.generation;
+     }
+     if(e.type==='SHIPYARD_STARTED'){
+       yardReceipt.textContent='Real construction order #'+e.order+
+         ' accepted at generation '+e.generation;
+       window.GalaxyColonyCommand?.('colonyShipyardStatus',{});
+     }
+     if(e.type==='SHIPYARD_DONE' && !e.count)
+       yardReceipt.textContent='No constructed shipyards yet.';
      if(e.type==='INTERFREIGHT_ITEM'){
        q('celestialBodyList').querySelectorAll('[data-shuttle-body]').forEach(panel=>{
          const list=panel.querySelector('[data-freight-list]');
