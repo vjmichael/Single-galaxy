@@ -776,6 +776,13 @@ static void scenario(const fs::path& db, bool farming){
             CHECK(!w.load_intercolony_freight(7,77003,freighter,receiver));
             CHECK(w.world().life_support(ship)->nutrients_kg==from_before-200);
             CHECK(w.world().colony_ship(freighter)->goods_kg.at("freight_nutrients")==200);
+            const auto freight_manifest=w.world().intercolony_transport_manifest(77003);
+            CHECK(freight_manifest && freight_manifest->valid());
+            CHECK(freight_manifest->vehicle==freighter);
+            CHECK(freight_manifest->mode==transport::Mode::OtherVehicle);
+            CHECK(transport::contains_good(*freight_manifest,
+                  transport::GoodKind::Resource,
+                  static_cast<std::uint8_t>(transport::ResourceGood::Nutrients),200));
             CHECK(w.world().life_support(receiver)->nutrients_kg==to_before);
             CHECK(w.world().intercolony_freight().at(77003).stage==
                   IntercolonyFreightStage::Loaded);
@@ -800,6 +807,9 @@ static void scenario(const fs::path& db, bool farming){
             CHECK(w.world().life_support(receiver)->nutrients_kg==to_before+200);
             CHECK(w.world().life_support(ship)->nutrients_kg==from_before-200);
             CHECK(w.world().colony_ship(freighter)->goods_kg.count("freight_nutrients")==0);
+            const auto delivered_manifest=w.world().intercolony_transport_manifest(77003);
+            CHECK(delivered_manifest && delivered_manifest->valid());
+            CHECK(delivered_manifest->contents.empty());
             CHECK(w.world().intercolony_freight().at(77003).arrival_receipt==99021);
             CHECK(w.world().intercolony_freight().at(77003).stage==
                   IntercolonyFreightStage::Delivered);
