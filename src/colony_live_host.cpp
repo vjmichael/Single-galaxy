@@ -14,6 +14,7 @@
 #include <stdexcept>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <memory>
 #include <random>
 #include <set>
