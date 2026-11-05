@@ -858,6 +858,9 @@ public:
     bool supply_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
         std::uint16_t latitude,std::uint16_t longitude,bool water,std::int64_t kg,
         FailPoint fail=FailPoint::None);
+    bool support_planetary_crew(PlayerId owner,EntityId ship,std::uint64_t body,
+        std::uint16_t latitude,std::uint16_t longitude,bool oxygen,std::int64_t kg,
+        FailPoint fail=FailPoint::None);
     bool cultivate_planetary_site(PlayerId owner,EntityId ship,std::uint64_t body,
         std::uint16_t latitude,std::uint16_t longitude,std::int64_t batches,
         FailPoint fail=FailPoint::None);
