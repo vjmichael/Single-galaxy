@@ -32,3 +32,5 @@
 Current delivered engineering report: [B7.0c Mineral Industry](B7_0c_Mineral_Industry_Report_2026-10-30.md). The consolidated feature specification remains the design authority; current milestones B7.0b and earlier are historical evidence. B7.0c implements named minerals, physically conserved refining inventories, functional structural modules, journaled recovery and local Matrix Vision controls. Farming, NPC welfare and automated colony progression remain later work.
 
 - [SHIP-01B.2 — real freighter commissioning, v92 draft](engineering/SHIP01B2_REAL_FREIGHTER_COMMISSIONING_20261105.md) — exact-HEAD native acceptance remains open; no free crew, scanner, or provisioning.
+
+- [SHIP-01C — first manufactured freighter actual intercolony delivery, test draft](engineering/SHIP01C_FIRST_MANUFACTURED_FREIGHT_DELIVERY_20261105.md) — real built hull, named crew, planetary work order, verified-when-passed physical freight.

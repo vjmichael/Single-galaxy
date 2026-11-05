@@ -512,6 +512,104 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
         }
         return;
     }
+    // SHIP-01C: pilot a specifically manufactured/commissioned hull without
+    // rebinding colony infrastructure, work board or founding ship authority.
+    // Only exact owner/physical hull/real crew + immutable build receipt admit
+    // commands. Request IDs are host-allocated, never browser-controlled.
+    if(!v.empty() && (v[0]=="FREIGHTER_PILOT_STATUS" ||
+                      v[0]=="FREIGHTER_THRUST" ||
+                      v[0]=="FREIGHTER_YAW" ||
+                      v[0]=="FREIGHTER_TRAVEL")){
+        try{
+            if(v.size()<2)throw std::invalid_argument("missing freighter order");
+            const auto raw=integer(v[1]);
+            if(raw<=0 || raw>=(std::int64_t{1}<<50))
+                throw std::invalid_argument("bad freighter order");
+            const auto order_id=std::uint64_t(raw);
+            const auto job=world.world().freighter_build_orders().find(order_id);
+            if(job==world.world().freighter_build_orders().end() ||
+               job->second.owner!=principal ||
+               job->second.source_ship!=ship ||
+               !job->second.commissioned())
+                throw std::invalid_argument("uncommissioned or foreign hull");
+            const auto hull_id=job->second.launched_ship;
+            const auto* hull=world.world().find(hull_id);
+            const auto* crew=world.world().colony_ship(hull_id);
+            const auto* life=world.world().life_support(hull_id);
+            const auto frame=world.world().ship_frames().find(hull_id);
+            if(!hull || hull->type!=EntityType::Ship ||
+               hull->owner_id!=principal ||
+               hull->manufactured_order_id!=order_id ||
+               !crew || crew->crew<1 || !life ||
+               frame==world.world().ship_frames().end() ||
+               !hull->fitting.exploration_scanner())
+                throw std::invalid_argument("freighter not operational");
+            if(v[0]=="FREIGHTER_THRUST" && v.size()==4){
+                const auto x=integer(v[2]),y=integer(v[3]);
+                if(x<-1 || x>1 || y<-1 || y>1)
+                    throw std::invalid_argument("invalid thrust vector");
+                Command command{};
+                command.id=++nonce;command.sequence=command.id;
+                command.execute_tick=world.world().tick()+1;
+                command.issuer=principal;command.actor=hull_id;
+                command.action=Action::Thrust;
+                command.thrust_x=int(x);command.thrust_y=int(y);
+                if(!world.submit(command))
+                    throw std::invalid_argument("freighter thrust rejected");
+                announce(world.world(),"FREIGHTER_PILOT_QUEUED|"+
+                    std::to_string(order_id)+"|"+std::to_string(hull_id)+"|"+
+                    std::to_string(command.id)+"|"+
+                    std::to_string(world.generation()));
+            }else if(v[0]=="FREIGHTER_YAW" && v.size()==3){
+                const auto delta=integer(v[2]);
+                if(delta!=15 && delta!=-15)
+                    throw std::invalid_argument("invalid hull yaw");
+                Command command{};
+                command.id=++nonce;command.sequence=command.id;
+                command.execute_tick=world.world().tick()+1;
+                command.issuer=principal;command.actor=hull_id;
+                command.action=Action::Thrust;command.amount=delta;
+                if(!world.submit(command))
+                    throw std::invalid_argument("freighter yaw rejected");
+                announce(world.world(),"FREIGHTER_PILOT_QUEUED|"+
+                    std::to_string(order_id)+"|"+std::to_string(hull_id)+"|"+
+                    std::to_string(command.id)+"|"+
+                    std::to_string(world.generation()));
+            }else if(v[0]=="FREIGHTER_TRAVEL" && v.size()==3){
+                const auto target=integer(v[2]);
+                if(target<=0)throw std::invalid_argument("invalid body");
+                const auto request=++nonce;
+                if(!world.begin_celestial_transit(principal,hull_id,
+                        std::uint64_t(target),request))
+                    throw std::invalid_argument("freighter transit rejected");
+                announce(world.world(),"FREIGHTER_TRANSIT_STARTED|"+
+                    std::to_string(order_id)+"|"+std::to_string(hull_id)+"|"+
+                    std::to_string(request)+"|"+std::to_string(target)+"|"+
+                    std::to_string(world.generation()));
+            }else if(v[0]!="FREIGHTER_PILOT_STATUS" || v.size()!=2){
+                throw std::invalid_argument("unsupported freighter control");
+            }
+            // Read back the actual committed/native state; a pending thrust
+            // is explicitly not reported as already executed movement.
+            const auto* current=world.world().find(hull_id);
+            const auto& custody=world.world().ship_frames().at(hull_id);
+            const auto* onboard=world.world().life_support(hull_id);
+            announce(world.world(),"FREIGHTER_PILOT_ITEM|"+
+                std::to_string(order_id)+"|"+std::to_string(hull_id)+"|"+
+                std::to_string(current->heading_deg)+"|"+
+                std::to_string(current->position.x)+"|"+
+                std::to_string(current->position.y)+"|"+
+                std::to_string(custody.anchor_body)+"|"+
+                std::to_string(world.world().colony_ship(hull_id)->crew)+"|"+
+                std::to_string(onboard->food_kg)+"|"+
+                std::to_string(onboard->water_kg)+"|"+
+                std::to_string(onboard->oxygen_kg)+"|"+
+                std::to_string(world.generation()));
+        }catch(const std::exception&){
+            announce(world.world(),"ERROR|FREIGHTER_PILOT_DENIED");
+        }
+        return;
+    }
     // SHIP-01B.1: real finite-hull production, separate from free genesis.
     // The client can request an existing player's yard but cannot assert
     // completion, choose an entity ID, or claim a crew and cargo.
