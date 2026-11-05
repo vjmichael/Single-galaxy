@@ -279,7 +279,7 @@ def main(executable,relay):
             ):
                 status,_=request(port,'POST','/command',payload)
                 assert status==400,(payload,status)
-            for action in ('colonyFreighterBuild','colonyFreighterStatus'):
+            for action in ('colonyFreighterBuild','colonyFreighterCommission','colonyFreighterStatus'):
                 assert action in session['commands'],action
             freighter={'token':token,'action':'colonyFreighterBuild',
                       'yard':91001,'order':92001}
@@ -301,6 +301,27 @@ def main(executable,relay):
                 {**freighter,'order':1<<50},
                 {**freighter,'extra':1},
                 {'token':token,'action':'colonyFreighterStatus','order':92001}
+            ):
+                status,_=request(port,'POST','/command',payload)
+                assert status==400,(payload,status)
+            commissioning={'token':token,'action':'colonyFreighterCommission',
+                           'order':92001,'firstNpc':103,'secondNpc':104,
+                           'provisionsKg':20}
+            status,_=request(port,'POST','/command',commissioning)
+            assert status==202,status
+            status,_=request(port,'POST','/command',
+                             {**commissioning,'token':'forged'})
+            assert status==403,status
+            for payload in (
+                {**commissioning,'order':True},
+                {**commissioning,'order':1<<50},
+                {**commissioning,'firstNpc':True},
+                {**commissioning,'secondNpc':True},
+                {**commissioning,'secondNpc':103},
+                {**commissioning,'provisionsKg':True},
+                {**commissioning,'provisionsKg':9},
+                {**commissioning,'provisionsKg':1001},
+                {**commissioning,'extra':123},
             ):
                 status,_=request(port,'POST','/command',payload)
                 assert status==400,(payload,status)

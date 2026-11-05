@@ -557,7 +557,13 @@ struct FreighterBuildOrder {
     std::uint64_t posted_tick=0,last_progress_tick=0,launched_tick=0;
     std::uint32_t system=0;
     std::uint64_t anchor_body=0;
+    // SHIP-01B.2: an immutable, authorized, near-berth commissioning receipt.
+    // Names are existing NPC identities; this receipt is not an extra census.
+    std::uint64_t commissioned_tick=0;
+    std::array<std::uint64_t,2> commissioning_crew{};
+    std::int64_t provisions_kg_each=0; // actual food + water + oxygen transfer
     bool finished() const noexcept {return launched_ship!=0;}
+    bool commissioned() const noexcept {return commissioned_tick!=0;}
 };
 struct PhysicalOasisReserve {
     std::int64_t water_kg=0,nutrients_kg=0;
@@ -1143,8 +1149,14 @@ public:
     }
     bool queue_shipyard_freighter(PlayerId owner,std::uint64_t yard_order,
         std::uint64_t build_order);
+    // Physical commissioning at the originating berth: transfer TWO real
+    // available named NPCs, one already fabricated scanner module, and equal
+    // finite food/water/oxygen stocks. Rejected requests leave no effect.
+    bool commission_shipyard_freighter(PlayerId owner,
+        std::uint64_t build_order,std::array<std::uint64_t,2> named_crew,
+        std::int64_t provisions_kg_each);
     // Finished order references an actual Entity with an empty physical hold.
-    // New hull starts uncommissioned and is not a crewed colony vessel.
+    // No ship commands before commissioning; no free crew or starter equipment.
     bool plan_intercolony_freight(PlayerId owner,std::uint64_t local_order_id,
         EntityId carrier,EntityId destination);
     bool load_intercolony_freight(PlayerId owner,std::uint64_t local_order_id,

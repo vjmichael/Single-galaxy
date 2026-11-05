@@ -144,6 +144,19 @@
         throw Error('Invalid real ship launch');
       return {...e,order,hull,generation};
     }
+    if(t==='FREIGHTER_COMMISSIONED'){
+      if(v.length!==10)throw Error('Malformed commissioned freighter receipt');
+      const order=numeric(v[4],Number.MAX_SAFE_INTEGER),
+        hull=numeric(v[5],Number.MAX_SAFE_INTEGER),
+        firstNpc=numeric(v[6],Number.MAX_SAFE_INTEGER),
+        secondNpc=numeric(v[7],Number.MAX_SAFE_INTEGER),
+        provisionsKg=numeric(v[8],1000),
+        generation=numeric(v[9],Number.MAX_SAFE_INTEGER);
+      if(!order||!hull||!firstNpc||!secondNpc||firstNpc===secondNpc||
+         provisionsKg<10||!generation)
+        throw Error('Invalid real commissioning transfer');
+      return {...e,order,hull,firstNpc,secondNpc,provisionsKg,generation};
+    }
     if(t==='FREIGHTER_DONE'){
       if(v.length!==5)throw Error('Malformed freighter status terminator');
       return {...e,count:numeric(v[4],64)};
@@ -832,6 +845,35 @@
  freighterState.textContent='No confirmed freighter orders yet.';
  const freighterList=document.createElement('div');
  freighterList.dataset.freighterList='1';
+ const crewFirst=document.createElement('input');
+ crewFirst.type='number';crewFirst.min='1';crewFirst.step='1';
+ crewFirst.placeholder='Existing NPC pilot ID';
+ crewFirst.setAttribute('aria-label','First named freighter crew NPC ID');
+ const crewSecond=document.createElement('input');
+ crewSecond.type='number';crewSecond.min='1';crewSecond.step='1';
+ crewSecond.placeholder='Existing NPC engineer ID';
+ crewSecond.setAttribute('aria-label','Second named freighter crew NPC ID');
+ const freighterProvisions=document.createElement('input');
+ freighterProvisions.type='number';freighterProvisions.min='10';
+ freighterProvisions.max='1000';freighterProvisions.step='1';
+ freighterProvisions.value='20';
+ freighterProvisions.setAttribute('aria-label','Each food water oxygen kilograms to transfer');
+ const freighterCommission=document.createElement('button');
+ freighterCommission.type='button';
+ freighterCommission.textContent='Commission freighter with real crew';
+ freighterCommission.addEventListener('click',()=>{
+   const order=Number(freighterOrder.value),
+      firstNpc=Number(crewFirst.value),secondNpc=Number(crewSecond.value),
+      provisionsKg=Number(freighterProvisions.value);
+   if(!Number.isSafeInteger(order)||order<=0||
+      !Number.isSafeInteger(firstNpc)||firstNpc<=0||
+      !Number.isSafeInteger(secondNpc)||secondNpc<=0||
+      firstNpc===secondNpc||!Number.isSafeInteger(provisionsKg)||
+      provisionsKg<10||provisionsKg>1000)return;
+   window.GalaxyColonyCommand?.('colonyFreighterCommission',
+       {order,firstNpc,secondNpc,provisionsKg});
+   freighterState.textContent='Commissioning requested. Waiting for native NPC, scanner and stock receipt.';
+ });
  freighterStart.addEventListener('click',()=>{
    const yard=Number(yardOrder.value);
    const order=Number(freighterOrder.value)||
@@ -848,7 +890,8 @@
    freighterState.textContent='Loading actual persistent shipbuilding orders.';
  });
  shipyardPanel.append(freighterTitle,freighterHint,freighterOrder,
-   freighterStart,freighterRefresh,freighterState,freighterList);
+   freighterStart,crewFirst,crewSecond,freighterProvisions,
+   freighterCommission,freighterRefresh,freighterState,freighterList);
  q('celestialBodyList').parentNode.insertBefore(
    shipyardPanel,q('celestialBodyList'));
  window.GalaxyColony={
@@ -1306,6 +1349,20 @@
          (e.hull?' · Actual ship #'+e.hull+' constructed (uncrewed)':
             ' · Hull not yet launched');
        freighterState.textContent='Native manufacturing generation '+e.generation;
+     }
+     if(e.type==='FREIGHTER_COMMISSIONED'){
+       let row=[...freighterList.children].find(node=>
+         node.dataset.freighterOrder===String(e.order));
+       if(!row){
+         row=document.createElement('div');
+         row.dataset.freighterOrder=String(e.order);
+         freighterList.append(row);
+       }
+       row.textContent='Manufactured ship #'+e.hull+' commissioned with existing NPCs #'+
+         e.firstNpc+' and #'+e.secondNpc+', '+e.provisionsKg+
+         ' kg each of food, water and oxygen, and a paid scanner.';
+       freighterState.textContent='Real ship #'+e.hull+
+         ' commissioned at native generation '+e.generation;
      }
      if(e.type==='FREIGHTER_QUEUED'){
        freighterState.textContent='Freighter order #'+e.order+

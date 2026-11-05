@@ -1408,3 +1408,13 @@ if(BUILD_TESTING)
   add_test(NAME galaxy_ship01b_first_freighter
     COMMAND galaxy_ship01b_first_freighter_tests)
 endif()
+
+# SHIP-01B.2 — real same-berth NPC crew, stocked life support and paid scanner
+# with v92 receipt, exact-once SQLite transfer and authorized first flight.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship01b2_commission_freighter_tests
+    tests/SHIP01B2_CommissionFreighterTests.cpp)
+  target_link_libraries(galaxy_ship01b2_commission_freighter_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship01b2_commission_freighter
+    COMMAND galaxy_ship01b2_commission_freighter_tests)
+endif()

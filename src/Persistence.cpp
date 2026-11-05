@@ -8815,6 +8815,21 @@ bool PersistentWorld::queue_shipyard_freighter(
     ++generation_;
     return true;
 }
+bool PersistentWorld::commission_shipyard_freighter(
+        PlayerId owner,std::uint64_t build_id,
+        std::array<std::uint64_t,2> crew,std::int64_t provisions_kg_each,
+        FailPoint fail) {
+    auto next=world_;
+    if(!next.commission_shipyard_freighter(owner,build_id,crew,provisions_kg_each))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("commissioning changed conserved world matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
 bool PersistentWorld::start_shipyard_construction(
         PlayerId owner,EntityId colony,std::uint64_t order,
         std::array<std::uint64_t,2> workers,FailPoint fail) {

@@ -1,6 +1,6 @@
 # SHIP-01 — Player-built shipyards, NPC shipbuilding, and intercolony ship orders
 **Design decision:** 2026-11-05  
-**Status:** SHIP-01A.0 read-only preflight locally verified on archived v66. SHIP-01A.1 authoritative construction, embodied materials, native timed labor, SQLite v90 persistence, host commands, relay and UI are implemented on the next draft PR, but exact-source C++ acceptance remains OPEN. Dedicated assembly berth, power, ship production, crew commissioning and contracts are NOT implemented.  
+**Status:** SHIP-01A.0 read-only preflight locally verified on archived v66. SHIP-01A.1 authoritative construction, embodied materials, native timed labor, SQLite v90 persistence, host commands, relay and UI are implemented on the next draft PR, but exact-source C++ acceptance remains OPEN. Dedicated station-grade assembly berth, power, intercolony ship sales and NPC contracts are NOT implemented. SHIP-01B.1 manufactures a real hull; SHIP-01B.2 now implements named-NPC, paid-scanner and finite-supply commissioning in a stacked DRAFT, but exact-head native and Windows acceptance remain OPEN.  
 **Dependency:** PLAY-13D.4G PR #50 (physical intercolony freight); PLAY-13D.4F PR #49 (local NPC work board).  
 **Purpose:** Close the missing ship-availability and industrial-economy part of the freight gameplay loop, without conflating implementation with validation.
 
@@ -52,6 +52,10 @@ The opportunity metric should be explainable: current backlog ship-build hours v
 ## SHIP-01B.1 — First finite manufactured freighter (draft)
 
 The first physical freighter hull implementation is now in a stacked draft branch; see [SHIP01B1_FIRST_PLAYER_MANUFACTURED_FREIGHTER_20261105.md](SHIP01B1_FIRST_PLAYER_MANUFACTURED_FREIGHTER_20261105.md). A real operational SHIP-01A yard debits six manufactured modules, uses its named workers for twelve committed ticks, then creates one new canonical uncrewed Entity with a 100 m³ cargo hold in the exact parent local frame. A v91 immutable manufacturing receipt links the order to the hull, and SQLite failpoint/restart tests have been written. The actual new C++ native test has **not yet passed at exact head**; the finished hull is **not yet crewed, fitted, or authorized to transport cargo** until a real commissioning gate. No station-grade power/slip or ship market is being claimed complete.
+
+## SHIP-01B.2 — real freighter commissioning (draft)
+
+See [SHIP01B2_REAL_FREIGHTER_COMMISSIONING_20261105.md](SHIP01B2_REAL_FREIGHTER_COMMISSIONING_20261105.md). The v92 implementation provides an owner-authorized, short-berth transfer of **two existing named NPCs**, one **already fabricated scanner module**, and **finite food/water/oxygen** aboard the exact v91 manufactured hull. It records immutable crew/stock provenance, conserves world matter, and uses SQLite copy/commit/swap recovery with explicit failure injection. The native host, HTTP relay and temporary browser have commissioning controls and committed status telemetry. These changes are **committed, not native-verified**; the full Planet A→Colony B delivery aboard this hull remains SHIP-01C.
 
 ## SHIP-01A.1 — authoritative construction implementation in progress
 
