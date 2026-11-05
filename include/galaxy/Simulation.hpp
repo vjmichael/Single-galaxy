@@ -1117,7 +1117,6 @@ public:
     }
     bool start_shipyard_construction(PlayerId owner,EntityId colony,
         std::uint64_t order_id,std::array<std::uint64_t,2> workers);
-    void process_shipyard_construction();
     bool plan_intercolony_freight(PlayerId owner,std::uint64_t local_order_id,
         EntityId carrier,EntityId destination);
     bool load_intercolony_freight(PlayerId owner,std::uint64_t local_order_id,
@@ -1196,6 +1195,7 @@ private:
     void process_colony_needs();
     void process_oasis_extractors();
     void process_planetary_surface_operations();
+    void process_shipyard_construction(); // only Simulation::step advances labor
     void process_farms();
     void move_npc_records(EntityId ship, EntityId site, NpcRole role, std::int64_t delta);
     void award_farm_experience(EntityId site);
