@@ -718,7 +718,7 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(w.world().planetary_shuttles().at(
             PlanetarySiteKey{chosen.body,chosen.latitude,chosen.longitude,1})
               .ascent_receipt==(farming?81003:
-                 (0xC000000000000000ULL | (77003ULL<<1) | 1ULL)));
+                 (0x10000000000000ULL | (77003ULL<<1) | 1ULL)));
         CHECK(!w.launch_planetary_shuttle(7,ship,
             PlanetarySiteKey{chosen.body,chosen.latitude,chosen.longitude,1},
             81001,false));
