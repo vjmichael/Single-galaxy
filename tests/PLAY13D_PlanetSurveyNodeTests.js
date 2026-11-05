@@ -164,3 +164,15 @@ test('PLAY-13D.4C.8 surface visitors have canonical named custody frames',()=>{
     'COLONY|1|14|PLANET_SHUTTLE_VISITORS_DONE|4294967300|36|36|1'
   ])assert.throws(()=>decode(raw),Error,raw);
 });
+
+test('PLAY-13D.4C.8 work duty is not implied by planetary disembarkation',()=>{
+  assert.equal(decode('COLONY|1|14|PLANET_SHUTTLE_WORKER|4294967300|17|36|84').npc,84);
+  assert.equal(decode('COLONY|1|14|PLANET_SHUTTLE_WORKERS_DONE|4294967300|17|36|1').count,1);
+  assert.equal(decode('COLONY|1|14|PLANET_SHUTTLE_COMMITTED|4294967300|17|36|DUTY_ON|37').operation,'DUTY_ON');
+  assert.equal(decode('COLONY|1|14|PLANET_SHUTTLE_COMMITTED|4294967300|17|36|DUTY_OFF|38').operation,'DUTY_OFF');
+  for(const raw of [
+    'COLONY|1|14|PLANET_SHUTTLE_WORKER|4294967300|17|36|0',
+    'COLONY|1|14|PLANET_SHUTTLE_WORKERS_DONE|4294967300|17|36|65',
+    'COLONY|1|14|PLANET_SHUTTLE_WORKER|4294967300|17|36',
+  ])assert.throws(()=>decode(raw),Error,raw);
+});
