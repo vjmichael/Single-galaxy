@@ -190,7 +190,13 @@ static void scenario(const fs::path& db, bool farming){
         catch(const std::exception&){load_failed=true;}
         CHECK(load_failed);
         CHECK(w.world().canonical_state()==load_before);
-        CHECK(w.load_planetary_shuttle(7,ship,key,true,200));
+        native.action=OrbitalShuttleAction::Load;
+        native.kilograms=200;
+        native.water=true;
+        const auto native_load=execute_orbital_shuttle(w,native);
+        CHECK(native_load.accepted && native_load.mutated &&
+              native_load.shuttle.water_kg==200 &&
+              native_load.generation==native_generation+1);
         CHECK(w.load_planetary_shuttle(7,ship,key,false,100));
         CHECK(w.world().planetary_shuttles().at(key).water_kg==200);
         CHECK(w.world().planetary_shuttles().at(key).food_kg==100);
@@ -213,7 +219,13 @@ static void scenario(const fs::path& db, bool farming){
         catch(const std::exception&){departure_failed=true;}
         CHECK(departure_failed);
         CHECK(w.world().canonical_state()==departure_before);
-        CHECK(w.launch_planetary_shuttle(7,ship,key,81001,false));
+        native.action=OrbitalShuttleAction::Descend;
+        native.kilograms=0;
+        native.request_id=81001;
+        const auto native_departure=execute_orbital_shuttle(w,native);
+        CHECK(native_departure.accepted && native_departure.mutated &&
+              native_departure.shuttle.flight_phase==1 &&
+              native_departure.shuttle.flight_request==81001);
         CHECK(!w.launch_planetary_shuttle(7,ship,key,81001,false));
         CHECK(w.world().planetary_shuttles().at(key).flight_phase==1);
         CHECK(w.world().npc_custody(available[2]).physical_location!=ship);
