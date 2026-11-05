@@ -865,6 +865,9 @@ public:
     bool start_shipyard_construction(PlayerId owner,EntityId colony,
         std::uint64_t order_id,std::array<std::uint64_t,2> workers,
         FailPoint fail=FailPoint::None);
+    bool assign_shipyard_builders(PlayerId owner,std::uint64_t order_id,
+        std::array<std::uint64_t,2> replacement,
+        FailPoint fail=FailPoint::None);
     bool post_local_delivery_order(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& site,ShuttleCargo cargo,
         std::int64_t kilograms,std::uint64_t order_id,
