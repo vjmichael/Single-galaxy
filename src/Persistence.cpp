@@ -8817,6 +8817,34 @@ bool PersistentWorld::cancel_local_delivery_order(
     return true;
 }
 
+bool PersistentWorld::load_intercolony_freight(PlayerId owner,
+        std::uint64_t id,EntityId carrier,EntityId destination,FailPoint fail) {
+    for(const auto& [request,p]:world_.pending_celestial_transits_) {
+        (void)request;
+        if(p.ship==carrier || p.ship==destination)return false;
+    }
+    auto next=world_;
+    if(!next.load_intercolony_freight(owner,id,carrier,destination))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("sealed intercolony load changed world matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::deliver_intercolony_freight(PlayerId owner,
+        std::uint64_t id,FailPoint fail) {
+    auto next=world_;
+    if(!next.deliver_intercolony_freight(owner,id))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("intercolony delivery changed conserved world matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
 bool PersistentWorld::build_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,FailPoint fail) {
     for(const auto& [id,p]:world_.pending_celestial_transits_) {
         (void)id;
