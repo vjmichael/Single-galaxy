@@ -1988,6 +1988,8 @@ Event Simulation::execute(const Command& c) {
         for(const auto id:c.passenger_ids){
             auto& n=npcs_.at(id);
             n.home_ship=c.target;
+            if(n.residence_kind==transport::LocationKind::ColonyShip)
+                n.residence_id=c.target;
             n.location=c.target;
             n.assigned_site=c.target;
             n.role=NpcRole::Ship;
@@ -2379,11 +2381,15 @@ Event Simulation::execute(const Command& c) {
             --colony_ships_.at(c.actor).crew;
             ++colony_ships_.at(c.target).crew;
             co->second.home_ship=c.target;
+            if(co->second.residence_kind==transport::LocationKind::ColonyShip)
+                co->second.residence_id=c.target;
             co->second.assigned_site=c.target;
         }
         --colony_ships_.at(c.actor).crew;
         ++colony_ships_.at(c.target).crew;
         n->second.home_ship=c.target;
+        if(n->second.residence_kind==transport::LocationKind::ColonyShip)
+            n->second.residence_id=c.target;
         n->second.assigned_site=c.target;
         snapshot_version_=std::max(snapshot_version_,
             c.passenger_ids.size()==2 ? 44:41);
@@ -2638,6 +2644,8 @@ Event Simulation::execute(const Command& c) {
                         if(n.home_ship==c.actor){
                             crew_rehomes_.emplace(npc,CrewRehome{c.actor,c.target,c.id,tick_});
                             n.home_ship=c.target;n.assigned_site=c.target;
+                            if(n.residence_kind==transport::LocationKind::ColonyShip)
+                                n.residence_id=c.target;
                             --colony_ships_.at(c.actor).crew;
                             ++colony_ships_.at(c.target).crew;
                         }
