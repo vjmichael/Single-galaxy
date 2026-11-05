@@ -7,6 +7,11 @@ on:
       - 'src/Persistence.cpp'
       - 'include/galaxy/Simulation.hpp'
       - 'include/galaxy/Persistence.hpp'
+      - 'src/colony_live_host.cpp'
+      - 'live/interactive_relay.py'
+      - 'viewer/colony.js'
+      - 'tests/PLAY13D_PlanetSurveyNodeTests.js'
+      - 'tests/PLAY13D_PlanetSurveyRelayTests.py'
       - 'tests/PLAY13D_RegionalFacilitiesTests.cpp'
       - 'tests/SHIP01B2_CommissionFreighterTests.cpp'
       - 'CMakeLists.txt'
@@ -50,3 +55,27 @@ jobs:
         run: cmake --build build --config Release --parallel 2 --target galaxy_ship01b_first_freighter_tests galaxy_ship01b2_commission_freighter_tests galaxy_play13d_regional_facilities_tests
       - name: Run exact HEAD ship building, commissioning and manufactured physical freight
         run: ctest --test-dir build -C Release --output-on-failure -R "^galaxy_(ship01b_first_freighter|ship01b2_commission_freighter|ship01c_manufactured_freight)$"
+
+  manufactured-hull-cockpit:
+    name: Actual native host, strict relay, and cockpit (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install SQLite SDK
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlite3-dev
+      - name: Configure and compile real desktop native host
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+          cmake --build build --parallel 2 --target galaxy_colony_live_host
+      - name: Relay strict action/session tests
+        run: python tests/PLAY13D_PlanetSurveyRelayTests.py --host build/galaxy_colony_live_host --relay live/interactive_relay.py
+      - name: Actual UI/contract decoders and malformed telemetry
+        run: node --test tests/PLAY13D_PlanetSurveyNodeTests.js
