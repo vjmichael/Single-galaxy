@@ -895,7 +895,9 @@ bool Simulation::npc_available_for_duty(std::uint64_t npc_id) const {
         (void)key;
         if(sh.pilot_npc==npc_id ||
            std::binary_search(sh.passenger_ids.begin(),
-                              sh.passenger_ids.end(),npc_id))return false;
+                              sh.passenger_ids.end(),npc_id) ||
+           std::binary_search(sh.disembarked_ids.begin(),
+                              sh.disembarked_ids.end(),npc_id))return false;
     }
     const auto status=npc_health_status(npc_id);
     return status==NpcHealthStatus::Healthy || status==NpcHealthStatus::Treated ||
@@ -5405,7 +5407,9 @@ bool Simulation::assign_planetary_shuttle_pilot(PlayerId owner,EntityId ship,
     for(const auto& [other,record]:planetary_shuttles_)
         if(record.pilot_npc==npc && other!=key ||
            std::binary_search(record.passenger_ids.begin(),
-                              record.passenger_ids.end(),npc))return false;
+                              record.passenger_ids.end(),npc) ||
+           std::binary_search(record.disembarked_ids.begin(),
+                              record.disembarked_ids.end(),npc))return false;
     shuttle->second.pilot_npc=npc;
     return true; // no boarding or NPC transfer before flight scheduler
 }
@@ -5442,9 +5446,55 @@ bool Simulation::book_planetary_shuttle_passenger(PlayerId owner,EntityId ship,
     for(const auto& [other,flight]:planetary_shuttles_)
         if(other!=key && (flight.pilot_npc==npc ||
             std::binary_search(flight.passenger_ids.begin(),
-                               flight.passenger_ids.end(),npc)))return false;
+                               flight.passenger_ids.end(),npc) ||
+            std::binary_search(flight.disembarked_ids.begin(),
+                               flight.disembarked_ids.end(),npc)))return false;
     ids.insert(at,npc);
     snapshot_version_=std::max(snapshot_version_,82);
+    return true;
+}
+
+
+bool Simulation::transfer_planetary_shuttle_visitor(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc,bool reboard) {
+    auto sh=planetary_shuttles_.find(key);
+    auto site=planetary_sites_.find(key);
+    auto person=npcs_.find(npc);
+    if(!owner || !npc || sh==planetary_shuttles_.end() ||
+       site==planetary_sites_.end() || person==npcs_.end() ||
+       sh->second.owner!=owner || sh->second.source_ship!=ship ||
+       site->second.owner!=owner || site->second.source_ship!=ship ||
+       site->second.spaceport_phase!=3 || sh->second.flight_phase!=2 ||
+       person->second.home_ship!=ship ||
+       person->second.location!=site->second.surface_location ||
+       person->second.assigned_site!=ship ||
+       person->second.role!=NpcRole::Ship ||
+       person->second.transport_id || npc==sh->second.pilot_npc)
+        return false;
+    for(const auto& [child,dependent]:physical_dependents_) {
+        (void)child;
+        if(dependent.guardian_id==npc)return false;
+    }
+    auto& aboard=sh->second.passenger_ids;
+    auto& visitors=sh->second.disembarked_ids;
+    if(reboard) {
+        auto at=std::lower_bound(visitors.begin(),visitors.end(),npc);
+        if(at==visitors.end() || *at!=npc || aboard.size()>=3 ||
+           std::binary_search(aboard.begin(),aboard.end(),npc))
+            return false;
+        auto place=std::lower_bound(aboard.begin(),aboard.end(),npc);
+        aboard.insert(place,npc);
+        visitors.erase(at);
+    }else {
+        auto at=std::lower_bound(aboard.begin(),aboard.end(),npc);
+        if(at==aboard.end() || *at!=npc || visitors.size()>=64 ||
+           std::binary_search(visitors.begin(),visitors.end(),npc))
+            return false;
+        auto place=std::lower_bound(visitors.begin(),visitors.end(),npc);
+        visitors.insert(place,npc);
+        aboard.erase(at);
+    }
+    snapshot_version_=std::max(snapshot_version_,83);
     return true;
 }
 
