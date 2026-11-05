@@ -1388,3 +1388,13 @@ if(BUILD_TESTING)
   add_test(NAME galaxy_ship01a_preflight
     COMMAND galaxy_ship01a_preflight_tests)
 endif()
+
+# SHIP-01A.1: authoritative eight-tick physical orbital shipyard construction,
+# exact modules embodied in facility, full SQLite failpoint / restart test.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship01a_construction_tests
+    tests/SHIP01A_ConstructionTests.cpp)
+  target_link_libraries(galaxy_ship01a_construction_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship01a_construction
+    COMMAND galaxy_ship01a_construction_tests)
+endif()
