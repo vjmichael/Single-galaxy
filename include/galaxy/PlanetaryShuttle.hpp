@@ -1,7 +1,10 @@
 #pragma once
 // PLAY-13D.4C.1: standalone, finite shuttle custody domain.
 // Not a host command, SQLite record, or simulated flight scheduler.
+#include <algorithm>
 #include <array>
+#include <cstddef>
+#include <utility>
 #include <cstdint>
 #include <limits>
 #include <map>
