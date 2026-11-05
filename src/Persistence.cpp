@@ -8807,12 +8807,16 @@ bool PersistentWorld::build_planetary_shuttle(PlayerId owner,EntityId ship,const
 }
 
 bool PersistentWorld::load_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,bool water,std::int64_t kg,FailPoint fail) {
+    return load_planetary_shuttle(owner,ship,key,
+        water?ShuttleCargo::Water:ShuttleCargo::Food,kg,fail);
+}
+bool PersistentWorld::load_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,ShuttleCargo cargo,std::int64_t kg,FailPoint fail) {
     for(const auto& [id,p]:world_.pending_celestial_transits_) {
         (void)id;
         if(p.ship==ship)return false;
     }
     auto next=world_;
-    if(!next.load_planetary_shuttle(owner,ship,key,water,kg))return false;
+    if(!next.load_planetary_shuttle(owner,ship,key,cargo,kg))return false;
     if(next.total_ore()!=resource_origin_)
         throw std::logic_error("shuttle operation changed conserved material");
     store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
@@ -8823,12 +8827,16 @@ bool PersistentWorld::load_planetary_shuttle(PlayerId owner,EntityId ship,const 
 }
 
 bool PersistentWorld::unload_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,bool water,std::int64_t kg,FailPoint fail) {
+    return unload_planetary_shuttle(owner,ship,key,
+        water?ShuttleCargo::Water:ShuttleCargo::Food,kg,fail);
+}
+bool PersistentWorld::unload_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,ShuttleCargo cargo,std::int64_t kg,FailPoint fail) {
     for(const auto& [id,p]:world_.pending_celestial_transits_) {
         (void)id;
         if(p.ship==ship)return false;
     }
     auto next=world_;
-    if(!next.unload_planetary_shuttle(owner,ship,key,water,kg))return false;
+    if(!next.unload_planetary_shuttle(owner,ship,key,cargo,kg))return false;
     if(next.total_ore()!=resource_origin_)
         throw std::logic_error("shuttle operation changed conserved material");
     store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
