@@ -8866,6 +8866,7 @@ std::int64_t Simulation::total_ore() const {
 
     // PLAY-13D.4C.2: source modules became the shuttle's physical dry mass;
     // manifest kilograms move out of ship storage exactly once.
+    std::set<std::uint64_t> assigned_shuttle_pilots;
     for(const auto& [key,v]:planetary_shuttles_) {
         const auto site=planetary_sites_.find(key);
         if(site==planetary_sites_.end() || v.owner!=site->second.owner ||
@@ -8875,6 +8876,8 @@ std::int64_t Simulation::total_ore() const {
            total>std::numeric_limits<std::int64_t>::max()-v.dry_mass_ore)
             throw std::overflow_error("invalid source-backed shuttle");
         if(v.pilot_npc) {
+            if(!assigned_shuttle_pilots.insert(v.pilot_npc).second)
+                throw std::overflow_error("pilot assigned to multiple shuttles");
             const auto npc=npcs_.find(v.pilot_npc);
             if(npc==npcs_.end() || npc->second.home_ship!=v.source_ship ||
                npc->second.location!=v.source_ship || npc->second.role!=NpcRole::Ship)
