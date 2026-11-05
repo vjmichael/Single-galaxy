@@ -477,7 +477,7 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(w.world().canonical_state()==before_policy);
         CHECK(w.set_planetary_workforce_policy(7,chosen.body,
             chosen.latitude,chosen.longitude,policy));
-        CHECK(w.world().canonical_state().rfind("galaxy-kernel-v81|",0)==0);
+        CHECK(w.world().canonical_state().rfind("galaxy-kernel-v85|",0)==0);
         CHECK(Simulation::from_snapshot(w.world().canonical_state())
               .planetary_sites().at(key).workforce_policy==policy);
         const auto before_site=w.world().planetary_sites().at(key);
@@ -549,7 +549,7 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(w.world().planetary_sites().size()==1);
         CHECK(w.world().total_ore()==origin);
         durable=w.world().canonical_state();
-        CHECK(durable.rfind("galaxy-kernel-v81|",0)==0);
+        CHECK(durable.rfind("galaxy-kernel-v85|",0)==0);
         CHECK(Simulation::from_snapshot(durable).canonical_state()==durable);
         if(!farming) {
             // Actual player-ordered planetary output recovery. The ship has
