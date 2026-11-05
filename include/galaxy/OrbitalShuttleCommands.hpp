@@ -78,9 +78,11 @@ inline OrbitalShuttleReply execute_shuttle_transport_instruction(
     }else if(item.kind==transport::GoodKind::Npc){
         // No direct roster editing. Reuse named passenger booking / physical
         // disembarkation and their existing custody/guardian checks.
-        if(shuttle->second.flight_phase==0)
+        if(shuttle->second.flight_phase==0 && pickup)
             accepted=world.book_planetary_shuttle_passenger(
-                authenticated,ship,key,item.id,pickup);
+                authenticated,ship,key,item.id,true);
+        // Orbital cancellation is a separate RELEASE command, not proof
+        // that a passenger completed travel back to the ship.
         else if(shuttle->second.flight_phase==2)
             accepted=world.transfer_planetary_shuttle_visitor(
                 authenticated,ship,key,item.id,pickup);
@@ -135,17 +137,34 @@ inline OrbitalShuttleReply execute_orbital_shuttle(
         case OrbitalShuttleAction::BookPassenger:
         case OrbitalShuttleAction::ReleasePassenger:
             if(!cmd.npc || cmd.request_id || cmd.kilograms)break;
+            if(cmd.action==OrbitalShuttleAction::BookPassenger){
+                const auto view=simulation.planetary_transport_manifest(cmd.site);
+                if(!view || !view->vehicle)return reply;
+                const transport::Instruction order{
+                    world.generation()+1,cmd.owner,view->vehicle,
+                    view->berth,view->other_end,
+                    {{transport::GoodKind::Npc,cmd.npc,1,0}}};
+                return execute_shuttle_transport_instruction(
+                    world,cmd.owner,cmd.ship,cmd.site,order);
+            }
             accepted=world.book_planetary_shuttle_passenger(
-                cmd.owner,cmd.ship,cmd.site,cmd.npc,
-                cmd.action==OrbitalShuttleAction::BookPassenger);
+                cmd.owner,cmd.ship,cmd.site,cmd.npc,false);
             break;
         case OrbitalShuttleAction::Disembark:
         case OrbitalShuttleAction::Reboard:
             if(!cmd.npc || cmd.request_id || cmd.kilograms)break;
-            accepted=world.transfer_planetary_shuttle_visitor(
-                cmd.owner,cmd.ship,cmd.site,cmd.npc,
-                cmd.action==OrbitalShuttleAction::Reboard);
-            break;
+            {
+                const auto view=simulation.planetary_transport_manifest(cmd.site);
+                if(!view || !view->vehicle)return reply;
+                const bool pickup=cmd.action==OrbitalShuttleAction::Reboard;
+                const transport::Instruction order{
+                    world.generation()+1,cmd.owner,view->vehicle,
+                    pickup?view->berth:view->other_end,
+                    pickup?view->other_end:view->berth,
+                    {{transport::GoodKind::Npc,cmd.npc,1,0}}};
+                return execute_shuttle_transport_instruction(
+                    world,cmd.owner,cmd.ship,cmd.site,order);
+            }
         case OrbitalShuttleAction::AssignVisitorDuty:
         case OrbitalShuttleAction::ReleaseVisitorDuty:
             if(!cmd.npc || cmd.request_id || cmd.kilograms)break;
@@ -160,12 +179,26 @@ inline OrbitalShuttleReply execute_orbital_shuttle(
             const auto kind=cmd.cargo==ShuttleCargo::Nutrients?
                 ShuttleCargo::Nutrients:
                 (cmd.water?ShuttleCargo::Water:ShuttleCargo::Food);
-            accepted=cmd.action==OrbitalShuttleAction::Load?
-                world.load_planetary_shuttle(cmd.owner,cmd.ship,cmd.site,
-                    kind,cmd.kilograms):
-                world.unload_planetary_shuttle(cmd.owner,cmd.ship,cmd.site,
-                    kind,cmd.kilograms);
-            break;
+            {
+                const auto view=simulation.planetary_transport_manifest(cmd.site);
+                if(!view || !view->vehicle)return reply;
+                const bool pickup=cmd.action==OrbitalShuttleAction::Load;
+                const std::uint64_t resource=
+                    kind==ShuttleCargo::Water?
+                        static_cast<std::uint8_t>(transport::ResourceGood::Water):
+                    kind==ShuttleCargo::Food?
+                        static_cast<std::uint8_t>(transport::ResourceGood::Food):
+                        static_cast<std::uint8_t>(transport::ResourceGood::Nutrients);
+                const transport::Instruction order{
+                    world.generation()+1,cmd.owner,view->vehicle,
+                    pickup?view->berth:view->other_end,
+                    pickup?view->other_end:view->berth,
+                    {{transport::GoodKind::Resource,resource,
+                      static_cast<std::uint64_t>(cmd.kilograms),
+                      static_cast<std::uint64_t>(cmd.kilograms)}}};
+                return execute_shuttle_transport_instruction(
+                    world,cmd.owner,cmd.ship,cmd.site,order);
+            }
         case OrbitalShuttleAction::Descend:
         case OrbitalShuttleAction::Ascend:
             if(cmd.npc || cmd.kilograms || !cmd.request_id)break;
