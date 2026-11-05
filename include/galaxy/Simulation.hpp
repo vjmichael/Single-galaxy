@@ -426,7 +426,7 @@ struct PlanetarySiteFacility {
     // 1=surface transfer, 2=construction, 3=operational.
     std::uint8_t spaceport_phase=1;
     std::uint64_t construction_progress=0;
-    std::uint64_t construction_required=40;
+    std::uint64_t construction_required=240;
     std::uint64_t surface_location=0;
     std::array<std::uint64_t,2> delegated_npcs{{0,0}};
     std::int64_t assigned_workers=2; // tied to ship headcount / named roster
