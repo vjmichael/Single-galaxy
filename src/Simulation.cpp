@@ -6138,7 +6138,7 @@ std::string Simulation::canonical_state() const {
             out<<'\n';
         }
     if(snapshot_version_>=80)
-        for(const auto& [key,v]:planetary_shuttles_)
+        for(const auto& [key,v]:planetary_shuttles_) {
             out<<"planetshuttle|"<<std::get<0>(key)<<'|'<<std::get<1>(key)<<'|'<<
                 std::get<2>(key)<<'|'<<std::get<3>(key)<<'|'<<v.owner<<'|'<<
                 v.source_ship<<'|'<<v.pilot_npc<<'|'<<v.dry_mass_ore<<'|'<<
@@ -6154,6 +6154,7 @@ std::string Simulation::canonical_state() const {
                 for(const auto id:v.passenger_ids)out<<'|'<<id;
             }
             out<<'\n';
+        }
     if(snapshot_version_>=81)
         for(const auto id:shuttle_flight_request_ids_)
             out<<"planetflightreceipt|"<<id<<'\n';
