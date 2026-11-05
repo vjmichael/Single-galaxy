@@ -242,6 +242,10 @@ struct SocietyMigrationPlan {
     std::vector<DependentMove> dependents;
     EntityId origin=0,destination=0;
     std::string family_scope,region_scope,origin_colony,destination_colony;
+    // Universal migration endpoints: append only to preserve all existing
+    // aggregate initialization call sites and legacy ship-to-ship plans.
+    transport::LocationKind origin_kind=transport::LocationKind::ColonyShip;
+    transport::LocationKind destination_kind=transport::LocationKind::ColonyShip;
 };
 
 // DEMOG-05q6e2: ART02 dependent identity has physical custody in the
