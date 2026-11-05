@@ -20,6 +20,8 @@ on:
       - 'src/Simulation.cpp'
       - 'include/galaxy/Simulation.hpp'
       - 'include/galaxy/NpcTransport.hpp'
+      - 'include/galaxy/UniversalNpcMigration.hpp'
+      - 'tests/PLAY13D_UniversalNpcMigrationTests.cpp'
       - 'include/galaxy/TransportIdentity.hpp'
       - 'include/galaxy/ShipControl.hpp'
       - 'tests/PLAY13D_SharedTransportIdentityTests.cpp'
@@ -54,9 +56,9 @@ jobs:
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
       - name: Build real galaxy kernel and planetary test
-        run: cmake --build build --config Release --target galaxy_play13d_planetary_agriculture_tests galaxy_play13d_planetary_regions_tests galaxy_play13d_planetary_landscape_tests galaxy_play13d_planetary_framework_tests galaxy_play13d_planetary_watershed_tests galaxy_play13d_planetary_geography_tests galaxy_play13d_live_planet_survey_tests galaxy_play13d_regional_facilities_tests galaxy_play13d_shuttle_host_fixture galaxy_play13d_shared_transport_tests galaxy_play13d_ship_control_tests galaxy_play13d_settlement_admission_tests galaxy_play13d_settlement_transition_tests galaxy_colony_live_host
+        run: cmake --build build --config Release --target galaxy_play13d_planetary_agriculture_tests galaxy_play13d_planetary_regions_tests galaxy_play13d_planetary_landscape_tests galaxy_play13d_planetary_framework_tests galaxy_play13d_planetary_watershed_tests galaxy_play13d_planetary_geography_tests galaxy_play13d_live_planet_survey_tests galaxy_play13d_regional_facilities_tests galaxy_play13d_shuttle_host_fixture galaxy_play13d_shared_transport_tests galaxy_play13d_universal_migration_tests galaxy_play13d_ship_control_tests galaxy_play13d_settlement_admission_tests galaxy_play13d_settlement_transition_tests galaxy_colony_live_host
       - name: Native mass conservation and return logistics
-        run: ctest --test-dir build -C Release -R "^galaxy_play13d_(planetary_(agriculture|regions|landscape|framework|watershed|geography)|live_planet_survey|regional_facilities|shared_transport|ship_control|settlement_admission|settlement_transition)$" --output-on-failure
+        run: ctest --test-dir build -C Release -R "^galaxy_play13d_(planetary_(agriculture|regions|landscape|framework|watershed|geography)|live_planet_survey|regional_facilities|shared_transport|universal_migration|ship_control|settlement_admission|settlement_transition)$" --output-on-failure
 
       - name: Browser native telemetry validation
         run: node --test tests/PLAY13D_PlanetSurveyNodeTests.js
