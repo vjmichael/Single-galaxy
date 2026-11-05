@@ -564,6 +564,83 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
         }
         return;
     }
+    // PLAY-13D.4G. Physical source -> existing crewed carrier -> destination.
+    // These commands move NO goods except through the actual native
+    // PersistentWorld load/unload transactions. The celestial leg reuses
+    // authenticated ship transit and its independently committed arrival.
+    if(!v.empty() && (v[0]=="INTERFREIGHT_LOAD" ||
+                      v[0]=="INTERFREIGHT_DISPATCH" ||
+                      v[0]=="INTERFREIGHT_DELIVER" ||
+                      v[0]=="INTERFREIGHT_STATUS")) {
+        try {
+            const auto& records=world.world().intercolony_freight();
+            if(v[0]=="INTERFREIGHT_STATUS" && v.size()==1) {
+                std::uint64_t count=0;
+                for(const auto& [id,leg]:records) {
+                    if(leg.owner!=principal || leg.source_ship!=ship || count>=64)continue;
+                    const auto good=leg.cargo==ShuttleCargo::Water?"WATER":
+                        leg.cargo==ShuttleCargo::Food?"FOOD":"NUTRIENTS";
+                    announce(world.world(),"INTERFREIGHT_ITEM|"+
+                        std::to_string(id)+"|"+std::to_string(leg.carrier_ship)+"|"+
+                        std::to_string(leg.destination_ship)+"|"+good+"|"+
+                        std::to_string(leg.kilograms)+"|"+
+                        std::to_string(unsigned(leg.stage))+"|"+
+                        std::to_string(leg.arrival_receipt));
+                    ++count;
+                }
+                announce(world.world(),"INTERFREIGHT_DONE|"+std::to_string(count));
+            }else if(v[0]=="INTERFREIGHT_LOAD" && v.size()==4) {
+                const auto order=integer(v[1]),carrier=integer(v[2]),
+                           destination=integer(v[3]);
+                const auto job=world.world().local_delivery_board().find(
+                    std::uint64_t(order>0?order:0));
+                if(order<=0 || order>=(std::int64_t{1}<<50) ||
+                   carrier<=0 || destination<=0 ||
+                   job==world.world().local_delivery_board().end() ||
+                   job->second.board_ship!=ship ||
+                   !world.load_intercolony_freight(principal,
+                       std::uint64_t(order),EntityId(carrier),
+                       EntityId(destination)))
+                    announce(world.world(),"ERROR|INTERFREIGHT_DENIED");
+                else announce(world.world(),"INTERFREIGHT_LOADED|"+
+                    std::to_string(order)+"|"+std::to_string(carrier)+"|"+
+                    std::to_string(destination)+"|"+std::to_string(world.generation()));
+            }else if(v[0]=="INTERFREIGHT_DISPATCH" && v.size()==2) {
+                const auto order=integer(v[1]);
+                const auto it=records.find(std::uint64_t(order>0?order:0));
+                if(order<=0 || it==records.end() ||
+                   it->second.owner!=principal || it->second.source_ship!=ship ||
+                   it->second.stage!=IntercolonyFreightStage::Loaded) {
+                    announce(world.world(),"ERROR|INTERFREIGHT_DENIED");
+                }else{
+                    const auto carrier=it->second.carrier_ship;
+                    const auto dest=it->second.destination_ship;
+                    const auto at=world.world().ship_frames().find(dest);
+                    const auto request=++nonce;
+                    if(at==world.world().ship_frames().end() ||
+                       !at->second.anchor_body ||
+                       !world.begin_celestial_transit(
+                           principal,carrier,at->second.anchor_body,request))
+                        announce(world.world(),"ERROR|INTERFREIGHT_DENIED");
+                    else announce(world.world(),"INTERFREIGHT_DEPARTED|"+
+                        std::to_string(order)+"|"+std::to_string(request)+"|"+
+                        std::to_string(carrier)+"|"+std::to_string(dest));
+                }
+            }else if(v[0]=="INTERFREIGHT_DELIVER" && v.size()==2) {
+                const auto order=integer(v[1]);
+                const auto it=records.find(std::uint64_t(order>0?order:0));
+                if(order<=0 || it==records.end() ||
+                   it->second.source_ship!=ship ||
+                   !world.deliver_intercolony_freight(principal,std::uint64_t(order)))
+                    announce(world.world(),"ERROR|INTERFREIGHT_DENIED");
+                else announce(world.world(),"INTERFREIGHT_DELIVERED|"+
+                    std::to_string(order)+"|"+std::to_string(world.generation()));
+            }else announce(world.world(),"ERROR|INTERFREIGHT_DENIED");
+        }catch(const std::exception&) {
+            announce(world.world(),"ERROR|INTERFREIGHT_DENIED");
+        }
+        return;
+    }
     // The owner's LOCAL work board: player posts a finite pickup contract;
     // the named NPC pilot then fulfills it via existing physical shuttle
     // flights and stock transfers on committed simulation ticks.
@@ -1467,6 +1544,18 @@ int main(int argc,char** argv){
                 else
                     announce(world.world(),"ERROR|FRAME_TRANSIT_BLOCKED");
             }
+            // Intercolony freight only completes after a separate, committed
+            // transit and actual destination berth. If a target moved away,
+            // the cargo stays sealed aboard its real carrier until recovered.
+            std::vector<std::uint64_t> landed_freight;
+            for(const auto& [order,leg]:world.world().intercolony_freight())
+                if(leg.owner==owner && leg.source_ship==ship &&
+                   leg.stage==IntercolonyFreightStage::Loaded)
+                    landed_freight.push_back(order);
+            for(const auto order:landed_freight)
+                if(world.deliver_intercolony_freight(owner,order))
+                    announce(world.world(),"INTERFREIGHT_DELIVERED|"+
+                        std::to_string(order)+"|"+std::to_string(world.generation()));
             sync_survey_knowledge(); // only after durable native world step
             // EXIT-01D: every eighth committed world tick, host (not the
             // player input UI) automatically observes a bounded rotation of
