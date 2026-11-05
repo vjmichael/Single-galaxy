@@ -5471,6 +5471,16 @@ bool Simulation::cancel_local_delivery_order(PlayerId owner,std::uint64_t order_
     return true;
 }
 void Simulation::process_local_delivery_board() {
+    // Pre-index claimed physical shuttles once per tick. Do not search all
+    // jobs for each pending instruction (quadratic at large work boards).
+    std::set<PlanetarySiteKey> occupied_sites;
+    for(const auto& [id,work]:local_delivery_orders_) {
+        (void)id;
+        if(work.stage!=LocalDeliveryStage::Posted &&
+           work.stage!=LocalDeliveryStage::Complete &&
+           work.stage!=LocalDeliveryStage::Cancelled)
+            occupied_sites.insert(work.site);
+    }
     for(auto& [id,work]:local_delivery_orders_) {
         if(work.stage==LocalDeliveryStage::Complete ||
            work.stage==LocalDeliveryStage::Cancelled)continue;
@@ -5494,21 +5504,9 @@ void Simulation::process_local_delivery_board() {
         };
         switch(work.stage) {
         case LocalDeliveryStage::Posted: {
-            // One physical shuttle cannot execute competing jobs. A posted
-            // contract is a request, not a reservation of stock or the pilot.
-            // Ready jobs can proceed even if another posted job is short of
-            // supplies, but a claimed in-flight order always wins.
-            bool occupied=false;
-            for(const auto& [other_id,other]:local_delivery_orders_) {
-                if(other_id==id || other.site!=work.site)continue;
-                if(other.stage!=LocalDeliveryStage::Posted &&
-                   other.stage!=LocalDeliveryStage::Complete &&
-                   other.stage!=LocalDeliveryStage::Cancelled) {
-                    occupied=true;
-                    break;
-                }
-            }
-            if(occupied)break;
+            // A claimed job owns the single physical shuttle until it
+            // completes. An understocked unclaimed job does not block another.
+            if(occupied_sites.count(work.site))break;
             // Only the locally assigned physical shuttle and its NPC pilot
             // may claim this order. No separate transport NPC is invented.
             if(sh.flight_phase!=0 || !sh.passenger_ids.empty() ||
@@ -5535,6 +5533,7 @@ void Simulation::process_local_delivery_board() {
                     flight_id(false),false)) {
                 work.assigned_pilot=sh.pilot_npc;
                 work.stage=LocalDeliveryStage::Descending;
+                occupied_sites.insert(work.site); // exclusive for this tick
             }
             break;
         }
