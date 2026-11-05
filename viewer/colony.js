@@ -902,7 +902,7 @@
            };
            workPost.addEventListener('click',()=>{
              const coords=workCoords(),kg=Number(shuttleKg.value);
-             const order=Date.now()*1000+Math.floor(Math.random()*1000);
+             const order=Date.now()*100+Math.floor(Math.random()*100);
              if(!coords||!Number.isSafeInteger(kg)||kg<1||kg>1000||
                 !Number.isSafeInteger(order)||order<=0)return;
              window.GalaxyColonyCommand?.('colonyLocalWorkPost',{
