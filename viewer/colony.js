@@ -157,6 +157,49 @@
         throw Error('Invalid real commissioning transfer');
       return {...e,order,hull,firstNpc,secondNpc,provisionsKg,generation};
     }
+    if(t==='FREIGHTER_PILOT_ITEM'){
+      if(v.length!==15)throw Error('Malformed real freighter cockpit status');
+      const signed=x=>{
+        if(!/^(?:0|-?[1-9][0-9]*)$/.test(x))throw Error('Invalid physical position');
+        const n=Number(x);
+        if(!Number.isSafeInteger(n)||Math.abs(n)>1000000000000)
+          throw Error('Out of range physical position');
+        return n;
+      };
+      const order=numeric(v[4],Number.MAX_SAFE_INTEGER),
+        hull=numeric(v[5],Number.MAX_SAFE_INTEGER),
+        heading=numeric(v[6],359),x=signed(v[7]),y=signed(v[8]),
+        body=numeric(v[9],Number.MAX_SAFE_INTEGER),
+        crew=numeric(v[10],1000),
+        food=numeric(v[11],100000000),
+        water=numeric(v[12],100000000),
+        oxygen=numeric(v[13],100000000),
+        generation=numeric(v[14],Number.MAX_SAFE_INTEGER);
+      if(!order||!hull||!crew||!generation)
+        throw Error('Invalid commissioned pilot state');
+      return {...e,order,hull,heading,x,y,body,crew,food,water,oxygen,generation};
+    }
+    if(t==='FREIGHTER_PILOT_QUEUED'){
+      if(v.length!==8)throw Error('Malformed real freighter command receipt');
+      const order=numeric(v[4],Number.MAX_SAFE_INTEGER),
+        hull=numeric(v[5],Number.MAX_SAFE_INTEGER),
+        command=numeric(v[6],Number.MAX_SAFE_INTEGER),
+        generation=numeric(v[7],Number.MAX_SAFE_INTEGER);
+      if(!order||!hull||!command||!generation)
+        throw Error('Invalid native freighter command receipt');
+      return {...e,order,hull,command,generation};
+    }
+    if(t==='FREIGHTER_TRANSIT_STARTED'){
+      if(v.length!==9)throw Error('Malformed freighter transit receipt');
+      const order=numeric(v[4],Number.MAX_SAFE_INTEGER),
+        hull=numeric(v[5],Number.MAX_SAFE_INTEGER),
+        request=numeric(v[6],Number.MAX_SAFE_INTEGER),
+        body=numeric(v[7],Number.MAX_SAFE_INTEGER),
+        generation=numeric(v[8],Number.MAX_SAFE_INTEGER);
+      if(!order||!hull||!request||!body||!generation)
+        throw Error('Invalid native freighter transit');
+      return {...e,order,hull,request,body,generation};
+    }
     if(t==='FREIGHTER_DONE'){
       if(v.length!==5)throw Error('Malformed freighter status terminator');
       return {...e,count:numeric(v[4],64)};
@@ -884,6 +927,54 @@
    freighterOrder.value=String(order);
    freighterState.textContent='Order submitted; awaiting real material debit receipt.';
  });
+ // Explicitly steer the commissioned ship by its manufacturing receipt.
+ // This never rebinds the colony work board to the ship's cargo cockpit.
+ const pilotTitle=document.createElement('strong');
+ pilotTitle.textContent='Pilot commissioned freighter (SHIP-01C)';
+ const pilotInfo=document.createElement('output');
+ pilotInfo.textContent='Enter a completed freighter order ID, then inspect its real cockpit.';
+ const pilotStatus=document.createElement('button');
+ pilotStatus.type='button';pilotStatus.textContent='Inspect freighter position';
+ const sendPilot=(action,fields={})=>{
+   const order=Number(freighterOrder.value);
+   if(!Number.isSafeInteger(order)||order<=0)return;
+   window.GalaxyColonyCommand?.(action,{order,...fields});
+ };
+ pilotStatus.addEventListener('click',()=>sendPilot('colonyFreighterPilotStatus'));
+ const pilotButtons=document.createElement('div');
+ for(const [name,x,y] of [
+   ['Thrust +X',1,0],['Thrust -X',-1,0],
+   ['Thrust +Y',0,1],['Thrust -Y',0,-1],['Stop thrust',0,0]
+ ]){
+   const button=document.createElement('button');
+   button.type='button';button.textContent=name;
+   button.addEventListener('click',()=>{
+     sendPilot('colonyFreighterThrust',{x,y});
+     pilotInfo.textContent='Native freighter thrust requested; inspect after next committed tick.';
+   });
+   pilotButtons.append(button);
+ }
+ for(const [label,delta] of [['Yaw left',-15],['Yaw right',15]]){
+   const button=document.createElement('button');
+   button.type='button';button.textContent=label;
+   button.addEventListener('click',()=>{
+     sendPilot('colonyFreighterYaw',{delta});
+     pilotInfo.textContent='Native freighter yaw requested; inspect after next committed tick.';
+   });
+   pilotButtons.append(button);
+ }
+ const pilotDestination=document.createElement('input');
+ pilotDestination.type='number';pilotDestination.min='1';pilotDestination.step='1';
+ pilotDestination.placeholder='Destination celestial body ID';
+ pilotDestination.setAttribute('aria-label','Commissioned freighter navigation body');
+ const pilotTravel=document.createElement('button');
+ pilotTravel.type='button';pilotTravel.textContent='Send freighter to celestial body';
+ pilotTravel.addEventListener('click',()=>{
+   const body=Number(pilotDestination.value);
+   if(!Number.isSafeInteger(body)||body<=0)return;
+   sendPilot('colonyFreighterTravel',{body});
+   pilotInfo.textContent='Physical freighter transit requested; waiting for native receipt.';
+ });
  freighterRefresh.addEventListener('click',()=>{
    freighterList.replaceChildren();
    window.GalaxyColonyCommand?.('colonyFreighterStatus',{});
@@ -891,7 +982,8 @@
  });
  shipyardPanel.append(freighterTitle,freighterHint,freighterOrder,
    freighterStart,crewFirst,crewSecond,freighterProvisions,
-   freighterCommission,freighterRefresh,freighterState,freighterList);
+   freighterCommission,freighterRefresh,freighterState,freighterList,
+   pilotTitle,pilotStatus,pilotButtons,pilotDestination,pilotTravel,pilotInfo);
  q('celestialBodyList').parentNode.insertBefore(
    shipyardPanel,q('celestialBodyList'));
  window.GalaxyColony={
@@ -1335,6 +1427,21 @@
        q('signatureFeedback').textContent=e.type==='PLANET_SHUTTLE_COMMITTED'?
          'Shuttle '+e.operation+' committed for body #'+e.id+'.':
          'Orbital shuttle status received from the native world.';
+     }
+     if(e.type==='FREIGHTER_PILOT_ITEM'){
+       pilotInfo.textContent='Ship #'+e.hull+' · heading '+e.heading+'° · position ('+
+         e.x+', '+e.y+') mm · celestial body #'+e.body+
+         ' · crew '+e.crew+' · food '+e.food+' kg, water '+e.water+
+         ' kg, oxygen '+e.oxygen+' kg · committed generation '+e.generation;
+     }
+     if(e.type==='FREIGHTER_PILOT_QUEUED'){
+       pilotInfo.textContent='Real ship #'+e.hull+' command #'+e.command+
+         ' queued at generation '+e.generation+
+         '. The hull moves only on its next committed native tick.';
+     }
+     if(e.type==='FREIGHTER_TRANSIT_STARTED'){
+       pilotInfo.textContent='Real ship #'+e.hull+' began physical transit #'+
+         e.request+' to body #'+e.body+' at generation '+e.generation;
      }
      if(e.type==='FREIGHTER_ITEM'){
        let row=[...freighterList.children].find(node=>
