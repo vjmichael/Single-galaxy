@@ -5817,6 +5817,7 @@ void Simulation::process_freighter_builds() {
         hull.cargo_capacity=100;
         hull.hull=100;
         hull.weapon_charges=0;
+        hull.manufactured_order_id=order.order_id;
         const auto actual_system=ship->second.system_id;
         const auto custody=frame->second;
         const EntityId manufactured=add_entity(hull);
@@ -7155,6 +7156,7 @@ std::string Simulation::canonical_state() const {
             for(auto item:e.fitting.rigging)out<<'|'<<unsigned(item);
         }
         if(snapshot_version_>=65)out<<'|'<<unsigned(e.survey_probes_carried);
+        if(snapshot_version_>=91)out<<'|'<<e.manufactured_order_id;
         out << '\n';
     }
     if (snapshot_version_ >= 6) {
@@ -8062,7 +8064,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             if(!result.discoveries_.emplace(std::make_pair(d.owner,d.site),d).second)
                 throw std::runtime_error("snapshot: duplicate discovery");
         } else if (f[0] == "entity") {
-            require_fields(f, result.snapshot_version_>=65 ? 35 : result.snapshot_version_>=64 ? 34 : result.snapshot_version_>=62 ? 27 : result.snapshot_version_>=61 ? 23 : result.snapshot_version_>=5 ? 22 : result.snapshot_version_ >= 3 ? 15 : 12);
+            require_fields(f, result.snapshot_version_>=91 ? 36 : result.snapshot_version_>=65 ? 35 : result.snapshot_version_>=64 ? 34 : result.snapshot_version_>=62 ? 27 : result.snapshot_version_>=61 ? 23 : result.snapshot_version_>=5 ? 22 : result.snapshot_version_ >= 3 ? 15 : 12);
             Entity e;
             e.id = u64(f[1]);
             const auto es = u64(f[2]), type = u64(f[3]);
@@ -8133,6 +8135,13 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                     throw std::runtime_error("snapshot: duplicate unique exploration scanner");
                 if(e.training_drone && e.fitting.exploration_scanner())
                     throw std::runtime_error("snapshot: drone has colony survey scanner");
+            }
+            if(result.snapshot_version_>=91){
+                e.manufactured_order_id=u64(f[35]);
+                if(e.manufactured_order_id>=(std::uint64_t{1}<<50) ||
+                   (e.manufactured_order_id && e.type!=EntityType::Ship &&
+                    e.type!=EntityType::Wreck))
+                    throw std::runtime_error("snapshot: invalid manufactured hull identity");
             }
             if (!result.valid_position(e.position) ||
                 e.velocity.x < -kMaxVelocityMmPerTick || e.velocity.x > kMaxVelocityMmPerTick ||
@@ -10101,12 +10110,23 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                    made->second.type!=EntityType::Ship ||
                    !made->second.owner_id ||
                    made->second.cargo_capacity!=100 ||
+                   made->second.manufactured_order_id!=job.order_id ||
                    frame==result.ship_frames_.end() ||
                    frame->second.system!=made->second.system_id)
                     throw std::runtime_error("snapshot: forged manufactured hull");
             }
         }
     }
+    if(result.snapshot_version_>=91)
+        for(const auto& [ship_id,ship]:result.entities_) {
+            if(!ship.manufactured_order_id)continue;
+            const auto order=result.freighter_build_orders_.find(
+                ship.manufactured_order_id);
+            if(order==result.freighter_build_orders_.end() ||
+               !order->second.finished() ||
+               order->second.launched_ship!=ship_id)
+                throw std::runtime_error("snapshot: unclaimed manufactured vessel");
+        }
     if(result.snapshot_version_>=90) {
         std::set<EntityId> yard_colonies;
         std::set<std::uint64_t> assigned_builders;
