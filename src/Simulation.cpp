@@ -5265,7 +5265,7 @@ bool Simulation::build_planetary_site(PlayerId owner,EntityId ship,
         50,0,50,0,0};
     facility.spaceport_phase=1;
     facility.construction_progress=0;
-    facility.construction_required=40;
+    facility.construction_required=240;
     facility.surface_location=surface_location;
     facility.delegated_npcs=assigned;
     facility.assigned_workers=2;
@@ -6248,14 +6248,14 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                            location=u64(f[18]),npc1=u64(f[19]),npc2=u64(f[20]),
                            workers=i64(f[21]),oxygen=i64(f[22]),co2=i64(f[23]),
                            organic=i64(f[24]),support=u64(f[25]);
-                if(phase<1 || phase>3 || needed!=40 || progress>40 ||
+                if(phase<1 || phase>3 || needed!=240 || progress>240 ||
                    !location || (workers!=2 && !(workers==0 && phase==3 &&
                      npc1==0 && npc2==0)) || oxygen<0 || co2<0 ||
                    organic<0 || oxygen>1000000 || co2>1000000 ||
                    organic>1000000 || (npc1==npc2 && npc1!=0) ||
                    ((npc1==0)!=(npc2==0)) ||
                    (workers==2 && (!npc1 || !npc2)) ||
-                   (phase==3 && progress!=40))
+                   (phase==3 && progress!=240))
                     throw std::runtime_error("snapshot: invalid planetary crew construction state");
                 site.spaceport_phase=std::uint8_t(phase);
                 site.construction_progress=progress;
@@ -6273,7 +6273,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 auto& site=result.planetary_sites_.at(
                     PlanetarySiteKey{body,std::uint16_t(lat),std::uint16_t(lon),1});
                 site.spaceport_phase=3;
-                site.construction_progress=40;
+                site.construction_progress=240;
                 site.assigned_workers=0;
                 site.surface_location=surface_custody_id(
                     PlanetarySiteKey{body,std::uint16_t(lat),std::uint16_t(lon),1});
@@ -8225,9 +8225,9 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                     !(site.assigned_workers==0 && site.spaceport_phase==3 &&
                       !site.delegated_npcs[0] && !site.delegated_npcs[1])) ||
                    site.spaceport_phase<1 || site.spaceport_phase>3 ||
-                   site.construction_required!=40 ||
-                   site.construction_progress>40 ||
-                   (site.spaceport_phase==3 && site.construction_progress!=40) ||
+                   site.construction_required!=240 ||
+                   site.construction_progress>240 ||
+                   (site.spaceport_phase==3 && site.construction_progress!=240) ||
                    (site.spaceport_phase!=3 && (site.farm || site.extractor)))
                     throw std::runtime_error("snapshot: invalid surface port custody");
             }
