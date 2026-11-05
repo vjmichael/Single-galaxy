@@ -125,6 +125,9 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(!w.world().planetary_spaceport_operational(chosen.body,chosen.latitude,chosen.longitude));
         w.step();
         CHECK(w.world().planetary_spaceport_operational(chosen.body,chosen.latitude,chosen.longitude));
+        // A v78 autonomous-disabled world is still canonical and reloadable.
+        CHECK(Simulation::from_snapshot(w.world().canonical_state()).canonical_state()
+              ==w.world().canonical_state());
         CHECK(w.equip_planetary_site(7,ship,chosen.body,chosen.latitude,chosen.longitude,farming));
         CHECK(!w.equip_planetary_site(7,ship,chosen.body,chosen.latitude,chosen.longitude,farming));
         CHECK(w.world().colony_ship(ship)->modules==0);
@@ -182,6 +185,9 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(w.world().canonical_state()==before_policy);
         CHECK(w.set_planetary_workforce_policy(7,chosen.body,
             chosen.latitude,chosen.longitude,policy));
+        CHECK(w.world().canonical_state().rfind("galaxy-kernel-v79|",0)==0);
+        CHECK(Simulation::from_snapshot(w.world().canonical_state())
+              .planetary_sites().at(key).workforce_policy==policy);
         const auto before_site=w.world().planetary_sites().at(key);
         const auto reserve_before=!farming?
             w.world().oasis_reserves().at(chosen.body).water_kg:0;
