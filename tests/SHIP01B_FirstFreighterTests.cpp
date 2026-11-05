@@ -1,6 +1,7 @@
 #include "galaxy/Persistence.hpp"
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
@@ -154,10 +155,11 @@ int main(){
             try{(void)Simulation::from_snapshot(forged);}
             catch(const std::exception&){rejected=true;}
             CHECK(rejected);
+            const auto created_id=result.launched_ship;
             w.steps(3);
             CHECK(w.world().entities().size()==before+1);
             CHECK(w.world().freighter_build_orders().at(92001).launched_ship==
-                  result.launched_ship);
+                  created_id);
             CHECK(w.world().total_ore()==original);
         }
         {
