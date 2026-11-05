@@ -1361,6 +1361,12 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_play13d_regional_facilities_tests PRIVATE galaxy_kernel)
   add_test(NAME galaxy_play13d_regional_facilities
     COMMAND galaxy_play13d_regional_facilities_tests)
+  # SHIP-01C: same full planetary/ship-freight test, except the
+  # carrier MUST be built from rock, crewed, fitted and provisioned in-world.
+  add_test(NAME galaxy_ship01c_manufactured_freight
+    COMMAND galaxy_play13d_regional_facilities_tests --manufactured-only)
+  set_tests_properties(galaxy_ship01c_manufactured_freight
+    PROPERTIES TIMEOUT 300)
 endif()
 
 # PLAY-13D.4C.1: isolated physical planetary shuttle manifest/NPC custody domain.
