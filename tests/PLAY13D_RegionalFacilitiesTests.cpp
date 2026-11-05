@@ -582,8 +582,10 @@ static void scenario(const fs::path& db, bool farming){
                 ShuttleCargo::Nutrients,500));
             CHECK(w.world().planetary_sites().at(key).nutrients_kg==site_before-500);
             CHECK(w.world().planetary_shuttles().at(key).nutrients_kg==500);
+            // Five hundred more kg really exist on the ground, but the
+            // other 500 kg plus remaining fuel/food exceed shuttle capacity.
             CHECK(!w.load_planetary_shuttle(7,ship,key,
-                ShuttleCargo::Nutrients,1000));
+                ShuttleCargo::Nutrients,500));
             CHECK(w.world().canonical_state().rfind("galaxy-kernel-v87|",0)==0);
             CHECK(Simulation::from_snapshot(w.world().canonical_state())
                   .planetary_shuttles().at(key).nutrients_kg==500);
