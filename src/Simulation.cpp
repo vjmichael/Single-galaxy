@@ -9910,10 +9910,14 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                !yard_colonies.insert(build.colony_ship).second)
                 throw std::runtime_error("snapshot: orphaned or duplicated shipyard");
             for(const auto worker:build.workers) {
-                const auto it=result.npcs_.find(worker);
-                if(it==result.npcs_.end() ||
-                   it->second.home_ship!=build.colony_ship)
-                    throw std::runtime_error("snapshot: shipyard builder missing");
+                // Worker IDs are immutable historical contributors. Later
+                // death, migration, or rehome must stall an unfinished yard,
+                // not make the entire SQLite world impossible to reload.
+                const auto alive=result.npcs_.find(worker);
+                const auto deceased=result.casualties_.find(worker);
+                if(alive==result.npcs_.end() &&
+                   deceased==result.casualties_.end())
+                    throw std::runtime_error("snapshot: shipyard builder never existed");
                 if(!build.operational() &&
                    !assigned_builders.insert(worker).second)
                     throw std::runtime_error("snapshot: worker double-booked");
