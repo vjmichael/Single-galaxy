@@ -513,10 +513,16 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
     // are native read-models; construction advances only in committed ticks.
     if(v.size()==1 && v[0]=="PLANET_CREW"){
         for(const auto& [id,n]:world.world().npc_records()){
-            if(n.home_ship==ship && n.location==ship &&
-               n.role==NpcRole::Ship && n.assigned_site==ship &&
-               world.world().npc_available_for_duty(id))
-                announce(world.world(),"PLANET_CREW_AVAILABLE|"+std::to_string(id));
+            if(n.home_ship!=ship || n.location!=ship ||
+               n.role!=NpcRole::Ship || n.assigned_site!=ship ||
+               !world.world().npc_available_for_duty(id))continue;
+            bool guardian=false;
+            for(const auto& [dependent,child]:world.world().physical_dependents()){
+                (void)dependent;
+                if(child.guardian_id==id){guardian=true;break;}
+            }
+            if(!guardian)announce(world.world(),
+                "PLANET_CREW_AVAILABLE|"+std::to_string(id));
         }
         announce(world.world(),"PLANET_CREW_DONE");
         return;
