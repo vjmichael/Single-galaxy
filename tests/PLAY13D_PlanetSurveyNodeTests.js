@@ -56,3 +56,33 @@ test('regional construction operations use authenticated command and native rece
   assert.match(host,/PLANET_OPERATION_COMMITTED/);
   assert.match(ui,/OASIS_REGION/);
 });
+
+test('orbit-only NPC roster and spaceport construction status decode',()=>{
+  const crew=decode('COLONY|1|13|PLANET_CREW_AVAILABLE|42');
+  assert.equal(crew.id,42);
+  assert.equal(decode('COLONY|1|13|PLANET_CREW_DONE').type,'PLANET_CREW_DONE');
+  const status=decode('COLONY|1|13|PLANET_SITE_STATUS|4294967300|17|36|2|19|240|2|35|28|26|42|43');
+  assert.equal(status.phase,2);
+  assert.equal(status.progress,19);
+  assert.equal(status.required,240);
+  assert.equal(status.npc1,42);
+  assert.equal(status.npc2,43);
+  for(const bad of [
+    'COLONY|1|13|PLANET_SITE_STATUS|4294967300|17|36|4|19|240|2|35|28|26|42|43',
+    'COLONY|1|13|PLANET_SITE_STATUS|4294967300|17|36|3|19|240|2|35|28|26|42|43',
+    'COLONY|1|13|PLANET_SITE_STATUS|4294967300|17|36|2|19|240|2|35|28|26|42|42',
+    'COLONY|1|13|PLANET_SITE_STATUS|4294967300|17|36|2|19|240|2|35|28|26|42',
+    'COLONY|1|13|PLANET_CREW_AVAILABLE|0'
+  ]) assert.throws(()=>decode(bad),Error,bad);
+});
+test('surface construction controls remain native and have no surface viewer',()=>{
+  const ui=fs.readFileSync(path.join(root,'viewer/colony.js'),'utf8');
+  const relay=fs.readFileSync(path.join(root,'live/interactive_relay.py'),'utf8');
+  assert.match(ui,/colonyPlanetCrew/);
+  assert.match(ui,/colonyPlanetStatus/);
+  assert.match(ui,/colonyPlanetSupport/);
+  assert.match(relay,/firstNpc/);
+  assert.match(relay,/secondNpc/);
+  assert.match(relay,/PLANET_SITE_STATUS/);
+  assert.match(relay,/PLANET_SUPPORT/);
+});
