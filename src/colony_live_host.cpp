@@ -1261,7 +1261,30 @@ int main(int argc,char** argv){
                 }catch(const std::exception&){announce(world.world(),"ERROR|UNAUTHORIZED_PRINCIPAL");}
             }
             const auto old=world.world().events().size();
+            std::map<PlanetarySiteKey,std::uint8_t> prior_shuttle_phases;
+            for(const auto& [key,sh]:world.world().planetary_shuttles())
+                prior_shuttle_phases.emplace(key,sh.flight_phase);
             world.step();
+            // Native world ticks complete shuttle flights automatically.
+            // Publish only the committed phase transition to the owning player.
+            for(const auto& [key,sh]:world.world().planetary_shuttles()) {
+                const auto prior=prior_shuttle_phases.find(key);
+                if(prior==prior_shuttle_phases.end() ||
+                   prior->second==sh.flight_phase || sh.owner!=owner)continue;
+                announce(world.world(),"PLANET_SHUTTLE_STATUS|"+
+                    std::to_string(std::get<0>(key))+"|"+
+                    std::to_string(std::get<1>(key))+"|"+
+                    std::to_string(std::get<2>(key))+"|1|"+
+                    std::to_string(sh.flight_phase)+"|"+
+                    std::to_string(sh.pilot_npc)+"|"+
+                    std::to_string(sh.water_kg)+"|"+
+                    std::to_string(sh.food_kg)+"|"+
+                    std::to_string(sh.arrival_tick)+"|"+
+                    std::to_string(sh.flight_request)+"|"+
+                    std::to_string(sh.descent_receipt)+"|"+
+                    std::to_string(sh.ascent_receipt)+"|"+
+                    std::to_string(world.generation()));
+            }
             // Mature transit requests are committed separately; no half-
             // applied position is ever published. Catch-up on restart is
             // automatic because due requests live in the world snapshot.
