@@ -1,4 +1,5 @@
 #include "galaxy/Persistence.hpp"
+#include "galaxy/OrbitalShuttleCommands.hpp"
 #include <chrono>
 #include <filesystem>
 #include <iostream>
@@ -151,6 +152,31 @@ static void scenario(const fs::path& db, bool farming){
         CHECK(!w.build_planetary_shuttle(7,ship,key));
         CHECK(w.world().colony_ship(ship)->modules==0);
         CHECK(w.world().planetary_shuttles().at(key).dry_mass_ore==4);
+        // PLAY-13D.4C.6: the standalone desktop client can issue typed native
+        // commands without HTTP, relay JSON, or a second gameplay authority.
+        OrbitalShuttleCommand native{};
+        native.owner=7;native.ship=ship;native.site=key;
+        native.action=OrbitalShuttleAction::Status;
+        const auto native_generation=w.generation();
+        const auto native_status=execute_orbital_shuttle(w,native);
+        CHECK(native_status.accepted && !native_status.mutated);
+        CHECK(native_status.present && native_status.shuttle.dry_mass_ore==4);
+        CHECK(native_status.generation==native_generation);
+        native.owner=8;
+        CHECK(!execute_orbital_shuttle(w,native).accepted);
+        native.owner=7;
+        native.site=PlanetarySiteKey{chosen.body,chosen.latitude,
+            std::uint16_t((chosen.longitude+1)%72),1};
+        CHECK(!execute_orbital_shuttle(w,native).accepted);
+        native.site=key;
+        native.action=OrbitalShuttleAction::Load;
+        native.kilograms=-1;
+        CHECK(!execute_orbital_shuttle(w,native).accepted);
+        native.kilograms=1001;
+        CHECK(!execute_orbital_shuttle(w,native).accepted);
+        CHECK(w.generation()==native_generation);
+        CHECK(w.world().total_ore()==origin);
+
         CHECK(!w.assign_planetary_shuttle_pilot(7,ship,key,first_npc));
         CHECK(!w.assign_planetary_shuttle_pilot(7,ship,key,9999999));
         CHECK(w.assign_planetary_shuttle_pilot(7,ship,key,available[2]));
