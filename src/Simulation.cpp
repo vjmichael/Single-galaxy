@@ -8349,6 +8349,22 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
         std::map<std::pair<EntityId,int>,std::int64_t> counts;
         std::map<std::uint64_t,int> mentor_occupancy;
         for(const auto& [id,n]:result.npcs_){
+            // A 4C.3 pilot remains a single existing NPC, with its only
+            // physical custody linked to a versioned shuttle flight state.
+            const bool shuttle_custody=result.snapshot_version_>=81 && [&](){
+                for(const auto& [key,sh]:result.planetary_shuttles_) {
+                    if(sh.pilot_npc!=id)continue;
+                    const auto site=result.planetary_sites_.find(key);
+                    if(site==result.planetary_sites_.end())return false;
+                    const auto expected=(sh.flight_phase==1 || sh.flight_phase==3)?
+                        shuttle_transit_custody_id(key):
+                        (sh.flight_phase==2?site->second.surface_location:sh.source_ship);
+                    return n.location==expected && n.home_ship==sh.source_ship &&
+                           n.role==NpcRole::Ship && n.assigned_site==sh.source_ship &&
+                           !n.transport_id;
+                }
+                return false;
+            }();
             if(n.transport_id && (result.snapshot_version_<32 || !result.colony_ships_.count(n.location) ||
                 (n.location==n.assigned_site && !result.crew_rehomes_.count(n.id))))
                 throw std::runtime_error("snapshot: invalid active passenger custody");
@@ -8371,6 +8387,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                     return false;
                 }()) ||
                 (!n.transport_id && n.location!=n.assigned_site &&
+                 !shuttle_custody &&
                  ![&](){for(const auto& [voyage_id,v]:result.voyages_){(void)voyage_id;
                      if((v.status==2 || v.status==5) && v.destination==n.location &&
                         std::binary_search(v.passengers.begin(),v.passengers.end(),id))return true;}
@@ -8996,9 +9013,20 @@ std::int64_t Simulation::total_ore() const {
             if(!assigned_shuttle_pilots.insert(v.pilot_npc).second)
                 throw std::overflow_error("pilot assigned to multiple shuttles");
             const auto npc=npcs_.find(v.pilot_npc);
+            const auto facility=planetary_sites_.find(key);
+            const auto destination=facility==planetary_sites_.end()?EntityId{0}:
+                facility->second.surface_location;
+            const auto expected=(v.flight_phase==1 || v.flight_phase==3)?
+                shuttle_transit_custody_id(key):
+                (v.flight_phase==2?destination:v.source_ship);
             if(npc==npcs_.end() || npc->second.home_ship!=v.source_ship ||
-               npc->second.location!=v.source_ship || npc->second.role!=NpcRole::Ship)
-                throw std::overflow_error("invalid shuttle pilot");
+               npc->second.assigned_site!=v.source_ship ||
+               npc->second.location!=expected || npc->second.transport_id ||
+               npc->second.role!=NpcRole::Ship ||
+               ((v.flight_phase==1 || v.flight_phase==3) &&
+                (!v.flight_request || !v.arrival_tick)) ||
+               (v.flight_phase>3))
+                throw std::overflow_error("invalid shuttle pilot custody");
         }
         total+=v.dry_mass_ore;
         if(v.water_kg+v.food_kg>1000000000LL-life_mass_kg)
