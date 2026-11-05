@@ -104,6 +104,8 @@ def main(executable,relay):
             shuttle_valid=[
                 {'operation':'STATUS'}, {'operation':'BUILD'},
                 {'operation':'PILOT','npc':42},
+                {'operation':'BOARD','npc':43},
+                {'operation':'RELEASE','npc':43},
                 {'operation':'LOAD','resource':'WATER','kg':100},
                 {'operation':'UNLOAD','resource':'FOOD','kg':25},
                 {'operation':'DESCEND','request':987654321},
@@ -127,6 +129,9 @@ def main(executable,relay):
                 {'operation':'BUILD','kg':1},
                 {'operation':'STATUS','pilot':42},
                 {'operation':'PILOT','npc':False},
+                {'operation':'BOARD','npc':False},
+                {'operation':'RELEASE','npc':0},
+                {'operation':'BOARD','npc':42,'kg':1},
                 {'operation':'PILOT','npc':42,'extra':1},
                 {'operation':'FREE'},
                 {'operation':'STATUS','latitude':36},
