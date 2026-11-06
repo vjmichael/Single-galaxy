@@ -846,6 +846,14 @@ struct PendingProbeDiscovery {
     std::uint64_t probe_id=0;
     std::uint64_t ready_tick=0;
 };
+// SHIP-STATUS-04: immutable original-world attribution of a named NPC's
+// cyber order. This is evidence of the operator, not a legal verdict.
+struct NpcCyberOperator {
+    std::uint64_t command_id=0;
+    PlayerId owner=0;
+    EntityId attacking_ship=0, target_ship=0;
+    std::uint64_t pilot_npc=0,observer_npc=0,admitted_tick=0;
+};
 struct Command {
     std::uint64_t id = 0;          // globally unique, for idempotency
     std::uint64_t execute_tick = 0;
@@ -1095,6 +1103,9 @@ public:
     // INSIDE native module commands and by player/NPC read models alike.
     bool hardpoint_effective_on(EntityId ship,std::uint8_t slot) const;
     const ship_status::Engine& status_effects() const noexcept {return ship_status_;}
+    const std::map<std::uint64_t,NpcCyberOperator>& npc_cyber_operators() const noexcept {
+        return npc_cyber_operators_;
+    }
     void step();
     void steps(std::uint64_t count);
     // Native host converts 10 gameplay seconds to its configured tick period.
@@ -1474,6 +1485,7 @@ private:
     std::uint64_t rng_state_;
     std::map<EntityId, Entity> entities_; // stable deterministic iteration
     ship_status::Engine ship_status_; // same canonical world snapshot, not sidecar
+    std::map<std::uint64_t,NpcCyberOperator> npc_cyber_operators_; // v102
     std::map<EntityId,ShipFrameCustody> ship_frames_; // durable v71 local-space custody
     std::map<std::uint64_t,std::array<EntityId,2>> generated_local_regions_; // v73 immutable site manifest
     std::map<EntityId,std::uint64_t> local_entity_anchors_; // v73 nonship frame custody
