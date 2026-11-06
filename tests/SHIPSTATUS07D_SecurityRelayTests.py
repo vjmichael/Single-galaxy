@@ -55,14 +55,17 @@ for action, args, line in [
     ("colonySecurityWarn", {"ship": 888}, "SECURITY_WARN|888"),
     ("colonySecurityHail", {"colony": 345}, "SECURITY_HAIL|345"),
     ("colonySecurityReply",
-     {"colony": 345, "notice": 9000000001, "choice": "acknowledge"},
+     {"colony": 345, "notice": "9000000001", "choice": "acknowledge"},
      "SECURITY_REPLY|345|9000000001|ACK"),
     ("colonySecurityReply",
-     {"colony": 345, "notice": 9000000001, "choice": "refuse"},
+     {"colony": 345, "notice": "9000000001", "choice": "refuse"},
      "SECURITY_REPLY|345|9000000001|REFUSE"),
     ("colonySecurityPatrol",
      {"case": "4123456789012345678", "ship": 88},
-     "SECURITY_PATROL|4123456789012345678|88")
+     "SECURITY_PATROL|4123456789012345678|88"),
+    ("colonySecurityReply",
+     {"colony": 345, "notice": "9223372036854775807", "choice": "refuse"},
+     "SECURITY_REPLY|345|9223372036854775807|REFUSE")
 ]:
     status, sent = submit(action, args)
     assert status == 202 and sent == [(line, 7)], (action, status, sent)
@@ -75,6 +78,12 @@ for action, args in [
     ("colonySecurityWarn", {"ship": 0}),
     ("colonySecurityHail", {"colony": 1, "pilotedShip": 999}),
     ("colonySecurityHail", {"colony": 0}),
+    ("colonySecurityReply",
+     {"colony": 3, "notice": 4, "choice": "acknowledge"}),
+    ("colonySecurityReply",
+     {"colony": 3, "notice": "0004", "choice": "acknowledge"}),
+    ("colonySecurityReply",
+     {"colony": 3, "notice": "9223372036854775808", "choice": "acknowledge"}),
     ("colonySecurityReply",
      {"colony": 3, "notice": 4, "choice": "silently_identify"}),
     ("colonySecurityReply",
