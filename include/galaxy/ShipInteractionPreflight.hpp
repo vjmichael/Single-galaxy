@@ -17,9 +17,12 @@ enum class Readiness : std::uint8_t {
 inline bool within_axis(std::int64_t a,std::int64_t b,
                         std::int64_t bound) noexcept {
     if(bound<0)return false;
-    const auto delta=static_cast<__int128>(a)-static_cast<__int128>(b);
-    return delta>=-static_cast<__int128>(bound) &&
-           delta<=static_cast<__int128>(bound);
+    // Sign-bit bias maps signed order to unsigned order, portable on MSVC.
+    constexpr std::uint64_t sign=std::uint64_t{1}<<63;
+    const auto x=static_cast<std::uint64_t>(a)^sign;
+    const auto y=static_cast<std::uint64_t>(b)^sign;
+    const auto distance=x>=y?x-y:y-x;
+    return distance<=static_cast<std::uint64_t>(bound);
 }
 // Only checks a spatial envelope; actual interaction executors must impose
 // their own gameplay-specific ranges and passenger/cargo permissions.
