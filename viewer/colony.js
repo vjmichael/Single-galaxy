@@ -1222,6 +1222,84 @@
    contractDeliver,contractRefresh);
  shipyardPanel.append(contractTitle,contractHelp,contractId,
    contractYard,contractBuild,contractButtons,contractState,contractList);
+ // WORK-01A is the shared NPC work coordinator, not a replacement
+ // shipyard scheduler. It projects real existing delivery, freight, yard,
+ // and manufacturing jobs and delegates *only* explicitly permitted steps.
+ const universalTitle=document.createElement('h3');
+ universalTitle.textContent='NPC Work Coordinator (WORK-01A)';
+ const universalInfo=document.createElement('p');
+ universalInfo.textContent='One read-only work board for deliveries, freight, yard construction, manufacturing and ship purchase orders. Delegating a customer ship order permits funding and physical hull collection when the existing native gates allow it. Named NPC commissioning is optional and must be explicitly specified.';
+ const universalId=document.createElement('input');
+ universalId.type='number';universalId.min='1';universalId.step='1';
+ universalId.placeholder='New delegation ID';
+ universalId.setAttribute('aria-label','Universal NPC work delegation ID');
+ const universalDependency=document.createElement('input');
+ universalDependency.type='number';universalDependency.min='0';
+ universalDependency.step='1';universalDependency.value='0';
+ universalDependency.placeholder='Earlier delegation dependency (0 for none)';
+ universalDependency.setAttribute('aria-label','Dependent earlier work directive ID');
+ const universalNpcFirst=document.createElement('input');
+ universalNpcFirst.type='number';universalNpcFirst.min='0';
+ universalNpcFirst.step='1';universalNpcFirst.value='0';
+ universalNpcFirst.placeholder='Optional existing buyer NPC 1';
+ universalNpcFirst.setAttribute('aria-label','Authorized buyer commissioning NPC one');
+ const universalNpcSecond=document.createElement('input');
+ universalNpcSecond.type='number';universalNpcSecond.min='0';
+ universalNpcSecond.step='1';universalNpcSecond.value='0';
+ universalNpcSecond.placeholder='Optional existing buyer NPC 2';
+ universalNpcSecond.setAttribute('aria-label','Authorized buyer commissioning NPC two');
+ const universalKg=document.createElement('input');
+ universalKg.type='number';universalKg.min='0';universalKg.max='1000';
+ universalKg.step='1';universalKg.value='0';
+ universalKg.placeholder='Optional commission provisions kg (0 for none)';
+ universalKg.setAttribute('aria-label','Authorize finite food water oxygen kilograms per resource');
+ const universalStatus=document.createElement('output');
+ universalStatus.textContent='Universal work board not yet inspected.';
+ const universalList=document.createElement('div');
+ universalList.dataset.universalWorkBoard='1';
+ const universalDirectives=document.createElement('div');
+ universalDirectives.dataset.universalWorkDirectives='1';
+ const validId=x=>Number.isSafeInteger(x)&&x>0&&x<2**50;
+ const delegateButton=document.createElement('button');
+ delegateButton.type='button';delegateButton.textContent='Delegate this ship purchase to NPCs';
+ delegateButton.addEventListener('click',()=>{
+   const order=Number(universalId.value),contract=Number(contractId.value),
+     firstNpc=Number(universalNpcFirst.value),
+     secondNpc=Number(universalNpcSecond.value),
+     provisionsKg=Number(universalKg.value),
+     dependency=Number(universalDependency.value);
+   if(!validId(order)||!validId(contract)||
+      !Number.isSafeInteger(firstNpc)||firstNpc<0||
+      !Number.isSafeInteger(secondNpc)||secondNpc<0||
+      Boolean(firstNpc)!==Boolean(secondNpc)||
+      (firstNpc&&firstNpc===secondNpc)||
+      !Number.isSafeInteger(dependency)||dependency<0||dependency>=order||
+      !Number.isSafeInteger(provisionsKg)||provisionsKg<0||provisionsKg>1000||
+      (firstNpc&&provisionsKg<10)||(!firstNpc&&provisionsKg))return;
+   window.GalaxyColonyCommand?.('colonyWorkDelegateShip',
+     {order,contract,firstNpc,secondNpc,provisionsKg,dependency});
+   universalStatus.textContent='Delegation requested. The native world owns the job and approvals.';
+ });
+ const universalCancel=document.createElement('button');
+ universalCancel.type='button';universalCancel.textContent='Revoke future NPC actions';
+ universalCancel.addEventListener('click',()=>{
+   const order=Number(universalId.value);
+   if(!validId(order))return;
+   window.GalaxyColonyCommand?.('colonyWorkCancel',{order});
+   universalStatus.textContent='Revocation requested; existing material transfers and completed construction remain physical.';
+ });
+ const universalRefresh=document.createElement('button');
+ universalRefresh.type='button';universalRefresh.textContent='Inspect all colony work';
+ universalRefresh.addEventListener('click',()=>{
+   universalList.replaceChildren();universalDirectives.replaceChildren();
+   window.GalaxyColonyCommand?.('colonyWorkStatus',{});
+ });
+ const universalActions=document.createElement('div');
+ universalActions.append(delegateButton,universalCancel,universalRefresh);
+ shipyardPanel.append(universalTitle,universalInfo,universalId,
+   universalDependency,universalNpcFirst,universalNpcSecond,universalKg,
+   universalActions,universalStatus,universalList,universalDirectives);
+
  const freighterTitle=document.createElement('strong');
  freighterTitle.textContent='Manufacture first real freighter (SHIP-01B)';
  const freighterHint=document.createElement('p');
