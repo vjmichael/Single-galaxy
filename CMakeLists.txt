@@ -1730,3 +1730,14 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/SHIPSTATUS05_CyberCockpitTests.js)
   endif()
 endif()
+
+# SHIP-STATUS-06: same authoritative patrol flight, physical rendezvous,
+# governed NPC cyber attack and committed player defense read model.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status06_fleet_cyber_tests
+    tests/SHIPSTATUS06_FleetCyberTests.cpp)
+  target_link_libraries(galaxy_ship_status06_fleet_cyber_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status06_fleet_cyber
+    COMMAND galaxy_ship_status06_fleet_cyber_tests)
+  set_tests_properties(galaxy_ship_status06_fleet_cyber PROPERTIES TIMEOUT 300)
+endif()
