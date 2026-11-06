@@ -15,9 +15,9 @@ New `include/galaxy/FleetSelection.hpp` provides a read-only player-controlled l
 - First entry: the original owned home colony ship.
 - Further entries: real hulls with immutable manufacturing receipts whose order points back to **that owner's same founding ship**.
 - Unfinished or uncommissioned hulls remain visible as **unavailable** but cannot be piloted.
-- A fabricated ship is selectable only when it is a living owned `Ship`, is fully commissioned, has real `ColonyShip` + `ColonyLifeSupport` records, a paid exploration scanner, an authoritative frame and a **named currently aboard NPC pilot**. Aggregate crew count alone is insufficient.
+- A fabricated ship is selectable only when it is a living owned `Ship`, is fully commissioned, has real `ColonyShip` + `ColonyLifeSupport` records, a paid exploration scanner, an authoritative frame and at least one of its **two immutable named commissioning crew IDs still physically aboard and assigned to ship duty**. Aggregate crew count alone is insufficient. Formal replacement-pilot assignment is a later separate durable crew-duty operation.
 - Foreign ships, asteroids, stale IDs, destroyed/uncrewed hulls and forged vessel selection requests fail closed.
-- Every committed tick revalidates selection. If a selected hull becomes unavailable, the host automatically falls back to the original colony ship. This is a cockpit fallback, not a material/ownership handover.
+- Every committed tick revalidates selection through indexed build-order and commissioning-NPC lookups, without scanning the entire fleet or NPC population. If a selected hull becomes unavailable, the host automatically falls back to the original colony ship. This is a cockpit fallback, not a material/ownership handover.
 
 The trusted native host handles `FLEET_STATUS` and `FLEET_SELECT|ship` after authenticating the owner. It publishes bounded roster receipts `FLEET_RESET`, `FLEET_ITEM`, `FLEET_DONE`, `FLEET_SELECTED`, `FLEET_FALLBACK` and per-tick `FLEET_PILOT_ITEM`. Standard `THRUST`, `YAW` and `FRAME_TRAVEL` are issued against `piloted_ship`; all other existing colony economy, manufacturing and work-board commands continue to use the unmodified `home_ship`.
 
