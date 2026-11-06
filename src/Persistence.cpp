@@ -8624,101 +8624,31 @@ PersistentWorld::PersistentWorld(const std::string& path, Simulation initial_wor
     store_->verify_colony_diplomatic_intents(generation_);
 }
 PersistentWorld::~PersistentWorld() = default;
+// Shared native transition: manual host travel and all NPC-operated
+// navigation now use identical Simulation physical guards and effects.
 bool PersistentWorld::begin_celestial_transit(
     PlayerId owner,EntityId ship,std::uint64_t body,std::uint64_t id,FailPoint fail) {
-    // Do not permit parent ship to abandon a shuttle pilot/cargo at the
-    // surface or in atmospheric transit; the original frame stays authoritative.
-    for(const auto& [key,sh]:world_.planetary_shuttles_) {
-        (void)key;
-        if(sh.source_ship==ship && sh.flight_phase!=0)return false;
-    }
-
-    if(!id || !owner || owner==Simulation::kServerAuthority ||
-       world_.ship_frames_.size()==0 || world_.snapshot_version_<71 ||
-       world_.pending_celestial_transits_.size()>=10000 ||
-       world_.completed_celestial_transits_.size()>=10000 ||
-       world_.completed_celestial_transits_.count(id) ||
-       world_.pending_celestial_transits_.count(id) ||
-       world_.tick_>std::numeric_limits<std::uint64_t>::max()-4)
-        return false;
-    for(const auto& [key,p]:world_.pending_celestial_transits_) {
-        (void)key;
-        if(p.ship==ship)return false;
-    }
-    // The authenticated host passes owner; this is not exposed as a raw
-    // client-facing "receipt" or unchecked destination position command.
-    // Celestial coordinates are not an implicit travel permission. A ship
-    // must possess the existing fitted exploration scanner to select an
-    // astronomical destination; future survey-history gates can narrow this.
-    const auto* carrier=world_.find(ship);
-    if(!carrier || !carrier->fitting.exploration_scanner())return false;
-    const auto decision=plan_celestial_frame_arrival(world_,owner,ship,body,id);
-    if(!decision.plan)return false;
-    const auto frame=world_.ship_frames_.find(ship);
-    if(frame==world_.ship_frames_.end() || frame->second.anchor_body==body)
-        return false;
-    // Do not strand an ongoing ferry/evacuation voyage by moving its hull
-    // to a different local frame while origin/receiver custody is unresolved.
-    for(const auto& [voyage_id,v]:world_.voyages_){
-        (void)voyage_id;
-        if(v.ferry==ship && (v.status==1 || v.status==3))return false;
-    }
-    // No pending ordinary command may race the beginning of transport.
-    for(const auto& [when,commands]:world_.commands_) {
-        (void)when;
-        for(const auto& c:commands)
-            if(c.actor==ship || c.target==ship)return false;
+    // Do not commandeer an active, owner-authorized NPC navigation ship or
+    // adopt its durable planned receipt as a different host command.
+    for(const auto& [flight_id,order]:world_.npc_flight_orders_){
+        (void)flight_id;
+        if((order.phase==NpcFlightPhase::Planned ||
+            order.phase==NpcFlightPhase::InTransit) &&
+           (order.ship==ship || order.transit_request==id))return false;
     }
     auto next=world_;
-    // Dock the thrust controller, not the ship: no drifting while in transit.
-    next.entities_.at(ship).velocity={};
-    next.pending_celestial_transits_.emplace(id,PendingCelestialTransit{
-        owner,ship,frame->second.system,frame->second.anchor_body,body,
-        next.tick_,next.tick_+4});
-    next.snapshot_version_=std::max(next.snapshot_version_,72);
+    if(!next.begin_native_celestial_transit(owner,ship,body,id))return false;
     store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
                    {},{},{},fail);
-    world_.swap(next);
-    ++generation_;
+    world_.swap(next);++generation_;
     return true;
 }
 bool PersistentWorld::complete_celestial_transit(std::uint64_t id,FailPoint fail) {
-    if(!id || world_.completed_celestial_transits_.count(id))return false;
-    const auto it=world_.pending_celestial_transits_.find(id);
-    if(it==world_.pending_celestial_transits_.end())return false;
-    const auto p=it->second;
-    if(world_.tick_<p.due_tick)return false;
-    const auto current=world_.ship_frames_.find(p.ship);
-    if(current==world_.ship_frames_.end() ||
-       current->second.system!=p.system ||
-       current->second.anchor_body!=p.source_anchor)return false;
-    const auto decision=plan_celestial_frame_arrival(
-        world_,p.owner,p.ship,p.destination_body,id);
-    if(!decision.plan)return false;
-    const auto& plan=*decision.plan;
-    if(plan.system!=p.system || plan.owner!=p.owner ||
-       plan.ship_id!=p.ship)return false;
     auto next=world_;
-    // PLAY-13C.4: establish the destination region in the SAME durable
-    // transaction as arrival; an aborted commit leaves neither new rocks
-    // nor a moved ship, and a later visit cannot seed the region twice.
-    next.seed_celestial_local_region(p.destination_body);
-    auto& ship=next.entities_.at(p.ship);
-    auto& frame=next.ship_frames_.at(p.ship);
-    frame={plan.destination_frame.system,plan.destination_frame.anchor_body,
-           plan.destination_frame.origin};
-    ship.position=plan.arrival_position;
-    ship.velocity=plan.arrival_velocity;
-    // Do not transfer cargo, passengers, inventory or identities: only the
-    // original hull's frame and position are changed atomically.
-    next.pending_celestial_transits_.erase(id);
-    next.completed_celestial_transits_.emplace(id,CompletedCelestialTransit{
-        p.owner,p.ship,p.system,p.destination_body,next.tick_});
-    next.snapshot_version_=std::max(next.snapshot_version_,72);
+    if(!next.complete_native_celestial_transit(id))return false;
     store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
                    {},{},{},fail);
-    world_.swap(next);
-    ++generation_;
+    world_.swap(next);++generation_;
     return true;
 }
 bool PersistentWorld::assign_planetary_shuttle_visitor_duty(PlayerId owner,EntityId ship,
@@ -8852,6 +8782,33 @@ bool PersistentWorld::delegate_customer_ship_order(
 }
 // WORK-01C: retain v94 original-world transaction, failpoints, conservation
 // and recovery. The delegation is not a new shipment/stock/manifest writer.
+// FLIGHT-01 is mission-neutral and journaled exactly like all other
+// original world actions: no parallel flight database or unsupervised thread.
+bool PersistentWorld::queue_npc_flight(
+    PlayerId owner,EntityId ship,std::uint64_t pilot,
+    std::uint64_t destination,std::uint64_t order_id,
+    std::uint64_t transit_request,NpcFlightPurpose purpose,FailPoint fail){
+    auto next=world_;
+    if(!next.queue_npc_flight(owner,ship,pilot,destination,order_id,
+                              transit_request,purpose))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("navigation authorization created material");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+bool PersistentWorld::cancel_npc_flight(
+    PlayerId owner,std::uint64_t order_id,FailPoint fail){
+    auto next=world_;
+    if(!next.cancel_npc_flight(owner,order_id))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("navigation cancellation altered matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
 bool PersistentWorld::delegate_transport_work_order(
         PlayerId owner,EntityId origin,std::uint64_t id,WorkTaskKind kind,
         std::uint64_t source,std::uint64_t dependency,FailPoint fail) {
