@@ -870,6 +870,11 @@ public:
         FailPoint fail=FailPoint::None);
     bool register_player_person(PlayerId owner,EntityId aboard,
         FailPoint fail=FailPoint::None);
+    bool grant_player_rescue_consent(PlayerId owner,EntityId receiver,
+        std::uint64_t consent_id,FailPoint fail=FailPoint::None);
+    bool complete_player_rescue(PlayerId owner,EntityId receiver,
+        std::uint64_t flight_id,std::uint64_t transfer_receipt,
+        FailPoint fail=FailPoint::None);
     bool cancel_npc_flight(PlayerId owner,std::uint64_t flight_order_id,
         FailPoint fail=FailPoint::None);
     // Real finite resource collection, committed atomically before publication.
