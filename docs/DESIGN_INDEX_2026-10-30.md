@@ -34,3 +34,5 @@ Current delivered engineering report: [B7.0c Mineral Industry](B7_0c_Mineral_Ind
 - [SHIP-01B.2 — real freighter commissioning, v92 draft](engineering/SHIP01B2_REAL_FREIGHTER_COMMISSIONING_20261105.md) — exact-HEAD native acceptance remains open; no free crew, scanner, or provisioning.
 
 - [SHIP-01C — first manufactured freighter actual intercolony delivery, test draft](engineering/SHIP01C_FIRST_MANUFACTURED_FREIGHT_DELIVERY_20261105.md) — real built hull, named crew, planetary work order, verified-when-passed physical freight.
+
+- [SHIP-01D — owner-safe fleet selection and separate colony authority, draft](engineering/SHIP01D_FLEET_SELECTION_AND_PILOT_CONTROL_20261105.md) — real hull roster, active cockpit, native local-frame camera, safe home/flight separation.
