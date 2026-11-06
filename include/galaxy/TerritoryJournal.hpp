@@ -12,7 +12,7 @@ namespace galaxy::colony_disposition {
 enum class TerritoryFailPoint : std::uint8_t {None=0,AfterInsert=1};
 enum class TerritoryEventKind : std::uint8_t {
     Claim=1, Invite=2, RevokeInvitation=3, Warning=4, Trespass=5,
-    Expulsion=6
+    Expulsion=6, NoticeAcknowledged=7, NoticeRefused=8
 };
 
 struct TerritoryEvent {
@@ -32,7 +32,9 @@ struct TerritorialStanding {
     bool invited=false;
     bool warned=false;
     bool trespass_recorded=false;
+    bool notice_received=false,notice_refused=false;
     std::uint64_t claim_event=0,warning_event=0,trespass_event=0;
+    std::uint64_t notice_reply_event=0;
     std::uint64_t grace_until=0;
 };
 
@@ -59,6 +61,16 @@ public:
               EntityId foreign_ship,std::uint64_t observer_npc,
               std::uint64_t event_id,std::uint64_t grace_ticks,
               TerritoryFailPoint fail=TerritoryFailPoint::None);
+    // Only the actual visiting owner can confirm receipt of a pending
+    // notice. No response means NO established delivery and NO trespass.
+    // Acknowledgement or refusal starts the grace interval on the response
+    // tick, rather than backdating it to the guard's transmission attempt.
+    bool respond_to_notice(const PersistentWorld& world,PlayerId visitor_owner,
+              EntityId colony,EntityId visiting_ship,std::uint64_t notice_id,
+              std::uint64_t reply_id,bool refuse,
+              TerritoryFailPoint fail=TerritoryFailPoint::None);
+    std::vector<TerritoryEvent> pending_notices(const PersistentWorld& world,
+              PlayerId visitor_owner) const;
     bool record_trespass(const PersistentWorld& world,PlayerId owner,
               EntityId colony,EntityId foreign_ship,std::uint64_t observer_npc,
               std::uint64_t event_id,
