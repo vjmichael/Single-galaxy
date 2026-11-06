@@ -1070,6 +1070,8 @@ public:
     const std::map<std::uint64_t,CompletedCelestialTransit>& completed_celestial_transits() const {
         return completed_celestial_transits_;
     }
+    // A zero pilot means pick the lowest-ID qualified available named
+    // shipboard NPC deterministically at the original SQLite admission.
     // FLIGHT-01 read model: only original physical ships, pilots and transit
     // receipts; these orders contain intent, never cloned passengers/cargo.
     const std::map<std::uint64_t,NpcFlightOrder>& npc_flight_orders() const noexcept {
