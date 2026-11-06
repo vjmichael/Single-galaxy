@@ -376,6 +376,83 @@ public:
                     "ship hail compact penalty cannot reconcile to ten original receipts");
         }
     }
+    // After ten immutable detailed receipts, increment this same original
+    // SQLite game's one-row-per-caller/recipient materialized penalty state.
+    // Never create another user-visible hail or rewrite the original ten.
+    // Any failure rolls back and the trusted host denies the outbound call.
+    void compact_strike(const PersistentWorld& world,PlayerId caller,
+        EntityId recipient,std::uint64_t event_id,
+        std::uint64_t seed_id,std::uint64_t next_points,
+        std::uint64_t cooldown_until){
+        if(!caller || !recipient || !event_id || !seed_id ||
+           next_points<11 ||
+           next_points>std::uint64_t(
+             std::numeric_limits<sqlite3_int64>::max()) ||
+           cooldown_until<=world.world().tick() ||
+           cooldown_until>std::uint64_t(
+             std::numeric_limits<sqlite3_int64>::max()))
+            throw std::invalid_argument("invalid compact nuisance event");
+        run(db_,"BEGIN IMMEDIATE");
+        try{
+            verify();
+            const auto rows=overflow_history();
+            const auto prior=std::find_if(rows.begin(),rows.end(),
+                [&](const OverflowPenalty& p){
+                    return p.caller_owner==caller &&
+                           p.recipient_ship==recipient;
+                });
+            const auto events=history();
+            const auto seed=std::find_if(events.begin(),events.end(),
+                [&](const Receipt& r){
+                    return r.event_id==seed_id &&
+                           r.caller_owner==caller &&
+                           r.recipient_ship==recipient &&
+                           r.kind==Kind::Abuse && r.penalty_points==10;
+                });
+            if(seed==events.end() ||
+               world.world().tick()<seed->world_tick ||
+               world.generation()<seed->world_generation ||
+               std::any_of(events.begin(),events.end(),
+                 [&](const Receipt& e){return e.event_id==event_id;}))
+                throw std::runtime_error("compact penalty seed not proven");
+            if(prior==rows.end()){
+                if(next_points!=11 || rows.size()>=kMaximumRecords)
+                    throw std::runtime_error("compact penalty quota or sequence");
+                Statement q(db_,"INSERT INTO sg_ship_hail07e_totals "
+                    "(caller_owner,recipient_ship,points,seed_event,last_event,"
+                    "last_tick,last_generation,cooldown) "
+                    "VALUES (?,?,?,?,?,?,?,?)");
+                const std::uint64_t v[]{caller,recipient,next_points,seed_id,
+                    event_id,world.world().tick(),world.generation(),
+                    cooldown_until};
+                for(int i=0;i<8;++i)bind_num(q.stmt,i+1,v[i]);
+                if(sqlite3_step(q.stmt)!=SQLITE_DONE)
+                    throw std::runtime_error("compact penalty insert failed");
+            }else{
+                if(prior->seed_event!=seed_id ||
+                   prior->total_points+1!=next_points ||
+                   world.world().tick()<=prior->last_tick ||
+                   world.generation()<prior->last_generation)
+                    throw std::runtime_error("duplicate compact penalty tick");
+                Statement q(db_,"UPDATE sg_ship_hail07e_totals SET "
+                    "points=?,last_event=?,last_tick=?,last_generation=?,"
+                    "cooldown=? WHERE caller_owner=? AND recipient_ship=? "
+                    "AND points=? AND last_tick<?");
+                const std::uint64_t v[]{next_points,event_id,
+                    world.world().tick(),world.generation(),cooldown_until,
+                    caller,recipient,prior->total_points,world.world().tick()};
+                for(int i=0;i<9;++i)bind_num(q.stmt,i+1,v[i]);
+                if(sqlite3_step(q.stmt)!=SQLITE_DONE ||
+                   sqlite3_changes(db_)!=1)
+                    throw std::runtime_error("compact penalty CAS failed");
+            }
+            run(db_,"COMMIT");
+        }catch(...){
+            sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);
+            throw;
+        }
+        verify();
+    }
     Result call(const PersistentWorld& world,
                 const colony_disposition::TerritoryJournal& territory,
                 PlayerId principal,EntityId source,EntityId target,
