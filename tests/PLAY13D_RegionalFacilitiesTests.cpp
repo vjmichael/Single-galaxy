@@ -941,8 +941,8 @@ static void scenario(const fs::path& db, bool farming,
                   IntercolonyFreightStage::Loaded);
             CHECK(!w.deliver_intercolony_freight(7,77003)); // wrong frame
             const auto aboard=w.world().canonical_state();
-            CHECK(aboard.rfind(autonomous?"galaxy-kernel-v95|":
-                delegated?"galaxy-kernel-v94|":
+            // This sealed-cargo snapshot predates navigation posting.
+            CHECK(aboard.rfind(delegated?"galaxy-kernel-v94|":
                 (manufactured?"galaxy-kernel-v92|":"galaxy-kernel-v89|"),0)==0);
             CHECK(Simulation::from_snapshot(aboard).canonical_state()==aboard);
             // A snapshot with sealed physical cargo but no matching order
