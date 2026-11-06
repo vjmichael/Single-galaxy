@@ -132,6 +132,34 @@ std::int64_t integer(const std::string& s){
 void announce(const Simulation& w,const std::string& text){
     std::cerr<<"COLONY|1|"<<w.tick()<<'|'<<text<<'\n'<<std::flush;
 }
+// A verified *human account's* private security desk never shares the
+// global owner-7 SGVIEW, colony diagnostics, or per-owner private evidence.
+// The locally trusted relay strips this wrapper and filters by principal.
+void announce_security_for(const Simulation& w,PlayerId recipient,
+                           const std::string& value) {
+    if(recipient==owner) { announce(w,value);return; }
+    std::cerr<<"PRIVATE|"<<recipient<<"|COLONY|1|"<<w.tick()
+             <<'|'<<value<<'\n'<<std::flush;
+}
+std::set<PlayerId> trusted_human_owners(bool authenticated) {
+    std::set<PlayerId> humans{owner};
+    if(!authenticated)return humans;
+    const char* raw=std::getenv("SG_AUTHENTICATED_HUMAN_OWNERS");
+    if(!raw || !*raw)return humans;
+    // Split by comma using only canonical positive decimal account IDs.
+    std::istringstream in(raw);
+    std::string item;
+    humans.clear();
+    while(std::getline(in,item,',')){
+        const auto value=integer(item);
+        if(value<=0 || value>9007199254740991LL ||
+           !humans.insert(PlayerId(value)).second)
+            throw std::invalid_argument("invalid human owner manifest");
+    }
+    if(humans.size()>64 || !humans.count(owner))
+        throw std::invalid_argument("local home account missing");
+    return humans;
+}
 // SHIP-STATUS-07: private world ownership is not optical identification.
 // Suppress the source ID when the real viewer lacks a live sensor contact.
 EntityId perceived_cyber_source(const Simulation& w,
@@ -2029,6 +2057,7 @@ int main(int argc,char** argv){
         auto ms=integer(argv[2]),max_ticks=integer(argv[3]);
         if(ms<20||ms>5000||max_ticks<5||max_ticks>1200)throw std::invalid_argument("invalid run limits");
         WorldWriterLease single_writer(argv[1]);
+        const auto human_owners=trusted_human_owners(authenticated_transport);
         Simulation genesis(0xB70B);
         const auto initial_ship=genesis.add_colony_ship(owner,{0,0},60,24);
         EntityId ship=initial_ship;
@@ -2244,9 +2273,9 @@ int main(int argc,char** argv){
                world.world().tick()%10==0){
                 try{
                     const auto replied=npc_hail::supervise(
-                        world,*communications,owner,nonce);
+                        world,*communications,owner,nonce,human_owners);
                     const auto initiated=npc_hail::initiate(
-                        world,*communications,*territory,owner,nonce);
+                        world,*communications,*territory,owner,nonce,human_owners);
                     if(replied.answered || initiated.submitted){
                         colony_disposition::security_desk::snapshot(
                             world,*territory,*cases,owner,ship,fleet.piloted(),
