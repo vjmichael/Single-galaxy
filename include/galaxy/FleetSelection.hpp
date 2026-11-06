@@ -47,12 +47,9 @@ public:
     }
 
     bool select(const Simulation& world,EntityId ship) {
-        for(const auto& item:list(world)) {
-            if(item.ship!=ship || !item.ready)return false;
-            piloted_=ship;
-            return true;
-        }
-        return false;
+        if(!is_ready(world,ship))return false;
+        piloted_=ship;
+        return true;
     }
 
     // Death/destruction/crew reassignment cannot preserve a stale cockpit.
@@ -62,9 +59,21 @@ public:
         return true;
     }
     bool is_ready(const Simulation& world,EntityId ship) const {
-        for(const auto& item:list(world))
-            if(item.ship==ship)return item.ready;
-        return false;
+        if(owner_==0 || owner_==Simulation::kServerAuthority)return false;
+        const auto* e=world.find(ship);
+        if(!e || e->owner_id!=owner_ || e->type!=EntityType::Ship)return false;
+        if(ship==home_)
+            return describe(world,home_,0,true).ready;
+        // Do not rebuild the entire fleet (or scan all NPCs) every game tick.
+        // The immutable hull receipt provides a direct indexed lookup.
+        if(!e->manufactured_order_id)return false;
+        const auto found=world.freighter_build_orders().find(
+            e->manufactured_order_id);
+        return found!=world.freighter_build_orders().end() &&
+            found->second.owner==owner_ &&
+            found->second.source_ship==home_ &&
+            found->second.launched_ship==ship &&
+            describe(world,ship,found->first,false).ready;
     }
 private:
     FleetShip describe(const Simulation& world,EntityId ship,
@@ -95,14 +104,18 @@ private:
                build->second.launched_ship!=ship ||
                build->second.source_ship!=home_ ||
                build->second.owner!=owner_)return f;
-            // Require a real named pilot physically assigned to this hull,
-            // not merely a nonzero aggregate from a stale build receipt.
+            // SHIP-01B.2 has two immutable *actual* commissioning NPC IDs.
+            // Lookup is O(log NPCs) per pilot, not O(all NPCs) on every tick.
+            // Future formal crew replacement will update a durable pilot-duty
+            // receipt; do not silently accept a headcount without an identity.
             bool aboard=false;
-            for(const auto& [id,n]:world.npc_records()) {
-                (void)id;
-                if(n.home_ship==ship && n.location==ship &&
-                   n.assigned_site==ship && n.role==NpcRole::Ship &&
-                   !n.transport_id){aboard=true;break;}
+            for(const auto id:build->second.commissioning_crew) {
+                const auto n=world.npc_records().find(id);
+                if(n!=world.npc_records().end() &&
+                   n->second.home_ship==ship && n->second.location==ship &&
+                   n->second.assigned_site==ship &&
+                   n->second.role==NpcRole::Ship &&
+                   !n->second.transport_id){aboard=true;break;}
             }
             if(!aboard)return f;
         }
