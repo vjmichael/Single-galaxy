@@ -1615,3 +1615,12 @@ if(BUILD_TESTING)
     COMMAND galaxy_npcresp02b_player_rescue_tests)
   set_tests_properties(galaxy_npcresp02b_player_rescue PROPERTIES TIMEOUT 300)
 endif()
+
+# NPC-RESP-03A: subjective hostile intent must never grant combat or arrest.
+if(BUILD_TESTING)
+  add_executable(galaxy_npcresp03_threat_policy_tests
+    tests/NPCRESP03_ColonyThreatPolicyTests.cpp)
+  target_link_libraries(galaxy_npcresp03_threat_policy_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_npcresp03_threat_policy
+    COMMAND galaxy_npcresp03_threat_policy_tests)
+endif()
