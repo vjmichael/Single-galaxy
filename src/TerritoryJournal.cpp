@@ -176,21 +176,21 @@ void TerritoryJournal::verify() const {
         previous_generation=e.world_generation;
     }
 }
-bool TerritoryJournal::append(const TerritoryEvent& supplied) {
+bool TerritoryJournal::append(const TerritoryEvent& supplied,TerritoryFailPoint fail) {
     // Validation precedes publication; this is a separate durable journal,
     // not a modification of world identity or simulated materials.
+    exec(state_->db,"BEGIN IMMEDIATE");
+    try {
     verify();
     auto rows=history();
-    for(const auto& e:rows)if(e.event_id==supplied.event_id)return false;
+    for(const auto& e:rows)if(e.event_id==supplied.event_id){exec(state_->db,"ROLLBACK");return false;}
     TerritoryEvent e=supplied;
     e.sequence=rows.size()+1;
     e.previous_digest=rows.empty()?"genesis":rows.back().digest;
     e.digest=digest(e);
     if(!rows.empty() && (e.world_tick<rows.back().world_tick ||
                          e.world_generation<rows.back().world_generation))
-        return false;
-    exec(state_->db,"BEGIN IMMEDIATE");
-    try {
+        {exec(state_->db,"ROLLBACK");return false;}
         Statement st(state_->db,
           "INSERT INTO sg_disposition02 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
         auto bind=[&](int i,std::uint64_t n){
@@ -210,13 +210,15 @@ bool TerritoryJournal::append(const TerritoryEvent& supplied) {
         check(sqlite3_bind_text(st.p,16,e.previous_digest.c_str(),-1,SQLITE_TRANSIENT),state_->db,"prior");
         check(sqlite3_bind_text(st.p,17,e.digest.c_str(),-1,SQLITE_TRANSIENT),state_->db,"digest");
         check(sqlite3_step(st.p),state_->db,"insert territory");
+        if(fail==TerritoryFailPoint::AfterInsert)
+            throw std::runtime_error("injected territory publication failure");
         exec(state_->db,"COMMIT");
     }catch(...){sqlite3_exec(state_->db,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
     verify();
     return true;
 }
 bool TerritoryJournal::claim(const PersistentWorld& w,PlayerId owner,
-                             EntityId colony,std::uint64_t id,std::int64_t radius){
+                             EntityId colony,std::uint64_t id,std::int64_t radius,TerritoryFailPoint fail){
     if(!id || radius<=0 || radius>5000 || !owner_of(w,owner,colony))
         return false;
     for(const auto& e:history())
@@ -226,10 +228,10 @@ bool TerritoryJournal::claim(const PersistentWorld& w,PlayerId owner,
     e.colony=colony;e.owner=owner;e.radius_mm=radius;
     e.center_x=ship->position.x;e.center_y=ship->position.y;
     e.world_tick=w.world().tick();e.world_generation=w.generation();
-    return append(e);
+    return append(e,fail);
 }
 bool TerritoryJournal::invite(const PersistentWorld& w,PlayerId owner,
-        EntityId colony,PlayerId visitor,std::uint64_t id){
+        EntityId colony,PlayerId visitor,std::uint64_t id,TerritoryFailPoint fail){
     if(!id || !owner_of(w,owner,colony) || !visitor ||
        visitor==owner || visitor==Simulation::kServerAuthority)return false;
     bool has_claim=false;for(const auto& e:history())
@@ -239,28 +241,23 @@ bool TerritoryJournal::invite(const PersistentWorld& w,PlayerId owner,
     TerritoryEvent e{};e.event_id=id;e.kind=TerritoryEventKind::Invite;
     e.colony=colony;e.owner=owner;e.visitor_owner=visitor;
     e.world_tick=w.world().tick();e.world_generation=w.generation();
-    return append(e);
+    return append(e,fail);
 }
 bool TerritoryJournal::revoke_invitation(const PersistentWorld& w,PlayerId owner,
-        EntityId colony,PlayerId visitor,std::uint64_t id){
+        EntityId colony,PlayerId visitor,std::uint64_t id,TerritoryFailPoint fail){
     if(!id || !owner_of(w,owner,colony) || !visitor ||
        visitor==owner)return false;
     bool invited=false;
     for(const auto& e:history())if(e.colony==colony &&
         e.visitor_owner==visitor) {
-        if(e.kind==TerritoryEventKind::Invite){
-            invited=true;
-            // An explicit later invitation can lift an expulsion; the
-            // original trespass remains in the historical ledger.
-            state.standing=npc_response::VisitorStanding::Unknown;
-        }
+        if(e.kind==TerritoryEventKind::Invite)invited=true;
         if(e.kind==TerritoryEventKind::RevokeInvitation)invited=false;
     }
     if(!invited)return false;
     TerritoryEvent e{};e.event_id=id;e.kind=TerritoryEventKind::RevokeInvitation;
     e.colony=colony;e.owner=owner;e.visitor_owner=visitor;
     e.world_tick=w.world().tick();e.world_generation=w.generation();
-    return append(e);
+    return append(e,TerritoryFailPoint::None);
 }
 TerritorialStanding TerritoryJournal::standing(const PersistentWorld& w,
         EntityId colony,EntityId visitor) const {
@@ -287,7 +284,11 @@ TerritorialStanding TerritoryJournal::standing(const PersistentWorld& w,
     bool invited=false;
     for(const auto& e:history()){
         if(e.colony!=colony || e.visitor_owner!=target->owner_id)continue;
-        if(e.kind==TerritoryEventKind::Invite)invited=true;
+        if(e.kind==TerritoryEventKind::Invite){
+            invited=true;
+            // A deliberate new invitation can lift an old expulsion.
+            state.standing=npc_response::VisitorStanding::Unknown;
+        }
         if(e.kind==TerritoryEventKind::RevokeInvitation)invited=false;
         if(e.visitor_ship==visitor && e.kind==TerritoryEventKind::Warning){
             warning=e.event_id;grace=e.deadline_tick;
@@ -312,7 +313,7 @@ TerritorialStanding TerritoryJournal::standing(const PersistentWorld& w,
 }
 bool TerritoryJournal::warn(const PersistentWorld& w,PlayerId owner,
        EntityId colony,EntityId foreign,std::uint64_t npc,
-       std::uint64_t id,std::uint64_t grace){
+       std::uint64_t id,std::uint64_t grace,TerritoryFailPoint fail){
     if(!id || !owner_of(w,owner,colony) || grace<2 || grace>10000 ||
        w.world().tick()>std::numeric_limits<std::uint64_t>::max()-grace)
         return false;
@@ -325,11 +326,11 @@ bool TerritoryJournal::warn(const PersistentWorld& w,PlayerId owner,
     e.visitor_ship=foreign;e.observer_npc=npc;
     e.world_tick=w.world().tick();e.world_generation=w.generation();
     e.deadline_tick=e.world_tick+grace;e.related_event=state.claim_event;
-    return append(e);
+    return append(e,fail);
 }
 bool TerritoryJournal::record_trespass(const PersistentWorld& w,
         PlayerId owner,EntityId colony,EntityId foreign,
-        std::uint64_t npc,std::uint64_t id) {
+        std::uint64_t npc,std::uint64_t id,TerritoryFailPoint fail) {
     if(!id || !owner_of(w,owner,colony))return false;
     const auto* target=w.world().find(foreign);
     const auto s=standing(w,colony,foreign);
@@ -341,10 +342,10 @@ bool TerritoryJournal::record_trespass(const PersistentWorld& w,
     e.visitor_ship=foreign;e.observer_npc=npc;
     e.world_tick=w.world().tick();e.world_generation=w.generation();
     e.deadline_tick=s.grace_until;e.related_event=s.warning_event;
-    return append(e);
+    return append(e,fail);
 }
 bool TerritoryJournal::expel(const PersistentWorld& w,PlayerId owner,
-        EntityId colony,EntityId foreign,std::uint64_t npc,std::uint64_t id) {
+        EntityId colony,EntityId foreign,std::uint64_t npc,std::uint64_t id,TerritoryFailPoint fail) {
     if(!id || !owner_of(w,owner,colony))return false;
     const auto* target=w.world().find(foreign);
     const auto s=standing(w,colony,foreign);
@@ -356,6 +357,6 @@ bool TerritoryJournal::expel(const PersistentWorld& w,PlayerId owner,
     e.visitor_ship=foreign;e.observer_npc=npc;
     e.world_tick=w.world().tick();e.world_generation=w.generation();
     e.related_event=s.trespass_event;
-    return append(e);
+    return append(e,fail);
 }
 } // namespace galaxy::colony_disposition
