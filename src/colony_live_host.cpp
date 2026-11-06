@@ -525,6 +525,18 @@ void apply(PersistentWorld& world,EntityId ship,FleetSelection& fleet,const std:
                 if(requested<=0 ||
                    !fleet.select(world.world(),EntityId(requested)))
                     throw std::invalid_argument("ship is not pilot-ready");
+                // A freight carrier already assigned a durable NPC mission
+                // is temporarily reserved. Piloting must not seize it away
+                // from the work board or break its custody receipts.
+                for(const auto& [id,leg]:world.world().intercolony_freight()) {
+                    (void)id;
+                    if(leg.carrier_ship==fleet.piloted() &&
+                       leg.stage!=IntercolonyFreightStage::Delivered) {
+                        // Restore home cockpit only, no simulation mutation.
+                        (void)fleet.select(world.world(),ship);
+                        throw std::invalid_argument("active freight carrier reserved");
+                    }
+                }
             }else if(v.size()!=1)
                 throw std::invalid_argument("bad fleet status request");
             announce(world.world(),"FLEET_RESET");
@@ -549,6 +561,59 @@ void apply(PersistentWorld& world,EntityId ship,FleetSelection& fleet,const std:
                 std::to_string(world.generation()));
         }catch(const std::exception&){
             announce(world.world(),"ERROR|FLEET_SELECTION_DENIED");
+        }
+        return;
+    }
+    // SHIP-01E: assign a real *non-piloted* manufactured carrier to an
+    // existing planetary NPC pickup -> intercolony freight work order. This
+    // uses the same canonical post_intercolony_work_order transaction as
+    // the original work board. No second AI job queue or virtual cargo.
+    if(!v.empty() && v[0]=="FLEET_WORK_POST"){
+        try {
+            if(v.size()!=9)throw std::invalid_argument("fleet work arity");
+            const auto order=integer(v[1]),carrier_id=integer(v[2]),
+                receiver_id=integer(v[3]),body=integer(v[4]),
+                latitude=integer(v[5]),longitude=integer(v[6]),
+                kg=integer(v[8]);
+            if(order<=0 || order>=(std::int64_t{1}<<50) ||
+               carrier_id<=0 || receiver_id<=0 ||
+               body<=0 || latitude<0 || latitude>=36 ||
+               longitude<0 || longitude>=72 || kg<=0 || kg>1000)
+                throw std::invalid_argument("invalid fleet work fields");
+            const auto carrier=EntityId(carrier_id);
+            const auto receiver=EntityId(receiver_id);
+            if(carrier==ship || carrier==receiver ||
+               carrier==fleet.piloted() ||
+               !fleet.is_ready(world.world(),carrier))
+                throw std::invalid_argument("carrier unavailable or actively piloted");
+            const auto vessel=world.world().find(carrier);
+            const auto receiving=world.world().find(receiver);
+            if(!vessel || !vessel->manufactured_order_id ||
+               !receiving || receiving->owner_id!=principal ||
+               !world.world().colony_ship(receiver) ||
+               !world.world().life_support(receiver))
+                throw std::invalid_argument("no real receiver or manufactured hull");
+            ShuttleCargo cargo{};
+            if(v[7]=="WATER")cargo=ShuttleCargo::Water;
+            else if(v[7]=="FOOD")cargo=ShuttleCargo::Food;
+            else if(v[7]=="NUTRIENTS")cargo=ShuttleCargo::Nutrients;
+            else throw std::invalid_argument("unsupported fleet material");
+            // Authoritative PersistentWorld performs one copied-state,
+            // all-or-nothing SQLite commit. An order never creates stock.
+            if(!world.post_intercolony_work_order(
+                    principal,ship,
+                    PlanetarySiteKey{std::uint64_t(body),
+                        std::uint16_t(latitude),
+                        std::uint16_t(longitude),1},
+                    cargo,kg,std::uint64_t(order),carrier,receiver))
+                throw std::invalid_argument("physical work order rejected");
+            announce(world.world(),"FLEET_WORK_ASSIGNED|"+
+                std::to_string(order)+"|"+std::to_string(carrier)+"|"+
+                std::to_string(receiver)+"|"+std::to_string(world.generation()));
+            // Existing NPC shuttle and physical freighter scheduler take over
+            // ONLY after their separately committed material handoffs.
+        }catch(const std::exception&){
+            announce(world.world(),"ERROR|FLEET_WORK_DENIED");
         }
         return;
     }
@@ -1900,8 +1965,11 @@ int main(int argc,char** argv){
             // native journal as the player's manual celestial navigation.
             std::vector<std::uint64_t> ready_freight;
             for(const auto& [order,leg]:world.world().intercolony_freight()){
+                // Never let an NPC work scheduler commandeer the vessel
+                // currently under the player's direct flight controls.
                 if(leg.owner!=owner || leg.source_ship!=ship ||
-                   leg.stage!=IntercolonyFreightStage::Loaded)continue;
+                   leg.stage!=IntercolonyFreightStage::Loaded ||
+                   leg.carrier_ship==fleet.piloted())continue;
                 const auto at=world.world().ship_frames().find(leg.carrier_ship);
                 if(at==world.world().ship_frames().end() ||
                    at->second.anchor_body!=leg.origin_body)continue;
