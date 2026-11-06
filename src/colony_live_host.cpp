@@ -1959,7 +1959,17 @@ int main(int argc,char** argv){
                 // currently under the player's direct flight controls.
                 if(leg.owner!=owner || leg.source_ship!=ship ||
                    leg.stage!=IntercolonyFreightStage::Loaded ||
-                   leg.carrier_ship==fleet.piloted())continue;
+                   leg.carrier_ship==fleet.piloted() ||
+                   !fleet.is_ready(world.world(),leg.carrier_ship))continue;
+                // A crew reassignment/death after accepting a job cannot
+                // grant an uncrewed autonomous flight. Leave the finite
+                // sealed cargo aboard until the ship is physically serviceable.
+                const auto* operating=world.world().colony_ship(leg.carrier_ship);
+                const auto* provisions=world.world().life_support(leg.carrier_ship);
+                if(!operating || !provisions ||
+                   provisions->food_kg<2*operating->crew ||
+                   provisions->water_kg<2*operating->crew ||
+                   provisions->oxygen_kg<2*operating->crew)continue;
                 const auto at=world.world().ship_frames().find(leg.carrier_ship);
                 if(at==world.world().ship_frames().end() ||
                    at->second.anchor_body!=leg.origin_body)continue;
