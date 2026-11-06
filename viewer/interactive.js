@@ -92,6 +92,7 @@ async function connect(){
  cancelAssist('paused');latestProjection=null;
  if(source){source.close();source=null;}
  window.GalaxyColonyMode=false;
+ window.GalaxyCyberControls?.reset();
  window.GalaxyResetExpedition?.();
  const bridge=window.GalaxyLiveBridge;bridge.reset();window.GalaxySurveyBridge?.reset();window.GalaxyColony?.reset();message('Connecting to one running local world…');
  try{
@@ -112,8 +113,10 @@ async function connect(){
    source=new EventSource('/events');
    source.addEventListener('colony',e=>{
      if(!colonyMode)return;
-     try{window.GalaxyColony?.accept(atob(e.data));}
-     catch(ex){message('Colony telemetry rejected: '+ex.message);}
+     try{
+       const raw=atob(e.data);
+       if(!window.GalaxyCyberControls?.accept(raw))window.GalaxyColony?.accept(raw);
+     }catch(ex){message('Colony telemetry rejected: '+ex.message);}
    });
    source.addEventListener('survey',e=>{
      try{window.GalaxySurveyBridge?.accept(atob(e.data));}
@@ -394,7 +397,7 @@ window.GalaxyDisconnect=()=>{
  lastReturnShip=null;
  if(source){source.close();source=null;}token=null;
  colonyMode=false;window.GalaxyColonyMode=false;
- window.GalaxyLiveBridge?.reset();window.GalaxyColony?.reset();window.GalaxySurveyBridge?.reset();
+ window.GalaxyLiveBridge?.reset();window.GalaxyColony?.reset();window.GalaxyCyberControls?.reset();window.GalaxySurveyBridge?.reset();
  el('interactiveControls').hidden=true;el('colonyPanel').hidden=true;el('surveyPanel').hidden=true;
  el('flightCameraControls').hidden=true;
  el('qaPanel').hidden=true;
