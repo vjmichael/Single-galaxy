@@ -44,6 +44,10 @@ int main(){
         for(const auto ship:{aggressor,home})
             genesis.provision_colony_genesis(
                 ship,2000,2000,2000,2000,2000);
+        // The target's real powered scanner is a legitimate exposed
+        // hardpoint: an applied Confusion must not be fabricated from an
+        // empty ship fitting.
+        genesis.provision_starter_exploration_scanner(home);
         genesis.enable_individual_workforce();
         genesis.upgrade_assignment_snapshot_format();
         genesis.enable_passenger_life_support();
