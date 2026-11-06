@@ -872,6 +872,8 @@ public:
         FailPoint fail=FailPoint::None);
     bool grant_player_rescue_consent(PlayerId owner,EntityId receiver,
         std::uint64_t consent_id,FailPoint fail=FailPoint::None);
+    bool revoke_player_rescue_consent(PlayerId owner,std::uint64_t consent_id,
+        FailPoint fail=FailPoint::None);
     bool complete_player_rescue(PlayerId owner,EntityId receiver,
         std::uint64_t flight_id,std::uint64_t transfer_receipt,
         FailPoint fail=FailPoint::None);
