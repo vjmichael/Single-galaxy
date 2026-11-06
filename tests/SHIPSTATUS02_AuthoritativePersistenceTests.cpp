@@ -82,6 +82,7 @@ int main(){
             CHECK(!w.submit_testing_ship_confusion(
                 attacker,ship,7001,seed_for_attack,8,4,100,0,3));
             CHECK(w.world().status_effects().records().size()==1);
+            CHECK(!w.submit(cmd(w,7001,ship,Action::SetHardpointPower,1)));
             CHECK(w.world().canonical_state().find("galaxy-kernel-v100|")==0);
             CHECK(!w.world().hardpoint_effective_on(ship,0));
             // Actual native SurveyLocal must refuse the disabled scanner.
