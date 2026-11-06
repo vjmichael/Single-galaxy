@@ -130,6 +130,19 @@ std::int64_t integer(const std::string& s){
 void announce(const Simulation& w,const std::string& text){
     std::cerr<<"COLONY|1|"<<w.tick()<<'|'<<text<<'\n'<<std::flush;
 }
+// SHIP-STATUS-07: private world ownership is not optical identification.
+// Suppress the source ID when the real viewer lacks a live sensor contact.
+EntityId perceived_cyber_source(const Simulation& w,
+    EntityId viewer,EntityId remote) {
+    const auto* own=w.find(viewer),*other=w.find(remote);
+    if(!own || !other || own->type!=EntityType::Ship ||
+       other->type!=EntityType::Ship ||
+       !w.same_local_frame(viewer,remote))return 0;
+    const auto radius=ship_sensors::detection_range_mm(w,*own,*other);
+    const auto dx=double(own->position.x)-other->position.x;
+    const auto dy=double(own->position.y)-other->position.y;
+    return std::hypot(dx,dy)<=double(radius)?remote:0;
+}
 // SHIP-STATUS-05: read-only cockpit from one authoritative physical ship.
 // A frame displays actual fitted hardware and effective native module state,
 // never a client-assumed equipment grant or a speculative attack outcome.
@@ -160,7 +173,7 @@ void cyber_status(const Simulation& w,EntityId ship) {
            w.tick()<effect.started_tick || w.tick()>=effect.expires_tick)
             continue;
         remaining=effect.expires_tick-w.tick();
-        source=effect.source_ship;
+        source=perceived_cyber_source(w,ship,effect.source_ship);
         exposed=effect.targets.size();
         break; // the native kernel does not permit overlapping effects
     }
@@ -2131,13 +2144,17 @@ int main(int argc,char** argv){
             // at genesis; only genuinely constructed NPC colonies with an
             // existing predatory government and fabricated emitter may act.
             const auto cyber_pulse=npc_cyber::supervise(world,owner);
-            if(cyber_pulse.approaches){
+            if(cyber_pulse.approaches &&
+               world.world().find(cyber_pulse.last_approaching_ship) &&
+               world.world().find(cyber_pulse.last_approaching_ship)->owner_id==owner){
                 announce(world.world(),"NPC_CYBER_APPROACH_QUEUED|"+
                     std::to_string(cyber_pulse.last_approaching_ship)+"|"+
                     std::to_string(cyber_pulse.last_approach_target)+"|"+
                     std::to_string(cyber_pulse.last_flight));
             }
-            if(cyber_pulse.queued){
+            if(cyber_pulse.queued &&
+               world.world().find(cyber_pulse.last_attacking_ship) &&
+               world.world().find(cyber_pulse.last_attacking_ship)->owner_id==owner){
                 announce(world.world(),"NPC_CYBER_QUEUED|"+
                     std::to_string(cyber_pulse.last_attacking_ship)+"|"+
                     std::to_string(cyber_pulse.last_target_ship)+"|"+
@@ -2375,7 +2392,8 @@ int main(int argc,char** argv){
                    it->second.target_ship==fleet.piloted()){
                     announce(world.world(),"CYBER_INCOMING|"+
                         std::to_string(it->second.target_ship)+"|"+
-                        std::to_string(it->second.attacking_ship)+"|"+
+                        std::to_string(perceived_cyber_source(world.world(),
+                            fleet.piloted(),it->second.attacking_ship))+"|"+
                         std::to_string(ev.command_id)+"|"+
                         to_string(ev.result));
                 }
