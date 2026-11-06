@@ -1741,3 +1741,16 @@ if(BUILD_TESTING)
     COMMAND galaxy_ship_status06_fleet_cyber_tests)
   set_tests_properties(galaxy_ship_status06_fleet_cyber PROPERTIES TIMEOUT 300)
 endif()
+
+if(BUILD_TESTING)
+  find_package(Python3 COMPONENTS Interpreter QUIET)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME galaxy_ship_status06_live_cyber
+      COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/SHIPSTATUS06_LiveCyberHostTests.py
+        --host $<TARGET_FILE:galaxy_colony_live_host>
+        --relay ${CMAKE_CURRENT_SOURCE_DIR}/live/interactive_relay.py
+        --bridge $<TARGET_FILE:galaxy_shipping_status_bridge>)
+    set_tests_properties(galaxy_ship_status06_live_cyber PROPERTIES TIMEOUT 90)
+  endif()
+endif()
