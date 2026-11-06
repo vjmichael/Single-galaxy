@@ -52,6 +52,14 @@
      if(!ship||!id||ship===id)throw Error('Invalid physical target');
      return {tick,type,ship,id,distance};
    }
+   if(type==='CYBER_SENSORS' && v.length===8){
+     const ship=validNumber(v[4]),
+       stealth=validNumber(v[5],1),counter=validNumber(v[6],1),
+       scanner=validNumber(v[7],1);
+     if(!ship)throw Error('Invalid original sensor ship');
+     return {tick,type,ship,stealth:!!stealth,counter:!!counter,
+       scanner:!!scanner};
+   }
    if(type==='CYBER_DEFENSE' && v.length===8){
      const ship=validNumber(v[4]),remaining=validNumber(v[5],8),
        source=validNumber(v[6]),exposed=validNumber(v[7],16);
@@ -83,12 +91,13 @@
    Number.isSafeInteger(target)&&target>0;
  if(typeof document==='undefined')return {parse,canAttack};
  const e=id=>document.getElementById(id);
- let status=null,defense=null,modules=new Map(),targets=new Map();
+ let status=null,defense=null,sensors=null,modules=new Map(),targets=new Map();
  function reset(){
-   status=null;defense=null;modules.clear();targets.clear();
+   status=null;defense=null;sensors=null;modules.clear();targets.clear();
    e('cyberStatus').textContent='Waiting for committed ship electronics.';
    e('cyberDefense').textContent='Waiting for committed defense state.';
    e('cyberAlert').textContent='No incoming cyber attack reported.';
+   e('cyberSensorStatus').textContent='Awaiting real fitted sensors and stealth status.';
    e('cyberFeedback').textContent='No attack queued.';
    e('cyberModuleList').replaceChildren();
    e('cyberTarget').replaceChildren(new Option('No valid local target',''));
@@ -108,7 +117,15 @@
      ['cyberFitEmitter',!ready||!status.colony||emitter],
      ['cyberRemoveEmitter',!ready||!status.colony||!emitter],
      ['cyberFitFirewall',!ready||!status.colony||firewall],
-     ['cyberRemoveFirewall',!ready||!status.colony||!firewall]
+     ['cyberRemoveFirewall',!ready||!status.colony||!firewall],
+     ['cyberFitStealth',!ready||!status.colony||!sensors||
+       sensors.tick!==status.tick||sensors.stealth],
+     ['cyberRemoveStealth',!ready||!status.colony||!sensors||
+       sensors.tick!==status.tick||!sensors.stealth],
+     ['cyberFitCounterSensor',!ready||!status.colony||!sensors||
+       sensors.tick!==status.tick||sensors.counter],
+     ['cyberRemoveCounterSensor',!ready||!status.colony||!sensors||
+       sensors.tick!==status.tick||!sensors.counter]
    ])e(id).disabled=disabled;
    if(ready){
      e('cyberStatus').textContent='Ship #'+status.ship+
@@ -123,6 +140,15 @@
        'You can isolate a hardpoint below to prevent remote toggling.':
      'No active Confusion on this ship. '+(firewall?
        'Passive firewall fitted.':'No passive firewall fitted.');
+   e('cyberSensorStatus').textContent=sensors &&
+     sensors.tick===status?.tick?
+       (sensors.stealth?'Stealth baffle FITTED':'Stealth baffle not fitted')+
+       ' · '+(sensors.counter?'Counter-ECM sensor array FITTED':
+         'Standard passive sensors')+
+       ' · '+(sensors.scanner?'Survey scanner ONLINE':
+         'No powered survey scanner')+
+       ' · passive scans do not reveal authenticated identities.':
+       'Awaiting this tick\'s native stealth and sensor status.';
    const list=e('cyberModuleList');
    list.replaceChildren();
    for(const slot of [0,1]){
@@ -164,10 +190,10 @@
    if(!data)return false;
    if(data.type==='CYBER_STATUS'){
      if(status?.ship!==data.ship){
-       modules.clear();targets.clear();defense=null;
+       modules.clear();targets.clear();defense=null;sensors=null;
        e('cyberAlert').textContent='No incoming cyber attack reported.';
      }else if(status.tick!==data.tick){
-       defense=null; // effect timing must come from this committed tick
+       defense=null;sensors=null; // current committed tick only
      }
      status=data;
    }else if(!status||data.ship!==status.ship){
@@ -180,6 +206,8 @@
      targets.set(data.id,data);
    }else if(data.type==='CYBER_DEFENSE'){
      if(data.tick===status.tick)defense=data;
+   }else if(data.type==='CYBER_SENSORS'){
+     if(data.tick===status.tick)sensors=data;
    }else if(data.type==='CYBER_INCOMING'){
      if(data.result==='APPLIED')
        e('cyberAlert').textContent='INCOMING CYBER ATTACK · ship #'+data.source+
@@ -200,7 +228,10 @@
  }
  for(const [id,device,install] of [
    ['cyberFitEmitter','emitter',true],['cyberRemoveEmitter','emitter',false],
-   ['cyberFitFirewall','firewall',true],['cyberRemoveFirewall','firewall',false]
+   ['cyberFitFirewall','firewall',true],['cyberRemoveFirewall','firewall',false],
+   ['cyberFitStealth','stealth',true],['cyberRemoveStealth','stealth',false],
+   ['cyberFitCounterSensor','counterSensor',true],
+   ['cyberRemoveCounterSensor','counterSensor',false]
  ])e(id).addEventListener('click',()=>send('colonyCyberFit',{device,install}));
  e('cyberAttack').addEventListener('click',()=>{
    const target=Number(e('cyberTarget').value);
