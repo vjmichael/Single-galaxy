@@ -1,4 +1,5 @@
 #include "galaxy/CyberIncidentJournal.hpp"
+#include "galaxy/ShipSensorProfile.hpp"
 #include <sqlite3.h>
 #include <algorithm>
 #include <iomanip>
@@ -67,6 +68,10 @@ std::string digest(const CyberIncidentCase& c){
           <<'|'<<c.attacking_ship<<'|'<<c.victim_ship
           <<'|'<<c.attacker_owner<<'|'<<c.victim_owner<<'|'
           <<static_cast<unsigned>(c.confusion_applied);
+    if(c.record_version>=2)
+        fields<<'|'<<static_cast<unsigned>(c.record_version)<<'|'
+              <<static_cast<unsigned>(c.sensor_detail)<<'|'
+              <<c.observed_description;
     std::uint64_t value=14695981039346656037ULL;
     for(const unsigned char letter:fields.str()){
         value^=letter;
@@ -108,7 +113,37 @@ CyberIncidentJournal::CyberIncidentJournal(
             "victim_ship INTEGER NOT NULL,attacker_owner INTEGER NOT NULL,"
             "victim_owner INTEGER NOT NULL,applied INTEGER NOT NULL,"
             "prev_digest TEXT NOT NULL,digest TEXT NOT NULL,"
+            "observed_description TEXT NOT NULL DEFAULT '',"
+            "sensor_detail INTEGER NOT NULL DEFAULT 0,"
+            "record_version INTEGER NOT NULL DEFAULT 1,"
             "UNIQUE(colony,command_id),CHECK(applied IN (0,1)))");
+        // Additive migration of the earlier SHIP-STATUS-07 draft schema.
+        // Old case ancestry remains readable under digest version 1.
+        {
+            Statement fields(state_->db,
+                "PRAGMA table_info(sg_ship_status07_incidents)");
+            bool description=false,detail=false,version=false;
+            int rc=SQLITE_OK;
+            while((rc=sqlite3_step(fields.stmt))==SQLITE_ROW){
+                const auto* name=sqlite3_column_text(fields.stmt,1);
+                const std::string field=name?
+                    reinterpret_cast<const char*>(name):"";
+                if(field=="observed_description")description=true;
+                if(field=="sensor_detail")detail=true;
+                if(field=="record_version")version=true;
+            }
+            if(rc!=SQLITE_DONE)throw std::runtime_error(
+                "cyber casebook cannot inspect original schema");
+            if(!description)exec(state_->db,
+                "ALTER TABLE sg_ship_status07_incidents ADD COLUMN "
+                "observed_description TEXT NOT NULL DEFAULT ''");
+            if(!detail)exec(state_->db,
+                "ALTER TABLE sg_ship_status07_incidents ADD COLUMN "
+                "sensor_detail INTEGER NOT NULL DEFAULT 0");
+            if(!version)exec(state_->db,
+                "ALTER TABLE sg_ship_status07_incidents ADD COLUMN "
+                "record_version INTEGER NOT NULL DEFAULT 1");
+        }
         exec(state_->db,
             "CREATE TRIGGER IF NOT EXISTS sg_status07_immutable_update "
             "BEFORE UPDATE ON sg_ship_status07_incidents "
@@ -134,8 +169,8 @@ std::vector<CyberIncidentCase> CyberIncidentJournal::history() const {
     Statement sql(state_->db,
         "SELECT sequence,case_id,command_id,world_tick,world_generation,"
         "observer,colony,attacker_ship,victim_ship,attacker_owner,victim_owner,"
-        "applied,prev_digest,digest "
-        "FROM sg_ship_status07_incidents ORDER BY sequence");
+        "applied,prev_digest,digest,observed_description,sensor_detail,"
+        "record_version FROM sg_ship_status07_incidents ORDER BY sequence");
     std::vector<CyberIncidentCase> cases;
     int rc=SQLITE_OK;
     while((rc=sqlite3_step(sql.stmt))==SQLITE_ROW){
@@ -156,6 +191,12 @@ std::vector<CyberIncidentCase> CyberIncidentJournal::history() const {
         c.confusion_applied=applied==1;
         c.previous_digest=string(sql.stmt,12);
         c.digest=string(sql.stmt,13);
+        c.observed_description=string(sql.stmt,14);
+        const auto detail=number(sql.stmt,15),version=number(sql.stmt,16);
+        if(detail>255 || version<1 || version>2)
+            throw std::runtime_error("unsupported cyber evidence version");
+        c.sensor_detail=static_cast<std::uint8_t>(detail);
+        c.record_version=static_cast<std::uint8_t>(version);
         cases.push_back(std::move(c));
         if(cases.size()>10000)
             throw std::runtime_error("cyber casebook exceeds bounded history");
@@ -176,8 +217,17 @@ void CyberIncidentJournal::verify() const {
            c.case_id==c.command_id || !c.world_tick ||
            !c.world_generation || !c.observer_npc ||
            !c.jurisdiction_colony || !c.attacking_ship || !c.victim_ship ||
-           !c.attacker_owner || !c.victim_owner ||
-           c.attacker_owner==c.victim_owner ||
+           !c.victim_owner ||
+           (c.record_version==1 && !c.attacker_owner) ||
+           (c.record_version==2 &&
+             (c.attacker_owner || c.sensor_detail<1 || c.sensor_detail>3 ||
+              c.observed_description.empty() ||
+              c.observed_description.size()>180 ||
+              !std::all_of(c.observed_description.begin(),
+                           c.observed_description.end(),
+                [](unsigned char ch){return (ch>='A'&&ch<='Z') ||
+                    (ch>='0'&&ch<='9') || ch=='_' || ch=='|';}))) ||
+           (c.attacker_owner && c.attacker_owner==c.victim_owner) ||
            c.attacking_ship==c.victim_ship ||
            c.world_tick<previous_tick ||
            c.world_generation<previous_generation ||
@@ -240,8 +290,11 @@ bool CyberIncidentJournal::intake(
         case_record.jurisdiction_colony=colony;
         case_record.attacking_ship=original.attacking_ship;
         case_record.victim_ship=original.victim_ship;
-        case_record.attacker_owner=original.attacker_owner;
+        case_record.attacker_owner=0;
         case_record.victim_owner=original.victim_owner;
+        case_record.sensor_detail=original.sensor_detail;
+        case_record.observed_description=original.observed_description;
+        case_record.record_version=2;
         case_record.confusion_applied=original.confusion_applied;
         case_record.previous_digest=prior.empty()?"genesis":prior.back().digest;
         case_record.digest=digest(case_record);
@@ -249,7 +302,8 @@ bool CyberIncidentJournal::intake(
             "INSERT INTO sg_ship_status07_incidents "
             "(sequence,case_id,command_id,world_tick,world_generation,"
             "observer,colony,attacker_ship,victim_ship,attacker_owner,victim_owner,"
-            "applied,prev_digest,digest) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+            "applied,prev_digest,digest,observed_description,sensor_detail,"
+            "record_version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
         sql.number(1,case_record.sequence);
         sql.number(2,case_record.case_id);
         sql.number(3,case_record.command_id);
@@ -264,6 +318,9 @@ bool CyberIncidentJournal::intake(
         sql.number(12,case_record.confusion_applied?1:0);
         sql.string(13,case_record.previous_digest);
         sql.string(14,case_record.digest);
+        sql.string(15,case_record.observed_description);
+        sql.number(16,case_record.sensor_detail);
+        sql.number(17,case_record.record_version);
         if(sqlite3_step(sql.stmt)!=SQLITE_DONE)
             throw std::runtime_error(
                 std::string("cyber casebook insert: ")+
