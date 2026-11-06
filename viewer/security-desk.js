@@ -50,8 +50,38 @@
        type==='SECURITY_CONTACTS_RESET' ||
        type==='SECURITY_NOTICES_RESET' ||
        type==='SECURITY_DESTINATIONS_RESET' ||
+       type==='SECURITY_CALL_INBOX_RESET' ||
+       type==='SECURITY_CALL_COMPLAINTS_RESET' ||
        type==='SECURITY_REFRESH_DONE') && v.length===4)
      return {tick,type};
+   if(type==='SECURITY_CALL_INBOX' && v.length===7){
+     const request=nativeId(v[4]),ship=whole(v[5]),
+       caller=whole(v[6]);
+     if(request==='0'||!ship||!caller)
+       throw Error('Invalid authenticated inbound ship hail');
+     return {tick,type,request,ship,caller};
+   }
+   if(type==='SECURITY_CALL_PENALTY' && v.length===7){
+     const points=whole(v[4],10),until=whole(v[5],1000000000000000),
+       review=whole(v[6],1);
+     if((points===0&&until!==0)||(review&&points<3))
+       throw Error('Invalid native communications penalty');
+     return {tick,type,points,until,review:!!review};
+   }
+   if(type==='SECURITY_CALL_SANCTION' && v.length===8){
+     const ship=whole(v[4]),points=whole(v[5],10),
+       until=whole(v[6],1000000000000000),review=whole(v[7],1);
+     if(!ship||!until||(review&&points<3))
+       throw Error('Invalid ship hail sanction');
+     return {tick,type,ship,points,until,review:!!review};
+   }
+   if(type==='SECURITY_CALL_COMPLAINT' && v.length===7){
+     const id=nativeId(v[4]),caller=whole(v[5]),
+       points=whole(v[6],10);
+     if(id==='0'||!caller||points<3)
+       throw Error('Invalid verified nuisance complaint');
+     return {tick,type,id,caller,points};
+   }
    if(type==='SECURITY_STATUS' && v.length===9){
      const home=whole(v[4]),piloted=whole(v[5]),
        claimed=whole(v[6],1),count=whole(v[7],10000),
@@ -90,7 +120,7 @@
    if(type==='SECURITY_RESULT' && v.length===8){
      const operation=v[4],result=v[5],receipt=nativeId(v[6]),
        linked=whole(v[7],1);
-     if(!/^SECURITY_(CLAIM|WARN|HAIL|REPLY|PATROL)$/.test(operation) ||
+     if(!/^SECURITY_(CLAIM|WARN|HAIL|REPLY|PATROL|CALL|CALL_REPLY)$/.test(operation) ||
         !['ACCEPTED','DENIED'].includes(result) ||
         (result==='ACCEPTED')!==(receipt!=='0') ||
         (linked && result!=='ACCEPTED'))
@@ -112,7 +142,8 @@
  if(typeof document==='undefined')return {parse,decodeHex,caseKey,nativeId};
  const el=id=>document.getElementById(id);
  let status=null,cases=new Map(),contacts=new Map(),
-     notices=new Map(),destinations=new Map();
+     notices=new Map(),destinations=new Map(),inbox=new Map(),
+     complaints=new Map(),commsPenalty=null;
  function selected(id){return el(id).value;}
  function setOptions(id,placeholder,items){
    const node=el(id),previous=node.value;
@@ -144,10 +175,41 @@
      [...notices.values()].map(n=>[
        'Colony #'+n.colony+' → your ship #'+n.ship+
        ' · notice #'+n.event,n.colony+':'+n.event]));
+   setOptions('securityCallInbox','No incoming direct hail',
+     [...inbox.values()].map(n=>[
+       'Authenticated caller #'+n.caller+' in ship #'+n.ship+
+         ' · request #'+n.request,n.request]));
    const track=Number(selected('securityContact'));
    const knownCase=cases.get(selected('securityCaseSelect'));
    el('securityWarn').disabled=!active||!status.claimed||
      !contacts.has(track);
+   const muted=!!(commsPenalty&&commsPenalty.until>status?.tick);
+   el('securityCallShip').disabled=!active||!contacts.has(track)||muted;
+   const pending=inbox.get(selected('securityCallInbox'));
+   el('securityIdentifyCaller').disabled=!active||!pending;
+   el('securityDeclineCaller').disabled=!active||!pending;
+   el('securityCommsPenalty').textContent=commsPenalty&&
+      commsPenalty.points?
+      ('Communications nuisance score '+commsPenalty.points+
+       ' · outbound hail mute until game tick '+commsPenalty.until+
+       (commsPenalty.review?
+        ' · formal security/law-enforcement review eligible (no automatic arrest)':
+        ' · repeated unsolicited hails are penalized')):
+      'No communications abuse penalty.';
+   const complaintsNode=el('securityCommsComplaints');
+   complaintsNode.replaceChildren();
+   if(!complaints.size){
+     const item=document.createElement('div');
+     item.textContent='No communications abuse complaints.';
+     complaintsNode.append(item);
+   }
+   for(const c of complaints.values()){
+     const item=document.createElement('div');
+     item.textContent='Complaint #'+c.id+' · verified caller #'+c.caller+
+       ' · nuisance points '+c.points+
+       ' · eligible for independent law-enforcement review, not a conviction';
+     complaintsNode.append(item);
+   }
    el('securityPatrol').disabled=!active||!knownCase||
      !contacts.has(track)||status.tier!==3;
    el('securityHail').disabled=!active||
@@ -177,7 +239,8 @@
  }
  function reset(){
    status=null;cases=new Map();contacts=new Map();
-   notices=new Map();destinations=new Map();
+   notices=new Map();destinations=new Map();inbox=new Map();
+   complaints=new Map();commsPenalty=null;
    el('securityDeskFeedback').textContent='No security action submitted.';
    update();
  }
@@ -196,6 +259,21 @@
      case 'SECURITY_CONTACTS_RESET':contacts.clear();break;
      case 'SECURITY_NOTICES_RESET':notices.clear();break;
      case 'SECURITY_DESTINATIONS_RESET':destinations.clear();break;
+     case 'SECURITY_CALL_INBOX_RESET':inbox.clear();break;
+     case 'SECURITY_CALL_COMPLAINTS_RESET':complaints.clear();break;
+     case 'SECURITY_CALL_INBOX':inbox.set(data.request,data);break;
+     case 'SECURITY_CALL_COMPLAINT':complaints.set(data.id,data);break;
+     case 'SECURITY_CALL_PENALTY':commsPenalty=data;break;
+     case 'SECURITY_CALL_SANCTION':
+       commsPenalty={tick:data.tick,points:data.points,
+         until:data.until,review:data.review};
+       el('securityDeskFeedback').textContent=
+         (data.points?'Repeated post-identification hail was BLOCKED; '+
+           'communications nuisance score '+data.points:
+           'Repeated hail suppressed; no second call delivered')+
+         ' · outbound mute until tick '+data.until+
+         (data.review?' · security/law-enforcement review eligible':'');
+       break;
      case 'SECURITY_CASE':cases.set(data.id,data);break;
      case 'SECURITY_CONTACT':contacts.set(data.ship,data);break;
      case 'SECURITY_NOTICE':notices.set(data.colony+':'+data.event,data);break;
@@ -219,7 +297,8 @@
    return true;
  }
  for(const id of ['securityContact','securityCaseSelect',
-                     'securityDestination','securityNotice'])
+                     'securityDestination','securityNotice',
+                     'securityCallInbox'])
    el(id).addEventListener('change',update);
  el('securityRefresh').addEventListener('click',
    ()=>send('colonySecurityRefresh'));
@@ -228,6 +307,22 @@
    if(Number.isSafeInteger(radius)&&radius>=1&&radius<=5000)
      void send('colonySecurityClaim',{radius});
  });
+ el('securityCallShip').addEventListener('click',()=>{
+   const ship=Number(selected('securityContact'));
+   if(contacts.has(ship) &&
+      !(commsPenalty&&commsPenalty.until>status?.tick))
+     void send('colonySecurityCall',{ship});
+ });
+ for(const [id,choice] of [
+   ['securityIdentifyCaller','identify'],
+   ['securityDeclineCaller','decline']
+ ]){
+   el(id).addEventListener('click',()=>{
+     const call=inbox.get(selected('securityCallInbox'));
+     if(call)void send('colonySecurityCallReply',{
+       request:call.request,choice});
+   });
+ }
  el('securityWarn').addEventListener('click',()=>{
    const ship=Number(selected('securityContact'));
    if(status?.claimed&&contacts.has(ship))
