@@ -412,6 +412,154 @@ bool CyberIncidentJournal::intake(
         throw;
     }
 }
+bool CyberIncidentJournal::link_authenticated_hail(
+    const PersistentWorld& world,const TerritoryJournal& territory,
+    EntityId jurisdiction_colony,std::uint64_t observer_npc,
+    EntityId visitor_ship,PlayerId authenticated_owner,
+    std::uint64_t actual_hail_reply_event) {
+    if(!jurisdiction_colony || !observer_npc || !visitor_ship ||
+       !actual_hail_reply_event || !authenticated_owner ||
+       authenticated_owner==Simulation::kServerAuthority)return false;
+    const auto* visitor=world.world().find(visitor_ship);
+    const auto* colony=world.world().find(jurisdiction_colony);
+    if(!visitor || !colony ||
+       visitor->type!=EntityType::Ship ||
+       colony->type!=EntityType::Ship ||
+       visitor->owner_id!=authenticated_owner ||
+       colony->owner_id==authenticated_owner ||
+       !world.world().colony_ship(jurisdiction_colony))
+        return false;
+    // A remote/anonymous radio ping is not an identity credential:
+    // require an ORIGINAL authenticated reply to a real territorial
+    // notice for this exact physical hull and this exact jurisdiction.
+    const auto notices=territory.history();
+    const auto hail=std::find_if(notices.begin(),notices.end(),
+        [&](const TerritoryEvent& row){
+            return row.event_id==actual_hail_reply_event &&
+              (row.kind==TerritoryEventKind::NoticeAcknowledged ||
+               row.kind==TerritoryEventKind::NoticeRefused) &&
+              row.colony==jurisdiction_colony &&
+              row.visitor_ship==visitor_ship &&
+              row.visitor_owner==authenticated_owner &&
+              row.world_tick==world.world().tick() &&
+              row.world_generation==world.generation();
+        });
+    if(hail==notices.end() || !hail->related_event)return false;
+    const auto warning=std::find_if(notices.begin(),notices.end(),
+        [&](const TerritoryEvent& row){
+            return row.event_id==hail->related_event &&
+                   row.kind==TerritoryEventKind::Warning &&
+                   row.colony==jurisdiction_colony &&
+                   row.visitor_owner==authenticated_owner &&
+                   row.visitor_ship==visitor_ship &&
+                   row.world_tick<=hail->world_tick;
+        });
+    if(warning==notices.end())return false;
+    const auto standing=territory.standing(
+        world,jurisdiction_colony,visitor_ship);
+    if(!standing.in_claimed_region || standing.invited ||
+       !standing.notice_received ||
+       standing.notice_reply_event!=actual_hail_reply_event)return false;
+    const auto observed=world.local_colony_watch_contacts(
+        jurisdiction_colony,observer_npc);
+    if(std::none_of(observed.begin(),observed.end(),
+        [&](const colony_defense::Contact& contact){
+            return contact.foreign_ship==visitor_ship &&
+                   contact.source==jurisdiction_colony &&
+                   contact.world_tick==world.world().tick();
+        }))return false;
+    bool committed=false;
+    try {
+        exec(state_->db,"BEGIN IMMEDIATE");
+        verify();
+        const auto cases=history(),prior=hail_history();
+        std::vector<CyberIncidentCase> to_link;
+        for(const auto& c:cases){
+            if(c.jurisdiction_colony!=jurisdiction_colony ||
+               c.attacking_ship!=visitor_ship ||
+               c.world_tick>world.world().tick())continue;
+            const bool duplicate=std::any_of(prior.begin(),prior.end(),
+                [&](const CyberHailIdentityLink& link){
+                    return link.case_id==c.case_id &&
+                           link.hail_event==actual_hail_reply_event;
+                });
+            if(!duplicate)to_link.push_back(c);
+        }
+        if(to_link.empty() || prior.size()+to_link.size()>10000){
+            exec(state_->db,"ROLLBACK");
+            return false;
+        }
+        std::string previous=prior.empty()?"genesis":prior.back().digest;
+        std::uint64_t sequence=prior.size();
+        for(const auto& c:to_link){
+            CyberHailIdentityLink link{};
+            link.sequence=++sequence;
+            link.case_id=c.case_id;
+            link.hail_event=actual_hail_reply_event;
+            link.world_tick=world.world().tick();
+            link.world_generation=world.generation();
+            link.authenticated_controller=authenticated_owner;
+            link.verified_ship=visitor_ship;
+            link.previous_digest=previous;
+            link.digest=link_digest(link);
+            Statement insert(state_->db,
+                "INSERT INTO sg_ship_status07_hail_links "
+                "(sequence,case_id,hail_event,world_tick,world_generation,"
+                "controller,verified_ship,prev_digest,digest) "
+                "VALUES (?,?,?,?,?,?,?,?,?)");
+            insert.number(1,link.sequence);
+            insert.number(2,link.case_id);
+            insert.number(3,link.hail_event);
+            insert.number(4,link.world_tick);
+            insert.number(5,link.world_generation);
+            insert.number(6,link.authenticated_controller);
+            insert.number(7,link.verified_ship);
+            insert.string(8,link.previous_digest);
+            insert.string(9,link.digest);
+            if(sqlite3_step(insert.stmt)!=SQLITE_DONE)
+                throw std::runtime_error("native cyber hail link insert failed");
+            previous=link.digest;
+        }
+        exec(state_->db,"COMMIT");
+        committed=true;
+        return true;
+    }catch(...){
+        if(!committed)
+            sqlite3_exec(state_->db,"ROLLBACK",nullptr,nullptr,nullptr);
+        throw;
+    }
+}
+std::vector<CyberSignatureAlert> CyberIncidentJournal::watch_known_descriptions(
+    const PersistentWorld& world,PlayerId colony_owner,EntityId colony,
+    std::uint64_t observer_npc) const {
+    std::vector<CyberSignatureAlert> alerts;
+    const auto* site=world.world().find(colony);
+    if(!colony_owner || colony_owner==Simulation::kServerAuthority ||
+       !site || site->owner_id!=colony_owner ||
+       !world.world().colony_ship(colony))return alerts;
+    // Original NPC watch must prove the ship was actually detected with
+    // sufficient fitted optics. Reconstruct cases by observed features,
+    // *not* by private persistent entity ID or true owner.
+    const auto seen=world.local_colony_watch_contacts(colony,observer_npc);
+    const auto cases=history();
+    for(const auto& contact:seen){
+        for(const auto& c:cases){
+            if(c.jurisdiction_colony!=colony ||
+               c.record_version<2 || !c.sensor_detail ||
+               c.sensor_detail>contact.sensor_detail ||
+               c.world_tick>world.world().tick())
+                continue;
+            if(ship_sensors::description_at_detail(
+                 world.world(),contact.foreign_ship,c.sensor_detail)!=
+               c.observed_description)continue;
+            alerts.push_back({c.case_id,c.observed_description,
+                              c.sensor_detail,contact.world_tick,
+                              true,false,false});
+            if(alerts.size()>=64)return alerts;
+        }
+    }
+    return alerts;
+}
 std::vector<CyberIncidentSummary> CyberIncidentJournal::for_colony_owner(
     const PersistentWorld& world,PlayerId authenticated_owner,
     EntityId colony) const {
