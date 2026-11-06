@@ -1,0 +1,35 @@
+name: NPC-RESP-03A colony threat policies
+on:
+  pull_request:
+    paths:
+      - 'include/galaxy/ColonyThreatPolicy.hpp'
+      - 'tests/NPCRESP03_ColonyThreatPolicyTests.cpp'
+      - 'CMakeLists.txt'
+      - '.github/workflows/npcresp03-colony-threat.yml'
+  workflow_dispatch:
+jobs:
+  native:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & (Join-Path $env:VCPKG_INSTALLATION_ROOT 'vcpkg.exe') install sqlite3:x64-windows --clean-after-build
+          if ($LASTEXITCODE -ne 0) { throw 'SQLite SDK install failed' }
+      - if: runner.os == 'Linux'
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tc=Join-Path $env:VCPKG_INSTALLATION_ROOT 'scripts/buildsystems/vcpkg.cmake'
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$tc" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'native configure failed' }
+      - run: cmake --build build --config Release --parallel 2 --target galaxy_npcresp03_threat_policy_tests
+      - run: ctest --test-dir build -C Release --output-on-failure -R "^galaxy_npcresp03_threat_policy$"
