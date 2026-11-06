@@ -965,9 +965,11 @@ bool Simulation::qualified_npc_flight_pilot(
        it->second.legal_residence()!=
            (transport::Endpoint{transport::LocationKind::ColonyShip,ship}))
         return false;
-    return npc_available_for_duty(pilot);
+    // Ignore only the order's own reservation; all other native jobs
+    // consult the full duty check with active-flight reservations.
+    return npc_available_for_duty_without_flight(pilot);
 }
-bool Simulation::npc_available_for_duty(std::uint64_t npc_id) const {
+bool Simulation::npc_available_for_duty_without_flight(std::uint64_t npc_id) const {
     const auto it=npcs_.find(npc_id);
     if(it==npcs_.end())return false;
     const auto& n=it->second;
@@ -986,6 +988,18 @@ bool Simulation::npc_available_for_duty(std::uint64_t npc_id) const {
     const auto status=npc_health_status(npc_id);
     return status==NpcHealthStatus::Healthy || status==NpcHealthStatus::Treated ||
            status==NpcHealthStatus::Recovered;
+}
+bool Simulation::npc_available_for_duty(std::uint64_t npc_id) const {
+    if(!npc_available_for_duty_without_flight(npc_id))return false;
+    // The existing real worker cannot also pilot a shuttle, perform
+    // industrial labor or accept another voyage while on a flight order.
+    for(const auto& [id,flight]:npc_flight_orders_){
+        (void)id;
+        if(flight.pilot_npc==npc_id &&
+           (flight.phase==NpcFlightPhase::Planned ||
+            flight.phase==NpcFlightPhase::InTransit))return false;
+    }
+    return true;
 }
 
 NpcResidenceAudit Simulation::assess_npc_residence() const {
