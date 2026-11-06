@@ -1295,6 +1295,8 @@
  window.GalaxyColony={
    reset(){fleetShips.clear();fleetRosterActive=false;fleetRestorePending=true;
      fleetRequested=0;window.GalaxyActivePilotedShipId=null;
+     contractList.replaceChildren();
+     contractState.textContent='Awaiting actual shipyard purchase orders.';
      window.GalaxyActivePilotedCelestialBody=null;
      fleetSelector.replaceChildren(new Option('Awaiting native fleet roster',''));
      fleetSelector.disabled=true;fleetSelectButton.disabled=true;
@@ -1313,6 +1315,38 @@
      q('signatureFeedback').textContent='Search for coarse anomaly signatures.';
      q('droneTarget').replaceChildren(new Option('Scan nearby rocks first',''));q('droneLaunch').disabled=true;deployedProbes.clear();probeCarried=0;probeLauncher=false;probeChoice='';q('probeTarget').replaceChildren(new Option('No probe deployed',''));q('probeLaunch').disabled=true;q('probeSurvey').disabled=true;q('probeRetrieve').disabled=true;q('probeInventory').textContent='Awaiting native probe stock.';q('probeFeedback').textContent='Native equipment required.';q('fittingCapacity').textContent='Awaiting actual ship fittings.';q('proximityStatus').textContent='Proximity safety sensor awaiting contacts.';q('fitScanner').disabled=true;q('unfitScanner').disabled=true;discoveries.clear();q('explorationResults').replaceChildren();q('explorationSummary').textContent='No mapped discoveries yet. Execute a native local scan.';salvageWrecks.clear();q('salvageTarget').replaceChildren(new Option('No recoverable wreck reported',''));q('salvageRecover').disabled=true;q('salvageFeedback').textContent='Waiting for native wreck inventory.';combatTargets.clear();q('combatHull').textContent='—';q('combatCharges').textContent='—';q('combatFire').disabled=true;q('combatFeedback').textContent='Awaiting native combat telemetry.';window.GalaxySelectedRockId=null;window.GalaxyShipHeading=null;window.GalaxyColonyOutpostIds.clear();openingStatus=null;openingScanned=false;refreshOpening();window.GalaxyColonyHomeShipId=null;q('colonySafetyAssess').disabled=true;q('colonySafetyPreflight').disabled=true;policyAudits.clear();geology.clear();small.clear();stocks.clear();outposts.clear();farms.clear();habitats.clear();utilities.clear();communities.clear();clinics.clear();reclaimers.clear();waterworks.clear();log.length=0;q('colonyEvents').textContent='Awaiting colony telemetry…';q('expeditionOutcome').textContent='Awaiting an actual native result';},
    accept(raw){const e=window.GalaxyColonyContract.decode(raw);
+     if(e.type==='YARD_CONTRACT_COMMITTED'){
+       contractId.value=String(e.id);
+       contractState.textContent='Physical customer contract #'+e.id+
+         ' committed at SQLite generation '+e.generation+
+         '. Reading the supplier/customer work record.';
+       window.GalaxyColonyCommand?.('colonyYardContractStatus',{});
+     }
+     if(e.type==='YARD_CONTRACT_ITEM'){
+       let row=[...contractList.children].find(el=>
+         el.dataset.customerOrder===String(e.id));
+       if(!row){
+         row=document.createElement('div');
+         row.dataset.customerOrder=String(e.id);
+         contractList.appendChild(row);
+       }
+       row.textContent='Contract #'+e.id+' · buyer colony #'+e.buyer+
+         ' (owner '+e.buyerOwner+') → yard colony #'+e.supplier+
+         ' (owner '+e.supplierOwner+') · '+
+         ['Requested','Accepted — bring six physical modules',
+          'Paid — building real hull ('+e.progress+'/12)',
+          'Delivered uncrewed ship #'+e.delivered][e.stage]+
+         (e.hull&&e.stage===2?' · built ship #'+e.hull+' ready for claim':'')+
+         ' · build order #'+e.build;
+       if(e.stage===3){
+         freighterOrder.value=String(e.build);
+         contractBuild.value=String(e.build);
+         contractState.textContent='Ship #'+e.delivered+
+           ' is now owned by the customer. Commission it with two real NPCs, a paid scanner and finite provisions.';
+       }
+     }
+     if(e.type==='ERROR'&&e.error==='YARD_CONTRACT_DENIED')
+       contractState.textContent='Native shipyard transaction refused. Check supplier acceptance, actual berth, six modules, build completion and owner authority.';
      if(e.type==='FLEET_RESET'){
        fleetShips.clear();fleetRosterActive=true;
      }
