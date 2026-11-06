@@ -1,0 +1,238 @@
+#pragma once
+// SHIP-STATUS-07D: one trusted native, owner-scoped security desk.
+// The original PersistentWorld, TerritoryJournal, CyberIncidentJournal,
+// NPC watch and flight dispatch remain authoritative. No shadow simulation,
+// client-selected principal, fabricated warrant or invisible identity lookup.
+#include "galaxy/CyberSecurityResponse.hpp"
+#include "galaxy/TerritorialHailing.hpp"
+#include "galaxy/FleetSelection.hpp"
+#include <algorithm>
+#include <cstdint>
+#include <iomanip>
+#include <sstream>
+#include <string>
+#include <vector>
+
+namespace galaxy::colony_disposition::security_desk {
+inline std::string hex(const std::string& input) {
+    static constexpr char digits[]="0123456789abcdef";
+    std::string result;
+    result.reserve(input.size()*2);
+    for(const unsigned char c:input){
+        result.push_back(digits[c>>4]);
+        result.push_back(digits[c&15]);
+    }
+    return result;
+}
+// Obtain the real on-duty observer at the observed colony, never an NPC ID
+// from HTTP. In particular, an unpowered/no-witness colony cannot fabricate
+// a case or claim that it identified a visiting ship.
+inline std::uint64_t witness(const PersistentWorld& world,EntityId colony,
+                             EntityId visitor=0) {
+    for(const auto& [id,npc]:world.world().npc_records()) {
+        if(npc.home_ship!=colony || npc.location!=colony ||
+           npc.transport_id || !world.world().npc_available_for_duty(id))
+            continue;
+        try {
+            const auto contacts=world.local_colony_watch_contacts(colony,id);
+            if(!visitor || std::any_of(contacts.begin(),contacts.end(),
+                [&](const colony_defense::Contact& c){
+                    return c.foreign_ship==visitor &&
+                           c.world_tick==world.world().tick();
+                }))return id;
+        }catch(const std::exception&){}
+    }
+    return 0;
+}
+inline std::uint64_t case_id(EntityId colony,std::uint64_t original_command) {
+    // Stable original-command/jurisdiction key; safe for SQLite signed IDs.
+    std::uint64_t value=(original_command*0x9e3779b97f4a7c15ULL) ^
+                        (colony*0xc2b2ae3d27d4eb4fULL) ^
+                        0x0177a7c0de55e7ULL;
+    value&=((std::uint64_t{1}<<62)-1);
+    if(!value || value==original_command)value^=0x1badd00dULL;
+    return value;
+}
+template<class Emit>
+std::size_t capture_current_tick(const PersistentWorld& world,
+    const TerritoryJournal& territory,CyberIncidentJournal& cases,
+    Emit&& emit) {
+    std::size_t recorded=0;
+    for(const auto& event:world.recent_history(100)) {
+        if(event.tick!=world.world().tick() ||
+           event.action!=Action::HackConfuse ||
+           (event.result!=Outcome::Applied &&
+            event.result!=Outcome::AttackResisted))
+            continue;
+        for(const auto& [colony,site]:world.world().entities()) {
+            if(site.type!=EntityType::Ship ||
+               !world.world().colony_ship(colony))continue;
+            const auto guard=witness(world,colony,event.actor);
+            if(!guard)continue;
+            try {
+                if(cases.intake(world,territory,colony,guard,
+                    event.command_id,case_id(colony,event.command_id))){
+                    ++recorded;
+                    // The event is publicly a case number, not an owner ID.
+                    if(recorded<=32 && site.owner_id)
+                        emit("SECURITY_CASE_FILED|"+
+                            std::to_string(site.owner_id)+"|"+
+                            std::to_string(case_id(colony,event.command_id)));
+                }
+            }catch(const std::exception&) {
+                emit("SECURITY_ERROR|CASE_INDEX_UNAVAILABLE");
+            }
+        }
+    }
+    return recorded;
+}
+template<class Emit>
+void snapshot(const PersistentWorld& world,
+    const TerritoryJournal& territory,const CyberIncidentJournal& cases,
+    PlayerId owner,EntityId home,EntityId piloted,Emit&& emit) {
+    const auto* home_ship=world.world().find(home);
+    if(!owner || owner==Simulation::kServerAuthority ||
+       !home_ship || home_ship->owner_id!=owner ||
+       !world.world().colony_ship(home))
+        return;
+    const auto entries=territory.history();
+    const bool claimed=std::any_of(entries.begin(),entries.end(),
+        [&](const TerritoryEvent& e){
+            return e.colony==home && e.kind==TerritoryEventKind::Claim &&
+                   e.owner==owner;
+        });
+    const auto report=cases.for_colony_owner(world,owner,home);
+    emit("SECURITY_STATUS|"+std::to_string(home)+"|"+
+         std::to_string(piloted)+"|"+std::to_string(claimed?1:0)+"|"+
+         std::to_string(report.size())+"|"+
+         std::to_string(security_capability(world.world(),home)));
+    emit("SECURITY_CASES_RESET");
+    // Cap wire readout without mutating durable history.
+    const std::size_t begin=report.size()>32?report.size()-32:0;
+    for(std::size_t i=begin;i<report.size();++i) {
+        const auto& r=report[i];
+        emit("SECURITY_CASE|"+std::to_string(r.evidence.case_id)+"|"+
+            std::to_string(r.evidence.world_tick)+"|"+
+            std::to_string(r.disrupted_modules?1:0)+"|"+
+            std::to_string(r.evidence.sensor_detail)+"|"+
+            hex(r.evidence.observed_description)+"|"+
+            std::to_string(r.later_identified_controller)+"|"+
+            std::to_string(r.identity_hail_event));
+    }
+    emit("SECURITY_CONTACTS_RESET");
+    const auto guard=witness(world,home);
+    if(guard){
+        const auto contacts=world.local_colony_watch_contacts(home,guard);
+        std::size_t count=0;
+        for(const auto& c:contacts) {
+            if(++count>32)break;
+            emit("SECURITY_CONTACT|"+std::to_string(c.foreign_ship)+"|"+
+                std::to_string(c.sensor_detail)+"|"+
+                hex(c.observed_description));
+        }
+    }
+    emit("SECURITY_NOTICES_RESET");
+    std::size_t notices=0;
+    for(const auto& notice:territory.pending_notices(world,owner)) {
+        if(++notices>32)break;
+        emit("SECURITY_NOTICE|"+std::to_string(notice.colony)+"|"+
+            std::to_string(notice.visitor_ship)+"|"+
+            std::to_string(notice.event_id));
+    }
+    emit("SECURITY_DESTINATIONS_RESET");
+    const auto* pilot=world.world().find(piloted);
+    if(pilot && pilot->owner_id==owner){
+        std::size_t destinations=0;
+        for(const auto& claim:entries) {
+            if(claim.kind!=TerritoryEventKind::Claim ||
+               claim.owner==owner || !claim.colony)continue;
+            const auto state=territory.standing(world,claim.colony,piloted);
+            if(!state.in_claimed_region ||
+               !witness(world,claim.colony,piloted))continue;
+            if(++destinations>32)break;
+            emit("SECURITY_DESTINATION|"+std::to_string(claim.colony));
+        }
+    }
+    emit("SECURITY_REFRESH_DONE");
+}
+template<class Emit>
+bool execute(const std::vector<std::string>& words,
+    PersistentWorld& world,TerritoryJournal& territory,
+    CyberIncidentJournal& cases,PlayerId owner,EntityId home,
+    EntityId piloted,std::uint64_t& nonce,Emit&& emit) {
+    if(words.empty() || words[0].rfind("SECURITY_",0)!=0)return false;
+    const auto* home_ship=world.world().find(home);
+    const auto* pilot_ship=world.world().find(piloted);
+    if(!owner || owner==Simulation::kServerAuthority ||
+       !home_ship || home_ship->owner_id!=owner ||
+       !world.world().colony_ship(home) ||
+       !pilot_ship || pilot_ship->owner_id!=owner){
+        emit("SECURITY_RESULT|DENIED|0");return true;
+    }
+    auto numeric=[](const std::string& value)->std::uint64_t {
+        if(value.empty() || value.size()>18 || value[0]=='0')return 0;
+        std::uint64_t result=0;
+        for(const char digit:value){
+            if(digit<'0'||digit>'9')return 0;
+            result=result*10+std::uint64_t(digit-'0');
+        }
+        return result;
+    };
+    if(words.size()==1 && words[0]=="SECURITY_REFRESH") {
+        snapshot(world,territory,cases,owner,home,piloted,emit);
+        return true;
+    }
+    bool accepted=false,linked=false;
+    std::uint64_t receipt=0;
+    const auto action=words[0];
+    if(words.size()==2 && action=="SECURITY_CLAIM"){
+        const auto radius=numeric(words[1]);
+        if(radius>=1 && radius<=5000)
+            accepted=territory.claim(world,owner,home,receipt=++nonce,
+                                      static_cast<std::int64_t>(radius));
+    }else if(words.size()==2 && action=="SECURITY_WARN"){
+        const auto visitor=numeric(words[1]);
+        const auto guard=witness(world,home,visitor);
+        if(guard && visitor)
+            accepted=territory.warn(world,owner,home,visitor,guard,
+                                     receipt=++nonce,10);
+    }else if(words.size()==2 && action=="SECURITY_HAIL"){
+        const auto colony=numeric(words[1]);
+        const auto guard=witness(world,colony,piloted);
+        if(colony && guard) {
+            accepted=territory.voluntary_hail(world,owner,colony,piloted,
+                                            guard,receipt=++nonce);
+            if(accepted)
+                linked=cases.link_authenticated_hail(world,territory,
+                     colony,guard,piloted,owner,receipt);
+        }
+    }else if(words.size()==4 && action=="SECURITY_REPLY"){
+        const auto colony=numeric(words[1]),notice=numeric(words[2]);
+        if(colony && notice && (words[3]=="ACK" || words[3]=="REFUSE")){
+            accepted=player_respond_to_hail(world,territory,owner,colony,
+                piloted,notice,receipt=++nonce,
+                words[3]=="ACK"?HailChoice::Acknowledge:HailChoice::Refuse);
+            if(accepted){
+                const auto guard=witness(world,colony,piloted);
+                if(guard)linked=cases.link_authenticated_hail(world,territory,
+                    colony,guard,piloted,owner,receipt);
+            }
+        }
+    }else if(words.size()==3 && action=="SECURITY_PATROL"){
+        const auto case_number=numeric(words[1]);
+        const auto target=numeric(words[2]);
+        const auto guard=witness(world,home,target);
+        if(case_number && target && guard){
+            const auto status=request_signature_patrol(world,cases,owner,
+                home,guard,target,case_number,receipt=++nonce);
+            accepted=status==npc_response::Status::Accepted;
+        }
+    }
+    emit("SECURITY_RESULT|"+action+"|"+
+         (accepted?"ACCEPTED":"DENIED")+"|"+
+         std::to_string(accepted?receipt:0)+"|"+
+         std::to_string(linked?1:0));
+    snapshot(world,territory,cases,owner,home,piloted,emit);
+    return true;
+}
+} // namespace galaxy::colony_disposition::security_desk
