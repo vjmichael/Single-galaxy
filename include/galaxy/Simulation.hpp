@@ -1123,6 +1123,7 @@ public:
     bool register_player_person(PlayerId owner,EntityId aboard);
     bool grant_player_rescue_consent(PlayerId owner,EntityId receiving_ship,
         std::uint64_t consent_id);
+    bool revoke_player_rescue_consent(PlayerId owner,std::uint64_t consent_id);
     bool complete_player_rescue(PlayerId owner,EntityId receiving_ship,
         std::uint64_t flight_id,std::uint64_t transfer_receipt);
     // Different local frames never share ordinary spatial interactions.
