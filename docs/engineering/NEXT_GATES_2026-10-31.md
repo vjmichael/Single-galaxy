@@ -1,3 +1,5 @@
+> **2026-11-06 CURRENT-WORK LINK:** This file is an archived 2026-10-31 handoff. For present SHIP-STATUS/stealth/hailing implementation, exact-head CI status, the **10-detailed-entries/unbounded-score rule** and the prioritized outstanding task list, use [ACTIVE_WORK_AND_ACCEPTANCE_2026-11-06.md](ACTIVE_WORK_AND_ACCEPTANCE_2026-11-06.md). Do not mistake the historical next gates below for today's active task order.
+
 # Engineering Handoff — 2026-10-31
 
 ## Latest verified artifact
