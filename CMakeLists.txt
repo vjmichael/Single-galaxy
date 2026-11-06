@@ -1532,6 +1532,24 @@ if(BUILD_TESTING)
     COMMAND galaxy_flight03_object_approach_tests)
 endif()
 
+# FLIGHT-04 read-only physical and receipt preflight: never an interaction grant.
+if(BUILD_TESTING)
+  add_executable(galaxy_flight04_interaction_preflight_tests
+    tests/FLIGHT04_ShipInteractionPreflightTests.cpp)
+  target_link_libraries(galaxy_flight04_interaction_preflight_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_flight04_interaction_preflight
+    COMMAND galaxy_flight04_interaction_preflight_tests)
+endif()
+
+# FLIGHT-04B: adapters call ORIGINAL persistent freight and dependent rescue executors.
+if(BUILD_TESTING)
+  add_executable(galaxy_flight04b_interaction_executors_tests
+    tests/FLIGHT04B_InteractionExecutorsTests.cpp)
+  target_link_libraries(galaxy_flight04b_interaction_executors_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_flight04b_interaction_executors
+    COMMAND galaxy_flight04b_interaction_executors_tests)
+endif()
+
 # FLIGHT-03: original NPC navigator, native ship pursuit and durable receipts.
 if(BUILD_TESTING)
   add_executable(galaxy_flight03_native_rendezvous_tests
@@ -1539,4 +1557,11 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_flight03_native_rendezvous_tests PRIVATE galaxy_kernel)
   add_test(NAME galaxy_flight03_native_rendezvous
     COMMAND galaxy_flight03_native_rendezvous_tests)
+endif()
+
+# FLIGHT-04B full native physical rendezvous to sealed freight and SQLite recovery.
+if(BUILD_TESTING)
+  add_test(NAME galaxy_flight04b_real_freight
+    COMMAND galaxy_play13d_regional_facilities_tests --flight03-rendezvous-freight)
+  set_tests_properties(galaxy_flight04b_real_freight PROPERTIES TIMEOUT 300)
 endif()
