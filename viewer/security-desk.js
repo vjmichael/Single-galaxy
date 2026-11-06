@@ -222,7 +222,7 @@
        ' · independent legal review still required';
      item.textContent='Complaint #'+c.id+' · authenticated caller #'+
        c.caller+' · nuisance points '+c.points+
-       reviewText+' · NO automatic arrest or armed response';
+       reviewText+' · not a conviction; NO automatic arrest or armed response';
      complaintsNode.append(item);
    }
    el('securityPatrol').disabled=!active||!knownCase||
