@@ -4,6 +4,7 @@
 #include <chrono>
 #include <filesystem>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <vector>
 using namespace galaxy;
@@ -75,6 +76,31 @@ static void fabricate_six_more_batches(PersistentWorld& w,EntityId ship,
         work(Action::RefineOre,4);
         work(Action::FabricateModule,2);
     }
+}
+// Negative recovery oracle: a fabricated coordinator completion must not
+// pass v94 snapshot validation without its original native transport receipt.
+static std::string forge_work_completion(std::string snapshot,
+        std::uint64_t directive,std::uint64_t tick) {
+    const auto marker="workdirective|"+std::to_string(directive)+"|";
+    const auto at=snapshot.find(marker);
+    CHECK(at!=std::string::npos);
+    const auto end=snapshot.find('\n',at);
+    CHECK(end!=std::string::npos);
+    std::istringstream source(snapshot.substr(at,end-at));
+    std::vector<std::string> fields;
+    std::string token;
+    while(std::getline(source,token,'|'))fields.push_back(token);
+    CHECK(fields.size()==15);
+    fields[10]="2"; // fake Fulfilled
+    fields[11]="0"; // fake unblocked
+    fields[14]=std::to_string(tick); // plausible forged resolved tick
+    std::string row;
+    for(std::size_t i=0;i<fields.size();++i){
+        if(i)row+='|';
+        row+=fields[i];
+    }
+    snapshot.replace(at,end-at,row);
+    return snapshot;
 }
 static void scenario(const fs::path& db, bool farming,
                      bool manufactured=false,bool delegated=false){
@@ -805,6 +831,14 @@ static void scenario(const fs::path& db, bool farming,
                   LocalDeliveryStage::Posted);
             const auto in_flight=w.world().canonical_state();
             CHECK(Simulation::from_snapshot(in_flight).canonical_state()==in_flight);
+            if(delegated){
+                const auto forged=forge_work_completion(
+                    in_flight,94003,w.world().tick());
+                bool denied=false;
+                try{(void)Simulation::from_snapshot(forged);}
+                catch(const std::exception&){denied=true;}
+                CHECK(denied); // no real shuttle unloading receipt yet
+            }
             w.steps(22);
             const auto completed=w.world().local_delivery_board().at(77003);
             const auto queued=w.world().local_delivery_board().at(77005);
@@ -832,6 +866,8 @@ static void scenario(const fs::path& db, bool farming,
                 7,ship,key,ShuttleCargo::Water,2-fuel_again));
             CHECK(w.post_local_delivery_order(7,ship,key,
                 ShuttleCargo::Nutrients,400,77004));
+            if(delegated)CHECK(w.delegate_transport_work_order(
+                7,ship,94005,WorkTaskKind::LocalDelivery,77004));
             CHECK(w.post_local_delivery_order(7,ship,key,
                 ShuttleCargo::Nutrients,100,77006));
             const auto waiting_stock=w.world().planetary_sites().at(key).nutrients_kg;
@@ -852,6 +888,12 @@ static void scenario(const fs::path& db, bool farming,
             CHECK(w.cancel_local_delivery_order(7,77004));
             CHECK(w.world().local_delivery_board().at(77004).stage==
                   LocalDeliveryStage::Cancelled);
+            if(delegated){
+                CHECK(w.world().work_directives().at(94005).status==
+                      WorkDirectiveStatus::Cancelled);
+                const auto restored=w.world().canonical_state();
+                CHECK(Simulation::from_snapshot(restored).canonical_state()==restored);
+            }
             CHECK(!w.cancel_local_delivery_order(7,77003));
             w.steps(12);
             CHECK(w.world().planetary_sites().at(key).nutrients_kg==waiting_stock-100);
@@ -913,6 +955,14 @@ static void scenario(const fs::path& db, bool farming,
             try{(void)Simulation::from_snapshot(orphan);}
             catch(const std::exception&){rejected_orphan=true;}
             CHECK(rejected_orphan);
+            if(delegated){
+                const auto forged=forge_work_completion(
+                    aboard,94004,w.world().tick());
+                bool denied=false;
+                try{(void)Simulation::from_snapshot(forged);}
+                catch(const std::exception&){denied=true;}
+                CHECK(denied); // carrier has not physically arrived
+            }
             CHECK(w.begin_celestial_transit(7,freighter,receiver_body,99021));
             CHECK(!w.deliver_intercolony_freight(7,77003)); // in flight
             w.steps(4);
