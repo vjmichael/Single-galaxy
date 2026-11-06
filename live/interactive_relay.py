@@ -732,7 +732,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     'token','action','colony','notice','choice'}:
                 colony,notice,choice=doc['colony'],doc['notice'],doc['choice']
                 if type(colony)!=int or not 1<=colony<=1000000000000000 or (
-                   type(notice)!=int or not 1<=notice<=1000000000000000000) or (
+                   type(notice)!=str or not 1<=len(notice)<=19 or
+                   not notice.isascii() or not notice.isdecimal() or
+                   notice[0]=='0' or int(notice)>=(1<<63)) or (
                    type(choice)!=str or choice not in ('acknowledge','refuse')):
                     raise ValueError('Invalid original notice reply')
                 command=f'SECURITY_REPLY|{colony}|{notice}|'+(
