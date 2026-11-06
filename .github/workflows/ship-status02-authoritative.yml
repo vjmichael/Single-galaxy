@@ -12,6 +12,8 @@ on:
       - 'tests/SHIPSTATUS03_PhysicalHackingTests.cpp'
       - 'tests/SHIPSTATUS04_NpcCyberTacticsTests.cpp'
       - 'include/galaxy/TerritorialCyberEvidence.hpp'
+      - 'include/galaxy/NpcCyberTactics.hpp'
+      - 'src/ColonyConflict.cpp'
       - 'tests/SHIPSTATUS01_ConfusionTests.cpp'
       - 'CMakeLists.txt'
       - '.github/workflows/ship-status02-authoritative.yml'
