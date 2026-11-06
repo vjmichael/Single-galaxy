@@ -51,7 +51,7 @@ def main(host: pathlib.Path):
             raise AssertionError("Foreign account was not denied")
         if not re.search(r"\|FLEET_PILOT_ITEM\|1\|",initial):
             raise AssertionError("Real piloted hull telemetry was not published")
-        if len(re.findall(r"\\|ERROR\\|FLEET_WORK_DENIED",initial))<2:
+        if len(re.findall(r"\|ERROR\|FLEET_WORK_DENIED",initial))<2:
             raise AssertionError("Fake/actively piloted fleet work assignment was not denied")
         if "|RESULT|" not in initial or "|APPLIED|" not in initial:
             raise AssertionError("Native owner flight commands were not committed")
