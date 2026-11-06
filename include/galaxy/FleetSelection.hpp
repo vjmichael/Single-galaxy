@@ -57,7 +57,7 @@ public:
 
     // Death/destruction/crew reassignment cannot preserve a stale cockpit.
     bool reconcile(const Simulation& world) {
-        if(is_ready(world,piloted_))return false;
+        if(piloted_==home_ || is_ready(world,piloted_))return false;
         piloted_=home_;
         return true;
     }
