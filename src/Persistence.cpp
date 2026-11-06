@@ -11179,6 +11179,74 @@ bool PersistentWorld::submit_testing_gate_operations(EntityId forward,EntityId r
     world_.swap(next);++generation_;
     return true;
 }
+bool PersistentWorld::submit_npc_cyber_attack(
+    PlayerId owner,EntityId attacking_ship,std::uint64_t pilot_npc,
+    std::uint64_t observer_npc,EntityId target,
+    std::uint64_t command_id,FailPoint fail) {
+    if(!owner || owner==Simulation::kServerAuthority ||
+       !attacking_ship || !target || attacking_ship==target ||
+       !pilot_npc || !observer_npc || !command_id ||
+       command_id>=(std::uint64_t{1}<<62) ||
+       store_->npc_busy_this_tick(pilot_npc,world_.tick()) ||
+       store_->npc_busy_this_tick(observer_npc,world_.tick()))
+        return false;
+    const auto* ship=world_.find(attacking_ship);
+    const auto* opponent=world_.find(target);
+    const auto& crew=world_.npc_records();
+    const auto p=crew.find(pilot_npc),w=crew.find(observer_npc);
+    if(!ship || !opponent || ship->type!=EntityType::Ship ||
+       opponent->type!=EntityType::Ship ||
+       ship->owner_id!=owner || opponent->owner_id==owner ||
+       !world_.colony_ship(attacking_ship) ||
+       !ship->fitting.intrusion_emitter() ||
+       p==crew.end() || w==crew.end() ||
+       p->second.home_ship!=attacking_ship ||
+       p->second.location!=attacking_ship ||
+       p->second.role!=NpcRole::Ship ||
+       p->second.transport_id ||
+       w->second.home_ship!=attacking_ship ||
+       w->second.location!=attacking_ship ||
+       w->second.transport_id ||
+       !world_.npc_available_for_duty(pilot_npc) ||
+       !world_.npc_available_for_duty(observer_npc))
+        return false;
+    // A tactical operator cannot steal an NPC navigator's exclusive
+    // control of a physically moving ship.
+    for(const auto& [id,flight]:world_.npc_flight_orders()){
+        (void)id;
+        if(flight.ship==attacking_ship &&
+           (flight.phase==NpcFlightPhase::Planned ||
+            flight.phase==NpcFlightPhase::InTransit))return false;
+    }
+    // Recompute a fresh original named-NPC sensory observation. A supplied
+    // target ID or an old territorial complaint is not a verified contact.
+    const auto observed=local_colony_watch_contacts(attacking_ship,observer_npc);
+    const auto found=std::find_if(observed.begin(),observed.end(),
+        [&](const colony_defense::Contact& c){
+            return c.source==attacking_ship && c.foreign_ship==target &&
+                   c.foreign_owner==opponent->owner_id &&
+                   c.observer_npc==observer_npc &&
+                   c.world_tick==world_.tick();
+        });
+    if(found==observed.end())return false;
+    Command command{};
+    command.id=command_id;
+    command.sequence=command_id;
+    command.execute_tick=world_.tick()+1;
+    command.issuer=owner;
+    command.actor=attacking_ship;
+    command.target=target;
+    command.action=Action::HackConfuse;
+    auto next=world_;
+    if(!next.submit(command))return false;
+    // Exactly the same native command, SQLite generation, physical module
+    // use, and recovery boundary as a player-operated HackConfuse.
+    store_->commit(next,generation_,resource_origin_,credit_origin_,
+                   &command,{},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
 bool PersistentWorld::submit_npc_mining_work(std::uint64_t npc_id,EntityId ship,EntityId rock,
         std::int64_t amount,std::uint64_t command_id,FailPoint fail){
     if(!npc_id||!ship||!rock||!command_id||amount<1||amount>1000)return false;
