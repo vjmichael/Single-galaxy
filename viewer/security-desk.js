@@ -22,6 +22,12 @@
      throw Error('Invalid original case identifier');
    return v; // Never round a 62-bit native SQLite identifier through Number.
  };
+ const nativeId=v=>{
+   if(!/^(0|[1-9][0-9]{0,18})$/.test(v) ||
+      BigInt(v)>=(1n<<63n))
+     throw Error('Invalid native SQLite event identifier');
+   return v;
+ };
  const decodeHex=raw=>{
    if(raw.length>512||raw.length%2!==0||!/^[0-9a-f]*$/.test(raw))
      throw Error('Invalid original sensor description');
@@ -57,8 +63,8 @@
      const id=caseKey(v[4]),originalTick=whole(v[5]),
        applied=whole(v[6],1),detail=whole(v[7],3),
        description=decodeHex(v[8]),controller=whole(v[9]),
-       hail=whole(v[10]);
-     if(!detail || !description || (controller===0)!==(hail===0))
+       hail=nativeId(v[10]);
+     if(!detail || !description || (controller===0)!==(hail==='0'))
        throw Error('Invalid native security case attribution');
      return {tick,type,id,originalTick,applied:!!applied,detail,
        description,controller,hail};
@@ -72,8 +78,8 @@
    }
    if(type==='SECURITY_NOTICE' && v.length===7){
      const colony=whole(v[4]),ship=whole(v[5]),
-       event=whole(v[6]);
-     if(!colony||!ship||!event)throw Error('Invalid real notice');
+       event=nativeId(v[6]);
+     if(!colony||!ship||event==='0')throw Error('Invalid real notice');
      return {tick,type,colony,ship,event};
    }
    if(type==='SECURITY_DESTINATION' && v.length===5){
@@ -82,11 +88,11 @@
      return {tick,type,colony};
    }
    if(type==='SECURITY_RESULT' && v.length===8){
-     const operation=v[4],result=v[5],receipt=whole(v[6]),
+     const operation=v[4],result=v[5],receipt=nativeId(v[6]),
        linked=whole(v[7],1);
      if(!/^SECURITY_(CLAIM|WARN|HAIL|REPLY|PATROL)$/.test(operation) ||
         !['ACCEPTED','DENIED'].includes(result) ||
-        (result==='ACCEPTED')!==(receipt>0) ||
+        (result==='ACCEPTED')!==(receipt!=='0') ||
         (linked && result!=='ACCEPTED'))
        throw Error('Forged security result');
      return {tick,type,operation,result,receipt,linked:!!linked};
@@ -103,7 +109,7 @@
      throw Error('Malformed known security telemetry');
    return null;
  }
- if(typeof document==='undefined')return {parse,decodeHex,caseKey};
+ if(typeof document==='undefined')return {parse,decodeHex,caseKey,nativeId};
  const el=id=>document.getElementById(id);
  let status=null,cases=new Map(),contacts=new Map(),
      notices=new Map(),destinations=new Map();
@@ -201,7 +207,7 @@
      case 'SECURITY_RESULT':
        el('securityDeskFeedback').textContent=
          data.operation.replaceAll('_',' ')+' · native '+data.result+
-         (data.receipt?' · receipt #'+data.receipt:'')+
+         (data.receipt!=='0'?' · receipt #'+data.receipt:'')+
          (data.linked?' · earlier physical hull cases linked to this later authenticated controller':'');
        break;
      case 'SECURITY_ERROR':
@@ -249,5 +255,5 @@
      void send('colonySecurityPatrol',{case:record.id,ship});
  });
  reset();
- return {parse,accept,reset,decodeHex,caseKey};
+ return {parse,accept,reset,decodeHex,caseKey,nativeId};
 });
