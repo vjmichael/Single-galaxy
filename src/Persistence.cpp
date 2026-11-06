@@ -11065,6 +11065,26 @@ bool PersistentWorld::submit_host_consigned_transfer(const Command& command,Fail
     world_.swap(next);++generation_;return true;
 }
 
+bool PersistentWorld::submit_testing_ship_confusion(
+    EntityId source,EntityId target,std::uint64_t effect_id,
+    std::uint64_t random_seed,std::uint64_t duration_ticks,
+    std::uint32_t pulse_ticks,std::uint8_t intensity,
+    std::uint8_t resistance,std::uint8_t exposed_hardpoint_mask,
+    FailPoint fail) {
+    // TEST-ONLY transition. No real mounted hacking hardware exists yet.
+    // As with ordinary host world changes, a failed SQLite commit leaves
+    // in-memory state unchanged. No second status database or free hardware.
+    auto next=world_;
+    if(!next.install_testing_confusion(source,target,effect_id,random_seed,
+            duration_ticks,pulse_ticks,intensity,resistance,
+            exposed_hardpoint_mask))return false;
+    store_->commit(next,generation_,resource_origin_,credit_origin_,
+                   nullptr,{},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
 bool PersistentWorld::submit(const Command& command, FailPoint fail) {
     // NPC-RESP-02B: independent character custody is authoritative for
     // PLAYER-operated ship controls. A rescued/detained person cannot
