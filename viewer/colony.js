@@ -115,6 +115,50 @@
         throw Error('Invalid shuttle operation receipt');
       return {...e,id,latitude,longitude,operation,generation};
     }
+    if(t==='WORK_COMMITTED'){
+      if(v.length!==6)throw Error('Malformed work delegation receipt');
+      const id=numeric(v[4],Number.MAX_SAFE_INTEGER),
+        generation=numeric(v[5],Number.MAX_SAFE_INTEGER);
+      if(!id||id>=2**50||!generation)throw Error('Invalid work commit');
+      return {...e,id,generation};
+    }
+    if(t==='WORK_ITEM'){
+      if(v.length!==11)throw Error('Malformed native universal work entry');
+      const kind=numeric(v[4],5),source=numeric(v[5],Number.MAX_SAFE_INTEGER),
+        phase=numeric(v[6],3),progress=numeric(v[7],Number.MAX_SAFE_INTEGER),
+        required=numeric(v[8],Number.MAX_SAFE_INTEGER),
+        delegated=numeric(v[9],Number.MAX_SAFE_INTEGER),
+        generation=numeric(v[10],Number.MAX_SAFE_INTEGER);
+      if(kind<1||!source||source>=2**50||!required||
+         progress>required||delegated>=2**50||!generation)
+        throw Error('Invalid native work progress');
+      return {...e,kind,source,phase,progress,required,delegated,generation};
+    }
+    if(t==='WORK_DONE'||t==='WORK_DIRECTIVES_DONE'){
+      if(v.length!==5)throw Error('Malformed native work row count');
+      return {...e,count:numeric(v[4],64)};
+    }
+    if(t==='WORK_DIRECTIVE'){
+      if(v.length!==15)throw Error('Malformed durable NPC delegation');
+      const id=numeric(v[4],Number.MAX_SAFE_INTEGER),
+        source=numeric(v[5],Number.MAX_SAFE_INTEGER),
+        status=numeric(v[6],2),blocked=numeric(v[7],6),
+        dependency=numeric(v[8],Number.MAX_SAFE_INTEGER),
+        firstNpc=numeric(v[9],Number.MAX_SAFE_INTEGER),
+        secondNpc=numeric(v[10],Number.MAX_SAFE_INTEGER),
+        provisionsKg=numeric(v[11],1000),
+        posted=numeric(v[12],Number.MAX_SAFE_INTEGER),
+        resolved=numeric(v[13],Number.MAX_SAFE_INTEGER),
+        generation=numeric(v[14],Number.MAX_SAFE_INTEGER);
+      if(!id||id>=2**50||!source||source>=2**50||
+         dependency>=id||Boolean(firstNpc)!==Boolean(secondNpc)||
+         (firstNpc&&firstNpc===secondNpc)||
+         (firstNpc&&provisionsKg<10)||(!firstNpc&&provisionsKg)||
+         (status!==0&&blocked)||!generation)
+        throw Error('Invalid delegation status and custody');
+      return {...e,id,source,status,blocked,dependency,
+        firstNpc,secondNpc,provisionsKg,posted,resolved,generation};
+    }
     if(t==='YARD_CONTRACT_COMMITTED'){
       if(v.length!==6)throw Error('Malformed customer shipyard transition');
       const id=numeric(v[4],Number.MAX_SAFE_INTEGER),
@@ -795,7 +839,7 @@
       if(v.length!==7||!/^\d+$/.test(v[4])||!/^[A-Z_]+$/.test(v[5]))throw Error('Bad action result');
       e.id=numeric(v[4],Number.MAX_SAFE_INTEGER);e.outcome=v[5];e.transferred=numeric(v[6]);
     }else if(t==='ERROR'){
-      if(v.length!==5||!['INVALID_INPUT','INVALID_SAFETY_ORDER','UNAUTHORIZED_PRINCIPAL','FRAME_TRAVEL_DENIED','FRAME_TRANSIT_BLOCKED','FLEET_SELECTION_DENIED','FLEET_WORK_DENIED','YARD_CONTRACT_DENIED'].includes(v[4]))throw Error('Bad rejected input');e.error=v[4];
+      if(v.length!==5||!['INVALID_INPUT','INVALID_SAFETY_ORDER','UNAUTHORIZED_PRINCIPAL','FRAME_TRAVEL_DENIED','FRAME_TRANSIT_BLOCKED','FLEET_SELECTION_DENIED','FLEET_WORK_DENIED','YARD_CONTRACT_DENIED','WORK_DENIED'].includes(v[4]))throw Error('Bad rejected input');e.error=v[4];
     }else throw Error('Unknown colony event');
     return e;
   }
