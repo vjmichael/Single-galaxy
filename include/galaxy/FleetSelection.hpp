@@ -140,10 +140,19 @@ inline bool fleet_freight_eligible(const Simulation& world,
        !fleet.is_ready(world,carrier))return false;
     const auto* vessel=world.find(carrier);
     const auto* destination=world.find(receiver);
+    const auto* crew=world.colony_ship(carrier);
+    const auto* supplies=world.life_support(carrier);
     if(!vessel || !vessel->manufactured_order_id || !destination ||
        destination->type!=EntityType::Ship ||
        destination->owner_id!=owner || !world.colony_ship(receiver) ||
-       !world.life_support(receiver))return false;
+       !world.life_support(receiver) || !crew || !supplies ||
+       crew->crew<1 || crew->crew>1000000)return false;
+    // Reserve at least ten *actual* shipboard needs cycles before taking
+    // the crew off assignment; finite supplies are consumed every 20 ticks.
+    // A request cannot conscript a starving hull and call it an NPC service.
+    if(supplies->food_kg<10*crew->crew ||
+       supplies->water_kg<10*crew->crew ||
+       supplies->oxygen_kg<10*crew->crew)return false;
     // A freighter must not be assigned two overlapping lots or hijacked
     // from a pre-existing NPC job; reservation lives in the canonical
     // intercolony freight ledger, not a speculative separate fleet flag.
