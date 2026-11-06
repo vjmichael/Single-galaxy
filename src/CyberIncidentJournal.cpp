@@ -269,6 +269,22 @@ bool CyberIncidentJournal::intake(
         throw;
     }
 }
+std::vector<CyberIncidentSummary> CyberIncidentJournal::for_colony_owner(
+    const PersistentWorld& world,PlayerId authenticated_owner,
+    EntityId colony) const {
+    std::vector<CyberIncidentSummary> permitted;
+    const auto* site=world.world().find(colony);
+    if(!authenticated_owner ||
+       authenticated_owner==Simulation::kServerAuthority ||
+       !site || site->type!=EntityType::Ship ||
+       site->owner_id!=authenticated_owner ||
+       !world.world().colony_ship(colony))
+        return permitted;
+    for(auto& item:summaries())
+        if(item.evidence.jurisdiction_colony==colony)
+            permitted.push_back(std::move(item));
+    return permitted;
+}
 std::vector<CyberIncidentSummary> CyberIncidentJournal::summaries() const {
     verify();
     std::vector<CyberIncidentSummary> output;
