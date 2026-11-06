@@ -171,12 +171,18 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
  <div id="cyberStatus" class="help" role="status" aria-live="polite">Waiting for committed ship electronics.</div>
  <div id="cyberDefense" class="help" role="status" aria-live="polite">Waiting for committed defense state.</div>
  <div id="cyberAlert" class="help" role="status" aria-live="polite">No incoming cyber attack reported.</div>
+ <div id="cyberSensorStatus" class="help" role="status" aria-live="polite">Awaiting real fitted sensors and stealth status.</div>
  <div class="controls" style="padding:8px 0;gap:6px">
   <button type="button" id="cyberFitEmitter" disabled>Fit intrusion emitter</button>
   <button type="button" id="cyberRemoveEmitter" disabled>Remove emitter</button>
   <button type="button" id="cyberFitFirewall" disabled>Fit firewall</button>
   <button type="button" id="cyberRemoveFirewall" disabled>Remove firewall</button>
+  <button type="button" id="cyberFitStealth" disabled>Fit stealth baffle</button>
+  <button type="button" id="cyberRemoveStealth" disabled>Remove stealth baffle</button>
+  <button type="button" id="cyberFitCounterSensor" disabled>Fit counter-ECM sensors</button>
+  <button type="button" id="cyberRemoveCounterSensor" disabled>Remove counter-ECM sensors</button>
  </div>
+ <div class="help">Stealth and counter-ECM require manufactured modules in actual support slots. Stealth narrows detection range; powered scanners and strong arrays recover contacts. Sensor descriptions cannot prove a pilot's identity without a verified hail.</div>
  <div class="help" style="margin-bottom:6px">Module power and isolation operate on fitted hardpoints. Changes take effect only after the simulation commits its next tick.</div>
  <div id="cyberModuleList" role="group" aria-label="Native ship module controls"></div>
  <div class="controls" style="padding:8px 0;gap:6px">
