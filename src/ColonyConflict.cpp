@@ -121,7 +121,16 @@ Decision evaluate(const Simulation& world,EntityId colony,
         // This is a strategic *preparation*, not combat. Crew and stored
         // modules demonstrate a real minimum local capacity; the later real
         // fleet/weapon pipeline must prove arms, ammunition and travel.
-        d.posture=colonyship->crew>=4 && colonyship->modules>=2?
+        // An actually installed, powered intrusion emitter is stronger
+        // operational evidence than merely owning unassigned generic modules.
+        // This remains a strategic intention, never an attack/crime warrant.
+        const auto emitter_slot=site->fitting.hardpoints[0]==3?0u:1u;
+        const bool fitted_cyber_capability=
+            site->fitting.intrusion_emitter() &&
+            world.hardpoint_effective_on(colony,
+                static_cast<std::uint8_t>(emitter_slot));
+        d.posture=colonyship->crew>=4 &&
+            (colonyship->modules>=2 || fitted_cyber_capability)?
             Posture::PrepareRaid:Posture::Warn;
     }
     return d;
