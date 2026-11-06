@@ -11198,6 +11198,7 @@ bool PersistentWorld::submit_npc_cyber_attack(
        opponent->type!=EntityType::Ship ||
        ship->owner_id!=owner || opponent->owner_id==owner ||
        !world_.colony_ship(attacking_ship) ||
+       !world_.passenger_needs_enabled() ||
        !ship->fitting.intrusion_emitter() ||
        p==crew.end() || w==crew.end() ||
        p->second.home_ship!=attacking_ship ||
