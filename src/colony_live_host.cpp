@@ -2103,7 +2103,7 @@ int main(int argc,char** argv){
             // committed ticks. There are no autonomous host-owned attackers
             // at genesis; only genuinely constructed NPC colonies with an
             // existing predatory government and fabricated emitter may act.
-            const auto cyber_pulse=npc_cyber::supervise(world,owner,nonce);
+            const auto cyber_pulse=npc_cyber::supervise(world,owner);
             if(cyber_pulse.queued){
                 announce(world.world(),"NPC_CYBER_QUEUED|"+
                     std::to_string(cyber_pulse.last_attacking_ship)+"|"+
