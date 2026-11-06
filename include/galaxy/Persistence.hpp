@@ -893,6 +893,12 @@ public:
         std::array<std::uint64_t,2> commissioning_crew,
         std::int64_t provisions_kg_each,std::uint64_t requires_directive=0,
         FailPoint fail=FailPoint::None);
+    // WORK-01C: one SQLite-atomic owner delegation of a previously
+    // posted native shuttle job or preplanned sealed freight leg.
+    bool delegate_transport_work_order(PlayerId owner,EntityId origin,
+        std::uint64_t directive_id,WorkTaskKind kind,
+        std::uint64_t source_order,std::uint64_t requires_directive=0,
+        FailPoint fail=FailPoint::None);
     bool cancel_work_directive(PlayerId owner,std::uint64_t directive,
         FailPoint fail=FailPoint::None);
     bool post_local_delivery_order(PlayerId owner,EntityId ship,
