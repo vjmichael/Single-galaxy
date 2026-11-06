@@ -1176,6 +1176,7 @@
      if(e.type==='FLEET_SELECTED'||e.type==='FLEET_FALLBACK'){
        window.GalaxyActivePilotedShipId=e.ship;
        window.GalaxyColonyHomeShipId=e.home;
+       window.GalaxyFleetSelectionChanged?.(e.ship,e.home);
        if(fleetShips.has(e.ship))fleetSelector.value=String(e.ship);
        const selected=fleetShips.get(e.ship);
        fleetPilotState.textContent=(e.type==='FLEET_FALLBACK'?
@@ -1196,6 +1197,10 @@
          storedPilot=e.ship;
          try{window.localStorage?.setItem(pilotSaveKey,String(e.ship));}catch{}
        }
+     }
+     if(e.type==='ERROR'&&e.error==='FLEET_SELECTION_DENIED'){
+       fleetRequested=0;
+       fleetPilotState.textContent='Ship selection denied by authoritative host. Refresh fleet to inspect crew and condition.';
      }
      if(e.type==='FLEET_PILOT_ITEM'){
        if(e.ship===window.GalaxyActivePilotedShipId){
@@ -1671,6 +1676,7 @@
        freighterState.textContent='Native manufacturing generation '+e.generation;
      }
      if(e.type==='FREIGHTER_COMMISSIONED'){
+       window.GalaxyColonyCommand?.('colonyFleetStatus',{});
        let row=[...freighterList.children].find(node=>
          node.dataset.freighterOrder===String(e.order));
        if(!row){
@@ -1691,6 +1697,7 @@
        window.GalaxyColonyCommand?.('colonyFreighterStatus',{});
      }
      if(e.type==='FREIGHTER_LAUNCHED'){
+       window.GalaxyColonyCommand?.('colonyFleetStatus',{});
        freighterState.textContent='Actual freighter ship #'+e.hull+
          ' built under order #'+e.order+' — needs real crew and equipment.';
        window.GalaxyColonyCommand?.('colonyFreighterStatus',{});
