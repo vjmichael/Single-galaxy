@@ -1,5 +1,6 @@
 #include "galaxy/Simulation.hpp"
 #include "galaxy/WorkPlanning.hpp"
+#include "galaxy/Navigation.hpp"
 #include "galaxy/CelestialFrameTransition.hpp"
 #include "galaxy/ShipyardConstructionPreflight.hpp"
 #include "galaxy/TransportIdentity.hpp"
@@ -6239,6 +6240,96 @@ bool Simulation::queue_npc_flight(PlayerId owner,EntityId ship,
     snapshot_version_=std::max(snapshot_version_,95);
     return true;
 }
+// FLIGHT-02: native station approach uses the SAME flight ledger/pilot
+// reservation as celestial travel, and the EXISTING navigation assist plus
+// original ordinary submitted ship controls. No independent flight physics.
+bool Simulation::queue_npc_station_docking(
+        PlayerId owner,EntityId ship,std::uint64_t pilot,
+        EntityId target,std::uint64_t id,NpcFlightPurpose purpose){
+    const auto vessel=entities_.find(ship),station=entities_.find(target);
+    if(!owner || owner==kServerAuthority || !ship || !target ||
+       !id || id>=(std::uint64_t{1}<<40) ||
+       unsigned(purpose)>unsigned(NpcFlightPurpose::Mining) ||
+       npc_flight_orders_.count(id) || npc_flight_orders_.size()>=10000 ||
+       vessel==entities_.end() || station==entities_.end() ||
+       vessel->second.type!=EntityType::Ship ||
+       station->second.type!=EntityType::Station ||
+       vessel->second.owner_id!=owner ||
+       vessel->second.system_id!=station->second.system_id ||
+       !same_local_frame(ship,target) ||
+       !colony_ships_.count(ship) || !life_support_.count(ship) ||
+       vessel->second.jump_state!=ShipJumpState::Ready ||
+       (vessel->second.dock_state!=DockState::InSpace &&
+        vessel->second.dock_state!=DockState::Docked) ||
+       (vessel->second.dock_state==DockState::Docked &&
+        vessel->second.dock_station==target) ||
+       pending_celestial_transits_.size()>=10000 ||
+       active_mining().count(ship))return false;
+    for(const auto& [id,p]:pending_celestial_transits_){
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    for(const auto& [id,v]:voyages_){
+        (void)id;
+        if(v.ferry==ship && (v.status==1 || v.status==3))return false;
+    }
+    for(const auto& [key,shuttle]:planetary_shuttles_){
+        (void)key;
+        if(shuttle.source_ship==ship && shuttle.flight_phase!=0)return false;
+    }
+    for(const auto& [when,commands]:commands_){
+        (void)when;
+        for(const auto& cmd:commands)
+            if(cmd.actor==ship || cmd.target==ship)return false;
+    }
+    std::uint64_t selected=pilot;
+    if(!selected)for(const auto& [id,n]:npcs_){
+        (void)n;
+        if(qualified_npc_flight_pilot(ship,id) &&
+           npc_available_for_duty(id)){selected=id;break;}
+    }
+    if(!qualified_npc_flight_pilot(ship,selected))return false;
+    for(const auto& [id,other]:npc_flight_orders_){
+        (void)id;
+        if((other.phase==NpcFlightPhase::Planned ||
+            other.phase==NpcFlightPhase::InTransit) &&
+           (other.ship==ship || other.pilot_npc==selected))return false;
+    }
+    NpcFlightOrder order{};
+    order.id=id;order.owner=owner;order.ship=ship;
+    order.pilot_npc=selected;order.station=target;
+    order.mode=NpcFlightMode::LocalDock;order.purpose=purpose;
+    order.posted_tick=tick_;
+    npc_flight_orders_.emplace(id,order);
+    snapshot_version_=std::max(snapshot_version_,96);
+    return true;
+}
+// One original command per committed world tick; original submit validates
+// idempotency, issuer and timing, and original execute performs the actual
+// thrust/undock/dock effects on the same authoritative physical ship.
+bool Simulation::submit_npc_local_control(NpcFlightOrder& order,
+        Action action,EntityId target,int tx,int ty){
+    constexpr std::uint64_t kNativeFlightCommandTag=(std::uint64_t{1}<<61);
+    if(order.mode!=NpcFlightMode::LocalDock ||
+       order.local_commands>=511 || order.id>=(std::uint64_t{1}<<40) ||
+       tick_==std::numeric_limits<std::uint64_t>::max())return false;
+    const auto next=static_cast<std::uint16_t>(order.local_commands+1);
+    const auto command_id=kNativeFlightCommandTag |
+        (order.id<<9) | next;
+    if(submitted_ids_.count(command_id))return false;
+    Command c{};
+    c.id=command_id;c.sequence=command_id;c.execute_tick=tick_+1;
+    c.issuer=order.owner;c.actor=order.ship;c.target=target;
+    c.action=action;c.thrust_x=tx;c.thrust_y=ty;
+    if(!submit(c))return false;
+    order.local_commands=next;
+    order.last_local_command=command_id;
+    if(order.phase==NpcFlightPhase::Planned){
+        order.phase=NpcFlightPhase::InTransit;
+        order.started_tick=tick_;
+    }
+    return true;
+}
 bool Simulation::cancel_npc_flight(PlayerId owner,std::uint64_t id){
     const auto it=npc_flight_orders_.find(id);
     if(!owner || owner==kServerAuthority ||
@@ -6333,6 +6424,71 @@ void Simulation::process_npc_flight_navigation(){
     if(snapshot_version_<95)return;
     for(auto& [id,order]:npc_flight_orders_){
         (void)id;
+        if(order.mode==NpcFlightMode::LocalDock){
+            if(order.phase!=NpcFlightPhase::Planned &&
+               order.phase!=NpcFlightPhase::InTransit)continue;
+            const auto ship=entities_.find(order.ship);
+            const auto station=entities_.find(order.station);
+            if(ship==entities_.end() || station==entities_.end() ||
+               ship->second.type!=EntityType::Ship ||
+               station->second.type!=EntityType::Station ||
+               ship->second.owner_id!=order.owner ||
+               ship->second.system_id!=station->second.system_id ||
+               !same_local_frame(order.ship,order.station))continue;
+            // Original station transition supplies the actual arrival.
+            // A scheduled Dock command is NOT proof of being docked.
+            if(ship->second.dock_state==DockState::Docked &&
+               ship->second.dock_station==order.station){
+                if(order.phase==NpcFlightPhase::InTransit){
+                    order.phase=NpcFlightPhase::Arrived;
+                    order.resolved_tick=tick_;
+                }
+                continue;
+            }
+            const auto pilot=npcs_.find(order.pilot_npc);
+            if(pilot==npcs_.end() || pilot->second.home_ship!=order.ship ||
+               pilot->second.role!=NpcRole::Ship){
+                // Revoke an unstarted plan; never delete native commands or
+                // instant-stop a moving hull after physical departure.
+                if(order.phase==NpcFlightPhase::Planned){
+                    order.phase=NpcFlightPhase::Cancelled;
+                    order.resolved_tick=tick_;
+                }
+                continue;
+            }
+            if(!qualified_npc_flight_pilot(order.ship,order.pilot_npc))
+                continue;
+            // A command from any other authority already targeting or
+            // controlling the ship blocks this NPC control tick.
+            bool pending=false;
+            for(const auto& [when,commands]:commands_){
+                (void)when;
+                for(const auto& c:commands)
+                    if(c.actor==order.ship || c.target==order.ship){
+                        pending=true;break;
+                    }
+                if(pending)break;
+            }
+            if(pending || order.local_commands>=511)continue;
+            const auto& actual=ship->second;
+            if(actual.jump_state!=ShipJumpState::Ready ||
+               actual.dock_state==DockState::Docking ||
+               actual.dock_state==DockState::Undocking)continue;
+            if(actual.dock_state==DockState::Docked){
+                (void)submit_npc_local_control(order,
+                    Action::RequestUndock,actual.dock_station);
+                continue;
+            }
+            if(actual.dock_state!=DockState::InSpace)continue;
+            const auto nav=assist_to_station(actual,station->second.position);
+            if(nav.arrived)
+                (void)submit_npc_local_control(
+                    order,Action::RequestDock,order.station);
+            else
+                (void)submit_npc_local_control(
+                    order,Action::Thrust,0,nav.thrust_x,nav.thrust_y);
+            continue;
+        }
         if(order.phase==NpcFlightPhase::InTransit){
             // Once a true departure is committed, only the original
             // completed physical transit receipt can finish the order.
