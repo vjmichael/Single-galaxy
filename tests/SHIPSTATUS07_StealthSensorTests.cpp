@@ -92,10 +92,12 @@ int main(){
         // A regular powered survey scanner can penetrate some stealth, but
         // only within 3 km; turning the hardpoint OFF loses this detection.
         CHECK(perform(world,8,defender,Action::ConfigureExplorationScanner,1,8006)==Outcome::Applied);
+        CHECK(world.world().find(defender)->fitting.hardpoints[0]==3);
+        CHECK(world.world().find(defender)->fitting.hardpoints[1]==1);
         CHECK(world.local_colony_watch_contacts(defender,guard).size()==1);
-        CHECK(perform(world,8,defender,Action::SetHardpointPower,0,8007)==Outcome::Applied);
+        CHECK(perform(world,8,defender,Action::SetHardpointPower,2,8007)==Outcome::Applied);
         CHECK(world.local_colony_watch_contacts(defender,guard).empty());
-        CHECK(perform(world,8,defender,Action::SetHardpointPower,1,8008)==Outcome::Applied);
+        CHECK(perform(world,8,defender,Action::SetHardpointPower,3,8008)==Outcome::Applied);
         const auto seen=world.local_colony_watch_contacts(defender,guard);
         CHECK(seen.size()==1 && seen.front().sensor_detail==ship_sensors::kDetailedClass);
         CHECK(seen.front().observed_description.find("HP_")!=std::string::npos);
