@@ -1425,6 +1425,18 @@ if(BUILD_TESTING)
     COMMAND galaxy_ship01b2_commission_freighter_tests)
 endif()
 
+# SHIP-01F: two separate owners placing, accepting, physically funding
+# six real fabricated modules, building and transferring one hull, followed
+# by purchaser named-NPC commissioning and SQLite crash recovery.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship01f_customer_shipyard_tests
+    tests/SHIP01F_CustomerShipyardTests.cpp)
+  target_link_libraries(galaxy_ship01f_customer_shipyard_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship01f_customer_shipyard
+    COMMAND galaxy_ship01f_customer_shipyard_tests)
+  set_tests_properties(galaxy_ship01f_customer_shipyard PROPERTIES TIMEOUT 180)
+endif()
+
 # SHIP-01D: native fleet list/selection and zero-privilege camera focus tests.
 if(BUILD_TESTING)
   add_executable(galaxy_ship01d_fleet_selection_tests
