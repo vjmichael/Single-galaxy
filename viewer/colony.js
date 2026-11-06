@@ -877,6 +877,80 @@
        guide.action==='colonyMine'||guide.action==='colonyRefine'?{amount:8}:
        guide.action==='colonyFabricate'?{amount:4}:{});
  });
+ // SHIP-01D: one fleet cockpit selector; the resource and factory authority
+ // remains the founding colony ship under all view/flight selections.
+ const fleetPanel=document.createElement('section');
+ fleetPanel.className='card pad';fleetPanel.dataset.fleetPanel='1';
+ const fleetTitle=document.createElement('h2');
+ fleetTitle.textContent='Your Fleet · Active Ship';
+ const fleetHelp=document.createElement('p');
+ fleetHelp.textContent='Choose which commissioned, crewed ship to pilot. Movement, navigation and the local camera follow this vessel; colony inventories, planetary work and shipyards stay at the home colony.';
+ const fleetSelector=document.createElement('select');
+ fleetSelector.setAttribute('aria-label','Choose an owned and crewed vessel');
+ fleetSelector.disabled=true;
+ const fleetSelectButton=document.createElement('button');
+ fleetSelectButton.type='button';fleetSelectButton.textContent='Take control of ship';
+ fleetSelectButton.disabled=true;
+ const fleetHomeButton=document.createElement('button');
+ fleetHomeButton.type='button';fleetHomeButton.textContent='Return to home colony ship';
+ fleetHomeButton.disabled=true;
+ const fleetRefreshButton=document.createElement('button');
+ fleetRefreshButton.type='button';fleetRefreshButton.textContent='Refresh fleet';
+ const fleetPilotState=document.createElement('output');
+ fleetPilotState.textContent='Awaiting verified owned fleet roster.';
+ const fleetAuthority=document.createElement('p');
+ fleetAuthority.textContent='Home colony resource authority remains unchanged.';
+ const fleetControls=document.createElement('div');
+ for(const [label,action,extra] of [
+   ['← Thrust','thrust',{x:-1,y:0}],['→ Thrust','thrust',{x:1,y:0}],
+   ['↑ Thrust','thrust',{x:0,y:-1}],['↓ Thrust','thrust',{x:0,y:1}],
+   ['Drift','thrust',{x:0,y:0}],
+   ['Yaw left','yaw',{delta:-15}],['Yaw right','yaw',{delta:15}]
+ ]){
+   const button=document.createElement('button');
+   button.type='button';button.textContent=label;button.disabled=true;
+   button.addEventListener('click',()=>window.GalaxyColonyCommand?.(action,extra));
+   fleetControls.append(button);
+ }
+ const fleetBody=document.createElement('input');
+ fleetBody.type='number';fleetBody.min='1';fleetBody.step='1';
+ fleetBody.placeholder='Celestial body ID';
+ fleetBody.setAttribute('aria-label','Selected vessel physical travel destination');
+ const fleetTravel=document.createElement('button');
+ fleetTravel.type='button';fleetTravel.textContent='Travel with selected ship';
+ fleetTravel.disabled=true;
+ fleetTravel.addEventListener('click',()=>{
+   const body=Number(fleetBody.value);
+   if(Number.isSafeInteger(body)&&body>0)
+     window.GalaxyColonyCommand?.('colonyFrameTravel',{body});
+ });
+ const fleetActions=document.createElement('div');
+ fleetActions.append(fleetSelector,fleetSelectButton,fleetHomeButton,fleetRefreshButton);
+ const fleetNavigation=document.createElement('div');
+ fleetNavigation.append(fleetBody,fleetTravel);
+ fleetPanel.append(fleetTitle,fleetHelp,fleetActions,fleetAuthority,
+   fleetPilotState,fleetControls,fleetNavigation);
+ const requestFleetShip=ship=>{
+   if(!Number.isSafeInteger(ship)||ship<=0)return;
+   if(!fleetShips.get(ship)?.ready)return;
+   fleetRequested=ship;
+   window.GalaxyColonyCommand?.('colonyFleetSelect',{ship});
+   fleetPilotState.textContent='Switch requested for ship #'+ship+
+     '. Waiting for authenticated native selection receipt.';
+ };
+ fleetSelectButton.addEventListener('click',()=>
+   requestFleetShip(Number(fleetSelector.value)));
+ fleetHomeButton.addEventListener('click',()=>{
+   const home=window.GalaxyColonyHomeShipId;
+   if(Number.isSafeInteger(home)&&home>0)requestFleetShip(home);
+ });
+ fleetRefreshButton.addEventListener('click',()=>
+   window.GalaxyColonyCommand?.('colonyFleetStatus',{}));
+ fleetSelector.addEventListener('change',()=>{
+   const chosen=fleetShips.get(Number(fleetSelector.value));
+   fleetSelectButton.disabled=!chosen?.ready;
+ });
+ q('colonyPanel').insertBefore(fleetPanel,q('colonyPanel').firstChild);
  // First shipyard construction test UI: one global control, not
  // repeated once for every planet. Only native SQLite receipts change state.
  const shipyardPanel=document.createElement('details');
@@ -1048,7 +1122,16 @@
  q('celestialBodyList').parentNode.insertBefore(
    shipyardPanel,q('celestialBodyList'));
  window.GalaxyColony={
-   reset(){signatureContacts.clear();celestialBodies.clear();oasises.clear();localOreTaxonomy.clear();expeditionAssessment=null;
+   reset(){fleetShips.clear();fleetRosterActive=false;fleetRestorePending=true;
+     fleetRequested=0;window.GalaxyActivePilotedShipId=null;
+     fleetSelector.replaceChildren(new Option('Awaiting native fleet roster',''));
+     fleetSelector.disabled=true;fleetSelectButton.disabled=true;
+     fleetHomeButton.disabled=true;
+     fleetPilotState.textContent='Awaiting verified owned fleet roster.';
+     fleetAuthority.textContent='Home colony resource authority remains unchanged.';
+     fleetControls.querySelectorAll('button').forEach(b=>b.disabled=true);
+     fleetTravel.disabled=true;
+     signatureContacts.clear();celestialBodies.clear();oasises.clear();localOreTaxonomy.clear();expeditionAssessment=null;
      q('celestialBodyList').textContent='No physical celestial bodies surveyed yet.';
      q('signatureTarget').replaceChildren(new Option('Scan to detect signals',''));
      q('signatureFocus').disabled=true;q('signatureCancel').disabled=true;
