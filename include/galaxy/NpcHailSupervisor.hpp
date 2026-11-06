@@ -166,12 +166,18 @@ inline InitiationPulse initiate(PersistentWorld& world,
                 std::numeric_limits<sqlite3_int64>::max()-1024))
                 return out;
             try {
+                const auto actual_witness_receipt=++nonce;
                 const auto watched=world.record_colony_watch_contact(
-                    ++nonce,colony,gov.leader_id,contact.foreign_ship);
+                    actual_witness_receipt,colony,gov.leader_id,
+                    contact.foreign_ship);
+                if(watched.world_tick!=world.world().tick() ||
+                   watched.source!=colony ||
+                   watched.foreign_ship!=contact.foreign_ship)
+                    throw std::runtime_error(
+                        "real NPC hail observation was not committed");
                 ++out.witnesses;
                 const auto choice=colony_disposition::assess(
-                    world,colony,watched.world_tick?
-                        nonce:std::uint64_t{0});
+                    world,colony,actual_witness_receipt);
                 const auto posture=choice.decision.posture;
                 const bool lawful_hail=
                     posture==colony_conflict::Posture::RequestAid ||
