@@ -1,4 +1,5 @@
 #include "galaxy/Persistence.hpp"
+#include "galaxy/FleetSelection.hpp"
 #include "galaxy/OrbitalShuttleCommands.hpp"
 #include <chrono>
 #include <filesystem>
@@ -114,6 +115,8 @@ static void scenario(const fs::path& db, bool farming, bool manufactured=false){
         seed.ensure_ship_frame_registry();
         origin=seed.total_ore();
         PersistentWorld w(db.string(),std::move(seed));
+        FleetSelection fleet(7,ship); // home is always industrial authority
+        CHECK(fleet.home()==ship && fleet.piloted()==ship);
         fabricate(w,ship);
         if(manufactured){
             std::vector<std::uint64_t> people;
@@ -142,6 +145,8 @@ static void scenario(const fs::path& db, bool farming, bool manufactured=false){
             CHECK(!w.begin_celestial_transit(7,freighter,chosen.body,92004));
             CHECK(w.commission_shipyard_freighter(7,92001,operating,250));
             CHECK(w.world().freighter_build_orders().at(92001).commissioned());
+            CHECK(fleet.is_ready(w.world(),freighter));
+            CHECK(fleet.piloted()==ship);
             CHECK(w.world().colony_ship(freighter)->crew==2);
             CHECK(w.world().life_support(freighter)->food_kg==250);
             CHECK(w.world().life_support(freighter)->water_kg==250);
@@ -907,8 +912,22 @@ static void scenario(const fs::path& db, bool farming, bool manufactured=false){
             CHECK(plan_failed && w.world().canonical_state()==before_plan);
             CHECK(!w.post_intercolony_work_order(8,ship,key,
                 ShuttleCargo::Nutrients,100,77007,freighter,receiver));
+            if(manufactured){
+                CHECK(fleet_freight_eligible(w.world(),fleet,7,freighter,receiver));
+                CHECK(fleet.select(w.world(),freighter));
+                CHECK(!fleet_freight_eligible(w.world(),fleet,7,freighter,receiver));
+                CHECK(fleet.select(w.world(),ship));
+                CHECK(fleet_freight_eligible(w.world(),fleet,7,freighter,receiver));
+            }
             CHECK(w.post_intercolony_work_order(7,ship,key,
                 ShuttleCargo::Nutrients,100,77007,freighter,receiver));
+            if(manufactured){
+                // The durable work order reserves exactly this hull. A
+                // second job cannot seize it or synthesize inventory.
+                CHECK(!fleet_freight_eligible(w.world(),fleet,7,freighter,receiver));
+                CHECK(fleet.piloted()==ship);
+                CHECK(w.world().freighter_build_orders().at(92001).source_ship==ship);
+            }
             CHECK(w.world().intercolony_freight().at(77007).stage==
                   IntercolonyFreightStage::AwaitingPickup);
             CHECK(w.world().colony_ship(freighter)->goods_kg.count("freight_nutrients")==0);

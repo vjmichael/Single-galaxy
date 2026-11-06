@@ -36,3 +36,5 @@ Current delivered engineering report: [B7.0c Mineral Industry](B7_0c_Mineral_Ind
 - [SHIP-01C — first manufactured freighter actual intercolony delivery, test draft](engineering/SHIP01C_FIRST_MANUFACTURED_FREIGHT_DELIVERY_20261105.md) — real built hull, named crew, planetary work order, verified-when-passed physical freight.
 
 - [SHIP-01D — owner-safe fleet selection and separate colony authority, draft](engineering/SHIP01D_FLEET_SELECTION_AND_PILOT_CONTROL_20261105.md) — real hull roster, active cockpit, native local-frame camera, safe home/flight separation.
+
+- [SHIP-01E — delegated NPC fleet freight assignment, draft](engineering/SHIP01E_DELEGATED_FLEET_FREIGHT_20261105.md) — real commissioned carriers, canonical planetary work orders and physical deliveries; no pilot or resource authority transfer.

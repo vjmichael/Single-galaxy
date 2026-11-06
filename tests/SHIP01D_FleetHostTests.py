@@ -33,6 +33,9 @@ def main(host: pathlib.Path):
             "AUTH|7|FLEET_STATUS",
             "AUTH|7|THRUST|1|0",
             "AUTH|7|YAW|15",
+            # Cannot assign founding ship or an asteroid as a freighter.
+            "AUTH|7|FLEET_WORK_POST|77007|1|2|4294967300|17|36|NUTRIENTS|100",
+            "AUTH|7|FLEET_WORK_POST|77008|2|1|4294967300|17|36|NUTRIENTS|100",
         ])
         if len(re.findall(r"\|FLEET_RESET\n",initial))<2:
             raise AssertionError("Real host did not enumerate fleet twice")
@@ -48,6 +51,8 @@ def main(host: pathlib.Path):
             raise AssertionError("Foreign account was not denied")
         if not re.search(r"\|FLEET_PILOT_ITEM\|1\|",initial):
             raise AssertionError("Real piloted hull telemetry was not published")
+        if len(re.findall(r"\|ERROR\|FLEET_WORK_DENIED",initial))<2:
+            raise AssertionError("Fake/actively piloted fleet work assignment was not denied")
         if "|RESULT|" not in initial or "|APPLIED|" not in initial:
             raise AssertionError("Native owner flight commands were not committed")
         restarted=launch(host,save,["AUTH|7|FLEET_STATUS"])

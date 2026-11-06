@@ -509,3 +509,38 @@ test('SHIP-01D owned fleet receipts enforce home provenance, readiness and stric
   assert.match(host,/bridge.set_focus_ship\(fleet.piloted\(\)\)/);
   assert.match(relay,/FLEET_STATUS/);
 });
+
+test('SHIP-01E fleet freight assignment reuses canonical work board without phantom cargo',()=>{
+  const assignment=decode('COLONY|1|75|FLEET_WORK_ASSIGNED|77007|12|3|151');
+  assert.equal(assignment.order,77007);
+  assert.equal(assignment.carrier,12);
+  assert.equal(assignment.destination,3);
+  assert.equal(assignment.generation,151);
+  assert.equal(decode('COLONY|1|76|ERROR|FLEET_WORK_DENIED').error,
+    'FLEET_WORK_DENIED');
+  const stage=decode('COLONY|1|76|INTERFREIGHT_ITEM|77007|12|3|NUTRIENTS|100|0|0');
+  assert.equal(stage.stage,0);
+  assert.equal(stage.carrier,assignment.carrier);
+  const finished=decode('COLONY|1|91|INTERFREIGHT_ITEM|77007|12|3|NUTRIENTS|100|2|99023');
+  assert.equal(finished.stage,2);
+  assert.equal(finished.receipt,99023);
+  for(const bad of [
+    'COLONY|1|75|FLEET_WORK_ASSIGNED|0|12|3|151',
+    'COLONY|1|75|FLEET_WORK_ASSIGNED|77007|12|12|151',
+    'COLONY|1|75|FLEET_WORK_ASSIGNED|77007|12|3|0',
+    'COLONY|1|75|FLEET_WORK_ASSIGNED|77007|12|3|151|extra',
+    'COLONY|1|76|ERROR|FAKE_FLEET_DELIVERY'
+  ])assert.throws(()=>decode(bad),Error,bad);
+  const ui=fs.readFileSync(path.join(root,'viewer/colony.js'),'utf8');
+  const host=fs.readFileSync(path.join(root,'src/colony_live_host.cpp'),'utf8');
+  const relay=fs.readFileSync(path.join(root,'live/interactive_relay.py'),'utf8');
+  const policy=fs.readFileSync(path.join(root,'include/galaxy/FleetSelection.hpp'),'utf8');
+  assert.match(ui,/Assign NPC freighter delivery/);
+  assert.match(ui,/colonyFleetWorkPost/);
+  assert.match(ui,/FLEET_WORK_ASSIGNED/);
+  assert.match(host,/post_intercolony_work_order/);
+  assert.match(host,/FLEET_WORK_POST/);
+  assert.match(host,/leg.carrier_ship==fleet.piloted\(\)/);
+  assert.match(relay,/FLEET_WORK_POST/);
+  assert.match(policy,/fleet_freight_eligible/);
+});
