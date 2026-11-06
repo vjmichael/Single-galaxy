@@ -74,6 +74,13 @@ public:
     }
     bool is_ready(const Simulation& world,EntityId ship) const {
         if(owner_==0 || owner_==Simulation::kServerAuthority)return false;
+        // v98+: cockpit selection is not teleportation. A physically
+        // registered player can pilot only the actual vessel occupied, and
+        // no owned vessel while rescued/detained on somebody else's ship.
+        const auto person=world.player_people().find(owner_);
+        if(person!=world.player_people().end() &&
+           (person->second.state!=PlayerPersonState::AboardOwnShip ||
+            person->second.physical_ship!=ship))return false;
         const auto* e=world.find(ship);
         if(!e || e->owner_id!=owner_ || e->type!=EntityType::Ship)return false;
         if(ship==home_)
