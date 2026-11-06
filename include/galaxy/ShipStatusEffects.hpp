@@ -119,6 +119,7 @@ public:
         }
         return view;
     }
+    bool contains_id(std::uint64_t id) const noexcept {return effects_.count(id)!=0;}
     std::vector<Effect> records() const {
         std::vector<Effect> out;
         for(const auto& [id,e]:effects_){(void)id;out.push_back(e);}
