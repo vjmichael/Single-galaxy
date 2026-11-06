@@ -84,11 +84,20 @@ struct CyberIncidentJournal::State {
 CyberIncidentJournal::CyberIncidentJournal(
     std::string original_world_db_path):state_(new State){
     try {
+        // A security casebook cannot create a second pretend game/world DB.
+        // The existing PersistentWorld must already own this SQLite save.
         if(sqlite3_open_v2(original_world_db_path.c_str(),&state_->db,
-              SQLITE_OPEN_READWRITE|SQLITE_OPEN_CREATE|SQLITE_OPEN_FULLMUTEX,
+              SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX,
               nullptr)!=SQLITE_OK)
-            throw std::runtime_error("cyber casebook failed to open world SQLite");
+            throw std::runtime_error("cyber casebook failed to open existing world SQLite");
         sqlite3_busy_timeout(state_->db,10000);
+        {
+            Statement schema(state_->db,
+                "SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='snapshots'");
+            if(sqlite3_step(schema.stmt)!=SQLITE_ROW)
+                throw std::runtime_error("cyber casebook requires original world snapshots");
+        }
         exec(state_->db,"PRAGMA foreign_keys=ON");
         exec(state_->db,
             "CREATE TABLE IF NOT EXISTS sg_ship_status07_incidents ("
