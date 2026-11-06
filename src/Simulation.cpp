@@ -11398,46 +11398,83 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                ship->second.type!=EntityType::Ship ||
                ship->second.owner_id!=flight.owner ||
                !result.colony_ships_.count(flight.ship) ||
-               !result.life_support_.count(flight.ship) ||
-               !distinct_requests.insert(flight.transit_request).second)
-                throw std::runtime_error("snapshot: forged NPC flight owner or transit identity");
-            const auto pending=result.pending_celestial_transits_.find(
-                flight.transit_request);
-            const auto done=result.completed_celestial_transits_.find(
-                flight.transit_request);
-            if(flight.phase==NpcFlightPhase::Planned ||
-               flight.phase==NpcFlightPhase::Cancelled){
-                if(pending!=result.pending_celestial_transits_.end() ||
-                   done!=result.completed_celestial_transits_.end())
-                    throw std::runtime_error("snapshot: unstarted NPC flight has physical travel receipt");
-            }else if(flight.phase==NpcFlightPhase::InTransit){
-                if(pending==result.pending_celestial_transits_.end() ||
-                   done!=result.completed_celestial_transits_.end() ||
-                   pending->second.owner!=flight.owner ||
-                   pending->second.ship!=flight.ship ||
-                   pending->second.destination_body!=flight.destination_body ||
-                   pending->second.started_tick!=flight.started_tick)
-                    throw std::runtime_error("snapshot: NPC flight has no original pending voyage");
+               !result.life_support_.count(flight.ship))
+                throw std::runtime_error("snapshot: forged NPC flight ship owner");
+            if(flight.mode==NpcFlightMode::Celestial){
+                // Existing FLIGHT-01 physical v72 receipts remain unchanged.
+                if(!distinct_requests.insert(flight.transit_request).second)
+                    throw std::runtime_error("snapshot: duplicate celestial flight receipt");
+                const auto pending=result.pending_celestial_transits_.find(
+                    flight.transit_request);
+                const auto done=result.completed_celestial_transits_.find(
+                    flight.transit_request);
+                if(flight.phase==NpcFlightPhase::Planned ||
+                   flight.phase==NpcFlightPhase::Cancelled){
+                    if(pending!=result.pending_celestial_transits_.end() ||
+                       done!=result.completed_celestial_transits_.end())
+                        throw std::runtime_error("snapshot: unstarted NPC flight has physical travel receipt");
+                }else if(flight.phase==NpcFlightPhase::InTransit){
+                    if(pending==result.pending_celestial_transits_.end() ||
+                       done!=result.completed_celestial_transits_.end() ||
+                       pending->second.owner!=flight.owner ||
+                       pending->second.ship!=flight.ship ||
+                       pending->second.destination_body!=flight.destination_body ||
+                       pending->second.started_tick!=flight.started_tick)
+                        throw std::runtime_error("snapshot: NPC flight has no original pending voyage");
+                }else{
+                    if(pending!=result.pending_celestial_transits_.end() ||
+                       done==result.completed_celestial_transits_.end() ||
+                       done->second.owner!=flight.owner ||
+                       done->second.ship!=flight.ship ||
+                       done->second.destination_body!=flight.destination_body ||
+                       done->second.completed_tick!=flight.resolved_tick)
+                        throw std::runtime_error("snapshot: NPC flight arrived without physical receipt");
+                }
             }else{
-                if(pending!=result.pending_celestial_transits_.end() ||
-                   done==result.completed_celestial_transits_.end() ||
-                   done->second.owner!=flight.owner ||
-                   done->second.ship!=flight.ship ||
-                   done->second.destination_body!=flight.destination_body ||
-                   done->second.completed_tick!=flight.resolved_tick)
-                    throw std::runtime_error("snapshot: NPC flight arrived without physical receipt");
+                // FLIGHT-02 uses the SAME existing real ship/dock control.
+                // A queued command alone never proves station arrival.
+                const auto target=result.entities_.find(flight.station);
+                if(result.snapshot_version_<96 ||
+                   target==result.entities_.end() ||
+                   target->second.type!=EntityType::Station ||
+                   target->second.system_id!=ship->second.system_id ||
+                   !result.same_local_frame(flight.ship,flight.station))
+                    throw std::runtime_error("snapshot: impossible NPC docking target");
+                if(flight.local_commands){
+                    if(!result.submitted_ids_.count(flight.last_local_command))
+                        throw std::runtime_error("snapshot: missing original NPC ship command");
+                }
+                if(flight.phase==NpcFlightPhase::Arrived){
+                    const bool docked=ship->second.dock_state==DockState::Docked &&
+                        ship->second.dock_station==flight.station;
+                    bool applied=false,dock_receipt=false;
+                    for(const auto& ev:result.events_)
+                        if(ev.command_id==flight.last_local_command &&
+                           ev.result==Outcome::Applied)applied=true;
+                    for(const auto& event:result.activity_events_)
+                        if(event.kind==ActivityKind::Docked &&
+                           event.actor==flight.ship &&
+                           event.target==flight.station &&
+                           event.tick>=flight.started_tick &&
+                           event.tick<=flight.resolved_tick)
+                            dock_receipt=true;
+                    if(!docked || !applied || !dock_receipt)
+                        throw std::runtime_error("snapshot: false NPC station arrival");
+                }
+                if(flight.phase==NpcFlightPhase::InTransit &&
+                   ship->second.dock_state==DockState::Docked &&
+                   ship->second.dock_station==flight.station){
+                    // Docked transition and coordinator receipt can be one
+                    // tick apart; this phase is still recoverable.
+                }
             }
             if(flight.phase==NpcFlightPhase::Planned ||
                flight.phase==NpcFlightPhase::InTransit){
                 if(!active_ships.insert(flight.ship).second ||
                    !active_pilots.insert(flight.pilot_npc).second)
                     throw std::runtime_error("snapshot: NPC pilot or ship assigned to two flights");
-                // A real person may subsequently die or be relocated
-                // by a separately authorized host action. The original
-                // pilot identity must still exist either as a current
-                // named NPC or as the durable physical casualty tombstone.
-                // The next native tick cancels a merely planned flight;
-                // an already underway physical transit can still resolve.
+                // Real casualties retain canonical tombstones; the native
+                // worker reconciler cancels an unstarted stale pilot order.
                 if(!result.npcs_.count(flight.pilot_npc) &&
                    !result.casualties_.count(flight.pilot_npc))
                     throw std::runtime_error("snapshot: flight pilot has no canonical identity");
