@@ -12,7 +12,8 @@ namespace galaxy::colony_disposition {
 enum class TerritoryFailPoint : std::uint8_t {None=0,AfterInsert=1};
 enum class TerritoryEventKind : std::uint8_t {
     Claim=1, Invite=2, RevokeInvitation=3, Warning=4, Trespass=5,
-    Expulsion=6, NoticeAcknowledged=7, NoticeRefused=8
+    Expulsion=6, NoticeAcknowledged=7, NoticeRefused=8,
+    VoluntaryHail=9
 };
 
 struct TerritoryEvent {
@@ -68,6 +69,14 @@ public:
     bool respond_to_notice(const PersistentWorld& world,PlayerId visitor_owner,
               EntityId colony,EntityId visiting_ship,std::uint64_t notice_id,
               std::uint64_t reply_id,bool refuse,
+              TerritoryFailPoint fail=TerritoryFailPoint::None);
+    // The authenticated visiting owner may identify the currently piloted
+    // physical hull by choice. A real duty-eligible named colony witness
+    // and a live claim are required; no warning or automatic response is
+    // fabricated. This does not establish the pilot at an earlier offense.
+    bool voluntary_hail(const PersistentWorld& world,PlayerId visitor_owner,
+              EntityId colony,EntityId visiting_ship,
+              std::uint64_t observer_npc,std::uint64_t hail_event_id,
               TerritoryFailPoint fail=TerritoryFailPoint::None);
     std::vector<TerritoryEvent> pending_notices(const PersistentWorld& world,
               PlayerId visitor_owner) const;
