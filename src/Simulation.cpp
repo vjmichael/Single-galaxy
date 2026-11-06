@@ -8518,8 +8518,12 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 updated=u64(f[13]),resolved=u64(f[14]);
             if(!id || id>=(std::uint64_t{1}<<50) ||
                !owner || owner==kServerAuthority || !ship ||
-               kind!=unsigned(WorkTaskKind::CustomerShipOrder) ||
+               (kind!=unsigned(WorkTaskKind::LocalDelivery) &&
+                kind!=unsigned(WorkTaskKind::IntercolonyFreight) &&
+                kind!=unsigned(WorkTaskKind::CustomerShipOrder)) ||
                !source || source>=(std::uint64_t{1}<<50) ||
+               (kind!=unsigned(WorkTaskKind::CustomerShipOrder) &&
+                (first || second || provisions)) ||
                (dependency && dependency>=id) ||
                ((first==0)!=(second==0)) ||
                (first && first==second) ||
@@ -8533,7 +8537,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                ((status!=0) && resolved<posted) ||
                result.work_directives_.size()>=10000 ||
                !result.work_directives_.emplace(id,WorkDirective{
-                   id,owner,ship,WorkTaskKind::CustomerShipOrder,
+                   id,owner,ship,static_cast<WorkTaskKind>(kind),
                    source,dependency,{first,second},provisions,
                    static_cast<WorkDirectiveStatus>(status),
                    static_cast<WorkBlock>(blocked),
@@ -10960,22 +10964,17 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
         }
     }
     if(result.snapshot_version_>=94) {
-        std::set<std::uint64_t> exclusive_active;
+        std::set<std::pair<WorkTaskKind,std::uint64_t>> exclusive_active;
         for(const auto& [id,directive]:result.work_directives_){
-            const auto contract=result.shipyard_customer_orders_.find(
-                directive.source_order);
             const auto ship=result.entities_.find(directive.colony_ship);
-            if(contract==result.shipyard_customer_orders_.end() ||
-               contract->second.customer_owner!=directive.owner ||
-               contract->second.customer_ship!=directive.colony_ship ||
-               ship==result.entities_.end() ||
+            if(ship==result.entities_.end() ||
                ship->second.type!=EntityType::Ship ||
                ship->second.owner_id!=directive.owner ||
                !result.colony_ships_.count(directive.colony_ship) ||
                !result.life_support_.count(directive.colony_ship))
                 throw std::runtime_error("snapshot: delegation has no original owner");
             if(directive.status!=WorkDirectiveStatus::Cancelled &&
-               !exclusive_active.insert(directive.source_order).second)
+               !exclusive_active.insert({directive.kind,directive.source_order}).second)
                 throw std::runtime_error("snapshot: duplicate active delegated work");
             if(directive.requires_directive){
                 const auto parent=result.work_directives_.find(
@@ -10988,6 +10987,45 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                     parent->second.status!=WorkDirectiveStatus::Fulfilled))
                     throw std::runtime_error("snapshot: work dependency/cycle forged");
             }
+            if(directive.kind==WorkTaskKind::LocalDelivery ||
+               directive.kind==WorkTaskKind::IntercolonyFreight){
+                // Freight and its prerequisite site pickup legitimately
+                // share one source ID; both retain separate native receipts.
+                const auto pickup=result.local_delivery_orders_.find(
+                    directive.source_order);
+                if(pickup==result.local_delivery_orders_.end() ||
+                   pickup->second.owner!=directive.owner ||
+                   pickup->second.board_ship!=directive.colony_ship)
+                    throw std::runtime_error("snapshot: forged transport delegation origin");
+                if(directive.kind==WorkTaskKind::LocalDelivery){
+                    if(directive.status==WorkDirectiveStatus::Fulfilled &&
+                       pickup->second.stage!=LocalDeliveryStage::Complete)
+                        throw std::runtime_error("snapshot: unproven shuttle completion");
+                }else{
+                    const auto freight=result.intercolony_freight_.find(
+                        directive.source_order);
+                    if((freight==result.intercolony_freight_.end() &&
+                        directive.status!=WorkDirectiveStatus::Cancelled) ||
+                       (freight!=result.intercolony_freight_.end() &&
+                        (freight->second.owner!=directive.owner ||
+                         freight->second.source_ship!=directive.colony_ship ||
+                         freight->second.cargo!=pickup->second.cargo ||
+                         freight->second.kilograms!=pickup->second.kilograms)))
+                        throw std::runtime_error("snapshot: forged freight delegation");
+                    if(directive.status==WorkDirectiveStatus::Fulfilled &&
+                       (freight==result.intercolony_freight_.end() ||
+                        freight->second.stage!=IntercolonyFreightStage::Delivered ||
+                        !freight->second.arrival_receipt))
+                        throw std::runtime_error("snapshot: unproven native freight arrival");
+                }
+                continue;
+            }
+            const auto contract=result.shipyard_customer_orders_.find(
+                directive.source_order);
+            if(contract==result.shipyard_customer_orders_.end() ||
+               contract->second.customer_owner!=directive.owner ||
+               contract->second.customer_ship!=directive.colony_ship)
+                throw std::runtime_error("snapshot: delegation has no original customer");
             if(directive.status==WorkDirectiveStatus::Fulfilled){
                 if(contract->second.stage!=ShipyardCustomerStage::Delivered)
                     throw std::runtime_error("snapshot: work completed without hull");
