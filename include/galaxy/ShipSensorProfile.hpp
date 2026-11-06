@@ -73,9 +73,13 @@ inline std::string description_at_detail(const Simulation& world,
             "|SUPPORT_COUNT_"+std::to_string(
                 int(t->fitting.support[0]!=0)+int(t->fitting.support[1]!=0));
     if(detail>=kHighResolutionClass)
-        result+="|BUILD_"+std::to_string(t->manufactured_order_id)+
-            "|SUPPORT_"+std::to_string(unsigned(t->fitting.support[0]))+
-            "_"+std::to_string(unsigned(t->fitting.support[1]));
+        result+="|SUPPORT_"+std::to_string(unsigned(t->fitting.support[0]))+
+            "_"+std::to_string(unsigned(t->fitting.support[1]))+
+            "|SUBSYSTEM_"+std::to_string(unsigned(t->fitting.subsystems[0]))+
+            "_"+std::to_string(unsigned(t->fitting.subsystems[1]))+
+            "|RIG_"+std::to_string(unsigned(t->fitting.rigging[0]));
+    // Manufacturing receipt IDs are private provenance and must NOT leak
+    // through a high-resolution optical sensor as a magic registration lookup.
     return result;
 }
 inline std::string description(const Simulation& world,
