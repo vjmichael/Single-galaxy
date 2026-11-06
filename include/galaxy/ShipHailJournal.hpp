@@ -676,15 +676,34 @@ public:
         Result result{};
         const auto* ship=world.world().find(source);
         if(!principal || !ship || ship->owner_id!=principal)return result;
+        std::map<EntityId,std::uint64_t> by_recipient;
         for(const auto& e:history()){
             if(e.kind==Kind::Abuse && e.caller_owner==principal){
-                result.penalty_points=std::max(
-                    result.penalty_points,e.penalty_points);
+                auto& count=by_recipient[e.recipient_ship];
+                count=std::max(count,e.penalty_points);
                 result.cooldown_until=std::max(
                     result.cooldown_until,e.cooldown_until);
                 result.law_review_eligible=
                     result.law_review_eligible||e.law_review_eligible;
             }
+        }
+        for(const auto& p:overflow_history()){
+            if(p.caller_owner!=principal)continue;
+            auto& count=by_recipient[p.recipient_ship];
+            count=std::max(count,p.total_points);
+            result.cooldown_until=std::max(
+                result.cooldown_until,p.cooldown_until);
+            result.law_review_eligible=true;
+        }
+        // Owner reputation is the SUM over genuinely verified targets,
+        // not just the highest per-target strike sequence. The fixed-length
+        // detailed evidence journal is not a cap on cumulative penalties.
+        const auto limit=std::uint64_t(
+            std::numeric_limits<sqlite3_int64>::max());
+        for(const auto& [recipient,points]:by_recipient){
+            (void)recipient;
+            result.penalty_points=points>limit-result.penalty_points?
+                limit:result.penalty_points+points;
         }
         return result;
     }
