@@ -77,6 +77,14 @@ inline Status dispatch_observed_patrol(
        observed.foreign_owner!=target->owner_id ||
        observed.world_tick!=world.world().tick())
         return Status::NoAuthority;
+    const auto& crew=world.world().npc_records();
+    const auto watch=crew.find(observed.observer_npc);
+    if(!world.world().colony_ship(patrol_ship) ||
+       !world.world().passenger_needs_enabled() ||
+       watch==crew.end() || watch->second.home_ship!=patrol_ship ||
+       watch->second.location!=patrol_ship || watch->second.transport_id ||
+       !world.world().npc_available_for_duty(observed.observer_npc))
+        return Status::NoAuthority;
     const auto verified=colony_defense::observe_local_contacts(
         world.world(),patrol_ship,observed.observer_npc);
     const auto real=std::find_if(verified.begin(),verified.end(),
