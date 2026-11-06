@@ -6,6 +6,7 @@
 #include "galaxy/OrbitalShuttleCommands.hpp"
 #include "galaxy/Galaxy.hpp"
 #include "galaxy/ClientContract.hpp"
+#include "galaxy/FleetSelection.hpp"
 #include "galaxy/ColonySafety.hpp"
 #include <algorithm>
 #include <chrono>
@@ -450,7 +451,7 @@ EntityId nearest(const Simulation& w, EntityId ship){
     }
     return chosen;
 }
-void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uint64_t& nonce,PlayerId principal,std::set<std::uint64_t>& pending_scans,std::set<std::uint64_t>& pending_probe_scans,SurveyArchive* knowledge){
+void apply(PersistentWorld& world,EntityId ship,FleetSelection& fleet,const std::string& line,std::uint64_t& nonce,PlayerId principal,std::set<std::uint64_t>& pending_scans,std::set<std::uint64_t>& pending_probe_scans,SurveyArchive* knowledge){
     if(principal!=owner){announce(world.world(),"ERROR|UNAUTHORIZED_PRINCIPAL");return;}
     const auto v=split(line);if(v.empty())return;
     if(v.size()==1 && v[0]=="SCAN"){
@@ -509,6 +510,45 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
             announce(world.world(),"SHIPYARD_DONE|"+std::to_string(count));
         }catch(const std::exception&){
             announce(world.world(),"ERROR|SHIPYARD_DENIED");
+        }
+        return;
+    }
+    // SHIP-01D: selecting a cockpit changes only which physical hull receives
+    // flight commands. All industrial / colony work commands still use ship,
+    // the original owner resource authority. Foreign and uncommissioned
+    // vessels are rejected by FleetSelection against the real world.
+    if(!v.empty() && (v[0]=="FLEET_STATUS" || v[0]=="FLEET_SELECT")){
+        try{
+            if(v[0]=="FLEET_SELECT"){
+                if(v.size()!=2)throw std::invalid_argument("bad fleet selection");
+                const auto requested=integer(v[1]);
+                if(requested<=0 ||
+                   !fleet.select(world.world(),EntityId(requested)))
+                    throw std::invalid_argument("ship is not pilot-ready");
+            }else if(v.size()!=1)
+                throw std::invalid_argument("bad fleet status request");
+            announce(world.world(),"FLEET_RESET");
+            std::size_t count=0;
+            for(const auto& item:fleet.list(world.world())){
+                announce(world.world(),"FLEET_ITEM|"+
+                    std::to_string(item.ship)+"|"+
+                    std::to_string(item.manufacture_order)+"|"+
+                    std::to_string(item.home?1:0)+"|"+
+                    std::to_string(item.ready?1:0)+"|"+
+                    std::to_string(item.crew)+"|"+
+                    std::to_string(item.anchor_body)+"|"+
+                    std::to_string(item.food_kg)+"|"+
+                    std::to_string(item.water_kg)+"|"+
+                    std::to_string(item.oxygen_kg));
+                ++count;
+            }
+            announce(world.world(),"FLEET_DONE|"+std::to_string(count));
+            announce(world.world(),"FLEET_SELECTED|"+
+                std::to_string(fleet.piloted())+"|"+
+                std::to_string(fleet.home())+"|"+
+                std::to_string(world.generation()));
+        }catch(const std::exception&){
+            announce(world.world(),"ERROR|FLEET_SELECTION_DENIED");
         }
         return;
     }
@@ -717,7 +757,8 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
             if(raw<=0)throw std::invalid_argument("invalid celestial target");
             const auto body=static_cast<std::uint64_t>(raw);
             const auto request=++nonce;
-            if(!world.begin_celestial_transit(principal,ship,body,request))
+            if(!fleet.is_ready(world.world(),fleet.piloted()) ||
+               !world.begin_celestial_transit(principal,fleet.piloted(),body,request))
                 announce(world.world(),"ERROR|FRAME_TRAVEL_DENIED");
             else announce(world.world(),"FRAME_TRANSIT_STARTED|"+
                 std::to_string(request)+"|"+std::to_string(body));
@@ -1396,6 +1437,8 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
         if(v.size()==3 && v[0]=="THRUST"){
             auto x=integer(v[1]),y=integer(v[2]);
             if(x<-1||x>1||y<-1||y>1)throw std::invalid_argument("bad thrust");
+            if(!fleet.is_ready(world.world(),fleet.piloted()))throw std::invalid_argument("pilot unavailable");
+            c.actor=fleet.piloted();
             c.action=Action::Thrust;c.thrust_x=static_cast<int>(x);c.thrust_y=static_cast<int>(y);
         }else if(v.size()==3 && v[0]=="SALVAGE_WRECK"){
             const auto target=integer(v[1]),amount=integer(v[2]);
@@ -1459,6 +1502,8 @@ void apply(PersistentWorld& world,EntityId ship,const std::string& line,std::uin
         }else if(v.size()==2 && v[0]=="YAW"){
             const auto delta=integer(v[1]);
             if(delta!=15 && delta!=-15)throw std::invalid_argument("bad yaw");
+            if(!fleet.is_ready(world.world(),fleet.piloted()))throw std::invalid_argument("pilot unavailable");
+            c.actor=fleet.piloted();
             c.action=Action::Thrust;c.amount=delta;
         }else if(v.size()==2 && v[0]=="MINE"){
             c.amount=integer(v[1]);if(c.amount<1||c.amount>100)throw std::invalid_argument("bad mine amount");
@@ -1688,10 +1733,13 @@ int main(int argc,char** argv){
             survey_knowledge.reset();
         }
         std::random_device rd;auto stream=(std::uint64_t(rd())<<32)^rd();if(!stream)stream=1;
-        ServerViewBridge bridge(world.world(),stream,owner);
+        FleetSelection fleet(owner,ship);
+        ServerViewBridge bridge(world.world(),stream,owner,fleet.piloted());
         std::cout<<encode_frame(bridge.snapshot())<<std::flush;
         announce(world.world(),was_saved?"RESUMED":"NEW_COLONY");
         status(world.world(),ship,true);
+        // The initial selection is always the actual home ship. A browser
+        // may restore a prior preference, but native selection revalidates it.
         std::uint64_t nonce=900000000000ULL+world.generation();
         std::set<std::uint64_t> pending_scans,pending_probe_scans;
         std::size_t known_discoveries=world.world().discoveries().size();
@@ -1707,7 +1755,7 @@ int main(int argc,char** argv){
             poll_input();
             const auto to_apply=std::move(commands);commands.clear();
             for(const auto& line:to_apply){
-                if(!authenticated_transport){apply(world,ship,line,nonce,owner,pending_scans,pending_probe_scans,survey_knowledge.get());continue;}
+                if(!authenticated_transport){apply(world,ship,fleet,line,nonce,owner,pending_scans,pending_probe_scans,survey_knowledge.get());continue;}
                 // The trusted relay supplies a resolved account ID over our
                 // private stdin pipe; unprefixed/forged/foreign commands fail
                 // closed even if relay validation is accidentally bypassed.
@@ -1718,7 +1766,7 @@ int main(int argc,char** argv){
                     const auto principal=integer(line.substr(first+1,second-first-1));
                     if(principal!=static_cast<std::int64_t>(owner))
                         throw std::invalid_argument("foreign colony command");
-                    apply(world,ship,line.substr(second+1),nonce,static_cast<PlayerId>(principal),pending_scans,pending_probe_scans,survey_knowledge.get());
+                    apply(world,ship,fleet,line.substr(second+1),nonce,static_cast<PlayerId>(principal),pending_scans,pending_probe_scans,survey_knowledge.get());
                 }catch(const std::exception&){announce(world.world(),"ERROR|UNAUTHORIZED_PRINCIPAL");}
             }
             const auto old=world.world().events().size();
@@ -1743,6 +1791,13 @@ int main(int argc,char** argv){
                 if(leg.owner==owner && leg.source_ship==ship)
                     prior_freight.emplace(id,leg.stage);
             world.step();
+            if(fleet.reconcile(world.world())) {
+                announce(world.world(),"FLEET_FALLBACK|"+
+                    std::to_string(fleet.piloted())+"|"+
+                    std::to_string(fleet.home())+"|"+
+                    std::to_string(world.generation()));
+            }
+            bridge.set_focus_ship(fleet.piloted());
             // Published only after atomic world-step commit. Each status
             // comes from the real work board; no guessed completion.
             for(const auto& [id,job]:world.world().local_delivery_board()) {
@@ -1960,6 +2015,26 @@ int main(int argc,char** argv){
             }
             std::cout<<encode_frame(bridge.after_committed_step(world.world()))<<std::flush;
             status(world.world(),ship,scanned);
+            // Player cockpit is not the home colony's management actor.
+            // Publish these independently so camera, heading and supplies
+            // describe the hull actually selected for flight.
+            if(const auto* e=world.world().find(fleet.piloted())) {
+                const auto* c=world.world().colony_ship(fleet.piloted());
+                const auto* life=world.world().life_support(fleet.piloted());
+                const auto frame=world.world().ship_frames().find(fleet.piloted());
+                if(c && life && frame!=world.world().ship_frames().end())
+                    announce(world.world(),"FLEET_PILOT_ITEM|"+
+                        std::to_string(fleet.piloted())+"|"+
+                        std::to_string(e->heading_deg)+"|"+
+                        std::to_string(e->position.x)+"|"+
+                        std::to_string(e->position.y)+"|"+
+                        std::to_string(frame->second.anchor_body)+"|"+
+                        std::to_string(c->crew)+"|"+
+                        std::to_string(life->food_kg)+"|"+
+                        std::to_string(life->water_kg)+"|"+
+                        std::to_string(life->oxygen_kg)+"|"+
+                        std::to_string(world.generation()));
+            }
             std::this_thread::sleep_until(start+period);
         }
         std::cerr<<"B7_0E COLONY HOST COMPLETED generation="<<world.generation()<<'\n';
