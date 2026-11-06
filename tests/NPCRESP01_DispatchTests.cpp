@@ -14,9 +14,12 @@ int main(){
     Simulation initial(90103);
     auto npc=initial.add_colony_ship(7,{0,0},100,6);
     initial.provision_colony_genesis(npc,2000,2000,2000,2000,2000);
+    auto patrol=initial.add_colony_ship(7,{0,5000},100,4);
+    initial.provision_colony_genesis(patrol,2000,2000,2000,2000,2000);
     auto player_ship=initial.add_ship(7,{10000,0},100);
-    auto other=initial.add_ship(9,{14000,0},100);
+    auto other=initial.add_ship(9,{4000,5000},100);
     initial.enable_individual_workforce();
+    initial.enable_passenger_life_support();
     const auto ore=initial.total_ore();
     std::string committed;
     {
@@ -33,6 +36,23 @@ int main(){
       try{(void)dispatch(world,req,FailPoint::AfterSnapshotWrite);}
       catch(const std::exception&){failed=true;}
       CHECK(failed && world.world().canonical_state()==before);
+      std::uint64_t observer=0;
+      for(const auto& [id,n]:world.world().npc_records())
+          if(n.home_ship==patrol && n.location==patrol &&
+             world.world().npc_available_for_duty(id)){
+              observer=id;break;
+          }
+      CHECK(observer);
+      const auto contacts=colony_defense::observe_local_contacts(
+          world.world(),patrol,observer);
+      const auto seen=std::find_if(contacts.begin(),contacts.end(),
+          [&](const colony_defense::Contact& c){return c.foreign_ship==other;});
+      CHECK(seen!=contacts.end());
+      auto fake=*seen;fake.foreign_ship=player_ship;fake.foreign_owner=7;
+      CHECK(dispatch_observed_patrol(world,7,patrol,0,fake,98002)==Status::NoAuthority);
+      CHECK(dispatch_observed_patrol(world,8,patrol,0,*seen,98002)==Status::WrongOwner);
+      CHECK(dispatch_observed_patrol(world,7,patrol,0,*seen,98002)==Status::Accepted);
+      CHECK(world.world().npc_flight_orders().at(98002).purpose==NpcFlightPurpose::Patrol);
       CHECK(dispatch(world,req)==Status::Accepted);
       CHECK(dispatch(world,req)==Status::Refused);
       CHECK(world.world().npc_flight_orders().at(98001).purpose==NpcFlightPurpose::Rescue);
@@ -45,7 +65,7 @@ int main(){
       CHECK(arrived);
       CHECK(world.world().npc_flight_orders().at(98001).phase==NpcFlightPhase::Arrived);
       CHECK(world.world().total_ore()==ore);
-      CHECK(world.world().npc_records().size()==6);
+      CHECK(world.world().npc_records().size()==10);
       CHECK(world.world().colony_ship(npc)->crew==6);
       committed=world.world().canonical_state();
       CHECK(Simulation::from_snapshot(committed).canonical_state()==committed);
@@ -57,7 +77,7 @@ int main(){
       CHECK(recovered.world().npc_flight_orders().at(98001).phase==NpcFlightPhase::Arrived);
     }
     fs::remove(db);fs::remove(db+"-wal");fs::remove(db+"-shm");
-    std::cout<<"PASS NPC-RESP-01: owner dispatch, no unauthorized enforcement, original pursuit and SQLite recovery\n";
+    std::cout<<"PASS NPC-RESP-01: owner rescue, real foreign watch patrol, no unauthorized enforcement and SQLite recovery\n";
     return 0;
  }catch(const std::exception& e){
     std::cerr<<"FAIL NPC-RESP-01: "<<e.what()<<'\n';
