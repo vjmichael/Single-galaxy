@@ -1,3 +1,9 @@
+## Current engineering checkpoint — 2026-11-06 (stacked draft work)
+
+For the **current SHIP-STATUS/ship cyber and hailing program**, consult [the actively maintained task and verification ledger](engineering/ACTIVE_WORK_AND_ACCEPTANCE_2026-11-06.md) first, then [the hardcoded hail anti-harassment contract](engineering/SHIPSTATUS07E_HAIL_ABUSE_ESCALATION_20261106.md), [authenticated case desk](engineering/SHIPSTATUS07D_AUTHENTICATED_HAIL_SECURITY_DESK_20261106.md) and [original cyber incident evidence/stealth](engineering/SHIPSTATUS07_CYBER_INCIDENT_INTAKE_20261106.md). The older milestone sections retained below are historical provenance, **not the active completion summary**. PRs #78–#86 are open drafts; native Windows/Linux and installed Windows game acceptance are unverified.
+
+---
+
 ## 2026-11-05 — First manufactured cargo freighter (SHIP-01B.1)
 
 [SHIP-01B.1 — first real freighter build](engineering/SHIP01B1_FIRST_PLAYER_MANUFACTURED_FREIGHTER_20261105.md): one finite manufactured hull from six actual construction modules and a completed local yard, with named NPC fabrication, twelve game ticks, v91 immutable ship ID, native SQLite journal, and no free crew or scanner. **Code committed, 21/21 source-based UI tests passed, exact-head C++ and SQLite acceptance pending.** Ship commissioning, powered orbital slips, and intercolony shipbuilding contracts remain open.
