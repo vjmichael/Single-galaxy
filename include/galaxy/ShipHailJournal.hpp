@@ -466,17 +466,9 @@ public:
            !seen(world,source,target))return outcome;
         verify();
         const auto old=history();
-        if(old.size()>=kMaximumRecords){
-            // An abusive sender cannot exhaust the immutable history and
-            // cause a host crash. Full journal -> no new outbound contact.
-            outcome.status=Status::Suppressed;
-            const auto previous=penalty_for(world,principal,source);
-            outcome.penalty_points=previous.penalty_points;
-            outcome.cooldown_until=previous.cooldown_until;
-            outcome.law_review_eligible=previous.law_review_eligible;
-            return outcome;
-        }
+        const bool journal_full=old.size()>=kMaximumRecords;
         std::uint64_t proof=0,prior_score=0,cooldown_until=0;
+        std::uint64_t seed_id=0;
         std::uint64_t declined_until=0;
         std::uint8_t proof_kind=0;
         bool already_scored_this_tick=false;
@@ -496,10 +488,20 @@ public:
             }else if(e.kind==Kind::Abuse){
                 prior_score=std::max(prior_score,e.penalty_points);
                 cooldown_until=std::max(cooldown_until,e.cooldown_until);
+                if(e.penalty_points==10)seed_id=e.event_id;
                 if(e.world_tick==world.world().tick())
                     already_scored_this_tick=true;
             }
             if(e.kind==Kind::Identify)pending.erase(e.related);
+        }
+        for(const auto& compact:overflow_history()){
+            if(compact.caller_owner!=principal ||
+               compact.recipient_ship!=target)continue;
+            prior_score=compact.total_points;
+            seed_id=compact.seed_event;
+            cooldown_until=std::max(cooldown_until,compact.cooldown_until);
+            if(compact.last_tick==world.world().tick())
+                already_scored_this_tick=true;
         }
         // A voluntarily identified visiting ship is already known to the
         // exact claimed colony account. Verify the original immutable chain
@@ -516,35 +518,53 @@ public:
             }
         }
         if(proof){
-            outcome.penalty_points=prior_score;
-            outcome.cooldown_until=cooldown_until;
-            outcome.law_review_eligible=prior_score>=kReportThreshold;
-            if(already_scored_this_tick || prior_score>=10){
-                // A capped offender is never permitted to contact an
-                // already identified recipient and cannot flood storage.
+            const auto account=penalty_for(world,principal,source);
+            outcome.penalty_points=account.penalty_points;
+            outcome.cooldown_until=account.cooldown_until;
+            outcome.law_review_eligible=account.law_review_eligible;
+            if(already_scored_this_tick ||
+               prior_score>=std::uint64_t(
+                  std::numeric_limits<sqlite3_int64>::max())){
                 outcome.status=Status::Suppressed;return outcome;
             }
-            // Hardcoded game policy: every further unsolicited call after
-            // identification or explicit decline is nuisance conduct.
-            const auto points=std::min<std::uint64_t>(10,prior_score+1);
+            // Every new *tick* can accrue more points, regardless of the
+            // ten-row detailed evidence cap. The actual call stays blocked.
+            const auto points=prior_score+1;
             const auto timeout=points==1?200ULL:points==2?800ULL:
                 points==3?2400ULL:7200ULL;
-            Receipt r{};
-            r.event_id=event_id;r.kind=Kind::Abuse;
-            r.world_tick=world.world().tick();
-            r.world_generation=world.generation();
-            r.caller_owner=principal;r.caller_ship=source;
-            r.recipient_ship=target;r.related=proof;
-            r.proof_kind=proof_kind;
-            r.penalty_points=points;
-            r.cooldown_until=r.world_tick+timeout;
-            r.law_review_eligible=points>=kReportThreshold;
-            commit(r);
+            if(world.world().tick()>
+               std::uint64_t(std::numeric_limits<sqlite3_int64>::max())
+                   -timeout){
+                outcome.status=Status::Suppressed;return outcome;
+            }
+            const auto expires=world.world().tick()+timeout;
+            if(points<=10){
+                if(journal_full){
+                    outcome.status=Status::Suppressed;return outcome;
+                }
+                Receipt r{};
+                r.event_id=event_id;r.kind=Kind::Abuse;
+                r.world_tick=world.world().tick();
+                r.world_generation=world.generation();
+                r.caller_owner=principal;r.caller_ship=source;
+                r.recipient_ship=target;r.related=proof;
+                r.proof_kind=proof_kind;
+                r.penalty_points=points;
+                r.cooldown_until=expires;
+                r.law_review_eligible=points>=kReportThreshold;
+                commit(r);
+            }else{
+                // A bounded aggregate row is updated transactionally once
+                // per new tick. Ten original detailed receipts stay immutable.
+                compact_strike(world,principal,target,event_id,
+                               seed_id,points,expires);
+            }
+            const auto updated=penalty_for(world,principal,source);
             outcome.status=Status::Penalized;
             outcome.event_id=event_id;
-            outcome.penalty_points=points;
-            outcome.cooldown_until=r.cooldown_until;
-            outcome.law_review_eligible=r.law_review_eligible;
+            outcome.penalty_points=updated.penalty_points;
+            outcome.cooldown_until=updated.cooldown_until;
+            outcome.law_review_eligible=updated.law_review_eligible;
             return outcome;
         }
         // A nuisance strike mutes the verified caller's outbound hails to
@@ -565,6 +585,12 @@ public:
                 declined_until,global.cooldown_until);
             outcome.penalty_points=global.penalty_points;
             outcome.law_review_eligible=global.law_review_eligible;
+            return outcome;
+        }
+        if(journal_full){
+            // Full detailed ledger cannot produce another new call. The
+            // already-identified pairs still accrue compact penalties.
+            outcome.status=Status::Suppressed;
             return outcome;
         }
         Receipt r{};
