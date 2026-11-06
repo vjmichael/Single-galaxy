@@ -8833,6 +8833,34 @@ bool PersistentWorld::commission_shipyard_freighter(
 // SHIP-01F all four contract transitions are copied-state SQLite commits;
 // failure injection never publishes an unfunded/fabricated vessel or moves
 // one seller module without its matched buyer debit.
+// WORK-01A: durable intent and revocation use the same SQLite publication
+// boundary as native material actions. The coordinator runs only within
+// PersistentWorld::step and calls existing native effects on that copy.
+bool PersistentWorld::delegate_customer_ship_order(
+        PlayerId owner,EntityId ship,std::uint64_t id,std::uint64_t contract,
+        std::array<std::uint64_t,2> crew,std::int64_t provisions,
+        std::uint64_t dependency,FailPoint fail) {
+    auto next=world_;
+    if(!next.delegate_customer_ship_order(owner,ship,id,contract,crew,
+                                          provisions,dependency))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("delegating NPC work altered conserved matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+bool PersistentWorld::cancel_work_directive(
+        PlayerId owner,std::uint64_t directive,FailPoint fail) {
+    auto next=world_;
+    if(!next.cancel_work_directive(owner,directive))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("work revocation altered conserved matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
 bool PersistentWorld::post_shipyard_customer_order(
         PlayerId customer,EntityId buyer_ship,std::uint64_t yard,
         std::uint64_t build,std::uint64_t id,FailPoint fail) {
