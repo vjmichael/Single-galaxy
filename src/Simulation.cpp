@@ -3127,16 +3127,34 @@ Event Simulation::execute(const Command& c) {
             }
             if(actor.jump_state!=ShipJumpState::Ready){result.result=Outcome::InTransition;return result;}
             const auto installed=actor.fitting.exploration_scanner();
+            // A compromised fitted module must not be removed and then
+            // reinstalled into the same slot/type to evade the immutable
+            // effect ancestry or silently transfer an old effect to new gear.
+            for(const auto& effect:ship_status_.records())
+                if(effect.target_ship==c.actor &&
+                   tick_>=effect.started_tick &&
+                   tick_<effect.expires_tick)
+                    for(const auto& key:effect.targets)
+                        if(key.rack==0 && key.hardware==1){
+                            result.result=Outcome::InTransition;return result;
+                        }
             if(c.amount==1){
                 if(installed){result.result=Outcome::InvalidArgument;return result;}
                 if(cit->second.modules<=0){result.result=Outcome::NoResources;return result;}
                 auto& rack=actor.fitting.hardpoints;
                 const auto slot=std::find(rack.begin(),rack.end(),0);
                 if(slot==rack.end()){result.result=Outcome::CargoFull;return result;}
-                *slot=1;--cit->second.modules;
+                *slot=1;
+                actor.hardpoint_requested_on[static_cast<std::size_t>(slot-rack.begin())]=true;
+                --cit->second.modules;
             }else{
                 if(!installed){result.result=Outcome::InvalidArgument;return result;}
-                for(auto& module:actor.fitting.hardpoints)if(module==1){module=0;break;}
+                for(std::size_t slot=0;slot<2;++slot)
+                    if(actor.fitting.hardpoints[slot]==1){
+                        actor.fitting.hardpoints[slot]=0;
+                        actor.hardpoint_requested_on[slot]=true;
+                        break;
+                    }
                 ++cit->second.modules;
             }
             snapshot_version_=std::max(snapshot_version_,64);
