@@ -11533,11 +11533,14 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 const bool rendezvous=flight.mode==NpcFlightMode::LocalRendezvous;
                 if(result.snapshot_version_<96 ||
                    (rendezvous && result.snapshot_version_<97) ||
-                   target==result.entities_.end() ||
-                   target->second.type!=(rendezvous?EntityType::Ship:EntityType::Station) ||
                    flight.station==flight.ship ||
-                   target->second.system_id!=ship->second.system_id ||
-                   !result.same_local_frame(flight.ship,flight.station))
+                   ((!rendezvous ||
+                     flight.phase==NpcFlightPhase::Planned ||
+                     flight.phase==NpcFlightPhase::InTransit) &&
+                    (target==result.entities_.end() ||
+                     target->second.type!=(rendezvous?EntityType::Ship:EntityType::Station) ||
+                     target->second.system_id!=ship->second.system_id ||
+                     !result.same_local_frame(flight.ship,flight.station))))
                     throw std::runtime_error("snapshot: impossible NPC docking target");
                 if(flight.local_commands){
                     if(!result.submitted_ids_.count(flight.last_local_command))
