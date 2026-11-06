@@ -1373,6 +1373,7 @@ private:
     bool complete_native_celestial_transit(std::uint64_t request_id);
     void process_npc_flight_navigation(); // same copied-state journaled step
     bool qualified_npc_flight_pilot(EntityId ship,std::uint64_t pilot) const;
+    bool npc_available_for_duty_without_flight(std::uint64_t id) const;
     void process_farms();
     void move_npc_records(EntityId ship, EntityId site, NpcRole role, std::int64_t delta);
     void award_farm_experience(EntityId site);
