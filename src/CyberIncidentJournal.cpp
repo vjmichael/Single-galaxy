@@ -235,6 +235,32 @@ std::vector<CyberIncidentCase> CyberIncidentJournal::history() const {
             std::string("cyber casebook read: ")+sqlite3_errmsg(state_->db));
     return cases;
 }
+std::vector<CyberHailIdentityLink> CyberIncidentJournal::hail_history() const {
+    Statement stmt(state_->db,
+        "SELECT sequence,case_id,hail_event,world_tick,world_generation,"
+        "controller,verified_ship,prev_digest,digest "
+        "FROM sg_ship_status07_hail_links ORDER BY sequence");
+    std::vector<CyberHailIdentityLink> links;
+    int rc=SQLITE_OK;
+    while((rc=sqlite3_step(stmt.stmt))==SQLITE_ROW){
+        CyberHailIdentityLink link{};
+        link.sequence=number(stmt.stmt,0);
+        link.case_id=number(stmt.stmt,1);
+        link.hail_event=number(stmt.stmt,2);
+        link.world_tick=number(stmt.stmt,3);
+        link.world_generation=number(stmt.stmt,4);
+        link.authenticated_controller=number(stmt.stmt,5);
+        link.verified_ship=number(stmt.stmt,6);
+        link.previous_digest=string(stmt.stmt,7);
+        link.digest=string(stmt.stmt,8);
+        links.push_back(std::move(link));
+        if(links.size()>10000)
+            throw std::runtime_error("cyber hail history is unbounded");
+    }
+    if(rc!=SQLITE_DONE)
+        throw std::runtime_error("cyber hail history SQLite read failed");
+    return links;
+}
 void CyberIncidentJournal::verify() const {
     const auto cases=history();
     std::uint64_t previous_tick=0,previous_generation=0,sequence=0;
@@ -269,6 +295,28 @@ void CyberIncidentJournal::verify() const {
         previous_tick=c.world_tick;
         previous_generation=c.world_generation;
         previous_digest=c.digest;
+    }
+    std::uint64_t last_tick=0,last_generation=0,link_sequence=0;
+    std::string last_digest="genesis";
+    std::set<std::pair<std::uint64_t,std::uint64_t>> unique_links;
+    for(const auto& link:hail_history()){
+        const auto original=std::find_if(cases.begin(),cases.end(),
+            [&](const CyberIncidentCase& c){return c.case_id==link.case_id;});
+        if(original==cases.end() ||
+           link.sequence!=++link_sequence || !link.hail_event ||
+           !link.authenticated_controller ||
+           link.authenticated_controller==Simulation::kServerAuthority ||
+           link.verified_ship!=original->attacking_ship ||
+           link.world_tick<original->world_tick ||
+           link.world_generation<original->world_generation ||
+           link.world_tick<last_tick || link.world_generation<last_generation ||
+           link.previous_digest!=last_digest ||
+           link.digest!=link_digest(link) ||
+           !unique_links.emplace(link.case_id,link.hail_event).second)
+            throw std::runtime_error("cyber hail identity link ancestry invalid");
+        last_tick=link.world_tick;
+        last_generation=link.world_generation;
+        last_digest=link.digest;
     }
 }
 bool CyberIncidentJournal::intake(
