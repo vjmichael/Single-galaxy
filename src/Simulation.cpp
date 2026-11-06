@@ -608,7 +608,7 @@ void Simulation::upgrade_passenger_snapshot_format(){
     snapshot_version_=std::max(snapshot_version_,31);
 }
 void Simulation::enable_passenger_life_support(){
-    if(tick_ || !submitted_ids_.empty() || !commands_.empty() ||
+    if(!player_people_.empty() || tick_ || !submitted_ids_.empty() || !commands_.empty() ||
        snapshot_version_<32 || npcs_.empty())
         throw std::invalid_argument("passenger life support requires new named-crew genesis world");
     snapshot_version_=57; // Versioned, durable; never silently alter old-world replay.
@@ -632,7 +632,7 @@ void Simulation::upgrade_legal_residence_snapshot_format(){
     snapshot_version_=86;
 }
 void Simulation::enable_medical_workforce_rules(){
-    if(tick_ || !submitted_ids_.empty() || !commands_.empty() ||
+    if(!player_people_.empty() || tick_ || !submitted_ids_.empty() || !commands_.empty() ||
        snapshot_version_<32 || npcs_.empty())
         throw std::invalid_argument("v40 medical workforce opt-in is genesis-only");
     snapshot_version_=40;
