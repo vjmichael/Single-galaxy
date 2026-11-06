@@ -1419,6 +1419,8 @@
      fleetRequested=0;window.GalaxyActivePilotedShipId=null;
      contractList.replaceChildren();
      contractState.textContent='Awaiting actual shipyard purchase orders.';
+     universalList.replaceChildren();universalDirectives.replaceChildren();
+     universalStatus.textContent='Awaiting native universal work projections.';
      window.GalaxyActivePilotedCelestialBody=null;
      fleetSelector.replaceChildren(new Option('Awaiting native fleet roster',''));
      fleetSelector.disabled=true;fleetSelectButton.disabled=true;
@@ -1437,6 +1439,54 @@
      q('signatureFeedback').textContent='Search for coarse anomaly signatures.';
      q('droneTarget').replaceChildren(new Option('Scan nearby rocks first',''));q('droneLaunch').disabled=true;deployedProbes.clear();probeCarried=0;probeLauncher=false;probeChoice='';q('probeTarget').replaceChildren(new Option('No probe deployed',''));q('probeLaunch').disabled=true;q('probeSurvey').disabled=true;q('probeRetrieve').disabled=true;q('probeInventory').textContent='Awaiting native probe stock.';q('probeFeedback').textContent='Native equipment required.';q('fittingCapacity').textContent='Awaiting actual ship fittings.';q('proximityStatus').textContent='Proximity safety sensor awaiting contacts.';q('fitScanner').disabled=true;q('unfitScanner').disabled=true;discoveries.clear();q('explorationResults').replaceChildren();q('explorationSummary').textContent='No mapped discoveries yet. Execute a native local scan.';salvageWrecks.clear();q('salvageTarget').replaceChildren(new Option('No recoverable wreck reported',''));q('salvageRecover').disabled=true;q('salvageFeedback').textContent='Waiting for native wreck inventory.';combatTargets.clear();q('combatHull').textContent='—';q('combatCharges').textContent='—';q('combatFire').disabled=true;q('combatFeedback').textContent='Awaiting native combat telemetry.';window.GalaxySelectedRockId=null;window.GalaxyShipHeading=null;window.GalaxyColonyOutpostIds.clear();openingStatus=null;openingScanned=false;refreshOpening();window.GalaxyColonyHomeShipId=null;q('colonySafetyAssess').disabled=true;q('colonySafetyPreflight').disabled=true;policyAudits.clear();geology.clear();small.clear();stocks.clear();outposts.clear();farms.clear();habitats.clear();utilities.clear();communities.clear();clinics.clear();reclaimers.clear();waterworks.clear();log.length=0;q('colonyEvents').textContent='Awaiting colony telemetry…';q('expeditionOutcome').textContent='Awaiting an actual native result';},
    accept(raw){const e=window.GalaxyColonyContract.decode(raw);
+     if(e.type==='WORK_COMMITTED'){
+       universalId.value=String(e.id);
+       universalStatus.textContent='Work delegation #'+e.id+
+         ' committed to native SQLite generation '+e.generation+
+         '. Existing material and NPC checks still apply.';
+       window.GalaxyColonyCommand?.('colonyWorkStatus',{});
+     }
+     if(e.type==='WORK_ITEM'){
+       let row=[...universalList.children].find(el=>
+         el.dataset.workKey===e.kind+':'+e.source);
+       if(!row){
+         row=document.createElement('div');
+         row.dataset.workKey=e.kind+':'+e.source;
+         universalList.appendChild(row);
+       }
+       const kinds=['','Local supply delivery','Intercolony freight',
+         'Shipyard construction','Freighter fabrication','Customer ship order'];
+       const phases=['Queued','Executing','Completed','Cancelled'];
+       row.textContent=kinds[e.kind]+' #'+e.source+' · '+phases[e.phase]+
+         ' · progress '+e.progress+'/'+e.required+
+         (e.delegated?' · NPC delegation #'+e.delegated:'');
+     }
+     if(e.type==='WORK_DIRECTIVE'){
+       let row=[...universalDirectives.children].find(el=>
+         el.dataset.delegateId===String(e.id));
+       if(!row){
+         row=document.createElement('div');
+         row.dataset.delegateId=String(e.id);
+         universalDirectives.appendChild(row);
+       }
+       // WorkBlock codes: None 0, Dependency 1, SupplierApproval 2,
+       // PhysicalFunding 3, NativeConstruction 4,
+       // PhysicalDelivery 5, NamedCrewAndSupplies 6.
+       const blockText=['Ready','Waiting for earlier work',
+         'Waiting for supplier approval','Need 6 real modules and a berth',
+         'Supplier NPCs constructing hull','Waiting for hull pickup',
+         'Need named crew, scanner and finite provisions'];
+       row.textContent='Delegation #'+e.id+' · customer ship contract #'+
+         e.source+' · '+
+         (['Active','Revoked','Fulfilled'][e.status]||'Unknown')+
+         (e.status===0?' · '+blockText[e.blocked]:'')+
+         (e.dependency?' · after work #'+e.dependency:'')+
+         (e.firstNpc?' · authorized NPCs #'+e.firstNpc+
+           ' and #'+e.secondNpc:' · pickup only')+
+         (e.status!==0?' · resolved tick '+e.resolved:'');
+     }
+     if(e.type==='ERROR'&&e.error==='WORK_DENIED')
+       universalStatus.textContent='NPC work delegation rejected by native authority. Check customer contract, earlier dependencies, existing crew and unique IDs.';
      if(e.type==='YARD_CONTRACT_COMMITTED'){
        contractId.value=String(e.id);
        contractState.textContent='Physical customer contract #'+e.id+
