@@ -81,9 +81,12 @@ int main(int argc,char** argv){
         CHECK(comms.history().front().recipient_ship==b);
         CHECK(comms.pending_for(w,7,a).empty());
         CHECK(comms.pending_for(w,8,b).size()==1);
-        CHECK(std::none_of(read(7,a).begin(),read(7,a).end(),
-            [](const auto& m){return m.rfind("SECURITY_CALL_INBOX|",0)==0;})==false ||
-            comms.pending_for(w,7,a).empty()); // owner's inbox remains empty
+        const auto av=read(7,a);
+        CHECK(std::none_of(av.begin(),av.end(),
+            [](const auto& m){return m.rfind("SECURITY_CALL_INBOX|",0)==0;}));
+        // Call receipt is visible to its initiating owner but the incoming
+        // inbox and authenticated controller stay restricted to recipient.
+
         const auto bv=read(8,b);
         CHECK(std::any_of(bv.begin(),bv.end(),
             [&](const std::string& m){
