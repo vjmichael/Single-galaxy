@@ -29,7 +29,6 @@ int main(){
     fs::create_directories(dir);
     EntityId player=0,predator=0,peace=0,rock=0;
     std::uint64_t pilot=0;
-    std::uint64_t nonce=920000;
     std::string pending,performed_state;
     std::int64_t material=0;
     {
@@ -69,7 +68,12 @@ int main(){
         const auto first=npc_cyber::supervise(w,7);
         CHECK(first.tick==5 && first.queued==1 &&
               first.last_attacking_ship==predator);
-        CHECK(first.last_target_ship!=0 && first.last_command>0);
+        CHECK(first.last_target_ship!=0 &&
+              first.last_command>=npc_cyber::kSupervisorIdBase &&
+              first.last_command<(std::uint64_t{1}<<50));
+        CHECK(first.last_command==
+              npc_cyber::kSupervisorIdBase+
+              first.tick*npc_cyber::kSupervisorIdsPerTick+3);
         CHECK(w.world().npc_cyber_operators().count(first.last_command)==1);
         CHECK(npc_cyber::supervise(w,7).queued==0);
         CHECK(w.world().npc_cyber_operators().size()==1);
@@ -94,6 +98,10 @@ int main(){
         while(recovered.world().tick()<15)recovered.step();
         const auto second=npc_cyber::supervise(recovered,7);
         CHECK(second.queued==1);
+        CHECK(second.last_command==
+              npc_cyber::kSupervisorIdBase+
+              second.tick*npc_cyber::kSupervisorIdsPerTick+3);
+        CHECK(second.last_command!=first.last_command);
         CHECK(recovered.world().npc_cyber_operators().size()==before+1);
         recovered.step();
         CHECK(recovered.world().events().back().result==Outcome::Applied);
