@@ -763,6 +763,11 @@ struct ShipFitting {
     // passive defensive cyber-controller (existing rack slots).
     bool intrusion_emitter() const {return hardpoints[0]==3 || hardpoints[1]==3;}
     bool cyber_firewall() const {return support[0]==1 || support[1]==1;}
+    // SHIP-STATUS-07: ordinary physical 2-tonne support modules. Stealth
+    // reduces observed radius; counter-ECM sensors recover local silhouettes.
+    // Neither module grants authentication or obscures trusted owner checks.
+    bool stealth_baffle() const {return support[0]==2 || support[1]==2;}
+    bool counter_ecm_array() const {return support[0]==3 || support[1]==3;}
     bool exploration_scanner() const {
         return hardpoints[0]==1 || hardpoints[1]==1;
     }
