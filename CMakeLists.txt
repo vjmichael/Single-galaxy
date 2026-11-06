@@ -1821,3 +1821,14 @@ if(BUILD_TESTING)
     COMMAND galaxy_ship_status07f_npc_hail_tests)
   set_tests_properties(galaxy_ship_status07f_npc_hail PROPERTIES TIMEOUT 300)
 endif()
+
+# COMBAT-PHYSICAL-01A: original C++/SQLite physical ship-to-ship finite
+# ammunition, real sensor/yaw/hull/wreck and protected crew custody v104.
+if(BUILD_TESTING)
+  add_executable(galaxy_combat01a_ship_weapon_tests
+    tests/COMBAT01A_RealShipWeaponTests.cpp)
+  target_link_libraries(galaxy_combat01a_ship_weapon_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_combat01a_ship_weapon
+    COMMAND galaxy_combat01a_ship_weapon_tests)
+  set_tests_properties(galaxy_combat01a_ship_weapon PROPERTIES TIMEOUT 300)
+endif()
