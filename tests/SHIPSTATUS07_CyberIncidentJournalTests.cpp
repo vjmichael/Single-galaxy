@@ -13,10 +13,11 @@ namespace fs=std::filesystem;
 #define CHECK(x) do {if(!(x))throw std::runtime_error(std::string(#x)+" line "+std::to_string(__LINE__));}while(false)
 
 static Command command(const PersistentWorld& world,std::uint64_t id,
-    EntityId ship,Action action,std::int64_t amount=0,EntityId target=0){
+    EntityId ship,Action action,std::int64_t amount=0,
+    EntityId target=0,PlayerId issuer=7){
     Command c{};
     c.id=id;c.sequence=id;c.execute_tick=world.world().tick()+1;
-    c.issuer=7;c.actor=ship;c.action=action;c.amount=amount;c.target=target;
+    c.issuer=issuer;c.actor=ship;c.action=action;c.amount=amount;c.target=target;
     return c;
 }
 static Outcome execute(PersistentWorld& world,const Command& c){
@@ -183,14 +184,14 @@ int main(){
               !linked.legal_crime_finding && !linked.arrest_authorized);
         // Security capability must be truly installed, not derived from
         // a police label or hostile diplomatic agenda.
-        CHECK(execute(world,Command{94011,world.world().tick()+1,94011,
-            8,victim,0,Action::Mine,0,0,2})==Outcome::Applied);
-        CHECK(execute(world,Command{94012,world.world().tick()+1,94012,
-            8,victim,0,Action::RefineOre,0,0,2})==Outcome::Applied);
-        CHECK(execute(world,Command{94013,world.world().tick()+1,94013,
-            8,victim,0,Action::FabricateModule,0,0,1})==Outcome::Applied);
-        CHECK(execute(world,Command{94014,world.world().tick()+1,94014,
-            8,victim,0,Action::ConfigureCyberModule,0,0,6})==Outcome::Applied);
+        CHECK(execute(world,command(world,94011,victim,Action::Mine,
+                                    2,rock,8))==Outcome::Applied);
+        CHECK(execute(world,command(world,94012,victim,Action::RefineOre,
+                                    2,0,8))==Outcome::Applied);
+        CHECK(execute(world,command(world,94013,victim,Action::FabricateModule,
+                                    1,0,8))==Outcome::Applied);
+        CHECK(execute(world,command(world,94014,victim,Action::ConfigureCyberModule,
+                                    6,0,8))==Outcome::Applied);
         CHECK(world.world().find(victim)->fitting.counter_ecm_array());
         CHECK(security_capability(world.world(),victim)==
               CyberSecurityLevel::PatrolEligible);
