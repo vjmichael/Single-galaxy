@@ -62,23 +62,24 @@
      return {tick,type,request,ship,caller};
    }
    if(type==='SECURITY_CALL_PENALTY' && v.length===7){
-     const points=whole(v[4],10),until=whole(v[5],1000000000000000),
+     const points=nativeId(v[4]),until=whole(v[5],1000000000000000),
        review=whole(v[6],1);
-     if((points===0&&until!==0)||(review&&points<3))
+     if((points==='0'&&until!==0)||(review&&BigInt(points)<3n))
        throw Error('Invalid native communications penalty');
      return {tick,type,points,until,review:!!review};
    }
    if(type==='SECURITY_CALL_SANCTION' && v.length===8){
-     const ship=whole(v[4]),points=whole(v[5],10),
+     const ship=whole(v[4]),points=nativeId(v[5]),
        until=whole(v[6],1000000000000000),review=whole(v[7],1);
-     if(!ship||(points && !until)||(review&&points<3))
+     if(!ship||(points!=='0' && !until)||
+        (review&&BigInt(points)<3n))
        throw Error('Invalid ship hail sanction');
      return {tick,type,ship,points,until,review:!!review};
    }
    if(type==='SECURITY_CALL_COMPLAINT' && v.length===7){
      const id=nativeId(v[4]),caller=whole(v[5]),
-       points=whole(v[6],10);
-     if(id==='0'||!caller||points<3)
+       points=nativeId(v[6]);
+     if(id==='0'||!caller||BigInt(points)<3n)
        throw Error('Invalid verified nuisance complaint');
      return {tick,type,id,caller,points};
    }
@@ -190,7 +191,7 @@
    el('securityIdentifyCaller').disabled=!active||!pending;
    el('securityDeclineCaller').disabled=!active||!pending;
    el('securityCommsPenalty').textContent=commsPenalty&&
-      commsPenalty.points?
+      commsPenalty.points!=='0'?
       ('Communications nuisance score '+commsPenalty.points+
        ' · outbound hail mute until game tick '+commsPenalty.until+
        (commsPenalty.review?
@@ -269,7 +270,7 @@
        commsPenalty={tick:data.tick,points:data.points,
          until:data.until,review:data.review};
        el('securityDeskFeedback').textContent=
-         (data.points?'Repeated post-identification hail was BLOCKED; '+
+         (data.points!=='0'?'Repeated post-identification hail was BLOCKED; '+
            'communications nuisance score '+data.points:
            'Repeated hail suppressed; no second call delivered')+
          ' · outbound mute until tick '+data.until+
