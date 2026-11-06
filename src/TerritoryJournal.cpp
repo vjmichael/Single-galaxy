@@ -157,7 +157,7 @@ void TerritoryJournal::verify() const {
     for(const auto& e:rows){
         if(e.sequence!=++sequence || !e.event_id || !e.colony || !e.owner ||
            e.owner==Simulation::kServerAuthority ||
-           static_cast<int>(e.kind)<1 || static_cast<int>(e.kind)>6 ||
+           static_cast<int>(e.kind)<1 || static_cast<int>(e.kind)>8 ||
            (e.kind==TerritoryEventKind::Claim &&
              (e.radius_mm<=0 || e.radius_mm>5000 || e.visitor_owner ||
               e.visitor_ship || e.observer_npc || e.related_event)) ||
@@ -171,6 +171,10 @@ void TerritoryJournal::verify() const {
               e.world_tick<e.deadline_tick)) ||
            (e.kind==TerritoryEventKind::Expulsion &&
              (!e.visitor_ship || !e.observer_npc || !e.related_event)) ||
+           ((e.kind==TerritoryEventKind::NoticeAcknowledged ||
+             e.kind==TerritoryEventKind::NoticeRefused) &&
+             (!e.visitor_ship || e.observer_npc || !e.related_event ||
+              e.deadline_tick<=e.world_tick)) ||
            (e.previous_digest!=previous || e.digest!=digest(e)) ||
            (sequence>1 && (e.world_tick<previous_tick ||
                             e.world_generation<previous_generation)))
@@ -191,6 +195,29 @@ void TerritoryJournal::verify() const {
                    parent->second.owner!=e.owner)
                     throw std::runtime_error("warning cites forged claim");
             }
+            if(e.kind==TerritoryEventKind::NoticeAcknowledged ||
+               e.kind==TerritoryEventKind::NoticeRefused){
+                const auto warning=prior.find(e.related_event);
+                if(warning==prior.end() ||
+                   warning->second.kind!=TerritoryEventKind::Warning ||
+                   warning->second.colony!=e.colony ||
+                   warning->second.owner!=e.owner ||
+                   warning->second.visitor_owner!=e.visitor_owner ||
+                   warning->second.visitor_ship!=e.visitor_ship ||
+                   warning->second.deadline_tick<=warning->second.world_tick ||
+                   e.world_tick>std::numeric_limits<std::uint64_t>::max()-
+                      (warning->second.deadline_tick-warning->second.world_tick) ||
+                   e.deadline_tick!=e.world_tick+
+                      (warning->second.deadline_tick-warning->second.world_tick))
+                    throw std::runtime_error("forged visitor notice response");
+                for(const auto& [id,old]:prior){
+                    (void)id;
+                    if((old.kind==TerritoryEventKind::NoticeAcknowledged ||
+                        old.kind==TerritoryEventKind::NoticeRefused) &&
+                       old.related_event==e.related_event)
+                        throw std::runtime_error("duplicate visitor notice receipt");
+                }
+            }
             if(e.kind==TerritoryEventKind::Trespass ||
                e.kind==TerritoryEventKind::Expulsion){
                 const auto parent=prior.find(e.related_event);
@@ -203,7 +230,21 @@ void TerritoryJournal::verify() const {
                    parent->second.visitor_ship!=e.visitor_ship ||
                    parent->second.world_tick>e.world_tick ||
                    (e.kind==TerritoryEventKind::Trespass &&
-                    parent->second.deadline_tick!=e.deadline_tick))
+                    ![&]{
+                        for(const auto& [id,reply]:prior){
+                            (void)id;
+                            if((reply.kind==TerritoryEventKind::NoticeAcknowledged ||
+                                reply.kind==TerritoryEventKind::NoticeRefused) &&
+                               reply.related_event==parent->second.event_id &&
+                               reply.colony==e.colony &&
+                               reply.visitor_ship==e.visitor_ship &&
+                               reply.visitor_owner==e.visitor_owner &&
+                               reply.deadline_tick==e.deadline_tick &&
+                               reply.world_tick<=e.world_tick)
+                                return true;
+                        }
+                        return false;
+                    }()))
                     throw std::runtime_error("territory incident cites forged witness");
             }
             if(e.owner!=prior.at(active->second).owner)
@@ -318,7 +359,8 @@ TerritorialStanding TerritoryJournal::standing(const PersistentWorld& w,
     state.in_claimed_region=in_range(*target,claim.center_x,
                                    claim.center_y,claim.radius_mm);
     if(!state.in_claimed_region)return state;
-    std::uint64_t warning=0,trespass=0,grace=0;
+    std::uint64_t warning=0,trespass=0,grace=0,reply=0;
+    bool received=false,refused=false;
     bool invited=false;
     for(const auto& e:history()){
         if(e.colony!=colony || e.visitor_owner!=target->owner_id)continue;
@@ -328,12 +370,23 @@ TerritorialStanding TerritoryJournal::standing(const PersistentWorld& w,
             // trespass and expulsion. Historical rows are never deleted.
             // Revocation starts a fresh visit, not an instant conviction
             // based on a warning from before the invitation.
-            warning=0;trespass=0;grace=0;
+            warning=0;trespass=0;grace=0;reply=0;
+            received=false;refused=false;
             state.standing=npc_response::VisitorStanding::Unknown;
         }
         if(e.kind==TerritoryEventKind::RevokeInvitation)invited=false;
         if(e.visitor_ship==visitor && e.kind==TerritoryEventKind::Warning){
-            warning=e.event_id;grace=e.deadline_tick;
+            warning=e.event_id;grace=0;reply=0;
+            received=false;refused=false;
+        }
+        if(e.visitor_ship==visitor &&
+           (e.kind==TerritoryEventKind::NoticeAcknowledged ||
+            e.kind==TerritoryEventKind::NoticeRefused) &&
+           e.related_event==warning){
+            received=true;
+            refused=e.kind==TerritoryEventKind::NoticeRefused;
+            reply=e.event_id;
+            grace=e.deadline_tick;
         }
         if(e.visitor_ship==visitor && e.kind==TerritoryEventKind::Trespass)
             trespass=e.event_id;
@@ -342,12 +395,14 @@ TerritorialStanding TerritoryJournal::standing(const PersistentWorld& w,
     }
     state.invited=invited;state.warning_event=warning;
     state.trespass_event=trespass;state.grace_until=grace;
+    state.notice_received=received;state.notice_refused=refused;
+    state.notice_reply_event=reply;
     state.warned=warning!=0;
     state.trespass_recorded=trespass!=0;
     if(state.standing!=npc_response::VisitorStanding::Expelled){
         if(invited)state.standing=npc_response::VisitorStanding::Invited;
         else if(trespass)state.standing=npc_response::VisitorStanding::Uninvited;
-        else if(warning && w.world().tick()>=grace)
+        else if(received && grace && w.world().tick()>=grace)
             state.standing=npc_response::VisitorStanding::Uninvited;
         else state.standing=npc_response::VisitorStanding::Unknown;
     }
@@ -370,6 +425,65 @@ bool TerritoryJournal::warn(const PersistentWorld& w,PlayerId owner,
     e.deadline_tick=e.world_tick+grace;e.related_event=state.claim_event;
     return append(e,fail);
 }
+
+std::vector<TerritoryEvent> TerritoryJournal::pending_notices(
+        const PersistentWorld& w,PlayerId visitor_owner) const {
+    verify();
+    std::vector<TerritoryEvent> result;
+    if(!visitor_owner || visitor_owner==Simulation::kServerAuthority)
+        return result;
+    for(const auto& e:history()) {
+        if(e.kind!=TerritoryEventKind::Warning ||
+           e.visitor_owner!=visitor_owner)continue;
+        const auto* vessel=w.world().find(e.visitor_ship);
+        if(!vessel || vessel->type!=EntityType::Ship ||
+           vessel->owner_id!=visitor_owner)continue;
+        const auto state=standing(w,e.colony,e.visitor_ship);
+        if(state.warning_event==e.event_id && !state.notice_received &&
+           state.in_claimed_region && !state.invited)
+            result.push_back(e);
+    }
+    return result;
+}
+bool TerritoryJournal::respond_to_notice(
+    const PersistentWorld& w,PlayerId visitor_owner,EntityId colony,
+    EntityId visitor,std::uint64_t warning_id,std::uint64_t reply_id,
+    bool refuse,TerritoryFailPoint fail) {
+    if(!visitor_owner || visitor_owner==Simulation::kServerAuthority ||
+       !colony || !visitor || !warning_id || !reply_id ||
+       warning_id==reply_id)return false;
+    const auto* target=w.world().find(visitor);
+    const auto* source=w.world().find(colony);
+    if(!target || !source || target->type!=EntityType::Ship ||
+       source->type!=EntityType::Ship ||
+       target->owner_id!=visitor_owner ||
+       source->owner_id==visitor_owner)return false;
+    const auto status=standing(w,colony,visitor);
+    if(!status.in_claimed_region || status.invited ||
+       status.warning_event!=warning_id || status.notice_received)return false;
+    TerritoryEvent warning{};
+    bool found=false;
+    for(const auto& e:history())if(e.event_id==warning_id &&
+            e.kind==TerritoryEventKind::Warning &&
+            e.colony==colony && e.visitor_ship==visitor &&
+            e.visitor_owner==visitor_owner) {
+        warning=e;found=true;break;
+    }
+    if(!found || warning.deadline_tick<=warning.world_tick)return false;
+    const auto grace=warning.deadline_tick-warning.world_tick;
+    if(w.world().tick()>std::numeric_limits<std::uint64_t>::max()-grace)
+        return false;
+    TerritoryEvent reply{};
+    reply.event_id=reply_id;
+    reply.kind=refuse?TerritoryEventKind::NoticeRefused:
+                      TerritoryEventKind::NoticeAcknowledged;
+    reply.colony=colony;reply.owner=source->owner_id;
+    reply.visitor_owner=visitor_owner;reply.visitor_ship=visitor;
+    reply.world_tick=w.world().tick();reply.world_generation=w.generation();
+    reply.related_event=warning_id;
+    reply.deadline_tick=reply.world_tick+grace;
+    return append(reply,fail);
+}
 bool TerritoryJournal::record_trespass(const PersistentWorld& w,
         PlayerId owner,EntityId colony,EntityId foreign,
         std::uint64_t npc,std::uint64_t id,TerritoryFailPoint fail) {
@@ -377,7 +491,8 @@ bool TerritoryJournal::record_trespass(const PersistentWorld& w,
     const auto* target=w.world().find(foreign);
     const auto s=standing(w,colony,foreign);
     if(!target || !s.in_claimed_region || s.invited || !s.warned ||
-       s.trespass_recorded || w.world().tick()<s.grace_until ||
+       s.trespass_recorded || !s.notice_received ||
+       !s.grace_until || w.world().tick()<s.grace_until ||
        !currently_witnessed(w,colony,foreign,npc))return false;
     TerritoryEvent e{};e.event_id=id;e.kind=TerritoryEventKind::Trespass;
     e.colony=colony;e.owner=owner;e.visitor_owner=target->owner_id;

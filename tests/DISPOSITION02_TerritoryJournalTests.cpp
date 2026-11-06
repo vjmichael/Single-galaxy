@@ -73,6 +73,12 @@ int main(){
    CHECK(j.standing(w,colony,visitor).standing==
       npc_response::VisitorStanding::Unknown);
    CHECK(!j.record_trespass(w,7,colony,visitor,observer,71008));
+   CHECK(!j.standing(w,colony,visitor).notice_received);
+   CHECK(j.pending_notices(w,8).size()==1);
+   CHECK(!j.respond_to_notice(w,9,colony,visitor,71006,71020,false));
+   CHECK(j.respond_to_notice(w,8,colony,visitor,71006,71020,false));
+   CHECK(j.standing(w,colony,visitor).notice_received);
+   CHECK(j.standing(w,colony,visitor).grace_until==w.world().tick()+5);
    const auto interpretation=assess_territorial(w,j,colony,visitor,70002);
    CHECK(interpretation.territory.warned);
    CHECK(interpretation.interpreted.intent==npc_response::ThreatIntent::WarnLeave);
@@ -106,10 +112,13 @@ int main(){
    CHECK(!j.standing(w,colony,visitor).trespass_recorded);
    CHECK(j.warn(w,7,colony,visitor,observer,71015,5));
    CHECK(!j.record_trespass(w,7,colony,visitor,observer,71017));
+   CHECK(j.respond_to_notice(w,8,colony,visitor,71015,71021,true));
+   CHECK(j.standing(w,colony,visitor).notice_refused);
+   CHECK(!j.record_trespass(w,7,colony,visitor,observer,71018));
    CHECK(j.invite(w,7,colony,8,71016));
    CHECK(j.standing(w,colony,visitor).standing==
       npc_response::VisitorStanding::Invited);
-   CHECK(j.history().size()==10);
+   CHECK(j.history().size()==12);
    CHECK(w.world().find(visitor)->hull==100);
    CHECK(w.world().total_material_kg()==matter);
    j.verify();
@@ -120,7 +129,7 @@ int main(){
    PersistentWorld w(path,Simulation(1));
    TerritoryJournal reopened(path);
    CHECK(w.world().canonical_state()==snapshot);
-   CHECK(reopened.history().size()==10);
+   CHECK(reopened.history().size()==12);
    CHECK(reopened.standing(w,colony,visitor).invited);
    CHECK(w.world().total_material_kg()==matter);
    // Ordinary attempted history rewrite must fail inside SQLite.

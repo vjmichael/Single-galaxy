@@ -1644,3 +1644,13 @@ if(BUILD_TESTING)
     COMMAND galaxy_disposition02_territory_tests)
   set_tests_properties(galaxy_disposition02_territory PROPERTIES TIMEOUT 300)
 endif()
+
+# DISPOSITION-03: visitor-owned territorial notice receipts, grace and enforcement.
+if(BUILD_TESTING)
+  add_executable(galaxy_disposition03_territorial_comms_tests
+    tests/DISPOSITION03_TerritorialCommsTests.cpp)
+  target_link_libraries(galaxy_disposition03_territorial_comms_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_disposition03_territorial_comms
+    COMMAND galaxy_disposition03_territorial_comms_tests)
+  set_tests_properties(galaxy_disposition03_territorial_comms PROPERTIES TIMEOUT 300)
+endif()
