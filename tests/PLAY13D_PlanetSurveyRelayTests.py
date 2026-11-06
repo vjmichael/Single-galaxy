@@ -377,6 +377,35 @@ def main(executable,relay):
             ):
                 status,_=request(port,'POST','/command',payload)
                 assert status==400,(payload,status)
+            # SHIP-01E: true fleet dispatch has no client-supplied owner,
+            # fabricated crew, cargo receipt or bypass flag. Strict shape.
+            fleet_job={'token':token,'action':'colonyFleetWorkPost',
+                       'order':77007,'carrier':4,'destination':5,
+                       'body':4294967300,'latitude':17,'longitude':36,
+                       'resource':'NUTRIENTS','kg':100}
+            status,_=request(port,'POST','/command',fleet_job)
+            assert status==202,status
+            status,_=request(port,'POST','/command',
+                             {**fleet_job,'token':'forged'})
+            assert status==403,status
+            for payload in (
+                {**fleet_job,'order':True},
+                {**fleet_job,'carrier':True},
+                {**fleet_job,'carrier':0},
+                {**fleet_job,'destination':4},
+                {**fleet_job,'destination':False},
+                {**fleet_job,'body':0},
+                {**fleet_job,'latitude':36},
+                {**fleet_job,'longitude':-1},
+                {**fleet_job,'resource':'ORE'},
+                {**fleet_job,'kg':0},
+                {**fleet_job,'kg':1001},
+                {**fleet_job,'owner':7},
+                {**fleet_job,'onboardCrew':2},
+                {**fleet_job,'skipTravel':True},
+            ):
+                status,_=request(port,'POST','/command',payload)
+                assert status==400,(payload,status)
             print("PASS PGF01B2 HTTP relay accepts valid geography and rejects forged inputs")
         finally:
             proc.terminate()
