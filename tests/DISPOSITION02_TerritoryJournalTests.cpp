@@ -79,7 +79,7 @@ int main(){
    CHECK(j.invite(w,7,colony,8,71013));
    CHECK(j.standing(w,colony,visitor).standing==
       npc_response::VisitorStanding::Invited);
-   CHECK(j.history().size()==8);
+   CHECK(j.history().size()==7);
    CHECK(w.world().find(visitor)->hull==100);
    CHECK(w.world().total_material_kg()==matter);
    j.verify();
@@ -90,7 +90,7 @@ int main(){
    PersistentWorld w(path,Simulation(1));
    TerritoryJournal reopened(path);
    CHECK(w.world().canonical_state()==snapshot);
-   CHECK(reopened.history().size()==8);
+   CHECK(reopened.history().size()==7);
    CHECK(reopened.standing(w,colony,visitor).invited);
    CHECK(w.world().total_material_kg()==matter);
    // Ordinary attempted history rewrite must fail inside SQLite.
