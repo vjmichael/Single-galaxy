@@ -2111,7 +2111,19 @@ int main(int argc,char** argv){
         }else announce(world.world(),"SECURITY_ERROR|CASE_DESK_UNAVAILABLE");
         // The initial selection is always the actual home ship. A browser
         // may restore a prior preference, but native selection revalidates it.
+        // Security journals can commit several original-world identity
+        // receipts in one tick. Never reuse their event IDs after a host
+        // crash/restart just because world generation advanced fewer times.
         std::uint64_t nonce=900000000000ULL+world.generation();
+        if(territory)for(const auto& e:territory->history())
+            nonce=std::max(nonce,e.event_id);
+        if(communications)for(const auto& e:communications->history())
+            nonce=std::max(nonce,e.event_id);
+        for(const auto& e:world.world().events())
+            nonce=std::max(nonce,e.command_id);
+        if(nonce>=static_cast<std::uint64_t>(
+           std::numeric_limits<std::int64_t>::max()-100000))
+            throw std::runtime_error("native command/evidence nonce exhausted");
         std::set<std::uint64_t> pending_scans,pending_probe_scans;
         std::size_t known_discoveries=world.world().discoveries().size();
         const auto report_count=[&](){
