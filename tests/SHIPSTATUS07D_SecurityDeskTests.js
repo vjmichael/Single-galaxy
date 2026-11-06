@@ -86,17 +86,20 @@ assert.deepEqual(requests.pop(),['colonySecurityPatrol',{case:key,ship:22}]);
 // No extra client-supplied owner, juror, NPC, warrant, or alleged pilot.
 frame('COLONY|1|15|SECURITY_DESTINATION|123');
 e('securityDestination').value='123';
+e('securityDestination').listeners.change();
 assert.equal(e('securityHail').disabled,false);
 e('securityHail').listeners.click();
 assert.deepEqual(requests.pop(),['colonySecurityHail',{colony:123}]);
 frame('COLONY|1|15|SECURITY_NOTICE|123|8|900000000003');
 e('securityNotice').value='123:900000000003';
+e('securityNotice').listeners.change();
 assert.equal(e('securityAcknowledge').disabled,false);
 e('securityAcknowledge').listeners.click();
 assert.deepEqual(requests.pop(),['colonySecurityReply',{
   colony:123,notice:900000000003,choice:'acknowledge'}]);
 frame('COLONY|1|15|SECURITY_NOTICE|124|9|900000000004');
 e('securityNotice').value='124:900000000004';
+e('securityNotice').listeners.change();
 assert.equal(e('securityRefuse').disabled,true,
  'cannot answer a notice addressed to another physical ship');
 frame('COLONY|1|15|SECURITY_CASES_RESET');
