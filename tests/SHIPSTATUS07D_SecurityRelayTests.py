@@ -51,6 +51,7 @@ def submit(action, payload=None, principal=7, origin=True,
 
 for action, args, line in [
     ("colonySecurityRefresh", {}, "SECURITY_REFRESH"),
+    ("colonyFireShip", {"target": 10023}, "FIRE_SHIP|10023"),
     ("colonySecurityCall", {"ship": 999}, "SECURITY_CALL|999"),
     ("colonySecurityCallReply",
      {"request": "9223372036854775807", "choice": "identify"},
@@ -79,6 +80,11 @@ for action, args, line in [
 
 for action, args in [
     ("colonySecurityRefresh", {"owner": 7}),
+    ("colonyFireShip", {"target": True}),
+    ("colonyFireShip", {"target": 0}),
+    ("colonyFireShip", {"target": "10023"}),
+    ("colonyFireShip", {"target": 10023, "damage": 1000}),
+    ("colonyFireShip", {"target": 10023, "attackerOwner": 8}),
     ("colonySecurityCall", {"ship": 0}),
     ("colonySecurityCall", {"ship": True}),
     ("colonySecurityCall", {"ship": "999"}),
