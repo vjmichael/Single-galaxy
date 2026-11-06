@@ -2,6 +2,7 @@
 #include "galaxy/ColonyDefense.hpp"
 #include <sqlite3.h>
 #include <algorithm>
+#include <map>
 #include <limits>
 #include <stdexcept>
 #include <sstream>
@@ -151,6 +152,8 @@ void TerritoryJournal::verify() const {
     auto rows=history();
     std::uint64_t sequence=0,previous_tick=0,previous_generation=0;
     std::string previous="genesis";
+    std::map<std::uint64_t,TerritoryEvent> prior;
+    std::map<EntityId,std::uint64_t> issued_claims;
     for(const auto& e:rows){
         if(e.sequence!=++sequence || !e.event_id || !e.colony || !e.owner ||
            e.owner==Simulation::kServerAuthority ||
@@ -172,6 +175,41 @@ void TerritoryJournal::verify() const {
            (sequence>1 && (e.world_tick<previous_tick ||
                             e.world_generation<previous_generation)))
             throw std::runtime_error("invalid or rewritten territory evidence chain");
+        // Real evidence lineage is required for every downstream action.
+        if(e.kind==TerritoryEventKind::Claim){
+            if(!issued_claims.emplace(e.colony,e.event_id).second)
+                throw std::runtime_error("duplicate frozen territory claim");
+        }else{
+            const auto active=issued_claims.find(e.colony);
+            if(active==issued_claims.end())
+                throw std::runtime_error("territory event without a real claim");
+            if(e.kind==TerritoryEventKind::Warning){
+                const auto parent=prior.find(e.related_event);
+                if(parent==prior.end() ||
+                   parent->second.kind!=TerritoryEventKind::Claim ||
+                   parent->second.colony!=e.colony ||
+                   parent->second.owner!=e.owner)
+                    throw std::runtime_error("warning cites forged claim");
+            }
+            if(e.kind==TerritoryEventKind::Trespass ||
+               e.kind==TerritoryEventKind::Expulsion){
+                const auto parent=prior.find(e.related_event);
+                if(parent==prior.end() ||
+                   parent->second.kind!=(e.kind==TerritoryEventKind::Trespass?
+                        TerritoryEventKind::Warning:TerritoryEventKind::Trespass) ||
+                   parent->second.colony!=e.colony ||
+                   parent->second.owner!=e.owner ||
+                   parent->second.visitor_owner!=e.visitor_owner ||
+                   parent->second.visitor_ship!=e.visitor_ship ||
+                   parent->second.world_tick>e.world_tick ||
+                   (e.kind==TerritoryEventKind::Trespass &&
+                    parent->second.deadline_tick!=e.deadline_tick))
+                    throw std::runtime_error("territory incident cites forged witness");
+            }
+            if(e.owner!=prior.at(active->second).owner)
+                throw std::runtime_error("territory action has wrong governing owner");
+        }
+        prior.emplace(e.event_id,e);
         previous=e.digest;previous_tick=e.world_tick;
         previous_generation=e.world_generation;
     }
