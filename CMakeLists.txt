@@ -1694,3 +1694,13 @@ if(BUILD_TESTING)
     COMMAND galaxy_ship_status02_authoritative_tests)
   set_tests_properties(galaxy_ship_status02_authoritative PROPERTIES TIMEOUT 300)
 endif()
+
+# SHIP-STATUS-03: real fabricated emitter/firewall, native attack and recovery.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status03_physical_hacking_tests
+    tests/SHIPSTATUS03_PhysicalHackingTests.cpp)
+  target_link_libraries(galaxy_ship_status03_physical_hacking_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status03_physical_hacking
+    COMMAND galaxy_ship_status03_physical_hacking_tests)
+  set_tests_properties(galaxy_ship_status03_physical_hacking PROPERTIES TIMEOUT 300)
+endif()
