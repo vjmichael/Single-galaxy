@@ -72,10 +72,14 @@ def run(host, relay, bridge):
             code, session, _ = request(port, "GET", "/session", cookie=cookie)
             assert code == 200 and "colonySecurityHail" in session["commands"]
             assert "colonySecurityReply" in session["commands"]
+            assert "colonySecurityCall" in session["commands"]
+            assert "colonySecurityCallReply" in session["commands"]
             assert request(port, "GET", "/viewer/security-desk.js")[0] == 200
             code, html, _ = request(port, "GET", "/viewer/interactive.html")
             assert code == 200 and b'id="securityCaseList"' in html
             assert b'id="securityHail"' in html
+            assert b'id="securityCallShip"' in html
+            assert b'id="securityCallInbox"' in html
             token = session["token"]
             for body in [
                 {"token": token, "action": "colonySecurityClaim",
@@ -85,7 +89,12 @@ def run(host, relay, bridge):
                 {"token": token, "action": "colonySecurityHail",
                  "colony": 3, "visitorOwner": 8},
                 {"token": token, "action": "colonySecurityReply",
-                 "colony": 3, "notice": 11, "choice": "force"}
+                 "colony": 3, "notice": 11, "choice": "force"},
+                {"token": token, "action": "colonySecurityCall",
+                 "ship": 999, "recipientOwner": 8},
+                {"token": token, "action": "colonySecurityCallReply",
+                 "request": "1001", "choice": "identify",
+                 "claimArrest": True}
             ]:
                 assert request(port, "POST", "/command", body, cookie)[0] == 400
             assert request(port, "POST", "/command", {
@@ -103,6 +112,12 @@ def run(host, relay, bridge):
             status, response, _ = request(port, "POST", "/command", {
                 "token": token, "action": "colonySecurityRefresh"}, cookie)
             assert status == 202
+            # A non-existent physical ship cannot receive an accepted hail
+            # even if the authenticated caller sends a guessed native ID.
+            status, response, _ = request(port, "POST", "/command", {
+                "token": token, "action": "colonySecurityCall",
+                "ship": 999}, cookie)
+            assert status == 202 and response["status"] == "queued_not_committed"
             # Read the actual authenticated native SSE stream, not a
             # synthetic local result or a queued HTTP acknowledgement.
             con = http.client.HTTPConnection("127.0.0.1", port, timeout=6)
@@ -126,13 +141,22 @@ def run(host, relay, bridge):
                             telemetry.append(decoded.decode("ascii"))
                     if any("|SECURITY_RESULT|SECURITY_CLAIM|ACCEPTED|" in v
                            for v in telemetry) and any(
-                            "|SECURITY_STATUS|" in v and "|1|0|1" in v
+                            "|SECURITY_RESULT|SECURITY_CALL|DENIED|" in v
+                            for v in telemetry) and any(
+                            "|SECURITY_CALL_PENALTY|0|0|0" in v
                             for v in telemetry):
                         break
             finally:
                 con.close()
             assert any("|SECURITY_RESULT|SECURITY_CLAIM|ACCEPTED|" in v
                        for v in telemetry), telemetry[-15:]
+            assert any("|SECURITY_RESULT|SECURITY_CALL|DENIED|" in v
+                       for v in telemetry), "fake ship hail not refused"
+            assert any("|SECURITY_CALL_INBOX_RESET" in v for v in telemetry)
+            assert any("|SECURITY_CALL_PENALTY|0|0|0" in v for v in telemetry)
+            with sqlite3.connect(db) as con:
+                assert con.execute(
+                    "SELECT COUNT(*) FROM sg_ship_hail07e").fetchone()[0]==0
             assert any("|SECURITY_CASES_RESET" in v for v in telemetry)
             assert not any("|SECURITY_CASE|" in v for v in telemetry), (
                 "empty genesis invented a cyber offender")
