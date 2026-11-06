@@ -19,3 +19,8 @@ This is a **player rescue movement**, not an arrest, permanent confiscation, coc
 
 ## Outstanding law and combat gates
 Actual disable/attack rules, incident evidence, arrest warrants, force escalation, being captured without consent, dedicated escape pods and safe release remain **not implemented**. An observation or diplomatic dislike grants no warrant. Current `FireTrainingWeapon` is strictly training-drone-only and must not be reused as police damage. All such authority must be proven independently before arrest or disabling can be activated.
+
+## Native control authority after physical rescue
+`FleetSelection::is_ready` now refuses cockpit selection for a registered person unless the player remains physically aboard that exact owned vessel in `AboardOwnShip` state. The original player-side `PersistentWorld::submit` gate additionally denies direct Thrust, Dock/Undock, Jump, manual Mine/StartMining/StopMining, training-weapon fire and direct SalvageWreck from a different ship or while rescued. Original **NPC** flight controls use the preexisting trusted `Simulation::submit` and remain unaffected. This intentionally prevents physical teleportation through the GUI; future owning-ship transfers require independently authorized boarding.
+
+The positive native test now verifies the player cannot thrust or manually start mining the abandoned source ship once aboard their rescuer.
