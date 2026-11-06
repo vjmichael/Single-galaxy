@@ -69,7 +69,7 @@ enum class NpcFlightPhase : std::uint8_t {
 // FLIGHT-02 extends the SAME NPC flight record, not a second autopilot.
 // Celestial uses original v72 transit receipts; LocalDock uses original
 // submitted Thrust/RequestDock/RequestUndock and station transition events.
-enum class NpcFlightMode : std::uint8_t {Celestial=0,LocalDock=1};
+enum class NpcFlightMode : std::uint8_t {Celestial=0,LocalDock=1,LocalRendezvous=2};
 struct NpcFlightOrder {
     std::uint64_t id=0;
     PlayerId owner=0;
@@ -99,7 +99,7 @@ struct PhysicalCelestialBody {
 enum class EntityType { Ship, Asteroid, Station, Stargate, Wreck };
 enum class Action { Thrust, Mine, StartMining, StopMining, RequestUndock, RequestDock, UnloadOre, LoadOre, SellOre, RequestJump, SetGatePairOnline, SetGateStaff, DeliverGateSpares, RefineOre, FabricateModule, ConstructOutpost, RefineMineral, FabricateMaterialModule, PlantCrops, HarvestCrops, RecycleWater, RecycleCompost, ProduceOxygen, LoadLifeWater, ConstructFarm, TransferFarmStock, AssignFarmWorkers, ConstructHabitat, TransferHabitatStock, AssignHabitatResidents, ConstructUtility, RepairUtility, TransferUtilitySpares, AssignUtilityTechnicians, SetUtilityMaintenance, ConstructCommunity, TransferCommunityStock, AssignCommunityStaff, ConstructClinic, TransferClinicStock, AssignClinicStaff, ConstructReclaimer, ConstructWaterworks, TransferWaterworksFeed, SetPolicyAssurance, AssignPolicyInspectors, AssignFarmMentor, HostDestroyShip, HostCrewLoss, ConstructWorkshop, TransferWorkshopFeed, AssignWorkshopOperator, TransferWorkshopOutput, ConstructWorkshopFinisher, AssignWorkshopFinisher, TransferWorkshopFinalOutput, TransferWorkshopStack, ConstructStorage, TransferStorageStack, ConstructStorageNode, TransferStorageNodeStack, ConstructStorageLink, ConstructWorkshopLink, PlaceFactoryEquipment, PlaceConveyorCell, CompleteConveyorRoute, HostEmbarkPassengers, HostDisembarkPassengers, HostStrandFerry, HostResumeFerry, HostEvacuatePassengers, HostDestroyPassengerFerry, HostResolveMixedFerryLoss, HostTrainMedic, HostTriageRescued, HostTreatInjuries, HostScheduleMedicShift, HostLoadMedicalKit, HostMobileStabilize, HostSettleMigrant, HostSplitEvacuatePassengers, HostEscrowConstructedStock, HostReturnConstructedStock, HostTransferConsignedStock, HostColonyDeparture, HostRegisterDependent, FireTrainingWeapon, SalvageWreck, SurveyLocal, ConfigureExplorationScanner, DeploySurveyProbe, ScanSurveyProbe, RecoverSurveyProbe, LaunchGeologicalDrone, FocusSurveyProbe, CancelSurveyFocus };
 enum class Outcome { Applied, InvalidActor, Unauthorized, InvalidTarget, OutOfRange, InvalidArgument, NoResources, CargoFull, NotMining, NotInSpace, NotDocked, InTransition, ShipMoving, HangarFull, InsufficientFunds, WrongSystem, GateOffline, NotColonyShip, InsufficientCrew };
-enum class ActivityKind { AsteroidDespawned, AutoMiningTransfer, MiningStopped, Undocked, Docked, JumpCompleted, ShipDestroyed, NpcLost, AutoStorageTransfer };
+enum class ActivityKind { AsteroidDespawned, AutoMiningTransfer, MiningStopped, Undocked, Docked, JumpCompleted, ShipDestroyed, NpcLost, AutoStorageTransfer, NpcRendezvous };
 enum class DockState { InSpace, Docked, Undocking, Docking };
 enum class ShipJumpState { Ready, Jumping, ArrivalCloak };
 struct StationHangar { std::int64_t ore = 0; std::int64_t capacity = 0; };
@@ -1094,6 +1094,11 @@ public:
     // celestial trips. No new station-navigation algorithm or docking effect.
     bool queue_npc_station_docking(PlayerId owner,EntityId ship,
         std::uint64_t pilot,EntityId station,std::uint64_t flight_id,
+        NpcFlightPurpose purpose=NpcFlightPurpose::General);
+    // FLIGHT-03: approach and velocity-match a real moving target ship.
+    // Completion is NOT permission to dock, load or transfer people/cargo.
+    bool queue_npc_ship_rendezvous(PlayerId owner,EntityId ship,
+        std::uint64_t pilot,EntityId target_ship,std::uint64_t flight_id,
         NpcFlightPurpose purpose=NpcFlightPurpose::General);
     bool cancel_npc_flight(PlayerId owner,std::uint64_t flight_id);
     // Different local frames never share ordinary spatial interactions.
