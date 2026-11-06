@@ -1714,3 +1714,19 @@ if(BUILD_TESTING)
     COMMAND galaxy_ship_status04_npc_cyber_tests)
   set_tests_properties(galaxy_ship_status04_npc_cyber PROPERTIES TIMEOUT 300)
 endif()
+
+# SHIP-STATUS-05: one native recurring original-world NPC supervisor.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status05_supervisor_tests
+    tests/SHIPSTATUS05_SupervisorTests.cpp)
+  target_link_libraries(galaxy_ship_status05_supervisor_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status05_supervisor
+    COMMAND galaxy_ship_status05_supervisor_tests)
+  set_tests_properties(galaxy_ship_status05_supervisor PROPERTIES TIMEOUT 300)
+  find_program(SG_STATUS05_NODE NAMES node node.exe)
+  if(SG_STATUS05_NODE)
+    add_test(NAME galaxy_ship_status05_cockpit
+      COMMAND ${SG_STATUS05_NODE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/SHIPSTATUS05_CyberCockpitTests.js)
+  endif()
+endif()
