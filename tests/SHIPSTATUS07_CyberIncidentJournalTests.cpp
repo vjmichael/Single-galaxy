@@ -85,6 +85,9 @@ int main(){
         const auto original=contemporaneous_cyber_evidence(
             world,territory,victim,defender_guard,attack_id);
         CHECK(original.attempted && original.confusion_applied);
+        CHECK(original.attacker_owner==0);
+        CHECK(original.sensor_detail>=1 &&
+              !original.observed_description.empty());
         CHECK(!original.legal_crime_finding && !original.arrest_authorized &&
               !original.damage_authorized && !original.seizure_authorized);
         CHECK(!cases.intake(world,territory,attacker,defender_guard,
@@ -113,6 +116,14 @@ int main(){
         CHECK(reports.size()==1 && reports[0].witnessed_attempt &&
               reports[0].disrupted_modules &&
               reports[0].independent_law_review_required);
+        CHECK(!reports[0].later_identified_controller &&
+              !reports[0].identity_hail_event &&
+              !reports[0].evidence.attacking_ship);
+        CHECK(cases.hail_history().empty());
+        CHECK(cases.watch_known_descriptions(
+              world,8,victim,defender_guard).size()==1);
+        CHECK(cases.watch_known_descriptions(
+              world,7,victim,defender_guard).empty());
         CHECK(!reports[0].legal_crime_finding &&
               !reports[0].arrest_authorized &&
               !reports[0].damage_authorized &&
@@ -123,13 +134,39 @@ int main(){
         CHECK(cases.for_colony_owner(world,0,victim).empty());
         const auto& c=reports[0].evidence;
         CHECK(c.command_id==attack_id && c.case_id==case_id &&
-              c.attacker_owner==7 && c.victim_owner==8 &&
-              c.attacking_ship==attacker && c.victim_ship==victim &&
+              c.attacker_owner==0 && c.victim_owner==8 &&
+              c.attacking_ship==0 && c.victim_ship==victim &&
               c.jurisdiction_colony==victim &&
               c.observer_npc==defender_guard);
         CHECK(c.world_tick==world.world().tick() &&
               c.world_generation==world.generation() &&
               c.previous_digest=="genesis" && c.digest.size()==16);
+        CHECK(c.record_version==2 && c.sensor_detail>=1 &&
+              c.observed_description==original.observed_description);
+        CHECK(cases.history().front().attacking_ship==attacker);
+        CHECK(cases.history().front().attacker_owner==0);
+        // Hail acknowledgement is an independent original-world receipt.
+        CHECK(!cases.link_authenticated_hail(
+            world,territory,victim,defender_guard,attacker,7,96003));
+        CHECK(territory.warn(world,8,victim,attacker,defender_guard,
+                             96002,4));
+        CHECK(!cases.link_authenticated_hail(
+            world,territory,victim,defender_guard,attacker,7,96002));
+        CHECK(territory.respond_to_notice(world,7,victim,attacker,
+                                           96002,96003,false));
+        CHECK(!cases.link_authenticated_hail(
+            world,territory,victim,defender_guard,attacker,8,96003));
+        CHECK(cases.link_authenticated_hail(
+            world,territory,victim,defender_guard,attacker,7,96003));
+        CHECK(!cases.link_authenticated_hail(
+            world,territory,victim,defender_guard,attacker,7,96003));
+        CHECK(cases.hail_history().size()==1);
+        const auto linked=cases.summaries().front();
+        CHECK(linked.later_identified_controller==7 &&
+              linked.identity_hail_event==96003 &&
+              linked.evidence.attacker_owner==0 &&
+              linked.evidence.attacking_ship==attacker &&
+              !linked.legal_crime_finding && !linked.arrest_authorized);
         original_snapshot=world.world().canonical_state();
         // Even same-process tampering through SQLite is refused by the
         // original-world casebook's append-only database triggers.
@@ -140,6 +177,12 @@ int main(){
             nullptr,nullptr,nullptr)!=SQLITE_OK);
         CHECK(sqlite3_exec(raw,
             "DELETE FROM sg_ship_status07_incidents WHERE case_id=97002",
+            nullptr,nullptr,nullptr)!=SQLITE_OK);
+        CHECK(sqlite3_exec(raw,
+            "UPDATE sg_ship_status07_hail_links SET controller=8 WHERE case_id=97002",
+            nullptr,nullptr,nullptr)!=SQLITE_OK);
+        CHECK(sqlite3_exec(raw,
+            "DELETE FROM sg_ship_status07_hail_links WHERE case_id=97002",
             nullptr,nullptr,nullptr)!=SQLITE_OK);
         CHECK(sqlite3_close(raw)==SQLITE_OK);
         cases.verify();
@@ -158,10 +201,13 @@ int main(){
         CHECK(recovered.world().canonical_state()==original_snapshot);
         cases.verify();
         CHECK(cases.history().size()==1);
+        CHECK(cases.hail_history().size()==1);
         const auto summary=cases.summaries().front();
         CHECK(summary.evidence.case_id==case_id &&
               summary.evidence.command_id==attack_id &&
-              summary.witnessed_attempt && summary.disrupted_modules);
+              summary.witnessed_attempt && summary.disrupted_modules &&
+              summary.later_identified_controller==7 &&
+              summary.identity_hail_event==96003);
         CHECK(!summary.legal_crime_finding && !summary.arrest_authorized &&
               !summary.damage_authorized && !summary.seizure_authorized);
         recovered.step();
