@@ -66,6 +66,10 @@ enum class NpcFlightPurpose : std::uint8_t {
 enum class NpcFlightPhase : std::uint8_t {
     Planned=0,InTransit=1,Arrived=2,Cancelled=3
 };
+// FLIGHT-02 extends the SAME NPC flight record, not a second autopilot.
+// Celestial uses original v72 transit receipts; LocalDock uses original
+// submitted Thrust/RequestDock/RequestUndock and station transition events.
+enum class NpcFlightMode : std::uint8_t {Celestial=0,LocalDock=1};
 struct NpcFlightOrder {
     std::uint64_t id=0;
     PlayerId owner=0;
@@ -76,6 +80,11 @@ struct NpcFlightOrder {
     NpcFlightPurpose purpose=NpcFlightPurpose::General;
     NpcFlightPhase phase=NpcFlightPhase::Planned;
     std::uint64_t posted_tick=0,started_tick=0,resolved_tick=0;
+    // FLIGHT-02/v96 additive: zero/default fields roundtrip v95 flights.
+    NpcFlightMode mode=NpcFlightMode::Celestial;
+    EntityId station=0;
+    std::uint16_t local_commands=0; // bounded 1..511 issued native commands
+    std::uint64_t last_local_command=0; // original accepted native command ID
 };
 enum class CelestialKind {Star=0,Planet=1,Moon=2,DebrisRegion=3};
 struct PhysicalCelestialBody {
@@ -1081,6 +1090,11 @@ public:
         std::uint64_t pilot,std::uint64_t destination_body,
         std::uint64_t flight_id,std::uint64_t transit_request,
         NpcFlightPurpose purpose=NpcFlightPurpose::General);
+    // Same flight ledger, qualified crew and physical effect journal as
+    // celestial trips. No new station-navigation algorithm or docking effect.
+    bool queue_npc_station_docking(PlayerId owner,EntityId ship,
+        std::uint64_t pilot,EntityId station,std::uint64_t flight_id,
+        NpcFlightPurpose purpose=NpcFlightPurpose::General);
     bool cancel_npc_flight(PlayerId owner,std::uint64_t flight_id);
     // Different local frames never share ordinary spatial interactions.
     bool same_local_frame(EntityId a,EntityId b) const;
@@ -1374,6 +1388,9 @@ private:
         std::uint64_t destination_body,std::uint64_t request_id);
     bool complete_native_celestial_transit(std::uint64_t request_id);
     void process_npc_flight_navigation(); // same copied-state journaled step
+    bool submit_npc_local_control(NpcFlightOrder& flight,
+                                  Action action,EntityId target,
+                                  int thrust_x=0,int thrust_y=0);
     bool qualified_npc_flight_pilot(EntityId ship,std::uint64_t pilot) const;
     bool npc_available_for_duty_without_flight(std::uint64_t id) const;
     void process_farms();
