@@ -448,6 +448,55 @@ def main(executable,relay):
                     status,_=request(port,'POST','/command',
                                      {'token':token,'action':action,'order':order})
                     assert status==400,(action,order,status)
+            # WORK-01A: only the authenticated local owner can delegate
+            # specific future steps. Client cannot supply owner, inventory,
+            # named workforce outside the strict command fields, or hull IDs.
+            for action,fields in (
+                ('colonyWorkDelegateShip',{'order':94001,'contract':93001,
+                   'firstNpc':31,'secondNpc':32,'provisionsKg':20,'dependency':0}),
+                ('colonyWorkCancel',{'order':94001}),
+                ('colonyWorkStatus',{}),
+            ):
+                assert action in session['commands'],action
+                payload={'token':token,'action':action,**fields}
+                status,_=request(port,'POST','/command',payload)
+                assert status==202,(action,status)
+                status,_=request(port,'POST','/command',
+                                 {**payload,'token':'forged'})
+                assert status==403,(action,status)
+                status,_=request(port,'POST','/command',
+                                 {**payload,'owner':8})
+                assert status==400,(action,status)
+                status,_=request(port,'POST','/command',payload,origin=False)
+                assert status==403,(action,status)
+            template={'token':token,'action':'colonyWorkDelegateShip',
+                'order':94001,'contract':93001,'firstNpc':31,'secondNpc':32,
+                'provisionsKg':20,'dependency':0}
+            for payload in (
+                {**template,'order':True},
+                {**template,'order':0},
+                {**template,'contract':False},
+                {**template,'contract':1<<50},
+                {**template,'firstNpc':True},
+                {**template,'secondNpc':31},
+                {**template,'firstNpc':0},
+                {**template,'firstNpc':0,'secondNpc':0},
+                {**template,'firstNpc':0,'secondNpc':0,'provisionsKg':20},
+                {**template,'provisionsKg':False},
+                {**template,'provisionsKg':9},
+                {**template,'dependency':94001},
+                {**template,'dependency':-1},
+                {**template,'ship':2},
+                {**template,'modules':6},
+                {**template,'skipPhysicalBerth':True},
+                {**template,'freeCrew':True},
+            ):
+                status,_=request(port,'POST','/command',payload)
+                assert status==400,(payload,status)
+            for invalid in (-1,0,True,1<<50):
+                status,_=request(port,'POST','/command',
+                    {'token':token,'action':'colonyWorkCancel','order':invalid})
+                assert status==400,(invalid,status)
             print("PASS PGF01B2 HTTP relay accepts valid geography and rejects forged inputs")
         finally:
             proc.terminate()
