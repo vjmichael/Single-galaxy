@@ -36,3 +36,21 @@ New `galaxy_flight04b_interaction_executors` native regression establishes fail-
 2. Existing intercolony freight also requires a **celestial transit arrival receipt**. Merely arriving alongside another ship is intentionally insufficient for delivery; future same-frame freight must be implemented under the original sealed goods transaction without discarding those original custody invariants.
 3. The trusted gameplay host/dispatcher does not yet invoke these new entrypoints for live orders. Wiring dispatch must come after FLIGHT-03's missing core LocalRendezvous execution/receipt/snapshot implementation.
 4. Because parent PR #66 still declares LocalRendezvous functions without implementing the core, native compiling/linking or passing CI is **not claimed**. No acceptance, merge or operational ship-to-ship passenger/freight claims before it is repaired and tested.
+
+
+## FLIGHT-04B full physical freight acceptance source (November 6, 2026)
+
+This branch is now merged with FLIGHT-03 v97 native ship-rendezvous code and has an additional **positive** regression named `galaxy_flight04b_real_freight`. It extends the existing PLAY13D / WORK-01C native sealed-freight fixture rather than creating any competing material ledger.
+
+New `--flight03-rendezvous-freight` scenario:
+1. Uses genuine finite planetary output and the existing original station/colony source-to-ship sealed cargo transaction.
+2. Uses a qualified original NPC pilot and a real native celestial flight to the receiving body's physical frame (maintains original intercolony-voyage requirement).
+3. Posts a separate authorized `LocalRendezvous` to the destination **physical ship** and waits for matching position, velocity and the committed `NpcRendezvous` native activity.
+4. Refuses early transfer and wrong-owner transfer through `ship_interaction::deliver_freight_after_rendezvous`.
+5. Injects a native SQLite publication failure on the proposed transfer and asserts unchanged canonical inventory/world state.
+6. Completes the **original** `PersistentWorld::deliver_intercolony_freight` through the rendezvous-guarded entrypoint, proves exact receiver stock and sealed hold debit, and rejects duplicate delivery.
+7. Continues existing physical return-voyage, inventory conservation, snapshot roundtrip and persistent SQLite close/reopen checks.
+
+Existing legacy and delegated freight scenarios keep their original commands and do not acquire surprise rendezvous prerequisites. Passenger and child rescue still require their original host/guardian/manifest executors; no fabricated positive passenger rescue is claimed.
+
+**State:** Test and source wired, Windows/Linux native verification queued. Do not merge or mark acceptance green before the exact head passes.
