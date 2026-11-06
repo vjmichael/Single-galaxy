@@ -5745,6 +5745,11 @@ bool Simulation::queue_shipyard_freighter(PlayerId owner,
        yard->second.owner!=owner || !yard->second.operational() ||
        freighter_build_orders_.size()>=10000 ||
        freighter_build_orders_.count(build_id))return false;
+    for(const auto& [id,contract]:shipyard_customer_orders_) {
+        (void)id;
+        if(contract.build_order==build_id &&
+           contract.stage!=ShipyardCustomerStage::Funded)return false;
+    }
     const EntityId ship=yard->second.colony_ship;
     const auto e=entities_.find(ship),inventory=colony_ships_.find(ship);
     const auto life=life_support_.find(ship),frame=ship_frames_.find(ship);
@@ -5883,14 +5888,16 @@ bool Simulation::fund_shipyard_customer_order(PlayerId customer,
     // refuses the build, restore both exact material inventories.
     paid->second.modules-=6;
     provider->second.modules+=6;
+    it->second.stage=ShipyardCustomerStage::Funded;
+    it->second.funded_tick=tick_;
     if(!queue_shipyard_freighter(order.supplier_owner,order.yard_order,
                                 order.build_order)){
+        it->second.stage=ShipyardCustomerStage::Accepted;
+        it->second.funded_tick=0;
         paid->second.modules+=6;
         provider->second.modules-=6;
         return false;
     }
-    it->second.stage=ShipyardCustomerStage::Funded;
-    it->second.funded_tick=tick_;
     return true;
 }
 bool Simulation::deliver_shipyard_customer_order(PlayerId customer,
@@ -10413,6 +10420,56 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                  (shuttle->second.flight_phase!=3 &&
                   shuttle->second.flight_phase!=0))))
                 throw std::runtime_error("snapshot: invalid courier flight phase");
+        }
+    }
+    if(result.snapshot_version_>=93) {
+        std::set<std::uint64_t> contract_builds;
+        for(const auto& [id,contract]:result.shipyard_customer_orders_) {
+            (void)id;
+            const auto yard=result.shipyard_constructions_.find(contract.yard_order);
+            const auto buyer=result.entities_.find(contract.customer_ship);
+            const auto supplier=result.entities_.find(contract.supplier_ship);
+            if(yard==result.shipyard_constructions_.end() ||
+               !yard->second.operational() ||
+               yard->second.owner!=contract.supplier_owner ||
+               yard->second.colony_ship!=contract.supplier_ship ||
+               buyer==result.entities_.end() ||
+               supplier==result.entities_.end() ||
+               buyer->second.type!=EntityType::Ship ||
+               supplier->second.type!=EntityType::Ship ||
+               buyer->second.owner_id!=contract.customer_owner ||
+               supplier->second.owner_id!=contract.supplier_owner ||
+               !result.colony_ships_.count(contract.customer_ship) ||
+               !result.colony_ships_.count(contract.supplier_ship) ||
+               !contract_builds.insert(contract.build_order).second)
+                throw std::runtime_error("snapshot: invalid customer/supplier custody");
+            const auto build=result.freighter_build_orders_.find(contract.build_order);
+            if(contract.stage==ShipyardCustomerStage::Requested ||
+               contract.stage==ShipyardCustomerStage::Accepted) {
+                if(build!=result.freighter_build_orders_.end())
+                    throw std::runtime_error("snapshot: unfunded customer hull");
+            }else{
+                if(build==result.freighter_build_orders_.end() ||
+                   build->second.owner!=contract.supplier_owner ||
+                   build->second.source_ship!=contract.supplier_ship ||
+                   build->second.yard_order!=contract.yard_order ||
+                   build->second.posted_tick<contract.posted_tick)
+                    throw std::runtime_error("snapshot: missing paid physical build");
+                if(contract.stage==ShipyardCustomerStage::Delivered) {
+                    const auto made=result.entities_.find(contract.delivered_ship);
+                    if(!build->second.finished() ||
+                       contract.delivered_ship!=build->second.launched_ship ||
+                       contract.delivered_tick<build->second.launched_tick ||
+                       made==result.entities_.end() ||
+                       made->second.owner_id!=contract.customer_owner)
+                        throw std::runtime_error("snapshot: customer handover not proven");
+                }else if(build->second.finished()) {
+                    const auto made=result.entities_.find(build->second.launched_ship);
+                    if(made==result.entities_.end() ||
+                       made->second.owner_id!=contract.supplier_owner)
+                        throw std::runtime_error("snapshot: unclaimed hull ownership forged");
+                }
+            }
         }
     }
     if(result.snapshot_version_>=91) {
