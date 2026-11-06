@@ -11061,10 +11061,14 @@ bool PersistentWorld::submit(const Command& command, FailPoint fail) {
     // The native NPC navigator submits its own original controls through
     // Simulation::submit inside the host-journaled step, unaffected here.
     if(command.action==Action::Thrust ||
+       command.action==Action::Mine ||
+       command.action==Action::StartMining ||
+       command.action==Action::StopMining ||
        command.action==Action::RequestDock ||
        command.action==Action::RequestUndock ||
        command.action==Action::RequestJump ||
-       command.action==Action::FireTrainingWeapon){
+       command.action==Action::FireTrainingWeapon ||
+       command.action==Action::SalvageWreck){
         const auto person=world_.player_people_.find(command.issuer);
         if(person!=world_.player_people_.end() &&
            (person->second.state!=PlayerPersonState::AboardOwnShip ||
