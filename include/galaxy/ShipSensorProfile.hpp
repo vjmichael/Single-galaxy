@@ -26,13 +26,22 @@ inline bool stealth_baffle(const Entity& ship) noexcept {
 inline bool strong_sensors(const Entity& ship) noexcept {
     return ship.fitting.support[0]==3 || ship.fitting.support[1]==3;
 }
+inline bool powered_survey_scanner(
+    const Simulation& world,const Entity& observer) {
+    for(std::uint8_t slot=0;slot<2;++slot)
+        if(observer.fitting.hardpoints[slot]==1 &&
+           world.hardpoint_effective_on(observer.id,slot))
+            return true;
+    return false;
+}
 inline std::int64_t detection_range_mm(
-    const Entity& observer,const Entity& target) noexcept {
+    const Simulation& world,
+    const Entity& observer,const Entity& target) {
     if(observer.type!=EntityType::Ship || target.type!=EntityType::Ship)
         return 0;
     if(!stealth_baffle(target))return kOrdinaryRangeMm;
     if(strong_sensors(observer))return kStealthStrongRangeMm;
-    if(observer.fitting.exploration_scanner())
+    if(powered_survey_scanner(world,observer))
         return kStealthSurveyRangeMm;
     return kStealthOrdinaryRangeMm;
 }
