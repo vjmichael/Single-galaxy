@@ -1,6 +1,7 @@
 #include "galaxy/ShipHailJournal.hpp"
 #include "galaxy/SecurityDeskHost.hpp"
 #include <sqlite3.h>
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <iostream>
@@ -143,6 +144,10 @@ int main(){
             CHECK(strike.penalty_points==5+i);
         }
         const auto filled=calls.history().size();
+        const auto detailed=calls.history();
+        CHECK(std::count_if(detailed.begin(),detailed.end(),
+             [&](const Receipt& e){return e.kind==Kind::Abuse &&
+               e.caller_owner==7 && e.recipient_ship==b;})==10);
         CHECK(calls.overflow_history().empty());
         recovered.step();
         const auto eleventh=calls.call(recovered,land,7,a,b,1300);
