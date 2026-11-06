@@ -125,6 +125,44 @@ std::int64_t integer(const std::string& s){
 void announce(const Simulation& w,const std::string& text){
     std::cerr<<"COLONY|1|"<<w.tick()<<'|'<<text<<'\n'<<std::flush;
 }
+// SHIP-STATUS-05: read-only cockpit from one authoritative physical ship.
+// A frame displays actual fitted hardware and effective native module state,
+// never a client-assumed equipment grant or a speculative attack outcome.
+void cyber_status(const Simulation& w,EntityId ship) {
+    const auto* hull=w.find(ship);
+    if(!hull || hull->type!=EntityType::Ship || hull->owner_id!=owner)return;
+    const auto until=hull->last_hack_tick &&
+        w.tick()<hull->last_hack_tick+Simulation::kHackCooldownTicks?
+        hull->last_hack_tick+Simulation::kHackCooldownTicks-w.tick():0;
+    announce(w,"CYBER_STATUS|"+std::to_string(ship)+"|"+
+        std::to_string(hull->fitting.intrusion_emitter()?1:0)+"|"+
+        std::to_string(hull->fitting.cyber_firewall()?1:0)+"|"+
+        std::to_string(until)+"|"+
+        std::to_string(w.colony_ship(ship)?1:0));
+    for(std::uint8_t slot=0;slot<2;++slot) {
+        const auto hw=hull->fitting.hardpoints[slot];
+        announce(w,"CYBER_MODULE|"+std::to_string(ship)+"|"+
+            std::to_string(unsigned(slot))+"|"+std::to_string(unsigned(hw))+"|"+
+            std::to_string(hull->hardpoint_requested_on[slot]?1:0)+"|"+
+            std::to_string(w.hardpoint_effective_on(ship,slot)?1:0)+"|"+
+            std::to_string(hull->hardpoint_isolated[slot]?1:0));
+    }
+    announce(w,"CYBER_TARGETS_RESET|"+std::to_string(ship));
+    for(const auto& [id,target]:w.entities()){
+        if(id==ship || target.type!=EntityType::Ship || target.training_drone ||
+           !target.owner_id || target.owner_id==hull->owner_id ||
+           target.system_id!=hull->system_id ||
+           !w.same_local_frame(ship,id) ||
+           target.dock_state!=DockState::InSpace)continue;
+        const auto dx=double(target.position.x)-hull->position.x;
+        const auto dy=double(target.position.y)-hull->position.y;
+        const auto distance=std::hypot(dx,dy);
+        if(distance>double(Simulation::kHackRangeMm))continue;
+        announce(w,"CYBER_TARGET|"+std::to_string(ship)+"|"+
+            std::to_string(id)+"|"+std::to_string(
+                static_cast<std::uint64_t>(distance)));
+    }
+}
 void status(const Simulation& w,EntityId ship,bool replay_discoveries=false){
     const auto* s=w.find(ship);const auto* c=w.colony_ship(ship);
     if(!s || !c)throw std::runtime_error("colony ship missing");
@@ -1696,6 +1734,33 @@ void apply(PersistentWorld& world,EntityId ship,FleetSelection& fleet,const std:
             const auto mode=integer(v[1]);
             if(mode!=1 && mode!=-1)throw std::invalid_argument("invalid scanner fit mode");
             c.action=Action::ConfigureExplorationScanner;c.amount=mode;
+        }else if(v.size()==2 && v[0]=="CYBER_FIT"){
+            const auto mode=integer(v[1]);
+            if(mode!=3 && mode!=-3 && mode!=4 && mode!=-4)
+                throw std::invalid_argument("invalid cyber fitting");
+            if(!fleet.is_ready(world.world(),fleet.piloted()))
+                throw std::invalid_argument("cockpit unavailable");
+            c.actor=fleet.piloted();
+            c.action=Action::ConfigureCyberModule;c.amount=mode;
+        }else if(v.size()==3 &&
+                 (v[0]=="CYBER_POWER" || v[0]=="CYBER_ISOLATE")){
+            const auto slot=integer(v[1]),enabled=integer(v[2]);
+            if(slot<0 || slot>1 || (enabled!=0 && enabled!=1))
+                throw std::invalid_argument("invalid cyber control");
+            if(!fleet.is_ready(world.world(),fleet.piloted()))
+                throw std::invalid_argument("cockpit unavailable");
+            c.actor=fleet.piloted();
+            c.action=v[0]=="CYBER_POWER"?Action::SetHardpointPower:
+                Action::SetCyberIsolation;
+            c.amount=slot*2+enabled;
+        }else if(v.size()==2 && v[0]=="CYBER_ATTACK"){
+            const auto target=integer(v[1]);
+            if(target<=0 || target>1000000000000000LL)
+                throw std::invalid_argument("invalid cyber target");
+            if(!fleet.is_ready(world.world(),fleet.piloted()))
+                throw std::invalid_argument("cockpit unavailable");
+            c.actor=fleet.piloted();c.target=static_cast<EntityId>(target);
+            c.action=Action::HackConfuse;
         }else if(v.size()==2 && v[0]=="FIRE_TRAINING"){
             const auto id=integer(v[1]);
             if(id<=0||id>100000000)throw std::invalid_argument("invalid combat target");
@@ -1970,6 +2035,7 @@ int main(int argc,char** argv){
         std::cout<<encode_frame(bridge.snapshot())<<std::flush;
         announce(world.world(),was_saved?"RESUMED":"NEW_COLONY");
         status(world.world(),ship,true);
+        cyber_status(world.world(),fleet.piloted());
         // The initial selection is always the actual home ship. A browser
         // may restore a prior preference, but native selection revalidates it.
         std::uint64_t nonce=900000000000ULL+world.generation();
@@ -2260,6 +2326,7 @@ int main(int argc,char** argv){
             }
             std::cout<<encode_frame(bridge.after_committed_step(world.world()))<<std::flush;
             status(world.world(),ship,scanned);
+            cyber_status(world.world(),fleet.piloted());
             // Player cockpit is not the home colony's management actor.
             // Publish these independently so camera, heading and supplies
             // describe the hull actually selected for flight.
