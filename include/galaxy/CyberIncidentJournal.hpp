@@ -51,6 +51,11 @@ public:
         CyberIntakeFailPoint fail=CyberIntakeFailPoint::None);
     std::vector<CyberIncidentCase> history() const;
     std::vector<CyberIncidentSummary> summaries() const;
+    // Host must supply authenticated_owner from its session, not a client
+    // field. A foreign caller cannot enumerate a colony's security cases.
+    std::vector<CyberIncidentSummary> for_colony_owner(
+        const PersistentWorld& world,PlayerId authenticated_owner,
+        EntityId colony) const;
     void verify() const;
 private:
     struct State;
