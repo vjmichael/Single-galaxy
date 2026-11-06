@@ -130,6 +130,23 @@ int main(){
         CHECK(calls.penalty_for(recovered,7,a).law_review_eligible);
         CHECK(calls.pending_for(recovered,8,b).empty());
         CHECK(calls.call(recovered,land,7,a,c,1100).status==Status::Suppressed);
+        // A malicious caller may keep trying after restart. Record at most
+        // the bounded 10-point history per original recipient and refuse
+        // every later attempt without allocating another immutable row.
+        for(std::uint64_t i=0;i<7;++i){
+            recovered.step();
+            const auto strike=calls.call(
+                recovered,land,7,a,b,1200+i);
+            CHECK(strike.status==Status::Penalized);
+            CHECK(strike.penalty_points==4+i);
+        }
+        const auto filled=calls.history().size();
+        recovered.step();
+        const auto blocked=calls.call(recovered,land,7,a,b,1300);
+        CHECK(blocked.status==Status::Suppressed &&
+              blocked.penalty_points==10);
+        CHECK(calls.history().size()==filled);
+        CHECK(calls.penalty_for(recovered,7,a).penalty_points==10);
         CHECK(recovered.world().npc_flight_orders().empty());
     }
     fs::remove_all(dir);
