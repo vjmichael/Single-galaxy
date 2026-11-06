@@ -37,6 +37,11 @@ def play(browser, url, first):
     assert page.locator("#securityHail").is_disabled()
     assert page.locator("#securityAcknowledge").is_disabled()
     assert page.locator("#securityPatrol").is_disabled()
+    assert page.locator("#securityCallShip").is_disabled()
+    assert page.locator("#securityIdentifyCaller").is_disabled()
+    assert page.locator("#securityDeclineCaller").is_disabled()
+    assert "No communications abuse penalty" in page.locator(
+        "#securityCommsPenalty").inner_text()
     if first:
         assert not page.locator("#securityClaim").is_disabled()
         page.locator("#securityClaimRadius").fill("3000")
@@ -60,12 +65,19 @@ def play(browser, url, first):
     assert page.locator("#securityContact").locator("option").count()==1
     assert page.locator("#securityDestination").locator("option").count()==1
     assert page.locator("#securityNotice").locator("option").count()==1
+    assert page.locator("#securityCallInbox").locator("option").count()==1
+    assert page.locator("#securityCallShip").is_disabled()
+    assert page.locator("#securityCommsComplaints").inner_text().startswith(
+        "No communications abuse complaints")
     assert not errors,"actual Chromium security errors: "+repr(errors)
     page.locator("#colonySignOut").click()
     page.locator("#colonySignIn").wait_for(state="visible",timeout=10000)
     assert "No witnessed cyber incidents" in page.locator(
         "#securityCaseList").inner_text()
     assert page.locator("#securityClaim").is_disabled()
+    assert page.locator("#securityCallShip").is_disabled()
+    assert "No communications abuse penalty" in page.locator(
+        "#securityCommsPenalty").inner_text()
     page.close()
 
 
