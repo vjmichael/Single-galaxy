@@ -50,6 +50,14 @@ struct Result {
     std::uint64_t event_id=0,penalty_points=0,cooldown_until=0;
     bool law_review_eligible=false;
 };
+struct OverflowPenalty {
+    PlayerId caller_owner=0;
+    EntityId recipient_ship=0;
+    // The first ten detailed abuse receipts remain immutable. Further
+    // committed violations accrue here using one compact row per pair.
+    std::uint64_t total_points=0,seed_event=0,last_event=0;
+    std::uint64_t last_tick=0,last_generation=0,cooldown_until=0;
+};
 struct Incoming {
     std::uint64_t request_id=0,request_tick=0;
     PlayerId caller=0; // authenticated initiating account, not a sensor guess
@@ -194,6 +202,13 @@ public:
                 "cooldown INTEGER NOT NULL,review INTEGER NOT NULL,"
                 "proof INTEGER NOT NULL,prior_digest TEXT NOT NULL,"
                 "digest TEXT NOT NULL)");
+            run(db_,"CREATE TABLE IF NOT EXISTS sg_ship_hail07e_totals ("
+                "caller_owner INTEGER NOT NULL,recipient_ship INTEGER NOT NULL,"
+                "points INTEGER NOT NULL,seed_event INTEGER NOT NULL,"
+                "last_event INTEGER UNIQUE NOT NULL,last_tick INTEGER NOT NULL,"
+                "last_generation INTEGER NOT NULL,cooldown INTEGER NOT NULL,"
+                "PRIMARY KEY(caller_owner,recipient_ship),"
+                "CHECK(points>=11))");
             run(db_,"CREATE TRIGGER IF NOT EXISTS sg_hail07e_immutable_update "
                 "BEFORE UPDATE ON sg_ship_hail07e "
                 "BEGIN SELECT RAISE(ABORT,'immutable ship hail'); END");
@@ -239,6 +254,31 @@ public:
         if(rc!=SQLITE_DONE)
             throw std::runtime_error("ship hail read failed");
         return result;
+    }
+    std::vector<OverflowPenalty> overflow_history() const {
+        Statement s(db_,
+            "SELECT caller_owner,recipient_ship,points,seed_event,"
+            "last_event,last_tick,last_generation,cooldown "
+            "FROM sg_ship_hail07e_totals ORDER BY caller_owner,recipient_ship");
+        std::vector<OverflowPenalty> out;
+        int rc=SQLITE_OK;
+        while((rc=sqlite3_step(s.stmt))==SQLITE_ROW){
+            OverflowPenalty p{};
+            p.caller_owner=field(s.stmt,0);
+            p.recipient_ship=field(s.stmt,1);
+            p.total_points=field(s.stmt,2);
+            p.seed_event=field(s.stmt,3);
+            p.last_event=field(s.stmt,4);
+            p.last_tick=field(s.stmt,5);
+            p.last_generation=field(s.stmt,6);
+            p.cooldown_until=field(s.stmt,7);
+            out.push_back(p);
+            if(out.size()>kMaximumRecords)
+                throw std::runtime_error("ship hail aggregate row limit");
+        }
+        if(rc!=SQLITE_DONE)
+            throw std::runtime_error("ship hail aggregate read failure");
+        return out;
     }
     void verify() const {
         std::uint64_t sequence=0,tick=0,generation=0;
@@ -311,6 +351,29 @@ public:
             }
             previous=e.digest;tick=e.world_tick;
             generation=e.world_generation;
+        }
+        const auto events=history();
+        for(const auto& p:overflow_history()){
+            const auto seed=std::find_if(events.begin(),events.end(),
+                [&](const Receipt& e){
+                    return e.event_id==p.seed_event &&
+                           e.kind==Kind::Abuse &&
+                           e.caller_owner==p.caller_owner &&
+                           e.recipient_ship==p.recipient_ship &&
+                           e.penalty_points==10;
+                });
+            if(seed==events.end() || !p.caller_owner ||
+               !p.recipient_ship || !p.last_event ||
+               p.total_points<11 ||
+               p.total_points>std::uint64_t(
+                   std::numeric_limits<sqlite3_int64>::max()) ||
+               p.last_tick<seed->world_tick ||
+               p.last_generation<seed->world_generation ||
+               p.cooldown_until<=p.last_tick ||
+               std::any_of(events.begin(),events.end(),
+                 [&](const Receipt& e){return e.event_id==p.last_event;}))
+                throw std::runtime_error(
+                    "ship hail compact penalty cannot reconcile to ten original receipts");
         }
     }
     Result call(const PersistentWorld& world,
