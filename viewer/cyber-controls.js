@@ -103,7 +103,7 @@
    list.replaceChildren();
    for(const slot of [0,1]){
      const m=modules.get(slot);
-     if(!m)continue;
+     if(!m || m.tick!==status?.tick)continue;
      const row=document.createElement('div');row.className='controls';
      row.style.padding='5px 0';row.style.gap='6px';
      const label=document.createElement('span');
@@ -127,11 +127,12 @@
    }
    const select=e('cyberTarget'),prev=select.value;
    select.replaceChildren(new Option('Select observed hostile ship',''),
-     ...[...targets.values()].sort((a,b)=>a.id-b.id)
+     ...[...targets.values()].filter(v=>v.tick===status?.tick)
+       .sort((a,b)=>a.id-b.id)
        .map(v=>new Option('Ship #'+v.id+' · '+v.distance+' mm',String(v.id))));
    if([...select.options].some(o=>o.value===prev))select.value=prev;
    e('cyberAttack').disabled=!canAttack(status,Number(select.value),emitterPowered) ||
-      !targets.has(Number(select.value));
+      targets.get(Number(select.value))?.tick!==status?.tick;
  }
  function accept(raw){
    if(typeof raw!=='string'||!raw.includes('|CYBER_'))return false;
@@ -165,7 +166,7 @@
    const target=Number(e('cyberTarget').value);
    const powered=[...modules.values()].some(m=>m.tick===status?.tick &&
      m.hardware===3 && m.effective && !m.isolated);
-   if(canAttack(status,target,powered)&&targets.has(target))
+   if(canAttack(status,target,powered)&&targets.get(target)?.tick===status?.tick)
      void send('colonyCyberAttack',{target});
  });
  e('cyberTarget').addEventListener('change',update);
