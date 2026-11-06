@@ -1425,6 +1425,17 @@ if(BUILD_TESTING)
     COMMAND galaxy_ship01b2_commission_freighter_tests)
 endif()
 
+# WORK-01B: typed real-authority capability registry, deterministic priority
+# and same-tick named-worker planning; existing v94 SQLite records unchanged.
+if(BUILD_TESTING)
+  add_executable(galaxy_work01b_work_planner_tests
+    tests/WORK01B_WorkPlannerTests.cpp)
+  target_link_libraries(galaxy_work01b_work_planner_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_work01b_work_planner
+    COMMAND galaxy_work01b_work_planner_tests)
+  set_tests_properties(galaxy_work01b_work_planner PROPERTIES TIMEOUT 180)
+endif()
+
 # WORK-01A native v94 universal work ledger + actual NPC fulfillment adapter.
 # Uses original galaxy_kernel, existing transport, shipyard, and NPC records.
 if(BUILD_TESTING)

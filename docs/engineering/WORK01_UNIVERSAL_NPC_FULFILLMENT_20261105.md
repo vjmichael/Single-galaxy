@@ -63,7 +63,9 @@ Dedicated `.github/workflows/work01a-universal-fulfillment.yml` runs C++/SQLite 
 
 ### Next phases, not silently claimed done
 
-**WORK-01B:** capability registry with typed input/result schemas per original authority; dependency graph planning and scheduling fairness; explicit reservation policies that do not duplicate existing native escrows; priority/urgency/worker availability, emergency preemption, finite worker and machine capacity. Shipyard supplier approval can be a separate opt-in delegation, but never blanket unauthorized acceptance.
+**WORK-01B.1 now implemented as source (CI unverified):** [Typed Capability & Canonical Planning](WORK01B_CAPABILITY_PLANNING_20261105.md) adds five typed schema entries, stable physical-stage/age scheduling, explicit dependency evaluation, and ephemeral same-tick real-NPC commissioning collision protection without a new snapshot version or inventory. General worker skill matching, site capacity, emergency overrides, configurable priority and installed desktop remain open.
+
+**WORK-01B remaining:** capability registry with typed input/result schemas per original authority; dependency graph planning and scheduling fairness; explicit reservation policies that do not duplicate existing native escrows; priority/urgency/worker availability, emergency preemption, finite worker and machine capacity. Shipyard supplier approval can be a separate opt-in delegation, but never blanket unauthorized acceptance.
 
 **WORK-01C:** safe executor adapters for already-existing local shuttle orders, physical freight, mining, agricultural production, factory crafting and maintenance; some are already native-automatic and need only queue integration.
 
