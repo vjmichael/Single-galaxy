@@ -30,6 +30,8 @@ assert.equal(cyber.parse('COLONY|1|6|CYBER_RESULT|991|3|ATTACK_RESISTED').result
 assert.deepEqual(cyber.parse('COLONY|1|6|CYBER_DEFENSE|17|4|88|2'),
  {tick:6,type:'CYBER_DEFENSE',ship:17,remaining:4,source:88,exposed:2});
 assert.equal(cyber.parse('COLONY|1|6|CYBER_INCOMING|17|88|992|APPLIED').result,'APPLIED');
+assert.equal(cyber.parse('COLONY|1|6|CYBER_INCOMING|17|0|992|APPLIED').source,0);
+assert.equal(cyber.parse('COLONY|1|6|CYBER_DEFENSE|17|4|0|1').source,0);
 assert.deepEqual(cyber.parse('COLONY|1|6|CYBER_SENSORS|17|1|0|1'),
  {tick:6,type:'CYBER_SENSORS',ship:17,stealth:true,counter:false,scanner:true});
 for(const forged of [
@@ -126,6 +128,10 @@ telemetry('COLONY|1|6|CYBER_INCOMING|17|88|992|APPLIED');
 assert.match(nodes.get('cyberAlert').textContent,/disrupted your modules/);
 telemetry('COLONY|1|6|CYBER_INCOMING|17|88|993|ATTACK_RESISTED');
 assert.match(nodes.get('cyberAlert').textContent,/ATTACK RESISTED/);
+telemetry('COLONY|1|6|CYBER_INCOMING|17|0|994|APPLIED');
+assert.match(nodes.get('cyberAlert').textContent,/unidentified ship/);
+telemetry('COLONY|1|6|CYBER_DEFENSE|17|4|0|1');
+assert.match(nodes.get('cyberDefense').textContent,/unidentified source/);
 telemetry('COLONY|1|7|CYBER_STATUS|17|1|0|0|1');
 assert.match(nodes.get('cyberDefense').textContent,/No active Confusion/);
 telemetry('COLONY|1|7|CYBER_DEFENSE|17|0|0|0');
