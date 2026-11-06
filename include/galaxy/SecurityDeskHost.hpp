@@ -258,7 +258,10 @@ bool execute(const std::vector<std::string>& words,
         return result;
     };
     if(words.size()==1 && words[0]=="SECURITY_REFRESH") {
-        snapshot(world,territory,cases,owner,home,piloted,emit);
+        // Including the canonical comms journal is essential when a
+        // disconnected recipient reconnects and requests its own inbox.
+        snapshot(world,territory,cases,owner,home,piloted,emit,
+                 communications);
         return true;
     }
     bool accepted=false,linked=false;
