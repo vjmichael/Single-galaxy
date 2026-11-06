@@ -43,6 +43,8 @@ The dedicated `.github/workflows/work01b-work-planner.yml` builds on Windows and
 
 ## Still open for later WORK-01B / WORK-01C
 
+**WORK-01B.2 now implemented as source (CI pending):** [Native Workforce Qualifications & Yard Capacity](WORK01B2_NATIVE_WORKFORCE_CAPACITY_20261105.md) adds real NPC duty/medical/transport qualification checks, builder job conflicts and one physical assembly slip per original yard; other machine types and autonomous executor categories remain future work.
+
 - Source-specific **workforce qualifications** (skill/licensing/experience) beyond real current role/custody checks, plus actual per-site machine-slot/yard queues.
 - Configurable player-approved priority settings and emergency/life-support precedence with a durable authorization policy. The current stage/age ordering is deterministic but **not full global fairness or emergency arbitration**.
 - General execution adapters for local shipping, freight, mining, farming, crafting, maintenance and repair—only existing customer-ship contract execution is admitted to universal delegated automation.

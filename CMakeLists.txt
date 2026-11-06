@@ -1425,6 +1425,17 @@ if(BUILD_TESTING)
     COMMAND galaxy_ship01b2_commission_freighter_tests)
 endif()
 
+# WORK-01B.2: canonical worker qualifications and original physical
+# one-slip yard capacity, native workforce duty and collision regression.
+if(BUILD_TESTING)
+  add_executable(galaxy_work01b2_native_capacity_tests
+    tests/WORK01B2_CapacityTests.cpp)
+  target_link_libraries(galaxy_work01b2_native_capacity_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_work01b2_native_capacity
+    COMMAND galaxy_work01b2_native_capacity_tests)
+  set_tests_properties(galaxy_work01b2_native_capacity PROPERTIES TIMEOUT 180)
+endif()
+
 # WORK-01B: typed real-authority capability registry, deterministic priority
 # and same-tick named-worker planning; existing v94 SQLite records unchanged.
 if(BUILD_TESTING)

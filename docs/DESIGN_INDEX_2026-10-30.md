@@ -43,3 +43,4 @@ Current delivered engineering report: [B7.0c Mineral Industry](B7_0c_Mineral_Ind
 
 - [WORK-01A — universal NPC work coordinator and real customer shipyard fulfillment (draft)](engineering/WORK01_UNIVERSAL_NPC_FULFILLMENT_20261105.md) — typed native work adapters, durable consent/dependencies, v94 recovery, no duplicate inventory.
 - [WORK-01B.1 — typed native work capability and prerequisite/NPC selection planner (draft)](engineering/WORK01B_CAPABILITY_PLANNING_20261105.md) — deterministic stage/age priority and per-tick real-worker collision prevention, original v94 resources unchanged.
+- [WORK-01B.2 — canonical worker qualification and one-slip shipyard capacity (draft)](engineering/WORK01B2_NATIVE_WORKFORCE_CAPACITY_20261105.md) — native NPC duty, builder conflicts, physical slip occupancy, no new workforce or factory ledger.

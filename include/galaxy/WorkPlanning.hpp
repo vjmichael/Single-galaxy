@@ -3,7 +3,7 @@
 // WORK-01B: capability descriptors and deterministic read-only planning.
 // This layer never owns resources, workers, transports or ship inventories.
 // Only original Simulation methods may commit real physical effects.
-#include "galaxy/Simulation.hpp"
+#include "galaxy/WorkCapacity.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -57,7 +57,8 @@ constexpr const Capability* find_capability(WorkTaskKind kind) noexcept {
 enum class Gate : std::uint8_t {
     Ready=0,Dependency=1,SupplierApproval=2,
     WorkerUnavailable=3,WorkerReserved=4,MissingSource=5,
-    UnsupportedExecutor=6
+    UnsupportedExecutor=6,YardUnavailable=7,
+    AssemblySlipBusy=8,BuilderUnavailable=9,WorkerOnNativeJob=10
 };
 struct PlannedDirective {
     std::uint64_t id=0;
@@ -70,6 +71,8 @@ struct PlannedDirective {
     std::uint32_t priority=0;
     Gate gate=Gate::Ready;
     std::array<std::uint64_t,2> reserved_crew{};
+    std::uint64_t reserved_yard=0;
+    std::array<std::uint64_t,2> reserved_builders{};
     bool can_execute() const noexcept {return gate==Gate::Ready;}
 };
 // Every planner call starts from committed canonical records. There is NO
@@ -80,7 +83,11 @@ inline std::vector<PlannedDirective> plan(
     const std::map<std::uint64_t,WorkDirective>& directives,
     const std::map<std::uint64_t,ShipyardCustomerOrder>& contracts,
     const std::map<std::uint64_t,NpcRecord>& npcs,
-    std::uint64_t tick) {
+    std::uint64_t tick,
+    const NativeCapacityContext& capacity={}) {
+    // Index existing build receipts and assigned construction workers ONCE.
+    // This is derived from native sources at the start of a world tick.
+    const auto capacity_index=index_native_capacity(capacity);
     std::vector<PlannedDirective> rows;
     rows.reserve(directives.size());
     for(const auto& [id,d]:directives){
@@ -136,23 +143,58 @@ inline std::vector<PlannedDirective> plan(
         if(p.gate!=Gate::Ready){rows.push_back(p);continue;}
         if(contract->second.stage==ShipyardCustomerStage::Requested)
             p.gate=Gate::SupplierApproval;
-        // Only final, near-berth commissioning may reserve two named crew.
-        // Funding a future build must not immobilize those NPCs for 12 ticks.
+
+        // Only the supplier's actual one-slip yard may accept new funding.
+        // Occupancy comes from unfinished native FreighterBuildOrder records.
+        // The context is required in production; absent context retains
+        // compatibility with pure WORK-01B.1 read-model callers.
+        if(p.gate==Gate::Ready &&
+           contract->second.stage==ShipyardCustomerStage::Accepted &&
+           capacity.yards){
+            const auto yard=inspect_shipyard(
+                contract->second,npcs,capacity,capacity_index);
+            switch(yard.status){
+            case YardCapacityStatus::MissingOrForeignYard:
+            case YardCapacityStatus::NotBuilt:
+                p.gate=Gate::YardUnavailable;break;
+            case YardCapacityStatus::BusySlip:
+                p.gate=Gate::AssemblySlipBusy;break;
+            case YardCapacityStatus::UnqualifiedBuilders:
+                p.gate=Gate::BuilderUnavailable;break;
+            case YardCapacityStatus::Available:
+                p.reserved_yard=yard.yard_id;
+                p.reserved_builders=yard.approved_builders;
+                break;
+            }
+        }
+        // After physical delivery, commission exactly the buyer-approved
+        // REAL crew; never auto-recruit other identities or steal yard labor.
+        // Do not pre-reserve crew while a 12-tick build is underway.
         if(p.gate==Gate::Ready &&
            contract->second.stage==ShipyardCustomerStage::Delivered &&
            d.commissioning_crew[0]){
-            for(const auto member:d.commissioning_crew){
-                const auto n=npcs.find(member);
-                if(!member || n==npcs.end() ||
-                   n->second.home_ship!=d.colony_ship ||
-                   n->second.location!=d.colony_ship ||
-                   n->second.assigned_site!=d.colony_ship ||
-                   n->second.role!=NpcRole::Ship ||
-                   n->second.transport_id || n->second.mentor_id){
-                    p.gate=Gate::WorkerUnavailable;break;
-                }
+            bool already_commissioned=false;
+            if(capacity.builds){
+                const auto build=capacity.builds->find(
+                    contract->second.build_order);
+                already_commissioned=build!=capacity.builds->end() &&
+                    build->second.commissioned() &&
+                    build->second.commissioning_crew==d.commissioning_crew &&
+                    build->second.provisions_kg_each==d.provisions_kg_each;
             }
-            if(p.gate==Gate::Ready)p.reserved_crew=d.commissioning_crew;
+            if(!already_commissioned){
+                for(const auto member:d.commissioning_crew){
+                    const auto qual=qualify_ship_worker(member,d.colony_ship,
+                        npcs,capacity,capacity_index,true);
+                    if(qual!=Qualification::Qualified){
+                        p.gate=qual==Qualification::ExistingNativeAssignment?
+                            Gate::WorkerOnNativeJob:Gate::WorkerUnavailable;
+                        break;
+                    }
+                }
+                if(p.gate==Gate::Ready)
+                    p.reserved_crew=d.commissioning_crew;
+            }
         }
         rows.push_back(p);
     }
@@ -163,20 +205,29 @@ inline std::vector<PlannedDirective> plan(
         if(ad.posted_tick!=bd.posted_tick)return ad.posted_tick<bd.posted_tick;
         return a.id<b.id;
     });
-    // Non-authoritative per-tick reservations prevent simultaneous selection
-    // of one named NPC by two coordinator directives. Original native
-    // commissioning performs independent final custody/supply checks.
-    std::set<std::uint64_t> claimed;
+    // One selection per physical yard slot and named worker per tick.
+    // This selection is EPHEMERAL; the native command rechecks everything
+    // before consuming inventory or moving an NPC.
+    std::set<std::uint64_t> claimed_workers,claimed_slips;
     for(auto& row:rows){
-        if(!row.can_execute() || !row.reserved_crew[0])continue;
-        if(claimed.count(row.reserved_crew[0]) ||
-           claimed.count(row.reserved_crew[1])){
+        if(!row.can_execute())continue;
+        const auto& workers=row.reserved_crew[0]?
+            row.reserved_crew:row.reserved_builders;
+        if(row.reserved_yard && claimed_slips.count(row.reserved_yard)){
+            row.gate=Gate::AssemblySlipBusy;
+        }else if((workers[0] && claimed_workers.count(workers[0])) ||
+                 (workers[1] && claimed_workers.count(workers[1]))){
             row.gate=Gate::WorkerReserved;
-            row.reserved_crew={};
-        }else{
-            claimed.insert(row.reserved_crew[0]);
-            claimed.insert(row.reserved_crew[1]);
         }
+        if(!row.can_execute()){
+            row.reserved_crew={};
+            row.reserved_builders={};
+            row.reserved_yard=0;
+            continue;
+        }
+        if(row.reserved_yard)claimed_slips.insert(row.reserved_yard);
+        for(const auto worker:workers)if(worker)
+            claimed_workers.insert(worker);
     }
     return rows;
 }
