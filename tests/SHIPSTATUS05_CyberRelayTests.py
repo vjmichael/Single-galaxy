@@ -20,12 +20,12 @@ class Runtime:
         self.sent.append((command, principal))
 
 
-def submit(action, fields=None, token=Runtime.token, origin=True):
+def submit(action, fields=None, token=Runtime.token, origin=True, colony_mode=True):
     doc = dict(token=token, action=action, **(fields or {}))
     request = json.dumps(doc, separators=(",", ":")).encode("utf-8")
     assert len(request) < 512
     server = types.SimpleNamespace(
-        accounts=None, colony_mode=True, qa_mode=False, server_port=8766,
+        accounts=None, colony_mode=colony_mode, qa_mode=False, server_port=8766,
         runtime=Runtime()
     )
     handler = object.__new__(relay.Handler)
@@ -77,5 +77,8 @@ for action, fields, opt in (
 ):
     code, submitted = submit(action, fields, **opt)
     assert code == 403 and not submitted, (code, submitted)
+
+code, submitted = submit("colonyCyberAttack", {"target": 22}, colony_mode=False)
+assert code == 403 and not submitted
 
 print("PASS SHIP-STATUS-05: locally validated cyber actions, strict relay fields, CSRF/session, and no caller-supplied authority")
