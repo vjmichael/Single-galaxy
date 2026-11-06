@@ -64,14 +64,14 @@
      const ship=validNumber(v[4]),remaining=validNumber(v[5],8),
        source=validNumber(v[6]),exposed=validNumber(v[7],16);
      if(!ship || (remaining===0 && (source!==0 || exposed!==0)) ||
-        (remaining>0 && (!source || !exposed || source===ship)))
+        (remaining>0 && (!exposed || (source && source===ship))))
        throw Error('Invalid committed defense state');
      return {tick,type,ship,remaining,source,exposed};
    }
    if(type==='CYBER_INCOMING' && v.length===8){
      const ship=validNumber(v[4]),source=validNumber(v[5]),
        id=validNumber(v[6]),result=v[7];
-     if(!ship || !source || !id || source===ship ||
+     if(!ship || !id || (source && source===ship) ||
         !/^[A-Z_]+$/.test(result))
        throw Error('Invalid committed incoming cyber event');
      return {tick,type,ship,source,id,result};
@@ -137,8 +137,9 @@
        ' · emission cooldown '+status.cooldown+' tick(s)';
    }
    e('cyberDefense').textContent=defense && status && defense.tick===status.tick && defense.remaining>0?
-     'CONFUSION ACTIVE · '+defense.remaining+' tick(s) remaining · source ship #'+
-       defense.source+' · '+defense.exposed+' exposed module(s). '+
+     'CONFUSION ACTIVE · '+defense.remaining+' tick(s) remaining · '+
+       (defense.source?'observed source track #'+defense.source:
+         'unidentified source')+' · '+defense.exposed+' exposed module(s). '+
        'You can isolate a hardpoint below to prevent remote toggling.':
      'No active Confusion on this ship. '+(firewall?
        'Passive firewall fitted.':'No passive firewall fitted.');
@@ -211,14 +212,16 @@
    }else if(data.type==='CYBER_SENSORS'){
      if(data.tick===status.tick)sensors=data;
    }else if(data.type==='CYBER_INCOMING'){
+     const source=data.source?'observed ship track #'+data.source:
+       'unidentified ship';
      if(data.result==='APPLIED')
-       e('cyberAlert').textContent='INCOMING CYBER ATTACK · ship #'+data.source+
+       e('cyberAlert').textContent='INCOMING CYBER ATTACK · '+source+
          ' disrupted your modules (native command #'+data.id+').';
      else if(data.result==='ATTACK_RESISTED')
-       e('cyberAlert').textContent='CYBER ATTACK RESISTED · ship #'+data.source+
+       e('cyberAlert').textContent='CYBER ATTACK RESISTED · '+source+
          ' did not disrupt your modules (native command #'+data.id+').';
      else
-       e('cyberAlert').textContent='Enemy cyber attempt · ship #'+data.source+
+       e('cyberAlert').textContent='Enemy cyber attempt · '+source+
          ' · native '+data.result.replaceAll('_',' ').toLowerCase()+
          ' (command #'+data.id+').';
    }
