@@ -55,7 +55,7 @@ global.window={GalaxyColonyCommand:(action,args)=>{
 }};
 delete require.cache[require.resolve('../viewer/security-desk.js')];
 const desk=require('../viewer/security-desk.js');
-const e=id=>nodes.get(id);
+const e=id=>global.document.getElementById(id);
 const frame=value=>assert.equal(desk.accept(value),true);
 assert.equal(e('securityClaim').disabled,true);
 frame('COLONY|1|15|SECURITY_STATUS|8|8|0|1|1');
