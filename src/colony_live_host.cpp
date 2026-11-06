@@ -2240,11 +2240,14 @@ int main(int argc,char** argv){
             // The local desktop currently has exactly one authenticated
             // human owner; future multiplayer must supply a real NPC-owner
             // registry before using this auto-responder for foreign owners.
-            if(communications && world.world().tick()%10==0){
+            if(communications && territory && cases &&
+               world.world().tick()%10==0){
                 try{
-                    const auto pulse=npc_hail::supervise(
+                    const auto replied=npc_hail::supervise(
                         world,*communications,owner,nonce);
-                    if(pulse.answered){
+                    const auto initiated=npc_hail::initiate(
+                        world,*communications,*territory,owner,nonce);
+                    if(replied.answered || initiated.submitted){
                         colony_disposition::security_desk::snapshot(
                             world,*territory,*cases,owner,ship,fleet.piloted(),
                             [&](const std::string& msg){
