@@ -86,6 +86,25 @@ int main(){
         CHECK(calls.reply(world,8,b,1011,1012,false).status==Status::Declined);
         CHECK(calls.call(world,land,9,c,b,1013).status==Status::Suppressed);
         CHECK(calls.penalty_for(world,9,c).penalty_points==0);
+        // Preexisting authenticated voluntary territorial identity counts
+        // as identification to the physical claiming colony, even if a
+        // direct ship-to-ship reply was never sent.
+        CHECK(land.claim(world,7,a,2001,3000));
+        std::uint64_t guard=0;
+        for(const auto& [id,npc]:world.world().npc_records())
+            if(npc.home_ship==a && npc.location==a &&
+               world.world().npc_available_for_duty(id)){
+                guard=id;break;
+            }
+        CHECK(guard);
+        CHECK(land.voluntary_hail(world,9,a,c,guard,2002));
+        const auto already_known=calls.call(world,land,7,a,c,2003);
+        CHECK(already_known.status==Status::Penalized);
+        CHECK(already_known.penalty_points==1);
+        CHECK(calls.history().back().proof_kind==2);
+        CHECK(calls.history().back().related==2002);
+        CHECK(calls.pending_for(world,9,c).empty());
+        land.verify();
         calls.verify();
         const auto old_count=calls.history().size();
         sqlite3* raw=nullptr;
