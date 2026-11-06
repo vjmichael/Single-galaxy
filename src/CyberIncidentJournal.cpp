@@ -81,6 +81,17 @@ std::string digest(const CyberIncidentCase& c){
     out<<std::hex<<std::setfill('0')<<std::setw(16)<<value;
     return out.str();
 }
+std::string link_digest(const CyberHailIdentityLink& l){
+    std::ostringstream fields;
+    fields<<l.previous_digest<<'|'<<l.sequence<<'|'<<l.case_id<<'|'
+          <<l.hail_event<<'|'<<l.world_tick<<'|'<<l.world_generation
+          <<'|'<<l.authenticated_controller<<'|'<<l.verified_ship;
+    std::uint64_t hash=14695981039346656037ULL;
+    for(const unsigned char c:fields.str()){hash^=c;hash*=1099511628211ULL;}
+    std::ostringstream out;
+    out<<std::hex<<std::setfill('0')<<std::setw(16)<<hash;
+    return out.str();
+}
 } // namespace
 
 struct CyberIncidentJournal::State {
@@ -152,6 +163,24 @@ CyberIncidentJournal::CyberIncidentJournal(
             "CREATE TRIGGER IF NOT EXISTS sg_status07_immutable_delete "
             "BEFORE DELETE ON sg_ship_status07_incidents "
             "BEGIN SELECT RAISE(ABORT,'immutable cyber case'); END");
+        // Identity is a SEPARATE later verified event. Never rewrite an
+        // anonymous incident merely because a player eventually hails.
+        exec(state_->db,
+            "CREATE TABLE IF NOT EXISTS sg_ship_status07_hail_links ("
+            "sequence INTEGER PRIMARY KEY,case_id INTEGER NOT NULL,"
+            "hail_event INTEGER NOT NULL,world_tick INTEGER NOT NULL,"
+            "world_generation INTEGER NOT NULL,"
+            "controller INTEGER NOT NULL,verified_ship INTEGER NOT NULL,"
+            "prev_digest TEXT NOT NULL,digest TEXT NOT NULL,"
+            "UNIQUE(case_id,hail_event))");
+        exec(state_->db,
+            "CREATE TRIGGER IF NOT EXISTS sg_status07_hail_no_update "
+            "BEFORE UPDATE ON sg_ship_status07_hail_links "
+            "BEGIN SELECT RAISE(ABORT,'immutable cyber hail link'); END");
+        exec(state_->db,
+            "CREATE TRIGGER IF NOT EXISTS sg_status07_hail_no_delete "
+            "BEFORE DELETE ON sg_ship_status07_hail_links "
+            "BEGIN SELECT RAISE(ABORT,'immutable cyber hail link'); END");
         verify();
     }catch(...){
         if(state_->db)sqlite3_close(state_->db);
