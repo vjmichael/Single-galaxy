@@ -1558,3 +1558,10 @@ if(BUILD_TESTING)
   add_test(NAME galaxy_flight03_native_rendezvous
     COMMAND galaxy_flight03_native_rendezvous_tests)
 endif()
+
+# FLIGHT-04B full native physical rendezvous to sealed freight and SQLite recovery.
+if(BUILD_TESTING)
+  add_test(NAME galaxy_flight04b_real_freight
+    COMMAND galaxy_play13d_regional_facilities_tests --flight03-rendezvous-freight)
+  set_tests_properties(galaxy_flight04b_real_freight PROPERTIES TIMEOUT 300)
+endif()

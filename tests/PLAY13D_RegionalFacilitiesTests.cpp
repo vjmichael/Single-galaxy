@@ -1,6 +1,7 @@
 #include "galaxy/Persistence.hpp"
 #include "galaxy/FleetSelection.hpp"
 #include "galaxy/OrbitalShuttleCommands.hpp"
+#include "galaxy/ShipInteractionExecutors.hpp"
 #include <chrono>
 #include <filesystem>
 #include <iostream>
@@ -128,7 +129,7 @@ static std::string forge_npc_flight_arrival(std::string snapshot,
 }
 static void scenario(const fs::path& db, bool farming,
                      bool manufactured=false,bool delegated=false,
-                     bool autonomous=false){
+                     bool autonomous=false,bool rendezvous_freight=false){
     const auto chosen=select_site(farming);
     EntityId ship=0,freighter=0,receiver=0;
     std::uint64_t receiver_body=0;
@@ -1053,6 +1054,35 @@ static void scenario(const fs::path& db, bool farming,
                 CHECK(!w.deliver_intercolony_freight(7,77003)); // no arrival receipt
                 CHECK(w.complete_celestial_transit(99021));
             }
+            if(rendezvous_freight){
+                CHECK(autonomous && !delegated);
+                CHECK(!w.queue_npc_ship_rendezvous(
+                    8,freighter,autonomous_pilot,receiver,97021));
+                CHECK(w.queue_npc_ship_rendezvous(7,freighter,autonomous_pilot,
+                    receiver,97021,NpcFlightPurpose::Freight));
+                CHECK(!ship_interaction::deliver_freight_after_rendezvous(
+                    w,7,77003,97021));
+                bool positioned=false;
+                for(int i=0;i<300;i++){
+                    w.step();
+                    if(w.world().npc_flight_orders().at(97021).phase==
+                       NpcFlightPhase::Arrived){positioned=true;break;}
+                }
+                CHECK(positioned);
+                CHECK(ship_interaction::rendezvous_preflight(
+                    w.world(),7,freighter,receiver,97021)==
+                    ship_interaction::Readiness::Ready);
+                const auto before_transfer=w.world().canonical_state();
+                bool failed=false;
+                try{(void)ship_interaction::deliver_freight_after_rendezvous(
+                    w,7,77003,97021,FailPoint::AfterSnapshotWrite);}
+                catch(const std::exception&){failed=true;}
+                CHECK(failed && w.world().canonical_state()==before_transfer);
+                CHECK(!ship_interaction::deliver_freight_after_rendezvous(
+                    w,8,77003,97021));
+                CHECK(ship_interaction::deliver_freight_after_rendezvous(
+                    w,7,77003,97021));
+            }else{
             const auto before_unload=w.world().canonical_state();
             bool unload_failed=false;
             try{(void)w.deliver_intercolony_freight(7,77003,
@@ -1069,6 +1099,7 @@ static void scenario(const fs::path& db, bool farming,
                 CHECK(w.world().work_directives().at(94004).status==
                       WorkDirectiveStatus::Fulfilled);
             }else CHECK(w.deliver_intercolony_freight(7,77003));
+            }
             CHECK(!w.deliver_intercolony_freight(7,77003)); // no duplication
             CHECK(w.world().life_support(receiver)->nutrients_kg==to_before+200);
             CHECK(w.world().life_support(ship)->nutrients_kg==from_before-200);
@@ -1302,7 +1333,8 @@ int main(int argc,char** argv){
     const bool manufactured_only=argc==2 && std::string(argv[1])=="--manufactured-only";
     const bool delegated_only=argc==2 && std::string(argv[1])=="--delegated-work";
     const bool nav_only=argc==2 && std::string(argv[1])=="--npc-autonomous-nav";
-    if(argc>2 || (argc==2 && !manufactured_only && !delegated_only && !nav_only)){
+    const bool rendezvous_only=argc==2 && std::string(argv[1])=="--flight03-rendezvous-freight";
+    if(argc>2 || (argc==2 && !manufactured_only && !delegated_only && !nav_only && !rendezvous_only)){
         std::cerr<<"Unknown test selection: --manufactured-only, --delegated-work or --npc-autonomous-nav\n";
         return 2;
     }
@@ -1310,7 +1342,9 @@ int main(int argc,char** argv){
       ("sg_play13d3_"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     try{
         fs::create_directories(dir);
-        if(nav_only){
+        if(rendezvous_only){
+            scenario(dir/"rendezvous-freight.sqlite",false,false,false,true,true);
+        }else if(nav_only){
             scenario(dir/"npc-nav.sqlite",false,false,true,true);
         }else if(delegated_only){
             scenario(dir/"delegated-transport.sqlite",false,false,true);
@@ -1321,7 +1355,9 @@ int main(int argc,char** argv){
             scenario(dir/"manufactured-freight.sqlite",false,true);
         }
         fs::remove_all(dir);
-        std::cout<<(nav_only?
+        std::cout<<(rendezvous_only?
+            "PASS FLIGHT-04B: moving-ship rendezvous, sealed physical freight, authorized original transfer and SQLite recovery\n":
+            nav_only?
             "PASS FLIGHT-01: generic NPC flight engine flies sealed freight and survey/rescue-purpose hull, original transit arrival, owner consent, crash and restart\n":
             delegated_only?
             "PASS WORK-01C: original NPC shuttle pickups and two freight voyages, coordinator physical unloading, SQLite failpoint and restart\n":
