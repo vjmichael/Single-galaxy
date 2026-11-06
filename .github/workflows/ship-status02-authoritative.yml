@@ -110,7 +110,7 @@ jobs:
           python tests/SHIPSTATUS07D_LiveSecurityHostTests.py \
             --host "$host" --relay live/interactive_relay.py \
             --bridge "$bridge"
-      - name: Real Chromium installed-game browser smoke (Linux)
+      - name: Live-game Chromium browser smoke (Linux, no packaged installation)
         if: runner.os == 'Linux'
         shell: bash
         run: |
