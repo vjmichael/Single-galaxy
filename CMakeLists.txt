@@ -1540,3 +1540,12 @@ if(BUILD_TESTING)
   add_test(NAME galaxy_flight04_interaction_preflight
     COMMAND galaxy_flight04_interaction_preflight_tests)
 endif()
+
+# FLIGHT-04B: adapters call ORIGINAL persistent freight and dependent rescue executors.
+if(BUILD_TESTING)
+  add_executable(galaxy_flight04b_interaction_executors_tests
+    tests/FLIGHT04B_InteractionExecutorsTests.cpp)
+  target_link_libraries(galaxy_flight04b_interaction_executors_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_flight04b_interaction_executors
+    COMMAND galaxy_flight04b_interaction_executors_tests)
+endif()
