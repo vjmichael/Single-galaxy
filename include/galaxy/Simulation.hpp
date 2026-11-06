@@ -1392,6 +1392,12 @@ private:
                                   Action action,EntityId target,
                                   int thrust_x=0,int thrust_y=0);
     bool qualified_npc_flight_pilot(EntityId ship,std::uint64_t pilot) const;
+    // ONE authoritative pilot chooser + ship/pilot exclusion for every
+    // FLIGHT-01/02 mode and future docking/transit route adapter.
+    std::uint64_t select_npc_flight_pilot(
+        EntityId ship,std::uint64_t requested) const;
+    bool npc_flight_slot_available(EntityId ship,
+                                   std::uint64_t pilot) const;
     bool npc_available_for_duty_without_flight(std::uint64_t id) const;
     void process_farms();
     void move_npc_records(EntityId ship, EntityId site, NpcRole role, std::int64_t delta);
