@@ -16,6 +16,7 @@ int main(){
   Simulation seed(260220);
   const auto colony=seed.add_colony_ship(7,{0,0},100,6);
   const auto visitor=seed.add_ship(8,{1000,0},100);
+  const auto outside=seed.add_ship(11,{4500,0},100);
   seed.provision_colony_genesis(colony,2000,2000,2000,2000,2000);
   seed.enable_individual_workforce();
   seed.upgrade_assignment_snapshot_format();
@@ -49,6 +50,8 @@ int main(){
    CHECK(j.claim(w,7,colony,71000,3000));
    CHECK(!j.claim(w,7,colony,71000,3000));
    CHECK(j.history().size()==1);
+   CHECK(!j.standing(w,colony,outside).in_claimed_region);
+   CHECK(!j.warn(w,7,colony,outside,observer,71999,5));
    CHECK(!j.invite(w,8,colony,8,71001));
    CHECK(j.invite(w,7,colony,8,71001));
    CHECK(!j.warn(w,7,colony,visitor,observer,71002,5));
@@ -94,7 +97,19 @@ int main(){
    CHECK(j.invite(w,7,colony,8,71013));
    CHECK(j.standing(w,colony,visitor).standing==
       npc_response::VisitorStanding::Invited);
-   CHECK(j.history().size()==7);
+   // Amnesty changes effective status, not historical memory. A later
+   // revocation starts a fresh grace period, not instant trespass.
+   CHECK(j.revoke_invitation(w,7,colony,8,71014));
+   CHECK(j.standing(w,colony,visitor).standing==
+      npc_response::VisitorStanding::Unknown);
+   CHECK(!j.standing(w,colony,visitor).warned);
+   CHECK(!j.standing(w,colony,visitor).trespass_recorded);
+   CHECK(j.warn(w,7,colony,visitor,observer,71015,5));
+   CHECK(!j.record_trespass(w,7,colony,visitor,observer,71017));
+   CHECK(j.invite(w,7,colony,8,71016));
+   CHECK(j.standing(w,colony,visitor).standing==
+      npc_response::VisitorStanding::Invited);
+   CHECK(j.history().size()==10);
    CHECK(w.world().find(visitor)->hull==100);
    CHECK(w.world().total_material_kg()==matter);
    j.verify();
@@ -105,7 +120,7 @@ int main(){
    PersistentWorld w(path,Simulation(1));
    TerritoryJournal reopened(path);
    CHECK(w.world().canonical_state()==snapshot);
-   CHECK(reopened.history().size()==7);
+   CHECK(reopened.history().size()==10);
    CHECK(reopened.standing(w,colony,visitor).invited);
    CHECK(w.world().total_material_kg()==matter);
    // Ordinary attempted history rewrite must fail inside SQLite.
