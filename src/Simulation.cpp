@@ -1,5 +1,6 @@
 #include "galaxy/Simulation.hpp"
 #include "galaxy/WorkPlanning.hpp"
+#include "galaxy/CelestialFrameTransition.hpp"
 #include "galaxy/ShipyardConstructionPreflight.hpp"
 #include "galaxy/TransportIdentity.hpp"
 #include "galaxy/NpcTransport.hpp"
@@ -950,6 +951,22 @@ NpcHealthStatus Simulation::npc_health_status(std::uint64_t id) const {
     return p->second.stabilization_command?NpcHealthStatus::Stabilized:NpcHealthStatus::Injured;
 }
 
+// FLIGHT-01: one generic pilot reservation spans all NPC ship purposes.
+// The native preflight first verifies ordinary duty, health, travel custody;
+// this additional derived check prevents other work from stealing a pilot
+// while this already-authorized flight owns that individual.
+bool Simulation::qualified_npc_flight_pilot(
+        EntityId ship,std::uint64_t pilot) const {
+    const auto it=npcs_.find(pilot);
+    if(!pilot || it==npcs_.end() || it->second.role!=NpcRole::Ship ||
+       it->second.home_ship!=ship || it->second.location!=ship ||
+       it->second.assigned_site!=ship || it->second.transport_id ||
+       it->second.mentor_id ||
+       it->second.legal_residence()!=
+           (transport::Endpoint{transport::LocationKind::ColonyShip,ship}))
+        return false;
+    return npc_available_for_duty(pilot);
+}
 bool Simulation::npc_available_for_duty(std::uint64_t npc_id) const {
     const auto it=npcs_.find(npc_id);
     if(it==npcs_.end())return false;
@@ -6161,6 +6178,152 @@ bool Simulation::delegate_customer_ship_order(PlayerId owner,
 // WORK-01C: authorization is only to advance/reconcile a previously
 // posted native transport order. Posting, carrier ownership, flight pilot,
 // physical cargo movement and voyage receipts remain in their own systems.
+// FLIGHT-01 service: general navigation applies to *any* existing
+// player-owned NPC-operated colony ship, regardless of mission type.
+bool Simulation::queue_npc_flight(PlayerId owner,EntityId ship,
+        std::uint64_t pilot,std::uint64_t destination,
+        std::uint64_t id,std::uint64_t transit,
+        NpcFlightPurpose purpose){
+    const auto e=entities_.find(ship),frame=ship_frames_.find(ship);
+    if(!id || id>=(std::uint64_t{1}<<50) || !transit ||
+       transit>=(std::uint64_t{1}<<50) ||
+       !owner || owner==kServerAuthority ||
+       unsigned(purpose)>unsigned(NpcFlightPurpose::Mining) ||
+       npc_flight_orders_.size()>=10000 || npc_flight_orders_.count(id) ||
+       pending_celestial_transits_.count(transit) ||
+       completed_celestial_transits_.count(transit) ||
+       !qualified_npc_flight_pilot(ship,pilot) ||
+       e==entities_.end() || e->second.type!=EntityType::Ship ||
+       e->second.owner_id!=owner || !colony_ships_.count(ship) ||
+       !life_support_.count(ship) ||
+       !e->second.fitting.exploration_scanner() ||
+       frame==ship_frames_.end() ||
+       !destination || frame->second.anchor_body==destination ||
+       !plan_celestial_frame_arrival(*this,owner,ship,destination,transit).plan)
+        return false;
+    for(const auto& [other_id,order]:npc_flight_orders_){
+        (void)other_id;
+        if(order.transit_request==transit)return false;
+        if((order.phase==NpcFlightPhase::Planned ||
+            order.phase==NpcFlightPhase::InTransit) &&
+           (order.ship==ship || order.pilot_npc==pilot))return false;
+    }
+    npc_flight_orders_.emplace(id,NpcFlightOrder{
+        id,owner,ship,pilot,destination,transit,purpose,
+        NpcFlightPhase::Planned,tick_,0,0});
+    snapshot_version_=std::max(snapshot_version_,95);
+    return true;
+}
+bool Simulation::cancel_npc_flight(PlayerId owner,std::uint64_t id){
+    const auto it=npc_flight_orders_.find(id);
+    if(!owner || owner==kServerAuthority ||
+       it==npc_flight_orders_.end() || it->second.owner!=owner ||
+       it->second.phase!=NpcFlightPhase::Planned)return false;
+    // A real physical transit cannot be recalled merely by deleting
+    // intent. Only an unstarted order can be cancelled.
+    it->second.phase=NpcFlightPhase::Cancelled;
+    it->second.resolved_tick=tick_;
+    return true;
+}
+// Shared physical departure gate: identical original host-owned
+// scanner/geometry/docking/shuttle/command and vessel restrictions.
+bool Simulation::begin_native_celestial_transit(
+        PlayerId owner,EntityId ship,std::uint64_t body,std::uint64_t id){
+    for(const auto& [key,sh]:planetary_shuttles_){
+        (void)key;
+        if(sh.source_ship==ship && sh.flight_phase!=0)return false;
+    }
+    if(!id || !owner || owner==kServerAuthority ||
+       ship_frames_.empty() || snapshot_version_<71 ||
+       pending_celestial_transits_.size()>=10000 ||
+       completed_celestial_transits_.size()>=10000 ||
+       completed_celestial_transits_.count(id) ||
+       pending_celestial_transits_.count(id) ||
+       tick_>std::numeric_limits<std::uint64_t>::max()-4)return false;
+    for(const auto& [key,p]:pending_celestial_transits_){
+        (void)key;
+        if(p.ship==ship)return false;
+    }
+    const auto* carrier=find(ship);
+    if(!carrier || !carrier->fitting.exploration_scanner())return false;
+    const auto decision=plan_celestial_frame_arrival(*this,owner,ship,body,id);
+    if(!decision.plan)return false;
+    const auto frame=ship_frames_.find(ship);
+    if(frame==ship_frames_.end() || frame->second.anchor_body==body)return false;
+    for(const auto& [voyage_id,v]:voyages_){
+        (void)voyage_id;
+        if(v.ferry==ship && (v.status==1 || v.status==3))return false;
+    }
+    for(const auto& [when,commands]:commands_){
+        (void)when;
+        for(const auto& c:commands)
+            if(c.actor==ship || c.target==ship)return false;
+    }
+    entities_.at(ship).velocity={};
+    pending_celestial_transits_.emplace(id,PendingCelestialTransit{
+        owner,ship,frame->second.system,frame->second.anchor_body,body,
+        tick_,tick_+4});
+    snapshot_version_=std::max(snapshot_version_,72);
+    return true;
+}
+bool Simulation::complete_native_celestial_transit(std::uint64_t id){
+    if(!id || completed_celestial_transits_.count(id))return false;
+    const auto it=pending_celestial_transits_.find(id);
+    if(it==pending_celestial_transits_.end())return false;
+    const auto p=it->second;
+    if(tick_<p.due_tick)return false;
+    const auto current=ship_frames_.find(p.ship);
+    if(current==ship_frames_.end() ||
+       current->second.system!=p.system ||
+       current->second.anchor_body!=p.source_anchor)return false;
+    const auto decision=plan_celestial_frame_arrival(
+        *this,p.owner,p.ship,p.destination_body,id);
+    if(!decision.plan)return false;
+    const auto& plan=*decision.plan;
+    if(plan.system!=p.system || plan.owner!=p.owner ||
+       plan.ship_id!=p.ship)return false;
+    seed_celestial_local_region(p.destination_body);
+    auto& ship=entities_.at(p.ship);
+    auto& frame=ship_frames_.at(p.ship);
+    frame={plan.destination_frame.system,plan.destination_frame.anchor_body,
+           plan.destination_frame.origin};
+    ship.position=plan.arrival_position;
+    ship.velocity=plan.arrival_velocity;
+    pending_celestial_transits_.erase(id);
+    completed_celestial_transits_.emplace(id,CompletedCelestialTransit{
+        p.owner,p.ship,p.system,p.destination_body,tick_});
+    snapshot_version_=std::max(snapshot_version_,72);
+    for(auto& [flight_id,nav]:npc_flight_orders_){
+        (void)flight_id;
+        if(nav.transit_request==id && nav.phase==NpcFlightPhase::InTransit &&
+           nav.owner==p.owner && nav.ship==p.ship &&
+           nav.destination_body==p.destination_body){
+            nav.phase=NpcFlightPhase::Arrived;
+            nav.resolved_tick=tick_;
+        }
+    }
+    return true;
+}
+void Simulation::process_npc_flight_navigation(){
+    if(snapshot_version_<95)return;
+    for(auto& [id,order]:npc_flight_orders_){
+        (void)id;
+        if(order.phase==NpcFlightPhase::InTransit){
+            // Once a true departure is committed, only the original
+            // completed physical transit receipt can finish the order.
+            (void)complete_native_celestial_transit(order.transit_request);
+            continue;
+        }
+        if(order.phase!=NpcFlightPhase::Planned)continue;
+        if(!qualified_npc_flight_pilot(order.ship,order.pilot_npc))
+            continue; // unavailable native worker: wait, do not invent NPC
+        if(begin_native_celestial_transit(order.owner,order.ship,
+                order.destination_body,order.transit_request)){
+            order.phase=NpcFlightPhase::InTransit;
+            order.started_tick=tick_;
+        }
+    }
+}
 bool Simulation::delegate_transport_work_order(PlayerId owner,EntityId origin,
         std::uint64_t id,WorkTaskKind kind,std::uint64_t source,
         std::uint64_t dependency){
@@ -7751,6 +7914,7 @@ void Simulation::step() {
     if(snapshot_version_>=90)process_shipyard_construction();
     if(snapshot_version_>=91)process_freighter_builds();
     if(snapshot_version_>=94)process_universal_work();
+    if(snapshot_version_>=95)process_npc_flight_navigation();
     process_farms();
     process_habitats();
     process_communities();
