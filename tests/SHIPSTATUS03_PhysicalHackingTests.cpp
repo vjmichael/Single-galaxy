@@ -174,6 +174,22 @@ int main(){
     CHECK(run(w,order(w,next_id++,8,victim,Action::ConfigureExplorationScanner,-1))==
           Outcome::Applied);
     CHECK(!w.world().find(victim)->fitting.exploration_scanner());
+    // Genuine hardware can be removed/installed without creating material
+    // or clearing the original emission cooldown.
+    const auto last_emission=w.world().find(attacker)->last_hack_tick;
+    CHECK(run(w,order(w,next_id++,7,attacker,Action::ConfigureCyberModule,-3))==
+          Outcome::Applied);
+    CHECK(!w.world().find(attacker)->fitting.intrusion_emitter());
+    CHECK(w.world().colony_ship(attacker)->modules==1);
+    CHECK(w.world().find(attacker)->last_hack_tick==last_emission);
+    CHECK(run(w,order(w,next_id++,7,attacker,Action::ConfigureCyberModule,3))==
+          Outcome::Applied);
+    CHECK(w.world().find(attacker)->fitting.intrusion_emitter());
+    CHECK(w.world().colony_ship(attacker)->modules==0);
+    CHECK(w.world().find(attacker)->last_hack_tick==last_emission);
+    CHECK(run(w,order(w,next_id++,8,victim,Action::ConfigureCyberModule,-4))==
+          Outcome::Applied);
+    CHECK(!w.world().find(victim)->fitting.cyber_firewall());
     CHECK(Simulation::from_snapshot(w.world().canonical_state()).canonical_state()==
           w.world().canonical_state());
     CHECK(w.world().total_material_kg()==starting_mass);
