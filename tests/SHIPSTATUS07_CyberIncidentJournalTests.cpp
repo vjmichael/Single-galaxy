@@ -1,4 +1,5 @@
 #include "galaxy/CyberIncidentJournal.hpp"
+#include "galaxy/CyberSecurityResponse.hpp"
 #include <sqlite3.h>
 #include <chrono>
 #include <filesystem>
@@ -124,6 +125,19 @@ int main(){
               world,8,victim,defender_guard).size()==1);
         CHECK(cases.watch_known_descriptions(
               world,7,victim,defender_guard).empty());
+        const auto weak=security_matches(world,cases,8,victim,defender_guard);
+        CHECK(weak.size()==1 && weak.front().case_id==case_id &&
+              weak.front().sighted_ship==attacker);
+        // The victim's scanner is temporarily confused OFF by this hack.
+        // A weak watch may record a matching description but cannot
+        // mobilize a security patrol from a suspicious silhouette alone.
+        CHECK(weak.front().response==CyberSecurityLevel::RecordOnly);
+        CHECK(!weak.front().identified_culprit &&
+              !weak.front().crime_finding &&
+              !weak.front().arrest_authorized &&
+              !weak.front().damage_authorized);
+        CHECK(request_signature_patrol(world,cases,8,victim,defender_guard,
+                 attacker,case_id,96010)==npc_response::Status::NoAuthority);
         CHECK(!reports[0].legal_crime_finding &&
               !reports[0].arrest_authorized &&
               !reports[0].damage_authorized &&
@@ -167,6 +181,31 @@ int main(){
               linked.evidence.attacker_owner==0 &&
               linked.evidence.attacking_ship==attacker &&
               !linked.legal_crime_finding && !linked.arrest_authorized);
+        // Security capability must be truly installed, not derived from
+        // a police label or hostile diplomatic agenda.
+        CHECK(execute(world,Command{94011,world.world().tick()+1,94011,
+            8,victim,0,Action::Mine,0,0,2})==Outcome::Applied);
+        CHECK(execute(world,Command{94012,world.world().tick()+1,94012,
+            8,victim,0,Action::RefineOre,0,0,2})==Outcome::Applied);
+        CHECK(execute(world,Command{94013,world.world().tick()+1,94013,
+            8,victim,0,Action::FabricateModule,0,0,1})==Outcome::Applied);
+        CHECK(execute(world,Command{94014,world.world().tick()+1,94014,
+            8,victim,0,Action::ConfigureCyberModule,0,0,6})==Outcome::Applied);
+        CHECK(world.world().find(victim)->fitting.counter_ecm_array());
+        CHECK(security_capability(world.world(),victim)==
+              CyberSecurityLevel::PatrolEligible);
+        const auto strong=security_matches(world,cases,8,victim,defender_guard);
+        CHECK(strong.size()==1 && strong.front().response==
+              CyberSecurityLevel::PatrolEligible);
+        CHECK(!strong.front().identified_culprit &&
+              !strong.front().crime_finding);
+        CHECK(request_signature_patrol(world,cases,8,victim,defender_guard,
+              attacker,case_id,96010)==npc_response::Status::Accepted);
+        CHECK(world.world().npc_flight_orders().at(96010).mode==
+              NpcFlightMode::LocalRendezvous);
+        CHECK(world.world().npc_flight_orders().at(96010).purpose==
+              NpcFlightPurpose::Patrol);
+        CHECK(!linked.damage_authorized && !linked.seizure_authorized);
         original_snapshot=world.world().canonical_state();
         // Even same-process tampering through SQLite is refused by the
         // original-world casebook's append-only database triggers.
