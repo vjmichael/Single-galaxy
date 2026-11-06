@@ -22,6 +22,7 @@ on:
       - 'include/galaxy/ShipHailJournal.hpp'
       - 'include/galaxy/NpcHailSupervisor.hpp'
       - 'tests/SHIPSTATUS07F_NpcHailSupervisorTests.cpp'
+      - 'tests/COMBAT01A_RealShipWeaponTests.cpp'
       - 'tests/SHIPSTATUS07D_SecurityDeskTests.js'
       - 'tests/SHIPSTATUS07D_SecurityRelayTests.py'
       - 'tests/SHIPSTATUS07D_LiveSecurityHostTests.py'
@@ -93,9 +94,9 @@ jobs:
       # Windows validates the real native executable, NOT a Windows browser
       # or a packaged Windows installer (deferred until native 3D assets).
       - name: Compile original game and security acceptance targets
-        run: cmake --build build --config Release --parallel 2 --target galaxy_ship_status07f_npc_hail_tests galaxy_ship_status07e_hail_abuse_tests galaxy_ship_status07d_security_desk_tests galaxy_client_contract_tests galaxy_ship_status07_view_privacy_tests galaxy_ship_status07_sensor_tests galaxy_ship_status07_incident_tests galaxy_ship_status06_fleet_cyber_tests galaxy_ship_status05_supervisor_tests galaxy_colony_live_host galaxy_shipping_status_bridge galaxy_ship_status04_npc_cyber_tests galaxy_ship_status03_physical_hacking_tests galaxy_ship_status02_authoritative_tests galaxy_ship_status01_confusion_tests galaxy_play10_exploration_tests
+        run: cmake --build build --config Release --parallel 2 --target galaxy_combat01a_ship_weapon_tests galaxy_ship_status07f_npc_hail_tests galaxy_ship_status07e_hail_abuse_tests galaxy_ship_status07d_security_desk_tests galaxy_client_contract_tests galaxy_ship_status07_view_privacy_tests galaxy_ship_status07_sensor_tests galaxy_ship_status07_incident_tests galaxy_ship_status06_fleet_cyber_tests galaxy_ship_status05_supervisor_tests galaxy_colony_live_host galaxy_shipping_status_bridge galaxy_ship_status04_npc_cyber_tests galaxy_ship_status03_physical_hacking_tests galaxy_ship_status02_authoritative_tests galaxy_ship_status01_confusion_tests galaxy_play10_exploration_tests
       - name: Original world, physical 2-owner hailing, cyber evidence and recovery
-        run: ctest --test-dir build -C Release --output-on-failure -R "^galaxy_(ship_status(01_confusion|02_authoritative|03_physical_hacking|04_npc_cyber|05_supervisor|05_cockpit|06_fleet_cyber|06_live_cyber|07_incident|07_sensors|07_view_privacy|07d_security_desk|07e_hail_abuse|07f_npc_hail)|play10_exploration|kernel_tests|client_contract_tests)$"
+        run: ctest --test-dir build -C Release --output-on-failure -R "^galaxy_(ship_status(01_confusion|02_authoritative|03_physical_hacking|04_npc_cyber|05_supervisor|05_cockpit|06_fleet_cyber|06_live_cyber|07_incident|07_sensors|07_view_privacy|07d_security_desk|07e_hail_abuse|07f_npc_hail)|combat01a_ship_weapon|play10_exploration|kernel_tests|client_contract_tests)$"
       - name: Verify live relay and cockpit syntax
         shell: bash
         run: |
