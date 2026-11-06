@@ -92,17 +92,26 @@ int main() {
     CHECK(w.submit_npc_cyber_attack(7,attacker,pilot,pilot,victim,attack_id));
     CHECK(!w.submit_npc_cyber_attack(7,attacker,pilot,pilot,victim,attack_id));
     CHECK(w.world().status_effects().records().empty());
+    CHECK(w.world().npc_cyber_operators().size()==1);
+    const auto& attribution=w.world().npc_cyber_operators().at(attack_id);
+    CHECK(attribution.pilot_npc==pilot && attribution.observer_npc==pilot);
+    CHECK(attribution.attacking_ship==attacker &&
+          attribution.target_ship==victim);
     saved=w.world().canonical_state();
+    CHECK(saved.find("galaxy-kernel-v102|")==0);
+    CHECK(saved.find("npccyber|")!=std::string::npos);
   }
   {
     PersistentWorld w(db,Simulation(12));
     TerritoryJournal journal(db);
     CHECK(w.world().canonical_state()==saved);
     CHECK(w.world().status_effects().records().empty());
+    CHECK(w.world().npc_cyber_operators().count(attack_id)==1);
     w.step();
     CHECK(w.world().events().back().command_id==attack_id);
     CHECK(w.world().events().back().result==Outcome::Applied);
     CHECK(w.world().status_effects().records().size()==1);
+    CHECK(w.world().npc_cyber_operators().count(attack_id)==1);
     CHECK(!w.world().hardpoint_effective_on(victim,0));
     const auto evidence=contemporaneous_cyber_evidence(
        w,journal,victim,defender_watch,attack_id);
@@ -125,6 +134,7 @@ int main() {
     PersistentWorld recovered(copy,Simulation(13));
     CHECK(recovered.world().canonical_state()==saved);
     CHECK(recovered.world().status_effects().records().size()==1);
+    CHECK(recovered.world().npc_cyber_operators().count(attack_id)==1);
     CHECK(!recovered.world().hardpoint_effective_on(victim,0));
     recovered.steps(12);
     CHECK(recovered.world().hardpoint_effective_on(victim,0));
