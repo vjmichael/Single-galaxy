@@ -1575,3 +1575,13 @@ if(BUILD_TESTING)
     COMMAND galaxy_flight05_physical_rescue_tests)
   set_tests_properties(galaxy_flight05_physical_rescue PROPERTIES TIMEOUT 300)
 endif()
+
+# FLIGHT-06: native verified rescue of actual guardians and dependent child.
+if(BUILD_TESTING)
+  add_executable(galaxy_flight06_dependent_rendezvous_tests
+    tests/FLIGHT06_DependentRendezvousRescueTests.cpp)
+  target_link_libraries(galaxy_flight06_dependent_rendezvous_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_flight06_dependent_rendezvous
+    COMMAND galaxy_flight06_dependent_rendezvous_tests)
+  set_tests_properties(galaxy_flight06_dependent_rendezvous PROPERTIES TIMEOUT 300)
+endif()
