@@ -9,10 +9,15 @@ assert.equal(status.emitter,true);
 assert.equal(status.firewall,false);
 assert.equal(status.cooldown,3);
 assert.equal(status.colony,true);
-assert.equal(cyber.canAttack(status,22),false);
-assert.equal(cyber.canAttack({...status,cooldown:0},22),true);
-assert.equal(cyber.canAttack({...status,emitter:false,cooldown:0},22),false);
-assert.equal(cyber.canAttack({...status,cooldown:0},0),false);
+// Fitted is not enough: a real emitter has to be effective and non-isolated
+// on the current committed tick before the cockpit can request an attack.
+assert.equal(cyber.canAttack(status,22,true),false);
+assert.equal(cyber.canAttack({...status,cooldown:0},22,true),true);
+assert.equal(cyber.canAttack({...status,cooldown:0},22,false),false);
+assert.equal(cyber.canAttack({...status,cooldown:0},22),false);
+assert.equal(cyber.canAttack({...status,emitter:false,cooldown:0},22,true),false);
+assert.equal(cyber.canAttack({...status,cooldown:0},0,true),false);
+assert.equal(cyber.canAttack({...status,cooldown:0},22,1),false);
 const moduleState=cyber.parse('COLONY|1|5|CYBER_MODULE|17|0|1|1|0|0');
 assert.equal(moduleState.hardware,1);
 assert.equal(moduleState.requested,true);
