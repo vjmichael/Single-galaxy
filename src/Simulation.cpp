@@ -6199,6 +6199,17 @@ bool Simulation::queue_npc_flight(PlayerId owner,EntityId ship,
         std::uint64_t id,std::uint64_t transit,
         NpcFlightPurpose purpose){
     const auto e=entities_.find(ship),frame=ship_frames_.find(ship);
+    // A zero requested pilot means deterministic qualification and
+    // appointment from existing real NPC records; nothing is recruited.
+    std::uint64_t selected_pilot=pilot;
+    if(!selected_pilot)for(const auto& [person_id,n]:npcs_){
+        (void)n;
+        if(qualified_npc_flight_pilot(ship,person_id) &&
+           npc_available_for_duty(person_id)){
+            selected_pilot=person_id;
+            break;
+        }
+    }
     if(!id || id>=(std::uint64_t{1}<<50) || !transit ||
        transit>=(std::uint64_t{1}<<50) ||
        !owner || owner==kServerAuthority ||
@@ -6206,7 +6217,7 @@ bool Simulation::queue_npc_flight(PlayerId owner,EntityId ship,
        npc_flight_orders_.size()>=10000 || npc_flight_orders_.count(id) ||
        pending_celestial_transits_.count(transit) ||
        completed_celestial_transits_.count(transit) ||
-       !qualified_npc_flight_pilot(ship,pilot) ||
+       !qualified_npc_flight_pilot(ship,selected_pilot) ||
        e==entities_.end() || e->second.type!=EntityType::Ship ||
        e->second.owner_id!=owner || !colony_ships_.count(ship) ||
        !life_support_.count(ship) ||
@@ -6220,10 +6231,10 @@ bool Simulation::queue_npc_flight(PlayerId owner,EntityId ship,
         if(order.transit_request==transit)return false;
         if((order.phase==NpcFlightPhase::Planned ||
             order.phase==NpcFlightPhase::InTransit) &&
-           (order.ship==ship || order.pilot_npc==pilot))return false;
+           (order.ship==ship || order.pilot_npc==selected_pilot))return false;
     }
     npc_flight_orders_.emplace(id,NpcFlightOrder{
-        id,owner,ship,pilot,destination,transit,purpose,
+        id,owner,ship,selected_pilot,destination,transit,purpose,
         NpcFlightPhase::Planned,tick_,0,0});
     snapshot_version_=std::max(snapshot_version_,95);
     return true;
