@@ -1832,3 +1832,14 @@ if(BUILD_TESTING)
     COMMAND galaxy_combat01a_ship_weapon_tests)
   set_tests_properties(galaxy_combat01a_ship_weapon PROPERTIES TIMEOUT 300)
 endif()
+
+# STATUS-07G: two genuine human owner IDs in a deliberately seeded ORIGINAL
+# test world, with no automatic production second ship or global SGVIEW leak.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status07g_two_human_tests
+    tests/SHIPSTATUS07G_TwoHumanSecurityTests.cpp)
+  target_link_libraries(galaxy_ship_status07g_two_human_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status07g_two_human
+    COMMAND galaxy_ship_status07g_two_human_tests)
+  set_tests_properties(galaxy_ship_status07g_two_human PROPERTIES TIMEOUT 300)
+endif()
