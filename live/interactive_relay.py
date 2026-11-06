@@ -335,7 +335,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             while True:
                 current=self._principal()
                 if not current or current['session_id']!=principal['session_id']:
-                    self.wfile.write(b'event: failed\\ndata: Session expired\\n\\n')
+                    self.wfile.write(b'event: failed\ndata: Session expired\n\n')
                     self.wfile.flush();return
                 with rt.cv:
                     rt.cv.wait_for(
@@ -348,17 +348,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 sent=False
                 for recipient,data in entries:
                     if recipient!=who:continue
-                    self.wfile.write(('event: colony\\ndata: '+data+'\\n\\n').encode('ascii'))
+                    self.wfile.write(('event: colony\ndata: '+data+'\n\n').encode('ascii'))
                     sent=True
                 if sent:self.wfile.flush()
                 if done and pos>=len(rt.private_colony_events):
                     if error:
-                        self.wfile.write(('event: failed\\ndata: '+str(error).replace(
-                            '\\n',' ')[:150]+'\\n\\n').encode('ascii'))
-                    else:self.wfile.write(b'event: complete\\ndata: finished\\n\\n')
+                        self.wfile.write(('event: failed\ndata: '+str(error).replace(
+                            '\n',' ')[:150]+'\n\n').encode('ascii'))
+                    else:self.wfile.write(b'event: complete\ndata: finished\n\n')
                     self.wfile.flush();return
                 if not sent:
-                    self.wfile.write(b': keepalive\\n\\n');self.wfile.flush()
+                    self.wfile.write(b': keepalive\n\n');self.wfile.flush()
         except (BrokenPipeError,ConnectionResetError,TimeoutError,OSError):
             pass
         finally:self.close_connection=True
