@@ -8823,6 +8823,29 @@ bool PersistentWorld::register_player_person(PlayerId owner,EntityId aboard,
     world_.swap(next);++generation_;
     return true;
 }
+bool PersistentWorld::grant_player_rescue_consent(
+    PlayerId owner,EntityId receiver,std::uint64_t consent_id,FailPoint fail){
+    auto next=world_;
+    if(!next.grant_player_rescue_consent(owner,receiver,consent_id))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("player consent changed world matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+bool PersistentWorld::complete_player_rescue(
+    PlayerId owner,EntityId receiver,std::uint64_t flight_id,
+    std::uint64_t receipt,FailPoint fail){
+    auto next=world_;
+    if(!next.complete_player_rescue(owner,receiver,flight_id,receipt))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("player rescue changed world matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
 bool PersistentWorld::queue_npc_ship_rendezvous(
     PlayerId owner,EntityId ship,std::uint64_t pilot,
     EntityId target_ship,std::uint64_t order_id,
