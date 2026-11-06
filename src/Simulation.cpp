@@ -1,4 +1,5 @@
 #include "galaxy/Simulation.hpp"
+#include "galaxy/WorkPlanning.hpp"
 #include "galaxy/ShipyardConstructionPreflight.hpp"
 #include "galaxy/TransportIdentity.hpp"
 #include "galaxy/NpcTransport.hpp"
@@ -6086,9 +6087,16 @@ bool Simulation::cancel_work_directive(PlayerId owner,std::uint64_t id){
 }
 void Simulation::process_universal_work(){
     if(snapshot_version_<94)return;
-    for(auto& [id,directive]:work_directives_){
-        (void)id;
-        if(directive.status!=WorkDirectiveStatus::Active)continue;
+    // WORK-01B: plan from ORIGINAL canonical source/worker records at each
+    // committed tick; never store a competing queue or reserve invented NPCs.
+    // The original native effect gates below remain the sole authorities.
+    const auto schedule=work::plan(
+        work_directives_,shipyard_customer_orders_,npcs_,tick_);
+    for(const auto& candidate:schedule){
+        auto active=work_directives_.find(candidate.id);
+        if(active==work_directives_.end() ||
+           active->second.status!=WorkDirectiveStatus::Active)continue;
+        auto& directive=active->second;
         const auto block=[&](WorkBlock reason){
             if(directive.blocked!=reason){
                 directive.blocked=reason;
@@ -6101,6 +6109,23 @@ void Simulation::process_universal_work(){
             directive.resolved_tick=tick_;
             directive.last_update_tick=tick_;
         };
+        // A shared named NPC may be selected by only one READY
+        // commissioning directive this tick. No future work reserves
+        // anyone indefinitely, and all original final validations remain.
+        if(candidate.gate==work::Gate::WorkerReserved ||
+           candidate.gate==work::Gate::WorkerUnavailable){
+            block(WorkBlock::NamedCrewAndSupplies);
+            continue;
+        }
+        if(candidate.gate==work::Gate::Dependency){
+            block(WorkBlock::Dependency);
+            continue;
+        }
+        if(candidate.gate==work::Gate::MissingSource ||
+           candidate.gate==work::Gate::UnsupportedExecutor){
+            block(WorkBlock::SupplierApproval);
+            continue;
+        }
         if(directive.requires_directive){
             const auto prerequisite=work_directives_.find(
                 directive.requires_directive);
