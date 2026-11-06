@@ -461,6 +461,81 @@ void apply(PersistentWorld& world,EntityId ship,FleetSelection& fleet,const std:
         else announce(world.world(),"ERROR|INVALID_INPUT");
         return;
     }
+    // WORK-01A: one owner-authorized universal work coordinator command
+    // boundary. All physical effects still go through native task authority.
+    if(!v.empty() && (v[0]=="WORK_DELEGATE_SHIP" ||
+                       v[0]=="WORK_CANCEL" || v[0]=="WORK_STATUS")){
+        try{
+            std::uint64_t changed_id=0;
+            bool changed=false;
+            if(v[0]=="WORK_DELEGATE_SHIP" && v.size()==7){
+                const auto id=integer(v[1]),contract=integer(v[2]),
+                    first=integer(v[3]),second=integer(v[4]),
+                    provisions=integer(v[5]),dependency=integer(v[6]);
+                if(id<=0 || id>=(std::int64_t{1}<<50) ||
+                   contract<=0 || contract>=(std::int64_t{1}<<50) ||
+                   first<0 || second<0 || provisions<0 ||
+                   first>=(std::int64_t{1}<<50) ||
+                   second>=(std::int64_t{1}<<50) ||
+                   dependency<0 || dependency>=(std::int64_t{1}<<50) ||
+                   !world.delegate_customer_ship_order(principal,ship,
+                       std::uint64_t(id),std::uint64_t(contract),
+                       {{std::uint64_t(first),std::uint64_t(second)}},
+                       provisions,std::uint64_t(dependency)))
+                    throw std::invalid_argument("delegation not permitted");
+                changed=true;changed_id=std::uint64_t(id);
+            }else if(v[0]=="WORK_CANCEL" && v.size()==2){
+                const auto id=integer(v[1]);
+                if(id<=0 || id>=(std::int64_t{1}<<50) ||
+                   !world.cancel_work_directive(principal,std::uint64_t(id)))
+                    throw std::invalid_argument("not a cancellable owner work order");
+                changed=true;changed_id=std::uint64_t(id);
+            }else if(v[0]!="WORK_STATUS" || v.size()!=1)
+                throw std::invalid_argument("invalid universal work command");
+            if(changed)
+                announce(world.world(),"WORK_COMMITTED|"+
+                    std::to_string(changed_id)+"|"+
+                    std::to_string(world.generation()));
+            std::uint64_t count=0;
+            for(const auto& entry:world.world().universal_work_board(
+                    principal,ship)){
+                if(count>=64)break;
+                announce(world.world(),"WORK_ITEM|"+
+                    std::to_string(unsigned(entry.kind))+"|"+
+                    std::to_string(entry.source_order)+"|"+
+                    std::to_string(unsigned(entry.phase))+"|"+
+                    std::to_string(entry.progress)+"|"+
+                    std::to_string(entry.required)+"|"+
+                    std::to_string(entry.delegated_id)+"|"+
+                    std::to_string(world.generation()));
+                ++count;
+            }
+            announce(world.world(),"WORK_DONE|"+std::to_string(count));
+            std::uint64_t direct_count=0;
+            for(const auto& [id,job]:world.world().work_directives()){
+                if(direct_count>=64)break;
+                if(job.owner!=principal || job.colony_ship!=ship)continue;
+                announce(world.world(),"WORK_DIRECTIVE|"+
+                    std::to_string(id)+"|"+
+                    std::to_string(job.source_order)+"|"+
+                    std::to_string(unsigned(job.status))+"|"+
+                    std::to_string(unsigned(job.blocked))+"|"+
+                    std::to_string(job.requires_directive)+"|"+
+                    std::to_string(job.commissioning_crew[0])+"|"+
+                    std::to_string(job.commissioning_crew[1])+"|"+
+                    std::to_string(job.provisions_kg_each)+"|"+
+                    std::to_string(job.posted_tick)+"|"+
+                    std::to_string(job.resolved_tick)+"|"+
+                    std::to_string(world.generation()));
+                ++direct_count;
+            }
+            announce(world.world(),"WORK_DIRECTIVES_DONE|"+
+                std::to_string(direct_count));
+        }catch(const std::exception&){
+            announce(world.world(),"ERROR|WORK_DENIED");
+        }
+        return;
+    }
     // SHIP-01F: one physical intercolony shipyard contract, not a free
     // factory. The buyer requests, the supplier independently accepts, six
     // existing modules change custody at a real berth, the ordinary twelve-
