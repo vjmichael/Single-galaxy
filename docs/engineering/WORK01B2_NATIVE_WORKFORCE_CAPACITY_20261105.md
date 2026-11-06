@@ -41,4 +41,8 @@ Planner `Gate` statuses newly distinguish missing/nonoperational yards, occupied
 
 Dedicated `.github/workflows/work01b2-capacity.yml` compiles on Windows and Linux and runs new planner qualification tests with the inherited WORK-01B.1, WORK-01A, SHIP-01F, SHIP-01B.2 and SHIP-01A real-world tests. The earlier WORK-01A SQLite failpoint/restart regression remains part of the required acceptance gate.
 
-**Outstanding:** exact-head CI; broader workforce skill/credential system; other typed executor scheduling; emergency preemption, true multi-machine/factory capacity, configurable owner priorities, durable owner-visible wait diagnostics and real multi-owner installed-desktop acceptance. Native worker and one-slip shipyard capacity scheduling are the actual B.2 scope; an entire colony labor market is not claimed complete.
+**Outstanding:** exact-head CI;
+
+**WORK-01B.3 source follow-on:** [Native Priority and Safety Policy](WORK01B3_POLICY_EMERGENCY_FAIRNESS_20261105.md) now adds emergency holds for elective funding/commissioning, original-world dry-run buyer readiness and rotating tie cohorts. Its exact-head CI is independently pending; original WORK-01B.2 scope remains unchanged.
+
+**Historical B.2 gate, before B.3:** exact-head CI; broader workforce skill/credential system; other typed executor scheduling; emergency preemption, true multi-machine/factory capacity, configurable owner priorities, durable owner-visible wait diagnostics and real multi-owner installed-desktop acceptance. Native worker and one-slip shipyard capacity scheduling are the actual B.2 scope; an entire colony labor market is not claimed complete.

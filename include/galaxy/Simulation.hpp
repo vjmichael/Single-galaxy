@@ -1221,6 +1221,11 @@ public:
     bool post_shipyard_customer_order(PlayerId customer,EntityId customer_ship,
         std::uint64_t yard_order,std::uint64_t build_order,std::uint64_t order_id);
     bool accept_shipyard_customer_order(PlayerId supplier,std::uint64_t order_id);
+    // WORK-01B.3: read-only native funding readiness. Never escrows,
+    // spends or accepts a shipyard contract; the original fund method
+    // remains the only authorized material transfer/build admission.
+    bool can_fund_shipyard_customer_order(PlayerId customer,
+        std::uint64_t order_id) const;
     bool fund_shipyard_customer_order(PlayerId customer,std::uint64_t order_id);
     bool deliver_shipyard_customer_order(PlayerId customer,std::uint64_t order_id);
     // WORK-01A canonical universal board derives its state from the original

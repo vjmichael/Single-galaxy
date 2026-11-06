@@ -84,6 +84,13 @@ int main(){
             // No delegation = no NPC authority to spend buyer materials,
             // even if the seller accepts a valid physical contract.
             CHECK(world.accept_shipyard_customer_order(7,93001));
+            // WORK-01B.3: native read-only preflight agrees with the real
+            // two-colony, six-module physical payment and supplier berth.
+            // Query cannot spend modules, authorize supplier, or issue work.
+            const auto preflight_state=world.world().canonical_state();
+            CHECK(world.world().can_fund_shipyard_customer_order(8,93001));
+            CHECK(!world.world().can_fund_shipyard_customer_order(7,93001));
+            CHECK(world.world().canonical_state()==preflight_state);
             const auto before=world.world().canonical_state();
             const auto generation=world.generation();
             bool fault=false;
@@ -149,6 +156,8 @@ int main(){
                   ShipyardCustomerStage::Funded);
             CHECK(world.world().colony_ship(buyer)->modules==2);
             CHECK(world.world().colony_ship(supplier)->modules==0);
+            // Already funded means no second debit can pass a dry run.
+            CHECK(!world.world().can_fund_shipyard_customer_order(8,93001));
             CHECK(world.world().freighter_build_orders().at(92001).owner==7);
             CHECK(world.world().work_directives().at(94001).blocked==
                   WorkBlock::NativeConstruction);

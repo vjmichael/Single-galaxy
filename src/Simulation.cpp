@@ -5868,6 +5868,76 @@ bool Simulation::accept_shipyard_customer_order(PlayerId supplier,
     it->second.accepted_tick=tick_;
     return true;
 }
+// WORK-01B.3: funding PREVIEW for the universal coordinator. It only
+// inspects original buyer inventory, supplier yard/slip, ship positions,
+// native builder duty and contractual consent. Original fund/queue methods
+// still revalidate and make the sole real material transition.
+bool Simulation::can_fund_shipyard_customer_order(
+        PlayerId customer,std::uint64_t contract_id) const {
+    const auto it=shipyard_customer_orders_.find(contract_id);
+    if(!customer || customer==kServerAuthority ||
+       it==shipyard_customer_orders_.end() ||
+       it->second.customer_owner!=customer ||
+       it->second.stage!=ShipyardCustomerStage::Accepted ||
+       freighter_build_orders_.size()>=10000 ||
+       freighter_build_orders_.count(it->second.build_order))
+        return false;
+    const auto& c=it->second;
+    const auto yard=shipyard_constructions_.find(c.yard_order);
+    const auto buyer=entities_.find(c.customer_ship);
+    const auto seller=entities_.find(c.supplier_ship);
+    const auto paid=colony_ships_.find(c.customer_ship);
+    const auto provider=colony_ships_.find(c.supplier_ship);
+    const auto life=life_support_.find(c.supplier_ship);
+    const auto frame=ship_frames_.find(c.supplier_ship);
+    if(yard==shipyard_constructions_.end() ||
+       !yard->second.operational() ||
+       yard->second.owner!=c.supplier_owner ||
+       yard->second.colony_ship!=c.supplier_ship ||
+       buyer==entities_.end() || seller==entities_.end() ||
+       buyer->second.type!=EntityType::Ship ||
+       seller->second.type!=EntityType::Ship ||
+       buyer->second.owner_id!=customer ||
+       seller->second.owner_id!=c.supplier_owner ||
+       paid==colony_ships_.end() || provider==colony_ships_.end() ||
+       life==life_support_.end() || frame==ship_frames_.end() ||
+       paid->second.modules<6 ||
+       provider->second.modules>1000000-6 ||
+       !same_local_frame(c.customer_ship,c.supplier_ship) ||
+       !freight_berth(buyer->second,seller->second) ||
+       buyer->second.velocity.x || buyer->second.velocity.y ||
+       seller->second.velocity.x || seller->second.velocity.y ||
+       frame->second.system!=seller->second.system_id ||
+       life->second.food_kg<2 || life->second.water_kg<2 ||
+       life->second.oxygen_kg<2)return false;
+    for(const auto& [id,trip]:pending_celestial_transits_){
+        (void)id;
+        if(trip.ship==c.customer_ship || trip.ship==c.supplier_ship)
+            return false;
+    }
+    for(const auto& [id,existing]:shipyard_customer_orders_){
+        if(id==contract_id)continue;
+        if(existing.yard_order==c.yard_order &&
+           (existing.stage==ShipyardCustomerStage::Accepted ||
+            existing.stage==ShipyardCustomerStage::Funded))
+            return false;
+        if(existing.build_order==c.build_order)return false;
+    }
+    for(const auto& [id,build]:freighter_build_orders_){
+        (void)id;
+        if(build.yard_order==c.yard_order && !build.finished())return false;
+    }
+    for(const auto worker:yard->second.workers){
+        const auto n=npcs_.find(worker);
+        if(!worker || n==npcs_.end() ||
+           n->second.home_ship!=c.supplier_ship ||
+           n->second.location!=c.supplier_ship ||
+           n->second.assigned_site!=c.supplier_ship ||
+           n->second.role!=NpcRole::Ship || n->second.transport_id ||
+           !npc_available_for_duty(worker))return false;
+    }
+    return yard->second.workers[0]!=yard->second.workers[1];
+}
 bool Simulation::fund_shipyard_customer_order(PlayerId customer,
         std::uint64_t contract_id) {
     const auto it=shipyard_customer_orders_.find(contract_id);
@@ -6095,8 +6165,44 @@ void Simulation::process_universal_work(){
         [this](std::uint64_t worker){
             return npc_available_for_duty(worker);
         }};
+    // Life-preserving priority is grounded in the SAME canonical
+    // compartment risk model used by the native colony safety system.
+    // Only new elective funding or crew reassignment is preempted;
+    // existing paid construction and hull handover are never reversed.
+    std::set<EntityId> critical_colonies;
+    std::set<EntityId> inspected_colonies;
+    for(const auto& [id,d]:work_directives_){
+        (void)id;
+        if(d.status!=WorkDirectiveStatus::Active ||
+           d.kind!=WorkTaskKind::CustomerShipOrder ||
+           !inspected_colonies.insert(d.colony_ship).second)continue;
+        const auto entity=entities_.find(d.colony_ship);
+        if(entity==entities_.end() || entity->second.owner_id!=d.owner ||
+           !colony_ships_.count(d.colony_ship) ||
+           !life_support_.count(d.colony_ship))continue;
+        const auto urgent=[&](EntityId site){
+            return colony_safety::assess(*this,d.colony_ship,site).
+                emergency_override;
+        };
+        bool emergency=urgent(d.colony_ship);
+        if(!emergency)for(const auto& [site,farm]:farms_)
+            if(farm.source_ship==d.colony_ship && farm.workers>0 &&
+               urgent(site)){emergency=true;break;}
+        if(!emergency)for(const auto& [site,habitat]:habitats_)
+            if(habitat.source_ship==d.colony_ship && habitat.residents>0 &&
+               urgent(site)){emergency=true;break;}
+        if(emergency)critical_colonies.insert(d.colony_ship);
+    }
+    const work::WorkPolicyContext policy{
+        [critical_colonies](EntityId colony){
+            return critical_colonies.count(colony)!=0;
+        },
+        [this](PlayerId owner,std::uint64_t contract){
+            return can_fund_shipyard_customer_order(owner,contract);
+        },1};
     const auto schedule=work::plan(
-        work_directives_,shipyard_customer_orders_,npcs_,tick_,capacity);
+        work_directives_,shipyard_customer_orders_,npcs_,tick_,
+        capacity,policy);
     for(const auto& candidate:schedule){
         auto active=work_directives_.find(candidate.id);
         if(active==work_directives_.end() ||
@@ -6123,7 +6229,19 @@ void Simulation::process_universal_work(){
             block(WorkBlock::NamedCrewAndSupplies);
             continue;
         }
-        if(candidate.gate==work::Gate::YardUnavailable ||
+        if(candidate.gate==work::Gate::EmergencyHold){
+            // Existing v94 wait codes remain compatible with SQLite.
+            // Do not pay/build or transfer named crew under a verified
+            // critical life-support hazard; re-check on every native tick.
+            const auto contract=shipyard_customer_orders_.find(
+                directive.source_order);
+            block(contract!=shipyard_customer_orders_.end() &&
+                  contract->second.stage==ShipyardCustomerStage::Delivered?
+                  WorkBlock::NamedCrewAndSupplies:WorkBlock::PhysicalFunding);
+            continue;
+        }
+        if(candidate.gate==work::Gate::FundingNotReady ||
+           candidate.gate==work::Gate::YardUnavailable ||
            candidate.gate==work::Gate::AssemblySlipBusy ||
            candidate.gate==work::Gate::BuilderUnavailable){
             // Existing 94 snapshot wait code: no speculative debit.
