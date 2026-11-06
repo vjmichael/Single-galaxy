@@ -349,7 +349,9 @@ public:
             if(e.kind==Kind::Identify)pending.erase(e.related);
         }
         // A voluntarily identified visiting ship is already known to the
-        // exact claimed colony account. No omniscient entity/owner mapping.
+        // exact claimed colony account. Verify the original immutable chain
+        // before accepting a historical identity receipt as a penalty basis.
+        territory.verify();
         for(const auto& t:territory.history()){
             if(t.colony==source && t.owner==principal &&
                t.visitor_ship==target &&
