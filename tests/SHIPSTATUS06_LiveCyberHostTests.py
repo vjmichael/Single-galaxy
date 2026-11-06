@@ -34,6 +34,7 @@ def request(port, method, path, payload=None, cookie=None, origin=True):
         headers["Content-Type"] = "application/json"
         if origin:
             headers["Origin"] = f"http://127.0.0.1:{port}"
+            headers["Sec-Fetch-Site"] = "same-origin"
     con = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
     try:
         con.request(method, path, body=(
