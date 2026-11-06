@@ -1244,6 +1244,13 @@ public:
         std::uint64_t id,std::uint64_t customer_contract,
         std::array<std::uint64_t,2> commissioning_crew,
         std::int64_t provisions_kg_each,std::uint64_t requires_directive=0);
+    // WORK-01C: authorize coordinator handling of an EXISTING local
+    // shuttle pickup or preplanned original intercolony freight leg. The
+    // same flight, native NPC pilot, cargo and receipt maps remain owners.
+    // No new carrier, automatic celestial voyage or phantom shipment.
+    bool delegate_transport_work_order(PlayerId owner,EntityId origin,
+        std::uint64_t directive_id,WorkTaskKind kind,
+        std::uint64_t source_order,std::uint64_t requires_directive=0);
     bool cancel_work_directive(PlayerId owner,std::uint64_t id);
     // Finished order references an actual Entity with an empty physical hold.
     // No ship commands before commissioning; no free crew or starter equipment.

@@ -4,6 +4,7 @@
 #include <chrono>
 #include <filesystem>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <vector>
 using namespace galaxy;
@@ -76,7 +77,33 @@ static void fabricate_six_more_batches(PersistentWorld& w,EntityId ship,
         work(Action::FabricateModule,2);
     }
 }
-static void scenario(const fs::path& db, bool farming, bool manufactured=false){
+// Negative recovery oracle: a fabricated coordinator completion must not
+// pass v94 snapshot validation without its original native transport receipt.
+static std::string forge_work_completion(std::string snapshot,
+        std::uint64_t directive,std::uint64_t tick) {
+    const auto marker="workdirective|"+std::to_string(directive)+"|";
+    const auto at=snapshot.find(marker);
+    CHECK(at!=std::string::npos);
+    const auto end=snapshot.find('\n',at);
+    CHECK(end!=std::string::npos);
+    std::istringstream source(snapshot.substr(at,end-at));
+    std::vector<std::string> fields;
+    std::string token;
+    while(std::getline(source,token,'|'))fields.push_back(token);
+    CHECK(fields.size()==15);
+    fields[10]="2"; // fake Fulfilled
+    fields[11]="0"; // fake unblocked
+    fields[14]=std::to_string(tick); // plausible forged resolved tick
+    std::string row;
+    for(std::size_t i=0;i<fields.size();++i){
+        if(i)row+='|';
+        row+=fields[i];
+    }
+    snapshot.replace(at,end-at,row);
+    return snapshot;
+}
+static void scenario(const fs::path& db, bool farming,
+                     bool manufactured=false,bool delegated=false){
     const auto chosen=select_site(farming);
     EntityId ship=0,freighter=0,receiver=0;
     std::uint64_t receiver_body=0;
@@ -761,6 +788,29 @@ static void scenario(const fs::path& db, bool farming, bool manufactured=false){
                 7,ship,key,ShuttleCargo::Water,4-fuel));
             CHECK(w.post_local_delivery_order(7,ship,key,
                 ShuttleCargo::Nutrients,200,77003));
+            if(delegated){
+                CHECK(!w.delegate_transport_work_order(
+                    8,ship,94003,WorkTaskKind::LocalDelivery,77003));
+                CHECK(!w.delegate_transport_work_order(
+                    7,ship,94003,WorkTaskKind::IntercolonyFreight,77003));
+                const auto before_delegation=w.world().canonical_state();
+                bool failed=false;
+                try{(void)w.delegate_transport_work_order(
+                    7,ship,94003,WorkTaskKind::LocalDelivery,77003,0,
+                    FailPoint::AfterSnapshotWrite);}
+                catch(const std::exception&){failed=true;}
+                CHECK(failed);
+                CHECK(w.world().canonical_state()==before_delegation);
+                CHECK(w.delegate_transport_work_order(
+                    7,ship,94003,WorkTaskKind::LocalDelivery,77003));
+                CHECK(!w.delegate_transport_work_order(
+                    7,ship,94003,WorkTaskKind::LocalDelivery,77003));
+                CHECK(!w.delegate_transport_work_order(
+                    7,ship,94009,WorkTaskKind::LocalDelivery,77003));
+                CHECK(w.world().total_ore()==origin);
+                CHECK(w.world().work_directives().at(94003).status==
+                      WorkDirectiveStatus::Active);
+            }
             CHECK(w.post_local_delivery_order(7,ship,key,
                 ShuttleCargo::Nutrients,100,77005));
             CHECK(!w.post_local_delivery_order(7,ship,key,
@@ -769,7 +819,9 @@ static void scenario(const fs::path& db, bool farming, bool manufactured=false){
                   LocalDeliveryStage::Posted);
             CHECK(w.world().local_delivery_board().at(77005).stage==
                   LocalDeliveryStage::Posted);
-            CHECK(w.world().canonical_state().rfind((manufactured?"galaxy-kernel-v92|":"galaxy-kernel-v88|"),0)==0);
+            CHECK(w.world().canonical_state().rfind(
+                delegated?"galaxy-kernel-v94|":
+                (manufactured?"galaxy-kernel-v92|":"galaxy-kernel-v88|"),0)==0);
             CHECK(Simulation::from_snapshot(w.world().canonical_state())
                   .canonical_state()==w.world().canonical_state());
             w.steps(3);
@@ -779,11 +831,26 @@ static void scenario(const fs::path& db, bool farming, bool manufactured=false){
                   LocalDeliveryStage::Posted);
             const auto in_flight=w.world().canonical_state();
             CHECK(Simulation::from_snapshot(in_flight).canonical_state()==in_flight);
+            if(delegated){
+                const auto forged=forge_work_completion(
+                    in_flight,94003,w.world().tick());
+                bool denied=false;
+                try{(void)Simulation::from_snapshot(forged);}
+                catch(const std::exception&){denied=true;}
+                CHECK(denied); // no real shuttle unloading receipt yet
+            }
             w.steps(22);
             const auto completed=w.world().local_delivery_board().at(77003);
             const auto queued=w.world().local_delivery_board().at(77005);
             CHECK(completed.stage==LocalDeliveryStage::Complete);
             CHECK(queued.stage==LocalDeliveryStage::Complete);
+            if(delegated){
+                CHECK(w.world().work_directives().at(94003).status==
+                      WorkDirectiveStatus::Fulfilled);
+                CHECK(w.world().work_directives().at(94003).resolved_tick>0);
+                CHECK(!w.delegate_transport_work_order(
+                    7,ship,94010,WorkTaskKind::LocalDelivery,77003));
+            }
             CHECK(completed.assigned_pilot==available[2]);
             CHECK(queued.assigned_pilot==available[2]);
             CHECK(w.world().planetary_sites().at(key).nutrients_kg==site_prior-300);
@@ -799,6 +866,8 @@ static void scenario(const fs::path& db, bool farming, bool manufactured=false){
                 7,ship,key,ShuttleCargo::Water,2-fuel_again));
             CHECK(w.post_local_delivery_order(7,ship,key,
                 ShuttleCargo::Nutrients,400,77004));
+            if(delegated)CHECK(w.delegate_transport_work_order(
+                7,ship,94005,WorkTaskKind::LocalDelivery,77004));
             CHECK(w.post_local_delivery_order(7,ship,key,
                 ShuttleCargo::Nutrients,100,77006));
             const auto waiting_stock=w.world().planetary_sites().at(key).nutrients_kg;
@@ -819,6 +888,12 @@ static void scenario(const fs::path& db, bool farming, bool manufactured=false){
             CHECK(w.cancel_local_delivery_order(7,77004));
             CHECK(w.world().local_delivery_board().at(77004).stage==
                   LocalDeliveryStage::Cancelled);
+            if(delegated){
+                CHECK(w.world().work_directives().at(94005).status==
+                      WorkDirectiveStatus::Cancelled);
+                const auto restored=w.world().canonical_state();
+                CHECK(Simulation::from_snapshot(restored).canonical_state()==restored);
+            }
             CHECK(!w.cancel_local_delivery_order(7,77003));
             w.steps(12);
             CHECK(w.world().planetary_sites().at(key).nutrients_kg==waiting_stock-100);
@@ -840,6 +915,16 @@ static void scenario(const fs::path& db, bool farming, bool manufactured=false){
             CHECK(seal_failed && w.world().canonical_state()==before_seal);
             CHECK(w.load_intercolony_freight(7,77003,freighter,receiver));
             CHECK(!w.load_intercolony_freight(7,77003,freighter,receiver));
+            if(delegated){
+                CHECK(!w.delegate_transport_work_order(
+                    8,ship,94004,WorkTaskKind::IntercolonyFreight,77003,94003));
+                CHECK(w.delegate_transport_work_order(
+                    7,ship,94004,WorkTaskKind::IntercolonyFreight,77003,94003));
+                CHECK(!w.delegate_transport_work_order(
+                    7,ship,94011,WorkTaskKind::IntercolonyFreight,77003));
+                CHECK(w.world().work_directives().at(94004).requires_directive==
+                      94003);
+            }
             CHECK(w.world().life_support(ship)->nutrients_kg==from_before-200);
             CHECK(w.world().colony_ship(freighter)->goods_kg.at("freight_nutrients")==200);
             const auto freight_manifest=w.world().intercolony_transport_manifest(77003);
@@ -854,7 +939,8 @@ static void scenario(const fs::path& db, bool farming, bool manufactured=false){
                   IntercolonyFreightStage::Loaded);
             CHECK(!w.deliver_intercolony_freight(7,77003)); // wrong frame
             const auto aboard=w.world().canonical_state();
-            CHECK(aboard.rfind((manufactured?"galaxy-kernel-v92|":"galaxy-kernel-v89|"),0)==0);
+            CHECK(aboard.rfind(delegated?"galaxy-kernel-v94|":
+                (manufactured?"galaxy-kernel-v92|":"galaxy-kernel-v89|"),0)==0);
             CHECK(Simulation::from_snapshot(aboard).canonical_state()==aboard);
             // A snapshot with sealed physical cargo but no matching order
             // is rejected; nobody can resurrect phantom freight by deleting
@@ -869,6 +955,14 @@ static void scenario(const fs::path& db, bool farming, bool manufactured=false){
             try{(void)Simulation::from_snapshot(orphan);}
             catch(const std::exception&){rejected_orphan=true;}
             CHECK(rejected_orphan);
+            if(delegated){
+                const auto forged=forge_work_completion(
+                    aboard,94004,w.world().tick());
+                bool denied=false;
+                try{(void)Simulation::from_snapshot(forged);}
+                catch(const std::exception&){denied=true;}
+                CHECK(denied); // carrier has not physically arrived
+            }
             CHECK(w.begin_celestial_transit(7,freighter,receiver_body,99021));
             CHECK(!w.deliver_intercolony_freight(7,77003)); // in flight
             w.steps(4);
@@ -881,7 +975,15 @@ static void scenario(const fs::path& db, bool farming, bool manufactured=false){
             catch(const std::exception&){unload_failed=true;}
             CHECK(unload_failed && w.world().canonical_state()==before_unload);
             CHECK(!w.deliver_intercolony_freight(8,77003));
-            CHECK(w.deliver_intercolony_freight(7,77003));
+            if(delegated){
+                // No user unload call: the coordinator must recheck the
+                // original completed voyage receipt inside native world.step.
+                CHECK(w.world().work_directives().at(94004).status==
+                      WorkDirectiveStatus::Active);
+                w.step();
+                CHECK(w.world().work_directives().at(94004).status==
+                      WorkDirectiveStatus::Fulfilled);
+            }else CHECK(w.deliver_intercolony_freight(7,77003));
             CHECK(!w.deliver_intercolony_freight(7,77003)); // no duplication
             CHECK(w.world().life_support(receiver)->nutrients_kg==to_before+200);
             CHECK(w.world().life_support(ship)->nutrients_kg==from_before-200);
@@ -921,6 +1023,13 @@ static void scenario(const fs::path& db, bool farming, bool manufactured=false){
             }
             CHECK(w.post_intercolony_work_order(7,ship,key,
                 ShuttleCargo::Nutrients,100,77007,freighter,receiver));
+            if(delegated){
+                CHECK(w.delegate_transport_work_order(
+                    7,ship,94007,WorkTaskKind::LocalDelivery,77007));
+                CHECK(w.delegate_transport_work_order(
+                    7,ship,94008,WorkTaskKind::IntercolonyFreight,77007,94007));
+                CHECK(w.world().universal_work_board(7,ship).size()>0);
+            }
             if(manufactured){
                 // The durable work order reserves exactly this hull. A
                 // second job cannot seize it or synthesize inventory.
@@ -937,10 +1046,20 @@ static void scenario(const fs::path& db, bool farming, bool manufactured=false){
             CHECK(w.world().intercolony_freight().at(77007).stage==
                   IntercolonyFreightStage::Loaded);
             CHECK(w.world().colony_ship(freighter)->goods_kg.at("freight_nutrients")==100);
+            if(delegated){
+                CHECK(w.world().work_directives().at(94007).status==
+                      WorkDirectiveStatus::Fulfilled);
+                CHECK(w.world().work_directives().at(94008).status==
+                      WorkDirectiveStatus::Active);
+            }
             CHECK(w.begin_celestial_transit(7,freighter,receiver_body,99023));
             w.steps(4);
             CHECK(w.complete_celestial_transit(99023));
-            CHECK(w.deliver_intercolony_freight(7,77007));
+            if(delegated){
+                w.step();
+                CHECK(w.world().work_directives().at(94008).status==
+                      WorkDirectiveStatus::Fulfilled);
+            }else CHECK(w.deliver_intercolony_freight(7,77007));
             CHECK(w.world().intercolony_freight().at(77007).arrival_receipt==99023);
             CHECK(w.world().life_support(receiver)->nutrients_kg==to_before+300);
             CHECK(w.world().total_ore()==origin);
@@ -976,7 +1095,8 @@ static void scenario(const fs::path& db, bool farming, bool manufactured=false){
                 CHECK(w.world().total_ore()==origin);
             }
             durable=w.world().canonical_state();
-            CHECK(durable.rfind((manufactured?"galaxy-kernel-v92|":"galaxy-kernel-v89|"),0)==0);
+            CHECK(durable.rfind(delegated?"galaxy-kernel-v94|":
+                (manufactured?"galaxy-kernel-v92|":"galaxy-kernel-v89|"),0)==0);
             CHECK(Simulation::from_snapshot(durable).canonical_state()==durable);
         }
     }
@@ -1022,6 +1142,18 @@ static void scenario(const fs::path& db, bool farming, bool manufactured=false){
             CHECK(w.world().intercolony_freight().at(77007).stage==
                   IntercolonyFreightStage::Delivered);
             CHECK(w.world().intercolony_freight().at(77007).arrival_receipt==99023);
+            if(delegated){
+                CHECK(w.world().work_directives().at(94003).status==
+                      WorkDirectiveStatus::Fulfilled);
+                CHECK(w.world().work_directives().at(94004).status==
+                      WorkDirectiveStatus::Fulfilled);
+                CHECK(w.world().work_directives().at(94007).status==
+                      WorkDirectiveStatus::Fulfilled);
+                CHECK(w.world().work_directives().at(94008).status==
+                      WorkDirectiveStatus::Fulfilled);
+                CHECK(!w.delegate_transport_work_order(
+                    7,ship,94015,WorkTaskKind::IntercolonyFreight,77007));
+            }
             CHECK(w.world().life_support(receiver)->nutrients_kg>=1200);
             // The manufactured ship has an actual 2-person life support
             // budget throughout long planetary production and two voyages.
@@ -1042,22 +1174,27 @@ static void scenario(const fs::path& db, bool farming, bool manufactured=false){
 }
 int main(int argc,char** argv){
     const bool manufactured_only=argc==2 && std::string(argv[1])=="--manufactured-only";
-    if(argc>2 || (argc==2 && !manufactured_only)){
-        std::cerr<<"Unknown test selection: only --manufactured-only is supported\n";
+    const bool delegated_only=argc==2 && std::string(argv[1])=="--delegated-work";
+    if(argc>2 || (argc==2 && !manufactured_only && !delegated_only)){
+        std::cerr<<"Unknown test selection: --manufactured-only or --delegated-work\n";
         return 2;
     }
     const auto dir=fs::temp_directory_path()/
       ("sg_play13d3_"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     try{
         fs::create_directories(dir);
-        if(!manufactured_only){
+        if(delegated_only){
+            scenario(dir/"delegated-transport.sqlite",false,false,true);
+        }else if(!manufactured_only){
             scenario(dir/"farm.sqlite",true);
             scenario(dir/"extract.sqlite",false);
         }else{
             scenario(dir/"manufactured-freight.sqlite",false,true);
         }
         fs::remove_all(dir);
-        std::cout<<(manufactured_only?
+        std::cout<<(delegated_only?
+            "PASS WORK-01C: original NPC shuttle pickups and two freight voyages, coordinator physical unloading, SQLite failpoint and restart\n":
+            manufactured_only?
             "PASS SHIP-01C: physically manufactured, commissioned freighter completes Planet A -> Colony B cargo delivery, SQLite restart\n":
             "PASS PLAY13D3 regional farm and finite extraction, physical custody, mass, rollback, SQLite restart\n");
     }catch(const std::exception& e){

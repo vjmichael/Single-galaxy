@@ -46,7 +46,7 @@ int main(){
             CHECK(static_cast<int>(cap->request)==i);
             CHECK(static_cast<int>(cap->result)==i);
             CHECK(cap->native_slots==1);
-            CHECK(cap->delegated_executor==(i==5));
+            CHECK(cap->delegated_executor==(i==1 || i==2 || i==5));
         }
         CHECK(find_capability(static_cast<WorkTaskKind>(88))==nullptr);
         CHECK(find_capability(WorkTaskKind::ShipyardConstruction)->named_workers==2);
@@ -122,7 +122,7 @@ int main(){
         // Explicit typed registry never silently auto-executes other
         // original native systems before their own consent adapters exist.
         auto unsupported=directive(50,500,10);
-        unsupported.kind=WorkTaskKind::IntercolonyFreight;
+        unsupported.kind=WorkTaskKind::ShipyardConstruction;
         directives.emplace(50,unsupported);
         rows=plan(directives,contracts,npcs,25);
         CHECK(find_row(rows,50).gate==Gate::UnsupportedExecutor);

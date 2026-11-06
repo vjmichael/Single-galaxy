@@ -1425,6 +1425,16 @@ if(BUILD_TESTING)
     COMMAND galaxy_ship01b2_commission_freighter_tests)
 endif()
 
+# WORK-01C: execute owner-delegated original local shuttle and sealed
+# intercolony freight, with the full real pilot, flight, hold, arrival receipt,
+# SQLite fault/restart acceptance fixture (no second transport engine).
+if(BUILD_TESTING)
+  add_test(NAME galaxy_work01c_native_transport_executors
+    COMMAND galaxy_play13d_regional_facilities_tests --delegated-work)
+  set_tests_properties(galaxy_work01c_native_transport_executors
+    PROPERTIES TIMEOUT 300)
+endif()
+
 # WORK-01B.3: original colony safety risk and bounded deterministic
 # fairness on real customer work, plus live original funding preview.
 if(BUILD_TESTING)

@@ -40,9 +40,9 @@ struct Capability {
 // A false executor is NOT an invitation to invent an alternative work path.
 inline constexpr std::array<Capability,5> capabilities{{
     {WorkTaskKind::LocalDelivery,RequestSchema::ExistingLocalDelivery,
-        ResultSchema::LocalDeliveryReceipt,1,1,false},
+        ResultSchema::LocalDeliveryReceipt,1,1,true},
     {WorkTaskKind::IntercolonyFreight,RequestSchema::ExistingFreightLeg,
-        ResultSchema::SealedFreightArrivalReceipt,0,1,false},
+        ResultSchema::SealedFreightArrivalReceipt,0,1,true},
     {WorkTaskKind::ShipyardConstruction,RequestSchema::ExistingShipyardConstruction,
         ResultSchema::OperationalShipyardReceipt,2,1,false},
     {WorkTaskKind::FreighterBuild,RequestSchema::ExistingFreighterBuild,
@@ -61,6 +61,10 @@ enum class Gate : std::uint8_t {
     UnsupportedExecutor=6,YardUnavailable=7,
     AssemblySlipBusy=8,BuilderUnavailable=9,WorkerOnNativeJob=10,
     EmergencyHold=11,FundingNotReady=12
+};
+struct NativeTransportContext {
+    const std::map<std::uint64_t,LocalDeliveryOrder>* local=nullptr;
+    const std::map<std::uint64_t,IntercolonyFreightLeg>* freight=nullptr;
 };
 struct PlannedDirective {
     std::uint64_t id=0;
@@ -88,7 +92,8 @@ inline std::vector<PlannedDirective> plan(
     const std::map<std::uint64_t,NpcRecord>& npcs,
     std::uint64_t tick,
     const NativeCapacityContext& capacity={},
-    const WorkPolicyContext& policy={}) {
+    const WorkPolicyContext& policy={},
+    const NativeTransportContext& transport={}) {
     // Index existing build receipts and assigned construction workers ONCE.
     // This is derived from native sources at the start of a world tick.
     const auto capacity_index=index_native_capacity(capacity);
@@ -110,6 +115,65 @@ inline std::vector<PlannedDirective> plan(
         if(!cap || !cap->delegated_executor){
             p.gate=Gate::UnsupportedExecutor;
             rows.push_back(p);continue;
+        }
+        if(d.kind==WorkTaskKind::LocalDelivery ||
+           d.kind==WorkTaskKind::IntercolonyFreight){
+            // WORK-01C never creates a second delivery/freight contract.
+            // The only source of truth is the original durable native order.
+            const LocalDeliveryOrder* pickup=nullptr;
+            if(transport.local){
+                const auto local=transport.local->find(d.source_order);
+                if(local!=transport.local->end())pickup=&local->second;
+            }
+            if(!pickup || pickup->owner!=d.owner ||
+               pickup->board_ship!=d.colony_ship ||
+               pickup->stage==LocalDeliveryStage::Cancelled){
+                p.gate=Gate::MissingSource;
+                rows.push_back(p);continue;
+            }
+            if(d.kind==WorkTaskKind::LocalDelivery){
+                p.priority+=pickup->stage==LocalDeliveryStage::Complete?
+                    4000:pickup->stage==LocalDeliveryStage::Posted?
+                    1000:2000;
+            }else{
+                const IntercolonyFreightLeg* leg=nullptr;
+                if(transport.freight){
+                    const auto it=transport.freight->find(d.source_order);
+                    if(it!=transport.freight->end())leg=&it->second;
+                }
+                if(!leg || leg->owner!=d.owner ||
+                   leg->source_ship!=d.colony_ship ||
+                   leg->cargo!=pickup->cargo ||
+                   leg->kilograms!=pickup->kilograms ||
+                   !leg->carrier_ship || !leg->destination_ship){
+                    p.gate=Gate::MissingSource;
+                    rows.push_back(p);continue;
+                }
+                p.priority+=leg->stage==IntercolonyFreightStage::Delivered?
+                    4000:leg->stage==IntercolonyFreightStage::Loaded?
+                    3000:1000;
+            }
+            // Only the coordinator completion order is dependency gated.
+            // The previously autonomous native shuttle continues to own
+            // its existing pilot and flights; no invented hold or NPC.
+            std::set<std::uint64_t> seen;
+            auto prerequisite=d.requires_directive;
+            while(prerequisite){
+                if(!seen.insert(prerequisite).second ||
+                   p.dependency_depth>=directives.size()){
+                    p.gate=Gate::Dependency;break;
+                }
+                ++p.dependency_depth;
+                const auto it=directives.find(prerequisite);
+                if(it==directives.end() || it->second.owner!=d.owner ||
+                   it->second.colony_ship!=d.colony_ship ||
+                   it->second.status!=WorkDirectiveStatus::Fulfilled){
+                    p.gate=Gate::Dependency;break;
+                }
+                prerequisite=it->second.requires_directive;
+            }
+            rows.push_back(p);
+            continue;
         }
         const auto contract=contracts.find(d.source_order);
         if(contract==contracts.end() ||
