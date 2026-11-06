@@ -19,3 +19,19 @@ The existing FLIGHT-02 NPC station control path now calls the universal guidance
 Native test `galaxy_flight03_object_approach` covers stationary asteroid, station, wreck, moving freighter, matching target velocity, retargeting after movement, cross-system and self-approach rejection. Windows/Linux workflow additionally runs native FLIGHT-02 docking regression.
 
 **Not yet implemented in this slice:** owner-authenticated generic target-order posting, persistent moving-ship rendezvous orders, berth/transfer receipts, full ship-to-ship collision avoidance, target despawn recovery and complete end-to-end freighter/rescue integration. Do not claim those complete based on a pure navigation helper.
+
+
+## FLIGHT-03 native execution closeout — November 6, 2026
+
+The earlier "not implemented" section above described the first pure-solver slice and is superseded for these items by the new v97 code:
+- `Simulation::queue_npc_ship_rendezvous` and `PersistentWorld::queue_npc_ship_rendezvous` now admit authenticated actual-ship targets using the same existing NPC pilot/ship exclusivity and original SQLite copied-state commit as FLIGHT-02.
+- `Simulation::process_npc_flight_navigation` now executes **LocalRendezvous** within the original shared navigator. It tracks the physical target ship every committed tick and uses its actual position and velocity. Only original native `Action::Thrust` controls move the approaching ship; no teleportation and no synthetic crew or inventory.
+- When the ships already have matched pose and velocity at posting, an applied original no-op `Thrust` provides a genuine native control receipt before flight completion.
+- Arrival produces `ActivityKind::NpcRendezvous` attached to the final accepted original control command. This receipt carries **zero goods** and confers no cargo, docking or passenger authority.
+- Canonical snapshots use v97 for this mode while prior v95/v96 rows remain accepted. Active flights require a real target in the same frame. **Completed flights** validate their historical native command/activity receipts rather than requiring ships to remain spatially together forever.
+- Invalid moving targets cannot produce false success; active orders cancel when target entity or physical frame is no longer valid.
+- Native `galaxy_flight03_native_rendezvous` test exercises wrong owner, no self-approach, SQLite posting fault rollback, moving physical target, same-world v97 snapshot roundtrip, valid physical arrival receipt, zero invented material and SQLite restart. Windows/Linux GitHub Actions now build this fixture along with original station docking and pure object-guidance regressions.
+
+**Acceptance status:** source committed. The exact-head native Windows/Linux CI jobs are queued; native success is not claimed.
+
+**Adjacent full-loop acceptance:** FLIGHT-04B's stacked branch now adds `galaxy_flight04b_real_freight` to reuse the actual WORK-01C sealed intercolony freight scenario and original trusted delivery executor, with a real LocalRendezvous barrier, deliberately failed SQLite delivery commit, owner rejection, successful native sealed-stock transfer, duplicate refusal and existing final recovery. A prior *celestial flight* remains required by the established intercolony inventory authority. The same-room ship-ship freight path without a prior celestial voyage is still a separate future transport rule.
