@@ -85,12 +85,12 @@ private:
            frame!=world.ship_frames().end())f.anchor_body=frame->second.anchor_body;
         if(!e || e->type!=EntityType::Ship ||
            e->owner_id!=owner_ || !colony || colony->crew<=0 ||
-           !stock || !e->fitting.exploration_scanner() ||
-           !world.ship_frames().count(ship))
+           !stock || !world.ship_frames().count(ship))
             return f;
         if(!home) {
             const auto build=world.freighter_build_orders().find(order);
-            if(build==world.freighter_build_orders().end() ||
+            if(!e->fitting.exploration_scanner() ||
+               build==world.freighter_build_orders().end() ||
                !build->second.commissioned() ||
                build->second.launched_ship!=ship ||
                build->second.source_ship!=home_ ||
