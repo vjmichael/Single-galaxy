@@ -11,6 +11,7 @@
 #include <exception>
 #include <limits>
 #include <stdexcept>
+#include <set>
 #include <vector>
 
 namespace galaxy::npc_hail {
@@ -52,7 +53,8 @@ inline bool actual_on_duty_operator(const Simulation& sim,
 // mode may a foreign colony with its own original named NPC leader answer
 // automatically. No NPC crew or identity is generated for the purpose.
 inline Pulse supervise(PersistentWorld& world,ship_comms::Journal& comms,
-    PlayerId sole_human_owner,std::uint64_t& next_receipt) {
+    PlayerId sole_human_owner,std::uint64_t& next_receipt,
+    const std::set<PlayerId>& human_owners={}) {
     Pulse out{};
     out.tick=world.world().tick();
     if(!sole_human_owner ||
@@ -62,6 +64,7 @@ inline Pulse supervise(PersistentWorld& world,ship_comms::Journal& comms,
     for(const auto& [id,entity]:world.world().entities())
         if(entity.type==EntityType::Ship &&
            entity.owner_id && entity.owner_id!=sole_human_owner &&
+           !human_owners.count(entity.owner_id) &&
            world.world().colony_ship(id))
             actual_colonies.push_back(id);
     for(const auto colony:actual_colonies){
@@ -123,7 +126,8 @@ struct InitiationPulse {
 inline InitiationPulse initiate(PersistentWorld& world,
     ship_comms::Journal& comms,
     const colony_disposition::TerritoryJournal& territory,
-    PlayerId sole_human_owner,std::uint64_t& nonce) {
+    PlayerId sole_human_owner,std::uint64_t& nonce,
+    const std::set<PlayerId>& human_owners={}) {
     InitiationPulse out{};
     out.tick=world.world().tick();
     if(!out.tick || out.tick%50 || !sole_human_owner ||
@@ -133,6 +137,7 @@ inline InitiationPulse initiate(PersistentWorld& world,
     for(const auto& [id,e]:world.world().entities())
         if(e.type==EntityType::Ship && e.owner_id &&
            e.owner_id!=sole_human_owner &&
+           !human_owners.count(e.owner_id) &&
            world.world().colony_ship(id))
             candidates.push_back(id);
     for(const auto colony:candidates) {
