@@ -35,7 +35,7 @@ int main(){
  const auto copy=(dir/"copy.sqlite").string();
  try{
   fs::create_directories(dir);
-  EntityId attacker=0,victim=0;
+  EntityId attacker=0,victim=0,remote=0,own_ship=0;
   std::int64_t starting_mass=0;
   std::uint64_t next_id=110;
   std::string queued_state,recovered_state;
@@ -43,6 +43,8 @@ int main(){
     Simulation genesis(50303);
     attacker=genesis.add_colony_ship(7,{0,0},100,6);
     victim=genesis.add_colony_ship(8,{1000,0},100,6);
+    remote=genesis.add_ship(9,{40000,0},100);
+    own_ship=genesis.add_ship(7,{500,0},100);
     const auto rock=genesis.add_asteroid({400,0},20);
     genesis.provision_starter_exploration_scanner(victim);
     genesis.enable_individual_workforce();
@@ -73,6 +75,11 @@ int main(){
           Outcome::ModuleOffline);
     CHECK(run(w,order(w,next_id++,7,attacker,Action::SetHardpointPower,1))==
           Outcome::Applied);
+    CHECK(run(w,order(w,next_id++,7,attacker,Action::HackConfuse,0,remote))==
+          Outcome::OutOfRange);
+    CHECK(run(w,order(w,next_id++,7,attacker,Action::HackConfuse,0,own_ship))==
+          Outcome::Unauthorized);
+    CHECK(w.world().find(attacker)->last_hack_tick==0);
     // Failure during native attack's snapshot write cannot half-publish.
     const auto attack=order(w,next_id++,7,attacker,Action::HackConfuse,0,victim);
     CHECK(w.submit(attack));
