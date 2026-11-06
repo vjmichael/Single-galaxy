@@ -8,6 +8,8 @@
 #include "galaxy/FleetSelection.hpp"
 #include <algorithm>
 #include <cstdint>
+#include <exception>
+#include <limits>
 #include <iomanip>
 #include <sstream>
 #include <string>
@@ -56,7 +58,7 @@ inline std::uint64_t case_id(EntityId colony,std::uint64_t original_command) {
 template<class Emit>
 std::size_t capture_current_tick(const PersistentWorld& world,
     const TerritoryJournal& territory,CyberIncidentJournal& cases,
-    Emit&& emit) {
+    PlayerId viewer_owner,Emit&& emit) {
     std::size_t recorded=0;
     for(const auto& event:world.recent_history(100)) {
         if(event.tick!=world.world().tick() ||
@@ -74,7 +76,7 @@ std::size_t capture_current_tick(const PersistentWorld& world,
                     event.command_id,case_id(colony,event.command_id))){
                     ++recorded;
                     // The event is publicly a case number, not an owner ID.
-                    if(recorded<=32 && site.owner_id)
+                    if(recorded<=32 && site.owner_id==viewer_owner)
                         emit("SECURITY_CASE_FILED|"+
                             std::to_string(site.owner_id)+"|"+
                             std::to_string(case_id(colony,event.command_id)));
@@ -105,7 +107,8 @@ void snapshot(const PersistentWorld& world,
     emit("SECURITY_STATUS|"+std::to_string(home)+"|"+
          std::to_string(piloted)+"|"+std::to_string(claimed?1:0)+"|"+
          std::to_string(report.size())+"|"+
-         std::to_string(security_capability(world.world(),home)));
+         std::to_string(static_cast<unsigned>(
+              security_capability(world.world(),home))));
     emit("SECURITY_CASES_RESET");
     // Cap wire readout without mutating durable history.
     const std::size_t begin=report.size()>32?report.size()-32:0;
@@ -170,11 +173,14 @@ bool execute(const std::vector<std::string>& words,
         emit("SECURITY_RESULT|DENIED|0");return true;
     }
     auto numeric=[](const std::string& value)->std::uint64_t {
-        if(value.empty() || value.size()>18 || value[0]=='0')return 0;
+        if(value.empty() || value.size()>19 || value[0]=='0')return 0;
         std::uint64_t result=0;
         for(const char digit:value){
             if(digit<'0'||digit>'9')return 0;
-            result=result*10+std::uint64_t(digit-'0');
+            const auto n=std::uint64_t(digit-'0');
+            if(result>(std::numeric_limits<std::uint64_t>::max()-n)/10)
+                return 0;
+            result=result*10+n;
         }
         return result;
     };
