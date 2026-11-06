@@ -1425,6 +1425,18 @@ if(BUILD_TESTING)
     COMMAND galaxy_ship01b2_commission_freighter_tests)
 endif()
 
+# FLIGHT-02: exact same original two-axis Navigation helper and
+# native ship thrust/dock/undock controls, shared v96 NPC flight ledger.
+if(BUILD_TESTING)
+  add_executable(galaxy_flight02_local_docking_tests
+    tests/FLIGHT02_LocalDockingTests.cpp)
+  target_link_libraries(galaxy_flight02_local_docking_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_flight02_local_docking
+    COMMAND galaxy_flight02_local_docking_tests)
+  set_tests_properties(galaxy_flight02_local_docking
+    PROPERTIES TIMEOUT 300)
+endif()
+
 # FLIGHT-01: one mission-neutral NPC ship navigator using the
 # original host celestial-transit physical gate, committed receipts,
 # real named pilots and v95 SQLite crash/recovery, not a freight autopilot.
