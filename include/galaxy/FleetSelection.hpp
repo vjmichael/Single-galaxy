@@ -43,6 +43,20 @@ public:
                vessel->manufactured_order_id!=id)continue;
             entries.push_back(describe(world,order.launched_ship,id,false));
         }
+        // Foreign shipyard provenance is deliberately retained. A delivered
+        // hull becomes eligible for the buyer's fleet only AFTER they staff
+        // and provision it from the buyer's own existing colony.
+        for(const auto& [id,contract]:world.shipyard_customer_orders()) {
+            (void)id;
+            if(contract.customer_owner!=owner_ ||
+               contract.customer_ship!=home_ ||
+               contract.stage!=ShipyardCustomerStage::Delivered)continue;
+            const auto* vessel=world.find(contract.delivered_ship);
+            if(!vessel || vessel->owner_id!=owner_ ||
+               vessel->manufactured_order_id!=contract.build_order)continue;
+            entries.push_back(describe(world,contract.delivered_ship,
+                contract.build_order,false));
+        }
         return entries;
     }
 
@@ -69,11 +83,9 @@ public:
         if(!e->manufactured_order_id)return false;
         const auto found=world.freighter_build_orders().find(
             e->manufactured_order_id);
-        return found!=world.freighter_build_orders().end() &&
-            found->second.owner==owner_ &&
-            found->second.source_ship==home_ &&
-            found->second.launched_ship==ship &&
-            describe(world,ship,found->first,false).ready;
+        if(found==world.freighter_build_orders().end() ||
+           found->second.launched_ship!=ship)return false;
+        return describe(world,ship,found->first,false).ready;
     }
 private:
     FleetShip describe(const Simulation& world,EntityId ship,
@@ -101,9 +113,21 @@ private:
             if(!e->fitting.exploration_scanner() ||
                build==world.freighter_build_orders().end() ||
                !build->second.commissioned() ||
-               build->second.launched_ship!=ship ||
-               build->second.source_ship!=home_ ||
-               build->second.owner!=owner_)return f;
+               build->second.launched_ship!=ship)return f;
+            bool valid_source=build->second.source_ship==home_ &&
+                              build->second.owner==owner_;
+            if(!valid_source)
+                for(const auto& [id,contract]:world.shipyard_customer_orders()){
+                    (void)id;
+                    if(contract.build_order==order &&
+                       contract.customer_owner==owner_ &&
+                       contract.customer_ship==home_ &&
+                       contract.stage==ShipyardCustomerStage::Delivered &&
+                       contract.delivered_ship==ship){
+                        valid_source=true;break;
+                    }
+                }
+            if(!valid_source)return f;
             // SHIP-01B.2 has two immutable *actual* commissioning NPC IDs.
             // Lookup is O(log NPCs) per pilot, not O(all NPCs) on every tick.
             // Future formal crew replacement will update a durable pilot-duty
