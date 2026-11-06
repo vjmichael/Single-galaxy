@@ -579,12 +579,25 @@ std::vector<CyberIncidentSummary> CyberIncidentJournal::for_colony_owner(
 std::vector<CyberIncidentSummary> CyberIncidentJournal::summaries() const {
     verify();
     std::vector<CyberIncidentSummary> output;
+    const auto links=hail_history();
     for(const auto& c:history()) {
         CyberIncidentSummary s{};
         s.evidence=c;
+        // Public reports must not publish privileged native ship/owner IDs
+        // merely because the C++ command executor knows the source actor.
+        s.evidence.attacker_owner=0;
+        s.evidence.attacking_ship=0;
         s.witnessed_attempt=true;
         s.disrupted_modules=c.confusion_applied;
         s.independent_law_review_required=true;
+        for(const auto& link:links)
+            if(link.case_id==c.case_id){
+                s.later_identified_controller=link.authenticated_controller;
+                s.identity_hail_event=link.hail_event;
+                s.evidence.attacking_ship=link.verified_ship;
+                // It proves the LATER authenticated controller/hull pair,
+                // not who physically piloted the hull during the offense.
+            }
         output.push_back(std::move(s));
     }
     return output;
