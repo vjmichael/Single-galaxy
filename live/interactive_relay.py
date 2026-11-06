@@ -713,9 +713,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 command=('PROBE_SCAN' if action=='colonyProbeScan' else 'PROBE_RECOVER')+'|'+str(probe)
             elif action=='colonyCyberFit' and set(doc)=={'token','action','device','install'}:
                 device,install=doc['device'],doc['install']
-                if type(device)!=str or device not in ('emitter','firewall') or type(install)!=bool:
-                    raise ValueError('Invalid physical cyber fitting')
-                module=3 if device=='emitter' else 4
+                if type(device)!=str or device not in (
+                    'emitter','firewall','stealth','counterSensor') or type(install)!=bool:
+                    raise ValueError('Invalid physical cyber/stealth fitting')
+                module={'emitter':3,'firewall':4,'stealth':5,
+                        'counterSensor':6}[device]
                 command=f'CYBER_FIT|{module if install else -module}'
             elif action in ('colonyCyberPower','colonyCyberIsolate') and set(doc)=={'token','action','slot','enabled'}:
                 slot,enabled=doc['slot'],doc['enabled']
