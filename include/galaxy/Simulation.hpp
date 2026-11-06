@@ -565,6 +565,23 @@ struct FreighterBuildOrder {
     bool finished() const noexcept {return launched_ship!=0;}
     bool commissioned() const noexcept {return commissioned_tick!=0;}
 };
+// SHIP-01F: buyer/supplier order stored in the SAME canonical world as the
+// actual six-module build receipt. Buyer provides all six fabricated modules
+// physically at the yard; provider NPC builders operate its ordinary slip.
+// A finished, uncrewed hull must be physically claimed by the buyer before
+// the buyer can staff/commission it from their own colony inventory.
+enum class ShipyardCustomerStage : std::uint8_t {
+    Requested=0,Accepted=1,Funded=2,Delivered=3
+};
+struct ShipyardCustomerOrder {
+    std::uint64_t id=0, yard_order=0, build_order=0;
+    PlayerId customer_owner=0, supplier_owner=0;
+    EntityId customer_ship=0,supplier_ship=0;
+    ShipyardCustomerStage stage=ShipyardCustomerStage::Requested;
+    std::uint64_t posted_tick=0,accepted_tick=0,funded_tick=0,
+                  delivered_tick=0;
+    EntityId delivered_ship=0;
+};
 struct PhysicalOasisReserve {
     std::int64_t water_kg=0,nutrients_kg=0;
     std::int64_t initial_water_kg=0,initial_nutrients_kg=0;
@@ -1155,6 +1172,19 @@ public:
     bool commission_shipyard_freighter(PlayerId owner,
         std::uint64_t build_order,std::array<std::uint64_t,2> named_crew,
         std::int64_t provisions_kg_each);
+    // SHIP-01F: genuine two-colony material-backed shipyard purchase.
+    // Other colony may request before arriving, but supplier's authority
+    // must accept. Funding requires a physical berth, transfers precisely
+    // six real modules to the yard, and consumes them in the SAME commit
+    // when the native twelve-tick build is queued.
+    const std::map<std::uint64_t,ShipyardCustomerOrder>& shipyard_customer_orders() const noexcept {
+        return shipyard_customer_orders_;
+    }
+    bool post_shipyard_customer_order(PlayerId customer,EntityId customer_ship,
+        std::uint64_t yard_order,std::uint64_t build_order,std::uint64_t order_id);
+    bool accept_shipyard_customer_order(PlayerId supplier,std::uint64_t order_id);
+    bool fund_shipyard_customer_order(PlayerId customer,std::uint64_t order_id);
+    bool deliver_shipyard_customer_order(PlayerId customer,std::uint64_t order_id);
     // Finished order references an actual Entity with an empty physical hold.
     // No ship commands before commissioning; no free crew or starter equipment.
     bool plan_intercolony_freight(PlayerId owner,std::uint64_t local_order_id,
@@ -1267,6 +1297,7 @@ private:
     std::map<std::uint64_t,IntercolonyFreightLeg> intercolony_freight_; // v89
     std::map<std::uint64_t,ShipyardConstruction> shipyard_constructions_; // v90
     std::map<std::uint64_t,FreighterBuildOrder> freighter_build_orders_; // v91
+    std::map<std::uint64_t,ShipyardCustomerOrder> shipyard_customer_orders_; // v93
     std::set<std::uint64_t> shuttle_flight_request_ids_; // v81 replay rejection
     std::map<std::uint64_t,PendingCelestialTransit> pending_celestial_transits_;
     std::map<std::uint64_t,CompletedCelestialTransit> completed_celestial_transits_;

@@ -406,6 +406,48 @@ def main(executable,relay):
             ):
                 status,_=request(port,'POST','/command',payload)
                 assert status==400,(payload,status)
+            # SHIP-01F: customer shipyard controls are exact authenticated
+            # transitions; no user may inject claimed ownership, NPCs,
+            # material balances, hull IDs or bypass physical berthing.
+            for action,payload in (
+                ('colonyYardContractPost',{'order':93001,'yard':91001,'build':92001}),
+                ('colonyYardContractAccept',{'order':93001}),
+                ('colonyYardContractFund',{'order':93001}),
+                ('colonyYardContractDeliver',{'order':93001}),
+                ('colonyYardContractStatus',{}),
+            ):
+                assert action in session['commands'],action
+                valid_contract={'token':token,'action':action,**payload}
+                status,_=request(port,'POST','/command',valid_contract)
+                assert status==202,(action,status)
+                status,_=request(port,'POST','/command',
+                    {**valid_contract,'token':'forged'})
+                assert status==403,(action,status)
+                status,_=request(port,'POST','/command',
+                    {**valid_contract,'claimedOwner':7})
+                assert status==400,(action,status)
+            template={'token':token,'action':'colonyYardContractPost',
+                      'order':93001,'yard':91001,'build':92001}
+            for payload in (
+                {**template,'order':True},
+                {**template,'yard':False},
+                {**template,'build':0},
+                {**template,'build':93001},
+                {**template,'yard':93001},
+                {**template,'order':1<<50},
+                {**template,'modules':6},
+                {**template,'freeHull':1234},
+                {**template,'crew':[11,12]},
+                {**template,'skipBerth':True},
+            ):
+                status,_=request(port,'POST','/command',payload)
+                assert status==400,(payload,status)
+            for action in ('colonyYardContractAccept','colonyYardContractFund',
+                           'colonyYardContractDeliver'):
+                for order in (0,-1,True,1<<50):
+                    status,_=request(port,'POST','/command',
+                                     {'token':token,'action':action,'order':order})
+                    assert status==400,(action,order,status)
             print("PASS PGF01B2 HTTP relay accepts valid geography and rejects forged inputs")
         finally:
             proc.terminate()

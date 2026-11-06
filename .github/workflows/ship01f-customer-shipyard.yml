@@ -1,0 +1,83 @@
+name: SHIP-01F actual colony-to-shipyard customer orders
+
+on:
+  pull_request:
+    paths:
+      - 'include/galaxy/Simulation.hpp'
+      - 'include/galaxy/Persistence.hpp'
+      - 'include/galaxy/FleetSelection.hpp'
+      - 'src/Simulation.cpp'
+      - 'src/Persistence.cpp'
+      - 'src/colony_live_host.cpp'
+      - 'live/interactive_relay.py'
+      - 'viewer/colony.js'
+      - 'tests/SHIP01F_CustomerShipyardTests.cpp'
+      - 'tests/PLAY13D_PlanetSurveyNodeTests.js'
+      - 'tests/PLAY13D_PlanetSurveyRelayTests.py'
+      - 'CMakeLists.txt'
+      - '.github/workflows/ship01f-customer-shipyard.yml'
+  workflow_dispatch:
+
+jobs:
+  actual-shipyard-customer-order:
+    name: Native two-owner ship construction, funding and delivery (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Linux SQLite SDK
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlite3-dev
+      - name: Windows SQLite SDK
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vcpkg = Join-Path $env:VCPKG_INSTALLATION_ROOT 'vcpkg.exe'
+          if (-not (Test-Path $vcpkg)) { throw 'Windows vcpkg unavailable' }
+          & $vcpkg install sqlite3:x64-windows --clean-after-build
+          if ($LASTEXITCODE -ne 0) { throw 'Windows native SQLite failed' }
+      - name: CMake configure Linux
+        if: runner.os == 'Linux'
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+      - name: CMake configure Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $toolchain = Join-Path $env:VCPKG_INSTALLATION_ROOT 'scripts/buildsystems/vcpkg.cmake'
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$toolchain" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'Windows native configure failed' }
+      - name: Compile real two-owner and existing freighter tests
+        run: cmake --build build --parallel 2 --config Release --target galaxy_ship01f_customer_shipyard_tests galaxy_ship01b2_commission_freighter_tests galaxy_ship01d_fleet_selection_tests galaxy_play13d_regional_facilities_tests
+      - name: Two-party funding/handover, buyer crew, SQLite atomic crash recovery, freight regression
+        run: ctest --test-dir build -C Release --output-on-failure -R "^galaxy_(ship01f_customer_shipyard|ship01b2_commission_freighter|ship01d_fleet_selection|ship01c_manufactured_freight)$"
+
+  native-host-and-contract-ui:
+    name: Real host and strict HTTP/browser contract receipts (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: SQLite native SDK
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlite3-dev
+      - name: Compile actual SQLite colony host
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+          cmake --build build --parallel 2 --target galaxy_colony_live_host
+      - name: Exact authenticated work contract schema and CSRF
+        run: python tests/PLAY13D_PlanetSurveyRelayTests.py --host build/galaxy_colony_live_host --relay live/interactive_relay.py
+      - name: Browser contracts and shipyard purchase receipts
+        run: node --test tests/PLAY13D_PlanetSurveyNodeTests.js
+      - name: Existing native fleet and work-order host smoke
+        run: python tests/SHIP01D_FleetHostTests.py --host build/galaxy_colony_live_host

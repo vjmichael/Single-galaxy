@@ -461,6 +461,87 @@ void apply(PersistentWorld& world,EntityId ship,FleetSelection& fleet,const std:
         else announce(world.world(),"ERROR|INVALID_INPUT");
         return;
     }
+    // SHIP-01F: one physical intercolony shipyard contract, not a free
+    // factory. The buyer requests, the supplier independently accepts, six
+    // existing modules change custody at a real berth, the ordinary twelve-
+    // tick native build finishes, and the empty hull transfers only when
+    // the customer ship returns to its real location.
+    if(!v.empty() && (v[0]=="YARD_CONTRACT_POST" ||
+                       v[0]=="YARD_CONTRACT_ACCEPT" ||
+                       v[0]=="YARD_CONTRACT_FUND" ||
+                       v[0]=="YARD_CONTRACT_DELIVER" ||
+                       v[0]=="YARD_CONTRACT_STATUS")){
+        try{
+            std::uint64_t id=0;
+            bool changed=false;
+            if(v[0]=="YARD_CONTRACT_POST" && v.size()==4){
+                const auto request=integer(v[1]),yard=integer(v[2]),
+                           build=integer(v[3]);
+                if(request<=0 || yard<=0 || build<=0 ||
+                   request>=(std::int64_t{1}<<50) ||
+                   build>=(std::int64_t{1}<<50) ||
+                   !world.post_shipyard_customer_order(principal,ship,
+                       std::uint64_t(yard),std::uint64_t(build),
+                       std::uint64_t(request)))
+                    throw std::invalid_argument("shipyard customer request denied");
+                id=std::uint64_t(request);changed=true;
+            }else if(v.size()==2 && v[0]!="YARD_CONTRACT_STATUS"){
+                const auto raw=integer(v[1]);
+                if(raw<=0 || raw>=(std::int64_t{1}<<50))
+                    throw std::invalid_argument("invalid ship order id");
+                id=std::uint64_t(raw);
+                const auto it=world.world().shipyard_customer_orders().find(id);
+                if(it==world.world().shipyard_customer_orders().end() ||
+                   (it->second.customer_owner!=principal &&
+                    it->second.supplier_owner!=principal))
+                    throw std::invalid_argument("foreign shipyard contract");
+                if(v[0]=="YARD_CONTRACT_ACCEPT")
+                    changed=world.accept_shipyard_customer_order(principal,id);
+                else if(v[0]=="YARD_CONTRACT_FUND")
+                    changed=world.fund_shipyard_customer_order(principal,id);
+                else if(v[0]=="YARD_CONTRACT_DELIVER")
+                    changed=world.deliver_shipyard_customer_order(principal,id);
+                if(!changed)throw std::invalid_argument("shipyard transition denied");
+            }else if(v[0]!="YARD_CONTRACT_STATUS" || v.size()!=1)
+                throw std::invalid_argument("invalid shipyard request shape");
+            if(changed)
+                announce(world.world(),"YARD_CONTRACT_COMMITTED|"+
+                    std::to_string(id)+"|"+std::to_string(world.generation()));
+            std::uint64_t count=0;
+            for(const auto& [oid,contract]:world.world().shipyard_customer_orders()){
+                if(count>=64)break;
+                if(contract.customer_owner!=principal &&
+                   contract.supplier_owner!=principal)continue;
+                const auto job=world.world().freighter_build_orders().find(
+                    contract.build_order);
+                const auto progress=job==world.world().freighter_build_orders().end()?
+                    0:job->second.progress;
+                const auto required=job==world.world().freighter_build_orders().end()?
+                    12:job->second.required;
+                const auto hull=job==world.world().freighter_build_orders().end()?
+                    0:job->second.launched_ship;
+                announce(world.world(),"YARD_CONTRACT_ITEM|"+
+                    std::to_string(oid)+"|"+
+                    std::to_string(contract.yard_order)+"|"+
+                    std::to_string(contract.build_order)+"|"+
+                    std::to_string(contract.customer_ship)+"|"+
+                    std::to_string(contract.supplier_ship)+"|"+
+                    std::to_string(contract.customer_owner)+"|"+
+                    std::to_string(contract.supplier_owner)+"|"+
+                    std::to_string(unsigned(contract.stage))+"|"+
+                    std::to_string(progress)+"|"+
+                    std::to_string(required)+"|"+
+                    std::to_string(hull)+"|"+
+                    std::to_string(contract.delivered_ship)+"|"+
+                    std::to_string(world.generation()));
+                ++count;
+            }
+            announce(world.world(),"YARD_CONTRACT_DONE|"+std::to_string(count));
+        }catch(const std::exception&){
+            announce(world.world(),"ERROR|YARD_CONTRACT_DENIED");
+        }
+        return;
+    }
     // SHIP-01A.1 player-built real shipyard; never trust the UI to claim
     // ownership, worker identity, resource consumption or completion.
     if(!v.empty() && (v[0]=="SHIPYARD_BUILD" ||
@@ -734,8 +815,17 @@ void apply(PersistentWorld& world,EntityId ship,FleetSelection& fleet,const std:
                    one<=0 || two<=0 || one==two ||
                    kg<10 || kg>1000 ||
                    build==world.world().freighter_build_orders().end() ||
-                   build->second.owner!=principal ||
-                   build->second.source_ship!=ship ||
+                   !((build->second.owner==principal &&
+                      build->second.source_ship==ship) ||
+                     std::any_of(world.world().shipyard_customer_orders().begin(),
+                         world.world().shipyard_customer_orders().end(),
+                         [&](const auto& entry){
+                            const auto& c=entry.second;
+                            return c.build_order==std::uint64_t(order) &&
+                               c.customer_owner==principal &&
+                               c.customer_ship==ship &&
+                               c.stage==ShipyardCustomerStage::Delivered;
+                         })) ||
                    !world.commission_shipyard_freighter(principal,
                        std::uint64_t(order),
                        {{std::uint64_t(one),std::uint64_t(two)}},kg)){
@@ -746,8 +836,20 @@ void apply(PersistentWorld& world,EntityId ship,FleetSelection& fleet,const std:
             }
             std::uint64_t count=0;
             for(const auto& [id,order]:world.world().freighter_build_orders()){
-                if(order.owner!=principal || order.source_ship!=ship ||
-                   count>=64)continue;
+                bool local_build=order.owner==principal &&
+                                 order.source_ship==ship;
+                if(!local_build){
+                    for(const auto& [cid,contract]:world.world().shipyard_customer_orders()){
+                        (void)cid;
+                        if(contract.build_order==id &&
+                           contract.customer_owner==principal &&
+                           contract.customer_ship==ship &&
+                           contract.stage==ShipyardCustomerStage::Delivered){
+                            local_build=true;break;
+                        }
+                    }
+                }
+                if(!local_build || count>=64)continue;
                 announce(world.world(),"FREIGHTER_ITEM|"+
                     std::to_string(id)+"|"+std::to_string(order.yard_order)+"|"+
                     std::to_string(order.progress)+"|"+

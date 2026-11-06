@@ -5745,6 +5745,19 @@ bool Simulation::queue_shipyard_freighter(PlayerId owner,
        yard->second.owner!=owner || !yard->second.operational() ||
        freighter_build_orders_.size()>=10000 ||
        freighter_build_orders_.count(build_id))return false;
+    for(const auto& [id,contract]:shipyard_customer_orders_) {
+        (void)id;
+        if(contract.build_order==build_id &&
+           contract.stage!=ShipyardCustomerStage::Funded)return false;
+        // Once the supplier accepts a customer, the assembly slip belongs
+        // to that accepted request until completion or explicit resolution.
+        // Direct manufacturing cannot jump ahead of the paid customer's job.
+        if(contract.yard_order==yard_id &&
+           contract.build_order!=build_id &&
+           (contract.stage==ShipyardCustomerStage::Accepted ||
+            contract.stage==ShipyardCustomerStage::Funded))
+            return false;
+    }
     const EntityId ship=yard->second.colony_ship;
     const auto e=entities_.find(ship),inventory=colony_ships_.find(ship);
     const auto life=life_support_.find(ship),frame=ship_frames_.find(ship);
@@ -5783,6 +5796,156 @@ bool Simulation::queue_shipyard_freighter(PlayerId owner,
         build_id,yard_id,owner,ship,0,12,0,12,tick_,0,0,
         frame->second.system,frame->second.anchor_body});
     snapshot_version_=std::max(snapshot_version_,91);
+    return true;
+}
+// SHIP-01F: customer/supplier agreements are real durable work orders.
+// Posting an intent never gives the provider free modules, steals an NPC,
+// or creates a ship; the buyer's funds are physically delivered later.
+bool Simulation::post_shipyard_customer_order(PlayerId customer,
+        EntityId buyer_ship,std::uint64_t yard_id,std::uint64_t build_id,
+        std::uint64_t contract_id) {
+    if(!customer || customer==kServerAuthority ||
+       !contract_id || contract_id>=(std::uint64_t{1}<<50) ||
+       !build_id || build_id>=(std::uint64_t{1}<<50) ||
+       contract_id==build_id || contract_id==yard_id ||
+       build_id==yard_id || shipyard_customer_orders_.size()>=10000 ||
+       shipyard_customer_orders_.count(contract_id) ||
+       freighter_build_orders_.count(build_id))return false;
+    const auto yard=shipyard_constructions_.find(yard_id);
+    const auto buyer=entities_.find(buyer_ship);
+    if(yard==shipyard_constructions_.end() ||
+       !yard->second.operational() ||
+       buyer==entities_.end() || buyer->second.type!=EntityType::Ship ||
+       buyer->second.owner_id!=customer ||
+       buyer_ship==yard->second.colony_ship ||
+       !colony_ships_.count(buyer_ship) ||
+       !life_support_.count(buyer_ship) ||
+       !ship_frames_.count(buyer_ship))return false;
+    const auto seller=entities_.find(yard->second.colony_ship);
+    if(seller==entities_.end() ||
+       seller->second.type!=EntityType::Ship ||
+       seller->second.owner_id!=yard->second.owner ||
+       !colony_ships_.count(yard->second.colony_ship) ||
+       !life_support_.count(yard->second.colony_ship))return false;
+    // One build ID is immutable from first request to physical hull delivery;
+    // unaccepted requests cannot collide silently with another customer's.
+    for(const auto& [id,existing]:shipyard_customer_orders_) {
+        (void)id;
+        if(existing.build_order==build_id)return false;
+    }
+    shipyard_customer_orders_.emplace(contract_id,ShipyardCustomerOrder{
+        contract_id,yard_id,build_id,customer,yard->second.owner,
+        buyer_ship,yard->second.colony_ship,
+        ShipyardCustomerStage::Requested,tick_,0,0,0,0});
+    snapshot_version_=std::max(snapshot_version_,93);
+    return true;
+}
+bool Simulation::accept_shipyard_customer_order(PlayerId supplier,
+        std::uint64_t contract_id) {
+    const auto it=shipyard_customer_orders_.find(contract_id);
+    if(it==shipyard_customer_orders_.end() ||
+       !supplier || supplier==kServerAuthority ||
+       it->second.supplier_owner!=supplier ||
+       it->second.stage!=ShipyardCustomerStage::Requested)return false;
+    const auto yard=shipyard_constructions_.find(it->second.yard_order);
+    if(yard==shipyard_constructions_.end() ||
+       !yard->second.operational() || yard->second.owner!=supplier ||
+       yard->second.colony_ship!=it->second.supplier_ship)return false;
+    // One active customer assignment at this physical yard. Requests may
+    // queue but acceptance must not double-book builder or paid material.
+    for(const auto& [id,other]:shipyard_customer_orders_) {
+        if(id!=contract_id && other.yard_order==it->second.yard_order &&
+           (other.stage==ShipyardCustomerStage::Accepted ||
+            other.stage==ShipyardCustomerStage::Funded))return false;
+    }
+    for(const auto& [id,build]:freighter_build_orders_) {
+        (void)id;
+        if(build.yard_order==it->second.yard_order && !build.finished())
+            return false;
+    }
+    it->second.stage=ShipyardCustomerStage::Accepted;
+    it->second.accepted_tick=tick_;
+    return true;
+}
+bool Simulation::fund_shipyard_customer_order(PlayerId customer,
+        std::uint64_t contract_id) {
+    const auto it=shipyard_customer_orders_.find(contract_id);
+    if(it==shipyard_customer_orders_.end() ||
+       it->second.customer_owner!=customer ||
+       it->second.stage!=ShipyardCustomerStage::Accepted)return false;
+    const auto& order=it->second;
+    const auto yard=shipyard_constructions_.find(order.yard_order);
+    const auto buyer=entities_.find(order.customer_ship);
+    const auto seller=entities_.find(order.supplier_ship);
+    auto paid=colony_ships_.find(order.customer_ship);
+    auto provider=colony_ships_.find(order.supplier_ship);
+    if(yard==shipyard_constructions_.end() ||
+       !yard->second.operational() ||
+       yard->second.owner!=order.supplier_owner ||
+       buyer==entities_.end() || seller==entities_.end() ||
+       buyer->second.owner_id!=customer ||
+       seller->second.owner_id!=order.supplier_owner ||
+       paid==colony_ships_.end() || provider==colony_ships_.end() ||
+       paid->second.modules<6 ||
+       provider->second.modules>1000000-6 ||
+       !same_local_frame(order.customer_ship,order.supplier_ship) ||
+       !freight_berth(buyer->second,seller->second) ||
+       buyer->second.velocity.x || buyer->second.velocity.y ||
+       seller->second.velocity.x || seller->second.velocity.y)return false;
+    // Fund and queue inside one authoritative world. If the ordinary yard
+    // refuses the build, restore both exact material inventories.
+    paid->second.modules-=6;
+    provider->second.modules+=6;
+    it->second.stage=ShipyardCustomerStage::Funded;
+    it->second.funded_tick=tick_;
+    if(!queue_shipyard_freighter(order.supplier_owner,order.yard_order,
+                                order.build_order)){
+        it->second.stage=ShipyardCustomerStage::Accepted;
+        it->second.funded_tick=0;
+        paid->second.modules+=6;
+        provider->second.modules-=6;
+        return false;
+    }
+    return true;
+}
+bool Simulation::deliver_shipyard_customer_order(PlayerId customer,
+        std::uint64_t contract_id) {
+    const auto it=shipyard_customer_orders_.find(contract_id);
+    if(it==shipyard_customer_orders_.end() ||
+       it->second.customer_owner!=customer ||
+       it->second.stage!=ShipyardCustomerStage::Funded)return false;
+    const auto& c=it->second;
+    const auto build=freighter_build_orders_.find(c.build_order);
+    if(build==freighter_build_orders_.end() ||
+       !build->second.finished() || build->second.commissioned() ||
+       build->second.owner!=c.supplier_owner ||
+       build->second.source_ship!=c.supplier_ship ||
+       build->second.yard_order!=c.yard_order)return false;
+    const auto buyer=entities_.find(c.customer_ship);
+    const auto ship=entities_.find(build->second.launched_ship);
+    if(buyer==entities_.end() || ship==entities_.end() ||
+       buyer->second.type!=EntityType::Ship ||
+       buyer->second.owner_id!=customer ||
+       ship->second.type!=EntityType::Ship ||
+       ship->second.owner_id!=c.supplier_owner ||
+       ship->second.manufactured_order_id!=c.build_order ||
+       colony_ships_.count(ship->first) || life_support_.count(ship->first) ||
+       !same_local_frame(c.customer_ship,ship->first) ||
+       !freight_berth(buyer->second,ship->second) ||
+       buyer->second.velocity.x || buyer->second.velocity.y ||
+       ship->second.velocity.x || ship->second.velocity.y)return false;
+    for(const auto& [id,trip]:pending_celestial_transits_){
+        (void)id;
+        if(trip.ship==c.customer_ship || trip.ship==ship->first)
+            return false;
+    }
+    // Hand over the one completed, UNCREWED physical hull. The provider's
+    // immutable build provenance remains intact. Customer must separately
+    // staff, fit and provision it using their own real colony stock.
+    ship->second.owner_id=customer;
+    it->second.delivered_ship=ship->first;
+    it->second.delivered_tick=tick_;
+    it->second.stage=ShipyardCustomerStage::Delivered;
     return true;
 }
 void Simulation::process_freighter_builds() {
@@ -5859,8 +6022,28 @@ bool Simulation::commission_shipyard_freighter(PlayerId owner,
        crew[0]==0 || crew[1]==0 || crew[0]==crew[1] ||
        provisions_kg_each<10 || provisions_kg_each>1000 ||
        job==freighter_build_orders_.end() || !job->second.finished() ||
-       job->second.commissioned() || job->second.owner!=owner)return false;
-    const auto source_id=job->second.source_ship;
+       job->second.commissioned())return false;
+    // For a customer's physical handover, the immutable build receipt
+    // still names the original supplier. The buyer staffs the delivered
+    // hull from their own colony; the supplier's workers and stock are
+    // never conscripted for commissioning.
+    EntityId commissioned_from=job->second.source_ship;
+    bool customer_build=false;
+    for(const auto& [id,contract]:shipyard_customer_orders_){
+        (void)id;
+        if(contract.build_order!=build_id)continue;
+        // A customer purchase requires the transfer receipt even when the
+        // customer and supplier happen to share the same player owner.
+        if(contract.stage!=ShipyardCustomerStage::Delivered ||
+           contract.customer_owner!=owner ||
+           contract.delivered_ship!=job->second.launched_ship)
+            return false;
+        commissioned_from=contract.customer_ship;
+        customer_build=true;
+        break;
+    }
+    if(!customer_build && job->second.owner!=owner)return false;
+    const auto source_id=commissioned_from;
     const auto hull_id=job->second.launched_ship;
     const auto source=entities_.find(source_id),hull=entities_.find(hull_id);
     const auto stock=colony_ships_.find(source_id);
@@ -5905,7 +6088,8 @@ bool Simulation::commission_shipyard_freighter(PlayerId owner,
            n->second.mentor_id ||
            n->second.residence_kind!=transport::LocationKind::ColonyShip ||
            (n->second.residence_id && n->second.residence_id!=source_id) ||
-           id==yard->second.workers[0] || id==yard->second.workers[1] ||
+           (!customer_build &&
+             (id==yard->second.workers[0] || id==yard->second.workers[1])) ||
            !npc_available_for_duty(id))return false;
         // Do not strand a dependent aboard the originating colony.
         for(const auto& [child,d]:physical_dependents_){
@@ -7223,6 +7407,16 @@ std::string Simulation::canonical_state() const {
             out<<'\n';
         }
     }
+    if(snapshot_version_>=93)
+        for(const auto& [id,order]:shipyard_customer_orders_) {
+            out<<"yardcustomer|"<<id<<'|'<<order.yard_order
+               <<'|'<<order.build_order<<'|'<<order.customer_owner
+               <<'|'<<order.supplier_owner<<'|'<<order.customer_ship
+               <<'|'<<order.supplier_ship<<'|'<<unsigned(order.stage)
+               <<'|'<<order.posted_tick<<'|'<<order.accepted_tick
+               <<'|'<<order.funded_tick<<'|'<<order.delivered_tick
+               <<'|'<<order.delivered_ship<<'\n';
+        }
     if(snapshot_version_>=81)
         for(const auto id:shuttle_flight_request_ids_)
             out<<"planetflightreceipt|"<<id<<'\n';
@@ -7663,12 +7857,12 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
     if (!std::getline(in, line)) throw std::runtime_error("snapshot: missing header");
     auto h = fields(line);
     require_fields(h, 5);
-    if (h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27" && h[0] != "galaxy-kernel-v28" && h[0] != "galaxy-kernel-v29" && h[0] != "galaxy-kernel-v30" && h[0] != "galaxy-kernel-v31" && h[0] != "galaxy-kernel-v32" && h[0] != "galaxy-kernel-v33" && h[0] != "galaxy-kernel-v34" && h[0] != "galaxy-kernel-v35" && h[0] != "galaxy-kernel-v36" && h[0] != "galaxy-kernel-v37" && h[0] != "galaxy-kernel-v38" && h[0] != "galaxy-kernel-v39" && h[0] != "galaxy-kernel-v40" && h[0] != "galaxy-kernel-v41" && h[0] != "galaxy-kernel-v44" && h[0] != "galaxy-kernel-v48" && h[0] != "galaxy-kernel-v49" && h[0] != "galaxy-kernel-v52" && h[0] != "galaxy-kernel-v53" && h[0] != "galaxy-kernel-v57" && h[0] != "galaxy-kernel-v58" && h[0] != "galaxy-kernel-v59" && h[0] != "galaxy-kernel-v60" && h[0] != "galaxy-kernel-v61" && h[0] != "galaxy-kernel-v62" && h[0] != "galaxy-kernel-v63" && h[0] != "galaxy-kernel-v64" && h[0] != "galaxy-kernel-v65" && h[0] != "galaxy-kernel-v66" && h[0] != "galaxy-kernel-v67" && h[0] != "galaxy-kernel-v68" && h[0] != "galaxy-kernel-v69" && h[0] != "galaxy-kernel-v70" && h[0] != "galaxy-kernel-v71" && h[0] != "galaxy-kernel-v72" && h[0] != "galaxy-kernel-v73" && h[0] != "galaxy-kernel-v74" && h[0] != "galaxy-kernel-v75" && h[0] != "galaxy-kernel-v76" && h[0] != "galaxy-kernel-v77" && h[0] != "galaxy-kernel-v78" && h[0] != "galaxy-kernel-v79" && h[0] != "galaxy-kernel-v80" && h[0] != "galaxy-kernel-v81" && h[0] != "galaxy-kernel-v82" && h[0] != "galaxy-kernel-v83" && h[0] != "galaxy-kernel-v84" && h[0] != "galaxy-kernel-v85" && h[0] != "galaxy-kernel-v86" && h[0] != "galaxy-kernel-v87" && h[0] != "galaxy-kernel-v88" && h[0] != "galaxy-kernel-v89" && h[0] != "galaxy-kernel-v90" && h[0] != "galaxy-kernel-v91" && h[0] != "galaxy-kernel-v92") throw std::runtime_error("snapshot: unsupported version");
+    if (h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27" && h[0] != "galaxy-kernel-v28" && h[0] != "galaxy-kernel-v29" && h[0] != "galaxy-kernel-v30" && h[0] != "galaxy-kernel-v31" && h[0] != "galaxy-kernel-v32" && h[0] != "galaxy-kernel-v33" && h[0] != "galaxy-kernel-v34" && h[0] != "galaxy-kernel-v35" && h[0] != "galaxy-kernel-v36" && h[0] != "galaxy-kernel-v37" && h[0] != "galaxy-kernel-v38" && h[0] != "galaxy-kernel-v39" && h[0] != "galaxy-kernel-v40" && h[0] != "galaxy-kernel-v41" && h[0] != "galaxy-kernel-v44" && h[0] != "galaxy-kernel-v48" && h[0] != "galaxy-kernel-v49" && h[0] != "galaxy-kernel-v52" && h[0] != "galaxy-kernel-v53" && h[0] != "galaxy-kernel-v57" && h[0] != "galaxy-kernel-v58" && h[0] != "galaxy-kernel-v59" && h[0] != "galaxy-kernel-v60" && h[0] != "galaxy-kernel-v61" && h[0] != "galaxy-kernel-v62" && h[0] != "galaxy-kernel-v63" && h[0] != "galaxy-kernel-v64" && h[0] != "galaxy-kernel-v65" && h[0] != "galaxy-kernel-v66" && h[0] != "galaxy-kernel-v67" && h[0] != "galaxy-kernel-v68" && h[0] != "galaxy-kernel-v69" && h[0] != "galaxy-kernel-v70" && h[0] != "galaxy-kernel-v71" && h[0] != "galaxy-kernel-v72" && h[0] != "galaxy-kernel-v73" && h[0] != "galaxy-kernel-v74" && h[0] != "galaxy-kernel-v75" && h[0] != "galaxy-kernel-v76" && h[0] != "galaxy-kernel-v77" && h[0] != "galaxy-kernel-v78" && h[0] != "galaxy-kernel-v79" && h[0] != "galaxy-kernel-v80" && h[0] != "galaxy-kernel-v81" && h[0] != "galaxy-kernel-v82" && h[0] != "galaxy-kernel-v83" && h[0] != "galaxy-kernel-v84" && h[0] != "galaxy-kernel-v85" && h[0] != "galaxy-kernel-v86" && h[0] != "galaxy-kernel-v87" && h[0] != "galaxy-kernel-v88" && h[0] != "galaxy-kernel-v89" && h[0] != "galaxy-kernel-v90" && h[0] != "galaxy-kernel-v91" && h[0] != "galaxy-kernel-v92" && h[0] != "galaxy-kernel-v93") throw std::runtime_error("snapshot: unsupported version");
     const auto sys = u64(h[1]);
     if (sys == 0 || sys > std::numeric_limits<std::uint32_t>::max())
         throw std::runtime_error("snapshot: invalid system");
     Simulation result(u64(h[4]), static_cast<std::uint32_t>(sys));
-    result.snapshot_version_ = h[0] == "galaxy-kernel-v92" ? 92 : h[0] == "galaxy-kernel-v91" ? 91 : h[0] == "galaxy-kernel-v90" ? 90 : h[0] == "galaxy-kernel-v89" ? 89 : h[0] == "galaxy-kernel-v88" ? 88 : h[0] == "galaxy-kernel-v87" ? 87 : h[0] == "galaxy-kernel-v86" ? 86 : h[0] == "galaxy-kernel-v85" ? 85 : h[0] == "galaxy-kernel-v84" ? 84 : h[0] == "galaxy-kernel-v83" ? 83 : h[0] == "galaxy-kernel-v82" ? 82 : h[0] == "galaxy-kernel-v81" ? 81 : h[0] == "galaxy-kernel-v80" ? 80 : h[0] == "galaxy-kernel-v79" ? 79 : h[0] == "galaxy-kernel-v78" ? 78 : h[0] == "galaxy-kernel-v77" ? 77 : h[0] == "galaxy-kernel-v76" ? 76 : h[0] == "galaxy-kernel-v75" ? 75 : h[0] == "galaxy-kernel-v74" ? 74 : h[0] == "galaxy-kernel-v73" ? 73 : h[0] == "galaxy-kernel-v72" ? 72 : h[0] == "galaxy-kernel-v71" ? 71 : h[0] == "galaxy-kernel-v70" ? 70 : h[0] == "galaxy-kernel-v69" ? 69 : h[0] == "galaxy-kernel-v68" ? 68 : h[0] == "galaxy-kernel-v67" ? 67 : h[0] == "galaxy-kernel-v66" ? 66 : h[0] == "galaxy-kernel-v65" ? 65 : h[0] == "galaxy-kernel-v64" ? 64 : h[0] == "galaxy-kernel-v63" ? 63 : h[0] == "galaxy-kernel-v62" ? 62 : h[0] == "galaxy-kernel-v61" ? 61 : h[0] == "galaxy-kernel-v60" ? 60 : h[0] == "galaxy-kernel-v59" ? 59 : h[0] == "galaxy-kernel-v58" ? 58 : h[0] == "galaxy-kernel-v57" ? 57 : h[0] == "galaxy-kernel-v53" ? 53 : h[0] == "galaxy-kernel-v52" ? 52 : h[0] == "galaxy-kernel-v49" ? 49 : h[0] == "galaxy-kernel-v48" ? 48 : h[0] == "galaxy-kernel-v44" ? 44 : h[0] == "galaxy-kernel-v41" ? 41 : h[0] == "galaxy-kernel-v40" ? 40 : h[0] == "galaxy-kernel-v39" ? 39 : h[0] == "galaxy-kernel-v38" ? 38 : h[0] == "galaxy-kernel-v37" ? 37 : h[0] == "galaxy-kernel-v36" ? 36 : h[0] == "galaxy-kernel-v35" ? 35 : h[0] == "galaxy-kernel-v34" ? 34 : h[0] == "galaxy-kernel-v33" ? 33 : h[0] == "galaxy-kernel-v32" ? 32 : h[0] == "galaxy-kernel-v31" ? 31 : h[0] == "galaxy-kernel-v30" ? 30 : h[0] == "galaxy-kernel-v29" ? 29 : h[0] == "galaxy-kernel-v28" ? 28 : h[0] == "galaxy-kernel-v27" ? 27 : h[0] == "galaxy-kernel-v26" ? 26 : h[0] == "galaxy-kernel-v25" ? 25 : h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
+    result.snapshot_version_ = h[0] == "galaxy-kernel-v93" ? 93 : h[0] == "galaxy-kernel-v92" ? 92 : h[0] == "galaxy-kernel-v91" ? 91 : h[0] == "galaxy-kernel-v90" ? 90 : h[0] == "galaxy-kernel-v89" ? 89 : h[0] == "galaxy-kernel-v88" ? 88 : h[0] == "galaxy-kernel-v87" ? 87 : h[0] == "galaxy-kernel-v86" ? 86 : h[0] == "galaxy-kernel-v85" ? 85 : h[0] == "galaxy-kernel-v84" ? 84 : h[0] == "galaxy-kernel-v83" ? 83 : h[0] == "galaxy-kernel-v82" ? 82 : h[0] == "galaxy-kernel-v81" ? 81 : h[0] == "galaxy-kernel-v80" ? 80 : h[0] == "galaxy-kernel-v79" ? 79 : h[0] == "galaxy-kernel-v78" ? 78 : h[0] == "galaxy-kernel-v77" ? 77 : h[0] == "galaxy-kernel-v76" ? 76 : h[0] == "galaxy-kernel-v75" ? 75 : h[0] == "galaxy-kernel-v74" ? 74 : h[0] == "galaxy-kernel-v73" ? 73 : h[0] == "galaxy-kernel-v72" ? 72 : h[0] == "galaxy-kernel-v71" ? 71 : h[0] == "galaxy-kernel-v70" ? 70 : h[0] == "galaxy-kernel-v69" ? 69 : h[0] == "galaxy-kernel-v68" ? 68 : h[0] == "galaxy-kernel-v67" ? 67 : h[0] == "galaxy-kernel-v66" ? 66 : h[0] == "galaxy-kernel-v65" ? 65 : h[0] == "galaxy-kernel-v64" ? 64 : h[0] == "galaxy-kernel-v63" ? 63 : h[0] == "galaxy-kernel-v62" ? 62 : h[0] == "galaxy-kernel-v61" ? 61 : h[0] == "galaxy-kernel-v60" ? 60 : h[0] == "galaxy-kernel-v59" ? 59 : h[0] == "galaxy-kernel-v58" ? 58 : h[0] == "galaxy-kernel-v57" ? 57 : h[0] == "galaxy-kernel-v53" ? 53 : h[0] == "galaxy-kernel-v52" ? 52 : h[0] == "galaxy-kernel-v49" ? 49 : h[0] == "galaxy-kernel-v48" ? 48 : h[0] == "galaxy-kernel-v44" ? 44 : h[0] == "galaxy-kernel-v41" ? 41 : h[0] == "galaxy-kernel-v40" ? 40 : h[0] == "galaxy-kernel-v39" ? 39 : h[0] == "galaxy-kernel-v38" ? 38 : h[0] == "galaxy-kernel-v37" ? 37 : h[0] == "galaxy-kernel-v36" ? 36 : h[0] == "galaxy-kernel-v35" ? 35 : h[0] == "galaxy-kernel-v34" ? 34 : h[0] == "galaxy-kernel-v33" ? 33 : h[0] == "galaxy-kernel-v32" ? 32 : h[0] == "galaxy-kernel-v31" ? 31 : h[0] == "galaxy-kernel-v30" ? 30 : h[0] == "galaxy-kernel-v29" ? 29 : h[0] == "galaxy-kernel-v28" ? 28 : h[0] == "galaxy-kernel-v27" ? 27 : h[0] == "galaxy-kernel-v26" ? 26 : h[0] == "galaxy-kernel-v25" ? 25 : h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
     result.tick_ = u64(h[2]);
     result.next_entity_id_ = u64(h[3]);
     if (result.next_entity_id_ == 0) throw std::runtime_error("snapshot: invalid next entity ID");
@@ -7819,6 +8013,37 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                     static_cast<ShuttleCargo>(cargo),kg,pilot,
                     static_cast<LocalDeliveryStage>(stage),created}).second)
                 throw std::runtime_error("snapshot: invalid local delivery order");
+        } else if(f[0]=="yardcustomer" && result.snapshot_version_>=93) {
+            require_fields(f,14);
+            const auto id=u64(f[1]),yard=u64(f[2]),build=u64(f[3]),
+                customer=u64(f[4]),supplier=u64(f[5]),
+                buyer_ship=u64(f[6]),supplier_ship=u64(f[7]),
+                stage=u64(f[8]),posted=u64(f[9]),
+                accepted=u64(f[10]),funded=u64(f[11]),
+                delivered=u64(f[12]),hull=u64(f[13]);
+            if(!id || id>=(std::uint64_t{1}<<50) || !yard ||
+               !build || build>=(std::uint64_t{1}<<50) ||
+               id==build || id==yard || build==yard ||
+               !customer || customer==kServerAuthority ||
+               !supplier || supplier==kServerAuthority ||
+               !buyer_ship || !supplier_ship ||
+               buyer_ship==supplier_ship || stage>3 ||
+               posted>result.tick_ || accepted>result.tick_ ||
+               funded>result.tick_ || delivered>result.tick_ ||
+               (stage>=1 && accepted<posted) ||
+               (stage>=2 && funded<accepted) ||
+               (stage==3 && delivered<funded) ||
+               (stage==0 && (accepted || funded || delivered || hull)) ||
+               (stage==1 && (funded || delivered || hull)) ||
+               (stage==2 && (delivered || hull)) ||
+               (stage==3 && !hull) ||
+               result.shipyard_customer_orders_.size()>=10000 ||
+               !result.shipyard_customer_orders_.emplace(id,
+                   ShipyardCustomerOrder{id,yard,build,customer,supplier,
+                       buyer_ship,supplier_ship,
+                       static_cast<ShipyardCustomerStage>(stage),
+                       posted,accepted,funded,delivered,hull}).second)
+                throw std::runtime_error("snapshot: invalid shipyard customer order");
         } else if(f[0]=="freighterbuild" && result.snapshot_version_>=91) {
             require_fields(f,result.snapshot_version_>=92?18:14);
             const auto id=u64(f[1]),yard=u64(f[2]),owner=u64(f[3]),
@@ -10208,6 +10433,56 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 throw std::runtime_error("snapshot: invalid courier flight phase");
         }
     }
+    if(result.snapshot_version_>=93) {
+        std::set<std::uint64_t> contract_builds;
+        for(const auto& [id,contract]:result.shipyard_customer_orders_) {
+            (void)id;
+            const auto yard=result.shipyard_constructions_.find(contract.yard_order);
+            const auto buyer=result.entities_.find(contract.customer_ship);
+            const auto supplier=result.entities_.find(contract.supplier_ship);
+            if(yard==result.shipyard_constructions_.end() ||
+               !yard->second.operational() ||
+               yard->second.owner!=contract.supplier_owner ||
+               yard->second.colony_ship!=contract.supplier_ship ||
+               buyer==result.entities_.end() ||
+               supplier==result.entities_.end() ||
+               buyer->second.type!=EntityType::Ship ||
+               supplier->second.type!=EntityType::Ship ||
+               buyer->second.owner_id!=contract.customer_owner ||
+               supplier->second.owner_id!=contract.supplier_owner ||
+               !result.colony_ships_.count(contract.customer_ship) ||
+               !result.colony_ships_.count(contract.supplier_ship) ||
+               !contract_builds.insert(contract.build_order).second)
+                throw std::runtime_error("snapshot: invalid customer/supplier custody");
+            const auto build=result.freighter_build_orders_.find(contract.build_order);
+            if(contract.stage==ShipyardCustomerStage::Requested ||
+               contract.stage==ShipyardCustomerStage::Accepted) {
+                if(build!=result.freighter_build_orders_.end())
+                    throw std::runtime_error("snapshot: unfunded customer hull");
+            }else{
+                if(build==result.freighter_build_orders_.end() ||
+                   build->second.owner!=contract.supplier_owner ||
+                   build->second.source_ship!=contract.supplier_ship ||
+                   build->second.yard_order!=contract.yard_order ||
+                   build->second.posted_tick<contract.posted_tick)
+                    throw std::runtime_error("snapshot: missing paid physical build");
+                if(contract.stage==ShipyardCustomerStage::Delivered) {
+                    const auto made=result.entities_.find(contract.delivered_ship);
+                    if(!build->second.finished() ||
+                       contract.delivered_ship!=build->second.launched_ship ||
+                       contract.delivered_tick<build->second.launched_tick ||
+                       made==result.entities_.end() ||
+                       made->second.owner_id!=contract.customer_owner)
+                        throw std::runtime_error("snapshot: customer handover not proven");
+                }else if(build->second.finished()) {
+                    const auto made=result.entities_.find(build->second.launched_ship);
+                    if(made==result.entities_.end() ||
+                       made->second.owner_id!=contract.supplier_owner)
+                        throw std::runtime_error("snapshot: unclaimed hull ownership forged");
+                }
+            }
+        }
+    }
     if(result.snapshot_version_>=91) {
         std::set<std::uint64_t> active_slips;
         std::set<EntityId> manufactured_hulls;
@@ -10431,6 +10706,7 @@ void Simulation::swap(Simulation& other) noexcept {
     intercolony_freight_.swap(other.intercolony_freight_);
     shipyard_constructions_.swap(other.shipyard_constructions_);
     freighter_build_orders_.swap(other.freighter_build_orders_);
+    shipyard_customer_orders_.swap(other.shipyard_customer_orders_);
     shuttle_flight_request_ids_.swap(other.shuttle_flight_request_ids_);
     pending_celestial_transits_.swap(other.pending_celestial_transits_);
     completed_celestial_transits_.swap(other.completed_celestial_transits_);

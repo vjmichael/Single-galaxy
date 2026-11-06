@@ -115,6 +115,41 @@
         throw Error('Invalid shuttle operation receipt');
       return {...e,id,latitude,longitude,operation,generation};
     }
+    if(t==='YARD_CONTRACT_COMMITTED'){
+      if(v.length!==6)throw Error('Malformed customer shipyard transition');
+      const id=numeric(v[4],Number.MAX_SAFE_INTEGER),
+        generation=numeric(v[5],Number.MAX_SAFE_INTEGER);
+      if(!id||!generation)throw Error('Invalid shipyard transaction receipt');
+      return {...e,id,generation};
+    }
+    if(t==='YARD_CONTRACT_ITEM'){
+      if(v.length!==17)throw Error('Malformed physical customer ship order');
+      const id=numeric(v[4],Number.MAX_SAFE_INTEGER),
+        yard=numeric(v[5],Number.MAX_SAFE_INTEGER),
+        build=numeric(v[6],Number.MAX_SAFE_INTEGER),
+        buyer=numeric(v[7],Number.MAX_SAFE_INTEGER),
+        supplier=numeric(v[8],Number.MAX_SAFE_INTEGER),
+        buyerOwner=numeric(v[9],Number.MAX_SAFE_INTEGER),
+        supplierOwner=numeric(v[10],Number.MAX_SAFE_INTEGER),
+        stage=numeric(v[11],3),progress=numeric(v[12],12),
+        required=numeric(v[13],12),
+        hull=numeric(v[14],Number.MAX_SAFE_INTEGER),
+        delivered=numeric(v[15],Number.MAX_SAFE_INTEGER),
+        generation=numeric(v[16],Number.MAX_SAFE_INTEGER);
+      if(!id||!yard||!build||!buyer||!supplier||
+         buyer===supplier||!buyerOwner||!supplierOwner||
+         required!==12||!generation||
+         (stage<2&&(progress||hull||delivered))||
+         (stage>=2&&stage<3&&delivered)||
+         (stage===3&&(!delivered||delivered!==hull||progress!==12)) ||
+         progress>required)throw Error('Invalid ship contract custody');
+      return {...e,id,yard,build,buyer,supplier,buyerOwner,
+        supplierOwner,stage,progress,required,hull,delivered,generation};
+    }
+    if(t==='YARD_CONTRACT_DONE'){
+      if(v.length!==5)throw Error('Malformed customer shipyard count');
+      return {...e,count:numeric(v[4],64)};
+    }
     if(t==='FLEET_WORK_ASSIGNED'){
       if(v.length!==8)throw Error('Malformed fleet job assignment');
       const order=numeric(v[4],Number.MAX_SAFE_INTEGER),
@@ -760,7 +795,7 @@
       if(v.length!==7||!/^\d+$/.test(v[4])||!/^[A-Z_]+$/.test(v[5]))throw Error('Bad action result');
       e.id=numeric(v[4],Number.MAX_SAFE_INTEGER);e.outcome=v[5];e.transferred=numeric(v[6]);
     }else if(t==='ERROR'){
-      if(v.length!==5||!['INVALID_INPUT','INVALID_SAFETY_ORDER','UNAUTHORIZED_PRINCIPAL','FRAME_TRAVEL_DENIED','FRAME_TRANSIT_BLOCKED','FLEET_SELECTION_DENIED','FLEET_WORK_DENIED'].includes(v[4]))throw Error('Bad rejected input');e.error=v[4];
+      if(v.length!==5||!['INVALID_INPUT','INVALID_SAFETY_ORDER','UNAUTHORIZED_PRINCIPAL','FRAME_TRAVEL_DENIED','FRAME_TRANSIT_BLOCKED','FLEET_SELECTION_DENIED','FLEET_WORK_DENIED','YARD_CONTRACT_DENIED'].includes(v[4]))throw Error('Bad rejected input');e.error=v[4];
     }else throw Error('Unknown colony event');
     return e;
   }
@@ -1085,6 +1120,64 @@
  });
  shipyardPanel.append(shipyardTitle,shipyardHint,yardNpc1,yardNpc2,
    yardStart,yardOrder,yardAssign,yardRefresh,yardReceipt,yardList);
+ // SHIP-01F: the customer's shipyard order is an immutable physical
+ // purchase, not a "free ship" action or a fabricated NPC workforce.
+ const contractTitle=document.createElement('h3');
+ contractTitle.textContent='Order a ship from another colony (SHIP-01F)';
+ const contractHelp=document.createElement('p');
+ contractHelp.textContent='Enter a REAL operational shipyard order ID at a different colony. The supplier accepts; your colony must bring six fabricated modules to the same physical berth. Supplier workers build for 12 world ticks. Return to claim the completed uncrewed hull, then commission it with YOUR named NPC crew, scanner module and provisions.';
+ const contractId=document.createElement('input');
+ contractId.type='number';contractId.min='1';contractId.step='1';
+ contractId.placeholder='Customer contract ID';
+ contractId.setAttribute('aria-label','Customer shipyard contract ID');
+ const contractYard=document.createElement('input');
+ contractYard.type='number';contractYard.min='1';contractYard.step='1';
+ contractYard.placeholder='Supplier yard ID';
+ contractYard.setAttribute('aria-label','Real supplier shipyard ID');
+ const contractBuild=document.createElement('input');
+ contractBuild.type='number';contractBuild.min='1';contractBuild.step='1';
+ contractBuild.placeholder='Requested hull build ID';
+ contractBuild.setAttribute('aria-label','Customer manufactured hull build order ID');
+ const contractState=document.createElement('output');
+ contractState.textContent='No verified shipyard purchase receipts yet.';
+ const contractList=document.createElement('div');
+ contractList.dataset.shipyardCustomerOrders='1';
+ const contractButtons=document.createElement('div');
+ const sendContract=(action,extra={})=>{
+   const order=Number(contractId.value);
+   if(!Number.isSafeInteger(order)||order<=0||order>=2**50)return;
+   window.GalaxyColonyCommand?.(action,{order,...extra});
+   contractState.textContent='Requested '+action+
+     '; awaiting the authoritative shipyard transaction.';
+ };
+ const contractPost=document.createElement('button');
+ contractPost.type='button';contractPost.textContent='Request hull from supplier';
+ contractPost.addEventListener('click',()=>{
+   const yard=Number(contractYard.value),build=Number(contractBuild.value);
+   if(!Number.isSafeInteger(yard)||yard<=0||yard>=2**50||
+      !Number.isSafeInteger(build)||build<=0||build>=2**50||
+      yard===build)return;
+   sendContract('colonyYardContractPost',{yard,build});
+ });
+ const contractAccept=document.createElement('button');
+ contractAccept.type='button';contractAccept.textContent='Accept customer order (supplier)';
+ contractAccept.addEventListener('click',()=>sendContract('colonyYardContractAccept'));
+ const contractFund=document.createElement('button');
+ contractFund.type='button';contractFund.textContent='Deliver 6 modules to yard';
+ contractFund.addEventListener('click',()=>sendContract('colonyYardContractFund'));
+ const contractDeliver=document.createElement('button');
+ contractDeliver.type='button';contractDeliver.textContent='Claim real finished hull';
+ contractDeliver.addEventListener('click',()=>sendContract('colonyYardContractDeliver'));
+ const contractRefresh=document.createElement('button');
+ contractRefresh.type='button';contractRefresh.textContent='Check ship purchase orders';
+ contractRefresh.addEventListener('click',()=>{
+   contractList.replaceChildren();
+   window.GalaxyColonyCommand?.('colonyYardContractStatus',{});
+ });
+ contractButtons.append(contractPost,contractAccept,contractFund,
+   contractDeliver,contractRefresh);
+ shipyardPanel.append(contractTitle,contractHelp,contractId,
+   contractYard,contractBuild,contractButtons,contractState,contractList);
  const freighterTitle=document.createElement('strong');
  freighterTitle.textContent='Manufacture first real freighter (SHIP-01B)';
  const freighterHint=document.createElement('p');
@@ -1202,6 +1295,8 @@
  window.GalaxyColony={
    reset(){fleetShips.clear();fleetRosterActive=false;fleetRestorePending=true;
      fleetRequested=0;window.GalaxyActivePilotedShipId=null;
+     contractList.replaceChildren();
+     contractState.textContent='Awaiting actual shipyard purchase orders.';
      window.GalaxyActivePilotedCelestialBody=null;
      fleetSelector.replaceChildren(new Option('Awaiting native fleet roster',''));
      fleetSelector.disabled=true;fleetSelectButton.disabled=true;
@@ -1220,6 +1315,38 @@
      q('signatureFeedback').textContent='Search for coarse anomaly signatures.';
      q('droneTarget').replaceChildren(new Option('Scan nearby rocks first',''));q('droneLaunch').disabled=true;deployedProbes.clear();probeCarried=0;probeLauncher=false;probeChoice='';q('probeTarget').replaceChildren(new Option('No probe deployed',''));q('probeLaunch').disabled=true;q('probeSurvey').disabled=true;q('probeRetrieve').disabled=true;q('probeInventory').textContent='Awaiting native probe stock.';q('probeFeedback').textContent='Native equipment required.';q('fittingCapacity').textContent='Awaiting actual ship fittings.';q('proximityStatus').textContent='Proximity safety sensor awaiting contacts.';q('fitScanner').disabled=true;q('unfitScanner').disabled=true;discoveries.clear();q('explorationResults').replaceChildren();q('explorationSummary').textContent='No mapped discoveries yet. Execute a native local scan.';salvageWrecks.clear();q('salvageTarget').replaceChildren(new Option('No recoverable wreck reported',''));q('salvageRecover').disabled=true;q('salvageFeedback').textContent='Waiting for native wreck inventory.';combatTargets.clear();q('combatHull').textContent='—';q('combatCharges').textContent='—';q('combatFire').disabled=true;q('combatFeedback').textContent='Awaiting native combat telemetry.';window.GalaxySelectedRockId=null;window.GalaxyShipHeading=null;window.GalaxyColonyOutpostIds.clear();openingStatus=null;openingScanned=false;refreshOpening();window.GalaxyColonyHomeShipId=null;q('colonySafetyAssess').disabled=true;q('colonySafetyPreflight').disabled=true;policyAudits.clear();geology.clear();small.clear();stocks.clear();outposts.clear();farms.clear();habitats.clear();utilities.clear();communities.clear();clinics.clear();reclaimers.clear();waterworks.clear();log.length=0;q('colonyEvents').textContent='Awaiting colony telemetry…';q('expeditionOutcome').textContent='Awaiting an actual native result';},
    accept(raw){const e=window.GalaxyColonyContract.decode(raw);
+     if(e.type==='YARD_CONTRACT_COMMITTED'){
+       contractId.value=String(e.id);
+       contractState.textContent='Physical customer contract #'+e.id+
+         ' committed at SQLite generation '+e.generation+
+         '. Reading the supplier/customer work record.';
+       window.GalaxyColonyCommand?.('colonyYardContractStatus',{});
+     }
+     if(e.type==='YARD_CONTRACT_ITEM'){
+       let row=[...contractList.children].find(el=>
+         el.dataset.customerOrder===String(e.id));
+       if(!row){
+         row=document.createElement('div');
+         row.dataset.customerOrder=String(e.id);
+         contractList.appendChild(row);
+       }
+       row.textContent='Contract #'+e.id+' · buyer colony #'+e.buyer+
+         ' (owner '+e.buyerOwner+') → yard colony #'+e.supplier+
+         ' (owner '+e.supplierOwner+') · '+
+         ['Requested','Accepted — bring six physical modules',
+          'Paid — building real hull ('+e.progress+'/12)',
+          'Delivered uncrewed ship #'+e.delivered][e.stage]+
+         (e.hull&&e.stage===2?' · built ship #'+e.hull+' ready for claim':'')+
+         ' · build order #'+e.build;
+       if(e.stage===3){
+         freighterOrder.value=String(e.build);
+         contractBuild.value=String(e.build);
+         contractState.textContent='Ship #'+e.delivered+
+           ' is now owned by the customer. Commission it with two real NPCs, a paid scanner and finite provisions.';
+       }
+     }
+     if(e.type==='ERROR'&&e.error==='YARD_CONTRACT_DENIED')
+       contractState.textContent='Native shipyard transaction refused. Check supplier acceptance, actual berth, six modules, build completion and owner authority.';
      if(e.type==='FLEET_RESET'){
        fleetShips.clear();fleetRosterActive=true;
      }
