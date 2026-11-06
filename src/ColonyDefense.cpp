@@ -1,6 +1,8 @@
 #include "galaxy/ColonyDefense.hpp"
+#include "galaxy/ShipSensorProfile.hpp"
 #include <algorithm>
 #include <stdexcept>
+#include <utility>
 namespace galaxy::colony_defense {
 std::vector<Contact> observe_local_contacts(const Simulation& world,
                                               EntityId source,std::uint64_t npc_id){
@@ -19,17 +21,23 @@ std::vector<Contact> observe_local_contacts(const Simulation& world,
         if(id==source || target.type!=EntityType::Ship ||
            !target.owner_id || target.owner_id==home->owner_id ||
            target.system_id!=home->system_id)continue;
+        const auto radius=ship_sensors::detection_range_mm(*home,target);
+        // Original fitted stealth baffles shorten the observer's *actual*
+        // contact acquisition range. Fitted survey/high-resolution arrays
+        // can recover some/all of the lost range. No hidden omniscient scan.
         const auto dx=target.position.x-home->position.x;
         const auto dy=target.position.y-home->position.y;
-        // The box check precedes multiplication: huge distant coordinates
-        // must never overflow squared-distance calculations.
-        if(dx < -kLocalWatchRangeMm || dx>kLocalWatchRangeMm ||
-           dy < -kLocalWatchRangeMm || dy>kLocalWatchRangeMm)continue;
+        if(dx < -radius || dx>radius || dy < -radius || dy>radius)
+            continue;
         const auto distance=static_cast<std::uint64_t>(dx*dx+dy*dy);
-        if(distance>static_cast<std::uint64_t>(
-             kLocalWatchRangeMm*kLocalWatchRangeMm))continue;
-        contacts.push_back({source,id,npc_id,world.tick(),distance,
-                            target.owner_id,target.system_id});
+        if(distance>static_cast<std::uint64_t>(radius*radius))continue;
+        Contact contact{source,id,npc_id,world.tick(),distance,
+                        target.owner_id,target.system_id};
+        contact.sensor_detail=ship_sensors::detail_class(*home,target);
+        contact.observed_description=
+            ship_sensors::description(world,source,id);
+        // Hail/identity never originates from passive sensor inference.
+        contacts.push_back(std::move(contact));
     }
     return contacts; // world entity map is already stable ID ordering
 }
