@@ -12,9 +12,12 @@ assert.deepEqual(parsed,{
 assert.equal(security.parse(
  'COLONY|1|22|SECURITY_CALL_PENALTY|3|34|1').review,true);
 assert.equal(security.parse(
- 'COLONY|1|22|SECURITY_CALL_SANCTION|20|1|24|0').points,1);
+ 'COLONY|1|22|SECURITY_CALL_PENALTY|9007199254740993|34|1').points,
+ '9007199254740993');
 assert.equal(security.parse(
- 'COLONY|1|22|SECURITY_CALL_SANCTION|20|0|0|0').points,0);
+ 'COLONY|1|22|SECURITY_CALL_SANCTION|20|1|24|0').points,'1');
+assert.equal(security.parse(
+ 'COLONY|1|22|SECURITY_CALL_SANCTION|20|0|0|0').points,'0');
 assert.equal(security.parse(
  'COLONY|1|22|SECURITY_CALL_COMPLAINT|9000|8|3').caller,8);
 for(const forged of [
