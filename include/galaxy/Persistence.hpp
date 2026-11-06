@@ -887,6 +887,14 @@ public:
         FailPoint fail=FailPoint::None);
     bool deliver_shipyard_customer_order(PlayerId customer,std::uint64_t order_id,
         FailPoint fail=FailPoint::None);
+    // WORK-01A authorized delegation, not a second inventory or job engine.
+    bool delegate_customer_ship_order(PlayerId owner,EntityId colony_ship,
+        std::uint64_t id,std::uint64_t customer_contract,
+        std::array<std::uint64_t,2> commissioning_crew,
+        std::int64_t provisions_kg_each,std::uint64_t requires_directive=0,
+        FailPoint fail=FailPoint::None);
+    bool cancel_work_directive(PlayerId owner,std::uint64_t directive,
+        FailPoint fail=FailPoint::None);
     bool post_local_delivery_order(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& site,ShuttleCargo cargo,
         std::int64_t kilograms,std::uint64_t order_id,
