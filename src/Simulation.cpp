@@ -5498,6 +5498,22 @@ bool Simulation::cancel_local_delivery_order(PlayerId owner,std::uint64_t order_
     if(leg!=intercolony_freight_.end() &&
        leg->second.stage==IntercolonyFreightStage::AwaitingPickup)
         intercolony_freight_.erase(leg);
+    // Revoking the original unstarted physical job also revokes any
+    // still-active derived coordinator permission. In particular, a
+    // preplanned freight leg may have just been erased above; retaining
+    // an active delegation to that erased leg would corrupt recovery.
+    for(auto& [id,d]:work_directives_){
+        (void)id;
+        if(d.owner!=owner || d.source_order!=order_id ||
+           d.colony_ship!=it->second.board_ship ||
+           (d.kind!=WorkTaskKind::LocalDelivery &&
+            d.kind!=WorkTaskKind::IntercolonyFreight) ||
+           d.status!=WorkDirectiveStatus::Active)continue;
+        d.status=WorkDirectiveStatus::Cancelled;
+        d.blocked=WorkBlock::None;
+        d.resolved_tick=tick_;
+        d.last_update_tick=tick_;
+    }
     return true;
 }
 void Simulation::process_local_delivery_board() {
