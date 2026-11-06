@@ -158,7 +158,7 @@ void snapshot(const PersistentWorld& world,
             emit("SECURITY_DESTINATION|"+std::to_string(claim.colony));
         }
     }
-    if(communications){
+    if(communications)try{
         emit("SECURITY_CALL_INBOX_RESET");
         for(const auto& incoming:communications->pending_for(
              world,owner,piloted)){
@@ -185,6 +185,10 @@ void snapshot(const PersistentWorld& world,
                 std::to_string(item.caller_owner)+"|"+
                 std::to_string(item.penalty_points));
         }
+    }catch(const std::exception&){
+        // An unavailable evidence index must not take down the physical
+        // colony simulation, and must never fabricate an accepted report.
+        emit("SECURITY_ERROR|COMMS_UNAVAILABLE");
     }
     emit("SECURITY_REFRESH_DONE");
 }
@@ -258,7 +262,7 @@ bool execute(const std::vector<std::string>& words,
     }else if(words.size()==2 && action=="SECURITY_CALL" &&
              communications){
         const auto other=numeric(words[1]);
-        if(other){
+        if(other)try{
             const auto result=communications->call(world,territory,owner,
                 piloted,other,receipt=++nonce);
             accepted=result.status==ship_comms::Status::CallSent;
@@ -269,15 +273,19 @@ bool execute(const std::vector<std::string>& words,
                     std::to_string(result.penalty_points)+"|"+
                     std::to_string(result.cooldown_until)+"|"+
                     std::to_string(result.law_review_eligible?1:0));
+        }catch(const std::exception&){
+            emit("SECURITY_ERROR|COMMS_UNAVAILABLE");
         }
     }else if(words.size()==3 && action=="SECURITY_CALL_REPLY" &&
              communications){
         const auto call=numeric(words[1]);
-        if(call && (words[2]=="IDENTIFY" || words[2]=="DECLINE")){
+        if(call && (words[2]=="IDENTIFY" || words[2]=="DECLINE"))try{
             const auto result=communications->reply(world,owner,piloted,
                 call,receipt=++nonce,words[2]=="IDENTIFY");
             accepted=result.status==ship_comms::Status::Identified ||
                      result.status==ship_comms::Status::Declined;
+        }catch(const std::exception&){
+            emit("SECURITY_ERROR|COMMS_UNAVAILABLE");
         }
     }else if(words.size()==3 && action=="SECURITY_PATROL"){
         const auto case_number=numeric(words[1]);
