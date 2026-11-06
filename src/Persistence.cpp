@@ -11211,6 +11211,20 @@ bool PersistentWorld::submit_npc_cyber_attack(
        !world_.npc_available_for_duty(pilot_npc) ||
        !world_.npc_available_for_duty(observer_npc))
         return false;
+    // The original v102 admission receipt also reserves the named real
+    // operator for this tick. It prevents two cyber requests (or two
+    // observers acting as duplicate controllers) from scheduling the same
+    // physical NPC or ship concurrently, including after a host restart.
+    for(const auto& [id,prior]:world_.npc_cyber_operators()){
+        (void)id;
+        if(prior.admitted_tick==world_.tick() &&
+           (prior.attacking_ship==attacking_ship ||
+            prior.pilot_npc==pilot_npc ||
+            prior.observer_npc==observer_npc ||
+            prior.pilot_npc==observer_npc ||
+            prior.observer_npc==pilot_npc))
+            return false;
+    }
     // A tactical operator cannot steal an NPC navigator's exclusive
     // control of a physically moving ship.
     for(const auto& [id,flight]:world_.npc_flight_orders()){
