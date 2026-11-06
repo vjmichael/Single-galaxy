@@ -970,6 +970,32 @@ bool Simulation::qualified_npc_flight_pilot(
     // consult the full duty check with active-flight reservations.
     return npc_available_for_duty_without_flight(pilot);
 }
+// Centralized admission: all NPC navigation modes select and reserve from
+// the same real named workforce and original native duty checks.
+std::uint64_t Simulation::select_npc_flight_pilot(
+        EntityId ship,std::uint64_t requested) const {
+    if(requested)
+        return qualified_npc_flight_pilot(ship,requested) &&
+               npc_available_for_duty(requested) ? requested:0;
+    for(const auto& [id,person]:npcs_){
+        (void)person;
+        if(qualified_npc_flight_pilot(ship,id) &&
+           npc_available_for_duty(id))return id;
+    }
+    return 0;
+}
+bool Simulation::npc_flight_slot_available(
+        EntityId ship,std::uint64_t pilot) const {
+    if(!ship || !pilot)return false;
+    for(const auto& [id,flight]:npc_flight_orders_){
+        (void)id;
+        if((flight.phase==NpcFlightPhase::Planned ||
+            flight.phase==NpcFlightPhase::InTransit) &&
+           (flight.ship==ship || flight.pilot_npc==pilot))
+            return false;
+    }
+    return true;
+}
 bool Simulation::npc_available_for_duty_without_flight(std::uint64_t npc_id) const {
     const auto it=npcs_.find(npc_id);
     if(it==npcs_.end())return false;
@@ -6200,17 +6226,7 @@ bool Simulation::queue_npc_flight(PlayerId owner,EntityId ship,
         std::uint64_t id,std::uint64_t transit,
         NpcFlightPurpose purpose){
     const auto e=entities_.find(ship),frame=ship_frames_.find(ship);
-    // A zero requested pilot means deterministic qualification and
-    // appointment from existing real NPC records; nothing is recruited.
-    std::uint64_t selected_pilot=pilot;
-    if(!selected_pilot)for(const auto& [person_id,n]:npcs_){
-        (void)n;
-        if(qualified_npc_flight_pilot(ship,person_id) &&
-           npc_available_for_duty(person_id)){
-            selected_pilot=person_id;
-            break;
-        }
-    }
+    const auto selected_pilot=select_npc_flight_pilot(ship,pilot);
     if(!id || id>=(std::uint64_t{1}<<50) || !transit ||
        transit>=(std::uint64_t{1}<<50) ||
        !owner || owner==kServerAuthority ||
@@ -6218,7 +6234,7 @@ bool Simulation::queue_npc_flight(PlayerId owner,EntityId ship,
        npc_flight_orders_.size()>=10000 || npc_flight_orders_.count(id) ||
        pending_celestial_transits_.count(transit) ||
        completed_celestial_transits_.count(transit) ||
-       !qualified_npc_flight_pilot(ship,selected_pilot) ||
+       !npc_flight_slot_available(ship,selected_pilot) ||
        e==entities_.end() || e->second.type!=EntityType::Ship ||
        e->second.owner_id!=owner || !colony_ships_.count(ship) ||
        !life_support_.count(ship) ||
@@ -6229,10 +6245,7 @@ bool Simulation::queue_npc_flight(PlayerId owner,EntityId ship,
         return false;
     for(const auto& [other_id,order]:npc_flight_orders_){
         (void)other_id;
-        if(order.transit_request==transit)return false;
-        if((order.phase==NpcFlightPhase::Planned ||
-            order.phase==NpcFlightPhase::InTransit) &&
-           (order.ship==ship || order.pilot_npc==selected_pilot))return false;
+        if(order.transit_request==transit && transit)return false;
     }
     npc_flight_orders_.emplace(id,NpcFlightOrder{
         id,owner,ship,selected_pilot,destination,transit,purpose,
@@ -6282,19 +6295,8 @@ bool Simulation::queue_npc_station_docking(
         for(const auto& cmd:commands)
             if(cmd.actor==ship || cmd.target==ship)return false;
     }
-    std::uint64_t selected=pilot;
-    if(!selected)for(const auto& [id,n]:npcs_){
-        (void)n;
-        if(qualified_npc_flight_pilot(ship,id) &&
-           npc_available_for_duty(id)){selected=id;break;}
-    }
-    if(!qualified_npc_flight_pilot(ship,selected))return false;
-    for(const auto& [id,other]:npc_flight_orders_){
-        (void)id;
-        if((other.phase==NpcFlightPhase::Planned ||
-            other.phase==NpcFlightPhase::InTransit) &&
-           (other.ship==ship || other.pilot_npc==selected))return false;
-    }
+    const auto selected=select_npc_flight_pilot(ship,pilot);
+    if(!npc_flight_slot_available(ship,selected))return false;
     NpcFlightOrder order{};
     order.id=id;order.owner=owner;order.ship=ship;
     order.pilot_npc=selected;order.station=target;
