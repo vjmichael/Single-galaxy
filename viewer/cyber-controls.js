@@ -62,8 +62,9 @@
  }
  // Stateless policy helper: never infer a successful native command from a
  // queued HTTP reply or from a button being clicked.
- const canAttack=(state,target)=>!!state&&state.emitter&&
-   state.cooldown===0&&Number.isSafeInteger(target)&&target>0;
+ const canAttack=(state,target,emitterPowered)=>!!state&&state.emitter&&
+   emitterPowered===true&&state.cooldown===0&&
+   Number.isSafeInteger(target)&&target>0;
  if(typeof document==='undefined')return {parse,canAttack};
  const e=id=>document.getElementById(id);
  let status=null,modules=new Map(),targets=new Map(),lastCycle=-1;
@@ -81,6 +82,10 @@
  }
  function update(){
    const ready=!!status, emitter=!!status?.emitter,firewall=!!status?.firewall;
+   // Only this committed tick's actual hardware result can enable an attack.
+   // Fitted, but manually OFF, isolated, or CONFUSED-OFF is not operational.
+   const emitterPowered=[...modules.values()].some(m=>
+     m.tick===status?.tick && m.hardware===3 && m.effective && !m.isolated);
    for(const [id,disabled] of [
      ['cyberFitEmitter',!ready||!status.colony||emitter],
      ['cyberRemoveEmitter',!ready||!status.colony||!emitter],
@@ -90,7 +95,8 @@
    if(ready){
      e('cyberStatus').textContent='Ship #'+status.ship+
        ' · '+(emitter?'intrusion emitter fitted':'no intrusion emitter')+
-       ' · '+(firewall?'firewall active':'no firewall')+
+       ' · '+(firewall?'firewall fitted':'no firewall')+
+       ' · emitter '+(emitterPowered?'ONLINE':'OFFLINE')+
        ' · emission cooldown '+status.cooldown+' tick(s)';
    }
    const list=e('cyberModuleList');
@@ -104,7 +110,8 @@
      label.textContent='Hardpoint '+(slot+1)+' · '+
        ({0:'Empty',1:'Scanner',2:'Probe launcher',3:'Intrusion emitter'}[m.hardware]||
         'Equipment')+' · '+
-       (m.effective?'ON':'OFF')+(m.effective!==m.requested?' · CONFUSED':'')+
+       (m.effective?'ON':'OFF')+
+       (m.effective!==m.requested && !m.isolated?' · CONFUSED':'')+
        (m.isolated?' · ISOLATED':'');
      row.append(label);
      const toggle=(name,action,enabled)=>{
@@ -123,7 +130,7 @@
      ...[...targets.values()].sort((a,b)=>a.id-b.id)
        .map(v=>new Option('Ship #'+v.id+' · '+v.distance+' mm',String(v.id))));
    if([...select.options].some(o=>o.value===prev))select.value=prev;
-   e('cyberAttack').disabled=!canAttack(status,Number(select.value)) ||
+   e('cyberAttack').disabled=!canAttack(status,Number(select.value),emitterPowered) ||
       !targets.has(Number(select.value));
  }
  function accept(raw){
@@ -156,7 +163,9 @@
  ])e(id).addEventListener('click',()=>send('colonyCyberFit',{device,install}));
  e('cyberAttack').addEventListener('click',()=>{
    const target=Number(e('cyberTarget').value);
-   if(canAttack(status,target)&&targets.has(target))
+   const powered=[...modules.values()].some(m=>m.tick===status?.tick &&
+     m.hardware===3 && m.effective && !m.isolated);
+   if(canAttack(status,target,powered)&&targets.has(target))
      void send('colonyCyberAttack',{target});
  });
  e('cyberTarget').addEventListener('change',update);
