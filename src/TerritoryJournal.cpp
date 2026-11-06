@@ -286,7 +286,11 @@ TerritorialStanding TerritoryJournal::standing(const PersistentWorld& w,
         if(e.colony!=colony || e.visitor_owner!=target->owner_id)continue;
         if(e.kind==TerritoryEventKind::Invite){
             invited=true;
-            // A deliberate new invitation can lift an old expulsion.
+            // Starting a new admission epoch forgives *active* warnings,
+            // trespass and expulsion. Historical rows are never deleted.
+            // Revocation starts a fresh visit, not an instant conviction
+            // based on a warning from before the invitation.
+            warning=0;trespass=0;grace=0;
             state.standing=npc_response::VisitorStanding::Unknown;
         }
         if(e.kind==TerritoryEventKind::RevokeInvitation)invited=false;
