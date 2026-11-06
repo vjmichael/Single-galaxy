@@ -8030,6 +8030,9 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                buyer_ship==supplier_ship || stage>3 ||
                posted>result.tick_ || accepted>result.tick_ ||
                funded>result.tick_ || delivered>result.tick_ ||
+               (stage>=1 && accepted<posted) ||
+               (stage>=2 && funded<accepted) ||
+               (stage==3 && delivered<funded) ||
                (stage==0 && (accepted || funded || delivered || hull)) ||
                (stage==1 && (funded || delivered || hull)) ||
                (stage==2 && (delivered || hull)) ||
