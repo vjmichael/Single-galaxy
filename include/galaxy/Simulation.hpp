@@ -97,6 +97,8 @@ struct PlayerPerson {
     PlayerPersonState state=PlayerPersonState::AboardOwnShip;
     PlayerId custodian=0;
     std::uint64_t registered_tick=0,last_receipt=0,last_update_tick=0;
+    EntityId consent_ship=0;
+    std::uint64_t consent_id=0,rescue_flight=0; // v99 consent and original physical evidence
 };
 enum class CelestialKind {Star=0,Planet=1,Moon=2,DebrisRegion=3};
 struct PhysicalCelestialBody {
@@ -111,7 +113,7 @@ struct PhysicalCelestialBody {
 enum class EntityType { Ship, Asteroid, Station, Stargate, Wreck };
 enum class Action { Thrust, Mine, StartMining, StopMining, RequestUndock, RequestDock, UnloadOre, LoadOre, SellOre, RequestJump, SetGatePairOnline, SetGateStaff, DeliverGateSpares, RefineOre, FabricateModule, ConstructOutpost, RefineMineral, FabricateMaterialModule, PlantCrops, HarvestCrops, RecycleWater, RecycleCompost, ProduceOxygen, LoadLifeWater, ConstructFarm, TransferFarmStock, AssignFarmWorkers, ConstructHabitat, TransferHabitatStock, AssignHabitatResidents, ConstructUtility, RepairUtility, TransferUtilitySpares, AssignUtilityTechnicians, SetUtilityMaintenance, ConstructCommunity, TransferCommunityStock, AssignCommunityStaff, ConstructClinic, TransferClinicStock, AssignClinicStaff, ConstructReclaimer, ConstructWaterworks, TransferWaterworksFeed, SetPolicyAssurance, AssignPolicyInspectors, AssignFarmMentor, HostDestroyShip, HostCrewLoss, ConstructWorkshop, TransferWorkshopFeed, AssignWorkshopOperator, TransferWorkshopOutput, ConstructWorkshopFinisher, AssignWorkshopFinisher, TransferWorkshopFinalOutput, TransferWorkshopStack, ConstructStorage, TransferStorageStack, ConstructStorageNode, TransferStorageNodeStack, ConstructStorageLink, ConstructWorkshopLink, PlaceFactoryEquipment, PlaceConveyorCell, CompleteConveyorRoute, HostEmbarkPassengers, HostDisembarkPassengers, HostStrandFerry, HostResumeFerry, HostEvacuatePassengers, HostDestroyPassengerFerry, HostResolveMixedFerryLoss, HostTrainMedic, HostTriageRescued, HostTreatInjuries, HostScheduleMedicShift, HostLoadMedicalKit, HostMobileStabilize, HostSettleMigrant, HostSplitEvacuatePassengers, HostEscrowConstructedStock, HostReturnConstructedStock, HostTransferConsignedStock, HostColonyDeparture, HostRegisterDependent, FireTrainingWeapon, SalvageWreck, SurveyLocal, ConfigureExplorationScanner, DeploySurveyProbe, ScanSurveyProbe, RecoverSurveyProbe, LaunchGeologicalDrone, FocusSurveyProbe, CancelSurveyFocus };
 enum class Outcome { Applied, InvalidActor, Unauthorized, InvalidTarget, OutOfRange, InvalidArgument, NoResources, CargoFull, NotMining, NotInSpace, NotDocked, InTransition, ShipMoving, HangarFull, InsufficientFunds, WrongSystem, GateOffline, NotColonyShip, InsufficientCrew };
-enum class ActivityKind { AsteroidDespawned, AutoMiningTransfer, MiningStopped, Undocked, Docked, JumpCompleted, ShipDestroyed, NpcLost, AutoStorageTransfer, NpcRendezvous };
+enum class ActivityKind { AsteroidDespawned, AutoMiningTransfer, MiningStopped, Undocked, Docked, JumpCompleted, ShipDestroyed, NpcLost, AutoStorageTransfer, NpcRendezvous, PlayerRescued };
 enum class DockState { InSpace, Docked, Undocking, Docking };
 enum class ShipJumpState { Ready, Jumping, ArrivalCloak };
 struct StationHangar { std::int64_t ore = 0; std::int64_t capacity = 0; };
@@ -1119,6 +1121,10 @@ public:
     // Explicit genesis or authenticated registration; not implied by pilot selection.
     // This cannot perform rescue or arrest, which need original physical receipts.
     bool register_player_person(PlayerId owner,EntityId aboard);
+    bool grant_player_rescue_consent(PlayerId owner,EntityId receiving_ship,
+        std::uint64_t consent_id);
+    bool complete_player_rescue(PlayerId owner,EntityId receiving_ship,
+        std::uint64_t flight_id,std::uint64_t transfer_receipt);
     // Different local frames never share ordinary spatial interactions.
     bool same_local_frame(EntityId a,EntityId b) const;
     // PLAY-13C.4: finite existing mineral stock may be redistributed into
