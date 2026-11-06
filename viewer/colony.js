@@ -1066,7 +1066,7 @@
  // Explicitly steer the commissioned ship by its manufacturing receipt.
  // This never rebinds the colony work board to the ship's cargo cockpit.
  const pilotTitle=document.createElement('strong');
- pilotTitle.textContent='Pilot commissioned freighter (SHIP-01C)';
+ pilotTitle.textContent='Advanced: direct freighter diagnostics (SHIP-01C)';
  const pilotInfo=document.createElement('output');
  pilotInfo.textContent='Enter a completed freighter order ID, then inspect its real cockpit.';
  const pilotStatus=document.createElement('button');
