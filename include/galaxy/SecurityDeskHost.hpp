@@ -6,6 +6,7 @@
 #include "galaxy/CyberSecurityResponse.hpp"
 #include "galaxy/TerritorialHailing.hpp"
 #include "galaxy/FleetSelection.hpp"
+#include "galaxy/ShipHailJournal.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <exception>
@@ -91,7 +92,8 @@ std::size_t capture_current_tick(const PersistentWorld& world,
 template<class Emit>
 void snapshot(const PersistentWorld& world,
     const TerritoryJournal& territory,const CyberIncidentJournal& cases,
-    PlayerId owner,EntityId home,EntityId piloted,Emit&& emit) {
+    PlayerId owner,EntityId home,EntityId piloted,Emit&& emit,
+    const ship_comms::Journal* communications=nullptr) {
     const auto* home_ship=world.world().find(home);
     if(!owner || owner==Simulation::kServerAuthority ||
        !home_ship || home_ship->owner_id!=owner ||
@@ -156,13 +158,42 @@ void snapshot(const PersistentWorld& world,
             emit("SECURITY_DESTINATION|"+std::to_string(claim.colony));
         }
     }
+    if(communications){
+        emit("SECURITY_CALL_INBOX_RESET");
+        for(const auto& incoming:communications->pending_for(
+             world,owner,piloted)){
+            emit("SECURITY_CALL_INBOX|"+
+                std::to_string(incoming.request_id)+"|"+
+                std::to_string(incoming.caller_ship)+"|"+
+                std::to_string(incoming.caller));
+        }
+        const auto penalties=communications->penalty_for(
+            world,owner,piloted);
+        emit("SECURITY_CALL_PENALTY|"+
+            std::to_string(penalties.penalty_points)+"|"+
+            std::to_string(penalties.cooldown_until)+"|"+
+            std::to_string(penalties.law_review_eligible?1:0));
+        emit("SECURITY_CALL_COMPLAINTS_RESET");
+        std::size_t reported=0;
+        for(const auto& item:communications->history()){
+            if(item.kind!=ship_comms::Kind::Abuse ||
+               item.recipient_ship!=piloted ||
+               !item.law_review_eligible)continue;
+            if(++reported>16)break;
+            emit("SECURITY_CALL_COMPLAINT|"+
+                std::to_string(item.event_id)+"|"+
+                std::to_string(item.caller_owner)+"|"+
+                std::to_string(item.penalty_points));
+        }
+    }
     emit("SECURITY_REFRESH_DONE");
 }
 template<class Emit>
 bool execute(const std::vector<std::string>& words,
     PersistentWorld& world,TerritoryJournal& territory,
     CyberIncidentJournal& cases,PlayerId owner,EntityId home,
-    EntityId piloted,std::uint64_t& nonce,Emit&& emit) {
+    EntityId piloted,std::uint64_t& nonce,Emit&& emit,
+    ship_comms::Journal* communications=nullptr) {
     if(words.empty() || words[0].rfind("SECURITY_",0)!=0)return false;
     const auto* home_ship=world.world().find(home);
     const auto* pilot_ship=world.world().find(piloted);
@@ -224,6 +255,30 @@ bool execute(const std::vector<std::string>& words,
                     colony,guard,piloted,owner,receipt);
             }
         }
+    }else if(words.size()==2 && action=="SECURITY_CALL" &&
+             communications){
+        const auto other=numeric(words[1]);
+        if(other){
+            const auto result=communications->call(world,territory,owner,
+                piloted,other,receipt=++nonce);
+            accepted=result.status==ship_comms::Status::CallSent;
+            if(result.status==ship_comms::Status::Penalized ||
+               result.status==ship_comms::Status::Suppressed)
+                emit("SECURITY_CALL_SANCTION|"+
+                    std::to_string(other)+"|"+
+                    std::to_string(result.penalty_points)+"|"+
+                    std::to_string(result.cooldown_until)+"|"+
+                    std::to_string(result.law_review_eligible?1:0));
+        }
+    }else if(words.size()==3 && action=="SECURITY_CALL_REPLY" &&
+             communications){
+        const auto call=numeric(words[1]);
+        if(call && (words[2]=="IDENTIFY" || words[2]=="DECLINE")){
+            const auto result=communications->reply(world,owner,piloted,
+                call,receipt=++nonce,words[2]=="IDENTIFY");
+            accepted=result.status==ship_comms::Status::Identified ||
+                     result.status==ship_comms::Status::Declined;
+        }
     }else if(words.size()==3 && action=="SECURITY_PATROL"){
         const auto case_number=numeric(words[1]);
         const auto target=numeric(words[2]);
@@ -238,7 +293,8 @@ bool execute(const std::vector<std::string>& words,
          (accepted?"ACCEPTED":"DENIED")+"|"+
          std::to_string(accepted?receipt:0)+"|"+
          std::to_string(linked?1:0));
-    snapshot(world,territory,cases,owner,home,piloted,emit);
+    snapshot(world,territory,cases,owner,home,piloted,emit,
+             communications);
     return true;
 }
 } // namespace galaxy::colony_disposition::security_desk
