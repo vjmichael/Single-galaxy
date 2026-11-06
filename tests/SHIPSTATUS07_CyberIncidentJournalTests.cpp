@@ -110,6 +110,10 @@ int main(){
               !reports[0].arrest_authorized &&
               !reports[0].damage_authorized &&
               !reports[0].seizure_authorized);
+        CHECK(cases.for_colony_owner(world,8,victim).size()==1);
+        CHECK(cases.for_colony_owner(world,7,victim).empty());
+        CHECK(cases.for_colony_owner(world,8,attacker).empty());
+        CHECK(cases.for_colony_owner(world,0,victim).empty());
         const auto& c=reports[0].evidence;
         CHECK(c.command_id==attack_id && c.case_id==case_id &&
               c.attacker_owner==7 && c.victim_owner==8 &&
