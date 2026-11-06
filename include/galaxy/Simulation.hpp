@@ -56,6 +56,27 @@ struct CompletedCelestialTransit {
     std::uint64_t destination_body=0;
     std::uint64_t completed_tick=0;
 };
+// FLIGHT-01: one generic native NPC flight navigation service for any
+// existing owner-controlled ship. Cargo, rescue, surveys and future work
+// adapters may request it, but NONE receive additional physical authority.
+enum class NpcFlightPurpose : std::uint8_t {
+    General=0,Freight=1,Rescue=2,Passenger=3,Survey=4,
+    Patrol=5,Mining=6
+};
+enum class NpcFlightPhase : std::uint8_t {
+    Planned=0,InTransit=1,Arrived=2,Cancelled=3
+};
+struct NpcFlightOrder {
+    std::uint64_t id=0;
+    PlayerId owner=0;
+    EntityId ship=0;
+    std::uint64_t pilot_npc=0;
+    std::uint64_t destination_body=0;
+    std::uint64_t transit_request=0; // original native transit receipt ID
+    NpcFlightPurpose purpose=NpcFlightPurpose::General;
+    NpcFlightPhase phase=NpcFlightPhase::Planned;
+    std::uint64_t posted_tick=0,started_tick=0,resolved_tick=0;
+};
 enum class CelestialKind {Star=0,Planet=1,Moon=2,DebrisRegion=3};
 struct PhysicalCelestialBody {
     std::uint64_t id=0,parent_id=0;
@@ -1049,6 +1070,18 @@ public:
     const std::map<std::uint64_t,CompletedCelestialTransit>& completed_celestial_transits() const {
         return completed_celestial_transits_;
     }
+    // A zero pilot means pick the lowest-ID qualified available named
+    // shipboard NPC deterministically at the original SQLite admission.
+    // FLIGHT-01 read model: only original physical ships, pilots and transit
+    // receipts; these orders contain intent, never cloned passengers/cargo.
+    const std::map<std::uint64_t,NpcFlightOrder>& npc_flight_orders() const noexcept {
+        return npc_flight_orders_;
+    }
+    bool queue_npc_flight(PlayerId owner,EntityId ship,
+        std::uint64_t pilot,std::uint64_t destination_body,
+        std::uint64_t flight_id,std::uint64_t transit_request,
+        NpcFlightPurpose purpose=NpcFlightPurpose::General);
+    bool cancel_npc_flight(PlayerId owner,std::uint64_t flight_id);
     // Different local frames never share ordinary spatial interactions.
     bool same_local_frame(EntityId a,EntityId b) const;
     // PLAY-13C.4: finite existing mineral stock may be redistributed into
@@ -1335,6 +1368,14 @@ private:
     void process_shipyard_construction(); // only Simulation::step advances labor
     void process_freighter_builds(); // only the committed world tick may launch
     void process_universal_work(); // coordinates native gates; never mints goods
+    // The original host celestial transit operations AND the generic NPC
+    // navigator call these exact common physical gate/effect helpers.
+    bool begin_native_celestial_transit(PlayerId owner,EntityId ship,
+        std::uint64_t destination_body,std::uint64_t request_id);
+    bool complete_native_celestial_transit(std::uint64_t request_id);
+    void process_npc_flight_navigation(); // same copied-state journaled step
+    bool qualified_npc_flight_pilot(EntityId ship,std::uint64_t pilot) const;
+    bool npc_available_for_duty_without_flight(std::uint64_t id) const;
     void process_farms();
     void move_npc_records(EntityId ship, EntityId site, NpcRole role, std::int64_t delta);
     void award_farm_experience(EntityId site);
@@ -1370,6 +1411,7 @@ private:
     std::set<std::uint64_t> shuttle_flight_request_ids_; // v81 replay rejection
     std::map<std::uint64_t,PendingCelestialTransit> pending_celestial_transits_;
     std::map<std::uint64_t,CompletedCelestialTransit> completed_celestial_transits_;
+    std::map<std::uint64_t,NpcFlightOrder> npc_flight_orders_; // v95 intent + proof
     std::map<std::uint32_t,std::vector<PhysicalCelestialBody>> physical_celestial_systems_;
     std::set<EntityId> depleted_;
     std::map<EntityId, AutoMining> mining_;

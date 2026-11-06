@@ -848,6 +848,18 @@ public:
     // is idempotent: a completed request never moves the ship twice.
     bool complete_celestial_transit(std::uint64_t request_id,
         FailPoint fail=FailPoint::None);
+    // A zero pilot requests deterministic assignment of a real
+    // qualified available NPC; the assigned identity is journaled.
+    // FLIGHT-01: unified, mission-neutral NPC flight service using the
+    // SAME original physical departure and arrival helpers as manual host
+    // transit; every change is one existing-world SQLite transaction.
+    bool queue_npc_flight(PlayerId owner,EntityId ship,std::uint64_t pilot,
+        std::uint64_t destination_body,std::uint64_t flight_order_id,
+        std::uint64_t transit_request_id,
+        NpcFlightPurpose purpose=NpcFlightPurpose::General,
+        FailPoint fail=FailPoint::None);
+    bool cancel_npc_flight(PlayerId owner,std::uint64_t flight_order_id,
+        FailPoint fail=FailPoint::None);
     // Real finite resource collection, committed atomically before publication.
     // PLAY-13D.3: atomic source-backed player site actions. These reuse
     // Simulation's exact geography and the existing world SQLite journal.

@@ -102,8 +102,33 @@ static std::string forge_work_completion(std::string snapshot,
     snapshot.replace(at,end-at,row);
     return snapshot;
 }
+// FLIGHT-01 recovery oracle: a completed flight intent is not an
+// arrival receipt. The physical native destination/owner/request must exist.
+static std::string forge_npc_flight_arrival(std::string snapshot,
+        std::uint64_t order_id,std::uint64_t tick) {
+    const auto marker="npcflight|"+std::to_string(order_id)+"|";
+    const auto start=snapshot.find(marker);
+    CHECK(start!=std::string::npos);
+    const auto end=snapshot.find('\n',start);
+    CHECK(end!=std::string::npos);
+    std::istringstream stream(snapshot.substr(start,end-start));
+    std::vector<std::string> fields;
+    std::string word;
+    while(std::getline(stream,word,'|'))fields.push_back(word);
+    CHECK(fields.size()==12);
+    fields[8]="2"; // claimed Arrived without native completed transit
+    fields[11]=std::to_string(tick);
+    std::string row;
+    for(std::size_t i=0;i<fields.size();++i){
+        if(i)row+='|';
+        row+=fields[i];
+    }
+    snapshot.replace(start,end-start,row);
+    return snapshot;
+}
 static void scenario(const fs::path& db, bool farming,
-                     bool manufactured=false,bool delegated=false){
+                     bool manufactured=false,bool delegated=false,
+                     bool autonomous=false){
     const auto chosen=select_site(farming);
     EntityId ship=0,freighter=0,receiver=0;
     std::uint64_t receiver_body=0;
@@ -123,6 +148,7 @@ static void scenario(const fs::path& db, bool farming,
         if(!manufactured)
             seed.provision_colony_genesis(freighter,1000,1000,1000,1000,1000);
         seed.provision_colony_genesis(receiver,1000,1000,1000,1000,1000);
+        if(autonomous)seed.provision_starter_exploration_scanner(receiver);
         seed.enable_individual_workforce();
         seed.provision_starter_exploration_scanner(ship);
         if(!manufactured)seed.provision_starter_exploration_scanner(freighter);
@@ -939,6 +965,7 @@ static void scenario(const fs::path& db, bool farming,
                   IntercolonyFreightStage::Loaded);
             CHECK(!w.deliver_intercolony_freight(7,77003)); // wrong frame
             const auto aboard=w.world().canonical_state();
+            // This sealed-cargo snapshot predates navigation posting.
             CHECK(aboard.rfind(delegated?"galaxy-kernel-v94|":
                 (manufactured?"galaxy-kernel-v92|":"galaxy-kernel-v89|"),0)==0);
             CHECK(Simulation::from_snapshot(aboard).canonical_state()==aboard);
@@ -963,11 +990,69 @@ static void scenario(const fs::path& db, bool farming,
                 catch(const std::exception&){denied=true;}
                 CHECK(denied); // carrier has not physically arrived
             }
-            CHECK(w.begin_celestial_transit(7,freighter,receiver_body,99021));
-            CHECK(!w.deliver_intercolony_freight(7,77003)); // in flight
-            w.steps(4);
-            CHECK(!w.deliver_intercolony_freight(7,77003)); // no arrival receipt
-            CHECK(w.complete_celestial_transit(99021));
+            std::uint64_t autonomous_pilot=0;
+            if(autonomous){
+                for(const auto& [id,n]:w.world().npc_records())
+                    if(n.home_ship==freighter && n.location==freighter &&
+                       n.role==NpcRole::Ship){autonomous_pilot=id;break;}
+                CHECK(autonomous_pilot);
+                const auto pre_flight=w.world().canonical_state();
+                bool failed=false;
+                try{(void)w.queue_npc_flight(7,freighter,autonomous_pilot,
+                    receiver_body,95021,99021,NpcFlightPurpose::Freight,
+                    FailPoint::AfterSnapshotWrite);}
+                catch(const std::exception&){failed=true;}
+                CHECK(failed);
+                CHECK(w.world().canonical_state()==pre_flight);
+                CHECK(!w.queue_npc_flight(8,freighter,autonomous_pilot,
+                    receiver_body,95021,99021,NpcFlightPurpose::Freight));
+                CHECK(w.queue_npc_flight(7,freighter,autonomous_pilot,
+                    receiver_body,95021,99021,NpcFlightPurpose::Freight));
+                CHECK(!w.world().npc_available_for_duty(autonomous_pilot));
+                CHECK(!w.queue_npc_flight(7,freighter,autonomous_pilot,
+                    receiver_body,95022,99022,NpcFlightPurpose::Survey));
+                CHECK(!w.begin_celestial_transit(7,freighter,receiver_body,99021));
+                const auto posting=w.world().canonical_state();
+                CHECK(posting.rfind("galaxy-kernel-v95|",0)==0);
+                CHECK(Simulation::from_snapshot(posting).canonical_state()==posting);
+                // Crash at the same SQLite publication boundary as the
+                // original host transit. Neither task nor voyage advances.
+                const auto original_tick=w.world().tick();
+                bool crashed=false;
+                try{w.step(FailPoint::AfterSnapshotWrite);}
+                catch(const std::exception&){crashed=true;}
+                CHECK(crashed);
+                CHECK(w.world().canonical_state()==posting);
+                CHECK(w.world().tick()==original_tick);
+                w.steps(2);
+                CHECK(w.world().npc_flight_orders().at(95021).phase==
+                      NpcFlightPhase::InTransit);
+                CHECK(w.world().pending_celestial_transits().count(99021)==1);
+                const auto in_transit=w.world().canonical_state();
+                CHECK(Simulation::from_snapshot(in_transit).canonical_state()==in_transit);
+                bool forged_arrival=false;
+                try{(void)Simulation::from_snapshot(forge_npc_flight_arrival(
+                    in_transit,95021,w.world().tick()));}
+                catch(const std::exception&){forged_arrival=true;}
+                CHECK(forged_arrival);
+                CHECK(!w.cancel_npc_flight(7,95021));
+                CHECK(!w.deliver_intercolony_freight(7,77003));
+                w.steps(3);
+                CHECK(w.world().npc_flight_orders().at(95021).phase==
+                      NpcFlightPhase::Arrived);
+                CHECK(w.world().completed_celestial_transits().count(99021)==1);
+                CHECK(w.world().npc_flight_orders().at(95021).resolved_tick==
+                      w.world().completed_celestial_transits().at(99021).completed_tick);
+                CHECK(w.world().npc_available_for_duty(autonomous_pilot));
+                const auto arrived=w.world().canonical_state();
+                CHECK(Simulation::from_snapshot(arrived).canonical_state()==arrived);
+            }else{
+                CHECK(w.begin_celestial_transit(7,freighter,receiver_body,99021));
+                CHECK(!w.deliver_intercolony_freight(7,77003)); // in flight
+                w.steps(4);
+                CHECK(!w.deliver_intercolony_freight(7,77003)); // no arrival receipt
+                CHECK(w.complete_celestial_transit(99021));
+            }
             const auto before_unload=w.world().canonical_state();
             bool unload_failed=false;
             try{(void)w.deliver_intercolony_freight(7,77003,
@@ -1052,9 +1137,18 @@ static void scenario(const fs::path& db, bool farming,
                 CHECK(w.world().work_directives().at(94008).status==
                       WorkDirectiveStatus::Active);
             }
-            CHECK(w.begin_celestial_transit(7,freighter,receiver_body,99023));
-            w.steps(4);
-            CHECK(w.complete_celestial_transit(99023));
+            if(autonomous){
+                CHECK(w.queue_npc_flight(7,freighter,autonomous_pilot,
+                    receiver_body,95023,99023,NpcFlightPurpose::Freight));
+                w.steps(5);
+                CHECK(w.world().npc_flight_orders().at(95023).phase==
+                      NpcFlightPhase::Arrived);
+                CHECK(w.world().completed_celestial_transits().count(99023)==1);
+            }else{
+                CHECK(w.begin_celestial_transit(7,freighter,receiver_body,99023));
+                w.steps(4);
+                CHECK(w.complete_celestial_transit(99023));
+            }
             if(delegated){
                 w.step();
                 CHECK(w.world().work_directives().at(94008).status==
@@ -1094,8 +1188,40 @@ static void scenario(const fs::path& db, bool farming,
                       after_move.position.y!=before_move.position.y);
                 CHECK(w.world().total_ore()==origin);
             }
+            if(autonomous){
+                // Mission-neutral proof: the SAME navigation engine can fly
+                // the original receiver ship on a survey/rescue-purpose
+                // return, without any freight plan, cargo or new NPC.
+                std::uint64_t receiver_pilot=0;
+                for(const auto& [id,n]:w.world().npc_records())
+                    if(n.home_ship==receiver && n.location==receiver &&
+                       n.role==NpcRole::Ship){receiver_pilot=id;break;}
+                CHECK(receiver_pilot);
+                CHECK(w.queue_npc_flight(7,receiver,0,
+                    chosen.body,95100,99100,NpcFlightPurpose::Survey));
+                CHECK(w.world().npc_flight_orders().at(95100).pilot_npc==
+                      receiver_pilot);
+                CHECK(!w.cancel_npc_flight(8,95100));
+                CHECK(w.cancel_npc_flight(7,95100));
+                CHECK(w.world().npc_flight_orders().at(95100).phase==
+                      NpcFlightPhase::Cancelled);
+                CHECK(w.queue_npc_flight(7,receiver,receiver_pilot,
+                    chosen.body,95101,99101,NpcFlightPurpose::Rescue));
+                w.steps(5);
+                CHECK(w.world().npc_flight_orders().at(95101).phase==
+                      NpcFlightPhase::Arrived);
+                CHECK(w.world().completed_celestial_transits().count(99101)==1);
+                CHECK(w.world().ship_frames().at(receiver).anchor_body==chosen.body);
+                CHECK(w.world().npc_flight_orders().at(95100).phase==
+                      NpcFlightPhase::Cancelled);
+                // The purpose tag never launched a rescue, moved occupants,
+                // changed original finite cargo or changed worker identity.
+                CHECK(w.world().colony_ship(receiver)->crew==3);
+                CHECK(w.world().total_ore()==origin);
+            }
             durable=w.world().canonical_state();
-            CHECK(durable.rfind(delegated?"galaxy-kernel-v94|":
+            CHECK(durable.rfind(autonomous?"galaxy-kernel-v95|":
+                delegated?"galaxy-kernel-v94|":
                 (manufactured?"galaxy-kernel-v92|":"galaxy-kernel-v89|"),0)==0);
             CHECK(Simulation::from_snapshot(durable).canonical_state()==durable);
         }
@@ -1175,15 +1301,18 @@ static void scenario(const fs::path& db, bool farming,
 int main(int argc,char** argv){
     const bool manufactured_only=argc==2 && std::string(argv[1])=="--manufactured-only";
     const bool delegated_only=argc==2 && std::string(argv[1])=="--delegated-work";
-    if(argc>2 || (argc==2 && !manufactured_only && !delegated_only)){
-        std::cerr<<"Unknown test selection: --manufactured-only or --delegated-work\n";
+    const bool nav_only=argc==2 && std::string(argv[1])=="--npc-autonomous-nav";
+    if(argc>2 || (argc==2 && !manufactured_only && !delegated_only && !nav_only)){
+        std::cerr<<"Unknown test selection: --manufactured-only, --delegated-work or --npc-autonomous-nav\n";
         return 2;
     }
     const auto dir=fs::temp_directory_path()/
       ("sg_play13d3_"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     try{
         fs::create_directories(dir);
-        if(delegated_only){
+        if(nav_only){
+            scenario(dir/"npc-nav.sqlite",false,false,true,true);
+        }else if(delegated_only){
             scenario(dir/"delegated-transport.sqlite",false,false,true);
         }else if(!manufactured_only){
             scenario(dir/"farm.sqlite",true);
@@ -1192,7 +1321,9 @@ int main(int argc,char** argv){
             scenario(dir/"manufactured-freight.sqlite",false,true);
         }
         fs::remove_all(dir);
-        std::cout<<(delegated_only?
+        std::cout<<(nav_only?
+            "PASS FLIGHT-01: generic NPC flight engine flies sealed freight and survey/rescue-purpose hull, original transit arrival, owner consent, crash and restart\n":
+            delegated_only?
             "PASS WORK-01C: original NPC shuttle pickups and two freight voyages, coordinator physical unloading, SQLite failpoint and restart\n":
             manufactured_only?
             "PASS SHIP-01C: physically manufactured, commissioned freighter completes Planet A -> Colony B cargo delivery, SQLite restart\n":
