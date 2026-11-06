@@ -6152,10 +6152,15 @@ void Simulation::process_universal_work(){
             const auto build=freighter_build_orders_.find(
                 it->second.build_order);
             if(build!=freighter_build_orders_.end() &&
-               (build->second.commissioned() ||
-                commission_shipyard_freighter(directive.owner,
+               ((build->second.commissioned() &&
+                 build->second.commissioning_crew==
+                     directive.commissioning_crew &&
+                 build->second.provisions_kg_each==
+                     directive.provisions_kg_each) ||
+                (!build->second.commissioned() &&
+                 commission_shipyard_freighter(directive.owner,
                     it->second.build_order,directive.commissioning_crew,
-                    directive.provisions_kg_each)))
+                    directive.provisions_kg_each))))
                 finish();
             else block(WorkBlock::NamedCrewAndSupplies);
             break;
@@ -7647,7 +7652,7 @@ std::string Simulation::canonical_state() const {
                <<'|'<<unsigned(directive.blocked)
                <<'|'<<directive.posted_tick
                <<'|'<<directive.last_update_tick
-               <<'|'<<directive.resolved_tick<<'|'<<0<<'\n';
+               <<'|'<<directive.resolved_tick<<'\n';
         }
     if(snapshot_version_>=81)
         for(const auto id:shuttle_flight_request_ids_)
@@ -8246,7 +8251,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                     static_cast<LocalDeliveryStage>(stage),created}).second)
                 throw std::runtime_error("snapshot: invalid local delivery order");
         } else if(f[0]=="workdirective" && result.snapshot_version_>=94) {
-            require_fields(f,16);
+            require_fields(f,15);
             const auto id=u64(f[1]),owner=u64(f[2]),
                 ship=u64(f[3]),kind=u64(f[4]),
                 source=u64(f[5]),dependency=u64(f[6]),
@@ -8254,11 +8259,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 provisions=i64(f[9]),status=u64(f[10]),
                 blocked=u64(f[11]),posted=u64(f[12]),
                 updated=u64(f[13]),resolved=u64(f[14]);
-            // Last slot is an explicit zero-valued schema sentinel:
-            // reject extension fields rather than silently accepting
-            // unknown privileged capabilities.
-            if(u64(f[15])!=0 ||
-               !id || id>=(std::uint64_t{1}<<50) ||
+            if(!id || id>=(std::uint64_t{1}<<50) ||
                !owner || owner==kServerAuthority || !ship ||
                kind!=unsigned(WorkTaskKind::CustomerShipOrder) ||
                !source || source>=(std::uint64_t{1}<<50) ||
@@ -10699,6 +10700,52 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                  (shuttle->second.flight_phase!=3 &&
                   shuttle->second.flight_phase!=0))))
                 throw std::runtime_error("snapshot: invalid courier flight phase");
+        }
+    }
+    if(result.snapshot_version_>=94) {
+        std::set<std::uint64_t> exclusive_active;
+        for(const auto& [id,directive]:result.work_directives_){
+            const auto contract=result.shipyard_customer_orders_.find(
+                directive.source_order);
+            const auto ship=result.entities_.find(directive.colony_ship);
+            if(contract==result.shipyard_customer_orders_.end() ||
+               contract->second.customer_owner!=directive.owner ||
+               contract->second.customer_ship!=directive.colony_ship ||
+               ship==result.entities_.end() ||
+               ship->second.type!=EntityType::Ship ||
+               ship->second.owner_id!=directive.owner ||
+               !result.colony_ships_.count(directive.colony_ship) ||
+               !result.life_support_.count(directive.colony_ship))
+                throw std::runtime_error("snapshot: delegation has no original owner");
+            if(directive.status!=WorkDirectiveStatus::Cancelled &&
+               !exclusive_active.insert(directive.source_order).second)
+                throw std::runtime_error("snapshot: duplicate active delegated work");
+            if(directive.requires_directive){
+                const auto parent=result.work_directives_.find(
+                    directive.requires_directive);
+                if(parent==result.work_directives_.end() ||
+                   parent->second.id>=id ||
+                   parent->second.owner!=directive.owner ||
+                   parent->second.colony_ship!=directive.colony_ship ||
+                   (directive.status==WorkDirectiveStatus::Fulfilled &&
+                    parent->second.status!=WorkDirectiveStatus::Fulfilled))
+                    throw std::runtime_error("snapshot: work dependency/cycle forged");
+            }
+            if(directive.status==WorkDirectiveStatus::Fulfilled){
+                if(contract->second.stage!=ShipyardCustomerStage::Delivered)
+                    throw std::runtime_error("snapshot: work completed without hull");
+                if(directive.commissioning_crew[0]){
+                    const auto build=result.freighter_build_orders_.find(
+                        contract->second.build_order);
+                    if(build==result.freighter_build_orders_.end() ||
+                       !build->second.commissioned() ||
+                       build->second.commissioning_crew!=
+                            directive.commissioning_crew ||
+                       build->second.provisions_kg_each!=
+                            directive.provisions_kg_each)
+                        throw std::runtime_error("snapshot: unproven NPC commissioning");
+                }
+            }
         }
     }
     if(result.snapshot_version_>=93) {
