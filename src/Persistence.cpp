@@ -11055,6 +11055,22 @@ bool PersistentWorld::submit_host_consigned_transfer(const Command& command,Fail
 }
 
 bool PersistentWorld::submit(const Command& command, FailPoint fail) {
+    // NPC-RESP-02B: independent character custody is authoritative for
+    // PLAYER-operated ship controls. A rescued/detained person cannot
+    // remotely pilot an abandoned hull by changing the selected cockpit.
+    // The native NPC navigator submits its own original controls through
+    // Simulation::submit inside the host-journaled step, unaffected here.
+    if(command.action==Action::Thrust ||
+       command.action==Action::RequestDock ||
+       command.action==Action::RequestUndock ||
+       command.action==Action::RequestJump ||
+       command.action==Action::FireTrainingWeapon){
+        const auto person=world_.player_people_.find(command.issuer);
+        if(person!=world_.player_people_.end() &&
+           (person->second.state!=PlayerPersonState::AboardOwnShip ||
+            person->second.physical_ship!=command.actor))
+            return false;
+    }
     // A player command cannot race an active NPC navigator's exclusive
     // physical ship-control session. The NPC uses Simulation::submit
     // INSIDE the same host-journaled step, not this external owner API.
