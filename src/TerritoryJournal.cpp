@@ -257,7 +257,7 @@ bool TerritoryJournal::revoke_invitation(const PersistentWorld& w,PlayerId owner
     TerritoryEvent e{};e.event_id=id;e.kind=TerritoryEventKind::RevokeInvitation;
     e.colony=colony;e.owner=owner;e.visitor_owner=visitor;
     e.world_tick=w.world().tick();e.world_generation=w.generation();
-    return append(e,TerritoryFailPoint::None);
+    return append(e,fail);
 }
 TerritorialStanding TerritoryJournal::standing(const PersistentWorld& w,
         EntityId colony,EntityId visitor) const {
