@@ -6361,6 +6361,20 @@ bool Simulation::grant_player_rescue_consent(
 // Physical rescue requires BOTH a registered consent and a separately
 // applied, original FLIGHT-03 ship-motion receipt, plus an independent
 // native player-transfer receipt. No ship ownership or NPC custody changes.
+bool Simulation::revoke_player_rescue_consent(
+        PlayerId owner,std::uint64_t consent_id){
+    auto it=player_people_.find(owner);
+    if(!owner || owner==kServerAuthority || !consent_id ||
+       it==player_people_.end() ||
+       it->second.state!=PlayerPersonState::AboardOwnShip ||
+       it->second.consent_id!=consent_id ||
+       !it->second.consent_ship)return false;
+    it->second.consent_ship=0;
+    it->second.consent_id=0;
+    it->second.last_update_tick=tick_;
+    snapshot_version_=std::max(snapshot_version_,99);
+    return true;
+}
 bool Simulation::complete_player_rescue(
         PlayerId owner,EntityId receiver,
         std::uint64_t flight_id,std::uint64_t transfer_receipt){

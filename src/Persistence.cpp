@@ -8834,6 +8834,17 @@ bool PersistentWorld::grant_player_rescue_consent(
     world_.swap(next);++generation_;
     return true;
 }
+bool PersistentWorld::revoke_player_rescue_consent(
+    PlayerId owner,std::uint64_t consent_id,FailPoint fail){
+    auto next=world_;
+    if(!next.revoke_player_rescue_consent(owner,consent_id))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("player rescue revocation changed world matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
 bool PersistentWorld::complete_player_rescue(
     PlayerId owner,EntityId receiver,std::uint64_t flight_id,
     std::uint64_t receipt,FailPoint fail){
