@@ -122,7 +122,7 @@ int main(){
         // Explicit typed registry never silently auto-executes other
         // original native systems before their own consent adapters exist.
         auto unsupported=directive(50,500,10);
-        unsupported.kind=WorkTaskKind::IntercolonyFreight;
+        unsupported.kind=WorkTaskKind::ShipyardConstruction;
         directives.emplace(50,unsupported);
         rows=plan(directives,contracts,npcs,25);
         CHECK(find_row(rows,50).gate==Gate::UnsupportedExecutor);
