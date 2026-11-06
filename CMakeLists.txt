@@ -1425,6 +1425,17 @@ if(BUILD_TESTING)
     COMMAND galaxy_ship01b2_commission_freighter_tests)
 endif()
 
+# WORK-01B.3: original colony safety risk and bounded deterministic
+# fairness on real customer work, plus live original funding preview.
+if(BUILD_TESTING)
+  add_executable(galaxy_work01b3_emergency_fairness_tests
+    tests/WORK01B3_EmergencyFairnessTests.cpp)
+  target_link_libraries(galaxy_work01b3_emergency_fairness_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_work01b3_emergency_fairness
+    COMMAND galaxy_work01b3_emergency_fairness_tests)
+  set_tests_properties(galaxy_work01b3_emergency_fairness PROPERTIES TIMEOUT 180)
+endif()
+
 # WORK-01B.2: canonical worker qualifications and original physical
 # one-slip yard capacity, native workforce duty and collision regression.
 if(BUILD_TESTING)
