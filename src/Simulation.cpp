@@ -2113,6 +2113,25 @@ Event Simulation::execute(const Command& c) {
             }
         }
     }
+    // SHIP-STATUS-04: an NPC-operator receipt is checked AGAIN at native
+    // execution, not just at the host's earlier scheduling tick. A crew
+    // transfer, casualty or hijack cannot remotely animate its old vessel.
+    if(c.action==Action::HackConfuse){
+        const auto attribution=npc_cyber_operators_.find(c.id);
+        if(attribution!=npc_cyber_operators_.end()){
+            const auto& o=attribution->second;
+            const auto pilot=npcs_.find(o.pilot_npc);
+            if(o.owner!=c.issuer || o.attacking_ship!=c.actor ||
+               o.target_ship!=c.target || pilot==npcs_.end() ||
+               pilot->second.home_ship!=c.actor ||
+               pilot->second.location!=c.actor ||
+               pilot->second.role!=NpcRole::Ship ||
+               pilot->second.transport_id ||
+               !npc_available_for_duty(o.pilot_npc)){
+                result.result=Outcome::Unauthorized;return result;
+            }
+        }
+    }
     if(c.action==Action::HostRegisterDependent){
         if(c.issuer!=kServerAuthority || snapshot_version_<59 || !c.actor ||
            c.actor!=c.target || !c.transport_id || c.transport_id<(1ULL<<62) ||
