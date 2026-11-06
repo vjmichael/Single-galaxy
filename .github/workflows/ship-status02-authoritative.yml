@@ -14,6 +14,7 @@ on:
       - 'tests/SHIPSTATUS05_SupervisorTests.cpp'
       - 'tests/SHIPSTATUS06_FleetCyberTests.cpp'
       - 'tests/SHIPSTATUS06_LiveCyberHostTests.py'
+      - 'tests/SHIPSTATUS06_InstalledBrowserTests.py'
       - 'tests/SHIPSTATUS05_CyberCockpitTests.js'
       - 'include/galaxy/NpcCyberSupervisor.hpp'
       - 'src/colony_live_host.cpp'
@@ -68,4 +69,15 @@ jobs:
           node --check viewer/interactive.js
           python -m py_compile live/interactive_relay.py
           python tests/SHIPSTATUS05_CyberRelayTests.py
+          python -m py_compile tests/SHIPSTATUS06_LiveCyberHostTests.py tests/SHIPSTATUS06_InstalledBrowserTests.py
           node tests/SHIPSTATUS05_CyberCockpitTests.js
+      - name: Real Chromium installed-game browser smoke (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          python -m pip install --disable-pip-version-check playwright
+          python -m playwright install chromium
+          python tests/SHIPSTATUS06_InstalledBrowserTests.py \
+            --host build/galaxy_colony_live_host \
+            --relay live/interactive_relay.py \
+            --bridge build/galaxy_shipping_status_bridge
