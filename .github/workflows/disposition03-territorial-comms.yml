@@ -1,0 +1,38 @@
+name: DISPOSITION-03 territorial communications and enforcement
+on:
+  pull_request:
+    paths:
+      - 'include/galaxy/TerritoryJournal.hpp'
+      - 'include/galaxy/TerritorialEnforcement.hpp'
+      - 'src/TerritoryJournal.cpp'
+      - 'tests/DISPOSITION02_TerritoryJournalTests.cpp'
+      - 'tests/DISPOSITION03_TerritorialCommsTests.cpp'
+      - 'CMakeLists.txt'
+      - '.github/workflows/disposition03-territorial-comms.yml'
+  workflow_dispatch:
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & (Join-Path $env:VCPKG_INSTALLATION_ROOT 'vcpkg.exe') install sqlite3:x64-windows --clean-after-build
+          if ($LASTEXITCODE -ne 0) { throw 'SQLite SDK installation failed' }
+      - if: runner.os == 'Linux'
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tc=Join-Path $env:VCPKG_INSTALLATION_ROOT 'scripts/buildsystems/vcpkg.cmake'
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$tc" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'native configuration failed' }
+      - run: cmake --build build --config Release --parallel 2 --target galaxy_disposition03_territorial_comms_tests galaxy_disposition02_territory_tests galaxy_disposition01_unified_response_tests
+      - run: ctest --test-dir build -C Release --output-on-failure -R "^galaxy_disposition(03_territorial_comms|02_territory|01_unified_response)$"
