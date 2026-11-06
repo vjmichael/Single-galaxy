@@ -12,6 +12,8 @@ on:
       - 'tests/SHIPSTATUS03_PhysicalHackingTests.cpp'
       - 'tests/SHIPSTATUS04_NpcCyberTacticsTests.cpp'
       - 'tests/SHIPSTATUS05_SupervisorTests.cpp'
+      - 'tests/SHIPSTATUS06_FleetCyberTests.cpp'
+      - 'tests/SHIPSTATUS06_LiveCyberHostTests.py'
       - 'tests/SHIPSTATUS05_CyberCockpitTests.js'
       - 'include/galaxy/NpcCyberSupervisor.hpp'
       - 'src/colony_live_host.cpp'
@@ -57,8 +59,8 @@ jobs:
           $tc=Join-Path $env:VCPKG_INSTALLATION_ROOT 'scripts/buildsystems/vcpkg.cmake'
           cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$tc" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
           if ($LASTEXITCODE -ne 0) { throw 'native configuration failed' }
-      - run: cmake --build build --config Release --parallel 2 --target galaxy_ship_status05_supervisor_tests galaxy_colony_live_host galaxy_ship_status04_npc_cyber_tests galaxy_ship_status03_physical_hacking_tests galaxy_ship_status02_authoritative_tests galaxy_ship_status01_confusion_tests galaxy_play10_exploration_tests
-      - run: ctest --test-dir build -C Release --output-on-failure -R "^galaxy_(ship_status(01_confusion|02_authoritative|03_physical_hacking|04_npc_cyber|05_supervisor|05_cockpit)|play10_exploration)$"
+      - run: cmake --build build --config Release --parallel 2 --target galaxy_ship_status06_fleet_cyber_tests galaxy_ship_status05_supervisor_tests galaxy_colony_live_host galaxy_shipping_status_bridge galaxy_ship_status04_npc_cyber_tests galaxy_ship_status03_physical_hacking_tests galaxy_ship_status02_authoritative_tests galaxy_ship_status01_confusion_tests galaxy_play10_exploration_tests
+      - run: ctest --test-dir build -C Release --output-on-failure -R "^galaxy_(ship_status(01_confusion|02_authoritative|03_physical_hacking|04_npc_cyber|05_supervisor|05_cockpit|06_fleet_cyber|06_live_cyber)|play10_exploration)$"
       - name: Verify live relay and cockpit syntax
         shell: bash
         run: |
