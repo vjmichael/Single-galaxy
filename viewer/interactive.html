@@ -165,6 +165,25 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
  </div>
  <div id="assistStatus" class="help" role="status" aria-live="polite">Manual flight. Select an asteroid or your home outpost to engage travel assist.</div>
 </section>
+<section aria-labelledby="cyberTitle" style="border:1px solid #496c85;border-radius:10px;padding:12px;margin:10px 0">
+ <h2 id="cyberTitle">Cyber warfare · Ship modules</h2>
+ <div class="help">Physical intrusion emitter, passive firewall and isolated control lines. Effects temporarily change the ship's native module state—not your manual flight controls. Build ordinary colony modules before fitting equipment.</div>
+ <div id="cyberStatus" class="help" role="status" aria-live="polite">Waiting for committed ship electronics.</div>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <button type="button" id="cyberFitEmitter" disabled>Fit intrusion emitter</button>
+  <button type="button" id="cyberRemoveEmitter" disabled>Remove emitter</button>
+  <button type="button" id="cyberFitFirewall" disabled>Fit firewall</button>
+  <button type="button" id="cyberRemoveFirewall" disabled>Remove firewall</button>
+ </div>
+ <div class="help" style="margin-bottom:6px">Module power and isolation operate on fitted hardpoints. Changes take effect only after the simulation commits its next tick.</div>
+ <div id="cyberModuleList" role="group" aria-label="Native ship module controls"></div>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <label>Visible hostile ship <select id="cyberTarget"><option value="">No valid local target</option></select></label>
+  <button id="cyberAttack" type="button" class="primary" disabled>Attempt Confusion attack</button>
+ </div>
+ <div id="cyberFeedback" class="help" role="status" aria-live="polite">No attack queued. Real targets require an operating emitter and physical range.</div>
+ <div class="help">A refused attack may be out of range, blocked by module isolation, or within the equipment cooldown. NPC ships follow the same rules. All attack outcomes are decided by the native world.</div>
+</section>
 <section aria-labelledby="combatTitle" style="border:1px solid #7b4752;border-radius:10px;padding:12px;margin:10px 0">
  <h2 id="combatTitle">Ship combat · Training weapons</h2>
  <div class="help">An uncrewed practice drone starts nearby. Rotate with Q/E to aim; the native weapon checks a 12 km range, 90° forward cone, finite charges and a two-tick cooldown. No civilian or colony attacks in this first slice.</div>
@@ -337,6 +356,7 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
 <script src="cargo-return.js"></script>
 <script src="expedition-feedback.js"></script>
 <script src="colony.js"></script>
+<script src="cyber-controls.js"></script>
 <script src="interactive.js"></script>
 <script src="colony-shipping.js"></script>
 </body>
