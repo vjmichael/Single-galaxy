@@ -1120,6 +1120,64 @@
  });
  shipyardPanel.append(shipyardTitle,shipyardHint,yardNpc1,yardNpc2,
    yardStart,yardOrder,yardAssign,yardRefresh,yardReceipt,yardList);
+ // SHIP-01F: the customer's shipyard order is an immutable physical
+ // purchase, not a "free ship" action or a fabricated NPC workforce.
+ const contractTitle=document.createElement('h3');
+ contractTitle.textContent='Order a ship from another colony (SHIP-01F)';
+ const contractHelp=document.createElement('p');
+ contractHelp.textContent='Enter a REAL operational shipyard order ID at a different colony. The supplier accepts; your colony must bring six fabricated modules to the same physical berth. Supplier workers build for 12 world ticks. Return to claim the completed uncrewed hull, then commission it with YOUR named NPC crew, scanner module and provisions.';
+ const contractId=document.createElement('input');
+ contractId.type='number';contractId.min='1';contractId.step='1';
+ contractId.placeholder='Customer contract ID';
+ contractId.setAttribute('aria-label','Customer shipyard contract ID');
+ const contractYard=document.createElement('input');
+ contractYard.type='number';contractYard.min='1';contractYard.step='1';
+ contractYard.placeholder='Supplier yard ID';
+ contractYard.setAttribute('aria-label','Real supplier shipyard ID');
+ const contractBuild=document.createElement('input');
+ contractBuild.type='number';contractBuild.min='1';contractBuild.step='1';
+ contractBuild.placeholder='Requested hull build ID';
+ contractBuild.setAttribute('aria-label','Customer manufactured hull build order ID');
+ const contractState=document.createElement('output');
+ contractState.textContent='No verified shipyard purchase receipts yet.';
+ const contractList=document.createElement('div');
+ contractList.dataset.shipyardCustomerOrders='1';
+ const contractButtons=document.createElement('div');
+ const sendContract=(action,extra={})=>{
+   const order=Number(contractId.value);
+   if(!Number.isSafeInteger(order)||order<=0||order>=2**50)return;
+   window.GalaxyColonyCommand?.(action,{order,...extra});
+   contractState.textContent='Requested '+action+
+     '; awaiting the authoritative shipyard transaction.';
+ };
+ const contractPost=document.createElement('button');
+ contractPost.type='button';contractPost.textContent='Request hull from supplier';
+ contractPost.addEventListener('click',()=>{
+   const yard=Number(contractYard.value),build=Number(contractBuild.value);
+   if(!Number.isSafeInteger(yard)||yard<=0||yard>=2**50||
+      !Number.isSafeInteger(build)||build<=0||build>=2**50||
+      yard===build)return;
+   sendContract('colonyYardContractPost',{yard,build});
+ });
+ const contractAccept=document.createElement('button');
+ contractAccept.type='button';contractAccept.textContent='Accept customer order (supplier)';
+ contractAccept.addEventListener('click',()=>sendContract('colonyYardContractAccept'));
+ const contractFund=document.createElement('button');
+ contractFund.type='button';contractFund.textContent='Deliver 6 modules to yard';
+ contractFund.addEventListener('click',()=>sendContract('colonyYardContractFund'));
+ const contractDeliver=document.createElement('button');
+ contractDeliver.type='button';contractDeliver.textContent='Claim real finished hull';
+ contractDeliver.addEventListener('click',()=>sendContract('colonyYardContractDeliver'));
+ const contractRefresh=document.createElement('button');
+ contractRefresh.type='button';contractRefresh.textContent='Check ship purchase orders';
+ contractRefresh.addEventListener('click',()=>{
+   contractList.replaceChildren();
+   window.GalaxyColonyCommand?.('colonyYardContractStatus',{});
+ });
+ contractButtons.append(contractPost,contractAccept,contractFund,
+   contractDeliver,contractRefresh);
+ shipyardPanel.append(contractTitle,contractHelp,contractId,
+   contractYard,contractBuild,contractButtons,contractState,contractList);
  const freighterTitle=document.createElement('strong');
  freighterTitle.textContent='Manufacture first real freighter (SHIP-01B)';
  const freighterHint=document.createElement('p');
