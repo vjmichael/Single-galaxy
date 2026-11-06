@@ -61,6 +61,15 @@ int main(){
         CHECK(world.world().find(intruder)->fitting.stealth_baffle());
         CHECK(world.world().canonical_state().rfind("galaxy-kernel-v103|",0)==0);
         CHECK(world.local_colony_watch_contacts(defender,guard).empty());
+        // Even with a GUESSED original entity ID, a real emitter cannot
+        // attack a stealth target beyond the native sensor envelope.
+        CHECK(perform(world,8,defender,Action::Mine,2,8011,asteroid)==Outcome::Applied);
+        CHECK(perform(world,8,defender,Action::RefineOre,2,8012)==Outcome::Applied);
+        CHECK(perform(world,8,defender,Action::FabricateModule,1,8013)==Outcome::Applied);
+        CHECK(perform(world,8,defender,Action::ConfigureCyberModule,3,8014)==Outcome::Applied);
+        CHECK(perform(world,8,defender,Action::HackConfuse,0,8015,intruder)==
+              Outcome::OutOfRange);
+        CHECK(world.world().status_effects().records().empty());
         // Counter-ECM is physically constructed from the defender's own
         // mined/refined modules, not a free or omniscient sensor buff.
         CHECK(perform(world,8,defender,Action::Mine,2,8001,asteroid)==Outcome::Applied);
@@ -72,6 +81,12 @@ int main(){
         CHECK(strong.front().sensor_detail==ship_sensors::kHighResolutionClass);
         CHECK(strong.front().observed_description.find("SUPPORT_")!=std::string::npos);
         CHECK(!strong.front().authenticated_hail);
+        // Once strong sensors actually acquire the same stealth vessel,
+        // the native emission reaches its executor, but the target has no
+        // exposed hardpoints and the original status engine resists.
+        CHECK(perform(world,8,defender,Action::HackConfuse,0,8016,intruder)==
+              Outcome::AttackResisted);
+        CHECK(world.world().status_effects().records().empty());
         CHECK(perform(world,8,defender,Action::ConfigureCyberModule,-6,8005)==Outcome::Applied);
         CHECK(world.local_colony_watch_contacts(defender,guard).empty());
         // A regular powered survey scanner can penetrate some stealth, but
