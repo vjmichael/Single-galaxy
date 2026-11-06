@@ -9,6 +9,7 @@ on:
       - 'src/Simulation.cpp'
       - 'src/Persistence.cpp'
       - 'tests/SHIPSTATUS02_AuthoritativePersistenceTests.cpp'
+      - 'tests/SHIPSTATUS03_PhysicalHackingTests.cpp'
       - 'tests/SHIPSTATUS01_ConfusionTests.cpp'
       - 'CMakeLists.txt'
       - '.github/workflows/ship-status02-authoritative.yml'
@@ -37,5 +38,5 @@ jobs:
           $tc=Join-Path $env:VCPKG_INSTALLATION_ROOT 'scripts/buildsystems/vcpkg.cmake'
           cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$tc" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
           if ($LASTEXITCODE -ne 0) { throw 'native configuration failed' }
-      - run: cmake --build build --config Release --parallel 2 --target galaxy_ship_status02_authoritative_tests galaxy_ship_status01_confusion_tests galaxy_play10_exploration_tests
-      - run: ctest --test-dir build -C Release --output-on-failure -R "^galaxy_(ship_status(01_confusion|02_authoritative)|play10_exploration)$"
+      - run: cmake --build build --config Release --parallel 2 --target galaxy_ship_status03_physical_hacking_tests galaxy_ship_status02_authoritative_tests galaxy_ship_status01_confusion_tests galaxy_play10_exploration_tests
+      - run: ctest --test-dir build -C Release --output-on-failure -R "^galaxy_(ship_status(01_confusion|02_authoritative|03_physical_hacking)|play10_exploration)$"
