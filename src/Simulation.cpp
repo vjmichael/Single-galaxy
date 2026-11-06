@@ -9722,7 +9722,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             if(!result.discoveries_.emplace(std::make_pair(d.owner,d.site),d).second)
                 throw std::runtime_error("snapshot: duplicate discovery");
         } else if(f[0]=="shipstatus" && result.snapshot_version_>=100) {
-            require_fields(f,11);
+            if(f.size()<11)throw std::runtime_error("snapshot: truncated ship status");
             const auto count=u64(f[10]);
             if(count==0 || count>ship_status::Engine::kMaxAffectedModules)
                 throw std::runtime_error("snapshot: invalid status slot count");
