@@ -47,11 +47,16 @@ std::string digest(const TerritoryEvent& e){
 }
 bool in_range(const Entity& ship,std::int64_t x,std::int64_t y,
               std::int64_t radius){
-    // Avoid signed subtraction and squared-distance overflow.
-    const auto dx=static_cast<__int128>(ship.position.x)-x;
-    const auto dy=static_cast<__int128>(ship.position.y)-y;
-    const auto rr=static_cast<__int128>(radius)*radius;
-    return dx*dx+dy*dy<=rr;
+    // Unsigned subtraction avoids signed overflow on MSVC and GCC.
+    const auto ux=static_cast<std::uint64_t>(ship.position.x);
+    const auto uy=static_cast<std::uint64_t>(ship.position.y);
+    const auto cx=static_cast<std::uint64_t>(x);
+    const auto cy=static_cast<std::uint64_t>(y);
+    const auto dx=ship.position.x>=x?ux-cx:cx-ux;
+    const auto dy=ship.position.y>=y?uy-cy:cy-uy;
+    if(dx>static_cast<std::uint64_t>(radius) ||
+       dy>static_cast<std::uint64_t>(radius))return false;
+    return dx*dx+dy*dy<=static_cast<std::uint64_t>(radius*radius);
 }
 bool owner_of(const PersistentWorld& world,PlayerId owner,EntityId colony){
     const auto* e=world.world().find(colony);
@@ -243,7 +248,12 @@ bool TerritoryJournal::revoke_invitation(const PersistentWorld& w,PlayerId owner
     bool invited=false;
     for(const auto& e:history())if(e.colony==colony &&
         e.visitor_owner==visitor) {
-        if(e.kind==TerritoryEventKind::Invite)invited=true;
+        if(e.kind==TerritoryEventKind::Invite){
+            invited=true;
+            // An explicit later invitation can lift an expulsion; the
+            // original trespass remains in the historical ledger.
+            state.standing=npc_response::VisitorStanding::Unknown;
+        }
         if(e.kind==TerritoryEventKind::RevokeInvitation)invited=false;
     }
     if(!invited)return false;
