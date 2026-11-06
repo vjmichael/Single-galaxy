@@ -5,6 +5,7 @@
 // must supply the actual authenticated human-owner set/ NPC-controller registry
 // rather than assuming all foreign owners are NPCs.
 #include "galaxy/ShipHailJournal.hpp"
+#include "galaxy/ColonyDispositionCoordinator.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <exception>
@@ -102,6 +103,93 @@ inline Pulse supervise(PersistentWorld& world,ship_comms::Journal& comms,
                 out.last_request=call.request_id;
                 out.last_receipt=result.event_id;
             }else ++out.skipped;
+        }
+    }
+    return out;
+}
+
+struct InitiationPulse {
+    std::uint64_t tick=0;
+    std::uint32_t witnesses=0,submitted=0,refused=0;
+    EntityId caller_colony=0,called_ship=0;
+    std::uint64_t last_hail=0;
+};
+// A different NPC subsystem may initiate a first contact ONLY if the
+// original named witness and independently dated colony policy actually
+// choose RequestAid or territorial Warn. No all-seeing foreign targeting,
+// free police ships, immediate trespass verdict or unsolicited attacks.
+// The current one-human-owner desktop is an explicit scope restriction.
+inline InitiationPulse initiate(PersistentWorld& world,
+    ship_comms::Journal& comms,
+    const colony_disposition::TerritoryJournal& territory,
+    PlayerId sole_human_owner,std::uint64_t& nonce) {
+    InitiationPulse out{};
+    out.tick=world.world().tick();
+    if(!out.tick || out.tick%50 || !sole_human_owner ||
+       sole_human_owner==Simulation::kServerAuthority)
+        return out;
+    std::vector<EntityId> candidates;
+    for(const auto& [id,e]:world.world().entities())
+        if(e.type==EntityType::Ship && e.owner_id &&
+           e.owner_id!=sole_human_owner &&
+           world.world().colony_ship(id))
+            candidates.push_back(id);
+    for(const auto colony:candidates) {
+        if(out.witnesses>=2 || out.submitted>=1)break;
+        const auto* original=world.world().find(colony);
+        if(!original || original->type!=EntityType::Ship)continue;
+        const auto owner=original->owner_id;
+        colony_conflict::GovernanceEpoch gov{};
+        try{gov=world.colony_governance(colony);}
+        catch(const std::exception&){continue;}
+        if(!actual_on_duty_operator(
+             world.world(),colony,gov.leader_id) ||
+           (gov.agenda!=colony_conflict::Agenda::Cooperative &&
+            gov.agenda!=colony_conflict::Agenda::Isolationist))
+            continue;
+        const auto contacts=world.local_colony_watch_contacts(
+            colony,gov.leader_id);
+        for(const auto& contact:contacts) {
+            if(out.witnesses>=2 || out.submitted>=1)break;
+            if(contact.foreign_owner!=sole_human_owner ||
+               contact.source!=colony ||
+               contact.world_tick!=world.world().tick())continue;
+            const auto previous=comms.history();
+            if(std::any_of(previous.begin(),previous.end(),
+                [&](const ship_comms::Receipt& p){
+                    return p.caller_owner==owner &&
+                        p.recipient_ship==contact.foreign_ship &&
+                        (p.kind==ship_comms::Kind::Identify ||
+                         p.kind==ship_comms::Kind::Decline);
+                }))continue;
+            if(nonce>=std::uint64_t(
+                std::numeric_limits<sqlite3_int64>::max()-1024))
+                return out;
+            try {
+                const auto watched=world.record_colony_watch_contact(
+                    ++nonce,colony,gov.leader_id,contact.foreign_ship);
+                ++out.witnesses;
+                const auto choice=colony_disposition::assess(
+                    world,colony,watched.world_tick?
+                        nonce:std::uint64_t{0});
+                const auto posture=choice.decision.posture;
+                const bool lawful_hail=
+                    posture==colony_conflict::Posture::RequestAid ||
+                    (posture==colony_conflict::Posture::Warn &&
+                     territory.standing(world,colony,contact.foreign_ship)
+                       .in_claimed_region);
+                if(!lawful_hail){++out.refused;continue;}
+                const auto answer=comms.call(world,territory,
+                    owner,colony,contact.foreign_ship,++nonce);
+                if(answer.status==ship_comms::Status::CallSent){
+                    ++out.submitted;
+                    out.caller_colony=colony;
+                    out.called_ship=contact.foreign_ship;
+                    out.last_hail=answer.event_id;
+                }else ++out.refused;
+            }catch(const std::exception&){
+                ++out.refused;
+            }
         }
     }
     return out;
