@@ -62,13 +62,17 @@ std::uint64_t projection_hash(const ClientProjection& projection);
 // No network, no authorization or real-time scheduling is implemented by this adapter.
 class ServerViewBridge {
 public:
-    ServerViewBridge(const Simulation& world, std::uint64_t stream_id, PlayerId viewer_owner = 0);
+    ServerViewBridge(const Simulation& world, std::uint64_t stream_id, PlayerId viewer_owner = 0, EntityId focus_ship = 0);
+    // Presentation focus only: does not authorize flight, transfer custody or
+    // alter the home colony. Next committed tick emits a scoped view diff.
+    void set_focus_ship(EntityId focus) noexcept {focus_ship_=focus;}
     ViewFrame snapshot() const;
     ViewFrame after_committed_step(const Simulation& world);
     std::uint64_t sequence() const noexcept { return sequence_; }
 private:
     ClientProjection previous_;
     PlayerId viewer_owner_ = 0;
+    EntityId focus_ship_ = 0;
     std::uint64_t stream_id_ = 0;
     std::uint64_t sequence_ = 0;
     std::size_t command_cursor_ = 0;
