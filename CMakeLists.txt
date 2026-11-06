@@ -1809,3 +1809,15 @@ if(BUILD_TESTING)
     COMMAND galaxy_ship_status07e_hail_abuse_tests)
   set_tests_properties(galaxy_ship_status07e_hail_abuse PROPERTIES TIMEOUT 300)
 endif()
+
+# STATUS-COMMS-01 / STATUS-NPC-01: original governance, real finite
+# on-duty NPC operator, authenticated direct hail identity/decline/silence
+# and durable restart. This is native original-game, not a mock world.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status07f_npc_hail_tests
+    tests/SHIPSTATUS07F_NpcHailSupervisorTests.cpp)
+  target_link_libraries(galaxy_ship_status07f_npc_hail_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status07f_npc_hail
+    COMMAND galaxy_ship_status07f_npc_hail_tests)
+  set_tests_properties(galaxy_ship_status07f_npc_hail PROPERTIES TIMEOUT 300)
+endif()
