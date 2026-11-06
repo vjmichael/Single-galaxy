@@ -169,6 +169,8 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
  <h2 id="cyberTitle">Cyber warfare · Ship modules</h2>
  <div class="help">Physical intrusion emitter, passive firewall and isolated control lines. Effects temporarily change the ship's native module state—not your manual flight controls. Build ordinary colony modules before fitting equipment.</div>
  <div id="cyberStatus" class="help" role="status" aria-live="polite">Waiting for committed ship electronics.</div>
+ <div id="cyberDefense" class="help" role="status" aria-live="polite">Waiting for committed defense state.</div>
+ <div id="cyberAlert" class="help" role="status" aria-live="polite">No incoming cyber attack reported.</div>
  <div class="controls" style="padding:8px 0;gap:6px">
   <button type="button" id="cyberFitEmitter" disabled>Fit intrusion emitter</button>
   <button type="button" id="cyberRemoveEmitter" disabled>Remove emitter</button>
@@ -178,7 +180,7 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
  <div class="help" style="margin-bottom:6px">Module power and isolation operate on fitted hardpoints. Changes take effect only after the simulation commits its next tick.</div>
  <div id="cyberModuleList" role="group" aria-label="Native ship module controls"></div>
  <div class="controls" style="padding:8px 0;gap:6px">
-  <label>Visible hostile ship <select id="cyberTarget"><option value="">No valid local target</option></select></label>
+  <label>Observed foreign ship <select id="cyberTarget"><option value="">No valid local target</option></select></label>
   <button id="cyberAttack" type="button" class="primary" disabled>Attempt Confusion attack</button>
  </div>
  <div id="cyberFeedback" class="help" role="status" aria-live="polite">No attack queued. Real targets require an operating emitter and physical range.</div>
