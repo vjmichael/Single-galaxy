@@ -77,6 +77,9 @@ constexpr PlayerId owner=7;
 constexpr std::int64_t sensor_mm=Simulation::kLocalSurveyRangeMm;
 std::string pending;
 std::vector<std::string> commands;
+// UI-only correlation. The actual command/effect and recovery receipts are
+// owned by the canonical PersistentWorld; this map never grants authority.
+std::map<std::uint64_t,unsigned> awaiting_cyber_results;
 void poll_input(){
     char data[1024];
     for(int n=0;n<4;++n){
@@ -1949,6 +1952,12 @@ void apply(PersistentWorld& world,EntityId ship,FleetSelection& fleet,const std:
             c.action=Action::ConstructOutpost;c.amount=1;
         }else throw std::invalid_argument("bad command");
         if(!world.submit(c))throw std::invalid_argument("rejected submission");
+        const unsigned cyber_kind=
+            c.action==Action::ConfigureCyberModule?1:
+            (c.action==Action::SetHardpointPower ||
+             c.action==Action::SetCyberIsolation)?2:
+            c.action==Action::HackConfuse?3:0;
+        if(cyber_kind)awaiting_cyber_results.emplace(c.id,cyber_kind);
         // The host emits the result only after the next committed tick.
     }catch(const std::exception&){announce(world.world(),"ERROR|INVALID_INPUT");}
 }
@@ -2314,6 +2323,13 @@ int main(int argc,char** argv){
                 pending_probe_scans.erase(ev.command_id);
                 announce(world.world(),"RESULT|"+std::to_string(ev.command_id)+"|"+
                     to_string(ev.result)+"|"+std::to_string(ev.transferred));
+                if(const auto cyber=awaiting_cyber_results.find(ev.command_id);
+                   cyber!=awaiting_cyber_results.end()){
+                    announce(world.world(),"CYBER_RESULT|"+
+                        std::to_string(ev.command_id)+"|"+
+                        std::to_string(cyber->second)+"|"+to_string(ev.result));
+                    awaiting_cyber_results.erase(cyber);
+                }
             }
             const auto reports_now=report_count();
             if(world.world().discoveries().size()!=known_discoveries ||
