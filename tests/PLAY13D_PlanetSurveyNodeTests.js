@@ -583,3 +583,47 @@ test('SHIP-01F two-party shipyard order receipts never invent finished hulls',()
   assert.match(core,/deliver_shipyard_customer_order/);
   assert.match(core,/galaxy-kernel-v93/);
 });
+
+test('WORK-01A universal work board uses bounded native work receipts',()=>{
+  const shipyard=decode('COLONY|1|20|WORK_ITEM|3|91001|2|8|8|0|102');
+  assert.equal(shipyard.kind,3);
+  assert.equal(shipyard.phase,2);
+  assert.equal(shipyard.required,8);
+  const customer=decode('COLONY|1|20|WORK_ITEM|5|93001|1|6|12|94001|102');
+  assert.equal(customer.delegated,94001);
+  const committed=decode('COLONY|1|20|WORK_COMMITTED|94001|103');
+  assert.equal(committed.id,94001);
+  const awaiting=decode('COLONY|1|20|WORK_DIRECTIVE|94001|93001|0|4|0|31|32|20|20|0|103');
+  assert.equal(awaiting.blocked,4);
+  assert.equal(awaiting.firstNpc,31);
+  const finished=decode('COLONY|1|40|WORK_DIRECTIVE|94001|93001|2|0|0|31|32|20|20|40|126');
+  assert.equal(finished.status,2);
+  assert.equal(finished.resolved,40);
+  assert.equal(decode('COLONY|1|40|WORK_DONE|2').count,2);
+  assert.equal(decode('COLONY|1|40|WORK_DIRECTIVES_DONE|1').count,1);
+  assert.equal(decode('COLONY|1|40|ERROR|WORK_DENIED').error,'WORK_DENIED');
+  for(const bad of [
+    'COLONY|1|40|WORK_ITEM|0|93001|1|6|12|94001|102',
+    'COLONY|1|40|WORK_ITEM|5|93001|4|6|12|94001|102',
+    'COLONY|1|40|WORK_ITEM|5|93001|1|13|12|94001|102',
+    'COLONY|1|40|WORK_ITEM|5|93001|1|6|12|94001|0',
+    'COLONY|1|40|WORK_DIRECTIVE|94001|93001|2|4|0|31|32|20|20|40|126',
+    'COLONY|1|40|WORK_DIRECTIVE|94001|93001|0|4|94001|31|32|20|20|0|126',
+    'COLONY|1|40|WORK_DIRECTIVE|94001|93001|0|4|0|31|31|20|20|0|126',
+    'COLONY|1|40|WORK_DIRECTIVE|94001|93001|0|4|0|0|0|20|20|0|126',
+    'COLONY|1|40|WORK_DIRECTIVE|94001|93001|0|4|0|31|32|20|20|0|126|extra',
+    'COLONY|1|40|WORK_COMMITTED|0|126',
+    'COLONY|1|40|WORK_DONE|65'
+  ])assert.throws(()=>decode(bad),Error,bad);
+  const ui=fs.readFileSync(path.join(root,'viewer/colony.js'),'utf8');
+  const relay=fs.readFileSync(path.join(root,'live/interactive_relay.py'),'utf8');
+  const host=fs.readFileSync(path.join(root,'src/colony_live_host.cpp'),'utf8');
+  const sim=fs.readFileSync(path.join(root,'src/Simulation.cpp'),'utf8');
+  assert.match(ui,/NPC Work Coordinator/);
+  assert.match(ui,/colonyWorkDelegateShip/);
+  assert.match(relay,/WORK_DELEGATE_SHIP/);
+  assert.match(relay,/WORK_CANCEL/);
+  assert.match(host,/universal_work_board/);
+  assert.match(sim,/process_universal_work/);
+  assert.match(sim,/galaxy-kernel-v94/);
+});
