@@ -1776,3 +1776,14 @@ if(BUILD_TESTING)
     COMMAND galaxy_ship_status07_sensor_tests)
   set_tests_properties(galaxy_ship_status07_sensors PROPERTIES TIMEOUT 300)
 endif()
+
+# SHIP-STATUS-07C: scoped player graphical visibility, real native
+# hide/reacquire deltas and foreign owner/cargo non-disclosure.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status07_view_privacy_tests
+    tests/SHIPSTATUS07_ViewPrivacyTests.cpp)
+  target_link_libraries(galaxy_ship_status07_view_privacy_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status07_view_privacy
+    COMMAND galaxy_ship_status07_view_privacy_tests)
+  set_tests_properties(galaxy_ship_status07_view_privacy PROPERTIES TIMEOUT 300)
+endif()
