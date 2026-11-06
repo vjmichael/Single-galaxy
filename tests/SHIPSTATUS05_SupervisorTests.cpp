@@ -64,14 +64,14 @@ int main(){
         CHECK(w.world().total_material_kg()==material);
         // At tick 4 the supervisor skips. Tick 5 triggers exactly one
         // original contact/strategic-intent/queued cyber command.
-        CHECK(npc_cyber::supervise(w,7,nonce).queued==0);
+        CHECK(npc_cyber::supervise(w,7).queued==0);
         w.step();
-        const auto first=npc_cyber::supervise(w,7,nonce);
+        const auto first=npc_cyber::supervise(w,7);
         CHECK(first.tick==5 && first.queued==1 &&
               first.last_attacking_ship==predator);
         CHECK(first.last_target_ship!=0 && first.last_command>0);
         CHECK(w.world().npc_cyber_operators().count(first.last_command)==1);
-        CHECK(npc_cyber::supervise(w,7,nonce).queued==0);
+        CHECK(npc_cyber::supervise(w,7).queued==0);
         CHECK(w.world().npc_cyber_operators().size()==1);
         pending=w.world().canonical_state();
         CHECK(pending.rfind("galaxy-kernel-v102|",0)==0);
