@@ -6021,20 +6021,20 @@ bool Simulation::commission_shipyard_freighter(PlayerId owner,
     // never conscripted for commissioning.
     EntityId commissioned_from=job->second.source_ship;
     bool customer_build=false;
-    if(job->second.owner!=owner){
-        for(const auto& [id,contract]:shipyard_customer_orders_){
-            (void)id;
-            if(contract.build_order==build_id &&
-               contract.stage==ShipyardCustomerStage::Delivered &&
-               contract.customer_owner==owner &&
-               contract.delivered_ship==job->second.launched_ship){
-                commissioned_from=contract.customer_ship;
-                customer_build=true;
-                break;
-            }
-        }
-        if(!customer_build)return false;
+    for(const auto& [id,contract]:shipyard_customer_orders_){
+        (void)id;
+        if(contract.build_order!=build_id)continue;
+        // A customer purchase requires the transfer receipt even when the
+        // customer and supplier happen to share the same player owner.
+        if(contract.stage!=ShipyardCustomerStage::Delivered ||
+           contract.customer_owner!=owner ||
+           contract.delivered_ship!=job->second.launched_ship)
+            return false;
+        commissioned_from=contract.customer_ship;
+        customer_build=true;
+        break;
     }
+    if(!customer_build && job->second.owner!=owner)return false;
     const auto source_id=commissioned_from;
     const auto hull_id=job->second.launched_ship;
     const auto source=entities_.find(source_id),hull=entities_.find(hull_id);
