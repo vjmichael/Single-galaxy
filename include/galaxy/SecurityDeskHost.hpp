@@ -175,7 +175,10 @@ void snapshot(const PersistentWorld& world,
             std::to_string(penalties.law_review_eligible?1:0));
         emit("SECURITY_CALL_COMPLAINTS_RESET");
         std::size_t reported=0;
-        for(const auto& item:communications->history()){
+        const auto committed=communications->history();
+        // Show latest eligible complaints, not only the oldest 16.
+        for(auto it=committed.rbegin();it!=committed.rend();++it){
+            const auto& item=*it;
             if(item.kind!=ship_comms::Kind::Abuse ||
                item.recipient_ship!=piloted ||
                !item.law_review_eligible)continue;
