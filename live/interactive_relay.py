@@ -5,6 +5,7 @@ Browser POSTs choose a small allowlisted action, never player identity, ship ID,
 command ID, target ID, tick, or SQL. Not an untrusted multiplayer authority.
 """
 import argparse
+from collections import deque
 import base64
 import hmac
 import hashlib
@@ -102,7 +103,8 @@ class SharedRuntime:
                 any(type(p)!=int or not 1<=p<=9007199254740991
                     for p in self.human_owners)):
             raise ValueError('Invalid trusted human-owner roster')
-        self.private_colony_events=[]
+        self.private_colony_events=deque(maxlen=4096)
+        self.private_event_sequence=0
         env=os.environ.copy()
         if authenticated:
             # Account roster travels only to the trusted native host process,
@@ -126,16 +128,16 @@ class SharedRuntime:
                 # Host-only owner-addressed frame. Never forward this wrapper
                 # on the ordinary global colony broadcast or SGVIEW stream.
                 m=re.fullmatch(r'PRIVATE\|([1-9][0-9]{0,15})\|(COLONY\|1\|[0-9]+\|SECURITY_[A-Z_]+(?:\|[A-Za-z0-9_-]+)*)',line)
-                if m and len(line)<=260:
+                if m and len(line)<=1400:
                     target=int(m.group(1))
                     if target in self.human_owners and target!=7:
                         with self.cv:
-                            if len(self.private_colony_events)<4096:
-                                encoded=base64.b64encode(
-                                    m.group(2).encode('ascii')).decode('ascii')
-                                self.private_colony_events.append(
-                                    (target,encoded))
-                                self.cv.notify_all()
+                            encoded=base64.b64encode(
+                                m.group(2).encode('ascii')).decode('ascii')
+                            self.private_event_sequence+=1
+                            self.private_colony_events.append(
+                                (self.private_event_sequence,target,encoded))
+                            self.cv.notify_all()
                 continue
             if line.startswith('COLONY|1|'):
                 if len(line)<=180 and re.fullmatch(r'[a-zA-Z0-9_|-]+',line):
@@ -330,7 +332,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         # Reconnection may replay *this owner's* earlier private receipts
         # from the current bounded process ring; the durable native refresh
         # reconstructs pending calls from SQLite even after host restart.
-        pos=0
+        cursor=0
         try:
             while True:
                 current=self._principal()
@@ -339,10 +341,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     self.wfile.flush();return
                 with rt.cv:
                     rt.cv.wait_for(
-                        lambda:pos<len(rt.private_colony_events) or rt.finished,
+                        lambda:cursor<rt.private_event_sequence or rt.finished,
                         timeout=3)
-                    entries=rt.private_colony_events[pos:]
-                    pos+=len(entries)
+                    # A bounded process ring never blocks later calls when
+                    # older streams disconnect; gap recovery comes from the
+                    # authoritative SECURITY_REFRESH on reconnect.
+                    latest=rt.private_event_sequence
+                    oldest=latest-len(rt.private_colony_events)+1
+                    entries=[(owner_id,data) for seq,owner_id,data
+                        in rt.private_colony_events
+                        if seq>=max(cursor+1,oldest)]
+                    cursor=latest
                     done=rt.finished
                     error=rt.error
                 sent=False
@@ -351,7 +360,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     self.wfile.write(('event: colony\ndata: '+data+'\n\n').encode('ascii'))
                     sent=True
                 if sent:self.wfile.flush()
-                if done and pos>=len(rt.private_colony_events):
+                if done and cursor>=rt.private_event_sequence:
                     if error:
                         self.wfile.write(('event: failed\ndata: '+str(error).replace(
                             '\n',' ')[:150]+'\n\n').encode('ascii'))
