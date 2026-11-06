@@ -132,10 +132,10 @@ int main(){
         std::cout<<"PASS WORK-01B: five typed capability schemas, stable "
             "stage priority and aging, prerequisite planning, real named-NPC "
             "reservation, cancel release, custody denial, foreign source "
-            "denial, and no invented executor or inventory\\n";
+            "denial, and no invented executor or inventory\n";
         return 0;
     }catch(const std::exception& e){
-        std::cerr<<"FAIL WORK-01B: "<<e.what()<<'\\n';
+        std::cerr<<"FAIL WORK-01B: "<<e.what()<<'\n';
         return 1;
     }
 }
