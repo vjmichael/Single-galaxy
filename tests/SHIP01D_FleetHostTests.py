@@ -31,6 +31,9 @@ def main(host: pathlib.Path):
             "AUTH|7|FLEET_SELECT|2",  # real asteroid, NOT a player hull
             "AUTH|8|FLEET_SELECT|1",  # untrusted foreign account
             "AUTH|7|FLEET_STATUS",
+            "AUTH|7|YARD_CONTRACT_STATUS",
+            "AUTH|7|YARD_CONTRACT_POST|93001|91001|92001",
+            "AUTH|8|YARD_CONTRACT_ACCEPT|93001",
             "AUTH|7|THRUST|1|0",
             "AUTH|7|YAW|15",
             # Cannot assign founding ship or an asteroid as a freighter.
@@ -49,6 +52,10 @@ def main(host: pathlib.Path):
             raise AssertionError("Non-ship fleet selection was not denied")
         if "|ERROR|UNAUTHORIZED_PRINCIPAL" not in initial:
             raise AssertionError("Foreign account was not denied")
+        if "|YARD_CONTRACT_DONE|0" not in initial:
+            raise AssertionError("Native host did not publish empty customer shipyard board")
+        if "|ERROR|YARD_CONTRACT_DENIED" not in initial:
+            raise AssertionError("Native host did not reject unconstructed supplier yard")
         if not re.search(r"\|FLEET_PILOT_ITEM\|1\|",initial):
             raise AssertionError("Real piloted hull telemetry was not published")
         if len(re.findall(r"\|ERROR\|FLEET_WORK_DENIED",initial))<2:
