@@ -1,5 +1,25 @@
 # Single-Galaxy — Current engineering work ledger and acceptance gates
 
+> **2026-11-06 user-directed work order supersedes the older table below.** The nine stacked SHIP-STATUS PR review threads have been **consolidated into one active draft PR #86** (target: DISPOSITION-03B/C PR #77). PRs #78–#85 are **closed as superseded, not merged or verified**. All their commits remain ancestors of #86. No change was merged into the default branch. Older sections below are historical snapshots and must not be treated as the current to-do order.
+>
+> **Current order:** 8 (GH PR consolidation) → **acceptance batch A = 1+2+3** (one Windows/Linux native + real Linux browser source-built CI matrix job) → **5, 6, 7, 9, 10** (independent dev waves; implementation may continue while runner jobs queue). **Task 4 / Windows installed game and Windows browser acceptance is intentionally DEFERRED until native 3D assets and a true 3D game presentation are in place.** Windows native compiler and non-installed C++ tests remain applicable.
+
+## User-directed active work order and gates (supersedes historical priorities)
+
+| Order | Task / owner-facing outcome | Current evidence |
+|---|---|---|
+| **8 — DONE (review consolidation)** | One canonical review PR and CI thread: [#86](https://github.com/vjmichael/Single-galaxy/pull/86) based directly on PR #77's territorial branch. Closed old #78–#85 review threads without losing their committed code or implying mainline acceptance. | All eight superseded threads closed; #86 open draft. **Mainline not merged**. |
+| **A = 1+2+3 — WIRED, EXECUTION OPEN** | One unified `native_and_live_game` Windows/Linux GitHub Actions **matrix job** covers native CMake/CTest across 01–07E; authentic physical two-owner cyber/hail SQLite and restart; login/relay plus Linux Chromium against the source-built game. | `.github/workflows/ship-status02-authoritative.yml` renamed internally to **SHIP-STATUS consolidated native + live-game acceptance** with one matrix and concurrency cancellation. Windows runs host/test binaries only, no browser/installer. Real native runner results **not yet passed**. |
+| **4 — DEFERRED BY USER** | Windows installed/packaged desktop game, true native Windows graphical acceptance and installer lifecycle. | Do **not** build or run a Windows browser-as-game acceptance substitute; reactivate **only after native 3D assets and real 3D presentation** are ready. |
+| **5 — NEXT IMPLEMENTATION** | Live two-sided authenticated player–player, player–NPC and NPC–player calls, opt-in identity and reliable delivery/reconnection; no fabricated NPC authority. | Core journal and local security desk coded; single-home-owner relay, so multiplayer/NPC active response are not completed. |
+| **6 — OPEN** | Lawful colony security complaints and agency capacity using original political/territorial authority, verified evidence, independent review and appropriate nonviolent response. | Review-eligible complaint evidence coded. No actual law-enforcement institutions, lawful verdict or police deployment connected. |
+| **7 — OPEN** | Adversarial privacy, hacked-client, forged identity, anonymous track, report, replay and bounded persistent ledger/counter test suite. | Narrow native test sources and JS tests exist; end-to-end security acceptance not complete. |
+| **9 — OPEN** | Named-NPC proportionate hailing, refusal, harassment reporting and actual resource-backed supervisor tasks using the unified existing NPC flight/work system. | No autonomous full two-sided NPC hailing gameplay yet. |
+| **10 — NOW ACTIVE (SEPARATE GAMEPLAY MILESTONE)** | Develop physically executable ship-to-ship weapon combat with finite fitted modules/ammo, actual damage and salvage/wreck/custody under original Simulation; NPC use must reuse existing combat/nav and lawful authority. | Current PLAY-08 training combat and hacking/status effects are **not equivalent to complete real ship-to-ship fighting**. Treat this as separate implementation rather than postponing indefinitely; 3D assets/Windows installer are **not** prerequisites for native simulation code or tests. |
+
+**Acceptance constraints:** no false pass from queued CI; never make GH CI a blocker to independent code changes; no second simulation or free NPCs. Real game-space attack consequences must be authorized through original custody, conflict and damage rules. No silent identity inference from sensor matches; no complaint equals criminal conviction.
+
+
 **Recorded 2026-11-06. Project:** the **original Single-Galaxy game**, not the separate EVEmu audit. **Source of truth:** the real repository branches, native C++/SQLite authoritative world, authenticated host, executable tests and exact commit-specific results. This ledger tracks the active *SHIP-STATUS / cyber / hailing / security* stack and its direct dependencies. It is not a claim that the full one-galaxy game is finished.
 
 ## Where development currently stands
