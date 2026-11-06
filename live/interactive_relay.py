@@ -308,6 +308,61 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return answer
 
 
+    def _security_only_events(self,principal):
+        # Secondary human account: never subscribe to SGVIEW, surveying,
+        # native host stdout, or player 7's ordinary COLONY events. Each
+        # private message carries a host-verified owner envelope, removed
+        # before dispatching to this exact authenticated session.
+        rt=self.server.runtime
+        who=principal['playerId']
+        if who==7 or who not in rt.human_owners:
+            self._json(403,{'error':'Wrong private stream principal'});return
+        try:
+            rt.send('SECURITY_REFRESH',principal=who)
+        except (RuntimeError,PermissionError,BrokenPipeError):
+            self._json(409,{'error':'Original security host unavailable'});return
+        self.send_response(200)
+        self.send_header('Content-Type','text/event-stream; charset=utf-8')
+        self.send_header('Cache-Control','no-store')
+        self.send_header('X-Content-Type-Options','nosniff')
+        self.send_header('Connection','close')
+        self.end_headers()
+        # Reconnection may replay *this owner's* earlier private receipts
+        # from the current bounded process ring; the durable native refresh
+        # reconstructs pending calls from SQLite even after host restart.
+        pos=0
+        try:
+            while True:
+                current=self._principal()
+                if not current or current['session_id']!=principal['session_id']:
+                    self.wfile.write(b'event: failed\\ndata: Session expired\\n\\n')
+                    self.wfile.flush();return
+                with rt.cv:
+                    rt.cv.wait_for(
+                        lambda:pos<len(rt.private_colony_events) or rt.finished,
+                        timeout=3)
+                    entries=rt.private_colony_events[pos:]
+                    pos+=len(entries)
+                    done=rt.finished
+                    error=rt.error
+                sent=False
+                for recipient,data in entries:
+                    if recipient!=who:continue
+                    self.wfile.write(('event: colony\\ndata: '+data+'\\n\\n').encode('ascii'))
+                    sent=True
+                if sent:self.wfile.flush()
+                if done and pos>=len(rt.private_colony_events):
+                    if error:
+                        self.wfile.write(('event: failed\\ndata: '+str(error).replace(
+                            '\\n',' ')[:150]+'\\n\\n').encode('ascii'))
+                    else:self.wfile.write(b'event: complete\\ndata: finished\\n\\n')
+                    self.wfile.flush();return
+                if not sent:
+                    self.wfile.write(b': keepalive\\n\\n');self.wfile.flush()
+        except (BrokenPipeError,ConnectionResetError,TimeoutError,OSError):
+            pass
+        finally:self.close_connection=True
+
     def do_GET(self):
         if not self._host_ok():
             self._json(403,{'error':'Local host required'});return
@@ -325,8 +380,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self._json(503,{'ok':False,'error':'Shipment authority unavailable'})
             return
         if url.path=='/session':
-            if self.server.accounts and (not principal or principal['playerId']!=7):
-                self._json(403,{'error':'Colony owner session required'});return
+            if self.server.accounts and (not principal or
+                principal['playerId'] not in self.server.runtime.human_owners):
+                self._json(403,{'error':'Authenticated owner session required'});return
+            if self.server.accounts and principal['playerId']!=7:
+                self._json(200,{'token':principal['csrf'],'qa_mode':False,
+                    'colony_mode':False,'security_only':True,
+                    'tick_ms':self.server.tick_ms,
+                    'max_ticks':self.server.max_ticks,
+                    'commands':['colonySecurityRefresh','colonySecurityCall',
+                                'colonySecurityCallReply']});return
             self._json(200,{'token':principal['csrf'] if self.server.accounts else self.server.runtime.token,'qa_mode':self.server.qa_mode,'colony_mode':self.server.colony_mode,'tick_ms':self.server.tick_ms,
                 'max_ticks':self.server.max_ticks,'commands':(['thrust','yaw','colonyFireTraining','colonyFireShip','colonySalvageWreck','colonyDockBase','colonyUndockBase','colonyUnloadBase','colonyLoadBase','colonyScan','colonyConfigureScanner','colonyCyberFit','colonyCyberPower','colonyCyberIsolate','colonyCyberAttack','colonySecurityRefresh','colonySecurityClaim','colonySecurityWarn','colonySecurityHail','colonySecurityReply','colonySecurityPatrol','colonySecurityCall','colonySecurityCallReply','colonyProbeDeploy','colonyProbeScan','colonyProbeRecover','colonySignatureScan','colonyCelestialScan','colonyPlanetSurvey','colonyPlanetCrew','colonyPlanetStatus','colonyPlanetPolicy','colonyPlanetShuttle','colonyLocalWorkPost','colonyLocalWorkStatus','colonyLocalWorkCancel','colonyFreightLoad','colonyFreightDispatch','colonyFreightDeliver','colonyFreightStatus','colonyLocalWorkPostToColony','colonyShipyardBuild','colonyShipyardAssign','colonyShipyardStatus','colonyFreighterBuild','colonyFreighterCommission','colonyFreighterStatus','colonyFreighterPilotStatus','colonyFreighterThrust','colonyFreighterYaw','colonyFreighterTravel','colonyFleetStatus','colonyFleetSelect','colonyFleetWorkPost','colonyYardContractPost','colonyYardContractAccept','colonyYardContractFund','colonyYardContractDeliver','colonyYardContractStatus','colonyWorkDelegateShip','colonyWorkCancel','colonyWorkStatus','colonyPlanetBuild','colonyPlanetEquip','colonyPlanetSupply','colonyPlanetGrow','colonyPlanetExtract','colonyPlanetRetrieve','colonyPlanetSupport','colonyEnvironmentScan','colonyProbeFocus','colonyProbeCancel','colonyDroneLaunch','colonyMine','colonyRefine','colonyFabricate','colonyBuild','colonyMineTarget','colonyProcess','colonyFabricateMaterial','colonyPlant','colonyHarvest','colonyRecycleWater','colonyRecycleCompost','colonyOxygen','colonyLifeWater','colonyFarmBuild','colonyFarmStaff','colonyFarmStock','colonyHabBuild','colonyHabResidents','colonyHabStock','colonyUtilityBuild','colonyUtilityRepair','colonyUtilitySpares','colonyUtilityStaff','colonyUtilityAuto','colonyCommunityBuild','colonyCommunityStaff','colonyCommunityStock','colonyClinicBuild','colonyClinicStaff','colonyClinicStock','colonyReclaimerBuild','colonyWaterworksBuild','colonyWaterworksFeed','colonyPolicySet','colonyPolicyStaff','colonySafetyAssess','colonySafetyPreflight'] if self.server.colony_mode else ['thrust','mine','stop','undock','dock','unload','load','sell','travelA','travelB','travelGate','travelHop','jump','jumpHop','directional','probeDeploy','probeScan','probeRecover','surveyArchive','surveyHistory','surveyPublish','planRoute'])});return
         if url.path in STATIC:
@@ -334,8 +397,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._send(200,file.read_bytes(),MIME[file.suffix]);return
         if url.path!='/events':
             self._json(404,{'error':'Not found'});return
-        if self.server.accounts and (not principal or principal['playerId']!=7):
-            self._json(403,{'error':'Colony owner session required'});return
+        if self.server.accounts and (not principal or
+                principal['playerId'] not in self.server.runtime.human_owners):
+            self._json(403,{'error':'Authenticated owner session required'});return
+        if self.server.accounts and principal['playerId']!=7:
+            self._security_only_events(principal);return
         self.send_response(200)
         self.send_header('Content-Type','text/event-stream; charset=utf-8')
         self.send_header('Cache-Control','no-store')
@@ -386,8 +452,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.path!='/command':
             self._json(404,{'error':'Not found'});return
         principal=self._principal()
-        if self.server.accounts and (not principal or principal['playerId']!=7):
-            self._json(403,{'error':'Colony owner session required'});return
+        if self.server.accounts and (not principal or
+                principal['playerId'] not in self.server.runtime.human_owners):
+            self._json(403,{'error':'Authenticated owner session required'});return
         origin='http://127.0.0.1:'+str(self.server.server_port)
         if self.headers.get('Origin')!=origin or self.headers.get('Content-Type')!='application/json':
             self._json(403,{'error':'Same-origin JSON requests only'});return
@@ -399,6 +466,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if not isinstance(doc,dict) or not isinstance(doc.get('token'),str) or not hmac.compare_digest(doc['token'],principal['csrf'] if self.server.accounts else self.server.runtime.token):
                 self._json(403,{'error':'Invalid session token'});return
             action=doc.get('action')
+            if self.server.accounts and principal['playerId']!=7 and action not in (
+                    'colonySecurityRefresh','colonySecurityCall',
+                    'colonySecurityCallReply'):
+                self._json(403,{'error':'Security-only owner cannot control the world'});return
             if self.server.colony_mode:
                 if action not in ('thrust','yaw','colonyFireTraining','colonyFireShip','colonyDockBase','colonyUndockBase','colonyUnloadBase','colonyLoadBase','colonyScan','colonyMine','colonyRefine','colonyFabricate','colonyBuild','colonyMineTarget','colonyProcess','colonyFabricateMaterial','colonyPlant','colonyHarvest','colonyRecycleWater','colonyRecycleCompost','colonyOxygen','colonyLifeWater','colonyFarmBuild','colonyFarmStaff','colonyFarmStock','colonyHabBuild','colonyHabResidents','colonyHabStock','colonyUtilityBuild','colonyUtilityRepair','colonyUtilitySpares','colonyUtilityStaff','colonyUtilityAuto','colonyCommunityBuild','colonyCommunityStaff','colonyCommunityStock','colonyClinicBuild','colonyClinicStaff','colonyClinicStock','colonyReclaimerBuild','colonyWaterworksBuild','colonyWaterworksFeed','colonyPolicySet','colonyPolicyStaff','colonySafetyAssess','colonySafetyPreflight','colonyPlanetSurvey','colonyPlanetCrew','colonyPlanetStatus','colonyPlanetPolicy','colonyPlanetShuttle','colonyLocalWorkPost','colonyLocalWorkStatus','colonyLocalWorkCancel','colonyFreightLoad','colonyFreightDispatch','colonyFreightDeliver','colonyFreightStatus','colonyLocalWorkPostToColony','colonyShipyardBuild','colonyShipyardAssign','colonyShipyardStatus','colonyFreighterBuild','colonyFreighterCommission','colonyFreighterStatus','colonyFreighterPilotStatus','colonyFreighterThrust','colonyFreighterYaw','colonyFreighterTravel','colonyFleetStatus','colonyFleetSelect','colonyFleetWorkPost','colonyYardContractPost','colonyYardContractAccept','colonyYardContractFund','colonyYardContractDeliver','colonyYardContractStatus','colonyWorkDelegateShip','colonyWorkCancel','colonyWorkStatus','colonyPlanetBuild','colonyPlanetEquip','colonyPlanetSupply','colonyPlanetGrow','colonyPlanetExtract','colonyPlanetRetrieve','colonyPlanetSupport','colonyCelestialScan','colonyEnvironmentScan','colonyProbeDeploy','colonyProbeScan','colonyProbeRecover','colonySignatureScan','colonyProbeFocus','colonyProbeCancel','colonyDroneLaunch','colonyFrameTravel','colonyCyberFit','colonyCyberPower','colonyCyberIsolate','colonyCyberAttack','colonySecurityRefresh','colonySecurityClaim','colonySecurityWarn','colonySecurityHail','colonySecurityReply','colonySecurityPatrol','colonySecurityCall','colonySecurityCallReply'):
                     self._json(403,{'error':'Unavailable in colony-first mode'});return
@@ -1018,7 +1089,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._json(202,{'status':'queued_not_committed'})
         except (ValueError,UnicodeDecodeError,json.JSONDecodeError) as exc:
             self._json(400,{'error':str(exc)[:120]})
-        except (BrokenPipeError,RuntimeError) as exc:
+        except (BrokenPipeError,RuntimeError,PermissionError) as exc:
             self._json(409,{'error':str(exc)[:120]})
 
 class Server(http.server.ThreadingHTTPServer):
