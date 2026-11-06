@@ -129,10 +129,12 @@ int main(){
         const auto weak=security_matches(world,cases,8,victim,defender_guard);
         CHECK(weak.size()==1 && weak.front().case_id==case_id &&
               weak.front().sighted_ship==attacker);
-        // The victim's scanner is temporarily confused OFF by this hack.
-        // A weak watch may record a matching description but cannot
-        // mobilize a security patrol from a suspicious silhouette alone.
-        CHECK(weak.front().response==CyberSecurityLevel::RecordOnly);
+        // The native Confusion engine decides whether the fitted survey
+        // scanner is currently effective. Neither ordinary nor survey
+        // capability can silently authorize an interceptor patrol.
+        const auto expected=world.world().hardpoint_effective_on(victim,0)?
+            CyberSecurityLevel::WatchForHail:CyberSecurityLevel::RecordOnly;
+        CHECK(weak.front().response==expected);
         CHECK(!weak.front().identified_culprit &&
               !weak.front().crime_finding &&
               !weak.front().arrest_authorized &&
