@@ -115,6 +115,50 @@
         throw Error('Invalid shuttle operation receipt');
       return {...e,id,latitude,longitude,operation,generation};
     }
+    if(t==='WORK_COMMITTED'){
+      if(v.length!==6)throw Error('Malformed work delegation receipt');
+      const id=numeric(v[4],Number.MAX_SAFE_INTEGER),
+        generation=numeric(v[5],Number.MAX_SAFE_INTEGER);
+      if(!id||id>=2**50||!generation)throw Error('Invalid work commit');
+      return {...e,id,generation};
+    }
+    if(t==='WORK_ITEM'){
+      if(v.length!==11)throw Error('Malformed native universal work entry');
+      const kind=numeric(v[4],5),source=numeric(v[5],Number.MAX_SAFE_INTEGER),
+        phase=numeric(v[6],3),progress=numeric(v[7],Number.MAX_SAFE_INTEGER),
+        required=numeric(v[8],Number.MAX_SAFE_INTEGER),
+        delegated=numeric(v[9],Number.MAX_SAFE_INTEGER),
+        generation=numeric(v[10],Number.MAX_SAFE_INTEGER);
+      if(kind<1||!source||source>=2**50||!required||
+         progress>required||delegated>=2**50||!generation)
+        throw Error('Invalid native work progress');
+      return {...e,kind,source,phase,progress,required,delegated,generation};
+    }
+    if(t==='WORK_DONE'||t==='WORK_DIRECTIVES_DONE'){
+      if(v.length!==5)throw Error('Malformed native work row count');
+      return {...e,count:numeric(v[4],64)};
+    }
+    if(t==='WORK_DIRECTIVE'){
+      if(v.length!==15)throw Error('Malformed durable NPC delegation');
+      const id=numeric(v[4],Number.MAX_SAFE_INTEGER),
+        source=numeric(v[5],Number.MAX_SAFE_INTEGER),
+        status=numeric(v[6],2),blocked=numeric(v[7],6),
+        dependency=numeric(v[8],Number.MAX_SAFE_INTEGER),
+        firstNpc=numeric(v[9],Number.MAX_SAFE_INTEGER),
+        secondNpc=numeric(v[10],Number.MAX_SAFE_INTEGER),
+        provisionsKg=numeric(v[11],1000),
+        posted=numeric(v[12],Number.MAX_SAFE_INTEGER),
+        resolved=numeric(v[13],Number.MAX_SAFE_INTEGER),
+        generation=numeric(v[14],Number.MAX_SAFE_INTEGER);
+      if(!id||id>=2**50||!source||source>=2**50||
+         dependency>=id||Boolean(firstNpc)!==Boolean(secondNpc)||
+         (firstNpc&&firstNpc===secondNpc)||
+         (firstNpc&&provisionsKg<10)||(!firstNpc&&provisionsKg)||
+         (status!==0&&blocked)||!generation)
+        throw Error('Invalid delegation status and custody');
+      return {...e,id,source,status,blocked,dependency,
+        firstNpc,secondNpc,provisionsKg,posted,resolved,generation};
+    }
     if(t==='YARD_CONTRACT_COMMITTED'){
       if(v.length!==6)throw Error('Malformed customer shipyard transition');
       const id=numeric(v[4],Number.MAX_SAFE_INTEGER),
@@ -795,7 +839,7 @@
       if(v.length!==7||!/^\d+$/.test(v[4])||!/^[A-Z_]+$/.test(v[5]))throw Error('Bad action result');
       e.id=numeric(v[4],Number.MAX_SAFE_INTEGER);e.outcome=v[5];e.transferred=numeric(v[6]);
     }else if(t==='ERROR'){
-      if(v.length!==5||!['INVALID_INPUT','INVALID_SAFETY_ORDER','UNAUTHORIZED_PRINCIPAL','FRAME_TRAVEL_DENIED','FRAME_TRANSIT_BLOCKED','FLEET_SELECTION_DENIED','FLEET_WORK_DENIED','YARD_CONTRACT_DENIED'].includes(v[4]))throw Error('Bad rejected input');e.error=v[4];
+      if(v.length!==5||!['INVALID_INPUT','INVALID_SAFETY_ORDER','UNAUTHORIZED_PRINCIPAL','FRAME_TRAVEL_DENIED','FRAME_TRANSIT_BLOCKED','FLEET_SELECTION_DENIED','FLEET_WORK_DENIED','YARD_CONTRACT_DENIED','WORK_DENIED'].includes(v[4]))throw Error('Bad rejected input');e.error=v[4];
     }else throw Error('Unknown colony event');
     return e;
   }
@@ -1178,6 +1222,84 @@
    contractDeliver,contractRefresh);
  shipyardPanel.append(contractTitle,contractHelp,contractId,
    contractYard,contractBuild,contractButtons,contractState,contractList);
+ // WORK-01A is the shared NPC work coordinator, not a replacement
+ // shipyard scheduler. It projects real existing delivery, freight, yard,
+ // and manufacturing jobs and delegates *only* explicitly permitted steps.
+ const universalTitle=document.createElement('h3');
+ universalTitle.textContent='NPC Work Coordinator (WORK-01A)';
+ const universalInfo=document.createElement('p');
+ universalInfo.textContent='One read-only work board for deliveries, freight, yard construction, manufacturing and ship purchase orders. Delegating a customer ship order permits funding and physical hull collection when the existing native gates allow it. Named NPC commissioning is optional and must be explicitly specified.';
+ const universalId=document.createElement('input');
+ universalId.type='number';universalId.min='1';universalId.step='1';
+ universalId.placeholder='New delegation ID';
+ universalId.setAttribute('aria-label','Universal NPC work delegation ID');
+ const universalDependency=document.createElement('input');
+ universalDependency.type='number';universalDependency.min='0';
+ universalDependency.step='1';universalDependency.value='0';
+ universalDependency.placeholder='Earlier delegation dependency (0 for none)';
+ universalDependency.setAttribute('aria-label','Dependent earlier work directive ID');
+ const universalNpcFirst=document.createElement('input');
+ universalNpcFirst.type='number';universalNpcFirst.min='0';
+ universalNpcFirst.step='1';universalNpcFirst.value='0';
+ universalNpcFirst.placeholder='Optional existing buyer NPC 1';
+ universalNpcFirst.setAttribute('aria-label','Authorized buyer commissioning NPC one');
+ const universalNpcSecond=document.createElement('input');
+ universalNpcSecond.type='number';universalNpcSecond.min='0';
+ universalNpcSecond.step='1';universalNpcSecond.value='0';
+ universalNpcSecond.placeholder='Optional existing buyer NPC 2';
+ universalNpcSecond.setAttribute('aria-label','Authorized buyer commissioning NPC two');
+ const universalKg=document.createElement('input');
+ universalKg.type='number';universalKg.min='0';universalKg.max='1000';
+ universalKg.step='1';universalKg.value='0';
+ universalKg.placeholder='Optional commission provisions kg (0 for none)';
+ universalKg.setAttribute('aria-label','Authorize finite food water oxygen kilograms per resource');
+ const universalStatus=document.createElement('output');
+ universalStatus.textContent='Universal work board not yet inspected.';
+ const universalList=document.createElement('div');
+ universalList.dataset.universalWorkBoard='1';
+ const universalDirectives=document.createElement('div');
+ universalDirectives.dataset.universalWorkDirectives='1';
+ const validId=x=>Number.isSafeInteger(x)&&x>0&&x<2**50;
+ const delegateButton=document.createElement('button');
+ delegateButton.type='button';delegateButton.textContent='Delegate this ship purchase to NPCs';
+ delegateButton.addEventListener('click',()=>{
+   const order=Number(universalId.value),contract=Number(contractId.value),
+     firstNpc=Number(universalNpcFirst.value),
+     secondNpc=Number(universalNpcSecond.value),
+     provisionsKg=Number(universalKg.value),
+     dependency=Number(universalDependency.value);
+   if(!validId(order)||!validId(contract)||
+      !Number.isSafeInteger(firstNpc)||firstNpc<0||
+      !Number.isSafeInteger(secondNpc)||secondNpc<0||
+      Boolean(firstNpc)!==Boolean(secondNpc)||
+      (firstNpc&&firstNpc===secondNpc)||
+      !Number.isSafeInteger(dependency)||dependency<0||dependency>=order||
+      !Number.isSafeInteger(provisionsKg)||provisionsKg<0||provisionsKg>1000||
+      (firstNpc&&provisionsKg<10)||(!firstNpc&&provisionsKg))return;
+   window.GalaxyColonyCommand?.('colonyWorkDelegateShip',
+     {order,contract,firstNpc,secondNpc,provisionsKg,dependency});
+   universalStatus.textContent='Delegation requested. The native world owns the job and approvals.';
+ });
+ const universalCancel=document.createElement('button');
+ universalCancel.type='button';universalCancel.textContent='Revoke future NPC actions';
+ universalCancel.addEventListener('click',()=>{
+   const order=Number(universalId.value);
+   if(!validId(order))return;
+   window.GalaxyColonyCommand?.('colonyWorkCancel',{order});
+   universalStatus.textContent='Revocation requested; existing material transfers and completed construction remain physical.';
+ });
+ const universalRefresh=document.createElement('button');
+ universalRefresh.type='button';universalRefresh.textContent='Inspect all colony work';
+ universalRefresh.addEventListener('click',()=>{
+   universalList.replaceChildren();universalDirectives.replaceChildren();
+   window.GalaxyColonyCommand?.('colonyWorkStatus',{});
+ });
+ const universalActions=document.createElement('div');
+ universalActions.append(delegateButton,universalCancel,universalRefresh);
+ shipyardPanel.append(universalTitle,universalInfo,universalId,
+   universalDependency,universalNpcFirst,universalNpcSecond,universalKg,
+   universalActions,universalStatus,universalList,universalDirectives);
+
  const freighterTitle=document.createElement('strong');
  freighterTitle.textContent='Manufacture first real freighter (SHIP-01B)';
  const freighterHint=document.createElement('p');
@@ -1297,6 +1419,8 @@
      fleetRequested=0;window.GalaxyActivePilotedShipId=null;
      contractList.replaceChildren();
      contractState.textContent='Awaiting actual shipyard purchase orders.';
+     universalList.replaceChildren();universalDirectives.replaceChildren();
+     universalStatus.textContent='Awaiting native universal work projections.';
      window.GalaxyActivePilotedCelestialBody=null;
      fleetSelector.replaceChildren(new Option('Awaiting native fleet roster',''));
      fleetSelector.disabled=true;fleetSelectButton.disabled=true;
@@ -1315,6 +1439,54 @@
      q('signatureFeedback').textContent='Search for coarse anomaly signatures.';
      q('droneTarget').replaceChildren(new Option('Scan nearby rocks first',''));q('droneLaunch').disabled=true;deployedProbes.clear();probeCarried=0;probeLauncher=false;probeChoice='';q('probeTarget').replaceChildren(new Option('No probe deployed',''));q('probeLaunch').disabled=true;q('probeSurvey').disabled=true;q('probeRetrieve').disabled=true;q('probeInventory').textContent='Awaiting native probe stock.';q('probeFeedback').textContent='Native equipment required.';q('fittingCapacity').textContent='Awaiting actual ship fittings.';q('proximityStatus').textContent='Proximity safety sensor awaiting contacts.';q('fitScanner').disabled=true;q('unfitScanner').disabled=true;discoveries.clear();q('explorationResults').replaceChildren();q('explorationSummary').textContent='No mapped discoveries yet. Execute a native local scan.';salvageWrecks.clear();q('salvageTarget').replaceChildren(new Option('No recoverable wreck reported',''));q('salvageRecover').disabled=true;q('salvageFeedback').textContent='Waiting for native wreck inventory.';combatTargets.clear();q('combatHull').textContent='—';q('combatCharges').textContent='—';q('combatFire').disabled=true;q('combatFeedback').textContent='Awaiting native combat telemetry.';window.GalaxySelectedRockId=null;window.GalaxyShipHeading=null;window.GalaxyColonyOutpostIds.clear();openingStatus=null;openingScanned=false;refreshOpening();window.GalaxyColonyHomeShipId=null;q('colonySafetyAssess').disabled=true;q('colonySafetyPreflight').disabled=true;policyAudits.clear();geology.clear();small.clear();stocks.clear();outposts.clear();farms.clear();habitats.clear();utilities.clear();communities.clear();clinics.clear();reclaimers.clear();waterworks.clear();log.length=0;q('colonyEvents').textContent='Awaiting colony telemetry…';q('expeditionOutcome').textContent='Awaiting an actual native result';},
    accept(raw){const e=window.GalaxyColonyContract.decode(raw);
+     if(e.type==='WORK_COMMITTED'){
+       universalId.value=String(e.id);
+       universalStatus.textContent='Work delegation #'+e.id+
+         ' committed to native SQLite generation '+e.generation+
+         '. Existing material and NPC checks still apply.';
+       window.GalaxyColonyCommand?.('colonyWorkStatus',{});
+     }
+     if(e.type==='WORK_ITEM'){
+       let row=[...universalList.children].find(el=>
+         el.dataset.workKey===e.kind+':'+e.source);
+       if(!row){
+         row=document.createElement('div');
+         row.dataset.workKey=e.kind+':'+e.source;
+         universalList.appendChild(row);
+       }
+       const kinds=['','Local supply delivery','Intercolony freight',
+         'Shipyard construction','Freighter fabrication','Customer ship order'];
+       const phases=['Queued','Executing','Completed','Cancelled'];
+       row.textContent=kinds[e.kind]+' #'+e.source+' · '+phases[e.phase]+
+         ' · progress '+e.progress+'/'+e.required+
+         (e.delegated?' · NPC delegation #'+e.delegated:'');
+     }
+     if(e.type==='WORK_DIRECTIVE'){
+       let row=[...universalDirectives.children].find(el=>
+         el.dataset.delegateId===String(e.id));
+       if(!row){
+         row=document.createElement('div');
+         row.dataset.delegateId=String(e.id);
+         universalDirectives.appendChild(row);
+       }
+       // WorkBlock codes: None 0, Dependency 1, SupplierApproval 2,
+       // PhysicalFunding 3, NativeConstruction 4,
+       // PhysicalDelivery 5, NamedCrewAndSupplies 6.
+       const blockText=['Ready','Waiting for earlier work',
+         'Waiting for supplier approval','Need 6 real modules and a berth',
+         'Supplier NPCs constructing hull','Waiting for hull pickup',
+         'Need named crew, scanner and finite provisions'];
+       row.textContent='Delegation #'+e.id+' · customer ship contract #'+
+         e.source+' · '+
+         (['Active','Revoked','Fulfilled'][e.status]||'Unknown')+
+         (e.status===0?' · '+blockText[e.blocked]:'')+
+         (e.dependency?' · after work #'+e.dependency:'')+
+         (e.firstNpc?' · authorized NPCs #'+e.firstNpc+
+           ' and #'+e.secondNpc:' · pickup only')+
+         (e.status!==0?' · resolved tick '+e.resolved:'');
+     }
+     if(e.type==='ERROR'&&e.error==='WORK_DENIED')
+       universalStatus.textContent='NPC work delegation rejected by native authority. Check customer contract, earlier dependencies, existing crew and unique IDs.';
      if(e.type==='YARD_CONTRACT_COMMITTED'){
        contractId.value=String(e.id);
        contractState.textContent='Physical customer contract #'+e.id+

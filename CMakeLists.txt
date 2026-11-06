@@ -1425,6 +1425,17 @@ if(BUILD_TESTING)
     COMMAND galaxy_ship01b2_commission_freighter_tests)
 endif()
 
+# WORK-01A native v94 universal work ledger + actual NPC fulfillment adapter.
+# Uses original galaxy_kernel, existing transport, shipyard, and NPC records.
+if(BUILD_TESTING)
+  add_executable(galaxy_work01a_universal_fulfillment_tests
+    tests/WORK01A_UniversalFulfillmentTests.cpp)
+  target_link_libraries(galaxy_work01a_universal_fulfillment_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_work01a_universal_fulfillment
+    COMMAND galaxy_work01a_universal_fulfillment_tests)
+  set_tests_properties(galaxy_work01a_universal_fulfillment PROPERTIES TIMEOUT 180)
+endif()
+
 # SHIP-01F: two separate owners placing, accepting, physically funding
 # six real fabricated modules, building and transferring one hull, followed
 # by purchaser named-NPC commissioning and SQLite crash recovery.
