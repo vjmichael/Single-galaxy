@@ -22,6 +22,7 @@ function cameraBounds(state){
  if(cameraFollow&&ship)bounds=api.viewport(ship,cameraZoom,cameraSpan);
  else {const b=api.fit(entities);bounds=api.viewport(
    {x:(b.left+b.right)/2,y:(b.top+b.bottom)/2},cameraZoom,b.right-b.left);}
+ updateCameraLabel();
 }
 function updateCameraLabel(){
  const status=el('cameraStatus');
