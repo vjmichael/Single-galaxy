@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <exception>
 #include <limits>
+#include <stdexcept>
 #include <vector>
 
 namespace galaxy::npc_hail {
