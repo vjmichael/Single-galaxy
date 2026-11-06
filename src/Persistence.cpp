@@ -11099,6 +11099,7 @@ bool PersistentWorld::submit(const Command& command, FailPoint fail) {
        command.action==Action::RequestUndock ||
        command.action==Action::RequestJump ||
        command.action==Action::FireTrainingWeapon ||
+       command.action==Action::SetHardpointPower ||
        command.action==Action::SalvageWreck){
         const auto person=world_.player_people_.find(command.issuer);
         if(person!=world_.player_people_.end() &&
@@ -11112,6 +11113,7 @@ bool PersistentWorld::submit(const Command& command, FailPoint fail) {
     if(command.action==Action::Thrust ||
        command.action==Action::RequestDock ||
        command.action==Action::RequestUndock ||
+       command.action==Action::SetHardpointPower ||
        command.action==Action::RequestJump){
         for(const auto& [id,flight]:world_.npc_flight_orders_){
             (void)id;
