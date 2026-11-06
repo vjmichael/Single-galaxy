@@ -6090,8 +6090,13 @@ void Simulation::process_universal_work(){
     // WORK-01B: plan from ORIGINAL canonical source/worker records at each
     // committed tick; never store a competing queue or reserve invented NPCs.
     // The original native effect gates below remain the sole authorities.
+    const work::NativeCapacityContext capacity{
+        &shipyard_constructions_,&freighter_build_orders_,
+        [this](std::uint64_t worker){
+            return npc_available_for_duty(worker);
+        }};
     const auto schedule=work::plan(
-        work_directives_,shipyard_customer_orders_,npcs_,tick_);
+        work_directives_,shipyard_customer_orders_,npcs_,tick_,capacity);
     for(const auto& candidate:schedule){
         auto active=work_directives_.find(candidate.id);
         if(active==work_directives_.end() ||
@@ -6113,8 +6118,17 @@ void Simulation::process_universal_work(){
         // commissioning directive this tick. No future work reserves
         // anyone indefinitely, and all original final validations remain.
         if(candidate.gate==work::Gate::WorkerReserved ||
-           candidate.gate==work::Gate::WorkerUnavailable){
+           candidate.gate==work::Gate::WorkerUnavailable ||
+           candidate.gate==work::Gate::WorkerOnNativeJob){
             block(WorkBlock::NamedCrewAndSupplies);
+            continue;
+        }
+        if(candidate.gate==work::Gate::YardUnavailable ||
+           candidate.gate==work::Gate::AssemblySlipBusy ||
+           candidate.gate==work::Gate::BuilderUnavailable){
+            // Existing 94 snapshot wait code: no speculative debit.
+            // Original supplier yard remains the only build authority.
+            block(WorkBlock::PhysicalFunding);
             continue;
         }
         if(candidate.gate==work::Gate::Dependency){
