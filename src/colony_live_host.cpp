@@ -522,21 +522,19 @@ void apply(PersistentWorld& world,EntityId ship,FleetSelection& fleet,const std:
             if(v[0]=="FLEET_SELECT"){
                 if(v.size()!=2)throw std::invalid_argument("bad fleet selection");
                 const auto requested=integer(v[1]);
-                if(requested<=0 ||
-                   !fleet.select(world.world(),EntityId(requested)))
-                    throw std::invalid_argument("ship is not pilot-ready");
-                // A freight carrier already assigned a durable NPC mission
-                // is temporarily reserved. Piloting must not seize it away
-                // from the work board or break its custody receipts.
+                if(requested<=0)
+                    throw std::invalid_argument("invalid selected ship");
+                // Reject a busy carrier BEFORE mutating the session cockpit;
+                // a denied click cannot silently switch away from the ship
+                // the player was already flying.
                 for(const auto& [id,leg]:world.world().intercolony_freight()) {
                     (void)id;
-                    if(leg.carrier_ship==fleet.piloted() &&
-                       leg.stage!=IntercolonyFreightStage::Delivered) {
-                        // Restore home cockpit only, no simulation mutation.
-                        (void)fleet.select(world.world(),ship);
+                    if(leg.carrier_ship==EntityId(requested) &&
+                       leg.stage!=IntercolonyFreightStage::Delivered)
                         throw std::invalid_argument("active freight carrier reserved");
-                    }
                 }
+                if(!fleet.select(world.world(),EntityId(requested)))
+                    throw std::invalid_argument("ship is not pilot-ready");
             }else if(v.size()!=1)
                 throw std::invalid_argument("bad fleet status request");
             announce(world.world(),"FLEET_RESET");
@@ -582,17 +580,9 @@ void apply(PersistentWorld& world,EntityId ship,FleetSelection& fleet,const std:
                 throw std::invalid_argument("invalid fleet work fields");
             const auto carrier=EntityId(carrier_id);
             const auto receiver=EntityId(receiver_id);
-            if(carrier==ship || carrier==receiver ||
-               carrier==fleet.piloted() ||
-               !fleet.is_ready(world.world(),carrier))
-                throw std::invalid_argument("carrier unavailable or actively piloted");
-            const auto vessel=world.world().find(carrier);
-            const auto receiving=world.world().find(receiver);
-            if(!vessel || !vessel->manufactured_order_id ||
-               !receiving || receiving->owner_id!=principal ||
-               !world.world().colony_ship(receiver) ||
-               !world.world().life_support(receiver))
-                throw std::invalid_argument("no real receiver or manufactured hull");
+            if(!fleet_freight_eligible(world.world(),fleet,
+                    principal,carrier,receiver))
+                throw std::invalid_argument("carrier busy, player-piloted or invalid");
             ShuttleCargo cargo{};
             if(v[7]=="WATER")cargo=ShuttleCargo::Water;
             else if(v[7]=="FOOD")cargo=ShuttleCargo::Food;
