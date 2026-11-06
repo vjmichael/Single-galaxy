@@ -115,6 +115,41 @@
         throw Error('Invalid shuttle operation receipt');
       return {...e,id,latitude,longitude,operation,generation};
     }
+    if(t==='YARD_CONTRACT_COMMITTED'){
+      if(v.length!==6)throw Error('Malformed customer shipyard transition');
+      const id=numeric(v[4],Number.MAX_SAFE_INTEGER),
+        generation=numeric(v[5],Number.MAX_SAFE_INTEGER);
+      if(!id||!generation)throw Error('Invalid shipyard transaction receipt');
+      return {...e,id,generation};
+    }
+    if(t==='YARD_CONTRACT_ITEM'){
+      if(v.length!==17)throw Error('Malformed physical customer ship order');
+      const id=numeric(v[4],Number.MAX_SAFE_INTEGER),
+        yard=numeric(v[5],Number.MAX_SAFE_INTEGER),
+        build=numeric(v[6],Number.MAX_SAFE_INTEGER),
+        buyer=numeric(v[7],Number.MAX_SAFE_INTEGER),
+        supplier=numeric(v[8],Number.MAX_SAFE_INTEGER),
+        buyerOwner=numeric(v[9],Number.MAX_SAFE_INTEGER),
+        supplierOwner=numeric(v[10],Number.MAX_SAFE_INTEGER),
+        stage=numeric(v[11],3),progress=numeric(v[12],12),
+        required=numeric(v[13],12),
+        hull=numeric(v[14],Number.MAX_SAFE_INTEGER),
+        delivered=numeric(v[15],Number.MAX_SAFE_INTEGER),
+        generation=numeric(v[16],Number.MAX_SAFE_INTEGER);
+      if(!id||!yard||!build||!buyer||!supplier||
+         buyer===supplier||!buyerOwner||!supplierOwner||
+         required!==12||!generation||
+         (stage<2&&(progress||hull||delivered))||
+         (stage>=2&&stage<3&&delivered)||
+         (stage===3&&(!delivered||delivered!==hull||progress!==12)) ||
+         progress>required)throw Error('Invalid ship contract custody');
+      return {...e,id,yard,build,buyer,supplier,buyerOwner,
+        supplierOwner,stage,progress,required,hull,delivered,generation};
+    }
+    if(t==='YARD_CONTRACT_DONE'){
+      if(v.length!==5)throw Error('Malformed customer shipyard count');
+      return {...e,count:numeric(v[4],64)};
+    }
     if(t==='FLEET_WORK_ASSIGNED'){
       if(v.length!==8)throw Error('Malformed fleet job assignment');
       const order=numeric(v[4],Number.MAX_SAFE_INTEGER),
@@ -760,7 +795,7 @@
       if(v.length!==7||!/^\d+$/.test(v[4])||!/^[A-Z_]+$/.test(v[5]))throw Error('Bad action result');
       e.id=numeric(v[4],Number.MAX_SAFE_INTEGER);e.outcome=v[5];e.transferred=numeric(v[6]);
     }else if(t==='ERROR'){
-      if(v.length!==5||!['INVALID_INPUT','INVALID_SAFETY_ORDER','UNAUTHORIZED_PRINCIPAL','FRAME_TRAVEL_DENIED','FRAME_TRANSIT_BLOCKED','FLEET_SELECTION_DENIED','FLEET_WORK_DENIED'].includes(v[4]))throw Error('Bad rejected input');e.error=v[4];
+      if(v.length!==5||!['INVALID_INPUT','INVALID_SAFETY_ORDER','UNAUTHORIZED_PRINCIPAL','FRAME_TRAVEL_DENIED','FRAME_TRANSIT_BLOCKED','FLEET_SELECTION_DENIED','FLEET_WORK_DENIED','YARD_CONTRACT_DENIED'].includes(v[4]))throw Error('Bad rejected input');e.error=v[4];
     }else throw Error('Unknown colony event');
     return e;
   }
