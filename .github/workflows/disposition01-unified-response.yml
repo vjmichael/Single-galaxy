@@ -1,0 +1,35 @@
+name: DISPOSITION-01 unified colony response
+on:
+  pull_request:
+    paths:
+      - 'include/galaxy/ColonyDispositionCoordinator.hpp'
+      - 'tests/DISPOSITION01_UnifiedResponseTests.cpp'
+      - 'CMakeLists.txt'
+      - '.github/workflows/disposition01-unified-response.yml'
+  workflow_dispatch:
+jobs:
+  native:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & (Join-Path $env:VCPKG_INSTALLATION_ROOT 'vcpkg.exe') install sqlite3:x64-windows --clean-after-build
+          if ($LASTEXITCODE -ne 0) { throw 'SQLite SDK installation failed' }
+      - if: runner.os == 'Linux'
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tc=Join-Path $env:VCPKG_INSTALLATION_ROOT 'scripts/buildsystems/vcpkg.cmake'
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$tc" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'CMake native configuration failed' }
+      - run: cmake --build build --parallel 2 --config Release --target galaxy_disposition01_unified_response_tests galaxy_colony_conflict01b2_diplomacy_epoch_tests galaxy_colony_conflict01b3_governance_tests galaxy_npcresp01_dispatch_tests
+      - run: ctest --test-dir build -C Release --output-on-failure -R "^galaxy_(disposition01_unified_response|colony_conflict01b2_diplomacy_epoch|colony_conflict01b3_governance|npcresp01_dispatch)$"

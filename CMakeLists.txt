@@ -1624,3 +1624,13 @@ if(BUILD_TESTING)
   add_test(NAME galaxy_npcresp03_threat_policy
     COMMAND galaxy_npcresp03_threat_policy_tests)
 endif()
+
+# DISPOSITION-01: original governance/GRSM -> witnessed patrol, no combat.
+if(BUILD_TESTING)
+  add_executable(galaxy_disposition01_unified_response_tests
+    tests/DISPOSITION01_UnifiedResponseTests.cpp)
+  target_link_libraries(galaxy_disposition01_unified_response_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_disposition01_unified_response
+    COMMAND galaxy_disposition01_unified_response_tests)
+  set_tests_properties(galaxy_disposition01_unified_response PROPERTIES TIMEOUT 300)
+endif()
