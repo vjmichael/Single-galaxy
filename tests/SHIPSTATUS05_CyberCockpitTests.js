@@ -27,6 +27,9 @@ assert.equal(cyber.parse('COLONY|1|5|CYBER_MODULE|17|1|0|1|0|0').hardware,0);
 assert.equal(cyber.parse('COLONY|1|5|CYBER_TARGETS_RESET|17').ship,17);
 assert.equal(cyber.parse('COLONY|1|5|CYBER_TARGET|17|22|7000').distance,7000);
 assert.equal(cyber.parse('COLONY|1|6|CYBER_RESULT|991|3|ATTACK_RESISTED').result,'ATTACK_RESISTED');
+assert.deepEqual(cyber.parse('COLONY|1|6|CYBER_DEFENSE|17|4|88|2'),
+ {tick:6,type:'CYBER_DEFENSE',ship:17,remaining:4,source:88,exposed:2});
+assert.equal(cyber.parse('COLONY|1|6|CYBER_INCOMING|17|88|992|APPLIED').result,'APPLIED');
 for(const forged of [
  'COLONY|1|x|CYBER_STATUS|17|1|0|0|1',
  'COLONY|1|5|CYBER_STATUS|17|2|0|0|1',
@@ -36,7 +39,13 @@ for(const forged of [
  'COLONY|1|5|CYBER_TARGET|17|22|9000',
  'COLONY|1|5|CYBER_RESULT|0|3|APPLIED',
  'COLONY|1|5|CYBER_RESULT|991|3|<script>',
- 'COLONY|1|5|CYBER_STATUS|17|1|0|0|1|extra'
+ 'COLONY|1|5|CYBER_STATUS|17|1|0|0|1|extra',
+ 'COLONY|1|6|CYBER_DEFENSE|17|0|88|2',
+ 'COLONY|1|6|CYBER_DEFENSE|17|4|0|2',
+ 'COLONY|1|6|CYBER_DEFENSE|17|10|88|2',
+ 'COLONY|1|6|CYBER_INCOMING|17|17|990|APPLIED',
+ 'COLONY|1|6|CYBER_INCOMING|17|88|0|APPLIED',
+ 'COLONY|1|6|CYBER_INCOMING|17|88|990|<script>'
  ])assert.throws(()=>cyber.parse(forged),undefined,forged);
 console.log('PASS SHIP-STATUS-05: strictly parsed committed cyber cockpit telemetry, effective state, and target gates');
 // Exercise the actual DOM wiring, not only the parser: disabled until a
@@ -95,6 +104,21 @@ telemetry('COLONY|1|6|CYBER_TARGET|17|22|700');
 select.value='22';select.listeners.change();
 assert.equal(attack.disabled,false,'fresh telemetry restores ready state');
 assert.equal(emitted.length,1,'no forged combat result is generated');
+telemetry('COLONY|1|6|CYBER_DEFENSE|17|4|88|2');
+assert.match(nodes.get('cyberDefense').textContent,/CONFUSION ACTIVE/);
+assert.match(nodes.get('cyberDefense').textContent,/4 tick/);
+telemetry('COLONY|1|6|CYBER_INCOMING|17|88|992|APPLIED');
+assert.match(nodes.get('cyberAlert').textContent,/disrupted your modules/);
+telemetry('COLONY|1|6|CYBER_INCOMING|17|88|993|ATTACK_RESISTED');
+assert.match(nodes.get('cyberAlert').textContent,/ATTACK RESISTED/);
+telemetry('COLONY|1|7|CYBER_STATUS|17|1|0|0|1');
+assert.match(nodes.get('cyberDefense').textContent,/No active Confusion/);
+telemetry('COLONY|1|7|CYBER_DEFENSE|17|0|0|0');
+assert.match(nodes.get('cyberDefense').textContent,/No active Confusion/);
+const html=require('node:fs').readFileSync(
+ require('node:path').join(__dirname,'../viewer/interactive.html'),'utf8');
+for(const id of ['cyberDefense','cyberAlert','cyberModuleList','cyberAttack'])
+ assert.match(html,new RegExp('id="'+id+'"'));
 delete global.document;delete global.window;delete global.Option;
 console.log('PASS SHIP-STATUS-05: committed-only DOM controls, isolation feedback, stale telemetry rejection');
 
