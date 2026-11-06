@@ -1674,3 +1674,13 @@ if(BUILD_TESTING)
     COMMAND galaxy_disposition03c_travel_clearance_tests)
   set_tests_properties(galaxy_disposition03c_travel_clearance PROPERTIES TIMEOUT 300)
 endif()
+
+# SHIP-STATUS-01: deterministic temporary module-control confusion prototype.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status01_confusion_tests
+    tests/SHIPSTATUS01_ConfusionTests.cpp)
+  target_link_libraries(galaxy_ship_status01_confusion_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status01_confusion
+    COMMAND galaxy_ship_status01_confusion_tests)
+  set_tests_properties(galaxy_ship_status01_confusion PROPERTIES TIMEOUT 300)
+endif()
