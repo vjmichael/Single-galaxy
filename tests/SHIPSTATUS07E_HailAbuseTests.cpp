@@ -53,7 +53,7 @@ int main(){
         const auto first=calls.call(world,land,7,a,b,1005);
         CHECK(first.status==Status::Penalized);
         CHECK(first.penalty_points==1 &&
-              first.cooldown_until==world.world().tick()+2 &&
+              first.cooldown_until==world.world().tick()+200 &&
               !first.law_review_eligible);
         CHECK(calls.history().size()==3);
         CHECK(calls.call(world,land,7,a,b,1006).status==Status::Suppressed);
