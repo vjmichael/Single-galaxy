@@ -4,9 +4,19 @@
 
 In the released game's intended opening, one player colony ship with finite NPC crew enters an unexplored fictional galaxy. No stations, gates, populated settlements, free factories or markets are preplaced. The player and later NPC communities develop infrastructure and history through physical work, supplies, travel and decisions.
 
+## Current active development and unfinished acceptance (2026-11-06)
+
+**Working branch is not merged into the default branch.** The latest active feature chain is **nine stacked draft PRs, [#78–#86](docs/engineering/ACTIVE_WORK_AND_ACCEPTANCE_2026-11-06.md)**, covering physical cyber status effects, NPC patrol/hacking, stealth and anonymous incident evidence, the authenticated colony security desk, direct ship hails and repeat-hail penalties. It is a code development checkpoint **not a playable release with demonstrated native/installed-game acceptance**. The historical test snapshots documented below remain true of their own prior versions, not of this unmerged feature chain.
+
+**Binding hailing rule:** a recipient may remain anonymous, identify itself or decline. After a real authenticated identity disclosure, repeated unsolicited hails are blocked; **the first ten abuse offenses per caller–recipient pair have separate immutable receipts, but nuisance points keep accumulating afterward through a compact SQLite counter**, summed across the caller's different recipients. Three or more points make an incident eligible for separate lawful security review—not an automatic conviction, arrest or generated police. See [the detailed rule](docs/engineering/SHIPSTATUS07E_HAIL_ABUSE_ESCALATION_20261106.md).
+
+**Current verification:** native Windows/Linux SHIP-STATUS C++ and integration gates are pending runner execution; the latest checked exact-code CI run had queued jobs with no executed steps. JavaScript parser/DOM shim suites passed, but real authenticated two-owner gameplay, Windows packaging, installed-game launch/restart and uninstall **have not yet been accepted**. The current workflow runs headless Chromium against a **source-built Linux host**, not a packaged Windows installation.
+
+**Start with the maintained [active engineering work ledger and prioritized outstanding task list](docs/engineering/ACTIVE_WORK_AND_ACCEPTANCE_2026-11-06.md)** rather than treating the earlier B7/GRSM milestone descriptions as the latest sprint status.
+
 ## Current prototype status
 
-The current source baseline is **GRSM-04b.A** (SQLite v15 verified victim/observer roles), descended from the **B7.0n** archive dated 2026-10-31. The archived evidence records a Linux pass of 54/54 CTest native/integration suites and 84/84 Node tests. The opt-in individual workforce model persists up to 24 original NPC crew identities and farm work/mentoring; a separate statistical cohort prototype demonstrates bounded large-number accounting. **Those are not a live trillion-NPC universe.** The game remains a bounded 2D colony/space prototype, not a continuous 3D multiplayer galaxy. Native Windows and full interactive Chromium playthrough remain open gates.
+The **historical source baseline described in this section** is **GRSM-04b.A** (SQLite v15 verified victim/observer roles), descended from the **B7.0n** archive dated 2026-10-31. The archived evidence records a Linux pass of 54/54 CTest native/integration suites and 84/84 Node tests. The opt-in individual workforce model persists up to 24 original NPC crew identities and farm work/mentoring; a separate statistical cohort prototype demonstrates bounded large-number accounting. **Those are not a live trillion-NPC universe.** The game remains a bounded 2D colony/space prototype, not a continuous 3D multiplayer galaxy. Native Windows and full interactive Chromium playthrough remain open gates.
 
 
 ## Authenticated local freight dashboard (DEMOG-05q6e5b8j)
