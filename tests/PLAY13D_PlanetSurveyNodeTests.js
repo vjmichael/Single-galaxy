@@ -544,3 +544,42 @@ test('SHIP-01E fleet freight assignment reuses canonical work board without phan
   assert.match(relay,/FLEET_WORK_POST/);
   assert.match(policy,/fleet_freight_eligible/);
 });
+
+test('SHIP-01F two-party shipyard order receipts never invent finished hulls',()=>{
+  const requested=decode('COLONY|1|101|YARD_CONTRACT_ITEM|93001|91001|92001|2|1|8|7|0|0|12|0|0|105');
+  assert.equal(requested.id,93001);
+  assert.equal(requested.buyerOwner,8);
+  assert.equal(requested.supplierOwner,7);
+  assert.equal(requested.hull,0);
+  const funded=decode('COLONY|1|112|YARD_CONTRACT_ITEM|93001|91001|92001|2|1|8|7|2|6|12|0|0|124');
+  assert.equal(funded.stage,2);
+  assert.equal(funded.progress,6);
+  const built=decode('COLONY|1|118|YARD_CONTRACT_ITEM|93001|91001|92001|2|1|8|7|2|12|12|6|0|132');
+  assert.equal(built.hull,6);
+  const delivered=decode('COLONY|1|119|YARD_CONTRACT_ITEM|93001|91001|92001|2|1|8|7|3|12|12|6|6|133');
+  assert.equal(delivered.delivered,built.hull);
+  const committed=decode('COLONY|1|120|YARD_CONTRACT_COMMITTED|93001|134');
+  assert.equal(committed.id,93001);
+  assert.equal(decode('COLONY|1|121|YARD_CONTRACT_DONE|1').count,1);
+  assert.equal(decode('COLONY|1|122|ERROR|YARD_CONTRACT_DENIED').error,
+    'YARD_CONTRACT_DENIED');
+  for(const bad of [
+    'COLONY|1|101|YARD_CONTRACT_ITEM|93001|91001|92001|2|2|8|7|0|0|12|0|0|105',
+    'COLONY|1|101|YARD_CONTRACT_ITEM|93001|91001|92001|2|1|8|7|3|12|12|6|0|133',
+    'COLONY|1|101|YARD_CONTRACT_ITEM|93001|91001|92001|2|1|8|7|2|0|12|0|6|133',
+    'COLONY|1|101|YARD_CONTRACT_ITEM|93001|91001|92001|2|1|8|7|4|0|12|0|0|105',
+    'COLONY|1|101|YARD_CONTRACT_ITEM|93001|91001|92001|2|1|8|7|0|0|12|0|0|105|extra',
+    'COLONY|1|101|YARD_CONTRACT_COMMITTED|0|110'
+  ])assert.throws(()=>decode(bad),Error,bad);
+  const ui=fs.readFileSync(path.join(root,'viewer/colony.js'),'utf8');
+  const relay=fs.readFileSync(path.join(root,'live/interactive_relay.py'),'utf8');
+  const host=fs.readFileSync(path.join(root,'src/colony_live_host.cpp'),'utf8');
+  const core=fs.readFileSync(path.join(root,'src/Simulation.cpp'),'utf8');
+  assert.match(ui,/Order a ship from another colony/);
+  assert.match(ui,/colonyYardContractPost/);
+  assert.match(relay,/YARD_CONTRACT_FUND/);
+  assert.match(host,/YARD_CONTRACT_DELIVER/);
+  assert.match(core,/post_shipyard_customer_order/);
+  assert.match(core,/deliver_shipyard_customer_order/);
+  assert.match(core,/galaxy-kernel-v93/);
+});
