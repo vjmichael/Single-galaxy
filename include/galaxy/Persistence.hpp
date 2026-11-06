@@ -454,6 +454,17 @@ public:
     std::uint64_t colony_notification_opportunity_count() const;
     std::uint64_t colony_notification_acknowledgement_count() const;
     bool submit(const Command& command, FailPoint fail = FailPoint::None);
+    // SHIP-STATUS-02: explicit trusted fixture to verify atomic world effects.
+    // No real hacker hardware exists yet: NEVER expose as a player/network API.
+    // Final attack admission will require original fitted emitter and legal
+    // combat authority before calling this same status engine.
+    bool submit_testing_ship_confusion(EntityId source,EntityId target,
+        std::uint64_t effect_id,std::uint64_t random_seed,
+        std::uint64_t duration_ticks,std::uint32_t pulse_ticks,
+        std::uint8_t intensity,std::uint8_t resistance,
+        std::uint8_t exposed_hardpoint_mask,
+        FailPoint fail=FailPoint::None);
+
     // Host-only: admits a receipt-reserved third-party shipment under the writer lock.
     bool submit_host_consigned_transfer(const Command&, FailPoint=FailPoint::None);
     bool submit_host_passenger_action(const Command& command, FailPoint fail = FailPoint::None);
