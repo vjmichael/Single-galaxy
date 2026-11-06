@@ -20,6 +20,8 @@ assert.equal(security.parse(
  'COLONY|1|22|SECURITY_CALL_SANCTION|20|0|0|0').points,'0');
 assert.equal(security.parse(
  'COLONY|1|22|SECURITY_CALL_COMPLAINT|9000|8|3').caller,8);
+assert.equal(security.parse(
+ 'COLONY|1|22|SECURITY_CALL_REVIEW|9000|4|101').status,4);
 for(const forged of [
  'COLONY|1|22|SECURITY_CALL_INBOX|01|20|8',
  'COLONY|1|22|SECURITY_CALL_INBOX|9223372036854775808|20|8',
@@ -28,6 +30,8 @@ for(const forged of [
  'COLONY|1|22|SECURITY_CALL_PENALTY|0|34|0',
  'COLONY|1|22|SECURITY_CALL_PENALTY|2|34|1',
  'COLONY|1|22|SECURITY_CALL_COMPLAINT|9000|8|2',
+ 'COLONY|1|22|SECURITY_CALL_REVIEW|9000|4|0',
+ 'COLONY|1|22|SECURITY_CALL_REVIEW|9000|5|101',
  'COLONY|1|22|SECURITY_CALL_SANCTION|20|1|0|0',
  'COLONY|1|22|SECURITY_CALL_REPLY|WEAPON|ANY',
  'COLONY|1|22|SECURITY_RESULT|SECURITY_CALL|ACCEPTED|0|0',
@@ -90,6 +94,9 @@ assert.match(el('securityCommsPenalty').textContent,/score 1/);
 event('COLONY|1|22|SECURITY_CALL_SANCTION|20|3|34|1');
 assert.match(el('securityCommsPenalty').textContent,/law-enforcement review eligible/);
 event('COLONY|1|22|SECURITY_CALL_COMPLAINT|9000|8|3');
+event('COLONY|1|22|SECURITY_CALL_REVIEW|9000|4|101');
+assert.match(el('securityCommsComplaints').children[0].textContent,
+ /awaiting actual law agency/);
 assert.match(el('securityCommsComplaints').children[0].textContent,
  /not a conviction/);
 event('COLONY|1|22|SECURITY_CALL_INBOX_RESET');
