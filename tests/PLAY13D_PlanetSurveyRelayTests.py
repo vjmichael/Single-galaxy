@@ -355,6 +355,28 @@ def main(executable,relay):
             ):
                 status,_=request(port,'POST','/command',payload)
                 assert status==400,(payload,status)
+            # SHIP-01D: the relay accepts a requested owned ship ID, not
+            # user-supplied principal, scanner, crew or resource authority.
+            fleet={'token':token,'action':'colonyFleetStatus'}
+            select={'token':token,'action':'colonyFleetSelect','ship':1}
+            for payload in (fleet,select):
+                status,_=request(port,'POST','/command',payload)
+                assert status==202,(payload,status)
+                status,_=request(port,'POST','/command',
+                                 {**payload,'token':'forged'})
+                assert status==403,(payload,status)
+            for payload in (
+                {**fleet,'ship':1},
+                {**fleet,'extra':'yes'},
+                {**select,'ship':True},
+                {**select,'ship':0},
+                {**select,'ship':-2},
+                {**select,'ship':1<<53},
+                {**select,'extra':1},
+                {**select,'playerId':7},
+            ):
+                status,_=request(port,'POST','/command',payload)
+                assert status==400,(payload,status)
             print("PASS PGF01B2 HTTP relay accepts valid geography and rejects forged inputs")
         finally:
             proc.terminate()
