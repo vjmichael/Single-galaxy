@@ -6165,8 +6165,44 @@ void Simulation::process_universal_work(){
         [this](std::uint64_t worker){
             return npc_available_for_duty(worker);
         }};
+    // Life-preserving priority is grounded in the SAME canonical
+    // compartment risk model used by the native colony safety system.
+    // Only new elective funding or crew reassignment is preempted;
+    // existing paid construction and hull handover are never reversed.
+    std::set<EntityId> critical_colonies;
+    std::set<EntityId> inspected_colonies;
+    for(const auto& [id,d]:work_directives_){
+        (void)id;
+        if(d.status!=WorkDirectiveStatus::Active ||
+           d.kind!=WorkTaskKind::CustomerShipOrder ||
+           !inspected_colonies.insert(d.colony_ship).second)continue;
+        const auto entity=entities_.find(d.colony_ship);
+        if(entity==entities_.end() || entity->second.owner_id!=d.owner ||
+           !colony_ships_.count(d.colony_ship) ||
+           !life_support_.count(d.colony_ship))continue;
+        const auto urgent=[&](EntityId site){
+            return colony_safety::assess(*this,d.colony_ship,site).
+                emergency_override;
+        };
+        bool emergency=urgent(d.colony_ship);
+        if(!emergency)for(const auto& [site,farm]:farms_)
+            if(farm.source_ship==d.colony_ship && farm.workers>0 &&
+               urgent(site)){emergency=true;break;}
+        if(!emergency)for(const auto& [site,habitat]:habitats_)
+            if(habitat.source_ship==d.colony_ship && habitat.residents>0 &&
+               urgent(site)){emergency=true;break;}
+        if(emergency)critical_colonies.insert(d.colony_ship);
+    }
+    const work::WorkPolicyContext policy{
+        [critical_colonies](EntityId colony){
+            return critical_colonies.count(colony)!=0;
+        },
+        [this](PlayerId owner,std::uint64_t contract){
+            return can_fund_shipyard_customer_order(owner,contract);
+        },1};
     const auto schedule=work::plan(
-        work_directives_,shipyard_customer_orders_,npcs_,tick_,capacity);
+        work_directives_,shipyard_customer_orders_,npcs_,tick_,
+        capacity,policy);
     for(const auto& candidate:schedule){
         auto active=work_directives_.find(candidate.id);
         if(active==work_directives_.end() ||
@@ -6193,7 +6229,19 @@ void Simulation::process_universal_work(){
             block(WorkBlock::NamedCrewAndSupplies);
             continue;
         }
-        if(candidate.gate==work::Gate::YardUnavailable ||
+        if(candidate.gate==work::Gate::EmergencyHold){
+            // Existing v94 wait codes remain compatible with SQLite.
+            // Do not pay/build or transfer named crew under a verified
+            // critical life-support hazard; re-check on every native tick.
+            const auto contract=shipyard_customer_orders_.find(
+                directive.source_order);
+            block(contract!=shipyard_customer_orders_.end() &&
+                  contract->second.stage==ShipyardCustomerStage::Delivered?
+                  WorkBlock::NamedCrewAndSupplies:WorkBlock::PhysicalFunding);
+            continue;
+        }
+        if(candidate.gate==work::Gate::FundingNotReady ||
+           candidate.gate==work::Gate::YardUnavailable ||
            candidate.gate==work::Gate::AssemblySlipBusy ||
            candidate.gate==work::Gate::BuilderUnavailable){
             // Existing 94 snapshot wait code: no speculative debit.
