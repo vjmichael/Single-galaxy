@@ -16,6 +16,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <stdexcept>
 #include <iostream>
@@ -2252,10 +2253,6 @@ int main(int argc,char** argv){
                             snapshot_for(who);
                             continue;
                         }
-                        const auto before=communications?
-                            communications->history().size():0;
-                        const auto old_totals=communications?
-                            communications->overflow_history().size():0;
                         colony_disposition::security_desk::execute(
                             split(operation),world,*territory,*cases,
                             who,home,who==owner?fleet.piloted():home,nonce,
@@ -2267,8 +2264,12 @@ int main(int argc,char** argv){
                         // using its private snapshot, never another user's
                         // global world frames or broadcast telemetry.
                         if(communications &&
-                           (communications->history().size()!=before ||
-                            communications->overflow_history().size()!=old_totals)){
+                           (operation.rfind("SECURITY_CALL|",0)==0 ||
+                            operation.rfind("SECURITY_CALL_REPLY|",0)==0)){
+                            // A compact 11th+ penalty updates its existing
+                            // row, so comparing row counts would miss it.
+                            // Every physically authorized recipient receives
+                            // only a fresh owner-scoped case/inbox snapshot.
                             for(const auto receiver:human_owners)
                                 if(receiver!=who && human_home(receiver))
                                     snapshot_for(receiver);
