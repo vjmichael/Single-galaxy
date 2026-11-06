@@ -326,6 +326,16 @@ public:
            !seen(world,source,target))return outcome;
         verify();
         const auto old=history();
+        if(old.size()>=kMaximumRecords){
+            // An abusive sender cannot exhaust the immutable history and
+            // cause a host crash. Full journal -> no new outbound contact.
+            outcome.status=Status::Suppressed;
+            const auto previous=penalty_for(world,principal,source);
+            outcome.penalty_points=previous.penalty_points;
+            outcome.cooldown_until=previous.cooldown_until;
+            outcome.law_review_eligible=previous.law_review_eligible;
+            return outcome;
+        }
         std::uint64_t proof=0,prior_score=0,cooldown_until=0;
         std::uint64_t declined_until=0;
         std::uint8_t proof_kind=0;
@@ -369,7 +379,9 @@ public:
             outcome.penalty_points=prior_score;
             outcome.cooldown_until=cooldown_until;
             outcome.law_review_eligible=prior_score>=kReportThreshold;
-            if(already_scored_this_tick){
+            if(already_scored_this_tick || prior_score>=10){
+                // A capped offender is never permitted to contact an
+                // already identified recipient and cannot flood storage.
                 outcome.status=Status::Suppressed;return outcome;
             }
             // Hardcoded game policy: every further unsolicited call after
@@ -437,6 +449,7 @@ public:
            call_event==response_event)return result;
         verify();
         const auto old=history();
+        if(old.size()>=kMaximumRecords)return result;
         const auto found=std::find_if(old.begin(),old.end(),
             [&](const Receipt& r){
                 return r.event_id==call_event && r.kind==Kind::Call &&
