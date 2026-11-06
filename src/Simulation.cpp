@@ -5749,6 +5749,14 @@ bool Simulation::queue_shipyard_freighter(PlayerId owner,
         (void)id;
         if(contract.build_order==build_id &&
            contract.stage!=ShipyardCustomerStage::Funded)return false;
+        // Once the supplier accepts a customer, the assembly slip belongs
+        // to that accepted request until completion or explicit resolution.
+        // Direct manufacturing cannot jump ahead of the paid customer's job.
+        if(contract.yard_order==yard_id &&
+           contract.build_order!=build_id &&
+           (contract.stage==ShipyardCustomerStage::Accepted ||
+            contract.stage==ShipyardCustomerStage::Funded))
+            return false;
     }
     const EntityId ship=yard->second.colony_ship;
     const auto e=entities_.find(ship),inventory=colony_ships_.find(ship);
