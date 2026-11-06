@@ -100,7 +100,8 @@ int main(){
         CHECK(land.voluntary_hail(world,9,a,c,guard,2002));
         const auto already_known=calls.call(world,land,7,a,c,2003);
         CHECK(already_known.status==Status::Penalized);
-        CHECK(already_known.penalty_points==1);
+        CHECK(already_known.penalty_points==4);
+        CHECK(calls.penalty_for(world,7,a).penalty_points==4);
         CHECK(calls.history().back().proof_kind==2);
         CHECK(calls.history().back().related==2002);
         CHECK(calls.pending_for(world,9,c).empty());
@@ -126,28 +127,56 @@ int main(){
         Journal calls(copy);
         CHECK(recovered.world().canonical_state()==saved);
         calls.verify();
-        CHECK(calls.penalty_for(recovered,7,a).penalty_points==3);
+        CHECK(calls.penalty_for(recovered,7,a).penalty_points==4);
         CHECK(calls.penalty_for(recovered,7,a).law_review_eligible);
         CHECK(calls.pending_for(recovered,8,b).empty());
         CHECK(calls.call(recovered,land,7,a,c,1100).status==Status::Suppressed);
-        // A malicious caller may keep trying after restart. Record at most
-        // the bounded 10-point history per original recipient and refuse
-        // every later attempt without allocating another immutable row.
+        // A malicious caller may keep trying after restart. Keep only ten
+        // individually immutable abuse events per recipient, then continue
+        // scoring through an atomic one-row compact total. Multiple target
+        // scores sum into the same authenticated player's total.
         for(std::uint64_t i=0;i<7;++i){
             recovered.step();
             const auto strike=calls.call(
                 recovered,land,7,a,b,1200+i);
             CHECK(strike.status==Status::Penalized);
-            CHECK(strike.penalty_points==4+i);
+            CHECK(strike.penalty_points==5+i);
         }
         const auto filled=calls.history().size();
+        CHECK(calls.overflow_history().empty());
         recovered.step();
-        const auto blocked=calls.call(recovered,land,7,a,b,1300);
-        CHECK(blocked.status==Status::Suppressed &&
-              blocked.penalty_points==10);
+        const auto eleventh=calls.call(recovered,land,7,a,b,1300);
+        CHECK(eleventh.status==Status::Penalized &&
+              eleventh.penalty_points==12);
         CHECK(calls.history().size()==filled);
-        CHECK(calls.penalty_for(recovered,7,a).penalty_points==10);
+        CHECK(calls.overflow_history().size()==1);
+        CHECK(calls.overflow_history().front().total_points==11);
+        CHECK(calls.overflow_history().front().last_event==1300);
+        CHECK(calls.penalty_for(recovered,7,a).penalty_points==12);
+        CHECK(calls.call(recovered,land,7,a,b,1301).status==
+              Status::Suppressed); // one score per target per game tick
+        recovered.step();
+        const auto twelfth=calls.call(recovered,land,7,a,b,1302);
+        CHECK(twelfth.status==Status::Penalized &&
+              twelfth.penalty_points==13);
+        CHECK(calls.history().size()==filled);
+        CHECK(calls.overflow_history().size()==1);
+        CHECK(calls.overflow_history().front().total_points==12);
+        CHECK(calls.penalty_for(recovered,7,a).penalty_points==13);
         CHECK(recovered.world().npc_flight_orders().empty());
+        calls.verify();
+        // Actual compact penalty state, unlike the immutable first ten
+        // detailed receipts, keeps accumulating after a native restart.
+        const auto late=(dir/"late.sqlite").string();
+        PersistentWorld::recover_copy(copy,late);
+        {
+            PersistentWorld late_world(late,Simulation(5));
+            Journal late_calls(late);
+            CHECK(late_calls.history().size()==filled);
+            CHECK(late_calls.overflow_history().size()==1);
+            CHECK(late_calls.penalty_for(late_world,7,a).penalty_points==13);
+            late_calls.verify();
+        }
     }
     fs::remove_all(dir);
     std::cout<<"PASS SHIP-STATUS-07E: physical authenticated direct hail, refusal and identification, post-identification hardcoded spam penalty, global mute, security review referral, immutable SQLite copy/restart and no invented police force\n";
