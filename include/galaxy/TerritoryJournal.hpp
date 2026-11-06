@@ -9,6 +9,7 @@
 
 namespace galaxy::colony_disposition {
 
+enum class TerritoryFailPoint : std::uint8_t {None=0,AfterInsert=1};
 enum class TerritoryEventKind : std::uint8_t {
     Claim=1, Invite=2, RevokeInvitation=3, Warning=4, Trespass=5,
     Expulsion=6
@@ -46,20 +47,25 @@ public:
     TerritoryJournal& operator=(const TerritoryJournal&)=delete;
 
     bool claim(const PersistentWorld& world,PlayerId owner,EntityId colony,
-               std::uint64_t event_id,std::int64_t radius_mm);
+               std::uint64_t event_id,std::int64_t radius_mm,
+               TerritoryFailPoint fail=TerritoryFailPoint::None);
     bool invite(const PersistentWorld& world,PlayerId owner,EntityId colony,
-                PlayerId visitor_owner,std::uint64_t event_id);
+                PlayerId visitor_owner,std::uint64_t event_id,
+               TerritoryFailPoint fail=TerritoryFailPoint::None);
     bool revoke_invitation(const PersistentWorld& world,PlayerId owner,
                 EntityId colony,PlayerId visitor_owner,std::uint64_t event_id);
     bool warn(const PersistentWorld& world,PlayerId owner,EntityId colony,
               EntityId foreign_ship,std::uint64_t observer_npc,
-              std::uint64_t event_id,std::uint64_t grace_ticks);
+              std::uint64_t event_id,std::uint64_t grace_ticks,
+              TerritoryFailPoint fail=TerritoryFailPoint::None);
     bool record_trespass(const PersistentWorld& world,PlayerId owner,
               EntityId colony,EntityId foreign_ship,std::uint64_t observer_npc,
-              std::uint64_t event_id);
+              std::uint64_t event_id,
+              TerritoryFailPoint fail=TerritoryFailPoint::None);
     bool expel(const PersistentWorld& world,PlayerId owner,EntityId colony,
               EntityId foreign_ship,std::uint64_t observer_npc,
-              std::uint64_t event_id);
+              std::uint64_t event_id,
+              TerritoryFailPoint fail=TerritoryFailPoint::None);
     TerritorialStanding standing(const PersistentWorld& world,
               EntityId colony,EntityId foreign_ship) const;
     std::vector<TerritoryEvent> history() const;
@@ -67,6 +73,6 @@ public:
 private:
     struct State;
     State* state_;
-    bool append(const TerritoryEvent& event);
+    bool append(const TerritoryEvent& event,TerritoryFailPoint fail);
 };
 } // namespace galaxy::colony_disposition
