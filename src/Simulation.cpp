@@ -6402,7 +6402,6 @@ bool Simulation::complete_player_rescue(
            record.consent_id==transfer_receipt)return false;
     }
     const auto original=person.physical_ship;
-    person; // no use-after-change of the location for the original receipt.
     it->second.physical_ship=receiver;
     it->second.state=PlayerPersonState::Rescued;
     it->second.custodian=vessel->owner_id; // rescuer, not an arresting authority
