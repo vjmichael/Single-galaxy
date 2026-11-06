@@ -12439,10 +12439,32 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                result.submitted_ids_.count(effect.id) ||
                source->second.owner_id==target->second.owner_id)
                 throw std::runtime_error("snapshot: invalid ship status source or target");
-            for(const auto& key:effect.targets)
-                if(key.rack!=0 || key.slot>=2 ||
-                   target->second.fitting.hardpoints[key.slot]!=key.hardware)
-                    throw std::runtime_error("snapshot: status no longer matches physical module");
+            // Historical records outlive removable hardware. An ACTIVE
+            // effect must still address the genuine original fitting; after
+            // expiration it may describe safely removed equipment.
+            if(effect.expires_tick>result.tick_)
+                for(const auto& key:effect.targets)
+                    if(key.rack!=0 || key.slot>=2 ||
+                       target->second.fitting.hardpoints[key.slot]!=key.hardware)
+                        throw std::runtime_error("snapshot: active status module mismatch");
+            if(result.snapshot_version_>=101 &&
+               (effect.id & (std::uint64_t{1}<<63))) {
+                const auto native_command=effect.id & ~(std::uint64_t{1}<<63);
+                const auto proven=std::find_if(result.events_.begin(),
+                    result.events_.end(),[&](const Event& event){
+                        return event.command_id==native_command &&
+                               event.result==Outcome::Applied &&
+                               event.tick==effect.started_tick;
+                    });
+                if(!native_command ||
+                   native_command>=(std::uint64_t{1}<<62) ||
+                   proven==result.events_.end() ||
+                   effect.expires_tick-effect.started_tick!=kHackDurationTicks ||
+                   effect.pulse_ticks!=2 || effect.intensity!=100 ||
+                   (effect.resistance!=0 && effect.resistance!=60) ||
+                   source->second.last_hack_tick<effect.started_tick)
+                    throw std::runtime_error("snapshot: forged physical hacking receipt");
+            }
         }
     }
     if (result.canonical_state() != bytes)
