@@ -340,10 +340,7 @@ public:
                (t.kind==colony_disposition::TerritoryEventKind::VoluntaryHail ||
                 t.kind==colony_disposition::TerritoryEventKind::NoticeAcknowledged ||
                 t.kind==colony_disposition::TerritoryEventKind::NoticeRefused)){
-                if(!proof || t.world_tick>=world.world().tick()-std::min(
-                    world.world().tick(),std::uint64_t{1000000000})){
-                    proof=t.event_id;proof_kind=2;
-                }
+                proof=t.event_id;proof_kind=2;
             }
         }
         if(proof){
@@ -376,11 +373,15 @@ public:
             outcome.law_review_eligible=r.law_review_eligible;
             return outcome;
         }
-        // Avoid repeated initial contact from filling the recipient inbox.
-        // No identity has been disclosed and no guilt is presumed.
-        if(outstanding || cooldown_until>world.world().tick()){
+        // A nuisance strike mutes the verified caller's outbound hails to
+        // ALL ships for its actual cooldown duration, not just this target.
+        // Genuine inbound notice replies and distress workflows are separate.
+        const auto global=penalty_for(world,principal,source);
+        if(outstanding || global.cooldown_until>world.world().tick()){
             outcome.status=Status::Suppressed;
-            outcome.cooldown_until=cooldown_until;
+            outcome.cooldown_until=global.cooldown_until;
+            outcome.penalty_points=global.penalty_points;
+            outcome.law_review_eligible=global.law_review_eligible;
             return outcome;
         }
         Receipt r{};
