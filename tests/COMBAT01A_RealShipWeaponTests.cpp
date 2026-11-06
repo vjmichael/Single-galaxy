@@ -48,8 +48,14 @@ int main(){
         CHECK(world.world().people_physically_aboard(home)>0);
         CHECK(fire(world,8,raider,home,7001)==Outcome::OutOfRange);
         CHECK(world.world().find(home)->hull==100); // +X aim cannot fire backward
-        CHECK(fire(world,7,home,home,7002)==Outcome::InvalidTarget ||
-              world.world().find(home)->hull==100);
+        {
+            Command forged{};
+            forged.id=7002;forged.sequence=7002;
+            forged.execute_tick=world.world().tick()+1;
+            forged.issuer=7;forged.actor=home;forged.target=home;
+            forged.action=Action::FireShipWeapon;
+            CHECK(!world.submit(forged)); // reject self-fire before queueing
+        }
         // Finite original 12-charge ammo; real yaw/range, no renderer trust.
         std::uint64_t id=7100;
         for(int shot=0;shot<7;++shot){
@@ -71,6 +77,7 @@ int main(){
         CHECK(world.world().find(home)->type==EntityType::Ship);
         CHECK(world.world().find(home)->hull==1);
         CHECK(world.world().people_physically_aboard(home)>0);
+        world.step();
         CHECK(fire(world,8,second,home,7400)==Outcome::AttackResisted);
         CHECK(world.world().find(second)->weapon_charges==5);
         CHECK(world.world().colony_ship(home)!=nullptr);
