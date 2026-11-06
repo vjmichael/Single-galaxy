@@ -1,0 +1,37 @@
+name: NPC-RESP-02B consent player rescue and custody
+on:
+  pull_request:
+    paths:
+      - 'src/Simulation.cpp'
+      - 'src/Persistence.cpp'
+      - 'include/galaxy/Simulation.hpp'
+      - 'include/galaxy/Persistence.hpp'
+      - 'tests/NPCRESP02B_PlayerRescueTests.cpp'
+      - '.github/workflows/npcresp02b-player-rescue.yml'
+  workflow_dispatch:
+jobs:
+  native:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & (Join-Path $env:VCPKG_INSTALLATION_ROOT 'vcpkg.exe') install sqlite3:x64-windows --clean-after-build
+          if ($LASTEXITCODE -ne 0) { throw 'SQLite SDK install failed' }
+      - if: runner.os == 'Linux'
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tc=Join-Path $env:VCPKG_INSTALLATION_ROOT 'scripts/buildsystems/vcpkg.cmake'
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$tc" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'native configure failed' }
+      - run: cmake --build build --config Release --parallel 2 --target galaxy_npcresp02b_player_rescue_tests galaxy_npcresp02_player_identity_tests galaxy_npcresp01_dispatch_tests
+      - run: ctest --test-dir build -C Release --output-on-failure -R "^galaxy_npcresp(02b_player_rescue|02_player_identity|01_dispatch)$"

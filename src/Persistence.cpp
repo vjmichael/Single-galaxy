@@ -8823,6 +8823,40 @@ bool PersistentWorld::register_player_person(PlayerId owner,EntityId aboard,
     world_.swap(next);++generation_;
     return true;
 }
+bool PersistentWorld::grant_player_rescue_consent(
+    PlayerId owner,EntityId receiver,std::uint64_t consent_id,FailPoint fail){
+    auto next=world_;
+    if(!next.grant_player_rescue_consent(owner,receiver,consent_id))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("player consent changed world matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+bool PersistentWorld::revoke_player_rescue_consent(
+    PlayerId owner,std::uint64_t consent_id,FailPoint fail){
+    auto next=world_;
+    if(!next.revoke_player_rescue_consent(owner,consent_id))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("player rescue revocation changed world matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+bool PersistentWorld::complete_player_rescue(
+    PlayerId owner,EntityId receiver,std::uint64_t flight_id,
+    std::uint64_t receipt,FailPoint fail){
+    auto next=world_;
+    if(!next.complete_player_rescue(owner,receiver,flight_id,receipt))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("player rescue changed world matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
 bool PersistentWorld::queue_npc_ship_rendezvous(
     PlayerId owner,EntityId ship,std::uint64_t pilot,
     EntityId target_ship,std::uint64_t order_id,
@@ -11032,6 +11066,26 @@ bool PersistentWorld::submit_host_consigned_transfer(const Command& command,Fail
 }
 
 bool PersistentWorld::submit(const Command& command, FailPoint fail) {
+    // NPC-RESP-02B: independent character custody is authoritative for
+    // PLAYER-operated ship controls. A rescued/detained person cannot
+    // remotely pilot an abandoned hull by changing the selected cockpit.
+    // The native NPC navigator submits its own original controls through
+    // Simulation::submit inside the host-journaled step, unaffected here.
+    if(command.action==Action::Thrust ||
+       command.action==Action::Mine ||
+       command.action==Action::StartMining ||
+       command.action==Action::StopMining ||
+       command.action==Action::RequestDock ||
+       command.action==Action::RequestUndock ||
+       command.action==Action::RequestJump ||
+       command.action==Action::FireTrainingWeapon ||
+       command.action==Action::SalvageWreck){
+        const auto person=world_.player_people_.find(command.issuer);
+        if(person!=world_.player_people_.end() &&
+           (person->second.state!=PlayerPersonState::AboardOwnShip ||
+            person->second.physical_ship!=command.actor))
+            return false;
+    }
     // A player command cannot race an active NPC navigator's exclusive
     // physical ship-control session. The NPC uses Simulation::submit
     // INSIDE the same host-journaled step, not this external owner API.

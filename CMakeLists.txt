@@ -1605,3 +1605,13 @@ if(BUILD_TESTING)
     COMMAND galaxy_npcresp02_player_identity_tests)
   set_tests_properties(galaxy_npcresp02_player_identity PROPERTIES TIMEOUT 300)
 endif()
+
+# NPC-RESP-02B: original receipt + owner-consent player rescue native loop.
+if(BUILD_TESTING)
+  add_executable(galaxy_npcresp02b_player_rescue_tests
+    tests/NPCRESP02B_PlayerRescueTests.cpp)
+  target_link_libraries(galaxy_npcresp02b_player_rescue_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_npcresp02b_player_rescue
+    COMMAND galaxy_npcresp02b_player_rescue_tests)
+  set_tests_properties(galaxy_npcresp02b_player_rescue PROPERTIES TIMEOUT 300)
+endif()
