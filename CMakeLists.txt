@@ -1595,3 +1595,13 @@ if(BUILD_TESTING)
     COMMAND galaxy_npcresp01_dispatch_tests)
   set_tests_properties(galaxy_npcresp01_dispatch PROPERTIES TIMEOUT 300)
 endif()
+
+# NPC-RESP-02: persistent player identity is not a ship or NPC.
+if(BUILD_TESTING)
+  add_executable(galaxy_npcresp02_player_identity_tests
+    tests/NPCRESP02_PlayerIdentityTests.cpp)
+  target_link_libraries(galaxy_npcresp02_player_identity_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_npcresp02_player_identity
+    COMMAND galaxy_npcresp02_player_identity_tests)
+  set_tests_properties(galaxy_npcresp02_player_identity PROPERTIES TIMEOUT 300)
+endif()
