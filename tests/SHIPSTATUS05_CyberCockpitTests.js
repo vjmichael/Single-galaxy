@@ -39,3 +39,62 @@ for(const forged of [
  'COLONY|1|5|CYBER_STATUS|17|1|0|0|1|extra'
  ])assert.throws(()=>cyber.parse(forged),undefined,forged);
 console.log('PASS SHIP-STATUS-05: strictly parsed committed cyber cockpit telemetry, effective state, and target gates');
+// Exercise the actual DOM wiring, not only the parser: disabled until a
+// current-tick physically powered emitter and target observation both exist.
+// No simulated browser command may be mistaken for a native combat result.
+class FakeOption {
+  constructor(text,value){this.text=text;this.value=value;}
+}
+class FakeNode {
+  constructor(){
+    this.children=[];this.options=[];this.listeners={};
+    this.value='';this.textContent='';this.style={};this.disabled=false;
+  }
+  replaceChildren(...children){
+    this.children=children;
+    this.options=children.filter(c=>c instanceof FakeOption);
+    if(this.options.length && !this.options.some(o=>o.value===this.value))
+      this.value=this.options[0].value;
+  }
+  append(...children){this.children.push(...children);}
+  addEventListener(event,fn){this.listeners[event]=fn;}
+}
+const nodes=new Map();
+global.Option=FakeOption;
+global.document={
+  getElementById(id){
+    if(!nodes.has(id))nodes.set(id,new FakeNode());
+    return nodes.get(id);
+  },
+  createElement(){return new FakeNode();}
+};
+let emitted=[];
+global.window={GalaxyColonyCommand:(action,args)=>{emitted.push([action,args]);}};
+delete require.cache[require.resolve('../viewer/cyber-controls.js')];
+const cockpit=require('../viewer/cyber-controls.js');
+function telemetry(value){assert.equal(cockpit.accept(value),true);}
+const attack=nodes.get('cyberAttack'),select=nodes.get('cyberTarget');
+telemetry('COLONY|1|5|CYBER_STATUS|17|1|0|0|1');
+telemetry('COLONY|1|5|CYBER_TARGET|17|22|700');
+select.value='22';select.listeners.change();
+telemetry('COLONY|1|5|CYBER_MODULE|17|0|3|1|0|0');
+assert.equal(attack.disabled,true,'confused-off emitter is not ready');
+telemetry('COLONY|1|5|CYBER_MODULE|17|0|3|1|1|0');
+assert.equal(attack.disabled,false,'same-tick powered emitter enables request');
+attack.listeners.click();
+assert.deepEqual(emitted,[['colonyCyberAttack',{target:22}]]);
+telemetry('COLONY|1|5|CYBER_MODULE|17|0|3|1|0|1');
+assert.equal(attack.disabled,true,'isolated emitter cannot attack');
+assert.match(nodes.get('cyberModuleList').children[0].children[0].textContent,/ISOLATED/);
+assert.doesNotMatch(nodes.get('cyberModuleList').children[0].children[0].textContent,/CONFUSED/);
+telemetry('COLONY|1|6|CYBER_STATUS|17|1|0|0|1');
+assert.equal(attack.disabled,true,'previous-tick hardware and target are stale');
+telemetry('COLONY|1|6|CYBER_MODULE|17|0|3|1|1|0');
+assert.equal(attack.disabled,true,'previous-tick target must not authorize request');
+telemetry('COLONY|1|6|CYBER_TARGET|17|22|700');
+select.value='22';select.listeners.change();
+assert.equal(attack.disabled,false,'fresh telemetry restores ready state');
+assert.equal(emitted.length,1,'no forged combat result is generated');
+delete global.document;delete global.window;delete global.Option;
+console.log('PASS SHIP-STATUS-05: committed-only DOM controls, isolation feedback, stale telemetry rejection');
+
