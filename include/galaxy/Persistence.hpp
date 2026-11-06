@@ -858,6 +858,12 @@ public:
         std::uint64_t transit_request_id,
         NpcFlightPurpose purpose=NpcFlightPurpose::General,
         FailPoint fail=FailPoint::None);
+    // FLIGHT-02: same flight registry and native pilot; one real local
+    // thrust/undock/dock sequence via the original ship command journal.
+    bool queue_npc_station_docking(PlayerId owner,EntityId ship,
+        std::uint64_t pilot,EntityId station,std::uint64_t flight_id,
+        NpcFlightPurpose purpose=NpcFlightPurpose::General,
+        FailPoint fail=FailPoint::None);
     bool cancel_npc_flight(PlayerId owner,std::uint64_t flight_order_id,
         FailPoint fail=FailPoint::None);
     // Real finite resource collection, committed atomically before publication.
