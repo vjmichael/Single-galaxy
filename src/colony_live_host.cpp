@@ -10,6 +10,7 @@
 #include "galaxy/ColonySafety.hpp"
 #include "galaxy/NpcCyberSupervisor.hpp"
 #include "galaxy/ShipSensorProfile.hpp"
+#include "galaxy/SecurityDeskHost.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -2052,6 +2053,17 @@ int main(int argc,char** argv){
                 }
             if(!ship)throw std::runtime_error("no colony ship for authenticated owner");
         }
+        // SHIP-STATUS-07D: both append-only evidence journals share the
+        // ORIGINAL authoritative SQLite game file. No duplicate world writer.
+        std::unique_ptr<colony_disposition::TerritoryJournal> territory;
+        std::unique_ptr<colony_disposition::CyberIncidentJournal> cases;
+        try {
+            territory=std::make_unique<colony_disposition::TerritoryJournal>(argv[1]);
+            cases=std::make_unique<colony_disposition::CyberIncidentJournal>(argv[1]);
+        }catch(const std::exception& ex) {
+            std::cerr<<"SECURITY_DESK_UNAVAILABLE "<<ex.what()<<'\n';
+            territory.reset();cases.reset();
+        }
         // PLAY-13B: the v67 world is the authoritative discovery source.
         // This sidecar is an owner-scoped, rebuildable navigation/survey index.
         // Every host restart replays committed native discoveries idempotently.
@@ -2086,6 +2098,14 @@ int main(int argc,char** argv){
         announce(world.world(),was_saved?"RESUMED":"NEW_COLONY");
         status(world.world(),ship,true);
         cyber_status(world.world(),fleet.piloted());
+        if(territory && cases){
+            colony_disposition::security_desk::capture_current_tick(
+                world,*territory,*cases,owner,
+                [&](const std::string& msg){announce(world.world(),msg);});
+            colony_disposition::security_desk::snapshot(
+                world,*territory,*cases,owner,ship,fleet.piloted(),
+                [&](const std::string& msg){announce(world.world(),msg);});
+        }else announce(world.world(),"SECURITY_ERROR|CASE_DESK_UNAVAILABLE");
         // The initial selection is always the actual home ship. A browser
         // may restore a prior preference, but native selection revalidates it.
         std::uint64_t nonce=900000000000ULL+world.generation();
@@ -2103,7 +2123,15 @@ int main(int argc,char** argv){
             poll_input();
             const auto to_apply=std::move(commands);commands.clear();
             for(const auto& line:to_apply){
-                if(!authenticated_transport){apply(world,ship,fleet,line,nonce,owner,pending_scans,pending_probe_scans,survey_knowledge.get());continue;}
+                if(!authenticated_transport){
+                    // Security identity must originate from authenticated
+                    // relay transport. A local test pipe is not a hail.
+                    if(line.rfind("SECURITY_",0)==0)
+                        announce(world.world(),"SECURITY_RESULT|DENIED|0");
+                    else apply(world,ship,fleet,line,nonce,owner,
+                        pending_scans,pending_probe_scans,survey_knowledge.get());
+                    continue;
+                }
                 // The trusted relay supplies a resolved account ID over our
                 // private stdin pipe; unprefixed/forged/foreign commands fail
                 // closed even if relay validation is accidentally bypassed.
@@ -2114,7 +2142,21 @@ int main(int argc,char** argv){
                     const auto principal=integer(line.substr(first+1,second-first-1));
                     if(principal!=static_cast<std::int64_t>(owner))
                         throw std::invalid_argument("foreign colony command");
-                    apply(world,ship,fleet,line.substr(second+1),nonce,static_cast<PlayerId>(principal),pending_scans,pending_probe_scans,survey_knowledge.get());
+                    const auto operation=line.substr(second+1);
+                    if(operation.rfind("SECURITY_",0)==0){
+                        if(!territory || !cases)
+                            announce(world.world(),
+                                "SECURITY_ERROR|CASE_DESK_UNAVAILABLE");
+                        else colony_disposition::security_desk::execute(
+                            split(operation),world,*territory,*cases,
+                            static_cast<PlayerId>(principal),ship,
+                            fleet.piloted(),nonce,
+                            [&](const std::string& msg){
+                                announce(world.world(),msg);
+                            });
+                    }else apply(world,ship,fleet,operation,nonce,
+                        static_cast<PlayerId>(principal),pending_scans,
+                        pending_probe_scans,survey_knowledge.get());
                 }catch(const std::exception&){announce(world.world(),"ERROR|UNAUTHORIZED_PRINCIPAL");}
             }
             const auto old=world.world().events().size();
@@ -2143,6 +2185,20 @@ int main(int argc,char** argv){
             // committed ticks. There are no autonomous host-owned attackers
             // at genesis; only genuinely constructed NPC colonies with an
             // existing predatory government and fabricated emitter may act.
+            // Reconcile genuine same-tick attacks, including after a host
+            // crash before its separate evidence insert. Only original native
+            // witnesses inside previously claimed territory may file cases.
+            if(territory && cases){
+                const auto added=
+                    colony_disposition::security_desk::capture_current_tick(
+                    world,*territory,*cases,owner,
+                    [&](const std::string& msg){
+                        announce(world.world(),msg);
+                    });
+                if(added)colony_disposition::security_desk::snapshot(
+                    world,*territory,*cases,owner,ship,fleet.piloted(),
+                    [&](const std::string& msg){announce(world.world(),msg);});
+            }
             const auto cyber_pulse=npc_cyber::supervise(world,owner);
             if(cyber_pulse.approaches &&
                world.world().find(cyber_pulse.last_approaching_ship) &&
