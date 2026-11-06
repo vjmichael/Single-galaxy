@@ -1298,6 +1298,22 @@ bool Simulation::submit(const Command& c) {
            c.secondary_transport)return false;
         snapshot_version_=std::max(snapshot_version_,100);
     }
+    if(c.action==Action::ConfigureCyberModule ||
+       c.action==Action::SetCyberIsolation ||
+       c.action==Action::HackConfuse){
+        if(!c.id || !c.actor || c.thrust_x || c.thrust_y ||
+           c.transport_id || !c.passenger_ids.empty() ||
+           c.secondary_receiver || c.secondary_transport)return false;
+        if(c.action==Action::ConfigureCyberModule &&
+           (c.target || (c.amount!=3 && c.amount!=-3 &&
+                         c.amount!=4 && c.amount!=-4)))return false;
+        if(c.action==Action::SetCyberIsolation &&
+           (c.target || c.amount<0 || c.amount>3))return false;
+        if(c.action==Action::HackConfuse &&
+           (!c.target || c.target==c.actor || c.amount ||
+            c.id>=(std::uint64_t{1}<<62)))return false;
+        snapshot_version_=std::max(snapshot_version_,101);
+    }
     if(c.action==Action::SurveyLocal){
         if(!c.id || !c.actor || c.target || c.amount || c.thrust_x || c.thrust_y ||
            c.transport_id || !c.passenger_ids.empty() ||
@@ -2085,6 +2101,8 @@ Event Simulation::execute(const Command& c) {
                c.action!=Action::Thrust &&
                c.action!=Action::SurveyLocal &&
                c.action!=Action::SetHardpointPower &&
+               c.action!=Action::SetCyberIsolation &&
+               c.action!=Action::HackConfuse &&
                c.action!=Action::Mine &&
                c.action!=Action::StartMining &&
                c.action!=Action::StopMining){
@@ -9026,6 +9044,8 @@ std::string to_string(Outcome o) {
         case Outcome::NotColonyShip: return "NOT_COLONY_SHIP";
         case Outcome::InsufficientCrew: return "INSUFFICIENT_CREW";
         case Outcome::ModuleOffline: return "MODULE_OFFLINE";
+        case Outcome::CooldownActive: return "COOLDOWN_ACTIVE";
+        case Outcome::AttackResisted: return "ATTACK_RESISTED";
     }
     return "UNKNOWN";
 }
