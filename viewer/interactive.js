@@ -16,8 +16,17 @@ function cancelAssist(mode='cancelled'){
 function startAssist(kind){
  const frame=latestProjection;
  if(!colonyMode||!token||!frame){message('Waiting for a verified live world frame.');return;}
- const player=[...frame.entities.values()].find(e=>e.entityType===0&&e.owner===7);
- if(!player){message('Colony ship is not in this system.');return;}
+ const home=window.GalaxyColonyHomeShipId;
+ const active=window.GalaxyActivePilotedShipId;
+ if(Number.isSafeInteger(home)&&Number.isSafeInteger(active)&&
+    home!==active){
+   message('Mining/return assist belongs to the home colony. Use the fleet cockpit for freighter movement.');
+   return;
+ }
+ const player=active?
+   frame.entities.get(active):
+   [...frame.entities.values()].find(e=>e.entityType===0&&e.owner===7);
+ if(!player){message('Selected ship is not in this physical view.');return;}
  let id,description;
  if(kind==='rock'){
    id=window.GalaxySelectedRockId;
@@ -39,6 +48,10 @@ function startAssist(kind){
 async function updateAssist(frame){
  const current=assist;
  if(!current||assistPending||!token||current.sessionToken!==token)return;
+ if(window.GalaxyActivePilotedShipId&&
+    current.shipId!==window.GalaxyActivePilotedShipId){
+   cancelAssist('paused');return;
+ }
  const player=frame.entities.get(current.shipId);
  const dest=window.GalaxyTravelAssist?.target(frame,current.kind,current.id,window.GalaxyColonyOutpostIds);
  if(!player||!dest||player.owner!==7||player.system!==dest.system||
@@ -60,6 +73,7 @@ async function updateAssist(frame){
  if(!accepted)cancelAssist('paused');
 }
 window.GalaxyColonyMode=false;
+window.GalaxyFleetSelectionChanged=()=>{cancelAssist('paused');};
 const el=id=>document.getElementById(id);
 const message=text=>{el('commandMessage').textContent=text;};
 async function command(action,extra={},assisted=false){
@@ -109,6 +123,9 @@ async function connect(){
      try{bridge.accept(atob(e.data));}
      catch(ex){source.close();source=null;bridge.fail('Frame rejected: '+ex.message);}
    });
+   // The authenticated host enumerates real hulls; saved UI selection
+   // is never trusted until FLEET_SELECTED confirms it.
+   if(colonyMode)void command('colonyFleetStatus',{},true);
    source.addEventListener('complete',()=>{cancelAssist('paused');bridge.complete();message('Run completed. Reconnect to review the finished world.');source.close();source=null;});
    source.addEventListener('failed',e=>{cancelAssist('paused');bridge.fail('Host failed: '+e.data);source.close();source=null;if(e.data==='Session expired')window.GalaxyDisconnect?.();});
    source.addEventListener('error',()=>{if(source){cancelAssist('paused');source.close();source=null;bridge.fail('Stream lost. Use Reconnect to replay and catch up.');}});
@@ -272,14 +289,19 @@ document.addEventListener('keydown',event=>{
 window.onGalaxyLiveProjection=function(state){
  latestProjection=state;
  if(colonyMode&&assist)void updateAssist(state);
- const ship=[...state.entities.values()].find(e=>e.entityType===0&&e.owner===7);
- if(!ship)return;
+ const controlled=window.GalaxyActivePilotedShipId;
+ const ship=controlled?
+   state.entities.get(controlled):
+   [...state.entities.values()].find(e=>e.entityType===0&&e.owner===7);
+ if(!ship||ship.entityType!==0||ship.owner!==7)return;
+ const managingElsewhere=!!window.GalaxyColonyHomeShipId&&
+   ship.id!==window.GalaxyColonyHomeShipId;
  const wreckId=Number(el('salvageTarget').value);
  const wreck=Number.isSafeInteger(wreckId)&&wreckId>0?state.entities.get(wreckId):null;
  if(wreck?.entityType===4){
    const distance=Math.hypot(wreck.x-ship.x,wreck.y-ship.y);
    const inRange=distance<=2500;
-   el('salvageRecover').disabled=!inRange||ship.cargo>=ship.capacity||
+   el('salvageRecover').disabled=managingElsewhere||!inRange||ship.cargo>=ship.capacity||
      !(window.GalaxySalvageStock?.get(wreckId)>0);
    el('salvageFeedback').textContent='Wreck #'+wreckId+' · '+Math.ceil(distance)+' mm away.'+
       (inRange?' Within salvage reach.':' Pilot within 2,500 mm to recover stock.');
@@ -291,7 +313,7 @@ window.onGalaxyLiveProjection=function(state){
    el('combatFire').disabled=true;
  }else if(opponent?.entityType===0){
    const dist=Math.hypot(opponent.x-ship.x,opponent.y-ship.y);
-   el('combatFire').disabled=dist>12000||el('combatCharges').textContent==='0';
+   el('combatFire').disabled=managingElsewhere||dist>12000||el('combatCharges').textContent==='0';
  }
  const nearby=[...state.entities.values()].filter(e=>
    e.entityType===1 && e.system===ship.system);
@@ -300,7 +322,8 @@ window.onGalaxyLiveProjection=function(state){
  const first=sorted[0];
  const speed=Math.hypot(ship.vx||0,ship.vy||0);
  el('flightTelemetry').textContent=
-   'Position '+ship.x.toLocaleString()+', '+ship.y.toLocaleString()+
+   'Piloting ship #'+ship.id+(managingElsewhere?' · managing home colony remotely':' · home colony')+
+   ' · Position '+ship.x.toLocaleString()+', '+ship.y.toLocaleString()+
    ' · speed '+speed.toFixed(0)+' mm/tick'+
    (first?' · nearest visible asteroid #'+first.rock.id+
       ' at '+first.range.toFixed(0)+' mm':' · no asteroid currently visible');
@@ -308,11 +331,11 @@ window.onGalaxyLiveProjection=function(state){
  const selected=Number.isSafeInteger(window.GalaxySelectedRockId)&&window.GalaxySelectedRockId>0?
    window.GalaxySelectedRockId:(Number.isSafeInteger(chosen)&&chosen>0?chosen:null);
  const mine=window.GalaxyExpeditionFeedback?.target(ship,nearby,selected);
- el('assistRock').disabled=!colonyMode||!selected||!window.GalaxyTravelAssist?.target(
+ el('assistRock').disabled=!colonyMode||managingElsewhere||!selected||!window.GalaxyTravelAssist?.target(
     state,'rock',selected,window.GalaxyColonyOutpostIds);
  const docked=state.docks.get(ship.id)?.state??0;
  const home=window.GalaxyCargoReturn?.plan(state,7,window.GalaxyColonyOutpostIds)?.site;
- el('assistHome').disabled=!colonyMode||!home||docked!==0;
+ el('assistHome').disabled=!colonyMode||managingElsewhere||!home||docked!==0;
  el('expeditionTarget').textContent=mine?
    '#'+mine.id+' · '+Math.ceil(mine.distance).toLocaleString()+' mm · '+mine.ore.toLocaleString()+' t visible ore':
    'No mineable asteroid currently visible';
@@ -341,8 +364,10 @@ window.onGalaxyLiveProjection=function(state){
    el('returnBay').textContent=cargo.site?cargo.bayOre+' t':'—';
    for(const [id,ready] of [['returnDock',cargo.canDock],
      ['returnUnload',cargo.canUnload],['returnLoad',cargo.canLoad],
-     ['returnUndock',cargo.canUndock]])el(id).disabled=!colonyMode||!ready;
-   el('returnBrake').disabled=!colonyMode||!(ship.vx||ship.vy)||cargo.dockState!==0;
+     ['returnUndock',cargo.canUndock]])
+     el(id).disabled=!colonyMode||managingElsewhere||!ready;
+   el('returnBrake').disabled=!colonyMode||managingElsewhere||
+     !(ship.vx||ship.vy)||cargo.dockState!==0;
  }
  const docking=state.docks.get(ship.id)?.state||0;
  el('undock').disabled=docking!==1;

@@ -461,3 +461,51 @@ test('SHIP-01C commissioned freighter cockpit reads real physical receipts only'
   assert.match(host,/manufactured_order_id!=order_id/);
   assert.match(relay,/FREIGHTER_PILOT_STATUS/);
 });
+
+test('SHIP-01D owned fleet receipts enforce home provenance, readiness and strict selected cockpit',()=>{
+  assert.equal(decode('COLONY|1|52|FLEET_RESET').type,'FLEET_RESET');
+  const home=decode('COLONY|1|52|FLEET_ITEM|1|0|1|1|20|0|1800|1700|1900');
+  assert.equal(home.ship,1);assert.equal(home.order,0);assert.equal(home.home,true);
+  assert.equal(home.ready,true);
+  const manufacturing=decode('COLONY|1|52|FLEET_ITEM|12|92001|0|0|0|0|0|0|0');
+  assert.equal(manufacturing.ready,false);
+  const crewed=decode('COLONY|1|53|FLEET_ITEM|12|92001|0|1|2|90012|198|199|200');
+  assert.equal(crewed.order,92001);assert.equal(crewed.crew,2);
+  assert.equal(decode('COLONY|1|53|FLEET_DONE|2').count,2);
+  const selected=decode('COLONY|1|54|FLEET_SELECTED|12|1|300');
+  assert.equal(selected.ship,12);assert.equal(selected.home,1);
+  assert.equal(decode('COLONY|1|55|FLEET_FALLBACK|1|1|301').ship,1);
+  const pilot=decode('COLONY|1|56|FLEET_PILOT_ITEM|12|345|-1000|2000|90012|2|196|197|198|302');
+  assert.equal(pilot.heading,345);assert.equal(pilot.x,-1000);
+  assert.equal(pilot.oxygen,198);
+  for(const bad of [
+    'COLONY|1|52|FLEET_RESET|extra',
+    'COLONY|1|52|FLEET_ITEM|1|0|0|1|20|0|1800|1700|1900',
+    'COLONY|1|52|FLEET_ITEM|12|92001|1|1|2|0|1800|1700|1900',
+    'COLONY|1|52|FLEET_ITEM|12|92001|0|1|0|0|0|0|0',
+    'COLONY|1|52|FLEET_ITEM|12|92001|0|3|2|0|0|0|0',
+    'COLONY|1|53|FLEET_DONE|10001',
+    'COLONY|1|54|FLEET_SELECTED|0|1|300',
+    'COLONY|1|54|FLEET_SELECTED|12|1|0',
+    'COLONY|1|55|FLEET_FALLBACK|12|1|301',
+    'COLONY|1|56|FLEET_PILOT_ITEM|12|360|-1000|2000|90012|2|196|197|198|302',
+    'COLONY|1|56|FLEET_PILOT_ITEM|12|345|-0|2000|90012|2|196|197|198|302',
+    'COLONY|1|56|FLEET_PILOT_ITEM|12|345|-1000|2000|90012|0|196|197|198|302'
+  ])assert.throws(()=>decode(bad),Error,bad);
+  assert.equal(decode('COLONY|1|57|ERROR|FLEET_SELECTION_DENIED').error,
+    'FLEET_SELECTION_DENIED');
+  const ui=fs.readFileSync(path.join(root,'viewer/colony.js'),'utf8');
+  const map=fs.readFileSync(path.join(root,'viewer/viewer.js'),'utf8');
+  const interactive=fs.readFileSync(path.join(root,'viewer/interactive.js'),'utf8');
+  const host=fs.readFileSync(path.join(root,'src/colony_live_host.cpp'),'utf8');
+  const relay=fs.readFileSync(path.join(root,'live/interactive_relay.py'),'utf8');
+  assert.match(ui,/Your Fleet · Active Ship/);
+  assert.match(ui,/colonyFleetSelect/);
+  assert.match(ui,/pilotSaveKey/);
+  assert.match(map,/GalaxyActivePilotedShipId/);
+  assert.match(interactive,/colonyFleetStatus/);
+  assert.match(host,/FLEET_SELECT/);
+  assert.match(host,/c.actor=fleet.piloted\(\)/);
+  assert.match(host,/bridge.set_focus_ship\(fleet.piloted\(\)\)/);
+  assert.match(relay,/FLEET_STATUS/);
+});

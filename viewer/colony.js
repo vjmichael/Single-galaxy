@@ -7,7 +7,7 @@
   function numeric(x,max=1e12){if(!/^(0|[1-9][0-9]*)$/.test(x))throw Error('Noncanonical number');const n=Number(x);if(!Number.isSafeInteger(n)||n>max)throw Error('Numeric overflow');return n;}
   function decode(raw){
     if(typeof raw!=='string'||raw.length>180||!/^COLONY\|1\|/.test(raw)||!/^[A-Za-z0-9_|-]+$/.test(raw))throw Error('Invalid colony telemetry');
-    const v=raw.split('|'),tick=numeric(v[2],1200),t=v[3];let e={tick,type:t};
+    const v=raw.split('|'),tick=numeric(v[2],Number.MAX_SAFE_INTEGER),t=v[3];let e={tick,type:t};
     if(t==='LOCAL_FRAME'){
       if(v.length!==6)throw Error('Malformed local frame');
       return {...e,system:numeric(v[4],4294967295),
@@ -114,6 +114,55 @@
       if(!id||!generation||!new Set(['BUILD','PILOT','BOARD','RELEASE','DISEMBARK','REBOARD','DUTY_ON','DUTY_OFF','LOAD','UNLOAD','DESCEND','ASCEND']).has(operation))
         throw Error('Invalid shuttle operation receipt');
       return {...e,id,latitude,longitude,operation,generation};
+    }
+    if(t==='FLEET_RESET'){
+      if(v.length!==4)throw Error('Malformed fleet census reset');
+      return e;
+    }
+    if(t==='FLEET_ITEM'){
+      if(v.length!==13)throw Error('Malformed owned fleet ship');
+      const ship=numeric(v[4],Number.MAX_SAFE_INTEGER),
+        order=numeric(v[5],Number.MAX_SAFE_INTEGER),
+        home=numeric(v[6],1),ready=numeric(v[7],1),
+        crew=numeric(v[8],1000000),body=numeric(v[9],Number.MAX_SAFE_INTEGER),
+        food=numeric(v[10],100000000),water=numeric(v[11],100000000),
+        oxygen=numeric(v[12],100000000);
+      if(!ship||(home===1)!==(order===0)||(ready===1&&crew===0))
+        throw Error('Invalid fleet provenance or readiness');
+      return {...e,ship,order,home:!!home,ready:!!ready,crew,body,food,water,oxygen};
+    }
+    if(t==='FLEET_DONE'){
+      if(v.length!==5)throw Error('Malformed fleet census total');
+      return {...e,count:numeric(v[4],10000)};
+    }
+    if(t==='FLEET_SELECTED'||t==='FLEET_FALLBACK'){
+      if(v.length!==7)throw Error('Malformed fleet cockpit selection');
+      const ship=numeric(v[4],Number.MAX_SAFE_INTEGER),
+        home=numeric(v[5],Number.MAX_SAFE_INTEGER),
+        generation=numeric(v[6],Number.MAX_SAFE_INTEGER);
+      if(!ship||!home||!generation||
+         (t==='FLEET_FALLBACK'&&ship!==home))
+        throw Error('Invalid selected ship or fallback');
+      return {...e,ship,home,generation};
+    }
+    if(t==='FLEET_PILOT_ITEM'){
+      if(v.length!==14)throw Error('Malformed selected ship telemetry');
+      const signed=x=>{
+        if(!/^(?:0|-?[1-9][0-9]*)$/.test(x))
+          throw Error('Noncanonical fleet coordinate');
+        const n=Number(x);
+        if(!Number.isSafeInteger(n)||Math.abs(n)>50000000000000000)
+          throw Error('Fleet position out of range');
+        return n;
+      };
+      const ship=numeric(v[4],Number.MAX_SAFE_INTEGER),
+        heading=numeric(v[5],359),x=signed(v[6]),y=signed(v[7]),
+        body=numeric(v[8],Number.MAX_SAFE_INTEGER),
+        crew=numeric(v[9],1000000),food=numeric(v[10],100000000),
+        water=numeric(v[11],100000000),oxygen=numeric(v[12],100000000),
+        generation=numeric(v[13],Number.MAX_SAFE_INTEGER);
+      if(!ship||!crew||!generation)throw Error('Invalid fleet pilot state');
+      return {...e,ship,heading,x,y,body,crew,food,water,oxygen,generation};
     }
     if(t==='FREIGHTER_ITEM'){
       if(v.length!==10)throw Error('Malformed physical freighter build');
@@ -701,7 +750,7 @@
       if(v.length!==7||!/^\d+$/.test(v[4])||!/^[A-Z_]+$/.test(v[5]))throw Error('Bad action result');
       e.id=numeric(v[4],Number.MAX_SAFE_INTEGER);e.outcome=v[5];e.transferred=numeric(v[6]);
     }else if(t==='ERROR'){
-      if(v.length!==5||!['INVALID_INPUT','INVALID_SAFETY_ORDER','UNAUTHORIZED_PRINCIPAL','FRAME_TRAVEL_DENIED','FRAME_TRANSIT_BLOCKED'].includes(v[4]))throw Error('Bad rejected input');e.error=v[4];
+      if(v.length!==5||!['INVALID_INPUT','INVALID_SAFETY_ORDER','UNAUTHORIZED_PRINCIPAL','FRAME_TRAVEL_DENIED','FRAME_TRANSIT_BLOCKED','FLEET_SELECTION_DENIED'].includes(v[4]))throw Error('Bad rejected input');e.error=v[4];
     }else throw Error('Unknown colony event');
     return e;
   }
@@ -763,6 +812,19 @@
  const celestialBodies=new Map(), localOreTaxonomy=new Map(),oasises=new Map();
  let probeCarried=0,probeLauncher=false,probeChoice='';
  const discoveries=new Map();
+ const pilotSaveKey='single-galaxy:fleet-pilot-preference:v1';
+ const fleetShips=new Map();
+ let fleetRosterActive=false,fleetRestorePending=true,fleetRequested=0;
+ let storedPilot=0;
+ try{
+   const raw=window.localStorage?.getItem(pilotSaveKey);
+   if(raw&&/^[1-9][0-9]*$/.test(raw)){
+     const value=Number(raw);
+     if(Number.isSafeInteger(value))storedPilot=value;
+   }
+ }catch{/* Optional browser preference; never game authority. */}
+ window.GalaxyActivePilotedShipId=null;
+ window.GalaxyActivePilotedCelestialBody=null;
  window.GalaxySalvageStock=salvageWrecks;
  window.GalaxyColonyGeology=geology;
  window.GalaxySelectedRockId=null;
@@ -816,6 +878,80 @@
        guide.action==='colonyMine'||guide.action==='colonyRefine'?{amount:8}:
        guide.action==='colonyFabricate'?{amount:4}:{});
  });
+ // SHIP-01D: one fleet cockpit selector; the resource and factory authority
+ // remains the founding colony ship under all view/flight selections.
+ const fleetPanel=document.createElement('section');
+ fleetPanel.className='card pad';fleetPanel.dataset.fleetPanel='1';
+ const fleetTitle=document.createElement('h2');
+ fleetTitle.textContent='Your Fleet · Active Ship';
+ const fleetHelp=document.createElement('p');
+ fleetHelp.textContent='Choose which commissioned, crewed ship to pilot. Movement, navigation and the local camera follow this vessel; colony inventories, planetary work and shipyards stay at the home colony.';
+ const fleetSelector=document.createElement('select');
+ fleetSelector.setAttribute('aria-label','Choose an owned and crewed vessel');
+ fleetSelector.disabled=true;
+ const fleetSelectButton=document.createElement('button');
+ fleetSelectButton.type='button';fleetSelectButton.textContent='Take control of ship';
+ fleetSelectButton.disabled=true;
+ const fleetHomeButton=document.createElement('button');
+ fleetHomeButton.type='button';fleetHomeButton.textContent='Return to home colony ship';
+ fleetHomeButton.disabled=true;
+ const fleetRefreshButton=document.createElement('button');
+ fleetRefreshButton.type='button';fleetRefreshButton.textContent='Refresh fleet';
+ const fleetPilotState=document.createElement('output');
+ fleetPilotState.textContent='Awaiting verified owned fleet roster.';
+ const fleetAuthority=document.createElement('p');
+ fleetAuthority.textContent='Home colony resource authority remains unchanged.';
+ const fleetControls=document.createElement('div');
+ for(const [label,action,extra] of [
+   ['← Thrust','thrust',{x:-1,y:0}],['→ Thrust','thrust',{x:1,y:0}],
+   ['↑ Thrust','thrust',{x:0,y:-1}],['↓ Thrust','thrust',{x:0,y:1}],
+   ['Drift','thrust',{x:0,y:0}],
+   ['Yaw left','yaw',{delta:-15}],['Yaw right','yaw',{delta:15}]
+ ]){
+   const button=document.createElement('button');
+   button.type='button';button.textContent=label;button.disabled=true;
+   button.addEventListener('click',()=>window.GalaxyColonyCommand?.(action,extra));
+   fleetControls.append(button);
+ }
+ const fleetBody=document.createElement('input');
+ fleetBody.type='number';fleetBody.min='1';fleetBody.step='1';
+ fleetBody.placeholder='Celestial body ID';
+ fleetBody.setAttribute('aria-label','Selected vessel physical travel destination');
+ const fleetTravel=document.createElement('button');
+ fleetTravel.type='button';fleetTravel.textContent='Travel with selected ship';
+ fleetTravel.disabled=true;
+ fleetTravel.addEventListener('click',()=>{
+   const body=Number(fleetBody.value);
+   if(Number.isSafeInteger(body)&&body>0)
+     window.GalaxyColonyCommand?.('colonyFrameTravel',{body});
+ });
+ const fleetActions=document.createElement('div');
+ fleetActions.append(fleetSelector,fleetSelectButton,fleetHomeButton,fleetRefreshButton);
+ const fleetNavigation=document.createElement('div');
+ fleetNavigation.append(fleetBody,fleetTravel);
+ fleetPanel.append(fleetTitle,fleetHelp,fleetActions,fleetAuthority,
+   fleetPilotState,fleetControls,fleetNavigation);
+ const requestFleetShip=ship=>{
+   if(!Number.isSafeInteger(ship)||ship<=0)return;
+   if(!fleetShips.get(ship)?.ready)return;
+   fleetRequested=ship;
+   window.GalaxyColonyCommand?.('colonyFleetSelect',{ship});
+   fleetPilotState.textContent='Switch requested for ship #'+ship+
+     '. Waiting for authenticated native selection receipt.';
+ };
+ fleetSelectButton.addEventListener('click',()=>
+   requestFleetShip(Number(fleetSelector.value)));
+ fleetHomeButton.addEventListener('click',()=>{
+   const home=window.GalaxyColonyHomeShipId;
+   if(Number.isSafeInteger(home)&&home>0)requestFleetShip(home);
+ });
+ fleetRefreshButton.addEventListener('click',()=>
+   window.GalaxyColonyCommand?.('colonyFleetStatus',{}));
+ fleetSelector.addEventListener('change',()=>{
+   const chosen=fleetShips.get(Number(fleetSelector.value));
+   fleetSelectButton.disabled=!chosen?.ready;
+ });
+ q('colonyPanel').insertBefore(fleetPanel,q('colonyPanel').firstChild);
  // First shipyard construction test UI: one global control, not
  // repeated once for every planet. Only native SQLite receipts change state.
  const shipyardPanel=document.createElement('details');
@@ -930,7 +1066,7 @@
  // Explicitly steer the commissioned ship by its manufacturing receipt.
  // This never rebinds the colony work board to the ship's cargo cockpit.
  const pilotTitle=document.createElement('strong');
- pilotTitle.textContent='Pilot commissioned freighter (SHIP-01C)';
+ pilotTitle.textContent='Advanced: direct freighter diagnostics (SHIP-01C)';
  const pilotInfo=document.createElement('output');
  pilotInfo.textContent='Enter a completed freighter order ID, then inspect its real cockpit.';
  const pilotStatus=document.createElement('button');
@@ -987,13 +1123,102 @@
  q('celestialBodyList').parentNode.insertBefore(
    shipyardPanel,q('celestialBodyList'));
  window.GalaxyColony={
-   reset(){signatureContacts.clear();celestialBodies.clear();oasises.clear();localOreTaxonomy.clear();expeditionAssessment=null;
+   reset(){fleetShips.clear();fleetRosterActive=false;fleetRestorePending=true;
+     fleetRequested=0;window.GalaxyActivePilotedShipId=null;
+     window.GalaxyActivePilotedCelestialBody=null;
+     fleetSelector.replaceChildren(new Option('Awaiting native fleet roster',''));
+     fleetSelector.disabled=true;fleetSelectButton.disabled=true;
+     fleetHomeButton.disabled=true;
+     fleetPilotState.textContent='Awaiting verified owned fleet roster.';
+     fleetAuthority.textContent='Home colony resource authority remains unchanged.';
+     fleetControls.querySelectorAll('button').forEach(b=>b.disabled=true);
+     fleetTravel.disabled=true;
+     signatureContacts.clear();celestialBodies.clear();oasises.clear();localOreTaxonomy.clear();expeditionAssessment=null;
      q('celestialBodyList').textContent='No physical celestial bodies surveyed yet.';
      q('signatureTarget').replaceChildren(new Option('Scan to detect signals',''));
      q('signatureFocus').disabled=true;q('signatureCancel').disabled=true;
      q('signatureFeedback').textContent='Search for coarse anomaly signatures.';
      q('droneTarget').replaceChildren(new Option('Scan nearby rocks first',''));q('droneLaunch').disabled=true;deployedProbes.clear();probeCarried=0;probeLauncher=false;probeChoice='';q('probeTarget').replaceChildren(new Option('No probe deployed',''));q('probeLaunch').disabled=true;q('probeSurvey').disabled=true;q('probeRetrieve').disabled=true;q('probeInventory').textContent='Awaiting native probe stock.';q('probeFeedback').textContent='Native equipment required.';q('fittingCapacity').textContent='Awaiting actual ship fittings.';q('proximityStatus').textContent='Proximity safety sensor awaiting contacts.';q('fitScanner').disabled=true;q('unfitScanner').disabled=true;discoveries.clear();q('explorationResults').replaceChildren();q('explorationSummary').textContent='No mapped discoveries yet. Execute a native local scan.';salvageWrecks.clear();q('salvageTarget').replaceChildren(new Option('No recoverable wreck reported',''));q('salvageRecover').disabled=true;q('salvageFeedback').textContent='Waiting for native wreck inventory.';combatTargets.clear();q('combatHull').textContent='—';q('combatCharges').textContent='—';q('combatFire').disabled=true;q('combatFeedback').textContent='Awaiting native combat telemetry.';window.GalaxySelectedRockId=null;window.GalaxyShipHeading=null;window.GalaxyColonyOutpostIds.clear();openingStatus=null;openingScanned=false;refreshOpening();window.GalaxyColonyHomeShipId=null;q('colonySafetyAssess').disabled=true;q('colonySafetyPreflight').disabled=true;policyAudits.clear();geology.clear();small.clear();stocks.clear();outposts.clear();farms.clear();habitats.clear();utilities.clear();communities.clear();clinics.clear();reclaimers.clear();waterworks.clear();log.length=0;q('colonyEvents').textContent='Awaiting colony telemetry…';q('expeditionOutcome').textContent='Awaiting an actual native result';},
    accept(raw){const e=window.GalaxyColonyContract.decode(raw);
+     if(e.type==='FLEET_RESET'){
+       fleetShips.clear();fleetRosterActive=true;
+     }
+     if(e.type==='FLEET_ITEM'){
+       if(!fleetRosterActive||fleetShips.has(e.ship))
+         throw Error('Duplicate/out-of-sequence fleet identity');
+       fleetShips.set(e.ship,e);
+     }
+     if(e.type==='FLEET_DONE'){
+       if(!fleetRosterActive||fleetShips.size!==e.count)
+         throw Error('Incomplete fleet roster receipt');
+       fleetRosterActive=false;
+       const choices=[...fleetShips.values()].sort((a,b)=>
+         Number(b.home)-Number(a.home)||a.ship-b.ship);
+       const active=window.GalaxyActivePilotedShipId;
+       fleetSelector.replaceChildren(...choices.map(item=>
+         new Option((item.home?'Home colony':'Manufactured freighter #'+item.order)+
+           ' · ship '+item.ship+(item.ready?' · ready':' · unavailable'),
+           String(item.ship))));
+       fleetSelector.disabled=!choices.length;
+       if(fleetShips.has(active))fleetSelector.value=String(active);
+       fleetSelectButton.disabled=!choices.length||
+         !fleetShips.get(Number(fleetSelector.value))?.ready;
+       fleetHomeButton.disabled=!choices.some(item=>item.home&&item.ready);
+       if(fleetRestorePending){
+         fleetRestorePending=false;
+         const saved=fleetShips.get(storedPilot);
+         if(saved?.ready&&storedPilot!==active)
+           requestFleetShip(storedPilot);
+         else if(storedPilot&&!saved?.ready){
+           storedPilot=0;
+           try{window.localStorage?.removeItem(pilotSaveKey);}catch{}
+         }
+       }
+     }
+     if(e.type==='FLEET_SELECTED'||e.type==='FLEET_FALLBACK'){
+       window.GalaxyActivePilotedShipId=e.ship;
+       window.GalaxyActivePilotedCelestialBody=null;
+       window.GalaxyColonyHomeShipId=e.home;
+       window.GalaxyFleetSelectionChanged?.(e.ship,e.home);
+       if(fleetShips.has(e.ship))fleetSelector.value=String(e.ship);
+       const selected=fleetShips.get(e.ship);
+       fleetPilotState.textContent=(e.type==='FLEET_FALLBACK'?
+         'Ship unavailable; returned to home cockpit. ':'Active cockpit confirmed. ')+
+         'Piloting ship #'+e.ship+' at generation '+e.generation+'.';
+       fleetAuthority.textContent='Home colony #'+e.home+
+         ' retains ALL industry, planetary work, shipyard and inventory authority. '+
+         (e.ship===e.home?'Piloting home colony.':'Piloting separate ship #'+e.ship+'.');
+       const ready=!!selected?.ready;
+       fleetControls.querySelectorAll('button').forEach(b=>b.disabled=!ready);
+       fleetTravel.disabled=!ready;
+       fleetHomeButton.disabled=e.ship===e.home||!fleetShips.get(e.home)?.ready;
+       if(e.type==='FLEET_FALLBACK'){
+         storedPilot=0;
+         try{window.localStorage?.removeItem(pilotSaveKey);}catch{}
+       }else if(fleetRequested===e.ship){
+         fleetRequested=0;
+         storedPilot=e.ship;
+         try{window.localStorage?.setItem(pilotSaveKey,String(e.ship));}catch{}
+       }
+     }
+     if(e.type==='ERROR'&&e.error==='FLEET_SELECTION_DENIED'){
+       fleetRequested=0;
+       fleetPilotState.textContent='Ship selection denied by authoritative host. Refresh fleet to inspect crew and condition.';
+     }
+     if(e.type==='FLEET_PILOT_ITEM'){
+       if(e.ship===window.GalaxyActivePilotedShipId){
+         window.GalaxyActivePilotedCelestialBody=e.body;
+         document.querySelectorAll('[data-pilot-body]').forEach(button=>{
+           button.disabled=Number(button.dataset.pilotBody)===e.body;
+         });
+         fleetPilotState.textContent='Piloting ship #'+e.ship+
+           ' · heading '+e.heading+'° · position '+e.x+', '+e.y+
+           ' mm · body #'+e.body+' · crew '+e.crew+
+           ' · food '+e.food+' kg · water '+e.water+' kg · oxygen '+
+           e.oxygen+' kg · world generation '+e.generation;
+         window.GalaxyShipHeading=e.heading;
+       }
+     }
      if(e.type==='CELESTIAL_HEADER'){
        celestialBodies.clear();oasises.clear();
        q('celestialBodyList').textContent='Receiving authoritative physical bodies…';
@@ -1015,7 +1240,8 @@
          const action=document.createElement('button');
          action.type='button';
          action.textContent='Travel to local region';
-         action.disabled=body.id===window.GalaxyActiveCelestialBody;
+         action.dataset.pilotBody=String(body.id);
+         action.disabled=body.id===window.GalaxyActivePilotedCelestialBody;
          action.addEventListener('click',()=>{
            if(window.GalaxyColonyCommand)
              window.GalaxyColonyCommand('colonyFrameTravel',{body:body.id});
@@ -1458,6 +1684,7 @@
        freighterState.textContent='Native manufacturing generation '+e.generation;
      }
      if(e.type==='FREIGHTER_COMMISSIONED'){
+       window.GalaxyColonyCommand?.('colonyFleetStatus',{});
        let row=[...freighterList.children].find(node=>
          node.dataset.freighterOrder===String(e.order));
        if(!row){
@@ -1478,6 +1705,7 @@
        window.GalaxyColonyCommand?.('colonyFreighterStatus',{});
      }
      if(e.type==='FREIGHTER_LAUNCHED'){
+       window.GalaxyColonyCommand?.('colonyFleetStatus',{});
        freighterState.textContent='Actual freighter ship #'+e.hull+
          ' built under order #'+e.order+' — needs real crew and equipment.';
        window.GalaxyColonyCommand?.('colonyFreighterStatus',{});

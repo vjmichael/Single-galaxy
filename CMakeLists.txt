@@ -1424,3 +1424,13 @@ if(BUILD_TESTING)
   add_test(NAME galaxy_ship01b2_commission_freighter
     COMMAND galaxy_ship01b2_commission_freighter_tests)
 endif()
+
+# SHIP-01D: native fleet list/selection and zero-privilege camera focus tests.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship01d_fleet_selection_tests
+    tests/SHIP01D_FleetSelectionTests.cpp)
+  target_link_libraries(galaxy_ship01d_fleet_selection_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship01d_fleet_selection
+    COMMAND galaxy_ship01d_fleet_selection_tests)
+  set_tests_properties(galaxy_ship01d_fleet_selection PROPERTIES TIMEOUT 180)
+endif()

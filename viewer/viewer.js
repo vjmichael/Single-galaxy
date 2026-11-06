@@ -16,14 +16,19 @@ let cameraFollow=true,cameraZoom=1,cameraSpan=30000;
 function cameraBounds(state){
  if(!window.GalaxyColonyMode||!state||!window.GalaxyFlightCamera)return;
  const api=window.GalaxyFlightCamera, entities=[...state.entities.values()];
- const ship=entities.find(e=>e.entityType===0&&e.owner===7);
+ const chosen=window.GalaxyActivePilotedShipId;
+ const ship=(chosen?entities.find(e=>e.id===chosen&&e.entityType===0&&e.owner===7):null)||
+   (!chosen?entities.find(e=>e.entityType===0&&e.owner===7):null);
  if(cameraFollow&&ship)bounds=api.viewport(ship,cameraZoom,cameraSpan);
  else {const b=api.fit(entities);bounds=api.viewport(
    {x:(b.left+b.right)/2,y:(b.top+b.bottom)/2},cameraZoom,b.right-b.left);}
+ updateCameraLabel();
 }
 function updateCameraLabel(){
  const status=el('cameraStatus');
- if(status)status.textContent=(cameraFollow?'Following colony ship':'Overview of visible world')+
+ if(status)status.textContent=(cameraFollow?
+   'Following '+(window.GalaxyActivePilotedShipId?'ship #'+window.GalaxyActivePilotedShipId:'home colony ship'):
+   'Overview of visible world')+
    ' · '+cameraZoom.toFixed(2)+'× zoom';
 }
 window.GalaxyFlightCameraActions={
@@ -61,7 +66,10 @@ function update() {
   const f=selectedState();if(!f)return;
   el('tickPill').textContent='Tick '+f.tick;el('frameLabel').textContent=`System ${f.system}  ·  seq ${f.sequence}  ·  ${f.entities.size} visible entities`;
   el('progress').value=String(index);el('indexText').textContent=`${index} / ${timeline.length-1}`;
-  const entities=[...f.entities.values()];const ship=entities.find(e=>e.entityType===0);
+  const entities=[...f.entities.values()];
+  const chosen=window.GalaxyActivePilotedShipId;
+  const ship=(chosen?entities.find(e=>e.id===chosen&&e.entityType===0&&e.owner===7):null)||
+    (!chosen?entities.find(e=>e.entityType===0):null);
   const rocks=entities.filter(e=>e.entityType===1);
   const total=rocks.reduce((sum,e)=>sum+e.ore,0);
   el('cargo').textContent=ship?`${ship.cargo} / ${ship.capacity}`:'—';
@@ -165,14 +173,18 @@ function draw() {
     label('JUMP GATE',p.x,p.y+31,'#9ce8be');
   }
   for(const e of entities.filter(e=>e.entityType===0)) {
-    const heading=window.GalaxyColonyMode&&e.owner===7?window.GalaxyShipHeading:null;
+    const active=window.GalaxyActivePilotedShipId;
+    const isPiloted=window.GalaxyColonyMode&&active===e.id;
+    const heading=isPiloted?window.GalaxyShipHeading:null;
     const p=xy(e.x,e.y),angle=Number.isInteger(heading)?heading*Math.PI/180:Math.atan2(e.vy,e.vx);
     ctx.save();ctx.translate(p.x,p.y);ctx.rotate(Number.isInteger(heading)?angle:(e.vx||e.vy?angle:0));
     ctx.fillStyle='#56dcef';ctx.shadowColor='#5fe0fc';ctx.shadowBlur=16;
     ctx.beginPath();ctx.moveTo(21,0);ctx.lineTo(-13,-11);ctx.lineTo(-8,0);ctx.lineTo(-13,11);ctx.closePath();ctx.fill();
     ctx.shadowBlur=0;ctx.strokeStyle='#b9f6ff';ctx.lineWidth=1;ctx.stroke();ctx.restore();
     ctx.strokeStyle='rgba(98,225,245,.18)';ctx.beginPath();ctx.arc(p.x,p.y,39,0,Math.PI*2);ctx.stroke();
-    label(window.GalaxyColonyMode&&e.owner===7?'COLONY SHIP':'MINING SHIP',p.x,p.y-28,'#b8f7ff');
+    label(isPiloted?'ACTIVE SHIP #'+e.id:
+      window.GalaxyColonyMode&&e.owner===7&&e.id===window.GalaxyColonyHomeShipId?
+        'HOME COLONY #'+e.id:'SHIP #'+e.id,p.x,p.y-28,'#b8f7ff');
   }
   ctx.font='11px monospace';ctx.fillStyle='#6584a4';ctx.textAlign='left';ctx.fillText('GALAXY / SYSTEM '+state.system+' / TICK '+state.tick,16,h-19);
 }
