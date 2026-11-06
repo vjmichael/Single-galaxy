@@ -868,6 +868,8 @@ public:
         std::uint64_t pilot,EntityId target_ship,std::uint64_t flight_id,
         NpcFlightPurpose purpose=NpcFlightPurpose::General,
         FailPoint fail=FailPoint::None);
+    bool register_player_person(PlayerId owner,EntityId aboard,
+        FailPoint fail=FailPoint::None);
     bool cancel_npc_flight(PlayerId owner,std::uint64_t flight_order_id,
         FailPoint fail=FailPoint::None);
     // Real finite resource collection, committed atomically before publication.

@@ -8812,6 +8812,17 @@ bool PersistentWorld::queue_npc_station_docking(
     world_.swap(next);++generation_;
     return true;
 }
+bool PersistentWorld::register_player_person(PlayerId owner,EntityId aboard,
+    FailPoint fail){
+    auto next=world_;
+    if(!next.register_player_person(owner,aboard))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("player registration created material");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
 bool PersistentWorld::queue_npc_ship_rendezvous(
     PlayerId owner,EntityId ship,std::uint64_t pilot,
     EntityId target_ship,std::uint64_t order_id,

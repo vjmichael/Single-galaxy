@@ -86,6 +86,18 @@ struct NpcFlightOrder {
     std::uint16_t local_commands=0; // bounded 1..511 issued native commands
     std::uint64_t last_local_command=0; // original accepted native command ID
 };
+// NPC-RESP-02/v98: one real player persona independent of fleet cockpit state.
+// Identity is not a clone of an NPC; physical custody transitions require
+// their own later independently authorized gameplay receipts.
+enum class PlayerPersonState : std::uint8_t {AboardOwnShip=0,Rescued=1,Detained=2,Stranded=3};
+struct PlayerPerson {
+    PlayerId owner=0;
+    EntityId home_ship=0;
+    EntityId physical_ship=0;
+    PlayerPersonState state=PlayerPersonState::AboardOwnShip;
+    PlayerId custodian=0;
+    std::uint64_t registered_tick=0,last_receipt=0,last_update_tick=0;
+};
 enum class CelestialKind {Star=0,Planet=1,Moon=2,DebrisRegion=3};
 struct PhysicalCelestialBody {
     std::uint64_t id=0,parent_id=0;
@@ -1101,6 +1113,12 @@ public:
         std::uint64_t pilot,EntityId target_ship,std::uint64_t flight_id,
         NpcFlightPurpose purpose=NpcFlightPurpose::General);
     bool cancel_npc_flight(PlayerId owner,std::uint64_t flight_id);
+    const std::map<PlayerId,PlayerPerson>& player_people() const noexcept {
+        return player_people_;
+    }
+    // Explicit genesis or authenticated registration; not implied by pilot selection.
+    // This cannot perform rescue or arrest, which need original physical receipts.
+    bool register_player_person(PlayerId owner,EntityId aboard);
     // Different local frames never share ordinary spatial interactions.
     bool same_local_frame(EntityId a,EntityId b) const;
     // PLAY-13C.4: finite existing mineral stock may be redistributed into
@@ -1440,6 +1458,7 @@ private:
     std::map<std::uint64_t,PendingCelestialTransit> pending_celestial_transits_;
     std::map<std::uint64_t,CompletedCelestialTransit> completed_celestial_transits_;
     std::map<std::uint64_t,NpcFlightOrder> npc_flight_orders_; // v95 intent + proof
+    std::map<PlayerId,PlayerPerson> player_people_; // v98 identity, never implicit in ship owner
     std::map<std::uint32_t,std::vector<PhysicalCelestialBody>> physical_celestial_systems_;
     std::set<EntityId> depleted_;
     std::map<EntityId, AutoMining> mining_;
