@@ -9,6 +9,7 @@
 #include "galaxy/FleetSelection.hpp"
 #include "galaxy/ColonySafety.hpp"
 #include "galaxy/NpcCyberSupervisor.hpp"
+#include "galaxy/ShipSensorProfile.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -166,6 +167,14 @@ void cyber_status(const Simulation& w,EntityId ship) {
     announce(w,"CYBER_DEFENSE|"+std::to_string(ship)+"|"+
         std::to_string(remaining)+"|"+std::to_string(source)+"|"+
         std::to_string(exposed));
+    bool scanner_online=false;
+    for(std::uint8_t slot=0;slot<2;++slot)
+        if(hull->fitting.hardpoints[slot]==1 &&
+           w.hardpoint_effective_on(ship,slot))scanner_online=true;
+    announce(w,"CYBER_SENSORS|"+std::to_string(ship)+"|"+
+        std::to_string(hull->fitting.stealth_baffle()?1:0)+"|"+
+        std::to_string(hull->fitting.counter_ecm_array()?1:0)+"|"+
+        std::to_string(scanner_online?1:0));
     announce(w,"CYBER_TARGETS_RESET|"+std::to_string(ship));
     for(const auto& [id,target]:w.entities()){
         if(id==ship || target.type!=EntityType::Ship || target.training_drone ||
@@ -176,7 +185,9 @@ void cyber_status(const Simulation& w,EntityId ship) {
         const auto dx=double(target.position.x)-hull->position.x;
         const auto dy=double(target.position.y)-hull->position.y;
         const auto distance=std::hypot(dx,dy);
-        if(distance>double(Simulation::kHackRangeMm))continue;
+        if(distance>double(Simulation::kHackRangeMm) ||
+           distance>double(ship_sensors::detection_range_mm(
+               w,*hull,target)))continue;
         announce(w,"CYBER_TARGET|"+std::to_string(ship)+"|"+
             std::to_string(id)+"|"+std::to_string(
                 static_cast<std::uint64_t>(distance)));
@@ -1755,8 +1766,9 @@ void apply(PersistentWorld& world,EntityId ship,FleetSelection& fleet,const std:
             c.action=Action::ConfigureExplorationScanner;c.amount=mode;
         }else if(v.size()==2 && v[0]=="CYBER_FIT"){
             const auto mode=integer(v[1]);
-            if(mode!=3 && mode!=-3 && mode!=4 && mode!=-4)
-                throw std::invalid_argument("invalid cyber fitting");
+            if(mode!=3 && mode!=-3 && mode!=4 && mode!=-4 &&
+               mode!=5 && mode!=-5 && mode!=6 && mode!=-6)
+                throw std::invalid_argument("invalid cyber/stealth fitting");
             if(!fleet.is_ready(world.world(),fleet.piloted()))
                 throw std::invalid_argument("cockpit unavailable");
             c.actor=fleet.piloted();
