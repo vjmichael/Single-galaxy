@@ -8313,7 +8313,8 @@ std::optional<AstronomicalProfile> Simulation::scan_celestial_profile(
     PlayerId owner,EntityId ship) const {
     const auto it=entities_.find(ship);
     if(!owner||it==entities_.end()||it->second.type!=EntityType::Ship||
-       it->second.owner_id!=owner||!it->second.fitting.exploration_scanner())
+       it->second.owner_id!=owner||!it->second.fitting.exploration_scanner() ||
+       !hardpoint_effective_on(ship,it->second.fitting.hardpoints[0]==1?0:1))
         return std::nullopt;
     // Shared versioned single-galaxy seed, never the mutable resource RNG.
     return generate_astronomical_profile(kAstronomicalGalaxySeed,it->second.system_id);
@@ -8322,7 +8323,8 @@ std::optional<Simulation::EnvironmentSurvey> Simulation::scan_environment(
     PlayerId owner,EntityId ship) const {
     const auto it=entities_.find(ship);
     if(!owner||it==entities_.end()||it->second.type!=EntityType::Ship||
-       it->second.owner_id!=owner||!it->second.fitting.exploration_scanner())
+       it->second.owner_id!=owner||!it->second.fitting.exploration_scanner() ||
+       !hardpoint_effective_on(ship,it->second.fitting.hardpoints[0]==1?0:1))
         return std::nullopt;
     const auto profile=scan_celestial_profile(owner,ship);
     if(!profile)return std::nullopt;
@@ -8344,7 +8346,9 @@ std::vector<Simulation::SignatureHint> Simulation::coarse_probe_signatures(
     const auto carrier=entities_.find(ship);
     if(!owner||carrier==entities_.end()||carrier->second.type!=EntityType::Ship||
        carrier->second.owner_id!=owner||
-       !carrier->second.fitting.exploration_scanner())return {};
+       !carrier->second.fitting.exploration_scanner() ||
+       !hardpoint_effective_on(ship,carrier->second.fitting.hardpoints[0]==1?0:1))
+        return {};
     constexpr std::int64_t q=5000000; // 5 km coarse bins; no secret exact coordinates
     const double radius=double(range_mm); // host-enforced discovery envelope
     std::vector<SignatureHint> result;
@@ -8381,7 +8385,7 @@ bool Simulation::hardpoint_effective_on(EntityId ship,std::uint8_t slot) const {
                 exposed[k.slot]=true;
     }
     const auto modules=ship_status::fitted_controls(*vessel,
-        vessel->hardpoint_requested_on,exposed,{{false,false}});
+        vessel->hardpoint_requested_on,exposed,vessel->hardpoint_isolated);
     for(const auto& m:ship_status_.project(ship,tick_,modules))
         if(m.key.rack==0 && m.key.slot==slot)return m.effective_on;
     return false;
@@ -12519,7 +12523,10 @@ std::int64_t Simulation::total_ore() const {
             throw std::overflow_error("invalid colony material stacks");
         colony_cargo_kg+=physical_kg;
         const auto& eq=entities_.at(id);
-        const auto installed=(eq.fitting.exploration_scanner()?1:0)+(eq.fitting.probe_launcher()?1:0);
+        const auto installed=(eq.fitting.exploration_scanner()?1:0)+
+            (eq.fitting.probe_launcher()?1:0)+
+            (eq.fitting.intrusion_emitter()?1:0)+
+            (eq.fitting.cyber_firewall()?1:0);
         const auto deployed=std::count_if(survey_probes_.begin(),survey_probes_.end(),
             [id](const auto& row){return row.second.carrier==id;});
         const auto mass=c.refined+2*(c.modules+installed+eq.survey_probes_carried+
