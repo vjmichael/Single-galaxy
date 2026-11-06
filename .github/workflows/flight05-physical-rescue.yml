@@ -1,0 +1,35 @@
+name: FLIGHT-05 physical NPC ferry rescue
+on:
+  pull_request:
+    paths:
+      - 'include/galaxy/ShipEmergencyRendezvous.hpp'
+      - 'tests/FLIGHT05_PhysicalRescueTests.cpp'
+      - 'CMakeLists.txt'
+      - '.github/workflows/flight05-physical-rescue.yml'
+  workflow_dispatch:
+jobs:
+  native:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & (Join-Path $env:VCPKG_INSTALLATION_ROOT 'vcpkg.exe') install sqlite3:x64-windows --clean-after-build
+          if ($LASTEXITCODE -ne 0) { throw 'SQLite install failed' }
+      - if: runner.os == 'Linux'
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tc=Join-Path $env:VCPKG_INSTALLATION_ROOT 'scripts/buildsystems/vcpkg.cmake'
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$tc" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed' }
+      - run: cmake --build build --parallel 2 --config Release --target galaxy_flight05_physical_rescue_tests galaxy_colony_auto04d3_ferry_tests galaxy_flight03_native_rendezvous_tests
+      - run: ctest --test-dir build -C Release --output-on-failure -R "^galaxy_(flight05_physical_rescue|colony_auto04d3_ferry_rescue|flight03_native_rendezvous)$"

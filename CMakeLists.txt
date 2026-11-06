@@ -1565,3 +1565,13 @@ if(BUILD_TESTING)
     COMMAND galaxy_play13d_regional_facilities_tests --flight03-rendezvous-freight)
   set_tests_properties(galaxy_flight04b_real_freight PROPERTIES TIMEOUT 300)
 endif()
+
+# FLIGHT-05: physical NPC rendezvous + trusted ferry manifest rescue.
+if(BUILD_TESTING)
+  add_executable(galaxy_flight05_physical_rescue_tests
+    tests/FLIGHT05_PhysicalRescueTests.cpp)
+  target_link_libraries(galaxy_flight05_physical_rescue_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_flight05_physical_rescue
+    COMMAND galaxy_flight05_physical_rescue_tests)
+  set_tests_properties(galaxy_flight05_physical_rescue PROPERTIES TIMEOUT 300)
+endif()
