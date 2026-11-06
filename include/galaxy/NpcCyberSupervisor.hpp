@@ -6,7 +6,9 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <limits>
+#include <vector>
 
 namespace galaxy::npc_cyber {
 struct Pulse {
