@@ -1,0 +1,37 @@
+name: NPC-RESP-02 player identity and v98 durable proof
+on:
+  pull_request:
+    paths:
+      - 'include/galaxy/Simulation.hpp'
+      - 'include/galaxy/Persistence.hpp'
+      - 'src/Simulation.cpp'
+      - 'src/Persistence.cpp'
+      - 'tests/NPCRESP02_PlayerIdentityTests.cpp'
+      - '.github/workflows/npcresp02-player-identity.yml'
+  workflow_dispatch:
+jobs:
+  native:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & (Join-Path $env:VCPKG_INSTALLATION_ROOT 'vcpkg.exe') install sqlite3:x64-windows --clean-after-build
+          if ($LASTEXITCODE -ne 0) { throw 'SQLite SDK install failed' }
+      - if: runner.os == 'Linux'
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tc=Join-Path $env:VCPKG_INSTALLATION_ROOT 'scripts/buildsystems/vcpkg.cmake'
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$tc" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'native configure failed' }
+      - run: cmake --build build --parallel 2 --config Release --target galaxy_npcresp02_player_identity_tests galaxy_npcresp01_dispatch_tests galaxy_flight06_dependent_rendezvous_tests
+      - run: ctest --test-dir build -C Release --output-on-failure -R "^galaxy_(npcresp02_player_identity|npcresp01_dispatch|flight06_dependent_rendezvous)$"
