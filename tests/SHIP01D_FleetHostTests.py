@@ -34,6 +34,10 @@ def main(host: pathlib.Path):
             "AUTH|7|YARD_CONTRACT_STATUS",
             "AUTH|7|YARD_CONTRACT_POST|93001|91001|92001",
             "AUTH|8|YARD_CONTRACT_ACCEPT|93001",
+            "AUTH|7|WORK_STATUS",
+            "AUTH|7|WORK_DELEGATE_SHIP|94001|93001|0|0|0|0",
+            "AUTH|7|WORK_CANCEL|94001",
+            "AUTH|8|WORK_STATUS",
             "AUTH|7|THRUST|1|0",
             "AUTH|7|YAW|15",
             # Cannot assign founding ship or an asteroid as a freighter.
@@ -56,6 +60,10 @@ def main(host: pathlib.Path):
             raise AssertionError("Native host did not publish empty customer shipyard board")
         if "|ERROR|YARD_CONTRACT_DENIED" not in initial:
             raise AssertionError("Native host did not reject unconstructed supplier yard")
+        if "|WORK_DONE|0" not in initial or "|WORK_DIRECTIVES_DONE|0" not in initial:
+            raise AssertionError("Native universal work board failed to project empty real work")
+        if initial.count("|ERROR|WORK_DENIED")<2:
+            raise AssertionError("Unfunded/foreign work delegation was not denied")
         if not re.search(r"\|FLEET_PILOT_ITEM\|1\|",initial):
             raise AssertionError("Real piloted hull telemetry was not published")
         if len(re.findall(r"\|ERROR\|FLEET_WORK_DENIED",initial))<2:
