@@ -5,12 +5,17 @@
 #include "galaxy/TerritorialHailing.hpp"
 #include <algorithm>
 #include <cstdint>
+#include <string>
 
 namespace galaxy::colony_disposition {
 struct ObservedCyberAttack {
     std::uint64_t command_id=0,world_tick=0,observer_npc=0;
     PlayerId attacker_owner=0,victim_owner=0;
     EntityId colony=0,attacking_ship=0,victim_ship=0;
+    // Sensor evidence does NOT include the native internal attacker owner.
+    // That ID is private simulation authorization data, not perceived data.
+    std::uint8_t sensor_detail=0;
+    std::string observed_description;
     bool attempted=false,confusion_applied=false;
     // Always false until an independent law/tribunal process finds an offense.
     bool legal_crime_finding=false,arrest_authorized=false;
@@ -78,8 +83,14 @@ inline ObservedCyberAttack contemporaneous_cyber_evidence(
     report.colony=colony;
     report.attacking_ship=found->actor;
     report.victim_ship=found->target;
-    report.attacker_owner=attacker->owner_id;
+    // Preserve actual attacker vessel ancestry for a later identity-bound
+    // hail, but hide the globally known native owner until authenticated.
+    report.attacker_owner=0;
     report.victim_owner=victim->owner_id;
+    report.sensor_detail=observed->sensor_detail;
+    report.observed_description=observed->observed_description;
+    if(report.sensor_detail<1 || report.sensor_detail>3 ||
+       report.observed_description.empty())return ObservedCyberAttack{};
     report.attempted=true;
     report.confusion_applied=found->result==Outcome::Applied;
     return report;
