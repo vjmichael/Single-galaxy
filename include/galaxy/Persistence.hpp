@@ -876,6 +876,17 @@ public:
     bool commission_shipyard_freighter(PlayerId owner,std::uint64_t build_id,
         std::array<std::uint64_t,2> crew,std::int64_t provisions_kg_each,
         FailPoint fail=FailPoint::None);
+    // Two-party v93 customer order; supplier independently accepts, customer
+    // physically pays six modules at the yard and later takes the real hull.
+    bool post_shipyard_customer_order(PlayerId customer,EntityId customer_ship,
+        std::uint64_t yard_id,std::uint64_t build_id,std::uint64_t order_id,
+        FailPoint fail=FailPoint::None);
+    bool accept_shipyard_customer_order(PlayerId supplier,std::uint64_t order_id,
+        FailPoint fail=FailPoint::None);
+    bool fund_shipyard_customer_order(PlayerId customer,std::uint64_t order_id,
+        FailPoint fail=FailPoint::None);
+    bool deliver_shipyard_customer_order(PlayerId customer,std::uint64_t order_id,
+        FailPoint fail=FailPoint::None);
     bool post_local_delivery_order(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& site,ShuttleCargo cargo,
         std::int64_t kilograms,std::uint64_t order_id,
