@@ -1,4 +1,5 @@
 #include "galaxy/TerritorialCyberEvidence.hpp"
+#include "galaxy/NpcCyberTactics.hpp"
 #include <chrono>
 #include <filesystem>
 #include <iostream>
@@ -69,6 +70,20 @@ int main() {
           Outcome::Applied);
     CHECK(w.world().find(attacker)->fitting.intrusion_emitter());
     CHECK(w.world().total_material_kg()==original);
+    // Existing durable politics, not a magic NPC hostility toggle, must
+    // classify the independent predatory leader's real current capability.
+    w.establish_colony_conflict_agenda(93001,attacker,pilot,
+        colony_conflict::Agenda::Predatory);
+    w.record_colony_watch_contact(93002,attacker,pilot,victim);
+    const auto predisposition=colony_disposition::assess(w,attacker,93002);
+    CHECK(predisposition.decision.posture==colony_conflict::Posture::PrepareRaid);
+    w.establish_colony_conflict_agenda(93011,victim,defender_watch,
+        colony_conflict::Agenda::Cooperative);
+    w.record_colony_watch_contact(93012,victim,defender_watch,attacker);
+    const auto peaceful=npc_cyber::dispatch_governed_hack(
+        w,victim,93012,93013,defender_watch,defender_watch,93014);
+    CHECK(peaceful.status==npc_cyber::DispatchStatus::NoOriginalRaidIntent);
+    CHECK(!peaceful.recorded_intent && !peaceful.command_id);
 
     CHECK(!w.submit_npc_cyber_attack(8,attacker,pilot,pilot,victim,91002));
     CHECK(!w.submit_npc_cyber_attack(7,attacker,defender_watch,pilot,victim,91003));
@@ -89,7 +104,12 @@ int main() {
     CHECK(w.world().canonical_state()==previous);
     {PersistentWorld independently_open(db,Simulation(11));
         CHECK(independently_open.world().canonical_state()==previous);}
-    CHECK(w.submit_npc_cyber_attack(7,attacker,pilot,pilot,victim,attack_id));
+    const auto dispatch=npc_cyber::dispatch_governed_hack(
+        w,attacker,93002,93003,pilot,pilot,attack_id);
+    CHECK(dispatch.status==npc_cyber::DispatchStatus::Queued);
+    CHECK(dispatch.posture==colony_conflict::Posture::PrepareRaid);
+    CHECK(dispatch.recorded_intent==93003 && dispatch.command_id==attack_id);
+    CHECK(!dispatch.legal_attack_warrant && !dispatch.criminal_verdict);
     CHECK(!w.submit_npc_cyber_attack(7,attacker,pilot,pilot,victim,attack_id));
     CHECK(w.world().status_effects().records().empty());
     CHECK(w.world().npc_cyber_operators().size()==1);
