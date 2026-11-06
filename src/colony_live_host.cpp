@@ -2173,6 +2173,34 @@ int main(int argc,char** argv){
         if(nonce>=static_cast<std::uint64_t>(
            std::numeric_limits<std::int64_t>::max()-100000))
             throw std::runtime_error("native command/evidence nonce exhausted");
+        // No second game instance: an account can use only a colony that
+        // *already exists* in the same canonical world. Lowest owned colony
+        // is the initial security-only cockpit; full multi-ship selection is
+        // deliberately a separate multiplayer feature.
+        const auto human_home=[&](PlayerId who)->EntityId {
+            if(!human_owners.count(who))return 0;
+            EntityId first=0;
+            for(const auto& [id,e]:world.world().entities())
+                if(e.type==EntityType::Ship && e.owner_id==who &&
+                   world.world().colony_ship(id) &&
+                   (!first || id<first))first=id;
+            return first;
+        };
+        const auto emit_desk=[&](PlayerId who,const std::string& item){
+            announce_security_for(world.world(),who,item);
+        };
+        const auto snapshot_for=[&](PlayerId who){
+            const auto home=human_home(who);
+            if(!home || !territory || !cases){
+                emit_desk(who,"SECURITY_ERROR|"+
+                    std::string(home?"CASE_DESK_UNAVAILABLE":"NO_OWNED_COLONY"));
+                return;
+            }
+            colony_disposition::security_desk::snapshot(world,*territory,
+                *cases,who,home,who==owner?fleet.piloted():home,
+                [&](const std::string& item){emit_desk(who,item);},
+                communications.get());
+        };
         std::set<std::uint64_t> pending_scans,pending_probe_scans;
         std::size_t known_discoveries=world.world().discoveries().size();
         const auto report_count=[&](){
@@ -2204,24 +2232,69 @@ int main(int argc,char** argv){
                     if(line.substr(0,first)!="AUTH"||second==std::string::npos)
                         throw std::invalid_argument("unauthenticated native command");
                     const auto principal=integer(line.substr(first+1,second-first-1));
-                    if(principal!=static_cast<std::int64_t>(owner))
-                        throw std::invalid_argument("foreign colony command");
+                    if(principal<=0 || !human_owners.count(
+                          static_cast<PlayerId>(principal)))
+                        throw std::invalid_argument("unknown human principal");
+                    const auto who=static_cast<PlayerId>(principal);
                     const auto operation=line.substr(second+1);
                     if(operation.rfind("SECURITY_",0)==0){
-                        if(!territory || !cases)
-                            announce(world.world(),
-                                "SECURITY_ERROR|CASE_DESK_UNAVAILABLE");
-                        else colony_disposition::security_desk::execute(
+                        // Only direct hailing/answering and private refresh
+                        // are enabled for secondary human accounts. Neither
+                        // owner-7 fleet commands nor case records cross over.
+                        if(who!=owner &&
+                           operation!="SECURITY_REFRESH" &&
+                           operation.rfind("SECURITY_CALL|",0)!=0 &&
+                           operation.rfind("SECURITY_CALL_REPLY|",0)!=0)
+                            throw std::invalid_argument(
+                                "foreign owner cannot administer colony");
+                        const auto home=human_home(who);
+                        if(!home || !territory || !cases){
+                            snapshot_for(who);
+                            continue;
+                        }
+                        const auto before=communications?
+                            communications->history().size():0;
+                        const auto old_totals=communications?
+                            communications->overflow_history().size():0;
+                        colony_disposition::security_desk::execute(
                             split(operation),world,*territory,*cases,
-                            static_cast<PlayerId>(principal),ship,
-                            fleet.piloted(),nonce,
+                            who,home,who==owner?fleet.piloted():home,nonce,
                             [&](const std::string& msg){
-                                announce(world.world(),msg);
+                                emit_desk(who,msg);
                             },communications.get());
-                    }else apply(world,ship,fleet,operation,nonce,
-                        static_cast<PlayerId>(principal),pending_scans,
-                        pending_probe_scans,survey_knowledge.get());
-                }catch(const std::exception&){announce(world.world(),"ERROR|UNAUTHORIZED_PRINCIPAL");}
+                        // On an actual changed durable call/reply record,
+                        // notify each genuinely registered *human* owner
+                        // using its private snapshot, never another user's
+                        // global world frames or broadcast telemetry.
+                        if(communications &&
+                           (communications->history().size()!=before ||
+                            communications->overflow_history().size()!=old_totals)){
+                            for(const auto receiver:human_owners)
+                                if(receiver!=who && human_home(receiver))
+                                    snapshot_for(receiver);
+                        }
+                    }else{
+                        if(who!=owner)
+                            throw std::invalid_argument(
+                                "secondary account has no flight authority");
+                        apply(world,ship,fleet,operation,nonce,who,
+                            pending_scans,pending_probe_scans,
+                            survey_knowledge.get());
+                    }
+                }catch(const std::exception&){
+                    // No potentially foreign private result goes to
+                    // the primary owner's public colony telemetry.
+                    const auto parsed=split(line);
+                    if(parsed.size()>=3 && parsed[0]=="AUTH"){
+                        try{
+                            const auto id=integer(parsed[1]);
+                            if(id>0 && human_owners.count(PlayerId(id))){
+                                emit_desk(PlayerId(id),
+                                    "SECURITY_ERROR|CASE_DESK_UNAVAILABLE");
+                            }
+                        }catch(const std::exception&){}
+                    }
+                }
             }
             const auto old=world.world().events().size();
             std::map<PlanetarySiteKey,std::uint8_t> prior_shuttle_phases;
