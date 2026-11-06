@@ -49,9 +49,9 @@ inline std::int64_t detection_range_mm(
 // observer with counter-ECM sensors can still acquire the hull silhouette.
 // This is a deterministic *classification*, not an account ID.
 inline std::uint8_t detail_class(
-    const Entity& observer,const Entity& target) noexcept {
+    const Simulation& world,const Entity& observer,const Entity& target) {
     if(strong_sensors(observer))return kHighResolutionClass;
-    if(observer.fitting.exploration_scanner() &&
+    if(powered_survey_scanner(world,observer) &&
        !target.fitting.intrusion_emitter())return kDetailedClass;
     return kOpticalClass;
 }
@@ -84,6 +84,6 @@ inline std::string description(const Simulation& world,
     const auto* target=world.find(target_ship);
     if(!observer || !target)return {};
     return description_at_detail(world,target_ship,
-        detail_class(*observer,*target));
+        detail_class(world,*observer,*target));
 }
 } // namespace galaxy::ship_sensors
