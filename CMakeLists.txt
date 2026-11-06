@@ -1765,3 +1765,14 @@ if(BUILD_TESTING)
     COMMAND galaxy_ship_status07_incident_tests)
   set_tests_properties(galaxy_ship_status07_incident PROPERTIES TIMEOUT 300)
 endif()
+
+# SHIP-STATUS-07B: original material-backed stealth, acquired anonymous
+# contacts, powered sensor hierarchy, and canonical v103 restart.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status07_sensor_tests
+    tests/SHIPSTATUS07_StealthSensorTests.cpp)
+  target_link_libraries(galaxy_ship_status07_sensor_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status07_sensors
+    COMMAND galaxy_ship_status07_sensor_tests)
+  set_tests_properties(galaxy_ship_status07_sensors PROPERTIES TIMEOUT 300)
+endif()
