@@ -1522,3 +1522,21 @@ if(BUILD_TESTING)
     COMMAND galaxy_ship01d_fleet_selection_tests)
   set_tests_properties(galaxy_ship01d_fleet_selection PROPERTIES TIMEOUT 180)
 endif()
+
+# FLIGHT-03 universal physical-object approach solver, no second movement engine.
+if(BUILD_TESTING)
+  add_executable(galaxy_flight03_object_approach_tests
+    tests/FLIGHT03_ObjectApproachTests.cpp)
+  target_link_libraries(galaxy_flight03_object_approach_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_flight03_object_approach
+    COMMAND galaxy_flight03_object_approach_tests)
+endif()
+
+# FLIGHT-03: original NPC navigator, native ship pursuit and durable receipts.
+if(BUILD_TESTING)
+  add_executable(galaxy_flight03_native_rendezvous_tests
+    tests/FLIGHT03_NativeRendezvousTests.cpp)
+  target_link_libraries(galaxy_flight03_native_rendezvous_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_flight03_native_rendezvous
+    COMMAND galaxy_flight03_native_rendezvous_tests)
+endif()

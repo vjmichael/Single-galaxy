@@ -8812,6 +8812,20 @@ bool PersistentWorld::queue_npc_station_docking(
     world_.swap(next);++generation_;
     return true;
 }
+bool PersistentWorld::queue_npc_ship_rendezvous(
+    PlayerId owner,EntityId ship,std::uint64_t pilot,
+    EntityId target_ship,std::uint64_t order_id,
+    NpcFlightPurpose purpose,FailPoint fail){
+    auto next=world_;
+    if(!next.queue_npc_ship_rendezvous(
+        owner,ship,pilot,target_ship,order_id,purpose))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("rendezvous navigation created material");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
 bool PersistentWorld::cancel_npc_flight(
     PlayerId owner,std::uint64_t order_id,FailPoint fail){
     auto next=world_;
