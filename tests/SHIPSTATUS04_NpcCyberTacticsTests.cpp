@@ -137,7 +137,10 @@ int main() {
        w,journal,victim,defender_watch,attack_id);
     CHECK(evidence.attempted && evidence.confusion_applied);
     CHECK(evidence.attacking_ship==attacker && evidence.victim_ship==victim);
-    CHECK(evidence.attacker_owner==7 && evidence.victim_owner==8);
+    // Trusted native world knows ownership for authorization, but the
+    // original named watch has not received an authenticated visitor hail.
+    CHECK(evidence.attacker_owner==0 && evidence.victim_owner==8);
+    CHECK(evidence.sensor_detail>=1 && !evidence.observed_description.empty());
     CHECK(!evidence.legal_crime_finding && !evidence.arrest_authorized &&
           !evidence.damage_authorized && !evidence.seizure_authorized);
     CHECK(!contemporaneous_cyber_evidence(w,journal,victim,pilot,attack_id).attempted);
