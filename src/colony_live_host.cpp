@@ -815,8 +815,17 @@ void apply(PersistentWorld& world,EntityId ship,FleetSelection& fleet,const std:
                    one<=0 || two<=0 || one==two ||
                    kg<10 || kg>1000 ||
                    build==world.world().freighter_build_orders().end() ||
-                   build->second.owner!=principal ||
-                   build->second.source_ship!=ship ||
+                   !((build->second.owner==principal &&
+                      build->second.source_ship==ship) ||
+                     std::any_of(world.world().shipyard_customer_orders().begin(),
+                         world.world().shipyard_customer_orders().end(),
+                         [&](const auto& entry){
+                            const auto& c=entry.second;
+                            return c.build_order==std::uint64_t(order) &&
+                               c.customer_owner==principal &&
+                               c.customer_ship==ship &&
+                               c.stage==ShipyardCustomerStage::Delivered;
+                         })) ||
                    !world.commission_shipyard_freighter(principal,
                        std::uint64_t(order),
                        {{std::uint64_t(one),std::uint64_t(two)}},kg)){
@@ -827,8 +836,20 @@ void apply(PersistentWorld& world,EntityId ship,FleetSelection& fleet,const std:
             }
             std::uint64_t count=0;
             for(const auto& [id,order]:world.world().freighter_build_orders()){
-                if(order.owner!=principal || order.source_ship!=ship ||
-                   count>=64)continue;
+                bool local_build=order.owner==principal &&
+                                 order.source_ship==ship;
+                if(!local_build){
+                    for(const auto& [cid,contract]:world.world().shipyard_customer_orders()){
+                        (void)cid;
+                        if(contract.build_order==id &&
+                           contract.customer_owner==principal &&
+                           contract.customer_ship==ship &&
+                           contract.stage==ShipyardCustomerStage::Delivered){
+                            local_build=true;break;
+                        }
+                    }
+                }
+                if(!local_build || count>=64)continue;
                 announce(world.world(),"FREIGHTER_ITEM|"+
                     std::to_string(id)+"|"+std::to_string(order.yard_order)+"|"+
                     std::to_string(order.progress)+"|"+
