@@ -1249,6 +1249,7 @@ bool Simulation::can_depart_colony(const Command& c) const {
     return true;
 }
 bool Simulation::submit(const Command& c) {
+    if(ship_status_.contains_id(c.id))return false;
     if(colony_departures_.count(c.actor) || colony_departures_.count(c.target))return false;
     // Building a hull never creates a pilot. A manufactured uncommissioned
     // vessel is physically present but not authorized to run ship commands.
@@ -8242,7 +8243,8 @@ bool Simulation::install_testing_confusion(EntityId source,EntityId target,
                   double(kTrainingWeaponRangeMm) ||
        !duration_ticks || duration_ticks>ship_status::Engine::kMaxDurationTicks ||
        tick_>std::numeric_limits<std::uint64_t>::max()-duration_ticks ||
-       !exposed_hardpoint_mask || (exposed_hardpoint_mask&~std::uint8_t{3}))
+       !exposed_hardpoint_mask || (exposed_hardpoint_mask&~std::uint8_t{3}) ||
+       submitted_ids_.count(effect_id))
         return false;
     const std::array<bool,2> exposed{{
         bool(exposed_hardpoint_mask&1),bool(exposed_hardpoint_mask&2)}};
@@ -12247,6 +12249,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                (target->second.type!=EntityType::Ship &&
                 target->second.type!=EntityType::Wreck) ||
                effect.started_tick>result.tick_ ||
+               result.submitted_ids_.count(effect.id) ||
                source->second.owner_id==target->second.owner_id)
                 throw std::runtime_error("snapshot: invalid ship status source or target");
             for(const auto& key:effect.targets)
