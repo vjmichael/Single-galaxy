@@ -32,6 +32,13 @@ int main(){
  const auto copy=(dir/"recovered.sqlite").string();
  try{
     fs::create_directories(dir);
+    // Intake cannot fabricate a second original world from an unknown path.
+    bool nonexistent_denied=false;
+    try {
+        CyberIncidentJournal counterfeit((dir/"no_original_world.sqlite").string());
+    }catch(const std::exception&){nonexistent_denied=true;}
+    CHECK(nonexistent_denied);
+    CHECK(!fs::exists(dir/"no_original_world.sqlite"));
     EntityId attacker=0,victim=0;
     constexpr std::uint64_t attack_id=97001,case_id=97002;
     std::uint64_t defender_guard=0;
