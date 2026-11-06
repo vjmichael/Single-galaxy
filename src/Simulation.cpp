@@ -5948,6 +5948,221 @@ bool Simulation::deliver_shipyard_customer_order(PlayerId customer,
     it->second.stage=ShipyardCustomerStage::Delivered;
     return true;
 }
+// WORK-01A universal read model: intentionally projects only authoritative
+// records. A native work order appears exactly once per typed source, even
+// if several NPCs/colonies consume the same physical fulfillment receipt.
+std::vector<WorkBoardItem> Simulation::universal_work_board(
+        PlayerId owner,EntityId colony_ship) const {
+    std::vector<WorkBoardItem> board;
+    if(!owner || owner==kServerAuthority || !colony_ship)return board;
+    const auto delegate_for=[&](WorkTaskKind kind,std::uint64_t source) {
+        for(const auto& [id,delegation]:work_directives_) {
+            if(delegation.owner==owner &&
+               delegation.colony_ship==colony_ship &&
+               delegation.kind==kind && delegation.source_order==source &&
+               delegation.status!=WorkDirectiveStatus::Cancelled)return id;
+        }
+        return std::uint64_t{0};
+    };
+    const auto add=[&](WorkTaskKind kind,std::uint64_t source,
+                       WorkPhase phase,std::uint64_t progress,
+                       std::uint64_t required) {
+        board.push_back(WorkBoardItem{
+            kind,source,owner,colony_ship,phase,progress,required,
+            delegate_for(kind,source)});
+    };
+    for(const auto& [id,job]:local_delivery_orders_){
+        if(job.owner!=owner || job.board_ship!=colony_ship)continue;
+        const auto phase=job.stage==LocalDeliveryStage::Cancelled?
+            WorkPhase::Cancelled:job.stage==LocalDeliveryStage::Complete?
+            WorkPhase::Completed:job.stage==LocalDeliveryStage::Posted?
+            WorkPhase::Queued:WorkPhase::Executing;
+        add(WorkTaskKind::LocalDelivery,id,phase,
+            job.stage==LocalDeliveryStage::Complete?1:0,1);
+    }
+    for(const auto& [id,leg]:intercolony_freight_){
+        if(leg.owner!=owner || leg.source_ship!=colony_ship)continue;
+        const auto phase=leg.stage==IntercolonyFreightStage::Delivered?
+            WorkPhase::Completed:leg.stage==IntercolonyFreightStage::AwaitingPickup?
+            WorkPhase::Queued:WorkPhase::Executing;
+        add(WorkTaskKind::IntercolonyFreight,id,phase,
+            leg.stage==IntercolonyFreightStage::Delivered?1:0,1);
+    }
+    for(const auto& [id,yard]:shipyard_constructions_){
+        if(yard.owner!=owner || yard.colony_ship!=colony_ship)continue;
+        add(WorkTaskKind::ShipyardConstruction,id,yard.operational()?
+            WorkPhase::Completed:WorkPhase::Executing,
+            yard.progress,yard.required);
+    }
+    for(const auto& [id,build]:freighter_build_orders_){
+        if(build.owner!=owner || build.source_ship!=colony_ship)continue;
+        add(WorkTaskKind::FreighterBuild,id,build.finished()?
+            WorkPhase::Completed:WorkPhase::Executing,
+            build.progress,build.required);
+    }
+    for(const auto& [id,contract]:shipyard_customer_orders_){
+        if(!((contract.customer_owner==owner &&
+              contract.customer_ship==colony_ship) ||
+             (contract.supplier_owner==owner &&
+              contract.supplier_ship==colony_ship)))continue;
+        const auto job=freighter_build_orders_.find(contract.build_order);
+        const auto progress=job==freighter_build_orders_.end()?0:
+            job->second.progress;
+        const auto required=job==freighter_build_orders_.end()?12:
+            job->second.required;
+        add(WorkTaskKind::CustomerShipOrder,id,
+            contract.stage==ShipyardCustomerStage::Delivered?
+                WorkPhase::Completed:
+            contract.stage==ShipyardCustomerStage::Requested?
+                WorkPhase::Queued:WorkPhase::Executing,
+            progress,required);
+    }
+    std::sort(board.begin(),board.end(),[](const auto& a,const auto& b){
+        if(a.kind!=b.kind)return a.kind<b.kind;
+        return a.source_order<b.source_order;
+    });
+    return board;
+}
+bool Simulation::delegate_customer_ship_order(PlayerId owner,
+        EntityId colony_ship,std::uint64_t id,std::uint64_t contract_id,
+        std::array<std::uint64_t,2> crew,std::int64_t provisions,
+        std::uint64_t dependency){
+    if(!owner || owner==kServerAuthority || !id ||
+       id>=(std::uint64_t{1}<<50) || work_directives_.size()>=10000 ||
+       work_directives_.count(id) || !contract_id ||
+       contract_id>=(std::uint64_t{1}<<50) ||
+       (dependency && dependency>=id) ||
+       ((crew[0]==0)!=(crew[1]==0)) ||
+       (crew[0] && crew[0]==crew[1]) ||
+       (crew[0] && (provisions<10 || provisions>1000)) ||
+       (!crew[0] && provisions))return false;
+    const auto contract=shipyard_customer_orders_.find(contract_id);
+    const auto colony=entities_.find(colony_ship);
+    if(contract==shipyard_customer_orders_.end() ||
+       contract->second.customer_owner!=owner ||
+       contract->second.customer_ship!=colony_ship ||
+       contract->second.stage==ShipyardCustomerStage::Delivered ||
+       colony==entities_.end() || colony->second.type!=EntityType::Ship ||
+       colony->second.owner_id!=owner ||
+       !colony_ships_.count(colony_ship) ||
+       !life_support_.count(colony_ship))return false;
+    if(dependency){
+        const auto earlier=work_directives_.find(dependency);
+        if(earlier==work_directives_.end() ||
+           earlier->second.owner!=owner ||
+           earlier->second.colony_ship!=colony_ship)return false;
+    }
+    for(const auto& [other_id,other]:work_directives_){
+        (void)other_id;
+        if(other.kind==WorkTaskKind::CustomerShipOrder &&
+           other.source_order==contract_id &&
+           other.status!=WorkDirectiveStatus::Cancelled)return false;
+    }
+    for(const auto person_id:crew){
+        if(!person_id)continue;
+        const auto n=npcs_.find(person_id);
+        if(n==npcs_.end() || n->second.home_ship!=colony_ship)
+            return false;
+    }
+    work_directives_.emplace(id,WorkDirective{
+        id,owner,colony_ship,WorkTaskKind::CustomerShipOrder,
+        contract_id,dependency,crew,provisions,
+        WorkDirectiveStatus::Active,WorkBlock::None,tick_,tick_,0});
+    snapshot_version_=std::max(snapshot_version_,94);
+    return true;
+}
+bool Simulation::cancel_work_directive(PlayerId owner,std::uint64_t id){
+    const auto it=work_directives_.find(id);
+    if(!owner || owner==kServerAuthority ||
+       it==work_directives_.end() || it->second.owner!=owner ||
+       it->second.status!=WorkDirectiveStatus::Active)return false;
+    it->second.status=WorkDirectiveStatus::Cancelled;
+    it->second.blocked=WorkBlock::None;
+    it->second.last_update_tick=tick_;
+    it->second.resolved_tick=tick_;
+    // This revokes FUTURE delegation only; it never reverses real paid
+    // material transfers or rewinds an already-built physical vessel.
+    return true;
+}
+void Simulation::process_universal_work(){
+    if(snapshot_version_<94)return;
+    for(auto& [id,directive]:work_directives_){
+        (void)id;
+        if(directive.status!=WorkDirectiveStatus::Active)continue;
+        const auto block=[&](WorkBlock reason){
+            if(directive.blocked!=reason){
+                directive.blocked=reason;
+                directive.last_update_tick=tick_;
+            }
+        };
+        const auto finish=[&](){
+            directive.status=WorkDirectiveStatus::Fulfilled;
+            directive.blocked=WorkBlock::None;
+            directive.resolved_tick=tick_;
+            directive.last_update_tick=tick_;
+        };
+        if(directive.requires_directive){
+            const auto prerequisite=work_directives_.find(
+                directive.requires_directive);
+            if(prerequisite==work_directives_.end() ||
+               prerequisite->second.status!=WorkDirectiveStatus::Fulfilled){
+                block(WorkBlock::Dependency);
+                continue;
+            }
+        }
+        if(directive.kind!=WorkTaskKind::CustomerShipOrder)continue;
+        const auto it=shipyard_customer_orders_.find(directive.source_order);
+        if(it==shipyard_customer_orders_.end() ||
+           it->second.customer_owner!=directive.owner ||
+           it->second.customer_ship!=directive.colony_ship){
+            block(WorkBlock::SupplierApproval);
+            continue;
+        }
+        switch(it->second.stage){
+        case ShipyardCustomerStage::Requested:
+            block(WorkBlock::SupplierApproval);
+            break;
+        case ShipyardCustomerStage::Accepted:
+            // The original physical funding gate is the *only* method
+            // allowed to debit customer modules or occupy the supplier slip.
+            if(fund_shipyard_customer_order(
+                    directive.owner,directive.source_order))
+                block(WorkBlock::NativeConstruction);
+            else block(WorkBlock::PhysicalFunding);
+            break;
+        case ShipyardCustomerStage::Funded:{
+            const auto build=freighter_build_orders_.find(
+                it->second.build_order);
+            if(build==freighter_build_orders_.end() ||
+               !build->second.finished()){
+                block(WorkBlock::NativeConstruction);
+                break;
+            }
+            if(deliver_shipyard_customer_order(
+                    directive.owner,directive.source_order)){
+                if(!directive.commissioning_crew[0])finish();
+                else block(WorkBlock::NamedCrewAndSupplies);
+            }else block(WorkBlock::PhysicalDelivery);
+            break;
+        }
+        case ShipyardCustomerStage::Delivered:{
+            if(!directive.commissioning_crew[0]){
+                finish();break;
+            }
+            const auto build=freighter_build_orders_.find(
+                it->second.build_order);
+            if(build!=freighter_build_orders_.end() &&
+               (build->second.commissioned() ||
+                commission_shipyard_freighter(directive.owner,
+                    it->second.build_order,directive.commissioning_crew,
+                    directive.provisions_kg_each)))
+                finish();
+            else block(WorkBlock::NamedCrewAndSupplies);
+            break;
+        }
+        }
+    }
+}
 void Simulation::process_freighter_builds() {
     for(auto& [id,order]:freighter_build_orders_) {
         (void)id;
@@ -7257,6 +7472,7 @@ void Simulation::step() {
     if(snapshot_version_>=88)process_local_delivery_board();
     if(snapshot_version_>=90)process_shipyard_construction();
     if(snapshot_version_>=91)process_freighter_builds();
+    if(snapshot_version_>=94)process_universal_work();
     process_farms();
     process_habitats();
     process_communities();
