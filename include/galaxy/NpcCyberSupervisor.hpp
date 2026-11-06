@@ -17,21 +17,28 @@ struct Pulse {
 };
 inline constexpr std::uint64_t kSupervisorCadenceTicks=5;
 inline constexpr std::uint32_t kMaxCyberOrdersPerPulse=2;
+inline constexpr std::uint32_t kMaxObservationsPerPulse=32;
+// Reserve [2^49,2^50) for supervisor-only journal/command IDs.
+// 128 IDs per committed tick, 4 per physical target attempt, and a
+// distinct namespace from the native interactive host command counter.
+inline constexpr std::uint64_t kSupervisorIdBase=(std::uint64_t{1}<<49);
+inline constexpr std::uint64_t kSupervisorIdsPerTick=128;
 
-// The HOST must call at most once on each committed native tick. The
-// callback owns a globally unique bounded command nonce; the original
-// persisted command/attribution ledgers independently reject replay.
-inline Pulse supervise(PersistentWorld& world,PlayerId player_owner,
-                       std::uint64_t& nonce) {
+// The HOST must call at most once per committed native tick.
+// IDs derive from the persistent tick and bounded original ship-order slot,
+// never from a volatile host counter that resets on process restart.
+inline Pulse supervise(PersistentWorld& world,PlayerId player_owner) {
     Pulse result{};
     result.tick=world.world().tick();
     if(!result.tick || result.tick%kSupervisorCadenceTicks ||
        !player_owner || player_owner==Simulation::kServerAuthority ||
-       nonce>=(std::uint64_t{1}<<50)-4)
+       result.tick>=(kSupervisorIdBase/kSupervisorIdsPerTick))
         return result;
     const auto& simulation=world.world();
+    std::uint64_t observed_slot=0;
     for(const auto& [ship_id,ship]:simulation.entities()) {
-        if(result.queued>=kMaxCyberOrdersPerPulse)break;
+        if(result.queued>=kMaxCyberOrdersPerPulse ||
+           observed_slot>=kMaxObservationsPerPulse)break;
         if(ship.type!=EntityType::Ship || !ship.owner_id ||
            ship.owner_id==player_owner || !simulation.colony_ship(ship_id) ||
            !ship.fitting.intrusion_emitter() ||
@@ -81,8 +88,10 @@ inline Pulse supervise(PersistentWorld& world,PlayerId player_owner,
                target->owner_id==ship.owner_id ||
                !simulation.same_local_frame(ship_id,contact.foreign_ship))
                 continue;
-            if(nonce>=(std::uint64_t{1}<<50)-4)return result;
-            const auto witness=++nonce,decision=++nonce,attack=++nonce;
+            if(observed_slot>=kMaxObservationsPerPulse)return result;
+            const auto prefix=kSupervisorIdBase+
+                result.tick*kSupervisorIdsPerTick+4*observed_slot++;
+            const auto witness=prefix+1,decision=prefix+2,attack=prefix+3;
             try{
                 // The native witness and actual governing choice precede the
                 // original queued HackConfuse. If any refuses, no attack.
