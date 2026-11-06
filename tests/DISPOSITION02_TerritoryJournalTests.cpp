@@ -38,6 +38,14 @@ int main(){
    TerritoryJournal j(path);
    CHECK(!j.claim(w,8,colony,71000,2000));
    CHECK(!j.claim(w,7,colony,71000,7000));
+   bool rolled_back=false;
+   try{(void)j.claim(w,7,colony,71000,3000,
+                     TerritoryFailPoint::AfterInsert);}
+   catch(const std::runtime_error&){rolled_back=true;}
+   CHECK(rolled_back && j.history().empty());
+   // Closing/reopening the second SQLite writer cannot reveal a
+   // half-published claim.
+   {TerritoryJournal independent(path);CHECK(independent.history().empty());}
    CHECK(j.claim(w,7,colony,71000,3000));
    CHECK(!j.claim(w,7,colony,71000,3000));
    CHECK(j.history().size()==1);
@@ -50,6 +58,13 @@ int main(){
    CHECK(j.revoke_invitation(w,7,colony,8,71004));
    CHECK(!j.revoke_invitation(w,7,colony,8,71005));
    CHECK(!j.warn(w,7,colony,visitor,observer,71006,1));
+   const auto before_warning=j.history().size();
+   rolled_back=false;
+   try{(void)j.warn(w,7,colony,visitor,observer,71006,5,
+                    TerritoryFailPoint::AfterInsert);}
+   catch(const std::runtime_error&){rolled_back=true;}
+   CHECK(rolled_back && j.history().size()==before_warning);
+   CHECK(!j.standing(w,colony,visitor).warned);
    CHECK(j.warn(w,7,colony,visitor,observer,71006,5));
    CHECK(!j.warn(w,7,colony,visitor,observer,71007,5));
    CHECK(j.standing(w,colony,visitor).standing==
