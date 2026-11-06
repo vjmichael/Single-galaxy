@@ -163,6 +163,19 @@ int main(){
         CHECK(calls.overflow_history().size()==1);
         CHECK(calls.overflow_history().front().total_points==12);
         CHECK(calls.penalty_for(recovered,7,a).penalty_points==13);
+        CHECK(calls.history().size()==filled); // ten immutable details fixed
+        {
+            sqlite3* raw=nullptr;
+            CHECK(sqlite3_open(copy.c_str(),&raw)==SQLITE_OK);
+            CHECK(sqlite3_exec(raw,
+                "UPDATE sg_ship_hail07e_totals SET points=2 "
+                "WHERE recipient_ship>0",nullptr,nullptr,nullptr)!=SQLITE_OK);
+            CHECK(sqlite3_exec(raw,
+                "DELETE FROM sg_ship_hail07e_totals WHERE recipient_ship>0",
+                nullptr,nullptr,nullptr)!=SQLITE_OK);
+            CHECK(sqlite3_close(raw)==SQLITE_OK);
+        }
+        CHECK(calls.overflow_history().front().total_points==12);
         CHECK(recovered.world().npc_flight_orders().empty());
         calls.verify();
         // Actual compact penalty state, unlike the immutable first ten
