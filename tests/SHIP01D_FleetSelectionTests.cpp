@@ -41,7 +41,7 @@ int main() {
     const auto db=fs::temp_directory_path()/
         ("sg-ship01d-"+std::to_string(
         std::chrono::steady_clock::now().time_since_epoch().count())+".sqlite");
-    EntityId origin=0,hull=0,foreign=0;
+    EntityId origin=0,hull=0,foreign=0,receiver_ship=0;
     std::uint64_t body=0;
     std::string durable;
     try{
@@ -50,6 +50,8 @@ int main() {
             origin=seed.add_colony_ship(7,{0,0},100,6);
             const auto rock=seed.add_asteroid({2000,0},100);
             foreign=seed.add_colony_ship(8,{0,0},100,2);
+            receiver_ship=seed.add_colony_ship(7,{0,0},100,2);
+            seed.provision_colony_genesis(receiver_ship,2000,2000,2000,2000,2000);
             seed.provision_colony_genesis(origin,2000,2000,2000,2000,2000);
             seed.provision_colony_genesis(foreign,2000,2000,2000,2000,2000);
             seed.enable_individual_workforce();
@@ -76,6 +78,8 @@ int main() {
             CHECK(fleet.home()==origin&&fleet.piloted()==origin);
             CHECK(fleet.is_ready(w.world(),origin));
             CHECK(!fleet.select(w.world(),foreign));
+            CHECK(!fleet_freight_eligible(w.world(),fleet,7,origin,receiver_ship));
+            CHECK(!fleet_freight_eligible(w.world(),fleet,8,foreign,receiver_ship));
             CHECK(!fleet.select(w.world(),rock));
             CHECK(!fleet.select(w.world(),99999999));
             CHECK(fleet.piloted()==origin);
@@ -96,6 +100,7 @@ int main() {
             CHECK(ships[1].ship==hull && ships[1].manufacture_order==92001);
             CHECK(!ships[1].ready && ships[1].crew==0);
             CHECK(!fleet.select(w.world(),hull)); // cannot steer uncrewed hull
+            CHECK(!fleet_freight_eligible(w.world(),fleet,7,hull,receiver_ship));
             CHECK(!fleet.select(w.world(),foreign));
 
             fabricate(w,origin,rock,serial,1);
@@ -111,11 +116,18 @@ int main() {
             ships=fleet.list(w.world());
             CHECK(ships.size()==2 && ships[0].ready && ships[1].ready);
             CHECK(ships[1].selected && !ships[0].selected);
+            CHECK(!fleet_freight_eligible(w.world(),fleet,7,hull,receiver_ship));
             CHECK(ships[1].crew==2);
             CHECK(ships[1].food_kg==200);
             CHECK(ships[1].water_kg==200);
             CHECK(ships[1].oxygen_kg==200);
             CHECK(w.world().total_ore()==conserved);
+            CHECK(fleet.select(w.world(),origin));
+            CHECK(fleet_freight_eligible(w.world(),fleet,7,hull,receiver_ship));
+            CHECK(!fleet_freight_eligible(w.world(),fleet,7,hull,foreign));
+            CHECK(!fleet_freight_eligible(w.world(),fleet,8,hull,receiver_ship));
+            CHECK(fleet.select(w.world(),hull));
+            CHECK(!fleet_freight_eligible(w.world(),fleet,7,hull,receiver_ship));
             CHECK(w.world().freighter_build_orders().at(92001).source_ship==origin);
             CHECK(w.world().colony_ship(hull)->crew==2);
             for(const auto pilot:pilots)
