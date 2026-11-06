@@ -582,6 +582,44 @@ struct ShipyardCustomerOrder {
                   delivered_tick=0;
     EntityId delivered_ship=0;
 };
+// WORK-01A: universal coordinator does NOT own inventory or NPCs. Each
+// existing canonical subsystem remains the effect authority. A delegation
+// record stores only specific owner permission to advance an existing order.
+enum class WorkTaskKind : std::uint8_t {
+    LocalDelivery=1,IntercolonyFreight=2,ShipyardConstruction=3,
+    FreighterBuild=4,CustomerShipOrder=5
+};
+enum class WorkPhase : std::uint8_t {
+    Queued=0,Executing=1,Completed=2,Cancelled=3
+};
+struct WorkBoardItem {
+    WorkTaskKind kind=WorkTaskKind::LocalDelivery;
+    std::uint64_t source_order=0;
+    PlayerId owner=0;
+    EntityId colony_ship=0;
+    WorkPhase phase=WorkPhase::Queued;
+    std::uint64_t progress=0,required=0;
+    std::uint64_t delegated_id=0;
+};
+enum class WorkDirectiveStatus : std::uint8_t {
+    Active=0,Cancelled=1,Fulfilled=2
+};
+enum class WorkBlock : std::uint8_t {
+    None=0,Dependency=1,SupplierApproval=2,PhysicalFunding=3,
+    NativeConstruction=4,PhysicalDelivery=5,NamedCrewAndSupplies=6
+};
+struct WorkDirective {
+    std::uint64_t id=0;
+    PlayerId owner=0;
+    EntityId colony_ship=0;
+    WorkTaskKind kind=WorkTaskKind::CustomerShipOrder;
+    std::uint64_t source_order=0,requires_directive=0;
+    std::array<std::uint64_t,2> commissioning_crew{};
+    std::int64_t provisions_kg_each=0;
+    WorkDirectiveStatus status=WorkDirectiveStatus::Active;
+    WorkBlock blocked=WorkBlock::None;
+    std::uint64_t posted_tick=0,last_update_tick=0,resolved_tick=0;
+};
 struct PhysicalOasisReserve {
     std::int64_t water_kg=0,nutrients_kg=0;
     std::int64_t initial_water_kg=0,initial_nutrients_kg=0;
@@ -1185,6 +1223,23 @@ public:
     bool accept_shipyard_customer_order(PlayerId supplier,std::uint64_t order_id);
     bool fund_shipyard_customer_order(PlayerId customer,std::uint64_t order_id);
     bool deliver_shipyard_customer_order(PlayerId customer,std::uint64_t order_id);
+    // WORK-01A canonical universal board derives its state from the original
+    // delivery, freight, yard, freighter and customer-contract records.
+    // No cloned inventory, duplicate order state or pseudo-NPCs.
+    std::vector<WorkBoardItem> universal_work_board(PlayerId owner,
+        EntityId colony_ship) const;
+    const std::map<std::uint64_t,WorkDirective>& work_directives() const noexcept {
+        return work_directives_;
+    }
+    // Currently one executable adapter: a customer explicitly permits NPC
+    // coordination of the existing ship order through physical funding,
+    // handover, and optional transfer of TWO specified real NPC crew.
+    // Other kinds are visible on the board but not auto-mutable yet.
+    bool delegate_customer_ship_order(PlayerId owner,EntityId colony_ship,
+        std::uint64_t id,std::uint64_t customer_contract,
+        std::array<std::uint64_t,2> commissioning_crew,
+        std::int64_t provisions_kg_each,std::uint64_t requires_directive=0);
+    bool cancel_work_directive(PlayerId owner,std::uint64_t id);
     // Finished order references an actual Entity with an empty physical hold.
     // No ship commands before commissioning; no free crew or starter equipment.
     bool plan_intercolony_freight(PlayerId owner,std::uint64_t local_order_id,
@@ -1267,6 +1322,7 @@ private:
     void process_planetary_surface_operations();
     void process_shipyard_construction(); // only Simulation::step advances labor
     void process_freighter_builds(); // only the committed world tick may launch
+    void process_universal_work(); // coordinates native gates; never mints goods
     void process_farms();
     void move_npc_records(EntityId ship, EntityId site, NpcRole role, std::int64_t delta);
     void award_farm_experience(EntityId site);
@@ -1298,6 +1354,7 @@ private:
     std::map<std::uint64_t,ShipyardConstruction> shipyard_constructions_; // v90
     std::map<std::uint64_t,FreighterBuildOrder> freighter_build_orders_; // v91
     std::map<std::uint64_t,ShipyardCustomerOrder> shipyard_customer_orders_; // v93
+    std::map<std::uint64_t,WorkDirective> work_directives_; // v94
     std::set<std::uint64_t> shuttle_flight_request_ids_; // v81 replay rejection
     std::map<std::uint64_t,PendingCelestialTransit> pending_celestial_transits_;
     std::map<std::uint64_t,CompletedCelestialTransit> completed_celestial_transits_;
