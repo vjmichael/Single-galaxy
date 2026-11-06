@@ -131,7 +131,8 @@
      return {tick,type,owner:whole(v[4]),caseId:caseKey(v[5])};
    }
    if(type==='SECURITY_ERROR' && v.length===5){
-     if(!['CASE_INDEX_UNAVAILABLE','CASE_DESK_UNAVAILABLE'].includes(v[4]))
+     if(!['CASE_INDEX_UNAVAILABLE','CASE_DESK_UNAVAILABLE',
+          'COMMS_UNAVAILABLE'].includes(v[4]))
        throw Error('Invalid security failure');
      return {tick,type,reason:v[4]};
    }
