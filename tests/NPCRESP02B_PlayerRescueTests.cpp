@@ -36,6 +36,11 @@ int main(){
      CHECK(failed && w.world().canonical_state()==before);
      CHECK(w.grant_player_rescue_consent(7,rescuer,99801));
      CHECK(!w.grant_player_rescue_consent(7,rescuer,99803));
+     CHECK(!w.revoke_player_rescue_consent(8,99801));
+     CHECK(w.revoke_player_rescue_consent(7,99801));
+     CHECK(!w.revoke_player_rescue_consent(7,99801));
+     CHECK(!w.complete_player_rescue(7,rescuer,97099,99802));
+     CHECK(w.grant_player_rescue_consent(7,rescuer,99804));
      CHECK(w.queue_npc_ship_rendezvous(9,rescuer,0,player_ship,97099,
                                       NpcFlightPurpose::Rescue));
      CHECK(!w.complete_player_rescue(7,rescuer,97099,99802));
@@ -61,7 +66,7 @@ int main(){
      CHECK(person.owner==7 && person.home_ship==player_ship &&
            person.physical_ship==rescuer &&
            person.state==PlayerPersonState::Rescued &&
-           person.custodian==9 && person.consent_id==99801 &&
+           person.custodian==9 && person.consent_id==99804 &&
            person.last_receipt==99802 && person.rescue_flight==97099);
      CHECK(w.world().find(player_ship)->owner_id==7);
      // The person is genuinely aboard the rescue vessel. Original direct
