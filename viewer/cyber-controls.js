@@ -40,7 +40,7 @@
        hardware=validNumber(v[6],3),requested=validNumber(v[7],1),
        effective=validNumber(v[8],1),isolated=validNumber(v[9],1);
      if(!ship)return null;
-     if(!hardware && (!requested||!effective||isolated))
+     if(!hardware && (effective||isolated))
        throw Error('Invalid empty module state');
      return {tick,type,ship,slot,hardware,requested:!!requested,
        effective:!!effective,isolated:!!isolated};
