@@ -1585,3 +1585,13 @@ if(BUILD_TESTING)
     COMMAND galaxy_flight06_dependent_rendezvous_tests)
   set_tests_properties(galaxy_flight06_dependent_rendezvous PROPERTIES TIMEOUT 300)
 endif()
+
+# NPC-RESP-01: original NPC flight ledger as owner-response dispatcher.
+if(BUILD_TESTING)
+  add_executable(galaxy_npcresp01_dispatch_tests
+    tests/NPCRESP01_DispatchTests.cpp)
+  target_link_libraries(galaxy_npcresp01_dispatch_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_npcresp01_dispatch
+    COMMAND galaxy_npcresp01_dispatch_tests)
+  set_tests_properties(galaxy_npcresp01_dispatch PROPERTIES TIMEOUT 300)
+endif()
