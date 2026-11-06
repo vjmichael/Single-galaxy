@@ -46,16 +46,13 @@ inline std::uint8_t detail_class(
        !target.fitting.intrusion_emitter())return kDetailedClass;
     return kOpticalClass;
 }
-inline std::string description(const Simulation& world,
-    EntityId observer_ship,EntityId target_ship) {
-    const auto* o=world.find(observer_ship);
+inline std::string description_at_detail(const Simulation& world,
+    EntityId target_ship,std::uint8_t detail) {
     const auto* t=world.find(target_ship);
-    if(!o || !t || o->type!=EntityType::Ship ||
-       t->type!=EntityType::Ship)return {};
-    // Exact reproducible visual/scan description at the recorded tick.
-    // Multiple alike ships can have the SAME description. This is lead
-    // evidence only; no automatic identity/conviction on matching looks.
-    const auto detail=detail_class(*o,*t);
+    if(!t || t->type!=EntityType::Ship ||
+       detail<kOpticalClass || detail>kHighResolutionClass)return {};
+    // Exact reproducible hull description at a specific available sensor
+    // grade. Matching visually identical ships must not identify owners.
     const auto class_name=world.colony_ship(target_ship)?
         "COLONY_HULL":"OTHER_HULL";
     std::string result=std::string(class_name)+
@@ -71,5 +68,13 @@ inline std::string description(const Simulation& world,
             "|SUPPORT_"+std::to_string(unsigned(t->fitting.support[0]))+
             "_"+std::to_string(unsigned(t->fitting.support[1]));
     return result;
+}
+inline std::string description(const Simulation& world,
+    EntityId observer_ship,EntityId target_ship) {
+    const auto* observer=world.find(observer_ship);
+    const auto* target=world.find(target_ship);
+    if(!observer || !target)return {};
+    return description_at_detail(world,target_ship,
+        detail_class(*observer,*target));
 }
 } // namespace galaxy::ship_sensors
