@@ -7,6 +7,7 @@
 #include "galaxy/TerritorialHailing.hpp"
 #include "galaxy/FleetSelection.hpp"
 #include "galaxy/ShipHailJournal.hpp"
+#include "galaxy/ShipCommsReview.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <exception>
@@ -187,6 +188,16 @@ void snapshot(const PersistentWorld& world,
                 std::to_string(it->last_event)+"|"+
                 std::to_string(it->caller_owner)+"|"+
                 std::to_string(it->total_points));
+            const auto guard=witness(world,home);
+            if(guard){
+                const auto review=ship_comms::review::assess(world,
+                    territory,*communications,owner,home,piloted,
+                    it->last_event,guard);
+                emit("SECURITY_CALL_REVIEW|"+
+                    std::to_string(it->last_event)+"|"+
+                    std::to_string(unsigned(review.status))+"|"+
+                    std::to_string(review.reviewer_npc));
+            }
         }
         const auto committed=communications->history();
         for(auto it=committed.rbegin();it!=committed.rend();++it){
@@ -201,6 +212,16 @@ void snapshot(const PersistentWorld& world,
                 std::to_string(item.event_id)+"|"+
                 std::to_string(item.caller_owner)+"|"+
                 std::to_string(item.penalty_points));
+            const auto guard=witness(world,home);
+            if(guard){
+                const auto review=ship_comms::review::assess(world,
+                    territory,*communications,owner,home,piloted,
+                    item.event_id,guard);
+                emit("SECURITY_CALL_REVIEW|"+
+                    std::to_string(item.event_id)+"|"+
+                    std::to_string(unsigned(review.status))+"|"+
+                    std::to_string(review.reviewer_npc));
+            }
         }
     }catch(const std::exception&){
         // An unavailable evidence index must not take down the physical
