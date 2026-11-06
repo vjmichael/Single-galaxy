@@ -15,6 +15,7 @@
 #include <iomanip>
 #include <limits>
 #include <map>
+#include <set>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
@@ -287,11 +288,24 @@ public:
             }else if(e.kind==Kind::Abuse && e.proof_kind==1){
                 const auto it=preceding.find(e.related);
                 if(it==preceding.end() ||
-                   (it->second.kind!=Kind::Identify &&
-                    it->second.kind!=Kind::Decline) ||
+                   it->second.kind!=Kind::Identify ||
                    it->second.caller_owner!=e.caller_owner ||
                    it->second.recipient_ship!=e.recipient_ship)
-                    throw std::runtime_error("ship hail abuse lacks prior response");
+                    throw std::runtime_error("ship hail abuse lacks prior identity");
+            }else if(e.kind==Kind::Abuse && e.proof_kind==2){
+                // The original separate immutable territorial journal must
+                // contain a matching signed/linked actual identity receipt.
+                Statement proof(db_,
+                  "SELECT 1 FROM sg_disposition02 WHERE event_id=? "
+                  "AND colony=? AND owner=? AND visitor_ship=? "
+                  "AND kind IN (7,8,9)");
+                bind_num(proof.stmt,1,e.related);
+                bind_num(proof.stmt,2,e.caller_ship);
+                bind_num(proof.stmt,3,e.caller_owner);
+                bind_num(proof.stmt,4,e.recipient_ship);
+                if(sqlite3_step(proof.stmt)!=SQLITE_ROW)
+                    throw std::runtime_error(
+                        "ship hail abuse lacks real territorial identity receipt");
             }
             previous=e.digest;tick=e.world_tick;
             generation=e.world_generation;
@@ -311,25 +325,28 @@ public:
         verify();
         const auto old=history();
         std::uint64_t proof=0,prior_score=0,cooldown_until=0;
+        std::uint64_t declined_until=0;
         std::uint8_t proof_kind=0;
-        bool outstanding=false,already_scored_this_tick=false;
+        bool already_scored_this_tick=false;
+        std::map<std::uint64_t,std::uint64_t> pending;
         for(const auto& e:old){
             if(e.caller_owner!=principal || e.recipient_ship!=target)
                 continue;
-            if((e.kind==Kind::Identify &&
-                e.recipient_controller==recipient->owner_id) ||
-               e.kind==Kind::Decline){
+            if(e.kind==Kind::Identify &&
+               e.recipient_controller==recipient->owner_id){
                 proof=e.event_id;proof_kind=1;
             }else if(e.kind==Kind::Call){
-                outstanding=true;
+                pending.emplace(e.event_id,e.world_tick);
+            }else if(e.kind==Kind::Decline){
+                pending.erase(e.related);
+                declined_until=std::max(declined_until,e.world_tick+24);
             }else if(e.kind==Kind::Abuse){
                 prior_score=std::max(prior_score,e.penalty_points);
                 cooldown_until=std::max(cooldown_until,e.cooldown_until);
                 if(e.world_tick==world.world().tick())
                     already_scored_this_tick=true;
             }
-            if((e.kind==Kind::Identify || e.kind==Kind::Decline) &&
-               e.caller_ship==source)outstanding=false;
+            if(e.kind==Kind::Identify)pending.erase(e.related);
         }
         // A voluntarily identified visiting ship is already known to the
         // exact claimed colony account. No omniscient entity/owner mapping.
@@ -377,9 +394,18 @@ public:
         // ALL ships for its actual cooldown duration, not just this target.
         // Genuine inbound notice replies and distress workflows are separate.
         const auto global=penalty_for(world,principal,source);
-        if(outstanding || global.cooldown_until>world.world().tick()){
+        bool outstanding=false;
+        for(const auto& [id,tick]:pending){
+            (void)id;
+            if(world.world().tick()>=tick &&
+               world.world().tick()-tick<=kReplyWindowTicks)
+                outstanding=true;
+        }
+        if(outstanding || declined_until>world.world().tick() ||
+           global.cooldown_until>world.world().tick()){
             outcome.status=Status::Suppressed;
-            outcome.cooldown_until=global.cooldown_until;
+            outcome.cooldown_until=std::max(
+                declined_until,global.cooldown_until);
             outcome.penalty_points=global.penalty_points;
             outcome.law_review_eligible=global.law_review_eligible;
             return outcome;
