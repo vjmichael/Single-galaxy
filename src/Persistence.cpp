@@ -8830,6 +8830,55 @@ bool PersistentWorld::commission_shipyard_freighter(
     ++generation_;
     return true;
 }
+// SHIP-01F all four contract transitions are copied-state SQLite commits;
+// failure injection never publishes an unfunded/fabricated vessel or moves
+// one seller module without its matched buyer debit.
+bool PersistentWorld::post_shipyard_customer_order(
+        PlayerId customer,EntityId buyer_ship,std::uint64_t yard,
+        std::uint64_t build,std::uint64_t id,FailPoint fail) {
+    auto next=world_;
+    if(!next.post_shipyard_customer_order(customer,buyer_ship,yard,build,id))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("shipyard request changed conserved resources");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+bool PersistentWorld::accept_shipyard_customer_order(
+        PlayerId supplier,std::uint64_t id,FailPoint fail) {
+    auto next=world_;
+    if(!next.accept_shipyard_customer_order(supplier,id))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("shipyard acceptance changed conserved resources");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+bool PersistentWorld::fund_shipyard_customer_order(
+        PlayerId customer,std::uint64_t id,FailPoint fail) {
+    auto next=world_;
+    if(!next.fund_shipyard_customer_order(customer,id))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("shipyard material funding altered conserved resources");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+bool PersistentWorld::deliver_shipyard_customer_order(
+        PlayerId customer,std::uint64_t id,FailPoint fail) {
+    auto next=world_;
+    if(!next.deliver_shipyard_customer_order(customer,id))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("shipyard handover altered conserved resources");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
 bool PersistentWorld::start_shipyard_construction(
         PlayerId owner,EntityId colony,std::uint64_t order,
         std::array<std::uint64_t,2> workers,FailPoint fail) {
