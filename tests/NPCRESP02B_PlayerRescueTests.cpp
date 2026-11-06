@@ -64,6 +64,17 @@ int main(){
            person.custodian==9 && person.consent_id==99801 &&
            person.last_receipt==99802 && person.rescue_flight==97099);
      CHECK(w.world().find(player_ship)->owner_id==7);
+     // The person is genuinely aboard the rescue vessel. Original direct
+     // cockpit controls cannot magically operate the abandoned source hull.
+     Command abandoned{};
+     abandoned.id=88012;abandoned.sequence=88012;
+     abandoned.execute_tick=w.world().tick()+1;
+     abandoned.issuer=7;abandoned.actor=player_ship;
+     abandoned.action=Action::Thrust;abandoned.thrust_x=1;
+     CHECK(!w.submit(abandoned));
+     abandoned.id=88013;abandoned.sequence=88013;
+     abandoned.action=Action::StartMining;abandoned.thrust_x=0;
+     CHECK(!w.submit(abandoned));
      CHECK(w.world().people_physically_aboard(player_ship)==0);
      CHECK(w.world().people_physically_aboard(rescuer)==7);
      CHECK(w.world().total_material_kg()==initial_material);
