@@ -30,6 +30,7 @@ STATIC={
     '/viewer/recordings.js':'viewer/recordings.js',
     '/viewer/viewer.js':'viewer/viewer.js',
     '/viewer/colony.js':'viewer/colony.js',
+    '/viewer/cyber-controls.js':'viewer/cyber-controls.js',
     '/viewer/opening-guide.js':'viewer/opening-guide.js',
     '/viewer/flight-controls.js':'viewer/flight-controls.js',
     '/viewer/flight-camera.js':'viewer/flight-camera.js',
