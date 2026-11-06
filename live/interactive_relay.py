@@ -740,7 +740,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             elif action=='colonySecurityPatrol' and set(doc)=={
                     'token','action','case','ship'}:
                 case_id,ship=doc['case'],doc['ship']
-                if type(case_id)!=int or not 1<=case_id<(1<<62) or (
+                # Original SQLite case IDs may exceed JS's 53-bit number
+                # precision; receive canonical DECIMAL STRINGS, not floats.
+                if type(case_id)!=str or not 1<=len(case_id)<=19 or (
+                   not case_id.isascii() or not case_id.isdecimal() or
+                   case_id[0]=='0' or int(case_id)>=(1<<62)) or (
                    type(ship)!=int or not 1<=ship<=1000000000000000):
                     raise ValueError('Invalid original case or observed vessel')
                 command=f'SECURITY_PATROL|{case_id}|{ship}'
