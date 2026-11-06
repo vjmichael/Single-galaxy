@@ -24,6 +24,7 @@ on:
       - 'tests/SHIPSTATUS07F_NpcHailSupervisorTests.cpp'
       - 'tests/SHIPSTATUS07G_TwoHumanSecurityTests.cpp'
       - 'tests/SHIPSTATUS07G_LiveTwoHumanHostTests.py'
+      - 'tests/SHIPSTATUS07G_PrivateRelayTests.py'
       - 'viewer/security-only.html'
       - 'viewer/security-only.js'
       - 'tests/COMBAT01A_RealShipWeaponTests.cpp'
@@ -108,7 +109,8 @@ jobs:
           node --check viewer/security-desk.js
           node --check viewer/security-only.js
           node --check viewer/interactive.js
-          python -m py_compile live/interactive_relay.py tests/SHIPSTATUS07G_LiveTwoHumanHostTests.py
+          python -m py_compile live/interactive_relay.py tests/SHIPSTATUS07G_LiveTwoHumanHostTests.py tests/SHIPSTATUS07G_PrivateRelayTests.py
+          python tests/SHIPSTATUS07G_PrivateRelayTests.py
           python tests/SHIPSTATUS05_CyberRelayTests.py
           python tests/SHIPSTATUS07D_SecurityRelayTests.py
           python -m py_compile tests/SHIPSTATUS06_LiveCyberHostTests.py tests/SHIPSTATUS06_InstalledBrowserTests.py tests/SHIPSTATUS07D_LiveSecurityHostTests.py tests/SHIPSTATUS07D_InstalledBrowserTests.py
