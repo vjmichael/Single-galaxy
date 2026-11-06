@@ -1100,6 +1100,13 @@ public:
     // worker. It accepts a real Mine command; a completion is recorded later,
     // atomically with the executed command's actual ore-transfer incident.
     // Merely sharing a ship or witnessing a mine is never execution proof.
+    // SHIP-STATUS-04: trusted autonomous NPC operator, same physical
+    // HackConfuse command and world writer. The calling host must bind
+    // owner to original colony governance/session approval (not user input).
+    // Observed contact grants awareness, NEVER a legal right to attack.
+    bool submit_npc_cyber_attack(PlayerId owner,EntityId attacking_ship,
+        std::uint64_t pilot_npc,std::uint64_t observer_npc,EntityId target,
+        std::uint64_t command_id,FailPoint fail=FailPoint::None);
     bool submit_npc_mining_work(std::uint64_t npc_id, EntityId ship,EntityId rock,
           std::int64_t amount,std::uint64_t command_id,FailPoint fail=FailPoint::None);
     // Named, host-attested fabrication using existing real ship machinery,
