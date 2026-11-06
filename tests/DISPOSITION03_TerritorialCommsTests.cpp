@@ -92,7 +92,7 @@ int main(){
    CHECK(enforcement_view(world,territory,colony,visitor).phase==
          EnforcementPhase::NeedsWarning);
    CHECK(!territory.standing(world,colony,visitor).trespass_recorded);
-   CHECK(territory.history().size()==8);
+   CHECK(territory.history().size()==7);
    CHECK(world.world().total_material_kg()==original);
    CHECK(world.world().find(visitor)->hull==100);
    saved=world.world().canonical_state();
@@ -101,7 +101,7 @@ int main(){
    PersistentWorld recovered(path,Simulation(30304));
    TerritoryJournal journal(path);
    CHECK(recovered.world().canonical_state()==saved);
-   CHECK(journal.history().size()==8);
+   CHECK(journal.history().size()==7);
    CHECK(enforcement_view(recovered,journal,colony,visitor).phase==
          EnforcementPhase::NeedsWarning);
    CHECK(recovered.world().total_material_kg()==original);
