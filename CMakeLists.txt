@@ -1425,6 +1425,16 @@ if(BUILD_TESTING)
     COMMAND galaxy_ship01b2_commission_freighter_tests)
 endif()
 
+# FLIGHT-01: one mission-neutral NPC ship navigator using the
+# original host celestial-transit physical gate, committed receipts,
+# real named pilots and v95 SQLite crash/recovery, not a freight autopilot.
+if(BUILD_TESTING)
+  add_test(NAME galaxy_flight01_unified_npc_navigation
+    COMMAND galaxy_play13d_regional_facilities_tests --npc-autonomous-nav)
+  set_tests_properties(galaxy_flight01_unified_npc_navigation
+    PROPERTIES TIMEOUT 300)
+endif()
+
 # WORK-01C: execute owner-delegated original local shuttle and sealed
 # intercolony freight, with the full real pilot, flight, hold, arrival receipt,
 # SQLite fault/restart acceptance fixture (no second transport engine).
