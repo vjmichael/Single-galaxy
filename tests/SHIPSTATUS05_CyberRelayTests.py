@@ -50,6 +50,8 @@ def submit(action, fields=None, token=Runtime.token, origin=True, colony_mode=Tr
 for action, payload, expected in (
     ("colonyCyberFit", {"device": "emitter", "install": True}, "CYBER_FIT|3"),
     ("colonyCyberFit", {"device": "firewall", "install": False}, "CYBER_FIT|-4"),
+    ("colonyCyberFit", {"device": "stealth", "install": True}, "CYBER_FIT|5"),
+    ("colonyCyberFit", {"device": "counterSensor", "install": False}, "CYBER_FIT|-6"),
     ("colonyCyberPower", {"slot": 1, "enabled": True}, "CYBER_POWER|1|1"),
     ("colonyCyberIsolate", {"slot": 0, "enabled": False}, "CYBER_ISOLATE|0|0"),
     ("colonyCyberAttack", {"target": 22}, "CYBER_ATTACK|22"),
@@ -60,6 +62,9 @@ for action, payload, expected in (
 for action, payload in (
     ("colonyCyberFit", {"device": "energy siphon", "install": True}),
     ("colonyCyberFit", {"device": "emitter", "install": 1}),
+    ("colonyCyberFit", {"device": "stealth", "install": "on"}),
+    ("colonyCyberFit", {"device": "counterSensor", "install": True, "owner": 8}),
+    ("colonyCyberFit", {"device": "stealth", "install": True, "sensorStrength": 999}),
     ("colonyCyberPower", {"slot": True, "enabled": True}),
     ("colonyCyberPower", {"slot": 2, "enabled": True}),
     ("colonyCyberIsolate", {"slot": 0, "enabled": "yes"}),
