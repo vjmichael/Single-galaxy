@@ -151,6 +151,21 @@ void cyber_status(const Simulation& w,EntityId ship) {
             std::to_string(w.hardpoint_effective_on(ship,slot)?1:0)+"|"+
             std::to_string(hull->hardpoint_isolated[slot]?1:0));
     }
+    // Defensive read model is derived from the current original-world
+    // effects, not the intended button state or an uncommitted attack.
+    std::uint64_t remaining=0,source=0,exposed=0;
+    for(const auto& effect:w.status_effects().records()){
+        if(effect.target_ship!=ship ||
+           w.tick()<effect.started_tick || w.tick()>=effect.expires_tick)
+            continue;
+        remaining=effect.expires_tick-w.tick();
+        source=effect.source_ship;
+        exposed=effect.targets.size();
+        break; // the native kernel does not permit overlapping effects
+    }
+    announce(w,"CYBER_DEFENSE|"+std::to_string(ship)+"|"+
+        std::to_string(remaining)+"|"+std::to_string(source)+"|"+
+        std::to_string(exposed));
     announce(w,"CYBER_TARGETS_RESET|"+std::to_string(ship));
     for(const auto& [id,target]:w.entities()){
         if(id==ship || target.type!=EntityType::Ship || target.training_drone ||
@@ -2104,6 +2119,12 @@ int main(int argc,char** argv){
             // at genesis; only genuinely constructed NPC colonies with an
             // existing predatory government and fabricated emitter may act.
             const auto cyber_pulse=npc_cyber::supervise(world,owner);
+            if(cyber_pulse.approaches){
+                announce(world.world(),"NPC_CYBER_APPROACH_QUEUED|"+
+                    std::to_string(cyber_pulse.last_approaching_ship)+"|"+
+                    std::to_string(cyber_pulse.last_approach_target)+"|"+
+                    std::to_string(cyber_pulse.last_flight));
+            }
             if(cyber_pulse.queued){
                 announce(world.world(),"NPC_CYBER_QUEUED|"+
                     std::to_string(cyber_pulse.last_attacking_ship)+"|"+
@@ -2333,6 +2354,19 @@ int main(int argc,char** argv){
                 // Do not mark discovery complete until the committed journal
                 // actually gains the observation after the response interval.
                 pending_probe_scans.erase(ev.command_id);
+                // Original immutable NPC operator receipt proves this was
+                // an actual foreign cyber attempt on the piloted physical
+                // ship. Never label a queued threat as an applied effect.
+                if(const auto it=world.world().npc_cyber_operators().find(
+                       ev.command_id);
+                   it!=world.world().npc_cyber_operators().end() &&
+                   it->second.target_ship==fleet.piloted()){
+                    announce(world.world(),"CYBER_INCOMING|"+
+                        std::to_string(it->second.target_ship)+"|"+
+                        std::to_string(it->second.attacking_ship)+"|"+
+                        std::to_string(ev.command_id)+"|"+
+                        to_string(ev.result));
+                }
                 announce(world.world(),"RESULT|"+std::to_string(ev.command_id)+"|"+
                     to_string(ev.result)+"|"+std::to_string(ev.transferred));
                 if(const auto cyber=awaiting_cyber_results.find(ev.command_id);
