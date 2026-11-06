@@ -64,7 +64,24 @@ def run(host, relay, bridge):
                 "token": foreign["csrf"],
                 "action": "colonySecurityClaim",
                 "radius": 3000}, cookie)[0] == 403
-            assert request(port, "GET", "/session", cookie=cookie)[0] == 403
+            # Secondary authenticated human may open only the private
+            # SECURITY_REFRESH/CALL/CALL_REPLY transport. The standard
+            # genesis has no owner-8 hull, therefore the native host must
+            # refuse any claimed physical authority without inventing one.
+            code, security_session, _ = request(
+                port, "GET", "/session", cookie=cookie)
+            assert code == 200 and security_session["security_only"]
+            assert security_session["commands"] == [
+                "colonySecurityRefresh","colonySecurityCall",
+                "colonySecurityCallReply"]
+            assert "colonyCyberAttack" not in security_session["commands"]
+            assert request(port, "POST", "/command", {
+                "token": foreign["csrf"],"action":"colonyCyberAttack",
+                "target":3},cookie)[0]==403
+            assert request(port, "POST", "/command", {
+                "token": foreign["csrf"],"action":"colonySecurityRefresh"},
+                cookie)[0]==202
+            assert request(port, "GET", "/viewer/security-only.html")[0]==200
             code, owner, cookie = request(port, "POST", "/api/login", {
                 "username": "owner", "password": "owner-security-password"})
             assert code == 200 and owner["playerId"] == 7
