@@ -1,0 +1,53 @@
+name: WORK-01C canonical local shuttle and intercolony transport executors
+
+on:
+  pull_request:
+    paths:
+      - 'include/galaxy/Simulation.hpp'
+      - 'include/galaxy/WorkPlanning.hpp'
+      - 'include/galaxy/Persistence.hpp'
+      - 'src/Simulation.cpp'
+      - 'src/Persistence.cpp'
+      - 'tests/PLAY13D_RegionalFacilitiesTests.cpp'
+      - 'tests/WORK01B_WorkPlannerTests.cpp'
+      - 'CMakeLists.txt'
+      - '.github/workflows/work01c-transport-executors.yml'
+  workflow_dispatch:
+
+jobs:
+  physical-transport:
+    name: Real shuttle pilot, sealed carrier, receipt and v94 replay (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native SQLite (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlite3-dev
+      - name: Install native SQLite (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vcpkg = Join-Path $env:VCPKG_INSTALLATION_ROOT 'vcpkg.exe'
+          if (-not (Test-Path $vcpkg)) { throw 'Missing Windows vcpkg' }
+          & $vcpkg install sqlite3:x64-windows --clean-after-build
+          if ($LASTEXITCODE -ne 0) { throw 'SQLite installation failed' }
+      - name: Configure Linux native C++
+        if: runner.os == 'Linux'
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+      - name: Configure Windows native C++
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $toolchain = Join-Path $env:VCPKG_INSTALLATION_ROOT 'scripts/buildsystems/vcpkg.cmake'
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$toolchain" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'Windows configure failed' }
+      - name: Compile original world and all inherited native gates
+        run: cmake --build build --parallel 2 --config Release --target galaxy_play13d_regional_facilities_tests galaxy_work01a_universal_fulfillment_tests galaxy_work01b_work_planner_tests galaxy_work01b2_native_capacity_tests galaxy_work01b3_emergency_fairness_tests
+      - name: Verify actual pilot, material, voyage, tamper and SQLite recovery
+        run: ctest --test-dir build -C Release --output-on-failure -R "^galaxy_(work01c_native_transport_executors|work01a_universal_fulfillment|work01b_work_planner|work01b2_native_capacity|work01b3_emergency_fairness)$"
