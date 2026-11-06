@@ -52,6 +52,22 @@
      if(!ship||!id||ship===id)throw Error('Invalid physical target');
      return {tick,type,ship,id,distance};
    }
+   if(type==='CYBER_DEFENSE' && v.length===8){
+     const ship=validNumber(v[4]),remaining=validNumber(v[5],8),
+       source=validNumber(v[6]),exposed=validNumber(v[7],16);
+     if(!ship || (remaining===0 && (source!==0 || exposed!==0)) ||
+        (remaining>0 && (!source || !exposed || source===ship)))
+       throw Error('Invalid committed defense state');
+     return {tick,type,ship,remaining,source,exposed};
+   }
+   if(type==='CYBER_INCOMING' && v.length===8){
+     const ship=validNumber(v[4]),source=validNumber(v[5]),
+       id=validNumber(v[6]),result=v[7];
+     if(!ship || !source || !id || source===ship ||
+        !/^[A-Z_]+$/.test(result))
+       throw Error('Invalid committed incoming cyber event');
+     return {tick,type,ship,source,id,result};
+   }
    if(type==='CYBER_RESULT' && v.length===7){
      const id=validNumber(v[4]),action=validNumber(v[5],3);
      const result=v[6];
@@ -67,10 +83,12 @@
    Number.isSafeInteger(target)&&target>0;
  if(typeof document==='undefined')return {parse,canAttack};
  const e=id=>document.getElementById(id);
- let status=null,modules=new Map(),targets=new Map(),lastCycle=-1;
+ let status=null,defense=null,modules=new Map(),targets=new Map();
  function reset(){
-   status=null;modules.clear();targets.clear();lastCycle=-1;
+   status=null;defense=null;modules.clear();targets.clear();
    e('cyberStatus').textContent='Waiting for committed ship electronics.';
+   e('cyberDefense').textContent='Waiting for committed defense state.';
+   e('cyberAlert').textContent='No incoming cyber attack reported.';
    e('cyberFeedback').textContent='No attack queued.';
    e('cyberModuleList').replaceChildren();
    e('cyberTarget').replaceChildren(new Option('No valid local target',''));
@@ -99,6 +117,12 @@
        ' · emitter '+(emitterPowered?'ONLINE':'OFFLINE')+
        ' · emission cooldown '+status.cooldown+' tick(s)';
    }
+   e('cyberDefense').textContent=defense?.tick===status?.tick && defense.remaining>0?
+     'CONFUSION ACTIVE · '+defense.remaining+' tick(s) remaining · source ship #'+
+       defense.source+' · '+defense.exposed+' exposed module(s). '+
+       'You can isolate a hardpoint below to prevent remote toggling.':
+     'No active Confusion on this ship. '+(firewall?
+       'Passive firewall fitted.':'No passive firewall fitted.');
    const list=e('cyberModuleList');
    list.replaceChildren();
    for(const slot of [0,1]){
@@ -140,7 +164,10 @@
    if(!data)return false;
    if(data.type==='CYBER_STATUS'){
      if(status?.ship!==data.ship){
-       modules.clear();targets.clear();
+       modules.clear();targets.clear();defense=null;
+       e('cyberAlert').textContent='No incoming cyber attack reported.';
+     }else if(status.tick!==data.tick){
+       defense=null; // effect timing must come from this committed tick
      }
      status=data;
    }else if(!status||data.ship!==status.ship){
@@ -151,6 +178,19 @@
      targets.clear();
    }else if(data.type==='CYBER_TARGET'){
      targets.set(data.id,data);
+   }else if(data.type==='CYBER_DEFENSE'){
+     if(data.tick===status.tick)defense=data;
+   }else if(data.type==='CYBER_INCOMING'){
+     if(data.result==='APPLIED')
+       e('cyberAlert').textContent='INCOMING CYBER ATTACK · ship #'+data.source+
+         ' disrupted your modules (native command #'+data.id+').';
+     else if(data.result==='ATTACK_RESISTED')
+       e('cyberAlert').textContent='CYBER ATTACK RESISTED · ship #'+data.source+
+         ' did not disrupt your modules (native command #'+data.id+').';
+     else
+       e('cyberAlert').textContent='Enemy cyber attempt · ship #'+data.source+
+         ' · native '+data.result.replaceAll('_',' ').toLowerCase()+
+         ' (command #'+data.id+').';
    }
    if(data.type==='CYBER_RESULT')
      e('cyberFeedback').textContent='Native command #'+data.id+
