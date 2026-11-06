@@ -82,6 +82,8 @@
      if(!id || !/^[A-Z_]+$/.test(result))throw Error('Invalid native outcome');
      return {tick,type,id,action,result};
    }
+   if(/^CYBER_(STATUS|MODULE|TARGETS_RESET|TARGET|RESULT|DEFENSE|INCOMING|SENSORS)$/.test(type))
+     throw Error('Invalid known cyber frame shape');
    return null;
  }
  // Stateless policy helper: never infer a successful native command from a
