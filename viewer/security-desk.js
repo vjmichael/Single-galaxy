@@ -76,6 +76,13 @@
        throw Error('Invalid ship hail sanction');
      return {tick,type,ship,points,until,review:!!review};
    }
+   if(type==='SECURITY_CALL_REVIEW' && v.length===7){
+     const id=nativeId(v[4]),status=whole(v[5],4),
+       reviewer=whole(v[6]);
+     if(id==='0'||(status===4 && !reviewer))
+       throw Error('Invalid native preliminary law review');
+     return {tick,type,id,status,reviewer};
+   }
    if(type==='SECURITY_CALL_COMPLAINT' && v.length===7){
      const id=nativeId(v[4]),caller=whole(v[5]),
        points=nativeId(v[6]);
@@ -145,7 +152,7 @@
  const el=id=>document.getElementById(id);
  let status=null,cases=new Map(),contacts=new Map(),
      notices=new Map(),destinations=new Map(),inbox=new Map(),
-     complaints=new Map(),commsPenalty=null;
+     complaints=new Map(),reviews=new Map(),commsPenalty=null;
  function selected(id){return el(id).value;}
  function setOptions(id,placeholder,items){
    const node=el(id),previous=node.value;
@@ -207,9 +214,15 @@
    }
    for(const c of complaints.values()){
      const item=document.createElement('div');
-     item.textContent='Complaint #'+c.id+' · verified caller #'+c.caller+
-       ' · nuisance points '+c.points+
-       ' · eligible for independent law-enforcement review, not a conviction';
+     const checked=reviews.get(c.id);
+     const reviewText=checked?.status===4?
+       ' · named duty reviewer confirmed; awaiting actual law agency':
+       checked?.status===3?' · no on-duty reviewer':
+       checked?.status===2?' · no territorial jurisdiction claim':
+       ' · independent legal review still required';
+     item.textContent='Complaint #'+c.id+' · authenticated caller #'+
+       c.caller+' · nuisance points '+c.points+
+       reviewText+' · NO automatic arrest or armed response';
      complaintsNode.append(item);
    }
    el('securityPatrol').disabled=!active||!knownCase||
@@ -242,7 +255,7 @@
  function reset(){
    status=null;cases=new Map();contacts=new Map();
    notices=new Map();destinations=new Map();inbox=new Map();
-   complaints=new Map();commsPenalty=null;
+   complaints=new Map();reviews=new Map();commsPenalty=null;
    el('securityDeskFeedback').textContent='No security action submitted.';
    update();
  }
@@ -262,9 +275,11 @@
      case 'SECURITY_NOTICES_RESET':notices.clear();break;
      case 'SECURITY_DESTINATIONS_RESET':destinations.clear();break;
      case 'SECURITY_CALL_INBOX_RESET':inbox.clear();break;
-     case 'SECURITY_CALL_COMPLAINTS_RESET':complaints.clear();break;
+     case 'SECURITY_CALL_COMPLAINTS_RESET':
+       complaints.clear();reviews.clear();break;
      case 'SECURITY_CALL_INBOX':inbox.set(data.request,data);break;
      case 'SECURITY_CALL_COMPLAINT':complaints.set(data.id,data);break;
+     case 'SECURITY_CALL_REVIEW':reviews.set(data.id,data);break;
      case 'SECURITY_CALL_PENALTY':commsPenalty=data;break;
      case 'SECURITY_CALL_SANCTION':
        commsPenalty={tick:data.tick,points:data.points,
