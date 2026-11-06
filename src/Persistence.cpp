@@ -8850,6 +8850,21 @@ bool PersistentWorld::delegate_customer_ship_order(
     world_.swap(next);++generation_;
     return true;
 }
+// WORK-01C: retain v94 original-world transaction, failpoints, conservation
+// and recovery. The delegation is not a new shipment/stock/manifest writer.
+bool PersistentWorld::delegate_transport_work_order(
+        PlayerId owner,EntityId origin,std::uint64_t id,WorkTaskKind kind,
+        std::uint64_t source,std::uint64_t dependency,FailPoint fail) {
+    auto next=world_;
+    if(!next.delegate_transport_work_order(owner,origin,id,kind,source,
+                                           dependency))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("transport delegation changed conserved matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
 bool PersistentWorld::cancel_work_directive(
         PlayerId owner,std::uint64_t directive,FailPoint fail) {
     auto next=world_;
