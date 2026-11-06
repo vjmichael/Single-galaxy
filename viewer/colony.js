@@ -824,6 +824,7 @@
    }
  }catch{/* Optional browser preference; never game authority. */}
  window.GalaxyActivePilotedShipId=null;
+ window.GalaxyActivePilotedCelestialBody=null;
  window.GalaxySalvageStock=salvageWrecks;
  window.GalaxyColonyGeology=geology;
  window.GalaxySelectedRockId=null;
@@ -1124,6 +1125,7 @@
  window.GalaxyColony={
    reset(){fleetShips.clear();fleetRosterActive=false;fleetRestorePending=true;
      fleetRequested=0;window.GalaxyActivePilotedShipId=null;
+     window.GalaxyActivePilotedCelestialBody=null;
      fleetSelector.replaceChildren(new Option('Awaiting native fleet roster',''));
      fleetSelector.disabled=true;fleetSelectButton.disabled=true;
      fleetHomeButton.disabled=true;
@@ -1175,6 +1177,7 @@
      }
      if(e.type==='FLEET_SELECTED'||e.type==='FLEET_FALLBACK'){
        window.GalaxyActivePilotedShipId=e.ship;
+       window.GalaxyActivePilotedCelestialBody=null;
        window.GalaxyColonyHomeShipId=e.home;
        window.GalaxyFleetSelectionChanged?.(e.ship,e.home);
        if(fleetShips.has(e.ship))fleetSelector.value=String(e.ship);
@@ -1185,10 +1188,10 @@
        fleetAuthority.textContent='Home colony #'+e.home+
          ' retains ALL industry, planetary work, shipyard and inventory authority. '+
          (e.ship===e.home?'Piloting home colony.':'Piloting separate ship #'+e.ship+'.');
-       const ready=selected?.ready!==false;
+       const ready=!!selected?.ready;
        fleetControls.querySelectorAll('button').forEach(b=>b.disabled=!ready);
        fleetTravel.disabled=!ready;
-       fleetHomeButton.disabled=e.ship===e.home;
+       fleetHomeButton.disabled=e.ship===e.home||!fleetShips.get(e.home)?.ready;
        if(e.type==='FLEET_FALLBACK'){
          storedPilot=0;
          try{window.localStorage?.removeItem(pilotSaveKey);}catch{}
@@ -1204,6 +1207,10 @@
      }
      if(e.type==='FLEET_PILOT_ITEM'){
        if(e.ship===window.GalaxyActivePilotedShipId){
+         window.GalaxyActivePilotedCelestialBody=e.body;
+         document.querySelectorAll('[data-pilot-body]').forEach(button=>{
+           button.disabled=Number(button.dataset.pilotBody)===e.body;
+         });
          fleetPilotState.textContent='Piloting ship #'+e.ship+
            ' · heading '+e.heading+'° · position '+e.x+', '+e.y+
            ' mm · body #'+e.body+' · crew '+e.crew+
@@ -1233,7 +1240,8 @@
          const action=document.createElement('button');
          action.type='button';
          action.textContent='Travel to local region';
-         action.disabled=body.id===window.GalaxyActiveCelestialBody;
+         action.dataset.pilotBody=String(body.id);
+         action.disabled=body.id===window.GalaxyActivePilotedCelestialBody;
          action.addEventListener('click',()=>{
            if(window.GalaxyColonyCommand)
              window.GalaxyColonyCommand('colonyFrameTravel',{body:body.id});
