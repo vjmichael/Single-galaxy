@@ -19,6 +19,7 @@ on:
       - 'viewer/interactive.html'
       - 'viewer/interactive.js'
       - 'live/interactive_relay.py'
+      - 'tests/SHIPSTATUS05_CyberRelayTests.py'
       - 'include/galaxy/TerritorialCyberEvidence.hpp'
       - 'include/galaxy/NpcCyberTactics.hpp'
       - 'src/ColonyConflict.cpp'
@@ -35,6 +36,12 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
       - if: runner.os == 'Windows'
@@ -58,3 +65,5 @@ jobs:
           node --check viewer/cyber-controls.js
           node --check viewer/interactive.js
           python -m py_compile live/interactive_relay.py
+          python tests/SHIPSTATUS05_CyberRelayTests.py
+          node tests/SHIPSTATUS05_CyberCockpitTests.js
