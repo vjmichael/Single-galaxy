@@ -1138,6 +1138,75 @@
      q('signatureFeedback').textContent='Search for coarse anomaly signatures.';
      q('droneTarget').replaceChildren(new Option('Scan nearby rocks first',''));q('droneLaunch').disabled=true;deployedProbes.clear();probeCarried=0;probeLauncher=false;probeChoice='';q('probeTarget').replaceChildren(new Option('No probe deployed',''));q('probeLaunch').disabled=true;q('probeSurvey').disabled=true;q('probeRetrieve').disabled=true;q('probeInventory').textContent='Awaiting native probe stock.';q('probeFeedback').textContent='Native equipment required.';q('fittingCapacity').textContent='Awaiting actual ship fittings.';q('proximityStatus').textContent='Proximity safety sensor awaiting contacts.';q('fitScanner').disabled=true;q('unfitScanner').disabled=true;discoveries.clear();q('explorationResults').replaceChildren();q('explorationSummary').textContent='No mapped discoveries yet. Execute a native local scan.';salvageWrecks.clear();q('salvageTarget').replaceChildren(new Option('No recoverable wreck reported',''));q('salvageRecover').disabled=true;q('salvageFeedback').textContent='Waiting for native wreck inventory.';combatTargets.clear();q('combatHull').textContent='—';q('combatCharges').textContent='—';q('combatFire').disabled=true;q('combatFeedback').textContent='Awaiting native combat telemetry.';window.GalaxySelectedRockId=null;window.GalaxyShipHeading=null;window.GalaxyColonyOutpostIds.clear();openingStatus=null;openingScanned=false;refreshOpening();window.GalaxyColonyHomeShipId=null;q('colonySafetyAssess').disabled=true;q('colonySafetyPreflight').disabled=true;policyAudits.clear();geology.clear();small.clear();stocks.clear();outposts.clear();farms.clear();habitats.clear();utilities.clear();communities.clear();clinics.clear();reclaimers.clear();waterworks.clear();log.length=0;q('colonyEvents').textContent='Awaiting colony telemetry…';q('expeditionOutcome').textContent='Awaiting an actual native result';},
    accept(raw){const e=window.GalaxyColonyContract.decode(raw);
+     if(e.type==='FLEET_RESET'){
+       fleetShips.clear();fleetRosterActive=true;
+     }
+     if(e.type==='FLEET_ITEM'){
+       if(!fleetRosterActive||fleetShips.has(e.ship))
+         throw Error('Duplicate/out-of-sequence fleet identity');
+       fleetShips.set(e.ship,e);
+     }
+     if(e.type==='FLEET_DONE'){
+       if(!fleetRosterActive||fleetShips.size!==e.count)
+         throw Error('Incomplete fleet roster receipt');
+       fleetRosterActive=false;
+       const choices=[...fleetShips.values()].sort((a,b)=>
+         Number(b.home)-Number(a.home)||a.ship-b.ship);
+       const active=window.GalaxyActivePilotedShipId;
+       fleetSelector.replaceChildren(...choices.map(item=>
+         new Option((item.home?'Home colony':'Manufactured freighter #'+item.order)+
+           ' · ship '+item.ship+(item.ready?' · ready':' · unavailable'),
+           String(item.ship))));
+       fleetSelector.disabled=!choices.length;
+       if(fleetShips.has(active))fleetSelector.value=String(active);
+       fleetSelectButton.disabled=!choices.length||
+         !fleetShips.get(Number(fleetSelector.value))?.ready;
+       fleetHomeButton.disabled=!choices.some(item=>item.home&&item.ready);
+       if(fleetRestorePending){
+         fleetRestorePending=false;
+         const saved=fleetShips.get(storedPilot);
+         if(saved?.ready&&storedPilot!==active)
+           requestFleetShip(storedPilot);
+         else if(storedPilot&&!saved?.ready){
+           storedPilot=0;
+           try{window.localStorage?.removeItem(pilotSaveKey);}catch{}
+         }
+       }
+     }
+     if(e.type==='FLEET_SELECTED'||e.type==='FLEET_FALLBACK'){
+       window.GalaxyActivePilotedShipId=e.ship;
+       window.GalaxyColonyHomeShipId=e.home;
+       if(fleetShips.has(e.ship))fleetSelector.value=String(e.ship);
+       const selected=fleetShips.get(e.ship);
+       fleetPilotState.textContent=(e.type==='FLEET_FALLBACK'?
+         'Ship unavailable; returned to home cockpit. ':'Active cockpit confirmed. ')+
+         'Piloting ship #'+e.ship+' at generation '+e.generation+'.';
+       fleetAuthority.textContent='Home colony #'+e.home+
+         ' retains ALL industry, planetary work, shipyard and inventory authority. '+
+         (e.ship===e.home?'Piloting home colony.':'Piloting separate ship #'+e.ship+'.');
+       const ready=selected?.ready!==false;
+       fleetControls.querySelectorAll('button').forEach(b=>b.disabled=!ready);
+       fleetTravel.disabled=!ready;
+       fleetHomeButton.disabled=e.ship===e.home;
+       if(e.type==='FLEET_FALLBACK'){
+         storedPilot=0;
+         try{window.localStorage?.removeItem(pilotSaveKey);}catch{}
+       }else if(fleetRequested===e.ship){
+         fleetRequested=0;
+         storedPilot=e.ship;
+         try{window.localStorage?.setItem(pilotSaveKey,String(e.ship));}catch{}
+       }
+     }
+     if(e.type==='FLEET_PILOT_ITEM'){
+       if(e.ship===window.GalaxyActivePilotedShipId){
+         fleetPilotState.textContent='Piloting ship #'+e.ship+
+           ' · heading '+e.heading+'° · position '+e.x+', '+e.y+
+           ' mm · body #'+e.body+' · crew '+e.crew+
+           ' · food '+e.food+' kg · water '+e.water+' kg · oxygen '+
+           e.oxygen+' kg · world generation '+e.generation;
+         window.GalaxyShipHeading=e.heading;
+       }
+     }
      if(e.type==='CELESTIAL_HEADER'){
        celestialBodies.clear();oasises.clear();
        q('celestialBodyList').textContent='Receiving authoritative physical bodies…';
