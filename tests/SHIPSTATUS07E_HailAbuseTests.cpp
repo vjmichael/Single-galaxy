@@ -1,5 +1,6 @@
 #include "galaxy/ShipHailJournal.hpp"
 #include "galaxy/SecurityDeskHost.hpp"
+#include "galaxy/ShipCommsReview.hpp"
 #include <sqlite3.h>
 #include <algorithm>
 #include <chrono>
@@ -74,6 +75,39 @@ int main(){
               third.law_review_eligible);
         CHECK(calls.pending_for(world,8,b).empty());
         CHECK(calls.penalty_for(world,7,a).penalty_points==3);
+        // STATUS-LAW-01/SEC-01: A real signed nuisance receipt is valid
+        // preliminary evidence, but an owned territory and actual named
+        // reviewer are independently required; even then no police exists.
+        std::uint64_t officer_b=0,wrong_officer_a=0;
+        for(const auto& [id,n]:world.world().npc_records()){
+            if(n.role!=NpcRole::Ship ||
+               !world.world().npc_available_for_duty(id))continue;
+            if(n.home_ship==b && n.location==b)officer_b=id;
+            if(n.home_ship==a && n.location==a)wrong_officer_a=id;
+        }
+        CHECK(officer_b && wrong_officer_a);
+        namespace review=ship_comms::review;
+        CHECK(review::assess(world,land,calls,7,b,b,1009,officer_b).status==
+              review::Status::WrongOwner);
+        CHECK(review::assess(world,land,calls,8,b,b,999999,officer_b).status==
+              review::Status::MissingEvidence);
+        CHECK(review::assess(world,land,calls,8,b,b,1009,officer_b).status==
+              review::Status::NoClaim);
+        CHECK(land.claim(world,8,b,3001,3000));
+        CHECK(review::assess(world,land,calls,8,b,b,1009,wrong_officer_a).status==
+              review::Status::NoDutyReviewer);
+        const auto actual_review=review::assess(world,land,calls,
+            8,b,b,1009,officer_b);
+        CHECK(actual_review.status==review::Status::AwaitingLawAgency);
+        CHECK(actual_review.credible_nuisance_evidence &&
+              actual_review.points==3 &&
+              actual_review.reported_caller==7);
+        CHECK(!actual_review.formal_law_agency_present &&
+              !actual_review.criminal_guilt &&
+              !actual_review.arrest_authorized &&
+              !actual_review.armed_intercept_authorized &&
+              !actual_review.property_seizure_authorized &&
+              !actual_review.police_dispatch_authorized);
         CHECK(calls.penalty_for(world,8,b).penalty_points==0);
         CHECK(calls.call(world,land,7,a,c,1010).status==Status::Suppressed);
         // Review eligibility is a recorded security complaint, not a
