@@ -2057,12 +2057,14 @@ int main(int argc,char** argv){
         // ORIGINAL authoritative SQLite game file. No duplicate world writer.
         std::unique_ptr<colony_disposition::TerritoryJournal> territory;
         std::unique_ptr<colony_disposition::CyberIncidentJournal> cases;
+        std::unique_ptr<ship_comms::Journal> communications;
         try {
             territory=std::make_unique<colony_disposition::TerritoryJournal>(argv[1]);
             cases=std::make_unique<colony_disposition::CyberIncidentJournal>(argv[1]);
+            communications=std::make_unique<ship_comms::Journal>(argv[1]);
         }catch(const std::exception& ex) {
             std::cerr<<"SECURITY_DESK_UNAVAILABLE "<<ex.what()<<'\n';
-            territory.reset();cases.reset();
+            territory.reset();cases.reset();communications.reset();
         }
         // PLAY-13B: the v67 world is the authoritative discovery source.
         // This sidecar is an owner-scoped, rebuildable navigation/survey index.
@@ -2104,7 +2106,8 @@ int main(int argc,char** argv){
                 [&](const std::string& msg){announce(world.world(),msg);});
             colony_disposition::security_desk::snapshot(
                 world,*territory,*cases,owner,ship,fleet.piloted(),
-                [&](const std::string& msg){announce(world.world(),msg);});
+                [&](const std::string& msg){announce(world.world(),msg);},
+                communications.get());
         }else announce(world.world(),"SECURITY_ERROR|CASE_DESK_UNAVAILABLE");
         // The initial selection is always the actual home ship. A browser
         // may restore a prior preference, but native selection revalidates it.
@@ -2153,7 +2156,7 @@ int main(int argc,char** argv){
                             fleet.piloted(),nonce,
                             [&](const std::string& msg){
                                 announce(world.world(),msg);
-                            });
+                            },communications.get());
                     }else apply(world,ship,fleet,operation,nonce,
                         static_cast<PlayerId>(principal),pending_scans,
                         pending_probe_scans,survey_knowledge.get());
@@ -2197,7 +2200,8 @@ int main(int argc,char** argv){
                     });
                 if(added)colony_disposition::security_desk::snapshot(
                     world,*territory,*cases,owner,ship,fleet.piloted(),
-                    [&](const std::string& msg){announce(world.world(),msg);});
+                    [&](const std::string& msg){announce(world.world(),msg);},
+                    communications.get());
             }
             const auto cyber_pulse=npc_cyber::supervise(world,owner);
             if(cyber_pulse.approaches &&
