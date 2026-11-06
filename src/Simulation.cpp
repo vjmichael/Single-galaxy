@@ -6469,7 +6469,15 @@ void Simulation::process_npc_flight_navigation(){
                     }
                 if(pending)break;
             }
-            if(pending || order.local_commands>=511)continue;
+            if(pending)continue;
+            if(order.local_commands>=511){
+                // Bounded native command budget. Release the pilot and
+                // allow human intervention; this NEVER moves the ship,
+                // edits cargo or fabricates a station arrival.
+                order.phase=NpcFlightPhase::Cancelled;
+                order.resolved_tick=tick_;
+                continue;
+            }
             const auto& actual=ship->second;
             if(actual.jump_state!=ShipJumpState::Ready ||
                actual.dock_state==DockState::Docking ||
