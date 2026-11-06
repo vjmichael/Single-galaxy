@@ -212,6 +212,9 @@
    update();
    return true;
  }
+ for(const id of ['securityContact','securityCaseSelect',
+                     'securityDestination','securityNotice'])
+   el(id).addEventListener('change',update);
  el('securityRefresh').addEventListener('click',
    ()=>send('colonySecurityRefresh'));
  el('securityClaim').addEventListener('click',()=>{
