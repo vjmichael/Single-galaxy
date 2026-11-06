@@ -209,6 +209,26 @@ public:
                 "last_generation INTEGER NOT NULL,cooldown INTEGER NOT NULL,"
                 "PRIMARY KEY(caller_owner,recipient_ship),"
                 "CHECK(points>=11))");
+            // The aggregate is deliberately *mutable* and bounded. SQLite
+            // enforces monotonic one-point changes to stop penalty clearing
+            // via ordinary SQL; unlike detailed events, old overflow values
+            // are not individually retained in the game save.
+            run(db_,
+                "CREATE TRIGGER IF NOT EXISTS sg_hail07e_totals_guard "
+                "BEFORE UPDATE ON sg_ship_hail07e_totals "
+                "WHEN NEW.caller_owner!=OLD.caller_owner OR "
+                "NEW.recipient_ship!=OLD.recipient_ship OR "
+                "NEW.seed_event!=OLD.seed_event OR "
+                "NEW.points!=OLD.points+1 OR "
+                "NEW.last_tick<=OLD.last_tick OR "
+                "NEW.last_generation<OLD.last_generation OR "
+                "NEW.cooldown<=NEW.last_tick OR "
+                "NEW.last_event=OLD.last_event "
+                "BEGIN SELECT RAISE(ABORT,'invalid compact nuisance increment'); END");
+            run(db_,
+                "CREATE TRIGGER IF NOT EXISTS sg_hail07e_totals_no_delete "
+                "BEFORE DELETE ON sg_ship_hail07e_totals "
+                "BEGIN SELECT RAISE(ABORT,'compact nuisance history cannot be deleted'); END");
             run(db_,"CREATE TRIGGER IF NOT EXISTS sg_hail07e_immutable_update "
                 "BEFORE UPDATE ON sg_ship_hail07e "
                 "BEGIN SELECT RAISE(ABORT,'immutable ship hail'); END");
