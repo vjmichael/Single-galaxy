@@ -71,12 +71,18 @@ int main() {
             CHECK(world.start_shipyard_construction(7,supplier,91001,staff));
             world.steps(8);
             CHECK(world.world().shipyard_constructions().at(91001).operational());
+            // The supplier also has six ordinary, independently fabricated
+            // modules. A customer payment must not consume the supplier's
+            // own stock or allow that private stock to bypass the accepted
+            // customer assembly reservation.
+            fabricate(world,7,supplier,rock,serial,3);
+            CHECK(world.world().colony_ship(supplier)->modules==6);
 
             // Buyer manufactures six modules for this purchase plus one
             // future scanner; no free payment or fabricated crew.
             fabricate(world,8,buyer,rock,serial,4);
             CHECK(world.world().colony_ship(buyer)->modules==8);
-            CHECK(world.world().colony_ship(supplier)->modules==0);
+            CHECK(world.world().colony_ship(supplier)->modules==6);
             CHECK(!world.post_shipyard_customer_order(7,buyer,91001,92001,93001));
             CHECK(world.post_shipyard_customer_order(8,buyer,91001,92001,93001));
             CHECK(!world.post_shipyard_customer_order(8,buyer,91001,92001,93001));
@@ -87,6 +93,9 @@ int main() {
             CHECK(!world.fund_shipyard_customer_order(8,93001));
             CHECK(world.accept_shipyard_customer_order(7,93001));
             CHECK(!world.accept_shipyard_customer_order(7,93001));
+            // The supplier has six spare units but may NOT bypass the
+            // customer's accepted order with a competing private hull.
+            CHECK(!world.queue_shipyard_freighter(7,91001,92002));
             CHECK(world.world().total_ore()==conserved);
 
             // Only the authorized customer can pay; the provider's
@@ -103,11 +112,11 @@ int main() {
             CHECK(world.generation()==generation);
             CHECK(world.world().canonical_state()==before_fund);
             CHECK(world.world().colony_ship(buyer)->modules==8);
-            CHECK(world.world().colony_ship(supplier)->modules==0);
+            CHECK(world.world().colony_ship(supplier)->modules==6);
             CHECK(world.fund_shipyard_customer_order(8,93001));
             CHECK(!world.fund_shipyard_customer_order(8,93001));
             CHECK(world.world().colony_ship(buyer)->modules==2);
-            CHECK(world.world().colony_ship(supplier)->modules==0);
+            CHECK(world.world().colony_ship(supplier)->modules==6);
             CHECK(world.world().total_ore()==conserved);
             CHECK(world.world().freighter_build_orders().at(92001).owner==7);
             CHECK(world.world().freighter_build_orders().at(92001).source_ship==supplier);
