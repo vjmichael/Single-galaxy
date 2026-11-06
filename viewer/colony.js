@@ -115,6 +115,55 @@
         throw Error('Invalid shuttle operation receipt');
       return {...e,id,latitude,longitude,operation,generation};
     }
+    if(t==='FLEET_RESET'){
+      if(v.length!==4)throw Error('Malformed fleet census reset');
+      return e;
+    }
+    if(t==='FLEET_ITEM'){
+      if(v.length!==13)throw Error('Malformed owned fleet ship');
+      const ship=numeric(v[4],Number.MAX_SAFE_INTEGER),
+        order=numeric(v[5],Number.MAX_SAFE_INTEGER),
+        home=numeric(v[6],1),ready=numeric(v[7],1),
+        crew=numeric(v[8],1000000),body=numeric(v[9],Number.MAX_SAFE_INTEGER),
+        food=numeric(v[10],100000000),water=numeric(v[11],100000000),
+        oxygen=numeric(v[12],100000000);
+      if(!ship||(home===1)!==(order===0)||(ready===1&&crew===0))
+        throw Error('Invalid fleet provenance or readiness');
+      return {...e,ship,order,home:!!home,ready:!!ready,crew,body,food,water,oxygen};
+    }
+    if(t==='FLEET_DONE'){
+      if(v.length!==5)throw Error('Malformed fleet census total');
+      return {...e,count:numeric(v[4],10000)};
+    }
+    if(t==='FLEET_SELECTED'||t==='FLEET_FALLBACK'){
+      if(v.length!==7)throw Error('Malformed fleet cockpit selection');
+      const ship=numeric(v[4],Number.MAX_SAFE_INTEGER),
+        home=numeric(v[5],Number.MAX_SAFE_INTEGER),
+        generation=numeric(v[6],Number.MAX_SAFE_INTEGER);
+      if(!ship||!home||!generation||
+         (t==='FLEET_FALLBACK'&&ship!==home))
+        throw Error('Invalid selected ship or fallback');
+      return {...e,ship,home,generation};
+    }
+    if(t==='FLEET_PILOT_ITEM'){
+      if(v.length!==14)throw Error('Malformed selected ship telemetry');
+      const signed=x=>{
+        if(!/^(?:0|-?[1-9][0-9]*)$/.test(x))
+          throw Error('Noncanonical fleet coordinate');
+        const n=Number(x);
+        if(!Number.isSafeInteger(n)||Math.abs(n)>50000000000000000)
+          throw Error('Fleet position out of range');
+        return n;
+      };
+      const ship=numeric(v[4],Number.MAX_SAFE_INTEGER),
+        heading=numeric(v[5],359),x=signed(v[6]),y=signed(v[7]),
+        body=numeric(v[8],Number.MAX_SAFE_INTEGER),
+        crew=numeric(v[9],1000000),food=numeric(v[10],100000000),
+        water=numeric(v[11],100000000),oxygen=numeric(v[12],100000000),
+        generation=numeric(v[13],Number.MAX_SAFE_INTEGER);
+      if(!ship||!crew||!generation)throw Error('Invalid fleet pilot state');
+      return {...e,ship,heading,x,y,body,crew,food,water,oxygen,generation};
+    }
     if(t==='FREIGHTER_ITEM'){
       if(v.length!==10)throw Error('Malformed physical freighter build');
       const order=numeric(v[4],Number.MAX_SAFE_INTEGER),
@@ -701,7 +750,7 @@
       if(v.length!==7||!/^\d+$/.test(v[4])||!/^[A-Z_]+$/.test(v[5]))throw Error('Bad action result');
       e.id=numeric(v[4],Number.MAX_SAFE_INTEGER);e.outcome=v[5];e.transferred=numeric(v[6]);
     }else if(t==='ERROR'){
-      if(v.length!==5||!['INVALID_INPUT','INVALID_SAFETY_ORDER','UNAUTHORIZED_PRINCIPAL','FRAME_TRAVEL_DENIED','FRAME_TRANSIT_BLOCKED'].includes(v[4]))throw Error('Bad rejected input');e.error=v[4];
+      if(v.length!==5||!['INVALID_INPUT','INVALID_SAFETY_ORDER','UNAUTHORIZED_PRINCIPAL','FRAME_TRAVEL_DENIED','FRAME_TRANSIT_BLOCKED','FLEET_SELECTION_DENIED'].includes(v[4]))throw Error('Bad rejected input');e.error=v[4];
     }else throw Error('Unknown colony event');
     return e;
   }
@@ -763,6 +812,18 @@
  const celestialBodies=new Map(), localOreTaxonomy=new Map(),oasises=new Map();
  let probeCarried=0,probeLauncher=false,probeChoice='';
  const discoveries=new Map();
+ const pilotSaveKey='single-galaxy:fleet-pilot-preference:v1';
+ const fleetShips=new Map();
+ let fleetRosterActive=false,fleetRestorePending=true,fleetRequested=0;
+ let storedPilot=0;
+ try{
+   const raw=window.localStorage?.getItem(pilotSaveKey);
+   if(raw&&/^[1-9][0-9]*$/.test(raw)){
+     const value=Number(raw);
+     if(Number.isSafeInteger(value))storedPilot=value;
+   }
+ }catch{/* Optional browser preference; never game authority. */}
+ window.GalaxyActivePilotedShipId=null;
  window.GalaxySalvageStock=salvageWrecks;
  window.GalaxyColonyGeology=geology;
  window.GalaxySelectedRockId=null;
