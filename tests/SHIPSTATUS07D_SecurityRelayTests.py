@@ -14,6 +14,7 @@ spec.loader.exec_module(relay)
 
 class Runtime:
     token = "trusted-owner-csrf"
+    human_owners = frozenset((7,8))
     sent = []
 
     def send(self, command, principal=None):
@@ -127,6 +128,28 @@ for action, args in [
 ]:
     status, sent = submit(action, args)
     assert status == 400 and not sent, (action, status, sent)
+
+# A legitimate secondary human can ONLY refresh, hail and answer a real
+# native-owned hull; Python never chooses their ship or allowed damage.
+for action, payload, expected in [
+    ("colonySecurityRefresh", {}, "SECURITY_REFRESH"),
+    ("colonySecurityCall", {"ship": 999}, "SECURITY_CALL|999"),
+    ("colonySecurityCallReply", {"request": "900001", "choice": "decline"},
+     "SECURITY_CALL_REPLY|900001|DECLINE")
+]:
+    status, sent = submit(action, payload, principal=8)
+    assert status == 202 and sent == [(expected,8)],(action,status,sent)
+
+for action, payload in [
+    ("colonyCyberAttack", {"target": 3}),
+    ("colonyFireShip", {"target": 3}),
+    ("colonySecurityClaim", {"radius": 3000}),
+    ("colonySecurityPatrol", {"case":"123","ship":3}),
+    ("colonySecurityHail", {"colony": 2}),
+    ("colonySecurityWarn", {"ship": 3})
+]:
+    status, sent = submit(action,payload,principal=8)
+    assert status == 403 and not sent,(action,status,sent)
 
 for options in [
     {"principal": None},
