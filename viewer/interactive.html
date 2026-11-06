@@ -206,7 +206,17 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
  <div class="controls" style="padding:8px 0;gap:6px">
   <label>Contact <select id="securityContact"><option value="">No acquired contact</option></select></label>
   <button type="button" id="securityWarn" disabled>Send territorial warning</button>
+  <button type="button" id="securityCallShip" disabled>Hail observed ship</button>
  </div>
+ <div class="help">The first direct hail identifies the calling account to the recipient, not the recipient to the caller. The recipient may identify itself or decline; unanswered calls are not proof of identity. Repeated unsolicited hails after a verified identification or explicit refusal incur escalating native communication penalties.</div>
+ <div id="securityCommsPenalty" class="help" role="status" aria-live="polite">No communications abuse penalty.</div>
+ <h3>Incoming direct ship hails</h3>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <label>Incoming hail <select id="securityCallInbox"><option value="">No incoming ship call</option></select></label>
+  <button type="button" id="securityIdentifyCaller" disabled>Identify my ship to caller</button>
+  <button type="button" id="securityDeclineCaller" disabled>Decline this hail</button>
+ </div>
+ <div id="securityCommsComplaints" class="help" role="log" aria-label="Hail harassment complaints">No communications abuse complaints.</div>
  <h3>Security incident records</h3>
  <div id="securityCaseList" class="help" role="log" aria-label="Witnessed cyber incident cases">No cases loaded.</div>
  <div class="controls" style="padding:8px 0;gap:6px">
