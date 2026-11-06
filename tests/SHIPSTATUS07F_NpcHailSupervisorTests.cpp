@@ -2,6 +2,7 @@
 #include <chrono>
 #include <filesystem>
 #include <iostream>
+#include <set>
 #include <stdexcept>
 #include <string>
 
@@ -64,6 +65,16 @@ int main(){
         CHECK(calls.call(world,territory,7,player,predatory,920003).status==
               ship_comms::Status::CallSent);
         const auto before=world.world().canonical_state();
+        // A ship with a real authenticated human account is NEVER
+        // treated as an NPC that can identify or decline on its behalf,
+        // even when it also has named NPC crew and a governance charter.
+        const auto protected_humans=npc_hail::supervise(
+            world,calls,7,nonce,std::set<PlayerId>{7,8,9,10});
+        CHECK(protected_humans.answered==0);
+        CHECK(calls.history().size()==3);
+        CHECK(calls.pending_for(world,8,cooperative).size()==1);
+        CHECK(calls.pending_for(world,9,isolationist).size()==1);
+        CHECK(calls.pending_for(world,10,predatory).size()==1);
         const auto pulse=npc_hail::supervise(world,calls,7,nonce);
         CHECK(pulse.answered==2 && pulse.identified==1 &&
               pulse.declined==1);
