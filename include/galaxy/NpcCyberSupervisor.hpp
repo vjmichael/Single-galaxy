@@ -70,7 +70,7 @@ inline Pulse supervise(PersistentWorld& world,PlayerId player_owner) {
         std::uint64_t operator_npc=0;
         for(const auto& [npc_id,npc]:simulation.npc_records()){
             if(npc.home_ship==ship_id && npc.location==ship_id &&
-               !n.transport_id && n.role==NpcRole::Ship &&
+               !npc.transport_id && npc.role==NpcRole::Ship &&
                simulation.npc_available_for_duty(npc_id)){
                 operator_npc=npc_id;break;
             }
