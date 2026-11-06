@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Single-Galaxy — Private ship communications</title>
+<style>
+:root{color-scheme:dark}body{font:16px/1.5 system-ui,sans-serif;max-width:800px;margin:24px auto;padding:0 18px;background:#111d2c;color:#e9f2fc}
+section{border:1px solid #4b607a;border-radius:10px;padding:18px;margin:15px 0}
+input,select,button{font:inherit;padding:7px;border-radius:5px;border:1px solid #7286a3;background:#20344d;color:#f8fbff}
+button:disabled{opacity:.45}.actions{display:flex;gap:8px;flex-wrap:wrap;margin:9px 0}
+select{max-width:100%}.help{color:#c1d0e0;font-size:14px}.warning{color:#f0cc93}
+#securityCommsComplaints,#securityCaseList{overflow-wrap:anywhere;margin:10px 0}
+</style></head><body>
+<h1>Single-Galaxy private ship communications</h1>
+<p class="help">Authenticated, owner-scoped communications for a vessel that already physically exists in the saved game. No flight control, global map, sensor omniscience or automatic police powers.</p>
+<section id="securityLogin">
+<label>Account <input id="securityUsername" autocomplete="username" maxlength="32"></label>
+<label>Password <input id="securityPassword" type="password" autocomplete="current-password"></label>
+<div class="actions"><button id="securityLoginButton">Sign in</button></div>
+<div id="securityLoginFeedback" role="status" class="help">Sign in to open your own security desk.</div>
+</section>
+<section id="securityOwnerPanel" hidden>
+<div class="actions"><strong id="securityOwnAccount"></strong><button id="securityLogout">Sign out</button></div>
+<div class="help" id="securityDeskStatus">Waiting for authenticated native owner-scoped readout.</div>
+<div class="actions"><button id="securityRefresh">Refresh my ship security</button></div>
+<h2>Hail a physically detected ship</h2>
+<p class="help">Only contact ships detected by your actual onboard sensors. A call identifies you to the recipient; it does not reveal their identity until they choose to identify themselves.</p>
+<select id="securityContact"><option value="">No detected ship</option></select>
+<div class="actions"><button id="securityCallShip" disabled>Hail observed ship</button></div>
+<h2>Incoming direct calls</h2>
+<select id="securityCallInbox"><option value="">No incoming calls</option></select>
+<div class="actions"><button id="securityIdentifyCaller" disabled>Identify my ship</button><button id="securityDeclineCaller" disabled>Decline, remain anonymous</button></div>
+<div class="help" id="securityCommsPenalty">No communications abuse penalty.</div>
+<h2>Reported communications nuisance</h2>
+<div class="help" id="securityCommsComplaints">No complaints.</div>
+<div id="securityDeskFeedback" role="status">No security action submitted.</div>
+<!-- The original SecurityDesk UI reuses strict trusted parser/DOM state.
+     Additional territorial and patrol controls do NOT exist in this
+     security-only player's displayed page and cannot be activated here. -->
+<div hidden aria-hidden="true">
+<select id="securityCaseSelect"></select><select id="securityDestination"></select>
+<select id="securityNotice"></select><input id="securityClaimRadius" value="3000">
+<button id="securityClaim" disabled></button><button id="securityWarn" disabled></button>
+<button id="securityHail" disabled></button><button id="securityPatrol" disabled></button>
+<button id="securityAcknowledge" disabled></button><button id="securityRefuse" disabled></button>
+<div id="securityCaseList"></div>
+</div>
+</section>
+<script src="/viewer/security-desk.js"></script>
+<script src="/viewer/security-only.js"></script>
+</body></html>
