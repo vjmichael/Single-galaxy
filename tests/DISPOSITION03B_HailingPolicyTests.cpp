@@ -12,6 +12,7 @@ int main() {
     std::chrono::steady_clock::now().time_since_epoch().count())+".sqlite")).string();
  const auto clean=[&]{for(const auto* s:{"","-wal","-shm"})fs::remove(path+s);};
  try {
+  {
   Simulation seed(30304);
   const auto colony=seed.add_colony_ship(7,{0,0},100,6);
   const auto visitor=seed.add_ship(8,{1000,0},100);
@@ -51,6 +52,7 @@ int main() {
   CHECK(suggested_sanction_units(90,aggravated,100)==100);
   CHECK(suggested_sanction_units(10,{},100)==10);
   journal.verify();
+  }
   clean();
   std::cout<<"PASS DISPOSITION-03B: opt-out, owned hails, authenticated receipt, proven offense and capped 1.5x policy\n";
   return 0;
