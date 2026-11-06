@@ -29,7 +29,9 @@ enum class Status : std::uint8_t {
     Denied=0, CallSent=1, Identified=2, Declined=3,
     Penalized=4, Suppressed=5
 };
-inline constexpr std::uint64_t kReplyWindowTicks=20;
+// At the native 20–25 ms tick, roughly 48–60 seconds to respond.
+inline constexpr std::uint64_t kReplyWindowTicks=2400;
+inline constexpr std::uint64_t kRefusalQuietTicks=1200;
 inline constexpr std::uint64_t kReportThreshold=3;
 inline constexpr std::uint64_t kMaximumRecords=10000;
 
@@ -339,7 +341,8 @@ public:
                 pending.emplace(e.event_id,e.world_tick);
             }else if(e.kind==Kind::Decline){
                 pending.erase(e.related);
-                declined_until=std::max(declined_until,e.world_tick+24);
+                declined_until=std::max(
+                    declined_until,e.world_tick+kRefusalQuietTicks);
             }else if(e.kind==Kind::Abuse){
                 prior_score=std::max(prior_score,e.penalty_points);
                 cooldown_until=std::max(cooldown_until,e.cooldown_until);
@@ -372,8 +375,8 @@ public:
             // Hardcoded game policy: every further unsolicited call after
             // identification or explicit decline is nuisance conduct.
             const auto points=std::min<std::uint64_t>(10,prior_score+1);
-            const auto timeout=points==1?2ULL:points==2?6ULL:
-                points==3?12ULL:24ULL;
+            const auto timeout=points==1?200ULL:points==2?800ULL:
+                points==3?2400ULL:7200ULL;
             Receipt r{};
             r.event_id=event_id;r.kind=Kind::Abuse;
             r.world_tick=world.world().tick();
