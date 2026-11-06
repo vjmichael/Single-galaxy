@@ -37,6 +37,10 @@ The in-game Security Desk now displays:
 
 New wire frames are `SECURITY_CALL_INBOX[_RESET]`, `SECURITY_CALL_PENALTY`, `SECURITY_CALL_SANCTION`, and `SECURITY_CALL_COMPLAINT[S_RESET]`, delivered through the existing authenticated COLONY telemetry, never as an alternative player-controlled combat writer. Browser parser rejects malformed shapes and preserves 63-bit IDs without rounding; private state is erased on logout.
 
+## Host exhaustion and error containment
+
+The harassment ledger holds at most **10,000** immutable original-world events, and stores at most **10 scored strikes per caller/recipient**. Subsequent calls to an already identified recipient remain blocked without adding duplicate capped entries. When the overall journal is full, the system fails **closed**: a new direct hail is suppressed rather than crashing the host or pretending a call/conviction happened. Unexpected communications journal errors emit `SECURITY_ERROR|COMMS_UNAVAILABLE` from the trusted host and do not replace or terminate the original physical simulation; only verified committed entries can be presented to the security desk. Bounded recipient complaint views display the newest eligible reports.
+
 ## Acceptance matrix
 
 | Gate | Status |
