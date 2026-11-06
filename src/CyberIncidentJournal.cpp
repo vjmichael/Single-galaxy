@@ -430,14 +430,15 @@ bool CyberIncidentJournal::link_authenticated_hail(
        !world.world().colony_ship(jurisdiction_colony))
         return false;
     // A remote/anonymous radio ping is not an identity credential:
-    // require an ORIGINAL authenticated reply to a real territorial
-    // notice for this exact physical hull and this exact jurisdiction.
+    // require an ORIGINAL authenticated response or voluntary hail in the
+    // same jurisdiction and on this exact physical hull.
     const auto notices=territory.history();
     const auto hail=std::find_if(notices.begin(),notices.end(),
         [&](const TerritoryEvent& row){
             return row.event_id==actual_hail_reply_event &&
               (row.kind==TerritoryEventKind::NoticeAcknowledged ||
-               row.kind==TerritoryEventKind::NoticeRefused) &&
+               row.kind==TerritoryEventKind::NoticeRefused ||
+               row.kind==TerritoryEventKind::VoluntaryHail) &&
               row.colony==jurisdiction_colony &&
               row.visitor_ship==visitor_ship &&
               row.visitor_owner==authenticated_owner &&
@@ -445,21 +446,26 @@ bool CyberIncidentJournal::link_authenticated_hail(
               row.world_generation==world.generation();
         });
     if(hail==notices.end() || !hail->related_event)return false;
-    const auto warning=std::find_if(notices.begin(),notices.end(),
+    const bool self_hail=hail->kind==TerritoryEventKind::VoluntaryHail;
+    const auto parent=std::find_if(notices.begin(),notices.end(),
         [&](const TerritoryEvent& row){
             return row.event_id==hail->related_event &&
-                   row.kind==TerritoryEventKind::Warning &&
                    row.colony==jurisdiction_colony &&
-                   row.visitor_owner==authenticated_owner &&
-                   row.visitor_ship==visitor_ship &&
+                   (self_hail ?
+                      row.kind==TerritoryEventKind::Claim :
+                      (row.kind==TerritoryEventKind::Warning &&
+                       row.visitor_owner==authenticated_owner &&
+                       row.visitor_ship==visitor_ship)) &&
                    row.world_tick<=hail->world_tick;
         });
-    if(warning==notices.end())return false;
+    if(parent==notices.end())return false;
+    if(self_hail && hail->observer_npc!=observer_npc)return false;
     const auto standing=territory.standing(
         world,jurisdiction_colony,visitor_ship);
-    if(!standing.in_claimed_region || standing.invited ||
-       !standing.notice_received ||
-       standing.notice_reply_event!=actual_hail_reply_event)return false;
+    if(!standing.in_claimed_region ||
+       (!self_hail && (standing.invited || !standing.notice_received ||
+          standing.notice_reply_event!=actual_hail_reply_event)))
+        return false;
     const auto observed=world.local_colony_watch_contacts(
         jurisdiction_colony,observer_npc);
     if(std::none_of(observed.begin(),observed.end(),
