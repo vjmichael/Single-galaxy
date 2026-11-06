@@ -115,6 +115,28 @@ int main(){
             CHECK(recovered.world().hardpoint_effective_on(ship,0));
             CHECK(run(recovered,cmd(recovered,1006,ship,Action::SurveyLocal))==
                   Outcome::Applied);
+            // The probe launcher is a separate fitted hardpoint: OFF means
+            // actual native launch is denied without consuming its real probe.
+            CHECK(run(recovered,cmd(recovered,1007,ship,Action::SetHardpointPower,2))==
+                  Outcome::Applied);
+            CHECK(!recovered.world().hardpoint_effective_on(ship,1));
+            CHECK(run(recovered,cmd(recovered,1008,ship,Action::DeploySurveyProbe))==
+                  Outcome::ModuleOffline);
+            CHECK(recovered.world().find(ship)->survey_probes_carried==1);
+            CHECK(run(recovered,cmd(recovered,1009,ship,Action::SetHardpointPower,3))==
+                  Outcome::Applied);
+            CHECK(recovered.world().hardpoint_effective_on(ship,1));
+            CHECK(run(recovered,cmd(recovered,1010,ship,Action::DeploySurveyProbe))==
+                  Outcome::Applied);
+            // Wrong-owner power controls must never mutate another ship.
+            auto wrong=cmd(recovered,1011,ship,Action::SetHardpointPower,0,8);
+            const auto original_intent=
+                recovered.world().find(ship)->hardpoint_requested_on[0];
+            if(recovered.submit(wrong)){
+                recovered.step();
+                CHECK(recovered.world().events().back().result==Outcome::Unauthorized);
+            }
+            CHECK(recovered.world().find(ship)->hardpoint_requested_on[0]==original_intent);
             CHECK(recovered.world().total_material_kg()==
                   static_cast<std::int64_t>(expected_mass));
             CHECK(recovered.world().find(ship)->hull==100);
