@@ -3137,6 +3137,148 @@ Event Simulation::execute(const Command& c) {
             snapshot_version_=std::max(snapshot_version_,100);
             result.result=Outcome::Applied;return result;
         }
+        case Action::SetCyberIsolation: {
+            const auto slot=static_cast<std::uint8_t>(c.amount/2);
+            if(slot>=2 || !actor.fitting.hardpoints[slot]){
+                result.result=Outcome::InvalidTarget;return result;
+            }
+            // A manual/isolated control line cannot be spoofed by the
+            // remote emitter; the physically installed module remains.
+            actor.hardpoint_isolated[slot]=(c.amount%2)==1;
+            snapshot_version_=std::max(snapshot_version_,101);
+            result.result=Outcome::Applied;return result;
+        }
+        case Action::ConfigureCyberModule: {
+            const auto colony=colony_ships_.find(c.actor);
+            if(colony==colony_ships_.end()){
+                result.result=Outcome::NotColonyShip;return result;
+            }
+            if(actor.dock_state!=DockState::InSpace ||
+               actor.velocity.x || actor.velocity.y ||
+               actor.jump_state!=ShipJumpState::Ready) {
+                result.result=actor.dock_state!=DockState::InSpace?
+                    Outcome::NotInSpace:Outcome::ShipMoving;
+                return result;
+            }
+            const bool installing=c.amount>0;
+            const auto type=std::uint8_t(c.amount>0?c.amount:-c.amount);
+            const bool emitter=type==3;
+            auto& rack=emitter?actor.fitting.hardpoints:actor.fitting.support;
+            if(installing) {
+                if(colony->second.modules<=0){
+                    result.result=Outcome::NoResources;return result;
+                }
+                if(std::find(rack.begin(),rack.end(),emitter?3:1)!=rack.end()){
+                    result.result=Outcome::InvalidArgument;return result;
+                }
+                const auto empty=std::find(rack.begin(),rack.end(),0);
+                if(empty==rack.end()){
+                    result.result=Outcome::CargoFull;return result;
+                }
+                const auto slot=static_cast<std::size_t>(empty-rack.begin());
+                *empty=emitter?3:1;
+                if(emitter) {
+                    actor.hardpoint_requested_on[slot]=true;
+                    actor.hardpoint_isolated[slot]=false;
+                }
+                --colony->second.modules; // one real fabricated 2-tonne module
+            } else {
+                const auto installed=std::find(rack.begin(),rack.end(),emitter?3:1);
+                if(installed==rack.end()){
+                    result.result=Outcome::InvalidTarget;return result;
+                }
+                const auto slot=static_cast<std::size_t>(installed-rack.begin());
+                if(emitter)for(const auto& effect:ship_status_.records()) {
+                    if(effect.target_ship!=c.actor ||
+                       tick_<effect.started_tick || tick_>=effect.expires_tick)
+                        continue;
+                    for(const auto& key:effect.targets)
+                        if(key.rack==0 && key.slot==slot && key.hardware==3){
+                            result.result=Outcome::InTransition;return result;
+                        }
+                }
+                *installed=0;
+                if(emitter){
+                    actor.hardpoint_requested_on[slot]=true;
+                    actor.hardpoint_isolated[slot]=false;
+                }
+                ++colony->second.modules; // material returns to the original cargo
+            }
+            snapshot_version_=std::max(snapshot_version_,101);
+            result.result=Outcome::Applied;return result;
+        }
+        case Action::HackConfuse: {
+            if(!actor.fitting.intrusion_emitter()){
+                result.result=Outcome::NoResources;return result;
+            }
+            const auto emitter_slot=actor.fitting.hardpoints[0]==3?0u:1u;
+            if(!hardpoint_effective_on(c.actor,
+                    static_cast<std::uint8_t>(emitter_slot))) {
+                result.result=Outcome::ModuleOffline;return result;
+            }
+            if(actor.dock_state!=DockState::InSpace ||
+               actor.jump_state!=ShipJumpState::Ready) {
+                result.result=Outcome::InTransition;return result;
+            }
+            if(actor.last_hack_tick &&
+               tick_>=actor.last_hack_tick &&
+               tick_-actor.last_hack_tick<kHackCooldownTicks){
+                result.result=Outcome::CooldownActive;return result;
+            }
+            const auto target_it=entities_.find(c.target);
+            if(target_it==entities_.end() ||
+               target_it->second.type!=EntityType::Ship) {
+                result.result=Outcome::InvalidTarget;return result;
+            }
+            const auto& defender=target_it->second;
+            if(!defender.owner_id ||
+               defender.owner_id==actor.owner_id) {
+                result.result=Outcome::Unauthorized;return result;
+            }
+            if(protected_from_attack(c.target) ||
+               defender.dock_state!=DockState::InSpace) {
+                result.result=Outcome::InTransition;return result;
+            }
+            if(defender.system_id!=actor.system_id ||
+               !same_local_frame(c.actor,c.target)) {
+                result.result=Outcome::OutOfRange;return result;
+            }
+            if(std::hypot(double(defender.position.x)-actor.position.x,
+                          double(defender.position.y)-actor.position.y)>
+                          double(kHackRangeMm)) {
+                result.result=Outcome::OutOfRange;return result;
+            }
+            const std::array<bool,2> exposed{{
+                bool(defender.fitting.hardpoints[0]),
+                bool(defender.fitting.hardpoints[1])}};
+            const auto roster=ship_status::fitted_controls(defender,
+                defender.hardpoint_requested_on,exposed,
+                defender.hardpoint_isolated);
+            // One real fitted passive firewall subtracts 60 attack points.
+            // Unplugged manually isolated modules cannot be attacked at all.
+            ship_status::Effect effect{};
+            effect.id=c.id | (std::uint64_t{1}<<63);
+            effect.source_ship=c.actor;
+            effect.target_ship=c.target;
+            effect.started_tick=tick_;
+            effect.expires_tick=tick_+kHackDurationTicks;
+            effect.pulse_ticks=2;
+            effect.intensity=100;
+            effect.resistance=defender.fitting.cyber_firewall()?60:0;
+            std::uint64_t seed=rng_state_ ^ (c.id*0x9e3779b97f4a7c15ULL)
+                                    ^ c.target;
+            seed=(seed^(seed>>30))*0xbf58476d1ce4e5b9ULL;
+            seed=(seed^(seed>>27))*0x94d049bb133111ebULL;
+            effect.seed=(seed^(seed>>31))|1ULL;
+            // The original world owns both receipt and target status.
+            // A resisted attack still expends this emission's cooldown.
+            actor.last_hack_tick=tick_;
+            snapshot_version_=std::max(snapshot_version_,101);
+            if(!ship_status_.inflict_confusion(effect,roster,tick_)) {
+                result.result=Outcome::AttackResisted;return result;
+            }
+            result.result=Outcome::Applied;return result;
+        }
         case Action::ConfigureExplorationScanner: {
             const auto cit=colony_ships_.find(c.actor);
             if(cit==colony_ships_.end()){result.result=Outcome::NotColonyShip;return result;}
