@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <exception>
 #include <limits>
+#include <set>
 #include <iomanip>
 #include <sstream>
 #include <string>
@@ -175,14 +176,27 @@ void snapshot(const PersistentWorld& world,
             std::to_string(penalties.law_review_eligible?1:0));
         emit("SECURITY_CALL_COMPLAINTS_RESET");
         std::size_t reported=0;
+        std::set<PlayerId> reported_callers;
+        // Compact total rows supersede each caller's tenth detailed
+        // nuisance receipt while exposing the genuine latest score.
+        const auto totals=communications->overflow_history();
+        for(auto it=totals.rbegin();it!=totals.rend();++it){
+            if(it->recipient_ship!=piloted || ++reported>16)continue;
+            reported_callers.insert(it->caller_owner);
+            emit("SECURITY_CALL_COMPLAINT|"+
+                std::to_string(it->last_event)+"|"+
+                std::to_string(it->caller_owner)+"|"+
+                std::to_string(it->total_points));
+        }
         const auto committed=communications->history();
-        // Show latest eligible complaints, not only the oldest 16.
         for(auto it=committed.rbegin();it!=committed.rend();++it){
             const auto& item=*it;
             if(item.kind!=ship_comms::Kind::Abuse ||
                item.recipient_ship!=piloted ||
-               !item.law_review_eligible)continue;
+               !item.law_review_eligible ||
+               reported_callers.count(item.caller_owner))continue;
             if(++reported>16)break;
+            reported_callers.insert(item.caller_owner);
             emit("SECURITY_CALL_COMPLAINT|"+
                 std::to_string(item.event_id)+"|"+
                 std::to_string(item.caller_owner)+"|"+
