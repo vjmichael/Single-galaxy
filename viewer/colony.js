@@ -115,6 +115,16 @@
         throw Error('Invalid shuttle operation receipt');
       return {...e,id,latitude,longitude,operation,generation};
     }
+    if(t==='FLEET_WORK_ASSIGNED'){
+      if(v.length!==8)throw Error('Malformed fleet job assignment');
+      const order=numeric(v[4],Number.MAX_SAFE_INTEGER),
+        carrier=numeric(v[5],Number.MAX_SAFE_INTEGER),
+        destination=numeric(v[6],Number.MAX_SAFE_INTEGER),
+        generation=numeric(v[7],Number.MAX_SAFE_INTEGER);
+      if(!order||!carrier||!destination||carrier===destination||!generation)
+        throw Error('Invalid native fleet dispatch receipt');
+      return {...e,order,carrier,destination,generation};
+    }
     if(t==='FLEET_RESET'){
       if(v.length!==4)throw Error('Malformed fleet census reset');
       return e;
@@ -750,7 +760,7 @@
       if(v.length!==7||!/^\d+$/.test(v[4])||!/^[A-Z_]+$/.test(v[5]))throw Error('Bad action result');
       e.id=numeric(v[4],Number.MAX_SAFE_INTEGER);e.outcome=v[5];e.transferred=numeric(v[6]);
     }else if(t==='ERROR'){
-      if(v.length!==5||!['INVALID_INPUT','INVALID_SAFETY_ORDER','UNAUTHORIZED_PRINCIPAL','FRAME_TRAVEL_DENIED','FRAME_TRANSIT_BLOCKED','FLEET_SELECTION_DENIED'].includes(v[4]))throw Error('Bad rejected input');e.error=v[4];
+      if(v.length!==5||!['INVALID_INPUT','INVALID_SAFETY_ORDER','UNAUTHORIZED_PRINCIPAL','FRAME_TRAVEL_DENIED','FRAME_TRANSIT_BLOCKED','FLEET_SELECTION_DENIED','FLEET_WORK_DENIED'].includes(v[4]))throw Error('Bad rejected input');e.error=v[4];
     }else throw Error('Unknown colony event');
     return e;
   }
@@ -929,8 +939,75 @@
  fleetActions.append(fleetSelector,fleetSelectButton,fleetHomeButton,fleetRefreshButton);
  const fleetNavigation=document.createElement('div');
  fleetNavigation.append(fleetBody,fleetTravel);
+ // SHIP-01E: assign a standing NPC freighter job without piloting the
+ // carrier. This form selects only *native* commissioned fleet entries.
+ const dispatchTitle=document.createElement('h3');
+ dispatchTitle.textContent='NPC freight assignment';
+ const dispatchHelp=document.createElement('p');
+ dispatchHelp.textContent='Post one physical Planet A pickup → Colony B contract. NPCs will run the surface shuttle, load the exact cargo into the assigned freighter, navigate, and unload only after a real arrival receipt. The selected pilot ship is never commandeered.';
+ const dispatchCarrier=document.createElement('select');
+ dispatchCarrier.setAttribute('aria-label','NPC freighter to dispatch');
+ const dispatchDestination=document.createElement('input');
+ dispatchDestination.type='number';dispatchDestination.min='1';
+ dispatchDestination.placeholder='Colony B receiving ship ID';
+ dispatchDestination.setAttribute('aria-label','Fleet work destination colony ship');
+ const dispatchBody=document.createElement('input');
+ dispatchBody.type='number';dispatchBody.min='1';
+ dispatchBody.placeholder='Planet A body ID';
+ dispatchBody.setAttribute('aria-label','Planetary pickup source body ID');
+ const dispatchLat=document.createElement('input');
+ dispatchLat.type='number';dispatchLat.min='0';dispatchLat.max='35';
+ dispatchLat.value='17';dispatchLat.setAttribute('aria-label','Pickup latitude cell');
+ const dispatchLon=document.createElement('input');
+ dispatchLon.type='number';dispatchLon.min='0';dispatchLon.max='71';
+ dispatchLon.value='36';dispatchLon.setAttribute('aria-label','Pickup longitude cell');
+ const dispatchResource=document.createElement('select');
+ dispatchResource.setAttribute('aria-label','Finite planetary freight material');
+ for(const value of ['NUTRIENTS','WATER','FOOD'])
+   dispatchResource.add(new Option(value,value));
+ const dispatchKg=document.createElement('input');
+ dispatchKg.type='number';dispatchKg.min='1';dispatchKg.max='1000';
+ dispatchKg.value='100';dispatchKg.setAttribute('aria-label','Freight mass kilograms');
+ const dispatchSubmit=document.createElement('button');
+ dispatchSubmit.type='button';dispatchSubmit.textContent='Assign NPC freighter delivery';
+ dispatchSubmit.disabled=true;
+ const dispatchRefresh=document.createElement('button');
+ dispatchRefresh.type='button';dispatchRefresh.textContent='Check assigned freight jobs';
+ const dispatchStatus=document.createElement('output');
+ dispatchStatus.textContent='Select a real crewed freighter and enter an existing source and destination.';
+ dispatchSubmit.addEventListener('click',()=>{
+   const carrier=Number(dispatchCarrier.value),
+      destination=Number(dispatchDestination.value),
+      body=Number(dispatchBody.value),
+      latitude=Number(dispatchLat.value),longitude=Number(dispatchLon.value),
+      kg=Number(dispatchKg.value),
+      order=Date.now()*100+Math.floor(Math.random()*100);
+   if(!Number.isSafeInteger(order)||order<=0||order>=2**50||
+      !fleetShips.get(carrier)?.ready||fleetShips.get(carrier)?.home||
+      carrier===window.GalaxyActivePilotedShipId||
+      !Number.isSafeInteger(destination)||destination<=0||carrier===destination||
+      !Number.isSafeInteger(body)||body<=0||
+      !Number.isSafeInteger(latitude)||latitude<0||latitude>35||
+      !Number.isSafeInteger(longitude)||longitude<0||longitude>71||
+      !Number.isSafeInteger(kg)||kg<1||kg>1000){
+     dispatchStatus.textContent='Select an idle, commissioned NPC freighter, valid existing colony and planet, and 1–1000 kg.';
+     return;
+   }
+   window.GalaxyColonyCommand?.('colonyFleetWorkPost',{
+     order,carrier,destination,body,latitude,longitude,
+     resource:dispatchResource.value,kg});
+   dispatchStatus.textContent='Requested job #'+order+
+     '. The native host must verify owner, source, receiver and available real crew.';
+ });
+ dispatchRefresh.addEventListener('click',()=>{
+   window.GalaxyColonyCommand?.('colonyFreightStatus',{});
+   dispatchStatus.textContent='Requested authoritative intercolony freight board status.';
+ });
  fleetPanel.append(fleetTitle,fleetHelp,fleetActions,fleetAuthority,
-   fleetPilotState,fleetControls,fleetNavigation);
+   fleetPilotState,fleetControls,fleetNavigation,
+   dispatchTitle,dispatchHelp,dispatchCarrier,dispatchDestination,
+   dispatchBody,dispatchLat,dispatchLon,dispatchResource,dispatchKg,
+   dispatchSubmit,dispatchRefresh,dispatchStatus);
  const requestFleetShip=ship=>{
    if(!Number.isSafeInteger(ship)||ship<=0)return;
    if(!fleetShips.get(ship)?.ready)return;
@@ -1133,6 +1210,9 @@
      fleetAuthority.textContent='Home colony resource authority remains unchanged.';
      fleetControls.querySelectorAll('button').forEach(b=>b.disabled=true);
      fleetTravel.disabled=true;
+     dispatchCarrier.replaceChildren(new Option('No commissioned NPC freighter',''));
+     dispatchSubmit.disabled=true;
+     dispatchStatus.textContent='Waiting for real fleet and cargo board.';
      signatureContacts.clear();celestialBodies.clear();oasises.clear();localOreTaxonomy.clear();expeditionAssessment=null;
      q('celestialBodyList').textContent='No physical celestial bodies surveyed yet.';
      q('signatureTarget').replaceChildren(new Option('Scan to detect signals',''));
@@ -1164,6 +1244,12 @@
        fleetSelectButton.disabled=!choices.length||
          !fleetShips.get(Number(fleetSelector.value))?.ready;
        fleetHomeButton.disabled=!choices.some(item=>item.home&&item.ready);
+       const eligible=choices.filter(item=>!item.home&&item.ready);
+       dispatchCarrier.replaceChildren(...(eligible.length?
+         eligible.map(item=>new Option('Freighter #'+item.ship+
+           ' · built by order #'+item.order,String(item.ship))):
+         [new Option('No commissioned NPC freighter','')]));
+       dispatchSubmit.disabled=!eligible.length;
        if(fleetRestorePending){
          fleetRestorePending=false;
          const saved=fleetShips.get(storedPilot);
@@ -1204,6 +1290,23 @@
      if(e.type==='ERROR'&&e.error==='FLEET_SELECTION_DENIED'){
        fleetRequested=0;
        fleetPilotState.textContent='Ship selection denied by authoritative host. Refresh fleet to inspect crew and condition.';
+     }
+     if(e.type==='FLEET_WORK_ASSIGNED'){
+       dispatchStatus.textContent='NPC work order #'+e.order+' assigned to real freighter #'+
+         e.carrier+' → Colony B ship #'+e.destination+
+         ' at SQLite generation '+e.generation+
+         '. Awaiting actual planetary pickup and ship transit.';
+       window.GalaxyColonyCommand?.('colonyFreightStatus',{});
+     }
+     if(e.type==='INTERFREIGHT_ITEM'){
+       dispatchStatus.textContent='Physical job #'+e.order+
+         ': freighter #'+e.carrier+' → ship #'+e.destination+
+         ', '+e.kg+' kg '+e.resource+
+         ', stage '+(['Awaiting NPC pickup','Sealed cargo loaded','Delivered'][e.stage]||'Unknown')+
+         (e.receipt?' (arrival receipt #'+e.receipt+')':'');
+     }
+     if(e.type==='ERROR'&&e.error==='FLEET_WORK_DENIED'){
+       dispatchStatus.textContent='NPC fleet dispatch rejected by native authority. Check real carrier, site and receiver.';
      }
      if(e.type==='FLEET_PILOT_ITEM'){
        if(e.ship===window.GalaxyActivePilotedShipId){
