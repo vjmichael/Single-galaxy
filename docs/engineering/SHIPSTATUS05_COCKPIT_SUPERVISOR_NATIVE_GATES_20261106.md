@@ -2,6 +2,19 @@
 
 **Source state:** committed to stacked draft on 2026-11-06. Native Windows/Linux and installed-browser acceptance **remain pending**. This document is a traceable implementation ledger, not a claim of a passing native release.
 
+## EvEmu 56 continuation and repairs (2026-11-06)
+
+The SHIP-STATUS-05 wave is implemented but **not yet accepted**. Current stacked draft [PR #82](https://github.com/vjmichael/Single-galaxy/pull/82), based on PR #81, has these follow-up fixes:
+
+- `44e467e`: corrected an undefined `n` reference in the native NPC supervisor crew eligibility check; the actual loop record is `npc`.
+- `400507b`, `0f9c7a4`: the cockpit only enables attacks when the current **committed tick** reports an actually powered, non-isolated type-3 emitter and current-tick observed target. A fitted-but-OFF emitter, isolated equipment, and stale post-restart telemetry cannot enable an attack; power-off due to isolation is not falsely labeled Confusion.
+- `2b92e5c`, `ebd4e74`: expanded Node tests to exercise real DOM button state, module power, isolation, fresh/stale telemetry and command request generation, beyond stateless parser tests. The tests do not impersonate a passed installed-browser run.
+- `e96e128`: direct C++ standard library includes for native supervisor portability.
+
+At continuation checkpoint, the new exact-head SHIP-STATUS-02 Windows/Linux jobs were still **queued**. Prior head `6311d33` had completed-failure Linux/Windows jobs with **zero job steps**, not a compiler diagnostic. Do not classify those as a native code failure or mark an acceptance gate green. Current-head SHA and job results must be read afresh before closeout.
+
+**Required native closeout:** both hosts compile and execute `galaxy_ship_status05_supervisor_tests`, the 01–04 native regressions, and `galaxy_colony_live_host`; Python 3.11/Node 22 relay and cockpit contracts pass; installed browser confirms real session and post-COMMIT attack/defense outcomes on independently present foreign hardware. No client event, HTTP 202, fabricated drone, or static contract test constitutes combat acceptance.
+
 ## Integration map
 
 | Layer | Original authority | Work committed |
