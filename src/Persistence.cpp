@@ -11239,9 +11239,15 @@ bool PersistentWorld::submit_npc_cyber_attack(
     command.target=target;
     command.action=Action::HackConfuse;
     auto next=world_;
-    if(!next.submit(command))return false;
-    // Exactly the same native command, SQLite generation, physical module
-    // use, and recovery boundary as a player-operated HackConfuse.
+    if(!next.submit(command) ||
+       next.npc_cyber_operators_.size()>=10000 ||
+       next.npc_cyber_operators_.count(command_id))return false;
+    next.npc_cyber_operators_.emplace(command_id,NpcCyberOperator{
+        command_id,owner,attacking_ship,target,pilot_npc,observer_npc,
+        world_.tick()});
+    next.snapshot_version_=std::max(next.snapshot_version_,102);
+    // The pilot/observer provenance and native command commit in the
+    // SAME original SQLite generation, never in an orphan side journal.
     store_->commit(next,generation_,resource_origin_,credit_origin_,
                    &command,{},{},{},fail);
     world_.swap(next);
