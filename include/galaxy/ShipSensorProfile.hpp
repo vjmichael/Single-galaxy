@@ -8,10 +8,11 @@
 
 namespace galaxy::ship_sensors {
 // Detectable signal classes are capabilities of ORIGINAL installed equipment:
-// support[1]=firewall, support[2]=passive stealth baffle,
-// support[3]=high-resolution counter-ECM sensor array. A hardpoint-mounted
-// survey scanner also assists tracking, but never authenticates identity.
-// These are fitting IDs within the ORIGINAL two support rack slots.
+// support hardware ID 1=firewall, 2=passive stealth baffle,
+// 3=high-resolution counter-ECM sensor array (distinct from slot indices).
+// A hardpoint-mounted survey scanner also assists tracking, but never
+// authenticates identity. These hardware IDs occupy the two original
+// support rack slots, not new or unlimited equipment locations.
 inline constexpr std::int64_t kOrdinaryRangeMm=5000;
 inline constexpr std::int64_t kStealthOrdinaryRangeMm=1200;
 inline constexpr std::int64_t kStealthSurveyRangeMm=3000;
