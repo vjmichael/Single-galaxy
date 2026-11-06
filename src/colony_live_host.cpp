@@ -9,6 +9,7 @@
 #include "galaxy/FleetSelection.hpp"
 #include "galaxy/ColonySafety.hpp"
 #include "galaxy/NpcCyberSupervisor.hpp"
+#include "galaxy/NpcHailSupervisor.hpp"
 #include "galaxy/ShipSensorProfile.hpp"
 #include "galaxy/SecurityDeskHost.hpp"
 #include <algorithm>
@@ -2221,6 +2222,27 @@ int main(int argc,char** argv){
                     world,*territory,*cases,owner,ship,fleet.piloted(),
                     [&](const std::string& msg){announce(world.world(),msg);},
                     communications.get());
+            }
+            // NPC hailing operates on the same real occupied colony ships
+            // and original signed contact journal as direct player hails.
+            // The local desktop currently has exactly one authenticated
+            // human owner; future multiplayer must supply a real NPC-owner
+            // registry before using this auto-responder for foreign owners.
+            if(communications && world.world().tick()%10==0){
+                try{
+                    const auto pulse=npc_hail::supervise(
+                        world,*communications,owner,nonce);
+                    if(pulse.answered){
+                        colony_disposition::security_desk::snapshot(
+                            world,*territory,*cases,owner,ship,fleet.piloted(),
+                            [&](const std::string& msg){
+                                announce(world.world(),msg);
+                            },communications.get());
+                    }
+                }catch(const std::exception& ex){
+                    std::cerr<<"NPC_HAIL_SUPERVISION_UNAVAILABLE "<<ex.what()<<'\n';
+                    announce(world.world(),"SECURITY_ERROR|COMMS_UNAVAILABLE");
+                }
             }
             const auto cyber_pulse=npc_cyber::supervise(world,owner);
             if(cyber_pulse.approaches &&
