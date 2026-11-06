@@ -34,6 +34,8 @@ int main(){
           person.physical_ship==ship && person.custodian==0 &&
           person.state==PlayerPersonState::AboardOwnShip &&
           person.last_receipt==0);
+    CHECK(world.world().people_physically_aboard(ship)==1);
+    CHECK(world.world().people_physically_aboard(foreign)==0);
     CHECK(world.world().total_ore()==before_material);
     durable=world.world().canonical_state();
     CHECK(durable.rfind("galaxy-kernel-v98|",0)==0);
