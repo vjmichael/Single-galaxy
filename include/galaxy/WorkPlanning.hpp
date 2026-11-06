@@ -4,6 +4,7 @@
 // This layer never owns resources, workers, transports or ship inventories.
 // Only original Simulation methods may commit real physical effects.
 #include "galaxy/WorkCapacity.hpp"
+#include "galaxy/WorkPolicy.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -58,7 +59,8 @@ enum class Gate : std::uint8_t {
     Ready=0,Dependency=1,SupplierApproval=2,
     WorkerUnavailable=3,WorkerReserved=4,MissingSource=5,
     UnsupportedExecutor=6,YardUnavailable=7,
-    AssemblySlipBusy=8,BuilderUnavailable=9,WorkerOnNativeJob=10
+    AssemblySlipBusy=8,BuilderUnavailable=9,WorkerOnNativeJob=10,
+    EmergencyHold=11,FundingNotReady=12
 };
 struct PlannedDirective {
     std::uint64_t id=0;
@@ -70,6 +72,7 @@ struct PlannedDirective {
     // Derived only from durable owner intent and original source stage.
     std::uint32_t priority=0;
     Gate gate=Gate::Ready;
+    PolicyClass policy=PolicyClass::NewDiscretionaryFunding;
     std::array<std::uint64_t,2> reserved_crew{};
     std::uint64_t reserved_yard=0;
     std::array<std::uint64_t,2> reserved_builders{};
@@ -84,7 +87,8 @@ inline std::vector<PlannedDirective> plan(
     const std::map<std::uint64_t,ShipyardCustomerOrder>& contracts,
     const std::map<std::uint64_t,NpcRecord>& npcs,
     std::uint64_t tick,
-    const NativeCapacityContext& capacity={}) {
+    const NativeCapacityContext& capacity={},
+    const WorkPolicyContext& policy={}) {
     // Index existing build receipts and assigned construction workers ONCE.
     // This is derived from native sources at the start of a world tick.
     const auto capacity_index=index_native_capacity(capacity);
@@ -114,6 +118,8 @@ inline std::vector<PlannedDirective> plan(
             p.gate=Gate::MissingSource;
             rows.push_back(p);continue;
         }
+        p.policy=policy_class(contract->second.stage,
+            d.commissioning_crew[0]!=0);
         switch(contract->second.stage){
         case ShipyardCustomerStage::Requested:
             p.priority+=1000;break;
@@ -143,6 +149,15 @@ inline std::vector<PlannedDirective> plan(
         if(p.gate!=Gate::Ready){rows.push_back(p);continue;}
         if(contract->second.stage==ShipyardCustomerStage::Requested)
             p.gate=Gate::SupplierApproval;
+        if(p.gate==Gate::Ready){
+            switch(inspect_policy(policy,d,contract->second)){
+            case PolicyHold::None:break;
+            case PolicyHold::LifeSupportEmergency:
+                p.gate=Gate::EmergencyHold;break;
+            case PolicyHold::PhysicalFundingUnavailable:
+                p.gate=Gate::FundingNotReady;break;
+            }
+        }
 
         // Only the supplier's actual one-slip yard may accept new funding.
         // Occupancy comes from unfinished native FreighterBuildOrder records.
@@ -200,11 +215,12 @@ inline std::vector<PlannedDirective> plan(
     }
     std::sort(rows.begin(),rows.end(),[&](const auto& a,const auto& b){
         if(a.priority!=b.priority)return a.priority>b.priority;
-        const auto& ad=directives.at(a.id);
-        const auto& bd=directives.at(b.id);
-        if(ad.posted_tick!=bd.posted_tick)return ad.posted_tick<bd.posted_tick;
         return a.id<b.id;
     });
+    // Stage remains absolute priority. On equal age/physical-stage bands,
+    // rotate ties so old saturated requests cannot hold scarce slots
+    // forever; all ordering derives from the committed world tick.
+    fair_rotate_ties(rows,tick,policy.fairness_quantum_ticks);
     // One selection per physical yard slot and named worker per tick.
     // This selection is EPHEMERAL; the native command rechecks everything
     // before consuming inventory or moving an NPC.
