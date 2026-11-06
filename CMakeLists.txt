@@ -1684,3 +1684,13 @@ if(BUILD_TESTING)
     COMMAND galaxy_ship_status01_confusion_tests)
   set_tests_properties(galaxy_ship_status01_confusion PROPERTIES TIMEOUT 300)
 endif()
+
+# SHIP-STATUS-02: native command gating and same-world SQLite/v100 recovery.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status02_authoritative_tests
+    tests/SHIPSTATUS02_AuthoritativePersistenceTests.cpp)
+  target_link_libraries(galaxy_ship_status02_authoritative_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status02_authoritative
+    COMMAND galaxy_ship_status02_authoritative_tests)
+  set_tests_properties(galaxy_ship_status02_authoritative PROPERTIES TIMEOUT 300)
+endif()
