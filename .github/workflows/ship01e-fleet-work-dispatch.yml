@@ -1,0 +1,80 @@
+name: SHIP-01E NPC fleet freight dispatch
+
+on:
+  pull_request:
+    paths:
+      - 'include/galaxy/FleetSelection.hpp'
+      - 'src/colony_live_host.cpp'
+      - 'live/interactive_relay.py'
+      - 'viewer/colony.js'
+      - 'tests/SHIP01D_FleetSelectionTests.cpp'
+      - 'tests/SHIP01D_FleetHostTests.py'
+      - 'tests/PLAY13D_RegionalFacilitiesTests.cpp'
+      - 'tests/PLAY13D_PlanetSurveyNodeTests.js'
+      - 'tests/PLAY13D_PlanetSurveyRelayTests.py'
+      - '.github/workflows/ship01e-fleet-work-dispatch.yml'
+  workflow_dispatch:
+
+jobs:
+  actual-npc-fleet:
+    name: Finite-crew fleet dispatch and native freight (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native SQLite (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlite3-dev
+      - name: Install native SQLite (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vcpkg = Join-Path $env:VCPKG_INSTALLATION_ROOT "vcpkg.exe"
+          if (-not (Test-Path $vcpkg)) { throw "Windows SQLite SDK unavailable" }
+          & $vcpkg install sqlite3:x64-windows --clean-after-build
+          if ($LASTEXITCODE -ne 0) { throw "Windows SQLite SDK failed" }
+      - name: Configure native CMake (Linux)
+        if: runner.os == 'Linux'
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+      - name: Configure native CMake (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $toolchain = Join-Path $env:VCPKG_INSTALLATION_ROOT "scripts/buildsystems/vcpkg.cmake"
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$toolchain" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+          if ($LASTEXITCODE -ne 0) { throw "Windows configure failed" }
+      - name: Compile real manufactured hull, NPC work board and fleet selection
+        run: cmake --build build --parallel 2 --config Release --target galaxy_ship01b2_commission_freighter_tests galaxy_ship01d_fleet_selection_tests galaxy_play13d_regional_facilities_tests
+      - name: Owner safe NPC assignment and physical Planet A to Colony B ship delivery
+        run: ctest --test-dir build -C Release --output-on-failure -R "^galaxy_(ship01b2_commission_freighter|ship01d_fleet_selection|ship01c_manufactured_freight)$"
+
+  authenticated-fleet-dispatch:
+    name: Actual host, strict dispatch inputs and UI status (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install native SQLite
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlite3-dev
+      - name: Compile actual colony host
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+          cmake --build build --parallel 2 --target galaxy_colony_live_host
+      - name: Native authenticated host fake-carrier refusal and restart
+        run: python tests/SHIP01D_FleetHostTests.py --host build/galaxy_colony_live_host
+      - name: Strict authenticated HTTP fleet dispatch, malformed/forged inputs
+        run: python tests/PLAY13D_PlanetSurveyRelayTests.py --host build/galaxy_colony_live_host --relay live/interactive_relay.py
+      - name: Browser decoder and real manufacturing/flight/dispatch receipt contracts
+        run: node --test tests/PLAY13D_PlanetSurveyNodeTests.js
