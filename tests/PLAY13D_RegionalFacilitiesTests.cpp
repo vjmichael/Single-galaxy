@@ -102,6 +102,30 @@ static std::string forge_work_completion(std::string snapshot,
     snapshot.replace(at,end-at,row);
     return snapshot;
 }
+// FLIGHT-01 recovery oracle: a completed flight intent is not an
+// arrival receipt. The physical native destination/owner/request must exist.
+static std::string forge_npc_flight_arrival(std::string snapshot,
+        std::uint64_t order_id,std::uint64_t tick) {
+    const auto marker="npcflight|"+std::to_string(order_id)+"|";
+    const auto start=snapshot.find(marker);
+    CHECK(start!=std::string::npos);
+    const auto end=snapshot.find('\n',start);
+    CHECK(end!=std::string::npos);
+    std::istringstream stream(snapshot.substr(start,end-start));
+    std::vector<std::string> fields;
+    std::string word;
+    while(std::getline(stream,word,'|'))fields.push_back(word);
+    CHECK(fields.size()==12);
+    fields[8]="2"; // claimed Arrived without native completed transit
+    fields[11]=std::to_string(tick);
+    std::string row;
+    for(std::size_t i=0;i<fields.size();++i){
+        if(i)row+='|';
+        row+=fields[i];
+    }
+    snapshot.replace(start,end-start,row);
+    return snapshot;
+}
 static void scenario(const fs::path& db, bool farming,
                      bool manufactured=false,bool delegated=false,
                      bool autonomous=false){
@@ -984,16 +1008,33 @@ static void scenario(const fs::path& db, bool farming,
                     receiver_body,95021,99021,NpcFlightPurpose::Freight));
                 CHECK(w.queue_npc_flight(7,freighter,autonomous_pilot,
                     receiver_body,95021,99021,NpcFlightPurpose::Freight));
+                CHECK(!w.world().npc_available_for_duty(autonomous_pilot));
                 CHECK(!w.queue_npc_flight(7,freighter,autonomous_pilot,
                     receiver_body,95022,99022,NpcFlightPurpose::Survey));
                 CHECK(!w.begin_celestial_transit(7,freighter,receiver_body,99021));
                 const auto posting=w.world().canonical_state();
                 CHECK(posting.rfind("galaxy-kernel-v95|",0)==0);
                 CHECK(Simulation::from_snapshot(posting).canonical_state()==posting);
+                // Crash at the same SQLite publication boundary as the
+                // original host transit. Neither task nor voyage advances.
+                const auto original_tick=w.world().tick();
+                bool crashed=false;
+                try{w.step(FailPoint::AfterSnapshotWrite);}
+                catch(const std::exception&){crashed=true;}
+                CHECK(crashed);
+                CHECK(w.world().canonical_state()==posting);
+                CHECK(w.world().tick()==original_tick);
                 w.steps(2);
                 CHECK(w.world().npc_flight_orders().at(95021).phase==
                       NpcFlightPhase::InTransit);
                 CHECK(w.world().pending_celestial_transits().count(99021)==1);
+                const auto in_transit=w.world().canonical_state();
+                CHECK(Simulation::from_snapshot(in_transit).canonical_state()==in_transit);
+                bool forged_arrival=false;
+                try{(void)Simulation::from_snapshot(forge_npc_flight_arrival(
+                    in_transit,95021,w.world().tick()));}
+                catch(const std::exception&){forged_arrival=true;}
+                CHECK(forged_arrival);
                 CHECK(!w.cancel_npc_flight(7,95021));
                 CHECK(!w.deliver_intercolony_freight(7,77003));
                 w.steps(3);
@@ -1002,6 +1043,9 @@ static void scenario(const fs::path& db, bool farming,
                 CHECK(w.world().completed_celestial_transits().count(99021)==1);
                 CHECK(w.world().npc_flight_orders().at(95021).resolved_tick==
                       w.world().completed_celestial_transits().at(99021).completed_tick);
+                CHECK(w.world().npc_available_for_duty(autonomous_pilot));
+                const auto arrived=w.world().canonical_state();
+                CHECK(Simulation::from_snapshot(arrived).canonical_state()==arrived);
             }else{
                 CHECK(w.begin_celestial_transit(7,freighter,receiver_body,99021));
                 CHECK(!w.deliver_intercolony_freight(7,77003)); // in flight
