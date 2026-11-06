@@ -77,6 +77,8 @@ int main(){
               npc_cyber::kSupervisorIdBase+
               first.tick*npc_cyber::kSupervisorIdsPerTick+3);
         CHECK(w.world().npc_cyber_operators().count(first.last_command)==1);
+        CHECK(!w.submit_npc_cyber_attack(8,predator,pilot,pilot,
+                                        player,10060));
         CHECK(npc_cyber::supervise(w,7).queued==0);
         CHECK(w.world().npc_cyber_operators().size()==1);
         pending=w.world().canonical_state();
@@ -118,6 +120,7 @@ int main(){
         PersistentWorld independent(copy,Simulation(3));
         CHECK(independent.world().canonical_state()==pending);
         CHECK(independent.world().npc_cyber_operators().size()==1);
+        CHECK(npc_cyber::supervise(independent,7).queued==0);
         independent.step();
         CHECK(independent.world().canonical_state()==performed_state);
         CHECK(independent.world().status_effects().records().size()==1);
