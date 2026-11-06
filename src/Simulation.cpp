@@ -5868,6 +5868,76 @@ bool Simulation::accept_shipyard_customer_order(PlayerId supplier,
     it->second.accepted_tick=tick_;
     return true;
 }
+// WORK-01B.3: funding PREVIEW for the universal coordinator. It only
+// inspects original buyer inventory, supplier yard/slip, ship positions,
+// native builder duty and contractual consent. Original fund/queue methods
+// still revalidate and make the sole real material transition.
+bool Simulation::can_fund_shipyard_customer_order(
+        PlayerId customer,std::uint64_t contract_id) const {
+    const auto it=shipyard_customer_orders_.find(contract_id);
+    if(!customer || customer==kServerAuthority ||
+       it==shipyard_customer_orders_.end() ||
+       it->second.customer_owner!=customer ||
+       it->second.stage!=ShipyardCustomerStage::Accepted ||
+       freighter_build_orders_.size()>=10000 ||
+       freighter_build_orders_.count(it->second.build_order))
+        return false;
+    const auto& c=it->second;
+    const auto yard=shipyard_constructions_.find(c.yard_order);
+    const auto buyer=entities_.find(c.customer_ship);
+    const auto seller=entities_.find(c.supplier_ship);
+    const auto paid=colony_ships_.find(c.customer_ship);
+    const auto provider=colony_ships_.find(c.supplier_ship);
+    const auto life=life_support_.find(c.supplier_ship);
+    const auto frame=ship_frames_.find(c.supplier_ship);
+    if(yard==shipyard_constructions_.end() ||
+       !yard->second.operational() ||
+       yard->second.owner!=c.supplier_owner ||
+       yard->second.colony_ship!=c.supplier_ship ||
+       buyer==entities_.end() || seller==entities_.end() ||
+       buyer->second.type!=EntityType::Ship ||
+       seller->second.type!=EntityType::Ship ||
+       buyer->second.owner_id!=customer ||
+       seller->second.owner_id!=c.supplier_owner ||
+       paid==colony_ships_.end() || provider==colony_ships_.end() ||
+       life==life_support_.end() || frame==ship_frames_.end() ||
+       paid->second.modules<6 ||
+       provider->second.modules>1000000-6 ||
+       !same_local_frame(c.customer_ship,c.supplier_ship) ||
+       !freight_berth(buyer->second,seller->second) ||
+       buyer->second.velocity.x || buyer->second.velocity.y ||
+       seller->second.velocity.x || seller->second.velocity.y ||
+       frame->second.system!=seller->second.system_id ||
+       life->second.food_kg<2 || life->second.water_kg<2 ||
+       life->second.oxygen_kg<2)return false;
+    for(const auto& [id,trip]:pending_celestial_transits_){
+        (void)id;
+        if(trip.ship==c.customer_ship || trip.ship==c.supplier_ship)
+            return false;
+    }
+    for(const auto& [id,existing]:shipyard_customer_orders_){
+        if(id==contract_id)continue;
+        if(existing.yard_order==c.yard_order &&
+           (existing.stage==ShipyardCustomerStage::Accepted ||
+            existing.stage==ShipyardCustomerStage::Funded))
+            return false;
+        if(existing.build_order==c.build_order)return false;
+    }
+    for(const auto& [id,build]:freighter_build_orders_){
+        (void)id;
+        if(build.yard_order==c.yard_order && !build.finished())return false;
+    }
+    for(const auto worker:yard->second.workers){
+        const auto n=npcs_.find(worker);
+        if(!worker || n==npcs_.end() ||
+           n->second.home_ship!=c.supplier_ship ||
+           n->second.location!=c.supplier_ship ||
+           n->second.assigned_site!=c.supplier_ship ||
+           n->second.role!=NpcRole::Ship || n->second.transport_id ||
+           !npc_available_for_duty(worker))return false;
+    }
+    return yard->second.workers[0]!=yard->second.workers[1];
+}
 bool Simulation::fund_shipyard_customer_order(PlayerId customer,
         std::uint64_t contract_id) {
     const auto it=shipyard_customer_orders_.find(contract_id);
