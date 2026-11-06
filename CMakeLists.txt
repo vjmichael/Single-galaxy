@@ -1654,3 +1654,13 @@ if(BUILD_TESTING)
     COMMAND galaxy_disposition03_territorial_comms_tests)
   set_tests_properties(galaxy_disposition03_territorial_comms PROPERTIES TIMEOUT 300)
 endif()
+
+# DISPOSITION-03B: player hailing policy and lawful evidence-bound aggravation.
+if(BUILD_TESTING)
+  add_executable(galaxy_disposition03b_hailing_policy_tests
+    tests/DISPOSITION03B_HailingPolicyTests.cpp)
+  target_link_libraries(galaxy_disposition03b_hailing_policy_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_disposition03b_hailing_policy
+    COMMAND galaxy_disposition03b_hailing_policy_tests)
+  set_tests_properties(galaxy_disposition03b_hailing_policy PROPERTIES TIMEOUT 300)
+endif()
