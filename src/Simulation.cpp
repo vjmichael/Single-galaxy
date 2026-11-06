@@ -1333,12 +1333,14 @@ bool Simulation::submit(const Command& c) {
            c.secondary_receiver || c.secondary_transport)return false;
         snapshot_version_=std::max(snapshot_version_,62);
     }
-    if(c.action==Action::FireTrainingWeapon){
+    if(c.action==Action::FireTrainingWeapon ||
+       c.action==Action::FireShipWeapon){
         if(!c.id||!c.actor||!c.target||c.actor==c.target||
            c.thrust_x||c.thrust_y||c.amount||c.transport_id||
            !c.passenger_ids.empty()||c.secondary_receiver||c.secondary_transport)
             return false;
-        snapshot_version_=std::max(snapshot_version_,62);
+        snapshot_version_=std::max(snapshot_version_,
+            c.action==Action::FireShipWeapon?104:62);
     }
     const bool register_child=c.action==Action::HostRegisterDependent;
     if(register_child){
@@ -2294,7 +2296,8 @@ Event Simulation::execute(const Command& c) {
     // GRSM-01b: host-authorized deterministic physical incidents. These are
     // simulation state transitions, NOT user-invokable reputation events.
     // Combat/damage resolution will eventually authorize these outcomes.
-    if(c.action==Action::FireTrainingWeapon || c.action==Action::Thrust || c.action==Action::RequestJump ||
+    if(c.action==Action::FireTrainingWeapon || c.action==Action::FireShipWeapon ||
+       c.action==Action::Thrust || c.action==Action::RequestJump ||
        c.action==Action::RequestDock || c.action==Action::RequestUndock){
         for(const auto& [id,v]:voyages_){(void)id;
             if(v.ferry==c.actor && v.status==3){result.result=Outcome::InTransition;return result;}
@@ -3419,6 +3422,96 @@ Event Simulation::execute(const Command& c) {
             actor.cargo+=moved;wreck.cargo-=moved;
             result.transferred=moved;result.result=Outcome::Applied;
             snapshot_version_=std::max(snapshot_version_,62);
+            return result;
+        }
+        case Action::FireShipWeapon: {
+            // COMBAT-PHYSICAL-01A: native ship-to-ship projectile impact,
+            // consuming the SAME finite original fitted starter weapon
+            // charge used by training combat. No generated ammo or second
+            // combat writer. The sensor and yaw are checked at EXECUTION,
+            // not trusted from the browser's target list.
+            if(actor.type!=EntityType::Ship ||
+               actor.dock_state!=DockState::InSpace){
+                result.result=Outcome::NotInSpace;return result;
+            }
+            if(actor.jump_state!=ShipJumpState::Ready){
+                result.result=Outcome::InTransition;return result;
+            }
+            const auto it=entities_.find(c.target);
+            if(it==entities_.end() || it->second.type!=EntityType::Ship ||
+               it->second.training_drone ||
+               !it->second.owner_id ||
+               it->second.owner_id==actor.owner_id ||
+               it->second.hull<=0){
+                result.result=Outcome::InvalidTarget;return result;
+            }
+            auto& target=it->second;
+            if(target.dock_state!=DockState::InSpace ||
+               target.jump_state!=ShipJumpState::Ready){
+                result.result=Outcome::InTransition;return result;
+            }
+            if(!same_local_frame(actor.id,target.id)){
+                result.result=Outcome::OutOfRange;return result;
+            }
+            const auto dx=target.position.x-actor.position.x;
+            const auto dy=target.position.y-actor.position.y;
+            const auto distance=std::hypot(double(dx),double(dy));
+            const auto sensed=ship_sensors::detection_range_mm(
+                *this,actor,target);
+            if(distance>double(kTrainingWeaponRangeMm) ||
+               distance>double(sensed)){
+                result.result=Outcome::OutOfRange;return result;
+            }
+            if(actor.weapon_charges<=0){
+                result.result=Outcome::NoResources;return result;
+            }
+            if(actor.last_weapon_tick &&
+               tick_-actor.last_weapon_tick<kTrainingWeaponCooldownTicks){
+                result.result=Outcome::CooldownActive;return result;
+            }
+            const double radians=double(actor.heading_deg)*
+                3.14159265358979323846/180.0;
+            const double along=double(dx)*std::cos(radians)+
+                double(dy)*std::sin(radians);
+            const double lateral=double(dy)*std::cos(radians)-
+                double(dx)*std::sin(radians);
+            if(along<=0 || std::abs(lateral)>along){
+                result.result=Outcome::OutOfRange;return result;
+            }
+            // Crew and dependents have real, permanent identities. Until
+            // their physical injury/rescue/custody rules are connected,
+            // only unoccupied non-colony hulls may reach zero and wreck.
+            const bool lives_aboard=
+                people_physically_aboard(target.id)!=0 ||
+                children_physically_aboard(target.id)!=0 ||
+                colony_ships_.count(target.id)!=0;
+            const auto floor=lives_aboard?std::int64_t{1}:std::int64_t{0};
+            const auto possible=std::max<std::int64_t>(
+                0,target.hull-floor);
+            if(!possible){
+                result.result=Outcome::AttackResisted;return result;
+            }
+            const auto damage=std::min(possible,kShipWeaponDamage);
+            --actor.weapon_charges;
+            actor.last_weapon_tick=tick_;
+            target.hull-=damage;
+            result.transferred=damage; // exact damage in original event
+            if(target.hull==0){
+                // Same physical wreck semantics as original host-authorized
+                // ship loss; cargo and ownership survive as salvage claims.
+                stop_mining(target.id,Outcome::NotInSpace);
+                target.type=EntityType::Wreck;
+                target.weapon_charges=0;
+                target.last_weapon_tick=0;
+                target.training_drone=false;
+                target.velocity={};
+                if(target.manufactured_order_id)
+                    ship_frames_.erase(target.id);
+                activity_events_.push_back({tick_,ActivityKind::ShipDestroyed,
+                    c.id,c.actor,c.target,Outcome::Applied,0});
+            }
+            snapshot_version_=std::max(snapshot_version_,104);
+            result.result=Outcome::Applied;
             return result;
         }
         case Action::FireTrainingWeapon: {
