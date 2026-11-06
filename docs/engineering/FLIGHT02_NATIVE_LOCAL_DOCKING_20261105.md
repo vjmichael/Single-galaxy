@@ -4,7 +4,7 @@
 
 ## Shared architecture: do not make a second autopilot
 
-FLIGHT-02 adds `NpcFlightMode::LocalDock` to the existing **FLIGHT-01 `NpcFlightOrder`** rather than introducing an `NpcDockingNavigator` or a parallel task queue. The original `Simulation::process_npc_flight_navigation` is still the sole native NPC flight executor. The same original `NpcFlightPurpose`, owner consent, qualified existing crew, pilot reservation, `PersistentWorld` copied-state commit and canonical snapshot recovery apply.
+FLIGHT-02 adds `NpcFlightMode::LocalDock` to the existing **FLIGHT-01 `NpcFlightOrder`** rather than introducing an `NpcDockingNavigator` or a parallel task queue. Both native flight modes now also call the **same** `Simulation::select_npc_flight_pilot` and `npc_flight_slot_available` helpers: there is exactly one qualified NPC pilot chooser and one active ship/pilot exclusivity gate. The original `Simulation::process_npc_flight_navigation` is still the sole native NPC flight executor. The same original `NpcFlightPurpose`, owner consent, qualified existing crew, pilot reservation, `PersistentWorld` copied-state commit and canonical snapshot recovery apply.
 
 Two interchangeable physical modes now share that service:
 - **Celestial:** original v72 four-tick body/frame transition with its canonical pending/completed receipts, unchanged from FLIGHT-01. v95 rows continue to deserialize.
