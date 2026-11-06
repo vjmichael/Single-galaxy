@@ -1,4 +1,4 @@
-name: SHIP-STATUS-02 authoritative module execution and recovery
+name: SHIP-STATUS consolidated native + live-game acceptance (01–07E)
 on:
   pull_request:
     paths:
@@ -50,10 +50,15 @@ on:
       - 'src/ColonyConflict.cpp'
       - 'tests/SHIPSTATUS01_ConfusionTests.cpp'
       - 'CMakeLists.txt'
+      - 'docs/engineering/ACTIVE_WORK_AND_ACCEPTANCE_2026-11-06.md'
       - '.github/workflows/ship-status02-authoritative.yml'
   workflow_dispatch:
+concurrency:
+  group: sg-status-integrated-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
-  native:
+  native_and_live_game:
+    name: Integrated native + live game (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -82,8 +87,13 @@ jobs:
           $tc=Join-Path $env:VCPKG_INSTALLATION_ROOT 'scripts/buildsystems/vcpkg.cmake'
           cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$tc" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
           if ($LASTEXITCODE -ne 0) { throw 'native configuration failed' }
-      - run: cmake --build build --config Release --parallel 2 --target galaxy_ship_status07e_hail_abuse_tests galaxy_ship_status07d_security_desk_tests galaxy_client_contract_tests galaxy_ship_status07_view_privacy_tests galaxy_ship_status07_sensor_tests galaxy_ship_status07_incident_tests galaxy_ship_status06_fleet_cyber_tests galaxy_ship_status05_supervisor_tests galaxy_colony_live_host galaxy_shipping_status_bridge galaxy_ship_status04_npc_cyber_tests galaxy_ship_status03_physical_hacking_tests galaxy_ship_status02_authoritative_tests galaxy_ship_status01_confusion_tests galaxy_play10_exploration_tests
-      - run: ctest --test-dir build -C Release --output-on-failure -R "^galaxy_(ship_status(01_confusion|02_authoritative|03_physical_hacking|04_npc_cyber|05_supervisor|05_cockpit|06_fleet_cyber|06_live_cyber|07_incident|07_sensors|07_view_privacy|07d_security_desk|07e_hail_abuse)|play10_exploration|kernel_tests|client_contract_tests)$"
+      # One coherent native test gate for outstanding STATUS-VERIFY-01/02/03.
+      # Windows validates the real native executable, NOT a Windows browser
+      # or a packaged Windows installer (deferred until native 3D assets).
+      - name: Compile original game and security acceptance targets
+        run: cmake --build build --config Release --parallel 2 --target galaxy_ship_status07e_hail_abuse_tests galaxy_ship_status07d_security_desk_tests galaxy_client_contract_tests galaxy_ship_status07_view_privacy_tests galaxy_ship_status07_sensor_tests galaxy_ship_status07_incident_tests galaxy_ship_status06_fleet_cyber_tests galaxy_ship_status05_supervisor_tests galaxy_colony_live_host galaxy_shipping_status_bridge galaxy_ship_status04_npc_cyber_tests galaxy_ship_status03_physical_hacking_tests galaxy_ship_status02_authoritative_tests galaxy_ship_status01_confusion_tests galaxy_play10_exploration_tests
+      - name: Original world, physical 2-owner hailing, cyber evidence and recovery
+        run: ctest --test-dir build -C Release --output-on-failure -R "^galaxy_(ship_status(01_confusion|02_authoritative|03_physical_hacking|04_npc_cyber|05_supervisor|05_cockpit|06_fleet_cyber|06_live_cyber|07_incident|07_sensors|07_view_privacy|07d_security_desk|07e_hail_abuse)|play10_exploration|kernel_tests|client_contract_tests)$"
       - name: Verify live relay and cockpit syntax
         shell: bash
         run: |
@@ -97,7 +107,7 @@ jobs:
           node tests/SHIPSTATUS05_CyberCockpitTests.js
           node tests/SHIPSTATUS07D_SecurityDeskTests.js
           node tests/SHIPSTATUS07E_HailAbuseCockpitTests.js
-      - name: Real authenticated native security host and relay (Windows/Linux)
+      - name: Actual authenticated original host + relay (Windows/Linux, no installation)
         shell: bash
         run: |
           if [[ "$RUNNER_OS" == "Windows" ]]; then
@@ -110,7 +120,7 @@ jobs:
           python tests/SHIPSTATUS07D_LiveSecurityHostTests.py \
             --host "$host" --relay live/interactive_relay.py \
             --bridge "$bridge"
-      - name: Live-game Chromium browser smoke (Linux, no packaged installation)
+      - name: Real Linux Chromium → running original game (source-built, no installation)
         if: runner.os == 'Linux'
         shell: bash
         run: |
