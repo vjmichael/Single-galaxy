@@ -125,7 +125,7 @@ class SharedRuntime:
             if line.startswith('PRIVATE|'):
                 # Host-only owner-addressed frame. Never forward this wrapper
                 # on the ordinary global colony broadcast or SGVIEW stream.
-                m=re.fullmatch(r'PRIVATE\\|([1-9][0-9]{0,15})\\|(COLONY\\|1\\|[0-9]+\\|SECURITY_[A-Z_]+(?:\\|[A-Za-z0-9_-]+)*)',line)
+                m=re.fullmatch(r'PRIVATE\|([1-9][0-9]{0,15})\|(COLONY\|1\|[0-9]+\|SECURITY_[A-Z_]+(?:\|[A-Za-z0-9_-]+)*)',line)
                 if m and len(line)<=260:
                     target=int(m.group(1))
                     if target in self.human_owners and target!=7:
