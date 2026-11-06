@@ -39,16 +39,25 @@ bool same(const AutoMining& a, const AutoMining& b) {
 // Owner-specific interest projection. No remote-system entities, inventories,
 // market inventories, or another owner's private hangars/wallets cross the wire.
 // owner=0 preserves the legacy single-system public test contract.
-ClientProjection project(const Simulation& world, PlayerId owner = 0) {
+ClientProjection project(const Simulation& world, PlayerId owner = 0, EntityId focus_ship = 0) {
     ClientProjection p;
     p.tick = world.tick();p.system_id = world.system_id();
     EntityId viewer_ship=0;
     if(owner) {
-        for(const auto& [id,e]:world.entities()) {
-            if(e.type==EntityType::Ship && e.owner_id==owner) {
-                viewer_ship=id;
-                p.system_id=e.system_id;
-                break;
+        if(focus_ship) {
+            const auto* focus=world.find(focus_ship);
+            if(!focus || focus->type!=EntityType::Ship ||
+               focus->owner_id!=owner)
+                throw std::invalid_argument("fleet camera cannot focus foreign or missing ship");
+            viewer_ship=focus_ship;
+            p.system_id=focus->system_id;
+        }else {
+            for(const auto& [id,e]:world.entities()) {
+                if(e.type==EntityType::Ship && e.owner_id==owner) {
+                    viewer_ship=id;
+                    p.system_id=e.system_id;
+                    break;
+                }
             }
         }
         if(!viewer_ship)throw std::invalid_argument("viewer owns no ship");
@@ -216,8 +225,8 @@ std::uint64_t projection_hash(const ClientProjection& p) {
     return fnv(out.str());
 }
 
-ServerViewBridge::ServerViewBridge(const Simulation& world, std::uint64_t stream_id, PlayerId viewer_owner)
-    : previous_(project(world,viewer_owner)), viewer_owner_(viewer_owner), stream_id_(stream_id),
+ServerViewBridge::ServerViewBridge(const Simulation& world, std::uint64_t stream_id, PlayerId viewer_owner, EntityId focus_ship)
+    : previous_(project(world,viewer_owner,focus_ship)), viewer_owner_(viewer_owner), focus_ship_(focus_ship), stream_id_(stream_id),
       command_cursor_(world.events().size()), activity_cursor_(world.activity_events().size()) {
     if(stream_id==0) throw std::invalid_argument("stream_id must be nonzero");
     (void)projection_hash(previous_);
@@ -252,7 +261,7 @@ ViewFrame ServerViewBridge::after_committed_step(const Simulation& world) {
        world.events().size()<command_cursor_ || world.activity_events().size()<activity_cursor_ ||
        sequence_==std::numeric_limits<std::uint64_t>::max())
         throw std::runtime_error("observation must follow one committed tick");
-    ClientProjection now=project(world,viewer_owner_);
+    ClientProjection now=project(world,viewer_owner_,focus_ship_);
     // System transfer is a complete authority/view change. Emit a new full
     // snapshot at the same stream epoch, with strictly increasing sequence.
     if(now.system_id!=previous_.system_id) {
