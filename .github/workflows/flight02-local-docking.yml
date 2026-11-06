@@ -48,4 +48,4 @@ jobs:
       - name: Compile original navigation, shared NPC control and prior flight gates
         run: cmake --build build --parallel 2 --config Release --target galaxy_flight02_local_docking_tests galaxy_navigation_tests galaxy_play13d_regional_facilities_tests galaxy_work01b_work_planner_tests
       - name: Verify docking, prior celestial and local freight, replay and tamper checks
-        run: ctest --test-dir build -C Release --output-on-failure -R "^galaxy_(flight02_local_docking|navigation|flight01_unified_npc_navigation|work01c_native_transport_executors|work01b_work_planner)$"
+        run: ctest --test-dir build -C Release --output-on-failure -R "^galaxy_(flight02_local_docking|b54_navigation_tests|flight01_unified_npc_navigation|work01c_native_transport_executors|work01b_work_planner)$"
