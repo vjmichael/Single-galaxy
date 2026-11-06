@@ -6559,6 +6559,13 @@ void Simulation::process_npc_flight_navigation(){
             const auto nav=assist_to_object(actual,station->second,1500);
             if(nav.arrived){
                 if(rendezvous){
+                    // Already at the berth still requires an ORIGINAL
+                    // applied physical-control receipt before arrival.
+                    if(order.phase==NpcFlightPhase::Planned){
+                        (void)submit_npc_local_control(
+                            order,Action::Thrust,0,0,0);
+                        continue;
+                    }
                     bool applied=false;
                     for(const auto& ev:events_)
                         if(ev.command_id==order.last_local_command &&
