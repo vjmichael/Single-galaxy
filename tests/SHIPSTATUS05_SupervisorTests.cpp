@@ -89,10 +89,10 @@ int main(){
         const auto before=recovered.world().npc_cyber_operators().size();
         // Physical emission has not cooled down and old Confusion remains.
         while(recovered.world().tick()<10)recovered.step();
-        CHECK(npc_cyber::supervise(recovered,7,nonce).queued==0);
+        CHECK(npc_cyber::supervise(recovered,7).queued==0);
         CHECK(recovered.world().npc_cyber_operators().size()==before);
         while(recovered.world().tick()<15)recovered.step();
-        const auto second=npc_cyber::supervise(recovered,7,nonce);
+        const auto second=npc_cyber::supervise(recovered,7);
         CHECK(second.queued==1);
         CHECK(recovered.world().npc_cyber_operators().size()==before+1);
         recovered.step();
