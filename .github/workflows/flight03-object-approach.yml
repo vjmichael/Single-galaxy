@@ -6,6 +6,7 @@ on:
       - 'src/Navigation.cpp'
       - 'src/Simulation.cpp'
       - 'tests/FLIGHT03_ObjectApproachTests.cpp'
+      - 'tests/FLIGHT03_NativeRendezvousTests.cpp'
       - 'CMakeLists.txt'
       - '.github/workflows/flight03-object-approach.yml'
   workflow_dispatch:
@@ -33,5 +34,5 @@ jobs:
           $toolchain = Join-Path $env:VCPKG_INSTALLATION_ROOT 'scripts/buildsystems/vcpkg.cmake'
           cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$toolchain" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
           if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed' }
-      - run: cmake --build build --parallel 2 --config Release --target galaxy_flight03_object_approach_tests galaxy_flight02_local_docking_tests
-      - run: ctest --test-dir build -C Release --output-on-failure -R "^galaxy_(flight03_object_approach|flight02_local_docking)$"
+      - run: cmake --build build --parallel 2 --config Release --target galaxy_flight03_object_approach_tests galaxy_flight03_native_rendezvous_tests galaxy_flight02_local_docking_tests
+      - run: ctest --test-dir build -C Release --output-on-failure -R "^galaxy_(flight03_object_approach|flight03_native_rendezvous|flight02_local_docking)$"
