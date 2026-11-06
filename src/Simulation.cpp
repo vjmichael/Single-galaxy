@@ -3261,7 +3261,9 @@ Event Simulation::execute(const Command& c) {
             effect.source_ship=c.actor;
             effect.target_ship=c.target;
             effect.started_tick=tick_;
-            effect.expires_tick=tick_+kHackDurationTicks;
+            effect.expires_tick=tick_+
+                (defender.fitting.cyber_firewall()?kHackDurationTicks/2:
+                 kHackDurationTicks);
             effect.pulse_ticks=2;
             effect.intensity=100;
             effect.resistance=defender.fitting.cyber_firewall()?60:0;
@@ -12459,7 +12461,9 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 if(!native_command ||
                    native_command>=(std::uint64_t{1}<<62) ||
                    proven==result.events_.end() ||
-                   effect.expires_tick-effect.started_tick!=kHackDurationTicks ||
+                   effect.expires_tick-effect.started_tick!=
+                     (effect.resistance==60?kHackDurationTicks/2:
+                      kHackDurationTicks) ||
                    effect.pulse_ticks!=2 || effect.intensity!=100 ||
                    (effect.resistance!=0 && effect.resistance!=60) ||
                    source->second.last_hack_tick<effect.started_tick)
