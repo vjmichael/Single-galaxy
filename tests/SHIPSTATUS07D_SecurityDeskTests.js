@@ -6,11 +6,17 @@ const security=require('../viewer/security-desk.js');
 const key='4123456789012345678'; // beyond 53-bit JS integer precision
 const hex=Buffer.from('COLONY_HULL|HULL_100|CARGO_100').toString('hex');
 assert.equal(security.caseKey(key),key);
+assert.equal(security.nativeId('9223372036854775807'),
+             '9223372036854775807');
+assert.throws(()=>security.nativeId('9223372036854775808'));
 assert.equal(security.decodeHex(hex),'COLONY_HULL|HULL_100|CARGO_100');
 assert.equal(security.parse(
   'COLONY|1|15|SECURITY_STATUS|8|8|1|1|3').claimed,true);
 assert.equal(security.parse(
   'COLONY|1|15|SECURITY_CASE|'+key+'|12|1|2|'+hex+'|0|0').id,key);
+assert.equal(security.parse(
+  'COLONY|1|15|SECURITY_NOTICE|7|8|9223372036854775807').event,
+  '9223372036854775807');
 for(const forged of [
  'COLONY|1|15|SECURITY_CASES_RESET|injected',
  'COLONY|1|15|SECURITY_CASE|0001|12|1|2|'+hex+'|0|0',
@@ -96,7 +102,7 @@ e('securityNotice').listeners.change();
 assert.equal(e('securityAcknowledge').disabled,false);
 e('securityAcknowledge').listeners.click();
 assert.deepEqual(requests.pop(),['colonySecurityReply',{
-  colony:123,notice:900000000003,choice:'acknowledge'}]);
+  colony:123,notice:'900000000003',choice:'acknowledge'}]);
 frame('COLONY|1|15|SECURITY_NOTICE|124|9|900000000004');
 e('securityNotice').value='124:900000000004';
 e('securityNotice').listeners.change();
