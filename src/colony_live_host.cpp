@@ -2117,8 +2117,15 @@ int main(int argc,char** argv){
         std::uint64_t nonce=900000000000ULL+world.generation();
         if(territory)for(const auto& e:territory->history())
             nonce=std::max(nonce,e.event_id);
-        if(communications)for(const auto& e:communications->history())
-            nonce=std::max(nonce,e.event_id);
+        if(communications){
+            for(const auto& e:communications->history())
+                nonce=std::max(nonce,e.event_id);
+            // Compact nuisance events after the tenth detailed receipt
+            // are also durable host-generated identities. Reconcile them
+            // or the first command after restart could reuse a penalty ID.
+            for(const auto& p:communications->overflow_history())
+                nonce=std::max(nonce,p.last_event);
+        }
         for(const auto& e:world.world().events())
             nonce=std::max(nonce,e.command_id);
         if(nonce>=static_cast<std::uint64_t>(
