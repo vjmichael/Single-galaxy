@@ -192,6 +192,42 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
  <div id="cyberFeedback" class="help" role="status" aria-live="polite">No attack queued. Real targets require an operating emitter and physical range.</div>
  <div class="help">A refused attack may be out of range, blocked by module isolation, or within the equipment cooldown. NPC ships follow the same rules. All attack outcomes are decided by the native world.</div>
 </section>
+<section aria-labelledby="securityDeskTitle" style="border:1px solid #60848b;border-radius:10px;padding:12px;margin:10px 0">
+ <h2 id="securityDeskTitle">Ship hails &amp; colony security cases</h2>
+ <div class="help">A visual contact is not a verified identity. Staying silent preserves anonymity unless other evidence proves who controlled the ship. A verified voluntary hail identifies the current ship controller and can link earlier incidents to that hull, but does not itself prove who committed a past offense.</div>
+ <div id="securityDeskStatus" class="help" role="status" aria-live="polite">Awaiting authenticated local security journal.</div>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <button type="button" id="securityRefresh">Refresh security records</button>
+  <label>Claim radius (mm) <input id="securityClaimRadius" type="number" min="1" max="5000" step="100" value="3000" style="width:85px"></label>
+  <button type="button" id="securityClaim" disabled>Establish claim</button>
+ </div>
+ <div class="help">Claims are policy declarations around a real existing colony ship, not free police stations. Recording a suspected vessel does not grant weapons or arrest authority.</div>
+ <h3>Observed foreign vessels</h3>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <label>Contact <select id="securityContact"><option value="">No acquired contact</option></select></label>
+  <button type="button" id="securityWarn" disabled>Send territorial warning</button>
+ </div>
+ <h3>Security incident records</h3>
+ <div id="securityCaseList" class="help" role="log" aria-label="Witnessed cyber incident cases">No cases loaded.</div>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <label>Case <select id="securityCaseSelect"><option value="">No recorded case</option></select></label>
+  <button type="button" id="securityPatrol" disabled>Investigate observed match (nonviolent)</button>
+ </div>
+ <div class="help">Patrol requests require strong installed sensors, qualified NPC crew, and a current matching physical contact. Similar-looking ships may be innocent.</div>
+ <h3>Voluntary hail from your piloted ship</h3>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <label>Foreign jurisdiction <select id="securityDestination"><option value="">No witnessed foreign claim</option></select></label>
+  <button type="button" id="securityHail" disabled>Identify my ship by hail</button>
+ </div>
+ <h3>Incoming territorial hails</h3>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <label>Pending notice <select id="securityNotice"><option value="">No pending notice</option></select></label>
+  <button type="button" id="securityAcknowledge" disabled>Acknowledge notice</button>
+  <button type="button" id="securityRefuse" disabled>Refuse notice</button>
+ </div>
+ <div id="securityDeskFeedback" class="help" role="status" aria-live="polite">No security action submitted.</div>
+ <div class="help">No automatic hail is sent when you enter someone else's territory. Staying silent is an intentional choice. Hailing or replying is authenticated, logged, and may reveal the controlling account for that vessel, but never creates a retroactive crime conviction.</div>
+</section>
 <section aria-labelledby="combatTitle" style="border:1px solid #7b4752;border-radius:10px;padding:12px;margin:10px 0">
  <h2 id="combatTitle">Ship combat · Training weapons</h2>
  <div class="help">An uncrewed practice drone starts nearby. Rotate with Q/E to aim; the native weapon checks a 12 km range, 90° forward cone, finite charges and a two-tick cooldown. No civilian or colony attacks in this first slice.</div>
@@ -365,6 +401,7 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
 <script src="expedition-feedback.js"></script>
 <script src="colony.js"></script>
 <script src="cyber-controls.js"></script>
+<script src="security-desk.js"></script>
 <script src="interactive.js"></script>
 <script src="colony-shipping.js"></script>
 </body>
