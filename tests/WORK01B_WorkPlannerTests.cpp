@@ -46,7 +46,7 @@ int main(){
             CHECK(static_cast<int>(cap->request)==i);
             CHECK(static_cast<int>(cap->result)==i);
             CHECK(cap->native_slots==1);
-            CHECK(cap->delegated_executor==(i==5));
+            CHECK(cap->delegated_executor==(i==1 || i==2 || i==5));
         }
         CHECK(find_capability(static_cast<WorkTaskKind>(88))==nullptr);
         CHECK(find_capability(WorkTaskKind::ShipyardConstruction)->named_workers==2);
