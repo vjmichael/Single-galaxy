@@ -21,7 +21,7 @@ std::vector<Contact> observe_local_contacts(const Simulation& world,
         if(id==source || target.type!=EntityType::Ship ||
            !target.owner_id || target.owner_id==home->owner_id ||
            target.system_id!=home->system_id)continue;
-        const auto radius=ship_sensors::detection_range_mm(*home,target);
+        const auto radius=ship_sensors::detection_range_mm(world,*home,target);
         // Original fitted stealth baffles shorten the observer's *actual*
         // contact acquisition range. Fitted survey/high-resolution arrays
         // can recover some/all of the lost range. No hidden omniscient scan.
@@ -33,7 +33,7 @@ std::vector<Contact> observe_local_contacts(const Simulation& world,
         if(distance>static_cast<std::uint64_t>(radius*radius))continue;
         Contact contact{source,id,npc_id,world.tick(),distance,
                         target.owner_id,target.system_id};
-        contact.sensor_detail=ship_sensors::detail_class(*home,target);
+        contact.sensor_detail=ship_sensors::detail_class(world,*home,target);
         contact.observed_description=
             ship_sensors::description(world,source,id);
         // Hail/identity never originates from passive sensor inference.
