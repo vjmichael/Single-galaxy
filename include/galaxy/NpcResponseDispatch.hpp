@@ -3,6 +3,8 @@
 // No second flight engine, cargo ledger, combat executor or person ledger.
 #include "galaxy/Persistence.hpp"
 #include "galaxy/ShipInteractionPreflight.hpp"
+#include "galaxy/ColonyDefense.hpp"
+#include <algorithm>
 #include <cstdint>
 
 namespace galaxy::npc_response {
@@ -52,6 +54,45 @@ inline Status dispatch(PersistentWorld& world,const Request& r,
     return world.queue_npc_ship_rendezvous(
         r.owner,r.responding_ship,r.pilot_npc,r.subject_ship,
         r.response_id,purpose,fail) ? Status::Accepted:Status::Refused;
+}
+// A credible nearby foreign contact can justify approaching to hail.
+// Actual observation is recomputed from CURRENT named, duty-eligible crew,
+// not trusted from a user-supplied contact ID, guessed coordinates or intent.
+// This is NO arrest warrant, weapon authority, or boarding permission.
+inline Status dispatch_observed_patrol(
+    PersistentWorld& world,PlayerId patrol_owner,
+    EntityId patrol_ship,std::uint64_t pilot_npc,
+    const colony_defense::Contact& observed,std::uint64_t order_id,
+    FailPoint fail=FailPoint::None) {
+    if(!order_id || !patrol_owner || patrol_owner==Simulation::kServerAuthority ||
+       !patrol_ship || !observed.source || !observed.foreign_ship ||
+       observed.source!=patrol_ship || observed.foreign_ship==patrol_ship)
+        return Status::Invalid;
+    const auto* patrol=world.world().find(patrol_ship);
+    const auto* target=world.world().find(observed.foreign_ship);
+    if(!patrol || !target || patrol->type!=EntityType::Ship ||
+       target->type!=EntityType::Ship)return Status::NoPhysicalShip;
+    if(patrol->owner_id!=patrol_owner)return Status::WrongOwner;
+    if(!target->owner_id || target->owner_id==patrol_owner ||
+       observed.foreign_owner!=target->owner_id ||
+       observed.world_tick!=world.world().tick())
+        return Status::NoAuthority;
+    const auto verified=colony_defense::observe_local_contacts(
+        world.world(),patrol_ship,observed.observer_npc);
+    const auto real=std::find_if(verified.begin(),verified.end(),
+        [&](const colony_defense::Contact& c){
+          return c.source==observed.source &&
+                 c.foreign_ship==observed.foreign_ship &&
+                 c.foreign_owner==observed.foreign_owner &&
+                 c.observer_npc==observed.observer_npc &&
+                 c.world_tick==observed.world_tick &&
+                 c.system==observed.system;
+        });
+    if(real==verified.end())return Status::NoAuthority;
+    return world.queue_npc_ship_rendezvous(
+        patrol_owner,patrol_ship,pilot_npc,observed.foreign_ship,
+        order_id,NpcFlightPurpose::Patrol,fail)?
+        Status::Accepted:Status::Refused;
 }
 inline bool physically_arrived(const Simulation& world,
                                const Request& request) noexcept {
