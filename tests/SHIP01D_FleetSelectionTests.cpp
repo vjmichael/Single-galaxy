@@ -56,12 +56,12 @@ int main() {
             seed.provision_starter_exploration_scanner(origin);
             seed.ensure_physical_celestial_systems();
             seed.ensure_ship_frame_registry();
-            for(const auto& [system,objects]:seed.physical_celestial_systems()) {
-                (void)system;
-                for(const auto& obj:objects)
-                    if(!body && (obj.kind==CelestialKind::Planet ||
-                                 obj.kind==CelestialKind::Moon))body=obj.id;
-            }
+            const auto catalogue=seed.physical_celestial_systems().find(
+                seed.system_id());
+            CHECK(catalogue!=seed.physical_celestial_systems().end());
+            for(const auto& obj:catalogue->second)
+                if(!body && (obj.kind==CelestialKind::Planet ||
+                             obj.kind==CelestialKind::Moon))body=obj.id;
             CHECK(body!=0);
             std::vector<std::uint64_t> named;
             for(const auto& [id,n]:seed.npc_records())
