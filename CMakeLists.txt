@@ -1787,3 +1787,14 @@ if(BUILD_TESTING)
     COMMAND galaxy_ship_status07_view_privacy_tests)
   set_tests_properties(galaxy_ship_status07_view_privacy PROPERTIES TIMEOUT 300)
 endif()
+
+# SHIP-STATUS-07D: native authenticated owner-scoped security desk, real
+# voluntary territorial hails, prior cyber evidence, and SQLite recovery.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status07d_security_desk_tests
+    tests/SHIPSTATUS07D_SecurityDeskTests.cpp)
+  target_link_libraries(galaxy_ship_status07d_security_desk_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status07d_security_desk
+    COMMAND galaxy_ship_status07d_security_desk_tests)
+  set_tests_properties(galaxy_ship_status07d_security_desk PROPERTIES TIMEOUT 300)
+endif()
