@@ -42,3 +42,4 @@ Current delivered engineering report: [B7.0c Mineral Industry](B7_0c_Mineral_Ind
 - [SHIP-01F — two-colony funded shipyard orders and real purchaser delivery, draft](engineering/SHIP01F_TWO_COLONY_SHIPYARD_CUSTOMER_20261105.md) — buyer/supplier approval, physical six-module payment, original twelve-tick yard, real hull handover and buyer NPC commissioning.
 
 - [WORK-01A — universal NPC work coordinator and real customer shipyard fulfillment (draft)](engineering/WORK01_UNIVERSAL_NPC_FULFILLMENT_20261105.md) — typed native work adapters, durable consent/dependencies, v94 recovery, no duplicate inventory.
+- [WORK-01B.1 — typed native work capability and prerequisite/NPC selection planner (draft)](engineering/WORK01B_CAPABILITY_PLANNING_20261105.md) — deterministic stage/age priority and per-tick real-worker collision prevention, original v94 resources unchanged.
