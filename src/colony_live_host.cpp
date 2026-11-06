@@ -1811,6 +1811,18 @@ void apply(PersistentWorld& world,EntityId ship,FleetSelection& fleet,const std:
             const auto id=integer(v[1]);
             if(id<=0||id>100000000)throw std::invalid_argument("invalid combat target");
             c.action=Action::FireTrainingWeapon;c.target=static_cast<EntityId>(id);
+        }else if(v.size()==2 && v[0]=="FIRE_SHIP"){
+            const auto id=integer(v[1]);
+            if(id<=0 || id>1000000000000000LL)
+                throw std::invalid_argument("invalid physical combat target");
+            if(!fleet.is_ready(world.world(),fleet.piloted()))
+                throw std::invalid_argument("selected combat vessel unavailable");
+            c.actor=fleet.piloted();
+            c.action=Action::FireShipWeapon;
+            c.target=static_cast<EntityId>(id);
+            // Never trust the client's claimed range, aim, identity,
+            // ammunition, crew status or lawfulness. Original Simulation
+            // independently checks all impact preconditions at execute.
         }else if(v.size()==1 && v[0]=="DOCK_BASE"){
             const auto* self=world.world().find(ship);
             if(!self)throw std::invalid_argument("ship missing");
