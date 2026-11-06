@@ -126,4 +126,32 @@ private:
     PlayerId owner_=0;
     EntityId home_=0,piloted_=0;
 };
+
+// SHIP-01E: fleet dispatch policy shared by real host and native tests.
+// This is ONLY a preflight. Actual cargo, berth, planetary workers, source
+// materials and journal uniqueness are validated atomically by the existing
+// PersistentWorld::post_intercolony_work_order implementation.
+inline bool fleet_freight_eligible(const Simulation& world,
+        const FleetSelection& fleet,PlayerId owner,
+        EntityId carrier,EntityId receiver) {
+    if(!owner || owner==Simulation::kServerAuthority ||
+       !carrier || !receiver || carrier==receiver ||
+       carrier==fleet.home() || carrier==fleet.piloted() ||
+       !fleet.is_ready(world,carrier))return false;
+    const auto* vessel=world.find(carrier);
+    const auto* destination=world.find(receiver);
+    if(!vessel || !vessel->manufactured_order_id || !destination ||
+       destination->type!=EntityType::Ship ||
+       destination->owner_id!=owner || !world.colony_ship(receiver) ||
+       !world.life_support(receiver))return false;
+    // A freighter must not be assigned two overlapping lots or hijacked
+    // from a pre-existing NPC job; reservation lives in the canonical
+    // intercolony freight ledger, not a speculative separate fleet flag.
+    for(const auto& [id,job]:world.intercolony_freight()){
+        (void)id;
+        if(job.carrier_ship==carrier &&
+           job.stage!=IntercolonyFreightStage::Delivered)return false;
+    }
+    return true;
+}
 } // namespace galaxy
