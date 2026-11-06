@@ -1,4 +1,5 @@
 #include "galaxy/Simulation.hpp"
+#include "galaxy/ShipStatusFitting.hpp"
 #include "galaxy/WorkPlanning.hpp"
 #include "galaxy/Navigation.hpp"
 #include "galaxy/ShipInteractionPreflight.hpp"
@@ -1288,6 +1289,14 @@ bool Simulation::submit(const Command& c) {
            !c.passenger_ids.empty() || c.secondary_receiver || c.secondary_transport)return false;
         snapshot_version_=std::max(snapshot_version_,64);
     }
+    // v100: desired state of a fitted hardpoint: amount=slot*2+enabled.
+    if(c.action==Action::SetHardpointPower){
+        if(!c.id || !c.actor || c.target || c.amount<0 || c.amount>3 ||
+           c.thrust_x || c.thrust_y || c.transport_id ||
+           !c.passenger_ids.empty() || c.secondary_receiver ||
+           c.secondary_transport)return false;
+        snapshot_version_=std::max(snapshot_version_,100);
+    }
     if(c.action==Action::SurveyLocal){
         if(!c.id || !c.actor || c.target || c.amount || c.thrust_x || c.thrust_y ||
            c.transport_id || !c.passenger_ids.empty() ||
@@ -2074,6 +2083,7 @@ Event Simulation::execute(const Command& c) {
             if(frame!=ship_frames_.end() && frame->second.anchor_body &&
                c.action!=Action::Thrust &&
                c.action!=Action::SurveyLocal &&
+               c.action!=Action::SetHardpointPower &&
                c.action!=Action::Mine &&
                c.action!=Action::StartMining &&
                c.action!=Action::StopMining){
@@ -2947,6 +2957,10 @@ Event Simulation::execute(const Command& c) {
             if(actor.dock_state!=DockState::InSpace){result.result=Outcome::NotInSpace;return result;}
             if(actor.jump_state!=ShipJumpState::Ready){result.result=Outcome::InTransition;return result;}
             if(!actor.fitting.probe_launcher()){result.result=Outcome::NoResources;return result;}
+            const auto probe_slot=actor.fitting.hardpoints[0]==2?0u:1u;
+            if(!hardpoint_effective_on(c.actor,static_cast<std::uint8_t>(probe_slot))){
+                result.result=Outcome::ModuleOffline;return result;
+            }
             if(c.action==Action::LaunchGeologicalDrone){
                 if(!actor.survey_probes_carried){result.result=Outcome::NoResources;return result;}
                 if(survey_probes_.size()>=1000){result.result=Outcome::InvalidArgument;return result;}
@@ -3095,6 +3109,15 @@ Event Simulation::execute(const Command& c) {
             }
             snapshot_version_=std::max(snapshot_version_,66);return result;
         }
+        case Action::SetHardpointPower: {
+            const auto slot=static_cast<std::uint8_t>(c.amount/2);
+            if(slot>=2 || !actor.fitting.hardpoints[slot]) {
+                result.result=Outcome::InvalidTarget;return result;
+            }
+            actor.hardpoint_requested_on[slot]=(c.amount%2)==1;
+            snapshot_version_=std::max(snapshot_version_,100);
+            result.result=Outcome::Applied;return result;
+        }
         case Action::ConfigureExplorationScanner: {
             const auto cit=colony_ships_.find(c.actor);
             if(cit==colony_ships_.end()){result.result=Outcome::NotColonyShip;return result;}
@@ -3123,6 +3146,10 @@ Event Simulation::execute(const Command& c) {
             if(actor.dock_state!=DockState::InSpace){result.result=Outcome::NotInSpace;return result;}
             if(actor.jump_state!=ShipJumpState::Ready){result.result=Outcome::InTransition;return result;}
             if(!actor.fitting.exploration_scanner()){result.result=Outcome::NoResources;return result;}
+            const auto scanner_slot=actor.fitting.hardpoints[0]==1?0u:1u;
+            if(!hardpoint_effective_on(c.actor,static_cast<std::uint8_t>(scanner_slot))){
+                result.result=Outcome::ModuleOffline;return result;
+            }
             constexpr auto range=kLocalSurveyRangeMm;
             std::vector<DiscoveryRecord> candidates;
             for(const auto& [id,e]:entities_){
@@ -8161,6 +8188,58 @@ void Simulation::configure_probe_report_tick_ms(std::uint64_t tick_ms) {
     probe_report_delay_ticks_=(10000ULL+tick_ms-1)/tick_ms;
     snapshot_version_=std::max(snapshot_version_,68);
 }
+bool Simulation::hardpoint_effective_on(EntityId ship,std::uint8_t slot) const {
+    const auto* vessel=find(ship);
+    if(!vessel || vessel->type!=EntityType::Ship ||
+       slot>=2 || !vessel->fitting.hardpoints[slot])return false;
+    std::array<bool,2> exposed{{false,false}};
+    for(const auto& e:ship_status_.records()){
+        if(e.target_ship!=ship || tick_<e.started_tick ||
+           tick_>=e.expires_tick)continue;
+        for(const auto& k:e.targets)
+            if(k.rack==0 && k.slot<2 &&
+               vessel->fitting.hardpoints[k.slot]==k.hardware)
+                exposed[k.slot]=true;
+    }
+    const auto modules=ship_status::fitted_controls(*vessel,
+        vessel->hardpoint_requested_on,exposed,{{false,false}});
+    for(const auto& m:ship_status_.project(ship,tick_,modules))
+        if(m.key.rack==0 && m.key.slot==slot)return m.effective_on;
+    return false;
+}
+
+bool Simulation::install_testing_confusion(EntityId source,EntityId target,
+    std::uint64_t effect_id,std::uint64_t random_seed,
+    std::uint64_t duration_ticks,std::uint32_t pulse_ticks,
+    std::uint8_t intensity,std::uint8_t resistance,
+    std::uint8_t exposed_hardpoint_mask) {
+    // Not a player action or evidence of real hacking equipment.
+    const auto* a=find(source),*b=find(target);
+    if(!a || !b || a->type!=EntityType::Ship ||
+       b->type!=EntityType::Ship || !a->owner_id || !b->owner_id ||
+       a->owner_id==b->owner_id || source==target ||
+       a->system_id!=b->system_id || !same_local_frame(source,target) ||
+       std::hypot(double(a->position.x)-b->position.x,
+                  double(a->position.y)-b->position.y)>
+                  double(kTrainingWeaponRangeMm) ||
+       !duration_ticks || duration_ticks>ship_status::Engine::kMaxDurationTicks ||
+       tick_>std::numeric_limits<std::uint64_t>::max()-duration_ticks ||
+       !exposed_hardpoint_mask || (exposed_hardpoint_mask&~std::uint8_t{3}))
+        return false;
+    const std::array<bool,2> exposed{{
+        bool(exposed_hardpoint_mask&1),bool(exposed_hardpoint_mask&2)}};
+    ship_status::Effect attack{};
+    attack.id=effect_id;attack.source_ship=source;attack.target_ship=target;
+    attack.started_tick=tick_;attack.expires_tick=tick_+duration_ticks;
+    attack.seed=random_seed;attack.pulse_ticks=pulse_ticks;
+    attack.intensity=intensity;attack.resistance=resistance;
+    const auto roster=ship_status::fitted_controls(
+        *b,b->hardpoint_requested_on,exposed,{{false,false}});
+    if(!ship_status_.inflict_confusion(attack,roster,tick_))return false;
+    snapshot_version_=std::max(snapshot_version_,100);
+    return true;
+}
+
 void Simulation::step() {
     if (tick_ == std::numeric_limits<std::uint64_t>::max()) throw std::overflow_error("tick counter exhausted");
     ++tick_;
@@ -8914,6 +8993,7 @@ std::string to_string(Outcome o) {
         case Outcome::GateOffline: return "GATE_OFFLINE";
         case Outcome::NotColonyShip: return "NOT_COLONY_SHIP";
         case Outcome::InsufficientCrew: return "INSUFFICIENT_CREW";
+        case Outcome::ModuleOffline: return "MODULE_OFFLINE";
     }
     return "UNKNOWN";
 }
