@@ -53,7 +53,8 @@ public:
                 PlayerId visitor_owner,std::uint64_t event_id,
                TerritoryFailPoint fail=TerritoryFailPoint::None);
     bool revoke_invitation(const PersistentWorld& world,PlayerId owner,
-                EntityId colony,PlayerId visitor_owner,std::uint64_t event_id);
+                EntityId colony,PlayerId visitor_owner,std::uint64_t event_id,
+                TerritoryFailPoint fail=TerritoryFailPoint::None);
     bool warn(const PersistentWorld& world,PlayerId owner,EntityId colony,
               EntityId foreign_ship,std::uint64_t observer_npc,
               std::uint64_t event_id,std::uint64_t grace_ticks,
