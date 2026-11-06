@@ -6490,7 +6490,7 @@ void Simulation::process_npc_flight_navigation(){
                 continue;
             }
             if(actual.dock_state!=DockState::InSpace)continue;
-            const auto nav=assist_to_station(actual,station->second.position);
+            const auto nav=assist_to_object(actual,station->second,1500);
             if(nav.arrived)
                 (void)submit_npc_local_control(
                     order,Action::RequestDock,order.station);
