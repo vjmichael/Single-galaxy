@@ -739,7 +739,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     raise ValueError('Invalid original notice reply')
                 command=f'SECURITY_REPLY|{colony}|{notice}|'+(
                     'ACK' if choice=='acknowledge' else 'REFUSE')
-            elif action=='colonySecurityPatrol','colonySecurityCall','colonySecurityCallReply' and set(doc)=={
+            elif action=='colonySecurityPatrol' and set(doc)=={
                     'token','action','case','ship'}:
                 case_id,ship=doc['case'],doc['ship']
                 # Original SQLite case IDs may exceed JS's 53-bit number
