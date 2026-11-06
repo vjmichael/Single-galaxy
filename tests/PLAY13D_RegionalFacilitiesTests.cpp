@@ -1197,8 +1197,10 @@ static void scenario(const fs::path& db, bool farming,
                     if(n.home_ship==receiver && n.location==receiver &&
                        n.role==NpcRole::Ship){receiver_pilot=id;break;}
                 CHECK(receiver_pilot);
-                CHECK(w.queue_npc_flight(7,receiver,receiver_pilot,
+                CHECK(w.queue_npc_flight(7,receiver,0,
                     chosen.body,95100,99100,NpcFlightPurpose::Survey));
+                CHECK(w.world().npc_flight_orders().at(95100).pilot_npc==
+                      receiver_pilot);
                 CHECK(!w.cancel_npc_flight(8,95100));
                 CHECK(w.cancel_npc_flight(7,95100));
                 CHECK(w.world().npc_flight_orders().at(95100).phase==
