@@ -1,0 +1,41 @@
+name: FLIGHT-04 ship interaction preflight
+on:
+  pull_request:
+    paths:
+      - 'include/galaxy/ShipInteractionPreflight.hpp'
+      - 'tests/FLIGHT04_ShipInteractionPreflightTests.cpp'
+      - 'CMakeLists.txt'
+      - '.github/workflows/flight04-interaction-preflight.yml'
+  workflow_dispatch:
+jobs:
+  native:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: SQLite SDK (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      - name: SQLite SDK (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & (Join-Path $env:VCPKG_INSTALLATION_ROOT 'vcpkg.exe') install sqlite3:x64-windows --clean-after-build
+          if ($LASTEXITCODE -ne 0) { throw 'SQLite install failed' }
+      - name: Configure (Linux)
+        if: runner.os == 'Linux'
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tc = Join-Path $env:VCPKG_INSTALLATION_ROOT 'scripts/buildsystems/vcpkg.cmake'
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$tc" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed' }
+      - name: Build
+        run: cmake --build build --parallel 2 --config Release --target galaxy_flight04_interaction_preflight_tests
+      - name: Native acceptance
+        run: ctest --test-dir build -C Release --output-on-failure -R "^galaxy_flight04_interaction_preflight$"
