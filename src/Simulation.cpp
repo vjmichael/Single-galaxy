@@ -6340,8 +6340,19 @@ void Simulation::process_npc_flight_navigation(){
             continue;
         }
         if(order.phase!=NpcFlightPhase::Planned)continue;
+        const auto pilot=npcs_.find(order.pilot_npc);
+        if(pilot==npcs_.end() ||
+           pilot->second.home_ship!=order.ship ||
+           pilot->second.role!=NpcRole::Ship){
+            // A genuinely lost/reassigned pilot must not leave a perpetual
+            // stale reservation; only the unstarted flight is revoked.
+            // No original physical departure or cargo transfer has occurred.
+            order.phase=NpcFlightPhase::Cancelled;
+            order.resolved_tick=tick_;
+            continue;
+        }
         if(!qualified_npc_flight_pilot(order.ship,order.pilot_npc))
-            continue; // unavailable native worker: wait, do not invent NPC
+            continue; // injured or occupied: wait for native availability
         if(begin_native_celestial_transit(order.owner,order.ship,
                 order.destination_body,order.transit_request)){
             order.phase=NpcFlightPhase::InTransit;
@@ -11246,11 +11257,15 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 if(!active_ships.insert(flight.ship).second ||
                    !active_pilots.insert(flight.pilot_npc).second)
                     throw std::runtime_error("snapshot: NPC pilot or ship assigned to two flights");
-                const auto pilot=result.npcs_.find(flight.pilot_npc);
-                if(pilot==result.npcs_.end() ||
-                   pilot->second.home_ship!=flight.ship ||
-                   pilot->second.role!=NpcRole::Ship)
-                    throw std::runtime_error("snapshot: flight pilot lacks original NPC identity");
+                // A real person may subsequently die or be relocated
+                // by a separately authorized host action. The original
+                // pilot identity must still exist either as a current
+                // named NPC or as the durable physical casualty tombstone.
+                // The next native tick cancels a merely planned flight;
+                // an already underway physical transit can still resolve.
+                if(!result.npcs_.count(flight.pilot_npc) &&
+                   !result.casualties_.count(flight.pilot_npc))
+                    throw std::runtime_error("snapshot: flight pilot has no canonical identity");
             }
         }
     }
