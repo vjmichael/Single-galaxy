@@ -283,10 +283,14 @@
          data.caseId+' recorded. Review the refreshed evidence.';
        break;
      case 'SECURITY_RESULT':
-       el('securityDeskFeedback').textContent=
-         data.operation.replaceAll('_',' ')+' · native '+data.result+
-         (data.receipt!=='0'?' · receipt #'+data.receipt:'')+
-         (data.linked?' · earlier physical hull cases linked to this later authenticated controller':'');
+       // The generic denied receipt must not erase the native nuisance
+       // penalty that was just reported for a repeated identified hail.
+       if(!(data.operation==='SECURITY_CALL' &&
+            data.result==='DENIED' && commsPenalty?.points>0))
+         el('securityDeskFeedback').textContent=
+           data.operation.replaceAll('_',' ')+' · native '+data.result+
+           (data.receipt!=='0'?' · receipt #'+data.receipt:'')+
+           (data.linked?' · earlier physical hull cases linked to this later authenticated controller':'');
        break;
      case 'SECURITY_ERROR':
        el('securityDeskFeedback').textContent=
