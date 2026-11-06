@@ -30,6 +30,8 @@ assert.equal(cyber.parse('COLONY|1|6|CYBER_RESULT|991|3|ATTACK_RESISTED').result
 assert.deepEqual(cyber.parse('COLONY|1|6|CYBER_DEFENSE|17|4|88|2'),
  {tick:6,type:'CYBER_DEFENSE',ship:17,remaining:4,source:88,exposed:2});
 assert.equal(cyber.parse('COLONY|1|6|CYBER_INCOMING|17|88|992|APPLIED').result,'APPLIED');
+assert.deepEqual(cyber.parse('COLONY|1|6|CYBER_SENSORS|17|1|0|1'),
+ {tick:6,type:'CYBER_SENSORS',ship:17,stealth:true,counter:false,scanner:true});
 for(const forged of [
  'COLONY|1|x|CYBER_STATUS|17|1|0|0|1',
  'COLONY|1|5|CYBER_STATUS|17|2|0|0|1',
@@ -45,7 +47,10 @@ for(const forged of [
  'COLONY|1|6|CYBER_DEFENSE|17|10|88|2',
  'COLONY|1|6|CYBER_INCOMING|17|17|990|APPLIED',
  'COLONY|1|6|CYBER_INCOMING|17|88|0|APPLIED',
- 'COLONY|1|6|CYBER_INCOMING|17|88|990|<script>'
+ 'COLONY|1|6|CYBER_INCOMING|17|88|990|<script>',
+ 'COLONY|1|6|CYBER_SENSORS|17|2|0|1',
+ 'COLONY|1|6|CYBER_SENSORS|0|1|0|1',
+ 'COLONY|1|6|CYBER_SENSORS|17|1|0|1|extra'
  ])assert.throws(()=>cyber.parse(forged),undefined,forged);
 console.log('PASS SHIP-STATUS-05: strictly parsed committed cyber cockpit telemetry, effective state, and target gates');
 // Exercise the actual DOM wiring, not only the parser: disabled until a
@@ -98,12 +103,22 @@ assert.match(nodes.get('cyberModuleList').children[0].children[0].textContent,/I
 assert.doesNotMatch(nodes.get('cyberModuleList').children[0].children[0].textContent,/CONFUSED/);
 telemetry('COLONY|1|6|CYBER_STATUS|17|1|0|0|1');
 assert.equal(attack.disabled,true,'previous-tick hardware and target are stale');
+assert.equal(nodes.get('cyberFitStealth').disabled,true,
+ 'stealth fitting must not act on previous-tick sensor telemetry');
+telemetry('COLONY|1|6|CYBER_SENSORS|17|1|0|1');
+assert.match(nodes.get('cyberSensorStatus').textContent,/Stealth baffle FITTED/);
+assert.equal(nodes.get('cyberFitStealth').disabled,true);
+assert.equal(nodes.get('cyberRemoveStealth').disabled,false);
+assert.equal(nodes.get('cyberFitCounterSensor').disabled,false);
+nodes.get('cyberFitCounterSensor').listeners.click();
+assert.deepEqual(emitted[1],
+ ['colonyCyberFit',{device:'counterSensor',install:true}]);
 telemetry('COLONY|1|6|CYBER_MODULE|17|0|3|1|1|0');
 assert.equal(attack.disabled,true,'previous-tick target must not authorize request');
 telemetry('COLONY|1|6|CYBER_TARGET|17|22|700');
 select.value='22';select.listeners.change();
 assert.equal(attack.disabled,false,'fresh telemetry restores ready state');
-assert.equal(emitted.length,1,'no forged combat result is generated');
+assert.equal(emitted.length,2,'no forged combat result is generated');
 telemetry('COLONY|1|6|CYBER_DEFENSE|17|4|88|2');
 assert.match(nodes.get('cyberDefense').textContent,/CONFUSION ACTIVE/);
 assert.match(nodes.get('cyberDefense').textContent,/4 tick/);
@@ -117,7 +132,8 @@ telemetry('COLONY|1|7|CYBER_DEFENSE|17|0|0|0');
 assert.match(nodes.get('cyberDefense').textContent,/No active Confusion/);
 const html=require('node:fs').readFileSync(
  require('node:path').join(__dirname,'../viewer/interactive.html'),'utf8');
-for(const id of ['cyberDefense','cyberAlert','cyberModuleList','cyberAttack'])
+for(const id of ['cyberDefense','cyberAlert','cyberSensorStatus','cyberFitStealth',
+ 'cyberFitCounterSensor','cyberModuleList','cyberAttack'])
  assert.match(html,new RegExp('id="'+id+'"'));
 delete global.document;delete global.window;delete global.Option;
 console.log('PASS SHIP-STATUS-05: committed-only DOM controls, isolation feedback, stale telemetry rejection');
