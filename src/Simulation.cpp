@@ -1306,13 +1306,18 @@ bool Simulation::submit(const Command& c) {
            c.secondary_receiver || c.secondary_transport)return false;
         if(c.action==Action::ConfigureCyberModule &&
            (c.target || (c.amount!=3 && c.amount!=-3 &&
-                         c.amount!=4 && c.amount!=-4)))return false;
+                         c.amount!=4 && c.amount!=-4 &&
+                         c.amount!=5 && c.amount!=-5 &&
+                         c.amount!=6 && c.amount!=-6)))return false;
         if(c.action==Action::SetCyberIsolation &&
            (c.target || c.amount<0 || c.amount>3))return false;
         if(c.action==Action::HackConfuse &&
            (!c.target || c.target==c.actor || c.amount ||
             c.id>=(std::uint64_t{1}<<62)))return false;
-        snapshot_version_=std::max(snapshot_version_,101);
+        snapshot_version_=std::max(snapshot_version_,
+            c.action==Action::ConfigureCyberModule &&
+            (c.amount==5 || c.amount==-5 ||
+             c.amount==6 || c.amount==-6)?103:101);
     }
     if(c.action==Action::SurveyLocal){
         if(!c.id || !c.actor || c.target || c.amount || c.thrust_x || c.thrust_y ||
@@ -3182,12 +3187,16 @@ Event Simulation::execute(const Command& c) {
             const bool installing=c.amount>0;
             const auto type=std::uint8_t(c.amount>0?c.amount:-c.amount);
             const bool emitter=type==3;
+            // 3 intrusion emitter, 4 firewall, 5 stealth baffle, 6
+            // high-resolution counter-ECM sensor array. No free hardware.
+            const std::uint8_t hardware=emitter?3:
+                type==4?1:type==5?2:3;
             auto& rack=emitter?actor.fitting.hardpoints:actor.fitting.support;
             if(installing) {
                 if(colony->second.modules<=0){
                     result.result=Outcome::NoResources;return result;
                 }
-                if(std::find(rack.begin(),rack.end(),emitter?3:1)!=rack.end()){
+                if(std::find(rack.begin(),rack.end(),hardware)!=rack.end()){
                     result.result=Outcome::InvalidArgument;return result;
                 }
                 const auto empty=std::find(rack.begin(),rack.end(),0);
@@ -3195,14 +3204,14 @@ Event Simulation::execute(const Command& c) {
                     result.result=Outcome::CargoFull;return result;
                 }
                 const auto slot=static_cast<std::size_t>(empty-rack.begin());
-                *empty=emitter?3:1;
+                *empty=hardware;
                 if(emitter) {
                     actor.hardpoint_requested_on[slot]=true;
                     actor.hardpoint_isolated[slot]=false;
                 }
                 --colony->second.modules; // one real fabricated 2-tonne module
             } else {
-                const auto installed=std::find(rack.begin(),rack.end(),emitter?3:1);
+                const auto installed=std::find(rack.begin(),rack.end(),hardware);
                 if(installed==rack.end()){
                     result.result=Outcome::InvalidTarget;return result;
                 }
@@ -3223,7 +3232,8 @@ Event Simulation::execute(const Command& c) {
                 }
                 ++colony->second.modules; // material returns to the original cargo
             }
-            snapshot_version_=std::max(snapshot_version_,101);
+            snapshot_version_=std::max(snapshot_version_,
+                (type==5 || type==6)?103:101);
             result.result=Outcome::Applied;return result;
         }
         case Action::HackConfuse: {
@@ -10020,7 +10030,8 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                     const unsigned maximum=j<2?
                         (result.snapshot_version_>=101?3u:
                          result.snapshot_version_>=65?2u:1u):
-                        (result.snapshot_version_>=101 && j<4?1u:0u);
+                        (result.snapshot_version_>=103 && j<4?3u:
+                         result.snapshot_version_>=101 && j<4?1u:0u);
                     if(value>maximum)
                         throw std::runtime_error("snapshot: unavailable ship module type");
                     if(e.type!=EntityType::Ship && e.type!=EntityType::Wreck && value)
@@ -10039,7 +10050,8 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                         throw std::runtime_error("snapshot: duplicate probe launcher");
                 if(result.snapshot_version_>=101 &&
                    ((e.fitting.hardpoints[0]==3 && e.fitting.hardpoints[1]==3) ||
-                    (e.fitting.support[0]==1 && e.fitting.support[1]==1)))
+                    (e.fitting.support[0]!=0 &&
+                     e.fitting.support[0]==e.fitting.support[1])))
                     throw std::runtime_error("snapshot: duplicated physical cyber equipment");
                 }
                 if(e.fitting.hardpoints[0]==1 && e.fitting.hardpoints[1]==1)
