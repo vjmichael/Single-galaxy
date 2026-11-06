@@ -6007,8 +6007,28 @@ bool Simulation::commission_shipyard_freighter(PlayerId owner,
        crew[0]==0 || crew[1]==0 || crew[0]==crew[1] ||
        provisions_kg_each<10 || provisions_kg_each>1000 ||
        job==freighter_build_orders_.end() || !job->second.finished() ||
-       job->second.commissioned() || job->second.owner!=owner)return false;
-    const auto source_id=job->second.source_ship;
+       job->second.commissioned())return false;
+    // For a customer's physical handover, the immutable build receipt
+    // still names the original supplier. The buyer staffs the delivered
+    // hull from their own colony; the supplier's workers and stock are
+    // never conscripted for commissioning.
+    EntityId commissioned_from=job->second.source_ship;
+    bool customer_build=false;
+    if(job->second.owner!=owner){
+        for(const auto& [id,contract]:shipyard_customer_orders_){
+            (void)id;
+            if(contract.build_order==build_id &&
+               contract.stage==ShipyardCustomerStage::Delivered &&
+               contract.customer_owner==owner &&
+               contract.delivered_ship==job->second.launched_ship){
+                commissioned_from=contract.customer_ship;
+                customer_build=true;
+                break;
+            }
+        }
+        if(!customer_build)return false;
+    }
+    const auto source_id=commissioned_from;
     const auto hull_id=job->second.launched_ship;
     const auto source=entities_.find(source_id),hull=entities_.find(hull_id);
     const auto stock=colony_ships_.find(source_id);
@@ -6053,7 +6073,8 @@ bool Simulation::commission_shipyard_freighter(PlayerId owner,
            n->second.mentor_id ||
            n->second.residence_kind!=transport::LocationKind::ColonyShip ||
            (n->second.residence_id && n->second.residence_id!=source_id) ||
-           id==yard->second.workers[0] || id==yard->second.workers[1] ||
+           (!customer_build &&
+             (id==yard->second.workers[0] || id==yard->second.workers[1])) ||
            !npc_available_for_duty(id))return false;
         // Do not strand a dependent aboard the originating colony.
         for(const auto& [child,d]:physical_dependents_){
