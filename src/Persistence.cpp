@@ -8798,6 +8798,20 @@ bool PersistentWorld::queue_npc_flight(
     world_.swap(next);++generation_;
     return true;
 }
+bool PersistentWorld::queue_npc_station_docking(
+    PlayerId owner,EntityId ship,std::uint64_t pilot,
+    EntityId station,std::uint64_t order_id,
+    NpcFlightPurpose purpose,FailPoint fail){
+    auto next=world_;
+    if(!next.queue_npc_station_docking(
+        owner,ship,pilot,station,order_id,purpose))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("local navigation created material");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
 bool PersistentWorld::cancel_npc_flight(
     PlayerId owner,std::uint64_t order_id,FailPoint fail){
     auto next=world_;
@@ -10993,6 +11007,21 @@ bool PersistentWorld::submit_host_consigned_transfer(const Command& command,Fail
 }
 
 bool PersistentWorld::submit(const Command& command, FailPoint fail) {
+    // A player command cannot race an active NPC navigator's exclusive
+    // physical ship-control session. The NPC uses Simulation::submit
+    // INSIDE the same host-journaled step, not this external owner API.
+    if(command.action==Action::Thrust ||
+       command.action==Action::RequestDock ||
+       command.action==Action::RequestUndock ||
+       command.action==Action::RequestJump){
+        for(const auto& [id,flight]:world_.npc_flight_orders_){
+            (void)id;
+            if(flight.ship==command.actor &&
+               (flight.phase==NpcFlightPhase::Planned ||
+                flight.phase==NpcFlightPhase::InTransit))
+                return false;
+        }
+    }
     if (command.action == Action::HostDestroyShip || command.action == Action::HostCrewLoss ||
         command.action == Action::SetGatePairOnline ||
         command.action == Action::SetGateStaff ||
