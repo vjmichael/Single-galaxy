@@ -71,7 +71,7 @@
    if(type==='SECURITY_CALL_SANCTION' && v.length===8){
      const ship=whole(v[4]),points=whole(v[5],10),
        until=whole(v[6],1000000000000000),review=whole(v[7],1);
-     if(!ship||!until||(review&&points<3))
+     if(!ship||(points && !until)||(review&&points<3))
        throw Error('Invalid ship hail sanction');
      return {tick,type,ship,points,until,review:!!review};
    }
