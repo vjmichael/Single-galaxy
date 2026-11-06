@@ -9993,6 +9993,10 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                     e.survey_probes_carried=static_cast<std::uint8_t>(count);
                     if(e.fitting.hardpoints[0]==2 && e.fitting.hardpoints[1]==2)
                         throw std::runtime_error("snapshot: duplicate probe launcher");
+                if(result.snapshot_version_>=101 &&
+                   ((e.fitting.hardpoints[0]==3 && e.fitting.hardpoints[1]==3) ||
+                    (e.fitting.support[0]==1 && e.fitting.support[1]==1)))
+                    throw std::runtime_error("snapshot: duplicated physical cyber equipment");
                 }
                 if(e.fitting.hardpoints[0]==1 && e.fitting.hardpoints[1]==1)
                     throw std::runtime_error("snapshot: duplicate unique exploration scanner");
