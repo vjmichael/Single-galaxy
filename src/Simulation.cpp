@@ -5785,6 +5785,154 @@ bool Simulation::queue_shipyard_freighter(PlayerId owner,
     snapshot_version_=std::max(snapshot_version_,91);
     return true;
 }
+// SHIP-01F: customer/supplier agreements are real durable work orders.
+// Posting an intent never gives the provider free modules, steals an NPC,
+// or creates a ship; the buyer's funds are physically delivered later.
+bool Simulation::post_shipyard_customer_order(PlayerId customer,
+        EntityId buyer_ship,std::uint64_t yard_id,std::uint64_t build_id,
+        std::uint64_t contract_id) {
+    if(!customer || customer==kServerAuthority ||
+       !contract_id || contract_id>=(std::uint64_t{1}<<50) ||
+       !build_id || build_id>=(std::uint64_t{1}<<50) ||
+       contract_id==build_id || contract_id==yard_id ||
+       build_id==yard_id || shipyard_customer_orders_.size()>=10000 ||
+       shipyard_customer_orders_.count(contract_id) ||
+       freighter_build_orders_.count(build_id))return false;
+    const auto yard=shipyard_constructions_.find(yard_id);
+    const auto buyer=entities_.find(buyer_ship);
+    if(yard==shipyard_constructions_.end() ||
+       !yard->second.operational() ||
+       buyer==entities_.end() || buyer->second.type!=EntityType::Ship ||
+       buyer->second.owner_id!=customer ||
+       buyer_ship==yard->second.colony_ship ||
+       !colony_ships_.count(buyer_ship) ||
+       !life_support_.count(buyer_ship) ||
+       !ship_frames_.count(buyer_ship))return false;
+    const auto seller=entities_.find(yard->second.colony_ship);
+    if(seller==entities_.end() ||
+       seller->second.type!=EntityType::Ship ||
+       seller->second.owner_id!=yard->second.owner ||
+       !colony_ships_.count(yard->second.colony_ship) ||
+       !life_support_.count(yard->second.colony_ship))return false;
+    // One build ID is immutable from first request to physical hull delivery;
+    // unaccepted requests cannot collide silently with another customer's.
+    for(const auto& [id,existing]:shipyard_customer_orders_) {
+        (void)id;
+        if(existing.build_order==build_id)return false;
+    }
+    shipyard_customer_orders_.emplace(contract_id,ShipyardCustomerOrder{
+        contract_id,yard_id,build_id,customer,yard->second.owner,
+        buyer_ship,yard->second.colony_ship,
+        ShipyardCustomerStage::Requested,tick_,0,0,0,0});
+    snapshot_version_=std::max(snapshot_version_,93);
+    return true;
+}
+bool Simulation::accept_shipyard_customer_order(PlayerId supplier,
+        std::uint64_t contract_id) {
+    const auto it=shipyard_customer_orders_.find(contract_id);
+    if(it==shipyard_customer_orders_.end() ||
+       !supplier || supplier==kServerAuthority ||
+       it->second.supplier_owner!=supplier ||
+       it->second.stage!=ShipyardCustomerStage::Requested)return false;
+    const auto yard=shipyard_constructions_.find(it->second.yard_order);
+    if(yard==shipyard_constructions_.end() ||
+       !yard->second.operational() || yard->second.owner!=supplier ||
+       yard->second.colony_ship!=it->second.supplier_ship)return false;
+    // One active customer assignment at this physical yard. Requests may
+    // queue but acceptance must not double-book builder or paid material.
+    for(const auto& [id,other]:shipyard_customer_orders_) {
+        if(id!=contract_id && other.yard_order==it->second.yard_order &&
+           (other.stage==ShipyardCustomerStage::Accepted ||
+            other.stage==ShipyardCustomerStage::Funded))return false;
+    }
+    for(const auto& [id,build]:freighter_build_orders_) {
+        (void)id;
+        if(build.yard_order==it->second.yard_order && !build.finished())
+            return false;
+    }
+    it->second.stage=ShipyardCustomerStage::Accepted;
+    it->second.accepted_tick=tick_;
+    return true;
+}
+bool Simulation::fund_shipyard_customer_order(PlayerId customer,
+        std::uint64_t contract_id) {
+    const auto it=shipyard_customer_orders_.find(contract_id);
+    if(it==shipyard_customer_orders_.end() ||
+       it->second.customer_owner!=customer ||
+       it->second.stage!=ShipyardCustomerStage::Accepted)return false;
+    const auto& order=it->second;
+    const auto yard=shipyard_constructions_.find(order.yard_order);
+    const auto buyer=entities_.find(order.customer_ship);
+    const auto seller=entities_.find(order.supplier_ship);
+    auto paid=colony_ships_.find(order.customer_ship);
+    auto provider=colony_ships_.find(order.supplier_ship);
+    if(yard==shipyard_constructions_.end() ||
+       !yard->second.operational() ||
+       yard->second.owner!=order.supplier_owner ||
+       buyer==entities_.end() || seller==entities_.end() ||
+       buyer->second.owner_id!=customer ||
+       seller->second.owner_id!=order.supplier_owner ||
+       paid==colony_ships_.end() || provider==colony_ships_.end() ||
+       paid->second.modules<6 ||
+       provider->second.modules>1000000-6 ||
+       !same_local_frame(order.customer_ship,order.supplier_ship) ||
+       !freight_berth(buyer->second,seller->second) ||
+       buyer->second.velocity.x || buyer->second.velocity.y ||
+       seller->second.velocity.x || seller->second.velocity.y)return false;
+    // Fund and queue inside one authoritative world. If the ordinary yard
+    // refuses the build, restore both exact material inventories.
+    paid->second.modules-=6;
+    provider->second.modules+=6;
+    if(!queue_shipyard_freighter(order.supplier_owner,order.yard_order,
+                                order.build_order)){
+        paid->second.modules+=6;
+        provider->second.modules-=6;
+        return false;
+    }
+    it->second.stage=ShipyardCustomerStage::Funded;
+    it->second.funded_tick=tick_;
+    return true;
+}
+bool Simulation::deliver_shipyard_customer_order(PlayerId customer,
+        std::uint64_t contract_id) {
+    const auto it=shipyard_customer_orders_.find(contract_id);
+    if(it==shipyard_customer_orders_.end() ||
+       it->second.customer_owner!=customer ||
+       it->second.stage!=ShipyardCustomerStage::Funded)return false;
+    const auto& c=it->second;
+    const auto build=freighter_build_orders_.find(c.build_order);
+    if(build==freighter_build_orders_.end() ||
+       !build->second.finished() || build->second.commissioned() ||
+       build->second.owner!=c.supplier_owner ||
+       build->second.source_ship!=c.supplier_ship ||
+       build->second.yard_order!=c.yard_order)return false;
+    const auto buyer=entities_.find(c.customer_ship);
+    const auto ship=entities_.find(build->second.launched_ship);
+    if(buyer==entities_.end() || ship==entities_.end() ||
+       buyer->second.type!=EntityType::Ship ||
+       buyer->second.owner_id!=customer ||
+       ship->second.type!=EntityType::Ship ||
+       ship->second.owner_id!=c.supplier_owner ||
+       ship->second.manufactured_order_id!=c.build_order ||
+       colony_ships_.count(ship->first) || life_support_.count(ship->first) ||
+       !same_local_frame(c.customer_ship,ship->first) ||
+       !freight_berth(buyer->second,ship->second) ||
+       buyer->second.velocity.x || buyer->second.velocity.y ||
+       ship->second.velocity.x || ship->second.velocity.y)return false;
+    for(const auto& [id,trip]:pending_celestial_transits_){
+        (void)id;
+        if(trip.ship==c.customer_ship || trip.ship==ship->first)
+            return false;
+    }
+    // Hand over the one completed, UNCREWED physical hull. The provider's
+    // immutable build provenance remains intact. Customer must separately
+    // staff, fit and provision it using their own real colony stock.
+    ship->second.owner_id=customer;
+    it->second.delivered_ship=ship->first;
+    it->second.delivered_tick=tick_;
+    it->second.stage=ShipyardCustomerStage::Delivered;
+    return true;
+}
 void Simulation::process_freighter_builds() {
     for(auto& [id,order]:freighter_build_orders_) {
         (void)id;
