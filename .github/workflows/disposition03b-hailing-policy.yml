@@ -3,7 +3,9 @@ on:
   pull_request:
     paths:
       - 'include/galaxy/TerritorialHailing.hpp'
+      - 'include/galaxy/TerritorialTravelClearance.hpp'
       - 'tests/DISPOSITION03B_HailingPolicyTests.cpp'
+      - 'tests/DISPOSITION03C_TravelClearanceTests.cpp'
       - 'CMakeLists.txt'
       - '.github/workflows/disposition03b-hailing-policy.yml'
   workflow_dispatch:
@@ -31,5 +33,5 @@ jobs:
           $tc=Join-Path $env:VCPKG_INSTALLATION_ROOT 'scripts/buildsystems/vcpkg.cmake'
           cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$tc" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
           if ($LASTEXITCODE -ne 0) { throw 'native configuration failed' }
-      - run: cmake --build build --config Release --parallel 2 --target galaxy_disposition03b_hailing_policy_tests galaxy_disposition03_territorial_comms_tests
-      - run: ctest --test-dir build -C Release --output-on-failure -R "^galaxy_disposition03(b_hailing_policy|_territorial_comms)$"
+      - run: cmake --build build --config Release --parallel 2 --target galaxy_disposition03c_travel_clearance_tests galaxy_disposition03b_hailing_policy_tests galaxy_disposition03_territorial_comms_tests
+      - run: ctest --test-dir build -C Release --output-on-failure -R "^galaxy_disposition03(b_hailing_policy|c_travel_clearance|_territorial_comms)$"
