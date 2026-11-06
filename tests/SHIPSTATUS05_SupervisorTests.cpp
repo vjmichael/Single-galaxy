@@ -30,6 +30,7 @@ int main(){
     EntityId player=0,predator=0,peace=0,rock=0;
     std::uint64_t pilot=0;
     std::string pending,performed_state;
+    std::uint64_t first_command=0;
     std::int64_t material=0;
     {
         Simulation genesis(91005);
@@ -68,6 +69,7 @@ int main(){
         const auto first=npc_cyber::supervise(w,7);
         CHECK(first.tick==5 && first.queued==1 &&
               first.last_attacking_ship==predator);
+        first_command=first.last_command;
         CHECK(first.last_target_ship!=0 &&
               first.last_command>=npc_cyber::kSupervisorIdBase &&
               first.last_command<(std::uint64_t{1}<<50));
@@ -101,7 +103,7 @@ int main(){
         CHECK(second.last_command==
               npc_cyber::kSupervisorIdBase+
               second.tick*npc_cyber::kSupervisorIdsPerTick+3);
-        CHECK(second.last_command!=first.last_command);
+        CHECK(second.last_command!=first_command);
         CHECK(recovered.world().npc_cyber_operators().size()==before+1);
         recovered.step();
         CHECK(recovered.world().events().back().result==Outcome::Applied);
