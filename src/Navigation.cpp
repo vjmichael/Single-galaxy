@@ -16,6 +16,37 @@ int axis(std::int64_t position,std::int64_t velocity,std::int64_t target) {
     return heading;
 }
 }
+
+NavigationDecision assist_to_object(const Entity& ship,const Entity& target,
+                                    std::int64_t stand_off_mm) {
+    if(ship.type!=EntityType::Ship || ship.dock_state!=DockState::InSpace ||
+       ship.jump_state!=ShipJumpState::Ready ||
+       target.id==ship.id || ship.system_id!=target.system_id ||
+       stand_off_mm<0 || stand_off_mm>Simulation::kWorldBoundMm)
+        throw std::invalid_argument("invalid physical object approach");
+    // The caller must additionally verify local-frame custody and target
+    // visibility/authorization. A target's velocity is not ship authority.
+    const auto dx=target.position.x-ship.position.x;
+    const auto dy=target.position.y-ship.position.y;
+    NavigationDecision decision;
+    // Stand off along the major relative axis, never through a target.
+    // For stationary stations this preserves FLIGHT-02's docking waypoint.
+    decision.waypoint=target.position;
+    if(std::llabs(dx)>750 || dy==0)
+        decision.waypoint.x-=(dx>0?stand_off_mm:-stand_off_mm);
+    else decision.waypoint.y-=(dy>0?stand_off_mm:-stand_off_mm);
+    const auto rx=decision.waypoint.x-ship.position.x;
+    const auto ry=decision.waypoint.y-ship.position.y;
+    const auto vx=ship.velocity.x-target.velocity.x;
+    const auto vy=ship.velocity.y-target.velocity.y;
+    decision.arrived=std::llabs(rx)<=250 && std::llabs(ry)<=250 &&
+                     vx==0 && vy==0;
+    if(!decision.arrived) {
+        decision.thrust_x=axis(ship.position.x,vx,decision.waypoint.x);
+        decision.thrust_y=axis(ship.position.y,vy,decision.waypoint.y);
+    }
+    return decision;
+}
 NavigationDecision assist_to_station(const Entity& ship,Vector2 station) {
     if(ship.type!=EntityType::Ship||ship.dock_state!=DockState::InSpace)
         throw std::invalid_argument("navigation assist needs an undocked ship");
