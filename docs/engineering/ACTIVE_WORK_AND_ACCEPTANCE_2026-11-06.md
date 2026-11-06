@@ -9,36 +9,24 @@
 | Order | Task / owner-facing outcome | Current evidence |
 |---|---|---|
 | **8 — DONE (review consolidation)** | One canonical review PR and CI thread: [#86](https://github.com/vjmichael/Single-galaxy/pull/86) based directly on PR #77's territorial branch. Closed old #78–#85 review threads without losing their committed code or implying mainline acceptance. | All eight superseded threads closed; #86 open draft. **Mainline not merged**. |
-| **A = 1+2+3 — WIRED, EXECUTION OPEN** | One unified `native_and_live_game` Windows/Linux GitHub Actions **matrix job** covers native CMake/CTest across 01–07E; authentic physical two-owner cyber/hail SQLite and restart; login/relay plus Linux Chromium against the source-built game. | `.github/workflows/ship-status02-authoritative.yml` renamed internally to **SHIP-STATUS consolidated native + live-game acceptance** with one matrix and concurrency cancellation. Windows runs host/test binaries only, no browser/installer. Real native runner results **not yet passed**. |
+| **A = 1+2+3 — WIRED, EXECUTION OPEN** | One unified `native_and_live_game` Windows/Linux GitHub Actions **matrix job** covers native CMake/CTest across 01–07E; authentic physical two-owner cyber/hail SQLite and restart; login/relay plus Linux Chromium against the source-built game. | `.github/workflows/ship-status02-authoritative.yml` renamed internally to **SHIP-STATUS consolidated native + live-game acceptance** with one matrix and concurrency cancellation. Windows runs host/test binaries only, no browser/installer. Real native runner results **not yet passed**. Latest inspected unified run [#42313442401](https://github.com/vjmichael/Single-galaxy/actions/runs/42313442401): Windows/Linux jobs queued with no executed steps. |
 | **4 — DEFERRED BY USER** | Windows installed/packaged desktop game, true native Windows graphical acceptance and installer lifecycle. | Do **not** build or run a Windows browser-as-game acceptance substitute; reactivate **only after native 3D assets and real 3D presentation** are ready. |
-| **5 — NEXT IMPLEMENTATION** | Live two-sided authenticated player–player, player–NPC and NPC–player calls, opt-in identity and reliable delivery/reconnection; no fabricated NPC authority. | Core journal and local security desk coded; single-home-owner relay, so multiplayer/NPC active response are not completed. |
-| **6 — OPEN** | Lawful colony security complaints and agency capacity using original political/territorial authority, verified evidence, independent review and appropriate nonviolent response. | Review-eligible complaint evidence coded. No actual law-enforcement institutions, lawful verdict or police deployment connected. |
-| **7 — OPEN** | Adversarial privacy, hacked-client, forged identity, anonymous track, report, replay and bounded persistent ledger/counter test suite. | Narrow native test sources and JS tests exist; end-to-end security acceptance not complete. |
-| **9 — OPEN** | Named-NPC proportionate hailing, refusal, harassment reporting and actual resource-backed supervisor tasks using the unified existing NPC flight/work system. | No autonomous full two-sided NPC hailing gameplay yet. |
-| **10 — NOW ACTIVE (SEPARATE GAMEPLAY MILESTONE)** | Develop physically executable ship-to-ship weapon combat with finite fitted modules/ammo, actual damage and salvage/wreck/custody under original Simulation; NPC use must reuse existing combat/nav and lawful authority. | Current PLAY-08 training combat and hacking/status effects are **not equivalent to complete real ship-to-ship fighting**. Treat this as separate implementation rather than postponing indefinitely; 3D assets/Windows installer are **not** prerequisites for native simulation code or tests. |
+| **5 — PARTIALLY CODED** | Live two-sided authenticated player–player, player–NPC and NPC–player calls, opt-in identity and reliable delivery/reconnection; no fabricated NPC authority. | Original NPC governing supervisor now codes reply/decline/silence and a narrowly justified RequestAid/warning outbound call using actual named observers and policy; native test added. Real multiplayer accounts/reconnect remain open. |
+| **6 — TRIAGE CODED, LAWFUL AGENCY OPEN** | Lawful colony security complaints and agency capacity using original political/territorial authority, verified evidence, independent review and appropriate nonviolent response. | Original complaint/jurisdiction/on-duty-reviewer preflight and owner-scoped review status coded; no real agency, verdict or police dispatch yet. |
+| **7 — TESTS/HARDENING IN PROGRESS** | Adversarial privacy, hacked-client, forged identity, anonymous track, report, replay and bounded persistent ledger/counter test suite. | Fixed malformed prior relay patrol condition, restored training-weapon allowlist and added verified-shape FireShip relay/owner spoofing tests, law-review denial cases and JS display assertions; native authenticated validation still pending. |
+| **9 — INITIAL NPC HAIL SUPERVISOR CODED** | Named-NPC proportionate hailing, refusal, harassment reporting and actual resource-backed supervisor tasks using the unified existing NPC flight/work system. | Real governed NPC identify/decline/silence plus bounded RequestAid/territorial warning initiation coded; real NPC-to-NPC communications, complaint-aware response and independent acceptance remain. |
+| **10 — PHYSICAL COMBAT 01A CODED, FULL BATTLE OPEN** | Develop physically executable ship-to-ship weapon combat with finite fitted modules/ammo, actual damage and salvage/wreck/custody under original Simulation; NPC use must reuse existing combat/nav and lawful authority. | Original `Action::FireShipWeapon`, v104 snapshot, finite ammo/aim/sensor hull impact, unoccupied-ship wreck conversion and staffed-ship hull floor implemented with CMake/relay regression source. Crewed destruction and real casualty/rescue/custody, salvage rights, NPC weapons and 3D battle UI remain open. |
 
 **Acceptance constraints:** no false pass from queued CI; never make GH CI a blocker to independent code changes; no second simulation or free NPCs. Real game-space attack consequences must be authorized through original custody, conflict and damage rules. No silent identity inference from sensor matches; no complaint equals criminal conviction.
 
 
 **Recorded 2026-11-06. Project:** the **original Single-Galaxy game**, not the separate EVEmu audit. **Source of truth:** the real repository branches, native C++/SQLite authoritative world, authenticated host, executable tests and exact commit-specific results. This ledger tracks the active *SHIP-STATUS / cyber / hailing / security* stack and its direct dependencies. It is not a claim that the full one-galaxy game is finished.
 
-## Where development currently stands
+## Where development currently stands — consolidated PR
 
-The game has a historical Linux proto­type and extensive older design/engineering reports. **Do not mistake those historical pass counts for current-stack acceptance.** The newest work is an **unmerged, sequential stack of nine OPEN DRAFT PRs**:
+**Current development:** [one active consolidated draft PR #86](https://github.com/vjmichael/Single-galaxy/pull/86), based on original territorial [PR #77](https://github.com/vjmichael/Single-galaxy/pull/77). The former sequential review threads **#78–#85 were closed as superseded** on 2026-11-06. Their code remains in #86's ancestry; **none of those were marked merged or native accepted**, and `main` remains untouched.
 
-| PR | Implementation checkpoint | Status |
-|---|---|---|
-| [#78](https://github.com/vjmichael/Single-galaxy/pull/78) — SHIP-STATUS-01 | Temporary physical-module Confusion effect | Draft; native current-stack acceptance pending |
-| [#79](https://github.com/vjmichael/Single-galaxy/pull/79) — 02 | Original authoritative module execution, v100 persistence | Draft; native acceptance pending |
-| [#80](https://github.com/vjmichael/Single-galaxy/pull/80) — 03 | Manufactured intrusion emitter, firewall, v101 | Draft; native acceptance pending |
-| [#81](https://github.com/vjmichael/Single-galaxy/pull/81) — 04 | Real NPC-operator cyber decisions, territorial evidence, v102 | Draft; native acceptance pending |
-| [#82](https://github.com/vjmichael/Single-galaxy/pull/82) — 05 | Player cyber cockpit and recurring supervised NPC cyber executor | Draft; installed/native acceptance pending |
-| [#83](https://github.com/vjmichael/Single-galaxy/pull/83) — 06 | Real NPC approach/patrol → cyber action; native defender status | Draft; native/installed acceptance pending |
-| [#84](https://github.com/vjmichael/Single-galaxy/pull/84) — 07 | Anonymous physical ship description, case intake, v103 stealth and sensor acquisition | Draft; native/installed acceptance pending |
-| [#85](https://github.com/vjmichael/Single-galaxy/pull/85) — 07D | Authenticated territorial and direct-security desk bridge; voluntary hailing, warning/reply, case presentation | Draft; native/installed acceptance pending |
-| [#86](https://github.com/vjmichael/Single-galaxy/pull/86) — 07E | Direct ship hails, Identify/Decline, durable anti-harassment penalties, owner-scoped complaints | Draft; native/installed acceptance pending |
-
-Each PR depends on the preceding one. **Code committed ≠ accepted feature ≠ merged mainline.** Do not mark a subordinate PR green because a later branch contains its source; require actual acceptance for the integrated chain. The active branch currently audited is `feature/ship-status07e-hail-abuse-escalation-20261106`, built on PR #85 and ultimately #78.
+Historical Linux prototype evidence from earlier B7/GRSM reports is not current-stack acceptance. For latest feature source and unverified gates, see [the follow-on technical report](SHIPSTATUS_NEXTWAVE_COMMS_REVIEW_COMBAT_20261106.md).
 
 ## Binding rules — ship identity, evidence, stealth and abusive hailing
 
@@ -77,9 +65,11 @@ Each PR depends on the preceding one. **Code committed ≠ accepted feature ≠ 
 
 This table is scoped to the **active cyber/security/hailing stack**. The much larger planetary, settlement, industry, migration, social-memory and continuous-galaxy roadmaps remain separate workstreams; do not mark those complete or blocked solely because this stack is awaiting verification.
 
-## Practical next order
+## Current execution order
 
-**First** complete P0 verification and native repairs (STATUS-VERIFY-01/02). **Second** execute authenticated real UI end-to-end (STATUS-VERIFY-03). **Third** produce installed Windows evidence (STATUS-INSTALL-01), while independently implementing legitimate cross-owner/NPC comms (STATUS-COMMS-01) without treating queued CI as a coding blocker. **Then** harden owner/privacy and connect legitimate enforcement; finally merge accepted stack. Maintain this ledger after each verified head and report the actual acceptance evidence.
+**Complete review housekeeping:** close obsolete #78–#85 review threads while retaining the single integrated #86 draft. **Combined acceptance A (former 1+2+3)** is the existing unified Windows/Linux native C++/SQLite and authenticated host job, with Linux-only source-built Chromium. Runners remain queued; the job is **not accepted**.
+
+**No Windows installed game, Windows browser substitute or installer work until real 3D assets and presentation.** Continue remaining code work in priority order: **5 two-sided hails; 6 lawful review infrastructure; 7 security hardening; 9 NPC behavioral responses; 10 physical ship combat and crew custody**. The first NPC reply/policy and v104 physical hull-damage slices are coded but **not native-verified**. The source-built 2D browser is a dev/test client, not the native Windows 3D game's release gate.
 
 ### Related primary records
 
