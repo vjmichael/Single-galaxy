@@ -6142,6 +6142,56 @@ bool Simulation::delegate_customer_ship_order(PlayerId owner,
     snapshot_version_=std::max(snapshot_version_,94);
     return true;
 }
+// WORK-01C: authorization is only to advance/reconcile a previously
+// posted native transport order. Posting, carrier ownership, flight pilot,
+// physical cargo movement and voyage receipts remain in their own systems.
+bool Simulation::delegate_transport_work_order(PlayerId owner,EntityId origin,
+        std::uint64_t id,WorkTaskKind kind,std::uint64_t source,
+        std::uint64_t dependency){
+    if(!owner || owner==kServerAuthority || !id ||
+       id>=(std::uint64_t{1}<<50) ||
+       !source || source>=(std::uint64_t{1}<<50) ||
+       (kind!=WorkTaskKind::LocalDelivery &&
+        kind!=WorkTaskKind::IntercolonyFreight) ||
+       work_directives_.count(id) || work_directives_.size()>=10000 ||
+       (dependency && dependency>=id))return false;
+    const auto colony=entities_.find(origin);
+    const auto pickup=local_delivery_orders_.find(source);
+    if(colony==entities_.end() || colony->second.type!=EntityType::Ship ||
+       colony->second.owner_id!=owner || !colony_ships_.count(origin) ||
+       !life_support_.count(origin) ||
+       pickup==local_delivery_orders_.end() ||
+       pickup->second.owner!=owner ||
+       pickup->second.board_ship!=origin ||
+       pickup->second.stage==LocalDeliveryStage::Cancelled)return false;
+    if(kind==WorkTaskKind::LocalDelivery &&
+       pickup->second.stage==LocalDeliveryStage::Complete)return false;
+    if(kind==WorkTaskKind::IntercolonyFreight){
+        const auto leg=intercolony_freight_.find(source);
+        if(leg==intercolony_freight_.end() ||
+           leg->second.owner!=owner || leg->second.source_ship!=origin ||
+           leg->second.cargo!=pickup->second.cargo ||
+           leg->second.kilograms!=pickup->second.kilograms ||
+           !leg->second.carrier_ship || !leg->second.destination_ship ||
+           leg->second.stage==IntercolonyFreightStage::Delivered)return false;
+    }
+    if(dependency){
+        const auto prior=work_directives_.find(dependency);
+        if(prior==work_directives_.end() ||
+           prior->second.owner!=owner ||
+           prior->second.colony_ship!=origin)return false;
+    }
+    for(const auto& [other_id,other]:work_directives_){
+        (void)other_id;
+        if(other.kind==kind && other.source_order==source &&
+           other.status!=WorkDirectiveStatus::Cancelled)return false;
+    }
+    work_directives_.emplace(id,WorkDirective{
+        id,owner,origin,kind,source,dependency,{},0,
+        WorkDirectiveStatus::Active,WorkBlock::None,tick_,tick_,0});
+    snapshot_version_=std::max(snapshot_version_,94);
+    return true;
+}
 bool Simulation::cancel_work_directive(PlayerId owner,std::uint64_t id){
     const auto it=work_directives_.find(id);
     if(!owner || owner==kServerAuthority ||
@@ -6200,9 +6250,11 @@ void Simulation::process_universal_work(){
         [this](PlayerId owner,std::uint64_t contract){
             return can_fund_shipyard_customer_order(owner,contract);
         },1};
+    const work::NativeTransportContext native_transport{
+        &local_delivery_orders_,&intercolony_freight_};
     const auto schedule=work::plan(
         work_directives_,shipyard_customer_orders_,npcs_,tick_,
-        capacity,policy);
+        capacity,policy,native_transport);
     for(const auto& candidate:schedule){
         auto active=work_directives_.find(candidate.id);
         if(active==work_directives_.end() ||
@@ -6266,6 +6318,54 @@ void Simulation::process_universal_work(){
                 block(WorkBlock::Dependency);
                 continue;
             }
+        }
+        // Existing planetary shuttle automation has ALREADY run this tick:
+        // these records are physical flight receipts, not a second engine.
+        if(directive.kind==WorkTaskKind::LocalDelivery){
+            const auto pickup=local_delivery_orders_.find(
+                directive.source_order);
+            if(pickup==local_delivery_orders_.end() ||
+               pickup->second.owner!=directive.owner ||
+               pickup->second.board_ship!=directive.colony_ship ||
+               pickup->second.stage==LocalDeliveryStage::Cancelled){
+                block(WorkBlock::PhysicalDelivery);
+            }else if(pickup->second.stage==LocalDeliveryStage::Complete){
+                // The only completion proof is the native shuttle unload.
+                finish();
+            }else block(WorkBlock::NativeConstruction);
+            continue;
+        }
+        if(directive.kind==WorkTaskKind::IntercolonyFreight){
+            const auto leg=intercolony_freight_.find(directive.source_order);
+            const auto pickup=local_delivery_orders_.find(
+                directive.source_order);
+            if(leg==intercolony_freight_.end() ||
+               pickup==local_delivery_orders_.end() ||
+               pickup->second.owner!=directive.owner ||
+               pickup->second.board_ship!=directive.colony_ship ||
+               pickup->second.stage==LocalDeliveryStage::Cancelled ||
+               leg->second.owner!=directive.owner ||
+               leg->second.source_ship!=directive.colony_ship ||
+               leg->second.cargo!=pickup->second.cargo ||
+               leg->second.kilograms!=pickup->second.kilograms){
+                block(WorkBlock::PhysicalDelivery);
+            }else if(leg->second.stage==IntercolonyFreightStage::Delivered){
+                // Arrival and unloaded cargo were committed by original
+                // freight system, never inferred from journey intentions.
+                finish();
+            }else if(leg->second.stage==IntercolonyFreightStage::AwaitingPickup){
+                // Original local board owns exact shuttle load and any
+                // automatic near-berth load onto the preplanned carrier.
+                block(WorkBlock::NativeConstruction);
+            }else if(intercolony_transport_manifest(directive.source_order) &&
+                     deliver_intercolony_freight(
+                         directive.owner,directive.source_order)){
+                // This calls the ORIGINAL native completed-arrival, berth,
+                // carrier inventory and receipt validation and commits in
+                // the same PersistentWorld copied-state step.
+                finish();
+            }else block(WorkBlock::PhysicalDelivery);
+            continue;
         }
         if(directive.kind!=WorkTaskKind::CustomerShipOrder)continue;
         const auto it=shipyard_customer_orders_.find(directive.source_order);
@@ -7675,7 +7775,7 @@ void Simulation::steps(std::uint64_t count) {
 
 std::string Simulation::canonical_state() const {
     std::ostringstream out;
-    out << ( snapshot_version_ >= 92 ? "galaxy-kernel-v92|" : snapshot_version_ >= 91 ? "galaxy-kernel-v91|" : snapshot_version_ >= 90 ? "galaxy-kernel-v90|" : snapshot_version_ >= 89 ? "galaxy-kernel-v89|" : snapshot_version_ >= 88 ? "galaxy-kernel-v88|" : snapshot_version_ >= 87 ? "galaxy-kernel-v87|" : snapshot_version_ >= 86 ? "galaxy-kernel-v86|" : snapshot_version_ >= 85 ? "galaxy-kernel-v85|" : snapshot_version_ >= 84 ? "galaxy-kernel-v84|" : snapshot_version_ >= 83 ? "galaxy-kernel-v83|" : snapshot_version_ >= 82 ? "galaxy-kernel-v82|" : snapshot_version_ >= 81 ? "galaxy-kernel-v81|" : snapshot_version_ >= 80 ? "galaxy-kernel-v80|" : snapshot_version_ >= 79 ? "galaxy-kernel-v79|" : snapshot_version_ >= 78 ? "galaxy-kernel-v78|" : snapshot_version_ >= 77 ? "galaxy-kernel-v77|" : snapshot_version_ >= 76 ? "galaxy-kernel-v76|" : snapshot_version_ >= 75 ? "galaxy-kernel-v75|" : snapshot_version_ >= 74 ? "galaxy-kernel-v74|" : snapshot_version_ >= 73 ? "galaxy-kernel-v73|" : snapshot_version_ >= 72 ? "galaxy-kernel-v72|" : snapshot_version_ >= 71 ? "galaxy-kernel-v71|" : snapshot_version_ >= 70 ? "galaxy-kernel-v70|" : snapshot_version_ >= 69 ? "galaxy-kernel-v69|" : snapshot_version_ >= 68 ? "galaxy-kernel-v68|" : snapshot_version_ >= 67 ? "galaxy-kernel-v67|" : snapshot_version_ >= 66 ? "galaxy-kernel-v66|" : snapshot_version_ >= 65 ? "galaxy-kernel-v65|" : snapshot_version_ >= 64 ? "galaxy-kernel-v64|" : snapshot_version_ >= 63 ? "galaxy-kernel-v63|" : snapshot_version_ >= 62 ? "galaxy-kernel-v62|" : snapshot_version_ >= 61 ? "galaxy-kernel-v61|" : snapshot_version_ >= 60 ? "galaxy-kernel-v60|" : snapshot_version_ >= 59 ? "galaxy-kernel-v59|" : snapshot_version_ >= 58 ? "galaxy-kernel-v58|" : snapshot_version_ >= 57 ? "galaxy-kernel-v57|" : snapshot_version_ >= 53 ? "galaxy-kernel-v53|" : snapshot_version_ >= 52 ? "galaxy-kernel-v52|" : snapshot_version_ >= 49 ? "galaxy-kernel-v49|" : snapshot_version_ >= 48 ? "galaxy-kernel-v48|" : snapshot_version_ >= 44 ? "galaxy-kernel-v44|" : snapshot_version_ >= 41 ? "galaxy-kernel-v41|" : snapshot_version_ >= 40 ? "galaxy-kernel-v40|" : snapshot_version_ >= 39 ? "galaxy-kernel-v39|" : snapshot_version_ >= 38 ? "galaxy-kernel-v38|" : snapshot_version_ >= 37 ? "galaxy-kernel-v37|" : snapshot_version_ >= 36 ? "galaxy-kernel-v36|" : snapshot_version_ >= 35 ? "galaxy-kernel-v35|" : snapshot_version_ >= 34 ? "galaxy-kernel-v34|" : snapshot_version_ >= 33 ? "galaxy-kernel-v33|" : snapshot_version_ >= 32 ? "galaxy-kernel-v32|" : snapshot_version_ >= 31 ? "galaxy-kernel-v31|" : snapshot_version_ >= 30 ? "galaxy-kernel-v30|" : snapshot_version_ >= 29 ? "galaxy-kernel-v29|" : snapshot_version_ >= 28 ? "galaxy-kernel-v28|" : snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
+    out << ( snapshot_version_ >= 94 ? "galaxy-kernel-v94|" : snapshot_version_ >= 93 ? "galaxy-kernel-v93|" : snapshot_version_ >= 92 ? "galaxy-kernel-v92|" : snapshot_version_ >= 91 ? "galaxy-kernel-v91|" : snapshot_version_ >= 90 ? "galaxy-kernel-v90|" : snapshot_version_ >= 89 ? "galaxy-kernel-v89|" : snapshot_version_ >= 88 ? "galaxy-kernel-v88|" : snapshot_version_ >= 87 ? "galaxy-kernel-v87|" : snapshot_version_ >= 86 ? "galaxy-kernel-v86|" : snapshot_version_ >= 85 ? "galaxy-kernel-v85|" : snapshot_version_ >= 84 ? "galaxy-kernel-v84|" : snapshot_version_ >= 83 ? "galaxy-kernel-v83|" : snapshot_version_ >= 82 ? "galaxy-kernel-v82|" : snapshot_version_ >= 81 ? "galaxy-kernel-v81|" : snapshot_version_ >= 80 ? "galaxy-kernel-v80|" : snapshot_version_ >= 79 ? "galaxy-kernel-v79|" : snapshot_version_ >= 78 ? "galaxy-kernel-v78|" : snapshot_version_ >= 77 ? "galaxy-kernel-v77|" : snapshot_version_ >= 76 ? "galaxy-kernel-v76|" : snapshot_version_ >= 75 ? "galaxy-kernel-v75|" : snapshot_version_ >= 74 ? "galaxy-kernel-v74|" : snapshot_version_ >= 73 ? "galaxy-kernel-v73|" : snapshot_version_ >= 72 ? "galaxy-kernel-v72|" : snapshot_version_ >= 71 ? "galaxy-kernel-v71|" : snapshot_version_ >= 70 ? "galaxy-kernel-v70|" : snapshot_version_ >= 69 ? "galaxy-kernel-v69|" : snapshot_version_ >= 68 ? "galaxy-kernel-v68|" : snapshot_version_ >= 67 ? "galaxy-kernel-v67|" : snapshot_version_ >= 66 ? "galaxy-kernel-v66|" : snapshot_version_ >= 65 ? "galaxy-kernel-v65|" : snapshot_version_ >= 64 ? "galaxy-kernel-v64|" : snapshot_version_ >= 63 ? "galaxy-kernel-v63|" : snapshot_version_ >= 62 ? "galaxy-kernel-v62|" : snapshot_version_ >= 61 ? "galaxy-kernel-v61|" : snapshot_version_ >= 60 ? "galaxy-kernel-v60|" : snapshot_version_ >= 59 ? "galaxy-kernel-v59|" : snapshot_version_ >= 58 ? "galaxy-kernel-v58|" : snapshot_version_ >= 57 ? "galaxy-kernel-v57|" : snapshot_version_ >= 53 ? "galaxy-kernel-v53|" : snapshot_version_ >= 52 ? "galaxy-kernel-v52|" : snapshot_version_ >= 49 ? "galaxy-kernel-v49|" : snapshot_version_ >= 48 ? "galaxy-kernel-v48|" : snapshot_version_ >= 44 ? "galaxy-kernel-v44|" : snapshot_version_ >= 41 ? "galaxy-kernel-v41|" : snapshot_version_ >= 40 ? "galaxy-kernel-v40|" : snapshot_version_ >= 39 ? "galaxy-kernel-v39|" : snapshot_version_ >= 38 ? "galaxy-kernel-v38|" : snapshot_version_ >= 37 ? "galaxy-kernel-v37|" : snapshot_version_ >= 36 ? "galaxy-kernel-v36|" : snapshot_version_ >= 35 ? "galaxy-kernel-v35|" : snapshot_version_ >= 34 ? "galaxy-kernel-v34|" : snapshot_version_ >= 33 ? "galaxy-kernel-v33|" : snapshot_version_ >= 32 ? "galaxy-kernel-v32|" : snapshot_version_ >= 31 ? "galaxy-kernel-v31|" : snapshot_version_ >= 30 ? "galaxy-kernel-v30|" : snapshot_version_ >= 29 ? "galaxy-kernel-v29|" : snapshot_version_ >= 28 ? "galaxy-kernel-v28|" : snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
         << '|' << rng_state_ << '\n';
     if (snapshot_version_>=5) for(const auto system:systems_)out<<"system|"<<system<<'\n';
     if(snapshot_version_>=68)out<<"probelatency|"<<probe_report_delay_ticks_<<'\n';
