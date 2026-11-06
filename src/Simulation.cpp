@@ -1,5 +1,6 @@
 #include "galaxy/Simulation.hpp"
 #include "galaxy/ShipStatusFitting.hpp"
+#include "galaxy/ShipSensorProfile.hpp"
 #include "galaxy/WorkPlanning.hpp"
 #include "galaxy/Navigation.hpp"
 #include "galaxy/ShipInteractionPreflight.hpp"
@@ -3272,9 +3273,19 @@ Event Simulation::execute(const Command& c) {
                !same_local_frame(c.actor,c.target)) {
                 result.result=Outcome::OutOfRange;return result;
             }
-            if(std::hypot(double(defender.position.x)-actor.position.x,
-                          double(defender.position.y)-actor.position.y)>
-                          double(kHackRangeMm)) {
+            // Never trust a guessed target entity ID from the browser or
+            // an autonomous NPC. Native sensor acquisition is mandatory at
+            // the actual execution tick, not merely at target-list render.
+            // A baffle can therefore make a vessel invisible to a nearby
+            // emitter until its carrier approaches or installs stronger
+            // original material-backed detection hardware.
+            const auto acquisition=ship_sensors::detection_range_mm(
+                *this,actor,defender);
+            const auto physical_distance=std::hypot(
+                double(defender.position.x)-actor.position.x,
+                double(defender.position.y)-actor.position.y);
+            if(physical_distance>double(kHackRangeMm) ||
+               physical_distance>double(acquisition)) {
                 result.result=Outcome::OutOfRange;return result;
             }
             const std::array<bool,2> exposed{{
