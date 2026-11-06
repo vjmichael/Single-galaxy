@@ -93,6 +93,7 @@ async function connect(){
  if(source){source.close();source=null;}
  window.GalaxyColonyMode=false;
  window.GalaxyCyberControls?.reset();
+ window.GalaxySecurityDesk?.reset();
  window.GalaxyResetExpedition?.();
  const bridge=window.GalaxyLiveBridge;bridge.reset();window.GalaxySurveyBridge?.reset();window.GalaxyColony?.reset();message('Connecting to one running local world…');
  try{
@@ -115,7 +116,9 @@ async function connect(){
      if(!colonyMode)return;
      try{
        const raw=atob(e.data);
-       if(!window.GalaxyCyberControls?.accept(raw))window.GalaxyColony?.accept(raw);
+       if(!window.GalaxyCyberControls?.accept(raw) &&
+          !window.GalaxySecurityDesk?.accept(raw))
+         window.GalaxyColony?.accept(raw);
      }catch(ex){message('Colony telemetry rejected: '+ex.message);}
    });
    source.addEventListener('survey',e=>{
@@ -128,7 +131,10 @@ async function connect(){
    });
    // The authenticated host enumerates real hulls; saved UI selection
    // is never trusted until FLEET_SELECTED confirms it.
-   if(colonyMode)void command('colonyFleetStatus',{},true);
+   if(colonyMode){
+     void command('colonyFleetStatus',{},true);
+     void command('colonySecurityRefresh',{},true);
+   }
    source.addEventListener('complete',()=>{cancelAssist('paused');bridge.complete();message('Run completed. Reconnect to review the finished world.');source.close();source=null;});
    source.addEventListener('failed',e=>{cancelAssist('paused');bridge.fail('Host failed: '+e.data);source.close();source=null;if(e.data==='Session expired')window.GalaxyDisconnect?.();});
    source.addEventListener('error',()=>{if(source){cancelAssist('paused');source.close();source=null;bridge.fail('Stream lost. Use Reconnect to replay and catch up.');}});
@@ -397,7 +403,7 @@ window.GalaxyDisconnect=()=>{
  lastReturnShip=null;
  if(source){source.close();source=null;}token=null;
  colonyMode=false;window.GalaxyColonyMode=false;
- window.GalaxyLiveBridge?.reset();window.GalaxyColony?.reset();window.GalaxyCyberControls?.reset();window.GalaxySurveyBridge?.reset();
+ window.GalaxyLiveBridge?.reset();window.GalaxyColony?.reset();window.GalaxyCyberControls?.reset();window.GalaxySecurityDesk?.reset();window.GalaxySurveyBridge?.reset();
  el('interactiveControls').hidden=true;el('colonyPanel').hidden=true;el('surveyPanel').hidden=true;
  el('flightCameraControls').hidden=true;
  el('qaPanel').hidden=true;
