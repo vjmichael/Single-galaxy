@@ -31,6 +31,9 @@ STATIC={
     '/viewer/viewer.js':'viewer/viewer.js',
     '/viewer/colony.js':'viewer/colony.js',
     '/viewer/cyber-controls.js':'viewer/cyber-controls.js',
+    '/viewer/security-desk.js':'viewer/security-desk.js',
+    '/viewer/security-only.html':'viewer/security-only.html',
+    '/viewer/security-only.js':'viewer/security-only.js',
     '/viewer/opening-guide.js':'viewer/opening-guide.js',
     '/viewer/flight-controls.js':'viewer/flight-controls.js',
     '/viewer/flight-camera.js':'viewer/flight-camera.js',
@@ -81,7 +84,8 @@ def authenticate_account(rows,username,password):
     return row if hmac.compare_digest(candidate,expected) else None
 
 class SharedRuntime:
-    def __init__(self,exe,db,tick_ms,max_ticks,qa_mode=False,authenticated=False):
+    def __init__(self,exe,db,tick_ms,max_ticks,qa_mode=False,authenticated=False,
+                 human_owners=None):
         self.cv=threading.Condition()
         self.frames=[]
         self.survey_events=[]
@@ -92,7 +96,19 @@ class SharedRuntime:
         self.cmd_lock=threading.Lock()
         self.token=secrets.token_urlsafe(32)
         self.authenticated=authenticated
+        self.human_owners=frozenset(human_owners or (7,))
+        if authenticated and (7 not in self.human_owners or
+                len(self.human_owners)>64 or
+                any(type(p)!=int or not 1<=p<=9007199254740991
+                    for p in self.human_owners)):
+            raise ValueError('Invalid trusted human-owner roster')
+        self.private_colony_events=[]
         env=os.environ.copy()
+        if authenticated:
+            # Account roster travels only to the trusted native host process,
+            # never to the browser. Real ship ownership is rechecked natively.
+            env['SG_AUTHENTICATED_HUMAN_OWNERS']=','.join(
+                str(p) for p in sorted(self.human_owners))
         # The relay is local-only and QA commands are disabled unless the
         # explicit developer CLI switch is present. Not a multiplayer authority.
         env['SINGLE_GALAXY_QA_MODE']='1' if qa_mode else '0'
@@ -106,6 +122,21 @@ class SharedRuntime:
     def _read_stderr(self):
         for raw in self.proc.stderr:
             line=raw.decode('ascii',errors='replace').rstrip('\n')
+            if line.startswith('PRIVATE|'):
+                # Host-only owner-addressed frame. Never forward this wrapper
+                # on the ordinary global colony broadcast or SGVIEW stream.
+                m=re.fullmatch(r'PRIVATE\\|([1-9][0-9]{0,15})\\|(COLONY\\|1\\|[0-9]+\\|SECURITY_[A-Z_]+(?:\\|[A-Za-z0-9_-]+)*)',line)
+                if m and len(line)<=260:
+                    target=int(m.group(1))
+                    if target in self.human_owners and target!=7:
+                        with self.cv:
+                            if len(self.private_colony_events)<4096:
+                                encoded=base64.b64encode(
+                                    m.group(2).encode('ascii')).decode('ascii')
+                                self.private_colony_events.append(
+                                    (target,encoded))
+                                self.cv.notify_all()
+                continue
             if line.startswith('COLONY|1|'):
                 if len(line)<=180 and re.fullmatch(r'[a-zA-Z0-9_|-]+',line):
                     with self.cv:
@@ -153,7 +184,12 @@ class SharedRuntime:
 
     def send(self,command,principal=None):
         if self.authenticated:
-            if principal!=7:raise PermissionError('This colony ship belongs to player 7')
+            if principal not in self.human_owners:
+                raise PermissionError('Unknown authenticated account')
+            if principal!=7 and not (command=='SECURITY_REFRESH' or
+                    command.startswith('SECURITY_CALL|') or
+                    command.startswith('SECURITY_CALL_REPLY|')):
+                raise PermissionError('Secondary account has security-only access')
             command='AUTH|'+str(principal)+'|'+command
         with self.cmd_lock:
             if self.finished or self.proc.poll() is not None:
@@ -208,7 +244,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def _session_payload(self,principal):
         return {'ok':True,'username':principal['username'],'playerId':principal['playerId'],
-                'csrf':principal['csrf'],'writes':False,'colonyWrites':principal['playerId']==7,'colony_mode':principal['playerId']==7,
+                'csrf':principal['csrf'],'writes':False,'colonyWrites':principal['playerId']==7,
+                'securityWrites':principal['playerId'] in self.server.runtime.human_owners,
+                'securityOnly':principal['playerId']!=7,
+                'colony_mode':principal['playerId']==7,
                 'tick_ms':self.server.tick_ms,'max_ticks':self.server.max_ticks}
 
     def _same_origin(self):
@@ -1012,7 +1051,9 @@ def run(args=None):
     with tempfile.TemporaryDirectory(prefix='galaxy-interactive-') as tmp:
         save=opt.save.resolve() if opt.save else pathlib.Path(tmp)/'world.sqlite'
         save.parent.mkdir(parents=True,exist_ok=True)
-        rt=SharedRuntime(opt.host_exe.resolve(),save,opt.tick_ms,opt.max_ticks,opt.qa_test,authenticated=bool(accounts))
+        rt=SharedRuntime(opt.host_exe.resolve(),save,opt.tick_ms,opt.max_ticks,opt.qa_test,
+            authenticated=bool(accounts),
+            human_owners={a['playerId'] for a in accounts.values()} if accounts else {7})
         rt.db=save
         try:
             with Server(('127.0.0.1',opt.port),Handler) as server:
