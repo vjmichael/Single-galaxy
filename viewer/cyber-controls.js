@@ -117,7 +117,7 @@
        ' · emitter '+(emitterPowered?'ONLINE':'OFFLINE')+
        ' · emission cooldown '+status.cooldown+' tick(s)';
    }
-   e('cyberDefense').textContent=defense?.tick===status?.tick && defense.remaining>0?
+   e('cyberDefense').textContent=defense && status && defense.tick===status.tick && defense.remaining>0?
      'CONFUSION ACTIVE · '+defense.remaining+' tick(s) remaining · source ship #'+
        defense.source+' · '+defense.exposed+' exposed module(s). '+
        'You can isolate a hardpoint below to prevent remote toggling.':
