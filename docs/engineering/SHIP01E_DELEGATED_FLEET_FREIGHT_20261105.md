@@ -27,7 +27,7 @@ The shared preflight `fleet_freight_eligible` requires:
 5. A finite reserve of at least **ten actual consumption cycles per onboard crew member** in each of food, water and oxygen. The crew's needs are not ignored just to satisfy a freight delivery.
 6. Existing native site, local celestial frame, source/receiver separation, real shuttle assignment, hold capacity and pending transit validation. These are checked by the underlying existing atomic work-order and freight engines, not replaced by the UI.
 
-The existing host NPC freight scheduler now skips the player's active cockpit when deciding which loaded vessel may leave. Native `FLEET_SELECT` rejects reserved freighters **before** modifying session pilot selection; denial cannot silently steal control away from a previously selected vessel.
+The existing host NPC freight scheduler now skips the player's active cockpit when deciding which loaded vessel may leave. It **rechecks actual named crew availability and finite food/water/oxygen immediately before autonomous departure**, stalling the shipment with its real sealed cargo in place if the carrier is no longer serviceable. Native `FLEET_SELECT` rejects reserved freighters **before** modifying session pilot selection; denial cannot silently steal control away from a previously selected vessel.
 
 ## Live UI and HTTP
 
