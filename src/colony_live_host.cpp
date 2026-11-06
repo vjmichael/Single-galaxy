@@ -8,6 +8,7 @@
 #include "galaxy/ClientContract.hpp"
 #include "galaxy/FleetSelection.hpp"
 #include "galaxy/ColonySafety.hpp"
+#include "galaxy/NpcCyberSupervisor.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -2098,6 +2099,17 @@ int main(int argc,char** argv){
                 if(leg.owner==owner && leg.source_ship==ship)
                     prior_freight.emplace(id,leg.stage);
             world.step();
+            // Run the same finite, original-world cyber command path on
+            // committed ticks. There are no autonomous host-owned attackers
+            // at genesis; only genuinely constructed NPC colonies with an
+            // existing predatory government and fabricated emitter may act.
+            const auto cyber_pulse=npc_cyber::supervise(world,owner,nonce);
+            if(cyber_pulse.queued){
+                announce(world.world(),"NPC_CYBER_QUEUED|"+
+                    std::to_string(cyber_pulse.last_attacking_ship)+"|"+
+                    std::to_string(cyber_pulse.last_target_ship)+"|"+
+                    std::to_string(cyber_pulse.last_command));
+            }
             if(fleet.reconcile(world.world())) {
                 announce(world.world(),"FLEET_FALLBACK|"+
                     std::to_string(fleet.piloted())+"|"+
