@@ -8,6 +8,12 @@ The project reuses SHIP-STATUS-01's temporary Confusion, SHIP-STATUS-02's actual
 
 A colony **may choose to commit an aggressive or unlawful cyber attack**. A watched contact, ignored hail, trespass claim, strategic hostility or patrol movement is never *by itself* a criminal conviction or license to injure or detain the target. Original gameplay must keep the difference between an actor's ability to attack, its political motive and the jurisdiction's legal judgment.
 
+### Original governed tactical trigger
+
+`NpcCyberTactics.hpp::dispatch_governed_hack` now consumes the **original** `ColonyDispositionCoordinator::assess` and demands `ColonyConflict::Posture::PrepareRaid` from a real dated colony-watch contact and actual effective original leader/governance policy. It **records the original strategic decision** via `record_colony_diplomatic_intent` before submitting the same physically verified NPC command. A peaceful, warning-only or unprepared colony has no automatic hacking action. A rejected or out-of-range physical command never gets magically upgraded to a successful attack merely because its leader selected PrepareRaid.
+
+`ColonyConflict::evaluate` also recognizes a real installed and **powered** intrusion emitter as physical attack preparation, in addition to the existing stock-based capacity threshold. A colony with no hardware and no original stock still cannot magically prepare a raid. Neither strategic intent nor a successful attack implies legal justification or a criminal verdict.
+
 ## Native NPC operator
 
 `PersistentWorld::submit_npc_cyber_attack(owner,attacking_ship,pilot_npc,observer_npc,target,command_id,fail)`:
@@ -60,7 +66,7 @@ Windows/Linux CI includes SHIP-STATUS-01/02/03/04 plus PLAY-10 exploration in th
 ## Outstanding next gates
 
 - Exact-head compilation and behavioral acceptance across Windows/Linux, repair failures.
-- Bind NPC tactical decisions to durable original `ColonyConflict` governance agendas and hostility/raid intent, without mistaking intent for lawful authority; no automated aggression on a speculative contact.
+- Extend the now-wired original `PrepareRaid` strategic trigger into a recurring host-supervised NPC tactical cadence with cooldown, squad decisions, equipment reserves, player-visible notification and disengagement. The present command dispatcher is not a background AI combat loop.
 - User-facing module/effective-state diagnostics and accessible temporary HUD interference.
 - Once the separate original criminal law-case mechanism has actual evidence and rules, link the observed cyber attack to a legal verdict and *then* optional hail-aggravation recommendation. No fake conviction, custody or physical interdiction.
 - Installed game acceptance with real NPC movements and resource constraints.
