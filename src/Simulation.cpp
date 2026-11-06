@@ -534,6 +534,17 @@ std::size_t Simulation::people_physically_aboard(EntityId ship) const {
             ++count;
         }
     }
+    // v98: the player is a distinct physical occupant, not an NPC clone.
+    // Existing life-support accounting uses this SAME physical population.
+    if(snapshot_version_>=98)
+        for(const auto& [owner,person]:player_people_){
+            (void)owner;
+            if(person.physical_ship==ship){
+                if(count==std::numeric_limits<std::size_t>::max())
+                    throw std::overflow_error("physical player occupancy overflow");
+                ++count;
+            }
+        }
     return count;
 }
 std::size_t Simulation::passengers_aboard(EntityId ship) const {
