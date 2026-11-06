@@ -54,9 +54,14 @@ inline ObservedCyberAttack contemporaneous_cyber_evidence(
        !world.world().same_local_frame(colony,found->actor))
         return report;
     const auto territory=journal.standing(world,colony,found->actor);
-    const auto victim_territory=journal.standing(world,colony,found->target);
-    if(!territory.in_claimed_region ||
-       !victim_territory.in_claimed_region)return report;
+    // A colony owns its own site. TerritoryJournal::standing() correctly
+    // excludes same-owner visitors, so it is NOT a valid test of whether
+    // the colony itself lies in its claim. Other ships require a real
+    // independently established foreign territorial standing.
+    const bool target_in_claim=found->target==colony ||
+        (victim->owner_id!=home->owner_id &&
+         journal.standing(world,colony,found->target).in_claimed_region);
+    if(!territory.in_claimed_region || !target_in_claim)return report;
     const auto contacts=world.local_colony_watch_contacts(colony,observer_npc);
     const auto observed=std::find_if(contacts.begin(),contacts.end(),
         [&](const colony_defense::Contact& c){
