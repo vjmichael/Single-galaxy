@@ -1664,3 +1664,13 @@ if(BUILD_TESTING)
     COMMAND galaxy_disposition03b_hailing_policy_tests)
   set_tests_properties(galaxy_disposition03b_hailing_policy PROPERTIES TIMEOUT 300)
 endif()
+
+# DISPOSITION-03C: controlled installation travel-clearance policy.
+if(BUILD_TESTING)
+  add_executable(galaxy_disposition03c_travel_clearance_tests
+    tests/DISPOSITION03C_TravelClearanceTests.cpp)
+  target_link_libraries(galaxy_disposition03c_travel_clearance_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_disposition03c_travel_clearance
+    COMMAND galaxy_disposition03c_travel_clearance_tests)
+  set_tests_properties(galaxy_disposition03c_travel_clearance PROPERTIES TIMEOUT 300)
+endif()
