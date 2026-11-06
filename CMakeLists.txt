@@ -1704,3 +1704,13 @@ if(BUILD_TESTING)
     COMMAND galaxy_ship_status03_physical_hacking_tests)
   set_tests_properties(galaxy_ship_status03_physical_hacking PROPERTIES TIMEOUT 300)
 endif()
+
+# SHIP-STATUS-04: original NPC cyber operator and territorial attack evidence.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status04_npc_cyber_tests
+    tests/SHIPSTATUS04_NpcCyberTacticsTests.cpp)
+  target_link_libraries(galaxy_ship_status04_npc_cyber_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status04_npc_cyber
+    COMMAND galaxy_ship_status04_npc_cyber_tests)
+  set_tests_properties(galaxy_ship_status04_npc_cyber PROPERTIES TIMEOUT 300)
+endif()
