@@ -5927,7 +5927,9 @@ void Simulation::process_station_transitions() {
         if (ship.transition_ticks == 0) throw std::logic_error("station transition missing countdown");
         if (--ship.transition_ticks != 0) continue;
         const auto station_it = entities_.find(ship.dock_station);
-        if (station_it == entities_.end() || station_it->second.type != EntityType::Station || station_it->second.system_id!=ship.system_id)
+        if (station_it == entities_.end() ||
+            station_it->second.type != EntityType::Station ||
+            (snapshot_version_<120 && station_it->second.system_id!=ship.system_id))
             throw std::logic_error("station disappeared during transition");
         const auto station_id = ship.dock_station;
         if (ship.dock_state == DockState::Undocking) {
