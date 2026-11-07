@@ -4,6 +4,8 @@ on:
     paths:
       - 'include/galaxy/WO5PhysicalResupply.hpp'
       - 'include/galaxy/WO5IntercolonyBooking.hpp'
+      - 'include/galaxy/WO5FreightEvidence.hpp'
+      - 'tests/PLAY13D_RegionalFacilitiesTests.cpp'
       - 'tests/WO5PhysicalLogisticsTests.cpp'
       - 'include/galaxy/WO4ResourceDemand.hpp'
       - 'include/galaxy/WO4Allocation.hpp'
