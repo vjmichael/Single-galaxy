@@ -34,6 +34,7 @@ int main(){
         for(const auto ship:{a,b,c})
             initial.provision_colony_genesis(
                 ship,2000,2000,2000,2000,2000);
+        initial.provision_starter_exploration_scanner(b);
         initial.enable_individual_workforce();
         initial.upgrade_assignment_snapshot_format();
         initial.enable_passenger_life_support();
@@ -105,6 +106,29 @@ int main(){
               !evidence.armed_intercept_authorized &&
               !evidence.property_seizure_authorized &&
               !evidence.police_dispatch_authorized);
+        // Nonviolent investigation must use a real current physical contact.
+        CHECK(!agency.investigate(world,territory,7,b,7000,a,8001));
+        CHECK(!agency.investigate(world,territory,8,b,99999,a,8001));
+        CHECK(!agency.investigate(world,territory,8,b,7000,c,8001));
+        CHECK(world.world().npc_flight_orders().empty());
+        CHECK(agency.investigate(world,territory,8,b,7000,a,8000));
+        const auto& flights=world.world().npc_flight_orders();
+        CHECK(flights.size()==1 && flights.count(8000)==1);
+        const auto& flight=flights.at(8000);
+        CHECK(flight.owner==8 && flight.ship==b &&
+              flight.station==a && flight.pilot_npc==appointment.officer &&
+              flight.purpose==NpcFlightPurpose::Patrol &&
+              flight.mode==NpcFlightMode::LocalRendezvous &&
+              flight.phase==NpcFlightPhase::Planned);
+        const auto work=agency.investigations(world,8,b);
+        CHECK(work.size()==1 && work.front().referral==7000 &&
+              work.front().target_ship==a &&
+              work.front().native_flight_present &&
+              work.front().native_phase==NpcFlightPhase::Planned);
+        CHECK(!agency.investigate(world,territory,8,b,7000,a,8002));
+        CHECK(world.world().npc_flight_orders().size()==1);
+        CHECK(world.world().find(a)->hull>0);
+        CHECK(world.world().find(b)->hull>0);
         canonical=world.world().canonical_state();
         PersistentWorld::recover_copy(db,backup);
     }
@@ -115,8 +139,15 @@ int main(){
         colony_law::Agency agency(backup);
         ship_notifications::Outbox outbox(backup);
         CHECK(world.world().canonical_state()==canonical);
-        CHECK(agency.active(world,8,b).event_id==4001);
+        CHECK(agency.appointments().size()==1 &&
+              agency.appointments().front().event_id==4001);
         CHECK(agency.referrals(8,b).size()==1);
+        const auto recovered=agency.investigations(world,8,b);
+        CHECK(recovered.size()==1 && recovered.front().native_flight_present &&
+              recovered.front().order_id==8000 &&
+              recovered.front().officer==appointment.officer);
+        CHECK(agency.max_event()>=8000);
+        CHECK(world.world().npc_flight_orders().count(8000)==1);
         CHECK(agency.referrals(7,b).empty());
         const auto saved=outbox.pending(8);
         CHECK(std::any_of(saved.begin(),saved.end(),
