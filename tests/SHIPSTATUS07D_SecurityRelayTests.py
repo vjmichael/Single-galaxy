@@ -52,6 +52,12 @@ def submit(action, payload=None, principal=7, origin=True,
 
 for action, args, line in [
     ("colonySecurityRefresh", {}, "SECURITY_REFRESH"),
+    ("colonySecurityNotifyAck", {"sequence": "90001"},
+     "SECURITY_NOTIFICATION_ACK|90001"),
+    ("colonySecurityAgencyEstablish", {},
+     "SECURITY_AGENCY_ESTABLISH"),
+    ("colonySecurityAgencyRefer", {"complaint": "90002"},
+     "SECURITY_AGENCY_REFER|90002"),
     ("colonyFireShip", {"target": 10023}, "FIRE_SHIP|10023"),
     ("colonySecurityCall", {"ship": 999}, "SECURITY_CALL|999"),
     ("colonySecurityCallReply",
@@ -81,6 +87,14 @@ for action, args, line in [
 
 for action, args in [
     ("colonySecurityRefresh", {"owner": 7}),
+    ("colonySecurityNotifyAck", {"sequence": 1}),
+    ("colonySecurityNotifyAck", {"sequence": "0001"}),
+    ("colonySecurityNotifyAck", {"sequence": "9223372036854775808"}),
+    ("colonySecurityNotifyAck", {"sequence": "1", "owner": 8}),
+    ("colonySecurityAgencyRefer", {"complaint": 5005}),
+    ("colonySecurityAgencyRefer", {"complaint": "0005"}),
+    ("colonySecurityAgencyRefer", {"complaint": "1", "police": True}),
+    ("colonySecurityAgencyEstablish", {"officerNpc": 5}),
     ("colonyFireShip", {"target": True}),
     ("colonyFireShip", {"target": 0}),
     ("colonyFireShip", {"target": "10023"}),
@@ -134,6 +148,8 @@ for action, args in [
 for action, payload, expected in [
     ("colonySecurityRefresh", {}, "SECURITY_REFRESH"),
     ("colonySecurityCall", {"ship": 999}, "SECURITY_CALL|999"),
+    ("colonySecurityNotifyAck", {"sequence": "901"},
+     "SECURITY_NOTIFICATION_ACK|901"),
     ("colonySecurityCallReply", {"request": "900001", "choice": "decline"},
      "SECURITY_CALL_REPLY|900001|DECLINE")
 ]:
@@ -146,7 +162,9 @@ for action, payload in [
     ("colonySecurityClaim", {"radius": 3000}),
     ("colonySecurityPatrol", {"case":"123","ship":3}),
     ("colonySecurityHail", {"colony": 2}),
-    ("colonySecurityWarn", {"ship": 3})
+    ("colonySecurityWarn", {"ship": 3}),
+    ("colonySecurityAgencyEstablish", {}),
+    ("colonySecurityAgencyRefer", {"complaint": "90002"})
 ]:
     status, sent = submit(action,payload,principal=8)
     assert status == 403 and not sent,(action,status,sent)
