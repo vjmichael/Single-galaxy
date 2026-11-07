@@ -14781,6 +14781,52 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 throw std::runtime_error("snapshot: named planetary NPC missing");
         }
     }
+    // All v116 approvals, including CLEARED historical family flights,
+    // remain forever disjoint from ordinary commands, work and transit.
+    if(result.snapshot_version_>=116)
+        for(const auto approval:result.planetary_family_booking_ids_) {
+            if(result.submitted_ids_.count(approval) ||
+               result.shuttle_flight_request_ids_.count(approval) ||
+               result.local_delivery_orders_.count(approval) ||
+               result.voyages_.count(approval) ||
+               result.pending_celestial_transits_.count(approval) ||
+               result.completed_celestial_transits_.count(approval) ||
+               (result.legacy_planetary_residence_import_ &&
+                result.legacy_planetary_residence_import_->host_request_id==
+                    approval))
+                throw std::runtime_error("snapshot: family request ID crossed authorities");
+            for(const auto& [key,site]:result.planetary_sites_) {
+                (void)key;
+                if(site.housing_order_id==approval ||
+                   site.utility_order_id==approval)
+                    throw std::runtime_error("snapshot: family ID reused as building");
+                for(const auto request:site.founder_consent_requests)
+                    if(request==approval)
+                        throw std::runtime_error("snapshot: family ID reused as founder");
+                for(const auto& [person,proof]:site.visitor_residency) {
+                    (void)person;
+                    if(proof[1]==approval || proof[2]==approval)
+                        throw std::runtime_error("snapshot: family ID reused as settler");
+                }
+                for(const auto& p:site.production_projects)
+                    if(p.order_id==approval)
+                        throw std::runtime_error("snapshot: family ID reused as production");
+                for(const auto& p:site.service_projects)
+                    if(p.order_id==approval)
+                        throw std::runtime_error("snapshot: family ID reused as service");
+                for(const auto& r:site.utility_handovers)
+                    if(r.request_id==approval)
+                        throw std::runtime_error("snapshot: family ID reused as utility relief");
+                for(const auto& h:site.production_handovers)
+                    for(const auto& r:h)
+                        if(r.request_id==approval)
+                            throw std::runtime_error("snapshot: family ID reused as production relief");
+                for(const auto& h:site.service_handovers)
+                    for(const auto& r:h)
+                        if(r.request_id==approval)
+                            throw std::runtime_error("snapshot: family ID reused as service relief");
+            }
+        }
     // v116: bind each family seat to one original physical dependent and
     // its same-site named guardian. Never synthesize a second NPC roster.
     std::set<std::uint64_t> planetary_child_berths;
