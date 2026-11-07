@@ -114,6 +114,43 @@ int main(){
             nullptr,nullptr,nullptr)!=SQLITE_OK);
         sqlite3_close(raw);
     }
+    // STATUS-07K migration: a genuine old CHECK(kind BETWEEN 1 AND 7)
+    // table must retain immutable sequences, both ACK states, and future
+    // ID allocation while admitting the new original territorial family.
+    {
+        const auto older=(root/"legacy.sqlite").string();
+        Simulation initial(707101);
+        const auto home=initial.add_colony_ship(7,{0,0},100,6);
+        initial.provision_colony_genesis(home,2000,2000,2000,2000,2000);
+        PersistentWorld w(older,std::move(initial));
+        execute(older,"CREATE TABLE sg_ship_notifications07i ("
+            "seq INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "owner INTEGER NOT NULL CHECK(owner>0),"
+            "kind INTEGER NOT NULL CHECK(kind BETWEEN 1 AND 7),"
+            "source_event INTEGER NOT NULL CHECK(source_event>0),"
+            "peer_ship INTEGER NOT NULL CHECK(peer_ship>0),"
+            "peer_owner INTEGER NOT NULL CHECK(peer_owner>=0),"
+            "related INTEGER NOT NULL CHECK(related>=0),"
+            "world_tick INTEGER NOT NULL CHECK(world_tick>=0),"
+            "acked INTEGER NOT NULL DEFAULT 0 CHECK(acked IN (0,1)),"
+            "UNIQUE(owner,source_event,kind))");
+        execute(older,"INSERT INTO sg_ship_notifications07i "
+            "(seq,owner,kind,source_event,peer_ship,peer_owner,related,"
+            "world_tick,acked) VALUES "
+            "(9,7,1,900,1,0,0,0,0),(10,7,1,901,1,0,0,0,1)");
+        ship_notifications::Outbox migrated(older);
+        const auto oldRows=migrated.pending(7);
+        CHECK(oldRows.size()==1 && oldRows.front().sequence==9);
+        CHECK(migrated.acknowledge(7,9));
+        colony_disposition::TerritoryJournal territory(older);
+        CHECK(territory.claim(w,7,home,1500,3000));
+        const auto current=migrated.pending(7);
+        CHECK(current.size()==1 && current.front().kind==8 &&
+              current.front().source_event==1500 &&
+              current.front().sequence>10);
+        CHECK(migrated.acknowledge(7,current.front().sequence));
+        CHECK(migrated.pending(7).empty());
+    }
     fs::remove_all(root);
     std::cout<<"PASS STATUS-07I: original hail+outbox atomic rollback, "
         "owner privacy, at-least-once replay, owner ACK and canonical SQLite recovery\n";
