@@ -15,8 +15,8 @@ function validateCatalog(catalog) {
 
   if (!catalog || typeof catalog !== "object") return {ok:false,errors:["catalog must be object"]};
   if (catalog.schema_version !== 1) err("schema_version must be 1");
-  if (catalog.status !== "research_candidate_not_world_authoritative")
-    err("catalog must explicitly be research-only, never authorized world inventory");
+  if (catalog.status !== "research_candidates_with_two_exact_native_bindings")
+    err("catalog requires exactly two audited original-world bindings");
   const sources = catalog.sources && typeof catalog.sources === "object" ? catalog.sources : {};
   for (const [key,source] of Object.entries(sources)) {
     if (!identifier(key) || !source || typeof source.title !== "string" ||
@@ -85,6 +85,26 @@ function validateCatalog(catalog) {
       }
   }
   if (!recipes.length) err("empty recipe catalogue");
+  // Never allow source-candidate changes to silently rewrite the original
+  // v22+ physically persisted workshop work-in-progress or batch quantities.
+  const exactNative=[
+    {id:"native_cut_aluminum_panel",site:"cut",input:"bulk/aluminum",
+     product:"bulk/aluminum_panels",binding:"original_quantified_line_panel"},
+    {id:"native_shape_aluminum_frame",site:"shape",input:"bulk/aluminum_panels",
+     product:"bulk/aluminum_frames",binding:"original_quantified_line_frame"}
+  ];
+  const sourceNative=recipes.filter(r=>Boolean(r.native_production_binding));
+  if(sourceNative.length!==2)err("only two original native recipes may be bound");
+  for(const expected of exactNative){
+    const r=sourceNative.find(x=>x.id===expected.id);
+    if(!r || r.site_capability!==expected.site || r.native_production_binding!==expected.binding ||
+       r.work_ticks!==5 || r.inputs.length!==1 || r.outputs.length!==2 ||
+       r.inputs[0].item!==expected.input || r.inputs[0].qty!==20000 ||
+       r.outputs[0].item!==expected.product || r.outputs[0].qty!==19000 ||
+       r.outputs[1].item!=="bulk/aluminum_scrap" || r.outputs[1].qty!==1000)
+      err("original save-compatible native recipe contract drift "+expected.id);
+  }
+
 
   // Every straight-line production dependency must be acyclic. Recovery,
   // reuse and recycling will require a separate explicitly bounded contract.
