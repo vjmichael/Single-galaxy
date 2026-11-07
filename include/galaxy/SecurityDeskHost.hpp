@@ -8,6 +8,7 @@
 #include "galaxy/FleetSelection.hpp"
 #include "galaxy/ShipHailJournal.hpp"
 #include "galaxy/ShipCommsReview.hpp"
+#include "galaxy/ColonyLawAgency.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <exception>
@@ -95,7 +96,9 @@ template<class Emit>
 void snapshot(const PersistentWorld& world,
     const TerritoryJournal& territory,const CyberIncidentJournal& cases,
     PlayerId owner,EntityId home,EntityId piloted,Emit&& emit,
-    const ship_comms::Journal* communications=nullptr) {
+    const ship_comms::Journal* communications=nullptr,
+    const ship_notifications::Outbox* notifications=nullptr,
+    const colony_law::Agency* law_agency=nullptr) {
     const auto* home_ship=world.world().find(home);
     if(!owner || owner==Simulation::kServerAuthority ||
        !home_ship || home_ship->owner_id!=owner ||
@@ -228,6 +231,39 @@ void snapshot(const PersistentWorld& world,
         // colony simulation, and must never fabricate an accepted report.
         emit("SECURITY_ERROR|COMMS_UNAVAILABLE");
     }
+    if(notifications)try{
+        emit("SECURITY_NOTIFICATIONS_RESET");
+        for(const auto& n:notifications->pending(owner)){
+            emit("SECURITY_NOTIFICATION|"+std::to_string(n.sequence)+"|"+
+                std::to_string(n.kind)+"|"+
+                std::to_string(n.source_event)+"|"+
+                std::to_string(n.peer_ship)+"|"+
+                std::to_string(n.peer_owner)+"|"+
+                std::to_string(n.related));
+        }
+    }catch(const std::exception&){
+        emit("SECURITY_ERROR|OUTBOX_UNAVAILABLE");
+    }
+    if(law_agency)try{
+        const auto authorized=law_agency->active(world,owner,home);
+        emit("SECURITY_AGENCY_STATUS|"+std::to_string(authorized.leader)+"|"+
+             std::to_string(authorized.officer)+"|"+
+             std::to_string(authorized.event_id?1:0));
+        const auto referrals=law_agency->referrals(owner,home);
+        const auto start=referrals.size()>16?referrals.size()-16:0;
+        emit("SECURITY_AGENCY_REFERRALS_RESET");
+        for(std::size_t i=start;i<referrals.size();++i){
+            const auto& r=referrals[i];
+            emit("SECURITY_AGENCY_REFERRAL|"+std::to_string(r.id)+"|"+
+                std::to_string(r.complaint)+"|"+
+                std::to_string(r.reported_caller)+"|"+
+                std::to_string(r.points)+"|"+
+                std::to_string(r.officer)+"|"+
+                std::to_string(r.reviewer));
+        }
+    }catch(const std::exception&){
+        emit("SECURITY_ERROR|AGENCY_UNAVAILABLE");
+    }
     emit("SECURITY_REFRESH_DONE");
 }
 template<class Emit>
@@ -235,7 +271,9 @@ bool execute(const std::vector<std::string>& words,
     PersistentWorld& world,TerritoryJournal& territory,
     CyberIncidentJournal& cases,PlayerId owner,EntityId home,
     EntityId piloted,std::uint64_t& nonce,Emit&& emit,
-    ship_comms::Journal* communications=nullptr) {
+    ship_comms::Journal* communications=nullptr,
+    ship_notifications::Outbox* notifications=nullptr,
+    colony_law::Agency* law_agency=nullptr) {
     if(words.empty() || words[0].rfind("SECURITY_",0)!=0)return false;
     const auto* home_ship=world.world().find(home);
     const auto* pilot_ship=world.world().find(piloted);
@@ -258,10 +296,24 @@ bool execute(const std::vector<std::string>& words,
         return result;
     };
     if(words.size()==1 && words[0]=="SECURITY_REFRESH") {
-        // Including the canonical comms journal is essential when a
-        // disconnected recipient reconnects and requests its own inbox.
         snapshot(world,territory,cases,owner,home,piloted,emit,
-                 communications);
+                 communications,notifications,law_agency);
+        return true;
+    }
+    if(words.size()==2 && words[0]=="SECURITY_NOTIFICATION_ACK"){
+        const auto seq=numeric(words[1]);
+        bool acknowledged=false;
+        if(seq && notifications)try{
+            acknowledged=notifications->acknowledge(owner,seq);
+        }catch(const std::exception&){
+            emit("SECURITY_ERROR|OUTBOX_UNAVAILABLE");
+        }
+        emit("SECURITY_RESULT|SECURITY_NOTIFICATION_ACK|"+
+            std::string(acknowledged?"ACCEPTED|":"DENIED|")+
+            std::to_string(acknowledged?seq:0)+"|0");
+        if(acknowledged)
+            snapshot(world,territory,cases,owner,home,piloted,emit,
+                     communications,notifications,law_agency);
         return true;
     }
     bool accepted=false,linked=false;
@@ -328,6 +380,23 @@ bool execute(const std::vector<std::string>& words,
         }catch(const std::exception&){
             emit("SECURITY_ERROR|COMMS_UNAVAILABLE");
         }
+    }else if(words.size()==1 && action=="SECURITY_AGENCY_ESTABLISH" &&
+              law_agency){
+        try{
+            accepted=law_agency->establish(world,territory,owner,home,
+                receipt=++nonce);
+        }catch(const std::exception&){
+            emit("SECURITY_ERROR|AGENCY_UNAVAILABLE");
+        }
+    }else if(words.size()==2 && action=="SECURITY_AGENCY_REFER" &&
+              law_agency && communications){
+        const auto complaint=numeric(words[1]);
+        if(complaint)try{
+            accepted=law_agency->refer(world,territory,*communications,
+                owner,home,piloted,complaint,receipt=++nonce);
+        }catch(const std::exception&){
+            emit("SECURITY_ERROR|AGENCY_UNAVAILABLE");
+        }
     }else if(words.size()==3 && action=="SECURITY_PATROL"){
         const auto case_number=numeric(words[1]);
         const auto target=numeric(words[2]);
@@ -343,7 +412,7 @@ bool execute(const std::vector<std::string>& words,
          std::to_string(accepted?receipt:0)+"|"+
          std::to_string(linked?1:0));
     snapshot(world,territory,cases,owner,home,piloted,emit,
-             communications);
+             communications,notifications,law_agency);
     return true;
 }
 } // namespace galaxy::colony_disposition::security_desk
