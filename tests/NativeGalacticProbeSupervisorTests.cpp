@@ -248,9 +248,16 @@ static void multi_cell_supervision(const fs::path& root,
     denied([&]{supervisor.run_next_tick("supervised-2",
                                       FailPoint::AfterSnapshotWrite);});
     CHECK(w.generation()==generation && w.world().canonical_state()==unchanged);
-    const auto retry=supervisor.run_next_tick("supervised-2");
-    CHECK(retry.world_generation==generation+1 &&
-          w.world().total_ore()==ore);
+    // A new supervisor instance reuses the exact durable failed claim
+    // rather than inventing another tick or taking another worker's turn.
+    spatial::NativeMultiCellSupervisor restarted(db,w);
+    restarted.register_worker(l1);restarted.register_worker(l2);
+    restarted.use_native_process_workers(worker_binary);
+    const auto retry=restarted.resume_pending_tick();
+    CHECK(retry && retry->dispatch_id=="supervised-2" &&
+          retry->world_generation==generation+1 &&
+          w.world().total_ore()==ore &&
+          !restarted.resume_pending_tick());
     const auto stable=w.world().canonical_state();
     const auto before=w.generation();
     denied([&]{supervisor.run_next_tick("abandoned-3",
