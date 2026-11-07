@@ -51,6 +51,9 @@ int main() {
         ("wo3_surface_"+std::to_string(std::chrono::steady_clock::now().
                                        time_since_epoch().count()));
     fs::create_directories(dir);
+    struct Cleanup {fs::path path;~Cleanup() {
+        std::error_code ec;fs::remove_all(path,ec);
+    }} cleanup{dir};
     const auto db=(dir/"original.sqlite").string();
     Simulation seed(613,choice.system);
     const auto ship=seed.add_colony_ship(7,{0,0},60,8);
@@ -216,7 +219,7 @@ int main() {
     PersistentWorld final_world(final_copy,Simulation(4));
     CHECK(final_world.world().state_hash()==w.world().state_hash());
     CHECK(final_world.world().total_ore()==initial_mass);
-    fs::remove_all(dir);
+    // Temp directory is removed when SQLite handles have closed (Windows-safe).
     std::cout<<"WO3-B native original planetary module deliveries, "
                 "staffed housing, tamper and SQLite recovery PASS\n";
     return 0;
