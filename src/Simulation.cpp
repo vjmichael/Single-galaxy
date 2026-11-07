@@ -12283,13 +12283,17 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             if(shuttle==result.planetary_shuttles_.end() ||
                shuttle->second.family.stage ||
                (!outbound && stage>1) ||
-               (outbound && stage==1 && shuttle->second.flight_phase!=1) ||
-               ((stage==2 && shuttle->second.flight_phase!=2) ||
-                (stage==3 && shuttle->second.flight_phase!=3) ||
-                (stage==4 && shuttle->second.flight_phase!=0)) ||
-               ((stage==1 || stage==2) && returned) ||
-               ((stage==3 || stage==4) && !returned) ||
-               (outbound && shuttle->second.descent_receipt!=outbound) ||
+               (stage==1 && shuttle->second.flight_phase!=(outbound?1:0)) ||
+               (stage==2 && shuttle->second.flight_phase!=2) ||
+               (stage==3 && shuttle->second.flight_phase!=3) ||
+               (stage==4 && shuttle->second.flight_phase!=0) ||
+               (stage==5 && shuttle->second.flight_phase!=2) ||
+               (stage==6 && shuttle->second.flight_phase!=3) ||
+               (stage==7 && shuttle->second.flight_phase!=0) ||
+               ((stage==1 || stage==2 || stage==5) && returned) ||
+               ((stage==3 || stage==4 || stage==6 || stage==7) && !returned) ||
+               (outbound && stage<=4 &&
+                shuttle->second.descent_receipt!=outbound) ||
                (returned && shuttle->second.ascent_receipt!=returned))
                 throw std::runtime_error("snapshot: impossible shuttle household phase");
             PlanetaryFamilyShuttleJourney family{};
@@ -12303,6 +12307,8 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                     throw std::runtime_error("snapshot: duplicated child passenger");
                 family.child_ids.push_back(child);
             }
+            if(stage>=5 && (!co_parent || count!=1))
+                throw std::runtime_error("snapshot: return lacks complete two-parent family");
             shuttle->second.family=std::move(family);
         } else if(f[0]=="localdelivery" && result.snapshot_version_>=88) {
             require_fields(f,13);
