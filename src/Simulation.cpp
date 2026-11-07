@@ -1827,6 +1827,18 @@ bool Simulation::submit(const Command& c) {
                 c.target==9 : c.action==Action::FabricateMaterialModule ?
                 (c.target!=1 && c.target!=2) : c.target!=0)) return false;
     }
+    // WO2-H: real NPC training is an explicit owner command on an installed
+    // original workshop, never a profession-catalogue license or worker spawn.
+    // c.amount = named trainee ID; thrust_x=1 cut or 2 shape.
+    if(c.action==Action::TrainWorkshopTrade) {
+        if(!c.id || !c.actor || !c.target || c.amount<1 ||
+           c.amount>1000000 || (c.thrust_x!=1 && c.thrust_x!=2) ||
+           c.thrust_y || c.transport_id || !c.passenger_ids.empty() ||
+           c.secondary_receiver || c.secondary_transport ||
+           !colony_ships_.count(c.actor) || !workshops_.count(c.target))
+            return false;
+        snapshot_version_=std::max(snapshot_version_,105);
+    }
     const bool workshop_command=c.action==Action::ConstructWorkshop ||
         c.action==Action::TransferWorkshopFeed ||
         c.action==Action::AssignWorkshopOperator ||
@@ -3768,6 +3780,7 @@ Event Simulation::execute(const Command& c) {
             actor.jump_ticks=kJumpTransitTicks;actor.pending_gate=c.target;
             snapshot_version_=std::max(snapshot_version_,5);result.result=Outcome::Applied;return result;
         }
+        case Action::TrainWorkshopTrade:
         case Action::ConstructWorkshop:
         case Action::TransferWorkshopFeed:
         case Action::AssignWorkshopOperator:
@@ -4080,6 +4093,79 @@ Event Simulation::execute(const Command& c) {
                     result.result=Outcome::InvalidTarget;return result;
                 }
                 auto& w=wi->second;
+                if(c.action==Action::TrainWorkshopTrade){
+                    // Authoritative execution rechecks the owner, custody,
+                    // installed station, real supply and duty. A queued order
+                    // may become invalid between approval and this tick.
+                    const auto trade=static_cast<WorkshopTrade>(c.thrust_x);
+                    const auto npc_id=static_cast<std::uint64_t>(c.amount);
+                    auto ni=npcs_.find(npc_id);
+                    const auto h=habitats_.find(c.target);
+                    if(ni==npcs_.end() || h==habitats_.end() ||
+                       h->second.source_ship!=c.actor || h->second.residents<=0 ||
+                       ni->second.home_ship!=c.actor ||
+                       ni->second.location!=c.target ||
+                       ni->second.assigned_site!=c.target ||
+                       ni->second.role!=NpcRole::Habitat ||
+                       ni->second.mentor_id || ni->second.transport_id ||
+                       (trade==WorkshopTrade::Shape && !w.finisher_installed) ||
+                       !npc_available_for_duty(npc_id)){
+                        result.result=Outcome::InvalidTarget;return result;
+                    }
+                    unsigned trained=0;
+                    for(const auto& credit:ni->second.industrial_training)
+                        if(credit.trade==trade)++trained;
+                    if(trained>=3 || ni->second.industrial_training.size()>=6){
+                        result.result=Outcome::InvalidArgument;return result;
+                    }
+                    for(const auto& [other_site,shop]:workshops_){
+                        (void)other_site;
+                        if(shop.operator_npc_id==npc_id ||
+                           shop.finisher_npc_id==npc_id){
+                            result.result=Outcome::InvalidTarget;return result;
+                        }
+                    }
+                    for(const auto& [id,shift]:medic_shifts_){
+                        (void)id;
+                        if(shift.medic_id==npc_id && shift.end_tick>tick_){
+                            result.result=Outcome::InvalidTarget;return result;
+                        }
+                    }
+                    for(const auto& [id,yard]:shipyard_constructions_){
+                        (void)id;
+                        if(!yard.operational() &&
+                           (yard.workers[0]==npc_id || yard.workers[1]==npc_id)){
+                            result.result=Outcome::InvalidTarget;return result;
+                        }
+                    }
+                    for(const auto& [id,build]:freighter_build_orders_){
+                        (void)id;
+                        if(build.finished())continue;
+                        const auto yard=shipyard_constructions_.find(build.yard_order);
+                        if(yard!=shipyard_constructions_.end() &&
+                           (yard->second.workers[0]==npc_id ||
+                            yard->second.workers[1]==npc_id)){
+                            result.result=Outcome::InvalidTarget;return result;
+                        }
+                    }
+                    auto utility=utilities_.find(c.target);
+                    if(utility==utilities_.end() || !utility->second.powered ||
+                       utility->second.condition<=0){
+                        result.result=Outcome::NoResources;return result;
+                    }
+                    auto& feed=trade==WorkshopTrade::Cut?w.aluminum_kg:w.panels_kg;
+                    // One kg of physical stock becomes one kg of recoverable
+                    // machining practice scrap. No matter disappears, and
+                    // training can't bypass native workshop inventory limits.
+                    if(feed<1 || w.scrap_kg>=1000){
+                        result.result=Outcome::NoResources;return result;
+                    }
+                    --feed;++w.scrap_kg;
+                    ni->second.industrial_training.push_back(
+                        NpcTradeTraining{c.id,tick_,c.target,trade});
+                    result.transferred=1;
+                    result.result=Outcome::Applied;return result;
+                }
                 if(c.action==Action::ConstructWorkshopFinisher){
                     if(w.finisher_installed){result.result=Outcome::InvalidTarget;return result;}
                     if(cship.modules<1){result.result=Outcome::NoResources;return result;}
