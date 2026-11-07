@@ -14921,15 +14921,64 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                         const auto& named=worker!=result.npcs_.end()?
                             worker->second:dead->second.identity;
                         if(named.home_ship!=site.source_ship ||
-                           std::find(site.delegated_npcs.begin(),
-                                     site.delegated_npcs.end(),
-                                     p.supervisor)==site.delegated_npcs.end() ||
                            std::count_if(named.industrial_training.begin(),
                                named.industrial_training.end(),
                                [](const NpcTradeTraining& credit){
                                    return credit.trade==WorkshopTrade::Shape;
                                })<3)
                             throw std::runtime_error("snapshot: unqualified physical production builder");
+                        // A completed visiting supervisor can legitimately
+                        // leave; an unfinished job must remain recoverable
+                        // even if its current supervisor is temporarily absent.
+                        // The original site/flight records own physical custody,
+                        // not a fabricated second employment ledger.
+                        if(result.snapshot_version_>=114) {
+                            const auto& history=site.production_handovers[i];
+                            if(!history.empty()) {
+                                auto incumbent=history.front().previous;
+                                std::uint64_t last_tick=0;
+                                const auto certified_at=[&](std::uint64_t id,
+                                                            std::uint64_t at) {
+                                    const auto alive=result.npcs_.find(id);
+                                    const auto lost=result.casualties_.find(id);
+                                    if(alive==result.npcs_.end() &&
+                                       lost==result.casualties_.end())return false;
+                                    const auto& n=alive!=result.npcs_.end()?
+                                        alive->second:lost->second.identity;
+                                    return n.home_ship==site.source_ship &&
+                                        std::count_if(
+                                            n.industrial_training.begin(),
+                                            n.industrial_training.end(),
+                                            [at](const NpcTradeTraining& receipt){
+                                                return receipt.trade==WorkshopTrade::Shape &&
+                                                       receipt.tick<=at;
+                                            })>=3;
+                                };
+                                for(const auto& h:history) {
+                                    if(!h.request_id || !h.tick ||
+                                       h.tick>result.tick_ || h.tick<=last_tick ||
+                                       h.previous!=incumbent ||
+                                       h.replacement==incumbent ||
+                                       !certified_at(h.previous,h.tick) ||
+                                       !certified_at(h.replacement,h.tick) ||
+                                       !request_ids.insert(h.request_id).second ||
+                                       result.submitted_ids_.count(h.request_id) ||
+                                       result.shuttle_flight_request_ids_.count(
+                                           h.request_id) ||
+                                       result.local_delivery_orders_.count(h.request_id) ||
+                                       result.voyages_.count(h.request_id) ||
+                                       h.request_id==site.housing_order_id ||
+                                       h.request_id==site.utility_order_id)
+                                        throw std::runtime_error(
+                                            "snapshot: invalid production supervisor succession");
+                                    incumbent=h.replacement;
+                                    last_tick=h.tick;
+                                }
+                                if(incumbent!=p.supervisor)
+                                    throw std::runtime_error(
+                                        "snapshot: interrupted production supervisor handover");
+                            }
+                        }
                     }
                 }
                 if(result.snapshot_version_>=110 && site.utility_phase) {
