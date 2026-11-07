@@ -219,6 +219,23 @@ int main() {
     PersistentWorld final_world(final_copy,Simulation(4));
     CHECK(final_world.world().state_hash()==w.world().state_hash());
     CHECK(final_world.world().total_ore()==initial_mass);
+    // An independently recovered, unresupplied colony cannot silently
+    // manufacture calories, drinking water or oxygen. It remains an original
+    // permanently housed site but its provision counter records shortages.
+    const auto shortage_db=(dir/"housing_unresupplied.sqlite").string();
+    PersistentWorld::recover_copy(db,shortage_db);
+    {
+        PersistentWorld depleted(shortage_db,Simulation(8));
+        depleted.steps(300);
+        const auto& now=depleted.world().planetary_sites().at(key);
+        CHECK(now.housing_phase==2 && now.housing_shortages>0);
+        CHECK(now.food_kg>=0 && now.water_kg>=0 && now.oxygen_kg>=0);
+        CHECK(depleted.world().total_ore()==initial_mass);
+        const auto shortage_audit=colony03::assess_surface_supplies(
+            depleted.world(),7,ship,key);
+        CHECK(!shortage_audit.independently_sustainable);
+        CHECK(shortage_audit.past_shortage_cycles>0);
+    }
     // Temp directory is removed when SQLite handles have closed (Windows-safe).
     std::cout<<"WO3-B native original planetary module deliveries, "
                 "staffed housing, tamper and SQLite recovery PASS\n";
