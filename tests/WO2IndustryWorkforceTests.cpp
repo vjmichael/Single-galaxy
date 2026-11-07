@@ -488,6 +488,36 @@ int main() {
         CHECK(shifts.world().workshop(site)->finisher_npc_id==0);
         CHECK(!shifts.world().workshop(site)->shifts[1].command_id);
         CHECK(shifts.world().total_material_kg()==initial_mass);
+        // A future authenticated order can be cancelled before its due tick
+        // without deleting the original accepted order or creating labor.
+        const auto later=shifts.world().tick()+5;
+        auto future=workforce02::approved_original_workshop_shift(
+            shifts.world(),7,ship,site,false,first_id,later,later+3,430,true);
+        CHECK(future.has_value() && shifts.submit(*future));
+        CHECK(shifts.world().pending_workshop_shift(site,false,430));
+        CHECK(!workforce02::approved_original_workshop_shift_cancel(
+            shifts.world(),8,ship,site,false,430,431,true));
+        auto stop_future=workforce02::approved_original_workshop_shift_cancel(
+            shifts.world(),7,ship,site,false,430,431,true);
+        CHECK(stop_future.has_value() && shifts.submit(*stop_future));
+        shifts.step();
+        CHECK(shifts.world().events().back().command_id==431 &&
+              shifts.world().events().back().result==Outcome::Applied);
+        CHECK(shifts.world().workshop(site)->cancelled_pending_shifts.count(430));
+        CHECK(!shifts.world().pending_workshop_shift(site,false,430));
+        const auto cancelled_copy=(folder/"wo2i_cancelled_pending.sqlite").string();
+        PersistentWorld::recover_copy(db,cancelled_copy);
+        {
+            PersistentWorld copied(cancelled_copy,Simulation(54321));
+            CHECK(copied.world().workshop(site)->cancelled_pending_shifts.count(430));
+            CHECK(copied.world().total_material_kg()==initial_mass);
+        }
+        while(shifts.world().tick()<later)shifts.step();
+        CHECK(shifts.world().events().back().command_id==430 &&
+              shifts.world().events().back().result==Outcome::InvalidTarget);
+        CHECK(shifts.world().workshop(site)->operator_npc_id==0);
+        CHECK(shifts.world().workshop(site)->cancelled_pending_shifts.empty());
+        CHECK(shifts.world().total_material_kg()==initial_mass);
         const auto finished_copy=(folder/"wo2i_recovered.sqlite").string();
         PersistentWorld::recover_copy(db,finished_copy);
         PersistentWorld recovered(finished_copy,Simulation(555));
