@@ -340,6 +340,67 @@ public:
         std::string scope,worker,dispatch_id;
         std::uint64_t world_generation=0,simulation_tick=0;
     };
+    // After a host restart or crash, resume the exact original generation,
+    // claim ID and live worker epoch previously committed by the supervisor.
+    // Never issue a speculative new claim when the old one may still commit.
+    std::optional<Committed> resume_pending_tick(
+        FailPoint failure=FailPoint::None){
+        sqlite3* db=nullptr;
+        if(sqlite3_open_v2(db_.c_str(),&db,
+            SQLITE_OPEN_READONLY|SQLITE_OPEN_FULLMUTEX,nullptr)!=SQLITE_OK){
+            if(db)sqlite3_close_v2(db);
+            throw std::runtime_error("cannot open original dispatch recovery");
+        }
+        std::string pending_scope,pending_claim;
+        std::uint64_t pending_epoch=0;
+        try{
+            detail::Statement installed(db,"SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='sg_spatial_tick_dispatch'");
+            if(installed.row()){
+                detail::Statement q(db,"SELECT scope,claim_id,epoch "
+                    "FROM sg_spatial_tick_dispatch WHERE world_generation=? "
+                    "AND status=0");
+                q.number(1,world_.generation());
+                if(q.row()){
+                    pending_scope=q.str(0);
+                    pending_claim=q.str(1);
+                    const auto epoch=q.integer(2);
+                    if(epoch<=0)throw std::runtime_error("corrupt pending worker epoch");
+                    pending_epoch=static_cast<std::uint64_t>(epoch);
+                }
+            }
+            sqlite3_close_v2(db);db=nullptr;
+        }catch(...){if(db)sqlite3_close_v2(db);throw;}
+        if(pending_claim.empty())return std::nullopt;
+        const auto selected=leases_.find(pending_scope);
+        if(selected==leases_.end() || selected->second.epoch!=pending_epoch ||
+           !worker_may_simulate_cell(db_,selected->second.cell,
+             selected->second.worker,selected->second.epoch,
+             selected->second.region_generation,
+             selected->second.checkpoint_revision))
+            throw std::runtime_error(
+                "pending original writer revoked; explicit host CAS takeover required");
+        if(!process_executable_.empty()){
+            std::size_t ships=0;
+            for(const auto& [id,e]:world_.world().entities()){
+                if(e.type!=EntityType::Ship)continue;
+                const auto cell=ship_cell(world_.world(),id);
+                if(cell && scope(*cell)==pending_scope)++ships;
+            }
+            if(!ships)throw std::runtime_error("pending cell is not occupied");
+            const auto grade=desired_detail(world_.world(),selected->second.cell);
+            const CellProcessTask request{pending_scope,selected->second.worker,
+                world_.generation(),world_.world().state_hash(),ships,
+                static_cast<std::uint8_t>(grade)};
+            if(!run_cell_process(process_executable_,request).passed)
+                throw std::runtime_error("pending native process failed health preflight");
+        }
+        const auto token=claim_original_writer(db_,world_,selected->second,
+                                                pending_claim,true);
+        world_.step_as_cell_worker(token,failure);
+        return Committed{pending_scope,selected->second.worker,pending_claim,
+            world_.generation(),world_.world().tick()};
+    }
     Committed run_next_tick(const std::string& dispatch_id,
         FailPoint failure=FailPoint::None){
         if(dispatch_id.empty())throw std::invalid_argument("dispatch ID required");
