@@ -4111,9 +4111,15 @@ Event Simulation::execute(const Command& c) {
                         if(snapshot_version_>=40 && !npc_available_for_duty(worker)){
                             result.result=Outcome::InvalidTarget;return result;
                         }
-                        for(const auto& [id,existing]:workshops_){(void)id;
-                            if(existing.operator_npc_id==worker ||
-                               existing.finisher_npc_id==worker){
+                        for(const auto& [id,existing]:workshops_){
+                            // Preserve the original harmless same-slot
+                            // idempotent assignment; reject ONLY a second
+                            // distinct simultaneous physical duty.
+                            const bool other_operator=existing.operator_npc_id==worker &&
+                                !(id==c.target && !second);
+                            const bool other_finisher=existing.finisher_npc_id==worker &&
+                                !(id==c.target && second);
+                            if(other_operator || other_finisher){
                                 result.result=Outcome::InvalidTarget;return result;
                             }
                         }
