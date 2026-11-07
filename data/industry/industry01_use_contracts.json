@@ -1,0 +1,439 @@
+{
+  "schema_version": 1,
+  "status": "stage1_demand_contracts_no_live_npc_mutation",
+  "principles": {
+    "life_support_first": true,
+    "durable_goods_persist": true,
+    "shared_services_valid": true,
+    "unhappiness_not_automatic_migration": true,
+    "material_replacement_only_from_original_world": true,
+    "no_mandatory_currency": true
+  },
+  "needs": [
+    {
+      "id": "nutrition",
+      "priority": "essential",
+      "access": "consumed_food"
+    },
+    {
+      "id": "water",
+      "priority": "essential",
+      "access": "clean_water_supply"
+    },
+    {
+      "id": "shelter",
+      "priority": "essential",
+      "access": "habitation_capacity"
+    },
+    {
+      "id": "medical",
+      "priority": "critical_when_needed",
+      "access": "actual_clinic_work"
+    },
+    {
+      "id": "hygiene",
+      "priority": "basic",
+      "access": "cleaning_and_sanitation"
+    },
+    {
+      "id": "comfort",
+      "priority": "preference",
+      "access": "usable_space_and_goods"
+    },
+    {
+      "id": "nature",
+      "priority": "preference",
+      "access": "plants_gardens_and_views"
+    },
+    {
+      "id": "social",
+      "priority": "preference",
+      "access": "shared_community"
+    },
+    {
+      "id": "learning",
+      "priority": "preference",
+      "access": "education_access"
+    },
+    {
+      "id": "leisure",
+      "priority": "preference",
+      "access": "entertainment_access"
+    },
+    {
+      "id": "communication",
+      "priority": "utility",
+      "access": "signal_and_device_access"
+    },
+    {
+      "id": "administration",
+      "priority": "societal",
+      "access": "accountable_public_capacity"
+    }
+  ],
+  "durables": [
+    {
+      "item": "item/chair",
+      "condition_max": 100,
+      "shared_access": "per_available_seat",
+      "maintenance": "repair_with_real_material_and_worker",
+      "need_ids": [
+        "comfort",
+        "social"
+      ]
+    },
+    {
+      "item": "item/table",
+      "condition_max": 100,
+      "shared_access": "per_available_table",
+      "maintenance": "repair_with_real_material_and_worker",
+      "need_ids": [
+        "comfort",
+        "social"
+      ]
+    },
+    {
+      "item": "item/desk",
+      "condition_max": 100,
+      "shared_access": "per_available_workstation",
+      "maintenance": "repair_with_real_material_and_worker",
+      "need_ids": [
+        "learning",
+        "administration"
+      ]
+    },
+    {
+      "item": "item/bed",
+      "condition_max": 100,
+      "shared_access": "resident_sleeping_place",
+      "maintenance": "repair_with_real_material_and_worker",
+      "need_ids": [
+        "shelter",
+        "comfort"
+      ]
+    },
+    {
+      "item": "item/houseplant",
+      "condition_max": 100,
+      "shared_access": "maintained_room_aesthetic",
+      "maintenance": "water_light_plant_care_actual_environment",
+      "need_ids": [
+        "nature",
+        "comfort"
+      ]
+    },
+    {
+      "item": "item/computer",
+      "condition_max": 100,
+      "shared_access": "per_working_device_and_power",
+      "maintenance": "repaired_electronic_parts_and_worker",
+      "need_ids": [
+        "communication",
+        "learning",
+        "leisure",
+        "administration"
+      ]
+    },
+    {
+      "item": "item/radio",
+      "condition_max": 100,
+      "shared_access": "communication_coverage",
+      "maintenance": "real_parts_and_worker",
+      "need_ids": [
+        "communication"
+      ]
+    },
+    {
+      "item": "item/network_node",
+      "condition_max": 100,
+      "shared_access": "communication_coverage",
+      "maintenance": "real_parts_and_worker",
+      "need_ids": [
+        "communication"
+      ]
+    },
+    {
+      "item": "item/speaker",
+      "condition_max": 100,
+      "shared_access": "venue_audio_capacity",
+      "maintenance": "real_parts_and_worker",
+      "need_ids": [
+        "leisure",
+        "social"
+      ]
+    },
+    {
+      "item": "item/camera",
+      "condition_max": 100,
+      "shared_access": "creative_or_security_tool",
+      "maintenance": "real_parts_and_worker",
+      "need_ids": [
+        "leisure",
+        "communication"
+      ]
+    },
+    {
+      "item": "item/video_camera",
+      "condition_max": 100,
+      "shared_access": "creative_or_security_tool",
+      "maintenance": "real_parts_and_worker",
+      "need_ids": [
+        "leisure",
+        "communication"
+      ]
+    },
+    {
+      "item": "item/microphone",
+      "condition_max": 100,
+      "shared_access": "venue_or_communications_capacity",
+      "maintenance": "real_parts_and_worker",
+      "need_ids": [
+        "leisure",
+        "communication"
+      ]
+    },
+    {
+      "item": "item/clinic_bed",
+      "condition_max": 100,
+      "shared_access": "clinic_care_slot",
+      "maintenance": "real_parts_and_worker",
+      "need_ids": [
+        "medical"
+      ]
+    },
+    {
+      "item": "item/medical_scanner",
+      "condition_max": 100,
+      "shared_access": "clinic_diagnostic_slot",
+      "maintenance": "real_parts_and_worker",
+      "need_ids": [
+        "medical"
+      ]
+    },
+    {
+      "item": "item/laundry_machine",
+      "condition_max": 100,
+      "shared_access": "hygiene_service_capacity",
+      "maintenance": "real_parts_and_worker",
+      "need_ids": [
+        "hygiene"
+      ]
+    },
+    {
+      "item": "item/printer",
+      "condition_max": 100,
+      "shared_access": "office_output_capacity",
+      "maintenance": "real_parts_and_worker",
+      "need_ids": [
+        "administration",
+        "learning"
+      ]
+    }
+  ],
+  "consumables": [
+    {
+      "item": "item/meal",
+      "shelf_policy": "short_food_shelf_life_requires_cold_chain_for_storage",
+      "on_spoil_to": "bulk/food_scraps",
+      "on_spoil_mass_fraction": "one_to_one_before_biological_processing",
+      "need_ids": [
+        "nutrition"
+      ]
+    },
+    {
+      "item": "item/sterile_dressing",
+      "shelf_policy": "sterility_and_integrity_limited",
+      "on_spoil_to": "waste/medical_waste",
+      "on_spoil_mass_fraction": "one_to_one_as_discarded_kit",
+      "need_ids": [
+        "medical"
+      ]
+    },
+    {
+      "item": "item/detergent_pack",
+      "shelf_policy": "stable_until_opened_or_contaminated",
+      "on_spoil_to": null,
+      "on_spoil_mass_fraction": "not_auto_spoiled",
+      "need_ids": [
+        "hygiene"
+      ]
+    },
+    {
+      "item": "item/paper_pack",
+      "shelf_policy": "dry_storage_prevents_moisture_damage",
+      "on_spoil_to": null,
+      "on_spoil_mass_fraction": "not_auto_spoiled",
+      "need_ids": [
+        "learning",
+        "administration"
+      ]
+    }
+  ],
+  "services": [
+    {
+      "service": "service/laundry",
+      "use_mode": "condition_restoration",
+      "physical_effect": "clean_existing_clothing_without_creating_new_clothes",
+      "capacity": "actual_working_machine_staff_water_detergent_power",
+      "demand_needs": [
+        "hygiene"
+      ],
+      "environmental_byproduct": "bulk/dirty_water"
+    },
+    {
+      "service": "service/clinical_care",
+      "use_mode": "episode",
+      "physical_effect": "consumes_supplies_and_qualifies_care_receipt",
+      "capacity": "actual_clinic_medics_equipment_and_sterile_stock",
+      "demand_needs": [
+        "medical"
+      ],
+      "environmental_byproduct": "waste/medical_waste"
+    },
+    {
+      "service": "service/food_service",
+      "use_mode": "consumed_prepared_meal",
+      "physical_effect": "actual_meal_consumed_at_accessible_table_or_takeaway",
+      "capacity": "actual_kitchen_cook_server_and_available_meals",
+      "demand_needs": [
+        "nutrition",
+        "social"
+      ],
+      "environmental_byproduct": "bulk/food_scraps"
+    },
+    {
+      "service": "service/education",
+      "use_mode": "time_bound_teaching",
+      "physical_effect": "learning_access_not_instant_skill_points",
+      "capacity": "actual_teacher_and_teaching_place",
+      "demand_needs": [
+        "learning"
+      ],
+      "environmental_byproduct": null
+    },
+    {
+      "service": "service/legal_consultation",
+      "use_mode": "time_bound_consultation",
+      "physical_effect": "qualified_counsel_receipt_not_a_new_physical_item",
+      "capacity": "actual_qualified_staff_and_case_access",
+      "demand_needs": [
+        "administration"
+      ],
+      "environmental_byproduct": null
+    },
+    {
+      "service": "service/public_administration",
+      "use_mode": "case_bound_public_work",
+      "physical_effect": "authorized_case_handling_not_compulsory_paper_consumption",
+      "capacity": "actual_staff_and_government_office",
+      "demand_needs": [
+        "administration"
+      ],
+      "environmental_byproduct": null
+    },
+    {
+      "service": "service/entertainment_performance",
+      "use_mode": "shared_leisure_event",
+      "physical_effect": "real_performer_time_and_venue_activity",
+      "capacity": "actual_performer_venue_and_equipment",
+      "demand_needs": [
+        "leisure",
+        "social"
+      ],
+      "environmental_byproduct": null
+    },
+    {
+      "service": "service/electricity_delivery",
+      "use_mode": "power_flow",
+      "physical_effect": "real_generated_and_distributed_energy_not_inventory_item",
+      "capacity": "actual_generation_conversion_cables_crew_and_losses",
+      "demand_needs": [
+        "communication",
+        "medical",
+        "administration"
+      ],
+      "environmental_byproduct": "waste/process_gas"
+    }
+  ],
+  "substitutions": [
+    {
+      "id": "public_seating",
+      "satisfies": [
+        "comfort",
+        "social"
+      ],
+      "items": [
+        "item/chair"
+      ],
+      "policy": "shared_counted_capacity_not_personal_trinket"
+    },
+    {
+      "id": "learning_access",
+      "satisfies": [
+        "learning"
+      ],
+      "items": [
+        "item/book",
+        "item/computer"
+      ],
+      "policy": "preference_and_access_not_every_person_needs_both"
+    },
+    {
+      "id": "media_access",
+      "satisfies": [
+        "leisure"
+      ],
+      "items": [
+        "item/radio",
+        "item/computer",
+        "item/speaker"
+      ],
+      "policy": "shared_service_can_replace_personal_hardware"
+    },
+    {
+      "id": "natural_ambience",
+      "satisfies": [
+        "nature"
+      ],
+      "items": [
+        "item/houseplant"
+      ],
+      "policy": "optional_trait_weight_never_survival_requirement"
+    }
+  ],
+  "variants": [
+    {
+      "item_family": "item/chair",
+      "tags": [
+        "wood",
+        "metal",
+        "polymer"
+      ],
+      "new_catalog_item_required": false
+    },
+    {
+      "item_family": "item/houseplant",
+      "tags": [
+        "broadleaf",
+        "flowering",
+        "succulent"
+      ],
+      "new_catalog_item_required": false
+    },
+    {
+      "item_family": "item/computer",
+      "tags": [
+        "basic",
+        "specialized"
+      ],
+      "new_catalog_item_required": false
+    }
+  ],
+  "event_contract": {
+    "item_wear": "world_consumes_material_only_on_approved_damage_or_maintenance_operation",
+    "spoilage": "world_moves_mass_to_named_waste_reservoir_before_item_is_decremented",
+    "service": "real_staff_duration_equipment_and_consumables_with_original_world_commit",
+    "needs": "later_population_system_reads_access_quality_preference_and_history",
+    "migration": "later_society_system_requires_real_destination_transport_and_consented_household_custody"
+  }
+}
