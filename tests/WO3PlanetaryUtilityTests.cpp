@@ -483,6 +483,186 @@ int main() {
         catch(const std::exception&){rejected=true;}
         CHECK(rejected);
         CHECK(twin_service.world().total_ore()==mass_before);
+        if(annex) {
+            // WO3-E: genuinely built eight-bed annex, one original ART02
+            // birth, BOTH real parents and the one physical registered child.
+            // The signed regional + ART02 census transfer and world snapshot
+            // must share ONE SQLite commit in both directions.
+            const auto surface=service.world().planetary_sites().at(key).
+                surface_location;
+            CHECK(service.load_planetary_shuttle(
+                7,ship,key,ShuttleCargo::Water,10));
+            up(service,ship,key,82700);
+            std::vector<std::uint64_t> parents;
+            for(const auto& [id,n]:service.world().npc_records())
+                if(n.home_ship==ship && n.location==ship &&
+                   n.role==NpcRole::Ship && id!=pilot &&
+                   service.world().npc_available_for_duty(id))
+                    parents.push_back(id);
+            CHECK(parents.size()>=2);
+            const auto guardian=parents[0],coparent=parents[1];
+            constexpr std::uint64_t seed=943061;
+            const std::string family_scope="wo3-full-household";
+            const std::string region_scope="wo3-full-region";
+            std::uint64_t original_ship_count=0;
+            {
+                NpcAppearanceStore registry(service_db,family_scope,seed,
+                    [&](std::uint64_t id){
+                        return service.world().npc_records().count(id)!=0;
+                    });
+                for(const auto& [id,n]:service.world().npc_records()){
+                    (void)id;
+                    CHECK(n.legal_residence().id==ship);
+                    ++original_ship_count;
+                }
+                registry.register_settlement(ship,original_ship_count);
+                registry.register_settlement(surface,0); // no invented settler
+                for(const auto& [id,n]:service.world().npc_records()){
+                    (void)n;
+                    registry.enroll_family_founder(id,ship);
+                }
+            }
+            namespace regional=galaxy::regional_events;
+            regional::CheckpointStore region(service_db,region_scope);
+            regional::Scheduler scheduler;
+            cold_colony::State home{},empty_surface{};
+            home.population=original_ship_count;
+            empty_surface.population=0;
+            scheduler.add_colony("home",home);
+            scheduler.add_colony("surface",empty_surface);
+            CHECK(region.save(scheduler,0)==1);
+            regional::RegionalModeAuthority authority(region);
+            CHECK(authority.enroll().generation==1);
+            const auto child=(std::uint64_t{1}<<62)+85001;
+            SocietyBirthPlan born{};
+            born.expected_world_generation=service.generation();
+            born.expected_region_revision=1;
+            born.expected_owner_generation=1;
+            born.family_seed=seed;born.expected_family_revision=0;
+            born.event_id=85001;born.child_id=child;
+            born.parent_a=guardian;born.parent_b=coparent;
+            born.home_ship=ship;
+            born.family_scope=family_scope;born.region_scope=region_scope;
+            born.regional_colony="home";
+            service.step_with_atomic_dependent_birth(born);
+            Command registration{};
+            registration.id=85002;registration.sequence=85002;
+            registration.issuer=Simulation::kServerAuthority;
+            registration.actor=ship;registration.target=ship;
+            registration.action=Action::HostRegisterDependent;
+            registration.transport_id=child;
+            registration.passenger_ids={guardian};
+            registration.execute_tick=service.world().tick()+1;
+            CHECK(service.submit_host_dependent_registration(
+                registration,family_scope,seed));
+            service.step_with_dependent_registration();
+            CHECK(service.book_planetary_shuttle_family(
+                7,ship,key,guardian,coparent,{child},85110));
+            CHECK(service.load_planetary_shuttle(
+                7,ship,key,ShuttleCargo::Water,10));
+            down(service,ship,key,85111);
+            CHECK(service.world().physical_dependents().at(child).location==
+                  surface);
+            // Two actual source workers and three arriving family members
+            // require the finished annex; the original 4-bed house is full.
+            CHECK(service.world().planetary_sites().at(key).
+                  service_projects[0].phase==2);
+            service.steps(20); // original solar + finite vital support ticks
+            PlanetaryHouseholdSettlementPlan admission{};
+            admission.expected_world_generation=service.generation();
+            admission.request_id=85520;
+            admission.coparent_move_id=85521;
+            admission.child_move_id=85522;
+            admission.expected_region_revision=region.load()->revision;
+            admission.expected_owner_generation=authority.state().generation;
+            admission.expected_origin_family_revision=1;
+            admission.expected_destination_family_revision=0;
+            admission.family_seed=seed;
+            admission.owner=7;admission.ship=ship;admission.site=key;
+            admission.guardian_id=guardian;
+            admission.guardian_consented=true;
+            admission.coparent_consented=true;
+            admission.family_scope=family_scope;
+            admission.region_scope=region_scope;
+            admission.origin_colony="home";
+            admission.destination_colony="surface";
+            CHECK(!service.commit_planetary_household_settlement(
+                PlanetaryHouseholdSettlementPlan{admission.expected_world_generation,
+                  admission.request_id,admission.expected_region_revision,
+                  admission.expected_owner_generation,admission.family_seed,
+                  admission.expected_origin_family_revision,
+                  admission.expected_destination_family_revision,
+                  admission.coparent_move_id,admission.child_move_id,8,
+                  ship,key,guardian,false,true,true,family_scope,
+                  region_scope,"home","surface"}));
+            bool failed_admission=false;
+            const auto before_admission=service.world().state_hash();
+            try {
+                (void)service.commit_planetary_household_settlement(
+                    admission,FailPoint::AfterSnapshotWrite);
+            }catch(const std::exception&){failed_admission=true;}
+            CHECK(failed_admission &&
+                  service.world().state_hash()==before_admission);
+            CHECK(service.commit_planetary_household_settlement(admission));
+            CHECK(service.world().planetary_sites().at(key).
+                  households.count(guardian)==1);
+            CHECK(service.world().npc_records().at(guardian).legal_residence()==
+                  (transport::Endpoint{transport::LocationKind::PlanetarySite,
+                                       surface}));
+            CHECK(service.world().physical_dependents().at(child).location==
+                  surface);
+            CHECK(region.load()->scheduler.colony("surface").population==3);
+            const auto audit_resident=colony03::audit_planetary_surface(
+                service.world(),7,ship,key);
+            CHECK(audit_resident && audit_resident->admitted_households==1 &&
+                  audit_resident->present_registered_children==1 &&
+                  audit_resident->installed_beds==8);
+            const auto admitted_copy=(folder/"household_admitted.sqlite").string();
+            PersistentWorld::recover_copy(service_db,admitted_copy);
+            {
+                PersistentWorld copy(admitted_copy,Simulation(945));
+                CHECK(copy.world().state_hash()==service.world().state_hash());
+            }
+            CHECK(service.book_planetary_household_return(
+                7,ship,key,guardian,85530));
+            CHECK(service.load_planetary_shuttle(
+                7,ship,key,ShuttleCargo::Water,10));
+            up(service,ship,key,85531);
+            CHECK(service.world().planetary_shuttles().at(key).family.stage==7);
+            PlanetaryHouseholdSettlementPlan departure=admission;
+            departure.expected_world_generation=service.generation();
+            departure.request_id=85536;
+            departure.coparent_move_id=85537;
+            departure.child_move_id=85538;
+            departure.returning=true;
+            departure.expected_region_revision=region.load()->revision;
+            departure.expected_origin_family_revision=3;
+            departure.expected_destination_family_revision=4;
+            departure.origin_colony="surface";
+            departure.destination_colony="home";
+            CHECK(service.commit_planetary_household_settlement(departure));
+            CHECK(service.world().npc_records().at(guardian).legal_residence()==
+                  (transport::Endpoint{transport::LocationKind::ColonyShip,ship}));
+            CHECK(service.world().physical_dependents().at(child).location==ship);
+            CHECK(service.world().planetary_shuttles().at(key).family.stage==0);
+            CHECK(service.world().planetary_shuttles().at(key).passenger_ids.empty());
+            CHECK(service.world().planetary_sites().at(key).
+                  households.at(guardian).return_request==85536);
+            CHECK(region.load()->scheduler.colony("surface").population==0);
+            CHECK(region.load()->scheduler.colony("home").population==
+                  original_ship_count+1);
+            CHECK(!service.commit_planetary_household_settlement(departure));
+            CHECK(service.world().total_ore()==mass_before);
+            CHECK(Simulation::from_snapshot(service.world().canonical_state()).
+                  state_hash()==service.world().state_hash());
+            const auto returned_copy=(folder/"household_returned.sqlite").string();
+            PersistentWorld::recover_copy(service_db,returned_copy);
+            {
+                PersistentWorld verified(returned_copy,Simulation(946));
+                CHECK(verified.world().state_hash()==service.world().state_hash());
+                CHECK(verified.world().total_ore()==mass_before);
+            }
+        }
     }
     const auto mass_before_production=w.world().total_ore();
     CHECK(mass_before_production==initial_mass);
