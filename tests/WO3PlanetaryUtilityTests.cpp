@@ -667,6 +667,24 @@ int main() {
             CHECK(demand_site!=admitted_pressure->compartments.end() &&
                   demand_site->current_consumers==
                       static_cast<std::uint64_t>(unique_consumers));
+            // Read-only diagnostics are insufficient if the physical
+            // simulation itself still charges a child twice. Run a separate
+            // original snapshot to the next 20-tick life-support boundary
+            // and bound its actual local waste by unique real consumers.
+            auto native_cycle=Simulation::from_snapshot(
+                service.world().canonical_state());
+            while(native_cycle.tick()%20!=19)native_cycle.step();
+            const auto before_cycle=colony03::audit_planetary_surface(
+                native_cycle,7,ship,key);
+            CHECK(before_cycle.has_value());
+            const auto waste_before=
+                native_cycle.planetary_sites().at(key).organic_waste_kg;
+            native_cycle.step();
+            const auto waste_after=
+                native_cycle.planetary_sites().at(key).organic_waste_kg;
+            CHECK(waste_after>=waste_before);
+            CHECK(waste_after-waste_before<=
+                  before_cycle->current_surface_consumers);
             const auto admitted_copy=(folder/"household_admitted.sqlite").string();
             PersistentWorld::recover_copy(service_db,admitted_copy);
             {
