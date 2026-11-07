@@ -250,6 +250,11 @@ struct PlanetarySiteAudit {
     std::uint64_t utility_handover_count=0,utility_last_handover_id=0;
     bool utility_supervisor_present=false,utility_supervisor_certified=false;
     bool utility_supervisor_has_temp_duty=false;
+    // v113 original farm/extractor construction progress: 0=absent,
+    // 1=constructing, 2=completed; never an off-world preview.
+    std::array<std::uint8_t,2> production_phases{{0,0}};
+    std::array<std::uint64_t,2> production_progress{{0,0}};
+    std::array<std::uint64_t,2> production_order_ids{{0,0}};
     std::int64_t stored_electricity=0,brine_kg=0;
     std::uint64_t utility_powered_cycles=0,hvac_cycles=0,utility_outages=0;
     std::int64_t recycled_water_kg=0,recycled_oxygen_kg=0;
@@ -303,6 +308,11 @@ inline std::optional<PlanetarySiteAudit> audit_planetary_surface(
                            shuttle_for_duty->second.duty_ids.end(),
                            s.utility_supervisor) &&
         a.utility_supervisor_present;
+    for(std::size_t i=0;i<s.production_projects.size();++i) {
+        a.production_phases[i]=s.production_projects[i].phase;
+        a.production_progress[i]=s.production_projects[i].progress;
+        a.production_order_ids[i]=s.production_projects[i].order_id;
+    }
     a.stored_electricity=s.stored_electricity;
     a.brine_kg=s.brine_kg;
     a.utility_powered_cycles=s.utility_powered_cycles;
