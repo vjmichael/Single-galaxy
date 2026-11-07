@@ -5,6 +5,7 @@
 // Simulation owners. The original SQLite BEGIN IMMEDIATE serializes effects.
 #include "galaxy/SeamlessCellWorker.hpp"
 #include "galaxy/Persistence.hpp"
+#include "galaxy/NativeCellProcessRunner.hpp"
 #include <sqlite3.h>
 #include <algorithm>
 #include <cstddef>
@@ -161,6 +162,15 @@ public:
         if(db_.empty() || limit_==0 || limit_>4)
             throw std::invalid_argument("bounded original supervisor capacity");
     }
+    // Production mode: each admitted cell executes in a constrained native
+    // child process. Unlike in-process async eligibility calculations, this
+    // exercises a real OS process lifecycle and a deadline/kill policy.
+    // No SQLite writer path or mutable world is passed to children.
+    void use_native_process_workers(std::string executable){
+        if(executable.empty() || executable.size()>4096)
+            throw std::invalid_argument("worker executable path required");
+        process_executable_=std::move(executable);
+    }
     void register_worker(const WorkerLease& lease){
         const auto name=scope(lease.cell);
         if(leases_.size()>=limit_ && !leases_.count(name))
@@ -196,26 +206,37 @@ public:
         // supervisor waits for every result before electing the ONE durable
         // original-world writer; no worker may independently advance a tick.
         const Simulation& immutable=world_.world();
+        const auto native_generation=world_.generation();
+        const auto native_hash=immutable.state_hash();
         std::vector<std::future<std::optional<std::pair<std::string,int>>>> pending;
         pending.reserve(leases_.size());
         last_failed_.clear();
         for(const auto& [cell,lease]:leases_){
             pending.push_back(std::async(std::launch::async,
-                [world=&immutable,db=db_,cell,lease]()
+                [world=&immutable,db=db_,cell,lease,
+                 binary=process_executable_,native_generation,native_hash]()
                     ->std::optional<std::pair<std::string,int>>{
                     if(!worker_may_simulate_cell(db,lease.cell,lease.worker,
                         lease.epoch,lease.region_generation,lease.checkpoint_revision))
                         return std::nullopt; // a revoked worker never receives a tick
-                    bool occupied=false;
+                    std::size_t physical_ships=0;
                     for(const auto& [id,e]:world->entities()){
                         if(e.type!=EntityType::Ship)continue;
                         const auto current=ship_cell(*world,id);
-                        if(current && scope(*current)==cell){
-                            occupied=true;break;
-                        }
+                        if(current && scope(*current)==cell)
+                            ++physical_ships;
                     }
-                    if(!occupied)return std::nullopt;
+                    if(!physical_ships)return std::nullopt;
                     const auto detail=desired_detail(*world,lease.cell);
+                    if(!binary.empty()){
+                        const CellProcessTask request{cell,lease.worker,
+                            native_generation,native_hash,physical_ships,
+                            static_cast<std::uint8_t>(detail)};
+                        const auto result=run_cell_process(binary,request);
+                        if(!result.passed)
+                            throw std::runtime_error(
+                                "OS cell process denied: "+result.reason);
+                    }
                     return std::make_pair(cell,static_cast<int>(detail));
                 }));
         }
@@ -257,5 +278,6 @@ private:
     std::uint64_t round_robin_=0;
     std::map<std::string,WorkerLease> leases_;
     std::vector<std::string> last_failed_;
+    std::string process_executable_;
 };
 } // namespace galaxy::spatial
