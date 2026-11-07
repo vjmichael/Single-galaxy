@@ -6766,6 +6766,59 @@ bool Simulation::set_planetary_housing_pause(PlayerId owner,EntityId ship,
     return true; // materials and original progress stay on the surface
 }
 
+bool Simulation::settle_planetary_founder(PlayerId owner,EntityId ship,
+    const PlanetarySiteKey& key,std::uint64_t npc_id,
+    std::uint64_t request_id,bool voluntary_consent_attested) {
+    const auto it=planetary_sites_.find(key);
+    if(!owner || owner==kServerAuthority || !npc_id || !request_id ||
+       request_id==std::numeric_limits<std::uint64_t>::max() ||
+       !voluntary_consent_attested ||
+       it==planetary_sites_.end() ||
+       !entities_.count(ship) || entities_.at(ship).owner_id!=owner ||
+       !colony_ships_.count(ship) ||
+       it->second.owner!=owner || it->second.source_ship!=ship ||
+       it->second.spaceport_phase!=3 || it->second.housing_phase!=2 ||
+       it->second.food_kg<4 || it->second.water_kg<4 ||
+       it->second.oxygen_kg<4 ||
+       it->second.housing_order_id==request_id ||
+       submitted_ids_.count(request_id) ||
+       shuttle_flight_request_ids_.count(request_id) ||
+       local_delivery_orders_.count(request_id) ||
+       voyages_.count(request_id))return false;
+    for(const auto& [key_other,other]:planetary_sites_) {
+        (void)key_other;
+        if(other.housing_order_id==request_id)return false;
+        for(const auto prior:other.founder_consent_requests)
+            if(prior==request_id)return false;
+    }
+    const auto n=npcs_.find(npc_id);
+    if(n==npcs_.end() || n->second.home_ship!=ship ||
+       n->second.location!=it->second.surface_location ||
+       n->second.assigned_site!=it->second.surface_location ||
+       n->second.role!=NpcRole::PlanetarySurface ||
+       !npc_available_for_duty(npc_id) ||
+       n->second.legal_residence()!=transport::Endpoint{
+           transport::LocationKind::ColonyShip,ship})return false;
+    for(const auto& [dependent_id,dependent]:physical_dependents_) {
+        (void)dependent_id;
+        if(dependent.guardian_id==npc_id ||
+           dependent.co_guardian_id==npc_id)return false;
+    }
+    auto& site=it->second;
+    for(std::size_t i=0;i<site.delegated_npcs.size();++i) {
+        if(site.delegated_npcs[i]!=npc_id)continue;
+        if(site.founder_residents[i] || site.founder_consent_requests[i])
+            return false;
+        site.founder_residents[i]=npc_id;
+        site.founder_consent_requests[i]=request_id;
+        n->second.residence_kind=transport::LocationKind::PlanetarySite;
+        n->second.residence_id=site.surface_location;
+        snapshot_version_=std::max(snapshot_version_,109);
+        return true;
+    }
+    return false; // arriving visitors require separate proven migration
+}
+
 bool Simulation::post_local_delivery_order(PlayerId owner,EntityId board_ship,
        const PlanetarySiteKey& key,ShuttleCargo cargo,
        std::int64_t kilograms,std::uint64_t order_id) {
@@ -9744,7 +9797,10 @@ std::string Simulation::canonical_state() const {
                     site.housing_completed_tick<<'|'<<
                     unsigned(site.housing_paused)<<'|'<<
                     site.housing_supported_cycles<<'|'<<
-                    site.housing_shortages;
+                    site.housing_shortages<<'|'<<site.founder_residents[0]<<'|'<<
+                    site.founder_consent_requests[0]<<'|'<<
+                    site.founder_residents[1]<<'|'<<
+                    site.founder_consent_requests[1];
             out<<'\n';
         }
     if(snapshot_version_>=80)
@@ -10751,7 +10807,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                !result.shuttle_flight_request_ids_.insert(id).second)
                 throw std::runtime_error("snapshot: invalid shuttle flight receipt");
         } else if(f[0]=="planetsite" && result.snapshot_version_>=77) {
-            require_fields(f,result.snapshot_version_>=109?42:
+            require_fields(f,result.snapshot_version_>=109?46:
                 (result.snapshot_version_>=79?33:(result.snapshot_version_>=78?26:15)));
             const auto body=u64(f[1]),lat=u64(f[2]),lon=u64(f[3]),
                        rev=u64(f[4]),owner=u64(f[5]),ship=u64(f[6]);
@@ -10851,6 +10907,18 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                     site.housing_paused=paused==1;
                     site.housing_supported_cycles=supported;
                     site.housing_shortages=shortages;
+                    const auto first=u64(f[42]),first_request=u64(f[43]),
+                               second=u64(f[44]),second_request=u64(f[45]);
+                    if((first==0)!=(first_request==0) ||
+                       (second==0)!=(second_request==0) ||
+                       (first && first==second) ||
+                       (first_request && first_request==second_request) ||
+                       ((first || second) && phase!=2) ||
+                       (first && first!=site.delegated_npcs[0]) ||
+                       (second && second!=site.delegated_npcs[1]))
+                        throw std::runtime_error("snapshot: invalid founder residency");
+                    site.founder_residents={{first,second}};
+                    site.founder_consent_requests={{first_request,second_request}};
                 }
             } else {
                 // Existing v77 instant facilities retain old constructed
