@@ -197,7 +197,19 @@ int main() {
         transport::Endpoint{transport::LocationKind::PlanetarySite,
                             w.world().planetary_sites().at(key).surface_location}));
     CHECK(w.world().total_ore()==initial_mass);
+    const auto occupied=colony03::audit_planetary_surface(w.world(),7,ship,key);
     const auto supplied=colony03::assess_surface_supplies(w.world(),7,ship,key);
+    // The genuinely landed shuttle pilot is a third person consuming site
+    // stock. A two-worker-only forecast is overoptimistic and must not
+    // survive this original-world housing/SQLite acceptance case.
+    CHECK(occupied && occupied->current_surface_consumers==3);
+    CHECK(supplied.current_surface_consumers==3);
+    CHECK(supplied.baseline_ten_tick_food_periods==
+          w.world().planetary_sites().at(key).food_kg/3);
+    CHECK(supplied.baseline_ten_tick_water_periods==
+          w.world().planetary_sites().at(key).water_kg/3);
+    CHECK(supplied.baseline_ten_tick_oxygen_periods==
+          w.world().planetary_sites().at(key).oxygen_kg/3);
     CHECK(supplied.gate==colony03::SurfaceSupplyGate::ImportDependent);
     CHECK(supplied.baseline_ten_tick_reserve_periods>=1);
     CHECK(!supplied.independent_power_proven &&
