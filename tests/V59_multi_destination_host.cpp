@@ -273,6 +273,12 @@ int main(){
   ck(logistics05::book_manufactured_consignment(
       game_host,w,*panels_offer,7,true),
       "WO5 failed original authenticated panels source booking");
+  reject([&]{(void)logistics05::book_manufactured_consignment(
+      game_host,w,*source_offer,7,true);},
+      "WO5 duplicate factory-return booking bypassed native immutable ledger");
+  ck(!logistics05::book_manufactured_consignment(
+      game_host,w,*source_offer,8,true),
+      "WO5 carrier impersonated authenticated source warehouse principal");
   ck(w.world().storage(site)->goods_kg.at("aluminum_frames")==1 &&
      w.world().storage(site)->goods_kg.at("aluminum_panels")==1 &&
      w.world().ship_inventory_snapshot(carrier).amount("good/aluminum_frames")==0,
