@@ -153,7 +153,10 @@ assert rt.private_event_sequence==4201
 assert b'event: resync\ndata: Native security refresh required' in output
 assert output.count(b'event: colony\n')==1
 assert base64.b64encode(b'COLONY|1|26|SECURITY_CALL_INBOX_RESET') in output
-assert b'SECURITY_STATUS' not in output
+assert base64.b64encode(
+    b'COLONY|1|25|SECURITY_STATUS|1|1|1|0|3') not in output
+assert base64.b64encode(
+    b'COLONY|1|25|SECURITY_STATUS|1|1|1|1|3') not in output
 assert b'event: frame' not in output and b'event: survey' not in output
 assert b'event: complete\n' in output
 print('PASS SHIP-STATUS-07H private relay: reconnect skips stale ring, '
