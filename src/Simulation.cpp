@@ -316,17 +316,28 @@ void Simulation::enable_native_galactic_physics(
     }
     for(auto& [id,e]:entities_){
         auto absolute=origins.at(e.system_id);
+        CosmicPosition relative_frame{};
         if(e.type==EntityType::Ship){
             const auto frame=ship_frames_.find(id);
             if(frame==ship_frames_.end() ||
                frame->second.system!=e.system_id)
                 throw std::runtime_error("missing original ship frame for galactic upgrade");
-            const auto& offset=frame->second.origin;
-            const auto shifted=galactic::advance(absolute,
-                {offset.x_mm,offset.y_mm,offset.z_mm});
-            if(!shifted)throw std::overflow_error("ship frame beyond galactic sectors");
-            absolute=*shifted;
+            relative_frame=frame->second.origin;
+        }else if(const auto anchor=local_entity_anchors_.find(id);
+                 anchor!=local_entity_anchors_.end()){
+            const auto found=physical_celestial_systems_.find(e.system_id);
+            if(found==physical_celestial_systems_.end())
+                throw std::runtime_error("anchored physical entity has no celestial system");
+            const auto body=std::find_if(found->second.begin(),found->second.end(),
+                [&](const PhysicalCelestialBody& b){return b.id==anchor->second;});
+            if(body==found->second.end())
+                throw std::runtime_error("anchored physical entity has no original body");
+            relative_frame=body->position;
         }
+        const auto shifted=galactic::advance(absolute,
+            {relative_frame.x_mm,relative_frame.y_mm,relative_frame.z_mm});
+        if(!shifted)throw std::overflow_error("physical frame beyond galactic sectors");
+        absolute=*shifted;
         const auto physical=galactic::advance(absolute,
             {e.position.x,e.position.y,e.position_z_mm});
         if(!physical)throw std::overflow_error("galactic physical genesis overflow");
@@ -1058,14 +1069,36 @@ void Simulation::add_system(std::uint32_t system) {
 EntityId Simulation::add_station_in_system(std::uint32_t system, Vector2 position) {
     if (tick_ || !systems_.count(system)) throw std::invalid_argument("unknown or locked system");
     Entity entity; entity.type=EntityType::Station;entity.position=position;
+    if(snapshot_version_>=120){
+        const auto origin=galactic_system_origins_.find(system);
+        if(origin==galactic_system_origins_.end())
+            throw std::runtime_error("real new system has no registered galactic origin");
+    }
     const auto id=add_entity(entity);entities_.at(id).system_id=system;
+    if(snapshot_version_>=120){
+        const auto exact=galactic::advance(galactic_system_origins_.at(system),
+            {position.x,position.y,0});
+        if(!exact)throw std::overflow_error("new-system entity sector overflow");
+        entities_.at(id).physical_galactic=*exact;
+    }
     snapshot_version_=std::max(snapshot_version_,5);return id;
 }
 EntityId Simulation::add_asteroid_in_system(std::uint32_t system, Vector2 position, std::int64_t ore) {
     if (tick_ || !systems_.count(system) || ore<=0 || ore>1000000000LL)
         throw std::invalid_argument("unknown system or ore");
     Entity entity;entity.type=EntityType::Asteroid;entity.position=position;entity.ore=ore;
+    if(snapshot_version_>=120){
+        const auto origin=galactic_system_origins_.find(system);
+        if(origin==galactic_system_origins_.end())
+            throw std::runtime_error("real new system has no registered galactic origin");
+    }
     const auto id=add_entity(entity);entities_.at(id).system_id=system;
+    if(snapshot_version_>=120){
+        const auto exact=galactic::advance(galactic_system_origins_.at(system),
+            {position.x,position.y,0});
+        if(!exact)throw std::overflow_error("new-system entity sector overflow");
+        entities_.at(id).physical_galactic=*exact;
+    }
     snapshot_version_=std::max(snapshot_version_,5);return id;
 }
 EntityId Simulation::add_gate(std::uint32_t origin, Vector2 position,
@@ -6894,6 +6927,21 @@ void Simulation::seed_celestial_local_region(std::uint64_t body_id) {
             rock.type=EntityType::Asteroid;
             rock.position=locations[i];
             rock.ore=allocations[i];
+            if(snapshot_version_>=120){
+                const auto origin=galactic_system_origins_.find(system);
+                const auto body=std::find_if(stars->second.begin(),stars->second.end(),
+                    [&](const PhysicalCelestialBody& b){return b.id==body_id;});
+                if(origin==galactic_system_origins_.end() ||
+                   body==stars->second.end())
+                    throw std::runtime_error("generated rock missing physical origin");
+                const auto anchored=galactic::advance(origin->second,
+                    {body->position.x_mm,body->position.y_mm,body->position.z_mm});
+                const auto absolute=anchored?galactic::advance(*anchored,
+                    {rock.position.x,rock.position.y,0}):std::nullopt;
+                if(!absolute)throw std::overflow_error("generated rock sector overflow");
+                rock.physical_galactic=*absolute;
+                rock.physical_galactic_authoritative=true;
+            }
             entities_.emplace(rock.id,rock);
             local_entity_anchors_.emplace(rock.id,body_id);
             manifest[i]=rock.id;
