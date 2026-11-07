@@ -28,6 +28,21 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The default pull_request checkout is a synthetic merge commit.
+          # WO3-F requires actual source-head evidence, not a merge surrogate.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify exact source head and native CMake toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          expected="${{ github.event.pull_request.head.sha || github.sha }}"
+          echo "WO3-F requested source commit: $expected"
+          echo "WO3-F checked-out source commit: $actual"
+          test "$actual" = "$expected"
+          cmake --version
+          ctest --version
       - name: Install SQLite SDK (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -54,4 +69,15 @@ jobs:
       - name: Compile WO3 plus actual colony, industry and NPC regressions
         run: cmake --build build --config Release --parallel 2 --target galaxy_wo3_colony_operations_tests galaxy_wo3_planetary_housing_tests galaxy_wo3_planetary_utility_tests galaxy_b70_colony_core_tests galaxy_b70e_colony_farms_tests galaxy_b70f_habitation_tests galaxy_b70l_waterworks_tests galaxy_econ02a_workshop_tests galaxy_play13d_planetary_agriculture_tests galaxy_industry01_native_tests galaxy_wo2_industry_workforce_tests
       - name: Prove physical facility, named resident and independent SQLite recovery
-        run: ctest --test-dir build -C Release --output-on-failure -R "^galaxy_(wo3_planetary_utility|wo3_planetary_housing|wo3_colony_operations|b70_colony_core_tests|b70e_colony_farms_tests|b70f_habitation_tests|b70l_waterworks_tests|econ02a_workshop_tests|play13d_planetary_agriculture|industry01_native_binding|wo2_industry_workforce)$"
+        run: ctest --test-dir build -C Release --output-on-failure --output-junit build/wo3-native-results.xml -R "^galaxy_(wo3_planetary_utility|wo3_planetary_housing|wo3_colony_operations|b70_colony_core_tests|b70e_colony_farms_tests|b70f_habitation_tests|b70l_waterworks_tests|econ02a_workshop_tests|play13d_planetary_agriculture|industry01_native_binding|wo2_industry_workforce)$"
+      - name: Retain exact-head native test evidence on success or failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wo3-native-${{ matrix.os }}-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            build/wo3-native-results.xml
+            build/Testing/Temporary/LastTest.log
+            build/Testing/Temporary/LastTestsFailed.log
+          if-no-files-found: warn
+          retention-days: 14
