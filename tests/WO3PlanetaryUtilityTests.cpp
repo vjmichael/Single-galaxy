@@ -438,7 +438,27 @@ int main() {
     CHECK(w.world().total_ore()==initial_mass);
     CHECK(!w.start_planetary_production_build(
         7,ship,key,true,81801,builder)); // installed, not a second farm
+    Command repeat_production{};
+    repeat_production.id=81800;
+    repeat_production.sequence=81800;
+    repeat_production.execute_tick=w.world().tick()+1;
+    repeat_production.issuer=7;
+    repeat_production.actor=ship;
+    repeat_production.action=Action::Thrust;
+    CHECK(!w.submit(repeat_production)); // original project ID remains owned
     const auto completed_snapshot=w.world().canonical_state();
+    auto forged_production=completed_snapshot;
+    const auto production_row=forged_production.find("planetproduction|");
+    CHECK(production_row!=std::string::npos);
+    const auto production_end=forged_production.find('\n',production_row);
+    const auto final_field=forged_production.rfind('|',production_end);
+    CHECK(final_field!=std::string::npos);
+    forged_production.replace(final_field+1,
+        production_end-final_field-1,"1"); // completed project cannot be paused
+    bool rejects_tampering=false;
+    try {(void)Simulation::from_snapshot(forged_production);}
+    catch(const std::exception&){rejects_tampering=true;}
+    CHECK(rejects_tampering);
     CHECK(Simulation::from_snapshot(completed_snapshot).canonical_state()==
           completed_snapshot);
     const auto completed_copy=(folder/"production_finished.sqlite").string();
