@@ -1284,6 +1284,16 @@ bool Simulation::can_depart_colony(const Command& c) const {
 }
 bool Simulation::submit(const Command& c) {
     if(ship_status_.contains_id(c.id))return false;
+    // WO3-E: an accepted original owner colony/site work or founder
+    // request ID is immutable and cannot be reused as a ship command.
+    // The original host registry does not reassign physical provenance.
+    if(snapshot_version_>=109)
+        for(const auto& [key,site]:planetary_sites_) {
+            (void)key;
+            if(c.id && c.id==site.housing_order_id)return false;
+            for(const auto request:site.founder_consent_requests)
+                if(request && request==c.id)return false;
+        }
     if(colony_departures_.count(c.actor) || colony_departures_.count(c.target))return false;
     // Building a hull never creates a pilot. A manufactured uncommissioned
     // vessel is physically present but not authorized to run ship commands.
@@ -6730,6 +6740,8 @@ bool Simulation::start_planetary_housing(PlayerId owner,EntityId ship,
     for(const auto& [site_id,other]:planetary_sites_) {
         (void)site_id;
         if(other.housing_order_id==order_id)return false;
+        for(const auto founded:other.founder_consent_requests)
+            if(founded==order_id)return false;
     }
     for(const auto id:it->second.delegated_npcs) {
         const auto n=npcs_.find(id);
