@@ -1134,6 +1134,11 @@ public:
     // approval and cancellation. Never a second scheduling queue.
     bool pending_workshop_shift(EntityId site,bool finisher,
                                 std::uint64_t command_id) const;
+    // Read only: original accepted future workshop shift commitments for
+    // one named NPC, excluding original owner-cancelled pending orders.
+    // Management never gets to overwrite an already-approved worker slot.
+    bool pending_workshop_worker_duty(std::uint64_t npc_id,
+                                      std::uint64_t from_tick) const;
     EntityId add_asteroid(Vector2 position, std::int64_t ore);
     // Genesis-only, massive realistic-scale asteroid; respects world conservation.
     EntityId add_geological_asteroid(Vector2 position, AsteroidClass taxonomy,
