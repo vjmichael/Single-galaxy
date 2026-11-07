@@ -11345,9 +11345,13 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
         std::set<std::uint64_t> credited_commands;
         const auto verify=[&](const NpcRecord& n){
             std::array<unsigned,2> per_trade{{0,0}};
+            std::uint64_t previous_practice_tick=0;
             for(const auto& t:n.industrial_training){
                 const auto code=static_cast<unsigned>(t.trade);
+                // One named NPC cannot practice twice in one committed tick.
+                // Persisted credits also retain chronological command order.
                 if(code<1 || code>2 || !t.command_id || !t.tick ||
+                   t.tick<=previous_practice_tick ||
                    t.tick>result.tick_ || !t.workshop_site ||
                    !credited_commands.insert(t.command_id).second ||
                    ++per_trade[code-1]>3 ||
@@ -11357,6 +11361,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                          e.tick==t.tick && e.result==Outcome::Applied &&
                          e.transferred==1;}))
                     throw std::runtime_error("snapshot: invalid industrial training provenance");
+                previous_practice_tick=t.tick;
             }
         };
         for(const auto& [id,n]:result.npcs_){(void)id;verify(n);}
