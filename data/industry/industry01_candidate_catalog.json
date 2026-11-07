@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "status": "research_candidate_not_world_authoritative",
+  "status": "research_candidates_with_two_exact_native_bindings",
   "units": {
     "bulk_quantity": "grams",
     "discrete_quantity": "count",
