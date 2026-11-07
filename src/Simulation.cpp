@@ -4405,7 +4405,8 @@ Event Simulation::execute(const Command& c) {
                         for(const auto& [id,shop]:workshops_){
                             (void)id;
                             if(shop.operator_npc_id==replacement ||
-                               shop.finisher_npc_id==replacement){
+                               shop.finisher_npc_id==replacement ||
+                               shop.supervisor_npc_id==replacement){
                                 result.result=Outcome::InvalidTarget;return result;
                             }
                             for(const auto& duty:shop.shifts)
@@ -4707,7 +4708,8 @@ Event Simulation::execute(const Command& c) {
                                 !(id==c.target && !second);
                             const bool other_finisher=existing.finisher_npc_id==worker &&
                                 !(id==c.target && second);
-                            if(other_operator || other_finisher){
+                            if(other_operator || other_finisher ||
+                               existing.supervisor_npc_id==worker){
                                 result.result=Outcome::InvalidTarget;return result;
                             }
                         }
@@ -11062,7 +11064,10 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             job.supervisor_npc_id=u64(f[5]);
             job.approved_tick=u64(f[6]);
             job.baseline_batches=u64(f[7]);
-            job.target_batches=static_cast<std::uint32_t>(u64(f[8]));
+            const auto target_batches=u64(f[8]);
+            if(!target_batches || target_batches>50)
+                throw std::runtime_error("snapshot: out-of-range owner-approved job quota");
+            job.target_batches=static_cast<std::uint32_t>(target_batches);
             auto it=result.workshops_.find(site);
             if(it==result.workshops_.end() || slot<1 || slot>2 ||
                !id || !job.supervisor_appointment_id ||
