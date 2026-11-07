@@ -186,7 +186,7 @@ Command decode_command(const std::string& record) {
                 throw std::runtime_error("recovery: malformed split rescue envelope");
         }
     }
-    if (in >> extra || action < 0 || action > static_cast<int>(Action::TrainWorkshopTrade) || c.id == 0 || c.issuer == 0)
+    if (in >> extra || action < 0 || action > static_cast<int>(Action::CancelWorkshopShift) || c.id == 0 || c.issuer == 0)
         throw std::runtime_error("recovery: invalid command journal values");
     c.action = static_cast<Action>(action);
     if (command_record(c) != record) throw std::runtime_error("recovery: noncanonical command journal");
@@ -3955,6 +3955,34 @@ public:
                 const auto c = decode_command(reinterpret_cast<const char*>(raw));
                 if (!journal_commands.emplace(c.id, c).second || !restored.has_command_id(c.id))
                     throw std::runtime_error("SQLite: duplicate/unknown command in operation journal");
+            }
+        }
+        // WO2-I: original SQLite accepted-command history proves the exact
+        // shop, owner, worker and bounded window of every surviving shift.
+        // The shift may expire without an extra command, but its source
+        // admission must never be faked or reassigned in a snapshot.
+        for(const auto& [site,shop]:restored.workshops()){
+            for(unsigned slot=0;slot<2;++slot){
+                const auto& shift=shop.shifts[slot];
+                if(!shift.command_id)continue;
+                const auto it=journal_commands.find(shift.command_id);
+                const auto ev=event_by_id.find(shift.command_id);
+                const auto* ship=restored.find(shop.source_ship);
+                if(it==journal_commands.end() || ev==event_by_id.end() ||
+                   it->second.action!=Action::StartWorkshopShift ||
+                   !ship || it->second.issuer!=ship->owner_id ||
+                   it->second.actor!=shop.source_ship ||
+                   it->second.target!=site ||
+                   it->second.thrust_x!=static_cast<int>(slot+1) ||
+                   it->second.amount!=static_cast<std::int64_t>(shift.worker) ||
+                   it->second.execute_tick!=shift.start_tick ||
+                   it->second.thrust_y<1 ||
+                   shift.end_tick-shift.start_tick!=
+                     static_cast<std::uint64_t>(it->second.thrust_y) ||
+                   ev->second.tick!=shift.start_tick ||
+                   ev->second.result!=Outcome::Applied ||
+                   ev->second.transferred!=0)
+                    throw std::runtime_error("SQLite: original workshop shift proof mismatch");
             }
         }
         // WO2-H: original SQLite accepted-command history proves the exact
