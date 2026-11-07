@@ -44,21 +44,29 @@ inline bool occupied_medical_shift(const Simulation& world,std::uint64_t npc,
     }
     return false;
 }
-inline bool already_on_named_duty(const Simulation& world,std::uint64_t npc,
-                                  std::uint64_t next_tick) {
-    if(!npc)return true;
-    for(const auto& entry:world.workshops()) {
+inline std::set<std::uint64_t> occupied_named_workers(
+    const Simulation& world,std::uint64_t at_tick) {
+    std::set<std::uint64_t> occupied;
+    for(const auto& entry:world.workshops()){
         const auto& shop=entry.second;
-        if(shop.operator_npc_id==npc || shop.finisher_npc_id==npc)return true;
+        if(shop.operator_npc_id)occupied.insert(shop.operator_npc_id);
+        if(shop.finisher_npc_id)occupied.insert(shop.finisher_npc_id);
     }
-    if(occupied_medical_shift(world,npc,next_tick))return true;
-    // Reuse exactly the original native capacity computation; workers on
-    // active shipyard and unfinished hull orders cannot also run a workshop.
+    for(const auto& entry:world.medic_shifts()){
+        const auto& shift=entry.second;
+        if(shift.medic_id && shift.end_tick>at_tick)
+            occupied.insert(shift.medic_id);
+    }
     work::NativeCapacityContext context{};
     context.yards=&world.shipyard_constructions();
     context.builds=&world.freighter_build_orders();
-    const auto occupied=work::index_native_capacity(context);
-    return occupied.working_npcs.count(npc)!=0;
+    const auto index=work::index_native_capacity(context);
+    occupied.insert(index.working_npcs.begin(),index.working_npcs.end());
+    return occupied;
+}
+inline bool already_on_named_duty(const Simulation& world,std::uint64_t npc,
+                                  std::uint64_t at_tick) {
+    return !npc || occupied_named_workers(world,at_tick).count(npc)!=0;
 }
 inline WorkState state_of(const Simulation& world,EntityId site,bool second,
                            const OutpostWorkshop& workshop) {
@@ -95,6 +103,9 @@ inline std::vector<Slot> plan_original_workshop(const Simulation& world,
     const bool site_ok=workshop && workshop->source_ship==home_ship;
     std::vector<Slot> out;
     out.reserve(2);
+    // Compute exclusions once, even for thousands of actual named NPCs.
+    const auto next_tick=world.tick()+1;
+    const auto occupied=occupied_named_workers(world,next_tick);
     for(unsigned n=0;n<2;++n) {
         const bool second=n!=0;
         Slot row{};
@@ -113,13 +124,12 @@ inline std::vector<Slot> plan_original_workshop(const Simulation& world,
             if(row.assigned_npc)row.gate=StaffGate::AlreadyStaffed;
             else {
                 row.gate=StaffGate::NoFreeQualifiedPerson;
-                const auto next_tick=world.tick()+1;
                 for(const auto& [id,npc]:world.npc_records()){
                     if(id==0 || id>1000000 || npc.home_ship!=home_ship ||
                        npc.location!=site || npc.assigned_site!=site ||
                        npc.role!=NpcRole::Habitat ||
                        npc.mentor_id || !world.npc_available_for_duty(id) ||
-                       already_on_named_duty(world,id,next_tick))
+                       occupied.count(id)!=0)
                         continue;
                     // Native workshop baseline does not infer a new skill
                     // license. A constructed station and existing Habitat
@@ -136,13 +146,12 @@ inline std::vector<Slot> plan_original_workshop(const Simulation& world,
        out[1].suggested_npc==out[0].suggested_npc){
         out[1].gate=StaffGate::NoFreeQualifiedPerson;
         out[1].suggested_npc=0;
-        const auto next_tick=world.tick()+1;
         for(const auto& [id,npc]:world.npc_records()){
             if(id==out[0].suggested_npc || id==0 || id>1000000 ||
                npc.home_ship!=home_ship || npc.location!=site ||
                npc.assigned_site!=site || npc.role!=NpcRole::Habitat ||
                npc.mentor_id || !world.npc_available_for_duty(id) ||
-               already_on_named_duty(world,id,next_tick))continue;
+               occupied.count(id)!=0)continue;
             out[1].suggested_npc=id;
             out[1].gate=StaffGate::Ready;
             break;
