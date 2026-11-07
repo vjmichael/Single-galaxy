@@ -14379,13 +14379,60 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 throw std::runtime_error("snapshot: named planetary NPC missing");
         }
     }
+    // v116: bind each family seat to one original physical dependent and
+    // its same-site named guardian. Never synthesize a second NPC roster.
+    std::set<std::uint64_t> planetary_child_berths;
+    if(result.snapshot_version_>=116)
+        for(const auto& [key,sh]:result.planetary_shuttles_) {
+            const auto& family=sh.family;
+            if(!family.stage)continue;
+            const auto site=result.planetary_sites_.find(key);
+            if(site==result.planetary_sites_.end() ||
+               sh.passenger_ids.size()+family.child_ids.size()>3 ||
+               !std::binary_search(sh.passenger_ids.begin(),
+                                   sh.passenger_ids.end(),family.guardian_id) ||
+               (family.co_parent_id &&
+                !std::binary_search(sh.passenger_ids.begin(),
+                                    sh.passenger_ids.end(),family.co_parent_id)) ||
+               result.submitted_ids_.count(family.booking_request) ||
+               result.shuttle_flight_request_ids_.count(family.booking_request) ||
+               result.voyages_.count(family.booking_request) ||
+               result.local_delivery_orders_.count(family.booking_request))
+                throw std::runtime_error("snapshot: orphan or reused family booking");
+            const auto custody=sh.flight_phase==1 || sh.flight_phase==3?
+                shuttle_transit_custody_id(key):
+                sh.flight_phase==2?site->second.surface_location:sh.source_ship;
+            for(const auto adult:{family.guardian_id,family.co_parent_id}) {
+                if(!adult)continue;
+                const auto n=result.npcs_.find(adult);
+                if(n==result.npcs_.end() || n->second.home_ship!=sh.source_ship ||
+                   n->second.location!=custody || n->second.role!=NpcRole::Ship ||
+                   n->second.assigned_site!=sh.source_ship)
+                    throw std::runtime_error("snapshot: separated family adult");
+            }
+            for(const auto child:family.child_ids) {
+                const auto dep=result.physical_dependents_.find(child);
+                if(!planetary_child_berths.insert(child).second ||
+                   dep==result.physical_dependents_.end() ||
+                   dep->second.home_ship!=sh.source_ship ||
+                   dep->second.location!=custody ||
+                   (dep->second.guardian_id!=family.guardian_id &&
+                    dep->second.guardian_id!=family.co_parent_id))
+                    throw std::runtime_error("snapshot: separated or repeated child berth");
+            }
+            for(const auto& [other_key,other]:result.planetary_shuttles_)
+                if(other_key!=key &&
+                   other.family.booking_request==family.booking_request)
+                    throw std::runtime_error("snapshot: reused family approval");
+        }
     if(result.snapshot_version_>=59)for(const auto& [id,d]:result.physical_dependents_){
         const auto g=result.npcs_.find(d.guardian_id);
         if(g==result.npcs_.end() || result.npcs_.count(id) || result.casualties_.count(id) ||
            !result.colony_ships_.count(d.home_ship) ||
-           !result.colony_ships_.count(d.location) ||
+           (!result.colony_ships_.count(d.location) &&
+            !planetary_child_berths.count(id)) ||
            g->second.home_ship!=d.home_ship || g->second.location!=d.location ||
-           d.location!=d.home_ship)
+           (d.location!=d.home_ship && !planetary_child_berths.count(id)))
             throw std::runtime_error("snapshot: child orphaned or without verified physical guardian");
         const auto receipt=std::find_if(result.events_.begin(),result.events_.end(),
             [&](const Event& e){return e.command_id==d.registration_command &&
