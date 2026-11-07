@@ -14406,6 +14406,63 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                            site.surface_location})
                         throw std::runtime_error("snapshot: invalid original founder admission");
                 }
+                if(result.snapshot_version_>=111) {
+                    std::size_t active_visitors=0;
+                    const auto shuttle=result.planetary_shuttles_.find(key);
+                    for(const auto& [id,proof]:site.visitor_residency) {
+                        const auto live=result.npcs_.find(id);
+                        const auto dead=result.casualties_.find(id);
+                        if((live==result.npcs_.end() &&
+                            dead==result.casualties_.end()) ||
+                           shuttle==result.planetary_shuttles_.end() ||
+                           !result.shuttle_flight_request_ids_.count(proof[0]) ||
+                           !proof[1] || !request_ids.insert(proof[1]).second ||
+                           result.submitted_ids_.count(proof[1]) ||
+                           result.shuttle_flight_request_ids_.count(proof[1]) ||
+                           result.local_delivery_orders_.count(proof[1]) ||
+                           result.voyages_.count(proof[1]) ||
+                           proof[1]==site.housing_order_id ||
+                           proof[1]==site.utility_order_id ||
+                           (proof[2] &&
+                            (!request_ids.insert(proof[2]).second ||
+                             result.submitted_ids_.count(proof[2]) ||
+                             result.shuttle_flight_request_ids_.count(proof[2]) ||
+                             result.local_delivery_orders_.count(proof[2]) ||
+                             result.voyages_.count(proof[2]) ||
+                             proof[2]==site.housing_order_id ||
+                             proof[2]==site.utility_order_id)))
+                            throw std::runtime_error("snapshot: invalid visitor admission proof");
+                        const NpcRecord& person=live!=result.npcs_.end()?
+                            live->second:dead->second.identity;
+                        if(person.home_ship!=site.source_ship ||
+                           person.role!=NpcRole::Ship ||
+                           person.assigned_site!=site.source_ship ||
+                           id==site.delegated_npcs[0] ||
+                           id==site.delegated_npcs[1] ||
+                           !founded_npcs.insert(id).second)
+                            throw std::runtime_error("snapshot: forged visitor identity");
+                        if(!proof[2]) {
+                            ++active_visitors;
+                            if(person.legal_residence()!=transport::Endpoint{
+                                  transport::LocationKind::PlanetarySite,
+                                  site.surface_location})
+                                throw std::runtime_error("snapshot: missing actual visitor residence");
+                            if(live!=result.npcs_.end()) {
+                                const auto arrival=shuttle->second.visitor_arrival_receipts.find(id);
+                                if(person.location!=site.surface_location ||
+                                   arrival==shuttle->second.visitor_arrival_receipts.end() ||
+                                   arrival->second!=proof[0] ||
+                                   !std::binary_search(
+                                       shuttle->second.disembarked_ids.begin(),
+                                       shuttle->second.disembarked_ids.end(),id) ||
+                                   !result.npc_transport_arrival(proof[0],id))
+                                    throw std::runtime_error("snapshot: unproven resident arrival");
+                            }
+                        }
+                    }
+                    if(active_visitors>2)
+                        throw std::runtime_error("snapshot: planetary beds over capacity");
+                }
             }
         }
     }
