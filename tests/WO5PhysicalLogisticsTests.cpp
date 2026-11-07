@@ -33,7 +33,7 @@ int main() {
     // A shortage is real but it does NOT give an imaginary planet, shuttle,
     // ship frame, pilot, cargo, remote route or trusted host approval.
     const auto board=economy04::observe_regional_distribution(
-        w.world(),7,economy04::Policy{4,1});
+        w.world(),7,economy04::Policy{32,1});
     CHECK(board && board->still_current(w.world()));
     CHECK(!board->shortages.empty());
     CHECK(w.world().total_ore()==mass);
