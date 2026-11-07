@@ -261,6 +261,19 @@ void snapshot(const PersistentWorld& world,
                 std::to_string(r.officer)+"|"+
                 std::to_string(r.reviewer));
         }
+        emit("SECURITY_AGENCY_INVESTIGATIONS_RESET");
+        const auto tasks=law_agency->investigations(world,owner,home);
+        const auto from=tasks.size()>16?tasks.size()-16:0;
+        for(std::size_t i=from;i<tasks.size();++i){
+            const auto& task=tasks[i];
+            emit("SECURITY_AGENCY_INVESTIGATION|"+
+                std::to_string(task.order_id)+"|"+
+                std::to_string(task.referral)+"|"+
+                std::to_string(task.target_ship)+"|"+
+                std::to_string(task.officer)+"|"+
+                std::to_string(task.native_flight_present?1:0)+"|"+
+                std::to_string(unsigned(task.native_phase)));
+        }
     }catch(const std::exception&){
         emit("SECURITY_ERROR|AGENCY_UNAVAILABLE");
     }
@@ -394,6 +407,16 @@ bool execute(const std::vector<std::string>& words,
         if(complaint)try{
             accepted=law_agency->refer(world,territory,*communications,
                 owner,home,piloted,complaint,receipt=++nonce);
+        }catch(const std::exception&){
+            emit("SECURITY_ERROR|AGENCY_UNAVAILABLE");
+        }
+    }else if(words.size()==3 && action=="SECURITY_AGENCY_INVESTIGATE" &&
+              law_agency){
+        const auto referral=numeric(words[1]);
+        const auto target=numeric(words[2]);
+        if(referral && target)try{
+            accepted=law_agency->investigate(world,territory,owner,home,
+                referral,target,receipt=++nonce);
         }catch(const std::exception&){
             emit("SECURITY_ERROR|AGENCY_UNAVAILABLE");
         }
