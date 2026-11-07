@@ -14189,11 +14189,13 @@ std::int64_t Simulation::total_ore() const {
     // stocks remain counted exactly once in world total matter.
     for(const auto& [key,site]:planetary_sites_) {
         (void)key;
-        if(site.embodied_ore!=4+4*(std::int64_t(site.farm)+
-                                   std::int64_t(site.extractor)) ||
+        if(site.housing_modules>2 || site.housing_phase>2 ||
+            site.embodied_ore!=4+4*(std::int64_t(site.farm)+
+                                   std::int64_t(site.extractor)+
+                                   std::int64_t(site.housing_phase!=0)) ||
            site.embodied_ore>std::numeric_limits<std::int64_t>::max()-total)
             throw std::overflow_error("invalid planetary installation mass");
-        total+=site.embodied_ore;
+        total+=site.embodied_ore+2*site.housing_modules;
         const auto kg=site.water_kg+site.nutrients_kg+site.food_kg+
                       site.wastewater_kg+site.oxygen_kg+site.co2_kg+
                       site.organic_waste_kg;
@@ -14212,6 +14214,7 @@ std::int64_t Simulation::total_ore() const {
            v.water_kg<0 || v.food_kg<0 || v.nutrients_kg<0 || v.water_kg>1000 ||
            v.food_kg>1000-v.water_kg ||
            v.nutrients_kg>1000-v.water_kg-v.food_kg ||
+            v.housing_module>1 ||
            !colony_ships_.count(v.source_ship) ||
            total>std::numeric_limits<std::int64_t>::max()-v.dry_mass_ore)
             throw std::overflow_error("invalid source-backed shuttle");
@@ -14287,7 +14290,7 @@ std::int64_t Simulation::total_ore() const {
                (v.flight_phase>3))
                 throw std::overflow_error("invalid shuttle pilot custody");
         }
-        total+=v.dry_mass_ore;
+        total+=v.dry_mass_ore+2*v.housing_module;
         const auto held=v.water_kg+v.food_kg+v.nutrients_kg;
         if(held>1000000000LL-life_mass_kg)
             throw std::overflow_error("invalid shuttle held stock");
