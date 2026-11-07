@@ -1892,8 +1892,10 @@ bool Simulation::submit(const Command& c) {
         if(c.action==Action::StartWorkshopShift){
             const auto end=c.execute_tick+static_cast<std::uint64_t>(c.thrust_y);
             const auto& shop=workshops_.at(c.target);
+            const auto& existing=shop.shifts[static_cast<std::size_t>(c.thrust_x-1)];
             if((c.thrust_x==2 && !shop.finisher_installed) ||
-               shop.shifts[static_cast<std::size_t>(c.thrust_x-1)].command_id)
+               (existing.command_id && c.execute_tick<existing.end_tick &&
+                existing.start_tick<end))
                 return false;
             for(const auto& [other_site,other]:workshops_){
                 (void)other_site;
@@ -8925,6 +8927,19 @@ bool Simulation::install_testing_confusion(EntityId source,EntityId target,
 void Simulation::step() {
     if (tick_ == std::numeric_limits<std::uint64_t>::max()) throw std::overflow_error("tick counter exhausted");
     ++tick_;
+    // WO2-I: end-exclusive releases precede this tick's ordered commands.
+    // Another preapproved shift can start at the exact former end without
+    // double-booking, a phantom interim worker or an extra production tick.
+    for(auto& [id,shop]:workshops_){
+        (void)id;
+        for(unsigned slot=0;slot<2;++slot){
+            auto& sh=shop.shifts[slot];
+            if(!sh.command_id || tick_<sh.end_tick)continue;
+            auto& assigned=slot==0?shop.operator_npc_id:shop.finisher_npc_id;
+            if(assigned==sh.worker)assigned=0;
+            sh={};
+        }
+    }
     // A newly authorized transition begins on the command tick; completion is
     // automatic after two further committed ticks, without another command.
     process_station_transitions();
