@@ -9589,6 +9589,56 @@ bool PersistentWorld::handover_planetary_surface_utility(PlayerId owner,
 
 // v113 original SQLite commit/copy/swap; failed commit preserves live site
 // modules, project progress and named workers.
+bool PersistentWorld::start_planetary_service_build(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,bool annex,
+        std::uint64_t order_id,std::uint64_t supervisor,FailPoint fail) {
+    auto next=world_;
+    if(!next.start_planetary_service_build(
+        owner,ship,key,annex,order_id,supervisor))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 service build created physical matter");
+    if(Simulation::from_snapshot(next.canonical_state()).state_hash()!=
+       next.state_hash())
+        throw std::logic_error("WO3 service project cannot restore");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::pause_planetary_service_build(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,bool annex,
+        bool paused,FailPoint fail) {
+    auto next=world_;
+    if(!next.pause_planetary_service_build(owner,ship,key,annex,paused))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 service pause altered physical matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::handover_planetary_service_build(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,bool annex,
+        std::uint64_t previous,std::uint64_t replacement,
+        std::uint64_t request_id,FailPoint fail) {
+    auto next=world_;
+    if(!next.handover_planetary_service_build(
+        owner,ship,key,annex,previous,replacement,request_id))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 supervisor relief altered physical matter");
+    if(Simulation::from_snapshot(next.canonical_state()).state_hash()!=
+       next.state_hash())
+        throw std::logic_error("WO3 supervisor history cannot restore");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
 bool PersistentWorld::start_planetary_production_build(PlayerId owner,
         EntityId ship,const PlanetarySiteKey& key,bool farm,
         std::uint64_t order_id,std::uint64_t qualified_supervisor,
