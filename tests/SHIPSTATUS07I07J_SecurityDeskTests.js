@@ -93,7 +93,8 @@ frame(good);
 assert.equal(calls.pop().action,'colonySecurityNotifyAck',
  'reconnect/reset allows at-least-once retransmission');
 // There is still no shortcut from a reported caller ID to arrest or force.
-assert.equal(el('securityAgencyStatus').textContent.includes('arrest'),true);
+for(const action of calls.map(v=>v.action))
+  assert.doesNotMatch(action,/arrest|police|fire|seize/i);
 delete global.document;delete global.window;delete global.Option;
 console.log('PASS STATUS-07I/07J: real UI parses durable owner notices, ACKs once, '+
   'replays on reconnect and requires original independent agency referrals');
