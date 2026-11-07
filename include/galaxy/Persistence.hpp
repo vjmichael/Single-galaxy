@@ -900,6 +900,11 @@ public:
         std::uint64_t first_npc,std::uint64_t second_npc,
         FailPoint fail=FailPoint::None);
     bool build_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,FailPoint fail=FailPoint::None);
+    // WO3-E v115: host-only reconciliation of existing v86-v108 legal
+    // planetary addresses. Requires a copied SQLite commit; never invents
+    // beds, shuttle arrivals, child custody, or independent consent.
+    bool host_import_legacy_planetary_residences(PlayerId host_principal,
+        std::uint64_t request_id,FailPoint fail=FailPoint::None);
     // WO3-B: original-world atomic physical module handoff and finite
     // owner-approved site construction. Uncommitted failures leave no effect.
     bool transfer_planetary_housing_module(PlayerId owner,EntityId ship,
