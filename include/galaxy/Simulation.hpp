@@ -1470,6 +1470,10 @@ public:
         const PlanetarySiteKey& key,std::uint64_t guardian,
         std::uint64_t co_parent,const std::vector<std::uint64_t>& children,
         std::uint64_t request_id);
+    // After verified return to the parent ship, clear the active family
+    // booking while retaining its immutable once-used original request ID.
+    bool release_planetary_shuttle_family(PlayerId host_principal,
+        PlayerId owner,EntityId ship,const PlanetarySiteKey& key);
     bool book_planetary_shuttle_passenger(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,std::uint64_t npc,bool board);
     // At surface: release a booked visitor from the shuttle, or rebook a
@@ -1715,6 +1719,7 @@ private:
     std::map<std::uint64_t,ShipyardCustomerOrder> shipyard_customer_orders_; // v93
     std::map<std::uint64_t,WorkDirective> work_directives_; // v94
     std::set<std::uint64_t> shuttle_flight_request_ids_; // v81 replay rejection
+    std::set<std::uint64_t> planetary_family_booking_ids_; // v116 immutable roster approvals
     std::map<std::uint64_t,PendingCelestialTransit> pending_celestial_transits_;
     std::map<std::uint64_t,CompletedCelestialTransit> completed_celestial_transits_;
     std::map<std::uint64_t,NpcFlightOrder> npc_flight_orders_; // v95 intent + proof
