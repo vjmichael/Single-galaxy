@@ -5,6 +5,12 @@ on:
       - 'include/galaxy/WO5PhysicalResupply.hpp'
       - 'include/galaxy/WO5IntercolonyBooking.hpp'
       - 'include/galaxy/WO5FreightEvidence.hpp'
+      - 'include/galaxy/WO5ManufacturedFreight.hpp'
+      - 'include/galaxy/WO5ManufacturedEvidence.hpp'
+      - 'tests/V59_multi_destination_host.cpp'
+      - 'src/ThirdPartyShipment.cpp'
+      - 'src/CanonicalShippingHost.cpp'
+      - 'src/ShipmentStatusView.cpp'
       - 'tests/PLAY13D_RegionalFacilitiesTests.cpp'
       - 'tests/WO5PhysicalLogisticsTests.cpp'
       - 'include/galaxy/WO4ResourceDemand.hpp'
@@ -77,9 +83,9 @@ jobs:
           cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$tc" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
           if ($LASTEXITCODE -ne 0) { throw 'Windows original configure failed' }
       - name: Build WO5 physically routed freight and upstream WO3/WO4 regressions
-        run: cmake --build build --config Release --parallel 2 --target galaxy_wo5_physical_logistics_tests galaxy_play13d_regional_facilities_tests galaxy_wo4_resource_demand_tests galaxy_wo4_material_allocation_tests galaxy_wo3_colony_operations_tests galaxy_wo3_planetary_housing_tests galaxy_wo3_planetary_utility_tests galaxy_wo2_industry_workforce_tests
+        run: cmake --build build --config Release --parallel 2 --target v59_multi_destination_host v59_third_party_custody v59_world_finished_goods_logistics galaxy_shipping_status_bridge galaxy_wo5_physical_logistics_tests galaxy_play13d_regional_facilities_tests galaxy_wo4_resource_demand_tests galaxy_wo4_material_allocation_tests galaxy_wo3_colony_operations_tests galaxy_wo3_planetary_housing_tests galaxy_wo3_planetary_utility_tests galaxy_wo2_industry_workforce_tests
       - name: Verify physical shuttle and freight receipts, rollback and independent SQLite recovery
-        run: ctest --test-dir build -C Release --output-on-failure --output-junit build/wo5-native-results.xml -R "^galaxy_(wo5_physical_logistics|wo4_resource_demand|wo4_material_allocation|wo3_planetary_utility|wo3_planetary_housing|ship01c_manufactured_freight|flight04b_real_freight)$"
+        run: ctest --test-dir build -C Release --output-on-failure --output-junit build/wo5-native-results.xml -R "^(v59_(multi_destination_host|third_party_custody|world_finished_goods_logistics)|galaxy_(shipping_transport_real_world_tests|wo5_physical_logistics|wo4_resource_demand|wo4_material_allocation|wo3_planetary_utility|wo3_planetary_housing|ship01c_manufactured_freight|flight04b_real_freight))$"
       - name: Retain executed native test evidence
         if: always()
         uses: actions/upload-artifact@v4
