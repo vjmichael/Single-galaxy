@@ -130,10 +130,13 @@ public:
                 SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX,nullptr)!=SQLITE_OK)
                 throw std::runtime_error("outbox requires existing original SQLite");
             sqlite3_busy_timeout(db_,10000);
-            Statement check(db_,
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='snapshots'");
-            if(sqlite3_step(check.ptr)!=SQLITE_ROW)
-                throw std::runtime_error("outbox refuses independent fake world");
+            {
+                Statement check(db_,
+                    "SELECT 1 FROM sqlite_master WHERE "
+                    "type='table' AND name='snapshots'");
+                if(sqlite3_step(check.ptr)!=SQLITE_ROW)
+                    throw std::runtime_error("outbox refuses independent fake world");
+            }
             ensure_schema(db_);
         }catch(...){if(db_)sqlite3_close(db_);db_=nullptr;throw;}
     }
