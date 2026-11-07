@@ -1356,7 +1356,16 @@ static void scenario(const fs::path& db, bool farming,
                     token.checkpoint_revision);
                 CHECK(loaded_audit && loaded_audit->loaded==1 &&
                       loaded_audit->awaiting==0 &&
+                      loaded_audit->delivered>=1 &&
                       loaded_audit->has_unresolved_original_freight);
+                // Native carrier reused after a PRIOR completed nutrient
+                // delivery: its new 100kg belong solely to 77007. The
+                // old 77003 delivery receipt remains independently valid.
+                const auto older=logistics05::inspect_original_freight_evidence(
+                    w.world(),7,77003);
+                CHECK(older && older->actual_arrival_proved &&
+                      older->physically_carried_kg==0 &&
+                      older->other_loaded_same_good_kg==100);
                 bool cannot_cutover=false;
                 try{
                     (void)authority.prepare("wo5-loaded-cutover",
