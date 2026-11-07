@@ -1843,3 +1843,25 @@ if(BUILD_TESTING)
     COMMAND galaxy_ship_status07g_two_human_tests)
   set_tests_properties(galaxy_ship_status07g_two_human PROPERTIES TIMEOUT 300)
 endif()
+
+# SHIP-STATUS-07I: original same-transaction durable owner notification outbox
+# with owner-scoped replay, idempotent ACK, adversarial rollback and restart.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status07i_outbox_tests
+    tests/SHIPSTATUS07I_DurableOutboxTests.cpp)
+  target_link_libraries(galaxy_ship_status07i_outbox_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status07i_outbox
+    COMMAND galaxy_ship_status07i_outbox_tests)
+  set_tests_properties(galaxy_ship_status07i_outbox PROPERTIES TIMEOUT 300)
+endif()
+
+# SHIP-STATUS-07J: original staffed government appointment and independently
+# witnessed verified nuisance intake. No verdict, warrant, police or weapons.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status07j_law_agency_tests
+    tests/SHIPSTATUS07J_LawAgencyTests.cpp)
+  target_link_libraries(galaxy_ship_status07j_law_agency_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status07j_law_agency
+    COMMAND galaxy_ship_status07j_law_agency_tests)
+  set_tests_properties(galaxy_ship_status07j_law_agency PROPERTIES TIMEOUT 300)
+endif()
