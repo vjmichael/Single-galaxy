@@ -9824,6 +9824,266 @@ bool Simulation::book_planetary_shuttle_family(PlayerId host_principal,
     return true;
 }
 
+// WO3-E/v118: the house AND the real child must be on this planet.
+// The matching ART02 census transfer is performed by the sole SQLite
+// writer; this in-memory operation alone is never a legal proof of custody.
+bool Simulation::settle_planetary_household(PlayerId host_principal,
+        PlayerId owner,EntityId ship,const PlanetarySiteKey& key,
+        std::uint64_t request_id,bool guardian_consent,bool co_parent_consent) {
+    auto sh=planetary_shuttles_.find(key);
+    auto site=planetary_sites_.find(key);
+    if(host_principal!=kServerAuthority || !owner || owner==kServerAuthority ||
+       !guardian_consent || !co_parent_consent || !request_id ||
+       request_id>std::numeric_limits<std::uint64_t>::max()-3 ||
+       request_id%16!=0 || sh==planetary_shuttles_.end() ||
+       site==planetary_sites_.end() || !entities_.count(ship) ||
+       entities_.at(ship).owner_id!=owner ||
+       site->second.owner!=owner || site->second.source_ship!=ship ||
+       sh->second.owner!=owner || sh->second.source_ship!=ship ||
+       sh->second.flight_phase!=2 || sh->second.family.stage!=2 ||
+       site->second.spaceport_phase!=3 ||
+       site->second.housing_phase!=2 || site->second.utility_phase!=2 ||
+       site->second.service_projects[0].phase!=2 ||
+       site->second.stored_electricity<3 ||
+       site->second.food_kg<3 || site->second.water_kg<3 ||
+       site->second.oxygen_kg<3 ||
+       site->second.households.size()>=32 ||
+       submitted_ids_.count(request_id) ||
+       shuttle_flight_request_ids_.count(request_id) ||
+       planetary_family_booking_ids_.count(request_id) ||
+       voyages_.count(request_id) ||
+       local_delivery_orders_.count(request_id) ||
+       pending_celestial_transits_.count(request_id) ||
+       completed_celestial_transits_.count(request_id) ||
+       (legacy_planetary_residence_import_ &&
+        legacy_planetary_residence_import_->host_request_id==request_id))
+        return false;
+    const auto& fam=sh->second.family;
+    if(!fam.guardian_id || !fam.co_parent_id ||
+       fam.child_ids.size()!=1 || !fam.outbound_receipt ||
+       fam.return_receipt || !fam.booking_request ||
+       site->second.households.count(fam.guardian_id) ||
+       sh->second.passenger_ids.size()!=2 ||
+       !std::binary_search(sh->second.passenger_ids.begin(),
+                           sh->second.passenger_ids.end(),fam.guardian_id) ||
+       !std::binary_search(sh->second.passenger_ids.begin(),
+                           sh->second.passenger_ids.end(),fam.co_parent_id))
+        return false;
+    const auto child=physical_dependents_.find(fam.child_ids[0]);
+    if(child==physical_dependents_.end() ||
+       child->second.home_ship!=ship ||
+       child->second.location!=site->second.surface_location ||
+       (child->second.guardian_id!=fam.guardian_id &&
+        child->second.guardian_id!=fam.co_parent_id))
+        return false;
+    std::int64_t adult_residents=0,other_children=0;
+    for(const auto& [id,n]:npcs_) {
+        if(n.legal_residence()!=transport::Endpoint{
+           transport::LocationKind::PlanetarySite,
+           site->second.surface_location})continue;
+        if(legacy_planetary_residence_import_ &&
+           legacy_planetary_residence_import_->legal_addresses.count(id))
+            continue; // grandfathered address does not invent an actual bed
+        ++adult_residents;
+    }
+    for(const auto& [person,h]:site->second.households) {
+        (void)person;
+        if(!h.return_request)
+            other_children+=std::int64_t(h.child_ids.size());
+        if(h.admission_request==request_id || h.return_request==request_id)
+            return false;
+    }
+    const auto beds=std::int64_t{4}+4;
+    if(std::max<std::int64_t>(2,adult_residents)+other_children+3>beds)
+        return false;
+    for(const auto adult:{fam.guardian_id,fam.co_parent_id}) {
+        const auto it=npcs_.find(adult);
+        if(it==npcs_.end() || it->second.home_ship!=ship ||
+           it->second.location!=site->second.surface_location ||
+           it->second.role!=NpcRole::Ship ||
+           it->second.assigned_site!=ship ||
+           it->second.transport_id ||
+           it->second.legal_residence()!=transport::Endpoint{
+               transport::LocationKind::ColonyShip,ship} ||
+           std::binary_search(sh->second.disembarked_ids.begin(),
+                              sh->second.disembarked_ids.end(),adult) ||
+           site->second.visitor_residency.count(adult))
+            return false;
+    }
+    for(const auto& [other_key,other]:planetary_sites_) {
+        (void)other_key;
+        if(other.housing_order_id==request_id ||
+           other.utility_order_id==request_id)return false;
+        for(const auto& p:other.production_projects)
+            if(p.order_id==request_id)return false;
+        for(const auto& p:other.service_projects)
+            if(p.order_id==request_id)return false;
+        for(const auto& h:other.utility_handovers)
+            if(h.request_id==request_id)return false;
+        for(const auto& chain:other.production_handovers)
+            for(const auto& h:chain)
+                if(h.request_id==request_id)return false;
+        for(const auto& chain:other.service_handovers)
+            for(const auto& h:chain)
+                if(h.request_id==request_id)return false;
+        for(const auto& [adult,proof]:other.visitor_residency) {
+            (void)adult;
+            if(proof[1]==request_id || proof[2]==request_id)return false;
+        }
+    }
+    PlanetaryHouseholdResidence resident{};
+    resident.co_parent_id=fam.co_parent_id;
+    resident.booking_request=fam.booking_request;
+    resident.arrival_receipt=fam.outbound_receipt;
+    resident.admission_request=request_id;
+    resident.admission_tick=tick_;
+    resident.consent_mask=3; // signed two-parent host attestations
+    resident.child_ids=fam.child_ids;
+    site->second.households.emplace(fam.guardian_id,std::move(resident));
+    for(const auto adult:{fam.guardian_id,fam.co_parent_id}) {
+        auto& npc=npcs_.at(adult);
+        npc.residence_kind=transport::LocationKind::PlanetarySite;
+        npc.residence_id=site->second.surface_location;
+        sh->second.passenger_ids.erase(
+            std::lower_bound(sh->second.passenger_ids.begin(),
+                             sh->second.passenger_ids.end(),adult));
+        sh->second.disembarked_ids.insert(
+            std::lower_bound(sh->second.disembarked_ids.begin(),
+                             sh->second.disembarked_ids.end(),adult),adult);
+        sh->second.visitor_arrival_receipts.emplace(
+            adult,fam.outbound_receipt);
+    }
+    sh->second.family={};
+    snapshot_version_=std::max(snapshot_version_,118);
+    return true;
+}
+
+// Physically board the SAME existing parent+child household for a legal
+// return. Adults have not lost their existing surface residence merely by
+// entering the shuttle; ART02 reverse migration waits for real ship arrival.
+bool Simulation::book_planetary_household_return(PlayerId host_principal,
+        PlayerId owner,EntityId ship,const PlanetarySiteKey& key,
+        std::uint64_t guardian,std::uint64_t request_id) {
+    auto sh=planetary_shuttles_.find(key);
+    auto site=planetary_sites_.find(key);
+    if(host_principal!=kServerAuthority || !owner || owner==kServerAuthority ||
+       !guardian || !request_id ||
+       sh==planetary_shuttles_.end() || site==planetary_sites_.end() ||
+       !entities_.count(ship) || entities_.at(ship).owner_id!=owner ||
+       sh->second.owner!=owner || sh->second.source_ship!=ship ||
+       site->second.owner!=owner || site->second.source_ship!=ship ||
+       sh->second.flight_phase!=2 || sh->second.family.stage ||
+       site->second.spaceport_phase!=3 ||
+       submitted_ids_.count(request_id) ||
+       shuttle_flight_request_ids_.count(request_id) ||
+       planetary_family_booking_ids_.count(request_id) ||
+       voyages_.count(request_id) ||
+       local_delivery_orders_.count(request_id) ||
+       pending_celestial_transits_.count(request_id) ||
+       completed_celestial_transits_.count(request_id))
+        return false;
+    const auto resident=site->second.households.find(guardian);
+    if(resident==site->second.households.end() ||
+       resident->second.return_request ||
+       resident->second.child_ids.size()!=1 ||
+       !resident->second.co_parent_id ||
+       sh->second.passenger_ids.size()>0 ||
+       !sh->second.pilot_npc)return false;
+    const auto co_parent=resident->second.co_parent_id;
+    const auto child_id=resident->second.child_ids[0];
+    const auto child=physical_dependents_.find(child_id);
+    if(child==physical_dependents_.end() ||
+       child->second.home_ship!=ship ||
+       child->second.location!=site->second.surface_location ||
+       (child->second.guardian_id!=guardian &&
+        child->second.guardian_id!=co_parent))
+        return false;
+    for(const auto adult:{guardian,co_parent}) {
+        const auto n=npcs_.find(adult);
+        if(n==npcs_.end() || n->second.home_ship!=ship ||
+           n->second.location!=site->second.surface_location ||
+           n->second.role!=NpcRole::Ship || n->second.assigned_site!=ship ||
+           n->second.transport_id ||
+           n->second.legal_residence()!=transport::Endpoint{
+               transport::LocationKind::PlanetarySite,
+               site->second.surface_location} ||
+           !std::binary_search(sh->second.disembarked_ids.begin(),
+                               sh->second.disembarked_ids.end(),adult))
+            return false;
+    }
+    for(const auto adult:{guardian,co_parent}) {
+        sh->second.disembarked_ids.erase(
+            std::lower_bound(sh->second.disembarked_ids.begin(),
+                             sh->second.disembarked_ids.end(),adult));
+        sh->second.visitor_arrival_receipts.erase(adult);
+        sh->second.passenger_ids.insert(
+            std::lower_bound(sh->second.passenger_ids.begin(),
+                             sh->second.passenger_ids.end(),adult),adult);
+    }
+    auto& family=sh->second.family;
+    family.guardian_id=guardian;family.co_parent_id=co_parent;
+    family.booking_request=resident->second.booking_request;
+    family.outbound_receipt=resident->second.arrival_receipt;
+    family.child_ids=resident->second.child_ids;
+    family.stage=5;
+    return true;
+}
+
+// Host may reverse residence ONLY after the original vehicle has actually
+// returned every family member aboard the owner ship. The corresponding
+// ART02+regional population change is inseparable from SQLite commit.
+bool Simulation::finalize_planetary_household_return(
+        PlayerId host_principal,PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t guardian,
+        std::uint64_t request_id) {
+    auto sh=planetary_shuttles_.find(key);
+    auto site=planetary_sites_.find(key);
+    if(host_principal!=kServerAuthority || !owner || owner==kServerAuthority ||
+       !request_id || request_id>std::numeric_limits<std::uint64_t>::max()-3 ||
+       request_id%16!=0 || !guardian ||
+       sh==planetary_shuttles_.end() || site==planetary_sites_.end() ||
+       !entities_.count(ship) || entities_.at(ship).owner_id!=owner ||
+       site->second.owner!=owner || site->second.source_ship!=ship ||
+       sh->second.owner!=owner || sh->second.source_ship!=ship ||
+       sh->second.flight_phase!=0 || sh->second.family.stage!=7 ||
+       sh->second.family.guardian_id!=guardian ||
+       submitted_ids_.count(request_id) ||
+       shuttle_flight_request_ids_.count(request_id) ||
+       planetary_family_booking_ids_.count(request_id) ||
+       voyages_.count(request_id) ||
+       local_delivery_orders_.count(request_id))
+        return false;
+    auto found=site->second.households.find(guardian);
+    if(found==site->second.households.end() ||
+       found->second.return_request ||
+       found->second.co_parent_id!=sh->second.family.co_parent_id ||
+       found->second.child_ids!=sh->second.family.child_ids)
+        return false;
+    const auto co_parent=found->second.co_parent_id;
+    for(const auto adult:{guardian,co_parent}) {
+        const auto n=npcs_.find(adult);
+        if(n==npcs_.end() || n->second.location!=ship ||
+           n->second.home_ship!=ship ||
+           n->second.legal_residence()!=transport::Endpoint{
+               transport::LocationKind::PlanetarySite,
+               site->second.surface_location})return false;
+    }
+    for(const auto child_id:found->second.child_ids) {
+        const auto d=physical_dependents_.find(child_id);
+        if(d==physical_dependents_.end() || d->second.home_ship!=ship ||
+           d->second.location!=ship)return false;
+    }
+    for(const auto adult:{guardian,co_parent}) {
+        auto& n=npcs_.at(adult);
+        n.residence_kind=transport::LocationKind::ColonyShip;
+        n.residence_id=ship;
+    }
+    found->second.return_request=request_id;
+    found->second.return_tick=tick_;
+    sh->second.family.stage=4; // existing guarded release now applies
+    return true;
+}
+
 bool Simulation::release_planetary_shuttle_family(PlayerId host_principal,
         PlayerId owner,EntityId ship,const PlanetarySiteKey& key) {
     const auto sh=planetary_shuttles_.find(key);
