@@ -1,4 +1,5 @@
 #include "galaxy/TerritoryJournal.hpp"
+#include "galaxy/ShipNotificationOutbox.hpp"
 #include "galaxy/ColonyDefense.hpp"
 #include <sqlite3.h>
 #include <algorithm>
@@ -90,6 +91,7 @@ TerritoryJournal::TerritoryJournal(std::string db_path):state_(new State) {
                 SQLITE_OPEN_READWRITE|SQLITE_OPEN_CREATE|SQLITE_OPEN_FULLMUTEX,
                 nullptr)!=SQLITE_OK)throw std::runtime_error("territory DB open");
         sqlite3_busy_timeout(state_->db,10000);
+        ship_notifications::Outbox::ensure_schema(state_->db);
         exec(state_->db,"PRAGMA foreign_keys=ON");
         exec(state_->db,
             "CREATE TABLE IF NOT EXISTS sg_disposition02 ("
@@ -304,6 +306,11 @@ bool TerritoryJournal::append(const TerritoryEvent& supplied,TerritoryFailPoint 
         check(sqlite3_step(st.p),state_->db,"insert territory");
         if(fail==TerritoryFailPoint::AfterInsert)
             throw std::runtime_error("injected territory publication failure");
+        // Original signed territorial receipt + independently routed
+        // per-owner delivery are ONE original-world SQLite transaction.
+        ship_notifications::Outbox::record_territory(state_->db,
+            static_cast<int>(e.kind),e.owner,e.colony,e.visitor_owner,
+            e.visitor_ship,e.event_id,e.related_event,e.world_tick);
         exec(state_->db,"COMMIT");
     }catch(...){sqlite3_exec(state_->db,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
     verify();
