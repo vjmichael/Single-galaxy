@@ -144,6 +144,20 @@ int main() {
         auto rows=workforce02::plan_original_workshop(w.world(),7,ship,site);
         first_id=rows[0].suggested_npc;
         CHECK(first_id>0);
+        // Native negative execution gates, not merely a UI preview:
+        // the finisher does not exist yet and cannot award shape credits.
+        const auto denied_shape=send(w,ship,200,Action::TrainWorkshopTrade,
+                                      site,static_cast<std::int64_t>(first_id),2);
+        CHECK(denied_shape.result==Outcome::InvalidTarget);
+        CHECK(denied_shape.transferred==0);
+        CHECK(w.world().workshop_training_units(first_id,WorkshopTrade::Shape)==0);
+        CHECK(w.world().total_material_kg()==initial_mass);
+        const auto denied_person=send(w,ship,201,Action::TrainWorkshopTrade,
+                                       site,999999,1);
+        CHECK(denied_person.result==Outcome::InvalidTarget);
+        CHECK(denied_person.transferred==0);
+        CHECK(w.world().workshop_training_units(999999,WorkshopTrade::Cut)==0);
+        CHECK(w.world().total_material_kg()==initial_mass);
         const auto original_training_mass=w.world().total_material_kg();
         // WO2-H: training needs actual owner confirmation, a named resident,
         // a built powered machine, available finite stock and three separate
