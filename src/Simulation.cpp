@@ -6739,9 +6739,14 @@ bool Simulation::start_planetary_housing(PlayerId owner,EntityId ship,
        voyages_.count(order_id))return false;
     for(const auto& [site_id,other]:planetary_sites_) {
         (void)site_id;
-        if(other.housing_order_id==order_id)return false;
+        if(other.housing_order_id==order_id ||
+           other.utility_order_id==order_id)return false;
         for(const auto founded:other.founder_consent_requests)
             if(founded==order_id)return false;
+        for(const auto& [visitor,proof]:other.visitor_residency) {
+            (void)visitor;
+            if(proof[1]==order_id || proof[2]==order_id)return false;
+        }
     }
     for(const auto id:it->second.delegated_npcs) {
         const auto n=npcs_.find(id);
@@ -6817,6 +6822,10 @@ bool Simulation::start_planetary_surface_utility(PlayerId owner,EntityId ship,
            other.utility_order_id==order_id)return false;
         for(const auto request:other.founder_consent_requests)
             if(request==order_id)return false;
+        for(const auto& [visitor,proof]:other.visitor_residency) {
+            (void)visitor;
+            if(proof[1]==order_id || proof[2]==order_id)return false;
+        }
     }
     auto& site=it->second;
     site.housing_modules-=2;
@@ -6865,9 +6874,14 @@ bool Simulation::settle_planetary_founder(PlayerId owner,EntityId ship,
        voyages_.count(request_id))return false;
     for(const auto& [key_other,other]:planetary_sites_) {
         (void)key_other;
-        if(other.housing_order_id==request_id)return false;
+        if(other.housing_order_id==request_id ||
+           other.utility_order_id==request_id)return false;
         for(const auto prior:other.founder_consent_requests)
             if(prior==request_id)return false;
+        for(const auto& [visitor,proof]:other.visitor_residency) {
+            (void)visitor;
+            if(proof[1]==request_id || proof[2]==request_id)return false;
+        }
     }
     const auto n=npcs_.find(npc_id);
     if(n==npcs_.end() || n->second.home_ship!=ship ||
@@ -6948,7 +6962,8 @@ bool Simulation::settle_planetary_visitor(PlayerId owner,EntityId ship,
     for(const auto& [other_key,other]:planetary_sites_) {
         (void)other_key;
         if(other.housing_order_id==request_id ||
-           other.utility_order_id==request_id)return false;
+           other.utility_order_id==request_id ||
+           other.visitor_residency.count(npc_id))return false;
         for(const auto proof:other.founder_consent_requests)
             if(proof==request_id)return false;
         for(const auto& [id,proof]:other.visitor_residency) {
