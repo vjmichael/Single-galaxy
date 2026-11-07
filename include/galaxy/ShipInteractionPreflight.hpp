@@ -46,10 +46,15 @@ inline Readiness spatial_preflight(const Simulation& world,PlayerId owner,
        b->jump_state!=ShipJumpState::Ready)
         return Readiness::InTransition;
     if(!within_axis(a->position.x,b->position.x,max_axis_gap_mm) ||
-       !within_axis(a->position.y,b->position.y,max_axis_gap_mm))
+       !within_axis(a->position.y,b->position.y,max_axis_gap_mm) ||
+       (world.native_3d_physics() &&
+        !within_axis(a->position_z_mm,b->position_z_mm,max_axis_gap_mm)))
         return Readiness::TooFar;
     if(!within_axis(a->velocity.x,b->velocity.x,max_relative_speed_mm_per_tick) ||
-       !within_axis(a->velocity.y,b->velocity.y,max_relative_speed_mm_per_tick))
+       !within_axis(a->velocity.y,b->velocity.y,max_relative_speed_mm_per_tick) ||
+       (world.native_3d_physics() &&
+        !within_axis(a->velocity_z_mm_per_tick,b->velocity_z_mm_per_tick,
+                     max_relative_speed_mm_per_tick)))
         return Readiness::RelativeMotion;
     return Readiness::Ready;
 }
