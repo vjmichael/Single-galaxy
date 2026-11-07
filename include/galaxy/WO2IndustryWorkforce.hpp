@@ -20,7 +20,8 @@ enum class StaffGate : std::uint8_t {
 };
 enum class WorkState : std::uint8_t {
     ActiveWorkInProgress, ReadyToProduce, NeedsStaff, NeedsPower,
-    NeedsMaintenance, NeedsInput, OutputFull, NotInstalled
+    NeedsMaintenance, NeedsInput, OutputFull, NotInstalled,
+    ApprovedWorkComplete
 };
 struct Slot {
     std::string recipe_id;
@@ -75,6 +76,11 @@ inline bool already_on_named_duty(const Simulation& world,std::uint64_t npc,
 inline WorkState state_of(const Simulation& world,EntityId site,bool second,
                            const OutpostWorkshop& workshop) {
     if(second && !workshop.finisher_installed)return WorkState::NotInstalled;
+    const auto& owner_job=workshop.approved_jobs[second?1:0];
+    const auto actual=second?workshop.finisher_batches:workshop.completed_batches;
+    if(owner_job.command_id &&
+       owner_job.achieved(actual)>=owner_job.target_batches)
+        return WorkState::ApprovedWorkComplete;
     const auto* utility=world.utility(site);
     if(!utility || !utility->powered)return WorkState::NeedsPower;
     if(utility->condition<=0)return WorkState::NeedsMaintenance;
