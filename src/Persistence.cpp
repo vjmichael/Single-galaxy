@@ -7894,11 +7894,13 @@ public:
                     if(cell_worker_token)
                         throw std::runtime_error("no active lease for worker commit");
                 }else{
-                    // A multi-cell ownership table is NOT permission to
-                    // parallelize this still-monolithic physical Simulation.
-                    if(count!=1 || !cell_worker_token)
+                    // Multiple physically occupied cells may have active
+                    // workers, but exactly ONE host-selected dispatch holds
+                    // the journal writer for this world generation.
+                    if(!cell_worker_token || count<1 ||
+                       (count>1 && cell_worker_token->dispatch_id.empty()))
                         throw std::runtime_error(
-                            "leased world mutation requires a unique fenced worker");
+                            "multi-cell writer requires a durable fenced dispatch");
                     const auto& token=*cell_worker_token;
                     if(!spatial::parse_scope(token.canonical_cell_scope) ||
                        token.trusted_worker.empty() ||
@@ -7931,6 +7933,40 @@ public:
                        !spatial::verify_native_index(db_,state,next))
                         throw std::runtime_error(
                             "stale, forged or conflicting worker world commit");
+                    if(count>1 || !token.dispatch_id.empty()){
+                        if(token.dispatch_id.empty() ||
+                           token.dispatch_id.size()>128)
+                            throw std::runtime_error("missing global dispatch identity");
+                        Statement selected(db_,"SELECT scope,worker,epoch,"
+                            "region_generation,checkpoint_revision,status "
+                            "FROM sg_spatial_tick_dispatch "
+                            "WHERE world_generation=? AND claim_id=?");
+                        selected.i64(1,static_cast<std::int64_t>(
+                            expected_generation));
+                        selected.text(2,token.dispatch_id);
+                        if(!selected.row() ||
+                           sqlite_str(selected.get(),0)!=token.canonical_cell_scope ||
+                           sqlite_str(selected.get(),1)!=token.trusted_worker ||
+                           sqlite3_column_int64(selected.get(),2)!=
+                               static_cast<sqlite3_int64>(token.worker_epoch) ||
+                           sqlite3_column_int64(selected.get(),3)!=
+                               static_cast<sqlite3_int64>(token.region_generation) ||
+                           sqlite3_column_int64(selected.get(),4)!=
+                               static_cast<sqlite3_int64>(token.checkpoint_revision) ||
+                           sqlite3_column_int(selected.get(),5)!=0)
+                            throw std::runtime_error(
+                                "stale, unselected or already consumed global writer");
+                        Statement complete(db_,"UPDATE sg_spatial_tick_dispatch "
+                            "SET status=1,completed_generation=? "
+                            "WHERE world_generation=? AND claim_id=? AND status=0");
+                        complete.i64(1,static_cast<std::int64_t>(next));
+                        complete.i64(2,static_cast<std::int64_t>(
+                            expected_generation));
+                        complete.text(3,token.dispatch_id);
+                        complete.execute();
+                        if(sqlite3_changes(db_)!=1)
+                            throw std::runtime_error("global dispatch completion race");
+                    }
                 }
             }
             if(society_effect)society_effect(db_,next);
@@ -14366,15 +14402,19 @@ void PersistentWorld::step_with_cell_worker(
            token->trusted_worker.size()>128 || !token->worker_epoch ||
            !token->region_generation || !token->checkpoint_revision)
             throw std::runtime_error("invalid native cell worker admission");
-        std::size_t ships=0;
+        bool occupied=false;
         for(const auto& [id,e]:world_.entities()){
             if(e.type!=EntityType::Ship)continue;
-            ++ships;
             const auto cell=spatial::ship_cell(world_,id);
-            if(!cell || spatial::scope(*cell)!=token->canonical_cell_scope)
-                throw std::runtime_error("worker cannot step another native cell");
+            if(!cell)
+                throw std::runtime_error("missing physical native ship residency");
+            if(spatial::scope(*cell)==token->canonical_cell_scope)
+                occupied=true;
         }
-        if(!ships)throw std::runtime_error("worker tick requires real ships");
+        if(!occupied)
+            throw std::runtime_error("worker dispatch has no occupied physical cell");
+        // The original Simulation::step still advances ALL entities once.
+        // This token elects its serialized writer, not per-cell physics.
     }
     auto next = world_;
     const auto before = next.events().size();
