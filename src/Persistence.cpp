@@ -4045,6 +4045,26 @@ public:
                     throw std::runtime_error("SQLite: workshop current worker lacks latest relief proof");
             }
         }
+        // Latest real appointed manager is derived from immutable ORIGINAL
+        // journal + Applied ticks. A superseded or revoked manager's older
+        // receipt cannot be reused to forge an active mentor or job policy.
+        const auto latest_workshop_appointment=[&](
+            EntityId site,std::uint64_t until_tick,bool inclusive){
+            std::uint64_t last_id=0,last_tick=0;
+            for(const auto& [id,order]:journal_commands){
+                if(order.action!=Action::AppointWorkshopSupervisor ||
+                   order.target!=site)continue;
+                const auto effect=event_by_id.find(id);
+                if(effect==event_by_id.end() ||
+                   effect->second.result!=Outcome::Applied)continue;
+                const auto tick=effect->second.tick;
+                if(tick>until_tick || (!inclusive && tick==until_tick))continue;
+                if(tick==last_tick && last_id)
+                    throw std::runtime_error("SQLite: ambiguous same-tick workshop manager");
+                if(tick>last_tick){last_tick=tick;last_id=id;}
+            }
+            return last_id;
+        };
         // WO2-J: the installed shop supervisor and bounded owner-approved
         // batch program must point to original applied owner commands.
         for(const auto& [site,shop]:restored.workshops()){
@@ -4062,8 +4082,10 @@ public:
                    app->second.thrust_x!=static_cast<int>(shop.supervisor_trade) ||
                    ev->second.result!=Outcome::Applied ||
                    ev->second.tick!=app->second.execute_tick ||
-                   ev->second.transferred!=0)
-                    throw std::runtime_error("SQLite: supervisor missing original owner appointment");
+                   ev->second.transferred!=0 ||
+                   latest_workshop_appointment(site,restored.tick(),true)!=
+                       shop.supervisor_appointment_id)
+                    throw std::runtime_error("SQLite: supervisor missing current original owner appointment");
             }
             for(unsigned slot=0;slot<2;++slot){
                 const auto& job=shop.approved_jobs[slot];
@@ -4100,7 +4122,9 @@ public:
                    app->second.thrust_x!=static_cast<int>(slot+1) ||
                    appointment->second.result!=Outcome::Applied ||
                    appointment->second.tick!=app->second.execute_tick ||
-                   appointment->second.tick>=job.approved_tick)
+                   appointment->second.tick>=job.approved_tick ||
+                   latest_workshop_appointment(site,job.approved_tick,false)!=
+                       job.supervisor_appointment_id)
                     throw std::runtime_error("SQLite: suspended job has no genuine supervisor provenance");
             }
         }
@@ -4141,8 +4165,10 @@ public:
                        app->second.thrust_x!=static_cast<int>(credit.trade) ||
                        appointment->second.result!=Outcome::Applied ||
                        appointment->second.tick>=credit.tick ||
-                       appointment->second.tick!=app->second.execute_tick)
-                        throw std::runtime_error("SQLite: forged or foreign workshop mentor appointment");
+                       appointment->second.tick!=app->second.execute_tick ||
+                       latest_workshop_appointment(credit.workshop_site,credit.tick,false)!=
+                           credit.supervisor_appointment_id)
+                        throw std::runtime_error("SQLite: forged, revoked or superseded workshop mentor appointment");
                 }else if(credit.supervisor_appointment_id)
                     throw std::runtime_error("SQLite: solitary practice forged mentor evidence");
             }
