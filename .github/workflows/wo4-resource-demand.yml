@@ -1,9 +1,16 @@
-name: WO4 original economy resource demand and scarcity
+name: WO4 original economic allocation, consumption, and regional demand
 on:
   pull_request:
     paths:
       - 'include/galaxy/WO4ResourceDemand.hpp'
+      - 'include/galaxy/WO4Allocation.hpp'
+      - 'include/galaxy/WO4LocalAllocation.hpp'
+      - 'include/galaxy/WO4ConsumptionProfiles.hpp'
+      - 'include/galaxy/WO4RegionalDistribution.hpp'
       - 'tests/WO4ResourceDemandTests.cpp'
+      - 'tests/WO3PlanetaryUtilityTests.cpp'
+      - 'src/Industry01Catalog.generated.cpp'
+      - 'src/MacroNeeds.cpp'
       - 'include/galaxy/WO3ColonyOperations.hpp'
       - 'src/Simulation.cpp'
       - 'src/Persistence.cpp'
