@@ -379,10 +379,13 @@ int main() {
         7,ship,key,true,81800,builder)); // only one of two modules
     up(w,ship,key,82012);
     CHECK(w.transfer_planetary_housing_module(7,ship,key,true));
-    for(const auto cargo:{ShuttleCargo::Water,ShuttleCargo::Food,
-                          ShuttleCargo::Oxygen})
-        CHECK(w.load_planetary_shuttle(7,ship,key,cargo,100));
+    // The next descent consumes one REAL kilogram of water propellant.
+    // Carry 101 water so the delivered 100 remains physically available.
+    CHECK(w.load_planetary_shuttle(7,ship,key,ShuttleCargo::Water,101));
+    CHECK(w.load_planetary_shuttle(7,ship,key,ShuttleCargo::Food,100));
+    CHECK(w.load_planetary_shuttle(7,ship,key,ShuttleCargo::Oxygen,100));
     down(w,ship,key,82013);
+    CHECK(w.world().planetary_shuttles().at(key).water_kg>=100);
     CHECK(w.transfer_planetary_housing_module(7,ship,key,false));
     for(const auto cargo:{ShuttleCargo::Water,ShuttleCargo::Food,
                           ShuttleCargo::Oxygen})
