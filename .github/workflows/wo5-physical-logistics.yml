@@ -9,6 +9,7 @@ on:
       - 'include/galaxy/SeamlessSpatialOwnership.hpp'
       - 'include/galaxy/SeamlessCellWorker.hpp'
       - 'include/galaxy/GalacticCoordinates.hpp'
+      - 'include/galaxy/GalacticSystemRegistry.hpp'
       - 'tests/SeamlessSpatialOwnershipTests.cpp'
       - 'include/galaxy/WO5RegionalFreightFence.hpp'
       - 'include/galaxy/WO5RegionalRecovery.hpp'
