@@ -58,3 +58,12 @@ The native source test now creates **two actual star-system IDs in one original 
 4. **Return to WO5-E/F**: Keep spatially local sealed-freight fence under original transactional owner handoff; revisit exact route bindings after SPACE-04/05 native acceptance. Never change player world geography to solve a simulation optimization.
 
 **No boxed star systems, money, cargo duplication, NPC creation, teleportation or region-local claim to physical goods was added.**
+
+
+## EvEmu 65 — SPACE-04B.1 floating local-origin foundation (2026-11-07)
+
+- Added `GalacticFloatingFrame.hpp`: explicit, checked 3D galactic↔short-range coordinates with an exact `galactic::Point` source of truth; rebasing never edits world state, cargo, NPCs, or velocity. Far-away objects simply fall outside the local interaction window, **not** outside the playable galaxy. Rejects invalid frames and sector overflow rather than aliasing a remote target.
+- Added `GalacticFloatingFrameTests.cpp` and registered `galaxy_floating_frame` CTest. Tests cross all three sector faces, negative displacement, exact position round-trip, local rebase, far-object visibility without deletion and invalid/overflowed coordinates. Updated the WO5 exact-head Windows/Linux CI matrix to compile and run this target; the test is **registered but not yet executed**.
+- Source commits on this branch: `297c989d` (geometry), `44bb1526` and `aad8d966` (test and fix), `e302703e` (CMake), `842c1992` (CI). No source-only slice is promoted to native PASS.
+- **Still required for full SPACE-04B:** versioned canonical *ship* 3D position/velocity in `Simulation` and persistence; migration of original motion integrator and all interaction distances to 3D; rebasing in the actual render and gameplay path, preserving old saves; independent movement/recovery and renderer acceptance. The new floating frame is a **pure near-field adapter**, not that migration.
+- **Still required SPACE-05:** worker epoch checks inside the physical action dispatcher and crash-safe one-writer ownership, not just stored lease CAS. WO5-F and upstream WO3-F/WO4-F remain blocked until genuine native CMake/CTest jobs execute. Shared GitHub runner blocker #90 remains open; current PR #93 head CI run `42417028636` was queued when inspected.
