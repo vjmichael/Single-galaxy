@@ -2101,12 +2101,17 @@ int main(int argc,char** argv){
         std::unique_ptr<colony_disposition::TerritoryJournal> territory;
         std::unique_ptr<colony_disposition::CyberIncidentJournal> cases;
         std::unique_ptr<ship_comms::Journal> communications;
+        std::unique_ptr<ship_notifications::Outbox> notifications;
+        std::unique_ptr<colony_law::Agency> law_agency;
         try {
             territory=std::make_unique<colony_disposition::TerritoryJournal>(argv[1]);
             cases=std::make_unique<colony_disposition::CyberIncidentJournal>(argv[1]);
             communications=std::make_unique<ship_comms::Journal>(argv[1]);
+            notifications=std::make_unique<ship_notifications::Outbox>(argv[1]);
+            law_agency=std::make_unique<colony_law::Agency>(argv[1]);
         }catch(const std::exception& ex) {
             std::cerr<<"SECURITY_DESK_UNAVAILABLE "<<ex.what()<<'\n';
+            law_agency.reset();notifications.reset();
             territory.reset();cases.reset();communications.reset();
         }
         // PLAY-13B: the v67 world is the authoritative discovery source.
@@ -2150,7 +2155,7 @@ int main(int argc,char** argv){
             colony_disposition::security_desk::snapshot(
                 world,*territory,*cases,owner,ship,fleet.piloted(),
                 [&](const std::string& msg){announce(world.world(),msg);},
-                communications.get());
+                communications.get(),notifications.get(),law_agency.get());
         }else announce(world.world(),"SECURITY_ERROR|CASE_DESK_UNAVAILABLE");
         // The initial selection is always the actual home ship. A browser
         // may restore a prior preference, but native selection revalidates it.
@@ -2160,6 +2165,7 @@ int main(int argc,char** argv){
         std::uint64_t nonce=900000000000ULL+world.generation();
         if(territory)for(const auto& e:territory->history())
             nonce=std::max(nonce,e.event_id);
+        if(law_agency)nonce=std::max(nonce,law_agency->max_event());
         if(communications){
             for(const auto& e:communications->history())
                 nonce=std::max(nonce,e.event_id);
@@ -2200,7 +2206,7 @@ int main(int argc,char** argv){
             colony_disposition::security_desk::snapshot(world,*territory,
                 *cases,who,home,who==owner?fleet.piloted():home,
                 [&](const std::string& item){emit_desk(who,item);},
-                communications.get());
+                communications.get(),notifications.get(),law_agency.get());
         };
         std::set<std::uint64_t> pending_scans,pending_probe_scans;
         std::size_t known_discoveries=world.world().discoveries().size();
@@ -2245,7 +2251,8 @@ int main(int argc,char** argv){
                         if(who!=owner &&
                            operation!="SECURITY_REFRESH" &&
                            operation.rfind("SECURITY_CALL|",0)!=0 &&
-                           operation.rfind("SECURITY_CALL_REPLY|",0)!=0)
+                           operation.rfind("SECURITY_CALL_REPLY|",0)!=0 &&
+                           operation.rfind("SECURITY_NOTIFICATION_ACK|",0)!=0)
                             throw std::invalid_argument(
                                 "foreign owner cannot administer colony");
                         const auto home=human_home(who);
@@ -2258,7 +2265,7 @@ int main(int argc,char** argv){
                             who,home,who==owner?fleet.piloted():home,nonce,
                             [&](const std::string& msg){
                                 emit_desk(who,msg);
-                            },communications.get());
+                            },communications.get(),notifications.get(),law_agency.get());
                         // On an actual changed durable call/reply record,
                         // notify each genuinely registered *human* owner
                         // using its private snapshot, never another user's
@@ -2336,7 +2343,7 @@ int main(int argc,char** argv){
                 if(added)colony_disposition::security_desk::snapshot(
                     world,*territory,*cases,owner,ship,fleet.piloted(),
                     [&](const std::string& msg){announce(world.world(),msg);},
-                    communications.get());
+                    communications.get(),notifications.get(),law_agency.get());
             }
             // NPC hailing operates on the same real occupied colony ships
             // and original signed contact journal as direct player hails.
@@ -2355,7 +2362,7 @@ int main(int argc,char** argv){
                             world,*territory,*cases,owner,ship,fleet.piloted(),
                             [&](const std::string& msg){
                                 announce(world.world(),msg);
-                            },communications.get());
+                            },communications.get(),notifications.get(),law_agency.get());
                     }
                 }catch(const std::exception& ex){
                     std::cerr<<"NPC_HAIL_SUPERVISION_UNAVAILABLE "<<ex.what()<<'\n';
