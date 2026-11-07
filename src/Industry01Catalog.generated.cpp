@@ -243,8 +243,12 @@ industry::Recipe original_workshop_recipe(const std::string& id) {
   auto trim=[](const std::string& s){if(s.rfind("bulk/",0)!=0)throw std::invalid_argument("non-bulk original work item");return s.substr(5);};
   auto mass=[](std::uint64_t x){if(x>static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
     throw std::overflow_error("industry recipe quantity too large");return static_cast<std::int64_t>(x);};
-  if(r->outputs[1].code!="bulk/aluminum_scrap" || r->work_ticks!=5 ||
-     (r->site_capability!="cut" && r->site_capability!="shape"))
+  const bool panel=id=="native_cut_aluminum_panel";
+  if(r->site_capability!=(panel?"cut":"shape") || r->work_ticks!=5 ||
+     r->inputs[0].code!=(panel?"bulk/aluminum":"bulk/aluminum_panels") ||
+     r->outputs[0].code!=(panel?"bulk/aluminum_panels":"bulk/aluminum_frames") ||
+     r->outputs[1].code!="bulk/aluminum_scrap" || r->inputs[0].quantity!=20000 ||
+     r->outputs[0].quantity!=19000 || r->outputs[1].quantity!=1000)
     throw std::invalid_argument("native recipe no longer matches original workshop contract");
   const std::string name=id=="native_cut_aluminum_panel"?"aluminum_panel":"aluminum_frame";
   return {name,r->site_capability,{{trim(r->inputs[0].code),mass(r->inputs[0].quantity)}},
