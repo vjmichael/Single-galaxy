@@ -6747,6 +6747,7 @@ public:
                          cmd->second.action!=Action::ConstructClinic &&
                          cmd->second.action!=Action::TransferClinicStock &&
                          cmd->second.action!=Action::ConstructWorkshop &&
+                         cmd->second.action!=Action::TrainWorkshopTrade &&
                          cmd->second.action!=Action::TransferWorkshopFeed &&
                          cmd->second.action!=Action::TransferWorkshopOutput &&
                          cmd->second.action!=Action::ConstructWorkshopFinisher &&
@@ -6865,6 +6866,17 @@ public:
                             std::to_string(c.amount>0?c.target:c.actor)+":"+kind[c.thrust_x]);
                         ledger.i64(6,ev.transferred);
                         ledger.text(7,"workshop_stack_transfer_kg");
+                    } else if(cmd->second.action==Action::TrainWorkshopTrade){
+                        const auto& c=cmd->second;
+                        if(ev.transferred!=1 || c.amount<1 || c.amount>1000000 ||
+                           (c.thrust_x!=1 && c.thrust_x!=2) ||
+                           c.issuer==Simulation::kServerAuthority)
+                            throw std::runtime_error("invalid industrial training practice material");
+                        ledger.text(4,"workshop:"+std::to_string(c.target)+
+                            (c.thrust_x==1?":aluminum":":aluminum_panels"));
+                        ledger.text(5,"workshop:"+std::to_string(c.target)+":aluminum_scrap");
+                        ledger.i64(6,1);
+                        ledger.text(7,"industrial_training_practice_kg");
                     } else if(cmd->second.action==Action::ConstructWorkshop ||
                               cmd->second.action==Action::TransferWorkshopFeed ||
                               cmd->second.action==Action::TransferWorkshopOutput){
