@@ -1176,6 +1176,11 @@ EntityId Simulation::spawn_ship_docked(PlayerId owner, EntityId station_id,
     entity.dock_station = station_id;
     entity.system_id=station->system_id;
     const auto ship = add_entity(entity);
+    if(snapshot_version_>=120){
+        if(!station->physical_galactic_authoritative)
+            throw std::runtime_error("docked ship's real station has no physical pose");
+        entities_.at(ship).physical_galactic=station->physical_galactic;
+    }
     if (existing == hangars_.end()) hangars_.emplace(key, StationHangar{0, hangar_capacity});
     wallets_.emplace(owner,0);
     snapshot_version_ = std::max(snapshot_version_, 3);
