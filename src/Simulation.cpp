@@ -104,6 +104,56 @@ void validate_site_conveyors(const OutpostStorage& st){
 } // namespace
 
 namespace {
+bool within_galactic_range(galactic::Point a,galactic::Point b,
+                           std::int64_t radius){
+    if(radius<0)return false;
+    const auto d=galactic::nearby_displacement(a,b);
+    if(!d)return false;
+    const long double r=radius, x=d->x_mm,y=d->y_mm,z=d->z_mm;
+    return std::fabs(x)<=r&&std::fabs(y)<=r&&std::fabs(z)<=r&&
+           x*x+y*y+z*z<=r*r;
+}
+galactic::Point coarse_galactic_point(galactic::Point p,std::int64_t quantum){
+    if(quantum<=0 || galactic::kSectorEdgeMm%quantum)
+        throw std::invalid_argument("invalid 3D survey quantization");
+    const auto snap=[&](galactic::Axis axis){
+        const auto r=axis.millimeters%quantum;
+        const auto delta=r>=quantum/2 ? quantum-r : -r;
+        const auto adjusted=galactic::normalize(axis,delta);
+        if(!adjusted)throw std::overflow_error("probe waypoint sector exhausted");
+        return *adjusted;
+    };
+    return {snap(p.x),snap(p.y),snap(p.z)};
+}
+std::int64_t projected_probe_axis(std::int64_t current,std::int64_t delta) {
+    const auto p=galactic::checked_add(current,delta);
+    return p.value_or(delta<0 ? std::numeric_limits<std::int64_t>::min() :
+                                   std::numeric_limits<std::int64_t>::max());
+}
+bool galactic_equal(galactic::Point a,galactic::Point b){return a==b;}
+bool move_galactic_toward(galactic::Point& location,
+    galactic::Point destination,std::int64_t max_mm,
+    Vector2& legacy_xy,std::int64_t& legacy_z) {
+    const auto d=galactic::nearby_displacement(destination,location);
+    if(!d)return false; // no physical instant motion across distant sectors
+    const long double x=d->x_mm,y=d->y_mm,z=d->z_mm;
+    const long double length=std::sqrt(x*x+y*y+z*z);
+    if(length==0)return true;
+    const auto next=[&](long double distance){
+        if(length<=max_mm)return static_cast<std::int64_t>(distance);
+        const auto part=static_cast<std::int64_t>(
+            std::round(distance*static_cast<long double>(max_mm)/length));
+        return part ? part : distance>0 ? std::int64_t{1}:std::int64_t{-1};
+    };
+    const galactic::Velocity displacement{next(x),next(y),next(z)};
+    const auto advanced=galactic::advance(location,displacement);
+    if(!advanced)throw std::overflow_error("survey flight sector overflow");
+    location=*advanced;
+    legacy_xy.x=projected_probe_axis(legacy_xy.x,displacement.x_mm_per_tick);
+    legacy_xy.y=projected_probe_axis(legacy_xy.y,displacement.y_mm_per_tick);
+    legacy_z=projected_probe_axis(legacy_z,displacement.z_mm_per_tick);
+    return location==destination;
+}
 bool within_native_3d_range(const Entity& a,const Entity& b,
                             std::int64_t radius) {
     if(a.physical_galactic_authoritative || b.physical_galactic_authoritative){
@@ -268,6 +318,47 @@ void Simulation::enable_native_galactic_physics(
     }
     galactic_system_origins_=origins;
     snapshot_version_=120;
+}
+void Simulation::enable_native_3d_probes(){
+    if(snapshot_version_>=121)return;
+    if(snapshot_version_<120 ||
+       galactic_system_origins_.size()!=systems_.size())
+        throw std::runtime_error("3D probe migration requires proven v120 galaxy");
+    // A v119 probe had only XY without an anchor-frame receipt. Refuse
+    // ambiguous frame custody instead of guessing a physical location.
+    for(const auto& [id,p]:survey_probes_){
+        const auto fr=ship_frames_.find(p.carrier);
+        if(fr!=ship_frames_.end() &&
+           (fr->second.anchor_body || fr->second.origin.x_mm ||
+            fr->second.origin.y_mm || fr->second.origin.z_mm))
+            throw std::runtime_error("legacy probe lacks exact anchor provenance");
+        if(!galactic_system_origins_.count(p.system))
+            throw std::runtime_error("legacy probe unknown galaxy origin");
+    }
+    const auto point=[&](std::uint32_t system,Vector2 xy,std::int64_t z){
+        const auto at=galactic_system_origins_.find(system);
+        if(at==galactic_system_origins_.end())
+            throw std::runtime_error("probe report unknown star origin");
+        const auto result=galactic::advance(at->second,{xy.x,xy.y,z});
+        if(!result)throw std::overflow_error("3D probe migration overflow");
+        return *result;
+    };
+    for(auto& [id,p]:survey_probes_){
+        (void)id;
+        p.galactic_position=point(p.system,p.position,0);
+        p.galactic_home=point(p.system,p.drone_home,0);
+        p.galactic_focus=point(p.system,p.focus_waypoint,0);
+        p.galactic_authoritative=true;
+    }
+    auto migrate_report=[&](DiscoveryRecord& d){
+        d.galactic_location=point(d.system,d.location,0);
+        d.galactic_authoritative=true;
+    };
+    for(auto& [key,d]:discoveries_){(void)key;migrate_report(d);}
+    for(auto& [key,p]:pending_probe_discoveries_){
+        (void)key;migrate_report(p.report);
+    }
+    snapshot_version_=121;
 }
 bool Simulation::valid_position(Vector2 p) const {
     if(snapshot_version_>=119)return true; // finite int64 is not a local wall
@@ -11597,7 +11688,7 @@ void Simulation::steps(std::uint64_t count) {
 
 std::string Simulation::canonical_state() const {
     std::ostringstream out;
-    out << ( snapshot_version_ >= 120 ? "galaxy-kernel-v120|" : snapshot_version_ >= 119 ? "galaxy-kernel-v119|" : snapshot_version_ >= 118 ? "galaxy-kernel-v118|" : snapshot_version_ >= 117 ? "galaxy-kernel-v117|" : snapshot_version_ >= 116 ? "galaxy-kernel-v116|" : snapshot_version_ >= 115 ? "galaxy-kernel-v115|" : snapshot_version_ >= 114 ? "galaxy-kernel-v114|" : snapshot_version_ >= 113 ? "galaxy-kernel-v113|" : snapshot_version_ >= 112 ? "galaxy-kernel-v112|" : snapshot_version_ >= 111 ? "galaxy-kernel-v111|" : snapshot_version_ >= 110 ? "galaxy-kernel-v110|" : snapshot_version_ >= 109 ? "galaxy-kernel-v109|" : snapshot_version_ >= 108 ? "galaxy-kernel-v108|" : snapshot_version_ >= 107 ? "galaxy-kernel-v107|" : snapshot_version_ >= 106 ? "galaxy-kernel-v106|" : snapshot_version_ >= 105 ? "galaxy-kernel-v105|" : snapshot_version_ >= 104 ? "galaxy-kernel-v104|" : snapshot_version_ >= 103 ? "galaxy-kernel-v103|" : snapshot_version_ >= 102 ? "galaxy-kernel-v102|" : snapshot_version_ >= 101 ? "galaxy-kernel-v101|" : snapshot_version_ >= 100 ? "galaxy-kernel-v100|" : snapshot_version_ >= 99 ? "galaxy-kernel-v99|" : snapshot_version_ >= 98 ? "galaxy-kernel-v98|" : snapshot_version_ >= 97 ? "galaxy-kernel-v97|" : snapshot_version_ >= 96 ? "galaxy-kernel-v96|" : snapshot_version_ >= 95 ? "galaxy-kernel-v95|" : snapshot_version_ >= 94 ? "galaxy-kernel-v94|" : snapshot_version_ >= 93 ? "galaxy-kernel-v93|" : snapshot_version_ >= 92 ? "galaxy-kernel-v92|" : snapshot_version_ >= 91 ? "galaxy-kernel-v91|" : snapshot_version_ >= 90 ? "galaxy-kernel-v90|" : snapshot_version_ >= 89 ? "galaxy-kernel-v89|" : snapshot_version_ >= 88 ? "galaxy-kernel-v88|" : snapshot_version_ >= 87 ? "galaxy-kernel-v87|" : snapshot_version_ >= 86 ? "galaxy-kernel-v86|" : snapshot_version_ >= 85 ? "galaxy-kernel-v85|" : snapshot_version_ >= 84 ? "galaxy-kernel-v84|" : snapshot_version_ >= 83 ? "galaxy-kernel-v83|" : snapshot_version_ >= 82 ? "galaxy-kernel-v82|" : snapshot_version_ >= 81 ? "galaxy-kernel-v81|" : snapshot_version_ >= 80 ? "galaxy-kernel-v80|" : snapshot_version_ >= 79 ? "galaxy-kernel-v79|" : snapshot_version_ >= 78 ? "galaxy-kernel-v78|" : snapshot_version_ >= 77 ? "galaxy-kernel-v77|" : snapshot_version_ >= 76 ? "galaxy-kernel-v76|" : snapshot_version_ >= 75 ? "galaxy-kernel-v75|" : snapshot_version_ >= 74 ? "galaxy-kernel-v74|" : snapshot_version_ >= 73 ? "galaxy-kernel-v73|" : snapshot_version_ >= 72 ? "galaxy-kernel-v72|" : snapshot_version_ >= 71 ? "galaxy-kernel-v71|" : snapshot_version_ >= 70 ? "galaxy-kernel-v70|" : snapshot_version_ >= 69 ? "galaxy-kernel-v69|" : snapshot_version_ >= 68 ? "galaxy-kernel-v68|" : snapshot_version_ >= 67 ? "galaxy-kernel-v67|" : snapshot_version_ >= 66 ? "galaxy-kernel-v66|" : snapshot_version_ >= 65 ? "galaxy-kernel-v65|" : snapshot_version_ >= 64 ? "galaxy-kernel-v64|" : snapshot_version_ >= 63 ? "galaxy-kernel-v63|" : snapshot_version_ >= 62 ? "galaxy-kernel-v62|" : snapshot_version_ >= 61 ? "galaxy-kernel-v61|" : snapshot_version_ >= 60 ? "galaxy-kernel-v60|" : snapshot_version_ >= 59 ? "galaxy-kernel-v59|" : snapshot_version_ >= 58 ? "galaxy-kernel-v58|" : snapshot_version_ >= 57 ? "galaxy-kernel-v57|" : snapshot_version_ >= 53 ? "galaxy-kernel-v53|" : snapshot_version_ >= 52 ? "galaxy-kernel-v52|" : snapshot_version_ >= 49 ? "galaxy-kernel-v49|" : snapshot_version_ >= 48 ? "galaxy-kernel-v48|" : snapshot_version_ >= 44 ? "galaxy-kernel-v44|" : snapshot_version_ >= 41 ? "galaxy-kernel-v41|" : snapshot_version_ >= 40 ? "galaxy-kernel-v40|" : snapshot_version_ >= 39 ? "galaxy-kernel-v39|" : snapshot_version_ >= 38 ? "galaxy-kernel-v38|" : snapshot_version_ >= 37 ? "galaxy-kernel-v37|" : snapshot_version_ >= 36 ? "galaxy-kernel-v36|" : snapshot_version_ >= 35 ? "galaxy-kernel-v35|" : snapshot_version_ >= 34 ? "galaxy-kernel-v34|" : snapshot_version_ >= 33 ? "galaxy-kernel-v33|" : snapshot_version_ >= 32 ? "galaxy-kernel-v32|" : snapshot_version_ >= 31 ? "galaxy-kernel-v31|" : snapshot_version_ >= 30 ? "galaxy-kernel-v30|" : snapshot_version_ >= 29 ? "galaxy-kernel-v29|" : snapshot_version_ >= 28 ? "galaxy-kernel-v28|" : snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
+    out << ( snapshot_version_ >= 121 ? "galaxy-kernel-v121|" : snapshot_version_ >= 120 ? "galaxy-kernel-v120|" : snapshot_version_ >= 119 ? "galaxy-kernel-v119|" : snapshot_version_ >= 118 ? "galaxy-kernel-v118|" : snapshot_version_ >= 117 ? "galaxy-kernel-v117|" : snapshot_version_ >= 116 ? "galaxy-kernel-v116|" : snapshot_version_ >= 115 ? "galaxy-kernel-v115|" : snapshot_version_ >= 114 ? "galaxy-kernel-v114|" : snapshot_version_ >= 113 ? "galaxy-kernel-v113|" : snapshot_version_ >= 112 ? "galaxy-kernel-v112|" : snapshot_version_ >= 111 ? "galaxy-kernel-v111|" : snapshot_version_ >= 110 ? "galaxy-kernel-v110|" : snapshot_version_ >= 109 ? "galaxy-kernel-v109|" : snapshot_version_ >= 108 ? "galaxy-kernel-v108|" : snapshot_version_ >= 107 ? "galaxy-kernel-v107|" : snapshot_version_ >= 106 ? "galaxy-kernel-v106|" : snapshot_version_ >= 105 ? "galaxy-kernel-v105|" : snapshot_version_ >= 104 ? "galaxy-kernel-v104|" : snapshot_version_ >= 103 ? "galaxy-kernel-v103|" : snapshot_version_ >= 102 ? "galaxy-kernel-v102|" : snapshot_version_ >= 101 ? "galaxy-kernel-v101|" : snapshot_version_ >= 100 ? "galaxy-kernel-v100|" : snapshot_version_ >= 99 ? "galaxy-kernel-v99|" : snapshot_version_ >= 98 ? "galaxy-kernel-v98|" : snapshot_version_ >= 97 ? "galaxy-kernel-v97|" : snapshot_version_ >= 96 ? "galaxy-kernel-v96|" : snapshot_version_ >= 95 ? "galaxy-kernel-v95|" : snapshot_version_ >= 94 ? "galaxy-kernel-v94|" : snapshot_version_ >= 93 ? "galaxy-kernel-v93|" : snapshot_version_ >= 92 ? "galaxy-kernel-v92|" : snapshot_version_ >= 91 ? "galaxy-kernel-v91|" : snapshot_version_ >= 90 ? "galaxy-kernel-v90|" : snapshot_version_ >= 89 ? "galaxy-kernel-v89|" : snapshot_version_ >= 88 ? "galaxy-kernel-v88|" : snapshot_version_ >= 87 ? "galaxy-kernel-v87|" : snapshot_version_ >= 86 ? "galaxy-kernel-v86|" : snapshot_version_ >= 85 ? "galaxy-kernel-v85|" : snapshot_version_ >= 84 ? "galaxy-kernel-v84|" : snapshot_version_ >= 83 ? "galaxy-kernel-v83|" : snapshot_version_ >= 82 ? "galaxy-kernel-v82|" : snapshot_version_ >= 81 ? "galaxy-kernel-v81|" : snapshot_version_ >= 80 ? "galaxy-kernel-v80|" : snapshot_version_ >= 79 ? "galaxy-kernel-v79|" : snapshot_version_ >= 78 ? "galaxy-kernel-v78|" : snapshot_version_ >= 77 ? "galaxy-kernel-v77|" : snapshot_version_ >= 76 ? "galaxy-kernel-v76|" : snapshot_version_ >= 75 ? "galaxy-kernel-v75|" : snapshot_version_ >= 74 ? "galaxy-kernel-v74|" : snapshot_version_ >= 73 ? "galaxy-kernel-v73|" : snapshot_version_ >= 72 ? "galaxy-kernel-v72|" : snapshot_version_ >= 71 ? "galaxy-kernel-v71|" : snapshot_version_ >= 70 ? "galaxy-kernel-v70|" : snapshot_version_ >= 69 ? "galaxy-kernel-v69|" : snapshot_version_ >= 68 ? "galaxy-kernel-v68|" : snapshot_version_ >= 67 ? "galaxy-kernel-v67|" : snapshot_version_ >= 66 ? "galaxy-kernel-v66|" : snapshot_version_ >= 65 ? "galaxy-kernel-v65|" : snapshot_version_ >= 64 ? "galaxy-kernel-v64|" : snapshot_version_ >= 63 ? "galaxy-kernel-v63|" : snapshot_version_ >= 62 ? "galaxy-kernel-v62|" : snapshot_version_ >= 61 ? "galaxy-kernel-v61|" : snapshot_version_ >= 60 ? "galaxy-kernel-v60|" : snapshot_version_ >= 59 ? "galaxy-kernel-v59|" : snapshot_version_ >= 58 ? "galaxy-kernel-v58|" : snapshot_version_ >= 57 ? "galaxy-kernel-v57|" : snapshot_version_ >= 53 ? "galaxy-kernel-v53|" : snapshot_version_ >= 52 ? "galaxy-kernel-v52|" : snapshot_version_ >= 49 ? "galaxy-kernel-v49|" : snapshot_version_ >= 48 ? "galaxy-kernel-v48|" : snapshot_version_ >= 44 ? "galaxy-kernel-v44|" : snapshot_version_ >= 41 ? "galaxy-kernel-v41|" : snapshot_version_ >= 40 ? "galaxy-kernel-v40|" : snapshot_version_ >= 39 ? "galaxy-kernel-v39|" : snapshot_version_ >= 38 ? "galaxy-kernel-v38|" : snapshot_version_ >= 37 ? "galaxy-kernel-v37|" : snapshot_version_ >= 36 ? "galaxy-kernel-v36|" : snapshot_version_ >= 35 ? "galaxy-kernel-v35|" : snapshot_version_ >= 34 ? "galaxy-kernel-v34|" : snapshot_version_ >= 33 ? "galaxy-kernel-v33|" : snapshot_version_ >= 32 ? "galaxy-kernel-v32|" : snapshot_version_ >= 31 ? "galaxy-kernel-v31|" : snapshot_version_ >= 30 ? "galaxy-kernel-v30|" : snapshot_version_ >= 29 ? "galaxy-kernel-v29|" : snapshot_version_ >= 28 ? "galaxy-kernel-v28|" : snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
         << '|' << rng_state_ << '\n';
     if (snapshot_version_>=5) for(const auto system:systems_)out<<"system|"<<system<<'\n';
     if(snapshot_version_>=120)for(const auto& [system,origin]:galactic_system_origins_)
@@ -12180,6 +12271,18 @@ std::string Simulation::canonical_state() const {
                <<'|'<<p.sample_ore<<'|'<<unsigned(p.taxonomy);
         if(snapshot_version_>=69)
             out<<'|'<<p.focus_site<<'|'<<p.focus_waypoint.x<<'|'<<p.focus_waypoint.y;
+        if(snapshot_version_>=121){
+            if(!p.galactic_authoritative || !p.galactic_position.valid() ||
+               !p.galactic_home.valid() || !p.galactic_focus.valid())
+                throw std::runtime_error("invalid 3D survey probe coordinates");
+            const auto emit=[&](galactic::Point g){
+                out<<'|'<<g.x.sector<<'|'<<g.x.millimeters
+                   <<'|'<<g.y.sector<<'|'<<g.y.millimeters
+                   <<'|'<<g.z.sector<<'|'<<g.z.millimeters;
+            };
+            out<<'|'<<p.position_z_mm<<'|'<<p.drone_home_z_mm<<'|'<<p.focus_z_mm;
+            emit(p.galactic_position);emit(p.galactic_home);emit(p.galactic_focus);
+        }
         out<<'\n';
     }
     if(snapshot_version_>=63)for(const auto& [key,d]:discoveries_){
@@ -12187,6 +12290,14 @@ std::string Simulation::canonical_state() const {
         out<<"discovery|"<<d.owner<<'|'<<d.site<<'|'<<d.system<<'|'<<d.location.x
            <<'|'<<d.location.y<<'|'<<d.first_tick<<'|'<<(d.geological?1:0);
         if(snapshot_version_>=67)out<<'|'<<unsigned(d.survey_taxonomy);
+        if(snapshot_version_>=121){
+            if(!d.galactic_authoritative || !d.galactic_location.valid())
+                throw std::runtime_error("invalid 3D discovery");
+            const auto& g=d.galactic_location;
+            out<<'|'<<d.location_z_mm<<'|'<<g.x.sector<<'|'<<g.x.millimeters
+               <<'|'<<g.y.sector<<'|'<<g.y.millimeters
+               <<'|'<<g.z.sector<<'|'<<g.z.millimeters;
+        }
         out<<'\n';
     }
     if(snapshot_version_>=68)for(const auto& [key,p]:pending_probe_discoveries_){
@@ -12195,7 +12306,16 @@ std::string Simulation::canonical_state() const {
         out<<"pendingprobe|"<<d.owner<<'|'<<d.site<<'|'<<d.system
            <<'|'<<d.location.x<<'|'<<d.location.y<<'|'<<d.first_tick
            <<'|'<<(d.geological?1:0)<<'|'<<p.carrier<<'|'<<p.probe_id
-           <<'|'<<p.ready_tick<<'\n';
+           <<'|'<<p.ready_tick;
+        if(snapshot_version_>=121){
+            if(!d.galactic_authoritative || !d.galactic_location.valid())
+                throw std::runtime_error("invalid pending 3D discovery");
+            const auto& g=d.galactic_location;
+            out<<'|'<<d.location_z_mm<<'|'<<g.x.sector<<'|'<<g.x.millimeters
+               <<'|'<<g.y.sector<<'|'<<g.y.millimeters
+               <<'|'<<g.z.sector<<'|'<<g.z.millimeters;
+        }
+        out<<'\n';
     }
     if (snapshot_version_ >= 2) {
         for (auto id : depleted_) out << "depleted|" << id << '\n';
@@ -12392,12 +12512,12 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
     if (!std::getline(in, line)) throw std::runtime_error("snapshot: missing header");
     auto h = fields(line);
     require_fields(h, 5);
-    if (h[0] != "galaxy-kernel-v120" && h[0] != "galaxy-kernel-v119" && h[0] != "galaxy-kernel-v118" && h[0] != "galaxy-kernel-v117" && h[0] != "galaxy-kernel-v116" && h[0] != "galaxy-kernel-v115" && h[0] != "galaxy-kernel-v114" && h[0] != "galaxy-kernel-v113" && h[0] != "galaxy-kernel-v112" && h[0] != "galaxy-kernel-v111" && h[0] != "galaxy-kernel-v110" && h[0] != "galaxy-kernel-v109" && h[0] != "galaxy-kernel-v108" && h[0] != "galaxy-kernel-v107" && h[0] != "galaxy-kernel-v106" && h[0] != "galaxy-kernel-v105" && h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27" && h[0] != "galaxy-kernel-v28" && h[0] != "galaxy-kernel-v29" && h[0] != "galaxy-kernel-v30" && h[0] != "galaxy-kernel-v31" && h[0] != "galaxy-kernel-v32" && h[0] != "galaxy-kernel-v33" && h[0] != "galaxy-kernel-v34" && h[0] != "galaxy-kernel-v35" && h[0] != "galaxy-kernel-v36" && h[0] != "galaxy-kernel-v37" && h[0] != "galaxy-kernel-v38" && h[0] != "galaxy-kernel-v39" && h[0] != "galaxy-kernel-v40" && h[0] != "galaxy-kernel-v41" && h[0] != "galaxy-kernel-v44" && h[0] != "galaxy-kernel-v48" && h[0] != "galaxy-kernel-v49" && h[0] != "galaxy-kernel-v52" && h[0] != "galaxy-kernel-v53" && h[0] != "galaxy-kernel-v57" && h[0] != "galaxy-kernel-v58" && h[0] != "galaxy-kernel-v59" && h[0] != "galaxy-kernel-v60" && h[0] != "galaxy-kernel-v61" && h[0] != "galaxy-kernel-v62" && h[0] != "galaxy-kernel-v63" && h[0] != "galaxy-kernel-v64" && h[0] != "galaxy-kernel-v65" && h[0] != "galaxy-kernel-v66" && h[0] != "galaxy-kernel-v67" && h[0] != "galaxy-kernel-v68" && h[0] != "galaxy-kernel-v69" && h[0] != "galaxy-kernel-v70" && h[0] != "galaxy-kernel-v71" && h[0] != "galaxy-kernel-v72" && h[0] != "galaxy-kernel-v73" && h[0] != "galaxy-kernel-v74" && h[0] != "galaxy-kernel-v75" && h[0] != "galaxy-kernel-v76" && h[0] != "galaxy-kernel-v77" && h[0] != "galaxy-kernel-v78" && h[0] != "galaxy-kernel-v79" && h[0] != "galaxy-kernel-v80" && h[0] != "galaxy-kernel-v81" && h[0] != "galaxy-kernel-v82" && h[0] != "galaxy-kernel-v83" && h[0] != "galaxy-kernel-v84" && h[0] != "galaxy-kernel-v85" && h[0] != "galaxy-kernel-v86" && h[0] != "galaxy-kernel-v87" && h[0] != "galaxy-kernel-v88" && h[0] != "galaxy-kernel-v89" && h[0] != "galaxy-kernel-v90" && h[0] != "galaxy-kernel-v91" && h[0] != "galaxy-kernel-v92" && h[0] != "galaxy-kernel-v93" && h[0] != "galaxy-kernel-v94" && h[0] != "galaxy-kernel-v95" && h[0] != "galaxy-kernel-v96" && h[0] != "galaxy-kernel-v97" && h[0] != "galaxy-kernel-v98" && h[0] != "galaxy-kernel-v99" && h[0] != "galaxy-kernel-v100" && h[0] != "galaxy-kernel-v101" && h[0] != "galaxy-kernel-v102" && h[0] != "galaxy-kernel-v103" && h[0] != "galaxy-kernel-v104") throw std::runtime_error("snapshot: unsupported version");
+    if (h[0] != "galaxy-kernel-v121" && h[0] != "galaxy-kernel-v120" && h[0] != "galaxy-kernel-v119" && h[0] != "galaxy-kernel-v118" && h[0] != "galaxy-kernel-v117" && h[0] != "galaxy-kernel-v116" && h[0] != "galaxy-kernel-v115" && h[0] != "galaxy-kernel-v114" && h[0] != "galaxy-kernel-v113" && h[0] != "galaxy-kernel-v112" && h[0] != "galaxy-kernel-v111" && h[0] != "galaxy-kernel-v110" && h[0] != "galaxy-kernel-v109" && h[0] != "galaxy-kernel-v108" && h[0] != "galaxy-kernel-v107" && h[0] != "galaxy-kernel-v106" && h[0] != "galaxy-kernel-v105" && h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27" && h[0] != "galaxy-kernel-v28" && h[0] != "galaxy-kernel-v29" && h[0] != "galaxy-kernel-v30" && h[0] != "galaxy-kernel-v31" && h[0] != "galaxy-kernel-v32" && h[0] != "galaxy-kernel-v33" && h[0] != "galaxy-kernel-v34" && h[0] != "galaxy-kernel-v35" && h[0] != "galaxy-kernel-v36" && h[0] != "galaxy-kernel-v37" && h[0] != "galaxy-kernel-v38" && h[0] != "galaxy-kernel-v39" && h[0] != "galaxy-kernel-v40" && h[0] != "galaxy-kernel-v41" && h[0] != "galaxy-kernel-v44" && h[0] != "galaxy-kernel-v48" && h[0] != "galaxy-kernel-v49" && h[0] != "galaxy-kernel-v52" && h[0] != "galaxy-kernel-v53" && h[0] != "galaxy-kernel-v57" && h[0] != "galaxy-kernel-v58" && h[0] != "galaxy-kernel-v59" && h[0] != "galaxy-kernel-v60" && h[0] != "galaxy-kernel-v61" && h[0] != "galaxy-kernel-v62" && h[0] != "galaxy-kernel-v63" && h[0] != "galaxy-kernel-v64" && h[0] != "galaxy-kernel-v65" && h[0] != "galaxy-kernel-v66" && h[0] != "galaxy-kernel-v67" && h[0] != "galaxy-kernel-v68" && h[0] != "galaxy-kernel-v69" && h[0] != "galaxy-kernel-v70" && h[0] != "galaxy-kernel-v71" && h[0] != "galaxy-kernel-v72" && h[0] != "galaxy-kernel-v73" && h[0] != "galaxy-kernel-v74" && h[0] != "galaxy-kernel-v75" && h[0] != "galaxy-kernel-v76" && h[0] != "galaxy-kernel-v77" && h[0] != "galaxy-kernel-v78" && h[0] != "galaxy-kernel-v79" && h[0] != "galaxy-kernel-v80" && h[0] != "galaxy-kernel-v81" && h[0] != "galaxy-kernel-v82" && h[0] != "galaxy-kernel-v83" && h[0] != "galaxy-kernel-v84" && h[0] != "galaxy-kernel-v85" && h[0] != "galaxy-kernel-v86" && h[0] != "galaxy-kernel-v87" && h[0] != "galaxy-kernel-v88" && h[0] != "galaxy-kernel-v89" && h[0] != "galaxy-kernel-v90" && h[0] != "galaxy-kernel-v91" && h[0] != "galaxy-kernel-v92" && h[0] != "galaxy-kernel-v93" && h[0] != "galaxy-kernel-v94" && h[0] != "galaxy-kernel-v95" && h[0] != "galaxy-kernel-v96" && h[0] != "galaxy-kernel-v97" && h[0] != "galaxy-kernel-v98" && h[0] != "galaxy-kernel-v99" && h[0] != "galaxy-kernel-v100" && h[0] != "galaxy-kernel-v101" && h[0] != "galaxy-kernel-v102" && h[0] != "galaxy-kernel-v103" && h[0] != "galaxy-kernel-v104") throw std::runtime_error("snapshot: unsupported version");
     const auto sys = u64(h[1]);
     if (sys == 0 || sys > std::numeric_limits<std::uint32_t>::max())
         throw std::runtime_error("snapshot: invalid system");
     Simulation result(u64(h[4]), static_cast<std::uint32_t>(sys));
-    result.snapshot_version_ = h[0] == "galaxy-kernel-v120" ? 120 : h[0] == "galaxy-kernel-v119" ? 119 : h[0] == "galaxy-kernel-v118" ? 118 : h[0] == "galaxy-kernel-v117" ? 117 : h[0] == "galaxy-kernel-v116" ? 116 : h[0] == "galaxy-kernel-v115" ? 115 : h[0] == "galaxy-kernel-v114" ? 114 : h[0] == "galaxy-kernel-v113" ? 113 : h[0] == "galaxy-kernel-v112" ? 112 : h[0] == "galaxy-kernel-v111" ? 111 : h[0] == "galaxy-kernel-v110" ? 110 : h[0] == "galaxy-kernel-v109" ? 109 : h[0] == "galaxy-kernel-v108" ? 108 : h[0] == "galaxy-kernel-v107" ? 107 : h[0] == "galaxy-kernel-v106" ? 106 : h[0] == "galaxy-kernel-v105" ? 105 : h[0] == "galaxy-kernel-v104" ? 104 : h[0] == "galaxy-kernel-v103" ? 103 : h[0] == "galaxy-kernel-v102" ? 102 : h[0] == "galaxy-kernel-v101" ? 101 : h[0] == "galaxy-kernel-v100" ? 100 : h[0] == "galaxy-kernel-v99" ? 99 : h[0] == "galaxy-kernel-v98" ? 98 : h[0] == "galaxy-kernel-v97" ? 97 : h[0] == "galaxy-kernel-v96" ? 96 : h[0] == "galaxy-kernel-v95" ? 95 : h[0] == "galaxy-kernel-v94" ? 94 : h[0] == "galaxy-kernel-v93" ? 93 : h[0] == "galaxy-kernel-v92" ? 92 : h[0] == "galaxy-kernel-v91" ? 91 : h[0] == "galaxy-kernel-v90" ? 90 : h[0] == "galaxy-kernel-v89" ? 89 : h[0] == "galaxy-kernel-v88" ? 88 : h[0] == "galaxy-kernel-v87" ? 87 : h[0] == "galaxy-kernel-v86" ? 86 : h[0] == "galaxy-kernel-v85" ? 85 : h[0] == "galaxy-kernel-v84" ? 84 : h[0] == "galaxy-kernel-v83" ? 83 : h[0] == "galaxy-kernel-v82" ? 82 : h[0] == "galaxy-kernel-v81" ? 81 : h[0] == "galaxy-kernel-v80" ? 80 : h[0] == "galaxy-kernel-v79" ? 79 : h[0] == "galaxy-kernel-v78" ? 78 : h[0] == "galaxy-kernel-v77" ? 77 : h[0] == "galaxy-kernel-v76" ? 76 : h[0] == "galaxy-kernel-v75" ? 75 : h[0] == "galaxy-kernel-v74" ? 74 : h[0] == "galaxy-kernel-v73" ? 73 : h[0] == "galaxy-kernel-v72" ? 72 : h[0] == "galaxy-kernel-v71" ? 71 : h[0] == "galaxy-kernel-v70" ? 70 : h[0] == "galaxy-kernel-v69" ? 69 : h[0] == "galaxy-kernel-v68" ? 68 : h[0] == "galaxy-kernel-v67" ? 67 : h[0] == "galaxy-kernel-v66" ? 66 : h[0] == "galaxy-kernel-v65" ? 65 : h[0] == "galaxy-kernel-v64" ? 64 : h[0] == "galaxy-kernel-v63" ? 63 : h[0] == "galaxy-kernel-v62" ? 62 : h[0] == "galaxy-kernel-v61" ? 61 : h[0] == "galaxy-kernel-v60" ? 60 : h[0] == "galaxy-kernel-v59" ? 59 : h[0] == "galaxy-kernel-v58" ? 58 : h[0] == "galaxy-kernel-v57" ? 57 : h[0] == "galaxy-kernel-v53" ? 53 : h[0] == "galaxy-kernel-v52" ? 52 : h[0] == "galaxy-kernel-v49" ? 49 : h[0] == "galaxy-kernel-v48" ? 48 : h[0] == "galaxy-kernel-v44" ? 44 : h[0] == "galaxy-kernel-v41" ? 41 : h[0] == "galaxy-kernel-v40" ? 40 : h[0] == "galaxy-kernel-v39" ? 39 : h[0] == "galaxy-kernel-v38" ? 38 : h[0] == "galaxy-kernel-v37" ? 37 : h[0] == "galaxy-kernel-v36" ? 36 : h[0] == "galaxy-kernel-v35" ? 35 : h[0] == "galaxy-kernel-v34" ? 34 : h[0] == "galaxy-kernel-v33" ? 33 : h[0] == "galaxy-kernel-v32" ? 32 : h[0] == "galaxy-kernel-v31" ? 31 : h[0] == "galaxy-kernel-v30" ? 30 : h[0] == "galaxy-kernel-v29" ? 29 : h[0] == "galaxy-kernel-v28" ? 28 : h[0] == "galaxy-kernel-v27" ? 27 : h[0] == "galaxy-kernel-v26" ? 26 : h[0] == "galaxy-kernel-v25" ? 25 : h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
+    result.snapshot_version_ = h[0] == "galaxy-kernel-v121" ? 121 : h[0] == "galaxy-kernel-v120" ? 120 : h[0] == "galaxy-kernel-v119" ? 119 : h[0] == "galaxy-kernel-v118" ? 118 : h[0] == "galaxy-kernel-v117" ? 117 : h[0] == "galaxy-kernel-v116" ? 116 : h[0] == "galaxy-kernel-v115" ? 115 : h[0] == "galaxy-kernel-v114" ? 114 : h[0] == "galaxy-kernel-v113" ? 113 : h[0] == "galaxy-kernel-v112" ? 112 : h[0] == "galaxy-kernel-v111" ? 111 : h[0] == "galaxy-kernel-v110" ? 110 : h[0] == "galaxy-kernel-v109" ? 109 : h[0] == "galaxy-kernel-v108" ? 108 : h[0] == "galaxy-kernel-v107" ? 107 : h[0] == "galaxy-kernel-v106" ? 106 : h[0] == "galaxy-kernel-v105" ? 105 : h[0] == "galaxy-kernel-v104" ? 104 : h[0] == "galaxy-kernel-v103" ? 103 : h[0] == "galaxy-kernel-v102" ? 102 : h[0] == "galaxy-kernel-v101" ? 101 : h[0] == "galaxy-kernel-v100" ? 100 : h[0] == "galaxy-kernel-v99" ? 99 : h[0] == "galaxy-kernel-v98" ? 98 : h[0] == "galaxy-kernel-v97" ? 97 : h[0] == "galaxy-kernel-v96" ? 96 : h[0] == "galaxy-kernel-v95" ? 95 : h[0] == "galaxy-kernel-v94" ? 94 : h[0] == "galaxy-kernel-v93" ? 93 : h[0] == "galaxy-kernel-v92" ? 92 : h[0] == "galaxy-kernel-v91" ? 91 : h[0] == "galaxy-kernel-v90" ? 90 : h[0] == "galaxy-kernel-v89" ? 89 : h[0] == "galaxy-kernel-v88" ? 88 : h[0] == "galaxy-kernel-v87" ? 87 : h[0] == "galaxy-kernel-v86" ? 86 : h[0] == "galaxy-kernel-v85" ? 85 : h[0] == "galaxy-kernel-v84" ? 84 : h[0] == "galaxy-kernel-v83" ? 83 : h[0] == "galaxy-kernel-v82" ? 82 : h[0] == "galaxy-kernel-v81" ? 81 : h[0] == "galaxy-kernel-v80" ? 80 : h[0] == "galaxy-kernel-v79" ? 79 : h[0] == "galaxy-kernel-v78" ? 78 : h[0] == "galaxy-kernel-v77" ? 77 : h[0] == "galaxy-kernel-v76" ? 76 : h[0] == "galaxy-kernel-v75" ? 75 : h[0] == "galaxy-kernel-v74" ? 74 : h[0] == "galaxy-kernel-v73" ? 73 : h[0] == "galaxy-kernel-v72" ? 72 : h[0] == "galaxy-kernel-v71" ? 71 : h[0] == "galaxy-kernel-v70" ? 70 : h[0] == "galaxy-kernel-v69" ? 69 : h[0] == "galaxy-kernel-v68" ? 68 : h[0] == "galaxy-kernel-v67" ? 67 : h[0] == "galaxy-kernel-v66" ? 66 : h[0] == "galaxy-kernel-v65" ? 65 : h[0] == "galaxy-kernel-v64" ? 64 : h[0] == "galaxy-kernel-v63" ? 63 : h[0] == "galaxy-kernel-v62" ? 62 : h[0] == "galaxy-kernel-v61" ? 61 : h[0] == "galaxy-kernel-v60" ? 60 : h[0] == "galaxy-kernel-v59" ? 59 : h[0] == "galaxy-kernel-v58" ? 58 : h[0] == "galaxy-kernel-v57" ? 57 : h[0] == "galaxy-kernel-v53" ? 53 : h[0] == "galaxy-kernel-v52" ? 52 : h[0] == "galaxy-kernel-v49" ? 49 : h[0] == "galaxy-kernel-v48" ? 48 : h[0] == "galaxy-kernel-v44" ? 44 : h[0] == "galaxy-kernel-v41" ? 41 : h[0] == "galaxy-kernel-v40" ? 40 : h[0] == "galaxy-kernel-v39" ? 39 : h[0] == "galaxy-kernel-v38" ? 38 : h[0] == "galaxy-kernel-v37" ? 37 : h[0] == "galaxy-kernel-v36" ? 36 : h[0] == "galaxy-kernel-v35" ? 35 : h[0] == "galaxy-kernel-v34" ? 34 : h[0] == "galaxy-kernel-v33" ? 33 : h[0] == "galaxy-kernel-v32" ? 32 : h[0] == "galaxy-kernel-v31" ? 31 : h[0] == "galaxy-kernel-v30" ? 30 : h[0] == "galaxy-kernel-v29" ? 29 : h[0] == "galaxy-kernel-v28" ? 28 : h[0] == "galaxy-kernel-v27" ? 27 : h[0] == "galaxy-kernel-v26" ? 26 : h[0] == "galaxy-kernel-v25" ? 25 : h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
     result.tick_ = u64(h[2]);
     result.next_entity_id_ = u64(h[3]);
     if (result.next_entity_id_ == 0) throw std::runtime_error("snapshot: invalid next entity ID");
@@ -13322,7 +13442,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             if(n<2||n>500)throw std::runtime_error("snapshot: invalid probe response latency");
             result.probe_report_delay_ticks_=n;
         } else if(f[0]=="pendingprobe" && result.snapshot_version_>=68) {
-            require_fields(f,11);
+            require_fields(f,result.snapshot_version_>=121?18:11);
             PendingProbeDiscovery pending{};
             auto& d=pending.report;
             d.owner=u64(f[1]);d.site=u64(f[2]);
@@ -13333,6 +13453,14 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             pending.carrier=u64(f[8]);pending.probe_id=u64(f[9]);
             pending.ready_tick=u64(f[10]);
             d.geological=geology==1;
+            if(result.snapshot_version_>=121){
+                d.location_z_mm=i64(f[11]);
+                d.galactic_location={{i64(f[12]),i64(f[13])},
+                    {i64(f[14]),i64(f[15])},{i64(f[16]),i64(f[17])}};
+                if(!d.galactic_location.valid())
+                    throw std::runtime_error("invalid exact pending probe location");
+                d.galactic_authoritative=true;
+            }
             if(!d.owner||!d.site||d.site>=result.next_entity_id_||
                !system||system>std::numeric_limits<std::uint32_t>::max()||
                !d.first_tick||d.first_tick>result.tick_||
@@ -13346,7 +13474,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             if(!result.pending_probe_discoveries_.emplace(std::make_pair(d.owner,d.site),pending).second)
                 throw std::runtime_error("snapshot: duplicate pending probe observation");
         } else if(f[0]=="surveyprobe" && result.snapshot_version_>=65){
-            require_fields(f,result.snapshot_version_>=69?17:result.snapshot_version_>=66?14:8);
+            require_fields(f,result.snapshot_version_>=121?38:result.snapshot_version_>=69?17:result.snapshot_version_>=66?14:8);
             DeployedSurveyProbe p{};
             p.id=u64(f[1]);p.carrier=u64(f[2]);p.owner=u64(f[3]);
             const auto system=u64(f[4]);p.position={i64(f[5]),i64(f[6])};
@@ -13374,6 +13502,20 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                        !result.valid_position(p.focus_waypoint)))||
                    (!p.focus_site && (p.focus_waypoint.x||p.focus_waypoint.y)))
                     throw std::runtime_error("snapshot: invalid probe focus");
+            }
+            if(result.snapshot_version_>=121){
+                p.position_z_mm=i64(f[17]);p.drone_home_z_mm=i64(f[18]);
+                p.focus_z_mm=i64(f[19]);
+                p.galactic_position={{i64(f[20]),i64(f[21])},
+                    {i64(f[22]),i64(f[23])},{i64(f[24]),i64(f[25])}};
+                p.galactic_home={{i64(f[26]),i64(f[27])},
+                    {i64(f[28]),i64(f[29])},{i64(f[30]),i64(f[31])}};
+                p.galactic_focus={{i64(f[32]),i64(f[33])},
+                    {i64(f[34]),i64(f[35])},{i64(f[36]),i64(f[37])}};
+                if(!p.galactic_position.valid() || !p.galactic_home.valid() ||
+                   !p.galactic_focus.valid())
+                    throw std::runtime_error("invalid high-order probe axis");
+                p.galactic_authoritative=true;
             }
             if(p.focus_site){
                 const auto site=result.entities_.find(p.focus_site);
@@ -13407,7 +13549,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             if(!result.survey_probes_.emplace(p.id,p).second)
                 throw std::runtime_error("snapshot: duplicate survey probe");
         } else if(f[0]=="discovery" && result.snapshot_version_>=63){
-            require_fields(f,result.snapshot_version_>=67?9:8);
+            require_fields(f,result.snapshot_version_>=121?16:result.snapshot_version_>=67?9:8);
             DiscoveryRecord d{};
             d.owner=u64(f[1]);d.site=u64(f[2]);
             const auto system=u64(f[3]),geo=u64(f[7]);
@@ -13418,6 +13560,14 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 if(klass>3 || (klass && !d.geological))
                     throw std::runtime_error("snapshot: invalid survey report");
                 d.survey_taxonomy=static_cast<std::uint8_t>(klass);
+            }
+            if(result.snapshot_version_>=121){
+                d.location_z_mm=i64(f[9]);
+                d.galactic_location={{i64(f[10]),i64(f[11])},
+                    {i64(f[12]),i64(f[13])},{i64(f[14]),i64(f[15])}};
+                if(!d.galactic_location.valid())
+                    throw std::runtime_error("invalid high-order discovery axis");
+                d.galactic_authoritative=true;
             }
             if(!d.owner || !d.site || d.site>=result.next_entity_id_ ||
                !system || system>std::numeric_limits<std::uint32_t>::max() ||
