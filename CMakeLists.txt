@@ -1898,3 +1898,12 @@ if(BUILD_TESTING)
   add_test(NAME galaxy_wo3_planetary_utility COMMAND galaxy_wo3_planetary_utility_tests)
   set_tests_properties(galaxy_wo3_planetary_utility PROPERTIES TIMEOUT 300)
 endif()
+
+
+# WO4-A: owner-scoped scarcity forecast over original physical life support.
+# No economy duplicate and no simulated distribution writer.
+if(BUILD_TESTING)
+    add_executable(galaxy_wo4_resource_demand_tests tests/WO4ResourceDemandTests.cpp)
+    target_link_libraries(galaxy_wo4_resource_demand_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_wo4_resource_demand COMMAND galaxy_wo4_resource_demand_tests)
+endif()
