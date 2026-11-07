@@ -62,6 +62,9 @@
 - **Acceptance gate remains open:** native C++ CTest on Linux and Windows, exact-head SQLite reopen/copy, tamper and unchanged-material checks must pass; do **not** mark WO2-H tested merely because source/tests/workflow were committed. WO2-I actual time-bounded shift admission and WO2-J authorized supervisors are next, not quietly implemented by this change.
 
 
+
+**Subsequent WO2-H source repairs:** `WO2IndustryWorkforce.hpp` now ranks eligible existing NPCs by original receipt-backed cut/shape credits, breaking ties by stable identity; this is advisory and retains backward-compatible baseline workers. The original native CTest now also reads the physical `resource_ledger` directly to require exactly 3 input-aluminum→scrap and 3 input-panels→scrap practice receipts on SQLite reopen, and verifies the trained shape worker appears through the existing workshop staffing view. These checks remain **unverified on native runners** until the exact repaired head runs.
+
 ### WO2-H native closeout checklist — current source head
 
 Training is **implemented in source**, but source presence is not evidence of a passing executable. The native-acceptance gate is **OPEN** until the exact PR #88 head has independent passing Linux and Windows builds, the dedicated `galaxy_wo2_industry_workforce_tests` executable, and SQLite recovery checks. The follow-on audit must verify:
