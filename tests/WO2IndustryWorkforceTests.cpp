@@ -468,6 +468,82 @@ int main() {
         try{(void)Simulation::from_snapshot(forged);}
         catch(const std::exception&){refused=true;}
         CHECK(refused);
+        // WO2-I atomic handover: one original owner command replaces only
+        // the named worker; it keeps the same shift ID, end tick and WIP.
+        CHECK(!workforce02::approved_original_workshop_shift_relief(
+            shifts.world(),7,ship,site,false,410,second_id,419,false));
+        CHECK(!workforce02::approved_original_workshop_shift_relief(
+            shifts.world(),8,ship,site,false,410,second_id,419,true));
+        CHECK(!workforce02::approved_original_workshop_shift_relief(
+            shifts.world(),7,ship,site,false,999999,second_id,419,true));
+        auto handover=workforce02::approved_original_workshop_shift_relief(
+            shifts.world(),7,ship,site,false,410,second_id,419,true);
+        CHECK(handover.has_value() &&
+              handover->action==Action::RelieveWorkshopShift &&
+              handover->amount==410 &&
+              handover->thrust_y==static_cast<int>(second_id));
+        const auto original_end=shifts.world().workshop(site)->shifts[0].end_tick;
+        const auto original_reserve=
+            shifts.world().workshop(site)->reserved_aluminum_kg;
+        CHECK(shifts.submit(*handover));
+        Command overlapping_handover=*handover;
+        overlapping_handover.id=417;overlapping_handover.sequence=417;
+        CHECK(!shifts.submit(overlapping_handover));
+        shifts.step();
+        CHECK(shifts.world().events().back().command_id==419 &&
+              shifts.world().events().back().result==Outcome::Applied);
+        CHECK(shifts.world().workshop(site)->operator_npc_id==second_id);
+        CHECK(shifts.world().workshop(site)->shifts[0].command_id==410);
+        CHECK(shifts.world().workshop(site)->shifts[0].relief_command_id==419);
+        CHECK(shifts.world().workshop(site)->shifts[0].end_tick==original_end);
+        CHECK(shifts.world().workshop(site)->reserved_aluminum_kg==
+              original_reserve ||
+              shifts.world().workshop(site)->reserved_aluminum_kg==20 ||
+              shifts.world().workshop(site)->reserved_aluminum_kg==0);
+        CHECK(shifts.world().total_material_kg()==initial_mass);
+        // Replay the same original SQLite journal after handover and check
+        // that it recovers the *new* worker, not the original start worker.
+        const auto relief_copy=(folder/"wo2i_atomic_relief.sqlite").string();
+        PersistentWorld::recover_copy(db,relief_copy);
+        {
+            PersistentWorld reopened(relief_copy,Simulation(760));
+            CHECK(reopened.world().workshop(site)->operator_npc_id==second_id);
+            CHECK(reopened.world().workshop(site)->shifts[0].command_id==410);
+            CHECK(reopened.world().workshop(site)->shifts[0].relief_command_id==419);
+            CHECK(reopened.world().workshop(site)->shifts[0].end_tick==finish);
+            CHECK(reopened.world().total_material_kg()==initial_mass);
+        }
+        // A second independently confirmed handover at the next tick may
+        // use a *lower* command ID. Recovery orders by true applied tick.
+        auto reverse=workforce02::approved_original_workshop_shift_relief(
+            shifts.world(),7,ship,site,false,410,first_id,418,true);
+        CHECK(reverse.has_value() && shifts.submit(*reverse));
+        shifts.step();
+        CHECK(shifts.world().events().back().command_id==418 &&
+              shifts.world().events().back().result==Outcome::Applied);
+        CHECK(shifts.world().workshop(site)->operator_npc_id==first_id);
+        CHECK(shifts.world().workshop(site)->shifts[0].relief_command_id==418);
+        CHECK(shifts.world().workshop(site)->shifts[0].end_tick==finish);
+        CHECK(shifts.world().total_material_kg()==initial_mass);
+        const auto second_relief=(folder/"wo2i_two_reliefs.sqlite").string();
+        PersistentWorld::recover_copy(db,second_relief);
+        {
+            PersistentWorld recovered(second_relief,Simulation(761));
+            CHECK(recovered.world().workshop(site)->operator_npc_id==first_id);
+            CHECK(recovered.world().workshop(site)->shifts[0].relief_command_id==418);
+        }
+        auto altered_relief=shifts.world().canonical_state();
+        const auto shift_row=altered_relief.find("workshopshift|");
+        CHECK(shift_row!=std::string::npos);
+        const auto shift_row_end=altered_relief.find('\n',shift_row);
+        CHECK(shift_row_end!=std::string::npos);
+        const auto final_pipe=altered_relief.rfind('|',shift_row_end);
+        CHECK(final_pipe!=std::string::npos && final_pipe>shift_row);
+        altered_relief.replace(final_pipe+1,shift_row_end-final_pipe-1,"999999");
+        bool rejected_relief_forgery=false;
+        try{(void)Simulation::from_snapshot(altered_relief);}
+        catch(const std::exception&){rejected_relief_forgery=true;}
+        CHECK(rejected_relief_forgery);
         CHECK(!workforce02::approved_original_workshop_shift_cancel(
             shifts.world(),8,ship,site,false,410,411,true));
         CHECK(!workforce02::approved_original_workshop_shift_cancel(
