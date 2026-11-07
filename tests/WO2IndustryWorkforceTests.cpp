@@ -701,13 +701,21 @@ int main() {
         auto mentor=workforce02::approved_workshop_mentorship(
             managed.world(),7,ship,site,WorkshopTrade::Cut,second_id,712,true);
         CHECK(mentor.has_value() && managed.submit(*mentor));
+        Command duplicate_mentorship=*mentor;
+        duplicate_mentorship.id=716;duplicate_mentorship.sequence=716;
+        CHECK(managed.submit(duplicate_mentorship));
         const auto before_energy=managed.world().utility(site)->consumed_energy;
         const auto before_credits=managed.world().workshop_training_units(
             second_id,WorkshopTrade::Cut);
         managed.step();
-        CHECK(managed.world().events().back().command_id==712 &&
-              managed.world().events().back().result==Outcome::Applied &&
-              managed.world().events().back().transferred==1);
+        CHECK(managed.world().events().size()>=2);
+        const auto& mentor_results=managed.world().events();
+        CHECK(mentor_results[mentor_results.size()-2].command_id==712 &&
+              mentor_results[mentor_results.size()-2].result==Outcome::Applied &&
+              mentor_results[mentor_results.size()-2].transferred==1);
+        CHECK(mentor_results.back().command_id==716 &&
+              mentor_results.back().result==Outcome::InvalidTarget &&
+              mentor_results.back().transferred==0);
         CHECK(managed.world().workshop_training_units(
             second_id,WorkshopTrade::Cut)==before_credits+1);
         const auto& latest=managed.world().npc_records().at(second_id).
@@ -718,8 +726,20 @@ int main() {
               latest.trade==WorkshopTrade::Cut);
         CHECK(managed.world().utility(site)->consumed_energy>=before_energy+1);
         CHECK(managed.world().total_material_kg()==initial);
-        // A second trainee cannot claim free skill from the same mentor/site
-        // on one committed tick; direct duplicate same-day commands fail.
+        // Only an actual original workshop batch can satisfy the owner
+        // program. After one quota batch, native production must not exceed
+        // the approved cap even when the physical operator keeps working.
+        const auto base=managed.world().workshop(site)->
+            approved_jobs[0].baseline_batches;
+        CHECK(send(managed,ship,717,Action::AssignWorkshopOperator,site,
+                   static_cast<std::int64_t>(second_id)).result==Outcome::Applied);
+        managed.steps(15);
+        const auto real_completed=managed.world().workshop(site)->completed_batches;
+        CHECK(real_completed>=base && real_completed<=base+1);
+        board=workforce02::workshop_job_board(managed.world(),7,ship,site);
+        CHECK(board[0].physically_completed==real_completed-base);
+        CHECK(board[0].physically_completed<=board[0].owner_target);
+        CHECK(managed.world().total_material_kg()==initial);
         const auto manager_copy=(folder/"wo2j_active_recovered.sqlite").string();
         PersistentWorld::recover_copy(management_db,manager_copy);
         {
