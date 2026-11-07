@@ -416,6 +416,7 @@ static void sustained_multi_cell_endurance(const fs::path& root,
     w.enable_native_3d_probes();
     const auto baseline_ore=w.world().total_ore();
     const auto baseline_npcs=w.world().npc_records().size();
+    const auto baseline_entities=w.world().entities().size();
     std::vector<spatial::WorkerLease> leases;
     for(int i=0;i<4;++i){
         const auto cell=spatial::ship_cell(w.world(),ships[i]);
@@ -480,7 +481,7 @@ static void sustained_multi_cell_endurance(const fs::path& root,
               completed.world_generation==w.generation() &&
               w.world().total_ore()==baseline_ore &&
               w.world().npc_records().size()==baseline_npcs &&
-              w.world().entities().size()==ships.size());
+              w.world().entities().size()==baseline_entities);
         for(const auto ship:ships){
             CHECK(w.world().find(ship));
         }
