@@ -122,6 +122,55 @@ function validateCatalog(catalog) {
   }
   if(!services.length)err("empty service catalogue");
 
+  // Lossy recycling is separately typed so an intentional material recovery
+  // cannot bypass the DAG cycle guard or silently create free resources.
+  const recovery=Array.isArray(catalog.recovery_recipes)?catalog.recovery_recipes:[];
+  const recoveryIds=new Set();
+  for(const x of recovery) {
+    if(!x || !identifier(x.id)) {err("invalid recovery id");continue;}
+    if(recipeIds.has(x.id)||recoveryIds.has(x.id))err("duplicate recovery recipe "+x.id);
+    recoveryIds.add(x.id);
+    if(x.kind!=="lossy_recovery_not_straight_line" ||
+       !identifier(x.site_capability) ||
+       !positive(x.work_ticks) || !nonnegative(x.energy_kj) ||
+       x.quantities!=="illustrative_game_balance")
+      err("invalid bounded recovery contract "+x.id);
+    if(!Array.isArray(x.source_ids)||!x.source_ids.length ||
+       x.source_ids.some(id=>!Object.hasOwn(sources,id)))
+      err("invalid recovery provenance "+x.id);
+    const inputMass=checkLines(x.inputs,x.id,"recovery input");
+    const outputMass=checkLines(x.outputs,x.id,"recovery output");
+    if(inputMass!==outputMass)err("unconserved recovery mass "+x.id);
+    if(!items.has(x.primary_recovered_item) || !Array.isArray(x.outputs) ||
+       !x.outputs.some(y=>y.item===x.primary_recovered_item))
+      err("missing primary recovered output "+x.id);
+    let recovered=0n,secondary=0n;
+    for(const line of Array.isArray(x.outputs)?x.outputs:[]) {
+      const item=items.get(line.item);
+      if(!item || !positive(line.qty))continue;
+      const mass=BigInt(item.mass_g_per_unit)*BigInt(line.qty);
+      if(line.item===x.primary_recovered_item) recovered+=mass;
+      else if(item.lifecycle==="waste")secondary+=mass;
+    }
+    if(!recovered || recovered>=inputMass || !secondary)
+      err("recovery must lose useful output to physical waste "+x.id);
+  }
+  if(!recoveryIds.size)err("missing separately bounded recovery recipes");
+
+  const calibration=Array.isArray(catalog.research_calibration)?catalog.research_calibration:[];
+  const calibrated=new Set();
+  for(const x of calibration) {
+    if(!x || !recipeIds.has(x.recipe) ||
+       typeof x.source_url!=="string" || !x.source_url.startsWith("https://") ||
+       typeof x.evidence!=="string" || x.evidence.length<30 ||
+       !["illustrative_not_verified_chemistry","process_dependencies_only","game_balance_only"].includes(x.numeric_status) ||
+       !identifier(x.environmental_scope))
+      err("invalid process research calibration");
+    else if(calibrated.has(x.recipe))err("duplicate calibration "+x.recipe);
+    else calibrated.add(x.recipe);
+  }
+  if(!calibrated.size)err("missing measured process research references");
+
   const legacy=Array.isArray(catalog.legacy_bridge)?catalog.legacy_bridge:[];
   const legacyIds=new Set();
   for(const row of legacy){
@@ -137,7 +186,7 @@ function validateCatalog(catalog) {
   }
   if(!legacy.length)err("legacy inventory compatibility not accounted for");
 
-  return {ok:errors.length===0,errors,stats:{items:items.size,recipes:recipeIds.size,services:serviceIds.size,legacy_mappings:legacyIds.size}};
+  return {ok:errors.length===0,errors,stats:{items:items.size,recipes:recipeIds.size,recovery_recipes:recoveryIds.size,services:serviceIds.size,legacy_mappings:legacyIds.size}};
 }
 
 
