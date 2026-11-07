@@ -529,6 +529,8 @@ struct PlanetarySiteFacility {
     std::uint8_t housing_phase=0; // 0 absent, 1 constructing, 2 complete
     std::uint64_t housing_progress=0, housing_order_id=0;
     std::uint64_t housing_stalled_ticks=0, housing_completed_tick=0;
+    bool housing_paused=false; // owner may suspend construction, never refund
+    std::uint64_t housing_supported_cycles=0,housing_shortages=0;
 };
 using PlanetarySiteKey = std::tuple<std::uint64_t,std::uint16_t,std::uint16_t,std::uint32_t>;
 // PLAY-13D: cargo identity is independent of player/NPC transport roles.
@@ -1343,6 +1345,8 @@ public:
     // from TWO modules physically delivered to the same surface site.
     bool start_planetary_housing(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,std::uint64_t order_id);
+    bool set_planetary_housing_pause(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool pause);
     bool load_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,bool water,std::int64_t kg);
     bool unload_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,bool water,std::int64_t kg);
     // Typed manifest: water, food and extracted nutrients use one physical
