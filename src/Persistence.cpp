@@ -4308,6 +4308,26 @@ public:
                 if(source!=reinterpret_cast<const char*>(sqlite3_column_text(ledger.get(),4)) ||
                    dest!=reinterpret_cast<const char*>(sqlite3_column_text(ledger.get(),5)))
                     throw std::runtime_error("SQLite: waterworks receipt endpoints mismatch");
+            } else if(reason=="industrial_training_practice_kg"){
+                ++workshop_practice;
+                const auto id=parse_u64(sqlite3_column_text(ledger.get(),0));
+                const auto ev=event_by_id.find(id);
+                const auto cmd=journal_commands.find(id);
+                if(ev==event_by_id.end() || cmd==journal_commands.end() ||
+                   cmd->second.action!=Action::TrainWorkshopTrade ||
+                   (cmd->second.thrust_x!=1 && cmd->second.thrust_x!=2) ||
+                   cmd->second.amount<1 || cmd->second.amount>1000000 ||
+                   cmd->second.issuer==Simulation::kServerAuthority ||
+                   ev->second.result!=Outcome::Applied || ev->second.transferred!=1 ||
+                   amount!=1 ||
+                   ev->second.tick!=static_cast<std::uint64_t>(sqlite3_column_int64(ledger.get(),1)) ||
+                   sqlite3_column_type(ledger.get(),4)!=SQLITE_TEXT ||
+                   sqlite3_column_type(ledger.get(),5)!=SQLITE_TEXT ||
+                   sqlite_str(ledger.get(),4)!="workshop:"+std::to_string(cmd->second.target)+
+                       (cmd->second.thrust_x==1?":aluminum":":aluminum_panels") ||
+                   sqlite_str(ledger.get(),5)!="workshop:"+std::to_string(cmd->second.target)+
+                       ":aluminum_scrap")
+                    throw std::runtime_error("SQLite: invalid original industrial training practice receipt");
             } else if(reason=="workshop_construction_t" ||
                       reason=="workshop_feed_transfer_kg" ||
                       reason=="workshop_output_transfer_kg"){
