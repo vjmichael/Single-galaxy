@@ -9511,6 +9511,8 @@ bool Simulation::book_planetary_shuttle_family(PlayerId host_principal,
        std::adjacent_find(children.begin(),children.end())!=children.end() ||
        submitted_ids_.count(request_id) ||
        shuttle_flight_request_ids_.count(request_id) ||
+       planetary_family_booking_ids_.count(request_id) ||
+       planetary_family_booking_ids_.size()>=100000 ||
        voyages_.count(request_id) || local_delivery_orders_.count(request_id) ||
        pending_celestial_transits_.count(request_id) ||
        completed_celestial_transits_.count(request_id) ||
@@ -9597,10 +9599,36 @@ bool Simulation::book_planetary_shuttle_family(PlayerId host_principal,
     family.guardian_id=guardian;family.co_parent_id=co_parent;
     family.booking_request=request_id;family.child_ids=children;
     family.stage=1;
+    planetary_family_booking_ids_.insert(request_id);
     snapshot_version_=std::max(snapshot_version_,116);
     return true;
 }
 
+bool Simulation::release_planetary_shuttle_family(PlayerId host_principal,
+        PlayerId owner,EntityId ship,const PlanetarySiteKey& key) {
+    const auto sh=planetary_shuttles_.find(key);
+    if(host_principal!=kServerAuthority || !owner || owner==kServerAuthority ||
+       sh==planetary_shuttles_.end() || sh->second.owner!=owner ||
+       sh->second.source_ship!=ship || sh->second.flight_phase!=0 ||
+       sh->second.family.stage!=4)return false;
+    const auto& family=sh->second.family;
+    if(!planetary_family_booking_ids_.count(family.booking_request))
+        return false;
+    for(const auto child:family.child_ids) {
+        const auto dep=physical_dependents_.find(child);
+        if(dep==physical_dependents_.end() ||
+           dep->second.location!=ship || dep->second.home_ship!=ship)
+            return false;
+    }
+    for(const auto parent:{family.guardian_id,family.co_parent_id}) {
+        if(!parent)continue;
+        const auto npc=npcs_.find(parent);
+        if(npc==npcs_.end() || npc->second.location!=ship ||
+           npc->second.home_ship!=ship)return false;
+    }
+    sh->second.family={}; // immutable original request ID remains recorded
+    return true;
+}
 bool Simulation::book_planetary_shuttle_passenger(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,std::uint64_t npc,bool board) {
     auto sh=planetary_shuttles_.find(key);
@@ -10983,6 +11011,9 @@ std::string Simulation::canonical_state() const {
     if(snapshot_version_>=81)
         for(const auto id:shuttle_flight_request_ids_)
             out<<"planetflightreceipt|"<<id<<'\n';
+    if(snapshot_version_>=116)
+        for(const auto id:planetary_family_booking_ids_)
+            out<<"planetfamilyreceipt|"<<id<<'\n';
     if(snapshot_version_>=76)
         for(const auto& [ship,r]:oasis_extractors_)
             out<<"oasisextractor|"<<ship<<'|'<<r.body<<'|'<<r.embodied_ore<<'|'<<
@@ -15721,6 +15752,7 @@ void Simulation::swap(Simulation& other) noexcept {
     work_directives_.swap(other.work_directives_);
     npc_flight_orders_.swap(other.npc_flight_orders_);
     shuttle_flight_request_ids_.swap(other.shuttle_flight_request_ids_);
+    planetary_family_booking_ids_.swap(other.planetary_family_booking_ids_);
     pending_celestial_transits_.swap(other.pending_celestial_transits_);
     completed_celestial_transits_.swap(other.completed_celestial_transits_);
     physical_celestial_systems_.swap(other.physical_celestial_systems_);
