@@ -225,9 +225,9 @@ inline std::optional<Command> approved_original_facility(
     c.action=plan.original_action;c.amount=1;
     return c;
 }
-// Physical surface sites are NOT original station outposts. They currently
-// have their own real built-site and shuttle lifecycle, but no general-purpose
-// permanent housing or independently provisioned full WO1 institutions.
+// Physical surface sites are NOT original station outposts. WO3-B adds the
+// separate physically built first habitat, not generic fully supplied
+// WO1 industry institutions or an independent second planetary simulation.
 struct PlanetarySiteAudit {
     PlanetarySiteKey key{};
     EntityId source_ship=0;
@@ -302,6 +302,65 @@ inline std::optional<PlanetarySiteAudit> audit_planetary_surface(
         std::max<std::int64_t>(0,4-static_cast<std::int64_t>(
             a.original_permanent_residents)):0;
     return a;
+}
+
+// WO3-C/F: conservative physical-service report, not a second resource
+// scheduler. An installed shelter is not proof of electricity, independence,
+// food renewal or a functioning return shuttle.
+enum class SurfaceSupplyGate : std::uint8_t {
+    NoOriginalSite, NotYetHoused, NamedWorkersUnavailable,
+    FoodShortage, WaterShortage, OxygenShortage, ImportDependent
+};
+struct SurfaceSupply {
+    SurfaceSupplyGate gate=SurfaceSupplyGate::NoOriginalSite;
+    std::int64_t baseline_ten_tick_food_periods=0;
+    std::int64_t baseline_ten_tick_water_periods=0;
+    std::int64_t baseline_ten_tick_oxygen_periods=0;
+    std::int64_t baseline_ten_tick_reserve_periods=0;
+    std::uint64_t permanent_named_residents=0;
+    std::uint64_t past_supported_cycles=0,past_shortage_cycles=0;
+    bool shuttle_installed=false,shuttle_on_surface=false;
+    bool food_production_installed=false,water_extractor_installed=false;
+    bool independent_power_proven=false,closed_water_loop_proven=false;
+    bool independently_sustainable=false;
+};
+inline SurfaceSupply assess_surface_supplies(
+    const Simulation& world,PlayerId owner,EntityId ship,
+    const PlanetarySiteKey& key) {
+    SurfaceSupply out{};
+    const auto site=world.planetary_sites().find(key);
+    const auto audit=audit_planetary_surface(world,owner,ship,key);
+    if(!audit || site==world.planetary_sites().end())return out;
+    const auto& s=site->second;
+    out.permanent_named_residents=audit->original_permanent_residents;
+    out.past_supported_cycles=s.housing_supported_cycles;
+    out.past_shortage_cycles=s.housing_shortages;
+    out.shuttle_installed=audit->shuttle_installed;
+    const auto shuttle=world.planetary_shuttles().find(key);
+    out.shuttle_on_surface=shuttle!=world.planetary_shuttles().end() &&
+                           shuttle->second.flight_phase==2;
+    out.food_production_installed=s.farm;
+    out.water_extractor_installed=s.extractor;
+    // Original on-site crew use TWO kg every TEN simulation ticks;
+    // temporary visitors have further needs and can shorten this runway.
+    out.baseline_ten_tick_food_periods=s.food_kg/2;
+    out.baseline_ten_tick_water_periods=s.water_kg/2;
+    out.baseline_ten_tick_oxygen_periods=s.oxygen_kg/2;
+    out.baseline_ten_tick_reserve_periods=std::min({
+        out.baseline_ten_tick_food_periods,
+        out.baseline_ten_tick_water_periods,
+        out.baseline_ten_tick_oxygen_periods});
+    if(s.housing_phase!=2)out.gate=SurfaceSupplyGate::NotYetHoused;
+    else if(!audit->staffed_by_original_named_npcs)
+        out.gate=SurfaceSupplyGate::NamedWorkersUnavailable;
+    else if(s.food_kg<2)out.gate=SurfaceSupplyGate::FoodShortage;
+    else if(s.water_kg<2)out.gate=SurfaceSupplyGate::WaterShortage;
+    else if(s.oxygen_kg<2)out.gate=SurfaceSupplyGate::OxygenShortage;
+    else out.gate=SurfaceSupplyGate::ImportDependent;
+    // A farm/extractor makes only real original recipe goods using finite
+    // inputs. WO3 has not invented planetary electrical infrastructure or
+    // closed-cycle renewals; no surface site is silently certified autonomous.
+    return out;
 }
 
 } // namespace galaxy::colony03
