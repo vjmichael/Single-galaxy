@@ -432,6 +432,22 @@ bool Simulation::pending_workshop_shift(EntityId site,bool finisher,
     }
     return false;
 }
+bool Simulation::pending_workshop_worker_duty(
+        std::uint64_t npc_id,std::uint64_t from_tick) const {
+    if(!npc_id)return false;
+    for(const auto& [due,orders]:commands_){
+        if(due<from_tick)continue;
+        for(const auto& c:orders){
+            if(c.action!=Action::StartWorkshopShift ||
+               c.amount!=static_cast<std::int64_t>(npc_id))continue;
+            const auto shop=workshops_.find(c.target);
+            if(shop==workshops_.end() || shop->second.source_ship!=c.actor ||
+               shop->second.cancelled_pending_shifts.count(c.id))continue;
+            return true;
+        }
+    }
+    return false;
+}
 const UtilityFacility* Simulation::utility(EntityId site) const {
     const auto it=utilities_.find(site);
     return it==utilities_.end()?nullptr:&it->second;
@@ -4318,6 +4334,7 @@ Event Simulation::execute(const Command& c) {
                        n->second.mentor_id || n->second.transport_id ||
                        !npc_available_for_duty(id) ||
                        occupied_native_shipyard(id) ||
+                       pending_workshop_worker_duty(id,tick_) ||
                        !workshop_trade_certified(id,trade)){
                         result.result=Outcome::InvalidTarget;return result;
                     }
