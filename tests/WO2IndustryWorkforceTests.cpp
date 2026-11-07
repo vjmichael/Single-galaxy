@@ -175,6 +175,8 @@ int main() {
             CHECK(training->action==Action::TrainWorkshopTrade);
             CHECK(training->issuer==7 && training->amount==static_cast<std::int64_t>(first_id) &&
                   training->thrust_x==1);
+            const auto before_power=w.world().utility(site)->consumed_energy;
+            const auto before_scrap=w.world().workshop(site)->scrap_kg;
             CHECK(w.submit(*training));
             if(training_id==270){
                 const auto pending_copy=(folder/"training_pending.sqlite").string();
@@ -190,6 +192,8 @@ int main() {
             CHECK(w.world().events().back().command_id==training_id &&
                   w.world().events().back().result==Outcome::Applied &&
                   w.world().events().back().transferred==1);
+            CHECK(w.world().utility(site)->consumed_energy>=before_power+1);
+            CHECK(w.world().workshop(site)->scrap_kg>=before_scrap+1);
             CHECK(w.world().total_material_kg()==original_training_mass);
             CHECK(w.world().workshop_training_units(first_id,WorkshopTrade::Cut)==training_id-269);
         }
@@ -237,7 +241,11 @@ int main() {
                 w.world(),7,ship,site,second_id,WorkshopTrade::Shape,
                 training_id,true);
             CHECK(training.has_value());
+            const auto before_power=w.world().utility(site)->consumed_energy;
+            const auto before_scrap=w.world().workshop(site)->scrap_kg;
             CHECK(w.submit(*training));w.step();
+            CHECK(w.world().utility(site)->consumed_energy>=before_power+1);
+            CHECK(w.world().workshop(site)->scrap_kg>=before_scrap+1);
             CHECK(w.world().events().back().command_id==training_id &&
                   w.world().events().back().result==Outcome::Applied);
             CHECK(w.world().total_material_kg()==initial_mass);
