@@ -11443,6 +11443,20 @@ std::string Simulation::canonical_state() const {
                     std::get<1>(key)<<'|'<<std::get<2>(key)<<'|'<<
                     std::get<3>(key)<<'|'<<h.request_id<<'|'<<h.tick<<'|'<<
                     h.previous<<'|'<<h.replacement<<'\n';
+    // v118 immutable original-household admission and reverse departure.
+    if(snapshot_version_>=118)
+        for(const auto& [key,site]:planetary_sites_)
+            for(const auto& [guardian,house]:site.households) {
+                out<<"planethousehold|"<<std::get<0>(key)<<'|'<<
+                    std::get<1>(key)<<'|'<<std::get<2>(key)<<'|'<<
+                    std::get<3>(key)<<'|'<<guardian<<'|'<<house.co_parent_id
+                   <<'|'<<house.booking_request<<'|'<<house.arrival_receipt
+                   <<'|'<<house.admission_request<<'|'<<house.admission_tick
+                   <<'|'<<house.return_request<<'|'<<house.return_tick
+                   <<'|'<<unsigned(house.consent_mask)<<'|'<<house.child_ids.size();
+                for(const auto child:house.child_ids)out<<'|'<<child;
+                out<<'\n';
+            }
     if(snapshot_version_>=111)
         for(const auto& [key,site]:planetary_sites_)
             for(const auto& [npc,proof]:site.visitor_residency)
@@ -12848,6 +12862,48 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 throw std::runtime_error("snapshot: invalid supervisor handover");
             site->second.utility_handovers.push_back({
                 id,when,previous,replacement});
+        } else if(f[0]=="planethousehold" &&
+                    result.snapshot_version_>=118) {
+            if(f.size()<16)
+                throw std::runtime_error("snapshot: truncated legal household");
+            const auto body=u64(f[1]),lat=u64(f[2]),lon=u64(f[3]),
+                rev=u64(f[4]),guardian=u64(f[5]),parent=u64(f[6]),
+                booking=u64(f[7]),arrival=u64(f[8]),
+                admission=u64(f[9]),at=u64(f[10]),
+                returned=u64(f[11]),returned_at=u64(f[12]),
+                consent=u64(f[13]),count=u64(f[14]);
+            if(!body || lat>=36 || lon>=72 || rev!=1 ||
+               !guardian || !parent || guardian==parent ||
+               !booking || !arrival || !admission || !at ||
+               at>result.tick_ || consent!=3 || count!=1 ||
+               (returned==0)!=(returned_at==0) ||
+               (returned && (returned==booking || returned==arrival ||
+                             returned==admission || returned_at<at ||
+                             returned_at>result.tick_)) ||
+               f.size()!=15+count)
+                throw std::runtime_error("snapshot: invalid legal household receipt");
+            const PlanetarySiteKey key{body,std::uint16_t(lat),
+                std::uint16_t(lon),1};
+            auto site=result.planetary_sites_.find(key);
+            if(site==result.planetary_sites_.end() ||
+               site->second.housing_phase!=2 ||
+               site->second.service_projects[0].phase!=2 ||
+               site->second.households.size()>=32)
+                throw std::runtime_error("snapshot: no physical legal household site");
+            PlanetaryHouseholdResidence house{};
+            house.co_parent_id=parent;house.booking_request=booking;
+            house.arrival_receipt=arrival;house.admission_request=admission;
+            house.admission_tick=at;house.return_request=returned;
+            house.return_tick=returned_at;
+            house.consent_mask=std::uint8_t(consent);
+            for(std::size_t i=0;i<count;++i){
+                const auto child=u64(f[15+i]);
+                if(child<(1ULL<<62))
+                    throw std::runtime_error("snapshot: malformed real child ID");
+                house.child_ids.push_back(child);
+            }
+            if(!site->second.households.emplace(guardian,std::move(house)).second)
+                throw std::runtime_error("snapshot: repeated household admission");
         } else if(f[0]=="planetsettler" && result.snapshot_version_>=111) {
             require_fields(f,9);
             const auto body=u64(f[1]),lat=u64(f[2]),lon=u64(f[3]),
