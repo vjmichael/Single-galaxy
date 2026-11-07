@@ -15,6 +15,17 @@ assert.equal(security.parse(
 assert.equal(security.parse(
  'COLONY|1|25|SECURITY_AGENCY_REFERRAL|7000|5005|7|3|101|102'
 ).reviewer,102);
+assert.deepEqual(security.parse(
+ 'COLONY|1|25|SECURITY_AGENCY_INVESTIGATION|8000|7000|22|101|1|0'),{
+ tick:25,type:'SECURITY_AGENCY_INVESTIGATION',order:'8000',
+ referral:'7000',target:22,officer:101,admitted:true,phase:0
+});
+assert.equal(security.parse(
+ 'COLONY|1|25|SECURITY_NOTIFICATION|8111|14|9100|22|0|9001'
+).kind,14);
+assert.equal(security.parse(
+ 'COLONY|1|25|SECURITY_NOTIFICATION|8112|15|9101|22|7|9100'
+).peerOwner,7);
 for(const forged of [
  'COLONY|1|25|SECURITY_NOTIFICATION|0|2|9100|22|7|0',
  'COLONY|1|25|SECURITY_NOTIFICATION|01|2|9100|22|7|0',
@@ -23,6 +34,10 @@ for(const forged of [
  'COLONY|1|25|SECURITY_NOTIFICATION|9001|1|9100|22|8|0',
  'COLONY|1|25|SECURITY_NOTIFICATION|9001|7|9100|22|8|0',
  'COLONY|1|25|SECURITY_NOTIFICATION|9001|2|9100|22|7|0|HACK',
+ 'COLONY|1|25|SECURITY_NOTIFICATION|8113|14|9100|22|7|9001',
+ 'COLONY|1|25|SECURITY_NOTIFICATION|8113|15|9100|22|0|9001',
+ 'COLONY|1|25|SECURITY_AGENCY_INVESTIGATION|8000|7000|22|101|0|0',
+ 'COLONY|1|25|SECURITY_AGENCY_INVESTIGATION|8000|7000|22|101|1|4',
  'COLONY|1|25|SECURITY_AGENCY_STATUS|100|100|1',
  'COLONY|1|25|SECURITY_AGENCY_STATUS|100|0|1',
  'COLONY|1|25|SECURITY_AGENCY_REFERRAL|7000|5005|7|2|101|102',
@@ -74,6 +89,24 @@ assert.deepEqual(calls.pop(),{
 frame('COLONY|1|25|SECURITY_AGENCY_REFERRAL|7000|5005|7|3|101|102');
 assert.match(el('securityAgencyReferrals').children[0].textContent,
  /NOT a criminal conviction/);
+frame('COLONY|1|25|SECURITY_CONTACT|22|3|434f4c4f4e595f48554c4c');
+el('securityContact').value='22';
+el('securityAgencyInvestigationReferral').value='7000';
+el('securityAgencyInvestigationReferral').listeners.change();
+assert.equal(el('securityAgencyInvestigate').disabled,false);
+el('securityAgencyInvestigate').listeners.click();
+assert.deepEqual(calls.pop(),{
+ action:'colonySecurityAgencyInvestigate',
+ args:{referral:'7000',ship:22}
+});
+frame('COLONY|1|25|SECURITY_AGENCY_INVESTIGATION|8000|7000|22|101|1|0');
+assert.match(el('securityAgencyInvestigations').children[0].textContent,
+ /original NPC flight planned/);
+assert.equal(el('securityAgencyInvestigate').disabled,true);
+frame('COLONY|1|25|SECURITY_AGENCY_INVESTIGATIONS_RESET');
+frame('COLONY|1|25|SECURITY_AGENCY_INVESTIGATION|8001|7000|22|101|0|3');
+assert.match(el('securityAgencyInvestigations').children[0].textContent,
+ /native flight NOT admitted/);
 frame('COLONY|1|25|SECURITY_NOTIFICATIONS_RESET');
 frame(good);
 assert.deepEqual(calls.pop(),{
