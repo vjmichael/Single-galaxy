@@ -390,6 +390,7 @@ enum class PlanetaryHouseholdGate : std::uint8_t {
     MissingOriginalSite, MissingGuardian, ForeignGuardian,
     ExistingSurfaceResident, MissingPhysicalArrival,
     MissingHousing, InsufficientBeds, InsufficientSupplies,
+    DependentNotCoLocated, DependentBerthOverflow,
     DependentTransportNotYetBound, IndependentAdultEligible
 };
 struct PlanetaryHouseholdAudit {
@@ -398,6 +399,10 @@ struct PlanetaryHouseholdAudit {
     std::vector<std::uint64_t> registered_dependent_ids{};
     std::int64_t available_beds=0;
     std::int64_t required_beds=0;
+    // The actual adult shuttle has three passenger seats, excluding pilot.
+    // A numerical fit never constitutes a legal ART02 child berth.
+    std::int64_t required_shuttle_passenger_seats=0;
+    std::int64_t physical_shuttle_passenger_capacity=3;
     bool original_shuttle_arrival_verified=false;
     bool all_dependents_physically_with_guardian=false;
     bool requires_art02_atomic_family_transaction=false;
@@ -423,28 +428,44 @@ inline PlanetaryHouseholdAudit assess_planetary_household(
        adult.assigned_site!=ship || adult.transport_id) {
         result.gate=PlanetaryHouseholdGate::ForeignGuardian;return result;
     }
-    if(adult.legal_residence()==transport::Endpoint{
-        transport::LocationKind::PlanetarySite,site->second.surface_location}) {
-        result.gate=PlanetaryHouseholdGate::ExistingSurfaceResident;
-        return result;
-    }
     result.required_beds=1;
+    result.required_shuttle_passenger_seats=1;
     bool colocated=true;
     for(const auto& [id,dependent]:world.physical_dependents()) {
         if(dependent.guardian_id!=guardian)continue;
         result.registered_dependent_ids.push_back(id);
         ++result.required_beds;
-        if(dependent.home_ship!=ship ||
+        ++result.required_shuttle_passenger_seats;
+        if(id!=dependent.child_id || dependent.home_ship!=ship ||
            dependent.location!=adult.location)colocated=false;
     }
     result.all_dependents_physically_with_guardian=colocated;
     result.requires_art02_atomic_family_transaction=
         !result.registered_dependent_ids.empty();
-    // Do not present a guardian separated from a child as migration-ready,
-    // or imply that the original adult-only shuttle carried children.
-    if(!result.registered_dependent_ids.empty()) {
-        result.gate=PlanetaryHouseholdGate::DependentTransportNotYetBound;
+    if(adult.legal_residence()==transport::Endpoint{
+        transport::LocationKind::PlanetarySite,site->second.surface_location}) {
+        result.gate=PlanetaryHouseholdGate::ExistingSurfaceResident;
         return result;
+    }
+    // This path may only give a diagnostic. Physical child identities are
+    // NOT ART02 birth, parent-consent, legal custody, or shuttle seat proofs.
+    // No branch ever returns IndependentAdultEligible for a guardian.
+    if(result.requires_art02_atomic_family_transaction) {
+        if(!colocated)
+            result.gate=PlanetaryHouseholdGate::DependentNotCoLocated;
+        else if(result.required_shuttle_passenger_seats>
+                result.physical_shuttle_passenger_capacity)
+            result.gate=PlanetaryHouseholdGate::DependentBerthOverflow;
+        else if(!audit->permanent_housing_installed)
+            result.gate=PlanetaryHouseholdGate::MissingHousing;
+        else if(result.available_beds<result.required_beds)
+            result.gate=PlanetaryHouseholdGate::InsufficientBeds;
+        else if(site->second.food_kg<4*result.required_beds ||
+                site->second.water_kg<4*result.required_beds ||
+                site->second.oxygen_kg<4*result.required_beds)
+            result.gate=PlanetaryHouseholdGate::InsufficientSupplies;
+        else result.gate=PlanetaryHouseholdGate::DependentTransportNotYetBound;
+        return result; // no family writer: admission is prohibited
     }
     const auto sh=world.planetary_shuttles().find(key);
     result.original_shuttle_arrival_verified=
