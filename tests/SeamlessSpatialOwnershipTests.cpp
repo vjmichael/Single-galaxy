@@ -98,8 +98,7 @@ int main(){
         CHECK(db.count("SELECT COUNT(*) FROM sg_spatial_native_transfer "
             "WHERE from_scope='spatial/v1/s1/x0/y0/z0' "
             "AND to_scope='spatial/v1/s1/x1/y0/z0'")==1);
-        CHECK(db.count("SELECT COUNT(*) FROM sg_spatial_native_transfer "
-            "WHERE ship_id='"+std::to_string(ship)+"'")==2);
+        CHECK(db.count("SELECT COUNT(*) FROM sg_spatial_native_transfer")==3);
     }
     bool fault=false;
     try{w.step(FailPoint::AfterSnapshotWrite);}
