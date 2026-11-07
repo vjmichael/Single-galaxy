@@ -11939,6 +11939,14 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             if(!id || result.shuttle_flight_request_ids_.size()>=100000 ||
                !result.shuttle_flight_request_ids_.insert(id).second)
                 throw std::runtime_error("snapshot: invalid shuttle flight receipt");
+        } else if(f[0]=="planetfamilyreceipt" &&
+                   result.snapshot_version_>=116) {
+            require_fields(f,2);
+            const auto id=u64(f[1]);
+            if(!id || id==std::numeric_limits<std::uint64_t>::max() ||
+               result.planetary_family_booking_ids_.size()>=100000 ||
+               !result.planetary_family_booking_ids_.insert(id).second)
+                throw std::runtime_error("snapshot: duplicate family approval");
         } else if(f[0]=="planetsite" && result.snapshot_version_>=77) {
             require_fields(f,result.snapshot_version_>=110?60:
                 result.snapshot_version_>=109?46:
@@ -14425,6 +14433,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                (family.co_parent_id &&
                 !std::binary_search(sh.passenger_ids.begin(),
                                     sh.passenger_ids.end(),family.co_parent_id)) ||
+               !result.planetary_family_booking_ids_.count(family.booking_request) ||
                result.submitted_ids_.count(family.booking_request) ||
                result.shuttle_flight_request_ids_.count(family.booking_request) ||
                result.voyages_.count(family.booking_request) ||
