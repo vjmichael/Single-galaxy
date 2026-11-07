@@ -4059,7 +4059,9 @@ Event Simulation::execute(const Command& c) {
                 result.result=Outcome::OutOfRange;return result;
             }
             stop_mining(c.actor,Outcome::NotInSpace);
-            actor.velocity={};actor.jump_state=ShipJumpState::Jumping;
+            actor.velocity={};
+            if(snapshot_version_>=119)actor.velocity_z_mm_per_tick=0;
+            actor.jump_state=ShipJumpState::Jumping;
             actor.jump_ticks=kJumpTransitTicks;actor.pending_gate=c.target;
             snapshot_version_=std::max(snapshot_version_,5);result.result=Outcome::Applied;return result;
         }
@@ -5599,7 +5601,10 @@ void Simulation::process_jump_transitions() {
         ship.system_id=destination;
         if(snapshot_version_>=71)ship_frames_.at(id)=ShipFrameCustody{destination,0,{}};
         ship.position={gate->gate_arrival.x+sign*12000,gate->gate_arrival.y};
-        ship.velocity={};ship.pending_gate=0;
+        if(snapshot_version_>=119)ship.position_z_mm=0;
+        ship.velocity={};
+        if(snapshot_version_>=119)ship.velocity_z_mm_per_tick=0;
+        ship.pending_gate=0;
         ship.jump_state=ShipJumpState::ArrivalCloak;ship.jump_ticks=kArrivalCloakTicks;
         // 1 physical entity whose system partition changes atomically in v5 snapshot.
         // Cargo remains on the same ship; station inventories never move.
