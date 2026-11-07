@@ -1916,3 +1916,13 @@ if(BUILD_TESTING)
     target_link_libraries(galaxy_wo4_material_allocation_tests PRIVATE galaxy_kernel)
     add_test(NAME galaxy_wo4_material_allocation COMMAND galaxy_wo4_material_allocation_tests)
 endif()
+
+
+# WO5 A/B original physical shuttle/resupply and intercolony booking admission.
+# The real arrival/SQLite recovery acceptance is exercised by the existing
+# WO3 planetary utility integration target, without shadow vehicle state.
+if(BUILD_TESTING)
+    add_executable(galaxy_wo5_physical_logistics_tests tests/WO5PhysicalLogisticsTests.cpp)
+    target_link_libraries(galaxy_wo5_physical_logistics_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_wo5_physical_logistics COMMAND galaxy_wo5_physical_logistics_tests)
+endif()
