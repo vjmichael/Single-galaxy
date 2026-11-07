@@ -4358,7 +4358,24 @@ Event Simulation::execute(const Command& c) {
                         result.result=Outcome::Applied;return result;
                     }
                     const auto supervisor=npcs_.find(w.supervisor_npc_id);
+                    // An appointment does not reserve a separate person:
+                    // other native duties may have changed since it was
+                    // issued. Recheck the same finite worker at job approval.
+                    bool supervisor_double_booked=false;
+                    for(const auto& [other_site,other]:workshops_){
+                        (void)other_site;
+                        if(other.operator_npc_id==w.supervisor_npc_id ||
+                           other.finisher_npc_id==w.supervisor_npc_id)
+                            supervisor_double_booked=true;
+                    }
+                    for(const auto& [shift_id,shift]:medic_shifts_){
+                        (void)shift_id;
+                        if(shift.medic_id==w.supervisor_npc_id &&
+                           shift.start_tick<=tick_ && tick_<shift.end_tick)
+                            supervisor_double_booked=true;
+                    }
                     if(job.command_id || !w.supervisor_npc_id ||
+                       supervisor_double_booked ||
                        !w.supervisor_appointment_id ||
                        std::any_of(events_.begin(),events_.end(),
                          [&](const Event& e){return e.command_id==w.supervisor_appointment_id &&
@@ -5790,7 +5807,40 @@ void Simulation::process_workshops(){
         // legacy manufacturing without a new explicit owner decision.
         if(w.supervisor_npc_id){
             const auto n=npcs_.find(w.supervisor_npc_id);
-            const bool present=n!=npcs_.end() &&
+            // A later medical/shipyard assignment or legacy machine command
+            // must never let one named NPC provide two kinds of physical labor.
+            // Fail closed here even if another subsystem admitted that duty;
+            // preserve any owner-approved unfinished job as suspended.
+            bool duty_conflict=false;
+            for(const auto& [other_site,other]:workshops_){
+                (void)other_site;
+                if(other.operator_npc_id==w.supervisor_npc_id ||
+                   other.finisher_npc_id==w.supervisor_npc_id)
+                    duty_conflict=true;
+            }
+            for(const auto& [shift_id,shift]:medic_shifts_){
+                (void)shift_id;
+                if(shift.medic_id==w.supervisor_npc_id &&
+                   shift.start_tick<=tick_ && tick_<shift.end_tick)
+                    duty_conflict=true;
+            }
+            for(const auto& [yard_id,yard]:shipyard_constructions_){
+                (void)yard_id;
+                if(!yard.operational() &&
+                   (yard.workers[0]==w.supervisor_npc_id ||
+                    yard.workers[1]==w.supervisor_npc_id))
+                    duty_conflict=true;
+            }
+            for(const auto& [build_id,build]:freighter_build_orders_){
+                (void)build_id;
+                if(build.finished())continue;
+                const auto yard=shipyard_constructions_.find(build.yard_order);
+                if(yard!=shipyard_constructions_.end() &&
+                   (yard->second.workers[0]==w.supervisor_npc_id ||
+                    yard->second.workers[1]==w.supervisor_npc_id))
+                    duty_conflict=true;
+            }
+            const bool present=!duty_conflict && n!=npcs_.end() &&
                 n->second.home_ship==w.source_ship &&
                 n->second.location==site && n->second.assigned_site==site &&
                 n->second.role==NpcRole::Habitat &&
