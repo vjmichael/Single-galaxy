@@ -128,15 +128,17 @@ int main() {
     CHECK(w.transfer_planetary_housing_module(7,ship,key,true));
     CHECK(w.load_planetary_shuttle(7,ship,key,ShuttleCargo::Water,30));
     CHECK(w.load_planetary_shuttle(7,ship,key,ShuttleCargo::Food,30));
+    CHECK(w.load_planetary_shuttle(7,ship,key,ShuttleCargo::Oxygen,30));
     CHECK(w.launch_planetary_shuttle(7,ship,key,81003,false));
     w.steps(3);
     CHECK(w.transfer_planetary_housing_module(7,ship,key,false));
     CHECK(w.unload_planetary_shuttle(7,ship,key,ShuttleCargo::Water,30));
     CHECK(w.unload_planetary_shuttle(7,ship,key,ShuttleCargo::Food,30));
-    // Pre-WO3 oxygen path still uses the game's original authenticated
-    // support operation; physical O2 shuttle cargo is future WO3-C work.
-    CHECK(w.support_planetary_crew(7,ship,choice.body,choice.lat,choice.lon,
-                                 true,30));
+    CHECK(w.unload_planetary_shuttle(7,ship,key,ShuttleCargo::Oxygen,30));
+    CHECK(w.world().planetary_shuttles().at(key).oxygen_kg==0);
+    CHECK(w.world().planetary_sites().at(key).oxygen_kg>=30);
+    // All three original supplies physically landed via the shuttle,
+    // with no direct ship-to-surface provision shortcut.
     CHECK(w.world().planetary_sites().at(key).housing_modules==2);
     CHECK(w.world().total_ore()==initial_mass);
     CHECK(!w.start_planetary_housing(8,ship,key,81200));
