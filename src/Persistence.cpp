@@ -9410,6 +9410,37 @@ bool PersistentWorld::handover_planetary_surface_utility(PlayerId owner,
     return true;
 }
 
+// v113 original SQLite commit/copy/swap; failed commit preserves live site
+// modules, project progress and named workers.
+bool PersistentWorld::start_planetary_production_build(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,bool farm,
+        std::uint64_t order_id,std::uint64_t qualified_supervisor,
+        FailPoint fail) {
+    auto next=world_;
+    if(!next.start_planetary_production_build(
+        owner,ship,key,farm,order_id,qualified_supervisor))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 production build fabricated material");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::pause_planetary_production_build(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,bool farm,bool pause,
+        FailPoint fail) {
+    auto next=world_;
+    if(!next.pause_planetary_production_build(
+        owner,ship,key,farm,pause))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 production pause fabricated material");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
 bool PersistentWorld::settle_planetary_founder(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,std::uint64_t npc_id,std::uint64_t request_id,
         bool voluntary_consent_attested,FailPoint fail) {
