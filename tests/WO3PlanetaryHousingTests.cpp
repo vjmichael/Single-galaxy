@@ -84,6 +84,10 @@ int main() {
     CHECK(w.world().planetary_spaceport_operational(choice.body,
                                                    choice.lat,choice.lon));
     CHECK(!w.start_planetary_housing(7,ship,key,81200));
+    const auto before_house=colony03::assess_surface_supplies(
+        w.world(),7,ship,key);
+    CHECK(before_house.gate==colony03::SurfaceSupplyGate::NotYetHoused);
+    CHECK(!before_house.independently_sustainable);
     CHECK(w.build_planetary_shuttle(7,ship,key));
     CHECK(w.assign_planetary_shuttle_pilot(7,ship,key,roster[2]));
     CHECK(w.load_planetary_shuttle(7,ship,key,ShuttleCargo::Water,10));
@@ -171,6 +175,12 @@ int main() {
         transport::Endpoint{transport::LocationKind::PlanetarySite,
                             w.world().planetary_sites().at(key).surface_location}));
     CHECK(w.world().total_ore()==initial_mass);
+    const auto supplied=colony03::assess_surface_supplies(w.world(),7,ship,key);
+    CHECK(supplied.gate==colony03::SurfaceSupplyGate::ImportDependent);
+    CHECK(supplied.baseline_ten_tick_reserve_periods>=1);
+    CHECK(!supplied.independent_power_proven &&
+          !supplied.closed_water_loop_proven &&
+          !supplied.independently_sustainable);
     const auto audit=colony03::audit_planetary_surface(
         w.world(),7,ship,key);
     CHECK(audit && audit->permanent_housing_installed &&
