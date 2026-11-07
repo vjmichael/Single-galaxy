@@ -939,6 +939,51 @@ int main() {
         CHECK(recovered.world().npc_records().at(second_id).
               industrial_training.back().mentor_id==first_id);
         CHECK(recovered.world().total_material_kg()==initial);
+        // A future original owner-approved shift is a real commitment.
+        // A manager proposal and a forged direct owner command must both
+        // refuse to appoint that worker until the original shift is cancelled.
+        const auto pending_db=(folder/"wo2j_future_shift_conflict.sqlite").string();
+        PersistentWorld::recover_copy(management_db,pending_db);
+        {
+            PersistentWorld booked(pending_db,Simulation(1058));
+            CHECK(send(booked,ship,750,Action::AssignWorkshopOperator,site,0).
+                  result==Outcome::Applied);
+            const auto due=booked.world().tick()+3;
+            auto future=workforce02::approved_original_workshop_shift(
+                booked.world(),7,ship,site,false,first_id,due,due+4,751,true);
+            CHECK(future.has_value() && booked.submit(*future));
+            CHECK(booked.world().pending_workshop_worker_duty(
+                first_id,booked.world().tick()+1));
+            CHECK(!workforce02::approved_workshop_supervisor(
+                booked.world(),7,ship,site,WorkshopTrade::Cut,first_id,752,true));
+            CHECK(send(booked,ship,752,Action::AppointWorkshopSupervisor,site,
+                       static_cast<std::int64_t>(first_id),1).
+                  result==Outcome::InvalidTarget);
+            CHECK(booked.world().workshop(site)->supervisor_npc_id==0);
+            auto cancel=workforce02::approved_original_workshop_shift_cancel(
+                booked.world(),7,ship,site,false,751,753,true);
+            CHECK(cancel.has_value() && booked.submit(*cancel));
+            booked.step();
+            CHECK(booked.world().events().back().command_id==753 &&
+                  booked.world().events().back().result==Outcome::Applied);
+            CHECK(!booked.world().pending_workshop_worker_duty(
+                first_id,booked.world().tick()+1));
+            booked.step(); // the original cancelled start still gets a refusal
+            CHECK(booked.world().events().back().command_id==751 &&
+                  booked.world().events().back().result==Outcome::InvalidTarget);
+            auto appoint_after=workforce02::approved_workshop_supervisor(
+                booked.world(),7,ship,site,WorkshopTrade::Cut,first_id,754,true);
+            CHECK(appoint_after.has_value() && booked.submit(*appoint_after));
+            booked.step();
+            CHECK(booked.world().events().back().result==Outcome::Applied &&
+                  booked.world().workshop(site)->supervisor_appointment_id==754);
+            const auto pending_replay=(folder/"wo2j_future_shift_recovered.sqlite").string();
+            PersistentWorld::recover_copy(pending_db,pending_replay);
+            PersistentWorld reopened(pending_replay,Simulation(1059));
+            CHECK(reopened.world().workshop(site)->supervisor_appointment_id==754);
+            CHECK(reopened.world().workshop(site)->supervisor_npc_id==first_id);
+            CHECK(reopened.world().total_material_kg()==initial);
+        }
         // The SECOND installed original machine is equally real: appointment,
         // panel-consuming shape mentorship, one actual shaped-frame batch,
         // physical cap and SQLite replay must all use the same original NPCs.
