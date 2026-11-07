@@ -5732,6 +5732,23 @@ void Simulation::process_workshops(){
     // The same QuantifiedLine kernel powers visible and remote work: we do
     // not animate conveyor items when the colony owner is far away.
     for(auto& [site,w]:workshops_){
+        // WO2-J: physical supervisor custody is not a detached job title.
+        // Revoking an unavailable person also revokes any associated quota
+        // authority; original materials and machine slots remain intact.
+        if(w.supervisor_npc_id){
+            const auto n=npcs_.find(w.supervisor_npc_id);
+            const bool present=n!=npcs_.end() &&
+                n->second.home_ship==w.source_ship &&
+                n->second.location==site && n->second.assigned_site==site &&
+                n->second.role==NpcRole::Habitat &&
+                !n->second.transport_id && !n->second.mentor_id &&
+                npc_available_for_duty(w.supervisor_npc_id);
+            if(!present){
+                w.supervisor_npc_id=0;
+                w.supervisor_appointment_id=0;
+                w.approved_jobs={};
+            }
+        }
         // WO2-I: expiry is authoritative and deterministic even when a line
         // has unfinished reserved input; it pauses until real relief arrives.
         for(unsigned slot=0;slot<2;++slot){
@@ -12430,6 +12447,49 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             if(n==result.npcs_.end() || n->second.home_ship!=w.source_ship ||
                n->second.location!=id || n->second.role!=NpcRole::Habitat)
                 throw std::runtime_error("snapshot: invalid workshop operator");
+        }
+        if(result.snapshot_version_>=108){
+            if((w.supervisor_npc_id==0)!=(w.supervisor_appointment_id==0))
+                throw std::runtime_error("snapshot: partial workshop manager appointment");
+            if(w.supervisor_npc_id){
+                const auto n=result.npcs_.find(w.supervisor_npc_id);
+                const auto* home=result.find(w.source_ship);
+                if(n==result.npcs_.end() ||
+                   n->second.home_ship!=w.source_ship ||
+                   n->second.location!=id || n->second.assigned_site!=id ||
+                   n->second.role!=NpcRole::Habitat ||
+                   n->second.transport_id ||
+                   !home || !result.workshop_trade_certified(
+                       w.supervisor_npc_id,w.supervisor_trade) ||
+                   w.operator_npc_id==w.supervisor_npc_id ||
+                   w.finisher_npc_id==w.supervisor_npc_id ||
+                   !result.submitted_ids_.count(w.supervisor_appointment_id) ||
+                   !std::any_of(result.events_.begin(),result.events_.end(),
+                      [&](const Event& e){
+                          return e.command_id==w.supervisor_appointment_id &&
+                                 e.result==Outcome::Applied;}))
+                    throw std::runtime_error("snapshot: manager lacks real NPC or appointment");
+                for(const auto& [other_site,other_shop]:result.workshops_)
+                    if(other_site!=id &&
+                       other_shop.supervisor_npc_id==w.supervisor_npc_id)
+                        throw std::runtime_error("snapshot: manager assigned to multiple original shops");
+            }
+            for(unsigned slot=0;slot<2;++slot){
+                const auto& job=w.approved_jobs[slot];
+                if(!job.command_id)continue;
+                const auto actual=slot==0?w.completed_batches:w.finisher_batches;
+                if(!w.supervisor_npc_id ||
+                   job.supervisor_npc_id!=w.supervisor_npc_id ||
+                   job.supervisor_appointment_id!=w.supervisor_appointment_id ||
+                   w.supervisor_trade!=static_cast<WorkshopTrade>(slot+1) ||
+                   job.baseline_batches>actual ||
+                   !result.submitted_ids_.count(job.command_id) ||
+                   !std::any_of(result.events_.begin(),result.events_.end(),
+                       [&](const Event& e){return e.command_id==job.command_id &&
+                          e.tick==job.approved_tick && e.result==Outcome::Applied &&
+                          e.transferred==0;}))
+                    throw std::runtime_error("snapshot: original workshop job lacked owner approval");
+            }
         }
         if(result.snapshot_version_>=106){
             for(const auto cancelled:w.cancelled_pending_shifts){
