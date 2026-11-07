@@ -6945,6 +6945,103 @@ bool Simulation::handover_planetary_surface_utility(PlayerId owner,EntityId ship
     return true;
 }
 
+// WO3-D v113: unlike the old orbit-only instant install, the materials
+// for this project have already arrived in the original surface module rack.
+// Both original trades build a structural installation under Shape certification;
+// the resulting farm/extractor uses the existing real inventories and work policy.
+bool Simulation::start_planetary_production_build(PlayerId owner,EntityId ship,
+    const PlanetarySiteKey& key,bool farm,std::uint64_t order_id,
+    std::uint64_t supervisor) {
+    auto site=planetary_sites_.find(key);
+    const auto frame=ship_frames_.find(ship);
+    const auto ship_entity=entities_.find(ship);
+    const auto geography=scan_planetary_geography(
+        owner,ship,std::get<0>(key),std::get<1>(key),std::get<2>(key));
+    const auto index=farm?std::size_t{0}:std::size_t{1};
+    if(!owner || owner==kServerAuthority || !order_id ||
+       order_id==std::numeric_limits<std::uint64_t>::max() ||
+       !supervisor || site==planetary_sites_.end() ||
+       ship_entity==entities_.end() || ship_entity->second.owner_id!=owner ||
+       !colony_ships_.count(ship) || frame==ship_frames_.end() ||
+       frame->second.anchor_body!=std::get<0>(key) || !geography ||
+       site->second.owner!=owner || site->second.source_ship!=ship ||
+       site->second.spaceport_phase!=3 || site->second.housing_phase!=2 ||
+       site->second.utility_phase!=2 || site->second.workforce_policy ||
+       site->second.housing_modules!=2 || site->second.food_kg<2 ||
+       site->second.water_kg<2 || site->second.oxygen_kg<2 ||
+       site->second.production_projects[index].phase ||
+       (farm ? (site->second.farm ||
+           !geography->landscape.region.farming_possible) :
+           (site->second.extractor ||
+            !oasis_reserves_.count(std::get<0>(key)))) ||
+       submitted_ids_.count(order_id) ||
+       shuttle_flight_request_ids_.count(order_id) ||
+       pending_celestial_transits_.count(order_id) ||
+       completed_celestial_transits_.count(order_id) ||
+       local_delivery_orders_.count(order_id) ||
+       voyages_.count(order_id))return false;
+    if(!farm) {
+        const auto source=planetary_oasis_source_region(
+            owner,ship,std::get<0>(key));
+        if(!source || source->latitude!=std::get<1>(key) ||
+           source->longitude!=std::get<2>(key))return false;
+    }
+    const auto worker=npcs_.find(supervisor);
+    if(worker==npcs_.end() ||
+       std::find(site->second.delegated_npcs.begin(),
+                 site->second.delegated_npcs.end(),supervisor)==
+           site->second.delegated_npcs.end() ||
+       worker->second.home_ship!=ship ||
+       worker->second.location!=site->second.surface_location ||
+       worker->second.assigned_site!=site->second.surface_location ||
+       worker->second.role!=NpcRole::PlanetarySurface ||
+       !workshop_trade_certified(supervisor,WorkshopTrade::Shape) ||
+       !npc_available_for_duty(supervisor))return false;
+    for(const auto id:site->second.delegated_npcs)
+        if(!id || !npc_available_for_duty(id))return false;
+    for(const auto& [other_key,other]:planetary_sites_) {
+        (void)other_key;
+        if(order_id==other.housing_order_id ||
+           order_id==other.utility_order_id)return false;
+        for(const auto& project:other.production_projects)
+            if(project.order_id==order_id)return false;
+        for(const auto id:other.founder_consent_requests)
+            if(id==order_id)return false;
+        for(const auto& relief:other.utility_handovers)
+            if(relief.request_id==order_id)return false;
+        for(const auto& [id,resident]:other.visitor_residency) {
+            (void)id;
+            if(resident[1]==order_id || resident[2]==order_id)return false;
+        }
+    }
+    auto& ground=site->second;
+    ground.housing_modules-=2; // exactly two existing landed modules
+    ground.embodied_ore+=4; // same conserved mass, now committed to WIP
+    auto& project=ground.production_projects[index];
+    project.phase=1;
+    project.progress=0;
+    project.order_id=order_id;
+    project.supervisor=supervisor;
+    project.stalled_ticks=0;
+    project.completed_tick=0;
+    project.paused=false;
+    snapshot_version_=std::max(snapshot_version_,113);
+    return true;
+}
+
+bool Simulation::pause_planetary_production_build(PlayerId owner,EntityId ship,
+    const PlanetarySiteKey& key,bool farm,bool pause) {
+    const auto site=planetary_sites_.find(key);
+    if(!owner || owner==kServerAuthority || site==planetary_sites_.end() ||
+       site->second.owner!=owner || site->second.source_ship!=ship ||
+       !entities_.count(ship) || entities_.at(ship).owner_id!=owner)return false;
+    auto& project=site->second.production_projects[farm?0:1];
+    if(project.phase!=1 || project.paused==pause)return false;
+    project.paused=pause;
+    snapshot_version_=std::max(snapshot_version_,113);
+    return true;
+}
+
 bool Simulation::settle_planetary_founder(PlayerId owner,EntityId ship,
     const PlanetarySiteKey& key,std::uint64_t npc_id,
     std::uint64_t request_id,bool voluntary_consent_attested) {
