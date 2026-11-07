@@ -18,3 +18,25 @@
 - If source code is complete but CI is still queued, label source complete and native acceptance **pending**, never claim tests passed.
 
 **Scope boundaries:** WO3 will decide which planet facilities can be constructed and kept supplied; WO4/5 will distribute and physically deliver their goods; WO7 society will interpret NPC preferences/household outcomes. Work definitions make no automatic colony-owner decisions.
+
+## Source implementation progress — draft PR #88
+
+**Status: WO2 in progress, not yet completed or native accepted.** Branch `industry/wo2-npc-work-management-20261106` is stacked on INDUSTRY-01 draft #87.
+
+| Subtask | Actual source outcome |
+| --- | --- |
+| WO2-A — Industry-to-profession map | **29 production site capabilities** covering all 71 standard and 3 recovery recipes; **9 actual service staff roles** across 8 services; profession, skill, minimum workers, future training/supervisor and 4 workforce stages |
+| WO2-B — Typed registry | Generated source-driven C++ `WO2ProfessionCatalog.generated.cpp`; strict fail-closed all-recipe and all-service coverage, never invents an original-world credential |
+| WO2-C — Native two-slot workshop staffing | `WO2IndustryWorkforce.hpp` recommends **only** physically present, original existing NPCs, excludes current/future medical shifts, active other workshop slots and shipyard work; owner-approved existing `Command` only, actual execution through `PersistentWorld::submit` |
+| WO2-D — Original world double-booking protection | `Simulation::apply` refuses stale/duplicate named workshop assignments and medical shifts that reuse an active workshop worker; original same-slot idempotence preserved |
+| WO2-E — Industry bill-of-work | `WO2WorkPrograms.hpp` expands a requested item into real raw source requirements, industry steps, worker trades and worker time/energy; service planning identifies staffing, facility, supplies, equipment without fictitious service inventory |
+| WO2-F — Source and native tests | **6/6 direct V8 profile/unit source checks passed**. `WO2IndustryWorkforceTests.cpp` and dedicated Windows/Linux native CMake/CTest/SQLite workflow committed; **real native results are pending** |
+
+### Remaining WO2 tasks
+
+- Durable per-NPC trade experience/qualifications with real training receipts (existing farm/medic skills alone do not certify unrelated professions).
+- Time-bounded, restart-safe staffing shifts, coverage/relief and original-world owner-approved work policies.
+- Authorized real NPC supervisor appointment, mentorship, job-board approval and accountable cancellation/reassignment, without granting managers the ability to spawn people, equipment or resources.
+- Independent native Linux/Windows compile and SQLite work/recovery acceptance; repair actual failures, retain the draft until accepted.
+
+**Boundary:** The other non-native recipe and service profiles remain job definitions until WO3 builds physical institutions and WO4/5 supply and distribution. No new player gameplay, currency, multiplayer or 3D work. WO3 has not started.
