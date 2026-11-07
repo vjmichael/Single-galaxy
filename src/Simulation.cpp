@@ -1975,7 +1975,9 @@ bool Simulation::submit(const Command& c) {
             c.action==Action::MentorWorkshopTrade ?
                (c.amount<1 || c.amount>1000000) :
             c.action==Action::ApproveWorkshopJob ?
-               (c.amount<1 || c.amount>50) :
+               (c.amount<1 || c.amount>50 ||
+                c.id>static_cast<std::uint64_t>(
+                   std::numeric_limits<std::int64_t>::max())) :
                (c.amount<1)))
             return false;
         const auto* ship=find(c.actor);
