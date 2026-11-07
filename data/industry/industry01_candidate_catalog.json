@@ -1004,15 +1004,6 @@
       "cargo_mm3_per_unit": 450,
       "lifecycle": "intermediate",
       "need_tags": []
-    },
-    {
-      "id": "bulk/carbon_feed",
-      "group": "chemistry",
-      "unit": "g",
-      "mass_g_per_unit": 1,
-      "cargo_mm3_per_unit": 1000,
-      "lifecycle": "intermediate",
-      "need_tags": []
     }
   ],
   "recipes": [
