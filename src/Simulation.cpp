@@ -17349,6 +17349,7 @@ void Simulation::swap(Simulation& other) noexcept {
     using std::swap;
     swap(system_id_, other.system_id_);
     systems_.swap(other.systems_);
+    galactic_system_origins_.swap(other.galactic_system_origins_);
     swap(tick_, other.tick_);
     swap(next_entity_id_, other.next_entity_id_);
     swap(rng_state_, other.rng_state_);
