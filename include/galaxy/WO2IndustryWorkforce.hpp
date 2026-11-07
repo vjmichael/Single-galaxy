@@ -397,7 +397,8 @@ inline std::optional<Command> approved_workshop_supervisor(
            person->second.mentor_id || person->second.transport_id ||
            !world.npc_available_for_duty(npc_id) ||
            !world.workshop_trade_certified(npc_id,trade) ||
-           already_on_named_duty(world,npc_id,world.tick()+1))
+           already_on_named_duty(world,npc_id,world.tick()+1) ||
+           world.pending_workshop_worker_duty(npc_id,world.tick()+1))
             return std::nullopt;
     }else if(!shop->supervisor_npc_id)return std::nullopt;
     Command cmd{};
