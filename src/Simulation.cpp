@@ -279,6 +279,14 @@ bool Simulation::same_local_frame(EntityId a,EntityId b) const {
     const auto* x=find(a);
     const auto* y=find(b);
     if(!x||!y||x->system_id!=y->system_id)return false;
+    if(snapshot_version_>=120){
+        // An orbital/local frame is a view and navigation attachment, NOT
+        // a collision or interaction wall. Both original entities have
+        // absolute primary galactic coordinates; each action still checks
+        // its real 3D physical range and original player/cargo authority.
+        return x->physical_galactic_authoritative &&
+               y->physical_galactic_authoritative;
+    }
     const auto ax=ship_frames_.find(a),ay=ship_frames_.find(b);
     const auto li=local_entity_anchors_.find(a);
     const auto ri=local_entity_anchors_.find(b);
