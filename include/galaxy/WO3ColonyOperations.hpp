@@ -377,6 +377,92 @@ inline std::optional<PlanetarySiteAudit> audit_planetary_surface(
     return a;
 }
 
+// WO3-E: read-only guardian/household preflight. This intentionally cannot
+// authorize a child migration. ART02 family births and dependent transport
+// must be committed together with the original physical shuttle custody.
+enum class PlanetaryHouseholdGate : std::uint8_t {
+    MissingOriginalSite, MissingGuardian, ForeignGuardian,
+    ExistingSurfaceResident, MissingPhysicalArrival,
+    MissingHousing, InsufficientBeds, InsufficientSupplies,
+    DependentTransportNotYetBound, IndependentAdultEligible
+};
+struct PlanetaryHouseholdAudit {
+    PlanetaryHouseholdGate gate=PlanetaryHouseholdGate::MissingOriginalSite;
+    std::uint64_t guardian=0;
+    std::vector<std::uint64_t> registered_dependent_ids{};
+    std::int64_t available_beds=0;
+    std::int64_t required_beds=0;
+    bool original_shuttle_arrival_verified=false;
+    bool all_dependents_physically_with_guardian=false;
+    bool requires_art02_atomic_family_transaction=false;
+    bool independent_adult_can_apply() const noexcept {
+        return gate==PlanetaryHouseholdGate::IndependentAdultEligible;
+    }
+};
+inline PlanetaryHouseholdAudit assess_planetary_household(
+    const Simulation& world,PlayerId owner,EntityId ship,
+    const PlanetarySiteKey& key,std::uint64_t guardian) {
+    PlanetaryHouseholdAudit result{};
+    result.guardian=guardian;
+    const auto audit=audit_planetary_surface(world,owner,ship,key);
+    const auto site=world.planetary_sites().find(key);
+    if(!audit || site==world.planetary_sites().end())return result;
+    result.available_beds=audit->unused_housing_capacity;
+    const auto person=world.npc_records().find(guardian);
+    if(!guardian || person==world.npc_records().end()) {
+        result.gate=PlanetaryHouseholdGate::MissingGuardian;return result;
+    }
+    const auto& adult=person->second;
+    if(adult.home_ship!=ship || adult.role!=NpcRole::Ship ||
+       adult.assigned_site!=ship || adult.transport_id) {
+        result.gate=PlanetaryHouseholdGate::ForeignGuardian;return result;
+    }
+    if(adult.legal_residence()==transport::Endpoint{
+        transport::LocationKind::PlanetarySite,site->second.surface_location}) {
+        result.gate=PlanetaryHouseholdGate::ExistingSurfaceResident;
+        return result;
+    }
+    result.required_beds=1;
+    bool colocated=true;
+    for(const auto& [id,dependent]:world.physical_dependents()) {
+        if(dependent.guardian_id!=guardian)continue;
+        result.registered_dependent_ids.push_back(id);
+        ++result.required_beds;
+        if(dependent.home_ship!=ship ||
+           dependent.location!=adult.location)colocated=false;
+    }
+    result.all_dependents_physically_with_guardian=colocated;
+    result.requires_art02_atomic_family_transaction=
+        !result.registered_dependent_ids.empty();
+    // Do not present a guardian separated from a child as migration-ready,
+    // or imply that the original adult-only shuttle carried children.
+    if(!result.registered_dependent_ids.empty()) {
+        result.gate=PlanetaryHouseholdGate::DependentTransportNotYetBound;
+        return result;
+    }
+    const auto sh=world.planetary_shuttles().find(key);
+    result.original_shuttle_arrival_verified=
+        sh!=world.planetary_shuttles().end() &&
+        std::binary_search(sh->second.disembarked_ids.begin(),
+                           sh->second.disembarked_ids.end(),guardian) &&
+        sh->second.visitor_arrival_receipts.count(guardian) &&
+        world.npc_transport_arrival(
+            sh->second.visitor_arrival_receipts.at(guardian),
+            guardian).has_value() &&
+        adult.location==site->second.surface_location;
+    if(!result.original_shuttle_arrival_verified) {
+        result.gate=PlanetaryHouseholdGate::MissingPhysicalArrival;
+    }else if(!audit->permanent_housing_installed) {
+        result.gate=PlanetaryHouseholdGate::MissingHousing;
+    }else if(result.available_beds<result.required_beds) {
+        result.gate=PlanetaryHouseholdGate::InsufficientBeds;
+    }else if(site->second.food_kg<4 || site->second.water_kg<4 ||
+             site->second.oxygen_kg<4) {
+        result.gate=PlanetaryHouseholdGate::InsufficientSupplies;
+    }else result.gate=PlanetaryHouseholdGate::IndependentAdultEligible;
+    return result;
+}
+
 // WO3-C/F: conservative physical-service report, not a second resource
 // scheduler. An installed shelter is not proof of electricity, independence,
 // food renewal or a functioning return shuttle.
