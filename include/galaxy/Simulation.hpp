@@ -1729,7 +1729,7 @@ private:
     void process_npc_flight_navigation(); // same copied-state journaled step
     bool submit_npc_local_control(NpcFlightOrder& flight,
                                   Action action,EntityId target,
-                                  int thrust_x=0,int thrust_y=0);
+                                  int thrust_x=0,int thrust_y=0,int thrust_z=0);
     bool qualified_npc_flight_pilot(EntityId ship,std::uint64_t pilot) const;
     // ONE authoritative pilot chooser + ship/pilot exclusion for every
     // FLIGHT-01/02 mode and future docking/transit route adapter.
