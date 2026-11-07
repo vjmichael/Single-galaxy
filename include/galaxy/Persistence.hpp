@@ -449,6 +449,9 @@ struct NativeCellWorkerTick {
     std::uint64_t worker_epoch=0;
     std::uint64_t region_generation=0;
     std::uint64_t checkpoint_revision=0;
+    // SPACE-05B: nonempty when a durable global writer dispatch is selected.
+    // Legacy one-cell leased worlds may continue without a dispatch claim.
+    std::string dispatch_id;
 };
 
 class PersistentWorld {
