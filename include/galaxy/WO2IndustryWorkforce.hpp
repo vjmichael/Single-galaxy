@@ -21,7 +21,7 @@ enum class StaffGate : std::uint8_t {
 enum class WorkState : std::uint8_t {
     ActiveWorkInProgress, ReadyToProduce, NeedsStaff, NeedsPower,
     NeedsMaintenance, NeedsInput, OutputFull, NotInstalled,
-    ApprovedWorkComplete
+    ApprovedWorkComplete, AwaitingSupervisor
 };
 struct Slot {
     std::string recipe_id;
@@ -78,6 +78,11 @@ inline WorkState state_of(const Simulation& world,EntityId site,bool second,
     if(second && !workshop.finisher_installed)return WorkState::NotInstalled;
     const auto& owner_job=workshop.approved_jobs[second?1:0];
     const auto actual=second?workshop.finisher_batches:workshop.completed_batches;
+    if(owner_job.command_id &&
+       (!workshop.supervisor_npc_id ||
+        owner_job.supervisor_npc_id!=workshop.supervisor_npc_id ||
+        owner_job.supervisor_appointment_id!=workshop.supervisor_appointment_id))
+        return WorkState::AwaitingSupervisor;
     if(owner_job.command_id &&
        owner_job.achieved(actual)>=owner_job.target_batches)
         return WorkState::ApprovedWorkComplete;
@@ -335,7 +340,7 @@ struct JobBoardRow {
     std::uint64_t supervisor=0,appointment_command=0,approval_command=0;
     std::uint64_t physically_completed=0;
     std::uint32_t owner_target=0;
-    bool approved=false,fulfilled=false;
+    bool approved=false,fulfilled=false,suspended=false;
 };
 inline std::array<JobBoardRow,2> workshop_job_board(
     const Simulation& world,PlayerId owner,EntityId home_ship,EntityId site) {
@@ -353,6 +358,10 @@ inline std::array<JobBoardRow,2> workshop_job_board(
         const auto& job=shop->approved_jobs[slot];
         row.approval_command=job.command_id;
         row.approved=job.command_id!=0;
+        row.suspended=row.approved &&
+            (!shop->supervisor_npc_id ||
+             shop->supervisor_npc_id!=job.supervisor_npc_id ||
+             shop->supervisor_appointment_id!=job.supervisor_appointment_id);
         row.owner_target=job.target_batches;
         const auto actual=slot?shop->finisher_batches:shop->completed_batches;
         row.physically_completed=job.command_id?job.achieved(actual):0;
@@ -415,8 +424,10 @@ inline std::optional<Command> approved_workshop_mentorship(
        !shop->supervisor_npc_id ||
        !shop->supervisor_appointment_id ||
        shop->supervisor_trade!=trade ||
+       !world.npc_available_for_duty(shop->supervisor_npc_id) ||
        shop->last_mentored_tick==world.tick()+1 ||
        !world.workshop_trade_certified(shop->supervisor_npc_id,trade) ||
+       !world.npc_available_for_duty(shop->supervisor_npc_id) ||
        (trade==WorkshopTrade::Shape && !shop->finisher_installed) ||
        !utility || !utility->powered || utility->condition<=0 ||
        utility->stored_energy<1 ||
