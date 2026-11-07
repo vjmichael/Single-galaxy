@@ -4,6 +4,7 @@
 // carrier claims, cargo creation, booking, remote transport or trust escalation.
 // Actual routing and physical custody remain WO5/RegionalHostCommands.
 #include "galaxy/WO4Allocation.hpp"
+#include "galaxy/RegionalModeAuthority.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <limits>
@@ -37,6 +38,10 @@ struct RegionalBoard {
     PlayerId owner=0;
     std::uint64_t observed_tick=0,observed_state_hash=0;
     Policy policy{};
+    // Default unverified read-only demand view. A cold or pending
+    // regional owner must never treat it as a dispatch entitlement.
+    bool detailed_region_authority_verified=false;
+    std::uint64_t regional_generation=0,regional_checkpoint_revision=0;
     std::vector<RegionalShortage> shortages;
     std::vector<CarrierRequest> unbooked_carrier_requests;
     bool still_current(const Simulation& world) const {
@@ -136,6 +141,38 @@ inline std::optional<RegionalBoard> observe_regional_distribution(
             }
         }
     }
+    return board;
+}
+// A trusted host may request a regional authority-verifiable *read-only*
+// board. The regional authority is read from its actual persisted manager,
+// not a caller-supplied state struct. Generation/revision are mandatory CAS
+// witnesses; cross-scope world/authority binding remains the host's job.
+inline std::optional<RegionalBoard> observe_detailed_regional_distribution(
+    const Simulation& world,PlayerId owner,Policy policy,
+    const regional_events::RegionalModeAuthority& authority,
+    std::uint64_t expected_generation,std::uint64_t expected_revision) {
+    const auto current=authority.state();
+    if(!expected_generation || !expected_revision ||
+       current.owner!=regional_events::SimulationOwner::Detailed ||
+       current.phase!=regional_events::TransitionPhase::Stable ||
+       current.generation!=expected_generation ||
+       current.checkpoint_revision!=expected_revision ||
+       current.boundary_tick>world.tick())
+        return std::nullopt;
+    auto board=observe_regional_distribution(world,owner,policy);
+    if(!board)return std::nullopt;
+    // Avoid accepting an ownership transition during the read. This is
+    // not a replacement for the original host's atomic admission when
+    // a later carrier actually moves physical goods.
+    const auto after=authority.state();
+    if(after.owner!=current.owner || after.phase!=current.phase ||
+       after.generation!=current.generation ||
+       after.checkpoint_revision!=current.checkpoint_revision ||
+       !board->still_current(world))
+        return std::nullopt;
+    board->detailed_region_authority_verified=true;
+    board->regional_generation=after.generation;
+    board->regional_checkpoint_revision=after.checkpoint_revision;
     return board;
 }
 // In particular a RegionalBoard MUST NEVER be fed directly into the
