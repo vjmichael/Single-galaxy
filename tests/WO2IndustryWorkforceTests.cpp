@@ -646,6 +646,131 @@ int main() {
         CHECK(recovered.world().workshop(site)->finisher_npc_id==0);
         CHECK(recovered.world().total_material_kg()==initial_mass);
     }
+    // WO2-J isolated original-world copy: do not change the WO2-H primary
+    // SQLite ledger that must prove exactly six historical solo credits.
+    {
+        const auto management_db=(folder/"wo2j_supervisor.sqlite").string();
+        PersistentWorld::recover_copy(db,management_db);
+        PersistentWorld managed(management_db,Simulation(106));
+        CHECK(managed.world().workshop(site)->operator_npc_id==0);
+        CHECK(managed.world().workshop_trade_certified(first_id,WorkshopTrade::Cut));
+        CHECK(managed.world().workshop_trade_certified(second_id,WorkshopTrade::Shape));
+        const auto initial=managed.world().total_material_kg();
+        CHECK(!workforce02::approved_workshop_supervisor(
+            managed.world(),7,ship,site,WorkshopTrade::Cut,first_id,710,false));
+        CHECK(!workforce02::approved_workshop_supervisor(
+            managed.world(),8,ship,site,WorkshopTrade::Cut,first_id,710,true));
+        CHECK(!workforce02::approved_workshop_supervisor(
+            managed.world(),7,ship,site,WorkshopTrade::Cut,second_id,710,true));
+        auto appoint=workforce02::approved_workshop_supervisor(
+            managed.world(),7,ship,site,WorkshopTrade::Cut,first_id,710,true);
+        CHECK(appoint.has_value() && managed.submit(*appoint));
+        CHECK(!workforce02::approved_workshop_supervisor(
+            managed.world(),7,ship,site,WorkshopTrade::Cut,first_id,710,true));
+        managed.step();
+        CHECK(managed.world().events().back().command_id==710);
+        CHECK(managed.world().events().back().result==Outcome::Applied);
+        CHECK(managed.world().workshop(site)->supervisor_npc_id==first_id);
+        CHECK(managed.world().workshop(site)->supervisor_appointment_id==710);
+        // No management appointment makes an automated NPC or resources.
+        CHECK(managed.world().npc_records().count(first_id));
+        CHECK(managed.world().total_material_kg()==initial);
+        auto board=workforce02::workshop_job_board(
+            managed.world(),7,ship,site);
+        CHECK(board[0].supervisor==first_id && !board[0].approved);
+        CHECK(!workforce02::approved_workshop_job(
+            managed.world(),7,ship,site,WorkshopTrade::Cut,1,711,false));
+        CHECK(!workforce02::approved_workshop_job(
+            managed.world(),8,ship,site,WorkshopTrade::Cut,1,711,true));
+        auto job=workforce02::approved_workshop_job(
+            managed.world(),7,ship,site,WorkshopTrade::Cut,1,711,true);
+        CHECK(job.has_value() && managed.submit(*job));
+        managed.step();
+        CHECK(managed.world().events().back().command_id==711);
+        CHECK(managed.world().events().back().result==Outcome::Applied);
+        board=workforce02::workshop_job_board(managed.world(),7,ship,site);
+        CHECK(board[0].approval_command==711 &&
+              board[0].owner_target==1 &&
+              board[0].physically_completed==0);
+        CHECK(!board[1].approved);
+        // The mentor's name and valid original appointment are required.
+        CHECK(!workforce02::approved_workshop_mentorship(
+            managed.world(),8,ship,site,WorkshopTrade::Cut,second_id,712,true));
+        CHECK(!workforce02::approved_workshop_mentorship(
+            managed.world(),7,ship,site,WorkshopTrade::Cut,first_id,712,true));
+        auto mentor=workforce02::approved_workshop_mentorship(
+            managed.world(),7,ship,site,WorkshopTrade::Cut,second_id,712,true);
+        CHECK(mentor.has_value() && managed.submit(*mentor));
+        const auto before_energy=managed.world().utility(site)->consumed_energy;
+        const auto before_credits=managed.world().workshop_training_units(
+            second_id,WorkshopTrade::Cut);
+        managed.step();
+        CHECK(managed.world().events().back().command_id==712 &&
+              managed.world().events().back().result==Outcome::Applied &&
+              managed.world().events().back().transferred==1);
+        CHECK(managed.world().workshop_training_units(
+            second_id,WorkshopTrade::Cut)==before_credits+1);
+        const auto& latest=managed.world().npc_records().at(second_id).
+            industrial_training.back();
+        CHECK(latest.mentor_id==first_id &&
+              latest.supervisor_appointment_id==710 &&
+              latest.command_id==712 &&
+              latest.trade==WorkshopTrade::Cut);
+        CHECK(managed.world().utility(site)->consumed_energy>=before_energy+1);
+        CHECK(managed.world().total_material_kg()==initial);
+        // A second trainee cannot claim free skill from the same mentor/site
+        // on one committed tick; direct duplicate same-day commands fail.
+        const auto manager_copy=(folder/"wo2j_active_recovered.sqlite").string();
+        PersistentWorld::recover_copy(management_db,manager_copy);
+        {
+            PersistentWorld reopened(manager_copy,Simulation(107));
+            CHECK(reopened.world().workshop(site)->supervisor_npc_id==first_id);
+            CHECK(reopened.world().workshop(site)->approved_jobs[0].command_id==711);
+            CHECK(reopened.world().npc_records().at(second_id).
+                 industrial_training.back().supervisor_appointment_id==710);
+            CHECK(reopened.world().total_material_kg()==initial);
+        }
+        auto fake=managed.world().canonical_state();
+        const auto mentor_marker=fake.find("npctraining|"+
+            std::to_string(second_id)+"|712|");
+        CHECK(mentor_marker!=std::string::npos);
+        const auto mentor_line_end=fake.find('\n',mentor_marker);
+        const auto mentor_last_pipe=fake.rfind('|',mentor_line_end);
+        CHECK(mentor_last_pipe>mentor_marker);
+        fake.replace(mentor_last_pipe+1,mentor_line_end-mentor_last_pipe-1,"999999");
+        bool forged=false;
+        try{(void)Simulation::from_snapshot(fake);}
+        catch(const std::exception&){forged=true;}
+        CHECK(forged);
+        // Cancel the approved job with the owner. This is not a material
+        // refund or a permission for the supervisor to impersonate the owner.
+        CHECK(!workforce02::approved_workshop_job_cancel(
+            managed.world(),8,ship,site,WorkshopTrade::Cut,711,713,true));
+        auto cancel=workforce02::approved_workshop_job_cancel(
+            managed.world(),7,ship,site,WorkshopTrade::Cut,711,713,true);
+        CHECK(cancel.has_value() && managed.submit(*cancel));
+        managed.step();
+        CHECK(managed.world().events().back().command_id==713 &&
+              managed.world().events().back().result==Outcome::Applied);
+        CHECK(!managed.world().workshop(site)->approved_jobs[0].command_id);
+        // Management revocation does not delete original NPC training.
+        auto revoke=workforce02::approved_workshop_supervisor(
+            managed.world(),7,ship,site,WorkshopTrade::Cut,0,714,true);
+        CHECK(revoke.has_value() && managed.submit(*revoke));
+        managed.step();
+        CHECK(managed.world().workshop(site)->supervisor_npc_id==0);
+        CHECK(managed.world().workshop(site)->supervisor_appointment_id==0);
+        CHECK(managed.world().workshop_training_units(
+            second_id,WorkshopTrade::Cut)==before_credits+1);
+        CHECK(managed.world().total_material_kg()==initial);
+        const auto revoked_copy=(folder/"wo2j_revoked_recovered.sqlite").string();
+        PersistentWorld::recover_copy(management_db,revoked_copy);
+        PersistentWorld recovered(revoked_copy,Simulation(108));
+        CHECK(!recovered.world().workshop(site)->supervisor_npc_id);
+        CHECK(recovered.world().npc_records().at(second_id).
+              industrial_training.back().mentor_id==first_id);
+        CHECK(recovered.world().total_material_kg()==initial);
+    }
     // Independently read the SAME original SQLite resource journal. Six
     // successful per-NPC practice commands must produce exactly six
     // mass-conserving inventory-to-scrap transfers, not shadow skill XP.
