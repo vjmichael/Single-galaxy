@@ -8723,7 +8723,9 @@ bool Simulation::queue_npc_ship_rendezvous(
 // idempotency, issuer and timing, and original execute performs the actual
 // thrust/undock/dock effects on the same authoritative physical ship.
 bool Simulation::submit_npc_local_control(NpcFlightOrder& order,
-        Action action,EntityId target,int tx,int ty){
+        Action action,EntityId target,int tx,int ty,int tz){
+    if(tz && (snapshot_version_<119 || action!=Action::Thrust ||
+              tz<-1 || tz>1 || tx || ty))return false;
     constexpr std::uint64_t kNativeFlightCommandTag=(std::uint64_t{1}<<61);
     if((order.mode!=NpcFlightMode::LocalDock &&
         order.mode!=NpcFlightMode::LocalRendezvous) ||
@@ -8737,6 +8739,7 @@ bool Simulation::submit_npc_local_control(NpcFlightOrder& order,
     c.id=command_id;c.sequence=command_id;c.execute_tick=tick_+1;
     c.issuer=order.owner;c.actor=order.ship;c.target=target;
     c.action=action;c.thrust_x=tx;c.thrust_y=ty;
+    if(tz)c.amount=tz; // same native Thrust action; no new teleport verb
     if(!submit(c))return false;
     order.local_commands=next;
     order.last_local_command=command_id;
@@ -8943,6 +8946,12 @@ void Simulation::process_npc_flight_navigation(){
                 }else
                     (void)submit_npc_local_control(
                         order,Action::RequestDock,order.station);
+            }else if(snapshot_version_>=119 && nav.thrust_z){
+                // Native Action::Thrust encodes one vertical axis per
+                // command. The regular movement integrator still advances
+                // all existing velocity components this tick.
+                (void)submit_npc_local_control(
+                    order,Action::Thrust,0,0,0,nav.thrust_z);
             }else
                 (void)submit_npc_local_control(
                     order,Action::Thrust,0,nav.thrust_x,nav.thrust_y);
