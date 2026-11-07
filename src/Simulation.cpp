@@ -3535,7 +3535,7 @@ Event Simulation::execute(const Command& c) {
                     result.result=Outcome::InvalidTarget;return result;
                 }
                 const auto& asteroid=target->second;
-                if(asteroid.system_id!=actor.system_id){result.result=Outcome::WrongSystem;return result;}
+                if(snapshot_version_<121 && asteroid.system_id!=actor.system_id){result.result=Outcome::WrongSystem;return result;}
                 // Geological drones require a 10 km ship-to-target operating
                 // envelope. The device finishes its assigned mission autonomously
                 // if the carrier subsequently flies away.
@@ -3572,7 +3572,7 @@ Event Simulation::execute(const Command& c) {
                 if(probe_it==survey_probes_.end()||
                    probe_it->second.owner!=c.issuer||
                    probe_it->second.carrier!=c.actor||
-                   probe_it->second.system!=actor.system_id||
+                   (snapshot_version_<121 && probe_it->second.system!=actor.system_id)||
                    probe_it->second.drone_phase!=0){
                     result.result=Outcome::InvalidTarget;return result;
                 }
@@ -3636,7 +3636,7 @@ Event Simulation::execute(const Command& c) {
                     result.result=Outcome::InvalidTarget;return result;
                 }
                 const auto& probe=it->second;
-                if(probe.system!=actor.system_id){result.result=Outcome::WrongSystem;return result;}
+                if(snapshot_version_<121 && probe.system!=actor.system_id){result.result=Outcome::WrongSystem;return result;}
                 if(c.action==Action::ScanSurveyProbe){
                     if(probe.drone_phase||probe.focus_site){result.result=Outcome::InvalidTarget;return result;}
                     // 0.5 AU is the planned deep-space probe command budget.
@@ -3653,7 +3653,8 @@ Event Simulation::execute(const Command& c) {
                     std::vector<DiscoveryRecord> candidates;
                     constexpr auto r=kProbeScanRangeMm;
                     for(const auto& [id,e]:entities_){
-                        if(e.type!=EntityType::Asteroid || e.system_id!=probe.system)continue;
+                        if(e.type!=EntityType::Asteroid ||
+                           (snapshot_version_<121 && e.system_id!=probe.system))continue;
                         const auto dx=snapshot_version_>=121?0:e.position.x-probe.position.x;
                         const auto dy=snapshot_version_>=121?0:e.position.y-probe.position.y;
                         if(snapshot_version_>=121){
@@ -3854,7 +3855,7 @@ Event Simulation::execute(const Command& c) {
                defender.dock_state!=DockState::InSpace) {
                 result.result=Outcome::InTransition;return result;
             }
-            if(defender.system_id!=actor.system_id ||
+            if((snapshot_version_<120 && defender.system_id!=actor.system_id) ||
                !same_local_frame(c.actor,c.target)) {
                 result.result=Outcome::OutOfRange;return result;
             }
@@ -4000,7 +4001,7 @@ Event Simulation::execute(const Command& c) {
                 result.result=Outcome::InvalidTarget;return result;
             }
             auto& wreck=it->second;
-            if(wreck.system_id!=actor.system_id){result.result=Outcome::WrongSystem;return result;}
+            if(snapshot_version_<120 && wreck.system_id!=actor.system_id){result.result=Outcome::WrongSystem;return result;}
             constexpr auto range=kSalvageRangeMm;
             if(snapshot_version_>=119 &&
                !within_native_3d_range(actor,wreck,range)){
@@ -4140,7 +4141,7 @@ Event Simulation::execute(const Command& c) {
                 result.result=Outcome::InvalidTarget;return result;
             }
             auto& drone=it->second;
-            if(drone.system_id!=actor.system_id){result.result=Outcome::WrongSystem;return result;}
+            if(snapshot_version_<120 && drone.system_id!=actor.system_id){result.result=Outcome::WrongSystem;return result;}
             if(snapshot_version_>=119 &&
                !within_native_3d_range(actor,drone,kTrainingWeaponRangeMm)){
                 result.result=Outcome::OutOfRange;return result;
@@ -11618,7 +11619,8 @@ std::vector<Simulation::SignatureHint> Simulation::coarse_probe_signatures(
     const double radius=double(range_mm); // host-enforced discovery envelope
     std::vector<SignatureHint> result;
     for(const auto& [id,e]:entities_) {
-        if(e.type!=EntityType::Asteroid||e.system_id!=carrier->second.system_id||
+        if(e.type!=EntityType::Asteroid||
+           (snapshot_version_<121 && e.system_id!=carrier->second.system_id)||
            !same_local_frame(ship,id)||discoveries_.count({owner,id}))continue;
         if(snapshot_version_>=121){
             if(!within_galactic_range(e.physical_galactic,
@@ -11742,7 +11744,7 @@ void Simulation::step() {
             const auto target=entities_.find(probe.focus_site);
             if(target!=entities_.end() &&
                target->second.type==EntityType::Asteroid &&
-               target->second.system_id==probe.system){
+               (snapshot_version_>=121 || target->second.system_id==probe.system)){
                 const auto& real=target->second;
                 if(!within_galactic_range(real.physical_galactic,
                     probe.galactic_position,kProbeScanRangeMm) &&
@@ -11844,7 +11846,7 @@ void Simulation::step() {
             const auto destination=p.drone_phase==1 &&
                 target!=entities_.end() &&
                 target->second.type==EntityType::Asteroid &&
-                target->second.system_id==p.system?
+                (snapshot_version_>=121 || target->second.system_id==p.system)?
                     target->second.physical_galactic:p.galactic_home;
             const bool arrived=move_galactic_toward(p.galactic_position,
                 destination,2000,p.position,p.position_z_mm);
@@ -11852,7 +11854,7 @@ void Simulation::step() {
             if(p.drone_phase==2){p.drone_phase=3;continue;}
             if(target!=entities_.end() &&
                target->second.type==EntityType::Asteroid &&
-               target->second.system_id==p.system &&
+               (snapshot_version_>=121 || target->second.system_id==p.system) &&
                geology_.count(p.drone_target)){
                 p.sample_ore=0;
                 p.taxonomy=1+static_cast<std::uint8_t>(
@@ -11888,7 +11890,8 @@ void Simulation::step() {
         if(p.drone_phase!=3 || !p.taxonomy)continue;
         const auto ship=entities_.find(p.carrier);
         if(ship==entities_.end() || ship->second.type!=EntityType::Ship ||
-           ship->second.owner_id!=p.owner || ship->second.system_id!=p.system)
+           ship->second.owner_id!=p.owner ||
+           (snapshot_version_<121 && ship->second.system_id!=p.system))
             continue;
         const auto dx=snapshot_version_>=121?0:p.position.x-ship->second.position.x;
         const auto dy=snapshot_version_>=121?0:p.position.y-ship->second.position.y;
@@ -11905,7 +11908,9 @@ void Simulation::step() {
             const auto rock=entities_.find(p.drone_target);
             const auto position=rock!=entities_.end()?rock->second.position:p.position;
             DiscoveryRecord found{p.owner,p.drone_target,
-                p.system,position,tick_,true,p.taxonomy};
+                snapshot_version_>=121 && rock!=entities_.end()?
+                    rock->second.system_id:p.system,
+                position,tick_,true,p.taxonomy};
             if(snapshot_version_>=121){
                 found.location_z_mm=rock!=entities_.end()?
                     rock->second.position_z_mm:p.position_z_mm;
@@ -11926,14 +11931,14 @@ void Simulation::step() {
         const auto carrier=entities_.find(pending.carrier);
         if(carrier==entities_.end()||carrier->second.type!=EntityType::Ship||
            carrier->second.owner_id!=pending.report.owner||
-           carrier->second.system_id!=pending.report.system) {
+           (snapshot_version_<121 && carrier->second.system_id!=pending.report.system)) {
             ++it;continue;
         }
         const auto probe=survey_probes_.find(pending.probe_id);
         if(probe!=survey_probes_.end()) {
             if(probe->second.owner!=pending.report.owner||
                probe->second.carrier!=pending.carrier||
-               probe->second.system!=pending.report.system) {
+               (snapshot_version_<121 && probe->second.system!=pending.report.system)) {
                 ++it;continue;
             }
             const auto dx=snapshot_version_>=121?0:
@@ -13878,7 +13883,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 const auto site=result.entities_.find(p.focus_site);
                 if(site!=result.entities_.end()){
                     if(site->second.type!=EntityType::Asteroid||
-                       site->second.system_id!=system)
+                       (result.snapshot_version_<121 && site->second.system_id!=system))
                         throw std::runtime_error("snapshot: focused probe site mismatch");
                     const auto quant=[](std::int64_t value,std::int64_t quantum){
                         const auto base=value/quantum*quantum;
@@ -16423,7 +16428,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             if(probe!=result.survey_probes_.end()&&
                (probe->second.owner!=p.report.owner||
                 probe->second.carrier!=p.carrier||
-                probe->second.system!=p.report.system))
+                (result.snapshot_version_<121 && probe->second.system!=p.report.system)))
                 throw std::runtime_error("snapshot: delayed probe ownership conflict");
         }
     }
@@ -16432,7 +16437,8 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             const auto it=result.entities_.find(p.carrier);
             if(id!=p.id || it==result.entities_.end() ||
                (it->second.type!=EntityType::Ship && it->second.type!=EntityType::Wreck) ||
-               it->second.owner_id!=p.owner || it->second.system_id!=p.system ||
+               it->second.owner_id!=p.owner ||
+               (result.snapshot_version_<121 && it->second.system_id!=p.system) ||
                !it->second.fitting.probe_launcher() ||
                !result.submitted_ids_.count(p.id))
                 throw std::runtime_error("snapshot: survey probe has no valid physical carrier");
