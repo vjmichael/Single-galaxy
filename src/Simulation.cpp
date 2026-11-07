@@ -14492,6 +14492,52 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                         });
                     if(person.home_ship!=site.source_ship || shape_credits<3)
                         throw std::runtime_error("snapshot: unqualified surface supervisor");
+                    if(result.snapshot_version_>=112 &&
+                       !site.utility_handovers.empty()) {
+                        auto current=site.utility_handovers.front().previous;
+                        auto previous_tick=std::uint64_t{0};
+                        const auto qualified_at=[&](std::uint64_t npc,
+                                                    std::uint64_t tick) {
+                            const auto live=result.npcs_.find(npc);
+                            const auto deceased=result.casualties_.find(npc);
+                            if(live==result.npcs_.end() &&
+                               deceased==result.casualties_.end())return false;
+                            const auto& n=live!=result.npcs_.end()?
+                                live->second:deceased->second.identity;
+                            if(n.home_ship!=site.source_ship)return false;
+                            return std::count_if(n.industrial_training.begin(),
+                                n.industrial_training.end(),[tick](
+                                   const NpcTradeTraining& training) {
+                                    return training.trade==WorkshopTrade::Shape &&
+                                           training.tick<=tick;
+                                })>=3;
+                        };
+                        for(const auto& handover:site.utility_handovers) {
+                            if(!handover.request_id || !handover.tick ||
+                               handover.tick>result.tick_ ||
+                               handover.tick<=previous_tick ||
+                               handover.previous!=current ||
+                               handover.replacement==current ||
+                               !qualified_at(current,handover.tick) ||
+                               !qualified_at(handover.replacement,handover.tick) ||
+                               !request_ids.insert(handover.request_id).second ||
+                               result.submitted_ids_.count(handover.request_id) ||
+                               result.shuttle_flight_request_ids_.count(
+                                   handover.request_id) ||
+                               result.local_delivery_orders_.count(
+                                   handover.request_id) ||
+                               result.voyages_.count(handover.request_id) ||
+                               handover.request_id==site.housing_order_id ||
+                               handover.request_id==site.utility_order_id)
+                                throw std::runtime_error(
+                                    "snapshot: invalid surface supervisor handover proof");
+                            previous_tick=handover.tick;
+                            current=handover.replacement;
+                        }
+                        if(current!=site.utility_supervisor)
+                            throw std::runtime_error(
+                                "snapshot: interrupted surface utility supervisor chain");
+                    }
                 }
                 for(std::size_t i=0;i<2;++i) {
                     const auto id=site.founder_residents[i];
