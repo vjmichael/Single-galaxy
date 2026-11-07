@@ -2318,6 +2318,15 @@ Event Simulation::execute(const Command& c) {
                tick_>std::numeric_limits<std::uint64_t>::max()-static_cast<std::uint64_t>(c.amount)){
                 result.result=Outcome::InvalidArgument;return result;
             }
+            // WO2: named medical and industrial jobs share ONE finite NPC.
+            // A hospital shift may not reuse a presently installed hands-on
+            // workshop operator/finisher; deny before any medical receipt.
+            for(const auto& [site,shop]:workshops_){(void)site;
+                if(shop.operator_npc_id==c.target ||
+                   shop.finisher_npc_id==c.target){
+                    result.result=Outcome::InvalidArgument;return result;
+                }
+            }
             unsigned overlapping=0;
             for(const auto& [id,shift]:medic_shifts_){(void)id;
                 if(tick_>=shift.end_tick || tick_+static_cast<std::uint64_t>(c.amount)<=shift.start_tick)continue;
@@ -4093,6 +4102,26 @@ Event Simulation::execute(const Command& c) {
                            npc->second.location!=c.target || npc->second.role!=NpcRole::Habitat ||
                            !habitats_.count(c.target)){
                             result.result=Outcome::InvalidTarget;return result;
+                        }
+                        // WO2 enforce this at the ORIGINAL execution boundary,
+                        // not only in a host planning screen. A stale scheduled
+                        // order must not duplicate a traveling, injured, or
+                        // medically committed physical worker.
+                        const auto worker=static_cast<std::uint64_t>(c.amount);
+                        if(snapshot_version_>=40 && !npc_available_for_duty(worker)){
+                            result.result=Outcome::InvalidTarget;return result;
+                        }
+                        for(const auto& [id,existing]:workshops_){(void)id;
+                            if(existing.operator_npc_id==worker ||
+                               existing.finisher_npc_id==worker){
+                                result.result=Outcome::InvalidTarget;return result;
+                            }
+                        }
+                        for(const auto& [id,shift]:medic_shifts_){(void)id;
+                            if(shift.medic_id==worker &&
+                               shift.start_tick<=tick_ && tick_<shift.end_tick){
+                                result.result=Outcome::InvalidTarget;return result;
+                            }
                         }
                     }
                     // Tier 1 devices require exclusive hands-on NPC labor.
