@@ -2487,7 +2487,8 @@ Event Simulation::execute(const Command& c) {
             // workshop operator/finisher; deny before any medical receipt.
             for(const auto& [site,shop]:workshops_){(void)site;
                 if(shop.operator_npc_id==c.target ||
-                   shop.finisher_npc_id==c.target){
+                   shop.finisher_npc_id==c.target ||
+                   shop.supervisor_npc_id==c.target){
                     result.result=Outcome::InvalidArgument;return result;
                 }
             }
