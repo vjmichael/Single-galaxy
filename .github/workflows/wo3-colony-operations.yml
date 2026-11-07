@@ -11,6 +11,7 @@ on:
       - 'include/galaxy/Persistence.hpp'
       - 'include/galaxy/UniversalTransport.hpp'
       - 'src/Persistence.cpp'
+      - 'docs/engineering/WO3_PLANETARY_COLONY_OPERATIONS_20261106.md'
       - 'CMakeLists.txt'
       - '.github/workflows/wo3-colony-operations.yml'
   workflow_dispatch:
