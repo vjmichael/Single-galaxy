@@ -1,4 +1,6 @@
 #include "galaxy/SecurityDeskHost.hpp"
+#include <sqlite3.h>
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <iostream>
@@ -54,6 +56,15 @@ int main(){
         PersistentWorld world(db,std::move(genesis));
         TerritoryJournal land(db);
         CyberIncidentJournal cases(db);
+        ship_notifications::Outbox outbox(db);
+        const auto has_notice=[&](PlayerId who,std::uint32_t kind,
+            std::uint64_t source){
+            const auto list=outbox.pending(who,64);
+            return std::any_of(list.begin(),list.end(),
+                [&](const auto& n){
+                    return n.kind==kind && n.source_event==source;
+                });
+        };
         std::vector<std::string> messages;
         auto emit=[&](const std::string& frame){
             messages.push_back(frame);
@@ -69,6 +80,8 @@ int main(){
             world,land,cases,7,home,home,nonce7,emit));
         CHECK(contains(messages,"SECURITY_RESULT|DENIED|0"));
         CHECK(land.history().size()==1);
+        CHECK(has_notice(8,8,land.history().front().event_id));
+        CHECK(outbox.pending(7).empty());
         CHECK(committed(world,7,aggressor,Action::Mine,2,7001,asteroid)==
               Outcome::Applied);
         CHECK(committed(world,7,aggressor,Action::RefineOre,2,7002)==
@@ -80,6 +93,24 @@ int main(){
         CHECK(committed(world,7,aggressor,Action::HackConfuse,0,7005,home)==
               Outcome::Applied);
         messages.clear();
+        // Insertion of the original cyber case must roll back if the
+        // victim owner's durable notice cannot commit. No orphan case.
+        sqlite3* probe=nullptr;
+        CHECK(sqlite3_open(db.c_str(),&probe)==SQLITE_OK);
+        CHECK(sqlite3_exec(probe,
+            "CREATE TRIGGER sg_status07k_fault BEFORE INSERT "
+            "ON sg_ship_notifications07i WHEN NEW.kind=14 AND NEW.owner=8 "
+            "BEGIN SELECT RAISE(ABORT,'injected cyber notice failure'); END",
+            nullptr,nullptr,nullptr)==SQLITE_OK);
+        CHECK(sqlite3_close(probe)==SQLITE_OK);
+        CHECK(security_desk::capture_current_tick(world,land,cases,8,emit)==0);
+        CHECK(cases.history().empty());
+        CHECK(outbox.pending(8).size()==1); // prior original territory claim
+        CHECK(sqlite3_open(db.c_str(),&probe)==SQLITE_OK);
+        CHECK(sqlite3_exec(probe,"DROP TRIGGER sg_status07k_fault",
+            nullptr,nullptr,nullptr)==SQLITE_OK);
+        CHECK(sqlite3_close(probe)==SQLITE_OK);
+        messages.clear();
         CHECK(security_desk::capture_current_tick(
             world,land,cases,8,emit)==1);
         CHECK(contains(messages,"SECURITY_CASE_FILED|8|"));
@@ -90,6 +121,8 @@ int main(){
         CHECK(index.front().attacker_owner==0);
         CHECK(index.front().attacking_ship==aggressor);
         native_case_id=index.front().case_id;
+        CHECK(has_notice(8,14,native_case_id));
+        CHECK(!has_notice(7,14,native_case_id));
         messages.clear();
         security_desk::snapshot(world,land,cases,8,home,home,emit);
         CHECK(contains(messages,"SECURITY_CASE|"+
@@ -112,6 +145,10 @@ int main(){
         CHECK(cases.hail_history().size()==1);
         CHECK(cases.hail_history().front().hail_event==voluntary_hail_id);
         CHECK(cases.summaries().front().later_identified_controller==7);
+        CHECK(has_notice(8,13,voluntary_hail_id));
+        CHECK(has_notice(7,13,voluntary_hail_id));
+        CHECK(has_notice(8,15,voluntary_hail_id));
+        CHECK(!has_notice(7,15,voluntary_hail_id));
         CHECK(cases.summaries().front().evidence.attacker_owner==0);
         CHECK(!cases.summaries().front().legal_crime_finding);
         CHECK(!cases.summaries().front().arrest_authorized);
@@ -122,6 +159,8 @@ int main(){
         CHECK(contains(messages,"SECURITY_RESULT|SECURITY_WARN|ACCEPTED|"));
         const auto warnings=land.pending_notices(world,7);
         CHECK(warnings.size()==1);
+        CHECK(has_notice(8,9,warnings.front().event_id));
+        CHECK(has_notice(7,9,warnings.front().event_id));
         messages.clear();
         security_desk::snapshot(world,land,cases,7,aggressor,aggressor,emit);
         CHECK(contains(messages,"SECURITY_NOTICE|"+
@@ -133,6 +172,9 @@ int main(){
               "ACK"},world,land,cases,7,aggressor,aggressor,nonce7,emit));
         CHECK(contains(messages,"SECURITY_RESULT|SECURITY_REPLY|ACCEPTED|"));
         CHECK(land.pending_notices(world,7).empty());
+        const auto response=land.history().back().event_id;
+        CHECK(has_notice(7,10,response));
+        CHECK(has_notice(8,10,response));
         CHECK(cases.hail_history().size()==2);
         // A visual match is never a criminal conviction; weak infrastructure
         // cannot use the incident as a force/dispatch permission.
@@ -151,7 +193,23 @@ int main(){
         PersistentWorld world(copy,Simulation(7));
         TerritoryJournal land(copy);
         CyberIncidentJournal cases(copy);
+        ship_notifications::Outbox outbox(copy);
         CHECK(world.world().canonical_state()==canonical);
+        const auto notices=outbox.pending(8,64);
+        CHECK(std::any_of(notices.begin(),notices.end(),
+            [&](const auto& n){
+                return n.kind==14 && n.source_event==native_case_id &&
+                       n.peer_owner==0;
+            }));
+        const auto later=std::find_if(notices.begin(),notices.end(),
+            [&](const auto& n){
+                return n.kind==15 &&
+                       n.source_event==voluntary_hail_id;
+            });
+        CHECK(later!=notices.end() && later->peer_owner==7);
+        CHECK(!outbox.acknowledge(7,later->sequence));
+        CHECK(outbox.acknowledge(8,later->sequence));
+        CHECK(outbox.acknowledge(8,later->sequence));
         CHECK(cases.history().size()==1 &&
               cases.history().front().case_id==native_case_id);
         CHECK(cases.hail_history().size()==2);
