@@ -19,7 +19,7 @@ test("INDUSTRY-01 candidate validates; no world-facing material or consumption s
   const result=validateCatalog(original);
   assert.deepEqual(result.errors,[]);
   assert.equal(result.ok,true);
-  assert.deepEqual(result.stats,{items:98,recipes:71,services:8,legacy_mappings:28});
+  assert.deepEqual(result.stats,{items:100,recipes:71,recovery_recipes:3,services:8,legacy_mappings:28});
   assert.equal(original.status,"research_candidate_not_world_authoritative");
   assert.ok(original.recipes.every(x=>x.quantities==="illustrative_game_balance"));
   assert.ok(original.legacy_bridge.every(x=>x.authoritative_conversion!=="automatic"));
@@ -104,4 +104,48 @@ test("native panel/frame bindings exactly conserve existing 20kg -> 19kg + 1kg o
     assert.equal(x.outputs[1].qty,1000);
     assert.equal(x.work_ticks,5);
   }
+});
+
+test("strictly lossy physically conserved recycling never manufactures free stock",()=>{
+  const result=validateCatalog(original);
+  assert.equal(result.ok,true,result.errors.join("; "));
+  assert.equal(original.recovery_recipes.length,3);
+  for(const recipe of original.recovery_recipes){
+    const input=recipe.inputs.reduce((a,x)=>a+x.qty,0);
+    const output=recipe.outputs.reduce((a,x)=>a+x.qty,0);
+    const useful=recipe.outputs.find(x=>x.item===recipe.primary_recovered_item);
+    assert.equal(input,output);
+    assert.ok(useful.qty<input);
+  }
+  rejects(c=>c.recovery_recipes[0].outputs[0].qty=1000,"unconserved recovery mass");
+  rejects(c=>{
+    c.recovery_recipes[0].outputs[0].qty=1000;
+    c.recovery_recipes[0].outputs[1].qty=0;
+  },"recovery must lose useful output");
+  rejects(c=>c.recovery_recipes[0].primary_recovered_item="bulk/imaginary","missing primary recovered output");
+});
+test("use contracts: durable capacity, consumable spoilage, services and migration separation",()=>{
+  const {validateUseContracts}=require("../scripts/validate_industry01.js");
+  const u=JSON.parse(fs.readFileSync(path.join(__dirname,"..","data","industry","industry01_use_contracts.json"),"utf8"));
+  const result=validateUseContracts(original,u);
+  assert.equal(result.ok,true,result.errors.join("; "));
+  assert.equal(result.stats.needs,12);
+  assert.equal(result.stats.use_profiles,20);
+  assert.equal(result.stats.services,8);
+  const stale=JSON.parse(JSON.stringify(u));
+  stale.durables.find(x=>x.item==="item/chair").condition_max=0;
+  assert.equal(validateUseContracts(original,stale).ok,false);
+  const magical=JSON.parse(JSON.stringify(u));
+  magical.event_contract.migration="automatic_after_missing_plant";
+  assert.equal(validateUseContracts(original,magical).ok,false);
+  const phantom=JSON.parse(JSON.stringify(u));
+  phantom.services.find(x=>x.service==="service/laundry").environmental_byproduct="item/chair";
+  assert.equal(validateUseContracts(original,phantom).ok,false);
+});
+test("real-world numerical claims are distinguished from provisional game yields",()=>{
+  const result=validateCatalog(original);
+  assert.equal(result.ok,true,result.errors.join("; "));
+  assert.ok(original.research_calibration.length>=5);
+  assert.ok(original.research_calibration.every(x=>x.numeric_status!=="real_world_verified_yield"));
+  rejects(c=>c.research_calibration[0].numeric_status="real_world_verified_yield","invalid process research calibration");
 });
