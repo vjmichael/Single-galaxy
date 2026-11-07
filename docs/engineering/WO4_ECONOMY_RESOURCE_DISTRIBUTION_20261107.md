@@ -37,3 +37,12 @@
 
 ## Next task
 **WO4-B: owner-approved priority policy and deterministic finite-stock allocation preflight.** Implementation must express hard vital minimums, local material scarcity and reservations as *proposals* until a trusted original-world writer records real allocation. Keep WO3-F independently open for native CI.
+
+## WO4-A planetary consumer census correction — source-only checkpoint
+
+During direct integration review, the native `colony03::audit_planetary_surface` census was found to count an original registered child **twice** when its three-seat family shuttle remained landed and the real family had completed legal planetary admission: once in the bound family shuttle manifest and again in the admitted household loop. The child remained one original `PhysicalDependent` identity; the duplicated count was an observational bug, not an actual new person.
+
+- WO4 branch now counts a physically present admitted household child separately **only if not already counted** in the landed original family manifest. It does not change custody, population or supplies.
+- The genuine v118 ART02 admission regression checks the count against the actual two existing planetary workers plus separately identified original disembarked visitors, shuttle pilot, boarded parents and one original child; WO4 scarcity projection must agree.
+- Source commits `07a5cb87` and `42e68232`. This is a **WO3-audit correction on the stacked WO4 branch**, not yet propagated to WO3 PR #89. Do not claim WO3-F native acceptance from this amendment. Before WO4 is merged, reconcile the census correction into the WO3 base to avoid divergent source behavior.
+- Source asserts are committed but still unexecuted natively; require exact-head Windows/Linux CMake/CTest.
