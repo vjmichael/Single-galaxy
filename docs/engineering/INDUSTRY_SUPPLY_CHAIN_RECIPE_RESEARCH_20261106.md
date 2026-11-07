@@ -121,6 +121,15 @@ If only cosmetic, model as variant/tag and art choice; do NOT grow hundreds of m
 - **Personal traits** weight different wants. A botanically inclined NPC may value potted plants or a garden; another may barely care. The same good may produce different satisfaction outcomes depending on context, repair condition, accessibility and expectations.
 - **Unhappiness is not an instant migration command.** It accumulates contextually alongside credible destinations, physical transport, family obligations, opportunity costs, and actual migration admission and custody. An individual may stay unhappy, adapt, protest, resign, organize or leave; avoid one generic happiness bar that erases identity.
 
+## Source audit against the current native branch (2026-11-06)
+
+Initial code inspection confirmed **the recipe and item systems are not yet a single authoritative system**:
+
+- `include/galaxy/Inventory.hpp` and `src/Inventory.cpp` define **one volume-only code catalogue**. Its current standard entries include original `ore`, `refined`, `construction_module`, tailings, specific silicate/sulfide mineral names, `good/structural_alloy`, `good/aluminum`, `good/aluminum_panels`, `good/aluminum_frames`, `good/aluminum_scrap`, `good/ceramic`, `good/glass`, `good/water`, `good/sulfur`, `good/carbon_feed` and three sealed freight-stock codes. Its `liters_per_unit` are **game-volume accounting**, explicitly not density or physical weight. Keep stable codes/legacy quantities.
+- `include/galaxy/EconomyPrototype.hpp` and `src/EconomyPrototype.cpp` have a separate **in-memory eight-item, seven-recipe** demonstration: aluminum feedstock → ingot → sheet/wire → bracket/valve → hull panel/pump. It tracks a separate item enum and illustrative kilogram mass; this is **not integrated with the original `PersistentWorld`**. Reuse the idea of multi-capability skills and work receipts, not a duplicate authoritative inventory.
+- `include/galaxy/Simulation.hpp` has original world mineral processing and conserved-mass game recipes, multiple type-specific stocks and physical tasks. `WorkPlanning.hpp` registers existing local freight, intercolony freight and shipyard customer/capacity tasks. The new general industry spec must **extend these original physical receipts and worker limits**, not equate the demo workshop with functional full-economy production.
+- **Immediate bridge deliverable:** inventory canonical-ID mapping and mass/volume dimension table with stable save migration and source provenance; then validate a single reference recipe `aluminum stock → manufactured panel` through the original-world inventory + labor + power + work receipt before broadening to the full researched catalog. This is a Stage 1 engineering acceptance *slice*, not early player-gameplay priority.
+
 ## Stage 1 research execution and exit
 
 1. **Audit current item materials and recipes** across `Inventory.hpp`, `EconomyPrototype`, `Simulation`, `Industrial/Catalogue` and the actual original item mass/volume/energy units. Produce stable item IDs and migration map; keep legacy saves valid.
