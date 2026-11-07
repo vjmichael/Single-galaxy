@@ -1963,6 +1963,19 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_native_cell_hang_worker PRIVATE Threads::Threads)
 endif()
 
+# SPACE-05C: independent 4x20 native process admission endurance and
+# deliberately hung-child process-tree timeout acceptance, no game DB.
+if(BUILD_TESTING)
+  add_executable(galaxy_native_cell_process_stress_tests
+    tests/NativeCellProcessStressTests.cpp)
+  target_link_libraries(galaxy_native_cell_process_stress_tests
+    PRIVATE galaxy_kernel Threads::Threads)
+  add_test(NAME galaxy_native_cell_process_stress
+    COMMAND galaxy_native_cell_process_stress_tests
+      $<TARGET_FILE:galaxy_native_cell_worker>
+      $<TARGET_FILE:galaxy_native_cell_hang_worker>)
+endif()
+
 # SPACE-04C/04D/05B: native high-order coordinates, 3D probes and bounded
 # active multi-cell original-world supervisor. Runs on Windows and Linux.
 if(BUILD_TESTING)
