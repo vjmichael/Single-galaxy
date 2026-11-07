@@ -13,11 +13,11 @@ int main(){
     assert(moved && moved->x.sector==946073001 &&
            moved->y.sector==-946073001 && moved->z.sector==18);
     const auto local=local_from_galactic(frame,*moved);
-    assert(local && *local==Local3{70,-90,100});
+    assert((local && *local==Local3{70,-90,100}));
     assert(galactic_from_local(frame,*local)==moved);
     const auto rebased=rebase(frame,*moved);
-    assert(rebased && local_from_galactic(*rebased,*moved)==Local3{0,0,0});
-    assert(galactic_from_local(*rebased,Local3{-70,90,-100})==origin);
+    assert((rebased && local_from_galactic(*rebased,*moved)==Local3{0,0,0}));
+    assert((galactic_from_local(*rebased,Local3{-70,90,-100})==origin));
     // A distant target is outside a short-range frame, NOT absent from
     // original space, which still retains its exact galactic coordinates.
     const auto far=advance(*moved,Velocity{2000000000LL,0,0});
@@ -30,7 +30,7 @@ int main(){
     const Point at_max{{std::numeric_limits<std::int64_t>::max(),
                         kSectorEdgeMm-1},{0,0},{0,0}};
     assert(!advance(at_max,Velocity{1,0,0}));
-    assert(!galactic_from_local(frame,Local3{1000000001LL,0,0}));
+    assert((!galactic_from_local(frame,Local3{1000000001LL,0,0})));
     std::cout<<"PASS SPACE-04B floating local frame geometry across x/y/z sectors; "
                 "no galaxy motion clamp or duplicated matter\n";
 }
