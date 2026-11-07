@@ -360,6 +360,8 @@ int main() {
     PersistentWorld::recover_copy(db,copy);
     PersistentWorld reread(copy,Simulation(9));
     CHECK(reread.world().state_hash()==w.world().state_hash());
+    const auto before_production_embodied=
+        w.world().planetary_sites().at(key).embodied_ore;
     // WO3-D/v113: farm production must now be physically constructed on
     // the planet from TWO fresh original shuttle-delivered module racks.
     // Existing orbital-ship modules cannot materialize into local structures.
@@ -401,7 +403,7 @@ int main() {
           begun.production_projects[0].progress==0 &&
           begun.production_projects[0].supervisor==builder &&
           begun.housing_modules==0 && !begun.farm &&
-          begun.embodied_ore==utility.embodied_ore+4);
+          begun.embodied_ore==before_production_embodied+4);
     CHECK(w.world().total_ore()==initial_mass);
     CHECK(w.world().canonical_state().rfind("galaxy-kernel-v113|",0)==0);
     CHECK(Simulation::from_snapshot(w.world().canonical_state()).state_hash()==
