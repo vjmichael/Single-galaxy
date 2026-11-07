@@ -13,6 +13,7 @@ on:
       - 'src/native_cell_worker.cpp'
       - 'tests/NativeCellHangWorker.cpp'
       - 'tests/NativeCellDetachedPipeWorker.cpp'
+      - 'tests/NativeCellForkFenceWorker.cpp'
       - 'tests/NativeCellProcessStressTests.cpp'
       - 'tests/NativeHighOrderMathPropertyTests.cpp'
       - 'include/galaxy/ShipInteractionPreflight.hpp'
@@ -74,7 +75,7 @@ jobs:
           cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$tc" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
           if ($LASTEXITCODE -ne 0) { throw 'native Windows configure failure' }
       - name: Build new and legacy native acceptance
-        run: cmake --build build --config Release --parallel 2 --target galaxy_native_cell_worker galaxy_native_cell_hang_worker galaxy_native_cell_detached_pipe_worker galaxy_native_cell_process_stress_tests galaxy_native_galactic_supervisor_tests galaxy_native_3d_worker_tests galaxy_play12_probe_tests galaxy_flight03_object_approach_tests galaxy_flight04_interaction_preflight_tests galaxy_flight04b_interaction_executors_tests galaxy_seamless_spatial_ownership_tests galaxy_play13d_regional_facilities_tests galaxy_wo3_colony_operations_tests galaxy_wo3_planetary_housing_tests galaxy_wo3_planetary_utility_tests galaxy_wo4_resource_demand_tests galaxy_wo4_material_allocation_tests galaxy_wo5_physical_logistics_tests
+        run: cmake --build build --config Release --parallel 2 --target galaxy_native_cell_worker galaxy_native_cell_hang_worker galaxy_native_cell_detached_pipe_worker galaxy_native_cell_fork_fence_worker galaxy_native_cell_process_stress_tests galaxy_native_galactic_supervisor_tests galaxy_native_3d_worker_tests galaxy_play12_probe_tests galaxy_flight03_object_approach_tests galaxy_flight04_interaction_preflight_tests galaxy_flight04b_interaction_executors_tests galaxy_seamless_spatial_ownership_tests galaxy_play13d_regional_facilities_tests galaxy_wo3_colony_operations_tests galaxy_wo3_planetary_housing_tests galaxy_wo3_planetary_utility_tests galaxy_wo4_resource_demand_tests galaxy_wo4_material_allocation_tests galaxy_wo5_physical_logistics_tests
       - name: Build independent high-order 128-bit property oracle (Linux)
         if: runner.os == 'Linux'
         run: cmake --build build --parallel 2 --target galaxy_high_order_math_property_tests
