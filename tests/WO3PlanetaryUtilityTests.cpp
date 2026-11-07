@@ -1,4 +1,5 @@
 #include "galaxy/WO3ColonyOperations.hpp"
+#include "galaxy/WO4ResourceDemand.hpp"
 #include "galaxy/WO2IndustryWorkforce.hpp"
 #include "galaxy/Persistence.hpp"
 #include <sqlite3.h>
@@ -198,6 +199,33 @@ int main() {
     CHECK(w.start_planetary_housing(7,ship,key,81200));
     w.steps(80);
     CHECK(w.world().planetary_sites().at(key).housing_phase==2);
+    // WO4-A: a physically built WO3 surface participates in demand
+    // observation from its REAL deposited provisions and its existing
+    // per-site live people census. A forecast cannot move stock.
+    const auto demand_before=w.world().state_hash();
+    const auto pressure=economy04::observe_owner_world(
+        w.world(),7,ship,economy04::Policy{4,1});
+    CHECK(pressure && pressure->still_current(w.world()));
+    CHECK(!economy04::observe_owner_world(w.world(),8,ship));
+    const auto surface_pressure=std::find_if(
+        pressure->compartments.begin(),pressure->compartments.end(),
+        [&](const auto& row) {
+            return row.kind==economy04::CompartmentKind::PlanetarySurface &&
+                   row.planetary_key==key;
+        });
+    CHECK(surface_pressure!=pressure->compartments.end());
+    const auto native_census=colony03::audit_planetary_surface(
+        w.world(),7,ship,key);
+    CHECK(native_census.has_value());
+    CHECK(surface_pressure->current_consumers==
+          static_cast<std::uint64_t>(native_census->current_surface_consumers));
+    CHECK(surface_pressure->needs[0].physically_present_kg==
+          w.world().planetary_sites().at(key).food_kg);
+    CHECK(surface_pressure->needs[1].physically_present_kg==
+          w.world().planetary_sites().at(key).water_kg);
+    CHECK(surface_pressure->needs[2].physically_present_kg==
+          w.world().planetary_sites().at(key).oxygen_kg);
+    CHECK(w.world().state_hash()==demand_before);
     CHECK(!w.start_planetary_surface_utility(8,ship,key,81400,builder));
     CHECK(!w.start_planetary_surface_utility(7,ship,key,81400,pilot));
     CHECK(!w.start_planetary_surface_utility(7,ship,key,81400,builder));
