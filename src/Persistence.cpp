@@ -186,7 +186,7 @@ Command decode_command(const std::string& record) {
                 throw std::runtime_error("recovery: malformed split rescue envelope");
         }
     }
-    if (in >> extra || action < 0 || action > static_cast<int>(Action::RelieveWorkshopShift) || c.id == 0 || c.issuer == 0)
+    if (in >> extra || action < 0 || action > static_cast<int>(Action::CancelWorkshopJob) || c.id == 0 || c.issuer == 0)
         throw std::runtime_error("recovery: invalid command journal values");
     c.action = static_cast<Action>(action);
     if (command_record(c) != record) throw std::runtime_error("recovery: noncanonical command journal");
@@ -4439,7 +4439,8 @@ public:
                 const auto ev=event_by_id.find(id);
                 const auto cmd=journal_commands.find(id);
                 if(ev==event_by_id.end() || cmd==journal_commands.end() ||
-                   cmd->second.action!=Action::TrainWorkshopTrade ||
+                   (cmd->second.action!=Action::TrainWorkshopTrade &&
+                     cmd->second.action!=Action::MentorWorkshopTrade) ||
                    (cmd->second.thrust_x!=1 && cmd->second.thrust_x!=2) ||
                    cmd->second.amount<1 || cmd->second.amount>1000000 ||
                    cmd->second.issuer==Simulation::kServerAuthority ||
@@ -4748,7 +4749,8 @@ public:
             else if (cmd->second.action==Action::ConstructWorkshopFinisher) ++expected_workshop_finisher_builds;
             else if (cmd->second.action==Action::TransferWorkshopFinalOutput) ++expected_workshop_final_outputs;
             else if (cmd->second.action==Action::TransferWorkshopStack) ++expected_workshop_stacks;
-            else if (cmd->second.action==Action::TrainWorkshopTrade) ++expected_workshop_practice;
+            else if (cmd->second.action==Action::TrainWorkshopTrade ||
+                     cmd->second.action==Action::MentorWorkshopTrade) ++expected_workshop_practice;
             else if (cmd->second.action==Action::HostEscrowConstructedStock) ++expected_world_escrows;
             else if (cmd->second.action==Action::HostReturnConstructedStock) ++expected_world_returns;
             else if (cmd->second.action==Action::ConstructStorage) ++expected_storage_builds;
@@ -6895,6 +6897,7 @@ public:
                          cmd->second.action!=Action::TransferClinicStock &&
                          cmd->second.action!=Action::ConstructWorkshop &&
                          cmd->second.action!=Action::TrainWorkshopTrade &&
+                         cmd->second.action!=Action::MentorWorkshopTrade &&
                          cmd->second.action!=Action::TransferWorkshopFeed &&
                          cmd->second.action!=Action::TransferWorkshopOutput &&
                          cmd->second.action!=Action::ConstructWorkshopFinisher &&
@@ -7013,7 +7016,8 @@ public:
                             std::to_string(c.amount>0?c.target:c.actor)+":"+kind[c.thrust_x]);
                         ledger.i64(6,ev.transferred);
                         ledger.text(7,"workshop_stack_transfer_kg");
-                    } else if(cmd->second.action==Action::TrainWorkshopTrade){
+                    } else if(cmd->second.action==Action::TrainWorkshopTrade ||
+                              cmd->second.action==Action::MentorWorkshopTrade){
                         const auto& c=cmd->second;
                         if(ev.transferred!=1 || c.amount<1 || c.amount>1000000 ||
                            (c.thrust_x!=1 && c.thrust_x!=2) ||
