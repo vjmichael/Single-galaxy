@@ -272,6 +272,9 @@ inline std::optional<PlanetarySiteAudit> audit_planetary_surface(
     a.housing_order_id=s.housing_order_id;
     a.housing_stalled_ticks=s.housing_stalled_ticks;
     a.housing_completed_tick=s.housing_completed_tick;
+    a.housing_paused=s.housing_paused;
+    a.housing_supported_cycles=s.housing_supported_cycles;
+    a.housing_shortages=s.housing_shortages;
     a.permanent_housing_installed=s.housing_phase==2;
     a.support_healthy_now=s.food_kg>=2 && s.water_kg>=2 && s.oxygen_kg>=2;
     for(const auto npc_id:s.delegated_npcs){
