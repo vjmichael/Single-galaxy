@@ -11,6 +11,8 @@ on:
       - 'tests/WO2_ProfessionCatalogTests.js'
       - 'tests/WO2IndustryWorkforceTests.cpp'
       - 'src/Simulation.cpp'
+      - 'include/galaxy/Simulation.hpp'
+      - 'src/Persistence.cpp'
       - 'CMakeLists.txt'
       - '.github/workflows/wo2-npc-industry-work.yml'
   workflow_dispatch:
@@ -63,5 +65,5 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Original Windows configure failed' }
       - name: Build original source and named-work tests
         run: cmake --build build --config Release --parallel 2 --target galaxy_wo2_industry_workforce_tests galaxy_industry01_native_tests galaxy_econ02b1a_outpost_tests galaxy_econ02b1b_connected_tests galaxy_econ02b0_quantified_tests galaxy_work01b2_native_capacity_tests v59_medical_care v59_medical_recovery
-      - name: Real original-world no-double-duty, material, authority and restart gates
+      - name: WO2 original NPC skills, training provenance, no-double-duty, material and SQLite restart
         run: ctest --test-dir build -C Release --output-on-failure -R "^galaxy_(wo2_industry_workforce|industry01_native_binding|econ02b1a_outpost_tests|econ02b1b_connected_tests|econ02b0_quantified_tests|work01b2_native_capacity)$|^v59_medical_(care|recovery)$"
