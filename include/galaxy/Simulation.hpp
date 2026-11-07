@@ -112,7 +112,7 @@ struct PhysicalCelestialBody {
 };
 
 enum class EntityType { Ship, Asteroid, Station, Stargate, Wreck };
-enum class Action { Thrust, Mine, StartMining, StopMining, RequestUndock, RequestDock, UnloadOre, LoadOre, SellOre, RequestJump, SetGatePairOnline, SetGateStaff, DeliverGateSpares, RefineOre, FabricateModule, ConstructOutpost, RefineMineral, FabricateMaterialModule, PlantCrops, HarvestCrops, RecycleWater, RecycleCompost, ProduceOxygen, LoadLifeWater, ConstructFarm, TransferFarmStock, AssignFarmWorkers, ConstructHabitat, TransferHabitatStock, AssignHabitatResidents, ConstructUtility, RepairUtility, TransferUtilitySpares, AssignUtilityTechnicians, SetUtilityMaintenance, ConstructCommunity, TransferCommunityStock, AssignCommunityStaff, ConstructClinic, TransferClinicStock, AssignClinicStaff, ConstructReclaimer, ConstructWaterworks, TransferWaterworksFeed, SetPolicyAssurance, AssignPolicyInspectors, AssignFarmMentor, HostDestroyShip, HostCrewLoss, ConstructWorkshop, TransferWorkshopFeed, AssignWorkshopOperator, TransferWorkshopOutput, ConstructWorkshopFinisher, AssignWorkshopFinisher, TransferWorkshopFinalOutput, TransferWorkshopStack, ConstructStorage, TransferStorageStack, ConstructStorageNode, TransferStorageNodeStack, ConstructStorageLink, ConstructWorkshopLink, PlaceFactoryEquipment, PlaceConveyorCell, CompleteConveyorRoute, HostEmbarkPassengers, HostDisembarkPassengers, HostStrandFerry, HostResumeFerry, HostEvacuatePassengers, HostDestroyPassengerFerry, HostResolveMixedFerryLoss, HostTrainMedic, HostTriageRescued, HostTreatInjuries, HostScheduleMedicShift, HostLoadMedicalKit, HostMobileStabilize, HostSettleMigrant, HostSplitEvacuatePassengers, HostEscrowConstructedStock, HostReturnConstructedStock, HostTransferConsignedStock, HostColonyDeparture, HostRegisterDependent, FireTrainingWeapon, SalvageWreck, SurveyLocal, ConfigureExplorationScanner, DeploySurveyProbe, ScanSurveyProbe, RecoverSurveyProbe, LaunchGeologicalDrone, FocusSurveyProbe, CancelSurveyFocus, SetHardpointPower, ConfigureCyberModule, SetCyberIsolation, HackConfuse, FireShipWeapon };
+enum class Action { Thrust, Mine, StartMining, StopMining, RequestUndock, RequestDock, UnloadOre, LoadOre, SellOre, RequestJump, SetGatePairOnline, SetGateStaff, DeliverGateSpares, RefineOre, FabricateModule, ConstructOutpost, RefineMineral, FabricateMaterialModule, PlantCrops, HarvestCrops, RecycleWater, RecycleCompost, ProduceOxygen, LoadLifeWater, ConstructFarm, TransferFarmStock, AssignFarmWorkers, ConstructHabitat, TransferHabitatStock, AssignHabitatResidents, ConstructUtility, RepairUtility, TransferUtilitySpares, AssignUtilityTechnicians, SetUtilityMaintenance, ConstructCommunity, TransferCommunityStock, AssignCommunityStaff, ConstructClinic, TransferClinicStock, AssignClinicStaff, ConstructReclaimer, ConstructWaterworks, TransferWaterworksFeed, SetPolicyAssurance, AssignPolicyInspectors, AssignFarmMentor, HostDestroyShip, HostCrewLoss, ConstructWorkshop, TransferWorkshopFeed, AssignWorkshopOperator, TransferWorkshopOutput, ConstructWorkshopFinisher, AssignWorkshopFinisher, TransferWorkshopFinalOutput, TransferWorkshopStack, ConstructStorage, TransferStorageStack, ConstructStorageNode, TransferStorageNodeStack, ConstructStorageLink, ConstructWorkshopLink, PlaceFactoryEquipment, PlaceConveyorCell, CompleteConveyorRoute, HostEmbarkPassengers, HostDisembarkPassengers, HostStrandFerry, HostResumeFerry, HostEvacuatePassengers, HostDestroyPassengerFerry, HostResolveMixedFerryLoss, HostTrainMedic, HostTriageRescued, HostTreatInjuries, HostScheduleMedicShift, HostLoadMedicalKit, HostMobileStabilize, HostSettleMigrant, HostSplitEvacuatePassengers, HostEscrowConstructedStock, HostReturnConstructedStock, HostTransferConsignedStock, HostColonyDeparture, HostRegisterDependent, FireTrainingWeapon, SalvageWreck, SurveyLocal, ConfigureExplorationScanner, DeploySurveyProbe, ScanSurveyProbe, RecoverSurveyProbe, LaunchGeologicalDrone, FocusSurveyProbe, CancelSurveyFocus, SetHardpointPower, ConfigureCyberModule, SetCyberIsolation, HackConfuse, FireShipWeapon, TrainWorkshopTrade };
 enum class Outcome { Applied, InvalidActor, Unauthorized, InvalidTarget, OutOfRange, InvalidArgument, NoResources, CargoFull, NotMining, NotInSpace, NotDocked, InTransition, ShipMoving, HangarFull, InsufficientFunds, WrongSystem, GateOffline, NotColonyShip, InsufficientCrew, ModuleOffline, CooldownActive, AttackResisted };
 enum class ActivityKind { AsteroidDespawned, AutoMiningTransfer, MiningStopped, Undocked, Docked, JumpCompleted, ShipDestroyed, NpcLost, AutoStorageTransfer, NpcRendezvous, PlayerRescued };
 enum class DockState { InSpace, Docked, Undocking, Docking };
@@ -254,6 +254,16 @@ struct WaterworksFacility {
 // not 24 expensive autonomous decision processes. Existing headcount and mass
 // accounting remain authoritative until the migration is completed.
 enum class NpcRole : int { Ship=0, Farm=1, Habitat=2, PlanetarySurface=3 };
+// WO2-H: immutable original-command-linked training evidence belongs to the
+// EXISTING finite NPC identity, never to a shadow profession/worker registry.
+// Only the two installed native industrial trades can currently grant credit.
+// 1=cut, 2=shape; future professions require physical facilities first.
+enum class WorkshopTrade : std::uint8_t { Cut=1, Shape=2 };
+struct NpcTradeTraining {
+    std::uint64_t command_id=0, tick=0;
+    EntityId workshop_site=0;
+    WorkshopTrade trade=WorkshopTrade::Cut;
+};
 struct NpcRecord {
     std::uint64_t id=0;
     EntityId home_ship=0, location=0;
@@ -268,6 +278,9 @@ struct NpcRecord {
     // authority and must not be silently treated as planetary residency.
     transport::LocationKind residence_kind=transport::LocationKind::ColonyShip;
     EntityId residence_id=0;
+    // Maximum three receipt-backed credits per installed native trade.
+    // Transfer, relocation and death preserve the identity's training history.
+    std::vector<NpcTradeTraining> industrial_training{};
     constexpr transport::Endpoint legal_residence() const noexcept {
         return {residence_kind,residence_id?residence_id:home_ship};
     }
@@ -957,6 +970,16 @@ public:
     // No NPC is added: counts at all sites must match the existing ledger.
     void enable_individual_workforce();
     const std::map<std::uint64_t,NpcRecord>& npc_records() const {return npcs_;}
+    std::uint32_t workshop_training_units(std::uint64_t npc,WorkshopTrade trade) const {
+        const auto it=npcs_.find(npc);
+        if(it==npcs_.end())return 0;
+        return static_cast<std::uint32_t>(std::count_if(
+            it->second.industrial_training.begin(),it->second.industrial_training.end(),
+            [trade](const NpcTradeTraining& receipt){return receipt.trade==trade;}));
+    }
+    bool workshop_trade_certified(std::uint64_t npc,WorkshopTrade trade) const {
+        return workshop_training_units(npc,trade)>=3;
+    }
     const std::map<std::uint64_t,NpcCasualty>& npc_casualties() const {return casualties_;}
     const std::map<std::uint64_t,MedicalCase>& medical_cases() const {return medical_cases_;}
     const std::map<std::uint64_t,MedicTraining>& named_medics() const {return named_medics_;}
