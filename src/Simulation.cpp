@@ -10738,6 +10738,25 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                                             static_cast<NpcRole>(role),n.farm_xp,n.mentor_id,n.transport_id,n.assigned_site,
                                             n.residence_kind,n.residence_id}).second)
                 throw std::runtime_error("snapshot: invalid NPC identity");
+        } else if(f[0]=="npctraining" && result.snapshot_version_>=105){
+            require_fields(f,6);
+            const auto id=u64(f[1]);
+            const auto command=u64(f[2]),when=u64(f[3]),site=u64(f[4]);
+            const auto trade=u64(f[5]);
+            if(!id || !command || !when || when>result.tick_ ||
+               !site || (trade!=1 && trade!=2))
+                throw std::runtime_error("snapshot: invalid industrial training record");
+            NpcRecord* person=nullptr;
+            auto live=result.npcs_.find(id);
+            if(live!=result.npcs_.end())person=&live->second;
+            else{
+                auto dead=result.casualties_.find(id);
+                if(dead!=result.casualties_.end())person=&dead->second.identity;
+            }
+            if(!person || person->industrial_training.size()>=6)
+                throw std::runtime_error("snapshot: orphan or excessive training proof");
+            person->industrial_training.push_back(
+                NpcTradeTraining{command,when,site,static_cast<WorkshopTrade>(trade)});
         } else if(f[0]=="teamxp" && result.snapshot_version_>=20){
             require_fields(f,3);
             const auto site=u64(f[1]),xp=u64(f[2]);
@@ -11042,6 +11061,14 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                     (result.snapshot_version_<39 || !count || c.transport_id!=c.target || c.amount)) ))
                     throw std::runtime_error("snapshot: invalid pending medical action");
             }
+            if(c.action==Action::TrainWorkshopTrade &&
+               (result.snapshot_version_<105 || !c.actor || !c.target ||
+                !c.issuer || c.issuer==Simulation::kServerAuthority ||
+                c.amount<1 || c.amount>1000000 ||
+                (c.thrust_x!=1 && c.thrust_x!=2) || c.thrust_y ||
+                c.transport_id || !c.passenger_ids.empty() ||
+                c.secondary_receiver || c.secondary_transport))
+                throw std::runtime_error("snapshot: invalid queued industrial training");
             if(c.action==Action::HostRegisterDependent &&
                (result.snapshot_version_<59 || c.issuer!=Simulation::kServerAuthority ||
                 c.actor!=c.target || c.transport_id<(1ULL<<62) ||
@@ -11270,6 +11297,29 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             a.result = static_cast<Outcome>(outcome);
             result.activity_events_.push_back(a);
         } else throw std::runtime_error("snapshot: unknown record");
+    }
+    // WO2-H: each industrial certificate derives from three distinct Applied
+    // original-world commands, never invented qualifications or source totals.
+    if(result.snapshot_version_>=105){
+        std::set<std::uint64_t> credited_commands;
+        const auto verify=[&](const NpcRecord& n){
+            std::array<unsigned,2> per_trade{{0,0}};
+            for(const auto& t:n.industrial_training){
+                const auto code=static_cast<unsigned>(t.trade);
+                if(code<1 || code>2 || !t.command_id || !t.tick ||
+                   t.tick>result.tick_ || !t.workshop_site ||
+                   !credited_commands.insert(t.command_id).second ||
+                   ++per_trade[code-1]>3 ||
+                   !result.submitted_ids_.count(t.command_id) ||
+                   !std::any_of(result.events_.begin(),result.events_.end(),
+                     [&](const Event& e){return e.command_id==t.command_id &&
+                         e.tick==t.tick && e.result==Outcome::Applied &&
+                         e.transferred==1;}))
+                    throw std::runtime_error("snapshot: invalid industrial training provenance");
+            }
+        };
+        for(const auto& [id,n]:result.npcs_){(void)id;verify(n);}
+        for(const auto& [id,dead]:result.casualties_){(void)id;verify(dead.identity);}
     }
     // v32 could persist active custody without recording the original manifest.
     // Never synthesize a voyage from incomplete evidence: its origin and
