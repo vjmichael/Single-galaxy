@@ -367,6 +367,56 @@ inline std::optional<Command> approved_original_workshop_shift(
     c.thrust_y=static_cast<int>(end_tick-start_tick);
     return c;
 }
+// WO2-I: atomic relief changes a named worker mid-shift without cancelling
+// and re-creating the work window or touching physical material/WIP.
+// amount=original start command ID, thrust_y=new existing resident NPC ID.
+// Owner authentication/confirmation happens in the host; the committed
+// original-world tick independently rechecks every custody/duty gate.
+inline std::optional<Command> approved_original_workshop_shift_relief(
+    const Simulation& world,PlayerId owner,EntityId home_ship,EntityId site,
+    bool finisher,std::uint64_t original_shift_command,
+    std::uint64_t replacement,std::uint64_t relief_command,
+    bool approved_by_owner) {
+    if(!approved_by_owner || !owner || !relief_command ||
+       world.has_command_id(relief_command) ||
+       !original_shift_command ||
+       original_shift_command>static_cast<std::uint64_t>(
+            std::numeric_limits<std::int64_t>::max()) ||
+       !replacement || replacement>1000000 ||
+       world.tick()==std::numeric_limits<std::uint64_t>::max())
+        return std::nullopt;
+    const auto* shop=world.workshop(site);
+    const auto rows=plan_original_workshop(world,owner,home_ship,site);
+    const auto slot=static_cast<std::size_t>(finisher?1:0);
+    if(!shop || rows[slot].gate!=StaffGate::AlreadyStaffed)
+        return std::nullopt;
+    const auto& shift=shop->shifts[slot];
+    if(shift.command_id!=original_shift_command ||
+       !shift.in_effect(world.tick()+1) || shift.worker==replacement ||
+       (finisher?shop->finisher_npc_id:shop->operator_npc_id)!=shift.worker)
+        return std::nullopt;
+    const auto person=world.npc_records().find(replacement);
+    if(person==world.npc_records().end() ||
+       person->second.home_ship!=home_ship ||
+       person->second.location!=site ||
+       person->second.assigned_site!=site ||
+       person->second.role!=NpcRole::Habitat ||
+       person->second.transport_id || person->second.mentor_id ||
+       !world.npc_available_for_duty(replacement) ||
+       already_on_named_duty(world,replacement,world.tick()+1) ||
+       medical_shift_overlaps(world,replacement,world.tick()+1,shift.end_tick))
+        return std::nullopt;
+    Command c{};
+    c.id=relief_command;c.sequence=relief_command;
+    c.execute_tick=world.tick()+1;
+    c.issuer=owner;c.actor=home_ship;c.target=site;
+    c.action=Action::RelieveWorkshopShift;
+    c.amount=static_cast<std::int64_t>(original_shift_command);
+    c.thrust_x=finisher?2:1;
+    c.thrust_y=static_cast<int>(replacement);
+    return c;
+}
+
 // An owner can cancel an active shift OR an existing original future
 // command with enough lead time for the cancellation to commit first.
 // A canceled future order receives its own rejected effect on the due tick.
