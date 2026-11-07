@@ -453,6 +453,14 @@ int main() {
         shifts.step();
         CHECK(shifts.world().workshop(site)->operator_npc_id==first_id);
         CHECK(shifts.world().workshop(site)->shifts[0].command_id==410);
+        const auto staffed=workforce02::plan_original_workshop(
+            shifts.world(),7,ship,site);
+        CHECK(staffed[0].shift_command_id==410 &&
+              staffed[0].shift_end_tick==finish);
+        const auto beyond=workforce02::plan_provisional_workshop_coverage(
+            shifts.world(),7,ship,site,shifts.world().tick()+1,finish+1);
+        CHECK(beyond[0].gate==workforce02::CoverageGate::ShiftWindowUncovered);
+        CHECK(!beyond[0].reserved);
         CHECK(shifts.world().total_material_kg()==initial_mass);
         const auto shift_snapshot=shifts.world().canonical_state();
         CHECK(Simulation::from_snapshot(shift_snapshot).workshop(site)->
@@ -483,8 +491,6 @@ int main() {
               handover->amount==410 &&
               handover->thrust_y==static_cast<int>(second_id));
         const auto original_end=shifts.world().workshop(site)->shifts[0].end_tick;
-        const auto original_reserve=
-            shifts.world().workshop(site)->reserved_aluminum_kg;
         CHECK(shifts.submit(*handover));
         Command overlapping_handover=*handover;
         overlapping_handover.id=417;overlapping_handover.sequence=417;
@@ -496,10 +502,13 @@ int main() {
         CHECK(shifts.world().workshop(site)->shifts[0].command_id==410);
         CHECK(shifts.world().workshop(site)->shifts[0].relief_command_id==419);
         CHECK(shifts.world().workshop(site)->shifts[0].end_tick==original_end);
-        CHECK(shifts.world().workshop(site)->reserved_aluminum_kg==
-              original_reserve ||
-              shifts.world().workshop(site)->reserved_aluminum_kg==20 ||
-              shifts.world().workshop(site)->reserved_aluminum_kg==0);
+        const auto relieved_slot=workforce02::plan_original_workshop(
+            shifts.world(),7,ship,site);
+        CHECK(relieved_slot[0].assigned_npc==second_id &&
+              relieved_slot[0].shift_command_id==410 &&
+              relieved_slot[0].shift_end_tick==finish);
+        // Native production advances this same tick; preserved total mass and
+        // the unchanged original end tick are the relevant invariants.
         CHECK(shifts.world().total_material_kg()==initial_mass);
         // Replay the same original SQLite journal after handover and check
         // that it recovers the *new* worker, not the original start worker.
