@@ -413,8 +413,10 @@ bool Simulation::valid_position(Vector2 p) const {
 EntityId Simulation::add_entity(Entity entity) {
     if (!valid_position(entity.position)) throw std::invalid_argument("entity out of system bounds");
     if (next_entity_id_ == std::numeric_limits<EntityId>::max()) throw std::overflow_error("entity IDs exhausted");
-    entity.id = next_entity_id_++;
-    entity.system_id = system_id_;
+    entity.id = next_entity_id_;
+    if(!entity.system_id)entity.system_id=system_id_;
+    if(!systems_.count(entity.system_id))
+        throw std::invalid_argument("physical entity genesis unknown star system");
     if(snapshot_version_>=120){
         const auto registered=galactic_system_origins_.find(entity.system_id);
         if(registered==galactic_system_origins_.end())
@@ -427,6 +429,7 @@ EntityId Simulation::add_entity(Entity entity) {
     }
     const auto id = entity.id;
     entities_.emplace(id, entity);
+    ++next_entity_id_;
     if(snapshot_version_>=71 && entity.type==EntityType::Ship)
         ship_frames_.emplace(id,ShipFrameCustody{entity.system_id,0,{}});
     return id;
@@ -1085,36 +1088,26 @@ void Simulation::add_system(std::uint32_t system) {
 EntityId Simulation::add_station_in_system(std::uint32_t system, Vector2 position) {
     if (tick_ || !systems_.count(system)) throw std::invalid_argument("unknown or locked system");
     Entity entity; entity.type=EntityType::Station;entity.position=position;
+    entity.system_id=system;
     if(snapshot_version_>=120){
         const auto origin=galactic_system_origins_.find(system);
         if(origin==galactic_system_origins_.end())
             throw std::runtime_error("real new system has no registered galactic origin");
     }
-    const auto id=add_entity(entity);entities_.at(id).system_id=system;
-    if(snapshot_version_>=120){
-        const auto exact=galactic::advance(galactic_system_origins_.at(system),
-            {position.x,position.y,0});
-        if(!exact)throw std::overflow_error("new-system entity sector overflow");
-        entities_.at(id).physical_galactic=*exact;
-    }
+    const auto id=add_entity(entity);
     snapshot_version_=std::max(snapshot_version_,5);return id;
 }
 EntityId Simulation::add_asteroid_in_system(std::uint32_t system, Vector2 position, std::int64_t ore) {
     if (tick_ || !systems_.count(system) || ore<=0 || ore>1000000000LL)
         throw std::invalid_argument("unknown system or ore");
     Entity entity;entity.type=EntityType::Asteroid;entity.position=position;entity.ore=ore;
+    entity.system_id=system;
     if(snapshot_version_>=120){
         const auto origin=galactic_system_origins_.find(system);
         if(origin==galactic_system_origins_.end())
             throw std::runtime_error("real new system has no registered galactic origin");
     }
-    const auto id=add_entity(entity);entities_.at(id).system_id=system;
-    if(snapshot_version_>=120){
-        const auto exact=galactic::advance(galactic_system_origins_.at(system),
-            {position.x,position.y,0});
-        if(!exact)throw std::overflow_error("new-system entity sector overflow");
-        entities_.at(id).physical_galactic=*exact;
-    }
+    const auto id=add_entity(entity);
     snapshot_version_=std::max(snapshot_version_,5);return id;
 }
 EntityId Simulation::add_gate(std::uint32_t origin, Vector2 position,
@@ -1126,17 +1119,12 @@ EntityId Simulation::add_gate(std::uint32_t origin, Vector2 position,
         throw std::invalid_argument("invalid stargate link");
     Entity gate;gate.type=EntityType::Stargate;gate.position=position;
     gate.gate_destination=destination;gate.gate_arrival=arrival;gate.gate_online=true;
+    gate.system_id=origin;
     // A gate belongs to the immutable physical origin of ITS system, not
     // necessarily the original world's default system (system_id_).
     if(snapshot_version_>=120 && !galactic_system_origins_.count(origin))
         throw std::runtime_error("new gate system has no original star origin");
-    const auto id=add_entity(gate);entities_.at(id).system_id=origin;
-    if(snapshot_version_>=120){
-        const auto exact=galactic::advance(galactic_system_origins_.at(origin),
-            {position.x,position.y,0});
-        if(!exact)throw std::overflow_error("new gate galactic sector exhausted");
-        entities_.at(id).physical_galactic=*exact;
-    }
+    const auto id=add_entity(gate);
     snapshot_version_=std::max(snapshot_version_,5);return id;
 }
 void Simulation::configure_gate_operations(EntityId first, EntityId second,
@@ -1186,6 +1174,7 @@ EntityId Simulation::spawn_ship_docked(PlayerId owner, EntityId station_id,
     entity.hull=100;entity.weapon_charges=12;
     entity.dock_state = DockState::Docked;
     entity.dock_station = station_id;
+    entity.system_id=station->system_id;
     const auto ship = add_entity(entity);
     if (existing == hangars_.end()) hangars_.emplace(key, StationHangar{0, hangar_capacity});
     wallets_.emplace(owner,0);
@@ -5856,6 +5845,7 @@ Event Simulation::execute(const Command& c) {
                 industry.modules-=4;
                 Entity station;station.type=EntityType::Station;
                 station.owner_id=actor.owner_id;station.position=site;
+                station.system_id=actor.system_id;
                 // A newly constructed outpost occupies the precise original
                 // ship's actual 3D/galactic coordinates, never an unrelated
                 // default system and never a remote finite XY coincidence.
@@ -5866,7 +5856,6 @@ Event Simulation::execute(const Command& c) {
                     std::optional<galactic::Point>(actor.physical_galactic):
                     std::nullopt;
                 const auto id=add_entity(station);
-                entities_.at(id).system_id=actor.system_id;
                 if(ship_absolute){
                     const auto dx=static_cast<long double>(site.x)-
                                   static_cast<long double>(actor.position.x);
@@ -9763,8 +9752,8 @@ void Simulation::process_freighter_builds() {
         hull.manufactured_order_id=order.order_id;
         const auto actual_system=ship->second.system_id;
         const auto custody=frame->second;
+        hull.system_id=actual_system;
         const EntityId manufactured=add_entity(hull);
-        entities_.at(manufactured).system_id=actual_system;
         ship_frames_[manufactured]=custody;
         if(snapshot_version_>=120){
             // The freighter is physically constructed alongside its real
