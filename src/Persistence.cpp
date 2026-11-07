@@ -9485,6 +9485,28 @@ bool PersistentWorld::handover_planetary_production_build(PlayerId owner,
     return true;
 }
 
+// Trusted single-writer import of historical legal-only planetary addresses.
+// A failed copy/SQLite commit never changes the live world.
+bool PersistentWorld::host_import_legacy_planetary_residences(
+        PlayerId host_principal,std::uint64_t request_id,FailPoint fail) {
+    if(host_principal!=Simulation::kServerAuthority)return false;
+    auto next=world_;
+    if(!next.host_import_legacy_planetary_residences(
+        host_principal,request_id))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 historical residence import altered matter");
+    // The new canonical v115 record must already be independently readable
+    // before attempting to persist it. No fall-through old-address rewrite.
+    if(Simulation::from_snapshot(next.canonical_state()).state_hash()!=
+       next.state_hash())
+        throw std::logic_error("WO3 historical residence import cannot restore");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
 bool PersistentWorld::settle_planetary_founder(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,std::uint64_t npc_id,std::uint64_t request_id,
         bool voluntary_consent_attested,FailPoint fail) {
