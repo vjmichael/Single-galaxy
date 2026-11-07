@@ -1,4 +1,5 @@
 #include "galaxy/Navigation.hpp"
+#include "galaxy/GalacticCoordinates.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
@@ -43,6 +44,50 @@ NavigationDecision assist_to_object(const Entity& ship,const Entity& target,
        target.id==ship.id || ship.system_id!=target.system_id ||
        stand_off_mm<0 || stand_off_mm>Simulation::kWorldBoundMm)
         throw std::invalid_argument("invalid physical object approach");
+    if(ship.physical_galactic_authoritative ||
+       target.physical_galactic_authoritative){
+        if(!ship.physical_galactic_authoritative ||
+           !target.physical_galactic_authoritative ||
+           !ship.physical_galactic.valid() ||
+           !target.physical_galactic.valid())
+            throw std::invalid_argument("incomplete high-order navigation custody");
+        // Every decision is made from the ORIGINAL galaxy sectors, never
+        // from the potentially saturated compatibility local position.
+        const auto from=ship.physical_galactic;
+        const auto to=target.physical_galactic;
+        const auto relative=[](galactic::Axis dst,galactic::Axis src){
+            const auto local=galactic::nearby_delta(dst,src);
+            if(local)return *local;
+            return dst.sector>src.sector?
+                std::int64_t{1000000000000000LL}:
+                std::int64_t{-1000000000000000LL};
+        };
+        auto dx=relative(to.x,from.x),dy=relative(to.y,from.y),
+             dz=relative(to.z,from.z);
+        const bool far_x=!galactic::nearby_delta(to.x,from.x);
+        const bool far_y=!galactic::nearby_delta(to.y,from.y);
+        const bool far_z=!galactic::nearby_delta(to.z,from.z);
+        NavigationDecision next{};
+        next.waypoint=target.position;
+        next.waypoint_z_mm=target.position_z_mm;
+        if(gap(dx,0)>750 || dy==0)
+            dx-=dx>0?stand_off_mm:-stand_off_mm;
+        else
+            dy-=dy>0?stand_off_mm:-stand_off_mm;
+        const auto vx=ship.velocity.x-target.velocity.x;
+        const auto vy=ship.velocity.y-target.velocity.y;
+        const auto vz=ship.velocity_z_mm_per_tick-
+                      target.velocity_z_mm_per_tick;
+        next.arrived=!far_x && !far_y && !far_z &&
+            gap(dx,0)<=250 && gap(dy,0)<=250 && gap(dz,0)<=250 &&
+            !vx && !vy && !vz;
+        if(!next.arrived){
+            next.thrust_x=axis(0,vx,dx);
+            next.thrust_y=axis(0,vy,dy);
+            next.thrust_z=axis(0,vz,dz);
+        }
+        return next;
+    }
     // Original object and ship are both authoritative Simulation entities.
     // The caller must still prove same local frame and pilot authorization.
     NavigationDecision decision;
