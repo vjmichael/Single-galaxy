@@ -31,7 +31,7 @@ inline bool valid_good(const Good& g) noexcept {
     case GoodKind::Npc: return g.amount==1 && g.mass_kg==0;
     case GoodKind::Resource:
         return g.id>=static_cast<std::uint8_t>(ResourceGood::Water) &&
-               g.id<=static_cast<std::uint8_t>(ResourceGood::Nutrients) &&
+               g.id<=static_cast<std::uint8_t>(ResourceGood::Oxygen) &&
                g.mass_kg==g.amount;
     case GoodKind::Equipment:
         // Generic future equipment support requires the host to supply an
