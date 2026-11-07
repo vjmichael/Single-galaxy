@@ -2,6 +2,7 @@
 #include "galaxy/ShipmentManifest.hpp"
 #include "galaxy/RegionalShipmentReconciliation.hpp"
 #include "galaxy/CanonicalShippingHost.hpp"
+#include "galaxy/WO5ManufacturedFreight.hpp"
 #include "galaxy/ShipmentStatusView.hpp"
 #include "galaxy/ClientContract.hpp"
 #include "galaxy/NpcAppearanceGenome.hpp"
@@ -214,7 +215,67 @@ int main(){
   active=7;
   reject([&]{auto spoof=frames;spoof.factory_return_command=9106;production_host.book_factory_goods(spoof);},
     "production host accepted the wrong finished material provenance");
-  game_host.book(frames,7);game_host.book(panels,7);
+  // WO5-C: one owner-9 recipient need per finished material. These are
+  // WO4 typed resource requirements, NOT one-owner remote freight grants.
+  const economy04::MaterialNeed frames_need{
+      destination,economy04::NativeMaterial::Frames,
+      economy04::Priority::Maintenance,1};
+  const economy04::MaterialNeed panels_need{
+      destination,economy04::NativeMaterial::Panels,
+      economy04::Priority::Production,1};
+  const auto source_offer=logistics05::inspect_manufactured_consignment(
+      w.world(),frames_need,9,true,home,carrier,receiver,site,7,8,
+      frames.factory_return_command,frames.load_command,
+      frames.unload_command,frames.id,frames.quantity_kg);
+  const auto panels_offer=logistics05::inspect_manufactured_consignment(
+      w.world(),panels_need,9,true,home,carrier,receiver,site,7,8,
+      panels.factory_return_command,panels.load_command,
+      panels.unload_command,panels.id,panels.quantity_kg);
+  ck(source_offer && panels_offer && source_offer->native.require_dispatch &&
+     panels_offer->native.require_dispatch &&
+     source_offer->observed_state_hash==w.world().state_hash() &&
+     source_offer->native.item_index==2 && panels_offer->native.item_index==1,
+     "WO5-C failed to match genuine recipient needs to physical finished goods");
+  auto unshippable=frames_need;
+  unshippable.material=economy04::NativeMaterial::Aluminum;
+  ck(!logistics05::inspect_manufactured_consignment(
+      w.world(),unshippable,9,true,home,carrier,receiver,site,7,8,
+      frames.factory_return_command,9507,9508,"wo5-raw-not-finished",1),
+     "WO5 admitted an unsupported generic material");
+  ck(!logistics05::inspect_manufactured_consignment(
+      w.world(),frames_need,9,false,home,carrier,receiver,site,7,8,
+      frames.factory_return_command,9507,9508,"wo5-unverified-receiver",1),
+     "WO5 accepted nonauthenticated receiver declaration");
+  ck(!logistics05::inspect_manufactured_consignment(
+      w.world(),frames_need,9,true,home,home,receiver,site,7,7,
+      frames.factory_return_command,9507,9508,"wo5-false-owner",1),
+     "WO5 collapsed source and carrier identity");
+  ck(!logistics05::inspect_manufactured_consignment(
+      w.world(),frames_need,9,true,home,carrier,receiver,site,7,8,
+      frames.factory_return_command,9507,9508,"wo5-over-demand",2),
+     "WO5 promised more finished stock than recipient requested");
+  // A copied original-world hash is insufficient proof of a factory lot:
+  // the original ProductionShippingHost validates immutable SQLite returns.
+  auto bad_return=*source_offer;
+  bad_return.native.id="wo5-bad-factory-proof";
+  bad_return.native.factory_return_command=panels.factory_return_command;
+  bad_return.native.load_command=9507;bad_return.native.unload_command=9508;
+  reject([&]{(void)logistics05::book_manufactured_consignment(
+      game_host,w,bad_return,7,true);},
+      "WO5 book accepted panels factory return for frames");
+  ck(!logistics05::book_manufactured_consignment(
+      game_host,w,*source_offer,7,false),
+      "WO5 booked with no authenticated recipient demand");
+  ck(logistics05::book_manufactured_consignment(
+      game_host,w,*source_offer,7,true),
+      "WO5 failed original authenticated frames source booking");
+  ck(logistics05::book_manufactured_consignment(
+      game_host,w,*panels_offer,7,true),
+      "WO5 failed original authenticated panels source booking");
+  ck(w.world().storage(site)->goods_kg.at("aluminum_frames")==1 &&
+     w.world().storage(site)->goods_kg.at("aluminum_panels")==1 &&
+     w.world().ship_inventory_snapshot(carrier).amount("good/aluminum_frames")==0,
+     "WO5 book falsely moved cargo without physical dispatch");
   if(const char* fixture=std::getenv("SG_SHIPPING_PENDING_FIXTURE")){
     sqlite3 *from=nullptr,*to=nullptr;
     ck(sqlite3_open_v2(path.c_str(),&from,SQLITE_OPEN_READONLY,nullptr)==SQLITE_OK,
