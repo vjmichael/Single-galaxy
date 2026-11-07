@@ -1107,6 +1107,10 @@ public:
     const std::map<EntityId, BuiltOutpost>& built_outposts() const {return built_outposts_;}
     const OutpostWorkshop* workshop(EntityId site) const;
     const std::map<EntityId,OutpostWorkshop>& workshops() const {return workshops_;}
+    // Exact original accepted but not-yet-due shift order lookup, for owner
+    // approval and cancellation. Never a second scheduling queue.
+    bool pending_workshop_shift(EntityId site,bool finisher,
+                                std::uint64_t command_id) const;
     EntityId add_asteroid(Vector2 position, std::int64_t ore);
     // Genesis-only, massive realistic-scale asteroid; respects world conservation.
     EntityId add_geological_asteroid(Vector2 position, AsteroidClass taxonomy,
