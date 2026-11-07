@@ -233,6 +233,65 @@ int main() {
     try{(void)Simulation::from_snapshot(corrupted);}
     catch(const std::exception&){denied=true;}
     CHECK(denied);
+    // WO3-E: a third original adult makes a real passenger trip. Arrival
+    // proof, capacity and voluntary owner attestations authorize residency,
+    // while ordinary shuttle reboard may not circumvent legal departure.
+    CHECK(roster.size()>=4 && roster[3]!=roster[2]);
+    CHECK(w.launch_planetary_shuttle(7,ship,key,81004,true));
+    w.steps(3);
+    CHECK(w.book_planetary_shuttle_passenger(7,ship,key,roster[3],true));
+    for(const auto cargo:{ShuttleCargo::Water,ShuttleCargo::Food,
+                         ShuttleCargo::Oxygen})
+        CHECK(w.load_planetary_shuttle(7,ship,key,cargo,20));
+    CHECK(w.launch_planetary_shuttle(7,ship,key,81005,false));
+    w.steps(3);
+    CHECK(w.transfer_planetary_shuttle_visitor(7,ship,key,roster[3],false));
+    for(const auto cargo:{ShuttleCargo::Water,ShuttleCargo::Food,
+                         ShuttleCargo::Oxygen})
+        CHECK(w.unload_planetary_shuttle(7,ship,key,cargo,20));
+    CHECK(!w.settle_planetary_visitor(8,ship,key,roster[3],81501,true));
+    CHECK(!w.settle_planetary_visitor(7,ship,key,roster[3],81501,false));
+    bool rollback_visitor=false;
+    try {
+        (void)w.settle_planetary_visitor(7,ship,key,roster[3],81501,
+            true,FailPoint::AfterSnapshotWrite);
+    }catch(const std::exception&){rollback_visitor=true;}
+    CHECK(rollback_visitor);
+    CHECK(w.world().npc_records().at(roster[3]).legal_residence()==
+          (transport::Endpoint{transport::LocationKind::ColonyShip,ship}));
+    CHECK(w.settle_planetary_visitor(7,ship,key,roster[3],81501,true));
+    CHECK(!w.settle_planetary_visitor(7,ship,key,roster[3],81501,true));
+    CHECK(!w.transfer_planetary_shuttle_visitor(7,ship,key,roster[3],true));
+    CHECK(w.world().canonical_state().rfind("galaxy-kernel-v111|",0)==0);
+    const auto resident_snapshot=w.world().canonical_state();
+    CHECK(Simulation::from_snapshot(resident_snapshot).canonical_state()==
+          resident_snapshot);
+    const auto residence_copy=(dir/"visitor_resident.sqlite").string();
+    PersistentWorld::recover_copy(db,residence_copy);
+    {
+        PersistentWorld resident(residence_copy,Simulation(10));
+        CHECK(resident.world().state_hash()==w.world().state_hash());
+        CHECK(resident.world().npc_records().at(roster[3]).legal_residence()==
+              (transport::Endpoint{transport::LocationKind::PlanetarySite,
+                  w.world().planetary_sites().at(key).surface_location}));
+        CHECK(!resident.depart_planetary_visitor(
+            7,ship,key,roster[3],81502,false));
+    }
+    CHECK(!w.depart_planetary_visitor(8,ship,key,roster[3],81502,true));
+    CHECK(!w.depart_planetary_visitor(7,ship,key,roster[3],81502,false));
+    CHECK(w.depart_planetary_visitor(7,ship,key,roster[3],81502,true));
+    CHECK(!w.depart_planetary_visitor(7,ship,key,roster[3],81502,true));
+    CHECK(w.world().npc_records().at(roster[3]).legal_residence()==
+          (transport::Endpoint{transport::LocationKind::ColonyShip,ship}));
+    CHECK(std::binary_search(
+        w.world().planetary_shuttles().at(key).passenger_ids.begin(),
+        w.world().planetary_shuttles().at(key).passenger_ids.end(),roster[3]));
+    CHECK(w.world().total_ore()==initial_mass);
+    CHECK(Simulation::from_snapshot(w.world().canonical_state()).state_hash()==
+          w.world().state_hash());
+    CHECK(w.launch_planetary_shuttle(7,ship,key,81006,true));
+    w.steps(3);
+    CHECK(w.world().npc_records().at(roster[3]).location==ship);
     const auto final_copy=(dir/"housing_finished.sqlite").string();
     PersistentWorld::recover_copy(db,final_copy);
     PersistentWorld final_world(final_copy,Simulation(4));
