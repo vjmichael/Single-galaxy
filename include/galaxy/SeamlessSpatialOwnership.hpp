@@ -153,8 +153,11 @@ inline std::optional<Cell> ship_cell(const Simulation& world,EntityId id){
 // Pure scheduling suggestion, not an independent cold simulation writer.
 enum class Detail : std::uint8_t {Dormant=0,Cold=1,Detailed=2};
 inline bool touching(Cell a,Cell b) {
-    if(a.system!=b.system)return false;
     if(a.hierarchical!=b.hierarchical)return false;
+    // Galactic v2 sectors represent the same continuous physical universe.
+    // A star-system ID is an administrative/source-catalogue label, never
+    // a collision wall or a reason to skip adjacent physical workload.
+    if(!a.hierarchical && a.system!=b.system)return false;
     if(a.hierarchical){
         const auto near_cell=[](std::int64_t as,std::int64_t ai,
                                 std::int64_t bs,std::int64_t bi){
