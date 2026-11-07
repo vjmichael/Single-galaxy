@@ -255,6 +255,8 @@ struct PlanetarySiteAudit {
     std::array<std::uint8_t,2> production_phases{{0,0}};
     std::array<std::uint64_t,2> production_progress{{0,0}};
     std::array<std::uint64_t,2> production_order_ids{{0,0}};
+    std::array<std::uint64_t,2> production_handover_count{{0,0}};
+    std::array<std::uint64_t,2> production_last_handover_id{{0,0}};
     std::int64_t stored_electricity=0,brine_kg=0;
     std::uint64_t utility_powered_cycles=0,hvac_cycles=0,utility_outages=0;
     std::int64_t recycled_water_kg=0,recycled_oxygen_kg=0;
@@ -312,6 +314,10 @@ inline std::optional<PlanetarySiteAudit> audit_planetary_surface(
         a.production_phases[i]=s.production_projects[i].phase;
         a.production_progress[i]=s.production_projects[i].progress;
         a.production_order_ids[i]=s.production_projects[i].order_id;
+        a.production_handover_count[i]=s.production_handovers[i].size();
+        if(!s.production_handovers[i].empty())
+            a.production_last_handover_id[i]=
+                s.production_handovers[i].back().request_id;
     }
     a.stored_electricity=s.stored_electricity;
     a.brine_kg=s.brine_kg;
