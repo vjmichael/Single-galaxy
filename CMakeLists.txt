@@ -1956,6 +1956,17 @@ endif()
 find_package(Threads REQUIRED)
 target_link_libraries(galaxy_kernel PUBLIC Threads::Threads)
 
+# SPACE-04E: independent signed 128-bit native property oracle.
+# Windows shipping physics intentionally does NOT depend on __int128.
+if(BUILD_TESTING AND NOT MSVC AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  add_executable(galaxy_high_order_math_property_tests
+    tests/NativeHighOrderMathPropertyTests.cpp)
+  target_include_directories(galaxy_high_order_math_property_tests
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  add_test(NAME galaxy_high_order_math_property
+    COMMAND galaxy_high_order_math_property_tests)
+endif()
+
 # SPACE-05C: native subprocess never receives an original-world writer.
 add_executable(galaxy_native_cell_worker src/native_cell_worker.cpp)
 if(BUILD_TESTING)
