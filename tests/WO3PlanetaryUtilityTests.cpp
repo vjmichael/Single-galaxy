@@ -391,6 +391,99 @@ int main() {
                           ShuttleCargo::Oxygen})
         CHECK(w.unload_planetary_shuttle(7,ship,key,cargo,100));
     CHECK(w.world().planetary_sites().at(key).housing_modules==2);
+    // WO3-D/v117: both additional facility families are built from this
+    // exact TWO landed original modules. Independent copied SQLite worlds
+    // are mutually exclusive alternatives, not cloned material in one world.
+    // Each actual 40-tick job uses the same genuinely Shape-certified
+    // original surface workers, original inventory and durable commit path.
+    for(const bool annex:{true,false}) {
+        const auto name=annex?"annex":"medical_support";
+        const auto service_db=(folder/(std::string("service_")+name+".sqlite")).string();
+        PersistentWorld::recover_copy(db,service_db);
+        PersistentWorld service(service_db,Simulation(933));
+        const auto service_order=annex?82500ULL:82600ULL;
+        const auto relief_id=annex?82501ULL:82601ULL;
+        const auto mass_before=service.world().total_ore();
+        CHECK(!service.start_planetary_service_build(
+            8,ship,key,annex,service_order,builder));
+        CHECK(!service.start_planetary_service_build(
+            7,ship,key,annex,service_order,pilot));
+        bool failed_write=false;
+        try {
+            (void)service.start_planetary_service_build(
+                7,ship,key,annex,service_order,builder,
+                FailPoint::AfterSnapshotWrite);
+        }catch(const std::exception&){failed_write=true;}
+        CHECK(failed_write);
+        CHECK(service.world().planetary_sites().at(key).
+              service_projects[annex?0:1].phase==0);
+        CHECK(service.start_planetary_service_build(
+            7,ship,key,annex,service_order,builder));
+        CHECK(service.world().planetary_sites().at(key).housing_modules==0);
+        CHECK(service.world().total_ore()==mass_before);
+        const auto begun=service.world().canonical_state();
+        CHECK(begun.rfind("galaxy-kernel-v117|",0)==0);
+        CHECK(Simulation::from_snapshot(begun).canonical_state()==begun);
+        service.steps(12);
+        CHECK(service.pause_planetary_service_build(
+            7,ship,key,annex,true));
+        const auto frozen=service.world().planetary_sites().at(key).
+            service_projects[annex?0:1].progress;
+        service.steps(5);
+        CHECK(service.world().planetary_sites().at(key).
+              service_projects[annex?0:1].progress==frozen);
+        CHECK(!service.handover_planetary_service_build(
+            8,ship,key,annex,builder,partner,relief_id));
+        bool relief_fault=false;
+        try {
+            (void)service.handover_planetary_service_build(
+                7,ship,key,annex,builder,partner,relief_id,
+                FailPoint::AfterSnapshotWrite);
+        }catch(const std::exception&){relief_fault=true;}
+        CHECK(relief_fault);
+        CHECK(service.handover_planetary_service_build(
+            7,ship,key,annex,builder,partner,relief_id));
+        CHECK(!service.handover_planetary_service_build(
+            7,ship,key,annex,builder,partner,relief_id));
+        const auto mid=(folder/(std::string("service_mid_")+name+".sqlite")).string();
+        PersistentWorld::recover_copy(service_db,mid);
+        PersistentWorld twin_service(mid,Simulation(939));
+        CHECK(twin_service.world().state_hash()==service.world().state_hash());
+        CHECK(service.pause_planetary_service_build(
+            7,ship,key,annex,false));
+        CHECK(twin_service.pause_planetary_service_build(
+            7,ship,key,annex,false));
+        service.steps(40);twin_service.steps(40);
+        CHECK(service.world().state_hash()==twin_service.world().state_hash());
+        const auto& built=service.world().planetary_sites().at(key).
+            service_projects[annex?0:1];
+        CHECK(built.phase==2 && built.progress==40 &&
+              built.completed_tick>0 && built.supervisor==partner &&
+              built.powered_cycles>0);
+        const auto audit=colony03::audit_planetary_surface(
+            service.world(),7,ship,key);
+        CHECK(audit && audit->service_phases[annex?0:1]==2 &&
+              audit->service_handover_count[annex?0:1]==1 &&
+              audit->service_powered_cycles[annex?0:1]>0 &&
+              audit->installed_beds==(annex?8:4) &&
+              service.world().total_ore()==mass_before);
+        CHECK(!service.start_planetary_service_build(
+            7,ship,key,annex,service_order+10,partner));
+        const auto accepted=service.world().canonical_state();
+        CHECK(Simulation::from_snapshot(accepted).canonical_state()==accepted);
+        auto forged=accepted;
+        const auto start=forged.find("planetservice|");
+        CHECK(start!=std::string::npos);
+        const auto end=forged.find('\n',start);
+        const auto id_pos=forged.find("|"+std::to_string(service_order)+"|",start);
+        CHECK(id_pos!=std::string::npos && id_pos<end);
+        forged.replace(id_pos+1,std::to_string(service_order).size(),"0");
+        bool rejected=false;
+        try{(void)Simulation::from_snapshot(forged);}
+        catch(const std::exception&){rejected=true;}
+        CHECK(rejected);
+        CHECK(twin_service.world().total_ore()==mass_before);
+    }
     const auto mass_before_production=w.world().total_ore();
     CHECK(mass_before_production==initial_mass);
     bool rolled_back=false;
