@@ -106,6 +106,29 @@ int main() {
               before[0].work_state==workforce02::WorkState::NeedsPower);
         CHECK(before[1].gate==workforce02::StaffGate::FinisherNotConstructed);
         CHECK(before[1].suggested_npc==0);
+        // WO2-G: a projected shift is bounded, does not mutate original
+        // resources or reserve an NPC, and never projects a nonexistent shop.
+        const auto before_hash=w.world().state_hash();
+        const auto start=w.world().tick()+1;
+        const auto preview=workforce02::plan_provisional_workshop_coverage(
+            w.world(),7,ship,site,start,start+8);
+        CHECK(preview.size()==2);
+        CHECK(preview[0].gate==workforce02::CoverageGate::Provisional);
+        CHECK(preview[0].worker==before[0].suggested_npc);
+        CHECK(!preview[0].incumbent && !preview[0].reserved &&
+              preview[0].requires_owner_command);
+        CHECK(preview[1].gate==workforce02::CoverageGate::SiteUnavailable);
+        CHECK(preview[1].worker==0);
+        CHECK(workforce02::plan_provisional_workshop_coverage(
+            w.world(),8,ship,site,start,start+8)[0].gate==
+                workforce02::CoverageGate::SiteUnavailable);
+        CHECK(workforce02::plan_provisional_workshop_coverage(
+            w.world(),7,ship,site,w.world().tick(),start+8)[0].gate==
+                workforce02::CoverageGate::InvalidWindow);
+        CHECK(workforce02::plan_provisional_workshop_coverage(
+            w.world(),7,ship,site,start,start+10001)[0].gate==
+                workforce02::CoverageGate::InvalidWindow);
+        CHECK(w.world().state_hash()==before_hash);
         CHECK(!workforce02::approved_original_assignment(
             w.world(),7,ship,site,false,before[0].suggested_npc,80,false).has_value());
         CHECK(!workforce02::approved_original_assignment(
@@ -154,6 +177,15 @@ int main() {
         CHECK(w.world().events().back().result==Outcome::Applied);
         CHECK(w.world().workshop(site)->finisher_npc_id==second_id);
         CHECK(w.world().total_material_kg()==initial_mass);
+        const auto coverage=workforce02::plan_provisional_workshop_coverage(
+            w.world(),7,ship,site,w.world().tick()+1,w.world().tick()+6);
+        CHECK(coverage.size()==2);
+        CHECK(coverage[0].gate==workforce02::CoverageGate::Provisional &&
+              coverage[1].gate==workforce02::CoverageGate::Provisional);
+        CHECK(coverage[0].incumbent && coverage[1].incumbent);
+        CHECK(coverage[0].worker==first_id && coverage[1].worker==second_id);
+        CHECK(coverage[0].worker!=coverage[1].worker);
+        CHECK(!coverage[0].reserved && !coverage[1].reserved);
         w.steps(16); // existing bounded physical work, not a second scheduler
         CHECK(w.world().workshop(site)->completed_batches>=2);
         CHECK(w.world().workshop(site)->finisher_batches>=1);
