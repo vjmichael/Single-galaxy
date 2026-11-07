@@ -9734,10 +9734,8 @@ bool PersistentWorld::commit_planetary_household_settlement(
     if(p.expected_world_generation!=generation_ || !p.request_id ||
        p.request_id%16 || p.request_id>
            std::numeric_limits<std::uint64_t>::max()-3 ||
-       !p.coparent_move_id || !p.child_move_id ||
-       p.coparent_move_id==p.child_move_id ||
-       p.request_id==p.coparent_move_id ||
-       p.request_id==p.child_move_id ||
+       p.coparent_move_id!=p.request_id+1 ||
+       p.child_move_id!=p.request_id+2 ||
        !p.owner || p.owner==Simulation::kServerAuthority ||
        !p.ship || !p.guardian_id || !p.family_seed ||
        p.family_scope.empty() || p.region_scope.empty() ||
