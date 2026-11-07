@@ -1954,11 +1954,13 @@ if(BUILD_TESTING)
 endif()
 
 find_package(Threads REQUIRED)
+target_link_libraries(galaxy_kernel PUBLIC Threads::Threads)
 
 # SPACE-05C: native subprocess never receives an original-world writer.
 add_executable(galaxy_native_cell_worker src/native_cell_worker.cpp)
 if(BUILD_TESTING)
   add_executable(galaxy_native_cell_hang_worker tests/NativeCellHangWorker.cpp)
+  target_link_libraries(galaxy_native_cell_hang_worker PRIVATE Threads::Threads)
 endif()
 
 # SPACE-04C/04D/05B: native high-order coordinates, 3D probes and bounded
