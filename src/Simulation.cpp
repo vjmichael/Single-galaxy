@@ -2688,7 +2688,8 @@ Event Simulation::execute(const Command& c) {
            built->second.source_colony_ship!=storage->second.source_ship||
            built->second.source_colony_ship==c.actor||
            entities_.at(built->second.source_colony_ship).owner_id!=site->second.owner_id||
-           ship->second.system_id!=site->second.system_id){
+           (snapshot_version_<120 &&
+            ship->second.system_id!=site->second.system_id)){
             result.result=Outcome::InvalidTarget;return result;
         }
         const auto& vehicle=ship->second;
@@ -2829,7 +2830,9 @@ Event Simulation::execute(const Command& c) {
                ship->second.type!=EntityType::Ship || site->second.type!=EntityType::Station ||
                !colony_ships_.count(c.actor) || cl==clinics_.end() ||
                ship->second.owner_id!=site->second.owner_id ||
-               ship->second.system_id!=site->second.system_id || c.amount<1 || c.amount>100){
+               (snapshot_version_<120 &&
+                ship->second.system_id!=site->second.system_id) ||
+               c.amount<1 || c.amount>100){
                 result.result=Outcome::InvalidTarget;return result;
             }
             if(snapshot_version_>=119 &&
@@ -2892,7 +2895,8 @@ Event Simulation::execute(const Command& c) {
                    within_native_3d_range(ship,site,kDockingRangeMm)){
                     const auto dx=snapshot_version_>=120?0:ship.position.x-site.position.x,dy=snapshot_version_>=120?0:ship.position.y-site.position.y;
                     crew=ship.type==EntityType::Ship && ship.owner_id==site.owner_id &&
-                         ship.system_id==site.system_id && dx>=-kDockingRangeMm && dx<=kDockingRangeMm &&
+                         (snapshot_version_>=120 || ship.system_id==site.system_id) &&
+                         dx>=-kDockingRangeMm && dx<=kDockingRangeMm &&
                          dy>=-kDockingRangeMm && dy<=kDockingRangeMm &&
                          dx*dx+dy*dy<=kDockingRangeMm*kDockingRangeMm;
                 }
@@ -2956,7 +2960,8 @@ Event Simulation::execute(const Command& c) {
            medic==npcs_.end() || training==named_medics_.end() || training->second.units<3 ||
            medic->second.role!=NpcRole::Habitat || medic->second.location!=c.target ||
            medic->second.assigned_site!=c.target || clinic->second.medics<1 ||
-           ship->second.system_id!=station->second.system_id ||
+           (snapshot_version_<120 &&
+            ship->second.system_id!=station->second.system_id) ||
            ship->second.owner_id!=station->second.owner_id){
             result.result=Outcome::InvalidTarget;return result;
         }
@@ -4471,7 +4476,8 @@ Event Simulation::execute(const Command& c) {
             if(!site || !built_outposts_.count(c.target) ||
                site->type!=EntityType::Station || site->owner_id!=actor.owner_id ||
                built_outposts_.at(c.target).source_colony_ship!=c.actor ||
-               site->system_id!=actor.system_id){result.result=Outcome::InvalidTarget;return result;}
+               (snapshot_version_<120 &&
+                site->system_id!=actor.system_id)){result.result=Outcome::InvalidTarget;return result;}
             if(actor.jump_state!=ShipJumpState::Ready ||
                (actor.dock_state!=DockState::InSpace && actor.dock_station!=c.target)){
                 result.result=Outcome::InTransition;return result;
