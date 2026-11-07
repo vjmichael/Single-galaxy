@@ -46,6 +46,9 @@ observe_native_regional_recovery(
     std::uint64_t expected_checkpoint_revision) {
     using namespace regional_events;
     if(world_sqlite_path.empty() || checkpoint.scope().empty() ||
+       authority.scope()!=checkpoint.scope() ||
+       authority.database_path()!=checkpoint.database_path() ||
+       checkpoint.database_path().empty() ||
        !owner || owner==Simulation::kServerAuthority ||
        !expected_owner_generation || !expected_checkpoint_revision)
         return std::nullopt;
@@ -63,6 +66,12 @@ observe_native_regional_recovery(
     if(sqlite3_open_v2(world_sqlite_path.c_str(),&db,
             SQLITE_OPEN_READONLY|SQLITE_OPEN_FULLMUTEX,nullptr)!=SQLITE_OK) {
         if(db)sqlite3_close(db);
+        return std::nullopt;
+    }
+    const auto* opened_path=sqlite3_db_filename(db,"main");
+    if(!opened_path ||
+       checkpoint.database_path()!=std::string(opened_path)){
+        sqlite3_close(db);
         return std::nullopt;
     }
     bool same_database=false;
