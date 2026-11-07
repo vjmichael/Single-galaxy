@@ -2,6 +2,7 @@
 #include "galaxy/WO5DelegatedLogistics.hpp"
 #include "galaxy/WO5RegionalRecovery.hpp"
 #include "galaxy/WO5RegionalFreightFence.hpp"
+#include "galaxy/SeamlessSpatialOwnership.hpp"
 #include "galaxy/WO5FreightEvidence.hpp"
 #include "galaxy/FleetSelection.hpp"
 #include "galaxy/OrbitalShuttleCommands.hpp"
@@ -1203,6 +1204,68 @@ static void scenario(const fs::path& db, bool farming,
                 }catch(const std::exception&){unsafe_handoff=true;}
                 CHECK(unsafe_handoff &&
                       authority.state().phase==
+                          regional_events::TransitionPhase::Stable);
+                // SPACE-02: the already-committed original ship/cell index
+                // proves which CPU grid contains the actual carrier. A
+                // physically UNRELATED cell must no longer be blocked by
+                // this 100kg freight simply because it shares one galaxy.
+                const auto original_carrier_cell=
+                    spatial::ship_cell(w.world(),freighter);
+                CHECK(original_carrier_cell);
+                const auto far_cell=spatial::Cell{
+                    original_carrier_cell->system,
+                    original_carrier_cell->x+1000000,
+                    original_carrier_cell->y,original_carrier_cell->z};
+                const auto unrelated_scope=spatial::scope(far_cell);
+                regional_events::CheckpointStore far_cp(
+                    db.string(),unrelated_scope);
+                CHECK(far_cp.save(cold,0)==1);
+                regional_events::RegionalModeAuthority far_authority(far_cp);
+                const auto far_first=far_authority.enroll();
+                const auto unblocked=far_authority.prepare(
+                    "space-unrelated-promote",
+                    regional_events::SimulationOwner::Detailed,
+                    far_first.generation,far_first.checkpoint_revision,
+                    far_first.boundary_tick);
+                const auto far_warm=far_authority.commit(
+                    "space-unrelated-promote",unblocked.generation,
+                    unblocked.checkpoint_revision,
+                    [](sqlite3*,regional_events::Scheduler&){});
+                CHECK(far_warm.owner==
+                      regional_events::SimulationOwner::Detailed);
+                const auto far_demote=far_authority.prepare(
+                    "space-unrelated-demote",
+                    regional_events::SimulationOwner::Cold,
+                    far_warm.generation,far_warm.checkpoint_revision,
+                    far_warm.boundary_tick);
+                const auto far_cold=far_authority.commit(
+                    "space-unrelated-demote",far_demote.generation,
+                    far_demote.checkpoint_revision,
+                    [](sqlite3*,regional_events::Scheduler&){});
+                CHECK(far_cold.owner==regional_events::SimulationOwner::Cold &&
+                      w.world().intercolony_freight().at(77007).stage==
+                         IntercolonyFreightStage::AwaitingPickup);
+                // The cell containing the real physical carrier remains
+                // protected. Scope must match the exact ORIGINAL bound
+                // hull, not a client-asserted coordinate.
+                const auto involved_scope=spatial::scope(*original_carrier_cell);
+                regional_events::CheckpointStore carrier_cp(
+                    db.string(),involved_scope);
+                CHECK(carrier_cp.save(cold,0)==1);
+                regional_events::RegionalModeAuthority carrier_authority(
+                    carrier_cp);
+                const auto carrier_token=carrier_authority.enroll();
+                bool protected_cell=false;
+                try{
+                    (void)carrier_authority.prepare(
+                        "space-carrier-protected",
+                        regional_events::SimulationOwner::Detailed,
+                        carrier_token.generation,
+                        carrier_token.checkpoint_revision,
+                        carrier_token.boundary_tick);
+                }catch(const std::exception&){protected_cell=true;}
+                CHECK(protected_cell &&
+                      carrier_authority.state().phase==
                           regional_events::TransitionPhase::Stable);
                 // Even a perfectly matching forged counter in an unrelated
                 // SQLite file cannot borrow this world's physical cargo.
