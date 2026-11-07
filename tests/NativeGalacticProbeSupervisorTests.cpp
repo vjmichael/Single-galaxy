@@ -403,8 +403,13 @@ static void sustained_multi_cell_endurance(const fs::path& root,
         const auto ship=simulation.add_colony_ship(
             static_cast<PlayerId>(20+i),
             {static_cast<std::int64_t>(i)*200000000,0},100,8);
+        // Prove finite original ore and NPC state through 256 ticks;
+        // provide enough ordinary life support that this regression tests
+        // worker conservation, not intentionally induced starvation.
         simulation.provision_colony_genesis(
-            ship,1000,1000,1000,1000,1000);
+            ship,100000,100000,100000,100000,100000);
+        simulation.add_asteroid(
+            {static_cast<std::int64_t>(i)*200000000+1000,0},100);
         ships.push_back(ship);
     }
     PersistentWorld w(db,std::move(simulation));
