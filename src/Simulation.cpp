@@ -4214,6 +4214,15 @@ Event Simulation::execute(const Command& c) {
                         if(snapshot_version_>=40 && !npc_available_for_duty(worker)){
                             result.result=Outcome::InvalidTarget;return result;
                         }
+                        // WO2-H: practice consumes this named NPC's hands for
+                        // the entire current tick. A later command on the same
+                        // committed tick cannot double-book them as an operator.
+                        if(snapshot_version_>=105 &&
+                           std::any_of(npc->second.industrial_training.begin(),
+                                       npc->second.industrial_training.end(),
+                              [&](const NpcTradeTraining& t){return t.tick==tick_;})){
+                            result.result=Outcome::InvalidTarget;return result;
+                        }
                         for(const auto& [id,existing]:workshops_){
                             // Preserve the original harmless same-slot
                             // idempotent assignment; reject ONLY a second
@@ -5254,7 +5263,11 @@ void Simulation::process_workshops(){
             n->second.home_ship==w.source_ship &&
             n->second.location==site && n->second.role==NpcRole::Habitat &&
             habitats_.count(site) && habitats_.at(site).residents>0 &&
-            (snapshot_version_<40 || npc_available_for_duty(w.operator_npc_id));
+            (snapshot_version_<40 || npc_available_for_duty(w.operator_npc_id)) &&
+            (snapshot_version_<105 ||
+             std::none_of(n->second.industrial_training.begin(),
+                          n->second.industrial_training.end(),
+                 [&](const NpcTradeTraining& t){return t.tick==tick_;}));
         const bool power=u!=utilities_.end() && u->second.powered;
         const bool working=u!=utilities_.end() && u->second.condition>0;
         industry::Recipe recipe=industry01::original_workshop_recipe("native_cut_aluminum_panel");
@@ -5292,7 +5305,11 @@ void Simulation::process_workshops(){
                 fn->second.role==NpcRole::Habitat &&
                 habitats_.count(site) && habitats_.at(site).residents>0 &&
                 w.finisher_npc_id!=w.operator_npc_id &&
-                (snapshot_version_<40 || npc_available_for_duty(w.finisher_npc_id));
+                (snapshot_version_<40 || npc_available_for_duty(w.finisher_npc_id)) &&
+                (snapshot_version_<105 ||
+                 std::none_of(fn->second.industrial_training.begin(),
+                              fn->second.industrial_training.end(),
+                     [&](const NpcTradeTraining& t){return t.tick==tick_;}));
             industry::Recipe fr=industry01::original_workshop_recipe("native_shape_aluminum_frame");
             industry::Machine fm{1,"shape",power,fn_staff,working};
             industry::State fs;
