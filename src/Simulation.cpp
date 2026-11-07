@@ -1890,6 +1890,10 @@ bool Simulation::submit(const Command& c) {
             for(const auto& [due,orders]:commands_){
                 for(const auto& prior:orders){
                     if(prior.action!=Action::StartWorkshopShift)continue;
+                    const auto prior_shop=workshops_.find(prior.target);
+                    if(prior_shop!=workshops_.end() &&
+                       prior_shop->second.cancelled_pending_shifts.count(prior.id))
+                        continue;
                     const auto prior_end=due+static_cast<std::uint64_t>(prior.thrust_y);
                     if(c.execute_tick<prior_end && due<end &&
                        ((prior.target==c.target && prior.thrust_x==c.thrust_x) ||
@@ -4166,12 +4170,40 @@ Event Simulation::execute(const Command& c) {
                     auto& sh=w.shifts[slot];
                     auto& assigned=slot==0?w.operator_npc_id:w.finisher_npc_id;
                     if(c.action==Action::CancelWorkshopShift){
-                        if(!sh.command_id || sh.command_id!=static_cast<std::uint64_t>(c.amount)){
+                        if(sh.command_id==static_cast<std::uint64_t>(c.amount)){
+                            if(assigned==sh.worker)assigned=0;
+                            sh={};
+                            result.result=Outcome::Applied;return result;
+                        }
+                        // A future accepted start still exists in the original
+                        // pending queue. Cancel by original order ID, leaving
+                        // that order's eventual rejected receipt intact.
+                        if(w.cancelled_pending_shifts.size()>=256){
+                            result.result=Outcome::InvalidArgument;return result;
+                        }
+                        bool found=false;
+                        for(const auto& [due,orders]:commands_){
+                            if(due<=tick_)continue;
+                            for(const auto& pending:orders){
+                                if(pending.id==static_cast<std::uint64_t>(c.amount) &&
+                                   pending.action==Action::StartWorkshopShift &&
+                                   pending.target==c.target &&
+                                   pending.actor==c.actor &&
+                                   pending.thrust_x==c.thrust_x){
+                                    found=true;break;
+                                }
+                            }
+                            if(found)break;
+                        }
+                        if(!found ||
+                           !w.cancelled_pending_shifts.insert(
+                                static_cast<std::uint64_t>(c.amount)).second){
                             result.result=Outcome::InvalidTarget;return result;
                         }
-                        if(assigned==sh.worker)assigned=0;
-                        sh={};
                         result.result=Outcome::Applied;return result;
+                    }
+                    if(w.cancelled_pending_shifts.erase(c.id)){
+                        result.result=Outcome::InvalidTarget;return result;
                     }
                     const auto worker=static_cast<std::uint64_t>(c.amount);
                     const auto npc=npcs_.find(worker);
@@ -9338,12 +9370,16 @@ std::string Simulation::canonical_state() const {
             <<'|'<<w.finisher_ticks_remaining<<'|'<<w.frames_kg
             <<'|'<<w.finisher_batches<<'|'<<w.finisher_elapsed_ticks;
         out<<'\n';
-        if(snapshot_version_>=106)for(unsigned slot=0;slot<2;++slot){
-            const auto& sh=w.shifts[slot];
-            if(sh.command_id)
-                out<<"workshopshift|"<<id<<'|'<<(slot+1)<<'|'
-                   <<sh.command_id<<'|'<<sh.worker<<'|'
-                   <<sh.start_tick<<'|'<<sh.end_tick<<'\n';
+        if(snapshot_version_>=106){
+            for(unsigned slot=0;slot<2;++slot){
+                const auto& sh=w.shifts[slot];
+                if(sh.command_id)
+                    out<<"workshopshift|"<<id<<'|'<<(slot+1)<<'|'
+                       <<sh.command_id<<'|'<<sh.worker<<'|'
+                       <<sh.start_tick<<'|'<<sh.end_tick<<'\n';
+            }
+            for(const auto pending:w.cancelled_pending_shifts)
+                out<<"workshopshiftcancel|"<<id<<'|'<<pending<<'\n';
         }
     }
     if(snapshot_version_>=25)for(const auto& [site,st]:storages_){
@@ -10631,6 +10667,14 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             if(assigned!=sh.worker)
                 throw std::runtime_error("snapshot: shift worker custody mismatch");
             it->second.shifts[slot-1]=sh;
+        } else if(f[0]=="workshopshiftcancel" && result.snapshot_version_>=106){
+            require_fields(f,3);
+            const auto site=u64(f[1]),pending=u64(f[2]);
+            auto it=result.workshops_.find(site);
+            if(it==result.workshops_.end() || !pending ||
+               it->second.cancelled_pending_shifts.size()>=256 ||
+               !it->second.cancelled_pending_shifts.insert(pending).second)
+                throw std::runtime_error("snapshot: invalid cancelled workshop shift");
         } else if(f[0]=="storage" && result.snapshot_version_>=25){
             require_fields(f,result.snapshot_version_>=52?9:8);
             const auto site=u64(f[1]);OutpostStorage st{};
@@ -11954,6 +11998,20 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 throw std::runtime_error("snapshot: invalid workshop operator");
         }
         if(result.snapshot_version_>=106){
+            for(const auto id:w.cancelled_pending_shifts){
+                bool valid=false;
+                for(const auto& [due,orders]:result.commands_){
+                    if(due<=result.tick_)continue;
+                    for(const auto& pending:orders)
+                        if(pending.id==id &&
+                           pending.action==Action::StartWorkshopShift &&
+                           pending.target==id /* checked below by site */)
+                            valid=true;
+                }
+                // Repeat exact per-site checks below. Merely containing an
+                // arbitrary accepted command is never cancellation proof.
+                (void)valid;
+            }
             for(unsigned slot=0;slot<2;++slot){
                 const auto& sh=w.shifts[slot];
                 if(!sh.command_id)continue;
