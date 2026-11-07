@@ -68,39 +68,93 @@ for command,principal in [
     else:raise AssertionError('Unauthorised native security command sent')
     assert rt.proc.stdin.getvalue()==before
 
-# The private SSE response consumes ONLY entries for the authenticated
-# principal. Neither original owner-7 public frames nor other private owner
-# messages may be delivered, including after a login/reconnect.
+# A new signed-in stream MUST NOT replay earlier volatile notifications
+# even when those events belong to the same playerId. Only the native
+# SECURITY_REFRESH result from committed SQLite is current.
 rt.private_colony_events.append((3,7,
     base64.b64encode(b'COLONY|1|25|SECURITY_CASE|SECRET').decode()))
 rt.private_event_sequence=3
 rt.finished=True
 rt.error=None
-rt.send=lambda command,principal=None:None
-writer=io.BytesIO()
-handler=object.__new__(relay.Handler)
-handler.server=types.SimpleNamespace(runtime=rt)
-handler.wfile=writer
-handler._principal=lambda:{'session_id':'session-8','playerId':8}
-handler.send_response=lambda code:None
-handler.send_header=lambda key,value:None
-handler.end_headers=lambda:None
-handler._security_only_events({'session_id':'session-8','playerId':8})
-output=writer.getvalue()
-assert b'event: colony\n' in output
-assert b'event: frame' not in output and b'event: survey' not in output
-assert b'SECRET' not in output
-assert b'event: complete\n' in output
-assert b'PRIVATE|' not in output
 
-# The rolling buffer continues accepting events after 4096 frames; cursor
-# sequence is independent of physical ring length.
-for i in range(4200):
-    rt.private_event_sequence+=1
-    rt.private_colony_events.append(
-        (rt.private_event_sequence,8,base64.b64encode(
-            f'COLONY|1|25|SECURITY_STATUS|1|1|1|{i%2}|3'.encode()).decode()))
+def fresh_snapshot(command,principal=None):
+    assert (command,principal)==('SECURITY_REFRESH',8)
+    with rt.cv:
+        rt.private_event_sequence+=1
+        rt.private_colony_events.append((
+            rt.private_event_sequence,8,
+            base64.b64encode(
+                b'COLONY|1|26|SECURITY_CALL_INBOX_RESET').decode()))
+        rt.cv.notify_all()
+
+rt.send=fresh_snapshot
+def make_handler(principal):
+    handler=object.__new__(relay.Handler)
+    handler.server=types.SimpleNamespace(runtime=rt)
+    handler.wfile=io.BytesIO()
+    handler._principal=lambda:principal
+    handler.send_response=lambda code:None
+    handler.send_header=lambda key,value:None
+    handler.end_headers=lambda:None
+    return handler
+
+principal={'session_id':'session-8','playerId':8}
+handler=make_handler(principal)
+handler._security_only_events(principal)
+output=handler.wfile.getvalue()
+assert output.count(b'event: colony\n')==1,output
+assert b'SECURITY_CALL_INBOX_RESET' not in output # SSE is base64 encoded
+assert base64.b64encode(b'COLONY|1|26|SECURITY_CALL_INBOX_RESET') in output
+assert b'event: frame' not in output and b'event: survey' not in output
+assert b'event: complete\n' in output
+assert b'PRIVATE|' not in output and b'SECRET' not in output
+assert base64.b64encode(b'COLONY|1|25|SECURITY_CALL_INBOX|1001|10|7') not in output
+
+# Expired or logged-out cookies cannot drain the owner-private queue,
+# even if the native refresh command was already sent.
+revoked=make_handler(None)
+revoked._security_only_events(principal)
+assert b'event: failed\ndata: Session expired' in revoked.wfile.getvalue()
+assert b'event: colony' not in revoked.wfile.getvalue()
+
+# The 4096-row ring rolls forward indefinitely. If a live client misses
+# events while it is still connected, the relay must signal a gap, discard
+# partial stale receipts and request a second original native refresh.
+# The test floods *after* the subscription captures its high-water mark.
+rt.private_colony_events=deque(maxlen=4096)
+rt.private_event_sequence=0
+calls=[0]
+def flood_then_recover(command,principal=None):
+    assert (command,principal)==('SECURITY_REFRESH',8)
+    calls[0]+=1
+    with rt.cv:
+        if calls[0]==1:
+            for i in range(4200):
+                rt.private_event_sequence+=1
+                rt.private_colony_events.append((
+                    rt.private_event_sequence,8 if i%3 else 9,
+                    base64.b64encode(
+                        f'COLONY|1|25|SECURITY_STATUS|1|1|1|{i%2}|3'
+                        .encode()).decode()))
+        else:
+            rt.private_event_sequence+=1
+            rt.private_colony_events.append((
+                rt.private_event_sequence,8,
+                base64.b64encode(
+                    b'COLONY|1|26|SECURITY_CALL_INBOX_RESET').decode()))
+        rt.cv.notify_all()
+rt.send=flood_then_recover
+lagged=make_handler(principal)
+lagged._security_only_events(principal)
+output=lagged.wfile.getvalue()
+assert calls==[2],calls
 assert len(rt.private_colony_events)==4096
-assert rt.private_event_sequence==4203
-print('PASS SHIP-STATUS-07G private relay: exact owner-only SSE, no SGVIEW, '
-      'human-only command gate, reconnect isolation and 4096-row rolling buffer')
+assert rt.private_event_sequence==4201
+assert b'event: resync\ndata: Native security refresh required' in output
+assert output.count(b'event: colony\n')==1
+assert base64.b64encode(b'COLONY|1|26|SECURITY_CALL_INBOX_RESET') in output
+assert b'SECURITY_STATUS' not in output
+assert b'event: frame' not in output and b'event: survey' not in output
+assert b'event: complete\n' in output
+print('PASS SHIP-STATUS-07H private relay: reconnect skips stale ring, '
+      'account isolation, expiry, rolling overflow and native resnapshot')
