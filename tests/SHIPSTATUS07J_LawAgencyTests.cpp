@@ -111,7 +111,35 @@ int main(){
         CHECK(!agency.investigate(world,territory,8,b,99999,a,8001));
         CHECK(!agency.investigate(world,territory,8,b,7000,c,8001));
         CHECK(world.world().npc_flight_orders().empty());
-        CHECK(agency.investigate(world,territory,8,b,7000,a,8000));
+        // Inject an original SQLite flight crash AFTER the agency's
+        // immutable intent has committed, but BEFORE original-world COMMIT.
+        // The case must remain NOT dispatched after crash + independent
+        // SQLite recovery. Retrying must use the very same reserved order.
+        bool interrupted=false;
+        const auto preflight=world.world().canonical_state();
+        try{
+            (void)agency.investigate(world,territory,8,b,7000,a,8000,
+                FailPoint::AfterSnapshotWrite);
+        }catch(const std::exception&){interrupted=true;}
+        CHECK(interrupted);
+        CHECK(world.world().canonical_state()==preflight);
+        CHECK(world.world().npc_flight_orders().empty());
+        const auto unadmitted=agency.investigations(world,8,b);
+        CHECK(unadmitted.size()==1 && unadmitted.front().order_id==8000 &&
+              !unadmitted.front().native_flight_present);
+        {
+            const auto failedCopy=(root/"intent_only.sqlite").string();
+            PersistentWorld::recover_copy(db,failedCopy);
+            PersistentWorld restarted(failedCopy,Simulation(7));
+            colony_law::Agency recoveredLaw(failedCopy);
+            const auto state=recoveredLaw.investigations(restarted,8,b);
+            CHECK(state.size()==1 && state.front().order_id==8000 &&
+                  !state.front().native_flight_present);
+            CHECK(restarted.world().npc_flight_orders().empty());
+        }
+        // This caller now supplies a different throwaway request nonce.
+        // The agency MUST reuse its one original reserved ID 8000.
+        CHECK(agency.investigate(world,territory,8,b,7000,a,8002));
         const auto& flights=world.world().npc_flight_orders();
         CHECK(flights.size()==1 && flights.count(8000)==1);
         const auto& flight=flights.at(8000);
