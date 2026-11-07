@@ -1,0 +1,2159 @@
+{
+  "schema_version": 1,
+  "status": "research_candidate_not_world_authoritative",
+  "units": {
+    "bulk_quantity": "grams",
+    "discrete_quantity": "count",
+    "mass": "grams",
+    "volume": "cubic_millimetres",
+    "energy": "kilojoules",
+    "time": "abstract_work_ticks"
+  },
+  "sources": {
+    "usda": {
+      "title": "USDA ERS Resource Requirements of Food Demand — supply-chain stages",
+      "url": "https://ers.usda.gov/data-products/resource-requirements-of-food-demand/documentation"
+    },
+    "usgs": {
+      "title": "USGS Minerals and Uses Activity (2026)",
+      "url": "https://www.usgs.gov/programs/mineral-resources-program/minerals-and-uses-activity"
+    },
+    "doe": {
+      "title": "US DOE Process Heat Basics",
+      "url": "https://www.energy.gov/cmei/ito/process-heat-basics"
+    },
+    "eia": {
+      "title": "US EIA How electricity is delivered to consumers",
+      "url": "https://www.eia.gov/energyexplained/electricity/delivery-to-consumers.php"
+    },
+    "nist": {
+      "title": "NIST Innovations in advanced processes and systems for semiconductor manufacturing (2026)",
+      "url": "https://www.nist.gov/publications/innovations-advanced-processes-and-systems-semiconductor-manufacturing"
+    },
+    "who": {
+      "title": "WHO Essential medicines fact sheet (2026)",
+      "url": "https://www.who.int/news-room/fact-sheets/detail/essential-medicines"
+    },
+    "epa": {
+      "title": "US EPA Sustainable Materials Management Basics",
+      "url": "https://www.epa.gov/smm/sustainable-materials-management-basics"
+    },
+    "nursery": {
+      "title": "USDA Forest Service commercial greenhouse operation planning",
+      "url": "https://research.fs.usda.gov/treesearch/31419"
+    },
+    "laundry": {
+      "title": "US EPA WaterSense at Work Laundry Equipment",
+      "url": "https://www.epa.gov/system/files/documents/2023-06/ws-commercial-watersense-at-work_Section_3.5_Laundry_Equipment.pdf"
+    }
+  },
+  "items": [
+    {
+      "id": "bulk/aluminum",
+      "group": "metals",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 370,
+      "lifecycle": "feedstock",
+      "need_tags": []
+    },
+    {
+      "id": "bulk/aluminum_scrap",
+      "group": "metals",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 410,
+      "lifecycle": "feedstock",
+      "need_tags": []
+    },
+    {
+      "id": "bulk/structural_alloy",
+      "group": "metals",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 150,
+      "lifecycle": "feedstock",
+      "need_tags": []
+    },
+    {
+      "id": "bulk/copper",
+      "group": "metals",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 112,
+      "lifecycle": "feedstock",
+      "need_tags": []
+    },
+    {
+      "id": "bulk/glass",
+      "group": "minerals",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 400,
+      "lifecycle": "feedstock",
+      "need_tags": []
+    },
+    {
+      "id": "bulk/ceramic",
+      "group": "minerals",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 500,
+      "lifecycle": "feedstock",
+      "need_tags": []
+    },
+    {
+      "id": "bulk/silicon_grade",
+      "group": "electronics",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 420,
+      "lifecycle": "feedstock",
+      "need_tags": []
+    },
+    {
+      "id": "bulk/wood",
+      "group": "biomass",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 1200,
+      "lifecycle": "feedstock",
+      "need_tags": []
+    },
+    {
+      "id": "bulk/textile",
+      "group": "fiber",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 2000,
+      "lifecycle": "feedstock",
+      "need_tags": []
+    },
+    {
+      "id": "bulk/polymer",
+      "group": "chemistry",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 1100,
+      "lifecycle": "feedstock",
+      "need_tags": []
+    },
+    {
+      "id": "bulk/insulation",
+      "group": "chemistry",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 1200,
+      "lifecycle": "feedstock",
+      "need_tags": []
+    },
+    {
+      "id": "bulk/paper",
+      "group": "fiber",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 1500,
+      "lifecycle": "feedstock",
+      "need_tags": []
+    },
+    {
+      "id": "bulk/soil",
+      "group": "horticulture",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 750,
+      "lifecycle": "feedstock",
+      "need_tags": []
+    },
+    {
+      "id": "bulk/nursery_plant",
+      "group": "horticulture",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 1100,
+      "lifecycle": "feedstock",
+      "need_tags": []
+    },
+    {
+      "id": "bulk/grain",
+      "group": "food",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 1300,
+      "lifecycle": "feedstock",
+      "need_tags": []
+    },
+    {
+      "id": "bulk/vegetables",
+      "group": "food",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 1200,
+      "lifecycle": "feedstock",
+      "need_tags": []
+    },
+    {
+      "id": "bulk/clean_water",
+      "group": "water",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 1000,
+      "lifecycle": "feedstock",
+      "need_tags": []
+    },
+    {
+      "id": "bulk/dirty_water",
+      "group": "water",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 1050,
+      "lifecycle": "feedstock",
+      "need_tags": []
+    },
+    {
+      "id": "bulk/detergent",
+      "group": "chemistry",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 1100,
+      "lifecycle": "feedstock",
+      "need_tags": []
+    },
+    {
+      "id": "bulk/ink",
+      "group": "chemistry",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 1000,
+      "lifecycle": "feedstock",
+      "need_tags": []
+    },
+    {
+      "id": "part/metal_panel",
+      "group": "construction",
+      "unit": "count",
+      "mass_g_per_unit": 30000,
+      "cargo_mm3_per_unit": 50000000,
+      "lifecycle": "intermediate",
+      "need_tags": []
+    },
+    {
+      "id": "part/metal_frame",
+      "group": "construction",
+      "unit": "count",
+      "mass_g_per_unit": 10000,
+      "cargo_mm3_per_unit": 35000000,
+      "lifecycle": "intermediate",
+      "need_tags": []
+    },
+    {
+      "id": "part/fastener_set",
+      "group": "construction",
+      "unit": "count",
+      "mass_g_per_unit": 1000,
+      "cargo_mm3_per_unit": 1500000,
+      "lifecycle": "intermediate",
+      "need_tags": []
+    },
+    {
+      "id": "part/wire_roll",
+      "group": "electronics",
+      "unit": "count",
+      "mass_g_per_unit": 5000,
+      "cargo_mm3_per_unit": 10000000,
+      "lifecycle": "intermediate",
+      "need_tags": []
+    },
+    {
+      "id": "part/glass_panel",
+      "group": "construction",
+      "unit": "count",
+      "mass_g_per_unit": 10000,
+      "cargo_mm3_per_unit": 20000000,
+      "lifecycle": "intermediate",
+      "need_tags": []
+    },
+    {
+      "id": "part/wood_board",
+      "group": "construction",
+      "unit": "count",
+      "mass_g_per_unit": 5000,
+      "cargo_mm3_per_unit": 9000000,
+      "lifecycle": "intermediate",
+      "need_tags": []
+    },
+    {
+      "id": "part/piping",
+      "group": "utilities",
+      "unit": "count",
+      "mass_g_per_unit": 6000,
+      "cargo_mm3_per_unit": 12000000,
+      "lifecycle": "intermediate",
+      "need_tags": []
+    },
+    {
+      "id": "part/circuit_board",
+      "group": "electronics",
+      "unit": "count",
+      "mass_g_per_unit": 500,
+      "cargo_mm3_per_unit": 800000,
+      "lifecycle": "intermediate",
+      "need_tags": []
+    },
+    {
+      "id": "part/optical_sensor",
+      "group": "electronics",
+      "unit": "count",
+      "mass_g_per_unit": 300,
+      "cargo_mm3_per_unit": 600000,
+      "lifecycle": "intermediate",
+      "need_tags": []
+    },
+    {
+      "id": "part/speaker_driver",
+      "group": "electronics",
+      "unit": "count",
+      "mass_g_per_unit": 700,
+      "cargo_mm3_per_unit": 1400000,
+      "lifecycle": "intermediate",
+      "need_tags": []
+    },
+    {
+      "id": "part/motor",
+      "group": "machinery",
+      "unit": "count",
+      "mass_g_per_unit": 6000,
+      "cargo_mm3_per_unit": 12000000,
+      "lifecycle": "intermediate",
+      "need_tags": []
+    },
+    {
+      "id": "part/acoustic_capsule",
+      "group": "electronics",
+      "unit": "count",
+      "mass_g_per_unit": 100,
+      "cargo_mm3_per_unit": 400000,
+      "lifecycle": "intermediate",
+      "need_tags": []
+    },
+    {
+      "id": "part/wire_bundle",
+      "group": "electronics",
+      "unit": "count",
+      "mass_g_per_unit": 500,
+      "cargo_mm3_per_unit": 1000000,
+      "lifecycle": "intermediate",
+      "need_tags": []
+    },
+    {
+      "id": "part/display",
+      "group": "electronics",
+      "unit": "count",
+      "mass_g_per_unit": 1000,
+      "cargo_mm3_per_unit": 2000000,
+      "lifecycle": "intermediate",
+      "need_tags": []
+    },
+    {
+      "id": "part/solar_cell",
+      "group": "energy",
+      "unit": "count",
+      "mass_g_per_unit": 3000,
+      "cargo_mm3_per_unit": 5000000,
+      "lifecycle": "intermediate",
+      "need_tags": []
+    },
+    {
+      "id": "part/plant_pot",
+      "group": "horticulture",
+      "unit": "count",
+      "mass_g_per_unit": 500,
+      "cargo_mm3_per_unit": 1200000,
+      "lifecycle": "intermediate",
+      "need_tags": []
+    },
+    {
+      "id": "item/chair",
+      "group": "furnishing",
+      "unit": "count",
+      "mass_g_per_unit": 15000,
+      "cargo_mm3_per_unit": 120000000,
+      "lifecycle": "durable",
+      "need_tags": [
+        "comfort",
+        "social"
+      ]
+    },
+    {
+      "id": "item/table",
+      "group": "furnishing",
+      "unit": "count",
+      "mass_g_per_unit": 22000,
+      "cargo_mm3_per_unit": 160000000,
+      "lifecycle": "durable",
+      "need_tags": [
+        "dining",
+        "work"
+      ]
+    },
+    {
+      "id": "item/desk",
+      "group": "furnishing",
+      "unit": "count",
+      "mass_g_per_unit": 24000,
+      "cargo_mm3_per_unit": 150000000,
+      "lifecycle": "durable",
+      "need_tags": [
+        "work",
+        "education"
+      ]
+    },
+    {
+      "id": "item/bed",
+      "group": "furnishing",
+      "unit": "count",
+      "mass_g_per_unit": 30000,
+      "cargo_mm3_per_unit": 200000000,
+      "lifecycle": "durable",
+      "need_tags": [
+        "sleep",
+        "health"
+      ]
+    },
+    {
+      "id": "item/houseplant",
+      "group": "horticulture",
+      "unit": "count",
+      "mass_g_per_unit": 3000,
+      "cargo_mm3_per_unit": 5000000,
+      "lifecycle": "durable",
+      "need_tags": [
+        "aesthetics",
+        "nature"
+      ]
+    },
+    {
+      "id": "item/computer",
+      "group": "electronics",
+      "unit": "count",
+      "mass_g_per_unit": 6000,
+      "cargo_mm3_per_unit": 16000000,
+      "lifecycle": "durable",
+      "need_tags": [
+        "work",
+        "learning",
+        "leisure"
+      ]
+    },
+    {
+      "id": "item/network_node",
+      "group": "communications",
+      "unit": "count",
+      "mass_g_per_unit": 3000,
+      "cargo_mm3_per_unit": 6500000,
+      "lifecycle": "durable",
+      "need_tags": [
+        "communication"
+      ]
+    },
+    {
+      "id": "item/radio",
+      "group": "communications",
+      "unit": "count",
+      "mass_g_per_unit": 2500,
+      "cargo_mm3_per_unit": 4500000,
+      "lifecycle": "durable",
+      "need_tags": [
+        "communication"
+      ]
+    },
+    {
+      "id": "item/camera",
+      "group": "media",
+      "unit": "count",
+      "mass_g_per_unit": 2000,
+      "cargo_mm3_per_unit": 5000000,
+      "lifecycle": "durable",
+      "need_tags": [
+        "creative",
+        "security"
+      ]
+    },
+    {
+      "id": "item/video_camera",
+      "group": "media",
+      "unit": "count",
+      "mass_g_per_unit": 3200,
+      "cargo_mm3_per_unit": 7000000,
+      "lifecycle": "durable",
+      "need_tags": [
+        "creative",
+        "education"
+      ]
+    },
+    {
+      "id": "item/microphone",
+      "group": "media",
+      "unit": "count",
+      "mass_g_per_unit": 800,
+      "cargo_mm3_per_unit": 2500000,
+      "lifecycle": "durable",
+      "need_tags": [
+        "creative",
+        "communication"
+      ]
+    },
+    {
+      "id": "item/speaker",
+      "group": "media",
+      "unit": "count",
+      "mass_g_per_unit": 1700,
+      "cargo_mm3_per_unit": 6000000,
+      "lifecycle": "durable",
+      "need_tags": [
+        "leisure",
+        "communication"
+      ]
+    },
+    {
+      "id": "item/printer",
+      "group": "office",
+      "unit": "count",
+      "mass_g_per_unit": 15000,
+      "cargo_mm3_per_unit": 34000000,
+      "lifecycle": "durable",
+      "need_tags": [
+        "work",
+        "administration"
+      ]
+    },
+    {
+      "id": "item/generator",
+      "group": "energy",
+      "unit": "count",
+      "mass_g_per_unit": 45000,
+      "cargo_mm3_per_unit": 80000000,
+      "lifecycle": "durable",
+      "need_tags": [
+        "power_access"
+      ]
+    },
+    {
+      "id": "item/water_pump",
+      "group": "utilities",
+      "unit": "count",
+      "mass_g_per_unit": 14000,
+      "cargo_mm3_per_unit": 30000000,
+      "lifecycle": "durable",
+      "need_tags": [
+        "hygiene",
+        "water_access"
+      ]
+    },
+    {
+      "id": "item/landing_beacon",
+      "group": "transport",
+      "unit": "count",
+      "mass_g_per_unit": 15000,
+      "cargo_mm3_per_unit": 32000000,
+      "lifecycle": "durable",
+      "need_tags": [
+        "transport_access"
+      ]
+    },
+    {
+      "id": "item/clinic_bed",
+      "group": "healthcare",
+      "unit": "count",
+      "mass_g_per_unit": 35000,
+      "cargo_mm3_per_unit": 280000000,
+      "lifecycle": "durable",
+      "need_tags": [
+        "health"
+      ]
+    },
+    {
+      "id": "item/sterile_dressing",
+      "group": "healthcare",
+      "unit": "count",
+      "mass_g_per_unit": 200,
+      "cargo_mm3_per_unit": 300000,
+      "lifecycle": "consumable",
+      "need_tags": [
+        "treatment"
+      ]
+    },
+    {
+      "id": "item/meal",
+      "group": "food",
+      "unit": "count",
+      "mass_g_per_unit": 700,
+      "cargo_mm3_per_unit": 1100000,
+      "lifecycle": "consumable",
+      "need_tags": [
+        "nutrition"
+      ]
+    },
+    {
+      "id": "item/paper_pack",
+      "group": "office",
+      "unit": "count",
+      "mass_g_per_unit": 1000,
+      "cargo_mm3_per_unit": 1400000,
+      "lifecycle": "consumable",
+      "need_tags": [
+        "work",
+        "education"
+      ]
+    },
+    {
+      "id": "item/printed_document",
+      "group": "office",
+      "unit": "count",
+      "mass_g_per_unit": 101,
+      "cargo_mm3_per_unit": 150000,
+      "lifecycle": "consumable",
+      "need_tags": [
+        "administration"
+      ]
+    },
+    {
+      "id": "item/detergent_pack",
+      "group": "hygiene",
+      "unit": "count",
+      "mass_g_per_unit": 1000,
+      "cargo_mm3_per_unit": 1500000,
+      "lifecycle": "consumable",
+      "need_tags": [
+        "hygiene"
+      ]
+    },
+    {
+      "id": "item/first_aid_kit",
+      "group": "healthcare",
+      "unit": "count",
+      "mass_g_per_unit": 1000,
+      "cargo_mm3_per_unit": 1800000,
+      "lifecycle": "durable",
+      "need_tags": [
+        "health",
+        "safety"
+      ]
+    },
+    {
+      "id": "item/clothes_bundle",
+      "group": "furnishing",
+      "unit": "count",
+      "mass_g_per_unit": 3000,
+      "cargo_mm3_per_unit": 13000000,
+      "lifecycle": "durable",
+      "need_tags": [
+        "hygiene",
+        "comfort"
+      ]
+    },
+    {
+      "id": "item/medical_scanner",
+      "group": "healthcare",
+      "unit": "count",
+      "mass_g_per_unit": 9000,
+      "cargo_mm3_per_unit": 26000000,
+      "lifecycle": "durable",
+      "need_tags": [
+        "treatment"
+      ]
+    },
+    {
+      "id": "item/laundry_machine",
+      "group": "service",
+      "unit": "count",
+      "mass_g_per_unit": 45000,
+      "cargo_mm3_per_unit": 90000000,
+      "lifecycle": "durable",
+      "need_tags": [
+        "hygiene"
+      ]
+    },
+    {
+      "id": "item/substation",
+      "group": "energy",
+      "unit": "count",
+      "mass_g_per_unit": 60000,
+      "cargo_mm3_per_unit": 90000000,
+      "lifecycle": "durable",
+      "need_tags": [
+        "power_access"
+      ]
+    },
+    {
+      "id": "item/solar_array",
+      "group": "energy",
+      "unit": "count",
+      "mass_g_per_unit": 43000,
+      "cargo_mm3_per_unit": 120000000,
+      "lifecycle": "durable",
+      "need_tags": [
+        "power_access"
+      ]
+    },
+    {
+      "id": "item/book",
+      "group": "media",
+      "unit": "count",
+      "mass_g_per_unit": 500,
+      "cargo_mm3_per_unit": 700000,
+      "lifecycle": "durable",
+      "need_tags": [
+        "education",
+        "leisure"
+      ]
+    }
+  ],
+  "recipes": [
+    {
+      "id": "form_metal_panel",
+      "site_capability": "metal_forming",
+      "work_ticks": 4,
+      "energy_kj": 250,
+      "inputs": [
+        {
+          "item": "bulk/aluminum",
+          "qty": 31000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "part/metal_panel",
+          "qty": 1
+        },
+        {
+          "item": "bulk/aluminum_scrap",
+          "qty": 1000
+        }
+      ],
+      "source_ids": [
+        "usgs",
+        "doe",
+        "epa"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "form_metal_frame",
+      "site_capability": "metal_forming",
+      "work_ticks": 3,
+      "energy_kj": 140,
+      "inputs": [
+        {
+          "item": "bulk/structural_alloy",
+          "qty": 10000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "part/metal_frame",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "usgs",
+        "doe"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "forge_fasteners",
+      "site_capability": "metal_forming",
+      "work_ticks": 2,
+      "energy_kj": 90,
+      "inputs": [
+        {
+          "item": "bulk/structural_alloy",
+          "qty": 1000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "part/fastener_set",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "usgs",
+        "doe"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "make_wire_roll",
+      "site_capability": "electrical_assembly",
+      "work_ticks": 3,
+      "energy_kj": 200,
+      "inputs": [
+        {
+          "item": "bulk/copper",
+          "qty": 4000
+        },
+        {
+          "item": "bulk/insulation",
+          "qty": 1000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "part/wire_roll",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "usgs",
+        "doe"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "form_glass_panel",
+      "site_capability": "glass_forming",
+      "work_ticks": 4,
+      "energy_kj": 240,
+      "inputs": [
+        {
+          "item": "bulk/glass",
+          "qty": 10000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "part/glass_panel",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "usgs",
+        "doe"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "mill_wood_board",
+      "site_capability": "woodworking",
+      "work_ticks": 2,
+      "energy_kj": 80,
+      "inputs": [
+        {
+          "item": "bulk/wood",
+          "qty": 5000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "part/wood_board",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "epa"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "make_piping",
+      "site_capability": "metal_forming",
+      "work_ticks": 3,
+      "energy_kj": 170,
+      "inputs": [
+        {
+          "item": "bulk/copper",
+          "qty": 6000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "part/piping",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "usgs",
+        "doe"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "assemble_circuit_board",
+      "site_capability": "precision_electronics",
+      "work_ticks": 5,
+      "energy_kj": 400,
+      "inputs": [
+        {
+          "item": "bulk/copper",
+          "qty": 100
+        },
+        {
+          "item": "bulk/polymer",
+          "qty": 250
+        },
+        {
+          "item": "bulk/silicon_grade",
+          "qty": 150
+        }
+      ],
+      "outputs": [
+        {
+          "item": "part/circuit_board",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "nist"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "assemble_optical_sensor",
+      "site_capability": "precision_electronics",
+      "work_ticks": 5,
+      "energy_kj": 260,
+      "inputs": [
+        {
+          "item": "bulk/glass",
+          "qty": 100
+        },
+        {
+          "item": "bulk/silicon_grade",
+          "qty": 200
+        }
+      ],
+      "outputs": [
+        {
+          "item": "part/optical_sensor",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "nist",
+        "usgs"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "assemble_speaker_driver",
+      "site_capability": "electrical_assembly",
+      "work_ticks": 3,
+      "energy_kj": 110,
+      "inputs": [
+        {
+          "item": "bulk/copper",
+          "qty": 400
+        },
+        {
+          "item": "bulk/structural_alloy",
+          "qty": 300
+        }
+      ],
+      "outputs": [
+        {
+          "item": "part/speaker_driver",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "usgs"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "assemble_motor",
+      "site_capability": "electrical_assembly",
+      "work_ticks": 4,
+      "energy_kj": 300,
+      "inputs": [
+        {
+          "item": "bulk/structural_alloy",
+          "qty": 4000
+        },
+        {
+          "item": "bulk/copper",
+          "qty": 2000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "part/motor",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "usgs",
+        "doe"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "assemble_acoustic_capsule",
+      "site_capability": "precision_electronics",
+      "work_ticks": 3,
+      "energy_kj": 150,
+      "inputs": [
+        {
+          "item": "bulk/copper",
+          "qty": 40
+        },
+        {
+          "item": "bulk/polymer",
+          "qty": 60
+        }
+      ],
+      "outputs": [
+        {
+          "item": "part/acoustic_capsule",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "nist"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "make_wire_bundle",
+      "site_capability": "electrical_assembly",
+      "work_ticks": 2,
+      "energy_kj": 100,
+      "inputs": [
+        {
+          "item": "bulk/copper",
+          "qty": 400
+        },
+        {
+          "item": "bulk/insulation",
+          "qty": 100
+        }
+      ],
+      "outputs": [
+        {
+          "item": "part/wire_bundle",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "usgs"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "assemble_display",
+      "site_capability": "precision_electronics",
+      "work_ticks": 5,
+      "energy_kj": 300,
+      "inputs": [
+        {
+          "item": "bulk/glass",
+          "qty": 600
+        },
+        {
+          "item": "bulk/polymer",
+          "qty": 400
+        }
+      ],
+      "outputs": [
+        {
+          "item": "part/display",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "nist"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "fabricate_solar_cell",
+      "site_capability": "precision_electronics",
+      "work_ticks": 7,
+      "energy_kj": 700,
+      "inputs": [
+        {
+          "item": "bulk/silicon_grade",
+          "qty": 1500
+        },
+        {
+          "item": "bulk/glass",
+          "qty": 1000
+        },
+        {
+          "item": "bulk/copper",
+          "qty": 500
+        }
+      ],
+      "outputs": [
+        {
+          "item": "part/solar_cell",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "nist",
+        "eia"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "fire_plant_pot",
+      "site_capability": "ceramics",
+      "work_ticks": "3",
+      "energy_kj": 180,
+      "inputs": [
+        {
+          "item": "bulk/ceramic",
+          "qty": 500
+        }
+      ],
+      "outputs": [
+        {
+          "item": "part/plant_pot",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "usgs",
+        "doe"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "assemble_chair",
+      "site_capability": "furnishing",
+      "work_ticks": 2,
+      "energy_kj": 70,
+      "inputs": [
+        {
+          "item": "part/wood_board",
+          "qty": 1
+        },
+        {
+          "item": "part/metal_frame",
+          "qty": 1
+        }
+      ],
+      "outputs": [
+        {
+          "item": "item/chair",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "epa"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "assemble_table",
+      "site_capability": "furnishing",
+      "work_ticks": 3,
+      "energy_kj": 100,
+      "inputs": [
+        {
+          "item": "part/wood_board",
+          "qty": 2
+        },
+        {
+          "item": "part/metal_frame",
+          "qty": 1
+        },
+        {
+          "item": "part/fastener_set",
+          "qty": 2
+        }
+      ],
+      "outputs": [
+        {
+          "item": "item/table",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "epa"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "assemble_desk",
+      "site_capability": "furnishing",
+      "work_ticks": 3,
+      "energy_kj": 120,
+      "inputs": [
+        {
+          "item": "part/wood_board",
+          "qty": 2
+        },
+        {
+          "item": "part/metal_frame",
+          "qty": 1
+        },
+        {
+          "item": "part/fastener_set",
+          "qty": 4
+        }
+      ],
+      "outputs": [
+        {
+          "item": "item/desk",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "epa"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "assemble_bed",
+      "site_capability": "furnishing",
+      "work_ticks": 4,
+      "energy_kj": 140,
+      "inputs": [
+        {
+          "item": "part/metal_frame",
+          "qty": 2
+        },
+        {
+          "item": "bulk/textile",
+          "qty": 10000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "item/bed",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "epa"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "pot_nursery_plant",
+      "site_capability": "horticulture",
+      "work_ticks": 4,
+      "energy_kj": 100,
+      "inputs": [
+        {
+          "item": "part/plant_pot",
+          "qty": 1
+        },
+        {
+          "item": "bulk/soil",
+          "qty": 1500
+        },
+        {
+          "item": "bulk/nursery_plant",
+          "qty": 1000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "item/houseplant",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "nursery"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "assemble_computer",
+      "site_capability": "precision_electronics",
+      "work_ticks": 5,
+      "energy_kj": 450,
+      "inputs": [
+        {
+          "item": "part/circuit_board",
+          "qty": 1
+        },
+        {
+          "item": "part/display",
+          "qty": 1
+        },
+        {
+          "item": "bulk/aluminum",
+          "qty": 3000
+        },
+        {
+          "item": "bulk/polymer",
+          "qty": 1500
+        }
+      ],
+      "outputs": [
+        {
+          "item": "item/computer",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "nist",
+        "usgs"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "assemble_network_node",
+      "site_capability": "precision_electronics",
+      "work_ticks": 5,
+      "energy_kj": 280,
+      "inputs": [
+        {
+          "item": "part/circuit_board",
+          "qty": 1
+        },
+        {
+          "item": "part/wire_bundle",
+          "qty": 1
+        },
+        {
+          "item": "bulk/aluminum",
+          "qty": 2000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "item/network_node",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "nist"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "assemble_radio",
+      "site_capability": "electrical_assembly",
+      "work_ticks": 3,
+      "energy_kj": 150,
+      "inputs": [
+        {
+          "item": "part/circuit_board",
+          "qty": 1
+        },
+        {
+          "item": "part/wire_bundle",
+          "qty": 1
+        },
+        {
+          "item": "bulk/polymer",
+          "qty": 1500
+        }
+      ],
+      "outputs": [
+        {
+          "item": "item/radio",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "nist"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "assemble_camera",
+      "site_capability": "precision_electronics",
+      "work_ticks": 4,
+      "energy_kj": 260,
+      "inputs": [
+        {
+          "item": "part/optical_sensor",
+          "qty": 1
+        },
+        {
+          "item": "part/circuit_board",
+          "qty": 1
+        },
+        {
+          "item": "bulk/aluminum",
+          "qty": 500
+        },
+        {
+          "item": "bulk/polymer",
+          "qty": 700
+        }
+      ],
+      "outputs": [
+        {
+          "item": "item/camera",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "nist"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "assemble_video_camera",
+      "site_capability": "precision_electronics",
+      "work_ticks": 6,
+      "energy_kj": 450,
+      "inputs": [
+        {
+          "item": "part/optical_sensor",
+          "qty": 1
+        },
+        {
+          "item": "part/circuit_board",
+          "qty": 1
+        },
+        {
+          "item": "part/display",
+          "qty": 1
+        },
+        {
+          "item": "bulk/polymer",
+          "qty": 1400
+        }
+      ],
+      "outputs": [
+        {
+          "item": "item/video_camera",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "nist"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "assemble_microphone",
+      "site_capability": "precision_electronics",
+      "work_ticks": 3,
+      "energy_kj": 140,
+      "inputs": [
+        {
+          "item": "part/acoustic_capsule",
+          "qty": 1
+        },
+        {
+          "item": "part/wire_bundle",
+          "qty": 1
+        },
+        {
+          "item": "bulk/polymer",
+          "qty": 200
+        }
+      ],
+      "outputs": [
+        {
+          "item": "item/microphone",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "nist"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "assemble_speaker",
+      "site_capability": "electrical_assembly",
+      "work_ticks": 3,
+      "energy_kj": 160,
+      "inputs": [
+        {
+          "item": "part/speaker_driver",
+          "qty": 1
+        },
+        {
+          "item": "bulk/polymer",
+          "qty": 1000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "item/speaker",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "nist"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "assemble_printer",
+      "site_capability": "machinery",
+      "work_ticks": 5,
+      "energy_kj": 400,
+      "inputs": [
+        {
+          "item": "part/circuit_board",
+          "qty": 1
+        },
+        {
+          "item": "part/motor",
+          "qty": 1
+        },
+        {
+          "item": "bulk/aluminum",
+          "qty": 6000
+        },
+        {
+          "item": "bulk/polymer",
+          "qty": 2500
+        }
+      ],
+      "outputs": [
+        {
+          "item": "item/printer",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "nist",
+        "epa"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "assemble_generator",
+      "site_capability": "heavy_equipment",
+      "work_ticks": 8,
+      "energy_kj": 980,
+      "inputs": [
+        {
+          "item": "part/motor",
+          "qty": 1
+        },
+        {
+          "item": "part/metal_panel",
+          "qty": 1
+        },
+        {
+          "item": "part/wire_roll",
+          "qty": 1
+        },
+        {
+          "item": "bulk/structural_alloy",
+          "qty": 4000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "item/generator",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "eia",
+        "doe"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "assemble_water_pump",
+      "site_capability": "machinery",
+      "work_ticks": 5,
+      "energy_kj": 360,
+      "inputs": [
+        {
+          "item": "part/motor",
+          "qty": 1
+        },
+        {
+          "item": "part/piping",
+          "qty": 1
+        },
+        {
+          "item": "bulk/aluminum",
+          "qty": 2000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "item/water_pump",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "doe"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "assemble_landing_beacon",
+      "site_capability": "electrical_assembly",
+      "work_ticks": 5,
+      "energy_kj": 320,
+      "inputs": [
+        {
+          "item": "part/metal_frame",
+          "qty": 1
+        },
+        {
+          "item": "item/radio",
+          "qty": 1
+        },
+        {
+          "item": "part/wire_bundle",
+          "qty": 1
+        },
+        {
+          "item": "bulk/aluminum",
+          "qty": 2000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "item/landing_beacon",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "eia",
+        "nist"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "assemble_clinic_bed",
+      "site_capability": "furnishing",
+      "work_ticks": 4,
+      "energy_kj": 130,
+      "inputs": [
+        {
+          "item": "part/metal_frame",
+          "qty": 2
+        },
+        {
+          "item": "bulk/textile",
+          "qty": 10000
+        },
+        {
+          "item": "bulk/aluminum",
+          "qty": 5000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "item/clinic_bed",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "who"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "sterilize_dressing",
+      "site_capability": "medical_cleanroom",
+      "work_ticks": 4,
+      "energy_kj": 230,
+      "inputs": [
+        {
+          "item": "bulk/textile",
+          "qty": 180
+        },
+        {
+          "item": "bulk/polymer",
+          "qty": 20
+        }
+      ],
+      "outputs": [
+        {
+          "item": "item/sterile_dressing",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "who",
+        "doe"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "cook_meal",
+      "site_capability": "food_kitchen",
+      "work_ticks": 2,
+      "energy_kj": 180,
+      "inputs": [
+        {
+          "item": "bulk/vegetables",
+          "qty": 300
+        },
+        {
+          "item": "bulk/grain",
+          "qty": 200
+        },
+        {
+          "item": "bulk/clean_water",
+          "qty": 200
+        }
+      ],
+      "outputs": [
+        {
+          "item": "item/meal",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "usda",
+        "doe"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "package_paper",
+      "site_capability": "packaging",
+      "work_ticks": 1,
+      "energy_kj": 30,
+      "inputs": [
+        {
+          "item": "bulk/paper",
+          "qty": 1000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "item/paper_pack",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "epa"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "print_document",
+      "site_capability": "office",
+      "work_ticks": 1,
+      "energy_kj": 15,
+      "inputs": [
+        {
+          "item": "bulk/paper",
+          "qty": 100
+        },
+        {
+          "item": "bulk/ink",
+          "qty": 1
+        }
+      ],
+      "outputs": [
+        {
+          "item": "item/printed_document",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "epa"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "package_detergent",
+      "site_capability": "packaging",
+      "work_ticks": 2,
+      "energy_kj": 25,
+      "inputs": [
+        {
+          "item": "bulk/detergent",
+          "qty": 950
+        },
+        {
+          "item": "bulk/polymer",
+          "qty": 50
+        }
+      ],
+      "outputs": [
+        {
+          "item": "item/detergent_pack",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "epa"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "assemble_first_aid_kit",
+      "site_capability": "medical_cleanroom",
+      "work_ticks": 2,
+      "energy_kj": 55,
+      "inputs": [
+        {
+          "item": "item/sterile_dressing",
+          "qty": 3
+        },
+        {
+          "item": "bulk/polymer",
+          "qty": 400
+        }
+      ],
+      "outputs": [
+        {
+          "item": "item/first_aid_kit",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "who"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "make_clothes_bundle",
+      "site_capability": "textiles",
+      "work_ticks": 3,
+      "energy_kj": 110,
+      "inputs": [
+        {
+          "item": "bulk/textile",
+          "qty": 3000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "item/clothes_bundle",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "epa"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "assemble_medical_scanner",
+      "site_capability": "precision_electronics",
+      "work_ticks": 6,
+      "energy_kj": 410,
+      "inputs": [
+        {
+          "item": "item/computer",
+          "qty": 1
+        },
+        {
+          "item": "part/optical_sensor",
+          "qty": 1
+        },
+        {
+          "item": "bulk/aluminum",
+          "qty": 2700
+        }
+      ],
+      "outputs": [
+        {
+          "item": "item/medical_scanner",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "who",
+        "nist"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "assemble_laundry_machine",
+      "site_capability": "heavy_equipment",
+      "work_ticks": 7,
+      "energy_kj": 750,
+      "inputs": [
+        {
+          "item": "part/motor",
+          "qty": 1
+        },
+        {
+          "item": "part/metal_panel",
+          "qty": 1
+        },
+        {
+          "item": "part/piping",
+          "qty": 1
+        },
+        {
+          "item": "bulk/polymer",
+          "qty": 3000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "item/laundry_machine",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "laundry",
+        "doe"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "assemble_substation",
+      "site_capability": "heavy_equipment",
+      "work_ticks": 8,
+      "energy_kj": 900,
+      "inputs": [
+        {
+          "item": "part/wire_roll",
+          "qty": 2
+        },
+        {
+          "item": "part/metal_panel",
+          "qty": 1
+        },
+        {
+          "item": "bulk/structural_alloy",
+          "qty": 20000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "item/substation",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "eia"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "assemble_solar_array",
+      "site_capability": "precision_electronics",
+      "work_ticks": 7,
+      "energy_kj": 800,
+      "inputs": [
+        {
+          "item": "part/metal_panel",
+          "qty": 1
+        },
+        {
+          "item": "part/glass_panel",
+          "qty": 1
+        },
+        {
+          "item": "part/solar_cell",
+          "qty": 1
+        }
+      ],
+      "outputs": [
+        {
+          "item": "item/solar_array",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "eia",
+        "nist"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "bind_book",
+      "site_capability": "media_print",
+      "work_ticks": 2,
+      "energy_kj": 45,
+      "inputs": [
+        {
+          "item": "bulk/paper",
+          "qty": 450
+        },
+        {
+          "item": "bulk/polymer",
+          "qty": 50
+        }
+      ],
+      "outputs": [
+        {
+          "item": "item/book",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "epa"
+      ],
+      "quantities": "illustrative_game_balance"
+    }
+  ],
+  "services": [
+    {
+      "id": "service/laundry",
+      "staff": [
+        "laundry_operator"
+      ],
+      "site_capabilities": [
+        "laundry_machine",
+        "water_supply",
+        "drainage",
+        "electricity"
+      ],
+      "input_consumables": [
+        "bulk/clean_water",
+        "bulk/detergent"
+      ],
+      "durable_requirements": [
+        "item/laundry_machine"
+      ],
+      "result": "restores_cleanliness_on_same_existing_clothing",
+      "source_ids": [
+        "laundry",
+        "epa"
+      ]
+    },
+    {
+      "id": "service/clinical_care",
+      "staff": [
+        "medical_worker"
+      ],
+      "site_capabilities": [
+        "clinic",
+        "sterile_work"
+      ],
+      "input_consumables": [
+        "item/sterile_dressing"
+      ],
+      "durable_requirements": [
+        "item/clinic_bed"
+      ],
+      "result": "supervised_treatment_episode_without_item_creation",
+      "source_ids": [
+        "who"
+      ]
+    },
+    {
+      "id": "service/food_service",
+      "staff": [
+        "cook",
+        "server"
+      ],
+      "site_capabilities": [
+        "kitchen",
+        "dining"
+      ],
+      "input_consumables": [
+        "item/meal"
+      ],
+      "durable_requirements": [
+        "item/table",
+        "item/chair"
+      ],
+      "result": "food_consumed_by_existing_named_person_or_cohort",
+      "source_ids": [
+        "usda"
+      ]
+    },
+    {
+      "id": "service/education",
+      "staff": [
+        "instructor"
+      ],
+      "site_capabilities": [
+        "classroom",
+        "power"
+      ],
+      "input_consumables": [],
+      "durable_requirements": [
+        "item/desk",
+        "item/computer"
+      ],
+      "result": "training_access_and_validated_learning_time",
+      "source_ids": [
+        "epa"
+      ]
+    },
+    {
+      "id": "service/legal_consultation",
+      "staff": [
+        "legal_worker"
+      ],
+      "site_capabilities": [
+        "office"
+      ],
+      "input_consumables": [],
+      "durable_requirements": [
+        "item/desk"
+      ],
+      "result": "counsel_or_authorized_case_work_receipt_not_physical_item",
+      "source_ids": [
+        "usda"
+      ]
+    },
+    {
+      "id": "service/public_administration",
+      "staff": [
+        "administrator"
+      ],
+      "site_capabilities": [
+        "government_office"
+      ],
+      "input_consumables": [
+        "item/printed_document"
+      ],
+      "durable_requirements": [
+        "item/desk",
+        "item/computer"
+      ],
+      "result": "authorized_administrative_work_receipt",
+      "source_ids": [
+        "epa"
+      ]
+    },
+    {
+      "id": "service/entertainment_performance",
+      "staff": [
+        "performer"
+      ],
+      "site_capabilities": [
+        "venue",
+        "power"
+      ],
+      "input_consumables": [],
+      "durable_requirements": [
+        "item/microphone",
+        "item/speaker"
+      ],
+      "result": "bounded_shared_leisure_access_not_item_consumption",
+      "source_ids": [
+        "epa"
+      ]
+    }
+  ],
+  "legacy_bridge": [
+    {
+      "legacy_code": "good/aluminum",
+      "proposed_item": "bulk/aluminum",
+      "authoritative_conversion": "unresolved_do_not_automatically_convert"
+    },
+    {
+      "legacy_code": "good/structural_alloy",
+      "proposed_item": "bulk/structural_alloy",
+      "authoritative_conversion": "unresolved_do_not_automatically_convert"
+    },
+    {
+      "legacy_code": "good/glass",
+      "proposed_item": "bulk/glass",
+      "authoritative_conversion": "unresolved_do_not_automatically_convert"
+    },
+    {
+      "legacy_code": "good/ceramic",
+      "proposed_item": "bulk/ceramic",
+      "authoritative_conversion": "unresolved_do_not_automatically_convert"
+    },
+    {
+      "legacy_code": "good/water",
+      "proposed_item": "bulk/clean_water",
+      "authoritative_conversion": "unresolved_do_not_automatically_convert"
+    },
+    {
+      "legacy_code": "good/freight_nutrients",
+      "proposed_item": null,
+      "authoritative_conversion": "distinct_sealed_cargo_not_ordinary_recipe_stock"
+    }
+  ]
+}
