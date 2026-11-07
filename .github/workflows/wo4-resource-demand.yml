@@ -7,6 +7,8 @@ on:
       - 'include/galaxy/WO4LocalAllocation.hpp'
       - 'include/galaxy/WO4ConsumptionProfiles.hpp'
       - 'include/galaxy/WO4RegionalDistribution.hpp'
+      - 'include/galaxy/WO4MaterialAllocation.hpp'
+      - 'tests/WO4MaterialAllocationTests.cpp'
       - 'tests/WO4ResourceDemandTests.cpp'
       - 'tests/WO3PlanetaryUtilityTests.cpp'
       - 'src/Industry01Catalog.generated.cpp'
@@ -68,9 +70,9 @@ jobs:
           cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$tc" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
           if ($LASTEXITCODE -ne 0) { throw 'Windows original configure failed' }
       - name: Build WO4 and upstream original colony regression
-        run: cmake --build build --config Release --parallel 2 --target galaxy_wo4_resource_demand_tests galaxy_wo3_colony_operations_tests galaxy_wo3_planetary_housing_tests galaxy_wo3_planetary_utility_tests galaxy_wo2_industry_workforce_tests
+        run: cmake --build build --config Release --parallel 2 --target galaxy_wo4_resource_demand_tests galaxy_wo4_material_allocation_tests galaxy_wo3_colony_operations_tests galaxy_wo3_planetary_housing_tests galaxy_wo3_planetary_utility_tests galaxy_wo2_industry_workforce_tests
       - name: Verify owner, physical stocks, and copy-recovered original SQLite
-        run: ctest --test-dir build -C Release --output-on-failure --output-junit build/wo4-actual-results.xml -R "^galaxy_(wo4_resource_demand|wo3_colony_operations|wo3_planetary_housing|wo3_planetary_utility|wo2_industry_workforce)$"
+        run: ctest --test-dir build -C Release --output-on-failure --output-junit build/wo4-actual-results.xml -R "^galaxy_(wo4_resource_demand|wo4_material_allocation|wo3_colony_operations|wo3_planetary_housing|wo3_planetary_utility|wo2_industry_workforce)$"
       - name: Retain executed native test evidence
         if: always()
         uses: actions/upload-artifact@v4
