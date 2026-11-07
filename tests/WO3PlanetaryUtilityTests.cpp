@@ -586,15 +586,10 @@ int main() {
             admission.region_scope=region_scope;
             admission.origin_colony="home";
             admission.destination_colony="surface";
+            auto spoofed_household=admission;
+            spoofed_household.owner=8;
             CHECK(!service.commit_planetary_household_settlement(
-                PlanetaryHouseholdSettlementPlan{admission.expected_world_generation,
-                  admission.request_id,admission.expected_region_revision,
-                  admission.expected_owner_generation,admission.family_seed,
-                  admission.expected_origin_family_revision,
-                  admission.expected_destination_family_revision,
-                  admission.coparent_move_id,admission.child_move_id,8,
-                  ship,key,guardian,false,true,true,family_scope,
-                  region_scope,"home","surface"}));
+                spoofed_household));
             bool failed_admission=false;
             const auto before_admission=service.world().state_hash();
             try {
