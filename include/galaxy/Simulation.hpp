@@ -537,6 +537,18 @@ struct PlanetarySiteFacility {
     // durable, single-use provenance, never a duplicate NPC population.
     std::array<std::uint64_t,2> founder_residents{{0,0}};
     std::array<std::uint64_t,2> founder_consent_requests{{0,0}};
+    // WO3-C/D v110: original surface utility built from TWO additional
+    // shuttle-delivered modules, supervised by an actually qualified NPC.
+    // Electricity is an energy unit, not matter; all recycled matter stays
+    // in the one canonical planetary site inventory.
+    std::uint8_t utility_phase=0; // 0 absent, 1 building, 2 operational
+    std::uint64_t utility_progress=0,utility_order_id=0;
+    std::uint64_t utility_supervisor=0,utility_stalled_ticks=0;
+    std::uint64_t utility_completed_tick=0;
+    bool utility_paused=false;
+    std::int64_t stored_electricity=0,brine_kg=0;
+    std::uint64_t utility_powered_cycles=0,hvac_cycles=0,utility_outages=0;
+    std::int64_t water_recycled_kg=0,oxygen_recycled_kg=0;
 };
 using PlanetarySiteKey = std::tuple<std::uint64_t,std::uint16_t,std::uint16_t,std::uint32_t>;
 // PLAY-13D: cargo identity is independent of player/NPC transport roles.
@@ -1355,6 +1367,13 @@ public:
     bool start_planetary_housing(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,std::uint64_t order_id);
     bool set_planetary_housing_pause(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool pause);
+    // Real surface solar array/HVAC/recycler: two more landed modules,
+    // 60 supervised construction ticks and a current WO2 Shape certificate.
+    bool start_planetary_surface_utility(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t order_id,
+        std::uint64_t qualified_supervisor);
+    bool pause_planetary_surface_utility(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,bool pause);
     // Admission of an already physically deployed named founder with
     // trusted owner + voluntary-consent attestation and unique request ID.
