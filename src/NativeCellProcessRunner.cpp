@@ -166,11 +166,19 @@ bool execute(const std::string& executable,const CellProcessTask& task,
     close(job);
     close(child.hProcess);
     if(success){
-        char buffer[2048]{};
-        DWORD received=0;
-        if(ReadFile(readpipe,buffer,static_cast<DWORD>(sizeof(buffer)),
-                    &received,nullptr))
-            output.assign(buffer,buffer+received);
+        // A grandchild holding a duplicate stdout handle must never make
+        // report collection exceed the completed worker's deadline.
+        // Peek the already-buffered bytes; never issue a blocking read for
+        // data that might arrive only after a descendant's future exit.
+        DWORD available=0;
+        if(PeekNamedPipe(readpipe,nullptr,0,nullptr,&available,nullptr) &&
+           available>0 && available<=2048){
+            char buffer[2048]{};
+            DWORD received=0;
+            if(ReadFile(readpipe,buffer,available,&received,nullptr) &&
+               received==available)
+                output.assign(buffer,buffer+received);
+        }
     }
     close(readpipe);
     return success;
@@ -240,9 +248,16 @@ bool execute(const std::string& executable,const CellProcessTask& task,
     }
     const bool success=exited && WIFEXITED(status) && WEXITSTATUS(status)==0;
     if(success){
-        char buffer[2048];
-        const auto size=read(fds[0],buffer,sizeof(buffer));
-        if(size>0)output.assign(buffer,static_cast<std::size_t>(size));
+        // The direct child can exit while an out-of-group descendant keeps
+        // the inherited stdout pipe open. A plain read() would then block
+        // indefinitely despite our verified leader-exit deadline.
+        const int flags=fcntl(fds[0],F_GETFL,0);
+        if(flags>=0 && fcntl(fds[0],F_SETFL,flags|O_NONBLOCK)==0){
+            char buffer[2049]{};
+            const auto size=read(fds[0],buffer,sizeof(buffer));
+            if(size>0 && size<=2048)
+                output.assign(buffer,static_cast<std::size_t>(size));
+        }
     }
     close(fds[0]);
     return success;
