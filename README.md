@@ -12,7 +12,7 @@ In the released game's intended opening, one player colony ship with finite NPC 
 
 **Current verification:** native Windows/Linux SHIP-STATUS C++ and integration gates are pending runner execution; the latest checked exact-code CI run had queued jobs with no executed steps. JavaScript parser/DOM shim suites passed, but real authenticated two-owner gameplay, Windows packaging, installed-game launch/restart and uninstall **have not yet been accepted**. The current workflow runs headless Chromium against a **source-built Linux host**, not a packaged Windows installation.
 
-**Start with the maintained [active engineering work ledger and prioritized outstanding task list](docs/engineering/ACTIVE_WORK_AND_ACCEPTANCE_2026-11-06.md)** and the [current NPC communications, complaint review and v104 physical ship-combat work report](docs/engineering/SHIPSTATUS_NEXTWAVE_COMMS_REVIEW_COMBAT_20261106.md) rather than treating the earlier B7/GRSM milestone descriptions as the latest sprint status.
+**Start with the maintained [active engineering work ledger and prioritized outstanding task list](docs/engineering/ACTIVE_WORK_AND_ACCEPTANCE_2026-11-06.md)**, the [Task 5 two-human owner-private hailing implementation and security acceptance](docs/engineering/SHIPSTATUS07G_TWO_HUMAN_SECURITY_TRANSPORT_20261106.md), and the [current NPC communications, complaint review and v104 physical ship-combat work report](docs/engineering/SHIPSTATUS_NEXTWAVE_COMMS_REVIEW_COMBAT_20261106.md) rather than treating the earlier B7/GRSM milestone descriptions as the latest sprint status.
 
 ## Current prototype status
 
