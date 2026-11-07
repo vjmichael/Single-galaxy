@@ -105,6 +105,10 @@ int main() {
     CHECK(w.world().total_ore()==initial_mass);
     CHECK(w.transfer_planetary_housing_module(7,ship,key,true));
     CHECK(w.world().planetary_shuttles().at(key).housing_module==1);
+    const auto manifest=w.world().planetary_transport_manifest(key);
+    CHECK(manifest && manifest->valid());
+    CHECK(transport::contains_good(*manifest,transport::GoodKind::Equipment,
+          transport::kPlanetaryHousingModuleEquipmentId,1));
     CHECK(w.world().total_ore()==initial_mass);
     const auto in_orbit=w.world().canonical_state();
     CHECK(in_orbit.rfind("galaxy-kernel-v109|",0)==0);
