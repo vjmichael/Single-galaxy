@@ -1,5 +1,7 @@
 #include "galaxy/WO3ColonyOperations.hpp"
 #include "galaxy/Persistence.hpp"
+#include "galaxy/NpcAppearanceGenome.hpp"
+#include "galaxy/RegionalModeAuthority.hpp"
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
@@ -525,6 +527,130 @@ int main() {
           !family_overflow.independent_adult_can_apply());
     CHECK(Simulation::from_snapshot(household_probe.canonical_state()).
           canonical_state()==household_probe.canonical_state());
+    // WO3-E v116: genuine ART02 birth, original immutable world/medical
+    // bridge and original physical child registration, NOT hand-written SQL
+    // or a host-only assertion. Two real parents and one child fill exactly
+    // three shuttle passenger berths; the separate pilot is unchanged.
+    {
+        CHECK(roster.size()>=5);
+        CHECK(w.book_planetary_shuttle_passenger(
+            7,ship,key,roster[3],false));
+        constexpr std::uint64_t family_seed=913746;
+        const std::string scope="wo3-genuine-family-boarding";
+        const std::string region_scope="wo3-region-family";
+        std::uint64_t ship_people=0,site_people=0;
+        const auto surface=w.world().planetary_sites().at(key).surface_location;
+        {
+            NpcAppearanceStore registry(db,scope,family_seed,
+                [&](std::uint64_t id) {
+                    return w.world().npc_records().count(id)!=0;
+                });
+            for(const auto& [id,npc]:w.world().npc_records()) {
+                (void)id;
+                if(npc.legal_residence()==transport::Endpoint{
+                    transport::LocationKind::ColonyShip,ship})++ship_people;
+                else if(npc.legal_residence()==transport::Endpoint{
+                    transport::LocationKind::PlanetarySite,surface})++site_people;
+            }
+            CHECK(ship_people>=3 && site_people==2);
+            registry.register_settlement(ship,ship_people);
+            registry.register_settlement(surface,site_people);
+            for(const auto& [id,npc]:w.world().npc_records()) {
+                const auto residence=npc.legal_residence();
+                CHECK(residence.id==ship || residence.id==surface);
+                registry.enroll_family_founder(id,residence.id);
+            }
+        }
+        namespace regional=galaxy::regional_events;
+        regional::CheckpointStore region(db,region_scope);
+        regional::Scheduler scheduler;
+        cold_colony::State baseline{};
+        baseline.population=ship_people;
+        scheduler.add_colony("home",baseline);
+        CHECK(region.save(scheduler,0)==1);
+        regional::RegionalModeAuthority authority(region);
+        CHECK(authority.enroll().generation==1);
+        const auto child=(std::uint64_t{1}<<62)+83041;
+        SocietyBirthPlan real_birth{};
+        real_birth.expected_world_generation=w.generation();
+        real_birth.expected_region_revision=1;
+        real_birth.expected_owner_generation=1;
+        real_birth.family_seed=family_seed;
+        real_birth.expected_family_revision=0;
+        real_birth.event_id=83501;
+        real_birth.child_id=child;
+        real_birth.parent_a=roster[3];real_birth.parent_b=roster[4];
+        real_birth.home_ship=ship;
+        real_birth.family_scope=scope;
+        real_birth.region_scope=region_scope;
+        real_birth.regional_colony="home";
+        w.step_with_atomic_dependent_birth(real_birth);
+        Command registered{};
+        registered.id=83502;registered.sequence=83502;
+        registered.issuer=Simulation::kServerAuthority;
+        registered.actor=ship;registered.target=ship;
+        registered.action=Action::HostRegisterDependent;
+        registered.transport_id=child;
+        registered.passenger_ids={roster[3]};
+        registered.execute_tick=w.world().tick()+1;
+        CHECK(w.submit_host_dependent_registration(registered,scope,family_seed));
+        w.step_with_dependent_registration();
+        CHECK(w.world().physical_dependents().count(child)==1);
+        const auto before=w.world().state_hash();
+        CHECK(!w.book_planetary_shuttle_passenger(
+            7,ship,key,roster[3],true));
+        CHECK(!w.book_planetary_shuttle_family(
+            8,ship,key,roster[3],roster[4],{child},83510));
+        CHECK(!w.book_planetary_shuttle_family(
+            7,ship,key,roster[3],roster[4],{child+1},83510));
+        bool rollback=false;
+        try {
+            (void)w.book_planetary_shuttle_family(
+                7,ship,key,roster[3],roster[4],{child},
+                83510,FailPoint::AfterSnapshotWrite);
+        }catch(const std::exception&){rollback=true;}
+        CHECK(rollback && w.world().state_hash()==before);
+        CHECK(w.book_planetary_shuttle_family(
+            7,ship,key,roster[3],roster[4],{child},83510));
+        CHECK(w.world().planetary_shuttles().at(key).passenger_ids.size()==2);
+        const auto packed=w.world().planetary_transport_manifest(key);
+        CHECK(packed && packed->valid() &&
+              transport::contains_good(
+                  *packed,transport::GoodKind::Npc,child,1));
+        const auto mass=w.world().total_ore();
+        CHECK(w.load_planetary_shuttle(
+            7,ship,key,ShuttleCargo::Water,10));
+        CHECK(w.launch_planetary_shuttle(7,ship,key,83511,false));
+        CHECK(w.world().physical_dependents().at(child).location!=ship);
+        const auto transit_copy=(dir/"real_family_in_transit.sqlite").string();
+        PersistentWorld::recover_copy(db,transit_copy);
+        {
+            PersistentWorld resumed(transit_copy,Simulation(99));
+            CHECK(resumed.world().state_hash()==w.world().state_hash());
+            CHECK(resumed.world().physical_dependents().at(child).location==
+                w.world().physical_dependents().at(child).location);
+            CHECK(resumed.world().total_ore()==mass);
+        }
+        w.steps(3);
+        CHECK(w.world().planetary_shuttles().at(key).family.stage==2);
+        CHECK(w.world().physical_dependents().at(child).location==surface);
+        CHECK(w.world().npc_records().at(roster[3]).location==surface);
+        CHECK(w.world().npc_records().at(roster[4]).location==surface);
+        CHECK(!w.transfer_planetary_shuttle_visitor(
+            7,ship,key,roster[4],false)); // second parent cannot leave
+        CHECK(w.launch_planetary_shuttle(7,ship,key,83512,true));
+        w.steps(3);
+        CHECK(w.world().physical_dependents().at(child).location==ship);
+        CHECK(w.world().npc_records().at(roster[3]).location==ship);
+        CHECK(w.world().npc_records().at(roster[4]).location==ship);
+        CHECK(w.release_planetary_shuttle_family(7,ship,key));
+        CHECK(!w.release_planetary_shuttle_family(7,ship,key));
+        CHECK(!w.book_planetary_shuttle_family(
+            7,ship,key,roster[3],roster[4],{child},83510));
+        CHECK(w.world().total_ore()==mass);
+        CHECK(Simulation::from_snapshot(w.world().canonical_state()).
+              canonical_state()==w.world().canonical_state());
+    }
     const auto final_copy=(dir/"housing_finished.sqlite").string();
     PersistentWorld::recover_copy(db,final_copy);
     PersistentWorld final_world(final_copy,Simulation(4));
