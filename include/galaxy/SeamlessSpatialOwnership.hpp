@@ -5,8 +5,10 @@
 // ownership. Cell scopes identify simulation responsibility, not geography
 // walls, sovereign claims or permission to create inventory.
 #include "galaxy/CosmicLocalFrame.hpp"
+#include "galaxy/GalacticCoordinates.hpp"
 #include <sqlite3.h>
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <limits>
 #include <map>
@@ -20,14 +22,24 @@ constexpr std::int64_t kCellEdgeMm=100000000LL; // 100 km, indexes only
 struct Cell {
     std::uint32_t system=0;
     std::int64_t x=0,y=0,z=0;
+    // v2 cells retain signed high-order sector identity, not a flattened
+    // int64 cell number that would overflow across the Milky Way.
+    bool hierarchical=false;
+    std::int64_t sector_x=0,sector_y=0,sector_z=0;
     bool operator==(const Cell& r)const {
-        return system==r.system && x==r.x && y==r.y && z==r.z;
+        return system==r.system && x==r.x && y==r.y && z==r.z &&
+               hierarchical==r.hierarchical &&
+               sector_x==r.sector_x && sector_y==r.sector_y && sector_z==r.sector_z;
     }
     bool operator<(const Cell& r)const {
         if(system!=r.system)return system<r.system;
         if(x!=r.x)return x<r.x;
         if(y!=r.y)return y<r.y;
-        return z<r.z;
+        if(z!=r.z)return z<r.z;
+        if(hierarchical!=r.hierarchical)return hierarchical<r.hierarchical;
+        if(sector_x!=r.sector_x)return sector_x<r.sector_x;
+        if(sector_y!=r.sector_y)return sector_y<r.sector_y;
+        return sector_z<r.sector_z;
     }
 };
 inline std::int64_t floor_cell(std::int64_t mm) {
@@ -42,11 +54,48 @@ inline Cell of(CosmicPosition p,std::uint32_t system) {
 }
 inline std::string scope(Cell c) {
     if(!c.system)throw std::invalid_argument("spatial cell system zero");
+    if(c.hierarchical){
+        if(c.x<0 || c.y<0 || c.z<0 ||
+           c.x>=galactic::kCellsPerSector ||
+           c.y>=galactic::kCellsPerSector ||
+           c.z>=galactic::kCellsPerSector)
+            throw std::invalid_argument("noncanonical high-order spatial cell");
+        return "spatial/v2/s"+std::to_string(c.system)+
+            "/q"+std::to_string(c.sector_x)+","+
+            std::to_string(c.sector_y)+","+std::to_string(c.sector_z)+
+            "/c"+std::to_string(c.x)+","+std::to_string(c.y)+","+
+            std::to_string(c.z);
+    }
     return "spatial/v1/s"+std::to_string(c.system)+
       "/x"+std::to_string(c.x)+"/y"+std::to_string(c.y)+
       "/z"+std::to_string(c.z);
 }
 inline std::optional<Cell> parse_scope(const std::string& text) {
+    if(text.rfind("spatial/v2/s",0)==0){
+        try{
+            const auto q=text.find("/q",12),c=text.find("/c",q+2);
+            if(q==std::string::npos || c==std::string::npos)return std::nullopt;
+            const auto sys=std::stoull(text.substr(12,q-12));
+            if(!sys || sys>std::numeric_limits<std::uint32_t>::max())
+                return std::nullopt;
+            const auto triple=[](const std::string& input){
+                const auto a=input.find(','),b=input.find(',',a+1);
+                if(a==std::string::npos||b==std::string::npos||
+                   input.find(',',b+1)!=std::string::npos)
+                    throw std::invalid_argument("invalid sector triple");
+                return std::array<std::int64_t,3>{
+                    std::stoll(input.substr(0,a)),
+                    std::stoll(input.substr(a+1,b-a-1)),
+                    std::stoll(input.substr(b+1))};
+            };
+            const auto sectors=triple(text.substr(q+2,c-q-2));
+            const auto cells=triple(text.substr(c+2));
+            const Cell parsed{static_cast<std::uint32_t>(sys),
+                cells[0],cells[1],cells[2],true,
+                sectors[0],sectors[1],sectors[2]};
+            return scope(parsed)==text?std::optional<Cell>(parsed):std::nullopt;
+        }catch(const std::exception&){return std::nullopt;}
+    }
     constexpr const char* prefix="spatial/v1/s";
     if(text.compare(0,std::char_traits<char>::length(prefix),prefix)!=0)
         return std::nullopt;
@@ -89,6 +138,14 @@ inline std::optional<CosmicPosition> cosmic_ship(
 inline std::optional<Cell> ship_cell(const Simulation& world,EntityId id){
     const auto* e=world.find(id);
     if(!e || e->type!=EntityType::Ship)return std::nullopt;
+    if(world.native_galactic_physics()){
+        if(!e->physical_galactic_authoritative ||
+           !e->physical_galactic.valid())return std::nullopt;
+        const auto c=galactic::cell(e->physical_galactic);
+        if(!c)return std::nullopt;
+        return Cell{e->system_id,c->within_x,c->within_y,c->within_z,
+            true,c->sector_x,c->sector_y,c->sector_z};
+    }
     const auto p=cosmic_ship(world,id);
     if(!p)return std::nullopt;
     return of(*p,e->system_id);
@@ -97,6 +154,21 @@ inline std::optional<Cell> ship_cell(const Simulation& world,EntityId id){
 enum class Detail : std::uint8_t {Dormant=0,Cold=1,Detailed=2};
 inline bool touching(Cell a,Cell b) {
     if(a.system!=b.system)return false;
+    if(a.hierarchical!=b.hierarchical)return false;
+    if(a.hierarchical){
+        const auto near_cell=[](std::int64_t as,std::int64_t ai,
+                                std::int64_t bs,std::int64_t bi){
+            if(as==bs)return ai==bi || ai+1==bi || bi+1==ai;
+            if(as<std::numeric_limits<std::int64_t>::max() &&
+               as+1==bs)return ai==galactic::kCellsPerSector-1 && bi==0;
+            if(bs<std::numeric_limits<std::int64_t>::max() &&
+               bs+1==as)return bi==galactic::kCellsPerSector-1 && ai==0;
+            return false;
+        };
+        return near_cell(a.sector_x,a.x,b.sector_x,b.x) &&
+               near_cell(a.sector_y,a.y,b.sector_y,b.y) &&
+               near_cell(a.sector_z,a.z,b.sector_z,b.z);
+    }
     const auto near=[](std::int64_t x,std::int64_t y) {
         return x==y ||
            (x<std::numeric_limits<std::int64_t>::max() && x+1==y) ||
@@ -225,9 +297,20 @@ inline void record_native_world_commit(sqlite3* db,const Simulation& world,
     std::uint64_t count=0;
     for(const auto& [ship,e]:world.entities()){
         if(e.type!=EntityType::Ship)continue;
-        const auto p=cosmic_ship(world,ship);
-        if(!p)throw std::runtime_error("spatial index missing original cosmic ship frame");
-        const auto cell=scope(of(*p,e.system_id));
+        const auto resident=ship_cell(world,ship);
+        if(!resident)
+            throw std::runtime_error("spatial index missing original galactic ship");
+        const auto cell=scope(*resident);
+        // v2 physical sector identity is carried by the exact scope; the
+        // old SQLite signed columns retain only canonical sub-sector offsets.
+        // Never attempt a lossy high-order sector*cell expansion.
+        const auto p=world.native_galactic_physics()?
+            std::optional<CosmicPosition>(CosmicPosition{
+                e.physical_galactic.x.millimeters,
+                e.physical_galactic.y.millimeters,
+                e.physical_galactic.z.millimeters}):
+            cosmic_ship(world,ship);
+        if(!p)throw std::runtime_error("spatial index missing original offset");
         const auto id=std::to_string(ship),owner=std::to_string(e.owner_id);
         detail::Statement old(db,"SELECT player_owner,scope,world_generation "
             "FROM sg_spatial_native_ship WHERE ship_id=?");
@@ -290,14 +373,21 @@ inline bool verify_native_index(sqlite3* db,const Simulation& world,
     std::uint64_t found=0;
     for(const auto& [ship,e]:world.entities()){
         if(e.type!=EntityType::Ship)continue;
-        const auto p=cosmic_ship(world,ship);
+        const auto resident=ship_cell(world,ship);
+        if(!resident)return false;
+        const auto p=world.native_galactic_physics()?
+            std::optional<CosmicPosition>(CosmicPosition{
+                e.physical_galactic.x.millimeters,
+                e.physical_galactic.y.millimeters,
+                e.physical_galactic.z.millimeters}):
+            cosmic_ship(world,ship);
         if(!p)return false;
         detail::Statement q(db,"SELECT player_owner,scope,cosmic_x,cosmic_y,"
           "cosmic_z,world_generation,world_hash FROM sg_spatial_native_ship "
           "WHERE ship_id=?");
         q.text(1,std::to_string(ship));
         if(!q.row() || q.str(0)!=std::to_string(e.owner_id) ||
-           q.str(1)!=scope(of(*p,e.system_id)) ||
+           q.str(1)!=scope(*resident) ||
            q.integer(2)!=p->x_mm || q.integer(3)!=p->y_mm ||
            q.integer(4)!=p->z_mm ||
            q.integer(5)!=static_cast<std::int64_t>(generation) ||
@@ -310,7 +400,7 @@ inline bool verify_native_index(sqlite3* db,const Simulation& world,
         latest.text(1,std::to_string(ship));
         if(!latest.row() ||
            latest.str(0)!=std::to_string(e.owner_id) ||
-           latest.str(1)!=scope(of(*p,e.system_id)) ||
+           latest.str(1)!=scope(*resident) ||
            latest.integer(2)<=0 ||
            latest.integer(2)>static_cast<std::int64_t>(generation))
             return false;
