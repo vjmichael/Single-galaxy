@@ -12302,6 +12302,26 @@ bool PersistentWorld::submit_testing_ship_confusion(
 }
 
 bool PersistentWorld::submit(const Command& command, FailPoint fail) {
+    return submit_with_cell_worker(command,nullptr,fail);
+}
+bool PersistentWorld::submit_as_cell_worker(
+        const Command& command,const NativeCellWorkerTick& token,
+        FailPoint fail) {
+    return submit_with_cell_worker(command,&token,fail);
+}
+bool PersistentWorld::submit_with_cell_worker(
+        const Command& command,const NativeCellWorkerTick* token,
+        FailPoint fail) {
+    // Physical command actor must already inhabit the worker's genuine
+    // original cell. Target range remains owned by original Simulation;
+    // a scope string is never a shortcut for player/crew authorization.
+    if(token){
+        const auto* actor=world_.find(command.actor);
+        const auto cell=spatial::ship_cell(world_,command.actor);
+        if(!actor || actor->type!=EntityType::Ship || !cell ||
+           spatial::scope(*cell)!=token->canonical_cell_scope)
+            throw std::runtime_error("worker cannot submit outside its original cell");
+    }
     // NPC-RESP-02B: independent character custody is authoritative for
     // PLAYER-operated ship controls. A rescued/detained person cannot
     // remotely pilot an abandoned hull by changing the selected cockpit.
@@ -12353,7 +12373,8 @@ bool PersistentWorld::submit(const Command& command, FailPoint fail) {
     if(!store_->manifest_transfer_allowed(command))return false;
     auto next = world_;
     if (!next.submit(command)) return false;
-    store_->commit(next, generation_, resource_origin_, credit_origin_, &command, {}, {}, {}, fail);
+    store_->commit(next, generation_, resource_origin_, credit_origin_,
+                   &command, {}, {}, {}, fail,nullptr,nullptr,{},token);
     world_.swap(next); // noexcept: in-memory state published only after COMMIT
     ++generation_;
     return true;
