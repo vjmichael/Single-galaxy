@@ -244,6 +244,11 @@ struct PlanetarySiteAudit {
     std::uint64_t housing_completed_tick=0;
     std::uint64_t housing_supported_cycles=0,housing_shortages=0;
     bool housing_paused=false;
+    std::uint8_t utility_phase=0;
+    std::uint64_t utility_progress=0,utility_supervisor=0;
+    std::int64_t stored_electricity=0,brine_kg=0;
+    std::uint64_t utility_powered_cycles=0,hvac_cycles=0,utility_outages=0;
+    std::int64_t recycled_water_kg=0,recycled_oxygen_kg=0;
     std::int64_t unused_housing_capacity=0; // 4 initial beds; no future free population
     std::uint64_t original_permanent_residents=0;
     bool support_healthy_now=false; // site has >=2kg of each local vital stock
@@ -275,6 +280,16 @@ inline std::optional<PlanetarySiteAudit> audit_planetary_surface(
     a.housing_paused=s.housing_paused;
     a.housing_supported_cycles=s.housing_supported_cycles;
     a.housing_shortages=s.housing_shortages;
+    a.utility_phase=s.utility_phase;
+    a.utility_progress=s.utility_progress;
+    a.utility_supervisor=s.utility_supervisor;
+    a.stored_electricity=s.stored_electricity;
+    a.brine_kg=s.brine_kg;
+    a.utility_powered_cycles=s.utility_powered_cycles;
+    a.hvac_cycles=s.hvac_cycles;
+    a.utility_outages=s.utility_outages;
+    a.recycled_water_kg=s.water_recycled_kg;
+    a.recycled_oxygen_kg=s.oxygen_recycled_kg;
     a.permanent_housing_installed=s.housing_phase==2;
     std::int64_t next_tick_people=2; // real delegated work team
     const auto shuttle=world.planetary_shuttles().find(key);
@@ -334,6 +349,8 @@ struct SurfaceSupply {
     bool shuttle_installed=false,shuttle_on_surface=false;
     bool food_production_installed=false,water_extractor_installed=false;
     bool independent_power_proven=false,closed_water_loop_proven=false;
+    bool hvac_ever_operated=false,loss_bearing_recycling_operated=false;
+    std::int64_t retained_recycling_brine_kg=0;
     bool independently_sustainable=false;
 };
 inline SurfaceSupply assess_surface_supplies(
@@ -353,6 +370,12 @@ inline SurfaceSupply assess_surface_supplies(
                            shuttle->second.flight_phase==2;
     out.food_production_installed=s.farm;
     out.water_extractor_installed=s.extractor;
+    out.independent_power_proven=s.utility_phase==2 &&
+        s.utility_powered_cycles>0;
+    out.hvac_ever_operated=s.utility_phase==2 && s.hvac_cycles>0;
+    out.loss_bearing_recycling_operated=s.utility_phase==2 &&
+        (s.water_recycled_kg>0 || s.oxygen_recycled_kg>0);
+    out.retained_recycling_brine_kg=s.brine_kg;
     // Original on-site crew use TWO kg every TEN simulation ticks;
     // temporary visitors have further needs and can shorten this runway.
     out.baseline_ten_tick_food_periods=s.food_kg/2;
@@ -369,9 +392,10 @@ inline SurfaceSupply assess_surface_supplies(
     else if(s.water_kg<2)out.gate=SurfaceSupplyGate::WaterShortage;
     else if(s.oxygen_kg<2)out.gate=SurfaceSupplyGate::OxygenShortage;
     else out.gate=SurfaceSupplyGate::ImportDependent;
-    // A farm/extractor makes only real original recipe goods using finite
-    // inputs. WO3 has not invented planetary electrical infrastructure or
-    // closed-cycle renewals; no surface site is silently certified autonomous.
+    // Solar electricity and HVAC are now physical installed services.
+    // Recycling retains brine/solid residue and cannot claim perfect closure.
+    // Farms and extractors still consume finite inputs, so solar electricity
+    // alone cannot certify a self-sustaining colony.
     return out;
 }
 
