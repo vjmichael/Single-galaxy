@@ -1298,7 +1298,41 @@ static void scenario(const fs::path& db, bool farming,
                       !in_flight->real_delivery_confirmed &&
                       in_flight->original_pilot!=0);
             }
-            if(autonomous){
+            if(delegated){
+                // WO5-D: the original named-NPC navigation service moves
+                // precisely the REAL 100kg carrier already sealed by the
+                // original local freight operation. No imagined carrier
+                // itinerary or free arrival; original native receipt wins.
+                const auto navigation=logistics05::inspect_native_npc_freight_flight(
+                    w.world(),7,77007,95023,99023);
+                CHECK(navigation && navigation->carrier_ship==freighter &&
+                      navigation->destination_ship==receiver &&
+                      navigation->destination_body==receiver_body &&
+                      navigation->native_pilot_id!=0);
+                CHECK(!logistics05::inspect_native_npc_freight_flight(
+                    w.world(),8,77007,95123,99123));
+                const auto flight_hash=w.world().state_hash();
+                CHECK(!logistics05::commit_native_npc_freight_flight(
+                    w,*navigation,false));
+                CHECK(w.world().state_hash()==flight_hash);
+                bool flight_interrupted=false;
+                try{
+                    (void)logistics05::commit_native_npc_freight_flight(
+                        w,*navigation,true,FailPoint::AfterSnapshotWrite);
+                }catch(const std::exception&){flight_interrupted=true;}
+                CHECK(flight_interrupted &&
+                      w.world().state_hash()==flight_hash);
+                CHECK(logistics05::commit_native_npc_freight_flight(
+                    w,*navigation,true));
+                CHECK(!logistics05::commit_native_npc_freight_flight(
+                    w,*navigation,true)); // never schedule second copy
+                w.steps(5);
+                CHECK(w.world().npc_flight_orders().at(95023).phase==
+                      NpcFlightPhase::Arrived &&
+                      w.world().npc_flight_orders().at(95023).pilot_npc==
+                          navigation->native_pilot_id);
+                CHECK(w.world().completed_celestial_transits().count(99023)==1);
+            }else if(autonomous){
                 CHECK(w.queue_npc_flight(7,freighter,autonomous_pilot,
                     receiver_body,95023,99023,NpcFlightPurpose::Freight));
                 w.steps(5);
