@@ -1245,6 +1245,13 @@ static void scenario(const fs::path& db, bool farming,
                 CHECK(far_cold.owner==regional_events::SimulationOwner::Cold &&
                       w.world().intercolony_freight().at(77007).stage==
                          IntercolonyFreightStage::AwaitingPickup);
+                const auto far_audit=logistics05::observe_native_regional_recovery(
+                    db.string(),w,far_cp,far_authority,7,
+                    far_cold.generation,far_cold.checkpoint_revision);
+                CHECK(far_audit && far_audit->spatial_region_verified &&
+                      far_audit->awaiting==0 && far_audit->loaded==0 &&
+                      far_audit->unrelated_unresolved_original_freight>=1 &&
+                      !far_audit->has_unresolved_original_freight);
                 // The cell containing the real physical carrier remains
                 // protected. Scope must match the exact ORIGINAL bound
                 // hull, not a client-asserted coordinate.
@@ -1267,6 +1274,14 @@ static void scenario(const fs::path& db, bool farming,
                 CHECK(protected_cell &&
                       carrier_authority.state().phase==
                           regional_events::TransitionPhase::Stable);
+                const auto involved_audit=
+                    logistics05::observe_native_regional_recovery(
+                        db.string(),w,carrier_cp,carrier_authority,7,
+                        carrier_token.generation,
+                        carrier_token.checkpoint_revision);
+                CHECK(involved_audit && involved_audit->spatial_region_verified &&
+                      involved_audit->awaiting>=1 &&
+                      involved_audit->has_unresolved_original_freight);
                 // Even a perfectly matching forged counter in an unrelated
                 // SQLite file cannot borrow this world's physical cargo.
                 const auto foreign_db=db.string()+".wo5_other.sqlite";
