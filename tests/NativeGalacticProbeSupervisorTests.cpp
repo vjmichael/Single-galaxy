@@ -4,8 +4,12 @@
 #include "galaxy/GalacticSystemRegistry.hpp"
 #include "galaxy/RegionalCheckpointStore.hpp"
 #include "galaxy/RegionalModeAuthority.hpp"
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <memory>
+#include <set>
+#include <vector>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -386,6 +390,120 @@ static void multi_cell_supervision(const fs::path& root,
           w.world().total_ore()==ore);
     denied([&]{w.step_as_cell_worker(stranded);});
 }
+// SPACE-05G: sustained *original-world* four-cell dispatch. This test
+// exercises the existing immutable-authority OS workers, one SQLite writer,
+// failpoint/recovery and repeated supervisor restarts. It must not describe
+// itself as four independent parallel physical simulation writers.
+static void sustained_multi_cell_endurance(const fs::path& root,
+    const std::string& native_worker){
+    const auto db=(root/"endurance.sqlite").string();
+    Simulation simulation(77113);
+    std::vector<EntityId> ships;
+    for(int i=0;i<4;++i){
+        const auto ship=simulation.add_colony_ship(
+            static_cast<PlayerId>(20+i),
+            {static_cast<std::int64_t>(i)*200000000,0},100,8);
+        simulation.provision_colony_genesis(
+            ship,1000,1000,1000,1000,1000);
+        ships.push_back(ship);
+    }
+    PersistentWorld w(db,std::move(simulation));
+    w.enable_native_3d_physics();
+    CHECK(galactic::register_original_system(db,w,1,
+        galactic::Point{{12,1234},{34,5678},{56,9012}},
+        "space-05g-original-star",true));
+    w.enable_native_galactic_physics(db);
+    w.enable_native_3d_probes();
+    const auto baseline_ore=w.world().total_ore();
+    const auto baseline_npcs=w.world().npc_records().size();
+    std::vector<spatial::WorkerLease> leases;
+    for(int i=0;i<4;++i){
+        const auto cell=spatial::ship_cell(w.world(),ships[i]);
+        CHECK(cell && std::none_of(leases.begin(),leases.end(),
+            [&](const spatial::WorkerLease& lease){
+                return lease.cell==*cell;
+            }));
+        const std::string id="endurance-"+std::to_string(i);
+        const auto region_scope=spatial::scope(*cell);
+        regional_events::CheckpointStore checkpoint(db,region_scope);
+        regional_events::Scheduler scheduler;
+        scheduler.add_colony("physical-"+id,cold_colony::State{});
+        CHECK(checkpoint.save(scheduler,0)==1);
+        regional_events::RegionalModeAuthority authority(checkpoint);
+        const auto regional=authority.enroll();
+        leases.push_back(spatial::transfer_cell_worker(db,*cell,id,0,
+            regional.generation,regional.checkpoint_revision,
+            "endurance-lease-"+id,true));
+    }
+    auto supervisor=std::make_unique<spatial::NativeMultiCellSupervisor>(db,w);
+    const auto attach=[&](spatial::NativeMultiCellSupervisor& host){
+        host.use_native_process_workers(native_worker);
+        for(const auto& lease:leases)host.register_worker(lease);
+        CHECK(host.worker_count()==4);
+    };
+    attach(*supervisor);
+    std::set<std::string> selected_cells;
+    std::vector<double> tick_ms;
+    tick_ms.reserve(256);
+    for(int i=0;i<256;++i){
+        if(i>0 && i%32==0){
+            supervisor.reset(); // actual host object/worker selector restart
+            supervisor=std::make_unique<spatial::NativeMultiCellSupervisor>(db,w);
+            attach(*supervisor);
+        }
+        const auto initial_generation=w.generation();
+        const auto initial_tick=w.world().tick();
+        const auto initial_state=w.world().canonical_state();
+        const auto start=std::chrono::steady_clock::now();
+        const auto dispatch="endurance-"+std::to_string(i);
+        spatial::NativeMultiCellSupervisor::Committed completed;
+        if(i%37==17){
+            denied([&]{
+                (void)supervisor->run_next_tick(dispatch,
+                    FailPoint::AfterSnapshotWrite);
+            });
+            CHECK(w.generation()==initial_generation &&
+                  w.world().tick()==initial_tick &&
+                  w.world().canonical_state()==initial_state);
+            const auto replay=supervisor->resume_pending_tick();
+            CHECK(replay && replay->dispatch_id==dispatch);
+            completed=*replay;
+            CHECK(!supervisor->resume_pending_tick());
+        }else{
+            completed=supervisor->run_next_tick(dispatch);
+        }
+        tick_ms.push_back(std::chrono::duration<double,std::milli>(
+            std::chrono::steady_clock::now()-start).count());
+        selected_cells.insert(completed.scope);
+        CHECK(w.generation()==initial_generation+1 &&
+              w.world().tick()==initial_tick+1 &&
+              completed.world_generation==w.generation() &&
+              w.world().total_ore()==baseline_ore &&
+              w.world().npc_records().size()==baseline_npcs &&
+              w.world().entities().size()==ships.size());
+        for(const auto ship:ships){
+            CHECK(w.world().find(ship));
+        }
+        // Checkpointed independent native SQLite recovery while the
+        // original supervisor continues to serve other cells.
+        if((i+1)%64==0){
+            const auto copy=(root/("endurance-"+std::to_string(i)+".sqlite")).string();
+            PersistentWorld::recover_copy(db,copy);
+            PersistentWorld recovered(copy,Simulation(1));
+            CHECK(recovered.generation()==w.generation() &&
+                  recovered.world().canonical_state()==w.world().canonical_state());
+        }
+    }
+    CHECK(selected_cells.size()==4);
+    std::sort(tick_ms.begin(),tick_ms.end());
+    std::cout<<"SPACE-05G original four-cell sustained native tick count="
+             <<tick_ms.size()<<" p50_ms="<<tick_ms[tick_ms.size()/2]
+             <<" p95_ms="<<tick_ms[tick_ms.size()*95/100]
+             <<" max_ms="<<tick_ms.back()
+             <<" no duplicated ships/NPCs/ore, 8 host restarts and "
+               "independent recovered SQLite checkpoints\\n";
+}
+
 int main(int argc,char** argv){
     const auto root=fs::temp_directory_path()/
         ("sg_space_04c_05b_"+std::to_string(
@@ -404,6 +522,7 @@ int main(int argc,char** argv){
         anchored_nonships_and_swap();
         cross_system_physical_contact();
         multi_cell_supervision(root,argv[1],argv[2]);
+        sustained_multi_cell_endurance(root,argv[1]);
         std::cout<<"PASS exact original galactic 3D, probe persistence and "
                     "durable multi-cell single-writer supervision\n";
         return 0;
