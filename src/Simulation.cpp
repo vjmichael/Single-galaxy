@@ -9672,6 +9672,8 @@ void Simulation::process_planetary_surface_operations() {
         if(ready<2) {
             if(site.utility_phase==1)++site.utility_stalled_ticks;
             if(site.housing_phase==1)++site.housing_stalled_ticks;
+            for(auto& job:site.production_projects)
+                if(job.phase==1)++job.stalled_ticks;
             if(site.housing_phase==2 && tick_%20==0)
                 ++site.housing_shortages;
             if(site.spaceport_phase==3 && site.workforce_policy &&
@@ -9681,6 +9683,8 @@ void Simulation::process_planetary_surface_operations() {
         if(site.food_kg<2 || site.water_kg<2 || site.oxygen_kg<2) {
             if(site.utility_phase==1)++site.utility_stalled_ticks;
             if(site.housing_phase==1)++site.housing_stalled_ticks;
+            for(auto& job:site.production_projects)
+                if(job.phase==1)++job.stalled_ticks;
             if(site.housing_phase==2 && tick_%20==0)
                 ++site.housing_shortages;
             if(site.spaceport_phase==3 && site.workforce_policy &&
