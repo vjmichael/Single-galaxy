@@ -54,6 +54,7 @@
        type==='SECURITY_CALL_COMPLAINTS_RESET' ||
        type==='SECURITY_NOTIFICATIONS_RESET' ||
        type==='SECURITY_AGENCY_REFERRALS_RESET' ||
+       type==='SECURITY_AGENCY_INVESTIGATIONS_RESET' ||
        type==='SECURITY_REFRESH_DONE') && v.length===4)
      return {tick,type};
    if(type==='SECURITY_NOTIFICATION' && v.length===10){
@@ -73,6 +74,16 @@
          (active&&leader===officer))
        throw Error('Invalid original government agency appointment');
      return {tick,type,leader,officer,active:!!active};
+   }
+   if(type==='SECURITY_AGENCY_INVESTIGATION' && v.length===10){
+     const order=nativeId(v[4]),referral=nativeId(v[5]),
+       target=whole(v[6]),officer=whole(v[7]),
+       admitted=whole(v[8],1),phase=whole(v[9],3);
+     if(order==='0'||referral==='0'||!target||!officer||
+        (!admitted&&phase!==3))
+       throw Error('Invalid native investigation/flight read model');
+     return {tick,type,order,referral,target,officer,
+       admitted:!!admitted,phase};
    }
    if(type==='SECURITY_AGENCY_REFERRAL' && v.length===10){
      const id=nativeId(v[4]),complaint=nativeId(v[5]),
@@ -157,7 +168,7 @@
    if(type==='SECURITY_RESULT' && v.length===8){
      const operation=v[4],result=v[5],receipt=nativeId(v[6]),
        linked=whole(v[7],1);
-     if(!/^SECURITY_(CLAIM|WARN|HAIL|REPLY|PATROL|CALL|CALL_REPLY|NOTIFICATION_ACK|AGENCY_ESTABLISH|AGENCY_REFER)$/.test(operation) ||
+     if(!/^SECURITY_(CLAIM|WARN|HAIL|REPLY|PATROL|CALL|CALL_REPLY|NOTIFICATION_ACK|AGENCY_ESTABLISH|AGENCY_REFER|AGENCY_INVESTIGATE)$/.test(operation) ||
         !['ACCEPTED','DENIED'].includes(result) ||
         (result==='ACCEPTED')!==(receipt!=='0') ||
         (linked && result!=='ACCEPTED'))
@@ -184,7 +195,7 @@
      notices=new Map(),destinations=new Map(),inbox=new Map(),
      complaints=new Map(),reviews=new Map(),commsPenalty=null,
      notifications=new Map(),pendingAcknowledgments=new Set(),
-     agency=null,agencyReferrals=new Map();
+     agency=null,agencyReferrals=new Map(),agencyInvestigations=new Map();
  function selected(id){return el(id).value;}
  function setOptions(id,placeholder,items){
    const node=el(id),previous=node.value;
@@ -250,6 +261,35 @@
        ' · independent reviewer NPC #'+c.reviewer+
        ' · evidence admitted, NOT a criminal conviction';
      agencyNode.append(item);
+   }
+   setOptions('securityAgencyInvestigationReferral','No admitted referral',
+     [...agencyReferrals.values()].map(r=>[
+       'Referral #'+r.id+' · caller account #'+r.caller,r.id]));
+   const investigateRef=selected('securityAgencyInvestigationReferral');
+   const targetTrack=Number(selected('securityContact'));
+   el('securityAgencyInvestigate').disabled=!agencyReady||
+     !agencyReferrals.has(investigateRef)||!contacts.has(targetTrack)||
+     [...agencyInvestigations.values()].some(i=>
+       i.referral===investigateRef && i.admitted);
+   const investigationsNode=el('securityAgencyInvestigations');
+   investigationsNode.replaceChildren();
+   if(!agencyInvestigations.size){
+     const item=document.createElement('div');
+     item.textContent='No independently authorized native investigation work.';
+     investigationsNode.append(item);
+   }
+   const stages=['planned','physically navigating','physically arrived',
+     'native order cancelled'];
+   for(const i of agencyInvestigations.values()){
+     const item=document.createElement('div');
+     item.textContent='Investigation intent #'+i.order+
+       ' · verified referral #'+i.referral+
+       ' · observed hull #'+i.target+
+       ' · named NPC pilot #'+i.officer+
+       (i.admitted?' · original NPC flight '+stages[i.phase]:
+         ' · durable intent only, native flight NOT admitted; retry needs fresh contact')+
+       ' · nonviolent approach only; no search, custody or force';
+     investigationsNode.append(item);
    }
    const noticesNode=el('securityNotificationList');
    noticesNode.replaceChildren();
@@ -349,7 +389,7 @@
    notices=new Map();destinations=new Map();inbox=new Map();
    complaints=new Map();reviews=new Map();commsPenalty=null;
    notifications=new Map();pendingAcknowledgments=new Set();
-   agency=null;agencyReferrals=new Map();
+   agency=null;agencyReferrals=new Map();agencyInvestigations=new Map();
    el('securityDeskFeedback').textContent='No security action submitted.';
    update();
  }
@@ -373,8 +413,12 @@
        complaints.clear();reviews.clear();break;
      case 'SECURITY_NOTIFICATIONS_RESET':notifications.clear();break;
      case 'SECURITY_AGENCY_REFERRALS_RESET':agencyReferrals.clear();break;
+     case 'SECURITY_AGENCY_INVESTIGATIONS_RESET':
+       agencyInvestigations.clear();break;
      case 'SECURITY_AGENCY_STATUS':agency=data;break;
      case 'SECURITY_AGENCY_REFERRAL':agencyReferrals.set(data.id,data);break;
+     case 'SECURITY_AGENCY_INVESTIGATION':
+       agencyInvestigations.set(data.order,data);break;
      case 'SECURITY_NOTIFICATION':notifications.set(data.sequence,data);break;
      case 'SECURITY_CALL_INBOX':inbox.set(data.request,data);break;
      case 'SECURITY_CALL_COMPLAINT':complaints.set(data.id,data);break;
@@ -427,13 +471,20 @@
  }
  for(const id of ['securityContact','securityCaseSelect',
                      'securityDestination','securityNotice',
-                     'securityCallInbox','securityAgencyComplaint'])
+                     'securityCallInbox','securityAgencyComplaint',
+                     'securityAgencyInvestigationReferral'])
    el(id).addEventListener('change',update);
  el('securityRefresh').addEventListener('click',
    ()=>send('colonySecurityRefresh'));
  el('securityAgencyEstablish').addEventListener('click',()=>{
    if(status?.claimed && !agency?.active)
      void send('colonySecurityAgencyEstablish');
+ });
+ el('securityAgencyInvestigate').addEventListener('click',()=>{
+   const referral=selected('securityAgencyInvestigationReferral');
+   const ship=Number(selected('securityContact'));
+   if(agency?.active && agencyReferrals.has(referral)&&contacts.has(ship))
+     void send('colonySecurityAgencyInvestigate',{referral,ship});
  });
  el('securityAgencyRefer').addEventListener('click',()=>{
    const complaint=selected('securityAgencyComplaint');
