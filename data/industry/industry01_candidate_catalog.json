@@ -1101,7 +1101,7 @@
     {
       "id": "fire_plant_pot",
       "site_capability": "ceramics",
-      "work_ticks": "3",
+      "work_ticks": 3,
       "energy_kj": 180,
       "inputs": [
         {
