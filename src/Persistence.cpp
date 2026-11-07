@@ -4048,7 +4048,7 @@ public:
         std::size_t refine_transfers=0, fabricate_transfers=0, build_transfers=0;
         std::size_t mineral_refine_transfers=0,material_fabricate_transfers=0;
         std::size_t life_transfers=0, farm_builds=0, farm_stock_transfers=0, habitat_builds=0, habitat_transfers=0,utility_builds=0,utility_repairs=0,utility_spare_transfers=0,community_builds=0,community_transfers=0,clinic_builds=0,clinic_transfers=0,reclaimer_builds=0,waterworks_builds=0,waterworks_transfers=0;
-        std::size_t workshop_builds=0,workshop_feeds=0,workshop_outputs=0,workshop_finisher_builds=0,workshop_final_outputs=0,workshop_stacks=0,storage_builds=0,storage_stacks=0,extra_storage_builds=0,extra_storage_stacks=0;
+        std::size_t workshop_builds=0,workshop_feeds=0,workshop_outputs=0,workshop_finisher_builds=0,workshop_final_outputs=0,workshop_stacks=0,workshop_practice=0,storage_builds=0,storage_stacks=0,extra_storage_builds=0,extra_storage_stacks=0;
         std::size_t auto_transfers = 0, auto_storage_transfers=0, storage_link_builds=0, conveyor_cells=0, world_escrows=0, world_returns=0;
         std::vector<ActivityEvent> recorded_auto, recorded_storage_auto;
         for (const auto& a : restored.activity_events()) {
@@ -4566,7 +4566,7 @@ public:
         std::size_t expected_mineral_refine=0,expected_material_fabricate=0;
         std::size_t expected_life_transfers=0,expected_farm_builds=0,expected_farm_stock_transfers=0;
         std::size_t expected_habitat_builds=0, expected_habitat_transfers=0;
-        std::size_t expected_utility_builds=0,expected_utility_repairs=0,expected_utility_spares=0,expected_community_builds=0,expected_community_transfers=0,expected_clinic_builds=0,expected_clinic_transfers=0,expected_reclaimer_builds=0,expected_waterworks_builds=0,expected_waterworks_transfers=0,expected_workshop_builds=0,expected_workshop_feeds=0,expected_workshop_outputs=0,expected_workshop_finisher_builds=0,expected_workshop_final_outputs=0,expected_workshop_stacks=0,expected_storage_builds=0,expected_storage_stacks=0,expected_extra_storage_builds=0,expected_extra_storage_stacks=0,expected_link_builds=0,expected_conveyor_cells=0, expected_world_escrows=0,expected_world_returns=0;
+        std::size_t expected_utility_builds=0,expected_utility_repairs=0,expected_utility_spares=0,expected_community_builds=0,expected_community_transfers=0,expected_clinic_builds=0,expected_clinic_transfers=0,expected_reclaimer_builds=0,expected_waterworks_builds=0,expected_waterworks_transfers=0,expected_workshop_builds=0,expected_workshop_feeds=0,expected_workshop_outputs=0,expected_workshop_finisher_builds=0,expected_workshop_final_outputs=0,expected_workshop_stacks=0,expected_workshop_practice=0,expected_storage_builds=0,expected_storage_stacks=0,expected_extra_storage_builds=0,expected_extra_storage_stacks=0,expected_link_builds=0,expected_conveyor_cells=0, expected_world_escrows=0,expected_world_returns=0;
 
         for (const auto& ev : restored.events()) {
             if (ev.result != Outcome::Applied || ev.transferred <= 0) continue;
@@ -4603,6 +4603,7 @@ public:
             else if (cmd->second.action==Action::ConstructWorkshopFinisher) ++expected_workshop_finisher_builds;
             else if (cmd->second.action==Action::TransferWorkshopFinalOutput) ++expected_workshop_final_outputs;
             else if (cmd->second.action==Action::TransferWorkshopStack) ++expected_workshop_stacks;
+            else if (cmd->second.action==Action::TrainWorkshopTrade) ++expected_workshop_practice;
             else if (cmd->second.action==Action::HostEscrowConstructedStock) ++expected_world_escrows;
             else if (cmd->second.action==Action::HostReturnConstructedStock) ++expected_world_returns;
             else if (cmd->second.action==Action::ConstructStorage) ++expected_storage_builds;
@@ -4649,6 +4650,7 @@ public:
             workshop_finisher_builds!=expected_workshop_finisher_builds ||
             workshop_final_outputs!=expected_workshop_final_outputs ||
             workshop_stacks!=expected_workshop_stacks ||
+             workshop_practice!=expected_workshop_practice ||
             storage_builds!=expected_storage_builds || storage_stacks!=expected_storage_stacks ||
             extra_storage_builds!=expected_extra_storage_builds ||
             extra_storage_stacks!=expected_extra_storage_stacks ||
