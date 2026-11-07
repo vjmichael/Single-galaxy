@@ -1283,9 +1283,10 @@ bool Simulation::can_depart_colony(const Command& c) const {
     return true;
 }
 bool Simulation::submit(const Command& c) {
-    if(legacy_planetary_residence_import_ &&
-       c.id==legacy_planetary_residence_import_->host_request_id)
-        return false; // historical host provenance may never be a ship command
+    if((legacy_planetary_residence_import_ &&
+        c.id==legacy_planetary_residence_import_->host_request_id) ||
+        planetary_family_booking_ids_.count(c.id))
+        return false; // immutable host and family approvals are not ship commands
     if(ship_status_.contains_id(c.id))return false;
     // WO3-E: an accepted original owner colony/site work or founder
     // request ID is immutable and cannot be reused as a ship command.
@@ -6740,6 +6741,8 @@ bool Simulation::transfer_planetary_housing_module(PlayerId owner,EntityId ship,
 
 bool Simulation::start_planetary_housing(PlayerId owner,EntityId ship,
     const PlanetarySiteKey& key,std::uint64_t order_id) {
+    if(planetary_family_booking_ids_.count(order_id))
+        return false; // no flight/construction/consent may replay family approval
     if(legacy_planetary_residence_import_ &&
        order_id==legacy_planetary_residence_import_->host_request_id)
         return false; // immutable host migration provenance, not reusable
@@ -6814,6 +6817,8 @@ bool Simulation::set_planetary_housing_pause(PlayerId owner,EntityId ship,
 bool Simulation::start_planetary_surface_utility(PlayerId owner,EntityId ship,
     const PlanetarySiteKey& key,std::uint64_t order_id,
     std::uint64_t qualified_supervisor) {
+    if(planetary_family_booking_ids_.count(order_id))
+        return false; // no flight/construction/consent may replay family approval
     if(legacy_planetary_residence_import_ &&
        order_id==legacy_planetary_residence_import_->host_request_id)
         return false; // immutable host migration provenance, not reusable
@@ -6895,6 +6900,8 @@ bool Simulation::pause_planetary_surface_utility(PlayerId owner,EntityId ship,
 bool Simulation::handover_planetary_surface_utility(PlayerId owner,EntityId ship,
     const PlanetarySiteKey& key,std::uint64_t previous,
     std::uint64_t replacement,std::uint64_t request_id) {
+    if(planetary_family_booking_ids_.count(request_id))
+        return false; // no flight/construction/consent may replay family approval
     if(legacy_planetary_residence_import_ &&
        request_id==legacy_planetary_residence_import_->host_request_id)
         return false; // immutable host migration provenance, not reusable
@@ -6984,6 +6991,8 @@ bool Simulation::handover_planetary_surface_utility(PlayerId owner,EntityId ship
 bool Simulation::start_planetary_production_build(PlayerId owner,EntityId ship,
     const PlanetarySiteKey& key,bool farm,std::uint64_t order_id,
     std::uint64_t supervisor) {
+    if(planetary_family_booking_ids_.count(order_id))
+        return false; // no flight/construction/consent may replay family approval
     if(legacy_planetary_residence_import_ &&
        order_id==legacy_planetary_residence_import_->host_request_id)
         return false; // immutable host migration provenance, not reusable
@@ -7105,6 +7114,8 @@ bool Simulation::handover_planetary_production_build(PlayerId owner,
     EntityId ship,const PlanetarySiteKey& key,bool farm,
     std::uint64_t previous,std::uint64_t replacement,
     std::uint64_t request_id) {
+    if(planetary_family_booking_ids_.count(request_id))
+        return false; // no flight/construction/consent may replay family approval
     if(legacy_planetary_residence_import_ &&
        request_id==legacy_planetary_residence_import_->host_request_id)
         return false; // immutable host migration provenance, not reusable
@@ -7246,6 +7257,8 @@ bool Simulation::host_import_legacy_planetary_residences(
 bool Simulation::settle_planetary_founder(PlayerId owner,EntityId ship,
     const PlanetarySiteKey& key,std::uint64_t npc_id,
     std::uint64_t request_id,bool voluntary_consent_attested) {
+    if(planetary_family_booking_ids_.count(request_id))
+        return false; // no flight/construction/consent may replay family approval
     if(legacy_planetary_residence_import_ &&
        request_id==legacy_planetary_residence_import_->host_request_id)
         return false; // immutable host migration provenance, not reusable
@@ -7315,6 +7328,8 @@ bool Simulation::settle_planetary_founder(PlayerId owner,EntityId ship,
 bool Simulation::settle_planetary_visitor(PlayerId owner,EntityId ship,
     const PlanetarySiteKey& key,std::uint64_t npc_id,
     std::uint64_t request_id,bool consent) {
+    if(planetary_family_booking_ids_.count(request_id))
+        return false; // no flight/construction/consent may replay family approval
     if(legacy_planetary_residence_import_ &&
        request_id==legacy_planetary_residence_import_->host_request_id)
         return false; // immutable host migration provenance, not reusable
@@ -7390,6 +7405,8 @@ bool Simulation::settle_planetary_visitor(PlayerId owner,EntityId ship,
 bool Simulation::depart_planetary_visitor(PlayerId owner,EntityId ship,
     const PlanetarySiteKey& key,std::uint64_t npc_id,
     std::uint64_t request_id,bool consent) {
+    if(planetary_family_booking_ids_.count(request_id))
+        return false; // no flight/construction/consent may replay family approval
     if(legacy_planetary_residence_import_ &&
        request_id==legacy_planetary_residence_import_->host_request_id)
         return false; // immutable host migration provenance, not reusable
@@ -9785,6 +9802,8 @@ EntityId shuttle_transit_custody_id(const PlanetarySiteKey& key) {
 }
 bool Simulation::launch_planetary_shuttle(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,std::uint64_t request_id,bool ascend) {
+    if(planetary_family_booking_ids_.count(request_id))
+        return false; // no flight/construction/consent may replay family approval
     if(legacy_planetary_residence_import_ &&
        request_id==legacy_planetary_residence_import_->host_request_id)
         return false; // immutable host migration provenance, not reusable
