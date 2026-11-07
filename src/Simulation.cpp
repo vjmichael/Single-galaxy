@@ -1,3 +1,4 @@
+#include "galaxy/Industry01Catalog.hpp"
 #include "galaxy/Simulation.hpp"
 #include "galaxy/ShipStatusFitting.hpp"
 #include "galaxy/ShipSensorProfile.hpp"
@@ -5119,8 +5120,7 @@ void Simulation::process_workshops(){
             (snapshot_version_<40 || npc_available_for_duty(w.operator_npc_id));
         const bool power=u!=utilities_.end() && u->second.powered;
         const bool working=u!=utilities_.end() && u->second.condition>0;
-        industry::Recipe recipe{"aluminum_panel","cut",{{"aluminum",20000}},
-            {"aluminum_panels",19000},{"aluminum_scrap",1000}};
+        industry::Recipe recipe=industry01::original_workshop_recipe("native_cut_aluminum_panel");
         industry::Machine machine{1,"cut",power,staff,working};
         industry::State state;
         state.feed.capacity_grams=1000000;
@@ -5156,8 +5156,7 @@ void Simulation::process_workshops(){
                 habitats_.count(site) && habitats_.at(site).residents>0 &&
                 w.finisher_npc_id!=w.operator_npc_id &&
                 (snapshot_version_<40 || npc_available_for_duty(w.finisher_npc_id));
-            industry::Recipe fr{"aluminum_frame","shape",{{"aluminum_panels",20000}},
-                {"aluminum_frames",19000},{"aluminum_scrap",1000}};
+            industry::Recipe fr=industry01::original_workshop_recipe("native_shape_aluminum_frame");
             industry::Machine fm{1,"shape",power,fn_staff,working};
             industry::State fs;
             fs.feed.capacity_grams=1000000;
