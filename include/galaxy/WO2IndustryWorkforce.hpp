@@ -159,6 +159,87 @@ inline std::vector<Slot> plan_original_workshop(const Simulation& world,
     }
     return out;
 }
+
+/**
+ * A bounded, read-only coverage forecast for the TWO actually installed
+ * native production stations. This is NOT a durable shift reservation.
+ * Future medical shifts must be checked over the whole requested interval,
+ * not just at the tick when a staffing screen was opened.
+ */
+enum class CoverageGate : std::uint8_t {
+    Provisional, InvalidWindow, SiteUnavailable, NoFreeWorker,
+    FutureMedicalShift, CurrentDutyUnavailable
+};
+struct CoverageRow {
+    bool finisher=false,incumbent=false;
+    std::uint64_t start_tick=0,end_tick=0,worker=0;
+    CoverageGate gate=CoverageGate::SiteUnavailable;
+    // Production cannot start from this forecast; the authenticated owner
+    // still has to submit the original worker command to PersistentWorld.
+    bool reserved=false;
+    bool requires_owner_command=true;
+};
+inline bool medical_shift_overlaps(const Simulation& world,std::uint64_t npc,
+                                    std::uint64_t start,std::uint64_t end) {
+    for(const auto& [id,shift]:world.medic_shifts()){
+        (void)id;
+        if(shift.medic_id==npc && start<shift.end_tick &&
+           shift.start_tick<end)return true;
+    }
+    return false;
+}
+inline std::vector<CoverageRow> plan_provisional_workshop_coverage(
+    const Simulation& world,PlayerId authenticated_owner,
+    EntityId home_ship,EntityId site,
+    std::uint64_t start_tick,std::uint64_t end_tick) {
+    const auto slots=plan_original_workshop(world,authenticated_owner,home_ship,site);
+    std::vector<CoverageRow> result(2);
+    const bool valid_window=world.tick()<std::numeric_limits<std::uint64_t>::max() &&
+        start_tick>world.tick() && end_tick>start_tick &&
+        end_tick-start_tick<=10000;
+    const auto occupied=occupied_named_workers(world,world.tick()+1);
+    std::set<std::uint64_t> selected;
+    for(std::size_t i=0;i<2;++i) {
+        auto& row=result[i];
+        row.finisher=i==1;row.start_tick=start_tick;row.end_tick=end_tick;
+        if(!valid_window){row.gate=CoverageGate::InvalidWindow;continue;}
+        const auto& slot=slots[i];
+        if(slot.gate!=StaffGate::Ready &&
+           slot.gate!=StaffGate::AlreadyStaffed &&
+           slot.gate!=StaffGate::NoFreeQualifiedPerson) {
+            row.gate=CoverageGate::SiteUnavailable;continue;
+        }
+        if(slot.assigned_npc) {
+            // An incumbent cannot be replaced by a read-only prediction.
+            row.worker=slot.assigned_npc;row.incumbent=true;
+            if(!world.npc_available_for_duty(row.worker))
+                row.gate=CoverageGate::CurrentDutyUnavailable;
+            else if(medical_shift_overlaps(world,row.worker,start_tick,end_tick))
+                row.gate=CoverageGate::FutureMedicalShift;
+            else row.gate=CoverageGate::Provisional;
+            selected.insert(row.worker);
+            continue;
+        }
+        bool future_conflict=false;
+        for(const auto& [id,npc]:world.npc_records()){
+            if(!id || id>1000000 || npc.home_ship!=home_ship ||
+               npc.location!=site || npc.assigned_site!=site ||
+               npc.role!=NpcRole::Habitat || npc.transport_id ||
+               npc.mentor_id || !world.npc_available_for_duty(id) ||
+               occupied.count(id) || selected.count(id))continue;
+            if(medical_shift_overlaps(world,id,start_tick,end_tick)){
+                future_conflict=true;continue;
+            }
+            row.worker=id;row.gate=CoverageGate::Provisional;
+            selected.insert(id);break;
+        }
+        if(!row.worker)
+            row.gate=future_conflict?CoverageGate::FutureMedicalShift:
+                                     CoverageGate::NoFreeWorker;
+    }
+    return result;
+}
+
 // Builds ONE original Command only following explicit owner/host approval.
 // Does not submit, reserve, allocate a command ID or claim success. Caller
 // uses the original PersistentWorld::submit and later verifies its Event.
