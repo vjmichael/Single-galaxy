@@ -247,6 +247,9 @@ struct PlanetarySiteAudit {
     bool housing_paused=false;
     std::uint8_t utility_phase=0;
     std::uint64_t utility_progress=0,utility_supervisor=0;
+    std::uint64_t utility_handover_count=0,utility_last_handover_id=0;
+    bool utility_supervisor_present=false,utility_supervisor_certified=false;
+    bool utility_supervisor_has_temp_duty=false;
     std::int64_t stored_electricity=0,brine_kg=0;
     std::uint64_t utility_powered_cycles=0,hvac_cycles=0,utility_outages=0;
     std::int64_t recycled_water_kg=0,recycled_oxygen_kg=0;
@@ -284,6 +287,22 @@ inline std::optional<PlanetarySiteAudit> audit_planetary_surface(
     a.utility_phase=s.utility_phase;
     a.utility_progress=s.utility_progress;
     a.utility_supervisor=s.utility_supervisor;
+    a.utility_handover_count=s.utility_handovers.size();
+    if(!s.utility_handovers.empty())
+        a.utility_last_handover_id=s.utility_handovers.back().request_id;
+    const auto supervisor=world.npc_records().find(s.utility_supervisor);
+    a.utility_supervisor_present=supervisor!=world.npc_records().end() &&
+        supervisor->second.home_ship==ship &&
+        supervisor->second.location==s.surface_location;
+    a.utility_supervisor_certified=world.workshop_trade_certified(
+        s.utility_supervisor,WorkshopTrade::Shape);
+    const auto shuttle_for_duty=world.planetary_shuttles().find(key);
+    a.utility_supervisor_has_temp_duty=
+        shuttle_for_duty!=world.planetary_shuttles().end() &&
+        std::binary_search(shuttle_for_duty->second.duty_ids.begin(),
+                           shuttle_for_duty->second.duty_ids.end(),
+                           s.utility_supervisor) &&
+        a.utility_supervisor_present;
     a.stored_electricity=s.stored_electricity;
     a.brine_kg=s.brine_kg;
     a.utility_powered_cycles=s.utility_powered_cycles;
