@@ -131,7 +131,16 @@ int main() {
     CHECK(w.world().planetary_sites().at(key).housing_modules==0);
     CHECK(w.world().planetary_sites().at(key).housing_phase==1);
     CHECK(w.world().total_ore()==initial_mass);
-    w.steps(20);
+    w.steps(10);
+    CHECK(!w.set_planetary_housing_pause(8,ship,key,true));
+    CHECK(w.set_planetary_housing_pause(7,ship,key,true));
+    CHECK(!w.set_planetary_housing_pause(7,ship,key,true));
+    const auto paused_progress=w.world().planetary_sites().at(key).housing_progress;
+    w.steps(10);
+    CHECK(w.world().planetary_sites().at(key).housing_progress==paused_progress);
+    CHECK(w.world().planetary_sites().at(key).housing_stalled_ticks>=10);
+    CHECK(w.set_planetary_housing_pause(7,ship,key,false));
+    w.steps(10);
     CHECK(w.world().planetary_sites().at(key).housing_progress==20);
     const auto provisional=w.world().canonical_state();
     CHECK(Simulation::from_snapshot(provisional).canonical_state()==provisional);
@@ -145,12 +154,29 @@ int main() {
     CHECK(w.world().planetary_sites().at(key).housing_phase==2);
     CHECK(w.world().planetary_sites().at(key).housing_progress==80);
     CHECK(w.world().planetary_sites().at(key).housing_completed_tick>0);
+    CHECK(!w.set_planetary_housing_pause(7,ship,key,true));
+    CHECK(w.world().total_ore()==initial_mass);
+    // Existing original two named on-surface workers may become founders only
+    // with trusted owner approval, explicit attested consent and housing.
+    CHECK(!w.settle_planetary_founder(8,ship,key,roster[0],81300,true));
+    CHECK(!w.settle_planetary_founder(7,ship,key,roster[0],81300,false));
+    CHECK(w.settle_planetary_founder(7,ship,key,roster[0],81300,true));
+    CHECK(!w.settle_planetary_founder(7,ship,key,roster[0],81300,true));
+    CHECK(!w.settle_planetary_founder(7,ship,key,roster[1],81300,true));
+    CHECK(w.settle_planetary_founder(7,ship,key,roster[1],81301,true));
+    CHECK(recovered.settle_planetary_founder(7,ship,key,roster[0],81300,true));
+    CHECK(recovered.settle_planetary_founder(7,ship,key,roster[1],81301,true));
+    CHECK(recovered.world().state_hash()==w.world().state_hash());
+    CHECK(w.world().npc_records().at(roster[0]).legal_residence()==
+        transport::Endpoint{transport::LocationKind::PlanetarySite,
+                            w.world().planetary_sites().at(key).surface_location});
     CHECK(w.world().total_ore()==initial_mass);
     const auto audit=colony03::audit_planetary_surface(
         w.world(),7,ship,key);
     CHECK(audit && audit->permanent_housing_installed &&
-          audit->housing_order_id==81200 && audit->unused_housing_capacity==4 &&
-          audit->physical_delegates==2 && audit->support_healthy_now);
+          audit->housing_order_id==81200 && audit->unused_housing_capacity==2 &&
+          audit->original_permanent_residents==2 &&
+          audit->physical_delegates==2);
     // A direct tampered record cannot invent an impossible construction tick.
     auto corrupted=w.world().canonical_state();
     const auto first=corrupted.find("planetsite|");
@@ -158,8 +184,7 @@ int main() {
     const auto end=corrupted.find('\n',first);
     const auto field=corrupted.rfind('|',end);
     CHECK(field!=std::string::npos && field>first);
-    corrupted.replace(field+1,end-field-1,
-                      std::to_string(w.world().tick()+100));
+    corrupted.replace(field+1,end-field-1,"81300"); // duplicate consent receipt
     bool denied=false;
     try{(void)Simulation::from_snapshot(corrupted);}
     catch(const std::exception&){denied=true;}
