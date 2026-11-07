@@ -1837,7 +1837,17 @@ bool Simulation::submit(const Command& c) {
            c.secondary_receiver || c.secondary_transport ||
            !colony_ships_.count(c.actor) || !workshops_.count(c.target))
             return false;
-        snapshot_version_=std::max(snapshot_version_,105);
+        const auto* owned_ship=find(c.actor);
+        const auto* built_site=find(c.target);
+        if(!owned_ship || owned_ship->type!=EntityType::Ship ||
+           !built_site || built_site->type!=EntityType::Station ||
+           !c.issuer || c.issuer==kServerAuthority ||
+           owned_ship->owner_id!=c.issuer ||
+           built_site->owner_id!=c.issuer ||
+           workshops_.at(c.target).source_ship!=c.actor ||
+           !built_outposts_.count(c.target) ||
+           built_outposts_.at(c.target).source_colony_ship!=c.actor)
+            return false;
     }
     const bool workshop_command=c.action==Action::ConstructWorkshop ||
         c.action==Action::TransferWorkshopFeed ||
@@ -2017,6 +2027,8 @@ bool Simulation::submit(const Command& c) {
     if(incident_action)snapshot_version_=std::max(snapshot_version_,
         c.action==Action::HostResolveMixedFerryLoss?37:
         c.action==Action::HostDestroyPassengerFerry?36:35);
+    if(c.action==Action::TrainWorkshopTrade)
+        snapshot_version_=std::max(snapshot_version_,105);
     submitted_ids_.insert(c.id);
     commands_[c.execute_tick].push_back(c);
     return true;
