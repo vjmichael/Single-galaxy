@@ -508,6 +508,15 @@ struct PlanetaryProductionProject {
     std::uint64_t stalled_ticks=0,completed_tick=0;
     bool paused=false;
 };
+// WO3-D/v117: additional original-module-backed surface services.
+// 0 annex adds four PHYSICAL beds; 1 medical-support bay provides a powered,
+// finite-infrastructure clinical workspace (never spontaneous medical cures).
+struct PlanetaryServiceProject {
+    std::uint8_t phase=0;
+    std::uint64_t progress=0,order_id=0,supervisor=0;
+    std::uint64_t stalled_ticks=0,completed_tick=0,powered_cycles=0;
+    bool paused=false;
+};
 struct PlanetarySiteFacility {
     planetary::PlanetaryRegionKey region{};
     PlayerId owner=0;
@@ -567,6 +576,10 @@ struct PlanetarySiteFacility {
     std::array<PlanetaryProductionProject,2> production_projects{};
     // Immutable original named-worker supervisory succession per project.
     std::array<std::vector<PlanetaryUtilityHandover>,2> production_handovers{};
+    // v117: original two-module extra habitat and medical-support bay.
+    // Each project has one exact material escrow and qualified original NPC.
+    std::array<PlanetaryServiceProject,2> service_projects{};
+    std::array<std::vector<PlanetaryUtilityHandover>,2> service_handovers{};
     // WO3-E/v111: historical arrivals and voluntary departures of actual
     // independent adult visitors. {descent receipt, admit request, exit request};
     // an exit receipt remains forever to prevent request/identity replay.
@@ -1422,6 +1435,16 @@ public:
         std::uint64_t replacement,std::uint64_t request_id);
     // WO3-D/v113: two genuinely landed, physically available original
     // modules, certified on-site crew, 40 original ticks and finite stock.
+    // v117: two real additional construction families with original site
+    // material, qualified named supervision, and immutable relief receipts.
+    bool start_planetary_service_build(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool annex,std::uint64_t order_id,
+        std::uint64_t supervisor);
+    bool pause_planetary_service_build(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool annex,bool paused);
+    bool handover_planetary_service_build(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool annex,std::uint64_t previous,
+        std::uint64_t replacement,std::uint64_t request_id);
     bool start_planetary_production_build(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,bool farm,std::uint64_t order_id,
         std::uint64_t qualified_supervisor);
