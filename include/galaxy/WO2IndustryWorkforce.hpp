@@ -54,6 +54,7 @@ inline std::set<std::uint64_t> occupied_named_workers(
         const auto& shop=entry.second;
         if(shop.operator_npc_id)occupied.insert(shop.operator_npc_id);
         if(shop.finisher_npc_id)occupied.insert(shop.finisher_npc_id);
+        if(shop.supervisor_npc_id)occupied.insert(shop.supervisor_npc_id);
     }
     for(const auto& entry:world.medic_shifts()){
         const auto& shift=entry.second;
@@ -318,6 +319,172 @@ inline std::optional<Command> approved_original_trade_training(
     c.amount=static_cast<std::int64_t>(npc);
     c.thrust_x=static_cast<int>(trade);
     return c;
+}
+
+// WO2-J: one read-only supervised program projection per original machine.
+// It reports real completed batches since owner approval (never estimated
+// progress or an independent factory/batch state).
+struct JobBoardRow {
+    WorkshopTrade trade=WorkshopTrade::Cut;
+    std::uint64_t supervisor=0,appointment_command=0,approval_command=0;
+    std::uint64_t physically_completed=0;
+    std::uint32_t owner_target=0;
+    bool approved=false,fulfilled=false;
+};
+inline std::array<JobBoardRow,2> workshop_job_board(
+    const Simulation& world,PlayerId owner,EntityId home_ship,EntityId site) {
+    std::array<JobBoardRow,2> rows{};
+    const auto slots=plan_original_workshop(world,owner,home_ship,site);
+    const auto* shop=world.workshop(site);
+    for(unsigned slot=0;slot<2;++slot){
+        auto& row=rows[slot];
+        row.trade=slot?WorkshopTrade::Shape:WorkshopTrade::Cut;
+        if(!shop || slots[slot].gate==StaffGate::InvalidOwner ||
+           slots[slot].gate==StaffGate::MissingOriginalSite ||
+           slots[slot].gate==StaffGate::ForeignSite)continue;
+        row.supervisor=shop->supervisor_npc_id;
+        row.appointment_command=shop->supervisor_appointment_id;
+        const auto& job=shop->approved_jobs[slot];
+        row.approval_command=job.command_id;
+        row.approved=job.command_id!=0;
+        row.owner_target=job.target_batches;
+        const auto actual=slot?shop->finisher_batches:shop->completed_batches;
+        row.physically_completed=job.command_id?job.achieved(actual):0;
+        row.fulfilled=job.command_id &&
+            row.physically_completed>=job.target_batches;
+    }
+    return rows;
+}
+// Original owner approves an actual existing qualified local person. Managers
+// may recommend choices but do not receive actor/owner command authority.
+inline std::optional<Command> approved_workshop_supervisor(
+    const Simulation& world,PlayerId owner,EntityId ship,EntityId site,
+    WorkshopTrade trade,std::uint64_t npc_id,std::uint64_t id,
+    bool owner_confirmed) {
+    if(!owner_confirmed || !id || world.has_command_id(id) ||
+       world.tick()==std::numeric_limits<std::uint64_t>::max() ||
+       (trade!=WorkshopTrade::Cut && trade!=WorkshopTrade::Shape) ||
+       !owner || npc_id>1000000)return std::nullopt;
+    const auto slots=plan_original_workshop(world,owner,ship,site);
+    const auto* shop=world.workshop(site);
+    if(!shop || slots[0].gate==StaffGate::InvalidOwner ||
+       slots[0].gate==StaffGate::MissingOriginalSite ||
+       slots[0].gate==StaffGate::ForeignSite ||
+       (trade==WorkshopTrade::Shape && !shop->finisher_installed))
+        return std::nullopt;
+    if(npc_id){
+        const auto person=world.npc_records().find(npc_id);
+        if(person==world.npc_records().end() ||
+           person->second.home_ship!=ship ||
+           person->second.location!=site ||
+           person->second.assigned_site!=site ||
+           person->second.role!=NpcRole::Habitat ||
+           person->second.mentor_id || person->second.transport_id ||
+           !world.npc_available_for_duty(npc_id) ||
+           !world.workshop_trade_certified(npc_id,trade) ||
+           already_on_named_duty(world,npc_id,world.tick()+1))
+            return std::nullopt;
+    }else if(!shop->supervisor_npc_id)return std::nullopt;
+    Command cmd{};
+    cmd.id=id;cmd.sequence=id;cmd.execute_tick=world.tick()+1;
+    cmd.issuer=owner;cmd.actor=ship;cmd.target=site;
+    cmd.action=Action::AppointWorkshopSupervisor;
+    cmd.thrust_x=static_cast<int>(trade);
+    cmd.amount=static_cast<std::int64_t>(npc_id);
+    return cmd;
+}
+inline std::optional<Command> approved_workshop_mentorship(
+    const Simulation& world,PlayerId owner,EntityId ship,EntityId site,
+    WorkshopTrade trade,std::uint64_t trainee,std::uint64_t id,
+    bool owner_confirmed) {
+    if(!owner_confirmed || !id || world.has_command_id(id) ||
+       world.tick()==std::numeric_limits<std::uint64_t>::max() ||
+       !trainee || trainee>1000000)return std::nullopt;
+    const auto rows=plan_original_workshop(world,owner,ship,site);
+    const auto* shop=world.workshop(site);
+    const auto* utility=world.utility(site);
+    if(!shop || rows[0].gate==StaffGate::InvalidOwner ||
+       rows[0].gate==StaffGate::MissingOriginalSite ||
+       rows[0].gate==StaffGate::ForeignSite ||
+       !shop->supervisor_npc_id ||
+       !shop->supervisor_appointment_id ||
+       shop->supervisor_trade!=trade ||
+       shop->last_mentored_tick==world.tick()+1 ||
+       !world.workshop_trade_certified(shop->supervisor_npc_id,trade) ||
+       (trade==WorkshopTrade::Shape && !shop->finisher_installed) ||
+       !utility || !utility->powered || utility->condition<=0 ||
+       utility->stored_energy<1 ||
+       (trade==WorkshopTrade::Cut?shop->aluminum_kg:shop->panels_kg)<1 ||
+       shop->scrap_kg>=1000)return std::nullopt;
+    const auto person=world.npc_records().find(trainee);
+    if(person==world.npc_records().end() ||
+       person->second.home_ship!=ship || person->second.location!=site ||
+       person->second.assigned_site!=site ||
+       person->second.role!=NpcRole::Habitat ||
+       person->second.transport_id || person->second.mentor_id ||
+       trainee==shop->supervisor_npc_id ||
+       !world.npc_available_for_duty(trainee) ||
+       world.workshop_trade_certified(trainee,trade) ||
+       already_on_named_duty(world,trainee,world.tick()+1))
+        return std::nullopt;
+    Command cmd{};
+    cmd.id=id;cmd.sequence=id;cmd.execute_tick=world.tick()+1;
+    cmd.issuer=owner;cmd.actor=ship;cmd.target=site;
+    cmd.action=Action::MentorWorkshopTrade;
+    cmd.thrust_x=static_cast<int>(trade);
+    cmd.amount=static_cast<std::int64_t>(trainee);
+    return cmd;
+}
+inline std::optional<Command> approved_workshop_job(
+    const Simulation& world,PlayerId owner,EntityId ship,EntityId site,
+    WorkshopTrade trade,std::uint32_t batches,std::uint64_t id,
+    bool owner_confirmed) {
+    if(!owner_confirmed || !id || world.has_command_id(id) ||
+       !batches || batches>50 ||
+       world.tick()==std::numeric_limits<std::uint64_t>::max())
+        return std::nullopt;
+    const auto rows=plan_original_workshop(world,owner,ship,site);
+    const auto* shop=world.workshop(site);
+    const auto slot=trade==WorkshopTrade::Cut?0:trade==WorkshopTrade::Shape?1:2;
+    if(!shop || slot>1 || rows[0].gate==StaffGate::InvalidOwner ||
+       rows[0].gate==StaffGate::MissingOriginalSite ||
+       rows[0].gate==StaffGate::ForeignSite ||
+       (slot==1 && !shop->finisher_installed) ||
+       !shop->supervisor_npc_id || !shop->supervisor_appointment_id ||
+       shop->supervisor_trade!=trade || shop->approved_jobs[slot].command_id)
+        return std::nullopt;
+    Command cmd{};
+    cmd.id=id;cmd.sequence=id;cmd.execute_tick=world.tick()+1;
+    cmd.issuer=owner;cmd.actor=ship;cmd.target=site;
+    cmd.action=Action::ApproveWorkshopJob;
+    cmd.thrust_x=static_cast<int>(trade);
+    cmd.amount=batches;
+    return cmd;
+}
+inline std::optional<Command> approved_workshop_job_cancel(
+    const Simulation& world,PlayerId owner,EntityId ship,EntityId site,
+    WorkshopTrade trade,std::uint64_t approval_id,std::uint64_t cancel_id,
+    bool owner_confirmed) {
+    if(!owner_confirmed || !cancel_id || world.has_command_id(cancel_id) ||
+       !approval_id ||
+       approval_id>static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) ||
+       world.tick()==std::numeric_limits<std::uint64_t>::max())
+        return std::nullopt;
+    const auto rows=plan_original_workshop(world,owner,ship,site);
+    const auto* shop=world.workshop(site);
+    const auto slot=trade==WorkshopTrade::Cut?0:trade==WorkshopTrade::Shape?1:2;
+    if(!shop || slot>1 || rows[0].gate==StaffGate::InvalidOwner ||
+       rows[0].gate==StaffGate::MissingOriginalSite ||
+       rows[0].gate==StaffGate::ForeignSite ||
+       shop->approved_jobs[slot].command_id!=approval_id)
+        return std::nullopt;
+    Command cmd{};
+    cmd.id=cancel_id;cmd.sequence=cancel_id;cmd.execute_tick=world.tick()+1;
+    cmd.issuer=owner;cmd.actor=ship;cmd.target=site;
+    cmd.action=Action::CancelWorkshopJob;
+    cmd.thrust_x=static_cast<int>(trade);
+    cmd.amount=static_cast<std::int64_t>(approval_id);
+    return cmd;
 }
 
 // WO2-I: an approved finite named-worker shift uses the original future
