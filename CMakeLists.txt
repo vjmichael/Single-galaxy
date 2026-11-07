@@ -1945,3 +1945,10 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_floating_frame_tests PRIVATE galaxy_kernel)
   add_test(NAME galaxy_floating_frame COMMAND galaxy_floating_frame_tests)
 endif()
+
+# SPACE-04B/05: actual original v119 flight and fenced SQLite world steps.
+if(BUILD_TESTING)
+  add_executable(galaxy_native_3d_worker_tests tests/Native3DPhysicsWorkerTests.cpp)
+  target_link_libraries(galaxy_native_3d_worker_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_native_3d_worker COMMAND galaxy_native_3d_worker_tests)
+endif()
