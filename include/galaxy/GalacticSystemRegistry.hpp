@@ -157,8 +157,17 @@ inline std::optional<Point> original_ship_galactic_position(
     if(native_db.empty())return std::nullopt;
     const auto* actual=native.world().find(ship);
     if(!actual || actual->type!=EntityType::Ship)return std::nullopt;
-    const auto cosmic=galaxy::spatial::cosmic_ship(native.world(),ship);
-    if(!cosmic)return std::nullopt;
+    // v120 ships already own their exact primary galactic coordinates.
+    // Never add a star origin twice or rederive from a saturated legacy XY.
+    if(native.world().native_galactic_physics()){
+        if(!actual->physical_galactic_authoritative ||
+           !actual->physical_galactic.valid())return std::nullopt;
+    }
+    const auto cosmic=native.world().native_galactic_physics()?
+        std::optional<CosmicPosition>{}:
+        galaxy::spatial::cosmic_ship(native.world(),ship);
+    if(!native.world().native_galactic_physics() && !cosmic)
+        return std::nullopt;
     sqlite3* db=nullptr;
     if(sqlite3_open_v2(native_db.c_str(),&db,
         SQLITE_OPEN_READONLY|SQLITE_OPEN_FULLMUTEX,nullptr)!=SQLITE_OK) {
@@ -174,7 +183,16 @@ inline std::optional<Point> original_ship_galactic_position(
         q.number(1,actual->system_id);
         if(!q.row()){sqlite3_close_v2(db);return std::nullopt;}
         const Point star{{q.n(0),q.n(1)},{q.n(2),q.n(3)},{q.n(4),q.n(5)}};
-        const auto coordinate=at_system_origin(star,*cosmic);
+        const auto coordinate=native.world().native_galactic_physics()?
+            std::optional<Point>(actual->physical_galactic):
+            at_system_origin(star,*cosmic);
+        if(native.world().native_galactic_physics()){
+            const auto expected=native.world().galactic_system_origins().find(actual->system_id);
+            if(expected==native.world().galactic_system_origins().end() ||
+               !(expected->second==star)){
+                sqlite3_close_v2(db);return std::nullopt;
+            }
+        }
         sqlite3_close_v2(db);
         return coordinate;
     }catch(const std::exception&){
