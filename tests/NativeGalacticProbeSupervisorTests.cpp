@@ -209,6 +209,29 @@ static void multi_cell_supervision(const fs::path& root,
         spatial::scope(next_cell),first.worker,successor.epoch-1,
         successor.region_generation,successor.checkpoint_revision,
         "abandoned-3"});});
+    // An orphaned selected writer cannot be stolen while its original
+    // epoch is live. After a real durable lease CAS revokes that epoch,
+    // a healthy worker on ANOTHER actual occupied cell may take over.
+    const auto stranded=spatial::claim_original_writer(
+        db,w,successor,"crosscell-stranded",true);
+    const auto cross_gen=w.generation(),cross_tick=w.world().tick();
+    const auto other=(next_cell==*cell1)?l2:l1;
+    denied([&]{(void)spatial::claim_original_writer(
+        db,w,other,"crosscell-too-early",true);});
+    CHECK(w.generation()==cross_gen && w.world().tick()==cross_tick);
+    const auto retired=spatial::transfer_cell_worker(db,next_cell,
+        "worker-D",successor.epoch,successor.region_generation,
+        successor.checkpoint_revision,"crosscell-retire",true);
+    CHECK(retired.epoch>successor.epoch);
+    spatial::NativeMultiCellSupervisor surviving(db,w);
+    surviving.register_worker(other);
+    surviving.use_native_process_workers(worker_binary);
+    const auto takeover=surviving.run_next_tick("crosscell-takeover");
+    CHECK(takeover.scope==spatial::scope(other.cell) &&
+          w.generation()==cross_gen+1 &&
+          w.world().tick()==cross_tick+1 &&
+          w.world().total_ore()==ore);
+    denied([&]{w.step_as_cell_worker(stranded);});
 }
 int main(int argc,char** argv){
     const auto root=fs::temp_directory_path()/
