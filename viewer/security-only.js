@@ -56,6 +56,13 @@ function openStream(){
    text('securityDeskFeedback','Invalid private security frame rejected.');
   }
  });
+ source.addEventListener('resync',()=>{
+  // The owner-private ring is only transient. A lost range triggers a fresh
+  // native SQLite-backed security snapshot, never locally inferred evidence.
+  window.GalaxySecurityDesk?.reset();
+  text('securityDeskFeedback',
+   'Private notifications fell behind; reloading saved security records.');
+ });
  source.addEventListener('failed',()=>reset());
 }
 async function bootstrap(){
