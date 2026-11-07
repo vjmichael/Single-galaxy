@@ -1018,6 +1018,8 @@ public:
         const PlanetarySiteKey& key,std::uint64_t guardian,
         std::uint64_t co_parent,const std::vector<std::uint64_t>& children,
         std::uint64_t request_id,FailPoint fail=FailPoint::None);
+    bool release_planetary_shuttle_family(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,FailPoint fail=FailPoint::None);
     bool book_planetary_shuttle_passenger(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,std::uint64_t npc,bool board,
         FailPoint fail=FailPoint::None);
