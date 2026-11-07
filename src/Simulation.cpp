@@ -4204,6 +4204,26 @@ Event Simulation::execute(const Command& c) {
                             result.result=Outcome::InvalidTarget;return result;
                         }
                     }
+                    // Native shipyard duties are physical work, not an
+                    // independent person pool. An active construction crew
+                    // cannot be scheduled onto the installed workshop.
+                    for(const auto& [id,yard]:shipyard_constructions_){
+                        (void)id;
+                        if(!yard.operational() &&
+                           (yard.workers[0]==worker || yard.workers[1]==worker)){
+                            result.result=Outcome::InvalidTarget;return result;
+                        }
+                    }
+                    for(const auto& [id,build]:freighter_build_orders_){
+                        (void)id;
+                        if(build.finished())continue;
+                        const auto yard=shipyard_constructions_.find(build.yard_order);
+                        if(yard!=shipyard_constructions_.end() &&
+                           (yard->second.workers[0]==worker ||
+                            yard->second.workers[1]==worker)){
+                            result.result=Outcome::InvalidTarget;return result;
+                        }
+                    }
                     if(snapshot_version_>=105 &&
                        std::any_of(npc->second.industrial_training.begin(),
                                    npc->second.industrial_training.end(),
@@ -5382,10 +5402,22 @@ void Simulation::process_workshops(){
         // has unfinished reserved input; it pauses until real relief arrives.
         for(unsigned slot=0;slot<2;++slot){
             auto& sh=w.shifts[slot];
-            if(!sh.command_id || tick_<sh.end_tick)continue;
+            if(!sh.command_id)continue;
             auto& assigned=slot==0?w.operator_npc_id:w.finisher_npc_id;
-            if(assigned==sh.worker)assigned=0;
-            sh={};
+            const auto person=npcs_.find(sh.worker);
+            // Expiry or lost physical custody invalidates an installed shift.
+            // Never strand a nonexistent person in the durable staff slot.
+            const bool lost=person==npcs_.end() ||
+                person->second.home_ship!=w.source_ship ||
+                person->second.location!=site ||
+                person->second.assigned_site!=site ||
+                person->second.role!=NpcRole::Habitat ||
+                person->second.mentor_id || person->second.transport_id ||
+                !npc_available_for_duty(sh.worker);
+            if(tick_>=sh.end_tick || lost){
+                if(assigned==sh.worker)assigned=0;
+                sh={};
+            }
         }
         const auto u=utilities_.find(site);
         const auto n=npcs_.find(w.operator_npc_id);
