@@ -7,6 +7,7 @@
 #include "galaxy/Simulation.hpp"
 #include <array>
 #include <cstdint>
+#include <limits>
 #include <optional>
 
 namespace galaxy::colony03 {
@@ -50,7 +51,8 @@ inline bool original_owner(const Simulation& world,PlayerId owner,
                            EntityId ship) {
     const auto* e=world.find(ship);
     return owner && e && e->type==EntityType::Ship &&
-           e->owner_id==owner && world.colony_ship(ship)!=nullptr;
+           e->owner_id==owner && world.colony_ship(ship)!=nullptr &&
+           world.life_support(ship)!=nullptr;
 }
 inline bool original_site(const Simulation& world,EntityId ship,EntityId site) {
     const auto* e=world.find(site);
@@ -214,7 +216,7 @@ inline std::optional<Command> approved_original_facility(
     Facility kind,std::uint64_t command_id,bool explicit_owner_approval) {
     if(!explicit_owner_approval || !command_id ||
        world.has_command_id(command_id) ||
-       world.tick()==UINT64_MAX)return std::nullopt;
+       world.tick()==std::numeric_limits<std::uint64_t>::max())return std::nullopt;
     const auto plan=plan_facility(world,owner,ship,site,kind);
     if(!plan.can_request())return std::nullopt;
     Command c{};c.id=command_id;c.sequence=command_id;
@@ -252,7 +254,8 @@ inline std::optional<PlanetarySiteAudit> audit_planetary_surface(
     a.workforce_policy=s.workforce_policy;
     a.water_kg=s.water_kg;a.food_kg=s.food_kg;
     a.nutrients_kg=s.nutrients_kg;a.oxygen_kg=s.oxygen_kg;
-    a.declared_workers=static_cast<std::uint64_t>(s.assigned_workers);
+    a.declared_workers=s.assigned_workers>0?
+        static_cast<std::uint64_t>(s.assigned_workers):0;
     a.shuttle_installed=world.planetary_shuttles().count(key)!=0;
     for(const auto npc_id:s.delegated_npcs){
         if(!npc_id)continue;
