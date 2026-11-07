@@ -4126,8 +4126,15 @@ Event Simulation::execute(const Command& c) {
                         result.result=Outcome::InvalidTarget;return result;
                     }
                     unsigned trained=0;
-                    for(const auto& credit:ni->second.industrial_training)
+                    for(const auto& credit:ni->second.industrial_training){
+                        // Original NPC cannot perform two separate training
+                        // sessions in the same logical tick, even for
+                        // different trades or distinct command IDs.
+                        if(credit.tick==tick_){
+                            result.result=Outcome::InvalidTarget;return result;
+                        }
                         if(credit.trade==trade)++trained;
+                    }
                     if(trained>=3 || ni->second.industrial_training.size()>=6){
                         result.result=Outcome::InvalidArgument;return result;
                     }
