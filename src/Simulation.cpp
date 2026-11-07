@@ -103,6 +103,18 @@ void validate_site_conveyors(const OutpostStorage& st){
 } // namespace
 
 namespace {
+bool within_native_3d_range(const Entity& a,const Entity& b,
+                            std::int64_t radius) {
+    // Difference in extended precision avoids int64 subtraction overflow;
+    // all physical proximity dimensions are tested, not a flat XY shadow.
+    if(radius<0)return false;
+    const long double x=static_cast<long double>(a.position.x)-b.position.x;
+    const long double y=static_cast<long double>(a.position.y)-b.position.y;
+    const long double z=static_cast<long double>(a.position_z_mm)-b.position_z_mm;
+    const long double r=static_cast<long double>(radius);
+    if(std::fabs(x)>r || std::fabs(y)>r || std::fabs(z)>r)return false;
+    return x*x+y*y+z*z<=r*r;
+}
 std::int64_t clamp_velocity(std::int64_t v) {
     return std::clamp(v, -Simulation::kMaxVelocityMmPerTick, Simulation::kMaxVelocityMmPerTick);
 }
@@ -2265,8 +2277,9 @@ Outcome Simulation::mine_status(const Entity& actor, EntityId target) const {
     const auto* deposit=geology(target);
     // Surface mining: full radius matters for kilometre-scale physical deposits.
     const std::int64_t access=kMiningRangeMm+(deposit ? deposit->radius_m*1000 : 0);
-    if(dx < -access || dx > access || dy < -access || dy > access ||
-       dx*dx + dy*dy > access*access) return Outcome::OutOfRange;
+    if(snapshot_version_>=119 ? !within_native_3d_range(actor,asteroid,access) :
+       (dx < -access || dx > access || dy < -access || dy > access ||
+        dx*dx + dy*dy > access*access)) return Outcome::OutOfRange;
     if (loaded_cargo_liters(actor) > actor.cargo_capacity*1000-1000) return Outcome::CargoFull;
     if (asteroid.ore <= 0) return Outcome::NoResources;
     return Outcome::Applied;
@@ -3695,7 +3708,10 @@ Event Simulation::execute(const Command& c) {
             }
             const auto dx=target.position.x-actor.position.x;
             const auto dy=target.position.y-actor.position.y;
-            const auto distance=std::hypot(double(dx),double(dy));
+            const auto distance=snapshot_version_>=119 ?
+                std::hypot(double(dx),double(dy),
+                           double(target.position_z_mm-actor.position_z_mm)) :
+                std::hypot(double(dx),double(dy));
             const auto sensed=ship_sensors::detection_range_mm(
                 *this,actor,target);
             if(distance>double(kTrainingWeaponRangeMm) ||
@@ -3715,7 +3731,9 @@ Event Simulation::execute(const Command& c) {
                 double(dy)*std::sin(radians);
             const double lateral=double(dy)*std::cos(radians)-
                 double(dx)*std::sin(radians);
-            if(along<=0 || std::abs(lateral)>along){
+            if(along<=0 || (snapshot_version_>=119 ?
+                std::hypot(lateral,double(target.position_z_mm-actor.position_z_mm))>along :
+                std::abs(lateral)>along)){
                 result.result=Outcome::OutOfRange;return result;
             }
             // Crew and dependents have real, permanent identities. Until
@@ -3768,8 +3786,9 @@ Event Simulation::execute(const Command& c) {
             const auto dx=drone.position.x-actor.position.x;
             const auto dy=drone.position.y-actor.position.y;
             constexpr auto range=kTrainingWeaponRangeMm;
-            if(dx < -range || dx > range || dy < -range || dy > range ||
-               dx*dx+dy*dy>range*range){result.result=Outcome::OutOfRange;return result;}
+            if(snapshot_version_>=119 ? !within_native_3d_range(actor,drone,range) :
+               (dx < -range || dx > range || dy < -range || dy > range ||
+                dx*dx+dy*dy>range*range)){result.result=Outcome::OutOfRange;return result;}
             if(!actor.weapon_charges){result.result=Outcome::NoResources;return result;}
             if(actor.last_weapon_tick &&
                tick_-actor.last_weapon_tick<kTrainingWeaponCooldownTicks){
@@ -3895,12 +3914,15 @@ Event Simulation::execute(const Command& c) {
             if(station->system_id!=actor.system_id){result.result=Outcome::WrongSystem;return result;}
             const auto dx = actor.position.x - station->position.x;
             const auto dy = actor.position.y - station->position.y;
-            if (dx < -kDockingRangeMm || dx > kDockingRangeMm ||
-                dy < -kDockingRangeMm || dy > kDockingRangeMm ||
-                dx * dx + dy * dy > kDockingRangeMm * kDockingRangeMm) {
+            if (snapshot_version_>=119 ?
+                !within_native_3d_range(actor,*station,kDockingRangeMm) :
+                (dx < -kDockingRangeMm || dx > kDockingRangeMm ||
+                 dy < -kDockingRangeMm || dy > kDockingRangeMm ||
+                 dx * dx + dy * dy > kDockingRangeMm * kDockingRangeMm)) {
                 result.result = Outcome::OutOfRange; return result;
             }
-            if (actor.velocity.x != 0 || actor.velocity.y != 0) {
+            if (actor.velocity.x != 0 || actor.velocity.y != 0 ||
+                (snapshot_version_>=119 && actor.velocity_z_mm_per_tick!=0)) {
                 result.result = Outcome::ShipMoving; return result;
             }
             stop_mining(c.actor, Outcome::NotInSpace);
@@ -13353,8 +13375,9 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             if(result.snapshot_version_>=119){
                 e.position_z_mm=i64(f[41]);
                 e.velocity_z_mm_per_tick=i64(f[42]);
-                if((e.type!=EntityType::Ship &&
+                if((e.type!=EntityType::Ship && e.type!=EntityType::Wreck &&
                    (e.position_z_mm || e.velocity_z_mm_per_tick)) ||
+                   (e.type==EntityType::Wreck && e.velocity_z_mm_per_tick) ||
                    e.velocity_z_mm_per_tick < -kMaxVelocityMmPerTick ||
                    e.velocity_z_mm_per_tick > kMaxVelocityMmPerTick)
                     throw std::runtime_error("snapshot: invalid 3D physical axis");
