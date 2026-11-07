@@ -8954,7 +8954,8 @@ bool Simulation::queue_npc_station_docking(
        vessel->second.type!=EntityType::Ship ||
        station->second.type!=EntityType::Station ||
        vessel->second.owner_id!=owner ||
-       vessel->second.system_id!=station->second.system_id ||
+       (snapshot_version_<120 &&
+        vessel->second.system_id!=station->second.system_id) ||
        !same_local_frame(ship,target) ||
        !colony_ships_.count(ship) || !life_support_.count(ship) ||
        vessel->second.jump_state!=ShipJumpState::Ready ||
@@ -9114,7 +9115,8 @@ bool Simulation::queue_npc_ship_rendezvous(
        vessel->second.type!=EntityType::Ship ||
        destination->second.type!=EntityType::Ship ||
        vessel->second.owner_id!=owner ||
-       vessel->second.system_id!=destination->second.system_id ||
+       (snapshot_version_<120 &&
+        vessel->second.system_id!=destination->second.system_id) ||
        ship==target || !same_local_frame(ship,target) ||
        !colony_ships_.count(ship) || !life_support_.count(ship) ||
        vessel->second.jump_state!=ShipJumpState::Ready ||
@@ -9299,7 +9301,8 @@ void Simulation::process_npc_flight_navigation(){
                ship->second.type!=EntityType::Ship ||
                station->second.type!=(rendezvous?EntityType::Ship:EntityType::Station) ||
                ship->second.owner_id!=order.owner ||
-               ship->second.system_id!=station->second.system_id ||
+               (snapshot_version_<120 &&
+                ship->second.system_id!=station->second.system_id) ||
                order.ship==order.station ||
                !same_local_frame(order.ship,order.station)){
                 if(rendezvous){
@@ -11676,7 +11679,8 @@ bool Simulation::install_testing_confusion(EntityId source,EntityId target,
     if(!a || !b || a->type!=EntityType::Ship ||
        b->type!=EntityType::Ship || !a->owner_id || !b->owner_id ||
        a->owner_id==b->owner_id || source==target ||
-       a->system_id!=b->system_id || !same_local_frame(source,target) ||
+       (snapshot_version_<120 && a->system_id!=b->system_id) ||
+       !same_local_frame(source,target) ||
        (snapshot_version_>=120 ?
          !within_native_3d_range(*a,*b,kTrainingWeaponRangeMm) :
          std::hypot(double(a->position.x)-b->position.x,
@@ -16585,7 +16589,8 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                      flight.phase==NpcFlightPhase::InTransit) &&
                     (target==result.entities_.end() ||
                      target->second.type!=(rendezvous?EntityType::Ship:EntityType::Station) ||
-                     target->second.system_id!=ship->second.system_id ||
+                     (result.snapshot_version_<120 &&
+                      target->second.system_id!=ship->second.system_id) ||
                      !result.same_local_frame(flight.ship,flight.station))))
                     throw std::runtime_error("snapshot: impossible NPC docking target");
                 if(flight.local_commands){
