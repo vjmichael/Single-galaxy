@@ -8,6 +8,7 @@ on:
       - 'include/galaxy/WO4ConsumptionProfiles.hpp'
       - 'include/galaxy/WO4RegionalDistribution.hpp'
       - 'include/galaxy/WO4MaterialAllocation.hpp'
+      - 'include/galaxy/WO4GoodsRegional.hpp'
       - 'tests/WO4MaterialAllocationTests.cpp'
       - 'tests/WO4ResourceDemandTests.cpp'
       - 'tests/WO3PlanetaryUtilityTests.cpp'
