@@ -626,7 +626,8 @@ public:
     // The same predicate is evaluated during booking and again at takeoff.
     bool valid_planetary_family_births(const Simulation& world,EntityId ship,
         std::uint64_t guardian,std::uint64_t co_parent,
-        const std::vector<std::uint64_t>& children) const {
+        const std::vector<std::uint64_t>& children,
+        EntityId expected_legal_residence=0) const {
         if(!ship || !guardian || guardian==co_parent || children.empty() ||
            children.size()>2 || !std::is_sorted(children.begin(),children.end()) ||
            std::adjacent_find(children.begin(),children.end())!=children.end())
@@ -708,9 +709,10 @@ public:
             Statement moved(db_,"SELECT destination FROM npc_family_moves "
                 "WHERE scope=? AND npc_id=? ORDER BY rowid DESC LIMIT 1");
             moved.text(1,scope);moved.text(2,std::to_string(id));
-            if(moved.row() &&
-               parse_u64(sqlite3_column_text(moved.get(),0))!=ship)
-                return false;
+            const auto actual_address=moved.row()?
+                parse_u64(sqlite3_column_text(moved.get(),0)):ship;
+            if(actual_address!=(expected_legal_residence?
+                expected_legal_residence:ship))return false;
             original.push_back(id);
             if(original.size()>2)return false;
         }
@@ -9141,7 +9143,10 @@ bool PersistentWorld::launch_planetary_shuttle(PlayerId owner,EntityId ship,
         const auto& family=it->second.family;
         if(family.stage && !store_->valid_planetary_family_births(
             world_,ship,family.guardian_id,family.co_parent_id,
-            family.child_ids))return false;
+            family.child_ids,(family.stage>=5 &&
+                world_.planetary_sites().count(key))?
+                world_.planetary_sites().at(key).surface_location:ship))
+            return false;
         for(const auto adult:it->second.passenger_ids)
             if(store_->has_art02_child_parent(adult) &&
                (!family.stage ||
@@ -9164,7 +9169,9 @@ bool PersistentWorld::launch_planetary_shuttle(PlayerId owner,EntityId ship,
         const auto& family=original.family;
         if(family.stage && !store_->valid_planetary_family_births(
             world_,ship,family.guardian_id,family.co_parent_id,
-            family.child_ids))
+            family.child_ids,(family.stage>=5 &&
+                world_.planetary_sites().count(key))?
+                world_.planetary_sites().at(key).surface_location:ship))
             throw std::runtime_error("family changed during shuttle takeoff");
         for(const auto adult:original.passenger_ids)
             if(store_->has_art02_child_parent(adult) &&
