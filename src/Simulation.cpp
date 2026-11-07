@@ -1987,6 +1987,15 @@ bool Simulation::submit(const Command& c) {
            !built_outposts_.count(c.target) ||
            built_outposts_.at(c.target).source_colony_ship!=c.actor)
             return false;
+        if(c.action==Action::AppointWorkshopSupervisor){
+            // At most one appointment/revocation for this original workshop
+            // per future tick, independent of arbitrary command sequence.
+            const auto due=commands_.find(c.execute_tick);
+            if(due!=commands_.end())
+                for(const auto& prior:due->second)
+                    if(prior.action==Action::AppointWorkshopSupervisor &&
+                       prior.target==c.target)return false;
+        }
         snapshot_version_=std::max(snapshot_version_,108);
     }
     const bool workshop_command=c.action==Action::ConstructWorkshop ||
@@ -4282,6 +4291,9 @@ Event Simulation::execute(const Command& c) {
                 // WO2-J appointment, mentorship and job policy are original
                 // site-owned actions; they cannot bypass workshop execution.
                 if(c.action==Action::AppointWorkshopSupervisor){
+                    if(w.last_mentored_tick==tick_){
+                        result.result=Outcome::InvalidTarget;return result;
+                    }
                     const auto trade=static_cast<WorkshopTrade>(c.thrust_x);
                     const auto id=static_cast<std::uint64_t>(c.amount);
                     if(!id){
@@ -4346,6 +4358,9 @@ Event Simulation::execute(const Command& c) {
                     const auto supervisor=npcs_.find(w.supervisor_npc_id);
                     if(job.command_id || !w.supervisor_npc_id ||
                        !w.supervisor_appointment_id ||
+                       std::any_of(events_.begin(),events_.end(),
+                         [&](const Event& e){return e.command_id==w.supervisor_appointment_id &&
+                           e.tick==tick_ && e.result==Outcome::Applied;}) ||
                        supervisor==npcs_.end() ||
                        supervisor->second.home_ship!=c.actor ||
                        supervisor->second.location!=c.target ||
@@ -4592,6 +4607,10 @@ Event Simulation::execute(const Command& c) {
                         if(!mentor_id || !mentor_appointment || mentor_id==npc_id ||
                            w.supervisor_trade!=trade || mentor==npcs_.end() ||
                            w.last_mentored_tick==tick_ ||
+                           std::any_of(events_.begin(),events_.end(),
+                             [&](const Event& e){
+                               return e.command_id==mentor_appointment &&
+                                      e.tick==tick_ && e.result==Outcome::Applied;}) ||
                            !workshop_trade_certified(mentor_id,trade) ||
                            mentor->second.home_ship!=c.actor ||
                            mentor->second.location!=c.target ||
