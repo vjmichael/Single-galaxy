@@ -11998,19 +11998,19 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 throw std::runtime_error("snapshot: invalid workshop operator");
         }
         if(result.snapshot_version_>=106){
-            for(const auto id:w.cancelled_pending_shifts){
-                bool valid=false;
+            for(const auto cancelled:w.cancelled_pending_shifts){
+                bool pending_found=false;
                 for(const auto& [due,orders]:result.commands_){
                     if(due<=result.tick_)continue;
                     for(const auto& pending:orders)
-                        if(pending.id==id &&
+                        if(pending.id==cancelled &&
                            pending.action==Action::StartWorkshopShift &&
-                           pending.target==id /* checked below by site */)
-                            valid=true;
+                           pending.target==id &&
+                           pending.actor==w.source_ship)
+                            pending_found=true;
                 }
-                // Repeat exact per-site checks below. Merely containing an
-                // arbitrary accepted command is never cancellation proof.
-                (void)valid;
+                if(!pending_found)
+                    throw std::runtime_error("snapshot: cancelled shift has no original pending order");
             }
             for(unsigned slot=0;slot<2;++slot){
                 const auto& sh=w.shifts[slot];
