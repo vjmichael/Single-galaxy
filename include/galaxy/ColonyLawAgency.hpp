@@ -406,6 +406,7 @@ public:
         if(old!=prior.end()){
             if(old->native_flight_present || old->target_ship!=target ||
                old->officer!=appointed.officer ||
+               old->observer!=contact.observer_npc ||
                old->government_event!=appointed.government_event)
                 return false;
             order_id=old->order_id; // retry one already durable intent
