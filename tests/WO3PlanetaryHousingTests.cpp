@@ -261,6 +261,13 @@ int main() {
     CHECK(w.world().npc_records().at(roster[3]).legal_residence()==
           (transport::Endpoint{transport::LocationKind::ColonyShip,ship}));
     CHECK(w.settle_planetary_visitor(7,ship,key,roster[3],81501,true));
+    // Resident audit must count one admitted visitor exactly once:
+    // 2 original delegates plus this consenting adult occupy 3/4 beds.
+    const auto visitor_beds=colony03::audit_planetary_surface(
+        w.world(),7,ship,key);
+    CHECK(visitor_beds && visitor_beds->unused_housing_capacity==1 &&
+          visitor_beds->original_permanent_residents==3 &&
+          visitor_beds->physical_delegates==2);
     CHECK(!w.settle_planetary_visitor(7,ship,key,roster[3],81501,true));
     CHECK(!w.transfer_planetary_shuttle_visitor(7,ship,key,roster[3],true));
     CHECK(w.world().canonical_state().rfind("galaxy-kernel-v111|",0)==0);
@@ -293,6 +300,9 @@ int main() {
     CHECK(!w.depart_planetary_visitor(8,ship,key,roster[3],81502,true));
     CHECK(!w.depart_planetary_visitor(7,ship,key,roster[3],81502,false));
     CHECK(w.depart_planetary_visitor(7,ship,key,roster[3],81502,true));
+    const auto departed_beds=colony03::audit_planetary_surface(
+        w.world(),7,ship,key);
+    CHECK(departed_beds && departed_beds->unused_housing_capacity==2);
     CHECK(!w.depart_planetary_visitor(7,ship,key,roster[3],81502,true));
     CHECK(w.world().npc_records().at(roster[3]).legal_residence()==
           (transport::Endpoint{transport::LocationKind::ColonyShip,ship}));
