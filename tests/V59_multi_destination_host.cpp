@@ -3,6 +3,7 @@
 #include "galaxy/RegionalShipmentReconciliation.hpp"
 #include "galaxy/CanonicalShippingHost.hpp"
 #include "galaxy/WO5ManufacturedFreight.hpp"
+#include "galaxy/WO5ManufacturedEvidence.hpp"
 #include "galaxy/ShipmentStatusView.hpp"
 #include "galaxy/ClientContract.hpp"
 #include "galaxy/NpcAppearanceGenome.hpp"
@@ -276,6 +277,16 @@ int main(){
      w.world().storage(site)->goods_kg.at("aluminum_panels")==1 &&
      w.world().ship_inventory_snapshot(carrier).amount("good/aluminum_frames")==0,
      "WO5 book falsely moved cargo without physical dispatch");
+  shipping::ShipmentStatusView wo5_status(path);
+  const auto booked=logistics05::inspect_manufactured_evidence(
+      w.world(),wo5_status,7,frames);
+  ck(booked &&
+     booked->phase==logistics05::ManufacturedPhase::AwaitingConsent &&
+     !booked->loaded_receipt && booked->original_carrier_held_kg==0,
+     "WO5 booking falsely reported cargo in transit");
+  ck(!logistics05::inspect_manufactured_evidence(
+      w.world(),wo5_status,10,frames),
+     "WO5 disclosed shipment to unrelated principal");
   if(const char* fixture=std::getenv("SG_SHIPPING_PENDING_FIXTURE")){
     sqlite3 *from=nullptr,*to=nullptr;
     ck(sqlite3_open_v2(path.c_str(),&from,SQLITE_OPEN_READONLY,nullptr)==SQLITE_OK,
@@ -302,6 +313,12 @@ int main(){
   game_host.dispatch(frames.id,8,"frames-dispatch");
   reject([&]{contracts.dispatch(frames.id,8,"frames-dispatch-duplicate");},"carrier dispatched twice");
   game_host.dispatch(panels.id,8,"panels-dispatch");
+  const auto dispatched=logistics05::inspect_manufactured_evidence(
+      w.world(),wo5_status,8,panels);
+  ck(dispatched &&
+     dispatched->phase==logistics05::ManufacturedPhase::Dispatched &&
+     !dispatched->loaded_receipt && !dispatched->unload_receipt,
+     "WO5 manufactured freight dispatch moved physical stock");
   active=7;reject([&]{game_host.load(frames.id,7);},"source-owner session moved carrier freight");
   active=9;reject([&]{game_host.load(frames.id,9);},"receiver session moved carrier freight");
   active=10;reject([&]{game_host.load(frames.id,10);},"alternate receiver session moved carrier freight");
@@ -316,6 +333,14 @@ int main(){
     game_host.load(id,8);
     ck(w.world().ship_inventory_snapshot(carrier).amount("good/"+code)==1,
        "dispatch did not physically load finished goods");
+    const auto& physical_lot=id==frames.id?frames:panels;
+    const auto loaded=logistics05::inspect_manufactured_evidence(
+        w.world(),wo5_status,8,physical_lot);
+    ck(loaded &&
+       loaded->phase==logistics05::ManufacturedPhase::PhysicallyLoaded &&
+       loaded->original_carrier_held_kg==1 &&
+       loaded->loaded_receipt && !loaded->unload_receipt,
+       "WO5 loaded claim lacks original carrier goods or ledger proof");
   }
   // v59: real owner cutovers while both physical lots are still aboard
   // the independent carrier. Ownership flips must not reissue either cargo.
@@ -385,8 +410,24 @@ int main(){
   active=9;reject([&]{game_host.unload(panels.id,9);},"receiver owner issued carrier unload");
   active=8;game_host.unload(panels.id,8);
   ck(w.world().storage(destination)->goods_kg.at("aluminum_panels")==1,"original receiver lacks delivered panels");
+  const auto received=logistics05::inspect_manufactured_evidence(
+      w.world(),wo5_status,9,panels);
+  ck(received &&
+     received->phase==logistics05::ManufacturedPhase::PhysicallyDelivered &&
+     received->original_carrier_held_kg==0 &&
+     received->original_destination_stock_kg>=1 &&
+     received->unload_receipt && !received->settlement_receipt,
+     "WO5 delivery lacks real receiving warehouse inventory");
   active=8;game_host.acknowledge_delivery(panels.id,8,2);
   active=9;game_host.acknowledge_delivery(panels.id,9,3);
+  const auto settled=logistics05::inspect_manufactured_evidence(
+      w.world(),wo5_status,9,panels);
+  ck(settled &&
+     settled->phase==logistics05::ManufacturedPhase::Settled &&
+     settled->loaded_receipt && settled->unload_receipt &&
+     settled->settlement_receipt &&
+     settled->original_carrier_held_kg==0,
+     "WO5 final settlement lacks two original signers or physical proof");
   active=0;
   // The first destination cannot receive the redirected frames even after
   // delivery of another item: storage and settlement remain destination-scoped.
