@@ -27,7 +27,8 @@ static Choice choose() {
                  {10,27},{26,52},{7,15},{28,8},{12,40},{24,55}}) {
                 const auto region=p.scan_planetary_geography(
                     7,ship,b.id,std::uint16_t(lat),std::uint16_t(lon));
-                if(region && !region->landscape.region.surface_water)
+                if(region && !region->landscape.region.surface_water &&
+                   region->landscape.region.farming_possible)
                     return {sys,b.id,std::uint16_t(lat),std::uint16_t(lon)};
             }
         }
@@ -359,7 +360,85 @@ int main() {
     PersistentWorld::recover_copy(db,copy);
     PersistentWorld reread(copy,Simulation(9));
     CHECK(reread.world().state_hash()==w.world().state_hash());
-    std::cout<<"WO3-C/D original qualified surface utility and SQLite PASS\n";
+    // WO3-D/v113: farm production must now be physically constructed on
+    // the planet from TWO fresh original shuttle-delivered module racks.
+    // Existing orbital-ship modules cannot materialize into local structures.
+    CHECK(!w.start_planetary_production_build(
+        8,ship,key,true,81800,builder));
+    CHECK(!w.start_planetary_production_build(
+        7,ship,key,true,81800,pilot));
+    CHECK(!w.start_planetary_production_build(
+        7,ship,key,true,81800,builder)); // no landed stock
+    up(w,ship,key,82010);
+    CHECK(w.transfer_planetary_housing_module(7,ship,key,true));
+    down(w,ship,key,82011);
+    CHECK(w.transfer_planetary_housing_module(7,ship,key,false));
+    CHECK(!w.start_planetary_production_build(
+        7,ship,key,true,81800,builder)); // only one of two modules
+    up(w,ship,key,82012);
+    CHECK(w.transfer_planetary_housing_module(7,ship,key,true));
+    for(const auto cargo:{ShuttleCargo::Water,ShuttleCargo::Food,
+                          ShuttleCargo::Oxygen})
+        CHECK(w.load_planetary_shuttle(7,ship,key,cargo,100));
+    down(w,ship,key,82013);
+    CHECK(w.transfer_planetary_housing_module(7,ship,key,false));
+    for(const auto cargo:{ShuttleCargo::Water,ShuttleCargo::Food,
+                          ShuttleCargo::Oxygen})
+        CHECK(w.unload_planetary_shuttle(7,ship,key,cargo,100));
+    CHECK(w.world().planetary_sites().at(key).housing_modules==2);
+    const auto mass_before_production=w.world().total_ore();
+    CHECK(mass_before_production==initial_mass);
+    bool rolled_back=false;
+    try {
+        (void)w.start_planetary_production_build(
+            7,ship,key,true,81800,builder,FailPoint::AfterSnapshotWrite);
+    }catch(const std::exception&){rolled_back=true;}
+    CHECK(rolled_back);
+    CHECK(w.world().planetary_sites().at(key).production_projects[0].phase==0);
+    CHECK(w.start_planetary_production_build(7,ship,key,true,81800,builder));
+    const auto& begun=w.world().planetary_sites().at(key);
+    CHECK(begun.production_projects[0].phase==1 &&
+          begun.production_projects[0].progress==0 &&
+          begun.production_projects[0].supervisor==builder &&
+          begun.housing_modules==0 && !begun.farm &&
+          begun.embodied_ore==utility.embodied_ore+4);
+    CHECK(w.world().total_ore()==initial_mass);
+    CHECK(w.world().canonical_state().rfind("galaxy-kernel-v113|",0)==0);
+    CHECK(Simulation::from_snapshot(w.world().canonical_state()).state_hash()==
+          w.world().state_hash());
+    const auto mid_copy=(folder/"production_midbuild.sqlite").string();
+    PersistentWorld::recover_copy(db,mid_copy);
+    PersistentWorld twin(mid_copy,Simulation(930));
+    CHECK(twin.world().state_hash()==w.world().state_hash());
+    w.steps(12);twin.steps(12);
+    CHECK(twin.world().state_hash()==w.world().state_hash());
+    CHECK(w.pause_planetary_production_build(7,ship,key,true,true));
+    CHECK(twin.pause_planetary_production_build(7,ship,key,true,true));
+    const auto frozen=w.world().planetary_sites().at(key).production_projects[0].progress;
+    w.steps(8);twin.steps(8);
+    CHECK(w.world().planetary_sites().at(key).production_projects[0].progress==frozen);
+    CHECK(twin.world().state_hash()==w.world().state_hash());
+    CHECK(w.pause_planetary_production_build(7,ship,key,true,false));
+    CHECK(twin.pause_planetary_production_build(7,ship,key,true,false));
+    w.steps(28);twin.steps(28);
+    CHECK(w.world().state_hash()==twin.world().state_hash());
+    const auto& finished=w.world().planetary_sites().at(key);
+    CHECK(finished.production_projects[0].phase==2 &&
+          finished.production_projects[0].progress==40 &&
+          finished.production_projects[0].completed_tick>0 &&
+          finished.farm && finished.extractor==false);
+    CHECK(w.world().total_ore()==initial_mass);
+    CHECK(!w.start_planetary_production_build(
+        7,ship,key,true,81801,builder)); // installed, not a second farm
+    const auto completed_snapshot=w.world().canonical_state();
+    CHECK(Simulation::from_snapshot(completed_snapshot).canonical_state()==
+          completed_snapshot);
+    const auto completed_copy=(folder/"production_finished.sqlite").string();
+    PersistentWorld::recover_copy(db,completed_copy);
+    PersistentWorld completed(completed_copy,Simulation(931));
+    CHECK(completed.world().state_hash()==w.world().state_hash());
+    CHECK(completed.world().total_ore()==initial_mass);
+    std::cout<<"WO3-C/D original qualified utility and physical farm construction/SQLite PASS\n";
     return 0;
  }catch(const std::exception& e){std::cerr<<e.what()<<"\n";return 1;}
 }
