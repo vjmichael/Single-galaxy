@@ -4093,7 +4093,8 @@ Event Simulation::execute(const Command& c) {
                 result.transferred=2;
                 result.result=Outcome::Applied;return result;
             }
-            if(c.action==Action::TransferWorkshopFeed ||
+            if(c.action==Action::TrainWorkshopTrade ||
+               c.action==Action::TransferWorkshopFeed ||
                c.action==Action::AssignWorkshopOperator ||
                c.action==Action::TransferWorkshopOutput ||
                c.action==Action::ConstructWorkshopFinisher ||
