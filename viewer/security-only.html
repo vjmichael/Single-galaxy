@@ -31,6 +31,8 @@ select{max-width:100%}.help{color:#c1d0e0;font-size:14px}.warning{color:#f0cc93}
 <div class="help" id="securityCommsPenalty">No communications abuse penalty.</div>
 <h2>Reported communications nuisance</h2>
 <div class="help" id="securityCommsComplaints">No complaints.</div>
+<h2>Durable private notifications</h2>
+<div class="help" id="securityNotificationList" role="log">Original-world security notices are replayed until authenticated acknowledgment commits.</div>
 <div id="securityDeskFeedback" role="status">No security action submitted.</div>
 <!-- The original SecurityDesk UI reuses strict trusted parser/DOM state.
      Additional territorial and patrol controls do NOT exist in this
@@ -42,6 +44,12 @@ select{max-width:100%}.help{color:#c1d0e0;font-size:14px}.warning{color:#f0cc93}
 <button id="securityHail" disabled></button><button id="securityPatrol" disabled></button>
 <button id="securityAcknowledge" disabled></button><button id="securityRefuse" disabled></button>
 <div id="securityCaseList"></div>
+<!-- Agency controls are deliberately unavailable to secondary accounts. -->
+<select id="securityAgencyComplaint"></select>
+<button id="securityAgencyEstablish" disabled></button>
+<button id="securityAgencyRefer" disabled></button>
+<div id="securityAgencyStatus"></div>
+<div id="securityAgencyReferrals"></div>
 </div>
 </section>
 <script src="/viewer/security-desk.js"></script>
