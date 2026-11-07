@@ -987,6 +987,12 @@ struct DeployedSurveyProbe {
     // v69: mission target is coarse (5 km quantization), NOT oracle coordinates.
     EntityId focus_site=0;
     Vector2 focus_waypoint{};
+    // SPACE-04D/v121: complete original three-axis probe/mission custody.
+    // Legacy XY is a compatibility view; these exact galactic points drive
+    // 3D motion and range after versioned migration.
+    std::int64_t position_z_mm=0,drone_home_z_mm=0,focus_z_mm=0;
+    galactic::Point galactic_position{},galactic_home{},galactic_focus{};
+    bool galactic_authoritative=false;
 };
 struct DiscoveryRecord {
     PlayerId owner=0;
@@ -998,6 +1004,9 @@ struct DiscoveryRecord {
     // v67: non-destructive geological survey classification, 0 unknown;
     // 1 carbonaceous, 2 silicate, 3 metallic. Persists after drone recovery.
     std::uint8_t survey_taxonomy=0;
+    std::int64_t location_z_mm=0;
+    galactic::Point galactic_location{};
+    bool galactic_authoritative=false;
 };
 // v68: host-origin observation withheld from every player projection until
 // its scheduled report time and a valid carrier/probe link. Persisted in world.
@@ -1309,6 +1318,8 @@ public:
     void enable_native_galactic_physics(
         const std::map<std::uint32_t,galactic::Point>& registered_origins);
     bool native_galactic_physics() const {return snapshot_version_>=120;}
+    void enable_native_3d_probes();
+    bool native_3d_probes() const {return snapshot_version_>=121;}
     const std::map<std::uint32_t,galactic::Point>& galactic_system_origins() const {
         return galactic_system_origins_;
     }
@@ -1414,7 +1425,7 @@ public:
     const std::map<std::pair<PlayerId,EntityId>,DiscoveryRecord>& discoveries() const { return discoveries_; }
     std::size_t pending_probe_report_count() const {return pending_probe_discoveries_.size();}
     // Coarse, scan-range-limited contacts for the authenticated player only.
-    struct SignatureHint { EntityId id=0;Vector2 coarse{};std::int64_t uncertainty_mm=5000000; };
+    struct SignatureHint { EntityId id=0;Vector2 coarse{};std::int64_t uncertainty_mm=5000000;std::int64_t coarse_z_mm=0; };
     std::vector<SignatureHint> coarse_probe_signatures(PlayerId owner,EntityId ship,
         std::int64_t range_mm=500000000) const;
     // Read-only survey of deterministic system metadata; no fabricated physical bodies.
