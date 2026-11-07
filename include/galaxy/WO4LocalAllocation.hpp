@@ -27,7 +27,8 @@ struct CommitResult {
 inline CommitResult commit_owner_approved_local_vital(
     PersistentWorld& persistent,const Grant& offer,
     AllocationPolicy policy,std::uint64_t unique_command_id,
-    bool trusted_host_authenticated_owner_and_explicit_approval) {
+    bool trusted_host_authenticated_owner_and_explicit_approval,
+    FailPoint fail=FailPoint::None) {
     CommitResult r{};r.command_id=unique_command_id;
     const auto& world=persistent.world();
     if(!trusted_host_authenticated_owner_and_explicit_approval ||
@@ -81,7 +82,7 @@ inline CommitResult commit_owner_approved_local_vital(
     }
     // One durable original simulation step. It also advances other
     // legitimate native jobs; WO4 does not claim isolated clock ownership.
-    persistent.step();
+    persistent.step(fail);
     const auto& events=persistent.world().events();
     for(auto it=events.rbegin();it!=events.rend();++it){
         if(it->command_id!=unique_command_id)continue;
