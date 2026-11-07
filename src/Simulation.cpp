@@ -11431,7 +11431,11 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                  !(result.snapshot_version_>=109 &&
                    mass==8+4*std::int64_t(farm+extractor)) &&
                  !(result.snapshot_version_>=110 &&
-                   mass==12+4*std::int64_t(farm+extractor))) ||
+                   mass==12+4*std::int64_t(farm+extractor)) &&
+                 !(result.snapshot_version_>=113 &&
+                   mass>=4+4*std::int64_t(farm+extractor) &&
+                   mass<=20+4*std::int64_t(farm+extractor) &&
+                   (mass-4)%4==0)) ||
                water<0 || nutrients<0 || food<0 || wastewater<0 ||
                water>1000000 || nutrients>1000000 || food>1000000 ||
                wastewater>1000000 || result.planetary_sites_.size()>=10000 ||
@@ -11556,8 +11560,14 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                            (stage==1 && (finished || built>=60)) ||
                            (stage==2 && (built!=60 || !finished || paused)) ||
                            (stage!=1 && paused) ||
-                           mass!=4+4*std::int64_t(farm+extractor)+
-                                 (phase?4:0)+(stage?4:0))
+                           (result.snapshot_version_<113 &&
+                            mass!=4+4*std::int64_t(farm+extractor)+
+                                  (phase?4:0)+(stage?4:0)) ||
+                           (result.snapshot_version_>=113 &&
+                            (mass<4+4*std::int64_t(farm+extractor)+
+                                  (phase?4:0)+(stage?4:0) ||
+                             mass>12+4*std::int64_t(farm+extractor)+
+                                  (phase?4:0)+(stage?4:0))))
                             throw std::runtime_error("snapshot: invalid surface utility");
                         site.utility_phase=std::uint8_t(stage);
                         site.utility_progress=built;
@@ -13967,8 +13977,18 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 throw std::runtime_error("snapshot: orphan planetary facility");
             if(!site.farm && site.harvest_cycles>0)
                 throw std::runtime_error("snapshot: unbuilt farm produced food");
-            if(site.embodied_ore!=4+4*(std::int64_t(site.farm)+
-                                        std::int64_t(site.extractor)))
+            // v109–v113 retain housing, utilities and physical production
+            // WIP as conserved on-site structural modules. A completed
+            // production project sets the original farm/extractor flag, but
+            // it must not debit the same two modules twice.
+            const auto expected_installed=4+4*(
+                std::int64_t(site.farm ||
+                             site.production_projects[0].phase!=0)+
+                std::int64_t(site.extractor ||
+                             site.production_projects[1].phase!=0)+
+                std::int64_t(site.housing_phase!=0)+
+                std::int64_t(site.utility_phase!=0));
+            if(site.embodied_ore!=expected_installed)
                 throw std::runtime_error("snapshot: invalid regional module custody");
             if(site.extractor && !result.oasis_reserves_.count(site.region.body))
                 throw std::runtime_error("snapshot: extractor has no physical source");
@@ -15183,8 +15203,11 @@ std::int64_t Simulation::total_ore() const {
     for(const auto& [key,site]:planetary_sites_) {
         (void)key;
         if(site.housing_modules>2 || site.housing_phase>2 ||
-            site.embodied_ore!=4+4*(std::int64_t(site.farm)+
-                                   std::int64_t(site.extractor)+
+            site.embodied_ore!=4+4*(
+                                   std::int64_t(site.farm ||
+                                     site.production_projects[0].phase!=0)+
+                                   std::int64_t(site.extractor ||
+                                     site.production_projects[1].phase!=0)+
                                    std::int64_t(site.housing_phase!=0)+
                                    std::int64_t(site.utility_phase!=0)) ||
            site.embodied_ore>std::numeric_limits<std::int64_t>::max()-total)
