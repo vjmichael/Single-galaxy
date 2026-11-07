@@ -169,6 +169,80 @@ inline NativeCellWorkerTick claim_original_writer(
     }
 }
 
+// An invalid player/worker command must not strand its selected global
+// dispatch. The original host may revoke a STILL-PENDING claim under the
+// same SQLite writer lock. Every revocation is immutable/auditable and a
+// later stale worker commit must then fail admission.
+inline bool release_uncommitted_writer_claim(
+    const std::string& path,const PersistentWorld& native,
+    const NativeCellWorkerTick& token,bool trusted_host){
+    if(!trusted_host || path.empty() || token.dispatch_id.empty() ||
+       token.canonical_cell_scope.empty())
+        throw std::invalid_argument("original host claim release required");
+    sqlite3* db=nullptr;
+    if(sqlite3_open_v2(path.c_str(),&db,
+        SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX,nullptr)!=SQLITE_OK){
+        if(db)sqlite3_close_v2(db);
+        throw std::runtime_error("original dispatch release SQLite unavailable");
+    }
+    bool committed=false;
+    try{
+        sqlite3_busy_timeout(db,5000);
+        detail::sql(db,"BEGIN IMMEDIATE");
+        detail::Statement latest(db,"SELECT generation,checksum FROM snapshots "
+            "ORDER BY generation DESC LIMIT 1");
+        if(!latest.row() ||
+           latest.integer(0)!=static_cast<std::int64_t>(native.generation()) ||
+           latest.str(1)!=std::to_string(native.world().state_hash()) ||
+           !verify_native_index(db,native.world(),native.generation()))
+            throw std::runtime_error("world changed before dispatch release");
+        detail::Statement selected(db,"SELECT scope,worker,epoch,status "
+            "FROM sg_spatial_tick_dispatch WHERE world_generation=? AND claim_id=?");
+        selected.number(1,native.generation());
+        selected.text(2,token.dispatch_id);
+        if(!selected.row()){
+            detail::sql(db,"COMMIT");committed=true;sqlite3_close_v2(db);
+            return false;
+        }
+        if(selected.str(0)!=token.canonical_cell_scope ||
+           selected.str(1)!=token.trusted_worker ||
+           selected.integer(2)!=static_cast<std::int64_t>(token.worker_epoch) ||
+           selected.integer(3)!=0)
+            throw std::runtime_error("cannot release different or committed dispatch");
+        detail::sql(db,"CREATE TABLE IF NOT EXISTS sg_spatial_dispatch_release("
+            "claim_id TEXT PRIMARY KEY,world_generation INTEGER NOT NULL,"
+            "scope TEXT NOT NULL,worker TEXT NOT NULL,epoch INTEGER NOT NULL,"
+            "original_hash TEXT NOT NULL)");
+        detail::sql(db,"CREATE TRIGGER IF NOT EXISTS sg_spatial_dispatch_release_no_update "
+            "BEFORE UPDATE ON sg_spatial_dispatch_release BEGIN "
+            "SELECT RAISE(ABORT,'immutable native dispatch cancellation');END");
+        detail::sql(db,"CREATE TRIGGER IF NOT EXISTS sg_spatial_dispatch_release_no_delete "
+            "BEFORE DELETE ON sg_spatial_dispatch_release BEGIN "
+            "SELECT RAISE(ABORT,'immutable native dispatch cancellation');END");
+        detail::Statement audit(db,"INSERT INTO sg_spatial_dispatch_release "
+            "(claim_id,world_generation,scope,worker,epoch,original_hash) "
+            "VALUES(?,?,?,?,?,?)");
+        audit.text(1,token.dispatch_id);
+        audit.number(2,native.generation());
+        audit.text(3,token.canonical_cell_scope);
+        audit.text(4,token.trusted_worker);
+        audit.number(5,token.worker_epoch);
+        audit.text(6,std::to_string(native.world().state_hash()));
+        audit.execute();
+        detail::Statement clear(db,"DELETE FROM sg_spatial_tick_dispatch "
+            "WHERE world_generation=? AND claim_id=? AND status=0");
+        clear.number(1,native.generation());clear.text(2,token.dispatch_id);
+        clear.execute();
+        if(sqlite3_changes(db)!=1)
+            throw std::runtime_error("writer dispatch release race");
+        detail::sql(db,"COMMIT");committed=true;sqlite3_close_v2(db);
+        return true;
+    }catch(...){
+        if(!committed)sqlite3_exec(db,"ROLLBACK",nullptr,nullptr,nullptr);
+        sqlite3_close_v2(db);throw;
+    }
+}
+
 // No unbounded CPU/process or task queue; the host selects one of at most
 // four admitted cell workers for each ORIGINAL tick. Detailed work takes
 // priority; cold cells still retain all original NPC needs/cargo every tick.
