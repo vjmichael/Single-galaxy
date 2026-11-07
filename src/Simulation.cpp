@@ -3567,8 +3567,8 @@ Event Simulation::execute(const Command& c) {
                     // 0.5 AU is the planned deep-space probe command budget.
                     // Native positions currently span only ~2,000 km per axis,
                     // so this limit will become meaningful with cosmic scaling.
-                    const auto dx=probe.position.x-actor.position.x;
-                    const auto dy=probe.position.y-actor.position.y;
+                    const auto dx=snapshot_version_>=121?0:probe.position.x-actor.position.x;
+                    const auto dy=snapshot_version_>=121?0:probe.position.y-actor.position.y;
                     if(snapshot_version_>=121 ?
                        !within_galactic_range(probe.galactic_position,
                           actor.physical_galactic,kDeepSpaceProbeCommsRangeMm):
@@ -3579,7 +3579,8 @@ Event Simulation::execute(const Command& c) {
                     constexpr auto r=kProbeScanRangeMm;
                     for(const auto& [id,e]:entities_){
                         if(e.type!=EntityType::Asteroid || e.system_id!=probe.system)continue;
-                        const auto dx=e.position.x-probe.position.x,dy=e.position.y-probe.position.y;
+                        const auto dx=snapshot_version_>=121?0:e.position.x-probe.position.x;
+                        const auto dy=snapshot_version_>=121?0:e.position.y-probe.position.y;
                         if(snapshot_version_>=121){
                             if(!within_galactic_range(e.physical_galactic,
                                 probe.galactic_position,r))continue;
@@ -3616,8 +3617,8 @@ Event Simulation::execute(const Command& c) {
                     result.result=Outcome::Applied;
                 }else{
                     constexpr auto r=kProbeRecoveryRangeMm;
-                    const auto dx=probe.position.x-actor.position.x;
-                    const auto dy=probe.position.y-actor.position.y;
+                    const auto dx=snapshot_version_>=121?0:probe.position.x-actor.position.x;
+                    const auto dy=snapshot_version_>=121?0:probe.position.y-actor.position.y;
                     if(snapshot_version_>=121 ?
                        !within_galactic_range(probe.galactic_position,
                           actor.physical_galactic,r) :
@@ -11428,7 +11429,9 @@ std::vector<Simulation::SignatureHint> Simulation::coarse_probe_signatures(
         }else if(std::hypot(double(e.position.x)-carrier->second.position.x,
                       double(e.position.y)-carrier->second.position.y)>radius)continue;
         const auto quant=[](std::int64_t value){
-            return (value>=0 ? (value+q/2)/q : -((-value+q/2)/q))*q;
+            const auto base=value/q*q,rem=value%q;
+            const auto step=rem>=q/2?q:rem<=-q/2?-q:0;
+            return galactic::checked_add(base,step).value_or(base);
         };
         result.push_back({id,{quant(e.position.x),quant(e.position.y)},
             5000000,snapshot_version_>=121?quant(e.position_z_mm):0});
@@ -11688,8 +11691,8 @@ void Simulation::step() {
         if(ship==entities_.end() || ship->second.type!=EntityType::Ship ||
            ship->second.owner_id!=p.owner || ship->second.system_id!=p.system)
             continue;
-        const auto dx=p.position.x-ship->second.position.x;
-        const auto dy=p.position.y-ship->second.position.y;
+        const auto dx=snapshot_version_>=121?0:p.position.x-ship->second.position.x;
+        const auto dy=snapshot_version_>=121?0:p.position.y-ship->second.position.y;
         constexpr auto range=kDroneControlRangeMm;
         if(snapshot_version_>=121 ?
            !within_galactic_range(p.galactic_position,
@@ -11734,8 +11737,10 @@ void Simulation::step() {
                probe->second.system!=pending.report.system) {
                 ++it;continue;
             }
-            const auto dx=probe->second.position.x-carrier->second.position.x;
-            const auto dy=probe->second.position.y-carrier->second.position.y;
+            const auto dx=snapshot_version_>=121?0:
+                probe->second.position.x-carrier->second.position.x;
+            const auto dy=snapshot_version_>=121?0:
+                probe->second.position.y-carrier->second.position.y;
             if(snapshot_version_>=121 ?
                !within_galactic_range(probe->second.galactic_position,
                    carrier->second.physical_galactic,
@@ -13677,8 +13682,11 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                        site->second.system_id!=system)
                         throw std::runtime_error("snapshot: focused probe site mismatch");
                     const auto quant=[](std::int64_t value,std::int64_t quantum){
-                        return (value>=0 ? (value+quantum/2)/quantum :
-                            -((-value+quantum/2)/quantum))*quantum;
+                        const auto base=value/quantum*quantum;
+                        const auto rem=value%quantum;
+                        const auto step=rem>=quantum/2?quantum:
+                            rem<=-quantum/2?-quantum:0;
+                        return galactic::checked_add(base,step).value_or(base);
                     };
                     const Vector2 coarse{quant(site->second.position.x,5000000),
                                          quant(site->second.position.y,5000000)};
@@ -13690,6 +13698,15 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                                              p.focus_waypoint.y==refined.y;
                     if(!coarse_match&&!refined_match)
                         throw std::runtime_error("snapshot: forged probe waypoint");
+                    if(result.snapshot_version_>=121){
+                        const auto canonical_coarse=coarse_galactic_point(
+                            site->second.physical_galactic,5000000);
+                        const auto canonical_fine=coarse_galactic_point(
+                            site->second.physical_galactic,25000);
+                        if(!(p.galactic_focus==canonical_coarse) &&
+                           !(p.galactic_focus==canonical_fine))
+                            throw std::runtime_error("snapshot: forged 3D probe waypoint");
+                    }
                 }
             }
             if(!p.id || !p.carrier || !p.owner ||
