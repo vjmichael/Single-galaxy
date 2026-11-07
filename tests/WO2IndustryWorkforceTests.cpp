@@ -731,19 +731,37 @@ int main() {
         // the approved cap even when the physical operator keeps working.
         const auto base=managed.world().workshop(site)->
             approved_jobs[0].baseline_batches;
+        CHECK(managed.world().workshop(site)->aluminum_kg>=20 ||
+              managed.world().workshop(site)->reserved_aluminum_kg==20);
         CHECK(send(managed,ship,717,Action::AssignWorkshopOperator,site,
                    static_cast<std::int64_t>(second_id)).result==Outcome::Applied);
-        managed.steps(15);
+        // Reopen while physical work is underway, then advance the original
+        // and recovered SQLite histories independently across the quota.
+        managed.steps(2);
+        const auto running_copy=(folder/"wo2j_running_recovered.sqlite").string();
+        PersistentWorld::recover_copy(management_db,running_copy);
+        managed.steps(13);
         const auto real_completed=managed.world().workshop(site)->completed_batches;
-        CHECK(real_completed>=base && real_completed<=base+1);
+        // Zero completed batches is NOT acceptance of a working job board.
+        CHECK(real_completed==base+1);
         board=workforce02::workshop_job_board(managed.world(),7,ship,site);
-        CHECK(board[0].physically_completed==real_completed-base);
-        CHECK(board[0].physically_completed<=board[0].owner_target);
-        if(board[0].fulfilled)
-            CHECK(workforce02::plan_original_workshop(
-                managed.world(),7,ship,site)[0].work_state==
-                workforce02::WorkState::ApprovedWorkComplete);
+        CHECK(board[0].physically_completed==1 &&
+              board[0].owner_target==1 && board[0].fulfilled &&
+              !board[0].suspended);
+        CHECK(workforce02::plan_original_workshop(
+            managed.world(),7,ship,site)[0].work_state==
+            workforce02::WorkState::ApprovedWorkComplete);
         CHECK(managed.world().total_material_kg()==initial);
+        managed.steps(15); // original operator remains, but cannot exceed quota
+        CHECK(managed.world().workshop(site)->completed_batches==real_completed);
+        CHECK(managed.world().total_material_kg()==initial);
+        {
+            PersistentWorld running(running_copy,Simulation(1051));
+            running.steps(28);
+            CHECK(running.world().workshop(site)->completed_batches==real_completed);
+            CHECK(running.world().workshop(site)->approved_jobs[0].command_id==711);
+            CHECK(running.world().total_material_kg()==initial);
+        }
         const auto manager_copy=(folder/"wo2j_active_recovered.sqlite").string();
         PersistentWorld::recover_copy(management_db,manager_copy);
         {
@@ -753,6 +771,47 @@ int main() {
             CHECK(reopened.world().npc_records().at(second_id).
                  industrial_training.back().supervisor_appointment_id==710);
             CHECK(reopened.world().total_material_kg()==initial);
+        }
+        // A physically reassigned supervisor must suspend, not erase or
+        // silently unlimit, a fresh unfinished owner-approved job. Perform
+        // this on its own SQLite copy so the main cancel/revoke history
+        // below remains independently auditable.
+        const auto suspension_db=(folder/"wo2j_supervisor_departure.sqlite").string();
+        PersistentWorld::recover_copy(management_db,suspension_db);
+        {
+            PersistentWorld absent(suspension_db,Simulation(1052));
+            CHECK(send(absent,ship,718,Action::CancelWorkshopJob,site,711,1).
+                  result==Outcome::Applied);
+            auto extended=workforce02::approved_workshop_job(
+                absent.world(),7,ship,site,WorkshopTrade::Cut,4,719,true);
+            CHECK(extended.has_value() && absent.submit(*extended));
+            absent.step();
+            CHECK(absent.world().events().back().result==Outcome::Applied);
+            CHECK(absent.world().workshop(site)->approved_jobs[0].command_id==719);
+            CHECK(first_id<second_id); // original resident order selects the mentor
+            CHECK(send(absent,ship,720,Action::AssignHabitatResidents,site,-1).
+                  result==Outcome::Applied);
+            CHECK(absent.world().npc_records().at(first_id).location==ship);
+            CHECK(absent.world().workshop(site)->supervisor_npc_id==0);
+            const auto suspended=workforce02::workshop_job_board(
+                absent.world(),7,ship,site);
+            CHECK(suspended[0].approved && suspended[0].suspended &&
+                  suspended[0].approval_command==719 &&
+                  suspended[0].owner_target==4 && !suspended[0].fulfilled);
+            const auto halted_batches=absent.world().workshop(site)->completed_batches;
+            absent.steps(15);
+            CHECK(absent.world().workshop(site)->completed_batches==halted_batches);
+            CHECK(absent.world().total_material_kg()==initial);
+            const auto departure_copy=(folder/"wo2j_suspended_recovered.sqlite").string();
+            PersistentWorld::recover_copy(suspension_db,departure_copy);
+            PersistentWorld suspended_replay(departure_copy,Simulation(1053));
+            const auto restored_board=workforce02::workshop_job_board(
+                suspended_replay.world(),7,ship,site);
+            CHECK(restored_board[0].approved && restored_board[0].suspended &&
+                  restored_board[0].approval_command==719);
+            CHECK(suspended_replay.world().workshop(site)->completed_batches==
+                  halted_batches);
+            CHECK(suspended_replay.world().total_material_kg()==initial);
         }
         auto fake=managed.world().canonical_state();
         const auto mentor_marker=fake.find("npctraining|"+
