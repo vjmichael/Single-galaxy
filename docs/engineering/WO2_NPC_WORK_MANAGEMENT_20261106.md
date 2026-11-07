@@ -21,7 +21,7 @@
 
 ## Source implementation progress — draft PR #88
 
-**Status: WO2 in progress, not yet completed or native accepted.** Branch `industry/wo2-npc-work-management-20261106` is stacked on INDUSTRY-01 draft #87.
+**Status: WO2 in progress, not yet completed or native accepted.** Native WO2-G coverage forecast and tests committed; do not equate a preview with actual signed shifts. Branch `industry/wo2-npc-work-management-20261106` is stacked on INDUSTRY-01 draft #87.
 
 | Subtask | Actual source outcome |
 | --- | --- |
@@ -31,12 +31,22 @@
 | WO2-D — Original world double-booking protection | `Simulation::apply` refuses stale/duplicate named workshop assignments and medical shifts that reuse an active workshop worker; original same-slot idempotence preserved |
 | WO2-E — Industry bill-of-work | `WO2WorkPrograms.hpp` expands a requested item into real raw source requirements, industry steps, worker trades and worker time/energy; service planning identifies staffing, facility, supplies, equipment without fictitious service inventory |
 | WO2-F — Source and native tests | **6/6 direct V8 profile/unit source checks passed**. `WO2IndustryWorkforceTests.cpp` and dedicated Windows/Linux native CMake/CTest/SQLite workflow committed; **real native results are pending** |
+| WO2-G — Read-only shift coverage preview | **Implemented source**, `plan_provisional_workshop_coverage` inspects the two original stations for a finite future tick window (max 10,000), present/in-flight worker fitness, existing assignments, overlapping native medical shifts, duplicate workers and owner/site authority. Returns *provisional suggestions only*: no worker reservation, scheduled shift, resource allocation or manager authorization. Native regression extended; **CI acceptance pending**. |
 
 ### Remaining WO2 tasks
 
 - Durable per-NPC trade experience/qualifications with real training receipts (existing farm/medic skills alone do not certify unrelated professions).
-- Time-bounded, restart-safe staffing shifts, coverage/relief and original-world owner-approved work policies.
+- **Executable**, time-bounded, restart-safe staffing shifts, coverage/relief, worker cancellation/reassignment and original-world owner-approved work policies. WO2-G adds a read-only forecast but does **not** persist or execute shifts.
 - Authorized real NPC supervisor appointment, mentorship, job-board approval and accountable cancellation/reassignment, without granting managers the ability to spawn people, equipment or resources.
 - Independent native Linux/Windows compile and SQLite work/recovery acceptance; repair actual failures, retain the draft until accepted.
 
 **Boundary:** The other non-native recipe and service profiles remain job definitions until WO3 builds physical institutions and WO4/5 supply and distribution. No new player gameplay, currency, multiplayer or 3D work. WO3 has not started.
+
+
+### WO2-G forecast acceptance contract
+
+- Future shift windows must begin after the current world tick, end after start, and last **at most 10,000 original ticks**. An invalid window has no effect and cannot become an original command.
+- Each row is limited to the two installed original workshop slots. The source-of-truth NPC record, home colony, physical location, current work assignments, real medical shift intervals, fitness and worker identity must be consulted; the same NPC cannot fill two rows.
+- The preview is not an approval, reservation, worker entitlement, durable shift, payroll entry or manufacturing receipt. Only an authenticated owner and the original `PersistentWorld::submit` + tick may execute a supported assignment.
+- Existing worker incumbents are **not displaced** by the forecast. The future solver must add owner-approved relief/cancellation and durable guard checks against changing conditions before actual shifts are released.
+- Source change on [PR #88](https://github.com/vjmichael/Single-galaxy/pull/88); C++ runtime/SQLite acceptance **not yet confirmed**, and WO2 remains open.
