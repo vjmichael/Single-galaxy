@@ -1518,6 +1518,33 @@ static void scenario(const fs::path& db, bool farming,
                         [](sqlite3*,regional_events::Scheduler&){});
                 }catch(const std::exception&){replay_rejected=true;}
                 CHECK(replay_rejected);
+                // Independent DB copy is a DIFFERENT physical owner
+                // instance, yet must contain the SAME committed regional
+                // epoch, original twice-delivered cargo and unique receipts.
+                const auto recovered_path=db.string()+".wo5-regional-recovered";
+                PersistentWorld::recover_copy(db.string(),recovered_path);
+                {
+                    PersistentWorld restored(recovered_path,Simulation(613));
+                    regional_events::CheckpointStore restored_checkpoint(
+                        recovered_path,"wo5-native-freight");
+                    regional_events::RegionalModeAuthority restored_owner(
+                        restored_checkpoint);
+                    const auto epoch=restored_owner.state();
+                    const auto restored_audit=
+                        logistics05::observe_native_regional_recovery(
+                            recovered_path,restored,restored_checkpoint,
+                            restored_owner,7,epoch.generation,
+                            epoch.checkpoint_revision);
+                    CHECK(epoch.owner==regional_events::SimulationOwner::Cold &&
+                          epoch.phase==regional_events::TransitionPhase::Stable &&
+                          epoch.generation==cold_again.generation &&
+                          restored.world().canonical_state()==
+                              w.world().canonical_state() &&
+                          restored_audit && restored_audit->loaded==0 &&
+                          restored_audit->awaiting==0 &&
+                          restored_audit->delivered>=2 &&
+                          !restored_audit->may_consider_detailed_only_work);
+                }
             }else CHECK(w.deliver_intercolony_freight(7,77007));
             CHECK(w.world().intercolony_freight().at(77007).arrival_receipt==99023);
             CHECK(w.world().life_support(receiver)->nutrients_kg==to_before+300);
