@@ -565,6 +565,8 @@ struct PlanetarySiteFacility {
     std::vector<PlanetaryUtilityHandover> utility_handovers{};
     // 0=original planetary farm; 1=original oasis extractor.
     std::array<PlanetaryProductionProject,2> production_projects{};
+    // Immutable original named-worker supervisory succession per project.
+    std::array<std::vector<PlanetaryUtilityHandover>,2> production_handovers{};
     // WO3-E/v111: historical arrivals and voluntary departures of actual
     // independent adult visitors. {descent receipt, admit request, exit request};
     // an exit receipt remains forever to prevent request/identity replay.
@@ -1407,6 +1409,9 @@ public:
         std::uint64_t qualified_supervisor);
     bool pause_planetary_production_build(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,bool farm,bool pause);
+    bool handover_planetary_production_build(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool farm,std::uint64_t previous,
+        std::uint64_t replacement,std::uint64_t request_id);
     // Admission of an already physically deployed named founder with
     // trusted owner + voluntary-consent attestation and unique request ID.
     // Does not invent NPCs or transfer visitors without arrival evidence.
