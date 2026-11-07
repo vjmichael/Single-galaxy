@@ -142,6 +142,12 @@ int main(){
     CHECK(warm.generation==2 &&
           warm.owner==regional_events::SimulationOwner::Detailed &&
           !spatial::worker_may_simulate_cell(path,*after,"worker-a",1,1,1));
+    // A byte-identical worker transfer cannot be replayed under a NEW
+    // regional owner generation even though the previous worker still
+    // has that old token: old authority is permanently stale.
+    denied([&]{(void)spatial::transfer_cell_worker(
+        path,*after,"worker-a",0,warm.generation,
+        warm.checkpoint_revision,"initial",true);});
     const auto replacement=spatial::transfer_cell_worker(
         path,*after,"worker-b",1,warm.generation,
         warm.checkpoint_revision,"worker-handoff",true);
@@ -165,6 +171,28 @@ int main(){
         CHECK(db.count("SELECT COUNT(*) FROM sg_spatial_native_transfer "
            "WHERE from_scope='spatial/v1/s1/x0/y0/z0' "
            "AND to_scope='spatial/v1/s1/x1/y0/z0'")==1);
+    }
+    // Invalid index-only edits must not provide a forged spatial owner:
+    // the immutable receipt tip and original world generation still win.
+    const auto tampered=(directory/"tampered.sqlite").string();
+    PersistentWorld::recover_copy(path,tampered);
+    sqlite3* unsafe=nullptr;
+    CHECK(sqlite3_open_v2(tampered.c_str(),&unsafe,
+          SQLITE_OPEN_READWRITE,nullptr)==SQLITE_OK);
+    char* error=nullptr;
+    CHECK(sqlite3_exec(unsafe,
+          "UPDATE sg_spatial_native_ship SET scope='spatial/v1/s1/x999/y0/z0' "
+          "WHERE scope='spatial/v1/s1/x1/y0/z0'",
+          nullptr,nullptr,&error)==SQLITE_OK);
+    sqlite3_free(error);error=nullptr;
+    CHECK(sqlite3_exec(unsafe,
+          "DELETE FROM sg_spatial_native_transfer",
+          nullptr,nullptr,&error)==SQLITE_CONSTRAINT);
+    sqlite3_free(error);sqlite3_close(unsafe);
+    {
+        Db db(tampered);
+        CHECK(!spatial::verify_native_index(
+              db.db,w.world(),w.generation()));
     }
     std::cout<<"PASS SPACE-01/02/03 native cell crossing, identity, atomic rollback, "
        "epoch-fenced computation, worker CAS and independent SQLite recovery\n";
