@@ -1004,6 +1004,24 @@
       "cargo_mm3_per_unit": 450,
       "lifecycle": "intermediate",
       "need_tags": []
+    },
+    {
+      "id": "waste/aqueous_brine",
+      "group": "waste",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 1100,
+      "lifecycle": "waste",
+      "need_tags": []
+    },
+    {
+      "id": "waste/medical_waste",
+      "group": "waste",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 1200,
+      "lifecycle": "waste",
+      "need_tags": []
     }
   ],
   "recipes": [
@@ -3099,9 +3117,7 @@
       "site_capabilities": [
         "government_office"
       ],
-      "input_consumables": [
-        "item/printed_document"
-      ],
+      "input_consumables": [],
       "durable_requirements": [
         "item/desk",
         "item/computer"
@@ -3294,6 +3310,132 @@
       "legacy_code": "mineral/troilite",
       "proposed_item": null,
       "authoritative_conversion": "unresolved_do_not_automatically_convert"
+    }
+  ],
+  "recovery_recipes": [
+    {
+      "id": "recover_aluminum_scrap",
+      "site_capability": "metal_foundry",
+      "work_ticks": 5,
+      "energy_kj": 300,
+      "inputs": [
+        {
+          "item": "bulk/aluminum_scrap",
+          "qty": 1000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "bulk/aluminum",
+          "qty": 800
+        },
+        {
+          "item": "waste/mineral_tailings",
+          "qty": 200
+        }
+      ],
+      "primary_recovered_item": "bulk/aluminum",
+      "source_ids": [
+        "epa",
+        "usgs"
+      ],
+      "quantities": "illustrative_game_balance",
+      "kind": "lossy_recovery_not_straight_line"
+    },
+    {
+      "id": "treat_wastewater",
+      "site_capability": "water_treatment",
+      "work_ticks": 4,
+      "energy_kj": 300,
+      "inputs": [
+        {
+          "item": "bulk/dirty_water",
+          "qty": 1000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "bulk/clean_water",
+          "qty": 900
+        },
+        {
+          "item": "waste/aqueous_brine",
+          "qty": 100
+        }
+      ],
+      "primary_recovered_item": "bulk/clean_water",
+      "source_ids": [
+        "epa",
+        "doe"
+      ],
+      "quantities": "illustrative_game_balance",
+      "kind": "lossy_recovery_not_straight_line"
+    },
+    {
+      "id": "compost_food_scraps",
+      "site_capability": "composting",
+      "work_ticks": 8,
+      "energy_kj": 100,
+      "inputs": [
+        {
+          "item": "bulk/food_scraps",
+          "qty": 1000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "bulk/soil",
+          "qty": 700
+        },
+        {
+          "item": "waste/process_gas",
+          "qty": 300
+        }
+      ],
+      "primary_recovered_item": "bulk/soil",
+      "source_ids": [
+        "epa",
+        "usda"
+      ],
+      "quantities": "illustrative_game_balance",
+      "kind": "lossy_recovery_not_straight_line"
+    }
+  ],
+  "research_calibration": [
+    {
+      "recipe": "beneficiate_aluminum_ore",
+      "source_url": "https://www.epa.gov/radiation/tenorm-bauxite-and-alumina-production-wastes",
+      "evidence": "EPA reports roughly 2–2.5 t solid waste per tonne aluminum from bauxite/alumina production. Original candidate represents generic game ore and total nonmetal residual, NOT a real bauxite refinery equipment or waste inventory.",
+      "numeric_status": "illustrative_not_verified_chemistry",
+      "environmental_scope": "mineral_tailings_proxy_requires_reservoir"
+    },
+    {
+      "recipe": "make_cement",
+      "source_url": "https://www.cement-co2-protocol.org/en/Content/Resources/Downloads/WBCSD_CO2_Protocol_En.pdf",
+      "evidence": "Limestone calcination releases CO2. WBCSD default approx 0.51–0.525 t CO2 per tonne clinker, not including fuel combustion.",
+      "numeric_status": "illustrative_not_verified_chemistry",
+      "environmental_scope": "gas_output_requires_finite_atmosphere_or_captured_gas_ledger"
+    },
+    {
+      "recipe": "assemble_circuit_board",
+      "source_url": "https://www.oecd.org/content/dam/oecd/en/publications/reports/2024/08/chips-nodes-and-wafers_1189c2a2/f68de895-en.pdf",
+      "evidence": "Chip design, wafer fabrication and assembly/test/packaging are distinct stages. PCB is a post-packaging assembly; single precision_electronics capability is deliberately abstract pending built cleanroom/fab.",
+      "numeric_status": "process_dependencies_only",
+      "environmental_scope": "requires_cleanroom_and_equipment_not_present_at_genesis"
+    },
+    {
+      "recipe": "cook_meal",
+      "source_url": "https://ers.usda.gov/data-products/resource-requirements-of-food-demand/documentation",
+      "evidence": "USDA traces farming/ranching, processing, distribution, retail and food service, so preparation must consume real source goods. Candidate 700g meal is game balance, not nutritional advice.",
+      "numeric_status": "game_balance_only",
+      "environmental_scope": "requires_crops_water_and_kitchen"
+    },
+    {
+      "recipe": "form_metal_panel",
+      "source_url": "https://www.usgs.gov/programs/mineral-resources-program/minerals-and-uses-activity",
+      "evidence": "Metal sheets/panels are formed, joined and cut. Candidate future variant is NOT original native QuantifiedLine panel (20kg->19kg panel+1kg scrap); use separate native binding.",
+      "numeric_status": "game_balance_only",
+      "environmental_scope": "future_machine_only"
     }
   ]
 }
