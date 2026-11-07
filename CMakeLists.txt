@@ -1974,6 +1974,8 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_native_cell_hang_worker PRIVATE Threads::Threads)
   add_executable(galaxy_native_cell_detached_pipe_worker
     tests/NativeCellDetachedPipeWorker.cpp)
+  add_executable(galaxy_native_cell_fork_fence_worker
+    tests/NativeCellForkFenceWorker.cpp)
 endif()
 
 # SPACE-05C: independent 4x20 native process admission endurance and
@@ -1987,7 +1989,8 @@ if(BUILD_TESTING)
     COMMAND galaxy_native_cell_process_stress_tests
       $<TARGET_FILE:galaxy_native_cell_worker>
       $<TARGET_FILE:galaxy_native_cell_hang_worker>
-      $<TARGET_FILE:galaxy_native_cell_detached_pipe_worker>)
+      $<TARGET_FILE:galaxy_native_cell_detached_pipe_worker>
+      $<TARGET_FILE:galaxy_native_cell_fork_fence_worker>)
 endif()
 
 # SPACE-04C/04D/05B: native high-order coordinates, 3D probes and bounded
