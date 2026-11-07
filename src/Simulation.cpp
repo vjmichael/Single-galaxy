@@ -4124,8 +4124,7 @@ Event Simulation::execute(const Command& c) {
                             }
                         }
                         for(const auto& [id,shift]:medic_shifts_){(void)id;
-                            if(shift.medic_id==worker &&
-                               shift.start_tick<=tick_ && tick_<shift.end_tick){
+                            if(shift.medic_id==worker && shift.end_tick>tick_){
                                 result.result=Outcome::InvalidTarget;return result;
                             }
                         }
