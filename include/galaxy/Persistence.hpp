@@ -810,6 +810,10 @@ public:
     // SPACE-04B: atomically migrate the SAME original world to v119 before
     // its first genuine 3-axis physical tick; no parallel ship ledger.
     void enable_native_3d_physics(FailPoint fail = FailPoint::None);
+    // SPACE-04C: imports all immutable original system origins and commits
+    // the v120 native high-order physical state in the same original journal.
+    void enable_native_galactic_physics(const std::string& native_sqlite,
+        FailPoint fail=FailPoint::None);
     void step(FailPoint fail = FailPoint::None);
     // The only leased-worker route to the original tick writer. Rejects stale
     // authority *inside* the same SQLite BEGIN IMMEDIATE as world commit.
