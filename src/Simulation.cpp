@@ -423,7 +423,7 @@ bool Simulation::pending_workshop_shift(EntityId site,bool finisher,
     if(shop==workshops_.end() ||
        shop->second.cancelled_pending_shifts.count(command_id))return false;
     for(const auto& [due,orders]:commands_){
-        if(due<=tick_+1)continue; // cancellation requires an earlier commit tick
+        if(due<=tick_ || due-tick_<=1)continue; // cancellation must commit first
         for(const auto& c:orders)
             if(c.id==command_id && c.target==site &&
                c.actor==shop->second.source_ship &&
