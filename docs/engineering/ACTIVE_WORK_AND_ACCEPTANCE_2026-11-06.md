@@ -108,3 +108,8 @@ This table is scoped to the **active cyber/security/hailing stack**. The much la
 - [SHIP-STATUS-07 – anonymous cyber cases and sensor privacy](SHIPSTATUS07_CYBER_INCIDENT_INTAKE_20261106.md)
 - [SHIP-STATUS-06 – real NPC physical cyber patrol verification](SHIPSTATUS06_FLEET_CYBER_DEFENSE_ACCEPTANCE_20261106.md)
 - [Design decisions register](../design/Core_Decisions_2026-10-31.md)
+ 
+### WO2-J exact-head follow-on (November 6)
+
+The same draft [WO2 PR #88](https://github.com/vjmichael/Single-galaxy/pull/88) now contains source-level hardening for **real worker-duty conflicts that suspend an approved job**, plus native regression assertions for **exactly one actual cut batch**, no subsequent overrun, running-machine independent SQLite recovery, departed-supervisor suspension, owner/site spoof refusal, owner-approved machine shift/relief while management remains attached, and the real **shape** workstream's separate training/one-frame quota. Details and individual source commits: [WO2 engineering ledger](WO2_NPC_WORK_MANAGEMENT_20261106.md). **All these are committed implementation and unexecuted test assertions, not passing CTest evidence.** Real Windows/Linux/SQLite exact-head results and any necessary repairs remain open. WO3 has not begun.
+
