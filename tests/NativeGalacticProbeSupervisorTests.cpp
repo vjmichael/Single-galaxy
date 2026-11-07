@@ -227,6 +227,38 @@ static void cross_system_physical_contact(){
           ==jumping.state_hash());
     CHECK(physical.find(gate)->physical_galactic==
           jumping.find(gate2)->physical_galactic);
+
+    // The v121 probe has one immutable launcher custody but may discover a
+    // mineral physically within scanning range beyond a catalogue boundary.
+    Simulation survey(4814);
+    survey.add_system(2);
+    const auto explorer=survey.add_colony_ship(7,{0,0},60,24);
+    survey.enable_individual_workforce();
+    survey.provision_starter_exploration_scanner(explorer);
+    survey.provision_starter_probe_kit(explorer);
+    survey.enable_native_3d_physics();
+    survey.enable_native_galactic_physics({{1,star1},{2,star2}});
+    const auto foreign=survey.add_asteroid_in_system(2,{-750,0},31);
+    survey.enable_native_3d_probes();
+    CHECK(survey.submit(command(50020,explorer,1,Action::DeploySurveyProbe)));
+    survey.step();
+    CHECK(survey.events().back().result==Outcome::Applied);
+    CHECK(survey.submit(command(50021,explorer,2,
+        Action::ScanSurveyProbe,50020)));
+    survey.step();
+    CHECK(survey.events().back().result==Outcome::Applied);
+    CHECK(survey.pending_probe_report_count()>=1);
+    CHECK(Simulation::from_snapshot(survey.canonical_state()).state_hash()
+          ==survey.state_hash());
+    for(int tick=0;tick<30;++tick)survey.step();
+    const auto observed=survey.discoveries().find({7,foreign});
+    CHECK(observed!=survey.discoveries().end() &&
+          observed->second.system==2 &&
+          observed->second.galactic_authoritative &&
+          observed->second.galactic_location==
+              survey.find(foreign)->physical_galactic);
+    CHECK(Simulation::from_snapshot(survey.canonical_state()).canonical_state()
+          ==survey.canonical_state());
 }
 static void multi_cell_supervision(const fs::path& root,
     const std::string& worker_binary,const std::string& hang_binary){
