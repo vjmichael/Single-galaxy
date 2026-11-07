@@ -1,3 +1,4 @@
+#include "galaxy/WO2WorkPrograms.hpp"
 #include "galaxy/WO2IndustryWorkforce.hpp"
 #include "galaxy/Persistence.hpp"
 #include <chrono>
@@ -31,6 +32,33 @@ int main() {
     CHECK(workforce02::find_trade("shape")->native_execution);
     CHECK(workforce02::find_service_role("legal_worker")!=nullptr);
     CHECK(workforce02::find_trade("invented_factory")==nullptr);
+
+    // One finished object expands into actual raw-material and profession
+    // prerequisites; the read-only graph cannot create a camera or raw ore.
+    const auto camera=workforce02::plan_material_program("item/camera",1);
+    CHECK(!camera.steps.empty());
+    CHECK(camera.steps.back().recipe_id=="assemble_camera");
+    CHECK(camera.steps.back().profession=="electronics_technician");
+    CHECK(camera.required_source_items.count("raw/quartz_feed")>0);
+    CHECK(camera.required_source_items.count("raw/copper_ore")>0);
+    CHECK(camera.sum_worker_ticks>0 && !camera.all_processes_native);
+    const auto farm_meal=workforce02::plan_material_program("item/meal",1);
+    CHECK(farm_meal.required_source_items.count("raw/harvested_grain")>0);
+    CHECK(farm_meal.required_source_items.count("raw/harvested_vegetables")>0);
+    const auto native=workforce02::plan_material_program("bulk/aluminum_panels",19000);
+    CHECK(!native.steps.empty());
+    CHECK(native.steps.back().recipe_id=="native_cut_aluminum_panel");
+    CHECK(native.steps.back().currently_native_executable);
+    CHECK(!native.all_processes_native); // ore still needs original physical mining
+    const auto legal=workforce02::describe_service_program("service/legal_consultation");
+    CHECK(legal.required_professions.size()==1);
+    CHECK(legal.required_professions[0]=="legal_practitioner");
+    CHECK(!legal.executable_now);
+    bool rejected=false;
+    try{(void)workforce02::plan_material_program("item/invented",1);}
+    catch(const std::invalid_argument&){rejected=true;}
+    CHECK(rejected);
+
 
     const auto folder=fs::temp_directory_path()/
        ("wo2_industry_"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
