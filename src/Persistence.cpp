@@ -9408,6 +9408,35 @@ bool PersistentWorld::settle_planetary_founder(PlayerId owner,EntityId ship,
     return true;
 }
 
+bool PersistentWorld::settle_planetary_visitor(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc_id,std::uint64_t request_id,
+        bool consent,FailPoint fail) {
+    auto next=world_;
+    if(!next.settle_planetary_visitor(owner,ship,key,npc_id,request_id,consent))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 visitor immigration fabricated physical matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::depart_planetary_visitor(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc_id,std::uint64_t request_id,
+        bool consent,FailPoint fail) {
+    auto next=world_;
+    if(!next.depart_planetary_visitor(owner,ship,key,npc_id,request_id,consent))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 visitor departure changed physical matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
 bool PersistentWorld::load_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,bool water,std::int64_t kg,FailPoint fail) {
     return load_planetary_shuttle(owner,ship,key,
         water?ShuttleCargo::Water:ShuttleCargo::Food,kg,fail);
