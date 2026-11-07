@@ -7,8 +7,10 @@
 #include "galaxy/Persistence.hpp"
 #include <sqlite3.h>
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <future>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <set>
