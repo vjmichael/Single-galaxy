@@ -226,10 +226,14 @@ inline std::vector<CoverageRow> plan_provisional_workshop_coverage(
                npc.location!=site || npc.assigned_site!=site ||
                npc.role!=NpcRole::Habitat || npc.transport_id ||
                npc.mentor_id || !world.npc_available_for_duty(id) ||
-               occupied.count(id) || selected.count(id))continue;
+               selected.count(id))continue;
+            // Inspect the requested interval BEFORE the current-duty index:
+            // an active clinic shift is an interval conflict, not simply an
+            // unexplained worker shortage.
             if(medical_shift_overlaps(world,id,start_tick,end_tick)){
                 future_conflict=true;continue;
             }
+            if(occupied.count(id))continue;
             row.worker=id;row.gate=CoverageGate::Provisional;
             selected.insert(id);break;
         }
