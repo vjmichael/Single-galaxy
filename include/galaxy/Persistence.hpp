@@ -924,6 +924,16 @@ public:
         const PlanetarySiteKey& key,std::uint64_t previous,
         std::uint64_t replacement,std::uint64_t request_id,
         FailPoint fail=FailPoint::None);
+    bool start_planetary_service_build(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool annex,std::uint64_t order_id,
+        std::uint64_t supervisor,FailPoint fail=FailPoint::None);
+    bool pause_planetary_service_build(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool annex,bool paused,
+        FailPoint fail=FailPoint::None);
+    bool handover_planetary_service_build(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool annex,std::uint64_t previous,
+        std::uint64_t replacement,std::uint64_t request_id,
+        FailPoint fail=FailPoint::None);
     bool start_planetary_production_build(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,bool farm,std::uint64_t order_id,
         std::uint64_t qualified_supervisor,FailPoint fail=FailPoint::None);
