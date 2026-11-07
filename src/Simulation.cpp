@@ -3091,7 +3091,7 @@ Event Simulation::execute(const Command& c) {
                 stop_mining(c.actor,Outcome::NotInSpace);
                 ship->second.type=EntityType::Wreck;
             ship->second.hull=0;ship->second.weapon_charges=0;ship->second.last_weapon_tick=0;ship->second.training_drone=false;
-                ship->second.velocity={};
+                ship->second.velocity={};ship->second.velocity_z_mm_per_tick=0;
                 activity_events_.push_back({tick_,ActivityKind::ShipDestroyed,c.id,c.actor,c.actor,Outcome::Applied,0});
             }else if(c.action==Action::HostStrandFerry){
                 voyage->second.status=3;voyage->second.stranded_reason=static_cast<unsigned>(c.amount);
@@ -3762,7 +3762,7 @@ Event Simulation::execute(const Command& c) {
                 target.weapon_charges=0;
                 target.last_weapon_tick=0;
                 target.training_drone=false;
-                target.velocity={};
+                target.velocity={};target.velocity_z_mm_per_tick=0;
                 if(target.manufactured_order_id)
                     ship_frames_.erase(target.id);
                 activity_events_.push_back({tick_,ActivityKind::ShipDestroyed,
@@ -3807,7 +3807,7 @@ Event Simulation::execute(const Command& c) {
             drone.hull-=result.transferred;
             if(!drone.hull){
                 drone.type=EntityType::Wreck;drone.training_drone=false;
-                drone.weapon_charges=0;drone.last_weapon_tick=0;drone.velocity={};
+                drone.weapon_charges=0;drone.last_weapon_tick=0;drone.velocity={};drone.velocity_z_mm_per_tick=0;
             }
             snapshot_version_=std::max(snapshot_version_,62);
             result.result=Outcome::Applied;return result;
@@ -13382,7 +13382,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                    e.velocity_z_mm_per_tick > kMaxVelocityMmPerTick)
                     throw std::runtime_error("snapshot: invalid 3D physical axis");
             }
-            if ((result.snapshot_version_<119 || e.type!=EntityType::Ship) &&
+            if ((result.snapshot_version_<119 || (e.type!=EntityType::Ship && e.type!=EntityType::Wreck)) &&
                 !result.valid_position(e.position) ||
                 e.velocity.x < -kMaxVelocityMmPerTick || e.velocity.x > kMaxVelocityMmPerTick ||
                 e.velocity.y < -kMaxVelocityMmPerTick || e.velocity.y > kMaxVelocityMmPerTick ||
