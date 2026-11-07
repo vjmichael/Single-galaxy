@@ -49,7 +49,7 @@ class Outbox {
                        std::uint32_t kind,std::uint64_t event,
                        std::uint64_t peer_ship,std::uint64_t peer_owner,
                        std::uint64_t related,std::uint64_t tick){
-        if(!owner || !event || !peer_ship || kind<1 || kind>6)
+        if(!owner || !event || !peer_ship || kind<1 || kind>7)
             throw std::invalid_argument("outbox requires original owner, hull and event");
         Statement s(db,"INSERT INTO sg_ship_notifications07i "
             "(owner,kind,source_event,peer_ship,peer_owner,related,world_tick) "
@@ -69,7 +69,7 @@ public:
         sql(db,"CREATE TABLE IF NOT EXISTS sg_ship_notifications07i ("
             "seq INTEGER PRIMARY KEY AUTOINCREMENT,"
             "owner INTEGER NOT NULL CHECK(owner>0),"
-            "kind INTEGER NOT NULL CHECK(kind BETWEEN 1 AND 6),"
+            "kind INTEGER NOT NULL CHECK(kind BETWEEN 1 AND 7),"
             "source_event INTEGER NOT NULL CHECK(source_event>0),"
             "peer_ship INTEGER NOT NULL CHECK(peer_ship>0),"
             "peer_owner INTEGER NOT NULL CHECK(peer_owner>=0),"
@@ -117,6 +117,13 @@ public:
         default:throw std::invalid_argument("unknown original communications event");
         }
     }
+    // The independently authorized agency uses the SAME transaction as its
+    // original verified referral. It never delivers a police warrant.
+    static void record_agency(sqlite3* db,std::uint64_t owner,
+        std::uint64_t referral,std::uint64_t colony,
+        std::uint64_t complaint,std::uint64_t tick){
+        insert(db,owner,7,referral,colony,0,complaint,tick);
+    }
     explicit Outbox(const std::string& existing_world){
         try{
             if(sqlite3_open_v2(existing_world.c_str(),&db_,
@@ -152,7 +159,7 @@ public:
             row.source_event=val(q.ptr,2);row.peer_ship=val(q.ptr,3);
             row.peer_owner=val(q.ptr,4);row.related=val(q.ptr,5);
             row.world_tick=val(q.ptr,6);
-            if(!row.sequence || row.kind<1 || row.kind>6 ||
+            if(!row.sequence || row.kind<1 || row.kind>7 ||
                !row.source_event || !row.peer_ship)
                 throw std::runtime_error("noncanonical durable notification");
             result.push_back(row);
