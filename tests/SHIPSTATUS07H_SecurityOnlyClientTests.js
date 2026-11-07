@@ -42,7 +42,7 @@ const context={
     if(url==='/session')return {
       ok:true,json:async()=>({token:'owner-8-csrf',commands:[
         'colonySecurityRefresh','colonySecurityCall',
-        'colonySecurityCallReply']})
+        'colonySecurityCallReply','colonySecurityNotifyAck']})
     };
     if(url==='/command')return {
       ok:true,json:async()=>({status:'queued_not_committed'})
