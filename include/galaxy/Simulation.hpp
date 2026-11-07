@@ -541,7 +541,7 @@ struct PlanetarySiteFacility {
 using PlanetarySiteKey = std::tuple<std::uint64_t,std::uint16_t,std::uint16_t,std::uint32_t>;
 // PLAY-13D: cargo identity is independent of player/NPC transport roles.
 // Nutrients are a finite, potentially planet-specific resource, not food.
-enum class ShuttleCargo : std::uint8_t { Water=0, Food=1, Nutrients=2 };
+enum class ShuttleCargo : std::uint8_t { Water=0, Food=1, Nutrients=2, Oxygen=3 };
 // 4C.2: docked-orbit shuttle, fabricated from real ship modules.
 // The captain is assigned but stays aboard the parent ship until 4C.3.
 struct PlanetaryShuttleState {
