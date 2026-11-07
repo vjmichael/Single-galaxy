@@ -9441,6 +9441,22 @@ bool PersistentWorld::pause_planetary_production_build(PlayerId owner,
     ++generation_;
     return true;
 }
+bool PersistentWorld::handover_planetary_production_build(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,bool farm,
+        std::uint64_t previous,std::uint64_t replacement,
+        std::uint64_t request_id,FailPoint fail) {
+    auto next=world_;
+    if(!next.handover_planetary_production_build(
+        owner,ship,key,farm,previous,replacement,request_id))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 production supervisor relief altered matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
 bool PersistentWorld::settle_planetary_founder(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,std::uint64_t npc_id,std::uint64_t request_id,
         bool voluntary_consent_attested,FailPoint fail) {
