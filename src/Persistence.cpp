@@ -1,4 +1,5 @@
 #include "galaxy/Persistence.hpp"
+#include "galaxy/GalacticSystemRegistry.hpp"
 #include "galaxy/SeamlessSpatialOwnership.hpp"
 #include "galaxy/UniversalNpcMigration.hpp"
 #include "galaxy/CelestialFrameTransition.hpp"
@@ -14287,6 +14288,47 @@ void PersistentWorld::enable_native_3d_physics(FailPoint fail) {
        next.state_hash() || next.total_ore()!=resource_origin_ ||
        next.total_credits()!=credit_origin_)
         throw std::runtime_error("SPACE-04B native 3D migration not lossless");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,
+                   nullptr,{},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+}
+
+void PersistentWorld::enable_native_galactic_physics(
+        const std::string& native_sqlite,FailPoint fail) {
+    if(native_sqlite.empty())
+        throw std::invalid_argument("original galaxy SQLite path required");
+    sqlite3* db=nullptr;
+    if(sqlite3_open_v2(native_sqlite.c_str(),&db,
+        SQLITE_OPEN_READONLY|SQLITE_OPEN_FULLMUTEX,nullptr)!=SQLITE_OK){
+        if(db)sqlite3_close_v2(db);
+        throw std::runtime_error("cannot read real original star origins");
+    }
+    std::map<std::uint32_t,galactic::Point> origins;
+    try{
+        if(!galactic::snapshot_match(db,*this))
+            throw std::runtime_error("stale native galaxy source during v120 upgrade");
+        galactic::Query q(db,"SELECT system,sector_x,mm_x,sector_y,mm_y,"
+            "sector_z,mm_z FROM sg_galaxy_system_origin ORDER BY system");
+        while(q.row()){
+            const auto system=q.n(0);
+            if(system<=0 ||
+               system>std::numeric_limits<std::uint32_t>::max())
+                throw std::runtime_error("untrusted system registry key");
+            const galactic::Point star{{q.n(1),q.n(2)},
+                {q.n(3),q.n(4)},{q.n(5),q.n(6)}};
+            if(!star.valid() ||
+               !origins.emplace(static_cast<std::uint32_t>(system),star).second)
+                throw std::runtime_error("invalid immutable galaxy registry");
+        }
+        sqlite3_close_v2(db);db=nullptr;
+    }catch(...){if(db)sqlite3_close_v2(db);throw;}
+    auto next=world_;
+    next.enable_native_galactic_physics(origins);
+    if(Simulation::from_snapshot(next.canonical_state()).state_hash()!=
+       next.state_hash() || next.total_ore()!=resource_origin_ ||
+       next.total_credits()!=credit_origin_)
+        throw std::runtime_error("v120 galaxy migration not lossless");
     store_->commit(next,generation_,resource_origin_,credit_origin_,
                    nullptr,{},{},{},fail);
     world_.swap(next);
