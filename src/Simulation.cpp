@@ -9257,6 +9257,19 @@ bool Simulation::launch_planetary_shuttle(PlayerId owner,EntityId ship,
        submitted_ids_.count(request_id) ||
        pending_celestial_transits_.count(request_id) ||
        completed_celestial_transits_.count(request_id))return false;
+    // House, utility and legal-residence requests are durable original
+    // command identities too. A new flight cannot impersonate past consent.
+    for(const auto& [other_key,existing]:planetary_sites_) {
+        (void)other_key;
+        if(existing.housing_order_id==request_id ||
+           existing.utility_order_id==request_id)return false;
+        for(const auto proof:existing.founder_consent_requests)
+            if(proof==request_id)return false;
+        for(const auto& [person,proof]:existing.visitor_residency) {
+            (void)person;
+            if(proof[1]==request_id || proof[2]==request_id)return false;
+        }
+    }
     // Request IDs and pilot identities cannot be reused across shuttles/legs.
     for(const auto& [other,r]:planetary_shuttles_) {
         (void)other;
