@@ -216,6 +216,7 @@ void Simulation::enable_native_3d_physics() {
     snapshot_version_=std::max(snapshot_version_,119);
 }
 bool Simulation::valid_position(Vector2 p) const {
+    if(snapshot_version_>=119)return true; // finite int64 is not a local wall
     return p.x >= -kWorldBoundMm && p.x <= kWorldBoundMm &&
            p.y >= -kWorldBoundMm && p.y <= kWorldBoundMm;
 }
