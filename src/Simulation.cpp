@@ -1283,6 +1283,9 @@ bool Simulation::can_depart_colony(const Command& c) const {
     return true;
 }
 bool Simulation::submit(const Command& c) {
+    if(legacy_planetary_residence_import_ &&
+       c.id==legacy_planetary_residence_import_->host_request_id)
+        return false; // historical host provenance may never be a ship command
     if(ship_status_.contains_id(c.id))return false;
     // WO3-E: an accepted original owner colony/site work or founder
     // request ID is immutable and cannot be reused as a ship command.
@@ -7165,6 +7168,63 @@ bool Simulation::handover_planetary_production_build(PlayerId owner,
     changes.push_back({request_id,tick_,previous,replacement});
     st.production_projects[index].supervisor=replacement;
     snapshot_version_=std::max(snapshot_version_,114);
+    return true;
+}
+
+// WO3-E: one trusted, explicit upgrade from pre-housing v86-v108 legal
+// addresses. The original people and their registered legal addresses are
+// unchanged. This import is neither a shuttle arrival nor four new beds.
+bool Simulation::host_import_legacy_planetary_residences(
+        PlayerId host_principal,std::uint64_t request_id) {
+    if(host_principal!=kServerAuthority || !request_id ||
+       request_id==std::numeric_limits<std::uint64_t>::max() ||
+       snapshot_version_<86 || snapshot_version_>=109 ||
+       legacy_planetary_residence_import_ ||
+       submitted_ids_.count(request_id) ||
+       shuttle_flight_request_ids_.count(request_id) ||
+       voyages_.count(request_id) ||
+       local_delivery_orders_.count(request_id) ||
+       npcs_.count(request_id) || casualties_.count(request_id) ||
+       physical_dependents_.count(request_id) ||
+       pending_celestial_transits_.count(request_id) ||
+       completed_celestial_transits_.count(request_id))
+        return false;
+    LegacyPlanetaryResidenceImport imported{};
+    imported.source_version=std::uint64_t(snapshot_version_);
+    imported.source_hash=state_hash();
+    imported.host_request_id=request_id;
+    imported.recorded_tick=tick_;
+    const auto collect=[&](const NpcRecord& person) {
+        if(person.legal_residence().kind!=transport::LocationKind::PlanetarySite)
+            return true;
+        const auto address=person.legal_residence().id;
+        unsigned matched=0;
+        for(const auto& [key,site]:planetary_sites_) {
+            (void)key;
+            if(site.surface_location!=address)continue;
+            ++matched;
+            const auto ship=entities_.find(site.source_ship);
+            if(site.spaceport_phase!=3 || site.owner==0 ||
+               person.home_ship!=site.source_ship ||
+               ship==entities_.end() || ship->second.owner_id!=site.owner)
+                return false;
+        }
+        if(matched!=1 || !imported.legal_addresses.emplace(person.id,address).second)
+            return false;
+        return true;
+    };
+    for(const auto& [id,n]:npcs_) {
+        (void)id;
+        if(!collect(n))return false;
+    }
+    for(const auto& [id,casualty]:casualties_) {
+        (void)id;
+        if(!collect(casualty.identity))return false;
+    }
+    if(imported.legal_addresses.empty() ||
+       imported.legal_addresses.size()>10000)return false;
+    legacy_planetary_residence_import_=std::move(imported);
+    snapshot_version_=115;
     return true;
 }
 
