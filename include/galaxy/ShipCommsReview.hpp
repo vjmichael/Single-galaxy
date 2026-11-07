@@ -74,7 +74,9 @@ inline Assessment assess(const PersistentWorld& world,
             [&](const ship_comms::Receipt& e){
                 return e.event_id==compact.seed_event &&
                        e.kind==ship_comms::Kind::Abuse &&
-                       e.recipient_ship==victim_ship;
+                       e.caller_owner==compact.caller_owner &&
+                       e.recipient_ship==victim_ship &&
+                       e.penalty_points==10;
             });
         if(seed==old.end())continue;
         a.reported_caller=compact.caller_owner;
