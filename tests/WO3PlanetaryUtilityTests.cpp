@@ -241,6 +241,12 @@ int main() {
     w.steps(10);
     const auto before_handover=w.world().planetary_sites().at(key);
     CHECK(before_handover.utility_phase==1);
+    const auto historical_v110=w.world().canonical_state();
+    CHECK(historical_v110.rfind("galaxy-kernel-v110|",0)==0);
+    CHECK(Simulation::from_snapshot(historical_v110).canonical_state()==
+          historical_v110);
+    // Native backward-compatibility: a pre-relief v110 utility job remains
+    // readable without inventing any handover receipts.
     CHECK(!w.handover_planetary_surface_utility(
         8,ship,key,builder,partner,81600));
     CHECK(!w.handover_planetary_surface_utility(
