@@ -6753,6 +6753,8 @@ bool Simulation::start_planetary_housing(PlayerId owner,EntityId ship,
            other.utility_order_id==order_id)return false;
         for(const auto& relief:other.utility_handovers)
             if(relief.request_id==order_id)return false;
+        for(const auto& production:other.production_projects)
+            if(production.order_id==order_id)return false;
         for(const auto founded:other.founder_consent_requests)
             if(founded==order_id)return false;
         for(const auto& [visitor,proof]:other.visitor_residency) {
@@ -6834,6 +6836,8 @@ bool Simulation::start_planetary_surface_utility(PlayerId owner,EntityId ship,
            other.utility_order_id==order_id)return false;
         for(const auto& relief:other.utility_handovers)
             if(relief.request_id==order_id)return false;
+        for(const auto& production:other.production_projects)
+            if(production.order_id==order_id)return false;
         for(const auto request:other.founder_consent_requests)
             if(request==order_id)return false;
         for(const auto& [visitor,proof]:other.visitor_residency) {
@@ -6930,6 +6934,8 @@ bool Simulation::handover_planetary_surface_utility(PlayerId owner,EntityId ship
         (void)other_key;
         if(request_id==other.housing_order_id ||
            request_id==other.utility_order_id)return false;
+        for(const auto& production:other.production_projects)
+            if(production.order_id==request_id)return false;
         for(const auto founding:other.founder_consent_requests)
             if(request_id==founding)return false;
         for(const auto& handover:other.utility_handovers)
@@ -7070,6 +7076,8 @@ bool Simulation::settle_planetary_founder(PlayerId owner,EntityId ship,
            other.utility_order_id==request_id)return false;
         for(const auto& relief:other.utility_handovers)
             if(relief.request_id==request_id)return false;
+        for(const auto& production:other.production_projects)
+            if(production.order_id==request_id)return false;
         for(const auto prior:other.founder_consent_requests)
             if(prior==request_id)return false;
         for(const auto& [visitor,proof]:other.visitor_residency) {
@@ -7158,6 +7166,8 @@ bool Simulation::settle_planetary_visitor(PlayerId owner,EntityId ship,
            other.visitor_residency.count(npc_id))return false;
         for(const auto& relief:other.utility_handovers)
             if(relief.request_id==request_id)return false;
+        for(const auto& production:other.production_projects)
+            if(production.order_id==request_id)return false;
         for(const auto proof:other.founder_consent_requests)
             if(proof==request_id)return false;
         for(const auto& [id,proof]:other.visitor_residency) {
@@ -7213,6 +7223,8 @@ bool Simulation::depart_planetary_visitor(PlayerId owner,EntityId ship,
            other.utility_order_id==request_id)return false;
         for(const auto& relief:other.utility_handovers)
             if(relief.request_id==request_id)return false;
+        for(const auto& production:other.production_projects)
+            if(production.order_id==request_id)return false;
         for(const auto proof:other.founder_consent_requests)
             if(proof==request_id)return false;
         for(const auto& [id,proof]:other.visitor_residency) {
