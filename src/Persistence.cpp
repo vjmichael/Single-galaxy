@@ -186,7 +186,7 @@ Command decode_command(const std::string& record) {
                 throw std::runtime_error("recovery: malformed split rescue envelope");
         }
     }
-    if (in >> extra || action < 0 || action > static_cast<int>(Action::CancelWorkshopShift) || c.id == 0 || c.issuer == 0)
+    if (in >> extra || action < 0 || action > static_cast<int>(Action::RelieveWorkshopShift) || c.id == 0 || c.issuer == 0)
         throw std::runtime_error("recovery: invalid command journal values");
     c.action = static_cast<Action>(action);
     if (command_record(c) != record) throw std::runtime_error("recovery: noncanonical command journal");
@@ -4000,7 +4000,6 @@ public:
                    it->second.actor!=shop.source_ship ||
                    it->second.target!=site ||
                    it->second.thrust_x!=static_cast<int>(slot+1) ||
-                   it->second.amount!=static_cast<std::int64_t>(shift.worker) ||
                    it->second.execute_tick!=shift.start_tick ||
                    it->second.thrust_y<1 ||
                    shift.end_tick-shift.start_tick!=
@@ -4009,6 +4008,35 @@ public:
                    ev->second.result!=Outcome::Applied ||
                    ev->second.transferred!=0)
                     throw std::runtime_error("SQLite: original workshop shift proof mismatch");
+                // A newly relieved shift retains its first worker in the
+                // original Start command. The current worker must instead
+                // match the *latest* real applied, same-owner relief receipt.
+                std::uint64_t last_relief=0,last_relief_tick=0;
+                std::uint64_t current_worker=static_cast<std::uint64_t>(it->second.amount);
+                for(const auto& [id,change]:journal_commands){
+                    if(change.action!=Action::RelieveWorkshopShift ||
+                       change.amount!=static_cast<std::int64_t>(shift.command_id) ||
+                       change.target!=site ||
+                       change.thrust_x!=static_cast<int>(slot+1))continue;
+                    const auto applied=event_by_id.find(id);
+                    if(applied==event_by_id.end() ||
+                       applied->second.result!=Outcome::Applied)continue;
+                    if(change.issuer!=ship->owner_id ||
+                       change.actor!=shop.source_ship ||
+                       change.thrust_y<1 || change.thrust_y>1000000 ||
+                       change.execute_tick<=shift.start_tick ||
+                       change.execute_tick>=shift.end_tick ||
+                       applied->second.tick!=change.execute_tick ||
+                       applied->second.transferred!=0 ||
+                       (last_relief_tick && change.execute_tick<=last_relief_tick))
+                        throw std::runtime_error("SQLite: workshop relief contradicted original owner or chronology");
+                    last_relief=id;
+                    last_relief_tick=change.execute_tick;
+                    current_worker=static_cast<std::uint64_t>(change.thrust_y);
+                }
+                if(last_relief!=shift.relief_command_id ||
+                   current_worker!=shift.worker)
+                    throw std::runtime_error("SQLite: workshop current worker lacks latest relief proof");
             }
         }
         // WO2-H: original SQLite accepted-command history proves the exact
