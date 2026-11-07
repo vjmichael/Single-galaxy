@@ -42,3 +42,8 @@ Secondary-human reads use the original owner-filtered `security_desk::snapshot` 
 - Task 6 (actual law agency), task 7 (broader adversarial security/privacy), task 9 (NPC complaint-driven behavior) and task 10 (crew safety / full combat) remain separate next work orders.
 
 **Acceptance rule:** no marking this feature native-accepted until actual CMake/CTest and live-host runner steps complete, failures are repaired, and exact head tested. Do not reinterpret a queued CI job as a pass.
+
+
+## SHIP-STATUS-07H continuation: no stale replay and bounded overflow repair
+
+New SSE subscribers now take a high-water mark before the native owner-only `SECURITY_REFRESH`; earlier volatile status is never replayed as though it were fresh. A subscriber that falls behind the 4,096-record private ring receives an explicit `resync` control event, and the relay requests another owner-verified SQLite security snapshot. The client clears stale private read models on that event; an unavailable native host yields a failure, never invented case evidence. The deterministic private-relay regression was extended for reconnect, revocation and post-subscription overflow. **Code/test source is committed; actual native/relay CI remains pending.** This is freshness and recovery, not a durable per-recipient historical notification outbox. Details: [07H report](SHIPSTATUS07H_PRIVATE_SSE_RECOVERY_20261106.md).
