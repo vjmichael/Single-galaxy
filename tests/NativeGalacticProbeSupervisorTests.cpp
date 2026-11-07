@@ -174,6 +174,60 @@ static void anchored_nonships_and_swap(){
           spare.galactic_system_origins().at(2)==star2 &&
           spare.canonical_state()==original_bytes);
 }
+static void cross_system_physical_contact(){
+    // Historical system labels identify original star catalogues, not
+    // walls. Two objects 250 mm apart stay near even when assigned to
+    // different stars. Distant targets still fail real native range checks.
+    Simulation physical(4812);
+    physical.add_system(2);
+    const auto ship=physical.add_ship(7,{0,0},100);
+    physical.add_asteroid({400000,0},9);
+    physical.enable_native_3d_physics();
+    const galactic::Point star1{{0,1000000},{0,1000000},{0,1000000}};
+    const galactic::Point star2{{0,1001000},{0,1000000},{0,1000000}};
+    physical.enable_native_galactic_physics({{1,star1},{2,star2}});
+    const auto station=physical.add_station_in_system(2,{-750,0});
+    const auto rock=physical.add_asteroid_in_system(2,{-750,0},23);
+    const auto remote=physical.add_asteroid_in_system(2,{250000,0},23);
+    const auto gate=physical.add_gate(2,{-750,0},1,{1000,0});
+    CHECK(physical.find(ship)->system_id==1 &&
+          physical.find(station)->system_id==2);
+    CHECK(physical.same_local_frame(ship,station));
+    CHECK(physical.mine_status(*physical.find(ship),rock)==Outcome::Applied);
+    CHECK(physical.mine_status(*physical.find(ship),remote)==Outcome::OutOfRange);
+    CHECK(spatial::touching(
+        spatial::Cell{1,0,0,0,true,0,0,0},
+        spatial::Cell{2,1,0,0,true,0,0,0}));
+    CHECK(!spatial::touching(
+        spatial::Cell{1,0,0,0,true,0,0,0},
+        spatial::Cell{2,3,0,0,true,0,0,0}));
+    physical.enable_native_3d_probes();
+    CHECK(physical.submit(command(50001,ship,1,Action::RequestDock,station)));
+    physical.step();
+    CHECK(physical.events().back().result==Outcome::Applied);
+    CHECK(Simulation::from_snapshot(physical.canonical_state()).state_hash()
+          ==physical.state_hash());
+    for(int i=0;i<2;++i)physical.step();
+    CHECK(physical.find(ship)->dock_state==DockState::Docked);
+    CHECK(physical.find(ship)->physical_galactic==
+          physical.find(station)->physical_galactic);
+    CHECK(Simulation::from_snapshot(physical.canonical_state()).canonical_state()
+          ==physical.canonical_state());
+    // The same physical crossing applies to fold-gate admission.
+    Simulation jumping(4813);
+    jumping.add_system(2);
+    const auto jumper=jumping.add_ship(7,{0,0},100);
+    jumping.enable_native_3d_physics();
+    jumping.enable_native_galactic_physics({{1,star1},{2,star2}});
+    const auto gate2=jumping.add_gate(2,{-750,0},1,{1000,0});
+    CHECK(jumping.submit(command(50002,jumper,1,Action::RequestJump,gate2)));
+    jumping.step();
+    CHECK(jumping.events().back().result==Outcome::Applied);
+    CHECK(Simulation::from_snapshot(jumping.canonical_state()).state_hash()
+          ==jumping.state_hash());
+    CHECK(physical.find(gate)->physical_galactic==
+          jumping.find(gate2)->physical_galactic);
+}
 static void multi_cell_supervision(const fs::path& root,
     const std::string& worker_binary,const std::string& hang_binary){
     const auto db=(root/"multi.sqlite").string();
@@ -316,6 +370,7 @@ int main(int argc,char** argv){
             std::chrono::milliseconds(50)).passed);
         galaxy_and_probes(root);
         anchored_nonships_and_swap();
+        cross_system_physical_contact();
         multi_cell_supervision(root,argv[1],argv[2]);
         std::cout<<"PASS exact original galactic 3D, probe persistence and "
                     "durable multi-cell single-writer supervision\n";
