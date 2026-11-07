@@ -212,8 +212,16 @@ inline void record_native_world_commit(sqlite3* db,const Simulation& world,
     if(!db || !next_generation || next_generation!=prior_generation+1)
         throw std::runtime_error("spatial index invalid original world commit");
     detail::install(db);
+    // When already installed, each new native writer must build exactly on
+    // the previous committed spatial tip; no stale source/index resurrection.
+    {
+        detail::Statement prior(db,"SELECT world_generation FROM "
+                                   "sg_spatial_native_meta WHERE singleton=1");
+        if(prior.row() &&
+           prior.integer(0)!=static_cast<std::int64_t>(prior_generation))
+            throw std::runtime_error("spatial index prior world generation diverged");
+    }
     const auto hash=std::to_string(world.state_hash());
-    std::set<std::string> seen;
     std::uint64_t count=0;
     for(const auto& [ship,e]:world.entities()){
         if(e.type!=EntityType::Ship)continue;
@@ -254,7 +262,7 @@ inline void record_native_world_commit(sqlite3* db,const Simulation& world,
         update.signed_number(4,p->x_mm);update.signed_number(5,p->y_mm);
         update.signed_number(6,p->z_mm);update.number(7,next_generation);
         update.text(8,hash);update.execute();
-        seen.insert(id);++count;
+        ++count;
     }
     // Remove derived identity for ships that have actually ceased to exist.
     // The original world snapshot, not this index, decides existence.
@@ -294,8 +302,23 @@ inline bool verify_native_index(sqlite3* db,const Simulation& world,
            q.integer(4)!=p->z_mm ||
            q.integer(5)!=static_cast<std::int64_t>(generation) ||
            q.str(6)!=hash)return false;
+        // Last immutable migration must terminate in the currently
+        // indexed cell. An index-only rewrite cannot fake a legal move.
+        detail::Statement latest(db,"SELECT player_owner,to_scope,"
+          "world_generation FROM sg_spatial_native_transfer "
+          "WHERE ship_id=? ORDER BY sequence DESC LIMIT 1");
+        latest.text(1,std::to_string(ship));
+        if(!latest.row() ||
+           latest.str(0)!=std::to_string(e.owner_id) ||
+           latest.str(1)!=scope(of(*p,e.system_id)) ||
+           latest.integer(2)<=0 ||
+           latest.integer(2)>static_cast<std::int64_t>(generation))
+            return false;
         ++found;
     }
-    return meta.integer(2)==static_cast<std::int64_t>(found);
+    detail::Statement extras(db,"SELECT COUNT(*) FROM sg_spatial_native_ship");
+    if(!extras.row())return false;
+    return meta.integer(2)==static_cast<std::int64_t>(found) &&
+           extras.integer(0)==static_cast<std::int64_t>(found);
 }
 } // namespace galaxy::spatial
