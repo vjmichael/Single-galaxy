@@ -62,6 +62,9 @@ int main() {
       ("wo3_colony_"+std::to_string(std::chrono::steady_clock::now().
                                   time_since_epoch().count()));
     fs::create_directories(folder);
+    struct Cleanup {fs::path path;~Cleanup() {
+        std::error_code ec;fs::remove_all(path,ec);
+    }} cleanup{folder};
     const auto db=(folder/"world.sqlite").string();
     EntityId ship=0,site=0;
     std::int64_t initial_mass=0;
@@ -172,7 +175,7 @@ int main() {
         CHECK(!colony03::audit_planetary_surface(
             finished.world(),8,ship,PlanetarySiteKey{}));
     }
-    fs::remove_all(folder);
+    // SQLite handles close before the scoped cleanup removes this directory.
     std::cout<<"WO3 original construction, finite NPC census and SQLite replay OK\n";
     return 0;
  }catch(const std::exception& e){
