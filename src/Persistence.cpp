@@ -3957,6 +3957,43 @@ public:
                     throw std::runtime_error("SQLite: duplicate/unknown command in operation journal");
             }
         }
+        // WO2-H: original SQLite accepted-command history proves the exact
+        // worker, trade and site of each qualification. Matching any generic
+        // Applied event is NOT enough to fabricate a credential for another NPC.
+        std::set<std::uint64_t> verified_training;
+        const auto verify_training=[&](const NpcRecord& npc) {
+            for(const auto& credit:npc.industrial_training){
+                const auto command=journal_commands.find(credit.command_id);
+                const auto applied=event_by_id.find(credit.command_id);
+                if(!verified_training.insert(credit.command_id).second ||
+                   command==journal_commands.end() ||
+                   command->second.action!=Action::TrainWorkshopTrade ||
+                   command->second.issuer==Simulation::kServerAuthority ||
+                   command->second.amount!=static_cast<std::int64_t>(npc.id) ||
+                   command->second.target!=credit.workshop_site ||
+                   command->second.thrust_x!=static_cast<int>(credit.trade) ||
+                   applied==event_by_id.end() ||
+                   applied->second.result!=Outcome::Applied ||
+                   applied->second.tick!=credit.tick ||
+                   applied->second.transferred!=1)
+                    throw std::runtime_error("SQLite: industrial certification contradicts original NPC command");
+            }
+        };
+        for(const auto& [id,npc]:restored.npc_records()){
+            (void)id;verify_training(npc);
+        }
+        for(const auto& [id,dead]:restored.npc_casualties()){
+            (void)id;verify_training(dead.identity);
+        }
+        for(const auto& [id,command]:journal_commands){
+            if(command.action!=Action::TrainWorkshopTrade)continue;
+            const auto event=event_by_id.find(id);
+            if(event!=event_by_id.end() && event->second.result==Outcome::Applied &&
+               !verified_training.count(id) &&
+               (restored.npc_records().count(static_cast<std::uint64_t>(command.amount)) ||
+                restored.npc_casualties().count(static_cast<std::uint64_t>(command.amount))))
+                throw std::runtime_error("SQLite: live NPC industrial qualification receipt missing");
+        }
         // GRSM-01 facts must agree with the independent transaction journal,
         // executed receipts and snapshot. A missing record is a hard error,
         // not a story the world is allowed to silently forget.
