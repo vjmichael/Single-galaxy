@@ -1,5 +1,6 @@
 #include "galaxy/Persistence.hpp"
 #include "galaxy/SeamlessCellWorker.hpp"
+#include "galaxy/Native3DFloatingProjection.hpp"
 #include "galaxy/RegionalCheckpointStore.hpp"
 #include "galaxy/RegionalModeAuthority.hpp"
 #include <chrono>
@@ -55,6 +56,22 @@ int main(){
           physical->position_z_mm==500 && physical->velocity.x==250);
     CHECK(w.world().total_ore()==original_mass &&
           w.world().colony_ship(ship)->crew==original_crew);
+    // The near-field 3D projection consumes the SAME persistent ship and
+    // host-approved immutable original star origin, never a new entity.
+    const galactic::Point star{{946073000,17},{-946073000,19},{12,23}};
+    CHECK(galactic::register_original_system(
+          db,w,1,star,"native-3d-original-star",true));
+    const auto global=galactic::original_ship_galactic_position(db,w,ship);
+    CHECK(global);
+    const galactic::FloatingFrame frame{*global,1000000000LL};
+    const auto projected=galactic::original_ship_in_floating_frame(
+        db,w,ship,frame);
+    CHECK(projected && projected->original_generation==w.generation()
+          && (projected->relative==galactic::Local3{0,0,0}));
+    const auto displaced=galactic::rebase(frame,star);
+    CHECK(displaced && !galactic::original_ship_in_floating_frame(
+          db,w,ship,*displaced)); // beyond local radius, not deleted
+
     const auto cell=spatial::ship_cell(w.world(),ship);
     CHECK(cell && cell->z==0 && cell->x==10);
     const auto persisted=w.world().canonical_state();
