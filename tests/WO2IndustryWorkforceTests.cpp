@@ -144,6 +144,45 @@ int main() {
         auto rows=workforce02::plan_original_workshop(w.world(),7,ship,site);
         first_id=rows[0].suggested_npc;
         CHECK(first_id>0);
+        const auto original_training_mass=w.world().total_material_kg();
+        // WO2-H: training needs actual owner confirmation, a named resident,
+        // a built powered machine, available finite stock and three separate
+        // committed original-world receipts. No invented credentials on load.
+        CHECK(!workforce02::approved_original_trade_training(
+            w.world(),7,ship,site,first_id,WorkshopTrade::Cut,270,false));
+        CHECK(!workforce02::approved_original_trade_training(
+            w.world(),8,ship,site,first_id,WorkshopTrade::Cut,271,true));
+        CHECK(!w.world().workshop_trade_certified(first_id,WorkshopTrade::Cut));
+        for(std::uint64_t training_id=270;training_id<273;++training_id){
+            auto training=workforce02::approved_original_trade_training(
+                w.world(),7,ship,site,first_id,WorkshopTrade::Cut,
+                training_id,true);
+            CHECK(training.has_value());
+            CHECK(training->action==Action::TrainWorkshopTrade);
+            CHECK(training->issuer==7 && training->amount==static_cast<std::int64_t>(first_id) &&
+                  training->thrust_x==1);
+            CHECK(w.submit(*training));w.step();
+            CHECK(w.world().events().back().command_id==training_id &&
+                  w.world().events().back().result==Outcome::Applied &&
+                  w.world().events().back().transferred==1);
+            CHECK(w.world().total_material_kg()==original_training_mass);
+            CHECK(w.world().workshop_training_units(first_id,WorkshopTrade::Cut)==training_id-269);
+        }
+        CHECK(w.world().workshop_trade_certified(first_id,WorkshopTrade::Cut));
+        CHECK(!w.world().workshop_trade_certified(first_id,WorkshopTrade::Shape));
+        CHECK(!workforce02::approved_original_trade_training(
+            w.world(),7,ship,site,first_id,WorkshopTrade::Cut,273,true));
+        CHECK(send(w,ship,273,Action::TrainWorkshopTrade,site,
+                   static_cast<std::int64_t>(first_id),1).result==Outcome::InvalidArgument);
+        CHECK(w.world().workshop_training_units(first_id,WorkshopTrade::Cut)==3);
+        CHECK(w.world().total_material_kg()==original_training_mass);
+        // Reject direct foreign-owner submissions before they reach a tick.
+        Command foreign{};
+        foreign.id=274;foreign.sequence=274;foreign.execute_tick=w.world().tick()+1;
+        foreign.issuer=8;foreign.actor=ship;foreign.target=site;
+        foreign.action=Action::TrainWorkshopTrade;foreign.amount=static_cast<std::int64_t>(first_id);
+        foreign.thrust_x=1;
+        CHECK(!w.submit(foreign));
         auto proposed=workforce02::approved_original_assignment(
             w.world(),7,ship,site,false,first_id,22,true);
         CHECK(proposed.has_value());
@@ -165,6 +204,37 @@ int main() {
         CHECK(rows[1].can_offer_assignment());
         second_id=rows[1].suggested_npc;
         CHECK(second_id>0 && second_id!=first_id);
+        // Operator must produce REAL panels before shape practice is allowed.
+        w.steps(8);
+        CHECK(w.world().workshop(site)->panels_kg>=3);
+        for(std::uint64_t training_id=280;training_id<283;++training_id){
+            auto training=workforce02::approved_original_trade_training(
+                w.world(),7,ship,site,second_id,WorkshopTrade::Shape,
+                training_id,true);
+            CHECK(training.has_value());
+            CHECK(w.submit(*training));w.step();
+            CHECK(w.world().events().back().command_id==training_id &&
+                  w.world().events().back().result==Outcome::Applied);
+            CHECK(w.world().total_material_kg()==initial_mass);
+        }
+        CHECK(w.world().workshop_trade_certified(second_id,WorkshopTrade::Shape));
+        CHECK(!w.world().workshop_trade_certified(second_id,WorkshopTrade::Cut));
+        CHECK(w.world().npc_records().at(first_id).industrial_training.size()==3);
+        // No duplicate or foreign training receipt can be used to fabricate
+        // a credential when restoring the independently validated world.
+        const auto valid_snapshot=w.world().canonical_state();
+        CHECK(Simulation::from_snapshot(valid_snapshot).workshop_trade_certified(
+            second_id,WorkshopTrade::Shape));
+        auto corrupted=valid_snapshot;
+        const auto marker=corrupted.find("npctraining|");
+        CHECK(marker!=std::string::npos);
+        const auto finish=corrupted.find('\n',marker);
+        CHECK(finish!=std::string::npos);
+        corrupted.insert(finish+1,corrupted.substr(marker,finish-marker+1));
+        bool rejected_duplicate=false;
+        try{(void)Simulation::from_snapshot(corrupted);}
+        catch(const std::exception&){rejected_duplicate=true;}
+        CHECK(rejected_duplicate);
         // Do not allow direct malicious duplicate named work, including
         // bypasses of the new *read-only* planner through existing commands.
         CHECK(send(w,ship,25,Action::AssignWorkshopFinisher,site,
@@ -195,6 +265,9 @@ int main() {
             PersistentWorld recovered(backup,Simulation(98765));
             CHECK(recovered.world().workshop(site)->operator_npc_id==first_id);
             CHECK(recovered.world().workshop(site)->finisher_npc_id==second_id);
+            CHECK(recovered.world().workshop_trade_certified(first_id,WorkshopTrade::Cut));
+            CHECK(recovered.world().workshop_trade_certified(second_id,WorkshopTrade::Shape));
+            CHECK(recovered.world().npc_records().at(second_id).industrial_training.size()==3);
             CHECK(recovered.world().total_material_kg()==initial_mass);
             auto after=workforce02::plan_original_workshop(recovered.world(),7,ship,site);
             CHECK(after[0].gate==workforce02::StaffGate::AlreadyStaffed);
@@ -206,6 +279,8 @@ int main() {
         PersistentWorld restarted(db,Simulation(42));
         CHECK(restarted.world().workshop(site)->operator_npc_id==first_id);
         CHECK(restarted.world().workshop(site)->finisher_npc_id==second_id);
+        CHECK(restarted.world().workshop_trade_certified(first_id,WorkshopTrade::Cut));
+        CHECK(restarted.world().workshop_trade_certified(second_id,WorkshopTrade::Shape));
         CHECK(restarted.world().total_material_kg()==initial_mass);
     }
     fs::remove_all(folder);
