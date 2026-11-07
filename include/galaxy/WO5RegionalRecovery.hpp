@@ -6,6 +6,7 @@
 // Region mode may change after observation: the actual host effect MUST
 // independently recheck its own original SQLite transaction admission.
 #include "galaxy/RegionalModeAuthority.hpp"
+#include "galaxy/Persistence.hpp"
 #include "galaxy/RegionalShipmentReconciliation.hpp"
 #include "galaxy/WO5FreightEvidence.hpp"
 #include <sqlite3.h>
