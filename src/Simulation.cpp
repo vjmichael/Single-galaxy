@@ -1535,6 +1535,8 @@ bool Simulation::submit(const Command& c) {
            source->system_id!=first->system_id||source->system_id!=second->system_id)
             return false;
         for(const auto receiver:{first,second}){
+            if(snapshot_version_>=119 &&
+               !within_native_3d_range(*source,*receiver,2500))return false;
             const auto dx=source->position.x-receiver->position.x;
             const auto dy=source->position.y-receiver->position.y;
             if(dx<-2500||dx>2500||dy<-2500||dy>2500||dx*dx+dy*dy>2500*2500)
@@ -1806,6 +1808,9 @@ bool Simulation::submit(const Command& c) {
         if(incident_action && (ship->second.jump_state!=ShipJumpState::Ready ||
            ship->second.dock_state!=DockState::InSpace))return false;
         if(c.action==Action::HostEvacuatePassengers || c.action==Action::HostResolveMixedFerryLoss){
+            if(snapshot_version_>=119 &&
+               !within_native_3d_range(ship->second,endpoint->second,kDockingRangeMm))
+                return false;
             const auto dx=ship->second.position.x-endpoint->second.position.x;
             const auto dy=ship->second.position.y-endpoint->second.position.y;
             if(dx<-kDockingRangeMm || dx>kDockingRangeMm ||
@@ -2662,11 +2667,14 @@ Event Simulation::execute(const Command& c) {
                medic->second.location==medic->second.home_ship &&
                entities_.count(medic->second.location) && entities_.count(c.actor)){
                 const auto& ship=entities_.at(medic->second.location),&site=entities_.at(c.actor);
-                const auto dx=ship.position.x-site.position.x,dy=ship.position.y-site.position.y;
-                crew=ship.type==EntityType::Ship && ship.owner_id==site.owner_id &&
-                     ship.system_id==site.system_id && dx>=-kDockingRangeMm && dx<=kDockingRangeMm &&
-                     dy>=-kDockingRangeMm && dy<=kDockingRangeMm &&
-                     dx*dx+dy*dy<=kDockingRangeMm*kDockingRangeMm;
+                if(snapshot_version_<119 ||
+                   within_native_3d_range(ship,site,kDockingRangeMm)){
+                    const auto dx=ship.position.x-site.position.x,dy=ship.position.y-site.position.y;
+                    crew=ship.type==EntityType::Ship && ship.owner_id==site.owner_id &&
+                         ship.system_id==site.system_id && dx>=-kDockingRangeMm && dx<=kDockingRangeMm &&
+                         dy>=-kDockingRangeMm && dy<=kDockingRangeMm &&
+                         dx*dx+dy*dy<=kDockingRangeMm*kDockingRangeMm;
+                }
             }
             if(clinic==clinics_.end() || medic==npcs_.end() || clinic->second.medics<1 ||
                (!resident && !crew) || c.amount<1 || c.amount>3 ||
@@ -2884,6 +2892,10 @@ Event Simulation::execute(const Command& c) {
             result.result=Outcome::InvalidTarget;return result;
         }
         for(const auto receiver:{first,second}){
+            if(snapshot_version_>=119 &&
+               !within_native_3d_range(*source,*receiver,2500)){
+                result.result=Outcome::OutOfRange;return result;
+            }
             const auto dx=source->position.x-receiver->position.x;
             const auto dy=source->position.y-receiver->position.y;
             if(dx<-2500||dx>2500||dy<-2500||dy>2500||dx*dx+dy*dy>2500*2500){
@@ -3065,6 +3077,10 @@ Event Simulation::execute(const Command& c) {
                     result.result=Outcome::InvalidArgument;return result;
                 }
                 if(mixed){
+                    if(snapshot_version_>=119 &&
+                       !within_native_3d_range(ship->second,endpoint->second,kDockingRangeMm)){
+                        result.result=Outcome::OutOfRange;return result;
+                    }
                     const auto dx=ship->second.position.x-endpoint->second.position.x;
                     const auto dy=ship->second.position.y-endpoint->second.position.y;
                     if(dx<-kDockingRangeMm || dx>kDockingRangeMm ||
@@ -3118,11 +3134,17 @@ Event Simulation::execute(const Command& c) {
             }else if(c.action==Action::HostStrandFerry){
                 voyage->second.status=3;voyage->second.stranded_reason=static_cast<unsigned>(c.amount);
                 voyage->second.stranded_tick=tick_;voyage->second.last_incident_id=c.id;
-                ship->second.velocity={};stop_mining(c.actor,Outcome::InTransition);
+                ship->second.velocity={};
+                if(snapshot_version_>=119)ship->second.velocity_z_mm_per_tick=0;
+                stop_mining(c.actor,Outcome::InTransition);
             }else if(c.action==Action::HostResumeFerry){
                 voyage->second.status=1;voyage->second.stranded_reason=0;
                 voyage->second.stranded_tick=0;voyage->second.last_incident_id=c.id;
             }else{
+                if(snapshot_version_>=119 &&
+                   !within_native_3d_range(ship->second,endpoint->second,kDockingRangeMm)){
+                    result.result=Outcome::OutOfRange;return result;
+                }
                 const auto dx=ship->second.position.x-endpoint->second.position.x;
                 const auto dy=ship->second.position.y-endpoint->second.position.y;
                 if(dx<-kDockingRangeMm || dx>kDockingRangeMm ||
