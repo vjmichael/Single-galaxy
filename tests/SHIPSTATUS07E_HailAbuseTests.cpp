@@ -203,6 +203,20 @@ int main(){
         CHECK(calls.overflow_history().front().total_points==12);
         CHECK(calls.penalty_for(recovered,7,a).penalty_points==13);
         CHECK(calls.history().size()==filled); // ten immutable details fixed
+        // STATUS-07I: compact strikes #11+ still produce two original-world
+        // owner-addressed, crash-durable notifications, atomically with the
+        // compact row. The ten immutable detailed receipts remain unchanged.
+        ship_notifications::Outbox notices(copy);
+        const auto outgoing=notices.pending(7);
+        const auto inbound=notices.pending(8);
+        const auto has=[&](const std::vector<ship_notifications::Notice>& rows,
+                            std::uint64_t event,std::uint32_t kind){
+            return std::any_of(rows.begin(),rows.end(),[&](const auto& n){
+                return n.source_event==event && n.kind==kind;
+            });
+        };
+        CHECK(has(outgoing,1300,5)&&has(inbound,1300,6));
+        CHECK(has(outgoing,1302,5)&&has(inbound,1302,6));
         {
             sqlite3* raw=nullptr;
             CHECK(sqlite3_open(copy.c_str(),&raw)==SQLITE_OK);
