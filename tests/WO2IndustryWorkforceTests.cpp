@@ -739,6 +739,10 @@ int main() {
         board=workforce02::workshop_job_board(managed.world(),7,ship,site);
         CHECK(board[0].physically_completed==real_completed-base);
         CHECK(board[0].physically_completed<=board[0].owner_target);
+        if(board[0].fulfilled)
+            CHECK(workforce02::plan_original_workshop(
+                managed.world(),7,ship,site)[0].work_state==
+                workforce02::WorkState::ApprovedWorkComplete);
         CHECK(managed.world().total_material_kg()==initial);
         const auto manager_copy=(folder/"wo2j_active_recovered.sqlite").string();
         PersistentWorld::recover_copy(management_db,manager_copy);
@@ -762,6 +766,17 @@ int main() {
         try{(void)Simulation::from_snapshot(fake);}
         catch(const std::exception&){forged=true;}
         CHECK(forged);
+        auto job_forged=managed.world().canonical_state();
+        const auto job_marker=job_forged.find("workshopjob|"+
+            std::to_string(site)+"|1|711|");
+        CHECK(job_marker!=std::string::npos);
+        job_forged.replace(job_marker,("workshopjob|"+
+            std::to_string(site)+"|1|711|").size(),
+            "workshopjob|"+std::to_string(site)+"|1|999999|");
+        bool rejected_job=false;
+        try{(void)Simulation::from_snapshot(job_forged);}
+        catch(const std::exception&){rejected_job=true;}
+        CHECK(rejected_job);
         // Cancel the approved job with the owner. This is not a material
         // refund or a permission for the supervisor to impersonate the owner.
         CHECK(!workforce02::approved_workshop_job_cancel(
