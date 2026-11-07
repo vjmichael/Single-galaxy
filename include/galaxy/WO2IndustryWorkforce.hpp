@@ -30,6 +30,9 @@ struct Slot {
     EntityId site=0,home_ship=0;
     PlayerId owner=0;
     std::uint64_t assigned_npc=0,suggested_npc=0;
+    // WO2-I: original active shift receipt and its end-exclusive tick,
+    // never a separate scheduler or an implied future reservation.
+    std::uint64_t shift_command_id=0,shift_end_tick=0;
     // Read-only; this does NOT reserve or schedule a person.
     bool can_offer_assignment() const noexcept {
         return gate==StaffGate::Ready && suggested_npc!=0 && assigned_npc==0;
@@ -138,6 +141,11 @@ inline std::vector<Slot> plan_original_workshop(const Simulation& world,
         else if(second && !workshop->finisher_installed)row.gate=StaffGate::FinisherNotConstructed;
         else {
             row.assigned_npc=second?workshop->finisher_npc_id:workshop->operator_npc_id;
+            const auto& active=workshop->shifts[second?1:0];
+            if(active.command_id && active.worker==row.assigned_npc){
+                row.shift_command_id=active.command_id;
+                row.shift_end_tick=active.end_tick;
+            }
             row.work_state=state_of(world,site,second,*workshop);
             if(row.assigned_npc)row.gate=StaffGate::AlreadyStaffed;
             else {
@@ -167,7 +175,7 @@ inline std::vector<Slot> plan_original_workshop(const Simulation& world,
  */
 enum class CoverageGate : std::uint8_t {
     Provisional, InvalidWindow, SiteUnavailable, NoFreeWorker,
-    FutureMedicalShift, CurrentDutyUnavailable
+    FutureMedicalShift, CurrentDutyUnavailable, ShiftWindowUncovered
 };
 struct CoverageRow {
     bool finisher=false,incumbent=false;
@@ -209,8 +217,14 @@ inline std::vector<CoverageRow> plan_provisional_workshop_coverage(
             row.gate=CoverageGate::SiteUnavailable;continue;
         }
         if(slot.assigned_npc) {
-            // An incumbent cannot be replaced by a read-only prediction.
+            // A finite real shift covers only its own authoritative interval.
+            // It is NOT a permanent reservation after the end-exclusive tick.
             row.worker=slot.assigned_npc;row.incumbent=true;
+            if(slot.shift_command_id &&
+               (start_tick>=slot.shift_end_tick || end_tick>slot.shift_end_tick)){
+                row.gate=CoverageGate::ShiftWindowUncovered;
+                continue;
+            }
             if(!world.npc_available_for_duty(row.worker))
                 row.gate=CoverageGate::CurrentDutyUnavailable;
             else if(medical_shift_overlaps(world,row.worker,start_tick,end_tick))
