@@ -10268,6 +10268,15 @@ void Simulation::process_planetary_surface_operations() {
                 }
             }
         }
+        // A built annex or medical-support room is an ACTUAL powered
+        // facility; neither duplicates the world energy inventory nor
+        // generates medical supplies or magically heals injured people.
+        if(site.utility_phase==2)
+            for(auto& project:site.service_projects)
+                if(project.phase==2 && site.stored_electricity>=1) {
+                    --site.stored_electricity;
+                    ++project.powered_cycles;
+                }
         std::int64_t ready=0;
         for(auto npc:site.delegated_npcs) {
             const auto it=npcs_.find(npc);
@@ -10298,6 +10307,8 @@ void Simulation::process_planetary_surface_operations() {
             if(site.housing_phase==1)++site.housing_stalled_ticks;
             for(auto& job:site.production_projects)
                 if(job.phase==1)++job.stalled_ticks;
+            for(auto& job:site.service_projects)
+                if(job.phase==1)++job.stalled_ticks;
             if(site.housing_phase==2 && tick_%20==0)
                 ++site.housing_shortages;
             if(site.spaceport_phase==3 && site.workforce_policy &&
@@ -10308,6 +10319,8 @@ void Simulation::process_planetary_surface_operations() {
             if(site.utility_phase==1)++site.utility_stalled_ticks;
             if(site.housing_phase==1)++site.housing_stalled_ticks;
             for(auto& job:site.production_projects)
+                if(job.phase==1)++job.stalled_ticks;
+            for(auto& job:site.service_projects)
                 if(job.phase==1)++job.stalled_ticks;
             if(site.housing_phase==2 && tick_%20==0)
                 ++site.housing_shortages;
@@ -10425,6 +10438,51 @@ void Simulation::process_planetary_surface_operations() {
                 // not new material sources or independent industry copies.
                 if(i==0)site.farm=true;
                 else site.extractor=true;
+            }
+        }
+        for(auto& project:site.service_projects) {
+            if(project.phase!=1)continue;
+            const auto builder=npcs_.find(project.supervisor);
+            const bool deployed=builder!=npcs_.end() &&
+                builder->second.assigned_site==site.surface_location &&
+                builder->second.role==NpcRole::PlanetarySurface &&
+                std::find(site.delegated_npcs.begin(),site.delegated_npcs.end(),
+                          project.supervisor)!=site.delegated_npcs.end() &&
+                npc_available_for_duty(project.supervisor);
+            const auto shuttle=planetary_shuttles_.find(key);
+            const auto health=npc_health_status(project.supervisor);
+            const bool visiting=builder!=npcs_.end() &&
+                shuttle!=planetary_shuttles_.end() &&
+                builder->second.assigned_site==site.source_ship &&
+                builder->second.role==NpcRole::Ship &&
+                !builder->second.transport_id &&
+                std::binary_search(shuttle->second.duty_ids.begin(),
+                                   shuttle->second.duty_ids.end(),
+                                   project.supervisor) &&
+                std::binary_search(shuttle->second.disembarked_ids.begin(),
+                                   shuttle->second.disembarked_ids.end(),
+                                   project.supervisor) &&
+                shuttle->second.visitor_arrival_receipts.count(
+                    project.supervisor) &&
+                npc_transport_arrival(
+                    shuttle->second.visitor_arrival_receipts.at(
+                        project.supervisor),project.supervisor).has_value() &&
+                (health==NpcHealthStatus::Healthy ||
+                 health==NpcHealthStatus::Treated ||
+                 health==NpcHealthStatus::Recovered);
+            if(project.paused || site.workforce_policy ||
+               builder==npcs_.end() ||
+               builder->second.home_ship!=site.source_ship ||
+               builder->second.location!=site.surface_location ||
+               !workshop_trade_certified(project.supervisor,
+                                         WorkshopTrade::Shape) ||
+               (!deployed && !visiting)) {
+                ++project.stalled_ticks;
+                continue;
+            }
+            if(++project.progress>=40) {
+                project.progress=40;project.phase=2;
+                project.completed_tick=tick_;
             }
         }
         if(site.housing_phase==2 && tick_%20==0) {
