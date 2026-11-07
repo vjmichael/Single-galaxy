@@ -574,6 +574,9 @@ struct PlanetaryShuttleState {
     // WO3-B/v109: one 2-tonne external construction module. Separate from
     // the existing 1-tonne internal consumables cargo hold and flight fuel.
     std::uint8_t housing_module=0;
+    // WO3-C/v109: real tanked oxygen in the same original finite
+    // 1-tonne internal shuttle cargo hold (not a separate supply service).
+    std::int64_t oxygen_kg=0;
 };
 // PLAY-13D.4F: finite local work board at the player's existing colony ship.
 // Multiple jobs may be posted, with only one claimed site-to-orbit delivery
