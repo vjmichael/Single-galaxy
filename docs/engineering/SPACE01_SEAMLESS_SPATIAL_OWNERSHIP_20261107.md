@@ -85,3 +85,26 @@ The native source test now creates **two actual star-system IDs in one original 
 3. Extend lease enforcement to ALL worker-executable mutation paths under the original commit, and implement safe multi-cell work scheduling, single-original-writer arbitration and crash/dead-worker recovery; do not parallelize the monolithic Simulation tick by pretending its per-cell lease is multiwriter authority.
 4. Obtain **executed native Windows/Linux CMake + CTest** at the exact latest PR #93 head, repair real failures and verify full regressions. WO3-F/WO4-F/WO5-F remain open. Runner issue #90 persists until actual jobs obtain runners.
 
+
+## EvEmu 65 follow-on — SPACE-04B/05 hardening (2026-11-07)
+
+Source changes on stacked PR #93, following the initial v119 physical movement / snapshot migration:
+
+- **All original world snapshot commits now share the SQLite worker fence.** The `PersistentWorld::Store::commit` transaction, not just `step()`, verifies active spatial lease and regional generation before any material or personnel effects commit. Any active lease rejects unfenced host `submit`, ordinary `step`, maintenance/policy commits and other original world snapshot mutations; multiple active leases cannot impersonate independently isolated multi-cell physics. The only accepted worker mutation is a host-supplied token that matches the current original lease and regional authority. These are fail-closed restrictions pending genuine multi-cell partitioning, not a finished distributed scheduler.
+- Added `PersistentWorld::submit_as_cell_worker`, which reuses the **existing** actor, player, NPC flight and freight authorization and the exact original command/receipt journal. It binds a worker to its currently occupied original ship cell and revalidates at the original SQLite commit. This permits continued actual ship-command input under one supervised writer without reopening the bypass. No separate player/account or secondary simulation state is created.
+- `NavigationDecision`, `Navigation.cpp` and original NPC local-control dispatch now consider native Z position and relative Z velocity; NPCs cannot falsely finish rendezvous purely by matching X/Y, and issue real original `Action::Thrust` vertical commands, never a teleport. Signed-limit relative-position steering is overflow-safe for int64 inputs. Preserves legacy zero-Z and old snapshot behavior.
+- `ShipInteractionPreflight.hpp` now checks 3D separation and relative velocity in v119. Gate activation and completion clear vertical velocity and set arrival altitude consistently with original gate geometry.
+- Selected additional original-world cargo, medical, crew-rescue, two-destination ferry, geological-drone and construction interactions now check 3D proximity **before** subtracting potentially distant coordinates. This removes false XY-only physical permission for those paths without giving computational cells wall/collider semantics.
+- Native `galaxy_native_3d_worker` CTest now has negative cases for unfenced command/policy writes under a live worker lease, stale-taken-over worker commands, identical-XY-but-separated-Z rendezvous, native NPC Z steering, signed-limit navigation, and altitude-separated mining, weapon and docking, in addition to recovery, rollback and physical conservation.
+- Exact-head Windows/Linux WO5 workflow also builds/runs `galaxy_flight02_local_docking`, `galaxy_flight03_object_approach`, `galaxy_flight03_native_rendezvous` and `galaxy_flight04_interaction_preflight`; relevant source paths are listed as workflow triggers.
+
+**Native acceptance remains OPEN:** at PR #93 head `22cd5b4f7c0d69bcbd52fc7079dd82583accdb34`, WO5 [run 42419606320](https://github.com/vjmichael/Single-galaxy/actions/runs/42419606320) remained **queued** when checked. Zero executed compiler/CTest results are being promoted to PASS. Shared [GitHub runner issue #90](https://github.com/vjmichael/Single-galaxy/issues/90) remains open.
+
+### Remaining high-priority work (source not yet finished)
+
+1. Canonical **galactic high-order sector+offset** coordinates as original ship physics authority, replacing v119 finite signed-mm absolute position fields, with exact cell-boundary integration and nearby cross-sector interactions. Existing registered star origins and read-only projections are not this migration.
+2. Durable **full three-dimensional probe/drone and celestial-NPC geometry** (legacy 2D probe persistence/scan/report paths remain). Keep tests explicit and fail-closed; do not pretend the 3D ship upgrade finished the probe stack.
+3. Real visible 3D installed game camera, scene projection, vertical piloting controls, multiplayer observability and end-to-end render/playback acceptance (native installed Windows with real assets remains deferred by owner).
+4. Active **multi-cell** worker process dispatch, bounded CPU/memory supervision, one original world write arbitration, checkpointed failure takeover and cold/dormant cadence verified with conserved NPC needs, flight and cargo; the newly hardened single-writer fence deliberately **does not** parallelize the world.
+5. Executed exact-head native Linux/Windows tests and corresponding WO3-F, WO4-F, WO5-F gates; repair failures only when real logs arrive. All claims above are committed **source**, not a passed native validation.
+
