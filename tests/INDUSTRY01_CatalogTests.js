@@ -19,7 +19,7 @@ test("INDUSTRY-01 candidate validates; no world-facing material or consumption s
   const result=validateCatalog(original);
   assert.deepEqual(result.errors,[]);
   assert.equal(result.ok,true);
-  assert.deepEqual(result.stats,{items:65,recipes:45,services:7,legacy_mappings:6});
+  assert.deepEqual(result.stats,{items:96,recipes:69,services:8,legacy_mappings:8});
   assert.equal(original.status,"research_candidate_not_world_authoritative");
   assert.ok(original.recipes.every(x=>x.quantities==="illustrative_game_balance"));
   assert.ok(original.legacy_bridge.every(x=>x.authoritative_conversion!=="automatic"));
