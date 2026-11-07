@@ -4012,6 +4012,7 @@ public:
                 // original Start command. The current worker must instead
                 // match the *latest* real applied, same-owner relief receipt.
                 std::uint64_t last_relief=0,last_relief_tick=0;
+                std::set<std::uint64_t> seen_relief_ticks;
                 std::uint64_t current_worker=static_cast<std::uint64_t>(it->second.amount);
                 for(const auto& [id,change]:journal_commands){
                     if(change.action!=Action::RelieveWorkshopShift ||
@@ -4028,7 +4029,7 @@ public:
                        change.execute_tick>=shift.end_tick ||
                        applied->second.tick!=change.execute_tick ||
                        applied->second.transferred!=0 ||
-                       change.execute_tick==last_relief_tick)
+                       !seen_relief_ticks.insert(change.execute_tick).second)
                         throw std::runtime_error("SQLite: workshop relief contradicted original owner or chronology");
                     // Command IDs need not increase with tick order.
                     // The event's applied tick, not its arbitrary ID, orders
