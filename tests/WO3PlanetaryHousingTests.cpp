@@ -337,7 +337,7 @@ int main() {
     const auto register_probe_child=[&](std::uint64_t cmd,std::uint64_t child){
         Command birth{};birth.id=cmd;birth.sequence=cmd;
         birth.execute_tick=household_probe.tick()+1;
-        birth.issuer=kServerAuthority;birth.actor=ship;birth.target=ship;
+        birth.issuer=Simulation::kServerAuthority;birth.actor=ship;birth.target=ship;
         birth.action=Action::HostRegisterDependent;
         birth.transport_id=child;birth.passenger_ids={roster[3]};
         CHECK(household_probe.submit(birth));
