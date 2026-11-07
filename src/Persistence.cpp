@@ -1,4 +1,5 @@
 #include "galaxy/Persistence.hpp"
+#include "galaxy/SeamlessSpatialOwnership.hpp"
 #include "galaxy/UniversalNpcMigration.hpp"
 #include "galaxy/CelestialFrameTransition.hpp"
 #include "galaxy/ColonySafety.hpp"
@@ -7864,6 +7865,12 @@ public:
             op.text(4, std::to_string(state.state_hash()));
             op.i64(5, static_cast<std::int64_t>(state.tick()));
             op.execute();
+            // SPACE-01: update derived 3D computational cell custody inside
+            // the SAME SQLite world snapshot/journal transaction. Ship ID,
+            // finite NPC roster, carrier cargo and physical position remain
+            // solely in original Simulation. A fault rolls both back.
+            spatial::record_native_world_commit(
+                db_,state,expected_generation,next);
             if(society_effect)society_effect(db_,next);
             // AUTO-04D.2: same exclusive world transaction; no second writer.
             colony_safety::journal::record_world_commit(db_,state,expected_generation,next);
