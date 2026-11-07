@@ -135,6 +135,26 @@ int main() {
     }
     CHECK(w.world().workshop_trade_certified(
         trained_partner,WorkshopTrade::Shape));
+    std::uint64_t trained_visitor=0;
+    for(const auto& [id,n]:w.world().npc_records()) {
+        if(id!=builder && id!=trained_partner && id!=operator_id &&
+           n.home_ship==ship && n.location==ship &&
+           n.role==NpcRole::Ship && w.world().npc_available_for_duty(id)) {
+            trained_visitor=id;
+            break;
+        }
+    }
+    CHECK(trained_visitor);
+    w.steps(60);
+    CHECK(w.world().workshop(orbital)->panels_kg>=3);
+    for(std::uint64_t id=320;id<323;++id) {
+        const auto training=workforce02::approved_original_trade_training(
+            w.world(),7,ship,orbital,trained_visitor,WorkshopTrade::Shape,id,true);
+        CHECK(training && w.submit(*training));w.step();
+        CHECK(w.world().events().back().result==Outcome::Applied);
+    }
+    CHECK(w.world().workshop_trade_certified(
+        trained_visitor,WorkshopTrade::Shape));
     CHECK(w.world().npc_records().at(builder).location==ship);
     CHECK(w.world().npc_available_for_duty(builder));
     CHECK(w.begin_celestial_transit(7,ship,chosen.body,90001));
@@ -185,6 +205,8 @@ int main() {
     down(w,ship,key,81005);
     CHECK(w.transfer_planetary_housing_module(7,ship,key,false));
     up(w,ship,key,81006);
+    CHECK(w.book_planetary_shuttle_passenger(
+        7,ship,key,trained_visitor,true));
     CHECK(w.transfer_planetary_housing_module(7,ship,key,true));
     CHECK(w.load_planetary_shuttle(7,ship,key,ShuttleCargo::Water,30));
     CHECK(w.load_planetary_shuttle(7,ship,key,ShuttleCargo::Food,30));
@@ -193,6 +215,10 @@ int main() {
     CHECK(w.transfer_planetary_housing_module(7,ship,key,false));
     for(auto cargo:{ShuttleCargo::Water,ShuttleCargo::Food,ShuttleCargo::Oxygen})
         CHECK(w.unload_planetary_shuttle(7,ship,key,cargo,30));
+    CHECK(w.transfer_planetary_shuttle_visitor(
+        7,ship,key,trained_visitor,false));
+    CHECK(w.assign_planetary_shuttle_visitor_duty(
+        7,ship,key,trained_visitor,true));
     CHECK(w.world().planetary_sites().at(key).housing_modules==2);
     CHECK(w.world().total_ore()==initial_mass);
     bool failed=false;
@@ -257,6 +283,21 @@ int main() {
               second.utility_handovers[1].tick &&
           second.utility_progress==before_handover.utility_progress+1 &&
           second.embodied_ore==before_handover.embodied_ore);
+    // A qualified worker who arrived on the ORIGINAL shuttle and was
+    // explicitly granted temporary surface duty can supply a real relief.
+    w.step();
+    CHECK(w.handover_planetary_surface_utility(
+        7,ship,key,builder,trained_visitor,81602));
+    const auto visitor_progress=w.world().planetary_sites().at(key).utility_progress;
+    CHECK(w.assign_planetary_shuttle_visitor_duty(
+        7,ship,key,trained_visitor,false));
+    w.step();
+    CHECK(w.world().planetary_sites().at(key).utility_progress==visitor_progress);
+    CHECK(w.assign_planetary_shuttle_visitor_duty(
+        7,ship,key,trained_visitor,true));
+    w.step();
+    CHECK(w.world().planetary_sites().at(key).utility_progress==visitor_progress+1);
+    CHECK(w.world().planetary_sites().at(key).utility_handovers.size()==3);
     CHECK(w.world().canonical_state().rfind("galaxy-kernel-v112|",0)==0);
     CHECK(Simulation::from_snapshot(w.world().canonical_state()).state_hash()==
           w.world().state_hash());
