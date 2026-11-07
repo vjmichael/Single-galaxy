@@ -76,3 +76,11 @@ Training is **implemented in source**, but source presence is not evidence of a 
 5. Repair failures and rerun **the repaired exact SHA**, then record the actual workflow run IDs and verdict. Do **not** claim acceptance based on queued, superseded or cancelled CI.
 
 No WO2-I shifts or WO2-J supervisor work is authorized as part of this gate. No new profession becomes runnable merely because its catalog record exists.
+
+
+### WO2-H execution repair and adversarial regression (current exact-head handoff)
+
+- **Found and repaired a real action-dispatch defect:** `TrainWorkshopTrade` was declared in the original `Action` enum and the `switch` case, but missing from the *inner original workshop action dispatch*. As a result, the training handler was unreachable. The command is now routed through the same installed-shop branch that owns finite inputs and original SQLite receipts.
+- **Original-NPC single-tick custody:** one named trainee may earn **at most one** physical practice credit per authoritative tick. Subsequent same-tick training attempts (even with different valid command IDs or trade codes) fail without material/energy transfer. A machine assignment arriving after that training is rejected for the same tick. An incumbent whose receipt shows training at the current tick cannot simultaneously produce workshop goods. These gates derive solely from immutable `NpcRecord::industrial_training`, without creating another workforce table or mutable shift state.
+- **Native regression source:** added explicit unbuilt frame-finisher and nonexistent trainee refusal; three same-tick original commands (successful training, rejected repeat training, rejected workshop assignment); energy debit and recoverable-scrap production after each credited practice; preserved total material; exact native command/SQLite audit. No credits are granted on denied commands.
+- **Verification status:** all these are **committed implementation + test assertions only**. The GitHub hosted Windows/Linux C++/SQLite matrix is queued on the repaired branch; **NO native pass has been observed**. Earlier cancelled/superseded runs are not evidence. Do not merge or mark WO2-H native-accepted until exact-head green tests exist. Local GitHub checkout was not available to the assistant's container because it could not resolve GitHub; no independent local executable was claimed.
