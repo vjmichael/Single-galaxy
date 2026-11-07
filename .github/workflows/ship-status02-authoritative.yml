@@ -25,6 +25,7 @@ on:
       - 'tests/SHIPSTATUS07G_TwoHumanSecurityTests.cpp'
       - 'tests/SHIPSTATUS07G_LiveTwoHumanHostTests.py'
       - 'tests/SHIPSTATUS07G_PrivateRelayTests.py'
+      - 'tests/SHIPSTATUS07H_SecurityOnlyClientTests.js'
       - 'tests/SHIPSTATUS07G_LinuxChromiumTwoHumanTests.py'
       - 'viewer/security-only.html'
       - 'viewer/security-only.js'
@@ -118,6 +119,7 @@ jobs:
           node tests/SHIPSTATUS05_CyberCockpitTests.js
           node tests/SHIPSTATUS07D_SecurityDeskTests.js
           node tests/SHIPSTATUS07E_HailAbuseCockpitTests.js
+          node tests/SHIPSTATUS07H_SecurityOnlyClientTests.js
       - name: Actual authenticated original host + relay (Windows/Linux, no installation)
         shell: bash
         run: |
