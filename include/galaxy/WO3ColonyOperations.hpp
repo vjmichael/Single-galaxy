@@ -325,11 +325,18 @@ inline std::optional<PlanetarySiteAudit> audit_planetary_surface(
     }
     a.staffed_by_original_named_npcs=
         a.physical_delegates==a.declared_workers && a.declared_workers!=0;
-    // Original physically stationed constructors occupy beds regardless
-    // of whether an approved legal residency request has been submitted.
+    // Original physically stationed constructors occupy two beds regardless
+    // of administrative residence. Physically admitted adult residents must
+    // additionally occupy a real remaining bed until a proven departure.
+    std::int64_t active_admitted_visitors=0;
+    for(const auto& [person,proof]:s.visitor_residency) {
+        (void)person;
+        if(proof[2]==0)++active_admitted_visitors;
+    }
     a.unused_housing_capacity=a.permanent_housing_installed?
         std::max<std::int64_t>(0,4-static_cast<std::int64_t>(
-            std::max(a.original_permanent_residents,a.physical_delegates))):0;
+            std::max(a.original_permanent_residents,a.physical_delegates))-
+            active_admitted_visitors):0;
     return a;
 }
 
