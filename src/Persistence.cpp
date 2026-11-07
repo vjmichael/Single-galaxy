@@ -9351,6 +9351,19 @@ bool PersistentWorld::start_planetary_housing(PlayerId owner,
     return true;
 }
 
+bool PersistentWorld::set_planetary_housing_pause(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool pause,FailPoint fail) {
+    auto next=world_;
+    if(!next.set_planetary_housing_pause(owner,ship,key,pause))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 construction pause changed world mass");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
 bool PersistentWorld::load_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,bool water,std::int64_t kg,FailPoint fail) {
     return load_planetary_shuttle(owner,ship,key,
         water?ShuttleCargo::Water:ShuttleCargo::Food,kg,fail);
