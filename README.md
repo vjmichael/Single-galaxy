@@ -1,5 +1,7 @@
 # Single Galaxy
 
+> **INDUSTRY-01 WO1 source closeout (November 6):** The first ordered industry work order is implemented in [draft PR #87](https://github.com/vjmichael/Single-galaxy/pull/87): 100 item/material types, 71 regular + 3 bounded recycling recipes, 8 services, 28 original inventory identity/unit records, 12 NPC-need dimensions, read-only generated C++ plus **two exact native workshop bindings**. [Full WO1 source/verification ledger](docs/engineering/INDUSTRY01_WO1_SOURCE_CLOSEOUT_20261106.md). **Source implementation complete; exact-head Windows/Linux native CI and PR merge still pending.** WO2 NPC work/management has NOT started.
+
 **Original offline-capable space exploration, colony, industry, society and emergent-civilization game (early Linux prototype).**
 
 In the released game's intended opening, one player colony ship with finite NPC crew enters an unexplored fictional galaxy. No stations, gates, populated settlements, free factories or markets are preplaced. The player and later NPC communities develop infrastructure and history through physical work, supplies, travel and decisions.
