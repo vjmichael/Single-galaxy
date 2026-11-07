@@ -9322,6 +9322,35 @@ bool PersistentWorld::build_planetary_shuttle(PlayerId owner,EntityId ship,const
     return true;
 }
 
+bool PersistentWorld::transfer_planetary_housing_module(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,bool load,FailPoint fail) {
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.transfer_planetary_housing_module(owner,ship,key,load))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 housing module transfer changed world mass");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::start_planetary_housing(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,std::uint64_t id,FailPoint fail) {
+    auto next=world_;
+    if(!next.start_planetary_housing(owner,ship,key,id))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 original housing construction created matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
 bool PersistentWorld::load_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,bool water,std::int64_t kg,FailPoint fail) {
     return load_planetary_shuttle(owner,ship,key,
         water?ShuttleCargo::Water:ShuttleCargo::Food,kg,fail);
