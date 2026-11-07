@@ -156,4 +156,39 @@ inline std::optional<ConsumptionView> observe_native_need_cycles(
     }
     return result;
 }
+// Original facility wear/maintenance is separate from catalogue-only
+// durable consumer objects. A native utility is a physically constructed
+// power installation with real condition, technicians and spare modules.
+struct NativeMaintenanceSignal {
+    EntityId site=0,source_ship=0;
+    std::int64_t condition=0,spare_modules=0,technicians=0;
+    bool currently_powered=false,wear_present=false;
+    Priority recommended_priority=Priority::Maintenance;
+};
+inline std::optional<std::vector<NativeMaintenanceSignal>>
+observe_native_utility_maintenance(const Simulation& world,PlayerId owner,
+                                   EntityId source_ship) {
+    if(!colony03::original_owner(world,owner,source_ship))
+        return std::nullopt;
+    std::vector<NativeMaintenanceSignal> rows;
+    for(const auto& [site,facility]:world.utilities()){
+        if(facility.source_ship!=source_ship)continue;
+        if(!colony03::original_site(world,source_ship,site) ||
+           !world.find(site) || world.find(site)->owner_id!=owner ||
+           facility.condition<0 || facility.condition>100 ||
+           facility.spare_modules<0 || facility.technicians<0)
+            return std::nullopt;
+        NativeMaintenanceSignal row{};
+        row.site=site;row.source_ship=source_ship;
+        row.condition=facility.condition;
+        row.spare_modules=facility.spare_modules;
+        row.technicians=facility.technicians;
+        row.currently_powered=facility.powered;
+        row.wear_present=facility.condition<100;
+        rows.push_back(row);
+    }
+    return rows;
+}
+// Neither this signal nor the INDUSTRY-01 material description triggers
+// native maintenance: only the original utility policy/repair commands do.
 } // namespace galaxy::economy04
