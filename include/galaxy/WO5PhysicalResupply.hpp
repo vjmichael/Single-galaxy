@@ -62,8 +62,8 @@ inline std::optional<ShuttleResupplyOffer> inspect_planetary_resupply(
        candidate.source.source_ship!=candidate.source.physical_location ||
        candidate.destination.source_ship!=candidate.source.source_ship ||
        candidate.destination.physical_location==candidate.source.physical_location ||
-       candidate.priority!=Priority::VitalCurrentWindow &&
-       candidate.priority!=Priority::VitalReserve)
+       (candidate.priority!=Priority::VitalCurrentWindow &&
+        candidate.priority!=Priority::VitalReserve))
         return std::nullopt;
     const auto cargo=original_shuttle_vital(candidate.vital);
     if(!cargo)return std::nullopt;
