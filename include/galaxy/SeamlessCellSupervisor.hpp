@@ -8,6 +8,7 @@
 #include <sqlite3.h>
 #include <algorithm>
 #include <cstdint>
+#include <future>
 #include <limits>
 #include <map>
 #include <set>
@@ -188,20 +189,44 @@ public:
         FailPoint failure=FailPoint::None){
         if(dispatch_id.empty())throw std::invalid_argument("dispatch ID required");
         if(leases_.empty())throw std::runtime_error("no native cell workers");
-        std::vector<std::pair<std::string,int>> eligible;
+        // These are REAL bounded concurrent read-only worker tasks. No task
+        // receives a mutable Simulation or SQLite game-writer handle. The
+        // supervisor waits for every result before electing the ONE durable
+        // original-world writer; no worker may independently advance a tick.
+        const Simulation& immutable=world_.world();
+        std::vector<std::future<std::optional<std::pair<std::string,int>>>> pending;
+        pending.reserve(leases_.size());
+        last_failed_.clear();
         for(const auto& [cell,lease]:leases_){
-            bool occupied=false;
-            for(const auto& [id,e]:world_.world().entities()){
-                if(e.type!=EntityType::Ship)continue;
-                const auto current=ship_cell(world_.world(),id);
-                if(current && scope(*current)==cell){occupied=true;break;}
+            pending.push_back(std::async(std::launch::async,
+                [world=&immutable,db=db_,cell,lease]()
+                    ->std::optional<std::pair<std::string,int>>{
+                    if(!worker_may_simulate_cell(db,lease.cell,lease.worker,
+                        lease.epoch,lease.region_generation,lease.checkpoint_revision))
+                        return std::nullopt; // a revoked worker never receives a tick
+                    bool occupied=false;
+                    for(const auto& [id,e]:world->entities()){
+                        if(e.type!=EntityType::Ship)continue;
+                        const auto current=ship_cell(*world,id);
+                        if(current && scope(*current)==cell){
+                            occupied=true;break;
+                        }
+                    }
+                    if(!occupied)return std::nullopt;
+                    const auto detail=desired_detail(*world,lease.cell);
+                    return std::make_pair(cell,static_cast<int>(detail));
+                }));
+        }
+        std::vector<std::pair<std::string,int>> eligible;
+        for(std::size_t i=0;i<pending.size();++i){
+            try{
+                auto report=pending[i].get();
+                if(report)eligible.push_back(*report);
+            }catch(const std::exception&){
+                auto at=leases_.begin();
+                std::advance(at,static_cast<std::ptrdiff_t>(i));
+                last_failed_.push_back(at->first);
             }
-            if(!occupied)continue;
-            if(!worker_may_simulate_cell(db_,lease.cell,lease.worker,
-                lease.epoch,lease.region_generation,lease.checkpoint_revision))
-                continue; // dead/stale workers cannot acquire new write work
-            const auto detail=desired_detail(world_.world(),lease.cell);
-            eligible.push_back({cell,static_cast<int>(detail)});
         }
         if(eligible.empty())
             throw std::runtime_error("no healthy occupied leased native cells");
@@ -220,11 +245,15 @@ public:
         return {winner,worker.worker,dispatch_id,world_.generation(),world_.world().tick()};
     }
     std::size_t worker_count() const noexcept {return leases_.size();}
+    const std::vector<std::string>& last_failed_cells() const noexcept {
+        return last_failed_;
+    }
 private:
     std::string db_;
     PersistentWorld& world_;
     std::size_t limit_;
     std::uint64_t round_robin_=0;
     std::map<std::string,WorkerLease> leases_;
+    std::vector<std::string> last_failed_;
 };
 } // namespace galaxy::spatial
