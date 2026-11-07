@@ -10,16 +10,27 @@ The original `Simulation`, `PersistentWorld`, per-owner `Entity`, canonical `Npc
 
 No currencies, wages, free seeded NPCs, independent second colony store, automatically built NPC infrastructure, new gameplay client, 3D art, or teleportation. Preserve original custody, migration, terrain, body-specific geology, owner authority, and actual supply constraints.
 
-## Work order breakdown and gates
+## Work order breakdown and gates — reconciled 2026-11-07
 
-| Work item | Required actual result | Current state |
-| --- | --- | --- |
-| **WO3-A — Native site capability audit and owner construction preflight** | Source of truth census and utility/food/water/oxygen view; enumerate **only original buildable** facilities, exact modules and prerequisites; proposal requires explicit owner approval and executes through original C++ commands and SQLite, never a separate new construction executor. | **Source implemented**. `include/galaxy/WO3ColonyOperations.hpp`, `tests/WO3ColonyOperationsTests.cpp`, CMake and exact-head Win/Linux CI workflow. Native tests NOT yet accepted. |
-| **WO3-B — Permanent planetary habitat and physically supported sites** | Existing original site, real delivered modules, named workforce, 80-tick construction and v109 durable housing. | **Initial 4-bed site housing source implemented; native unverified.** Expand structure types later. |
-| **WO3-C — Utilities and ongoing provision/consumption** | Real food/water/oxygen physical delivery, supported/shortage cycles, honest import-dependent stock runway. | **Source implemented through v110**: finite solar electricity, HVAC and lossy water/oxygen recycling with brine/residue; import dependence remains. Exact-head native acceptance open. |
-| **WO3-D — Player-authorized NPC construction and worksite organization** | Original two named workers; owner-authorized material-consuming housing job with pause/resume and original world ticks. | **Source implemented for housing + qualified utility supervisor**; other construction families, succession and full worksite organization remain open. Native unverified. |
-| **WO3-E — Census, residency, migration and departure** | Four-bed housing; authentic founding NPC legal residence with owner request, voluntary-consent attestation, physical presence and unique request proof. | **Source implemented through v111 for independent adult visitors**: actual shuttle arrival, attested legal residency and voluntary return boarding; family/guardian moves and legacy residence migration open. Native unverified. |
-| **WO3-F — Operations/recovery and native acceptance** | Original SQLite copied recovery, tamper/forged owner tests, actual shortage and finite mass. | **Adversarial test sources committed**, including v110 utility and v111 visitor/SQLite recovery; exact-head Windows/Linux native CMake/CTest/SQLite acceptance OPEN. |
+The table is the **current authoritative status**. The historical narrative below documents earlier checkpoints and must not be mistaken for present completion claims. Implemented means *source committed*, **not** native-accepted or released.
+
+| Work item | Confirmed source state | Remaining implementation | Native acceptance |
+| --- | --- | --- | --- |
+| **WO3-A — Original site audit/construction preflight** | Original orbital facility proposals and site/census audits; original owner commands; finite constructed materials | Extend coverage when additional facilities become physically supported | **OPEN** |
+| **WO3-B — Surface housing** | v109 4-bed planetary house, two shuttle-delivered modules, original 80-tick construction, two founding NPCs | Broader structure families and genuine household occupancy | **OPEN** |
+| **WO3-C — Provisioning and utilities** | v110 solar/HVAC/loss-bearing recycling; finite shuttle-delivered stock; physical-person-aware supply forecast | Additional infrastructure/renewal services, sustainable-life-support proof never assumed | **OPEN** |
+| **WO3-D — Construction and workforce** | v110 qualified Shape-supervised utility; v112 immutable owner-approved supervisor handovers; actual qualified disembarked temporary-duty workers stall/resume work; no material duplication | Non-utility planetary projects, broader trades and management | **OPEN** |
+| **WO3-E — Residence and migration** | v109 founders, v111 personally receipted voluntary adult visitor settlement/return with original-world legal address; original guardian-associated children are explicitly blocked from adult-only relocation | **ART02-backed guardian/child shuttle travel and joint housing**, dependent-care supply, safe historical planetary-residence upgrade | **OPEN** |
+| **WO3-F — Recovery/verification** | SQLite clone-commit-swap tests, v109–v112 snapshot/version checks, hostile/duplicate consent/work approvals, independent copied-world replay; actual Windows/Linux workflow registered | Native compile and CTest failure repair; proof at latest exact SHA | **OPEN** |
+
+### Current development ledger and evidence
+
+- **Branch and stack:** `industry/wo3-colony-operations-20261106`, draft [PR #89](https://github.com/vjmichael/Single-galaxy/pull/89) stacked on WO2 draft PR #88.
+- **Source before this reconciliation:** head `83b1e5807ab094f1a160c77b663762c67f0e137c`. Changes include `Simulation.hpp`, `Simulation.cpp`, `Persistence.hpp`, `Persistence.cpp`, `WO3ColonyOperations.hpp`, native housing/utility test source, and `.github/workflows/wo3-colony-operations.yml`.
+- **Latest inspected native result:** WO3 workflow run `42350176909` was **pending**, not a compiler or native success. Previously inspected earlier WO3 jobs were cancelled; none establishes release acceptance. New commits supersede earlier SHA results.
+- **Key invariants:** only canonical original NPC/dependent identities, original life support and physical cargo; no children manufactured from named visitor IDs, no remote migration/custody fiction, no arrival without physical transport receipts, no wages/currency; SQLite failures leave the original world unchanged.
+- **Next sequential implementation:** (1) dependent/guardian custody-and-housing preflight using the existing physical ART02 family authority and original shuttle, (2) truly atomic registered family movement with original dependent records and authoritative family ledger, (3) legacy residence compatibility, (4) actual new construction families. Native exact-head failure repair is independent and can proceed whenever results arrive.
+- **Release gating:** no native Windows installed-game acceptance until 3D assets are present as directed. GitHub source publication or queued tests do not imply pass.
 
 ## WO3-A implementation
 `colony03::plan_facility` determines owner/site authority from actual original player ship, `BuiltOutpost`, `Entity` ownership, physical 2.5 km station distance and committed finite ship modules/crew. It enumerates the exact ten supported buildable cases: farm, habitat, utility, community, clinic, reclaimer, waterworks, workshop, frame finisher and one original storage. It checks their **real** prerequisite installed facilities, including the appropriate habitat, utility and workshop. A forecast is not a reservation.
