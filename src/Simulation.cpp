@@ -10504,7 +10504,11 @@ void Simulation::process_planetary_surface_operations() {
             const auto locals=std::int64_t(sh.disembarked_ids.size());
             const auto landing=sh.flight_phase==2?
                 1+std::int64_t(sh.passenger_ids.size()):0;
-            const std::int64_t flight_children=sh.family.stage==2?
+            // Only a LANDED shuttle is a physical passenger consumer.
+            // A legally settled child may remain on the landing manifest:
+            // changing residence never duplicates a person or ration.
+            const std::int64_t flight_children=
+                sh.flight_phase==2 && sh.family.stage==2?
                 static_cast<std::int64_t>(sh.family.child_ids.size()):0;
             std::int64_t resident_children=0;
             for(const auto& [guardian,household]:site->second.households){
@@ -10512,9 +10516,15 @@ void Simulation::process_planetary_surface_operations() {
                 if(household.return_request)continue;
                 for(const auto child:household.child_ids) {
                     const auto dep=physical_dependents_.find(child);
-                    if(dep!=physical_dependents_.end() &&
-                       dep->second.location==site->second.surface_location)
-                        ++resident_children;
+                    if(dep==physical_dependents_.end() ||
+                       dep->second.location!=site->second.surface_location)
+                        continue;
+                    const bool on_landed_manifest=
+                        sh.flight_phase==2 && sh.family.stage==2 &&
+                        std::find(sh.family.child_ids.begin(),
+                                  sh.family.child_ids.end(),child)!=
+                            sh.family.child_ids.end();
+                    if(!on_landed_manifest)++resident_children;
                 }
             }
             const std::int64_t people=locals+landing+flight_children+
