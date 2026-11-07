@@ -1363,7 +1363,9 @@ public:
     bool revoke_player_rescue_consent(PlayerId owner,std::uint64_t consent_id);
     bool complete_player_rescue(PlayerId owner,EntityId receiving_ship,
         std::uint64_t flight_id,std::uint64_t transfer_receipt);
-    // Different local frames never share ordinary spatial interactions.
+    // v119 and older: physical interaction is restricted by the original
+    // local frame. v120+: that frame is only a view; actual gameplay actions
+    // must still test the primary galactic 3D distance and native authority.
     bool same_local_frame(EntityId a,EntityId b) const;
     // PLAY-13C.4: finite existing mineral stock may be redistributed into
     // native local deposits; this never creates material from nothing.
