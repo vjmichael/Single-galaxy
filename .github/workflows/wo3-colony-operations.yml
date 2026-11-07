@@ -5,6 +5,7 @@ on:
       - 'include/galaxy/WO3ColonyOperations.hpp'
       - 'tests/WO3ColonyOperationsTests.cpp'
       - 'tests/WO3PlanetaryHousingTests.cpp'
+      - 'tests/WO3PlanetaryUtilityTests.cpp'
       - 'src/Simulation.cpp'
       - 'include/galaxy/Simulation.hpp'
       - 'include/galaxy/Persistence.hpp'
