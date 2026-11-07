@@ -140,10 +140,51 @@ function validateCatalog(catalog) {
   return {ok:errors.length===0,errors,stats:{items:items.size,recipes:recipeIds.size,services:serviceIds.size,legacy_mappings:legacyIds.size}};
 }
 
-module.exports={validateCatalog};
+
+function validateLegacyUnits(catalog, audit) {
+  const errors=[];
+  if(!audit || audit.schema_version!==1 ||
+     audit.status!=="original_world_id_audit_read_only" ||
+     !Array.isArray(audit.rows))return {ok:false,errors:["legacy audit missing or wrong version"]};
+  const seen=new Set(),codes=new Set((catalog.legacy_bridge||[]).map(x=>x.legacy_code));
+  for(const row of audit.rows) {
+    if(!row || typeof row.legacy_code!=="string" || !row.legacy_code ||
+       seen.has(row.legacy_code)) {errors.push("duplicate or invalid legacy identity");continue;}
+    seen.add(row.legacy_code);
+    if(!codes.has(row.legacy_code))errors.push("original legacy identity missing bridge "+row.legacy_code);
+    if(!Number.isSafeInteger(row.storage_litres_per_unit) || row.storage_litres_per_unit<=0 ||
+       !Number.isSafeInteger(row.mass_g_per_unit) || row.mass_g_per_unit<=0)
+      errors.push("invalid original unit "+row.legacy_code);
+    if(row.migration!=="read_only_identity_no_automatic_world_conversion")
+      errors.push("unsafe original world migration "+row.legacy_code);
+    if(typeof row.original_source_field!=="string" || !row.original_source_field.length)
+      errors.push("missing original field "+row.legacy_code);
+  }
+  for(const code of codes)if(!seen.has(code))errors.push("bridge not in native unit manifest "+code);
+  if(seen.size!==28)errors.push("unexpected legacy identity count "+seen.size);
+  const unique=(x)=>audit.rows.find(r=>r.legacy_code===x);
+  for(const [id,kg,litres] of [
+    ["ore",1000000,1000],["refined",1000000,1000],
+    ["construction_module",2000000,2000],["good/aluminum",1000,1],
+    ["good/aluminum_panels",1000,1],["good/freight_nutrients",1000,1]
+  ]) {
+    const value=unique(id);
+    if(!value || value.mass_g_per_unit!==kg ||
+       value.storage_litres_per_unit!==litres)
+      errors.push("known original source unit mismatch "+id);
+  }
+  return {ok:errors.length===0,errors,stats:{native_items:seen.size}};
+}
+
+module.exports={validateCatalog,validateLegacyUnits};
 if (require.main===module) {
   const input=process.argv[2] || path.join(__dirname,"..","data","industry","industry01_candidate_catalog.json");
-  const result=validateCatalog(JSON.parse(fs.readFileSync(input,"utf8")));
+  const catalog=JSON.parse(fs.readFileSync(input,"utf8"));
+  const result=validateCatalog(catalog);
+  const legacy=JSON.parse(fs.readFileSync(path.join(__dirname,"..","data","industry","industry01_legacy_units.json"),"utf8"));
+  const original=validateLegacyUnits(catalog,legacy);
+  result.errors.push(...original.errors);
+  result.ok=result.ok&&original.ok;
   if(!result.ok){for(const e of result.errors)console.error("INDUSTRY-01: "+e);process.exitCode=1;}
   else console.log("INDUSTRY-01 candidate validated:",JSON.stringify(result.stats));
 }
