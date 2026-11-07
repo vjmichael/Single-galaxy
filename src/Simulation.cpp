@@ -10495,8 +10495,13 @@ void Simulation::process_planetary_surface_operations() {
             std::int64_t resident_children=0;
             for(const auto& [guardian,household]:site->second.households){
                 (void)guardian;
-                if(!household.return_request)
-                    resident_children+=std::int64_t(household.child_ids.size());
+                if(household.return_request)continue;
+                for(const auto child:household.child_ids) {
+                    const auto dep=physical_dependents_.find(child);
+                    if(dep!=physical_dependents_.end() &&
+                       dep->second.location==site->second.surface_location)
+                        ++resident_children;
+                }
             }
             const std::int64_t people=locals+landing+flight_children+
                 resident_children;
