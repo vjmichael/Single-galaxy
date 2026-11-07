@@ -328,6 +328,45 @@ int main() {
     CHECK(w.launch_planetary_shuttle(7,ship,key,81006,true));
     w.steps(3);
     CHECK(w.world().npc_records().at(roster[3]).location==ship);
+    // WO3-E: existing physical dependent identity is NOT an ART02
+    // custody authorization or a shuttle child berth. Audit the actual
+    // 3-seat shuttle before allowing any household writer to be added.
+    auto household_probe=Simulation::from_snapshot(w.world().canonical_state());
+    CHECK(household_probe.book_planetary_shuttle_passenger(
+        7,ship,key,roster[3],false)); // genuine returned adult, unbooked
+    const auto register_probe_child=[&](std::uint64_t cmd,std::uint64_t child){
+        Command birth{};birth.id=cmd;birth.sequence=cmd;
+        birth.execute_tick=household_probe.tick()+1;
+        birth.issuer=kServerAuthority;birth.actor=ship;birth.target=ship;
+        birth.action=Action::HostRegisterDependent;
+        birth.transport_id=child;birth.passenger_ids={roster[3]};
+        CHECK(household_probe.submit(birth));
+        household_probe.step();
+        CHECK(household_probe.physical_dependents().count(child)==1);
+    };
+    register_probe_child(83001,(std::uint64_t{1}<<62)+301);
+    const auto family_one=colony03::assess_planetary_household(
+        household_probe,7,ship,key,roster[3]);
+    CHECK(family_one.registered_dependent_ids.size()==1 &&
+          family_one.all_dependents_physically_with_guardian &&
+          family_one.requires_art02_atomic_family_transaction &&
+          family_one.required_beds==2 &&
+          family_one.required_shuttle_passenger_seats==2 &&
+          family_one.physical_shuttle_passenger_capacity==3 &&
+          !family_one.independent_adult_can_apply());
+    CHECK(!household_probe.book_planetary_shuttle_passenger(
+        7,ship,key,roster[3],true));
+    register_probe_child(83002,(std::uint64_t{1}<<62)+302);
+    register_probe_child(83003,(std::uint64_t{1}<<62)+303);
+    const auto family_overflow=colony03::assess_planetary_household(
+        household_probe,7,ship,key,roster[3]);
+    CHECK(family_overflow.required_beds==4 &&
+          family_overflow.required_shuttle_passenger_seats==4 &&
+          family_overflow.gate==
+            colony03::PlanetaryHouseholdGate::DependentBerthOverflow &&
+          !family_overflow.independent_adult_can_apply());
+    CHECK(Simulation::from_snapshot(household_probe.canonical_state()).
+          canonical_state()==household_probe.canonical_state());
     const auto final_copy=(dir/"housing_finished.sqlite").string();
     PersistentWorld::recover_copy(db,final_copy);
     PersistentWorld final_world(final_copy,Simulation(4));
