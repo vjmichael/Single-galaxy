@@ -92,30 +92,43 @@ int main() {
     // Existing original NPC identity #0 already holds the real surface job.
     // A legacy legal address is not a new arrival or an occupied modern bed.
     {
-        const auto original=w.world().canonical_state();
+        // Upgrade an independent original world through *real* v85 arrival
+        // and the repository's v86 legal-residence migration. Relabeling
+        // a v78 header without its intermediate records would be invalid.
+        auto historical_world=Simulation::from_snapshot(w.world().canonical_state());
+        CHECK(historical_world.build_planetary_shuttle(7,ship,key));
+        CHECK(historical_world.assign_planetary_shuttle_pilot(
+            7,ship,key,roster[2]));
+        CHECK(historical_world.book_planetary_shuttle_passenger(
+            7,ship,key,roster[3],true));
+        CHECK(historical_world.load_planetary_shuttle(
+            7,ship,key,ShuttleCargo::Water,10));
+        CHECK(historical_world.launch_planetary_shuttle(
+            7,ship,key,86510,false));
+        for(int i=0;i<3;++i)historical_world.step();
+        CHECK(historical_world.transfer_planetary_shuttle_visitor(
+            7,ship,key,roster[3],false)); // v85: individual descent receipt
+        historical_world.upgrade_legal_residence_snapshot_format();
+        const auto original=historical_world.canonical_state();
         const auto header_end=original.find('|');
         CHECK(header_end!=std::string::npos);
         const auto version=std::stoull(original.substr(
             std::string("galaxy-kernel-v").size(),
             header_end-std::string("galaxy-kernel-v").size()));
-        CHECK(version>=78 && version<109);
+        CHECK(version==86);
         std::istringstream input(original);
         std::ostringstream old_state;
         std::string line;
         while(std::getline(input,line)){
-            if(line.rfind("galaxy-kernel-v",0)==0)
-                line.replace(0,header_end,"galaxy-kernel-v86");
-            else if(line.rfind("npc|",0)==0){
+            if(line.rfind("npc|",0)==0){
                 const auto next=line.find('|',4);
                 CHECK(next!=std::string::npos);
                 const auto id=std::stoull(line.substr(4,next-4));
-                if(version>=86) {
-                    const auto last=line.rfind('|');
-                    CHECK(last!=std::string::npos);
-                    const auto prior=line.rfind('|',last-1);
-                    CHECK(prior!=std::string::npos);
-                    line.erase(prior);
-                }
+                const auto last=line.rfind('|');
+                CHECK(last!=std::string::npos);
+                const auto prior=line.rfind('|',last-1);
+                CHECK(prior!=std::string::npos);
+                line.erase(prior);
                 line+="|"+std::to_string(id==roster[0]?3:1)+"|"+
                     std::to_string(id==roster[0]?
                         w.world().planetary_sites().at(key).surface_location:ship);
