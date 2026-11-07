@@ -44,7 +44,7 @@ inline WorkerLease transfer_cell_worker(
     sqlite3* db=nullptr;
     if(sqlite3_open_v2(original_sqlite.c_str(),&db,
         SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX,nullptr)!=SQLITE_OK){
-        if(db)sqlite3_close(db);
+        if(db)sqlite3_close_v2(db);
         throw std::runtime_error("spatial worker original SQLite unavailable");
     }
     bool committed=false;
@@ -144,11 +144,11 @@ inline WorkerLease transfer_cell_worker(
             update.text(7,durable_transfer_id);update.execute();
             result.epoch=expected_worker_epoch+1;
         }
-        detail::sql(db,"COMMIT");committed=true;sqlite3_close(db);
+        detail::sql(db,"COMMIT");committed=true;sqlite3_close_v2(db);
         return result;
     }catch(...){
         if(!committed)sqlite3_exec(db,"ROLLBACK",nullptr,nullptr,nullptr);
-        sqlite3_close(db);throw;
+        sqlite3_close_v2(db);throw;
     }
 }
 // Admission is ONLY an opt-in worker CPU authorization, NOT permission to
@@ -166,7 +166,7 @@ inline bool worker_may_simulate_cell(
     sqlite3* db=nullptr;
     if(sqlite3_open_v2(original_sqlite.c_str(),&db,
         SQLITE_OPEN_READONLY|SQLITE_OPEN_FULLMUTEX,nullptr)!=SQLITE_OK){
-        if(db)sqlite3_close(db);return false;
+        if(db)sqlite3_close_v2(db);return false;
     }
     try{
         const auto scoped=scope(cell);
@@ -182,7 +182,7 @@ inline bool worker_may_simulate_cell(
           q.integer(4)==static_cast<sqlite3_int64>(expected_region_generation) &&
           q.integer(5)==static_cast<sqlite3_int64>(expected_checkpoint_revision) &&
           q.integer(6)==0;
-        sqlite3_close(db);return valid;
-    }catch(const std::exception&){sqlite3_close(db);return false;}
+        sqlite3_close_v2(db);return valid;
+    }catch(const std::exception&){sqlite3_close_v2(db);return false;}
 }
 } // namespace galaxy::spatial
