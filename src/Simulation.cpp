@@ -7068,6 +7068,88 @@ bool Simulation::pause_planetary_production_build(PlayerId owner,EntityId ship,
     return true;
 }
 
+// WO3-D/v114: original project progress and finite deposited material survive
+// an owner-approved handover. Replacement is an existing certified named
+// delegate or a genuinely disembarked and authorized original shuttle worker.
+bool Simulation::handover_planetary_production_build(PlayerId owner,
+    EntityId ship,const PlanetarySiteKey& key,bool farm,
+    std::uint64_t previous,std::uint64_t replacement,
+    std::uint64_t request_id) {
+    auto site=planetary_sites_.find(key);
+    const auto index=farm?std::size_t{0}:std::size_t{1};
+    if(!owner || owner==kServerAuthority || !previous || !replacement ||
+       previous==replacement || !request_id ||
+       request_id==std::numeric_limits<std::uint64_t>::max() ||
+       site==planetary_sites_.end() || !entities_.count(ship) ||
+       entities_.at(ship).owner_id!=owner ||
+       site->second.owner!=owner || site->second.source_ship!=ship ||
+       site->second.spaceport_phase!=3 ||
+       site->second.production_projects[index].phase!=1 ||
+       site->second.production_projects[index].supervisor!=previous ||
+       site->second.production_handovers[index].size()>=16 ||
+       site->second.workforce_policy ||
+       submitted_ids_.count(request_id) ||
+       shuttle_flight_request_ids_.count(request_id) ||
+       pending_celestial_transits_.count(request_id) ||
+       completed_celestial_transits_.count(request_id) ||
+       local_delivery_orders_.count(request_id) ||
+       voyages_.count(request_id))return false;
+    auto& st=site->second;
+    auto& changes=st.production_handovers[index];
+    if(!changes.empty() && changes.back().tick>=tick_)return false;
+    const auto person=npcs_.find(replacement);
+    if(person==npcs_.end() || person->second.home_ship!=ship ||
+       person->second.location!=st.surface_location ||
+       !workshop_trade_certified(replacement,WorkshopTrade::Shape))
+        return false;
+    const bool delegated=
+        std::find(st.delegated_npcs.begin(),st.delegated_npcs.end(),
+                  replacement)!=st.delegated_npcs.end() &&
+        person->second.assigned_site==st.surface_location &&
+        person->second.role==NpcRole::PlanetarySurface &&
+        npc_available_for_duty(replacement);
+    const auto shuttle=planetary_shuttles_.find(key);
+    const auto health=npc_health_status(replacement);
+    const bool visiting=shuttle!=planetary_shuttles_.end() &&
+        person->second.assigned_site==ship &&
+        person->second.role==NpcRole::Ship &&
+        !person->second.transport_id &&
+        std::binary_search(shuttle->second.duty_ids.begin(),
+                           shuttle->second.duty_ids.end(),replacement) &&
+        std::binary_search(shuttle->second.disembarked_ids.begin(),
+                           shuttle->second.disembarked_ids.end(),replacement) &&
+        shuttle->second.visitor_arrival_receipts.count(replacement) &&
+        npc_transport_arrival(
+            shuttle->second.visitor_arrival_receipts.at(replacement),
+            replacement).has_value() &&
+        (health==NpcHealthStatus::Healthy ||
+         health==NpcHealthStatus::Treated ||
+         health==NpcHealthStatus::Recovered);
+    if(!delegated && !visiting)return false;
+    for(const auto& [other_key,other]:planetary_sites_) {
+        (void)other_key;
+        if(request_id==other.housing_order_id ||
+           request_id==other.utility_order_id)return false;
+        for(const auto& project:other.production_projects)
+            if(project.order_id==request_id)return false;
+        for(const auto& handover:other.utility_handovers)
+            if(handover.request_id==request_id)return false;
+        for(const auto& list:other.production_handovers)
+            for(const auto& handover:list)
+                if(handover.request_id==request_id)return false;
+        for(const auto founding:other.founder_consent_requests)
+            if(founding==request_id)return false;
+        for(const auto& [id,proof]:other.visitor_residency) {
+            (void)id;
+            if(proof[1]==request_id || proof[2]==request_id)return false;
+        }
+    }
+    changes.push_back({request_id,tick_,previous,replacement});
+    st.production_projects[index].supervisor=replacement;
+    snapshot_version_=std::max(snapshot_version_,114);
+    return true;
+}
+
 bool Simulation::settle_planetary_founder(PlayerId owner,EntityId ship,
     const PlanetarySiteKey& key,std::uint64_t npc_id,
     std::uint64_t request_id,bool voluntary_consent_attested) {
