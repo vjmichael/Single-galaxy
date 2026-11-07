@@ -662,6 +662,19 @@ public:
                (!common_scope.empty() && scope!=common_scope))
                 return false;
             common_scope=scope;
+            // An active historical ferry dependent berth cannot be silently
+            // rebound to a planetary shuttle, even if the cached world
+            // happens to show the child at its original ship.
+            {
+                Statement active_table(db_,"SELECT 1 FROM sqlite_master "
+                    "WHERE type='table' AND name='sg_dependent_travel'");
+                if(active_table.row()) {
+                    Statement competing(db_,"SELECT 1 FROM sg_dependent_travel "
+                        "WHERE child_id=? AND status=1 LIMIT 1");
+                    competing.text(1,std::to_string(id));
+                    if(competing.row())return false;
+                }
+            }
             const auto physical=world.physical_dependents().find(id);
             if(physical==world.physical_dependents().end() ||
                physical->second.home_ship!=ship ||
