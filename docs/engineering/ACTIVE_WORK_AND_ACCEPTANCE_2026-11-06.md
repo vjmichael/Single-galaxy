@@ -160,3 +160,22 @@ Draft stacked [PR #89](https://github.com/vjmichael/Single-galaxy/pull/89) now i
 - Exact-head CI at `13cc017c` created WO3 workflow run `42395241102`, **queued** when inspected. Previous exact-head run `42393625531` at `517b64ac` reported failed jobs for both Windows and Ubuntu with `steps=null` and `logs_url=null`, matching the unrelated WO2 run; this supplies no diagnostic native C++ trace.
 
 **Remaining WO3-F exit gate:** obtain real Windows and Linux runner assignment, CMake compiler/linker output, all targeted CTests (including new copied-SQLite recovery and negative tamper cases), independent recovery-copy parity, and repair any actual discovered source failures. Preserve draft PR #89 and its WO2 PR #88 base. Do not confuse an unassigned GitHub Actions job with a failed C++ test; the installed Windows 3D gameplay acceptance remains deferred until actual assets exist.
+
+
+## WO3-F closeout attempt — 2026-11-07 (native runner gate still OPEN)
+
+Owner asked to close WO3-F. **Do not falsely mark accepted:** the current required evidence is still unavailable.
+
+**Observed GitHub Actions evidence** at source head `493c9f7ab78b6b0db90521ec9b44c56cf692fd98`:
+- WO3 workflow run [#200](https://github.com/vjmichael/Single-galaxy/actions/runs/42395280307), retried as attempt 2, reports `failure` for **both** ubuntu-latest and windows-latest.
+- Raw attempt-2 jobs `128474670052` and `128474670177` each have `runner_id=0`, `runner_name=""`, `steps=[]`, and no actual native compiler/CTest output; redirected logs are missing (`BlobNotFound`). This is **runner-provisioning / infrastructure evidence**, not proof of a C++ test failure or test success.
+- The identical no-runner pattern was seen on the previous WO3 and unrelated WO2 work, confirming that simply treating the CI conclusion as a source diagnostic would be unsound.
+- The currently available isolated Debian toolchain has CMake, Ninja, g++ and SQLite development headers, but this private repository cannot be cloned from that environment; there is no matching local checkout to compile. No local full-project C++ result is claimed.
+
+**Repair of the acceptance harness:** committed `91ce8c5f` on PR #89:
+1. `actions/checkout@v4` now checks out `${{ github.event.pull_request.head.sha || github.sha }}`, rather than the default pull_request synthetic merge commit. A cross-platform bash step independently compares `git rev-parse HEAD` with this intended exact source SHA before configure.
+2. The existing 11 original kernel, WO2, WO3 and planetary regression targets remain in the native Windows/Linux matrix; all are registered in CMake, and the suite's CTest regex selects the expected test names.
+3. The CTest step writes a JUnit result and `actions/upload-artifact@v4` preserves that result and original CTest failure log even when a runner-executed test fails. With zero runner assignment there can still be no artifact.
+4. New exact-head workflow [#201](https://github.com/vjmichael/Single-galaxy/actions/runs/42396710663) was queued at commit `91ce8c5f` when checked.
+
+**Remaining prerequisite for closing WO3-F:** a real native Linux and Windows run must assign runners, compile/link at the exact PR head, execute required CTests including ART02 household admit/return, rollback and independent copied-SQLite recovery, and fix any reproducible failures. External Windows installed-3D gameplay remains deliberately deferred until real assets and is not part of this gate. Until OS evidence exists, **WO3-F remains open; PR #89 remains draft/stacked on WO2 #88**.
