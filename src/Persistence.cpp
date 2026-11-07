@@ -9726,6 +9726,237 @@ bool PersistentWorld::host_import_legacy_planetary_residences(
     return true;
 }
 
+// WO3-E/v118: the only legal household route between a physically built
+// planet and its original ship. The world snapshot, original ART02 people
+// and original ECON03 regional population all commit under ONE SQLite writer.
+bool PersistentWorld::commit_planetary_household_settlement(
+        const PlanetaryHouseholdSettlementPlan& p,FailPoint fail) {
+    if(p.expected_world_generation!=generation_ || !p.request_id ||
+       p.request_id%16 || p.request_id>
+           std::numeric_limits<std::uint64_t>::max()-3 ||
+       !p.coparent_move_id || !p.child_move_id ||
+       p.coparent_move_id==p.child_move_id ||
+       p.request_id==p.coparent_move_id ||
+       p.request_id==p.child_move_id ||
+       !p.owner || p.owner==Simulation::kServerAuthority ||
+       !p.ship || !p.guardian_id || !p.family_seed ||
+       p.family_scope.empty() || p.region_scope.empty() ||
+       p.origin_colony.empty() || p.destination_colony.empty() ||
+       p.origin_colony==p.destination_colony ||
+       !p.expected_region_revision || !p.expected_owner_generation ||
+       !p.guardian_consented || !p.coparent_consented)
+        return false;
+    const auto site=world_.planetary_sites().find(p.site);
+    const auto shuttle=world_.planetary_shuttles().find(p.site);
+    if(site==world_.planetary_sites().end() ||
+       shuttle==world_.planetary_shuttles().end() ||
+       site->second.owner!=p.owner || site->second.source_ship!=p.ship ||
+       shuttle->second.owner!=p.owner ||
+       shuttle->second.source_ship!=p.ship)return false;
+    const auto address=site->second.surface_location;
+    const auto& flight=shuttle->second.family;
+    std::uint64_t parent=0,child=0;
+    if(p.returning) {
+        const auto household=site->second.households.find(p.guardian_id);
+        if(household==site->second.households.end() ||
+           household->second.return_request ||
+           household->second.child_ids.size()!=1 ||
+           flight.stage!=7 ||
+           flight.guardian_id!=p.guardian_id ||
+           flight.co_parent_id!=household->second.co_parent_id ||
+           flight.child_ids!=household->second.child_ids)return false;
+        parent=household->second.co_parent_id;
+        child=household->second.child_ids.front();
+    }else {
+        if(flight.stage!=2 || flight.guardian_id!=p.guardian_id ||
+           !flight.co_parent_id || flight.child_ids.size()!=1)return false;
+        parent=flight.co_parent_id;child=flight.child_ids.front();
+    }
+    const auto origin=p.returning?address:p.ship;
+    const auto destination=p.returning?p.ship:address;
+    if(!store_->valid_planetary_family_births(
+        world_,p.ship,p.guardian_id,parent,{child},origin))
+        return false;
+    for(const auto person_id:{p.guardian_id,parent}) {
+        const auto n=world_.npc_records().find(person_id);
+        if(n==world_.npc_records().end() ||
+           n->second.home_ship!=p.ship ||
+           n->second.legal_residence()!=transport::Endpoint{
+               p.returning?transport::LocationKind::PlanetarySite:
+                           transport::LocationKind::ColonyShip,origin})
+            return false;
+    }
+    const auto dependent=world_.physical_dependents().find(child);
+    if(dependent==world_.physical_dependents().end() ||
+       dependent->second.home_ship!=p.ship ||
+       dependent->second.location!=(p.returning?p.ship:address))
+        return false;
+    // All three actual people must have the same original legal address.
+    const auto file=store_->sqlite_path();
+    NpcAppearanceStore family(file,p.family_scope,p.family_seed,
+        [&](std::uint64_t id){return world_.npc_records().count(id)!=0;});
+    const auto source=family.family_census(origin);
+    std::uint64_t dest_count=0,dest_revision=0;
+    try {
+        const auto target=family.family_census(destination);
+        dest_count=target.current_population;dest_revision=target.revision;
+    }catch(const std::out_of_range&) {
+        if(p.returning)return false; // original ship must already exist
+        // The first real planetary family may register a genuine ZERO census
+        // only WITH its first atomic inbound move, never ahead of the world.
+    }
+    if(source.revision!=p.expected_origin_family_revision ||
+       dest_revision!=p.expected_destination_family_revision ||
+       source.current_population<3 ||
+       family.current_residence(p.guardian_id)!=origin ||
+       family.current_residence(parent)!=origin ||
+       family.current_residence(child)!=origin)return false;
+    regional_events::CheckpointStore region(file,p.region_scope);
+    const auto projection=region.load();
+    if(!projection || projection->revision!=p.expected_region_revision)
+        return false;
+    regional_events::RegionalModeAuthority owner(region);
+    const auto custody=owner.state();
+    if(custody.owner!=regional_events::SimulationOwner::Cold ||
+       custody.phase!=regional_events::TransitionPhase::Stable ||
+       custody.generation!=p.expected_owner_generation ||
+       custody.checkpoint_revision!=projection->revision ||
+       projection->scheduler.colony(p.origin_colony).population!=
+           source.current_population ||
+       projection->scheduler.colony(p.destination_colony).population!=
+           dest_count)
+        return false;
+    auto next=world_;
+    const bool changed=p.returning?
+        next.finalize_planetary_household_return(
+            Simulation::kServerAuthority,p.owner,p.ship,p.site,
+            p.guardian_id,p.request_id):
+        next.settle_planetary_household(
+            Simulation::kServerAuthority,p.owner,p.ship,p.site,
+            p.request_id,p.guardian_consented,p.coparent_consented);
+    if(!changed)return false;
+    if(p.returning && !next.release_planetary_shuttle_family(
+            Simulation::kServerAuthority,p.owner,p.ship,p.site))
+        throw std::logic_error("committed return cannot release real shuttle");
+    if(next.total_ore()!=resource_origin_ ||
+       next.total_credits()!=credit_origin_ ||
+       next.npc_records().size()!=world_.npc_records().size() ||
+       next.physical_dependents().size()!=world_.physical_dependents().size())
+        throw std::logic_error("household settlement changed material or people");
+    if(Simulation::from_snapshot(next.canonical_state()).state_hash()!=
+       next.state_hash())
+        throw std::logic_error("household settlement cannot canonically restore");
+    const auto effect=[&](sqlite3* db,std::uint64_t new_generation) {
+        // The original world owns the only ART02 connection and transaction.
+        if(!store_->valid_planetary_family_births(
+            world_,p.ship,p.guardian_id,parent,{child},origin))
+            throw std::runtime_error("household birth or custody changed");
+        NpcAppearanceStore joined(db,p.family_scope,p.family_seed,
+            [&](std::uint64_t id){return next.npc_records().count(id)!=0;});
+        if(!p.returning && !dest_revision)
+            joined.register_settlement(destination,0);
+        const auto actual_src=joined.family_census(origin);
+        const auto actual_dst=joined.family_census(destination);
+        if(actual_src.revision!=p.expected_origin_family_revision ||
+           actual_dst.revision!=p.expected_destination_family_revision ||
+           actual_src.current_population!=source.current_population ||
+           actual_dst.current_population!=dest_count ||
+           joined.current_residence(p.guardian_id)!=origin ||
+           joined.current_residence(parent)!=origin ||
+           joined.current_residence(child)!=origin)
+            throw std::runtime_error("ART02 household CAS changed");
+        const auto authorize=[&](std::uint64_t adult,std::uint64_t from,
+                                 std::uint64_t to) {
+            if(from!=origin || to!=destination ||
+               (adult!=p.guardian_id && adult!=parent))return false;
+            const auto old=world_.npc_records().find(adult);
+            const auto now=next.npc_records().find(adult);
+            return old!=world_.npc_records().end() &&
+                now!=next.npc_records().end() &&
+                old->second.legal_residence().id==origin &&
+                now->second.legal_residence().id==destination;
+        };
+        const auto moves=joined.record_guardian_household_moves(
+            p.request_id,p.guardian_id,{{child,p.child_move_id}},
+            origin,destination,next.tick(),
+            p.expected_origin_family_revision,
+            p.expected_destination_family_revision,authorize,
+            parent,p.coparent_move_id);
+        if(moves.size()!=3)
+            throw std::runtime_error("incomplete original family census move");
+        const auto region_revision=
+            region.commit_migration_in_world_transaction(db,
+                p.expected_region_revision,p.expected_owner_generation,
+                next.tick(),p.origin_colony,p.destination_colony,
+                source.current_population,dest_count,
+                std::to_string(p.request_id),3,"wo3-planetary-household");
+        run(db,"CREATE TABLE IF NOT EXISTS sg_planet_household_migration("
+            "request_id TEXT PRIMARY KEY,world_generation INTEGER NOT NULL,"
+            "tick INTEGER NOT NULL,origin TEXT NOT NULL,destination TEXT NOT NULL,"
+            "guardian TEXT NOT NULL,coparent TEXT NOT NULL,child TEXT NOT NULL,"
+            "returning INTEGER NOT NULL CHECK(returning IN (0,1)),"
+            "family_scope TEXT NOT NULL,region_scope TEXT NOT NULL,"
+            "region_revision INTEGER NOT NULL,owner_generation INTEGER NOT NULL,"
+            "coparent_event TEXT NOT NULL UNIQUE,child_event TEXT NOT NULL UNIQUE)");
+        Statement receipt(db,"INSERT INTO sg_planet_household_migration "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+        receipt.text(1,std::to_string(p.request_id));
+        receipt.i64(2,static_cast<std::int64_t>(new_generation));
+        receipt.i64(3,static_cast<std::int64_t>(next.tick()));
+        receipt.text(4,std::to_string(origin));
+        receipt.text(5,std::to_string(destination));
+        receipt.text(6,std::to_string(p.guardian_id));
+        receipt.text(7,std::to_string(parent));
+        receipt.text(8,std::to_string(child));
+        receipt.i64(9,p.returning?1:0);
+        receipt.text(10,p.family_scope);
+        receipt.text(11,p.region_scope);
+        receipt.i64(12,static_cast<std::int64_t>(region_revision));
+        receipt.i64(13,static_cast<std::int64_t>(p.expected_owner_generation));
+        receipt.text(14,std::to_string(p.coparent_move_id));
+        receipt.text(15,std::to_string(p.child_move_id));
+        receipt.execute();
+    };
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail,nullptr,nullptr,effect);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::book_planetary_household_return(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,std::uint64_t guardian,
+        std::uint64_t request_id,FailPoint fail) {
+    const auto current=world_.planetary_sites().find(key);
+    if(current==world_.planetary_sites().end())return false;
+    const auto registered=current->second.households.find(guardian);
+    if(registered==current->second.households.end() ||
+       !registered->second.co_parent_id ||
+       registered->second.child_ids.size()!=1 ||
+       !store_->valid_planetary_family_births(
+           world_,ship,guardian,registered->second.co_parent_id,
+           registered->second.child_ids,
+           current->second.surface_location))
+        return false;
+    auto next=world_;
+    if(!next.book_planetary_household_return(
+        Simulation::kServerAuthority,owner,ship,key,guardian,request_id))
+        return false;
+    if(next.total_ore()!=resource_origin_)return false;
+    const auto verify=[&](sqlite3*,std::uint64_t) {
+        if(!store_->valid_planetary_family_births(
+            world_,ship,guardian,registered->second.co_parent_id,
+            registered->second.child_ids,
+            current->second.surface_location))
+            throw std::runtime_error("ART02 family changed at return booking");
+    };
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail,nullptr,nullptr,verify);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
 bool PersistentWorld::settle_planetary_founder(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,std::uint64_t npc_id,std::uint64_t request_id,
         bool voluntary_consent_attested,FailPoint fail) {
