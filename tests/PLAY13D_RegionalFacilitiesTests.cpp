@@ -1,4 +1,5 @@
 #include "galaxy/Persistence.hpp"
+#include "galaxy/WO5FreightEvidence.hpp"
 #include "galaxy/FleetSelection.hpp"
 #include "galaxy/OrbitalShuttleCommands.hpp"
 #include "galaxy/ShipInteractionExecutors.hpp"
@@ -964,6 +965,16 @@ static void scenario(const fs::path& db, bool farming,
             CHECK(w.world().life_support(receiver)->nutrients_kg==to_before);
             CHECK(w.world().intercolony_freight().at(77003).stage==
                   IntercolonyFreightStage::Loaded);
+            // WO5-B: loaded is proved by original physically sealed cargo,
+            // not the administrative booking or a claim of remote arrival.
+            const auto freight_loaded=logistics05::inspect_original_freight_evidence(
+                w.world(),7,77003);
+            CHECK(freight_loaded &&
+                  freight_loaded->original_stage==IntercolonyFreightStage::Loaded &&
+                  freight_loaded->physically_carried_kg==200 &&
+                  !freight_loaded->actual_arrival_proved);
+            CHECK(!logistics05::inspect_original_freight_evidence(
+                w.world(),8,77003));
             CHECK(!w.deliver_intercolony_freight(7,77003)); // wrong frame
             const auto aboard=w.world().canonical_state();
             // This sealed-cargo snapshot predates navigation posting.
@@ -1110,6 +1121,16 @@ static void scenario(const fs::path& db, bool farming,
             CHECK(w.world().intercolony_freight().at(77003).arrival_receipt==99021);
             CHECK(w.world().intercolony_freight().at(77003).stage==
                   IntercolonyFreightStage::Delivered);
+            // WO5-B: destination was credited only after original
+            // celestial receipt 99021 and the sealed cargo left the carrier.
+            const auto freight_delivered=
+                logistics05::inspect_original_freight_evidence(w.world(),7,77003);
+            CHECK(freight_delivered &&
+                  freight_delivered->original_stage==
+                      IntercolonyFreightStage::Delivered &&
+                  freight_delivered->actual_arrival_proved &&
+                  freight_delivered->original_arrival_receipt==99021 &&
+                  freight_delivered->physically_carried_kg==0);
             CHECK(w.world().total_ore()==origin);
             // Single-contract path: player assigns a REAL returning carrier
             // to an unfinished NPC surface pickup. Native ticks load the
