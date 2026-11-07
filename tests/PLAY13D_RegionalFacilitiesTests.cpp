@@ -1,5 +1,7 @@
 #include "galaxy/Persistence.hpp"
 #include "galaxy/WO5DelegatedLogistics.hpp"
+#include "galaxy/WO5RegionalRecovery.hpp"
+#include "galaxy/WO5RegionalFreightFence.hpp"
 #include "galaxy/WO5FreightEvidence.hpp"
 #include "galaxy/FleetSelection.hpp"
 #include "galaxy/OrbitalShuttleCommands.hpp"
@@ -1171,6 +1173,50 @@ static void scenario(const fs::path& db, bool farming,
                   !awaiting->actual_arrival_proved &&
                   awaiting->physically_carried_kg==0);
             if(delegated){
+                // WO5-E: register a real regional scheduler in this very
+                // SQLite database, not an unrelated mock regional store.
+                // The original posted intercolony shipment is still
+                // physically unresolved: cold/detailed promotion MUST fail.
+                regional_events::CheckpointStore cp(db.string(),"wo5-native-freight");
+                regional_events::Scheduler cold;
+                cold_colony::State cold_home{};
+                cold.add_colony("freight-home",cold_home);
+                CHECK(cp.save(cold,0)==1);
+                regional_events::RegionalModeAuthority authority(cp);
+                const auto state=authority.enroll();
+                CHECK(state.owner==regional_events::SimulationOwner::Cold &&
+                      state.phase==regional_events::TransitionPhase::Stable);
+                const auto audit=logistics05::observe_native_regional_recovery(
+                    db.string(),w,cp,authority,7,state.generation,
+                    state.checkpoint_revision);
+                CHECK(audit &&
+                      audit->awaiting>=1 &&
+                      audit->has_unresolved_original_freight &&
+                      !audit->may_consider_detailed_only_work &&
+                      audit->original_world_generation==w.generation());
+                bool unsafe_handoff=false;
+                try{
+                    (void)authority.prepare("wo5-unsafe-inflight",
+                        regional_events::SimulationOwner::Detailed,
+                        state.generation,state.checkpoint_revision,
+                        state.boundary_tick);
+                }catch(const std::exception&){unsafe_handoff=true;}
+                CHECK(unsafe_handoff &&
+                      authority.state().phase==
+                          regional_events::TransitionPhase::Stable);
+                // Even a perfectly matching forged counter in an unrelated
+                // SQLite file cannot borrow this world's physical cargo.
+                const auto foreign_db=db.string()+".wo5_other.sqlite";
+                regional_events::CheckpointStore unrelated(foreign_db,
+                    "wo5-native-freight");
+                CHECK(unrelated.save(cold,0)==1);
+                regional_events::RegionalModeAuthority foreign(unrelated);
+                const auto fake=foreign.enroll();
+                CHECK(!logistics05::observe_native_regional_recovery(
+                    db.string(),w,unrelated,foreign,7,fake.generation,
+                    fake.checkpoint_revision));
+            }
+            if(delegated){
                 // WO5-D: one owner-authorized contract over the actual
                 // original posted work order, 2 real finite vehicles and
                 // an existing physical NPC/pilot roster. No shadow jobs.
@@ -1358,6 +1404,87 @@ static void scenario(const fs::path& db, bool farming,
                       delivered->real_delivery_confirmed);
                 CHECK(!logistics05::inspect_native_contract_status(
                     w.world(),8,77007,94007,94008));
+                // WO5-E: the exact ORIGINAL delivery, not a planning
+                // receipt or a cold simulation, releases the handoff fence.
+                // Recreate the regional handle after the fault/restart
+                // and enforce old-epoch refusal across both directions.
+                regional_events::CheckpointStore cp(
+                    db.string(),"wo5-native-freight");
+                regional_events::RegionalModeAuthority authority(cp);
+                const auto cold_state=authority.state();
+                const auto safe=logistics05::observe_native_regional_recovery(
+                    db.string(),w,cp,authority,7,cold_state.generation,
+                    cold_state.checkpoint_revision);
+                CHECK(safe && safe->awaiting==0 && safe->loaded==0 &&
+                      safe->delivered>=2 &&
+                      !safe->has_unresolved_original_freight &&
+                      !safe->may_consider_detailed_only_work);
+                const auto prior_world_hash=w.world().state_hash();
+                const auto prior_world_generation=w.generation();
+                const auto promote=authority.prepare(
+                    "wo5-native-to-detailed",
+                    regional_events::SimulationOwner::Detailed,
+                    cold_state.generation,cold_state.checkpoint_revision,
+                    cold_state.boundary_tick);
+                const auto during=logistics05::observe_native_regional_recovery(
+                    db.string(),w,cp,authority,7,promote.generation,
+                    promote.checkpoint_revision);
+                CHECK(during && during->phase==
+                      regional_events::TransitionPhase::ToDetailed &&
+                      !during->may_consider_detailed_only_work);
+                bool transient=false;
+                try{
+                    (void)authority.commit(
+                        "wo5-native-to-detailed",promote.generation,
+                        promote.checkpoint_revision,
+                        [](sqlite3*,regional_events::Scheduler&){
+                            throw std::runtime_error("injected handoff stage crash");
+                        });
+                }catch(const std::exception&){transient=true;}
+                CHECK(transient && authority.state().phase==
+                      regional_events::TransitionPhase::ToDetailed &&
+                      w.world().state_hash()==prior_world_hash &&
+                      w.generation()==prior_world_generation);
+                const auto warm=authority.commit(
+                    "wo5-native-to-detailed",promote.generation,
+                    promote.checkpoint_revision,
+                    [](sqlite3*,regional_events::Scheduler&){});
+                CHECK(warm.owner==regional_events::SimulationOwner::Detailed &&
+                      warm.phase==regional_events::TransitionPhase::Stable &&
+                      warm.generation>cold_state.generation &&
+                      w.generation()==prior_world_generation);
+                CHECK(!logistics05::observe_native_regional_recovery(
+                    db.string(),w,cp,authority,7,cold_state.generation,
+                    cold_state.checkpoint_revision));
+                const auto warm_audit=logistics05::observe_native_regional_recovery(
+                    db.string(),w,cp,authority,7,warm.generation,
+                    warm.checkpoint_revision);
+                CHECK(warm_audit && warm_audit->may_consider_detailed_only_work &&
+                      warm_audit->delivered>=2 &&
+                      !warm_audit->has_unresolved_original_freight);
+                const auto demote=authority.prepare(
+                    "wo5-native-to-cold",
+                    regional_events::SimulationOwner::Cold,
+                    warm.generation,warm.checkpoint_revision,warm.boundary_tick);
+                const auto cold_again=authority.commit(
+                    "wo5-native-to-cold",demote.generation,
+                    demote.checkpoint_revision,
+                    [](sqlite3*,regional_events::Scheduler&){});
+                const auto audited=logistics05::observe_native_regional_recovery(
+                    db.string(),w,cp,authority,7,cold_again.generation,
+                    cold_again.checkpoint_revision);
+                CHECK(audited && !audited->has_unresolved_original_freight &&
+                      !audited->may_consider_detailed_only_work &&
+                      audited->delivered>=2 &&
+                      w.world().state_hash()==prior_world_hash &&
+                      w.generation()==prior_world_generation);
+                bool replay_rejected=false;
+                try{
+                    (void)authority.commit("wo5-native-to-cold",
+                        demote.generation,demote.checkpoint_revision,
+                        [](sqlite3*,regional_events::Scheduler&){});
+                }catch(const std::exception&){replay_rejected=true;}
+                CHECK(replay_rejected);
             }else CHECK(w.deliver_intercolony_freight(7,77007));
             CHECK(w.world().intercolony_freight().at(77007).arrival_receipt==99023);
             CHECK(w.world().life_support(receiver)->nutrients_kg==to_before+300);
