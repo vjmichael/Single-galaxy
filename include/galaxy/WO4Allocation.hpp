@@ -63,6 +63,37 @@ inline std::optional<AllocationPlan> plan_local_vitals(
            policy.reserves.kg_per_person_per_window ||
        !colony03::original_owner(world,observed.owner,observed.source_ship))
         return std::nullopt;
+    // The snapshot is caller-supplied data. Merely copying the current
+    // state hash onto a forged compartment/need is NOT physical proof.
+    // Reconstruct all inputs from the original world before even offering
+    // a proposal; the commit route independently does the same again.
+    const auto authoritative=observe_owner_world(
+        world,observed.owner,observed.source_ship,observed.policy);
+    if(!authoritative ||
+       authoritative->compartments.size()!=observed.compartments.size())
+        return std::nullopt;
+    for(std::size_t i=0;i<observed.compartments.size();++i){
+        const auto& got=observed.compartments[i];
+        const auto& real=authoritative->compartments[i];
+        if(got.kind!=real.kind || got.owner!=real.owner ||
+           got.source_ship!=real.source_ship ||
+           got.physical_location!=real.physical_location ||
+           !(got.planetary_key==real.planetary_key) ||
+           got.current_consumers!=real.current_consumers)
+            return std::nullopt;
+        for(std::size_t v=0;v<3;++v) {
+            const auto& a=got.needs[v];
+            const auto& b=real.needs[v];
+            if(a.vital!=b.vital || a.pressure!=b.pressure ||
+               a.physically_present_kg!=b.physically_present_kg ||
+               a.one_window_kg!=b.one_window_kg ||
+               a.reserve_target_kg!=b.reserve_target_kg ||
+               a.reserve_deficit_kg!=b.reserve_deficit_kg ||
+               a.buffer_above_target_kg!=b.buffer_above_target_kg ||
+               a.complete_windows_covered!=b.complete_windows_covered)
+                return std::nullopt;
+        }
+    }
     AllocationPlan plan{};
     plan.owner=observed.owner;plan.source_ship=observed.source_ship;
     plan.observed_tick=observed.observed_tick;
