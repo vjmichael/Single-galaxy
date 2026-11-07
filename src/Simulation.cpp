@@ -9859,7 +9859,10 @@ bool Simulation::equip_planetary_site(PlayerId owner,EntityId ship,
     const auto source=farm?std::optional<planetary::PlanetaryRegionKey>{}:
         planetary_oasis_source_region(owner,ship,body);
     if(!site || !owner || it==planetary_sites_.end() ||
-       it->second.production_projects[farm?0:1].phase!=0 ||
+       // Once physical v113 production begins, do not bypass it with an
+       // instant orbit-side install of the other building.
+       it->second.production_projects[0].phase!=0 ||
+       it->second.production_projects[1].phase!=0 ||
        it->second.owner!=owner || it->second.spaceport_phase!=3 || it->second.source_ship!=ship ||
        frame==ship_frames_.end() || frame->second.anchor_body!=body ||
        colony==colony_ships_.end() || colony->second.modules<2 ||
