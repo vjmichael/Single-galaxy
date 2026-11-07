@@ -573,6 +573,13 @@ struct PlanetarySiteFacility {
     std::map<std::uint64_t,std::array<std::uint64_t,3>> visitor_residency{};
 };
 using PlanetarySiteKey = std::tuple<std::uint64_t,std::uint16_t,std::uint16_t,std::uint32_t>;
+// WO3-E: an imported *historical legal address*, never a new household,
+// physical shuttle arrival, consent receipt or usable housing allocation.
+struct LegacyPlanetaryResidenceImport {
+    std::uint64_t source_version=0,source_hash=0;
+    std::uint64_t host_request_id=0,recorded_tick=0;
+    std::map<std::uint64_t,EntityId> legal_addresses; // original person -> surface location
+};
 // PLAY-13D: cargo identity is independent of player/NPC transport roles.
 // Nutrients are a finite, potentially planet-specific resource, not food.
 enum class ShuttleCargo : std::uint8_t { Water=0, Food=1, Nutrients=2, Oxygen=3 };
@@ -1415,6 +1422,14 @@ public:
     // Admission of an already physically deployed named founder with
     // trusted owner + voluntary-consent attestation and unique request ID.
     // Does not invent NPCs or transfer visitors without arrival evidence.
+    // Trusted migration for an ALREADY recorded v86-v108 planetary legal
+    // residence. It does not move people, create housing, or grant new rights.
+    bool host_import_legacy_planetary_residences(PlayerId host_principal,
+        std::uint64_t request_id);
+    const std::optional<LegacyPlanetaryResidenceImport>&
+        legacy_planetary_residence_import() const noexcept {
+        return legacy_planetary_residence_import_;
+    }
     bool settle_planetary_founder(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,std::uint64_t npc_id,
         std::uint64_t request_id,bool voluntary_consent_attested);
@@ -1741,6 +1756,7 @@ private:
     std::map<EntityId,OutpostStorage> storages_;
     std::map<EntityId, AsteroidGeology> geology_;
     std::vector<ActivityEvent> activity_events_;
+    std::optional<LegacyPlanetaryResidenceImport> legacy_planetary_residence_import_{};
     int snapshot_version_ = 1; // v30 adds durable route cells; v1-v29 remain readable
     std::map<std::uint64_t, std::vector<Command>> commands_;
     std::set<std::uint64_t> submitted_ids_;
