@@ -583,6 +583,16 @@ struct LegacyPlanetaryResidenceImport {
 // PLAY-13D: cargo identity is independent of player/NPC transport roles.
 // Nutrients are a finite, potentially planet-specific resource, not food.
 enum class ShuttleCargo : std::uint8_t { Water=0, Food=1, Nutrients=2, Oxygen=3 };
+// WO3-E/v116: one physically booked ART02 dependent journey. Stage 1
+// is orbital booking, 2 is landed with the guardian, 3 is ascending,
+// 4 is completed back aboard the original colony ship. No legal residence
+// change or child immigration is inferred merely from visiting.
+struct PlanetaryFamilyShuttleJourney {
+    std::uint64_t guardian_id=0,co_parent_id=0,booking_request=0;
+    std::uint64_t outbound_receipt=0,return_receipt=0;
+    std::uint8_t stage=0;
+    std::vector<std::uint64_t> child_ids;
+};
 // 4C.2: docked-orbit shuttle, fabricated from real ship modules.
 // The captain is assigned but stays aboard the parent ship until 4C.3.
 struct PlanetaryShuttleState {
@@ -618,6 +628,7 @@ struct PlanetaryShuttleState {
     // WO3-C/v109: real tanked oxygen in the same original finite
     // 1-tonne internal shuttle cargo hold (not a separate supply service).
     std::int64_t oxygen_kg=0;
+    PlanetaryFamilyShuttleJourney family{}; // one durable, finite physical trip
 };
 // PLAY-13D.4F: finite local work board at the player's existing colony ship.
 // Multiple jobs may be posted, with only one claimed site-to-orbit delivery
@@ -1452,6 +1463,12 @@ public:
     bool assign_planetary_shuttle_pilot(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,std::uint64_t npc);
     // Book/release actual named NPCs against the shuttle transport manifest.
     // Only orbital berth modifications; voyage departures move all occupants.
+    // Only a trusted PersistentWorld family/ART02 SQLite gate may call
+    // this after verifying immutable birth parentage and complete custody.
+    bool book_planetary_shuttle_family(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t guardian,
+        std::uint64_t co_parent,const std::vector<std::uint64_t>& children,
+        std::uint64_t request_id);
     bool book_planetary_shuttle_passenger(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,std::uint64_t npc,bool board);
     // At surface: release a booked visitor from the shuttle, or rebook a
