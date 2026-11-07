@@ -250,6 +250,16 @@ int main() {
     for(const auto cargo:{ShuttleCargo::Water,ShuttleCargo::Food,
                          ShuttleCargo::Oxygen})
         CHECK(w.unload_planetary_shuttle(7,ship,key,cargo,20));
+    const auto adult_preflight=colony03::assess_planetary_household(
+        w.world(),7,ship,key,roster[3]);
+    CHECK(adult_preflight.independent_adult_can_apply() &&
+          adult_preflight.original_shuttle_arrival_verified &&
+          adult_preflight.registered_dependent_ids.empty() &&
+          !adult_preflight.requires_art02_atomic_family_transaction &&
+          adult_preflight.required_beds==1 &&
+          adult_preflight.available_beds==2);
+    CHECK(!colony03::assess_planetary_household(
+        w.world(),8,ship,key,roster[3]).independent_adult_can_apply());
     CHECK(!w.settle_planetary_visitor(8,ship,key,roster[3],81501,true));
     CHECK(!w.settle_planetary_visitor(7,ship,key,roster[3],81501,false));
     bool rollback_visitor=false;
@@ -268,6 +278,9 @@ int main() {
     CHECK(visitor_beds && visitor_beds->unused_housing_capacity==1 &&
           visitor_beds->original_permanent_residents==3 &&
           visitor_beds->physical_delegates==2);
+    CHECK(colony03::assess_planetary_household(
+        w.world(),7,ship,key,roster[3]).gate==
+        colony03::PlanetaryHouseholdGate::ExistingSurfaceResident);
     CHECK(!w.settle_planetary_visitor(7,ship,key,roster[3],81501,true));
     CHECK(!w.transfer_planetary_shuttle_visitor(7,ship,key,roster[3],true));
     CHECK(w.world().canonical_state().rfind("galaxy-kernel-v111|",0)==0);
