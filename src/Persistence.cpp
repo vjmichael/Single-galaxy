@@ -9055,6 +9055,33 @@ bool PersistentWorld::transfer_planetary_shuttle_visitor(PlayerId owner,EntityId
     ++generation_;
     return true;
 }
+bool PersistentWorld::book_planetary_shuttle_family(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,std::uint64_t guardian,
+        std::uint64_t co_parent,const std::vector<std::uint64_t>& children,
+        std::uint64_t request_id,FailPoint fail) {
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    if(!store_->valid_planetary_family_births(
+        world_,ship,guardian,co_parent,children))return false;
+    auto next=world_;
+    if(!next.book_planetary_shuttle_family(
+        Simulation::kServerAuthority,owner,ship,key,guardian,co_parent,
+        children,request_id))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("family booking fabricated physical matter");
+    const auto verify=[&](sqlite3*,std::uint64_t) {
+        if(!store_->valid_planetary_family_births(
+            world_,ship,guardian,co_parent,children))
+            throw std::runtime_error("ART02 birth changed during family booking");
+    };
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail,nullptr,nullptr,verify);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
 bool PersistentWorld::book_planetary_shuttle_passenger(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,std::uint64_t npc,bool board,FailPoint fail) {
     for(const auto& [id,p]:world_.pending_celestial_transits_) {
@@ -9085,16 +9112,43 @@ bool PersistentWorld::launch_planetary_shuttle(PlayerId owner,EntityId ship,
        it!=world_.planetary_shuttles().end()) {
         if(store_->has_art02_child_parent(it->second.pilot_npc))
             return false;
+        const auto& family=it->second.family;
+        if(family.stage && !store_->valid_planetary_family_births(
+            world_,ship,family.guardian_id,family.co_parent_id,
+            family.child_ids))return false;
         for(const auto adult:it->second.passenger_ids)
-            if(store_->has_art02_child_parent(adult))return false;
+            if(store_->has_art02_child_parent(adult) &&
+               (!family.stage ||
+                (adult!=family.guardian_id &&
+                 adult!=family.co_parent_id)))return false;
     }
     auto next=world_;
     if(!next.launch_planetary_shuttle(owner,ship,key,request_id,ascend))
         return false;
     if(next.total_ore()!=resource_origin_)
         throw std::logic_error("shuttle takeoff altered conserved resources");
+    // Retry the ART02 query INSIDE the original SQLite world commit lock:
+    // no new child may appear between preflight and actual takeoff.
+    const auto source=world_.planetary_shuttles().find(key);
+    const auto verify=[&](sqlite3*,std::uint64_t) {
+        if(source==world_.planetary_shuttles().end())return;
+        const auto& original=source->second;
+        if(store_->has_art02_child_parent(original.pilot_npc))
+            throw std::runtime_error("pilot acquired an unmanifested child");
+        const auto& family=original.family;
+        if(family.stage && !store_->valid_planetary_family_births(
+            world_,ship,family.guardian_id,family.co_parent_id,
+            family.child_ids))
+            throw std::runtime_error("family changed during shuttle takeoff");
+        for(const auto adult:original.passenger_ids)
+            if(store_->has_art02_child_parent(adult) &&
+               (!family.stage ||
+                (adult!=family.guardian_id &&
+                 adult!=family.co_parent_id)))
+                throw std::runtime_error("unmanifested adult parent at takeoff");
+    };
     store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
-                   {},{},{},fail);
+                   {},{},{},fail,nullptr,nullptr,verify);
     world_.swap(next);
     ++generation_;
     return true;
