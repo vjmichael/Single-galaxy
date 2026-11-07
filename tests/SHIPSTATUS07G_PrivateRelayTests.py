@@ -53,12 +53,16 @@ rt.proc.stdin=io.BytesIO()
 relay.SharedRuntime.send(rt,'SECURITY_REFRESH',principal=8)
 relay.SharedRuntime.send(rt,'SECURITY_CALL|99',principal=8)
 relay.SharedRuntime.send(rt,'SECURITY_CALL_REPLY|1001|DECLINE',principal=8)
+relay.SharedRuntime.send(rt,'SECURITY_NOTIFICATION_ACK|41',principal=8)
 assert rt.proc.stdin.getvalue()==(
     b'AUTH|8|SECURITY_REFRESH\n'
     b'AUTH|8|SECURITY_CALL|99\n'
-    b'AUTH|8|SECURITY_CALL_REPLY|1001|DECLINE\n')
+    b'AUTH|8|SECURITY_CALL_REPLY|1001|DECLINE\n'
+    b'AUTH|8|SECURITY_NOTIFICATION_ACK|41\n')
 for command,principal in [
     ('FIRE_SHIP|7',8),('SECURITY_CLAIM|3000',8),
+    ('SECURITY_AGENCY_ESTABLISH',8),
+    ('SECURITY_AGENCY_REFER|5005',8),
     ('SECURITY_PATROL|123|7',8),('SECURITY_WARN|7',8),
     ('SECURITY_REFRESH',9),('AUTH|7|SECURITY_REFRESH',8),
 ]:
