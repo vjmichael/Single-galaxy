@@ -14332,6 +14332,7 @@ void PersistentWorld::enable_native_3d_physics(FailPoint fail) {
 
 void PersistentWorld::enable_native_galactic_physics(
         const std::string& native_sqlite,FailPoint fail) {
+    if(world_.native_galactic_physics())return;
     if(native_sqlite.empty())
         throw std::invalid_argument("original galaxy SQLite path required");
     sqlite3* db=nullptr;
