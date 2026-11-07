@@ -6751,6 +6751,21 @@ bool Simulation::start_planetary_housing(PlayerId owner,EntityId ship,
     return true;
 }
 
+
+bool Simulation::set_planetary_housing_pause(PlayerId owner,EntityId ship,
+    const PlanetarySiteKey& key,bool pause) {
+    const auto it=planetary_sites_.find(key);
+    if(!owner || owner==kServerAuthority ||
+       it==planetary_sites_.end() ||
+       it->second.owner!=owner || it->second.source_ship!=ship ||
+       !entities_.count(ship) || entities_.at(ship).owner_id!=owner ||
+       it->second.housing_phase!=1 ||
+       it->second.housing_paused==pause)return false;
+    it->second.housing_paused=pause;
+    snapshot_version_=std::max(snapshot_version_,109);
+    return true; // materials and original progress stay on the surface
+}
+
 bool Simulation::post_local_delivery_order(PlayerId owner,EntityId board_ship,
        const PlanetarySiteKey& key,ShuttleCargo cargo,
        std::int64_t kilograms,std::uint64_t order_id) {
@@ -9118,13 +9133,23 @@ void Simulation::process_planetary_surface_operations() {
             // No manufacturing on acceptance: only real original world
             // ticks, locally provisioned named staff and paused competing
             // planetary workforce policy advance actual building.
-            if(site.spaceport_phase==3 && !site.workforce_policy) {
+            if(site.spaceport_phase==3 && !site.workforce_policy &&
+               !site.housing_paused) {
                 if(++site.housing_progress>=80) {
                     site.housing_progress=80;
                     site.housing_phase=2;
                     site.housing_completed_tick=tick_;
                 }
             }else ++site.housing_stalled_ticks;
+        }
+        if(site.housing_phase==2 && tick_%20==0) {
+            // The two named deployed residents already consume original
+            // supplies in the ten-tick worker-support rule above. This is
+            // an observational health-of-provisions cycle, not an invented
+            // second ration withdrawal or a self-sufficiency certificate.
+            if(site.food_kg>=2 && site.water_kg>=2 &&
+               site.oxygen_kg>=2)++site.housing_supported_cycles;
+            else ++site.housing_shortages;
         }
         if(site.spaceport_phase==3) {
             // Autonomous policies run on a bounded world-tick cadence. No
@@ -9716,7 +9741,10 @@ std::string Simulation::canonical_state() const {
                 out<<'|'<<unsigned(site.housing_modules)<<'|'<<
                     unsigned(site.housing_phase)<<'|'<<site.housing_progress<<'|'<<
                     site.housing_order_id<<'|'<<site.housing_stalled_ticks<<'|'<<
-                    site.housing_completed_tick;
+                    site.housing_completed_tick<<'|'<<
+                    unsigned(site.housing_paused)<<'|'<<
+                    site.housing_supported_cycles<<'|'<<
+                    site.housing_shortages;
             out<<'\n';
         }
     if(snapshot_version_>=80)
@@ -10723,7 +10751,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                !result.shuttle_flight_request_ids_.insert(id).second)
                 throw std::runtime_error("snapshot: invalid shuttle flight receipt");
         } else if(f[0]=="planetsite" && result.snapshot_version_>=77) {
-            require_fields(f,result.snapshot_version_>=109?39:
+            require_fields(f,result.snapshot_version_>=109?42:
                 (result.snapshot_version_>=79?33:(result.snapshot_version_>=78?26:15)));
             const auto body=u64(f[1]),lat=u64(f[2]),lon=u64(f[3]),
                        rev=u64(f[4]),owner=u64(f[5]),ship=u64(f[6]);
@@ -10797,8 +10825,14 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 if(result.snapshot_version_>=109) {
                     const auto modules=u64(f[33]),phase=u64(f[34]),
                         progress=u64(f[35]),order=u64(f[36]),
-                        stalled=u64(f[37]),completed=u64(f[38]);
+                        stalled=u64(f[37]),completed=u64(f[38]),
+                        paused=u64(f[39]),supported=u64(f[40]),
+                        shortages=u64(f[41]);
                     if(modules>2 || phase>2 || progress>80 ||
+                       paused>1 || supported>result.tick_ ||
+                       shortages>result.tick_ ||
+                       (phase!=2 && (supported || shortages)) ||
+                       (phase!=1 && paused) ||
                        stalled>result.tick_ || completed>result.tick_ ||
                        ((phase==0)!=(order==0)) ||
                        (phase==0 && (progress || completed)) ||
@@ -10814,6 +10848,9 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                     site.housing_order_id=order;
                     site.housing_stalled_ticks=stalled;
                     site.housing_completed_tick=completed;
+                    site.housing_paused=paused==1;
+                    site.housing_supported_cycles=supported;
+                    site.housing_shortages=shortages;
                 }
             } else {
                 // Existing v77 instant facilities retain old constructed
