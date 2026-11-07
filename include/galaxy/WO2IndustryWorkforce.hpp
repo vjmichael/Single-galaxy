@@ -324,10 +324,20 @@ inline std::optional<Command> approved_original_workshop_shift(
     const auto rows=plan_original_workshop(world,owner,home_ship,site);
     const auto& row=rows[finisher?1:0];
     const auto* shop=world.workshop(site);
-    if((row.gate!=StaffGate::Ready && row.gate!=StaffGate::NoFreeQualifiedPerson) ||
-       !shop || shop->shifts[finisher?1:0].command_id ||
-       (finisher && !shop->finisher_installed) ||
-       (finisher?shop->finisher_npc_id:shop->operator_npc_id))
+    const auto slot=finisher?1:0;
+    const auto prior=shop?shop->shifts[slot]:WorkshopShift{};
+    const auto assigned=shop?
+        (finisher?shop->finisher_npc_id:shop->operator_npc_id):0;
+    const bool prior_ends_before_start=prior.command_id &&
+        prior.end_tick<=start_tick && assigned==prior.worker;
+    if(!shop ||
+       (row.gate!=StaffGate::Ready &&
+        row.gate!=StaffGate::NoFreeQualifiedPerson &&
+        !(row.gate==StaffGate::AlreadyStaffed &&
+          prior_ends_before_start)) ||
+       (prior.command_id && !prior_ends_before_start) ||
+       (assigned && !prior_ends_before_start) ||
+       (finisher && !shop->finisher_installed))
         return std::nullopt;
     const auto person=world.npc_records().find(worker);
     if(person==world.npc_records().end() ||
@@ -337,7 +347,8 @@ inline std::optional<Command> approved_original_workshop_shift(
        person->second.role!=NpcRole::Habitat ||
        person->second.transport_id || person->second.mentor_id ||
        !world.npc_available_for_duty(worker) ||
-       already_on_named_duty(world,worker,world.tick()+1) ||
+       (already_on_named_duty(world,worker,world.tick()+1) &&
+        !(prior_ends_before_start && worker==prior.worker)) ||
        medical_shift_overlaps(world,worker,start_tick,end_tick))
         return std::nullopt;
     for(const auto& [id,other]:world.workshops()){
