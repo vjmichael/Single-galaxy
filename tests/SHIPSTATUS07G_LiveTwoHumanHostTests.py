@@ -85,7 +85,7 @@ def run(fixture,host,relay,bridge):
             assert code==200 and session2['security_only'] is True
             assert session2['commands']==[
                 'colonySecurityRefresh','colonySecurityCall',
-                'colonySecurityCallReply']
+                'colonySecurityCallReply','colonySecurityNotifyAck']
             assert request(port,'POST','/command',{
                 'token':bob['csrf'],'action':'colonyCyberAttack',
                 'target':alice_ship},cookie2)[0]==403
