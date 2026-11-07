@@ -12266,7 +12266,8 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                    mass==12+4*std::int64_t(farm+extractor)) &&
                  !(result.snapshot_version_>=113 &&
                    mass>=4+4*std::int64_t(farm+extractor) &&
-                   mass<=20+4*std::int64_t(farm+extractor) &&
+                   mass<=(result.snapshot_version_>=117?28:20)+
+                   4*std::int64_t(farm+extractor) &&
                    (mass-4)%4==0)) ||
                water<0 || nutrients<0 || food<0 || wastewater<0 ||
                water>1000000 || nutrients>1000000 || food>1000000 ||
@@ -12398,7 +12399,8 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                            (result.snapshot_version_>=113 &&
                             (mass<4+4*std::int64_t(farm+extractor)+
                                   (phase?4:0)+(stage?4:0) ||
-                             mass>12+4*std::int64_t(farm+extractor)+
+                             mass>(result.snapshot_version_>=117?20:12)+
+                                  4*std::int64_t(farm+extractor)+
                                   (phase?4:0)+(stage?4:0))))
                             throw std::runtime_error("snapshot: invalid surface utility");
                         site.utility_phase=std::uint8_t(stage);
