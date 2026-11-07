@@ -1,6 +1,8 @@
 #include "galaxy/Persistence.hpp"
 #include "galaxy/SeamlessCellWorker.hpp"
 #include "galaxy/Native3DFloatingProjection.hpp"
+#include "galaxy/Navigation.hpp"
+#include "galaxy/ShipInteractionPreflight.hpp"
 #include "galaxy/RegionalCheckpointStore.hpp"
 #include "galaxy/RegionalModeAuthority.hpp"
 #include <chrono>
@@ -23,6 +25,33 @@ static Command thrust(std::uint64_t id,EntityId ship,std::uint64_t tick,
 }
 int main(){
  try{
+    // Two original physical ships at identical XY are NOT co-located if
+    // Z differs; neither rendezvous nor NPC autopilot may claim arrival.
+    Simulation flight(771);
+    const auto pilot=flight.add_colony_ship(7,{0,0},100,8);
+    const auto target=flight.add_colony_ship(8,{0,0},100,8);
+    flight.provision_colony_genesis(pilot,1000,1000,1000,1000,1000);
+    flight.provision_colony_genesis(target,1000,1000,1000,1000,1000);
+    flight.enable_native_3d_physics();
+    CHECK(flight.submit(thrust(7001,pilot,1,0,0,1)));
+    flight.step();
+    CHECK(flight.find(pilot)->position_z_mm==250);
+    CHECK(ship_interaction::spatial_preflight(
+        flight,7,pilot,target,200,250)==
+          ship_interaction::Readiness::TooFar);
+    CHECK(ship_interaction::spatial_preflight(
+        flight,7,pilot,target,300,100)==
+          ship_interaction::Readiness::RelativeMotion);
+    const auto nav=assist_to_object(
+        *flight.find(pilot),*flight.find(target),0);
+    CHECK(!nav.arrived && nav.thrust_z==-1);
+    // These coordinates are legitimate far-away targets; negative-to-
+    // positive INT64 differences must never overflow in NPC steering.
+    Entity remote=*flight.find(pilot), far=*flight.find(target);
+    remote.position.x=std::numeric_limits<std::int64_t>::min();
+    far.position.x=std::numeric_limits<std::int64_t>::max();
+    CHECK(assist_to_object(remote,far,0).thrust_x==1);
+
     const auto root=fs::temp_directory_path()/
         ("sg_native3d_"+std::to_string(std::chrono::steady_clock::now().
                                        time_since_epoch().count()));
