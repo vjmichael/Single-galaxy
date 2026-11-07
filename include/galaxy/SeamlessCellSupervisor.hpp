@@ -401,13 +401,14 @@ public:
         std::vector<std::string> candidates;
         for(const auto& e:eligible)
             if(e.second==max_detail)candidates.push_back(e.first);
-        const auto winner=candidates[round_robin_%candidates.size()];
-        // Update rotation only after a committed original tick. Rollback
-        // retries select the identical worker until an explicit takeover.
+        // The original durable tick is the only rotation clock. Restarting
+        // the supervisor cannot change the selected worker for an uncommitted
+        // generation or lose a cell's turn after command-only generations.
+        const auto winner=candidates[
+            static_cast<std::size_t>(world_.world().tick()%candidates.size())];
         const auto& worker=leases_.at(winner);
         const auto token=claim_original_writer(db_,world_,worker,dispatch_id,true);
         world_.step_as_cell_worker(token,failure);
-        ++round_robin_;
         return {winner,worker.worker,dispatch_id,world_.generation(),world_.world().tick()};
     }
     std::size_t worker_count() const noexcept {return leases_.size();}
@@ -418,7 +419,6 @@ private:
     std::string db_;
     PersistentWorld& world_;
     std::size_t limit_;
-    std::uint64_t round_robin_=0;
     std::map<std::string,WorkerLease> leases_;
     std::vector<std::string> last_failed_;
     std::string process_executable_;
