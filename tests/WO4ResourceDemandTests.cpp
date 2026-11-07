@@ -217,6 +217,9 @@ int main(){
     const auto region_hash=regional.state_hash();
     const auto board=observe_regional_distribution(regional,7,Policy{4,1});
     CHECK(board && board->still_current(regional));
+    CHECK(!board->detailed_region_authority_verified &&
+          board->regional_generation==0 &&
+          board->regional_checkpoint_revision==0);
     CHECK(board->shortages.size()==3);
     CHECK(board->unbooked_carrier_requests.size()==3);
     for(std::size_t i=0;i<3;++i) {
