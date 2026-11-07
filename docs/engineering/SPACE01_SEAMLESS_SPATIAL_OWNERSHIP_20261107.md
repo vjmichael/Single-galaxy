@@ -180,3 +180,42 @@ Source changes on stacked PR #93, following the initial v119 physical movement /
 - Hardened worker subprocess inherited descriptors: Windows now uses `STARTUPINFOEXW` with an explicit allowlist containing only its private NUL stdin and bounded stdout/stderr pipe; the worker cannot inherit arbitrary original-host SQLite/IPC handles. Linux uses kernel `close_range` before `execv` (with a strictly bounded fail-closed POSIX descriptor-sweep fallback). Explicit child resource limits, Job Object/process-group termination and protocol validation remain in place.
 - Made repeat `PersistentWorld::enable_native_galactic_physics` calls idempotent after v120, avoiding an unnecessary original SQLite generation or migration side effect.
 - Exact-head CI attempt [42423776606](https://github.com/vjmichael/Single-galaxy/actions/runs/42423776606) again returned `failure` on both platforms with **empty runner names and zero executed steps**. This remains external GitHub Actions provisioning, not compiler or CTest evidence. Issue [#90](https://github.com/vjmichael/Single-galaxy/issues/90) is still open. Another fresh exact-head run is required after these source changes.
+
+## EvEmu 68 — Source and native-component gate resolution (2026-11-07)
+
+**Scope and evidence classification:** This work resolves several concrete CMake, coordinate, gameplay, and isolated Linux subprocess issues. It **does not** close any Windows or full native kernel acceptance without a runner, and it does **not** claim an installed-game visual proof without the absent 3D renderer/assets. Work committed to original-world [PR #93](https://github.com/vjmichael/Single-galaxy/pull/93).
+
+### Native component checks actually executed outside GitHub Actions
+
+| Acceptance fixture | Compiler / environment | Observed result | Scope |
+| --- | --- | --- | --- |
+| Native cell process runner and 4×20 stress fixture | Linux GCC 14.2 / C++17 | **PASS**: 80 OS subprocess reports; 5.63 ms mean; 6.40 ms p95; 7.84 ms max, 3 hung workers terminated, invalid requests rejected | Isolated runner, worker, hang fixture copied from PR, not entire kernel |
+| Native cell process runner and corrected stress fixture | Linux Clang 17 / C++17 | **PASS**: 80 native launches; 5.65 ms mean; 6.79 ms p95, repeat timeout/rejection checks | Independent compiler of isolated subprocess component |
+| Signed high-order sector math with independent 128-bit arithmetic oracle | Linux GCC 14.2 with UBSan; independently Clang 17 UBSan | **PASS**: 200,004 varied axis normalization/boundary checks per compiler | Standalone original coordinate math header, not full world |
+| Original kernel CMake/CTest regression suite | GitHub Actions Windows 2022 / Ubuntu 24.04 | **BLOCKED**: last inspected jobs had empty runner identities and zero executed steps | No valid CMake/compiler/CTest evidence; [issue #90](https://github.com/vjmichael/Single-galaxy/issues/90) |
+| Installed Windows interactive 3D game | PR source inventory | **NOT TESTABLE**: no original installed renderer or asset-backed 3D game artifact in this branch | Retain explicit deferred gate until actual game assets and installer |
+
+The Linux native process proof was compiled directly from current source in an isolated temporary environment. Do not present this as whole-kernel acceptance, Windows security evidence, or 80 full world simulation generations. Source tests are also registered in native CTest:
+- `tests/NativeCellProcessStressTests.cpp`, `galaxy_native_cell_process_stress`, Windows/Linux
+- `tests/NativeHighOrderMathPropertyTests.cpp`, `galaxy_high_order_math_property`, GCC/Clang (not MSVC `__int128`)
+
+### Corrected original-game and build defects
+
+- Fixed two C++-style `//` lines inside `CMakeLists.txt` which were not valid CMake comments. CMake now has `#` for that WO3 section. This was a real source-level configuration defect independent of the unavailable runners.
+- Removed post-insertion system-ID mutation for newly created entities. `add_entity` now selects a validated intended star/system before insertion, resolves its galactic pose at that star, and increments the entity sequence only after successful insertion. Explicit origin used by secondary-star gates, spawned stations/asteroids, newly docked ships, built outposts and manufactured hulls. Docked genesis ships inherit the physical station point rather than merely its screen coordinate.
+- Extended v120+ physical interactions across artificial administrative `system_id` borders for physically nearby targets: mining, survey, docking, transit completion, gate activation, approved cargo-berth range, permitted combat proximity, training drones and salvage. The original target, owner, resource and 3D range checks remain; older-v119 behavior retains legacy local-system gating.
+- `spatial::touching` recognizes adjacent actual galactic sectors/cells despite different catalogue labels, but continues rejecting distant locations by exact sector/cell geometry.
+- Extended v121 native survey and geological drone logic across nearby original-system administrative boundaries: sensor signatures, target lock, drone flight/sampling, delayed reports, recovered report provenance, carrier comms, and snapshot validation. A target discovery records the asteroid's actual star system rather than the launcher label. Legacy <=v120 launch-system rules remain.
+- Strengthened isolated POSIX process runner for an `std::async` multithreaded host: descriptor-limit lookup occurs before `fork`, not in the forked child. Child closes inherited SQLite/IPC descriptors before `execv`, and is still subject to process-group termination.
+
+### Expanded native exact-head evidence plan (not yet complete)
+
+The [SPACE high-order CI workflow](https://github.com/vjmichael/Single-galaxy/blob/space/seamless-spatial-ownership-20261107/.github/workflows/space-native-galactic-supervisor.yml) now builds and runs the new native-process and galactic math fixtures together with:
+- `galaxy_wo3_colony_operations`, `galaxy_wo3_planetary_housing`, `galaxy_wo3_planetary_utility`
+- `galaxy_wo4_resource_demand`, `galaxy_wo4_material_allocation`
+- `galaxy_wo5_physical_logistics`, `galaxy_work01c_native_transport_executors`
+- `galaxy_flight04b_real_freight`, native v119 flight, probe lifecycle, v121 cross-star and two-cell supervisor recovery
+
+The new regression `cross_system_physical_contact()` covers true foreign-system proximity in mining, docking, fold gates, cell adjacency, delayed real-3D probe reports, and native snapshot round-trips. Source test exists, but **has not executed in full kernel**. No runner-based WO3-F/WO4-F/WO5-F gate may be marked closed until those targets genuinely execute and any failures are repaired. The GitHub runner blocker has independent evidence recorded in [issue #90](https://github.com/vjmichael/Single-galaxy/issues/90), comment 6714432525.
+
+**Remaining blockers**: Obtain actual Actions runner allocation (or access to a complete real kernel checkout for CMake/CTest), correct any native failures; verify Windows native OS process and game build; conduct sustained game simulation/worker resource tests and full freight/colony regressions; test the asset-backed installed interactive 3D game once renderer/assets/installers exist. Native process steady-state CPU and resident memory measurements beyond the bounded isolated launch runs are still open.
