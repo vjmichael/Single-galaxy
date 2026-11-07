@@ -367,7 +367,19 @@ inline std::optional<PlanetarySiteAudit> audit_planetary_surface(
             if(dep!=world.physical_dependents().end() &&
                dep->second.location==s.surface_location) {
                 ++a.present_registered_children;
-                ++next_tick_people;
+                // A legally admitted child can still be physically aboard
+                // the landed original family shuttle. That exact child was
+                // already included in the three-seat flight manifest above:
+                // count the real person once, not once as passenger AND once
+                // again as a permanent household dependent.
+                const bool in_landed_family=
+                    shuttle!=world.planetary_shuttles().end() &&
+                    shuttle->second.flight_phase==2 &&
+                    shuttle->second.family.stage==2 &&
+                    std::find(shuttle->second.family.child_ids.begin(),
+                              shuttle->second.family.child_ids.end(),
+                              child)!=shuttle->second.family.child_ids.end();
+                if(!in_landed_family)++next_tick_people;
             }
         }
     }
