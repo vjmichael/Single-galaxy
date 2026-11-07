@@ -257,6 +257,14 @@ struct PlanetarySiteAudit {
     std::array<std::uint64_t,2> production_order_ids{{0,0}};
     std::array<std::uint64_t,2> production_handover_count{{0,0}};
     std::array<std::uint64_t,2> production_last_handover_id{{0,0}};
+    // v117 two more physically built services: annex (+4 real beds),
+    // medical-support room (infrastructure only; not free healing).
+    std::array<std::uint8_t,2> service_phases{{0,0}};
+    std::array<std::uint64_t,2> service_progress{{0,0}};
+    std::array<std::uint64_t,2> service_order_ids{{0,0}};
+    std::array<std::uint64_t,2> service_powered_cycles{{0,0}};
+    std::array<std::uint64_t,2> service_handover_count{{0,0}};
+    std::int64_t installed_beds=0;
     std::int64_t stored_electricity=0,brine_kg=0;
     std::uint64_t utility_powered_cycles=0,hvac_cycles=0,utility_outages=0;
     std::int64_t recycled_water_kg=0,recycled_oxygen_kg=0;
@@ -320,6 +328,15 @@ inline std::optional<PlanetarySiteAudit> audit_planetary_surface(
             a.production_last_handover_id[i]=
                 s.production_handovers[i].back().request_id;
     }
+    for(std::size_t i=0;i<s.service_projects.size();++i) {
+        a.service_phases[i]=s.service_projects[i].phase;
+        a.service_progress[i]=s.service_projects[i].progress;
+        a.service_order_ids[i]=s.service_projects[i].order_id;
+        a.service_powered_cycles[i]=s.service_projects[i].powered_cycles;
+        a.service_handover_count[i]=s.service_handovers[i].size();
+    }
+    a.installed_beds=s.housing_phase==2?
+        4+(s.service_projects[0].phase==2?4:0):0;
     a.stored_electricity=s.stored_electricity;
     a.brine_kg=s.brine_kg;
     a.utility_powered_cycles=s.utility_powered_cycles;
@@ -387,7 +404,7 @@ inline std::optional<PlanetarySiteAudit> audit_planetary_surface(
         static_cast<std::int64_t>(a.physical_delegates),
         permanent_other_residents)+active_admitted_visitors;
     a.unused_housing_capacity=a.permanent_housing_installed?
-        std::max<std::int64_t>(0,4-occupied_beds):0;
+        std::max<std::int64_t>(0,a.installed_beds-occupied_beds):0;
     return a;
 }
 
