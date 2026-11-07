@@ -4,7 +4,7 @@
 // never debit inventory or issue NPC work. The original Simulation ticks
 // remain the sole native consumer/producer; dynamic supply and recovery
 // can change outcomes before each due tick.
-#include "galaxy/WO4ResourceDemand.hpp"
+#include "galaxy/WO4Allocation.hpp"
 #include "galaxy/Industry01Catalog.hpp"
 #include "galaxy/MacroNeeds.hpp"
 #include <algorithm>
