@@ -127,6 +127,52 @@ static void galaxy_and_probes(const fs::path& root){
     CHECK(vertical.events().back().result==Outcome::Applied);
     CHECK(vertical.pending_probe_report_count()==0);
 }
+static void anchored_nonships_and_swap(){
+    // One original world has two vastly separated, real star systems.
+    // Body-local resources must take their own celestial anchor position;
+    // a system-two outpost must not inherit system-one's star coordinates.
+    Simulation original(4403);
+    original.add_system(2);
+    const auto ship=original.add_colony_ship(7,{0,0},100,8);
+    original.provision_colony_genesis(ship,1000,1000,1000,1000,1000);
+    original.add_asteroid({1000,0},50);
+    original.enable_native_3d_physics();
+    const galactic::Point star1{{99,777},{0,444},{6,321}};
+    const galactic::Point star2{{-1000,700},{2000,800},{900,1000}};
+    original.enable_native_galactic_physics({{1,star1},{2,star2}});
+    const auto far_station=original.add_station_in_system(2,{123,456});
+    const auto far_rock=original.add_asteroid_in_system(2,{-500,1000},22);
+    const auto expected_station=galactic::advance(star2,{123,456,0});
+    const auto expected_rock=galactic::advance(star2,{-500,1000,0});
+    CHECK(expected_station && expected_rock);
+    CHECK(original.find(far_station)->physical_galactic==*expected_station);
+    CHECK(original.find(far_rock)->physical_galactic==*expected_rock);
+    const auto& bodies=original.physical_celestial_systems().at(1);
+    CHECK(!bodies.empty());
+    const auto body=bodies.front();
+    original.seed_celestial_local_region(body.id);
+    const auto generated=original.generated_local_regions().at(body.id);
+    CHECK(generated[0] && generated[1]);
+    const auto frame=galactic::advance(star1,
+        {body.position.x_mm,body.position.y_mm,body.position.z_mm});
+    CHECK(frame);
+    for(const auto id:generated){
+        const auto* rock=original.find(id);
+        CHECK(rock && rock->type==EntityType::Asteroid &&
+              original.local_entity_anchors().at(id)==body.id);
+        const auto location=galactic::advance(*frame,
+            {rock->position.x,rock->position.y,rock->position_z_mm});
+        CHECK(location && rock->physical_galactic==*location);
+    }
+    const auto original_bytes=original.canonical_state();
+    CHECK(Simulation::from_snapshot(original_bytes).canonical_state()==original_bytes);
+    Simulation spare(9944);
+    original.swap(spare);
+    CHECK(spare.native_galactic_physics() &&
+          spare.galactic_system_origins().at(1)==star1 &&
+          spare.galactic_system_origins().at(2)==star2 &&
+          spare.canonical_state()==original_bytes);
+}
 static void multi_cell_supervision(const fs::path& root,
     const std::string& worker_binary,const std::string& hang_binary){
     const auto db=(root/"multi.sqlite").string();
@@ -248,6 +294,7 @@ int main(int argc,char** argv){
         CHECK(!spatial::run_cell_process(argv[2],task,
             std::chrono::milliseconds(50)).passed);
         galaxy_and_probes(root);
+        anchored_nonships_and_swap();
         multi_cell_supervision(root,argv[1],argv[2]);
         std::cout<<"PASS exact original galactic 3D, probe persistence and "
                     "durable multi-cell single-writer supervision\n";
