@@ -1,4 +1,5 @@
 #include "galaxy/Persistence.hpp"
+#include "galaxy/WO5DelegatedLogistics.hpp"
 #include "galaxy/WO5FreightEvidence.hpp"
 #include "galaxy/FleetSelection.hpp"
 #include "galaxy/OrbitalShuttleCommands.hpp"
@@ -1170,10 +1171,102 @@ static void scenario(const fs::path& db, bool farming,
                   !awaiting->actual_arrival_proved &&
                   awaiting->physically_carried_kg==0);
             if(delegated){
-                CHECK(w.delegate_transport_work_order(
-                    7,ship,94007,WorkTaskKind::LocalDelivery,77007));
-                CHECK(w.delegate_transport_work_order(
-                    7,ship,94008,WorkTaskKind::IntercolonyFreight,77007,94007));
+                // WO5-D: one owner-authorized contract over the actual
+                // original posted work order, 2 real finite vehicles and
+                // an existing physical NPC/pilot roster. No shadow jobs.
+                const logistics05::DelegationPolicy policy{true,true,true};
+                CHECK(!logistics05::inspect_native_contract(
+                    w.world(),8,ship,77007,94007,94008,policy));
+                CHECK(!logistics05::inspect_native_contract(
+                    w.world(),7,ship,77007,94007,94008,
+                    logistics05::DelegationPolicy{}));
+                const auto proposal=logistics05::inspect_native_contract(
+                    w.world(),7,ship,77007,94007,94008,policy);
+                CHECK(proposal &&
+                      proposal->real_carrier==freighter &&
+                      proposal->real_receiver==receiver &&
+                      proposal->kilograms==100 &&
+                      proposal->eligible_native_pilots+
+                          (proposal->currently_assigned_pilot?1:0)>0 &&
+                      !proposal->pickup_already_delegated &&
+                      !proposal->freight_already_delegated);
+                const auto prior_hash=w.world().state_hash();
+                const auto prior_mass=w.world().total_ore();
+                CHECK(logistics05::commit_native_contract(
+                    w,*proposal,false).status==
+                    logistics05::DelegationResult::Refused);
+                CHECK(w.world().state_hash()==prior_hash);
+                bool second_rolled_back=false;
+                try{
+                    (void)logistics05::commit_native_contract(
+                        w,*proposal,true,FailPoint::AfterSnapshotWrite);
+                }catch(const std::exception&){second_rolled_back=true;}
+                CHECK(second_rolled_back);
+                // First durable original directive SURVIVES second-step
+                // SQLite failure; second does not, and no cargo moves.
+                CHECK(w.world().work_directives().count(94007)==1 &&
+                      w.world().work_directives().count(94008)==0 &&
+                      w.world().total_ore()==prior_mass);
+                const auto recovery_offer=logistics05::inspect_native_contract(
+                    w.world(),7,ship,77007,94007,94008,policy);
+                CHECK(recovery_offer &&
+                      recovery_offer->pickup_already_delegated &&
+                      !recovery_offer->freight_already_delegated);
+                const auto restarted_generation=w.generation();
+                const auto finish=logistics05::commit_native_contract(
+                    w,*recovery_offer,true);
+                CHECK(finish.status==
+                    logistics05::DelegationResult::AllOriginalDirectivesCommitted &&
+                      w.generation()==restarted_generation+1 &&
+                      w.world().work_directives().at(94008).requires_directive==94007);
+                CHECK(logistics05::commit_native_contract(
+                    w,*proposal,true).status==
+                    logistics05::DelegationResult::Refused);
+                const auto after=logistics05::inspect_native_contract_status(
+                    w.world(),7,77007,94007,94008);
+                CHECK(after &&
+                      after->pickup_status==WorkDirectiveStatus::Active &&
+                      after->freight_status==WorkDirectiveStatus::Active &&
+                      !after->real_delivery_confirmed);
+                // Independent SQLite recovery and owner revocation test:
+                // cancel only FUTURE NPC delegation, not the real finite
+                // pickup, in-transit material or its original freight leg.
+                const auto cancelled_db=(folder/"wo5_cancel_delegation.sqlite").string();
+                PersistentWorld::recover_copy(db.string(),cancelled_db);
+                {
+                    PersistentWorld copy(cancelled_db,Simulation(99437));
+                    CHECK(copy.world().work_directives().count(94008)==1);
+                    const auto untouched=copy.world().state_hash();
+                    bool cancelled_fault=false;
+                    try{
+                        (void)logistics05::revoke_native_delegation(
+                            copy,7,94007,94008,true,
+                            FailPoint::AfterSnapshotWrite);
+                    }catch(const std::exception&){cancelled_fault=true;}
+                    CHECK(cancelled_fault &&
+                          copy.world().state_hash()==untouched);
+                    CHECK(!logistics05::revoke_native_delegation(
+                        copy,8,94007,94008,true));
+                    CHECK(logistics05::revoke_native_delegation(
+                        copy,7,94007,94008,true));
+                    CHECK(copy.world().work_directives().at(94007).status==
+                          WorkDirectiveStatus::Cancelled &&
+                          copy.world().work_directives().at(94008).status==
+                          WorkDirectiveStatus::Cancelled &&
+                          copy.world().local_delivery_board().at(77007).stage==
+                          LocalDeliveryStage::Posted &&
+                          copy.world().intercolony_freight().at(77007).stage==
+                          IntercolonyFreightStage::AwaitingPickup &&
+                          copy.world().total_ore()==prior_mass);
+                    CHECK(!logistics05::revoke_native_delegation(
+                        copy,7,94007,94008,true));
+                }
+                {
+                    PersistentWorld restarted(cancelled_db,Simulation(99438));
+                    CHECK(restarted.world().work_directives().at(94008).status==
+                          WorkDirectiveStatus::Cancelled &&
+                          restarted.world().local_delivery_board().count(77007)==1);
+                }
                 CHECK(w.world().universal_work_board(7,ship).size()>0);
             }
             if(manufactured){
