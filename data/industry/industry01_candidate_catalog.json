@@ -707,6 +707,285 @@
         "education",
         "leisure"
       ]
+    },
+    {
+      "id": "raw/aluminum_ore",
+      "group": "geology",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 600,
+      "lifecycle": "feedstock",
+      "need_tags": []
+    },
+    {
+      "id": "raw/copper_ore",
+      "group": "geology",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 550,
+      "lifecycle": "feedstock",
+      "need_tags": []
+    },
+    {
+      "id": "raw/iron_ore",
+      "group": "geology",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 500,
+      "lifecycle": "feedstock",
+      "need_tags": []
+    },
+    {
+      "id": "raw/silica_sand",
+      "group": "geology",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 600,
+      "lifecycle": "feedstock",
+      "need_tags": []
+    },
+    {
+      "id": "raw/quartz_feed",
+      "group": "geology",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 600,
+      "lifecycle": "feedstock",
+      "need_tags": []
+    },
+    {
+      "id": "raw/limestone",
+      "group": "geology",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 600,
+      "lifecycle": "feedstock",
+      "need_tags": []
+    },
+    {
+      "id": "raw/clay",
+      "group": "geology",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 750,
+      "lifecycle": "feedstock",
+      "need_tags": []
+    },
+    {
+      "id": "raw/soda_ash",
+      "group": "geology",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 1000,
+      "lifecycle": "feedstock",
+      "need_tags": []
+    },
+    {
+      "id": "raw/timber",
+      "group": "biomass",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 1300,
+      "lifecycle": "feedstock",
+      "need_tags": []
+    },
+    {
+      "id": "raw/plant_fiber",
+      "group": "biomass",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 1600,
+      "lifecycle": "feedstock",
+      "need_tags": []
+    },
+    {
+      "id": "raw/hydrocarbon_feed",
+      "group": "chemistry",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 1400,
+      "lifecycle": "feedstock",
+      "need_tags": []
+    },
+    {
+      "id": "raw/harvested_grain",
+      "group": "agriculture",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 1400,
+      "lifecycle": "feedstock",
+      "need_tags": []
+    },
+    {
+      "id": "raw/harvested_vegetables",
+      "group": "agriculture",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 1400,
+      "lifecycle": "feedstock",
+      "need_tags": []
+    },
+    {
+      "id": "raw/plant_cutting",
+      "group": "horticulture",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 1800,
+      "lifecycle": "feedstock",
+      "need_tags": []
+    },
+    {
+      "id": "raw/untreated_water",
+      "group": "water",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 1100,
+      "lifecycle": "feedstock",
+      "need_tags": []
+    },
+    {
+      "id": "raw/farm_milk",
+      "group": "food",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 1100,
+      "lifecycle": "feedstock",
+      "need_tags": []
+    },
+    {
+      "id": "raw/livestock_carcass",
+      "group": "food",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 1000,
+      "lifecycle": "feedstock",
+      "need_tags": []
+    },
+    {
+      "id": "bulk/iron",
+      "group": "metals",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 140,
+      "lifecycle": "intermediate",
+      "need_tags": []
+    },
+    {
+      "id": "bulk/carbon_feed",
+      "group": "chemistry",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 1000,
+      "lifecycle": "intermediate",
+      "need_tags": []
+    },
+    {
+      "id": "bulk/flour",
+      "group": "food",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 1400,
+      "lifecycle": "intermediate",
+      "need_tags": []
+    },
+    {
+      "id": "bulk/bran",
+      "group": "food",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 1700,
+      "lifecycle": "intermediate",
+      "need_tags": []
+    },
+    {
+      "id": "bulk/dairy",
+      "group": "food",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 1000,
+      "lifecycle": "intermediate",
+      "need_tags": []
+    },
+    {
+      "id": "bulk/animal_protein",
+      "group": "food",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 1100,
+      "lifecycle": "intermediate",
+      "need_tags": []
+    },
+    {
+      "id": "bulk/cement",
+      "group": "construction",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 850,
+      "lifecycle": "intermediate",
+      "need_tags": []
+    },
+    {
+      "id": "bulk/concrete_mix",
+      "group": "construction",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 600,
+      "lifecycle": "intermediate",
+      "need_tags": []
+    },
+    {
+      "id": "bulk/fuel",
+      "group": "energy",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 1300,
+      "lifecycle": "intermediate",
+      "need_tags": []
+    },
+    {
+      "id": "bulk/food_scraps",
+      "group": "waste",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 1500,
+      "lifecycle": "waste",
+      "need_tags": []
+    },
+    {
+      "id": "waste/mineral_tailings",
+      "group": "waste",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 700,
+      "lifecycle": "waste",
+      "need_tags": []
+    },
+    {
+      "id": "waste/biomass_residue",
+      "group": "waste",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 1700,
+      "lifecycle": "waste",
+      "need_tags": []
+    },
+    {
+      "id": "waste/process_gas",
+      "group": "waste",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 500000,
+      "lifecycle": "waste",
+      "need_tags": []
+    },
+    {
+      "id": "waste/animal_remains",
+      "group": "waste",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 1400,
+      "lifecycle": "waste",
+      "need_tags": []
     }
   ],
   "recipes": [
@@ -1979,6 +2258,658 @@
         "epa"
       ],
       "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "beneficiate_aluminum_ore",
+      "site_capability": "mineral_refining",
+      "work_ticks": 8,
+      "energy_kj": 1200,
+      "inputs": [
+        {
+          "item": "raw/aluminum_ore",
+          "qty": 5000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "bulk/aluminum",
+          "qty": 1000
+        },
+        {
+          "item": "waste/mineral_tailings",
+          "qty": 4000
+        }
+      ],
+      "source_ids": [
+        "usgs",
+        "doe"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "beneficiate_copper_ore",
+      "site_capability": "mineral_refining",
+      "work_ticks": 8,
+      "energy_kj": 1000,
+      "inputs": [
+        {
+          "item": "raw/copper_ore",
+          "qty": 5000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "bulk/copper",
+          "qty": 1000
+        },
+        {
+          "item": "waste/mineral_tailings",
+          "qty": 4000
+        }
+      ],
+      "source_ids": [
+        "usgs",
+        "doe"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "refine_iron_ore",
+      "site_capability": "mineral_refining",
+      "work_ticks": 7,
+      "energy_kj": 950,
+      "inputs": [
+        {
+          "item": "raw/iron_ore",
+          "qty": 4000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "bulk/iron",
+          "qty": 3000
+        },
+        {
+          "item": "waste/mineral_tailings",
+          "qty": 1000
+        }
+      ],
+      "source_ids": [
+        "usgs",
+        "doe"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "alloy_structural_stock",
+      "site_capability": "metal_foundry",
+      "work_ticks": 5,
+      "energy_kj": 620,
+      "inputs": [
+        {
+          "item": "bulk/iron",
+          "qty": 2800
+        },
+        {
+          "item": "bulk/carbon_feed",
+          "qty": 200
+        }
+      ],
+      "outputs": [
+        {
+          "item": "bulk/structural_alloy",
+          "qty": 3000
+        }
+      ],
+      "source_ids": [
+        "usgs",
+        "doe"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "make_silicate_glass",
+      "site_capability": "glass_forming",
+      "work_ticks": 5,
+      "energy_kj": 670,
+      "inputs": [
+        {
+          "item": "raw/silica_sand",
+          "qty": 800
+        },
+        {
+          "item": "raw/limestone",
+          "qty": 100
+        },
+        {
+          "item": "raw/soda_ash",
+          "qty": 100
+        }
+      ],
+      "outputs": [
+        {
+          "item": "bulk/glass",
+          "qty": 1000
+        }
+      ],
+      "source_ids": [
+        "usgs",
+        "doe"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "fire_ceramic_stock",
+      "site_capability": "ceramics",
+      "work_ticks": 5,
+      "energy_kj": 490,
+      "inputs": [
+        {
+          "item": "raw/clay",
+          "qty": 1000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "bulk/ceramic",
+          "qty": 900
+        },
+        {
+          "item": "waste/mineral_tailings",
+          "qty": 100
+        }
+      ],
+      "source_ids": [
+        "usgs",
+        "doe"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "purify_silicon_grade",
+      "site_capability": "precision_electronics",
+      "work_ticks": 9,
+      "energy_kj": 1200,
+      "inputs": [
+        {
+          "item": "raw/quartz_feed",
+          "qty": 3000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "bulk/silicon_grade",
+          "qty": 1000
+        },
+        {
+          "item": "waste/mineral_tailings",
+          "qty": 2000
+        }
+      ],
+      "source_ids": [
+        "nist",
+        "usgs"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "saw_timber_stock",
+      "site_capability": "woodworking",
+      "work_ticks": 4,
+      "energy_kj": 180,
+      "inputs": [
+        {
+          "item": "raw/timber",
+          "qty": 5000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "bulk/wood",
+          "qty": 4500
+        },
+        {
+          "item": "waste/biomass_residue",
+          "qty": 500
+        }
+      ],
+      "source_ids": [
+        "epa"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "spin_textile",
+      "site_capability": "textiles",
+      "work_ticks": 5,
+      "energy_kj": 290,
+      "inputs": [
+        {
+          "item": "raw/plant_fiber",
+          "qty": 5000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "bulk/textile",
+          "qty": 4000
+        },
+        {
+          "item": "waste/biomass_residue",
+          "qty": 1000
+        }
+      ],
+      "source_ids": [
+        "epa"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "pulp_paper",
+      "site_capability": "paper_mill",
+      "work_ticks": 6,
+      "energy_kj": 460,
+      "inputs": [
+        {
+          "item": "bulk/wood",
+          "qty": 3000
+        },
+        {
+          "item": "bulk/clean_water",
+          "qty": 2000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "bulk/paper",
+          "qty": 2500
+        },
+        {
+          "item": "waste/biomass_residue",
+          "qty": 500
+        },
+        {
+          "item": "bulk/dirty_water",
+          "qty": 2000
+        }
+      ],
+      "source_ids": [
+        "epa",
+        "doe"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "refine_polymer",
+      "site_capability": "chemical_plant",
+      "work_ticks": 7,
+      "energy_kj": 600,
+      "inputs": [
+        {
+          "item": "raw/hydrocarbon_feed",
+          "qty": 1000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "bulk/polymer",
+          "qty": 900
+        },
+        {
+          "item": "waste/mineral_tailings",
+          "qty": 100
+        }
+      ],
+      "source_ids": [
+        "doe",
+        "epa"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "refine_insulation",
+      "site_capability": "chemical_plant",
+      "work_ticks": 7,
+      "energy_kj": 510,
+      "inputs": [
+        {
+          "item": "raw/hydrocarbon_feed",
+          "qty": 1000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "bulk/insulation",
+          "qty": 900
+        },
+        {
+          "item": "waste/mineral_tailings",
+          "qty": 100
+        }
+      ],
+      "source_ids": [
+        "doe"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "refine_fuel",
+      "site_capability": "chemical_plant",
+      "work_ticks": 6,
+      "energy_kj": 510,
+      "inputs": [
+        {
+          "item": "raw/hydrocarbon_feed",
+          "qty": 1000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "bulk/fuel",
+          "qty": 900
+        },
+        {
+          "item": "waste/process_gas",
+          "qty": 100
+        }
+      ],
+      "source_ids": [
+        "doe",
+        "eia"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "make_cement",
+      "site_capability": "industrial_kiln",
+      "work_ticks": 8,
+      "energy_kj": 1050,
+      "inputs": [
+        {
+          "item": "raw/limestone",
+          "qty": 2000
+        },
+        {
+          "item": "raw/clay",
+          "qty": 500
+        }
+      ],
+      "outputs": [
+        {
+          "item": "bulk/cement",
+          "qty": 1800
+        },
+        {
+          "item": "waste/process_gas",
+          "qty": 700
+        }
+      ],
+      "source_ids": [
+        "usgs",
+        "doe"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "mix_concrete",
+      "site_capability": "construction_mixer",
+      "work_ticks": 3,
+      "energy_kj": 170,
+      "inputs": [
+        {
+          "item": "bulk/cement",
+          "qty": 1000
+        },
+        {
+          "item": "raw/silica_sand",
+          "qty": 2000
+        },
+        {
+          "item": "bulk/clean_water",
+          "qty": 1000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "bulk/concrete_mix",
+          "qty": 4000
+        }
+      ],
+      "source_ids": [
+        "usgs",
+        "doe"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "clean_grain_harvest",
+      "site_capability": "agricultural_processing",
+      "work_ticks": 2,
+      "energy_kj": 100,
+      "inputs": [
+        {
+          "item": "raw/harvested_grain",
+          "qty": 5000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "bulk/grain",
+          "qty": 4500
+        },
+        {
+          "item": "bulk/food_scraps",
+          "qty": 500
+        }
+      ],
+      "source_ids": [
+        "usda"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "grade_vegetable_harvest",
+      "site_capability": "agricultural_processing",
+      "work_ticks": 2,
+      "energy_kj": 100,
+      "inputs": [
+        {
+          "item": "raw/harvested_vegetables",
+          "qty": 5000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "bulk/vegetables",
+          "qty": 4500
+        },
+        {
+          "item": "bulk/food_scraps",
+          "qty": 500
+        }
+      ],
+      "source_ids": [
+        "usda"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "mill_flour",
+      "site_capability": "food_mill",
+      "work_ticks": 4,
+      "energy_kj": 200,
+      "inputs": [
+        {
+          "item": "bulk/grain",
+          "qty": 1000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "bulk/flour",
+          "qty": 850
+        },
+        {
+          "item": "bulk/bran",
+          "qty": 150
+        }
+      ],
+      "source_ids": [
+        "usda",
+        "doe"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "pasteurize_dairy",
+      "site_capability": "food_kitchen",
+      "work_ticks": 4,
+      "energy_kj": 300,
+      "inputs": [
+        {
+          "item": "raw/farm_milk",
+          "qty": 1000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "bulk/dairy",
+          "qty": 1000
+        }
+      ],
+      "source_ids": [
+        "usda",
+        "doe"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "process_animal_protein",
+      "site_capability": "food_processing",
+      "work_ticks": 4,
+      "energy_kj": 250,
+      "inputs": [
+        {
+          "item": "raw/livestock_carcass",
+          "qty": 3000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "bulk/animal_protein",
+          "qty": 2300
+        },
+        {
+          "item": "waste/animal_remains",
+          "qty": 700
+        }
+      ],
+      "source_ids": [
+        "usda"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "prepare_nursery_plant",
+      "site_capability": "horticulture",
+      "work_ticks": 5,
+      "energy_kj": 150,
+      "inputs": [
+        {
+          "item": "raw/plant_cutting",
+          "qty": 1000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "bulk/nursery_plant",
+          "qty": 1000
+        }
+      ],
+      "source_ids": [
+        "nursery"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "treat_drinking_water",
+      "site_capability": "water_treatment",
+      "work_ticks": 4,
+      "energy_kj": 350,
+      "inputs": [
+        {
+          "item": "raw/untreated_water",
+          "qty": 1000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "bulk/clean_water",
+          "qty": 1000
+        }
+      ],
+      "source_ids": [
+        "doe"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "cook_dairy_meal",
+      "site_capability": "food_kitchen",
+      "work_ticks": 3,
+      "energy_kj": 200,
+      "inputs": [
+        {
+          "item": "bulk/dairy",
+          "qty": 400
+        },
+        {
+          "item": "bulk/flour",
+          "qty": 200
+        },
+        {
+          "item": "bulk/clean_water",
+          "qty": 100
+        }
+      ],
+      "outputs": [
+        {
+          "item": "item/meal",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "usda",
+        "doe"
+      ],
+      "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "cook_protein_meal",
+      "site_capability": "food_kitchen",
+      "work_ticks": 3,
+      "energy_kj": 220,
+      "inputs": [
+        {
+          "item": "bulk/animal_protein",
+          "qty": 500
+        },
+        {
+          "item": "bulk/vegetables",
+          "qty": 200
+        }
+      ],
+      "outputs": [
+        {
+          "item": "item/meal",
+          "qty": 1
+        }
+      ],
+      "source_ids": [
+        "usda",
+        "doe"
+      ],
+      "quantities": "illustrative_game_balance"
     }
   ],
   "services": [
@@ -2122,6 +3053,29 @@
       "source_ids": [
         "epa"
       ]
+    },
+    {
+      "id": "service/electricity_delivery",
+      "staff": [
+        "utility_operator"
+      ],
+      "site_capabilities": [
+        "generation",
+        "substation",
+        "distribution"
+      ],
+      "input_consumables": [
+        "bulk/fuel"
+      ],
+      "durable_requirements": [
+        "item/generator",
+        "item/substation"
+      ],
+      "result": "delivered_power_flow_subject_to_generation_distribution_losses",
+      "source_ids": [
+        "eia",
+        "doe"
+      ]
     }
   ],
   "legacy_bridge": [
@@ -2152,6 +3106,16 @@
     },
     {
       "legacy_code": "good/freight_nutrients",
+      "proposed_item": null,
+      "authoritative_conversion": "distinct_sealed_cargo_not_ordinary_recipe_stock"
+    },
+    {
+      "legacy_code": "good/freight_food",
+      "proposed_item": null,
+      "authoritative_conversion": "distinct_sealed_cargo_not_ordinary_recipe_stock"
+    },
+    {
+      "legacy_code": "good/freight_water",
       "proposed_item": null,
       "authoritative_conversion": "distinct_sealed_cargo_not_ordinary_recipe_stock"
     }
