@@ -641,6 +641,32 @@ int main() {
             CHECK(audit_resident && audit_resident->admitted_households==1 &&
                   audit_resident->present_registered_children==1 &&
                   audit_resident->installed_beds==8);
+            // The actual registered ART02 child is already in the landed
+            // family's physical shuttle manifest. Legal admission changes
+            // residence but must NOT double its life-support demand.
+            const auto& landed_family=service.world().planetary_shuttles().at(key);
+            CHECK(landed_family.flight_phase==2 &&
+                  landed_family.family.stage==2 &&
+                  landed_family.family.child_ids.size()==1);
+            const auto unique_consumers=std::int64_t{2}+
+                static_cast<std::int64_t>(landed_family.disembarked_ids.size())+
+                1+static_cast<std::int64_t>(landed_family.passenger_ids.size())+
+                static_cast<std::int64_t>(landed_family.family.child_ids.size());
+            CHECK(audit_resident->current_surface_consumers==unique_consumers);
+            const auto admitted_pressure=economy04::observe_owner_world(
+                service.world(),7,ship,economy04::Policy{4,1});
+            CHECK(admitted_pressure.has_value());
+            const auto demand_site=std::find_if(
+                admitted_pressure->compartments.begin(),
+                admitted_pressure->compartments.end(),
+                [&](const auto& compartment){
+                    return compartment.kind==
+                               economy04::CompartmentKind::PlanetarySurface &&
+                           compartment.planetary_key==key;
+                });
+            CHECK(demand_site!=admitted_pressure->compartments.end() &&
+                  demand_site->current_consumers==
+                      static_cast<std::uint64_t>(unique_consumers));
             const auto admitted_copy=(folder/"household_admitted.sqlite").string();
             PersistentWorld::recover_copy(service_db,admitted_copy);
             {
