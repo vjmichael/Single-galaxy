@@ -1959,6 +1959,36 @@ bool Simulation::submit(const Command& c) {
                     return false;
         snapshot_version_=std::max(snapshot_version_,107);
     }
+    // WO2-J: the authenticated colony owner alone admits management policy
+    // commands. A certified manager never gains owner-command authority.
+    if(c.action==Action::AppointWorkshopSupervisor ||
+       c.action==Action::MentorWorkshopTrade ||
+       c.action==Action::ApproveWorkshopJob ||
+       c.action==Action::CancelWorkshopJob){
+        if(!c.id || !c.actor || !c.target || c.thrust_x<1 || c.thrust_x>2 ||
+           c.thrust_y || c.transport_id || !c.passenger_ids.empty() ||
+           c.secondary_receiver || c.secondary_transport ||
+           c.issuer==kServerAuthority || !colony_ships_.count(c.actor) ||
+           !workshops_.count(c.target) ||
+           (c.action==Action::AppointWorkshopSupervisor ?
+               (c.amount<0 || c.amount>1000000) :
+            c.action==Action::MentorWorkshopTrade ?
+               (c.amount<1 || c.amount>1000000) :
+            c.action==Action::ApproveWorkshopJob ?
+               (c.amount<1 || c.amount>50) :
+               (c.amount<1)))
+            return false;
+        const auto* ship=find(c.actor);
+        const auto* site=find(c.target);
+        if(!ship || !site || ship->type!=EntityType::Ship ||
+           site->type!=EntityType::Station || !c.issuer ||
+           ship->owner_id!=c.issuer || site->owner_id!=c.issuer ||
+           workshops_.at(c.target).source_ship!=c.actor ||
+           !built_outposts_.count(c.target) ||
+           built_outposts_.at(c.target).source_colony_ship!=c.actor)
+            return false;
+        snapshot_version_=std::max(snapshot_version_,108);
+    }
     const bool workshop_command=c.action==Action::ConstructWorkshop ||
         c.action==Action::TransferWorkshopFeed ||
         c.action==Action::AssignWorkshopOperator ||
@@ -3906,6 +3936,10 @@ Event Simulation::execute(const Command& c) {
         case Action::StartWorkshopShift:
         case Action::CancelWorkshopShift:
         case Action::RelieveWorkshopShift:
+        case Action::AppointWorkshopSupervisor:
+        case Action::MentorWorkshopTrade:
+        case Action::ApproveWorkshopJob:
+        case Action::CancelWorkshopJob:
         case Action::ConstructWorkshop:
         case Action::TransferWorkshopFeed:
         case Action::AssignWorkshopOperator:
@@ -4209,6 +4243,10 @@ Event Simulation::execute(const Command& c) {
             if(c.action==Action::StartWorkshopShift ||
                c.action==Action::CancelWorkshopShift ||
                c.action==Action::RelieveWorkshopShift ||
+               c.action==Action::AppointWorkshopSupervisor ||
+               c.action==Action::MentorWorkshopTrade ||
+               c.action==Action::ApproveWorkshopJob ||
+               c.action==Action::CancelWorkshopJob ||
                c.action==Action::TrainWorkshopTrade ||
                c.action==Action::TransferWorkshopFeed ||
                c.action==Action::AssignWorkshopOperator ||
@@ -4222,6 +4260,83 @@ Event Simulation::execute(const Command& c) {
                     result.result=Outcome::InvalidTarget;return result;
                 }
                 auto& w=wi->second;
+                // WO2-J appointment, mentorship and job policy are original
+                // site-owned actions; they cannot bypass workshop execution.
+                if(c.action==Action::AppointWorkshopSupervisor){
+                    const auto trade=static_cast<WorkshopTrade>(c.thrust_x);
+                    const auto id=static_cast<std::uint64_t>(c.amount);
+                    if(!id){
+                        if(!w.supervisor_npc_id){
+                            result.result=Outcome::InvalidTarget;return result;
+                        }
+                        w.supervisor_npc_id=0;w.supervisor_appointment_id=0;
+                        w.approved_jobs={};
+                        result.result=Outcome::Applied;return result;
+                    }
+                    const auto n=npcs_.find(id);
+                    const auto h=habitats_.find(c.target);
+                    if((trade==WorkshopTrade::Shape && !w.finisher_installed) ||
+                       n==npcs_.end() || h==habitats_.end() ||
+                       h->second.source_ship!=c.actor || h->second.residents<=0 ||
+                       n->second.home_ship!=c.actor ||
+                       n->second.location!=c.target ||
+                       n->second.assigned_site!=c.target ||
+                       n->second.role!=NpcRole::Habitat ||
+                       n->second.mentor_id || n->second.transport_id ||
+                       !npc_available_for_duty(id) ||
+                       !workshop_trade_certified(id,trade)){
+                        result.result=Outcome::InvalidTarget;return result;
+                    }
+                    for(const auto& [site,shop]:workshops_){
+                        if(shop.supervisor_npc_id==id && site!=c.target){
+                            result.result=Outcome::InvalidTarget;return result;
+                        }
+                        if(shop.operator_npc_id==id || shop.finisher_npc_id==id){
+                            result.result=Outcome::InvalidTarget;return result;
+                        }
+                    }
+                    for(const auto& [rid,shift]:medic_shifts_){
+                        (void)rid;
+                        if(shift.medic_id==id && shift.end_tick>tick_){
+                            result.result=Outcome::InvalidTarget;return result;
+                        }
+                    }
+                    if(w.supervisor_npc_id==id && w.supervisor_trade==trade){
+                        result.result=Outcome::InvalidTarget;return result;
+                    }
+                    // Manager replacement invalidates prior owner-approved
+                    // board entries. Historical applied receipts remain.
+                    w.supervisor_npc_id=id;w.supervisor_trade=trade;
+                    w.supervisor_appointment_id=c.id;
+                    w.approved_jobs={};
+                    result.result=Outcome::Applied;return result;
+                }
+                if(c.action==Action::ApproveWorkshopJob ||
+                   c.action==Action::CancelWorkshopJob){
+                    const auto slot=static_cast<std::size_t>(c.thrust_x-1);
+                    auto& job=w.approved_jobs[slot];
+                    if(c.action==Action::CancelWorkshopJob){
+                        if(!job.command_id ||
+                           job.command_id!=static_cast<std::uint64_t>(c.amount)){
+                            result.result=Outcome::InvalidTarget;return result;
+                        }
+                        job={};
+                        result.result=Outcome::Applied;return result;
+                    }
+                    if(job.command_id || !w.supervisor_npc_id ||
+                       w.supervisor_trade!=static_cast<WorkshopTrade>(c.thrust_x) ||
+                       (slot==1 && !w.finisher_installed)){
+                        result.result=Outcome::InvalidTarget;return result;
+                    }
+                    const auto current=slot==0?w.completed_batches:w.finisher_batches;
+                    job.command_id=c.id;
+                    job.supervisor_appointment_id=w.supervisor_appointment_id;
+                    job.supervisor_npc_id=w.supervisor_npc_id;
+                    job.approved_tick=tick_;
+                    job.target_batches=static_cast<std::uint32_t>(c.amount);
+                    job.baseline_batches=current;
+                    result.result=Outcome::Applied;return result;
+                }
                 if(c.action==Action::StartWorkshopShift ||
                    c.action==Action::CancelWorkshopShift ||
                    c.action==Action::RelieveWorkshopShift){
