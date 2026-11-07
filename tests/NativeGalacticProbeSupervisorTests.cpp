@@ -1,4 +1,5 @@
 #include "galaxy/Persistence.hpp"
+#include "galaxy/Navigation.hpp"
 #include "galaxy/SeamlessCellSupervisor.hpp"
 #include "galaxy/NativeCellProcessRunner.hpp"
 #include "galaxy/GalacticSystemRegistry.hpp"
@@ -197,6 +198,10 @@ static void cross_system_physical_contact(){
     CHECK(physical.find(ship)->system_id==1 &&
           physical.find(station)->system_id==2);
     CHECK(physical.same_local_frame(ship,station));
+    // NPC navigation may use the authoritative galactic relative vector
+    // even when a physically adjacent station has another catalogue label.
+    CHECK(assist_to_object(*physical.find(ship),*physical.find(station),0).arrived);
+    CHECK(!assist_to_object(*physical.find(ship),*physical.find(remote),0).arrived);
     CHECK(physical.mine_status(*physical.find(ship),rock)==Outcome::Applied);
     CHECK(physical.mine_status(*physical.find(ship),remote)==Outcome::OutOfRange);
     CHECK(spatial::touching(
@@ -231,6 +236,28 @@ static void cross_system_physical_contact(){
           ==jumping.state_hash());
     CHECK(physical.find(gate)->physical_galactic==
           jumping.find(gate2)->physical_galactic);
+
+    // A genuine named-NPC pilot may start an original docking plan to
+    // an adjacent foreign-label station. Older snapshots still use the
+    // original same-system safety rule. No teleport/forced docking.
+    Simulation npc_nav(4815);
+    npc_nav.add_system(2);
+    const auto captain=npc_nav.add_colony_ship(7,{0,0},120,4);
+    npc_nav.provision_colony_genesis(captain,2000,2000,2000,2000,2000);
+    npc_nav.enable_individual_workforce();
+    CHECK(npc_nav.npc_records().size()==4);
+    npc_nav.enable_native_3d_physics();
+    npc_nav.enable_native_galactic_physics({{1,star1},{2,star2}});
+    const auto foreign_station=npc_nav.add_station_in_system(2,{-750,0});
+    CHECK(npc_nav.queue_npc_station_docking(
+        7,captain,0,foreign_station,50012,NpcFlightPurpose::Rescue));
+    CHECK(Simulation::from_snapshot(npc_nav.canonical_state()).canonical_state()
+          ==npc_nav.canonical_state());
+    for(int step=0;step<3;++step)npc_nav.step();
+    CHECK(npc_nav.npc_flight_orders().at(50012).phase!=NpcFlightPhase::Cancelled);
+    CHECK(npc_nav.npc_flight_orders().at(50012).local_commands>0);
+    CHECK(Simulation::from_snapshot(npc_nav.canonical_state()).canonical_state()
+          ==npc_nav.canonical_state());
 
     // The v121 probe has one immutable launcher custody but may discover a
     // mineral physically within scanning range beyond a catalogue boundary.
