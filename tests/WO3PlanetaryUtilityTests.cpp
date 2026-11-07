@@ -1,6 +1,7 @@
 #include "galaxy/WO3ColonyOperations.hpp"
 #include "galaxy/WO2IndustryWorkforce.hpp"
 #include "galaxy/Persistence.hpp"
+#include <sqlite3.h>
 #include <chrono>
 #include <filesystem>
 #include <iostream>
@@ -678,6 +679,39 @@ int main() {
                 CHECK(verified.world().state_hash()==service.world().state_hash());
                 CHECK(verified.world().total_ore()==mass_before);
             }
+            // WO3-F: a valid v118 household is recoverable, but deleting
+            // only its atomic root receipt must never let the three ART02
+            // family moves or original regional population masquerade as
+            // an independently accepted colony migration.
+            const auto forged_copy=(folder/"household_root_removed.sqlite").string();
+            PersistentWorld::recover_copy(service_db,forged_copy);
+            sqlite3* raw=nullptr;
+            CHECK(sqlite3_open(forged_copy.c_str(),&raw)==SQLITE_OK);
+            const auto deleted=sqlite3_exec(raw,
+                "DELETE FROM sg_planet_household_migration "
+                "WHERE request_id='85520'",nullptr,nullptr,nullptr);
+            CHECK(sqlite3_close(raw)==SQLITE_OK);
+            CHECK(deleted==SQLITE_OK);
+            bool rejected_missing_root=false;
+            try{PersistentWorld forged(forged_copy,Simulation(947));}
+            catch(const std::exception&){rejected_missing_root=true;}
+            CHECK(rejected_missing_root);
+            // A retained root with a forged regional cross-store effect
+            // must also fail independent copied SQLite restoration.
+            const auto forged_region=(folder/"household_region_forged.sqlite").string();
+            PersistentWorld::recover_copy(service_db,forged_region);
+            raw=nullptr;
+            CHECK(sqlite3_open(forged_region.c_str(),&raw)==SQLITE_OK);
+            const auto changed=sqlite3_exec(raw,
+                "UPDATE sg_regional_command_receipt SET outcome=0 "
+                "WHERE scope='wo3-full-region' AND command_id='85536'",
+                nullptr,nullptr,nullptr);
+            CHECK(sqlite3_close(raw)==SQLITE_OK);
+            CHECK(changed==SQLITE_OK);
+            bool rejected_forged_region=false;
+            try{PersistentWorld forged(forged_region,Simulation(948));}
+            catch(const std::exception&){rejected_forged_region=true;}
+            CHECK(rejected_forged_region);
         }
     }
     const auto mass_before_production=w.world().total_ore();
