@@ -267,6 +267,18 @@ int main() {
     const auto resident_snapshot=w.world().canonical_state();
     CHECK(Simulation::from_snapshot(resident_snapshot).canonical_state()==
           resident_snapshot);
+    // A forged visitor admission cannot reuse a genuine flight receipt.
+    // Parser must reject it even when all person/location fields still match.
+    auto forged_resident=resident_snapshot;
+    const auto visitor_marker=forged_resident.find("planetsettler|");
+    CHECK(visitor_marker!=std::string::npos);
+    const auto consent_marker=forged_resident.find("|81501|0\n",visitor_marker);
+    CHECK(consent_marker!=std::string::npos);
+    forged_resident.replace(consent_marker,9,"|81004|0\n");
+    bool forged_consent_rejected=false;
+    try{(void)Simulation::from_snapshot(forged_resident);}
+    catch(const std::exception&){forged_consent_rejected=true;}
+    CHECK(forged_consent_rejected);
     const auto residence_copy=(dir/"visitor_resident.sqlite").string();
     PersistentWorld::recover_copy(db,residence_copy);
     {
