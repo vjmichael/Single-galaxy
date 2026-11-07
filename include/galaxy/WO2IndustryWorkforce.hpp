@@ -356,8 +356,9 @@ inline std::optional<Command> approved_original_workshop_shift(
     c.thrust_y=static_cast<int>(end_tick-start_tick);
     return c;
 }
-// Only an original applied shift may be cancelled here. A pending start
-// remains a future accepted command and is rechecked on its due tick.
+// An owner can cancel an active shift OR an existing original future
+// command with enough lead time for the cancellation to commit first.
+// A canceled future order receives its own rejected effect on the due tick.
 inline std::optional<Command> approved_original_workshop_shift_cancel(
     const Simulation& world,PlayerId owner,EntityId home_ship,EntityId site,
     bool finisher,std::uint64_t original_shift_command,
@@ -372,8 +373,14 @@ inline std::optional<Command> approved_original_workshop_shift_cancel(
     const auto rows=plan_original_workshop(world,owner,home_ship,site);
     const auto& row=rows[finisher?1:0];
     const auto* shop=world.workshop(site);
-    if(!shop || row.gate!=StaffGate::AlreadyStaffed ||
-       shop->shifts[finisher?1:0].command_id!=original_shift_command)
+    const bool active=shop &&
+        shop->shifts[finisher?1:0].command_id==original_shift_command;
+    const bool pending=world.pending_workshop_shift(
+        site,finisher,original_shift_command);
+    if(!shop || (!active && !pending) ||
+       (row.gate!=StaffGate::AlreadyStaffed &&
+        row.gate!=StaffGate::Ready &&
+        row.gate!=StaffGate::NoFreeQualifiedPerson))
         return std::nullopt;
     Command c{};
     c.id=cancel_command;c.sequence=cancel_command;
