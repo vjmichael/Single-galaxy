@@ -405,6 +405,12 @@ int main() {
           begun.housing_modules==0 && !begun.farm &&
           begun.embodied_ore==before_production_embodied+4);
     CHECK(w.world().total_ore()==initial_mass);
+    const auto pending_farm=colony03::audit_planetary_surface(
+        w.world(),7,ship,key);
+    CHECK(pending_farm && pending_farm->production_phases[0]==1 &&
+          pending_farm->production_progress[0]==0 &&
+          pending_farm->production_order_ids[0]==81800 &&
+          pending_farm->production_phases[1]==0);
     CHECK(w.world().canonical_state().rfind("galaxy-kernel-v113|",0)==0);
     CHECK(Simulation::from_snapshot(w.world().canonical_state()).state_hash()==
           w.world().state_hash());
