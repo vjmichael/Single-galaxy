@@ -732,7 +732,7 @@ struct OutpostWorkshop {
     std::int64_t frames_kg=0;         // finite 1000kg output stock
     std::uint64_t finisher_batches=0, finisher_elapsed_ticks=0;
     std::array<WorkshopShift,2> shifts{}; // cut=0, shape=1; v106
-    // At most two durable cancellations of not-yet-due original shift orders
+    // Up to 256 bounded cancellations of not-yet-due original shift orders
     // per shop. The pending commands remain in the original SQLite journal,
     // and execute as rejected instead of silently disappearing on recovery.
     std::set<std::uint64_t> cancelled_pending_shifts{};
