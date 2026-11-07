@@ -136,6 +136,12 @@ int main(){
     // reserve before proposing a single kg for its actual built outpost.
     const AllocationPolicy allocation_policy{Policy{4,1},true,true};
     CHECK(!plan_local_vitals(*observed,w.world(),AllocationPolicy{}));
+    auto fake_current=*observed;
+    fake_current.compartments[0].needs[0].buffer_above_target_kg+=100;
+    CHECK(!plan_local_vitals(fake_current,w.world(),allocation_policy));
+    fake_current=*observed;
+    fake_current.compartments[1].needs[0].reserve_deficit_kg+=100;
+    CHECK(!plan_local_vitals(fake_current,w.world(),allocation_policy));
     const auto planned=plan_local_vitals(*observed,w.world(),allocation_policy);
     CHECK(planned.has_value() && planned->still_current(w.world()));
     CHECK(planned->grants.size()==3);
