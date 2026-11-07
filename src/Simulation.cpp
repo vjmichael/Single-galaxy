@@ -10026,6 +10026,10 @@ bool Simulation::book_planetary_household_return(PlayerId host_principal,
     family.outbound_receipt=resident->second.arrival_receipt;
     family.child_ids=resident->second.child_ids;
     family.stage=5;
+    // Keep return-boarding approval immutable across crash/restart, separate
+    // from the later consented legal return request and flight receipt.
+    planetary_family_booking_ids_.insert(request_id);
+    snapshot_version_=std::max(snapshot_version_,118);
     return true;
 }
 
@@ -16124,6 +16128,16 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                             const auto visitor=site.visitor_residency.find(n.id);
                             if(visitor!=site.visitor_residency.end() &&
                                visitor->second[2]==0)return true;
+                        }
+                        if(result.snapshot_version_>=118) {
+                            const auto household=site.households.find(n.id);
+                            if(household!=site.households.end() &&
+                               !household->second.return_request)return true;
+                            for(const auto& [guardian,record]:site.households) {
+                                (void)guardian;
+                                if(record.co_parent_id==n.id &&
+                                   !record.return_request)return true;
+                            }
                         }
                         return false;
                     }
