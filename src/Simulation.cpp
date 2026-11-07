@@ -9472,6 +9472,10 @@ bool Simulation::launch_planetary_shuttle(PlayerId owner,EntityId ship,
            existing.utility_order_id==request_id)return false;
         for(const auto proof:existing.founder_consent_requests)
             if(proof==request_id)return false;
+        for(const auto& relief:existing.utility_handovers)
+            if(relief.request_id==request_id)return false;
+        for(const auto& project:existing.production_projects)
+            if(project.order_id==request_id)return false;
         for(const auto& [person,proof]:existing.visitor_residency) {
             (void)person;
             if(proof[1]==request_id || proof[2]==request_id)return false;
@@ -9863,6 +9867,9 @@ bool Simulation::equip_planetary_site(PlayerId owner,EntityId ship,
     const auto source=farm?std::optional<planetary::PlanetaryRegionKey>{}:
         planetary_oasis_source_region(owner,ship,body);
     if(!site || !owner || it==planetary_sites_.end() ||
+       // v113 worlds use on-site construction with immutable proof, not
+       // the historical immediate orbit-module installation action.
+       snapshot_version_>=113 ||
        // Once physical v113 production begins, do not bypass it with an
        // instant orbit-side install of the other building.
        it->second.production_projects[0].phase!=0 ||
