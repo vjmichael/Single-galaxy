@@ -1,4 +1,6 @@
 # INDUSTRY-01 — First source-grounded industry graph and candidate recipe catalogue
+
+> **LATEST IMPLEMENTATION:** This is the earlier 96-item/69-recipe snapshot. See the [full WO1 source implementation closeout](INDUSTRY01_WO1_SOURCE_CLOSEOUT_20261106.md) for the up-to-date 100-item, 71-standard-recipe, 3-lossy-recovery, 8-service, 28-native-identity registry and two connected real-workshop recipe bindings. Source integration is committed; exact-head native CI pending.
 **2026-11-06 · first coding slice · NOT WORLD-AUTHORITATIVE**
 
 **Development priority:** the owner's [20-stage sequence](PROJECT_DEVELOPMENT_SEQUENCE_20261106.md), with industry recipes first. Companion architecture and research brief: [industry supply-chain research](INDUSTRY_SUPPLY_CHAIN_RECIPE_RESEARCH_20261106.md). This stage does **not** resume general player gameplay, implement NPC work schedules, create a currency or add infrastructure at genesis.
