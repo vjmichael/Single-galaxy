@@ -6740,6 +6740,9 @@ bool Simulation::transfer_planetary_housing_module(PlayerId owner,EntityId ship,
 
 bool Simulation::start_planetary_housing(PlayerId owner,EntityId ship,
     const PlanetarySiteKey& key,std::uint64_t order_id) {
+    if(legacy_planetary_residence_import_ &&
+       order_id==legacy_planetary_residence_import_->host_request_id)
+        return false; // immutable host migration provenance, not reusable
     const auto it=planetary_sites_.find(key);
     if(!owner || owner==kServerAuthority || !order_id ||
        order_id==std::numeric_limits<std::uint64_t>::max() ||
@@ -6811,6 +6814,9 @@ bool Simulation::set_planetary_housing_pause(PlayerId owner,EntityId ship,
 bool Simulation::start_planetary_surface_utility(PlayerId owner,EntityId ship,
     const PlanetarySiteKey& key,std::uint64_t order_id,
     std::uint64_t qualified_supervisor) {
+    if(legacy_planetary_residence_import_ &&
+       order_id==legacy_planetary_residence_import_->host_request_id)
+        return false; // immutable host migration provenance, not reusable
     auto it=planetary_sites_.find(key);
     if(!owner || owner==kServerAuthority || !order_id ||
        order_id==std::numeric_limits<std::uint64_t>::max() ||
@@ -6889,6 +6895,9 @@ bool Simulation::pause_planetary_surface_utility(PlayerId owner,EntityId ship,
 bool Simulation::handover_planetary_surface_utility(PlayerId owner,EntityId ship,
     const PlanetarySiteKey& key,std::uint64_t previous,
     std::uint64_t replacement,std::uint64_t request_id) {
+    if(legacy_planetary_residence_import_ &&
+       request_id==legacy_planetary_residence_import_->host_request_id)
+        return false; // immutable host migration provenance, not reusable
     auto it=planetary_sites_.find(key);
     if(!owner || owner==kServerAuthority || !ship || !previous ||
        !replacement || previous==replacement || !request_id ||
@@ -6975,6 +6984,9 @@ bool Simulation::handover_planetary_surface_utility(PlayerId owner,EntityId ship
 bool Simulation::start_planetary_production_build(PlayerId owner,EntityId ship,
     const PlanetarySiteKey& key,bool farm,std::uint64_t order_id,
     std::uint64_t supervisor) {
+    if(legacy_planetary_residence_import_ &&
+       order_id==legacy_planetary_residence_import_->host_request_id)
+        return false; // immutable host migration provenance, not reusable
     auto site=planetary_sites_.find(key);
     const auto frame=ship_frames_.find(ship);
     const auto ship_entity=entities_.find(ship);
@@ -7093,6 +7105,9 @@ bool Simulation::handover_planetary_production_build(PlayerId owner,
     EntityId ship,const PlanetarySiteKey& key,bool farm,
     std::uint64_t previous,std::uint64_t replacement,
     std::uint64_t request_id) {
+    if(legacy_planetary_residence_import_ &&
+       request_id==legacy_planetary_residence_import_->host_request_id)
+        return false; // immutable host migration provenance, not reusable
     auto site=planetary_sites_.find(key);
     const auto index=farm?std::size_t{0}:std::size_t{1};
     if(!owner || owner==kServerAuthority || !previous || !replacement ||
@@ -7231,6 +7246,9 @@ bool Simulation::host_import_legacy_planetary_residences(
 bool Simulation::settle_planetary_founder(PlayerId owner,EntityId ship,
     const PlanetarySiteKey& key,std::uint64_t npc_id,
     std::uint64_t request_id,bool voluntary_consent_attested) {
+    if(legacy_planetary_residence_import_ &&
+       request_id==legacy_planetary_residence_import_->host_request_id)
+        return false; // immutable host migration provenance, not reusable
     const auto it=planetary_sites_.find(key);
     if(!owner || owner==kServerAuthority || !npc_id || !request_id ||
        request_id==std::numeric_limits<std::uint64_t>::max() ||
@@ -7297,6 +7315,9 @@ bool Simulation::settle_planetary_founder(PlayerId owner,EntityId ship,
 bool Simulation::settle_planetary_visitor(PlayerId owner,EntityId ship,
     const PlanetarySiteKey& key,std::uint64_t npc_id,
     std::uint64_t request_id,bool consent) {
+    if(legacy_planetary_residence_import_ &&
+       request_id==legacy_planetary_residence_import_->host_request_id)
+        return false; // immutable host migration provenance, not reusable
     auto it=planetary_sites_.find(key);
     auto sh=planetary_shuttles_.find(key);
     auto person=npcs_.find(npc_id);
@@ -7369,6 +7390,9 @@ bool Simulation::settle_planetary_visitor(PlayerId owner,EntityId ship,
 bool Simulation::depart_planetary_visitor(PlayerId owner,EntityId ship,
     const PlanetarySiteKey& key,std::uint64_t npc_id,
     std::uint64_t request_id,bool consent) {
+    if(legacy_planetary_residence_import_ &&
+       request_id==legacy_planetary_residence_import_->host_request_id)
+        return false; // immutable host migration provenance, not reusable
     auto it=planetary_sites_.find(key);
     auto sh=planetary_shuttles_.find(key);
     auto person=npcs_.find(npc_id);
@@ -9618,6 +9642,9 @@ EntityId shuttle_transit_custody_id(const PlanetarySiteKey& key) {
 }
 bool Simulation::launch_planetary_shuttle(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,std::uint64_t request_id,bool ascend) {
+    if(legacy_planetary_residence_import_ &&
+       request_id==legacy_planetary_residence_import_->host_request_id)
+        return false; // immutable host migration provenance, not reusable
     auto sh=planetary_shuttles_.find(key);
     auto site=planetary_sites_.find(key);
     auto hull=entities_.find(ship);
