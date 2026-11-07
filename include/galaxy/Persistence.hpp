@@ -1011,6 +1011,13 @@ public:
     bool load_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,ShuttleCargo cargo,std::int64_t kg,FailPoint fail=FailPoint::None);
     bool unload_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,ShuttleCargo cargo,std::int64_t kg,FailPoint fail=FailPoint::None);
     bool assign_planetary_shuttle_pilot(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,std::uint64_t npc,FailPoint fail=FailPoint::None);
+    // ART02-backed atomic household booking. Birth parentage and every
+    // original physical dependent are checked against authoritative SQLite
+    // under the writer lock, not accepted from a client-supplied roster.
+    bool book_planetary_shuttle_family(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t guardian,
+        std::uint64_t co_parent,const std::vector<std::uint64_t>& children,
+        std::uint64_t request_id,FailPoint fail=FailPoint::None);
     bool book_planetary_shuttle_passenger(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,std::uint64_t npc,bool board,
         FailPoint fail=FailPoint::None);
