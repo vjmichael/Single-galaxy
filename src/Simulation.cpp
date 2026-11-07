@@ -4162,7 +4162,9 @@ Event Simulation::execute(const Command& c) {
                     }
                     auto utility=utilities_.find(c.target);
                     if(utility==utilities_.end() || !utility->second.powered ||
-                       utility->second.condition<=0){
+                       utility->second.condition<=0 ||
+                       utility->second.stored_energy<1 ||
+                       utility->second.consumed_energy==std::numeric_limits<std::int64_t>::max()){
                         result.result=Outcome::NoResources;return result;
                     }
                     auto& feed=trade==WorkshopTrade::Cut?w.aluminum_kg:w.panels_kg;
@@ -4173,6 +4175,8 @@ Event Simulation::execute(const Command& c) {
                         result.result=Outcome::NoResources;return result;
                     }
                     --feed;++w.scrap_kg;
+                    --utility->second.stored_energy;
+                    ++utility->second.consumed_energy;
                     ni->second.industrial_training.push_back(
                         NpcTradeTraining{c.id,tick_,c.target,trade});
                     result.transferred=1;
