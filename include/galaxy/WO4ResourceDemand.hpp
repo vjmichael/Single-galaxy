@@ -125,8 +125,23 @@ inline std::optional<Snapshot> observe_owner_world(
         snapshot.compartments.push_back(row);
         return true;
     };
+    // Original v57+ life support charges PHYSICALLY ABOARD named people
+    // plus registered physically aboard children, rather than outdated
+    // aggregate crew. Read the same authoritative occupancy as
+    // Simulation::process_colony_needs, without creating or moving anyone.
+    std::uint64_t aboard=static_cast<std::uint64_t>(people->crew);
+    if(world.passenger_needs_enabled()) {
+        const auto adults=world.people_physically_aboard(source_ship);
+        const auto children=world.children_physically_aboard(source_ship);
+        if(adults>static_cast<std::uint64_t>(
+                std::numeric_limits<std::int64_t>::max()) ||
+           children>static_cast<std::uint64_t>(
+                std::numeric_limits<std::int64_t>::max())-adults)
+            return std::nullopt;
+        aboard=static_cast<std::uint64_t>(adults+children);
+    }
     if(!add(CompartmentKind::ColonyShip,source_ship,PlanetarySiteKey{},
-            static_cast<std::uint64_t>(people->crew),
+            aboard,
             life->food_kg,life->water_kg,life->oxygen_kg))
         return std::nullopt;
     // These are separate REAL bins. An outpost farm's provisions must
