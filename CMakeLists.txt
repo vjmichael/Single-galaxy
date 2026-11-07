@@ -1938,3 +1938,10 @@ if(BUILD_TESTING)
   add_test(NAME galaxy_seamless_spatial_ownership
       COMMAND galaxy_seamless_spatial_ownership_tests)
 endif()
+
+# SPACE-04B: exact 3D floating-origin geometry (source foundation, not live flight).
+if(BUILD_TESTING)
+  add_executable(galaxy_floating_frame_tests tests/GalacticFloatingFrameTests.cpp)
+  target_link_libraries(galaxy_floating_frame_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_floating_frame COMMAND galaxy_floating_frame_tests)
+endif()
