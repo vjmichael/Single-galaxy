@@ -1231,7 +1231,7 @@ static void scenario(const fs::path& db, bool farming,
                 // Independent SQLite recovery and owner revocation test:
                 // cancel only FUTURE NPC delegation, not the real finite
                 // pickup, in-transit material or its original freight leg.
-                const auto cancelled_db=(folder/"wo5_cancel_delegation.sqlite").string();
+                const auto cancelled_db=(db.parent_path()/"wo5_cancel_delegation.sqlite").string();
                 PersistentWorld::recover_copy(db.string(),cancelled_db);
                 {
                     PersistentWorld copy(cancelled_db,Simulation(99437));
