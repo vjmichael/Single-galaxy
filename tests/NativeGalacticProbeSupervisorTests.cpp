@@ -220,6 +220,19 @@ static void multi_cell_supervision(const fs::path& root,
     supervisor.register_worker(l1);supervisor.register_worker(l2);
     supervisor.use_native_process_workers(worker_binary);
     CHECK(supervisor.worker_count()==2);
+    // Command admission is also globally leased, not merely the tick path.
+    // An unauthorized command cannot strand a speculative writer claim.
+    const auto unmodified=w.generation();
+    CHECK(!supervisor.submit_original_command(
+        command(8001,ship2,w.world().tick()+1,Action::Thrust,0,0,0,1),
+        "rejected-command"));
+    CHECK(w.generation()==unmodified &&
+          !w.world().has_command_id(8001));
+    CHECK(supervisor.submit_original_command(
+        command(8002,ship1,w.world().tick()+1,Action::Thrust,0,0,0,1),
+        "accepted-command"));
+    CHECK(w.generation()==unmodified+1 &&
+          w.world().has_command_id(8002));
     const auto start=w.generation(),tick=w.world().tick();
     denied([&]{w.step();});
     denied([&]{w.step_as_cell_worker(NativeCellWorkerTick{
