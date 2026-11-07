@@ -9889,7 +9889,7 @@ bool PersistentWorld::commit_planetary_household_settlement(
                 p.expected_region_revision,p.expected_owner_generation,
                 next.tick(),p.origin_colony,p.destination_colony,
                 source.current_population,dest_count,
-                std::to_string(p.request_id),3,"wo3-planetary-household");
+                std::to_string(p.request_id),3,"society-migration-host");
         run(db,"CREATE TABLE IF NOT EXISTS sg_planet_household_migration("
             "request_id TEXT PRIMARY KEY,world_generation INTEGER NOT NULL,"
             "tick INTEGER NOT NULL,origin TEXT NOT NULL,destination TEXT NOT NULL,"
