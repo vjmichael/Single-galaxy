@@ -244,6 +244,66 @@ inline std::vector<CoverageRow> plan_provisional_workshop_coverage(
     return result;
 }
 
+// WO2-H: inspect receipt-backed ORIGINAL NPC credentials. These two native
+// trades are the only currently executable certifications. Other profession
+// profiles remain non-executable until their facilities exist.
+struct TradeQualification {
+    std::uint64_t npc=0;
+    WorkshopTrade trade=WorkshopTrade::Cut;
+    std::uint32_t proven_units=0,required_units=3;
+    bool certified=false;
+};
+inline TradeQualification inspect_trade_qualification(
+    const Simulation& world,std::uint64_t npc,WorkshopTrade trade) {
+    TradeQualification row{};
+    row.npc=npc;row.trade=trade;
+    if(trade!=WorkshopTrade::Cut && trade!=WorkshopTrade::Shape)return row;
+    row.proven_units=world.workshop_training_units(npc,trade);
+    row.certified=row.proven_units>=row.required_units;
+    return row;
+}
+// The host must authenticate 'owner' from the active session. The bool is an
+// explicit owner confirmation, not a privilege to create arbitrary training.
+// Real material and original workforce admission are rechecked on execution.
+inline std::optional<Command> approved_original_trade_training(
+    const Simulation& world,PlayerId owner,EntityId home_ship,EntityId site,
+    std::uint64_t npc,WorkshopTrade trade,std::uint64_t command_id,
+    bool approved_by_owner) {
+    if(!approved_by_owner || !command_id || !npc || npc>1000000 ||
+       command_id==std::numeric_limits<std::uint64_t>::max() ||
+       world.tick()==std::numeric_limits<std::uint64_t>::max() ||
+       (trade!=WorkshopTrade::Cut && trade!=WorkshopTrade::Shape))
+        return std::nullopt;
+    const auto rows=plan_original_workshop(world,owner,home_ship,site);
+    const auto& row=rows[trade==WorkshopTrade::Shape?1:0];
+    if(row.gate!=StaffGate::Ready && row.gate!=StaffGate::AlreadyStaffed &&
+       row.gate!=StaffGate::NoFreeQualifiedPerson)return std::nullopt;
+    const auto* shop=world.workshop(site);
+    const auto* power=world.utility(site);
+    const auto person=world.npc_records().find(npc);
+    if(!shop || !power || !power->powered || power->condition<=0 ||
+       shop->scrap_kg>=1000 ||
+       (trade==WorkshopTrade::Cut ? shop->aluminum_kg<1 :
+           !shop->finisher_installed || shop->panels_kg<1) ||
+       person==world.npc_records().end() ||
+       person->second.home_ship!=home_ship ||
+       person->second.location!=site || person->second.assigned_site!=site ||
+       person->second.role!=NpcRole::Habitat ||
+       person->second.mentor_id || person->second.transport_id ||
+       !world.npc_available_for_duty(npc) ||
+       occupied_named_workers(world,world.tick()+1).count(npc) ||
+       world.workshop_training_units(npc,trade)>=3)
+        return std::nullopt;
+    Command c{};
+    c.id=command_id;c.sequence=command_id;
+    c.execute_tick=world.tick()+1;c.issuer=owner;
+    c.actor=home_ship;c.target=site;
+    c.action=Action::TrainWorkshopTrade;
+    c.amount=static_cast<std::int64_t>(npc);
+    c.thrust_x=static_cast<int>(trade);
+    return c;
+}
+
 // Builds ONE original Command only following explicit owner/host approval.
 // Does not submit, reserve, allocate a command ID or claim success. Caller
 // uses the original PersistentWorld::submit and later verifies its Event.
