@@ -1221,6 +1221,8 @@ bool Simulation::can_depart_colony(const Command& c) const {
        passengers_aboard(c.actor) || passengers_aboard(c.target))return false;
     const auto near=[&](const Entity* origin){
         if(!origin || origin->system_id!=receiver->system_id)return false;
+        if(snapshot_version_>=119 &&
+           !within_native_3d_range(*origin,*receiver,kDockingRangeMm))return false;
         const auto dx=origin->position.x-receiver->position.x;
         const auto dy=origin->position.y-receiver->position.y;
         return dx>=-kDockingRangeMm && dx<=kDockingRangeMm &&
@@ -2468,6 +2470,10 @@ Event Simulation::execute(const Command& c) {
            (vehicle.dock_state!=DockState::InSpace&&vehicle.dock_station!=c.target)){
             result.result=Outcome::InTransition;return result;
         }
+        if(snapshot_version_>=119 &&
+           !within_native_3d_range(vehicle,site->second,kDockingRangeMm)){
+            result.result=Outcome::OutOfRange;return result;
+        }
         const auto dx=vehicle.position.x-site->second.position.x;
         const auto dy=vehicle.position.y-site->second.position.y;
         if(dx<-kDockingRangeMm||dx>kDockingRangeMm||
@@ -2600,6 +2606,10 @@ Event Simulation::execute(const Command& c) {
                ship->second.system_id!=site->second.system_id || c.amount<1 || c.amount>100){
                 result.result=Outcome::InvalidTarget;return result;
             }
+            if(snapshot_version_>=119 &&
+               !within_native_3d_range(ship->second,site->second,kDockingRangeMm)){
+                result.result=Outcome::OutOfRange;return result;
+            }
             const auto dx=ship->second.position.x-site->second.position.x;
             const auto dy=ship->second.position.y-site->second.position.y;
             if(dx<-kDockingRangeMm || dx>kDockingRangeMm ||
@@ -2720,6 +2730,10 @@ Event Simulation::execute(const Command& c) {
            ship->second.system_id!=station->second.system_id ||
            ship->second.owner_id!=station->second.owner_id){
             result.result=Outcome::InvalidTarget;return result;
+        }
+        if(snapshot_version_>=119 &&
+           !within_native_3d_range(ship->second,station->second,kDockingRangeMm)){
+            result.result=Outcome::OutOfRange;return result;
         }
         const auto dx=ship->second.position.x-station->second.position.x;
         const auto dy=ship->second.position.y-station->second.position.y;
@@ -3283,6 +3297,10 @@ Event Simulation::execute(const Command& c) {
                 // envelope. The device finishes its assigned mission autonomously
                 // if the carrier subsequently flies away.
                 constexpr auto range=kDroneControlRangeMm;
+                if(snapshot_version_>=119 &&
+                   !within_native_3d_range(actor,asteroid,range)){
+                    result.result=Outcome::OutOfRange;return result;
+                }
                 const auto dx=asteroid.position.x-actor.position.x;
                 const auto dy=asteroid.position.y-actor.position.y;
                 if(dx<-range||dx>range||dy<-range||dy>range||dx*dx+dy*dy>range*range){
@@ -4124,6 +4142,10 @@ Event Simulation::execute(const Command& c) {
             if(actor.jump_state!=ShipJumpState::Ready ||
                (actor.dock_state!=DockState::InSpace && actor.dock_station!=c.target)){
                 result.result=Outcome::InTransition;return result;
+            }
+            if(snapshot_version_>=119 &&
+               !within_native_3d_range(actor,*site,kDockingRangeMm)){
+                result.result=Outcome::OutOfRange;return result;
             }
             auto dx=actor.position.x-site->position.x,dy=actor.position.y-site->position.y;
             if(dx < -kDockingRangeMm || dx>kDockingRangeMm ||
