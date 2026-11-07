@@ -6996,16 +6996,33 @@ bool Simulation::start_planetary_production_build(PlayerId owner,EntityId ship,
            source->longitude!=std::get<2>(key))return false;
     }
     const auto worker=npcs_.find(supervisor);
-    if(worker==npcs_.end() ||
-       std::find(site->second.delegated_npcs.begin(),
-                 site->second.delegated_npcs.end(),supervisor)==
-           site->second.delegated_npcs.end() ||
-       worker->second.home_ship!=ship ||
+    if(worker==npcs_.end() || worker->second.home_ship!=ship ||
        worker->second.location!=site->second.surface_location ||
-       worker->second.assigned_site!=site->second.surface_location ||
-       worker->second.role!=NpcRole::PlanetarySurface ||
-       !workshop_trade_certified(supervisor,WorkshopTrade::Shape) ||
-       !npc_available_for_duty(supervisor))return false;
+       !workshop_trade_certified(supervisor,WorkshopTrade::Shape))return false;
+    const bool delegate=
+        std::find(site->second.delegated_npcs.begin(),
+                  site->second.delegated_npcs.end(),supervisor)!=
+                  site->second.delegated_npcs.end() &&
+        worker->second.assigned_site==site->second.surface_location &&
+        worker->second.role==NpcRole::PlanetarySurface &&
+        npc_available_for_duty(supervisor);
+    const auto shuttle=planetary_shuttles_.find(key);
+    const bool visiting_builder=shuttle!=planetary_shuttles_.end() &&
+        worker->second.assigned_site==ship &&
+        worker->second.role==NpcRole::Ship &&
+        !worker->second.transport_id &&
+        std::binary_search(shuttle->second.disembarked_ids.begin(),
+                           shuttle->second.disembarked_ids.end(),supervisor) &&
+        std::binary_search(shuttle->second.duty_ids.begin(),
+                           shuttle->second.duty_ids.end(),supervisor) &&
+        shuttle->second.visitor_arrival_receipts.count(supervisor) &&
+        npc_transport_arrival(
+            shuttle->second.visitor_arrival_receipts.at(supervisor),
+            supervisor).has_value() &&
+        (npc_health_status(supervisor)==NpcHealthStatus::Healthy ||
+         npc_health_status(supervisor)==NpcHealthStatus::Treated ||
+         npc_health_status(supervisor)==NpcHealthStatus::Recovered);
+    if(!delegate && !visiting_builder)return false;
     for(const auto id:site->second.delegated_npcs)
         if(!id || !npc_available_for_duty(id))return false;
     for(const auto& [other_key,other]:planetary_sites_) {
@@ -9761,15 +9778,39 @@ void Simulation::process_planetary_surface_operations() {
             auto& project=site.production_projects[i];
             if(project.phase!=1)continue;
             const auto builder=npcs_.find(project.supervisor);
+            const bool real_delegate=builder!=npcs_.end() &&
+                builder->second.assigned_site==site.surface_location &&
+                builder->second.role==NpcRole::PlanetarySurface &&
+                std::find(site.delegated_npcs.begin(),site.delegated_npcs.end(),
+                          project.supervisor)!=site.delegated_npcs.end() &&
+                npc_available_for_duty(project.supervisor);
+            const auto shuttle=planetary_shuttles_.find(key);
+            const bool actual_visitor=builder!=npcs_.end() &&
+                shuttle!=planetary_shuttles_.end() &&
+                builder->second.assigned_site==site.source_ship &&
+                builder->second.role==NpcRole::Ship &&
+                !builder->second.transport_id &&
+                std::binary_search(shuttle->second.duty_ids.begin(),
+                                   shuttle->second.duty_ids.end(),
+                                   project.supervisor) &&
+                std::binary_search(shuttle->second.disembarked_ids.begin(),
+                                   shuttle->second.disembarked_ids.end(),
+                                   project.supervisor) &&
+                shuttle->second.visitor_arrival_receipts.count(
+                    project.supervisor) &&
+                npc_transport_arrival(
+                    shuttle->second.visitor_arrival_receipts.at(
+                        project.supervisor),project.supervisor).has_value() &&
+                (npc_health_status(project.supervisor)==NpcHealthStatus::Healthy ||
+                 npc_health_status(project.supervisor)==NpcHealthStatus::Treated ||
+                 npc_health_status(project.supervisor)==NpcHealthStatus::Recovered);
             if(project.paused || site.workforce_policy ||
                builder==npcs_.end() ||
                builder->second.home_ship!=site.source_ship ||
                builder->second.location!=site.surface_location ||
-               builder->second.assigned_site!=site.surface_location ||
-               builder->second.role!=NpcRole::PlanetarySurface ||
                !workshop_trade_certified(project.supervisor,
                                          WorkshopTrade::Shape) ||
-               !npc_available_for_duty(project.supervisor)) {
+               (!real_delegate && !actual_visitor)) {
                 ++project.stalled_ticks;
                 continue;
             }
