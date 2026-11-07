@@ -306,6 +306,35 @@ int main() {
         CHECK(restarted.world().workshop_trade_certified(second_id,WorkshopTrade::Shape));
         CHECK(restarted.world().total_material_kg()==initial_mass);
     }
+    // Independently read the SAME original SQLite resource journal. Six
+    // successful per-NPC practice commands must produce exactly six
+    // mass-conserving inventory-to-scrap transfers, not shadow skill XP.
+    sqlite3* audit=nullptr;
+    CHECK(sqlite3_open_v2(db.c_str(),&audit,SQLITE_OPEN_READONLY,nullptr)==SQLITE_OK);
+    sqlite3_stmt* rows=nullptr;
+    CHECK(sqlite3_prepare_v2(audit,
+        "SELECT amount,source_id,destination_id FROM resource_ledger "
+        "WHERE reason='industrial_training_practice_kg' ORDER BY id",
+        -1,&rows,nullptr)==SQLITE_OK);
+    std::size_t cut_receipts=0,shape_receipts=0;
+    int rc=SQLITE_ROW;
+    while((rc=sqlite3_step(rows))==SQLITE_ROW){
+        CHECK(sqlite3_column_int64(rows,0)==1);
+        const auto source=std::string(reinterpret_cast<const char*>(
+            sqlite3_column_text(rows,1)));
+        const auto target=std::string(reinterpret_cast<const char*>(
+            sqlite3_column_text(rows,2)));
+        CHECK(target=="workshop:"+std::to_string(site)+":aluminum_scrap");
+        if(source=="workshop:"+std::to_string(site)+":aluminum")
+            ++cut_receipts;
+        else if(source=="workshop:"+std::to_string(site)+":aluminum_panels")
+            ++shape_receipts;
+        else CHECK(false);
+    }
+    CHECK(rc==SQLITE_DONE);
+    CHECK(sqlite3_finalize(rows)==SQLITE_OK);
+    CHECK(sqlite3_close(audit)==SQLITE_OK);
+    CHECK(cut_receipts==3 && shape_receipts==3);
     fs::remove_all(folder);
     std::cout<<"WO2: full professions, authorization, exclusive native staff, bounded work and SQLite recovery: PASS\n";
     return 0;
