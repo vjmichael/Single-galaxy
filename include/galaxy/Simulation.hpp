@@ -500,6 +500,14 @@ struct OasisExtractor {
 struct PlanetaryUtilityHandover {
     std::uint64_t request_id=0, tick=0, previous=0, replacement=0;
 };
+// WO3-D v113: one project per original farm/extractor installation. The
+// original site holds all material; no duplicate production inventory exists.
+struct PlanetaryProductionProject {
+    std::uint8_t phase=0; // 0 absent/legacy, 1 constructing, 2 completed
+    std::uint64_t progress=0,order_id=0,supervisor=0;
+    std::uint64_t stalled_ticks=0,completed_tick=0;
+    bool paused=false;
+};
 struct PlanetarySiteFacility {
     planetary::PlanetaryRegionKey region{};
     PlayerId owner=0;
@@ -555,6 +563,8 @@ struct PlanetarySiteFacility {
     std::uint64_t utility_powered_cycles=0,hvac_cycles=0,utility_outages=0;
     std::int64_t water_recycled_kg=0,oxygen_recycled_kg=0;
     std::vector<PlanetaryUtilityHandover> utility_handovers{};
+    // 0=original planetary farm; 1=original oasis extractor.
+    std::array<PlanetaryProductionProject,2> production_projects{};
     // WO3-E/v111: historical arrivals and voluntary departures of actual
     // independent adult visitors. {descent receipt, admit request, exit request};
     // an exit receipt remains forever to prevent request/identity replay.
@@ -1390,6 +1400,13 @@ public:
     bool handover_planetary_surface_utility(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,std::uint64_t previous,
         std::uint64_t replacement,std::uint64_t request_id);
+    // WO3-D/v113: two genuinely landed, physically available original
+    // modules, certified on-site crew, 40 original ticks and finite stock.
+    bool start_planetary_production_build(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool farm,std::uint64_t order_id,
+        std::uint64_t qualified_supervisor);
+    bool pause_planetary_production_build(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool farm,bool pause);
     // Admission of an already physically deployed named founder with
     // trusted owner + voluntary-consent attestation and unique request ID.
     // Does not invent NPCs or transfer visitors without arrival evidence.
