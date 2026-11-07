@@ -108,6 +108,8 @@ const std::vector<Item>& items(){static const std::vector<Item> x={
   {"waste/animal_remains","waste","g","waste",1ULL,1400ULL,{}},
   {"bulk/aluminum_panels","metals","g","intermediate",1ULL,400ULL,{}},
   {"bulk/aluminum_frames","metals","g","intermediate",1ULL,450ULL,{}},
+  {"waste/aqueous_brine","waste","g","waste",1ULL,1100ULL,{}},
+  {"waste/medical_waste","waste","g","waste",1ULL,1200ULL,{}},
 };return x;}
 const std::vector<Recipe>& recipes(){static const std::vector<Recipe> x={
   {"form_metal_panel","metal_forming",4ULL,250ULL,{{"bulk/aluminum",31000ULL}},{{"part/metal_panel",1ULL},{"bulk/aluminum_scrap",1000ULL}},""},
@@ -182,13 +184,18 @@ const std::vector<Recipe>& recipes(){static const std::vector<Recipe> x={
   {"native_cut_aluminum_panel","cut",5ULL,100ULL,{{"bulk/aluminum",20000ULL}},{{"bulk/aluminum_panels",19000ULL},{"bulk/aluminum_scrap",1000ULL}},"original_quantified_line_panel"},
   {"native_shape_aluminum_frame","shape",5ULL,100ULL,{{"bulk/aluminum_panels",20000ULL}},{{"bulk/aluminum_frames",19000ULL},{"bulk/aluminum_scrap",1000ULL}},"original_quantified_line_frame"},
 };return x;}
+const std::vector<Recovery>& recovery_recipes(){static const std::vector<Recovery> x={
+  {{"recover_aluminum_scrap","metal_foundry",5ULL,300ULL,{{"bulk/aluminum_scrap",1000ULL}},{{"bulk/aluminum",800ULL},{"waste/mineral_tailings",200ULL}},"lossy_recovery"},"bulk/aluminum"},
+  {{"treat_wastewater","water_treatment",4ULL,300ULL,{{"bulk/dirty_water",1000ULL}},{{"bulk/clean_water",900ULL},{"waste/aqueous_brine",100ULL}},"lossy_recovery"},"bulk/clean_water"},
+  {{"compost_food_scraps","composting",8ULL,100ULL,{{"bulk/food_scraps",1000ULL}},{{"bulk/soil",700ULL},{"waste/process_gas",300ULL}},"lossy_recovery"},"bulk/soil"},
+};return x;}
 const std::vector<Service>& services(){static const std::vector<Service> x={
   {"service/laundry","restores_cleanliness_on_same_existing_clothing",{"laundry_operator"},{"laundry_machine","water_supply","drainage","electricity"},{"bulk/clean_water","bulk/detergent"},{"item/laundry_machine"}},
   {"service/clinical_care","supervised_treatment_episode_without_item_creation",{"medical_worker"},{"clinic","sterile_work"},{"item/sterile_dressing"},{"item/clinic_bed"}},
   {"service/food_service","food_consumed_by_existing_named_person_or_cohort",{"cook","server"},{"kitchen","dining"},{"item/meal"},{"item/table","item/chair"}},
   {"service/education","training_access_and_validated_learning_time",{"instructor"},{"classroom","power"},{},{"item/desk","item/computer"}},
   {"service/legal_consultation","counsel_or_authorized_case_work_receipt_not_physical_item",{"legal_worker"},{"office"},{},{"item/desk"}},
-  {"service/public_administration","authorized_administrative_work_receipt",{"administrator"},{"government_office"},{"item/printed_document"},{"item/desk","item/computer"}},
+  {"service/public_administration","authorized_administrative_work_receipt",{"administrator"},{"government_office"},{},{"item/desk","item/computer"}},
   {"service/entertainment_performance","bounded_shared_leisure_access_not_item_consumption",{"performer"},{"venue","power"},{},{"item/microphone","item/speaker"}},
   {"service/electricity_delivery","delivered_power_flow_subject_to_generation_distribution_losses",{"utility_operator"},{"generation","substation","distribution"},{"bulk/fuel"},{"item/generator","item/substation"}},
 };return x;}
@@ -249,6 +256,28 @@ void validate_against_original_inventory(){
   std::set<std::string> ids;
   for(const auto& x:items()){if(x.code.empty() || x.mass_g_per_unit==0 || x.cargo_mm3_per_unit==0 || !ids.insert(x.code).second)
     throw std::invalid_argument("invalid generated industry item");}
+  for(const auto& recovery:recovery_recipes()){
+    const auto& r=recovery.recipe;std::uint64_t total_input=0,total_output=0,recovered=0,discarded=0;
+    for(const auto& in:r.inputs){const auto* x=find_item(in.code);if(!x || !in.quantity)
+      throw std::invalid_argument("bad recovery input");
+      if(in.quantity>std::numeric_limits<std::uint64_t>::max()/x->mass_g_per_unit)
+        throw std::overflow_error("recovery input overflow");
+      const auto mass=in.quantity*x->mass_g_per_unit;
+      if(mass>std::numeric_limits<std::uint64_t>::max()-total_input)throw std::overflow_error("recovery input total overflow");
+      total_input+=mass;}
+    for(const auto& o:r.outputs){const auto* x=find_item(o.code);if(!x || !o.quantity)
+      throw std::invalid_argument("bad recovery output");
+      if(o.quantity>std::numeric_limits<std::uint64_t>::max()/x->mass_g_per_unit)
+        throw std::overflow_error("recovery output overflow");
+      const auto mass=o.quantity*x->mass_g_per_unit;
+      if(mass>std::numeric_limits<std::uint64_t>::max()-total_output)throw std::overflow_error("recovery total overflow");
+      total_output+=mass;
+      if(o.code==recovery.recovered_item)recovered+=mass;
+      else if(x->lifecycle=="waste")discarded+=mass;
+    }
+    if(!total_input || total_input!=total_output || !recovered || recovered>=total_input || !discarded)
+      throw std::invalid_argument("recovery must conserve and lose useful yield");
+  }
   for(const auto& r:recipes()){
     if(r.code.empty() || r.work_ticks==0 || r.inputs.empty() || r.outputs.empty())throw std::invalid_argument("invalid industry recipe");
     auto mass=[](const std::vector<Ingredient>& lines){std::uint64_t sum=0;std::set<std::string> seen;
