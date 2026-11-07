@@ -217,6 +217,17 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
   <button type="button" id="securityDeclineCaller" disabled>Decline this hail</button>
  </div>
  <div id="securityCommsComplaints" class="help" role="log" aria-label="Hail harassment complaints">No communications abuse complaints.</div>
+ <h3>Durable private notifications</h3>
+ <div id="securityNotificationList" class="help" role="log" aria-label="Owner-private durable notification delivery">Waiting for original SQLite security outbox.</div>
+ <h3>Colony law agency · evidence referral only</h3>
+ <div class="help">A territorial claim alone is not a police agency. A current government must appoint a distinct physically present NPC officer, and a separate qualified NPC independently reviews an original complaint. This grants no guilt, warrant, armed response, arrest or seizure.</div>
+ <div id="securityAgencyStatus" class="help" role="status">No appointed agency.</div>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <button id="securityAgencyEstablish" type="button" disabled>Appoint staffed colony agency</button>
+  <label>Verified complaint <select id="securityAgencyComplaint"><option value="">No verified complaint</option></select></label>
+  <button id="securityAgencyRefer" type="button" disabled>Refer evidence to appointed agency</button>
+ </div>
+ <div id="securityAgencyReferrals" class="help" role="log" aria-label="Independent verified law-agency referrals">No verified agency referrals.</div>
  <h3>Security incident records</h3>
  <div id="securityCaseList" class="help" role="log" aria-label="Witnessed cyber incident cases">No cases loaded.</div>
  <div class="controls" style="padding:8px 0;gap:6px">
