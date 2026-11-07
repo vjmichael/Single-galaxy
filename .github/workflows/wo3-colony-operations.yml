@@ -7,6 +7,8 @@ on:
       - 'tests/WO3PlanetaryHousingTests.cpp'
       - 'src/Simulation.cpp'
       - 'include/galaxy/Simulation.hpp'
+      - 'include/galaxy/Persistence.hpp'
+      - 'include/galaxy/UniversalTransport.hpp'
       - 'src/Persistence.cpp'
       - 'CMakeLists.txt'
       - '.github/workflows/wo3-colony-operations.yml'
