@@ -340,7 +340,8 @@ public:
     bool investigate(PersistentWorld& world,
         const colony_disposition::TerritoryJournal& territory,
         PlayerId owner,EntityId colony,std::uint64_t referral_id,
-        EntityId target,std::uint64_t requested_order){
+        EntityId target,std::uint64_t requested_order,
+        FailPoint fail=FailPoint::None){
         if(!requested_order || requested_order>=(std::uint64_t{1}<<40) ||
            !referral_id || !target || target==colony ||
            !owns(world,owner,colony) ||
@@ -436,7 +437,7 @@ public:
         // approaches an observed ship under native Patrol navigation; it
         // confers no search, stop, boarding, seizure, arrest or attack right.
         const auto response=npc_response::dispatch_observed_patrol(
-            world,owner,colony,appointed.officer,contact,order_id);
+            world,owner,colony,appointed.officer,contact,order_id,fail);
         if(response!=npc_response::Status::Accepted)return false;
         const auto f=world.world().npc_flight_orders().find(order_id);
         return f!=world.world().npc_flight_orders().end() &&
