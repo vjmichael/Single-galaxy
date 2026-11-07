@@ -10499,8 +10499,12 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             if(result.snapshot_version_>=87)
                 state.nutrients_kg=i64(f[result.snapshot_version_>=109?
                                           f.size()-2:f.size()-1]);
-            if(result.snapshot_version_>=109)
-                state.housing_module=std::uint8_t(u64(f.back()));
+            if(result.snapshot_version_>=109) {
+                const auto module=u64(f.back());
+                if(module>1)
+                    throw std::runtime_error("snapshot: invalid shuttle module rack");
+                state.housing_module=std::uint8_t(module);
+            }
             if(result.snapshot_version_>=81) {
                 const auto phase=u64(f[11]);
                 if(phase>3)throw std::runtime_error("snapshot: invalid flight phase");
@@ -13939,8 +13943,13 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 case transport::LocationKind::PlanetarySite:
                     for(const auto& [key,site]:result.planetary_sites_) {
                         (void)key;
-                        if(site.surface_location==residence.id &&
-                           site.spaceport_phase==3)return true;
+                        if(site.surface_location!=residence.id ||
+                           site.spaceport_phase!=3)continue;
+                        if(result.snapshot_version_<109)return true;
+                        if(site.housing_phase!=2)return false;
+                        for(const auto founded:site.founder_residents)
+                            if(founded==n.id)return true;
+                        return false;
                     }
                     return false;
                 case transport::LocationKind::OtherNpcLocation:
@@ -13957,6 +13966,39 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             (void)id;
             if(!legal_address_is_registered(d.identity))
                 throw std::runtime_error("snapshot: orphaned deceased legal residence");
+        }
+        if(result.snapshot_version_>=109) {
+            std::set<std::uint64_t> founded_npcs,request_ids;
+            for(const auto& [key,site]:result.planetary_sites_) {
+                (void)key;
+                for(std::size_t i=0;i<2;++i) {
+                    const auto id=site.founder_residents[i];
+                    const auto request=site.founder_consent_requests[i];
+                    if(!id)continue;
+                    const auto living=result.npcs_.find(id);
+                    const NpcRecord* person=living!=result.npcs_.end()?
+                        &living->second:nullptr;
+                    if(!person) {
+                        const auto dead=result.casualties_.find(id);
+                        if(dead!=result.casualties_.end())
+                            person=&dead->second.identity;
+                    }
+                    if(!person || id!=site.delegated_npcs[i] ||
+                       !founded_npcs.insert(id).second ||
+                       !request_ids.insert(request).second ||
+                       !request || request==site.housing_order_id ||
+                       result.submitted_ids_.count(request) ||
+                       result.shuttle_flight_request_ids_.count(request) ||
+                       result.local_delivery_orders_.count(request) ||
+                       person->home_ship!=site.source_ship ||
+                       person->assigned_site!=site.surface_location ||
+                       person->role!=NpcRole::PlanetarySurface ||
+                       person->legal_residence()!=transport::Endpoint{
+                           transport::LocationKind::PlanetarySite,
+                           site.surface_location})
+                        throw std::runtime_error("snapshot: invalid original founder admission");
+                }
+            }
         }
     }
     if(result.snapshot_version_>=100){
