@@ -210,10 +210,15 @@ bool Simulation::same_local_frame(EntityId a,EntityId b) const {
     return left==right;
 }
 void Simulation::enable_native_3d_physics() {
-    // Opt-in migration preserves all original entity IDs, resources and
-    // legacy x/y state. The host persists the v119 change via its existing
-    // original world snapshot transaction before any physical turn.
-    snapshot_version_=std::max(snapshot_version_,119);
+    if(snapshot_version_>=119)return;
+    // Earlier genesis snapshots may have aggregate crew, not named NPCs.
+    // Materialize only already-existing finite crew at tick zero; a later
+    // legacy world without safe identity provenance must refuse migration.
+    if(snapshot_version_<20)enable_individual_workforce();
+    // The original v71 celestial/ship-frame migration is a prerequisite
+    // for the atomic 3D spatial index, never an independent position writer.
+    if(snapshot_version_<71)ensure_ship_frame_registry();
+    snapshot_version_=119;
 }
 bool Simulation::valid_position(Vector2 p) const {
     if(snapshot_version_>=119)return true; // finite int64 is not a local wall
