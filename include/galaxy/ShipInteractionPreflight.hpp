@@ -3,6 +3,7 @@
 // Native rescue, freight, mining and transfer executors retain all resource,
 // custody, consent, capacity, and ownership authority.
 #include "galaxy/Simulation.hpp"
+#include "galaxy/GalacticCoordinates.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <limits>
@@ -45,7 +46,18 @@ inline Readiness spatial_preflight(const Simulation& world,PlayerId owner,
        a->jump_state!=ShipJumpState::Ready ||
        b->jump_state!=ShipJumpState::Ready)
         return Readiness::InTransition;
-    if(!within_axis(a->position.x,b->position.x,max_axis_gap_mm) ||
+    if(world.native_galactic_physics()){
+        if(!a->physical_galactic_authoritative ||
+           !b->physical_galactic_authoritative)
+            return Readiness::InvalidPhysicalTarget;
+        const auto delta=galactic::nearby_displacement(
+            a->physical_galactic,b->physical_galactic);
+        if(!delta ||
+           !within_axis(delta->x_mm,0,max_axis_gap_mm) ||
+           !within_axis(delta->y_mm,0,max_axis_gap_mm) ||
+           !within_axis(delta->z_mm,0,max_axis_gap_mm))
+            return Readiness::TooFar;
+    }else if(!within_axis(a->position.x,b->position.x,max_axis_gap_mm) ||
        !within_axis(a->position.y,b->position.y,max_axis_gap_mm) ||
        (world.native_3d_physics() &&
         !within_axis(a->position_z_mm,b->position_z_mm,max_axis_gap_mm)))
