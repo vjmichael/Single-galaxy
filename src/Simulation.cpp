@@ -14966,6 +14966,70 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             }
     }
     if(result.snapshot_version_>=86) {
+        if(result.snapshot_version_>=115 &&
+           result.legacy_planetary_residence_import_) {
+            const auto& migration=*result.legacy_planetary_residence_import_;
+            const auto request=migration.host_request_id;
+            if(result.submitted_ids_.count(request) ||
+               result.shuttle_flight_request_ids_.count(request) ||
+               result.voyages_.count(request) ||
+               result.local_delivery_orders_.count(request) ||
+               result.pending_celestial_transits_.count(request) ||
+               result.completed_celestial_transits_.count(request) ||
+               result.npcs_.count(request) ||
+               result.casualties_.count(request) ||
+               result.physical_dependents_.count(request))
+                throw std::runtime_error("snapshot: legacy import request reused");
+            for(const auto& [key,site]:result.planetary_sites_) {
+                (void)key;
+                if(site.housing_order_id==request ||
+                   site.utility_order_id==request)
+                    throw std::runtime_error("snapshot: legacy import collides with building");
+                for(const auto approved:site.founder_consent_requests)
+                    if(approved==request)
+                        throw std::runtime_error("snapshot: legacy import collides with founder");
+                for(const auto& [id,proof]:site.visitor_residency) {
+                    (void)id;
+                    if(proof[1]==request || proof[2]==request)
+                        throw std::runtime_error("snapshot: legacy import collides with settler");
+                }
+                for(const auto& h:site.utility_handovers)
+                    if(h.request_id==request)
+                        throw std::runtime_error("snapshot: legacy import collides with relief");
+                for(const auto& p:site.production_projects)
+                    if(p.order_id==request)
+                        throw std::runtime_error("snapshot: legacy import collides with production");
+                for(const auto& history:site.production_handovers)
+                    for(const auto& h:history)
+                        if(h.request_id==request)
+                            throw std::runtime_error("snapshot: legacy import collides with succession");
+            }
+            for(const auto& [id,address]:migration.legal_addresses) {
+                const auto live=result.npcs_.find(id);
+                const auto dead=result.casualties_.find(id);
+                if((live==result.npcs_.end())==(dead==result.casualties_.end()))
+                    throw std::runtime_error("snapshot: ungrounded historical resident");
+                const auto& person=live!=result.npcs_.end()?
+                    live->second:dead->second.identity;
+                if(person.legal_residence()!=transport::Endpoint{
+                       transport::LocationKind::PlanetarySite,address})
+                    throw std::runtime_error("snapshot: altered legacy legal address");
+                std::size_t sites=0;
+                for(const auto& [key,site]:result.planetary_sites_) {
+                    (void)key;
+                    if(site.surface_location!=address)continue;
+                    const auto ship=result.entities_.find(site.source_ship);
+                    if(site.spaceport_phase!=3 || !site.owner ||
+                       person.home_ship!=site.source_ship ||
+                       ship==result.entities_.end() ||
+                       ship->second.owner_id!=site.owner)
+                        throw std::runtime_error("snapshot: orphan legacy authority");
+                    ++sites;
+                }
+                if(sites!=1)
+                    throw std::runtime_error("snapshot: ambiguous historical planetary address");
+            }
+        }
         const auto legal_address_is_registered=[&](const NpcRecord& n) {
             const auto residence=n.legal_residence();
             if(!residence.id)return false;
