@@ -57,12 +57,12 @@
        type==='SECURITY_REFRESH_DONE') && v.length===4)
      return {tick,type};
    if(type==='SECURITY_NOTIFICATION' && v.length===10){
-     const sequence=nativeId(v[4]),kind=whole(v[5],7),
+     const sequence=nativeId(v[4]),kind=whole(v[5],15),
        event=nativeId(v[6]),ship=whole(v[7]),
        peerOwner=whole(v[8]),related=nativeId(v[9]);
      if(sequence==='0'||event==='0'||!ship||!kind||
-        ([1,5,7].includes(kind)&&peerOwner!==0)||
-        ([2,3,6].includes(kind)&&peerOwner===0))
+        ([1,5,7,8,9,10,11,12,14].includes(kind)&&peerOwner!==0)||
+        ([2,3,6,15].includes(kind)&&peerOwner===0))
        throw Error('Invalid original owner notification');
      return {tick,type,sequence,kind,event,ship,peerOwner,related};
    }
@@ -255,7 +255,13 @@
    noticesNode.replaceChildren();
    const names=['','Outgoing hail','Incoming authenticated hail',
      'Your reply','Reply to your hail','Outbound nuisance strike',
-     'Incoming verified nuisance strike','Agency evidence referral'];
+     'Incoming verified nuisance strike','Agency evidence referral',
+     'Territorial claim/invitation decision',
+     'Observed territorial warning','Territorial notice response',
+     'Witnessed territorial trespass','Territorial expulsion record',
+     'Voluntary authenticated territorial hail',
+     'Witnessed anonymous cyber incident (culprit not proven)',
+     'Later authenticated hull controller (not proof of earlier attack)'];
    if(!notifications.size){
      const item=document.createElement('div');
      item.textContent='No unacknowledged durable security notifications.';
