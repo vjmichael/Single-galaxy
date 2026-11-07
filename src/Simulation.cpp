@@ -7015,12 +7015,17 @@ bool Simulation::depart_planetary_visitor(PlayerId owner,EntityId ship,
        landing->second!=record->second[0] ||
        !npc_transport_arrival(landing->second,npc_id))return false;
     // Reboard with the original canonical shuttle operation, moving exactly
-    // one physical person into one real seat. No teleportation or new roster.
-    if(!transfer_planetary_shuttle_visitor(owner,ship,key,npc_id,true))
-        return false;
-    record->second[2]=request_id;
+    // one physical person into one real seat. Prevent the public reboard API
+    // from bypassing legal departure: perform both changes in the same
+    // original-world atomic clone, restoring legal status on local failure.
     person->second.residence_kind=transport::LocationKind::ColonyShip;
     person->second.residence_id=ship;
+    if(!transfer_planetary_shuttle_visitor(owner,ship,key,npc_id,true)) {
+        person->second.residence_kind=transport::LocationKind::PlanetarySite;
+        person->second.residence_id=it->second.surface_location;
+        return false;
+    }
+    record->second[2]=request_id;
     snapshot_version_=std::max(snapshot_version_,111);
     return true;
 }
@@ -9151,6 +9156,11 @@ bool Simulation::transfer_planetary_shuttle_visitor(PlayerId owner,EntityId ship
         (void)child;
         if(dependent.guardian_id==npc)return false;
     }
+    // Legal settlers cannot bypass the original consent-and-departure
+    // receipt path by requesting an ordinary shuttle reboard.
+    if(reboard && person->second.legal_residence()==transport::Endpoint{
+          transport::LocationKind::PlanetarySite,
+          site->second.surface_location})return false;
     auto& aboard=sh->second.passenger_ids;
     auto& visitors=sh->second.disembarked_ids;
     if(reboard) {
