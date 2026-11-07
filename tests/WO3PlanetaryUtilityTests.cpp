@@ -448,10 +448,39 @@ int main() {
     CHECK(w.world().planetary_sites().at(key).production_projects[0].progress==frozen);
     CHECK(w.world().planetary_sites().at(key).production_projects[0].stalled_ticks>=5);
     CHECK(twin.world().state_hash()==w.world().state_hash());
-    CHECK(w.assign_planetary_shuttle_visitor_duty(
-        7,ship,key,trained_visitor,true));
-    CHECK(twin.assign_planetary_shuttle_visitor_duty(
-        7,ship,key,trained_visitor,true));
+    // Physical visiting supervisor became unavailable. Replace it with
+    // another genuinely certified original delegate while retaining all
+    // accumulated work, deposited materials and the same job order.
+    CHECK(!w.handover_planetary_production_build(
+        8,ship,key,true,trained_visitor,builder,81900));
+    CHECK(!w.handover_planetary_production_build(
+        7,ship,key,true,pilot,builder,81900));
+    bool handover_failed=false;
+    try {
+        (void)w.handover_planetary_production_build(
+            7,ship,key,true,trained_visitor,builder,81900,
+            FailPoint::AfterSnapshotWrite);
+    }catch(const std::exception&){handover_failed=true;}
+    CHECK(handover_failed);
+    CHECK(w.world().planetary_sites().at(key).production_projects[0].supervisor==
+          trained_visitor);
+    CHECK(w.handover_planetary_production_build(
+        7,ship,key,true,trained_visitor,builder,81900));
+    CHECK(twin.handover_planetary_production_build(
+        7,ship,key,true,trained_visitor,builder,81900));
+    CHECK(!w.handover_planetary_production_build(
+        7,ship,key,true,trained_visitor,builder,81900));
+    const auto handed=w.world().planetary_sites().at(key);
+    CHECK(handed.production_projects[0].supervisor==builder &&
+          handed.production_projects[0].progress==frozen &&
+          handed.production_projects[0].order_id==81800 &&
+          handed.production_handovers[0].size()==1 &&
+          handed.production_handovers[0][0].request_id==81900 &&
+          handed.production_handovers[0][0].previous==trained_visitor &&
+          handed.production_handovers[0][0].replacement==builder);
+    CHECK(w.world().canonical_state().rfind("galaxy-kernel-v114|",0)==0);
+    CHECK(w.world().state_hash()==twin.world().state_hash());
+    // Inactive visitor duty never resumes; the real replacement supervises.
     w.steps(28);twin.steps(28);
     CHECK(w.world().state_hash()==twin.world().state_hash());
     const auto& finished=w.world().planetary_sites().at(key);
@@ -470,6 +499,9 @@ int main() {
     repeat_production.actor=ship;
     repeat_production.action=Action::Thrust;
     CHECK(!w.submit(repeat_production)); // original project ID remains owned
+    repeat_production.id=81900;
+    repeat_production.sequence=81900;
+    CHECK(!w.submit(repeat_production)); // replacement approval immutable
     const auto completed_snapshot=w.world().canonical_state();
     auto forged_production=completed_snapshot;
     const auto production_row=forged_production.find("planetproduction|");
@@ -483,6 +515,18 @@ int main() {
     try {(void)Simulation::from_snapshot(forged_production);}
     catch(const std::exception&){rejects_tampering=true;}
     CHECK(rejects_tampering);
+    auto forged_succession=completed_snapshot;
+    const auto relief=forged_succession.find("planetproductionhandover|");
+    CHECK(relief!=std::string::npos);
+    const auto relief_end=forged_succession.find('\n',relief);
+    const auto relief_last=forged_succession.rfind('|',relief_end);
+    CHECK(relief_last!=std::string::npos);
+    forged_succession.replace(relief_last+1,
+        relief_end-relief_last-1,"999999");
+    bool refuses_succession_forgery=false;
+    try {(void)Simulation::from_snapshot(forged_succession);}
+    catch(const std::exception&){refuses_succession_forgery=true;}
+    CHECK(refuses_succession_forgery);
     CHECK(Simulation::from_snapshot(completed_snapshot).canonical_state()==
           completed_snapshot);
     const auto completed_copy=(folder/"production_finished.sqlite").string();
