@@ -310,4 +310,91 @@ inline bool revoke_native_delegation(
     }
     return changed;
 }
+
+// WO5-D native flight continuation for a PHYSICALLY loaded sealed cargo
+// carrier, a true NPC aboard that hull, and the original receiver's
+// celestial anchor. Autonomous navigation is never a free spacecraft or
+// instant transfer. The separate original WorkDirective will only close
+// after the actual completed celestial receipt and physical delivery.
+struct NpcFreightFlightOffer {
+    PlayerId owner=0;
+    std::uint64_t original_order_id=0;
+    EntityId carrier_ship=0,destination_ship=0;
+    std::uint64_t destination_body=0;
+    std::uint64_t native_flight_order=0,native_transit_request=0;
+    std::uint64_t native_pilot_id=0;
+    std::uint64_t observed_tick=0,observed_state_hash=0;
+};
+inline std::optional<NpcFreightFlightOffer> inspect_native_npc_freight_flight(
+    const Simulation& world,PlayerId owner,std::uint64_t order_id,
+    std::uint64_t flight_order,std::uint64_t transit_request,
+    std::uint64_t named_npc_pilot=0){
+    if(!owner || owner==Simulation::kServerAuthority ||
+       !order_id || !flight_order || !transit_request ||
+       flight_order>=(std::uint64_t{1}<<50) ||
+       transit_request>=(std::uint64_t{1}<<50) ||
+       flight_order==transit_request)
+        return std::nullopt;
+    const auto leg=world.intercolony_freight().find(order_id);
+    if(leg==world.intercolony_freight().end() ||
+       leg->second.owner!=owner ||
+       leg->second.stage!=IntercolonyFreightStage::Loaded ||
+       leg->second.arrival_receipt ||
+       leg->second.carrier_ship==leg->second.destination_ship)
+        return std::nullopt;
+    const auto& f=leg->second;
+    const auto destination=world.ship_frames().find(f.destination_ship);
+    if(destination==world.ship_frames().end() ||
+       !destination->second.anchor_body)
+        return std::nullopt;
+    const auto proof=inspect_original_freight_evidence(world,owner,order_id);
+    if(!proof || proof->original_stage!=IntercolonyFreightStage::Loaded ||
+       proof->physically_carried_kg!=f.kilograms ||
+       proof->actual_arrival_proved)return std::nullopt;
+    // Native owner, NPC duty, physical presence, transit admission,
+    // scanner, life-support, route, duplicate-ID and fleet claims are all
+    // checked by the exact original flight scheduler on a read-only copy.
+    auto preview=world;
+    if(!preview.queue_npc_flight(
+       owner,f.carrier_ship,named_npc_pilot,
+       destination->second.anchor_body,flight_order,transit_request,
+       NpcFlightPurpose::Freight))
+        return std::nullopt;
+    const auto selected=preview.npc_flight_orders().find(flight_order);
+    if(selected==preview.npc_flight_orders().end() ||
+       !selected->second.pilot_npc)return std::nullopt;
+    NpcFreightFlightOffer offer{};
+    offer.owner=owner;offer.original_order_id=order_id;
+    offer.carrier_ship=f.carrier_ship;
+    offer.destination_ship=f.destination_ship;
+    offer.destination_body=destination->second.anchor_body;
+    offer.native_flight_order=flight_order;
+    offer.native_transit_request=transit_request;
+    offer.native_pilot_id=selected->second.pilot_npc;
+    offer.observed_tick=world.tick();
+    offer.observed_state_hash=world.state_hash();
+    return offer;
+}
+inline bool commit_native_npc_freight_flight(
+    PersistentWorld& persistent,const NpcFreightFlightOffer& offer,
+    bool trusted_host_authenticated_owner_approval,
+    FailPoint fail=FailPoint::None){
+    if(!trusted_host_authenticated_owner_approval ||
+       offer.observed_tick!=persistent.world().tick() ||
+       offer.observed_state_hash!=persistent.world().state_hash())
+        return false;
+    const auto current=inspect_native_npc_freight_flight(
+        persistent.world(),offer.owner,offer.original_order_id,
+        offer.native_flight_order,offer.native_transit_request,
+        offer.native_pilot_id);
+    if(!current || current->carrier_ship!=offer.carrier_ship ||
+       current->destination_ship!=offer.destination_ship ||
+       current->destination_body!=offer.destination_body ||
+       current->native_pilot_id!=offer.native_pilot_id)
+        return false;
+    return persistent.queue_npc_flight(
+        offer.owner,offer.carrier_ship,offer.native_pilot_id,
+        offer.destination_body,offer.native_flight_order,
+        offer.native_transit_request,NpcFlightPurpose::Freight,fail);
+}
 } // namespace galaxy::logistics05
