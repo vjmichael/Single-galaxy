@@ -178,6 +178,11 @@ int main() {
             const auto before_power=w.world().utility(site)->consumed_energy;
             const auto before_scrap=w.world().workshop(site)->scrap_kg;
             CHECK(w.submit(*training));
+            // An approved order ID becomes consumed at admission, even before
+            // the world tick applies it. An obsolete proposal cannot be reused.
+            CHECK(!workforce02::approved_original_trade_training(
+                w.world(),7,ship,site,first_id,WorkshopTrade::Cut,
+                training_id,true));
             if(training_id==270){
                 const auto pending_copy=(folder/"training_pending.sqlite").string();
                 PersistentWorld::recover_copy(db,pending_copy);
@@ -305,6 +310,24 @@ int main() {
         try{(void)Simulation::from_snapshot(corrupted);}
         catch(const std::exception&){rejected_duplicate=true;}
         CHECK(rejected_duplicate);
+        // Original receipt order is historical, not an interchangeable set.
+        // Reversing two legitimate credits for one NPC must fail closed.
+        auto reversed=valid_snapshot;
+        const auto credit1=reversed.find("npctraining|");
+        CHECK(credit1!=std::string::npos);
+        const auto credit1_end=reversed.find('\n',credit1);
+        CHECK(credit1_end!=std::string::npos);
+        const auto credit2=credit1_end+1;
+        CHECK(reversed.compare(credit2,12,"npctraining|")==0);
+        const auto credit2_end=reversed.find('\n',credit2);
+        CHECK(credit2_end!=std::string::npos);
+        const auto record1=reversed.substr(credit1,credit1_end-credit1+1);
+        const auto record2=reversed.substr(credit2,credit2_end-credit2+1);
+        reversed.replace(credit1,credit2_end-credit1+1,record2+record1);
+        bool rejected_reordered=false;
+        try{(void)Simulation::from_snapshot(reversed);}
+        catch(const std::exception&){rejected_reordered=true;}
+        CHECK(rejected_reordered);
         auto fabricated=valid_snapshot;
         const auto first_line=fabricated.find("npctraining|");
         const auto second_separator=fabricated.find('|',first_line+12);
@@ -328,6 +351,17 @@ int main() {
         CHECK(w.submit(*proposed));w.step();
         CHECK(w.world().events().back().result==Outcome::Applied);
         CHECK(w.world().workshop(site)->finisher_npc_id==second_id);
+        CHECK(w.world().total_material_kg()==initial_mass);
+        // An active operator cannot simultaneously be a shape trainee, even
+        // though the frame finisher now exists and has physical input.
+        const auto occupied_credit_count=
+            w.world().workshop_training_units(first_id,WorkshopTrade::Shape);
+        const auto occupied_train=send(w,ship,350,Action::TrainWorkshopTrade,
+            site,static_cast<std::int64_t>(first_id),2);
+        CHECK(occupied_train.result==Outcome::InvalidTarget &&
+              occupied_train.transferred==0);
+        CHECK(w.world().workshop_training_units(first_id,WorkshopTrade::Shape)==
+              occupied_credit_count);
         CHECK(w.world().total_material_kg()==initial_mass);
         const auto coverage=workforce02::plan_provisional_workshop_coverage(
             w.world(),7,ship,site,w.world().tick()+1,w.world().tick()+6);
@@ -394,6 +428,29 @@ int main() {
     CHECK(sqlite3_finalize(rows)==SQLITE_OK);
     CHECK(sqlite3_close(audit)==SQLITE_OK);
     CHECK(cut_receipts==3 && shape_receipts==3);
+    // Adversarial independent SQLite copy: altering the physical practice
+    // receipt must either be denied by SQLite or rejected on original-world
+    // recovery. A snapshot-only skill count is never sufficient evidence.
+    const auto tampered=(folder/"training_ledger_tamper.sqlite").string();
+    PersistentWorld::recover_copy(db,tampered);
+    sqlite3* adversary=nullptr;
+    CHECK(sqlite3_open_v2(tampered.c_str(),&adversary,
+                          SQLITE_OPEN_READWRITE,nullptr)==SQLITE_OK);
+    char* sql_error=nullptr;
+    const int mutated=sqlite3_exec(adversary,
+        "UPDATE resource_ledger SET amount=2 WHERE id=("
+        "SELECT id FROM resource_ledger "
+        "WHERE reason='industrial_training_practice_kg' ORDER BY id LIMIT 1)",
+        nullptr,nullptr,&sql_error);
+    if(sql_error)sqlite3_free(sql_error);
+    if(mutated==SQLITE_OK)CHECK(sqlite3_changes(adversary)==1);
+    CHECK(sqlite3_close(adversary)==SQLITE_OK);
+    if(mutated==SQLITE_OK){
+        bool fail_closed=false;
+        try{PersistentWorld forged(tampered,Simulation(5678));}
+        catch(const std::exception&){fail_closed=true;}
+        CHECK(fail_closed);
+    }
     fs::remove_all(folder);
     std::cout<<"WO2: full professions, authorization, exclusive native staff, bounded work and SQLite recovery: PASS\n";
     return 0;
