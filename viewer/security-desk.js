@@ -52,8 +52,37 @@
        type==='SECURITY_DESTINATIONS_RESET' ||
        type==='SECURITY_CALL_INBOX_RESET' ||
        type==='SECURITY_CALL_COMPLAINTS_RESET' ||
+       type==='SECURITY_NOTIFICATIONS_RESET' ||
+       type==='SECURITY_AGENCY_REFERRALS_RESET' ||
        type==='SECURITY_REFRESH_DONE') && v.length===4)
      return {tick,type};
+   if(type==='SECURITY_NOTIFICATION' && v.length===10){
+     const sequence=nativeId(v[4]),kind=whole(v[5],7),
+       event=nativeId(v[6]),ship=whole(v[7]),
+       peerOwner=whole(v[8]),related=nativeId(v[9]);
+     if(sequence==='0'||event==='0'||!ship||!kind||
+        ([1,5,7].includes(kind)&&peerOwner!==0)||
+        ([2,3,6].includes(kind)&&peerOwner===0))
+       throw Error('Invalid original owner notification');
+     return {tick,type,sequence,kind,event,ship,peerOwner,related};
+   }
+   if(type==='SECURITY_AGENCY_STATUS' && v.length===7){
+     const leader=whole(v[4]),officer=whole(v[5]),
+       active=whole(v[6],1);
+     if((!!leader)!==(!!officer) || (!!leader)!==!!active ||
+         (active&&leader===officer))
+       throw Error('Invalid original government agency appointment');
+     return {tick,type,leader,officer,active:!!active};
+   }
+   if(type==='SECURITY_AGENCY_REFERRAL' && v.length===10){
+     const id=nativeId(v[4]),complaint=nativeId(v[5]),
+       caller=whole(v[6]),points=nativeId(v[7]),
+       officer=whole(v[8]),reviewer=whole(v[9]);
+     if(id==='0'||complaint==='0'||!caller||
+        BigInt(points)<3n||!officer||!reviewer||officer===reviewer)
+       throw Error('Invalid independent agency referral');
+     return {tick,type,id,complaint,caller,points,officer,reviewer};
+   }
    if(type==='SECURITY_CALL_INBOX' && v.length===7){
      const request=nativeId(v[4]),ship=whole(v[5]),
        caller=whole(v[6]);
@@ -128,7 +157,7 @@
    if(type==='SECURITY_RESULT' && v.length===8){
      const operation=v[4],result=v[5],receipt=nativeId(v[6]),
        linked=whole(v[7],1);
-     if(!/^SECURITY_(CLAIM|WARN|HAIL|REPLY|PATROL|CALL|CALL_REPLY)$/.test(operation) ||
+     if(!/^SECURITY_(CLAIM|WARN|HAIL|REPLY|PATROL|CALL|CALL_REPLY|NOTIFICATION_ACK|AGENCY_ESTABLISH|AGENCY_REFER)$/.test(operation) ||
         !['ACCEPTED','DENIED'].includes(result) ||
         (result==='ACCEPTED')!==(receipt!=='0') ||
         (linked && result!=='ACCEPTED'))
@@ -140,7 +169,8 @@
    }
    if(type==='SECURITY_ERROR' && v.length===5){
      if(!['CASE_INDEX_UNAVAILABLE','CASE_DESK_UNAVAILABLE',
-          'COMMS_UNAVAILABLE','NO_OWNED_COLONY'].includes(v[4]))
+          'COMMS_UNAVAILABLE','NO_OWNED_COLONY',
+           'OUTBOX_UNAVAILABLE','AGENCY_UNAVAILABLE'].includes(v[4]))
        throw Error('Invalid security failure');
      return {tick,type,reason:v[4]};
    }
@@ -152,7 +182,9 @@
  const el=id=>document.getElementById(id);
  let status=null,cases=new Map(),contacts=new Map(),
      notices=new Map(),destinations=new Map(),inbox=new Map(),
-     complaints=new Map(),reviews=new Map(),commsPenalty=null;
+     complaints=new Map(),reviews=new Map(),commsPenalty=null,
+     notifications=new Map(),pendingAcknowledgments=new Set(),
+     agency=null,agencyReferrals=new Map();
  function selected(id){return el(id).value;}
  function setOptions(id,placeholder,items){
    const node=el(id),previous=node.value;
@@ -188,6 +220,55 @@
      [...inbox.values()].map(n=>[
        'Authenticated caller #'+n.caller+' in ship #'+n.ship+
          ' · request #'+n.request,n.request]));
+   setOptions('securityAgencyComplaint','No verified complaint',
+     [...complaints.values()].map(c=>[
+       'Complaint #'+c.id+' · '+c.points+' nuisance points',c.id]));
+   const agencyReady=active && !!agency?.active;
+   el('securityAgencyStatus').textContent=agencyReady?
+     'Appointed law agency · leader NPC #'+agency.leader+
+     ' · officer NPC #'+agency.officer+
+     ' · independent referral only; no warrants or arrests':
+     'No currently staffed, authorized colony law agency.';
+   el('securityAgencyEstablish').disabled=!active||!status.claimed||
+     agencyReady;
+   const caseChoice=selected('securityAgencyComplaint');
+   el('securityAgencyRefer').disabled=!agencyReady||
+     !complaints.has(caseChoice);
+   const agencyNode=el('securityAgencyReferrals');
+   agencyNode.replaceChildren();
+   if(!agencyReferrals.size){
+     const item=document.createElement('div');
+     item.textContent='No verified complaints referred to a law agency.';
+     agencyNode.append(item);
+   }
+   for(const c of agencyReferrals.values()){
+     const item=document.createElement('div');
+     item.textContent='Referral #'+c.id+' · complaint #'+
+       c.complaint+' · authenticated caller #'+c.caller+' · '+c.points+
+       ' points · agency officer NPC #'+c.officer+
+       ' · independent reviewer NPC #'+c.reviewer+
+       ' · evidence admitted, NOT a criminal conviction';
+     agencyNode.append(item);
+   }
+   const noticesNode=el('securityNotificationList');
+   noticesNode.replaceChildren();
+   const names=['','Outgoing hail','Incoming authenticated hail',
+     'Your reply','Reply to your hail','Outbound nuisance strike',
+     'Incoming verified nuisance strike','Agency evidence referral'];
+   if(!notifications.size){
+     const item=document.createElement('div');
+     item.textContent='No unacknowledged durable security notifications.';
+     noticesNode.append(item);
+   }
+   for(const n of notifications.values()){
+     const item=document.createElement('div');
+     item.textContent=names[n.kind]+' · original event #'+n.event+
+       ' · ship #'+n.ship+
+       (n.peerOwner?' · authenticated counterparty #'+n.peerOwner:'')+
+       (n.related!=='0'?' · related original receipt #'+n.related:'')+
+       ' · durable delivery #'+n.sequence;
+     noticesNode.append(item);
+   }
    const track=Number(selected('securityContact'));
    const knownCase=cases.get(selected('securityCaseSelect'));
    el('securityWarn').disabled=!active||!status.claimed||
@@ -256,6 +337,8 @@
    status=null;cases=new Map();contacts=new Map();
    notices=new Map();destinations=new Map();inbox=new Map();
    complaints=new Map();reviews=new Map();commsPenalty=null;
+   notifications=new Map();pendingAcknowledgments=new Set();
+   agency=null;agencyReferrals=new Map();
    el('securityDeskFeedback').textContent='No security action submitted.';
    update();
  }
@@ -277,6 +360,11 @@
      case 'SECURITY_CALL_INBOX_RESET':inbox.clear();break;
      case 'SECURITY_CALL_COMPLAINTS_RESET':
        complaints.clear();reviews.clear();break;
+     case 'SECURITY_NOTIFICATIONS_RESET':notifications.clear();break;
+     case 'SECURITY_AGENCY_REFERRALS_RESET':agencyReferrals.clear();break;
+     case 'SECURITY_AGENCY_STATUS':agency=data;break;
+     case 'SECURITY_AGENCY_REFERRAL':agencyReferrals.set(data.id,data);break;
+     case 'SECURITY_NOTIFICATION':notifications.set(data.sequence,data);break;
      case 'SECURITY_CALL_INBOX':inbox.set(data.request,data);break;
      case 'SECURITY_CALL_COMPLAINT':complaints.set(data.id,data);break;
      case 'SECURITY_CALL_REVIEW':reviews.set(data.id,data);break;
@@ -300,6 +388,7 @@
          data.caseId+' recorded. Review the refreshed evidence.';
        break;
      case 'SECURITY_RESULT':
+       if(data.operation==='SECURITY_NOTIFICATION_ACK')break;
        // The generic denied receipt must not erase the native nuisance
        // penalty that was just reported for a repeated identified hail.
        if(!(data.operation==='SECURITY_CALL' &&
@@ -315,14 +404,31 @@
        break;
    }
    update();
+   if(data.type==='SECURITY_NOTIFICATION' &&
+      !pendingAcknowledgments.has(data.sequence)){
+     // A parsed, rendered owner notice is eligible for native ACK.
+     // 202 is queued, never claimed as a committed acknowledgment.
+     pendingAcknowledgments.add(data.sequence);
+     void Promise.resolve(window.GalaxyColonyCommand?.(
+       'colonySecurityNotifyAck',{sequence:data.sequence})).catch(()=>{});
+   }
    return true;
  }
  for(const id of ['securityContact','securityCaseSelect',
                      'securityDestination','securityNotice',
-                     'securityCallInbox'])
+                     'securityCallInbox','securityAgencyComplaint'])
    el(id).addEventListener('change',update);
  el('securityRefresh').addEventListener('click',
    ()=>send('colonySecurityRefresh'));
+ el('securityAgencyEstablish').addEventListener('click',()=>{
+   if(status?.claimed && !agency?.active)
+     void send('colonySecurityAgencyEstablish');
+ });
+ el('securityAgencyRefer').addEventListener('click',()=>{
+   const complaint=selected('securityAgencyComplaint');
+   if(agency?.active && complaints.has(complaint))
+     void send('colonySecurityAgencyRefer',{complaint});
+ });
  el('securityClaim').addEventListener('click',()=>{
    const radius=Number(el('securityClaimRadius').value);
    if(Number.isSafeInteger(radius)&&radius>=1&&radius<=5000)
