@@ -39,7 +39,7 @@ inline bool occupied_medical_shift(const Simulation& world,std::uint64_t npc,
                                    std::uint64_t at_tick) {
     for(const auto& entry:world.medic_shifts()){
         const auto& sh=entry.second;
-        if(sh.medic_id==npc && sh.start_tick<=at_tick && at_tick<sh.end_tick)
+        if(sh.medic_id==npc && at_tick<sh.end_tick)
             return true;
     }
     return false;
