@@ -77,9 +77,10 @@ int main(){
         {0,0},std::numeric_limits<std::int64_t>::min());
     CHECK(negative_overflow && negative_overflow->valid() &&
           negative_overflow->sector<-9000);
-    CHECK(!galactic::advance(
-        {{{std::numeric_limits<std::int64_t>::max(),sector-1},
-          {0,0},{0,0}}},{1,0,0}));
+    const galactic::Point at_limit{
+        {std::numeric_limits<std::int64_t>::max(),sector-1},
+        {0,0},{0,0}};
+    CHECK(!galactic::advance(at_limit,{1,0,0}));
     const auto origin=galactic::at_system_origin(
         huge,{100,200,-300});
     CHECK(origin && origin->valid() &&
