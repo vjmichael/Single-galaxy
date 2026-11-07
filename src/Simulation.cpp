@@ -6951,8 +6951,7 @@ bool Simulation::settle_planetary_founder(PlayerId owner,EntityId ship,
            transport::LocationKind::ColonyShip,ship})return false;
     for(const auto& [dependent_id,dependent]:physical_dependents_) {
         (void)dependent_id;
-        if(dependent.guardian_id==npc_id ||
-           dependent.co_guardian_id==npc_id)return false;
+        if(dependent.guardian_id==npc_id)return false;
     }
     auto& site=it->second;
     for(std::size_t i=0;i<site.delegated_npcs.size();++i) {
@@ -7006,8 +7005,7 @@ bool Simulation::settle_planetary_visitor(PlayerId owner,EntityId ship,
        !npc_transport_arrival(arrival->second,npc_id))return false;
     for(const auto& [child,dependent]:physical_dependents_) {
         (void)child;
-        if(dependent.guardian_id==npc_id ||
-           dependent.co_guardian_id==npc_id)return false;
+        if(dependent.guardian_id==npc_id)return false;
     }
     std::size_t visiting_residents=0;
     for(const auto& [id,record]:it->second.visitor_residency) {
@@ -7069,8 +7067,7 @@ bool Simulation::depart_planetary_visitor(PlayerId owner,EntityId ship,
            it->second.surface_location})return false;
     for(const auto& [child,dependent]:physical_dependents_) {
         (void)child;
-        if(dependent.guardian_id==npc_id ||
-           dependent.co_guardian_id==npc_id)return false;
+        if(dependent.guardian_id==npc_id)return false;
     }
     for(const auto& [other_key,other]:planetary_sites_) {
         (void)other_key;
