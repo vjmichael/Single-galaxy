@@ -270,6 +270,7 @@ inline std::optional<Command> approved_original_trade_training(
     bool approved_by_owner) {
     if(!approved_by_owner || !command_id || !npc || npc>1000000 ||
        command_id==std::numeric_limits<std::uint64_t>::max() ||
+       world.has_command_id(command_id) ||
        world.tick()==std::numeric_limits<std::uint64_t>::max() ||
        (trade!=WorkshopTrade::Cut && trade!=WorkshopTrade::Shape))
         return std::nullopt;
