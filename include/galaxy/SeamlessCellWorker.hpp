@@ -93,13 +93,16 @@ inline WorkerLease transfer_cell_worker(
         detail::sql(db,"CREATE TRIGGER IF NOT EXISTS sg_spatial_worker_log_no_delete "
             "BEFORE DELETE ON sg_spatial_worker_transfer BEGIN "
             "SELECT RAISE(ABORT,'immutable spatial worker handoff');END");
-        detail::Statement existing(db,"SELECT worker,epoch,transfer_id "
+        detail::Statement existing(db,"SELECT worker,epoch,transfer_id,"
+            "region_generation,checkpoint_revision "
             "FROM sg_spatial_worker_lease WHERE scope=?");
         existing.text(1,scoped);
         const bool present=existing.row();
         const std::string prior=present?existing.str(0):std::string{};
         const auto epoch=present?existing.integer(1):0;
         const auto previous_id=present?existing.str(2):std::string{};
+        const auto previous_region=present?existing.integer(3):0;
+        const auto previous_revision=present?existing.integer(4):0;
         WorkerLease result{};
         result.cell=cell;result.worker=next_worker;
         result.transfer_id=durable_transfer_id;
@@ -110,6 +113,8 @@ inline WorkerLease transfer_cell_worker(
         // physical effect, increment a worker epoch or create a new job.
         if(present && previous_id==durable_transfer_id &&
            prior==next_worker && epoch>0 &&
+           previous_region==static_cast<std::int64_t>(expected_region_generation) &&
+           previous_revision==static_cast<std::int64_t>(expected_checkpoint_revision) &&
            static_cast<std::uint64_t>(epoch)==expected_worker_epoch+1){
             result.epoch=static_cast<std::uint64_t>(epoch);
             result.replayed=true;
