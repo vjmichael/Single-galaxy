@@ -238,6 +238,25 @@ int main() {
           after_handover.utility_handovers.size()==1 &&
           after_handover.utility_handovers.front().request_id==81600);
     CHECK(w.world().total_ore()==initial_mass);
+    // Same-tick cross-orders must never mutate the on-site incumbent;
+    // later bounded handovers retain the same original construction receipt.
+    CHECK(!w.handover_planetary_surface_utility(
+        7,ship,key,partner,builder,81601));
+    w.step();
+    CHECK(!w.handover_planetary_surface_utility(
+        7,ship,key,partner,builder,81600)); // already used approval ID
+    CHECK(w.handover_planetary_surface_utility(
+        7,ship,key,partner,builder,81601));
+    const auto& second=w.world().planetary_sites().at(key);
+    CHECK(second.utility_supervisor==builder &&
+          second.utility_handovers.size()==2 &&
+          second.utility_handovers[0].replacement==partner &&
+          second.utility_handovers[1].previous==partner &&
+          second.utility_handovers[1].replacement==builder &&
+          second.utility_handovers[0].tick<
+              second.utility_handovers[1].tick &&
+          second.utility_progress==before_handover.utility_progress+1 &&
+          second.embodied_ore==before_handover.embodied_ore);
     CHECK(w.world().canonical_state().rfind("galaxy-kernel-v112|",0)==0);
     CHECK(Simulation::from_snapshot(w.world().canonical_state()).state_hash()==
           w.world().state_hash());
