@@ -1,5 +1,6 @@
 #include "galaxy/WO4MaterialAllocation.hpp"
 #include "galaxy/WO4GoodsRegional.hpp"
+#include "galaxy/WO4ConsumptionProfiles.hpp"
 #include <chrono>
 #include <filesystem>
 #include <iostream>
@@ -145,6 +146,21 @@ int main() {
         world.world(),7,local,retained,true);
     CHECK(no_double && no_double->unbooked_requests.empty() &&
           no_double->uncovered_kg[0]==80);
+
+    // WO4-D does not invent equipment degradation: native maintenance
+    // reads the physically constructed utility's original condition/spares.
+    applied(world,ship,9,Action::ConstructUtility,site);
+    const auto native_wear=observe_native_utility_maintenance(
+        world.world(),7,ship);
+    CHECK(native_wear && native_wear->size()==1 &&
+          native_wear->front().site==site &&
+          native_wear->front().condition==
+              world.world().utility(site)->condition &&
+          native_wear->front().spare_modules==
+              world.world().utility(site)->spare_modules &&
+          native_wear->front().recommended_priority==Priority::Maintenance);
+    CHECK(!observe_native_utility_maintenance(world.world(),8,ship));
+    CHECK(world.world().total_material_kg()==starting_mass);
 
     // Independent SQLite copied world sees only one actual 100kg delivery.
     const auto duplicate=(folder/"recovered.sqlite").string();
