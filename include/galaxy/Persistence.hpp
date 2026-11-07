@@ -791,6 +791,9 @@ public:
                                      std::uint64_t command_id, FailPoint fail = FailPoint::None);
     bool submit_testing_crew_loss(EntityId colony_ship, std::int64_t count,
                                   std::uint64_t command_id, FailPoint fail = FailPoint::None);
+    // SPACE-04B: atomically migrate the SAME original world to v119 before
+    // its first genuine 3-axis physical tick; no parallel ship ledger.
+    void enable_native_3d_physics(FailPoint fail = FailPoint::None);
     void step(FailPoint fail = FailPoint::None);
     // TRUSTED HOST only; executes one due terminal ferry incident and commits
     // world snapshot, ART02 deaths, ECON03 population and receipts atomically.
