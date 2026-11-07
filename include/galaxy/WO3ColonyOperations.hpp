@@ -271,6 +271,8 @@ struct PlanetarySiteAudit {
     std::int64_t unused_housing_capacity=0; // 4 initial beds; no future free population
     std::uint64_t original_permanent_residents=0;
     std::uint64_t historical_legal_address_holders=0; // not modern settled beds
+    std::uint64_t admitted_households=0,returned_households=0;
+    std::uint64_t present_registered_children=0; // real original PhysicalDependent
     bool support_healthy_now=false; // site has >=2kg of each local vital stock
 };
 inline std::optional<PlanetarySiteAudit> audit_planetary_surface(
@@ -356,6 +358,19 @@ inline std::optional<PlanetarySiteAudit> audit_planetary_surface(
                 next_tick_people+=static_cast<std::int64_t>(sh.family.child_ids.size());
         }
     }
+    for(const auto& [guardian,house]:s.households) {
+        (void)guardian;
+        if(house.return_request){++a.returned_households;continue;}
+        ++a.admitted_households;
+        for(const auto child:house.child_ids) {
+            const auto dep=world.physical_dependents().find(child);
+            if(dep!=world.physical_dependents().end() &&
+               dep->second.location==s.surface_location) {
+                ++a.present_registered_children;
+                ++next_tick_people;
+            }
+        }
+    }
     a.current_surface_consumers=next_tick_people;
     a.support_healthy_now=s.food_kg>=next_tick_people &&
         s.water_kg>=next_tick_people &&
@@ -404,7 +419,8 @@ inline std::optional<PlanetarySiteAudit> audit_planetary_surface(
         static_cast<std::int64_t>(a.physical_delegates),
         permanent_other_residents)+active_admitted_visitors;
     a.unused_housing_capacity=a.permanent_housing_installed?
-        std::max<std::int64_t>(0,a.installed_beds-occupied_beds):0;
+        std::max<std::int64_t>(0,a.installed_beds-occupied_beds-
+            static_cast<std::int64_t>(a.admitted_households)):0;
     return a;
 }
 
