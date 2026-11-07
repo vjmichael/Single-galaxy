@@ -9352,6 +9352,11 @@ std::optional<transport::Manifest> Simulation::planetary_transport_manifest(
     manifest.cargo_capacity_kg=vessel.housing_module?3000:1000;
     for(const auto id:vessel.passenger_ids)
         manifest.contents.push_back({transport::GoodKind::Npc,id,1,0});
+    if(vessel.family.stage>=1 && vessel.family.stage<=3)
+        for(const auto id:vessel.family.child_ids)
+            manifest.contents.push_back({transport::GoodKind::Npc,id,1,0});
+    std::sort(manifest.contents.begin(),manifest.contents.end(),
+        transport::before_good_key);
     const auto add_stock=[&](transport::ResourceGood kind,std::int64_t kilograms){
         if(kilograms>0)manifest.contents.push_back({
             transport::GoodKind::Resource,static_cast<std::uint8_t>(kind),
@@ -9612,6 +9617,12 @@ bool Simulation::book_planetary_shuttle_passenger(PlayerId owner,EntityId ship,
        npc==sh->second.pilot_npc)return false;
     auto& ids=sh->second.passenger_ids;
     auto at=std::lower_bound(ids.begin(),ids.end(),npc);
+    // A bound guardian cannot be unbooked independently of their child.
+    const auto& family=sh->second.family;
+    if(family.stage && (npc==family.guardian_id ||
+                        npc==family.co_parent_id))return false;
+    if(board && family.stage>=1 && family.stage<=3 &&
+       ids.size()+family.child_ids.size()>=3)return false;
     if(!board) {
         if(at==ids.end() || *at!=npc)return false;
         ids.erase(at);
@@ -9813,8 +9824,27 @@ bool Simulation::launch_planetary_shuttle(PlayerId owner,EntityId ship,
        pilot->second.assigned_site!=ship || pilot->second.transport_id ||
        pilot->second.location!=(ascend?site->second.surface_location:ship))
         return false;
-    // Shared transport manifest discipline: passengers are named existing
-    // NPCs, distinct from the pilot, with no competing ferry or shuttle berth.
+    // Shared transport manifest discipline: parents remain original named
+    // NPCs; ART02 children occupy actual passenger seats as registered
+    // PhysicalDependent identities rather than fabricated worker records.
+    const auto& family=sh->second.family;
+    if(family.stage) {
+        if((!ascend && family.stage!=1) ||
+           (ascend && family.stage!=2) ||
+           sh->second.passenger_ids.size()+family.child_ids.size()>3 ||
+           !std::binary_search(sh->second.passenger_ids.begin(),
+                               sh->second.passenger_ids.end(),family.guardian_id) ||
+           (family.co_parent_id &&
+            !std::binary_search(sh->second.passenger_ids.begin(),
+                                sh->second.passenger_ids.end(),
+                                family.co_parent_id)))return false;
+        for(const auto child:family.child_ids) {
+            const auto d=physical_dependents_.find(child);
+            if(d==physical_dependents_.end() || d->second.home_ship!=ship ||
+               d->second.location!=(ascend?
+                  site->second.surface_location:ship))return false;
+        }
+    }
     if(sh->second.passenger_ids.size()>3)return false;
     for(auto passenger_id:sh->second.passenger_ids) {
         const auto it=npcs_.find(passenger_id);
@@ -9851,6 +9881,14 @@ bool Simulation::launch_planetary_shuttle(PlayerId owner,EntityId ship,
     pilot->second.location=transit;
     for(const auto passenger_id:sh->second.passenger_ids)
         npcs_.at(passenger_id).location=transit;
+    if(sh->second.family.stage) {
+        for(const auto child:sh->second.family.child_ids)
+            physical_dependents_.at(child).location=transit;
+        if(ascend) {
+            sh->second.family.stage=3;
+            sh->second.family.return_receipt=request_id;
+        } else sh->second.family.outbound_receipt=request_id;
+    }
     shuttle_flight_request_ids_.insert(request_id);
     snapshot_version_=std::max(snapshot_version_,81);
     return true;
@@ -9872,6 +9910,16 @@ void Simulation::process_planetary_shuttle_flights() {
                 throw std::logic_error("shuttle manifest passenger missing custody");
             passenger.location=sh.flight_phase==1?
                 site->second.surface_location:sh.source_ship;
+        }
+        if(sh.family.stage) {
+            for(const auto child:sh.family.child_ids) {
+                auto& person=physical_dependents_.at(child);
+                if(person.location!=shuttle_transit_custody_id(key))
+                    throw std::logic_error("bound child lost during shuttle flight");
+                person.location=sh.flight_phase==1?
+                    site->second.surface_location:sh.source_ship;
+            }
+            sh.family.stage=sh.flight_phase==1?2:4;
         }
         sh.flight_phase=sh.flight_phase==1?2:0;
         sh.flight_request=0;
@@ -9917,7 +9965,9 @@ void Simulation::process_planetary_surface_operations() {
             const auto locals=std::int64_t(sh.disembarked_ids.size());
             const auto landing=sh.flight_phase==2?
                 1+std::int64_t(sh.passenger_ids.size()):0;
-            const std::int64_t people=locals+landing;
+            const std::int64_t children=sh.family.stage==2?
+                static_cast<std::int64_t>(sh.family.child_ids.size()):0;
+            const std::int64_t people=locals+landing+children;
             if(!people)continue;
             if(ground.food_kg<people || ground.water_kg<people ||
                ground.oxygen_kg<people) {
