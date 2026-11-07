@@ -1,5 +1,6 @@
 #include "galaxy/SeamlessCellWorker.hpp"
 #include "galaxy/GalacticCoordinates.hpp"
+#include "galaxy/GalacticSystemRegistry.hpp"
 #include "galaxy/Persistence.hpp"
 #include "galaxy/RegionalModeAuthority.hpp"
 #include "galaxy/RegionalCheckpointStore.hpp"
@@ -96,6 +97,7 @@ int main(){
         fs::remove_all(path,ec);}} cleanup{directory};
     const auto path=(directory/"native.sqlite").string();
     Simulation simulation(91011);
+    simulation.add_system(2); // real original system ID, not a synthetic star
     const auto ship=simulation.add_colony_ship(7,{side-2,0},100,8);
     simulation.provision_colony_genesis(ship,1000,1000,1000,1000,1000);
     const auto other=simulation.add_colony_ship(7,{-1,0},100,8);
@@ -109,6 +111,30 @@ int main(){
     CHECK(spatial::desired_detail(simulation,{1,0,0,0},Cell{1,0,0,0})==
           spatial::Detail::Detailed);
     PersistentWorld w(path,std::move(simulation));
+    // SPACE-04A.2: real host-registered original star origins. Registries
+    // describe astronomical geometry, not new star systems, items or ships.
+    const galactic::Point star_1{
+        {946073000,10},{-946073000,20},{1000,30}};
+    const galactic::Point star_2{
+        {946073100,11},{-946073050,21},{1002,31}};
+    CHECK(!galactic::register_original_system(
+        path,w,1,star_1,"survey-system-one",false));
+    CHECK(!galactic::register_original_system(
+        path,w,999,star_1,"ghost-system",true));
+    CHECK(galactic::register_original_system(
+        path,w,1,star_1,"survey-system-one",true));
+    CHECK(galactic::register_original_system(
+        path,w,1,star_1,"survey-system-one",true)); // exact replay only
+    denied([&]{(void)galactic::register_original_system(
+        path,w,1,star_2,"forged-replacement",true);});
+    CHECK(galactic::register_original_system(
+        path,w,2,star_2,"survey-system-two",true));
+    const auto origin_before=galactic::original_ship_galactic_position(
+        path,w,ship);
+    const auto native_before=spatial::cosmic_ship(w.world(),ship);
+    CHECK(origin_before && native_before &&
+          origin_before==galactic::at_system_origin(
+              star_1,*native_before));
     const auto start=spatial::ship_cell(w.world(),ship);
     const auto before=spatial::ship_cell(w.world(),other);
     CHECK(start && before && start->x==0 && before->x==-1);
@@ -122,6 +148,13 @@ int main(){
     CHECK(w.submit(thrust));
     w.step();
     const auto after=spatial::ship_cell(w.world(),ship);
+    const auto origin_after=galactic::original_ship_galactic_position(
+        path,w,ship);
+    const auto native_after=spatial::cosmic_ship(w.world(),ship);
+    CHECK(origin_after && native_after &&
+          origin_after==galactic::at_system_origin(
+              star_1,*native_after) &&
+          !(*origin_after==*origin_before));
     CHECK(after && after->x==1 && after->y==0 &&
           w.world().find(ship)->velocity.x>0 &&
           w.world().find(ship)->owner_id==7 &&
@@ -203,6 +236,8 @@ int main(){
         Db db(clone);
         CHECK(spatial::verify_native_index(
             db.db,reopened.world(),reopened.generation()));
+        CHECK(galactic::original_ship_galactic_position(
+            clone,reopened,ship)==origin_after);
         CHECK(spatial::worker_may_simulate_cell(
             clone,*after,"worker-b",2,warm.generation,
             warm.checkpoint_revision));
