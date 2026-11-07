@@ -248,6 +248,23 @@ struct SocietyMigrationPlan {
     transport::LocationKind destination_kind=transport::LocationKind::ColonyShip;
 };
 
+// WO3-E/v118: the one original ship <-> physically built planetary household.
+// Every other regional/family generation is supplied by trusted host state,
+// checked against the original ART02/ECON03 checkpoint, then CAS-committed.
+struct PlanetaryHouseholdSettlementPlan {
+    std::uint64_t expected_world_generation=0,request_id=0;
+    std::uint64_t expected_region_revision=0,expected_owner_generation=0;
+    std::uint64_t family_seed=0;
+    std::uint64_t expected_origin_family_revision=0;
+    std::uint64_t expected_destination_family_revision=0;
+    std::uint64_t coparent_move_id=0,child_move_id=0;
+    PlayerId owner=0;
+    EntityId ship=0;
+    PlanetarySiteKey site{};
+    std::uint64_t guardian_id=0;
+    bool returning=false,guardian_consented=false,coparent_consented=false;
+    std::string family_scope,region_scope,origin_colony,destination_colony;
+};
 // DEMOG-05q6e2: ART02 dependent identity has physical custody in the
 // trusted world SQLite transaction, without creating a playable NPC.
 struct DependentTravelPlan {
@@ -944,6 +961,14 @@ public:
         const PlanetarySiteKey& key,bool farm,std::uint64_t previous,
         std::uint64_t replacement,std::uint64_t request_id,
         FailPoint fail=FailPoint::None);
+    // One physical, ART02 and regional-census legal household movement.
+    // No change is visible until all three authorities commit together.
+    bool commit_planetary_household_settlement(
+        const PlanetaryHouseholdSettlementPlan& plan,
+        FailPoint fail=FailPoint::None);
+    bool book_planetary_household_return(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t guardian,
+        std::uint64_t request_id,FailPoint fail=FailPoint::None);
     bool settle_planetary_founder(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,std::uint64_t npc_id,
         std::uint64_t request_id,bool voluntary_consent_attested,
