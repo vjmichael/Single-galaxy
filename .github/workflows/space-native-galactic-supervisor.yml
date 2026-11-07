@@ -1,0 +1,83 @@
+name: SPACE-04C-04D-05B original galaxy / probes / multi-cell supervisor
+on:
+  pull_request:
+    paths:
+      - 'include/galaxy/GalacticPhysicalPosition.hpp'
+      - 'include/galaxy/GalacticCoordinates.hpp'
+      - 'include/galaxy/GalacticSystemRegistry.hpp'
+      - 'include/galaxy/SeamlessSpatialOwnership.hpp'
+      - 'include/galaxy/SeamlessCellWorker.hpp'
+      - 'include/galaxy/SeamlessCellSupervisor.hpp'
+      - 'include/galaxy/ShipInteractionPreflight.hpp'
+      - 'include/galaxy/Simulation.hpp'
+      - 'include/galaxy/Persistence.hpp'
+      - 'src/Simulation.cpp'
+      - 'src/Persistence.cpp'
+      - 'src/Navigation.cpp'
+      - 'tests/NativeGalacticProbeSupervisorTests.cpp'
+      - 'tests/Native3DPhysicsWorkerTests.cpp'
+      - 'tests/PLAY12_ProbeLifecycleTests.cpp'
+      - 'CMakeLists.txt'
+      - '.github/workflows/space-native-galactic-supervisor.yml'
+  workflow_dispatch:
+concurrency:
+  group: sg-space-v121-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  original-native:
+    runs-on: ${{ matrix.os }}
+    name: Exact-head original physical SQLite (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Require exact source SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="${{ github.event.pull_request.head.sha || github.sha }}"
+          actual="$(git rev-parse HEAD)"
+          echo "SPACE source expected: $expected"
+          echo "SPACE source actual:   $actual"
+          test "$actual" = "$expected"
+      - name: Install Linux SQLite SDK
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlite3-dev ninja-build
+      - name: Install Windows SQLite SDK
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vcpkg = Join-Path $env:VCPKG_INSTALLATION_ROOT 'vcpkg.exe'
+          & $vcpkg install sqlite3:x64-windows --clean-after-build
+          if ($LASTEXITCODE -ne 0) { throw 'vcpkg SQLite SDK failure' }
+      - name: Configure native Linux
+        if: runner.os == 'Linux'
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+      - name: Configure native Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tc = Join-Path $env:VCPKG_INSTALLATION_ROOT 'scripts/buildsystems/vcpkg.cmake'
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$tc" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'native Windows configure failure' }
+      - name: Build new and legacy native acceptance
+        run: cmake --build build --config Release --parallel 2 --target galaxy_native_galactic_supervisor_tests galaxy_native_3d_worker_tests galaxy_play12_probe_tests galaxy_flight03_object_approach_tests galaxy_flight04_interaction_preflight_tests galaxy_seamless_spatial_ownership_tests
+      - name: Execute high-order, probe, supervisor and regression tests
+        run: ctest --test-dir build -C Release --output-on-failure --output-junit build/space-v121-results.xml -R "^(galaxy_native_galactic_supervisor|galaxy_native_3d_worker|galaxy_play12_probes|galaxy_flight03_object_approach|galaxy_flight04_interaction_preflight|galaxy_seamless_spatial_ownership)$"
+      - name: Archive exact-head test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: space-v121-${{ matrix.os }}-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            build/space-v121-results.xml
+            build/Testing/Temporary/LastTest.log
+            build/Testing/Temporary/LastTestsFailed.log
+          if-no-files-found: warn
+          retention-days: 14
