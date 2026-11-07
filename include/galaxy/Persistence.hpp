@@ -814,6 +814,8 @@ public:
     // the v120 native high-order physical state in the same original journal.
     void enable_native_galactic_physics(const std::string& native_sqlite,
         FailPoint fail=FailPoint::None);
+    // SPACE-04D: durable v121 exact 3D native probe and discovery upgrade.
+    void enable_native_3d_probes(FailPoint fail=FailPoint::None);
     void step(FailPoint fail = FailPoint::None);
     // The only leased-worker route to the original tick writer. Rejects stale
     // authority *inside* the same SQLite BEGIN IMMEDIATE as world commit.
