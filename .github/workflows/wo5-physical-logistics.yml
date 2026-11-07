@@ -8,6 +8,7 @@ on:
       - 'include/galaxy/WO5DelegatedLogistics.hpp'
       - 'include/galaxy/SeamlessSpatialOwnership.hpp'
       - 'include/galaxy/SeamlessCellWorker.hpp'
+      - 'include/galaxy/GalacticCoordinates.hpp'
       - 'tests/SeamlessSpatialOwnershipTests.cpp'
       - 'include/galaxy/WO5RegionalFreightFence.hpp'
       - 'include/galaxy/WO5RegionalRecovery.hpp'
