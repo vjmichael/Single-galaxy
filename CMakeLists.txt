@@ -19,7 +19,7 @@ else()
 endif()
 add_library(galaxy_kernel STATIC src/PlanetaryAgriculture.cpp src/Simulation.cpp src/ColonyResilience.cpp
   src/ColonyRecovery.cpp src/ColonyPolicy.cpp src/PopulationCohorts.cpp
-    src/ColonyWaterSupply.cpp src/Persistence.cpp src/EconomyPrototype.cpp src/QuantifiedProduction.cpp src/Industry01Catalog.generated.cpp src/WO2ProfessionCatalog.generated.cpp src/Inventory.cpp src/InventoryLogistics.cpp src/FactoryLayout.cpp src/BlueprintConstruction.cpp src/HostBlueprintRegistry.cpp src/ClientContract.cpp src/Galaxy.cpp src/Navigation.cpp src/GateTransit.cpp src/Region.cpp
+    src/ColonyWaterSupply.cpp src/Persistence.cpp src/NativeCellProcessRunner.cpp src/EconomyPrototype.cpp src/QuantifiedProduction.cpp src/Industry01Catalog.generated.cpp src/WO2ProfessionCatalog.generated.cpp src/Inventory.cpp src/InventoryLogistics.cpp src/FactoryLayout.cpp src/BlueprintConstruction.cpp src/HostBlueprintRegistry.cpp src/ClientContract.cpp src/Galaxy.cpp src/Navigation.cpp src/GateTransit.cpp src/Region.cpp
   src/ColdColonyNeeds.cpp src/MacroNeeds.cpp src/ColonySafety.cpp src/ColonySafetyJournal.cpp src/ColonySafetyNotice.cpp src/ColonyDefense.cpp src/ColonyConflict.cpp src/TerritoryJournal.cpp src/CyberIncidentJournal.cpp src/ColonyEvacuation.cpp src/ColonyFamilyDeparture.cpp src/NpcAppearanceGenome.cpp src/MedicalSocietyBridge.cpp src/DependentIncidentAccounting.cpp src/DependentIncidentJournal.cpp src/DependentGuardianship.cpp src/SplitRescueIntent.cpp src/RegionalCheckpointStore.cpp src/RegionalPopulationAudit.cpp src/RegionalEventScheduler.cpp src/RegionalModeAuthority.cpp src/RegionalFactoryHandoff.cpp src/RegionalProductionNetwork.cpp src/RegionalShipmentReconciliation.cpp src/ShipmentManifest.cpp src/ThirdPartyShipment.cpp src/CanonicalShippingHost.cpp src/ShipmentStatusView.cpp
   src/RegionalHostCommands.cpp src/RegionalInterestManager.cpp src/RegionalCustodyLedger.cpp src/RegionalPersistentWorldBridge.cpp)
 target_include_directories(galaxy_kernel PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -1955,6 +1955,12 @@ endif()
 
 find_package(Threads REQUIRED)
 
+# SPACE-05C: native subprocess never receives an original-world writer.
+add_executable(galaxy_native_cell_worker src/native_cell_worker.cpp)
+if(BUILD_TESTING)
+  add_executable(galaxy_native_cell_hang_worker tests/NativeCellHangWorker.cpp)
+endif()
+
 # SPACE-04C/04D/05B: native high-order coordinates, 3D probes and bounded
 # active multi-cell original-world supervisor. Runs on Windows and Linux.
 if(BUILD_TESTING)
@@ -1962,5 +1968,7 @@ if(BUILD_TESTING)
     tests/NativeGalacticProbeSupervisorTests.cpp)
   target_link_libraries(galaxy_native_galactic_supervisor_tests PRIVATE galaxy_kernel Threads::Threads)
   add_test(NAME galaxy_native_galactic_supervisor
-           COMMAND galaxy_native_galactic_supervisor_tests)
+           COMMAND galaxy_native_galactic_supervisor_tests
+             $<TARGET_FILE:galaxy_native_cell_worker>
+             $<TARGET_FILE:galaxy_native_cell_hang_worker>)
 endif()
