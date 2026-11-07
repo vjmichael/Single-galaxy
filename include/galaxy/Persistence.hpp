@@ -441,6 +441,16 @@ struct VerifiedSplitRescueIntent {
     std::vector<EntityId> receiving_ferries;
 };
 
+// SPACE-05: host-held admission token for one original physical world tick.
+// Never accept a worker identity/epoch from an unauthenticated player packet.
+struct NativeCellWorkerTick {
+    std::string canonical_cell_scope;
+    std::string trusted_worker;
+    std::uint64_t worker_epoch=0;
+    std::uint64_t region_generation=0;
+    std::uint64_t checkpoint_revision=0;
+};
+
 class PersistentWorld {
     friend class industry::RegionalProductionNetwork;
     friend class shipping::ThirdPartyRegistry;
@@ -795,6 +805,10 @@ public:
     // its first genuine 3-axis physical tick; no parallel ship ledger.
     void enable_native_3d_physics(FailPoint fail = FailPoint::None);
     void step(FailPoint fail = FailPoint::None);
+    // The only leased-worker route to the original tick writer. Rejects stale
+    // authority *inside* the same SQLite BEGIN IMMEDIATE as world commit.
+    void step_as_cell_worker(const NativeCellWorkerTick& token,
+                             FailPoint fail = FailPoint::None);
     // TRUSTED HOST only; executes one due terminal ferry incident and commits
     // world snapshot, ART02 deaths, ECON03 population and receipts atomically.
     // For other ticks call step(); non-enrolled regions are refused.
@@ -1221,6 +1235,9 @@ public:
 
 
 private:
+    void step_with_cell_worker(const NativeCellWorkerTick* token,
+                               FailPoint fail);
+
     // Only the trusted regional production bridge may attach a physical
     // inventory escrow effect to this canonical world command.
     void settle_constructed_stock(const Command&,
