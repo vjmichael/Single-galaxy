@@ -154,6 +154,23 @@ bool move_galactic_toward(galactic::Point& location,
     legacy_z=projected_probe_axis(legacy_z,displacement.z_mm_per_tick);
     return location==destination;
 }
+double physical_distance_mm(const Entity& a,const Entity& b,bool three_dimensional){
+    if(a.physical_galactic_authoritative || b.physical_galactic_authoritative){
+        if(!a.physical_galactic_authoritative || !b.physical_galactic_authoritative)
+            return std::numeric_limits<double>::infinity();
+        const auto delta=galactic::nearby_displacement(
+            a.physical_galactic,b.physical_galactic);
+        if(!delta)return std::numeric_limits<double>::infinity();
+        return std::hypot(double(delta->x_mm),double(delta->y_mm),
+                          double(delta->z_mm));
+    }
+    if(three_dimensional)
+        return std::hypot(double(a.position.x)-b.position.x,
+                          double(a.position.y)-b.position.y,
+                          double(a.position_z_mm)-b.position_z_mm);
+    return std::hypot(double(a.position.x)-b.position.x,
+                      double(a.position.y)-b.position.y);
+}
 bool within_native_3d_range(const Entity& a,const Entity& b,
                             std::int64_t radius) {
     if(a.physical_galactic_authoritative || b.physical_galactic_authoritative){
@@ -3795,12 +3812,8 @@ Event Simulation::execute(const Command& c) {
             // original material-backed detection hardware.
             const auto acquisition=ship_sensors::detection_range_mm(
                 *this,actor,defender);
-            const auto physical_distance=snapshot_version_>=119 ?
-                std::hypot(double(defender.position.x)-actor.position.x,
-                           double(defender.position.y)-actor.position.y,
-                           double(defender.position_z_mm)-actor.position_z_mm) :
-                std::hypot(double(defender.position.x)-actor.position.x,
-                           double(defender.position.y)-actor.position.y);
+            const auto physical_distance=physical_distance_mm(
+                actor,defender,snapshot_version_>=119);
             if(physical_distance>double(kHackRangeMm) ||
                physical_distance>double(acquisition)) {
                 result.result=Outcome::OutOfRange;return result;
@@ -3986,11 +3999,21 @@ Event Simulation::execute(const Command& c) {
                !within_native_3d_range(actor,target,kTrainingWeaponRangeMm)){
                 result.result=Outcome::OutOfRange;return result;
             }
-            const auto dx=target.position.x-actor.position.x;
-            const auto dy=target.position.y-actor.position.y;
+            const auto relative=snapshot_version_>=120?
+                galactic::nearby_displacement(
+                    target.physical_galactic,actor.physical_galactic):
+                std::optional<CosmicPosition>{};
+            if(snapshot_version_>=120 && !relative){
+                result.result=Outcome::OutOfRange;return result;
+            }
+            const auto dx=snapshot_version_>=120?relative->x_mm:
+                target.position.x-actor.position.x;
+            const auto dy=snapshot_version_>=120?relative->y_mm:
+                target.position.y-actor.position.y;
+            const auto dz=snapshot_version_>=120?relative->z_mm:
+                target.position_z_mm-actor.position_z_mm;
             const auto distance=snapshot_version_>=119 ?
-                std::hypot(double(dx),double(dy),
-                           (double(target.position_z_mm)-double(actor.position_z_mm))) :
+                std::hypot(double(dx),double(dy),double(dz)) :
                 std::hypot(double(dx),double(dy));
             const auto sensed=ship_sensors::detection_range_mm(
                 *this,actor,target);
@@ -4012,7 +4035,7 @@ Event Simulation::execute(const Command& c) {
             const double lateral=double(dy)*std::cos(radians)-
                 double(dx)*std::sin(radians);
             if(along<=0 || (snapshot_version_>=119 ?
-                std::hypot(lateral,(double(target.position_z_mm)-double(actor.position_z_mm)))>along :
+                std::hypot(lateral,double(dz))>along :
                 std::abs(lateral)>along)){
                 result.result=Outcome::OutOfRange;return result;
             }
@@ -4067,8 +4090,17 @@ Event Simulation::execute(const Command& c) {
                !within_native_3d_range(actor,drone,kTrainingWeaponRangeMm)){
                 result.result=Outcome::OutOfRange;return result;
             }
-            const auto dx=drone.position.x-actor.position.x;
-            const auto dy=drone.position.y-actor.position.y;
+            const auto relative=snapshot_version_>=120?
+                galactic::nearby_displacement(
+                    drone.physical_galactic,actor.physical_galactic):
+                std::optional<CosmicPosition>{};
+            if(snapshot_version_>=120 && !relative){
+                result.result=Outcome::OutOfRange;return result;
+            }
+            const auto dx=snapshot_version_>=120?relative->x_mm:
+                drone.position.x-actor.position.x;
+            const auto dy=snapshot_version_>=120?relative->y_mm:
+                drone.position.y-actor.position.y;
             constexpr auto range=kTrainingWeaponRangeMm;
             if(snapshot_version_>=119 ? !within_native_3d_range(actor,drone,range) :
                (dx < -range || dx > range || dy < -range || dy > range ||
