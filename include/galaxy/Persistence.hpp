@@ -925,6 +925,10 @@ public:
     bool pause_planetary_production_build(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,bool farm,bool pause,
         FailPoint fail=FailPoint::None);
+    bool handover_planetary_production_build(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool farm,std::uint64_t previous,
+        std::uint64_t replacement,std::uint64_t request_id,
+        FailPoint fail=FailPoint::None);
     bool settle_planetary_founder(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,std::uint64_t npc_id,
         std::uint64_t request_id,bool voluntary_consent_attested,
