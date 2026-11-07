@@ -22,6 +22,11 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #ifdef __linux__
+#include <cerrno>
+#include <cstddef>
+#include <linux/filter.h>
+#include <linux/seccomp.h>
+#include <sys/prctl.h>
 #include <sys/syscall.h>
 #endif
 #endif
@@ -184,6 +189,57 @@ bool execute(const std::string& executable,const CellProcessTask& task,
     return success;
 }
 #else
+#ifdef __linux__
+// This component runs exactly one read-only native report task per child.
+// Descendants are not part of its protocol, so deny process creation and
+// process-group escape inside the kernel before the child can exec. These
+// filters are inherited across execve; failure to apply is fatal.
+bool restrict_native_worker_descendants(){
+    constexpr std::uint32_t denied=SECCOMP_RET_ERRNO |
+        static_cast<std::uint32_t>(EPERM);
+    const sock_filter filter[]={
+        BPF_STMT(BPF_LD|BPF_W|BPF_ABS,
+            static_cast<std::uint32_t>(offsetof(seccomp_data,nr))),
+#ifdef SYS_clone
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,SYS_clone,0,1),
+        BPF_STMT(BPF_RET|BPF_K,denied),
+#endif
+#ifdef SYS_clone3
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,SYS_clone3,0,1),
+        BPF_STMT(BPF_RET|BPF_K,denied),
+#endif
+#ifdef SYS_fork
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,SYS_fork,0,1),
+        BPF_STMT(BPF_RET|BPF_K,denied),
+#endif
+#ifdef SYS_vfork
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,SYS_vfork,0,1),
+        BPF_STMT(BPF_RET|BPF_K,denied),
+#endif
+#ifdef SYS_setsid
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,SYS_setsid,0,1),
+        BPF_STMT(BPF_RET|BPF_K,denied),
+#endif
+#ifdef SYS_setpgid
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,SYS_setpgid,0,1),
+        BPF_STMT(BPF_RET|BPF_K,denied),
+#endif
+#ifdef SYS_unshare
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,SYS_unshare,0,1),
+        BPF_STMT(BPF_RET|BPF_K,denied),
+#endif
+#ifdef SYS_setns
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,SYS_setns,0,1),
+        BPF_STMT(BPF_RET|BPF_K,denied),
+#endif
+        BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_ALLOW)
+    };
+    sock_fprog program{static_cast<unsigned short>(
+        sizeof(filter)/sizeof(filter[0])),const_cast<sock_filter*>(filter)};
+    return prctl(PR_SET_NO_NEW_PRIVS,1,0,0,0)==0 &&
+        prctl(PR_SET_SECCOMP,SECCOMP_MODE_FILTER,&program)==0;
+}
+#endif
 bool execute(const std::string& executable,const CellProcessTask& task,
     std::chrono::milliseconds deadline,std::string& output){
     int fds[2]={-1,-1};
@@ -197,6 +253,7 @@ bool execute(const std::string& executable,const CellProcessTask& task,
     // from a multi-threaded supervisor and must not call sysconf or use
     // libc allocation/locks before its execv.
     const long descriptor_limit=sysconf(_SC_OPEN_MAX);
+    const pid_t launching_parent=getpid();
     const pid_t pid=fork();
     if(pid<0){close(fds[0]);close(fds[1]);return false;}
     if(pid==0){
@@ -220,6 +277,14 @@ bool execute(const std::string& executable,const CellProcessTask& task,
         const rlimit cpu{2,2};
         if(setrlimit(RLIMIT_AS,&address)!=0 ||
            setrlimit(RLIMIT_CPU,&cpu)!=0)_exit(125);
+#ifdef __linux__
+        // Closing the parent unexpectedly cannot orphan an uncontained
+        // read-only worker. PR_SET_PDEATHSIG is checked against the
+        // captured original parent PID to close the post-fork race.
+        if(prctl(PR_SET_PDEATHSIG,SIGKILL)!=0 ||
+           getppid()!=launching_parent ||
+           !restrict_native_worker_descendants())_exit(125);
+#endif
         const char* const args[]={executable.c_str(),"--cell-read-v1",
             task.scope.c_str(),worker.c_str(),generation.c_str(),
             checksum.c_str(),ships.c_str(),detail.c_str(),nullptr};
