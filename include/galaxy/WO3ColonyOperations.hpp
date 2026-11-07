@@ -242,6 +242,8 @@ struct PlanetarySiteAudit {
     std::uint64_t housing_progress=0,housing_order_id=0;
     std::uint64_t housing_stalled_ticks=0;
     std::uint64_t housing_completed_tick=0;
+    std::uint64_t housing_supported_cycles=0,housing_shortages=0;
+    bool housing_paused=false;
     std::int64_t unused_housing_capacity=0; // 4 initial beds; no future free population
     std::uint64_t original_permanent_residents=0;
     bool support_healthy_now=false; // site has >=2kg of each local vital stock
