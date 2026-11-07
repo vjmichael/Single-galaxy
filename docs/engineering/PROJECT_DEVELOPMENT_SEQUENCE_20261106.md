@@ -1,4 +1,6 @@
 # Single-Galaxy — Owner-directed 20-stage development sequence
+
+> **Stage 1 progress:** WO1 research, cataloguing, source-generated C++ registry and the two existing real-workshop bindings implemented on [draft PR #87](https://github.com/vjmichael/Single-galaxy/pull/87). [Exact source/verification gate ledger](INDUSTRY01_WO1_SOURCE_CLOSEOUT_20261106.md). Native CI is not yet green; **WO2 is next, not underway**.
 **Recorded November 6, 2026.** This supersedes earlier suggestions to prioritize full player gameplay, native 3D production or multiplayer ahead of the world simulation. **This is the order in which major feature areas should receive concentrated development work.** Existing prototype implementations remain useful foundations, not evidence that an area is finished.
 
 ## Binding order
