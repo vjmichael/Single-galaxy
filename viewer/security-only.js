@@ -9,7 +9,8 @@ const el=id=>document.getElementById(id);
 const text=(id,value)=>{el(id).textContent=value;};
 let csrf=null,source=null,account=null,closed=false;
 const allowed=new Set([
- 'colonySecurityRefresh','colonySecurityCall','colonySecurityCallReply'
+ 'colonySecurityRefresh','colonySecurityCall',
+ 'colonySecurityCallReply','colonySecurityNotifyAck'
 ]);
 async function json(url,body,extra={}){
  const response=await fetch(url,Object.assign({
@@ -73,7 +74,8 @@ async function bootstrap(){
   if(typeof data.token!=='string' ||
      !Array.isArray(data.commands) ||
      !['colonySecurityRefresh','colonySecurityCall',
-        'colonySecurityCallReply'].every(v=>data.commands.includes(v)))
+        'colonySecurityCallReply','colonySecurityNotifyAck']
+       .every(v=>data.commands.includes(v)))
       throw Error('Native security commands not authorized');
   csrf=data.token;
   closed=false;
