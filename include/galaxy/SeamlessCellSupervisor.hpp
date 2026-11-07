@@ -287,6 +287,55 @@ public:
         found->second=successor;
         return successor;
     }
+    // Player commands use the exact same global writer arbitration as a
+    // physical tick. A rejected/no-op command releases its uncommitted
+    // claim with immutable audit, rather than deadlocking subsequent ticks.
+    bool submit_original_command(const Command& command,
+        const std::string& claim_id,FailPoint failure=FailPoint::None){
+        if(claim_id.empty() || !command.actor)
+            throw std::invalid_argument("original command dispatch required");
+        const auto* actor=world_.world().find(command.actor);
+        const auto cell=ship_cell(world_.world(),command.actor);
+        if(!actor || actor->type!=EntityType::Ship || !cell)
+            throw std::runtime_error("command needs current physical ship");
+        const auto key=scope(*cell);
+        const auto leased=leases_.find(key);
+        if(leased==leases_.end() ||
+           !worker_may_simulate_cell(db_,leased->second.cell,
+                leased->second.worker,leased->second.epoch,
+                leased->second.region_generation,
+                leased->second.checkpoint_revision))
+            throw std::runtime_error("original command cell not currently leased");
+        if(!process_executable_.empty()){
+            std::size_t ships=0;
+            for(const auto& [id,e]:world_.world().entities()){
+                if(e.type!=EntityType::Ship)continue;
+                const auto resident=ship_cell(world_.world(),id);
+                if(resident && scope(*resident)==key)++ships;
+            }
+            const auto grade=desired_detail(world_.world(),*cell);
+            const CellProcessTask request{key,leased->second.worker,
+                world_.generation(),world_.world().state_hash(),ships,
+                static_cast<std::uint8_t>(grade)};
+            const auto result=run_cell_process(process_executable_,request);
+            if(!result.passed)
+                throw std::runtime_error("native OS command worker unavailable");
+        }
+        const auto token=claim_original_writer(
+            db_,world_,leased->second,claim_id,true);
+        try{
+            const bool accepted=world_.submit_as_cell_worker(command,token,failure);
+            if(!accepted &&
+               !release_uncommitted_writer_claim(db_,world_,token,true))
+                throw std::runtime_error("missing rejected-command claim release");
+            return accepted;
+        }catch(...){
+            try{
+                (void)release_uncommitted_writer_claim(db_,world_,token,true);
+            }catch(const std::exception&){} // preserve original error
+            throw;
+        }
+    }
     struct Committed {
         std::string scope,worker,dispatch_id;
         std::uint64_t world_generation=0,simulation_tick=0;
