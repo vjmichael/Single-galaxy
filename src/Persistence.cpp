@@ -605,6 +605,22 @@ std::uint64_t latest_generation(sqlite3* db) {
 class PersistentWorld::Store {
 public:
     bool manifest_transfer_allowed(const Command& c) const {return shipping::manifest_transfer_authorized(db_,c) && shipping::third_party_transfer_authorized(db_,c);}
+    // A canonical PhysicalDependent stores one guardian, while ART02 retains
+    // both birth parents. Until planetary family berths are atomic, an adult
+    // with an ART02 child cannot use the independent-adult shuttle interface.
+    // Consult the existing authoritative family registry, not a copied NPC
+    // roster or an assertion by the incoming client.
+    bool has_art02_child_parent(std::uint64_t adult_id) const {
+        if(!adult_id)return false;
+        Statement table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='npc_family_births'");
+        if(!table.row())return false; // no ART02 families registered in legacy DB
+        Statement children(db_,"SELECT 1 FROM npc_family_births "
+            "WHERE parent_a=? OR parent_b=? LIMIT 1");
+        children.text(1,std::to_string(adult_id));
+        children.text(2,std::to_string(adult_id));
+        return children.row(); // conservative for unproven custody/death
+    }
     std::string sqlite_path() const {
         const char* path=sqlite3_db_filename(db_,"main");
         if(!path)throw std::runtime_error("world SQLite file path unavailable");
@@ -8944,6 +8960,8 @@ bool PersistentWorld::transfer_planetary_shuttle_visitor(PlayerId owner,EntityId
         (void)id;
         if(p.ship==ship)return false;
     }
+    // ART02 secondary parentage is not present on PhysicalDependent.
+    if(reboard && store_->has_art02_child_parent(npc))return false;
     auto next=world_;
     if(!next.transfer_planetary_shuttle_visitor(owner,ship,key,npc,reboard))
         return false;
@@ -8961,6 +8979,7 @@ bool PersistentWorld::book_planetary_shuttle_passenger(PlayerId owner,EntityId s
         (void)id;
         if(p.ship==ship)return false;
     }
+    if(board && store_->has_art02_child_parent(npc))return false;
     auto next=world_;
     if(!next.book_planetary_shuttle_passenger(owner,ship,key,npc,board))
         return false;
@@ -8977,6 +8996,15 @@ bool PersistentWorld::launch_planetary_shuttle(PlayerId owner,EntityId ship,
     for(const auto& [id,p]:world_.pending_celestial_transits_) {
         (void)id;
         if(p.ship==ship)return false;
+    }
+    // Recheck actual ART02 parentage at takeoff, not only booking time.
+    // A birth recorded after an earlier booking must not strand a child.
+    if(const auto it=world_.planetary_shuttles().find(key);
+       it!=world_.planetary_shuttles().end()) {
+        if(store_->has_art02_child_parent(it->second.pilot_npc))
+            return false;
+        for(const auto adult:it->second.passenger_ids)
+            if(store_->has_art02_child_parent(adult))return false;
     }
     auto next=world_;
     if(!next.launch_planetary_shuttle(owner,ship,key,request_id,ascend))
@@ -9460,6 +9488,7 @@ bool PersistentWorld::handover_planetary_production_build(PlayerId owner,
 bool PersistentWorld::settle_planetary_founder(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,std::uint64_t npc_id,std::uint64_t request_id,
         bool voluntary_consent_attested,FailPoint fail) {
+    if(store_->has_art02_child_parent(npc_id))return false;
     auto next=world_;
     if(!next.settle_planetary_founder(owner,ship,key,npc_id,request_id,
                                       voluntary_consent_attested))return false;
@@ -9475,6 +9504,7 @@ bool PersistentWorld::settle_planetary_founder(PlayerId owner,EntityId ship,
 bool PersistentWorld::settle_planetary_visitor(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,std::uint64_t npc_id,std::uint64_t request_id,
         bool consent,FailPoint fail) {
+    if(store_->has_art02_child_parent(npc_id))return false;
     auto next=world_;
     if(!next.settle_planetary_visitor(owner,ship,key,npc_id,request_id,consent))
         return false;
@@ -9489,6 +9519,7 @@ bool PersistentWorld::settle_planetary_visitor(PlayerId owner,EntityId ship,
 bool PersistentWorld::depart_planetary_visitor(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,std::uint64_t npc_id,std::uint64_t request_id,
         bool consent,FailPoint fail) {
+    if(store_->has_art02_child_parent(npc_id))return false;
     auto next=world_;
     if(!next.depart_planetary_visitor(owner,ship,key,npc_id,request_id,consent))
         return false;
@@ -9546,6 +9577,7 @@ bool PersistentWorld::assign_planetary_shuttle_pilot(PlayerId owner,EntityId shi
         (void)id;
         if(p.ship==ship)return false;
     }
+    if(store_->has_art02_child_parent(npc))return false;
     auto next=world_;
     if(!next.assign_planetary_shuttle_pilot(owner,ship,key,npc))return false;
     if(next.total_ore()!=resource_origin_)
