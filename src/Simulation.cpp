@@ -1373,8 +1373,8 @@ bool Simulation::can_depart_colony(const Command& c) const {
         if(!origin || origin->system_id!=receiver->system_id)return false;
         if(snapshot_version_>=119 &&
            !within_native_3d_range(*origin,*receiver,kDockingRangeMm))return false;
-        const auto dx=origin->position.x-receiver->position.x;
-        const auto dy=origin->position.y-receiver->position.y;
+        const auto dx=snapshot_version_>=120?0:origin->position.x-receiver->position.x;
+        const auto dy=snapshot_version_>=120?0:origin->position.y-receiver->position.y;
         return dx>=-kDockingRangeMm && dx<=kDockingRangeMm &&
                dy>=-kDockingRangeMm && dy<=kDockingRangeMm &&
                dx*dx+dy*dy<=kDockingRangeMm*kDockingRangeMm;
@@ -1687,8 +1687,8 @@ bool Simulation::submit(const Command& c) {
         for(const auto receiver:{first,second}){
             if(snapshot_version_>=119 &&
                !within_native_3d_range(*source,*receiver,2500))return false;
-            const auto dx=source->position.x-receiver->position.x;
-            const auto dy=source->position.y-receiver->position.y;
+            const auto dx=snapshot_version_>=120?0:source->position.x-receiver->position.x;
+            const auto dy=snapshot_version_>=120?0:source->position.y-receiver->position.y;
             if(dx<-2500||dx>2500||dy<-2500||dy>2500||dx*dx+dy*dy>2500*2500)
                 return false;
         }
@@ -1961,8 +1961,8 @@ bool Simulation::submit(const Command& c) {
             if(snapshot_version_>=119 &&
                !within_native_3d_range(ship->second,endpoint->second,kDockingRangeMm))
                 return false;
-            const auto dx=ship->second.position.x-endpoint->second.position.x;
-            const auto dy=ship->second.position.y-endpoint->second.position.y;
+            const auto dx=snapshot_version_>=120?0:ship->second.position.x-endpoint->second.position.x;
+            const auto dy=snapshot_version_>=120?0:ship->second.position.y-endpoint->second.position.y;
             if(dx<-kDockingRangeMm || dx>kDockingRangeMm ||
                dy<-kDockingRangeMm || dy>kDockingRangeMm ||
                dx*dx+dy*dy>kDockingRangeMm*kDockingRangeMm)return false;
@@ -2440,8 +2440,8 @@ Outcome Simulation::mine_status(const Entity& actor, EntityId target) const {
     const std::int64_t access=kMiningRangeMm+(deposit ? deposit->radius_m*1000 : 0);
     if(snapshot_version_>=119 && !within_native_3d_range(actor,asteroid,access))
         return Outcome::OutOfRange; // before potentially overflowing XY subtraction
-    const auto dx = actor.position.x - asteroid.position.x;
-    const auto dy = actor.position.y - asteroid.position.y;
+    const auto dx = snapshot_version_>=120?0:actor.position.x - asteroid.position.x;
+    const auto dy = snapshot_version_>=120?0:actor.position.y - asteroid.position.y;
     if(snapshot_version_>=119 ? !within_native_3d_range(actor,asteroid,access) :
        (dx < -access || dx > access || dy < -access || dy > access ||
         dx*dx + dy*dy > access*access)) return Outcome::OutOfRange;
@@ -2629,8 +2629,8 @@ Event Simulation::execute(const Command& c) {
            !within_native_3d_range(vehicle,site->second,kDockingRangeMm)){
             result.result=Outcome::OutOfRange;return result;
         }
-        const auto dx=vehicle.position.x-site->second.position.x;
-        const auto dy=vehicle.position.y-site->second.position.y;
+        const auto dx=snapshot_version_>=120?0:vehicle.position.x-site->second.position.x;
+        const auto dy=snapshot_version_>=120?0:vehicle.position.y-site->second.position.y;
         if(dx<-kDockingRangeMm||dx>kDockingRangeMm||
            dy<-kDockingRangeMm||dy>kDockingRangeMm||
            dx*dx+dy*dy>kDockingRangeMm*kDockingRangeMm){
@@ -2765,8 +2765,8 @@ Event Simulation::execute(const Command& c) {
                !within_native_3d_range(ship->second,site->second,kDockingRangeMm)){
                 result.result=Outcome::OutOfRange;return result;
             }
-            const auto dx=ship->second.position.x-site->second.position.x;
-            const auto dy=ship->second.position.y-site->second.position.y;
+            const auto dx=snapshot_version_>=120?0:ship->second.position.x-site->second.position.x;
+            const auto dy=snapshot_version_>=120?0:ship->second.position.y-site->second.position.y;
             if(dx<-kDockingRangeMm || dx>kDockingRangeMm ||
                dy<-kDockingRangeMm || dy>kDockingRangeMm ||
                dx*dx+dy*dy>kDockingRangeMm*kDockingRangeMm){result.result=Outcome::OutOfRange;return result;}
@@ -2819,7 +2819,7 @@ Event Simulation::execute(const Command& c) {
                 const auto& ship=entities_.at(medic->second.location),&site=entities_.at(c.actor);
                 if(snapshot_version_<119 ||
                    within_native_3d_range(ship,site,kDockingRangeMm)){
-                    const auto dx=ship.position.x-site.position.x,dy=ship.position.y-site.position.y;
+                    const auto dx=snapshot_version_>=120?0:ship.position.x-site.position.x,dy=snapshot_version_>=120?0:ship.position.y-site.position.y;
                     crew=ship.type==EntityType::Ship && ship.owner_id==site.owner_id &&
                          ship.system_id==site.system_id && dx>=-kDockingRangeMm && dx<=kDockingRangeMm &&
                          dy>=-kDockingRangeMm && dy<=kDockingRangeMm &&
@@ -2893,8 +2893,8 @@ Event Simulation::execute(const Command& c) {
            !within_native_3d_range(ship->second,station->second,kDockingRangeMm)){
             result.result=Outcome::OutOfRange;return result;
         }
-        const auto dx=ship->second.position.x-station->second.position.x;
-        const auto dy=ship->second.position.y-station->second.position.y;
+        const auto dx=snapshot_version_>=120?0:ship->second.position.x-station->second.position.x;
+        const auto dy=snapshot_version_>=120?0:ship->second.position.y-station->second.position.y;
         if(dx<-kDockingRangeMm || dx>kDockingRangeMm ||
            dy<-kDockingRangeMm || dy>kDockingRangeMm ||
            dx*dx+dy*dy>kDockingRangeMm*kDockingRangeMm){
@@ -3046,8 +3046,8 @@ Event Simulation::execute(const Command& c) {
                !within_native_3d_range(*source,*receiver,2500)){
                 result.result=Outcome::OutOfRange;return result;
             }
-            const auto dx=source->position.x-receiver->position.x;
-            const auto dy=source->position.y-receiver->position.y;
+            const auto dx=snapshot_version_>=120?0:source->position.x-receiver->position.x;
+            const auto dy=snapshot_version_>=120?0:source->position.y-receiver->position.y;
             if(dx<-2500||dx>2500||dy<-2500||dy>2500||dx*dx+dy*dy>2500*2500){
                 result.result=Outcome::OutOfRange;return result;
             }
@@ -3231,8 +3231,8 @@ Event Simulation::execute(const Command& c) {
                        !within_native_3d_range(ship->second,endpoint->second,kDockingRangeMm)){
                         result.result=Outcome::OutOfRange;return result;
                     }
-                    const auto dx=ship->second.position.x-endpoint->second.position.x;
-                    const auto dy=ship->second.position.y-endpoint->second.position.y;
+                    const auto dx=snapshot_version_>=120?0:ship->second.position.x-endpoint->second.position.x;
+                    const auto dy=snapshot_version_>=120?0:ship->second.position.y-endpoint->second.position.y;
                     if(dx<-kDockingRangeMm || dx>kDockingRangeMm ||
                        dy<-kDockingRangeMm || dy>kDockingRangeMm ||
                        dx*dx+dy*dy>kDockingRangeMm*kDockingRangeMm){
@@ -3295,8 +3295,8 @@ Event Simulation::execute(const Command& c) {
                    !within_native_3d_range(ship->second,endpoint->second,kDockingRangeMm)){
                     result.result=Outcome::OutOfRange;return result;
                 }
-                const auto dx=ship->second.position.x-endpoint->second.position.x;
-                const auto dy=ship->second.position.y-endpoint->second.position.y;
+                const auto dx=snapshot_version_>=120?0:ship->second.position.x-endpoint->second.position.x;
+                const auto dy=snapshot_version_>=120?0:ship->second.position.y-endpoint->second.position.y;
                 if(dx<-kDockingRangeMm || dx>kDockingRangeMm ||
                    dy<-kDockingRangeMm || dy>kDockingRangeMm ||
                    dx*dx+dy*dy>kDockingRangeMm*kDockingRangeMm){
@@ -3938,8 +3938,8 @@ Event Simulation::execute(const Command& c) {
                !within_native_3d_range(actor,wreck,range)){
                 result.result=Outcome::OutOfRange;return result;
             }
-            const auto dx=wreck.position.x-actor.position.x;
-            const auto dy=wreck.position.y-actor.position.y;
+            const auto dx=snapshot_version_>=120?0:wreck.position.x-actor.position.x;
+            const auto dy=snapshot_version_>=120?0:wreck.position.y-actor.position.y;
             if(snapshot_version_>=119 ? !within_native_3d_range(actor,wreck,range) :
                (dx< -range || dx>range || dy< -range || dy>range ||
                 dx*dx+dy*dy>range*range)){result.result=Outcome::OutOfRange;return result;}
@@ -4200,8 +4200,8 @@ Event Simulation::execute(const Command& c) {
                !within_native_3d_range(actor,*station,kDockingRangeMm)){
                 result.result=Outcome::OutOfRange;return result;
             }
-            const auto dx = actor.position.x - station->position.x;
-            const auto dy = actor.position.y - station->position.y;
+            const auto dx = snapshot_version_>=120?0:actor.position.x - station->position.x;
+            const auto dy = snapshot_version_>=120?0:actor.position.y - station->position.y;
             if (snapshot_version_>=119 ?
                 !within_native_3d_range(actor,*station,kDockingRangeMm) :
                 (dx < -kDockingRangeMm || dx > kDockingRangeMm ||
@@ -4308,8 +4308,8 @@ Event Simulation::execute(const Command& c) {
                !within_native_3d_range(actor,*gate,kJumpActivationMm)){
                 result.result=Outcome::OutOfRange;return result;
             }
-            const auto dx=actor.position.x-gate->position.x;
-            const auto dy=actor.position.y-gate->position.y;
+            const auto dx=snapshot_version_>=120?0:actor.position.x-gate->position.x;
+            const auto dy=snapshot_version_>=120?0:actor.position.y-gate->position.y;
             if(dx<-kJumpActivationMm || dx>kJumpActivationMm ||
                dy<-kJumpActivationMm || dy>kJumpActivationMm ||
                dx*dx+dy*dy>kJumpActivationMm*kJumpActivationMm){
@@ -4386,7 +4386,7 @@ Event Simulation::execute(const Command& c) {
                !within_native_3d_range(actor,*site,kDockingRangeMm)){
                 result.result=Outcome::OutOfRange;return result;
             }
-            auto dx=actor.position.x-site->position.x,dy=actor.position.y-site->position.y;
+            auto dx=snapshot_version_>=120?0:actor.position.x-site->position.x,dy=snapshot_version_>=120?0:actor.position.y-site->position.y;
             if(dx < -kDockingRangeMm || dx>kDockingRangeMm ||
                dy < -kDockingRangeMm || dy>kDockingRangeMm ||
                dx*dx+dy*dy>kDockingRangeMm*kDockingRangeMm){
