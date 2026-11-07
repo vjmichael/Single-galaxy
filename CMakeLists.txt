@@ -1926,3 +1926,15 @@ if(BUILD_TESTING)
     target_link_libraries(galaxy_wo5_physical_logistics_tests PRIVATE galaxy_kernel)
     add_test(NAME galaxy_wo5_physical_logistics COMMAND galaxy_wo5_physical_logistics_tests)
 endif()
+
+
+# SPACE-01/02/03: native, original-world 3D computational cell occupancy,
+# exact SQLite atomic migration, per-cell worker authority and WO5 freight
+# identity/recovery. No browser-only mock or second material ledger.
+if(BUILD_TESTING)
+  add_executable(galaxy_seamless_spatial_ownership_tests
+      tests/SeamlessSpatialOwnershipTests.cpp)
+  target_link_libraries(galaxy_seamless_spatial_ownership_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_seamless_spatial_ownership
+      COMMAND galaxy_seamless_spatial_ownership_tests)
+endif()
