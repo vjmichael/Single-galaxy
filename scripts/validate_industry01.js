@@ -125,7 +125,7 @@ function validateCatalog(catalog) {
   const legacy=Array.isArray(catalog.legacy_bridge)?catalog.legacy_bridge:[];
   const legacyIds=new Set();
   for(const row of legacy){
-    if(!row||!identifier(row.legacy_code)||!row.legacy_code.includes("/")){
+    if(!row||!identifier(row.legacy_code)){
       err("invalid legacy item mapping");continue;
     }
     if(legacyIds.has(row.legacy_code))err("duplicate legacy mapping "+row.legacy_code);
