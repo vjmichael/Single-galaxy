@@ -531,6 +531,12 @@ struct PlanetarySiteFacility {
     std::uint64_t housing_stalled_ticks=0, housing_completed_tick=0;
     bool housing_paused=false; // owner may suspend construction, never refund
     std::uint64_t housing_supported_cycles=0,housing_shortages=0;
+    // WO3-E: only the TWO actual originally deployed founders may obtain
+    // first permanent legal planetary residence, after completed housing.
+    // IDs refer to canonical NpcRecord; the matching owner decisions are
+    // durable, single-use provenance, never a duplicate NPC population.
+    std::array<std::uint64_t,2> founder_residents{{0,0}};
+    std::array<std::uint64_t,2> founder_consent_requests{{0,0}};
 };
 using PlanetarySiteKey = std::tuple<std::uint64_t,std::uint16_t,std::uint16_t,std::uint32_t>;
 // PLAY-13D: cargo identity is independent of player/NPC transport roles.
@@ -1347,6 +1353,12 @@ public:
         const PlanetarySiteKey& key,std::uint64_t order_id);
     bool set_planetary_housing_pause(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,bool pause);
+    // Admission of an already physically deployed named founder with
+    // trusted owner + voluntary-consent attestation and unique request ID.
+    // Does not invent NPCs or transfer visitors without arrival evidence.
+    bool settle_planetary_founder(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc_id,
+        std::uint64_t request_id,bool voluntary_consent_attested);
     bool load_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,bool water,std::int64_t kg);
     bool unload_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,bool water,std::int64_t kg);
     // Typed manifest: water, food and extracted nutrients use one physical
