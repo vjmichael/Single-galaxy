@@ -14203,9 +14203,13 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                         throw std::runtime_error("snapshot: missing utility supervisor identity");
                     const auto& person=worker!=result.npcs_.end()?
                         worker->second:dead->second.identity;
-                    if(person.home_ship!=site.source_ship ||
-                       !result.workshop_trade_certified(
-                           site.utility_supervisor,WorkshopTrade::Shape))
+                    const auto shape_credits=std::count_if(
+                        person.industrial_training.begin(),
+                        person.industrial_training.end(),
+                        [](const NpcTradeTraining& receipt){
+                            return receipt.trade==WorkshopTrade::Shape;
+                        });
+                    if(person.home_ship!=site.source_ship || shape_credits<3)
                         throw std::runtime_error("snapshot: unqualified surface supervisor");
                 }
                 for(std::size_t i=0;i<2;++i) {
