@@ -14,8 +14,8 @@ using namespace galaxy::spatial;
 #define CHECK(X) do {if(!(X))throw std::runtime_error( #X );}while(false)
 int main(int argc,char** argv){
     try{
-        CHECK(argc==3);
-        const std::string binary(argv[1]),hung(argv[2]);
+        CHECK(argc==4);
+        const std::string binary(argv[1]),hung(argv[2]),detached(argv[3]);
         constexpr int workers=4, rounds=20;
         std::vector<double> elapsed_ms;
         elapsed_ms.reserve(workers*rounds);
@@ -52,6 +52,16 @@ int main(int argc,char** argv){
             CHECK(!run_cell_process(hung,request,
                 std::chrono::milliseconds(40)).passed);
         }
+#ifndef _WIN32
+        // A child that calls setsid() can keep stdout open outside the
+        // original process group after its leader exits successfully.
+        // The host must not block in read() until that descendant dies.
+        const auto inherited_start=std::chrono::steady_clock::now();
+        CHECK(!run_cell_process(detached,request,
+            std::chrono::milliseconds(1200)).passed);
+        CHECK(std::chrono::steady_clock::now()-inherited_start<
+              std::chrono::milliseconds(3000));
+#endif
         CHECK(run_cell_process(binary,request).passed);
         CHECK(!run_cell_process(binary,CellProcessTask{
             request.scope,request.worker,0,request.original_hash,
