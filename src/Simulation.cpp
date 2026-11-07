@@ -4261,6 +4261,24 @@ Event Simulation::execute(const Command& c) {
                     result.result=Outcome::InvalidTarget;return result;
                 }
                 auto& w=wi->second;
+                const auto occupied_native_shipyard=[&](std::uint64_t who){
+                    for(const auto& [id,yard]:shipyard_constructions_){
+                        (void)id;
+                        if(!yard.operational() &&
+                           (yard.workers[0]==who || yard.workers[1]==who))
+                            return true;
+                    }
+                    for(const auto& [id,build]:freighter_build_orders_){
+                        (void)id;
+                        if(build.finished())continue;
+                        const auto yard=shipyard_constructions_.find(build.yard_order);
+                        if(yard!=shipyard_constructions_.end() &&
+                           (yard->second.workers[0]==who ||
+                            yard->second.workers[1]==who))
+                            return true;
+                    }
+                    return false;
+                };
                 // WO2-J appointment, mentorship and job policy are original
                 // site-owned actions; they cannot bypass workshop execution.
                 if(c.action==Action::AppointWorkshopSupervisor){
@@ -4285,6 +4303,7 @@ Event Simulation::execute(const Command& c) {
                        n->second.role!=NpcRole::Habitat ||
                        n->second.mentor_id || n->second.transport_id ||
                        !npc_available_for_duty(id) ||
+                       occupied_native_shipyard(id) ||
                        !workshop_trade_certified(id,trade)){
                         result.result=Outcome::InvalidTarget;return result;
                     }
@@ -4570,7 +4589,8 @@ Event Simulation::execute(const Command& c) {
                            mentor->second.assigned_site!=c.target ||
                            mentor->second.role!=NpcRole::Habitat ||
                            mentor->second.transport_id || mentor->second.mentor_id ||
-                           !npc_available_for_duty(mentor_id)){
+                           !npc_available_for_duty(mentor_id) ||
+                           occupied_native_shipyard(mentor_id)){
                             result.result=Outcome::InvalidTarget;return result;
                         }
                         for(const auto& [site,shop]:workshops_){
