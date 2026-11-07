@@ -12449,6 +12449,57 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                     throw std::runtime_error("snapshot: repeated legacy resident");
             }
             result.legacy_planetary_residence_import_=std::move(m);
+        } else if(f[0]=="planetservice" &&
+                   result.snapshot_version_>=117) {
+            require_fields(f,14);
+            const auto body=u64(f[1]),lat=u64(f[2]),lon=u64(f[3]),
+                revision=u64(f[4]),kind=u64(f[5]),phase=u64(f[6]),
+                progress=u64(f[7]),order=u64(f[8]),supervisor=u64(f[9]),
+                stalled=u64(f[10]),done=u64(f[11]),paused=u64(f[12]),
+                powered=u64(f[13]);
+            if(!body || lat>=36 || lon>=72 || revision!=1 || kind>1 ||
+               phase<1 || phase>2 || progress>40 || !order || !supervisor ||
+               paused>1 || stalled>result.tick_ || done>result.tick_ ||
+               powered>result.tick_ ||
+               (phase==1 && (done || progress>=40 || powered)) ||
+               (phase==2 && (progress!=40 || !done || paused)))
+                throw std::runtime_error("snapshot: invalid service project");
+            const PlanetarySiteKey key{body,std::uint16_t(lat),
+                std::uint16_t(lon),1};
+            const auto site=result.planetary_sites_.find(key);
+            if(site==result.planetary_sites_.end() ||
+               site->second.housing_phase!=2 ||
+               site->second.utility_phase!=2 ||
+               site->second.service_projects[kind].phase)
+                throw std::runtime_error("snapshot: orphan or repeated service");
+            auto& p=site->second.service_projects[kind];
+            p.phase=std::uint8_t(phase);p.progress=progress;
+            p.order_id=order;p.supervisor=supervisor;
+            p.stalled_ticks=stalled;p.completed_tick=done;
+            p.paused=paused!=0;p.powered_cycles=powered;
+        } else if(f[0]=="planetservicehandover" &&
+                   result.snapshot_version_>=117) {
+            require_fields(f,10);
+            const auto body=u64(f[1]),lat=u64(f[2]),lon=u64(f[3]),
+                revision=u64(f[4]),kind=u64(f[5]),id=u64(f[6]),
+                when=u64(f[7]),previous=u64(f[8]),replacement=u64(f[9]);
+            if(!body || lat>=36 || lon>=72 || revision!=1 || kind>1 ||
+               !id || !when || when>result.tick_ || !previous ||
+               !replacement || previous==replacement)
+                throw std::runtime_error("snapshot: invalid service handover");
+            const PlanetarySiteKey key{body,std::uint16_t(lat),
+                std::uint16_t(lon),1};
+            const auto site=result.planetary_sites_.find(key);
+            if(site==result.planetary_sites_.end() ||
+               !site->second.service_projects[kind].phase ||
+               site->second.service_handovers[kind].size()>=16)
+                throw std::runtime_error("snapshot: orphan or overflowed service handover");
+            auto& chain=site->second.service_handovers[kind];
+            if(!chain.empty() &&
+               (chain.back().tick>=when ||
+                chain.back().replacement!=previous))
+                throw std::runtime_error("snapshot: broken service succession");
+            chain.push_back({id,when,previous,replacement});
         } else if(f[0]=="planetproduction" &&
                    result.snapshot_version_>=113) {
             require_fields(f,13);
