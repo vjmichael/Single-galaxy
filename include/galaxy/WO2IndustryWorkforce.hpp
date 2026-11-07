@@ -306,6 +306,85 @@ inline std::optional<Command> approved_original_trade_training(
     return c;
 }
 
+// WO2-I: an approved finite named-worker shift uses the original future
+// execute_tick as its start, and the bounded native command duration as its
+// expiration. A pending order is NOT an already working person: the original
+// execution boundary rechecks physical duty and may refuse it.
+inline std::optional<Command> approved_original_workshop_shift(
+    const Simulation& world,PlayerId owner,EntityId home_ship,EntityId site,
+    bool finisher,std::uint64_t worker,std::uint64_t start_tick,
+    std::uint64_t end_tick,std::uint64_t command_id,bool approved_by_owner) {
+    if(!approved_by_owner || !command_id || world.has_command_id(command_id) ||
+       !worker || worker>1000000 || !owner ||
+       world.tick()==std::numeric_limits<std::uint64_t>::max() ||
+       start_tick<=world.tick() || end_tick<=start_tick ||
+       start_tick-world.tick()>10000 || end_tick-start_tick>10000 ||
+       command_id==std::numeric_limits<std::uint64_t>::max())
+        return std::nullopt;
+    const auto rows=plan_original_workshop(world,owner,home_ship,site);
+    const auto& row=rows[finisher?1:0];
+    const auto* shop=world.workshop(site);
+    if((row.gate!=StaffGate::Ready && row.gate!=StaffGate::NoFreeQualifiedPerson) ||
+       !shop || shop->shifts[finisher?1:0].command_id ||
+       (finisher && !shop->finisher_installed) ||
+       (finisher?shop->finisher_npc_id:shop->operator_npc_id))
+        return std::nullopt;
+    const auto person=world.npc_records().find(worker);
+    if(person==world.npc_records().end() ||
+       person->second.home_ship!=home_ship ||
+       person->second.location!=site ||
+       person->second.assigned_site!=site ||
+       person->second.role!=NpcRole::Habitat ||
+       person->second.transport_id || person->second.mentor_id ||
+       !world.npc_available_for_duty(worker) ||
+       already_on_named_duty(world,worker,world.tick()+1) ||
+       medical_shift_overlaps(world,worker,start_tick,end_tick))
+        return std::nullopt;
+    for(const auto& [id,other]:world.workshops()){
+        (void)id;
+        for(const auto& shift:other.shifts)
+            if(shift.command_id && shift.worker==worker &&
+               start_tick<shift.end_tick && shift.start_tick<end_tick)
+                return std::nullopt;
+    }
+    Command c{};
+    c.id=command_id;c.sequence=command_id;c.execute_tick=start_tick;
+    c.issuer=owner;c.actor=home_ship;c.target=site;
+    c.action=Action::StartWorkshopShift;
+    c.amount=static_cast<std::int64_t>(worker);
+    c.thrust_x=finisher?2:1;
+    c.thrust_y=static_cast<int>(end_tick-start_tick);
+    return c;
+}
+// Only an original applied shift may be cancelled here. A pending start
+// remains a future accepted command and is rechecked on its due tick.
+inline std::optional<Command> approved_original_workshop_shift_cancel(
+    const Simulation& world,PlayerId owner,EntityId home_ship,EntityId site,
+    bool finisher,std::uint64_t original_shift_command,
+    std::uint64_t cancel_command,bool approved_by_owner) {
+    if(!approved_by_owner || !cancel_command ||
+       world.has_command_id(cancel_command) ||
+       !original_shift_command ||
+       original_shift_command>static_cast<std::uint64_t>(
+            std::numeric_limits<std::int64_t>::max()) ||
+       world.tick()==std::numeric_limits<std::uint64_t>::max())
+        return std::nullopt;
+    const auto rows=plan_original_workshop(world,owner,home_ship,site);
+    const auto& row=rows[finisher?1:0];
+    const auto* shop=world.workshop(site);
+    if(!shop || row.gate!=StaffGate::AlreadyStaffed ||
+       shop->shifts[finisher?1:0].command_id!=original_shift_command)
+        return std::nullopt;
+    Command c{};
+    c.id=cancel_command;c.sequence=cancel_command;
+    c.execute_tick=world.tick()+1;c.issuer=owner;
+    c.actor=home_ship;c.target=site;
+    c.action=Action::CancelWorkshopShift;
+    c.amount=static_cast<std::int64_t>(original_shift_command);
+    c.thrust_x=finisher?2:1;
+    return c;
+}
+
 // Builds ONE original Command only following explicit owner/host approval.
 // Does not submit, reserve, allocate a command ID or claim success. Caller
 // uses the original PersistentWorld::submit and later verifies its Event.
