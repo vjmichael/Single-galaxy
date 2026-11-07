@@ -757,6 +757,7 @@ struct OutpostWorkshop {
     // real local certified NPC, never an independently created worker.
     std::uint64_t supervisor_npc_id=0,supervisor_appointment_id=0;
     WorkshopTrade supervisor_trade=WorkshopTrade::Cut;
+    std::uint64_t last_mentored_tick=0; // at most one real trainee per site/tick
     std::array<WorkshopJobApproval,2> approved_jobs{};
 };
 // ECON-02B2b: player-built, site-bound 4 m3 mixed-stack container.
