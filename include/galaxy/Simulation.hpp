@@ -1465,7 +1465,8 @@ public:
     // Only orbital berth modifications; voyage departures move all occupants.
     // Only a trusted PersistentWorld family/ART02 SQLite gate may call
     // this after verifying immutable birth parentage and complete custody.
-    bool book_planetary_shuttle_family(PlayerId owner,EntityId ship,
+    bool book_planetary_shuttle_family(PlayerId host_principal,
+        PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,std::uint64_t guardian,
         std::uint64_t co_parent,const std::vector<std::uint64_t>& children,
         std::uint64_t request_id);
