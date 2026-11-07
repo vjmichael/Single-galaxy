@@ -10110,6 +10110,20 @@ bool Simulation::release_planetary_shuttle_family(PlayerId host_principal,
         if(npc==npcs_.end() || npc->second.location!=ship ||
            npc->second.home_ship!=ship)return false;
     }
+    // Physically deboard the completed original household at the real
+    // parent-ship berth. No adult remains silently reserved as a passenger.
+    for(const auto adult:{family.guardian_id,family.co_parent_id}) {
+        if(!adult)continue;
+        auto& passengers=sh->second.passenger_ids;
+        const auto it=std::lower_bound(passengers.begin(),passengers.end(),adult);
+        if(it==passengers.end() || *it!=adult)return false;
+    }
+    for(const auto adult:{family.guardian_id,family.co_parent_id}) {
+        if(!adult)continue;
+        auto& passengers=sh->second.passenger_ids;
+        passengers.erase(std::lower_bound(passengers.begin(),
+                                           passengers.end(),adult));
+    }
     sh->second.family={}; // immutable original request ID remains recorded
     return true;
 }
