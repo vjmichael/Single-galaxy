@@ -8,6 +8,7 @@
 // grants force/arrest authority, or modifies the original Simulation.
 #include "galaxy/TerritoryJournal.hpp"
 #include "galaxy/ShipSensorProfile.hpp"
+#include "galaxy/ShipNotificationOutbox.hpp"
 #include <sqlite3.h>
 #include <algorithm>
 #include <cmath>
@@ -131,7 +132,7 @@ class Journal {
            sqlite3_bind_int64(s,i,sqlite3_int64(value))!=SQLITE_OK)
             throw std::runtime_error("ship hail ID exceeds SQLite");
     }
-    void commit(Receipt value){
+    void commit(Receipt value,PlayerId recipient_owner){
         run(db_,"BEGIN IMMEDIATE");
         try{
             verify();
@@ -169,6 +170,11 @@ class Journal {
                   SQLITE_TRANSIENT)!=SQLITE_OK ||
                sqlite3_step(s.stmt)!=SQLITE_DONE)
                 throw std::runtime_error("ship hail append failed");
+            // The original receipt and addressed notices commit atomically.
+            ship_notifications::Outbox::record_comms(db_,int(value.kind),
+                value.caller_owner,recipient_owner,value.event_id,
+                value.caller_ship,value.recipient_ship,
+                value.recipient_controller,value.related,value.world_tick);
             run(db_,"COMMIT");
         }catch(...){
             sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);
@@ -192,6 +198,7 @@ public:
                 if(sqlite3_step(schema.stmt)!=SQLITE_ROW)
                     throw std::runtime_error("ship hail needs original snapshots");
             }
+            ship_notifications::Outbox::ensure_schema(db_);
             run(db_,"CREATE TABLE IF NOT EXISTS sg_ship_hail07e ("
                 "sequence INTEGER PRIMARY KEY,event_id INTEGER UNIQUE NOT NULL,"
                 "kind INTEGER NOT NULL,caller_owner INTEGER NOT NULL,"
@@ -401,9 +408,9 @@ public:
     // Never create another user-visible hail or rewrite the original ten.
     // Any failure rolls back and the trusted host denies the outbound call.
     void compact_strike(const PersistentWorld& world,PlayerId caller,
-        EntityId recipient,std::uint64_t event_id,
-        std::uint64_t seed_id,std::uint64_t next_points,
-        std::uint64_t cooldown_until){
+        EntityId source_ship,EntityId recipient,PlayerId recipient_owner,
+        std::uint64_t event_id,std::uint64_t seed_id,
+        std::uint64_t next_points,std::uint64_t cooldown_until){
         if(!caller || !recipient || !event_id || !seed_id ||
            next_points<11 ||
            next_points>std::uint64_t(
@@ -466,6 +473,9 @@ public:
                    sqlite3_changes(db_)!=1)
                     throw std::runtime_error("compact penalty CAS failed");
             }
+            ship_notifications::Outbox::record_comms(db_,4,caller,
+                recipient_owner,event_id,source_ship,recipient,0,
+                seed_id,world.world().tick());
             run(db_,"COMMIT");
         }catch(...){
             sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);
@@ -572,11 +582,12 @@ public:
                 r.penalty_points=points;
                 r.cooldown_until=expires;
                 r.law_review_eligible=points>=kReportThreshold;
-                commit(r);
+                commit(r,recipient->owner_id);
             }else{
                 // A bounded aggregate row is updated transactionally once
                 // per new tick. Ten original detailed receipts stay immutable.
-                compact_strike(world,principal,target,event_id,
+                compact_strike(world,principal,source,target,
+                               recipient->owner_id,event_id,
                                seed_id,points,expires);
             }
             const auto updated=penalty_for(world,principal,source);
@@ -619,7 +630,7 @@ public:
         r.world_generation=world.generation();
         r.caller_owner=principal;
         r.caller_ship=source;r.recipient_ship=target;
-        commit(r);
+        commit(r,recipient->owner_id);
         outcome.status=Status::CallSent;
         outcome.event_id=event_id;
         return outcome;
@@ -660,7 +671,7 @@ public:
         r.related=call_event;
         r.world_tick=world.world().tick();
         r.world_generation=world.generation();
-        commit(r);
+        commit(r,principal);
         result.status=identify?Status::Identified:Status::Declined;
         result.event_id=response_event;
         return result;
