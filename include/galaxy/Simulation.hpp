@@ -926,6 +926,10 @@ struct Entity {
     PlayerId owner_id = 0; // 0 denotes environment-owned object
     Vector2 position{};
     Vector2 velocity{};
+    // SPACE-04B/v119: native physical third axis; x/y remain existing
+    // original journal fields and z is appended in v119 snapshots.
+    // All three axes are authoritative for v119 ship flight.
+    std::int64_t position_z_mm=0, velocity_z_mm_per_tick=0;
     std::uint16_t heading_deg = 0; // PLAY-04: yaw, clockwise from +X; authoritative and persistent
     std::int64_t hull = 0; // PLAY-08: v62 0 for non-ships, 100 for new player ships
     std::int64_t weapon_charges = 0; // finite starter training-weapon shots
@@ -1291,6 +1295,10 @@ public:
     void ensure_physical_celestial_systems();
     // Explicit atomic migration, NOT a travel command.
     void ensure_ship_frame_registry();
+    // SPACE-04B: explicit versioned migration; older saves retain v118
+    // bounded XY movement until the host opts into v119 3D mode.
+    void enable_native_3d_physics();
+    bool native_3d_physics() const {return snapshot_version_>=119;}
     const std::map<EntityId,ShipFrameCustody>& ship_frames() const {return ship_frames_;}
     const std::map<std::uint64_t,PendingCelestialTransit>& pending_celestial_transits() const {
         return pending_celestial_transits_;
