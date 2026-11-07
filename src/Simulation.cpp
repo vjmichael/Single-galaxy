@@ -9257,7 +9257,8 @@ void Simulation::process_planetary_surface_operations() {
                    site.stored_electricity>=3) {
                     site.wastewater_kg-=10;site.water_kg+=8;
                     site.brine_kg+=2;site.stored_electricity-=3;
-                    site.water_recycled_kg+=8;
+                    site.water_recycled_kg=std::min<std::int64_t>(
+                        1000000,site.water_recycled_kg+8);
                 }
                 if(site.co2_kg>=10 &&
                    site.oxygen_kg<=1000000-8 &&
@@ -9265,7 +9266,8 @@ void Simulation::process_planetary_surface_operations() {
                    site.stored_electricity>=3) {
                     site.co2_kg-=10;site.oxygen_kg+=8;
                     site.organic_waste_kg+=2;site.stored_electricity-=3;
-                    site.oxygen_recycled_kg+=8;
+                    site.oxygen_recycled_kg=std::min<std::int64_t>(
+                        1000000,site.oxygen_recycled_kg+8);
                 }
             }
         }
@@ -9295,6 +9297,7 @@ void Simulation::process_planetary_surface_operations() {
                    health==NpcHealthStatus::Recovered)++ready;
             }
         if(ready<2) {
+            if(site.utility_phase==1)++site.utility_stalled_ticks;
             if(site.housing_phase==1)++site.housing_stalled_ticks;
             if(site.housing_phase==2 && tick_%20==0)
                 ++site.housing_shortages;
@@ -9303,6 +9306,7 @@ void Simulation::process_planetary_surface_operations() {
             continue; // injured, missing or unavailable crew pause work
         }
         if(site.food_kg<2 || site.water_kg<2 || site.oxygen_kg<2) {
+            if(site.utility_phase==1)++site.utility_stalled_ticks;
             if(site.housing_phase==1)++site.housing_stalled_ticks;
             if(site.housing_phase==2 && tick_%20==0)
                 ++site.housing_shortages;
@@ -14184,6 +14188,26 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             std::set<std::uint64_t> founded_npcs,request_ids;
             for(const auto& [key,site]:result.planetary_sites_) {
                 (void)key;
+                if(result.snapshot_version_>=110 && site.utility_phase) {
+                    if(!site.utility_order_id ||
+                       !request_ids.insert(site.utility_order_id).second ||
+                       result.submitted_ids_.count(site.utility_order_id) ||
+                       result.shuttle_flight_request_ids_.count(site.utility_order_id) ||
+                       result.local_delivery_orders_.count(site.utility_order_id) ||
+                       result.voyages_.count(site.utility_order_id))
+                        throw std::runtime_error("snapshot: duplicate surface utility order");
+                    const auto worker=result.npcs_.find(site.utility_supervisor);
+                    const auto dead=result.casualties_.find(site.utility_supervisor);
+                    if(worker==result.npcs_.end() &&
+                       dead==result.casualties_.end())
+                        throw std::runtime_error("snapshot: missing utility supervisor identity");
+                    const auto& person=worker!=result.npcs_.end()?
+                        worker->second:dead->second.identity;
+                    if(person.home_ship!=site.source_ship ||
+                       !result.workshop_trade_certified(
+                           site.utility_supervisor,WorkshopTrade::Shape))
+                        throw std::runtime_error("snapshot: unqualified surface supervisor");
+                }
                 for(std::size_t i=0;i<2;++i) {
                     const auto id=site.founder_residents[i];
                     const auto request=site.founder_consent_requests[i];
