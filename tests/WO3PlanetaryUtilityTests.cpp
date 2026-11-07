@@ -298,6 +298,13 @@ int main() {
     w.step();
     CHECK(w.world().planetary_sites().at(key).utility_progress==visitor_progress+1);
     CHECK(w.world().planetary_sites().at(key).utility_handovers.size()==3);
+    const auto active_relief=colony03::audit_planetary_surface(w.world(),7,ship,key);
+    CHECK(active_relief && active_relief->utility_handover_count==3 &&
+          active_relief->utility_last_handover_id==81602 &&
+          active_relief->utility_supervisor==trained_visitor &&
+          active_relief->utility_supervisor_present &&
+          active_relief->utility_supervisor_certified &&
+          active_relief->utility_supervisor_has_temp_duty);
     CHECK(w.world().canonical_state().rfind("galaxy-kernel-v112|",0)==0);
     CHECK(Simulation::from_snapshot(w.world().canonical_state()).state_hash()==
           w.world().state_hash());
