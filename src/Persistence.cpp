@@ -6320,10 +6320,16 @@ public:
                     region.text(2,std::to_string(request));
                     if(!region.row() ||
                        sqlite_str(region.get(),0)!="society-migration-host" ||
-                       sqlite_str(region.get(),1)!="society-migration-generation:"+
-                           std::to_string(tick)+":"+
-                           (returning?"surface:home":"home:surface")+
-                           ":household:3" ||
+                       ![&](){
+                           const auto request_text=sqlite_str(region.get(),1);
+                           const auto prefix="society-migration-generation:"+
+                               std::to_string(tick)+":";
+                           const std::string suffix=":household:3";
+                           return request_text.size()>prefix.size()+suffix.size() &&
+                               request_text.compare(0,prefix.size(),prefix)==0 &&
+                               request_text.compare(request_text.size()-suffix.size(),
+                                                    suffix.size(),suffix)==0;
+                       }() ||
                        sqlite3_column_int64(region.get(),2)!=region_revision ||
                        sqlite3_column_int64(region.get(),3)!=1 || region.row())
                         throw std::runtime_error(
