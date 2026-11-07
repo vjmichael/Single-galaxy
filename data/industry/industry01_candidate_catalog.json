@@ -207,7 +207,7 @@
       "unit": "g",
       "mass_g_per_unit": 1,
       "cargo_mm3_per_unit": 1050,
-      "lifecycle": "feedstock",
+      "lifecycle": "waste",
       "need_tags": []
     },
     {
