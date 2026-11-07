@@ -5820,12 +5820,20 @@ void Simulation::process_station_transitions() {
             ship.position.y = station_it->second.position.y;
             if(snapshot_version_>=119)
                 ship.position_z_mm=station_it->second.position_z_mm;
+            if(snapshot_version_>=120){
+                const auto next=galactic::advance(
+                    station_it->second.physical_galactic,{kUndockOffsetMm,0,0});
+                if(!next)throw std::overflow_error("undock beyond galactic sectors");
+                ship.physical_galactic=*next;
+            }
             activity_events_.push_back({tick_, ActivityKind::Undocked, 0, ship.id, station_id, Outcome::Applied, 0});
         } else {
             ship.dock_state = DockState::Docked;
             ship.position = station_it->second.position;
             if(snapshot_version_>=119)
                 ship.position_z_mm=station_it->second.position_z_mm;
+            if(snapshot_version_>=120)
+                ship.physical_galactic=station_it->second.physical_galactic;
             activity_events_.push_back({tick_, ActivityKind::Docked, 0, ship.id, station_id, Outcome::Applied, 0});
         }
         ship.velocity = {};
@@ -5852,6 +5860,15 @@ void Simulation::process_jump_transitions() {
         if(snapshot_version_>=71)ship_frames_.at(id)=ShipFrameCustody{destination,0,{}};
         ship.position={gate->gate_arrival.x+sign*12000,gate->gate_arrival.y};
         if(snapshot_version_>=119)ship.position_z_mm=0;
+        if(snapshot_version_>=120){
+            const auto origin=galactic_system_origins_.find(destination);
+            if(origin==galactic_system_origins_.end())
+                throw std::runtime_error("jump requires immutable destination star");
+            const auto exact=galactic::advance(origin->second,
+                {ship.position.x,ship.position.y,0});
+            if(!exact)throw std::overflow_error("jump arrival sector exhausted");
+            ship.physical_galactic=*exact;
+        }
         ship.velocity={};
         if(snapshot_version_>=119)ship.velocity_z_mm_per_tick=0;
         ship.pending_gate=0;
@@ -9079,6 +9096,18 @@ bool Simulation::complete_native_celestial_transit(std::uint64_t id){
            plan.destination_frame.origin};
     ship.position=plan.arrival_position;
     ship.velocity=plan.arrival_velocity;
+    if(snapshot_version_>=120){
+        const auto origin=galactic_system_origins_.find(plan.system);
+        if(origin==galactic_system_origins_.end())
+            throw std::runtime_error("celestial arrival missing system star");
+        const auto anchored=galactic::at_system_origin(
+            origin->second,plan.destination_frame.origin);
+        if(!anchored)throw std::overflow_error("celestial anchor sector exhausted");
+        const auto absolute=galactic::advance(*anchored,
+            {ship.position.x,ship.position.y,ship.position_z_mm});
+        if(!absolute)throw std::overflow_error("celestial arrival sector exhausted");
+        ship.physical_galactic=*absolute;
+    }
     pending_celestial_transits_.erase(id);
     completed_celestial_transits_.emplace(id,CompletedCelestialTransit{
         p.owner,p.ship,p.system,p.destination_body,tick_});
@@ -9577,6 +9606,16 @@ void Simulation::process_freighter_builds() {
         const EntityId manufactured=add_entity(hull);
         entities_.at(manufactured).system_id=actual_system;
         ship_frames_[manufactured]=custody;
+        if(snapshot_version_>=120){
+            // The freighter is physically constructed alongside its real
+            // source ship, not teleported to a default system origin.
+            const auto direction=hull.position.x>=ship->second.position.x?
+                std::int64_t{1000}:std::int64_t{-1000};
+            const auto exact=galactic::advance(
+                ship->second.physical_galactic,{direction,0,0});
+            if(!exact)throw std::overflow_error("shipyard launch sector exhausted");
+            entities_.at(manufactured).physical_galactic=*exact;
+        }
         order.launched_ship=manufactured;
         order.launched_tick=tick_;
         // The build order retains exactly 12 embodied material units as
