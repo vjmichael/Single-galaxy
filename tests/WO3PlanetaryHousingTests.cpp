@@ -463,6 +463,57 @@ int main() {
           !family_one.independent_adult_can_apply());
     CHECK(!household_probe.book_planetary_shuttle_passenger(
         7,ship,key,roster[3],true));
+    // v116 direct host/custody test uses actual original registered physical
+    // child records, but intentionally does NOT fabricate ART02 SQLite
+    // parentage. A PersistentWorld writer still demands real ART02 proofs.
+    {
+        auto journey=Simulation::from_snapshot(household_probe.canonical_state());
+        const auto child=(std::uint64_t{1}<<62)+301;
+        CHECK(!journey.book_planetary_shuttle_family(
+            7,7,ship,key,roster[3],0,{child},83005));
+        CHECK(journey.book_planetary_shuttle_family(
+            Simulation::kServerAuthority,7,ship,key,roster[3],0,
+            {child},83005));
+        const auto departing=journey.planetary_transport_manifest(key);
+        CHECK(departing && departing->valid() &&
+            transport::contains_good(*departing,transport::GoodKind::Npc,
+                                      child,1));
+        CHECK(!journey.book_planetary_shuttle_passenger(
+            7,ship,key,roster[3],false));
+        CHECK(journey.load_planetary_shuttle(
+            7,ship,key,ShuttleCargo::Water,10));
+        const auto mass=journey.total_ore();
+        CHECK(journey.launch_planetary_shuttle(7,ship,key,83006,false));
+        CHECK(journey.physical_dependents().at(child).location!=ship);
+        CHECK(Simulation::from_snapshot(journey.canonical_state()).
+              state_hash()==journey.state_hash());
+        journey.steps(3);
+        CHECK(journey.planetary_shuttles().at(key).family.stage==2);
+        CHECK(journey.physical_dependents().at(child).location==
+              journey.planetary_sites().at(key).surface_location);
+        const auto landed=colony03::audit_planetary_surface(
+            journey,7,ship,key);
+        CHECK(landed && landed->current_surface_consumers>=4);
+        CHECK(Simulation::from_snapshot(journey.canonical_state()).
+              canonical_state()==journey.canonical_state());
+        CHECK(journey.launch_planetary_shuttle(7,ship,key,83007,true));
+        journey.steps(3);
+        CHECK(journey.planetary_shuttles().at(key).family.stage==4);
+        CHECK(journey.physical_dependents().at(child).location==ship);
+        CHECK(journey.npc_records().at(roster[3]).location==ship);
+        CHECK(journey.release_planetary_shuttle_family(
+            Simulation::kServerAuthority,7,ship,key));
+        CHECK(!journey.release_planetary_shuttle_family(
+            Simulation::kServerAuthority,7,ship,key));
+        CHECK(!journey.book_planetary_shuttle_family(
+            Simulation::kServerAuthority,7,ship,key,roster[3],0,
+            {child},83005)); // immutable historic booking request
+        CHECK(journey.total_ore()==mass);
+        CHECK(Simulation::from_snapshot(journey.canonical_state()).
+              canonical_state()==journey.canonical_state());
+        CHECK(!w.book_planetary_shuttle_family(
+            7,ship,key,roster[3],0,{child},83005));
+    }
     register_probe_child(83002,(std::uint64_t{1}<<62)+302);
     register_probe_child(83003,(std::uint64_t{1}<<62)+303);
     const auto family_overflow=colony03::assess_planetary_household(
