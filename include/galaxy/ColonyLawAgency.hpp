@@ -390,7 +390,9 @@ public:
             (void)n;
             if(id==appointed.leader || id==appointed.officer ||
                !free_worker(id))continue;
-            const auto contacts=world.local_colony_watch_contacts(colony,id);
+            std::vector<colony_defense::Contact> contacts;
+            try{contacts=world.local_colony_watch_contacts(colony,id);}
+            catch(const std::exception&){continue;}
             for(const auto& c:contacts)
                 if(c.source==colony && c.foreign_ship==target &&
                    c.foreign_owner==source->reported_caller &&
