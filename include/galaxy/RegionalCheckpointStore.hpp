@@ -31,6 +31,13 @@ public:
     CheckpointStore& operator=(const CheckpointStore&)=delete;
     std::optional<VersionedCheckpoint> load() const;
     const std::string& scope() const noexcept {return scope_;}
+    // WO5-E trusted-host provenance: bind independent authority and the
+    // original physical world audit to the exact SAME SQLite filename.
+    // Never exposes the writable sqlite3 connection to a client.
+    std::string database_path() const {
+        const auto* path=sqlite3_db_filename(db_,"main");
+        return path?std::string(path):std::string{};
+    }
     // Atomic optimistic update. Must pass the revision obtained from load(),
     // or zero only if no checkpoint exists. Includes pending notices and escrow.
     // Caller should only replace its in-memory committed state after success.
