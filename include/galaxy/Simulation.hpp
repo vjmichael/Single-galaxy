@@ -6,6 +6,7 @@
 #include "galaxy/NpcTransport.hpp"
 #include "galaxy/UniversalTransport.hpp"
 #include "galaxy/ShipStatusEffects.hpp"
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <limits>
