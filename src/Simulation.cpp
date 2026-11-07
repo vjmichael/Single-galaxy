@@ -6875,8 +6875,14 @@ std::optional<Simulation::ExpeditionProspect> Simulation::assess_expedition(
     for(const auto site:manifest->second) {
         const auto it=entities_.find(site);
         if(!site || it==entities_.end())continue; // depleted tombstone
+        // Expedition resource totals describe THIS physical body. The
+        // new high-order frame-free interaction model must never convert
+        // another planet's reserves into local available resources.
+        const auto anchor=local_entity_anchors_.find(site);
         if(it->second.type!=EntityType::Asteroid ||
-           !same_local_frame(ship,site))throw std::logic_error("invalid expedition rock custody");
+           anchor==local_entity_anchors_.end() || anchor->second!=p.body ||
+           (snapshot_version_<120 && !same_local_frame(ship,site)))
+            throw std::logic_error("invalid expedition rock custody");
         const auto tonnes=std::uint64_t(it->second.ore);
         if(tonnes>std::numeric_limits<std::uint64_t>::max()-p.ore_tonnes)
             throw std::overflow_error("expedition ore overflow");
@@ -6898,7 +6904,11 @@ std::optional<Simulation::ExpeditionProspect> Simulation::assess_expedition(
         (void)facility;
         const auto it=entities_.find(site);
         if(it!=entities_.end()&&it->second.owner_id==authenticated_owner &&
-           same_local_frame(ship,site)) {p.local_supply_site=true;break;}
+           (snapshot_version_>=120 ?
+                within_native_3d_range(*e,it->second,kDockingRangeMm):
+                same_local_frame(ship,site))) {
+            p.local_supply_site=true;break;
+        }
     }
     return p;
 }
