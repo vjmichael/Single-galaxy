@@ -416,6 +416,22 @@ const OutpostWorkshop* Simulation::workshop(EntityId site) const {
     const auto it=workshops_.find(site);
     return it==workshops_.end()?nullptr:&it->second;
 }
+bool Simulation::pending_workshop_shift(EntityId site,bool finisher,
+                                        std::uint64_t command_id) const {
+    if(!command_id)return false;
+    const auto shop=workshops_.find(site);
+    if(shop==workshops_.end() ||
+       shop->second.cancelled_pending_shifts.count(command_id))return false;
+    for(const auto& [due,orders]:commands_){
+        if(due<=tick_+1)continue; // cancellation requires an earlier commit tick
+        for(const auto& c:orders)
+            if(c.id==command_id && c.target==site &&
+               c.actor==shop->second.source_ship &&
+               c.action==Action::StartWorkshopShift &&
+               c.thrust_x==(finisher?2:1))return true;
+    }
+    return false;
+}
 const UtilityFacility* Simulation::utility(EntityId site) const {
     const auto it=utilities_.find(site);
     return it==utilities_.end()?nullptr:&it->second;
