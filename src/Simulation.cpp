@@ -15850,6 +15850,90 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                         }
                     }
                 }
+                if(result.snapshot_version_>=117) {
+                    const auto built_count=[](bool present) {
+                        return present?std::int64_t{1}:std::int64_t{0};
+                    };
+                    const auto exact_mass=std::int64_t{4}+4*(
+                        built_count(site.housing_phase!=0)+
+                        built_count(site.utility_phase!=0)+
+                        built_count(site.farm || site.production_projects[0].phase!=0)+
+                        built_count(site.extractor || site.production_projects[1].phase!=0)+
+                        built_count(site.service_projects[0].phase!=0)+
+                        built_count(site.service_projects[1].phase!=0));
+                    if(site.embodied_ore!=exact_mass)
+                        throw std::runtime_error("snapshot: unbacked planetary building modules");
+                    for(std::size_t i=0;i<site.service_projects.size();++i) {
+                        const auto& p=site.service_projects[i];
+                        const auto& history=site.service_handovers[i];
+                        if(!p.phase) {
+                            if(!history.empty())
+                                throw std::runtime_error("snapshot: owner relief without physical service");
+                            continue;
+                        }
+                        if(site.housing_phase!=2 || site.utility_phase!=2 ||
+                           !p.order_id || !p.supervisor ||
+                           !request_ids.insert(p.order_id).second ||
+                           result.submitted_ids_.count(p.order_id) ||
+                           result.shuttle_flight_request_ids_.count(p.order_id) ||
+                           result.planetary_family_booking_ids_.count(p.order_id) ||
+                           result.local_delivery_orders_.count(p.order_id) ||
+                           result.voyages_.count(p.order_id) ||
+                           result.pending_celestial_transits_.count(p.order_id) ||
+                           result.completed_celestial_transits_.count(p.order_id) ||
+                           p.order_id==site.housing_order_id ||
+                           p.order_id==site.utility_order_id ||
+                           (result.legacy_planetary_residence_import_ &&
+                            p.order_id==result.legacy_planetary_residence_import_->
+                                host_request_id) ||
+                           p.powered_cycles>(result.tick_-p.completed_tick))
+                            throw std::runtime_error("snapshot: unqualified service admission");
+                        const auto certified_at=[&](std::uint64_t id,std::uint64_t at) {
+                            const auto live=result.npcs_.find(id);
+                            const auto dead=result.casualties_.find(id);
+                            if(live==result.npcs_.end() &&
+                               dead==result.casualties_.end())return false;
+                            const auto& named=live!=result.npcs_.end()?
+                                live->second:dead->second.identity;
+                            return named.home_ship==site.source_ship &&
+                                std::count_if(named.industrial_training.begin(),
+                                              named.industrial_training.end(),
+                                              [at](const NpcTradeTraining& receipt){
+                                    return receipt.trade==WorkshopTrade::Shape &&
+                                           receipt.tick<=at;})>=3;
+                        };
+                        if(!certified_at(p.supervisor,result.tick_))
+                            throw std::runtime_error("snapshot: uncertified named service builder");
+                        if(history.size()>16)
+                            throw std::runtime_error("snapshot: excessive service supervisor changes");
+                        if(!history.empty()) {
+                            std::uint64_t incumbent=history.front().previous;
+                            std::uint64_t previous_tick=0;
+                            for(const auto& h:history) {
+                                if(!h.request_id || !h.tick ||
+                                   h.tick<=previous_tick || h.tick>result.tick_ ||
+                                   h.previous!=incumbent ||
+                                   h.replacement==incumbent ||
+                                   !certified_at(h.previous,h.tick) ||
+                                   !certified_at(h.replacement,h.tick) ||
+                                   !request_ids.insert(h.request_id).second ||
+                                   result.submitted_ids_.count(h.request_id) ||
+                                   result.shuttle_flight_request_ids_.count(
+                                       h.request_id) ||
+                                   result.planetary_family_booking_ids_.count(
+                                       h.request_id) ||
+                                   result.local_delivery_orders_.count(h.request_id) ||
+                                   result.voyages_.count(h.request_id) ||
+                                   h.request_id==site.housing_order_id ||
+                                   h.request_id==site.utility_order_id)
+                                    throw std::runtime_error("snapshot: forged service handover");
+                                previous_tick=h.tick;incumbent=h.replacement;
+                            }
+                            if(incumbent!=p.supervisor)
+                                throw std::runtime_error("snapshot: interrupted service succession");
+                        }
+                    }
+                }
                 if(result.snapshot_version_>=110 && site.utility_phase) {
                     if(!site.utility_order_id ||
                        !request_ids.insert(site.utility_order_id).second ||
