@@ -21,6 +21,9 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#ifdef __linux__
+#include <sys/syscall.h>
+#endif
 #endif
 
 namespace galaxy::spatial {
@@ -189,6 +192,19 @@ bool execute(const std::string& executable,const CellProcessTask& task,
         if(setpgid(0,0)!=0 || dup2(fds[1],STDOUT_FILENO)<0 ||
            dup2(fds[1],STDERR_FILENO)<0)_exit(125);
         close(fds[1]);
+        // The forked worker must NEVER exec with an inherited original
+        // SQLite/socket/host-authorization descriptor. Prefer Linux kernel
+        // close_range; on other POSIX kernels use a strictly bounded,
+        // fail-closed descriptor sweep before exec.
+        bool stripped=false;
+#if defined(__linux__) && defined(SYS_close_range)
+        stripped=syscall(SYS_close_range,3U,~0U,0U)==0;
+#endif
+        if(!stripped){
+            const long end=sysconf(_SC_OPEN_MAX);
+            if(end<3 || end>65536)_exit(125);
+            for(int fd=3;fd<end;++fd)(void)close(fd);
+        }
         const rlimit address{256ULL*1024*1024,256ULL*1024*1024};
         const rlimit cpu{2,2};
         if(setrlimit(RLIMIT_AS,&address)!=0 ||
