@@ -52,8 +52,12 @@ function generateCatalog(c,audit){
   out.push("  auto trim=[](const std::string& s){if(s.rfind(\"bulk/\",0)!=0)throw std::invalid_argument(\"non-bulk original work item\");return s.substr(5);};");
   out.push("  auto mass=[](std::uint64_t x){if(x>static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))");
   out.push("    throw std::overflow_error(\"industry recipe quantity too large\");return static_cast<std::int64_t>(x);};");
-  out.push("  if(r->outputs[1].code!=\"bulk/aluminum_scrap\" || r->work_ticks!=5 ||");
-  out.push("     (r->site_capability!=\"cut\" && r->site_capability!=\"shape\"))");
+  out.push("  const bool panel=id==\"native_cut_aluminum_panel\";");
+  out.push("  if(r->site_capability!=(panel?\"cut\":\"shape\") || r->work_ticks!=5 ||");
+  out.push("     r->inputs[0].code!=(panel?\"bulk/aluminum\":\"bulk/aluminum_panels\") ||");
+  out.push("     r->outputs[0].code!=(panel?\"bulk/aluminum_panels\":\"bulk/aluminum_frames\") ||");
+  out.push("     r->outputs[1].code!=\"bulk/aluminum_scrap\" || r->inputs[0].quantity!=20000 ||");
+  out.push("     r->outputs[0].quantity!=19000 || r->outputs[1].quantity!=1000)");
   out.push("    throw std::invalid_argument(\"native recipe no longer matches original workshop contract\");");
   out.push("  const std::string name=id==\"native_cut_aluminum_panel\"?\"aluminum_panel\":\"aluminum_frame\";");
   out.push("  return {name,r->site_capability,{{trim(r->inputs[0].code),mass(r->inputs[0].quantity)}},");
