@@ -11993,6 +11993,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
     // original-world commands, never invented qualifications or source totals.
     if(result.snapshot_version_>=105){
         std::set<std::uint64_t> credited_commands;
+        std::set<std::pair<EntityId,std::uint64_t>> mentored_site_ticks;
         const auto verify=[&](const NpcRecord& n){
             std::array<unsigned,2> per_trade{{0,0}};
             std::uint64_t previous_practice_tick=0;
@@ -12011,11 +12012,34 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                          e.tick==t.tick && e.result==Outcome::Applied &&
                          e.transferred==1;}))
                     throw std::runtime_error("snapshot: invalid industrial training provenance");
+                if(result.snapshot_version_>=108 && t.mentor_id){
+                    const auto manager=result.npcs_.find(t.mentor_id);
+                    const auto deceased=result.casualties_.find(t.mentor_id);
+                    if(!t.supervisor_appointment_id || t.mentor_id==n.id ||
+                       (manager==result.npcs_.end() &&
+                        deceased==result.casualties_.end()) ||
+                       !result.submitted_ids_.count(t.supervisor_appointment_id) ||
+                       !std::any_of(result.events_.begin(),result.events_.end(),
+                          [&](const Event& ev){
+                              return ev.command_id==t.supervisor_appointment_id &&
+                                     ev.tick<=t.tick &&
+                                     ev.result==Outcome::Applied;}) ||
+                       !mentored_site_ticks.insert({t.workshop_site,t.tick}).second)
+                        throw std::runtime_error("snapshot: invalid original mentor identity or appointment receipt");
+                }
                 previous_practice_tick=t.tick;
             }
         };
         for(const auto& [id,n]:result.npcs_){(void)id;verify(n);}
         for(const auto& [id,dead]:result.casualties_){(void)id;verify(dead.identity);}
+        if(result.snapshot_version_>=108)
+            for(const auto& [site,shop]:result.workshops_){
+                std::uint64_t latest=0;
+                for(const auto& key:mentored_site_ticks)
+                    if(key.first==site)latest=std::max(latest,key.second);
+                if(shop.last_mentored_tick!=latest)
+                    throw std::runtime_error("snapshot: workshop mentored-tick evidence mismatch");
+            }
     }
     // v32 could persist active custody without recording the original manifest.
     // Never synthesize a voyage from incomplete evidence: its origin and
