@@ -161,7 +161,18 @@ int main() {
             CHECK(training->action==Action::TrainWorkshopTrade);
             CHECK(training->issuer==7 && training->amount==static_cast<std::int64_t>(first_id) &&
                   training->thrust_x==1);
-            CHECK(w.submit(*training));w.step();
+            CHECK(w.submit(*training));
+            if(training_id==270){
+                const auto pending_copy=(folder/"training_pending.sqlite").string();
+                PersistentWorld::recover_copy(db,pending_copy);
+                PersistentWorld queued(pending_copy,Simulation(491));
+                CHECK(queued.world().workshop_training_units(first_id,WorkshopTrade::Cut)==0);
+                CHECK(queued.world().has_command_id(training_id));
+                queued.step();
+                CHECK(queued.world().workshop_training_units(first_id,WorkshopTrade::Cut)==1);
+                CHECK(queued.world().total_material_kg()==initial_mass);
+            }
+            w.step();
             CHECK(w.world().events().back().command_id==training_id &&
                   w.world().events().back().result==Outcome::Applied &&
                   w.world().events().back().transferred==1);
@@ -235,6 +246,18 @@ int main() {
         try{(void)Simulation::from_snapshot(corrupted);}
         catch(const std::exception&){rejected_duplicate=true;}
         CHECK(rejected_duplicate);
+        auto fabricated=valid_snapshot;
+        const auto first_line=fabricated.find("npctraining|");
+        const auto second_separator=fabricated.find('|',first_line+12);
+        CHECK(second_separator!=std::string::npos);
+        const auto third_separator=fabricated.find('|',second_separator+1);
+        CHECK(third_separator!=std::string::npos);
+        fabricated.replace(second_separator+1,
+                           third_separator-second_separator-1,"9999999");
+        bool rejected_forgery=false;
+        try{(void)Simulation::from_snapshot(fabricated);}
+        catch(const std::exception&){rejected_forgery=true;}
+        CHECK(rejected_forgery);
         // Do not allow direct malicious duplicate named work, including
         // bypasses of the new *read-only* planner through existing commands.
         CHECK(send(w,ship,25,Action::AssignWorkshopFinisher,site,
