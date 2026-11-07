@@ -103,21 +103,41 @@ inline NativeCellWorkerTick claim_original_writer(
                    old.integer(4)==0){
                     insert=false; // exact idempotent retry after a failed commit
                 }else{
-                    // Recovery is only a strictly newer, CAS-issued epoch
-                    // replacing a stranded claim on the SAME real cell.
-                    if(old.integer(4)!=0 || old.str(1)!=requested ||
-                       old.integer(3)>=static_cast<std::int64_t>(worker.epoch))
+                    // A stranded global claim may be moved to another
+                    // occupied cell ONLY after the previous cell's lease has
+                    // been revoked by the host's durable worker-epoch CAS.
+                    // A merely silent/slow worker with a live epoch CANNOT
+                    // be preempted by another untrusted process.
+                    const auto former_scope=old.str(1);
+                    const auto former_worker=old.str(2);
+                    const auto former_epoch=old.integer(3);
+                    const auto former_claim=old.str(0);
+                    if(old.integer(4)!=0 || former_epoch<=0 ||
+                       former_scope.empty() || former_worker.empty())
                         throw std::runtime_error("competing selected global writer");
+                    detail::Statement previous(db,"SELECT worker,epoch "
+                        "FROM sg_spatial_worker_lease WHERE scope=?");
+                    previous.text(1,former_scope);
+                    if(!previous.row() ||
+                       (previous.str(0)==former_worker &&
+                        previous.integer(1)==former_epoch))
+                        throw std::runtime_error("previous global writer still leased");
+                    if(former_scope==requested &&
+                       former_epoch>=static_cast<std::int64_t>(worker.epoch))
+                        throw std::runtime_error("same-cell takeover epoch stale");
                     detail::Statement take(db,"UPDATE sg_spatial_tick_dispatch "
-                        "SET claim_id=?,worker=?,epoch=?,region_generation=?,"
+                        "SET claim_id=?,scope=?,worker=?,epoch=?,region_generation=?,"
                         "checkpoint_revision=?,status=0,completed_generation=0 "
-                        "WHERE world_generation=? AND scope=? AND epoch<? AND status=0");
-                    take.text(1,claim_id);take.text(2,worker.worker);
-                    take.number(3,worker.epoch);
-                    take.number(4,worker.region_generation);
-                    take.number(5,worker.checkpoint_revision);
-                    take.number(6,generation);take.text(7,requested);
-                    take.number(8,worker.epoch);take.execute();
+                        "WHERE world_generation=? AND claim_id=? AND scope=? "
+                        "AND worker=? AND epoch=? AND status=0");
+                    take.text(1,claim_id);take.text(2,requested);
+                    take.text(3,worker.worker);take.number(4,worker.epoch);
+                    take.number(5,worker.region_generation);
+                    take.number(6,worker.checkpoint_revision);
+                    take.number(7,generation);take.text(8,former_claim);
+                    take.text(9,former_scope);take.text(10,former_worker);
+                    take.number(11,static_cast<std::uint64_t>(former_epoch));
+                    take.execute();
                     if(sqlite3_changes(db)!=1)
                         throw std::runtime_error("writer takeover lost CAS race");
                 }
