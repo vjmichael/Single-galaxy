@@ -4047,6 +4047,10 @@ Event Simulation::execute(const Command& c) {
             if(!gate || gate->type!=EntityType::Stargate){result.result=Outcome::InvalidTarget;return result;}
             if(gate->system_id!=actor.system_id){result.result=Outcome::WrongSystem;return result;}
             if(!gate->gate_online){result.result=Outcome::GateOffline;return result;}
+            if(snapshot_version_>=119 &&
+               !within_native_3d_range(actor,*gate,kJumpActivationMm)){
+                result.result=Outcome::OutOfRange;return result;
+            }
             const auto dx=actor.position.x-gate->position.x;
             const auto dy=actor.position.y-gate->position.y;
             if(dx<-kJumpActivationMm || dx>kJumpActivationMm ||
@@ -5552,16 +5556,28 @@ void Simulation::process_station_transitions() {
         if (ship.dock_state == DockState::Undocking) {
             ship.dock_state = DockState::InSpace;
             ship.dock_station = 0;
-            ship.position.x = std::clamp(station_it->second.position.x + kUndockOffsetMm,
-                                         -kWorldBoundMm, kWorldBoundMm);
+            if(snapshot_version_>=119){
+                const auto x=station_it->second.position.x;
+                if(x>std::numeric_limits<std::int64_t>::max()-kUndockOffsetMm)
+                    throw std::overflow_error("3D undock coordinate overflow");
+                ship.position.x=x+kUndockOffsetMm;
+            }else{
+                ship.position.x = std::clamp(station_it->second.position.x + kUndockOffsetMm,
+                                             -kWorldBoundMm, kWorldBoundMm);
+            }
             ship.position.y = station_it->second.position.y;
+            if(snapshot_version_>=119)
+                ship.position_z_mm=station_it->second.position_z_mm;
             activity_events_.push_back({tick_, ActivityKind::Undocked, 0, ship.id, station_id, Outcome::Applied, 0});
         } else {
             ship.dock_state = DockState::Docked;
             ship.position = station_it->second.position;
+            if(snapshot_version_>=119)
+                ship.position_z_mm=station_it->second.position_z_mm;
             activity_events_.push_back({tick_, ActivityKind::Docked, 0, ship.id, station_id, Outcome::Applied, 0});
         }
         ship.velocity = {};
+        if(snapshot_version_>=119)ship.velocity_z_mm_per_tick=0;
         snapshot_version_ = std::max(snapshot_version_, 3);
     }
 }
