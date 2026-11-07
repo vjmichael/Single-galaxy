@@ -276,7 +276,17 @@ inline std::optional<PlanetarySiteAudit> audit_planetary_surface(
     a.housing_supported_cycles=s.housing_supported_cycles;
     a.housing_shortages=s.housing_shortages;
     a.permanent_housing_installed=s.housing_phase==2;
-    a.support_healthy_now=s.food_kg>=2 && s.water_kg>=2 && s.oxygen_kg>=2;
+    std::int64_t next_tick_people=2; // real delegated work team
+    const auto shuttle=world.planetary_shuttles().find(key);
+    if(shuttle!=world.planetary_shuttles().end()) {
+        const auto& sh=shuttle->second;
+        next_tick_people+=static_cast<std::int64_t>(sh.disembarked_ids.size());
+        if(sh.flight_phase==2)
+            next_tick_people+=1+static_cast<std::int64_t>(sh.passenger_ids.size());
+    }
+    a.support_healthy_now=s.food_kg>=next_tick_people &&
+        s.water_kg>=next_tick_people &&
+        s.oxygen_kg>=next_tick_people;
     for(const auto npc_id:s.delegated_npcs){
         if(!npc_id)continue;
         const auto it_n=world.npc_records().find(npc_id);
@@ -298,9 +308,11 @@ inline std::optional<PlanetarySiteAudit> audit_planetary_surface(
     }
     a.staffed_by_original_named_npcs=
         a.physical_delegates==a.declared_workers && a.declared_workers!=0;
+    // Original physically stationed constructors occupy beds regardless
+    // of whether an approved legal residency request has been submitted.
     a.unused_housing_capacity=a.permanent_housing_installed?
         std::max<std::int64_t>(0,4-static_cast<std::int64_t>(
-            a.original_permanent_residents)):0;
+            std::max(a.original_permanent_residents,a.physical_delegates))):0;
     return a;
 }
 
