@@ -400,11 +400,20 @@ int main() {
     }catch(const std::exception&){rolled_back=true;}
     CHECK(rolled_back);
     CHECK(w.world().planetary_sites().at(key).production_projects[0].phase==0);
-    CHECK(w.start_planetary_production_build(7,ship,key,true,81800,builder));
+    // A real original shuttle visitor with three native Shape credits
+    // must hold temporary site duty; presence alone does not authorize work.
+    CHECK(w.assign_planetary_shuttle_visitor_duty(
+        7,ship,key,trained_visitor,false));
+    CHECK(!w.start_planetary_production_build(
+        7,ship,key,true,81800,trained_visitor));
+    CHECK(w.assign_planetary_shuttle_visitor_duty(
+        7,ship,key,trained_visitor,true));
+    CHECK(w.start_planetary_production_build(
+        7,ship,key,true,81800,trained_visitor));
     const auto& begun=w.world().planetary_sites().at(key);
     CHECK(begun.production_projects[0].phase==1 &&
           begun.production_projects[0].progress==0 &&
-          begun.production_projects[0].supervisor==builder &&
+          begun.production_projects[0].supervisor==trained_visitor &&
           begun.housing_modules==0 && !begun.farm &&
           begun.embodied_ore==before_production_embodied+4);
     CHECK(w.world().total_ore()==initial_mass);
@@ -431,6 +440,18 @@ int main() {
     CHECK(twin.world().state_hash()==w.world().state_hash());
     CHECK(w.pause_planetary_production_build(7,ship,key,true,false));
     CHECK(twin.pause_planetary_production_build(7,ship,key,true,false));
+    CHECK(w.assign_planetary_shuttle_visitor_duty(
+        7,ship,key,trained_visitor,false));
+    CHECK(twin.assign_planetary_shuttle_visitor_duty(
+        7,ship,key,trained_visitor,false));
+    w.steps(5);twin.steps(5);
+    CHECK(w.world().planetary_sites().at(key).production_projects[0].progress==frozen);
+    CHECK(w.world().planetary_sites().at(key).production_projects[0].stalled_ticks>=5);
+    CHECK(twin.world().state_hash()==w.world().state_hash());
+    CHECK(w.assign_planetary_shuttle_visitor_duty(
+        7,ship,key,trained_visitor,true));
+    CHECK(twin.assign_planetary_shuttle_visitor_duty(
+        7,ship,key,trained_visitor,true));
     w.steps(28);twin.steps(28);
     CHECK(w.world().state_hash()==twin.world().state_hash());
     const auto& finished=w.world().planetary_sites().at(key);
