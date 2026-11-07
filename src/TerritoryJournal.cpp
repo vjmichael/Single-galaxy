@@ -1,4 +1,5 @@
 #include "galaxy/TerritoryJournal.hpp"
+#include "galaxy/ShipNotificationOutbox.hpp"
 #include "galaxy/ColonyDefense.hpp"
 #include <sqlite3.h>
 #include <algorithm>
@@ -90,6 +91,7 @@ TerritoryJournal::TerritoryJournal(std::string db_path):state_(new State) {
                 SQLITE_OPEN_READWRITE|SQLITE_OPEN_CREATE|SQLITE_OPEN_FULLMUTEX,
                 nullptr)!=SQLITE_OK)throw std::runtime_error("territory DB open");
         sqlite3_busy_timeout(state_->db,10000);
+        ship_notifications::Outbox::ensure_schema(state_->db);
         exec(state_->db,"PRAGMA foreign_keys=ON");
         exec(state_->db,
             "CREATE TABLE IF NOT EXISTS sg_disposition02 ("
@@ -157,7 +159,7 @@ void TerritoryJournal::verify() const {
     for(const auto& e:rows){
         if(e.sequence!=++sequence || !e.event_id || !e.colony || !e.owner ||
            e.owner==Simulation::kServerAuthority ||
-           static_cast<int>(e.kind)<1 || static_cast<int>(e.kind)>8 ||
+           static_cast<int>(e.kind)<1 || static_cast<int>(e.kind)>9 ||
            (e.kind==TerritoryEventKind::Claim &&
              (e.radius_mm<=0 || e.radius_mm>5000 || e.visitor_owner ||
               e.visitor_ship || e.observer_npc || e.related_event)) ||
@@ -166,6 +168,9 @@ void TerritoryJournal::verify() const {
            (e.kind==TerritoryEventKind::Warning &&
              (!e.visitor_ship || !e.observer_npc || !e.related_event ||
               e.deadline_tick<=e.world_tick)) ||
+           (e.kind==TerritoryEventKind::VoluntaryHail &&
+             (!e.visitor_ship || !e.observer_npc || !e.related_event ||
+              e.deadline_tick || e.center_x || e.center_y)) ||
            (e.kind==TerritoryEventKind::Trespass &&
              (!e.visitor_ship || !e.observer_npc || !e.related_event ||
               e.world_tick<e.deadline_tick)) ||
@@ -187,6 +192,16 @@ void TerritoryJournal::verify() const {
             const auto active=issued_claims.find(e.colony);
             if(active==issued_claims.end())
                 throw std::runtime_error("territory event without a real claim");
+            if(e.kind==TerritoryEventKind::VoluntaryHail){
+                const auto parent=prior.find(e.related_event);
+                if(parent==prior.end() ||
+                   parent->second.kind!=TerritoryEventKind::Claim ||
+                   parent->second.colony!=e.colony ||
+                   parent->second.owner!=e.owner ||
+                   e.visitor_owner==e.owner)
+                    throw std::runtime_error(
+                        "voluntary hail lacks original territorial claim");
+            }
             if(e.kind==TerritoryEventKind::Warning){
                 const auto parent=prior.find(e.related_event);
                 if(parent==prior.end() ||
@@ -291,6 +306,11 @@ bool TerritoryJournal::append(const TerritoryEvent& supplied,TerritoryFailPoint 
         check(sqlite3_step(st.p),state_->db,"insert territory");
         if(fail==TerritoryFailPoint::AfterInsert)
             throw std::runtime_error("injected territory publication failure");
+        // Original signed territorial receipt + independently routed
+        // per-owner delivery are ONE original-world SQLite transaction.
+        ship_notifications::Outbox::record_territory(state_->db,
+            static_cast<int>(e.kind),e.owner,e.colony,e.visitor_owner,
+            e.visitor_ship,e.event_id,e.related_event,e.world_tick);
         exec(state_->db,"COMMIT");
     }catch(...){sqlite3_exec(state_->db,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
     verify();
@@ -483,6 +503,34 @@ bool TerritoryJournal::respond_to_notice(
     reply.related_event=warning_id;
     reply.deadline_tick=reply.world_tick+grace;
     return append(reply,fail);
+}
+bool TerritoryJournal::voluntary_hail(const PersistentWorld& w,
+        PlayerId visitor_owner,EntityId colony,EntityId visiting_ship,
+        std::uint64_t observer_npc,std::uint64_t event_id,
+        TerritoryFailPoint fail) {
+    if(!visitor_owner || visitor_owner==Simulation::kServerAuthority ||
+       !colony || !visiting_ship || colony==visiting_ship ||
+       !observer_npc || !event_id)return false;
+    const auto* source=w.world().find(colony);
+    const auto* visitor=w.world().find(visiting_ship);
+    if(!source || !visitor ||
+       source->type!=EntityType::Ship ||
+       visitor->type!=EntityType::Ship ||
+       !w.world().colony_ship(colony) ||
+       visitor->owner_id!=visitor_owner ||
+       source->owner_id==visitor_owner ||
+       !currently_witnessed(w,colony,visiting_ship,observer_npc))
+        return false;
+    const auto standing_now=standing(w,colony,visiting_ship);
+    if(!standing_now.in_claimed_region || !standing_now.claim_event)
+        return false;
+    TerritoryEvent e{};
+    e.event_id=event_id;e.kind=TerritoryEventKind::VoluntaryHail;
+    e.colony=colony;e.owner=source->owner_id;
+    e.visitor_owner=visitor_owner;e.visitor_ship=visiting_ship;
+    e.observer_npc=observer_npc;e.related_event=standing_now.claim_event;
+    e.world_tick=w.world().tick();e.world_generation=w.generation();
+    return append(e,fail);
 }
 bool TerritoryJournal::record_trespass(const PersistentWorld& w,
         PlayerId owner,EntityId colony,EntityId foreign,

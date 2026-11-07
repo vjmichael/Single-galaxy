@@ -11065,6 +11065,26 @@ bool PersistentWorld::submit_host_consigned_transfer(const Command& command,Fail
     world_.swap(next);++generation_;return true;
 }
 
+bool PersistentWorld::submit_testing_ship_confusion(
+    EntityId source,EntityId target,std::uint64_t effect_id,
+    std::uint64_t random_seed,std::uint64_t duration_ticks,
+    std::uint32_t pulse_ticks,std::uint8_t intensity,
+    std::uint8_t resistance,std::uint8_t exposed_hardpoint_mask,
+    FailPoint fail) {
+    // TEST-ONLY transition. No real mounted hacking hardware exists yet.
+    // As with ordinary host world changes, a failed SQLite commit leaves
+    // in-memory state unchanged. No second status database or free hardware.
+    auto next=world_;
+    if(!next.install_testing_confusion(source,target,effect_id,random_seed,
+            duration_ticks,pulse_ticks,intensity,resistance,
+            exposed_hardpoint_mask))return false;
+    store_->commit(next,generation_,resource_origin_,credit_origin_,
+                   nullptr,{},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
 bool PersistentWorld::submit(const Command& command, FailPoint fail) {
     // NPC-RESP-02B: independent character custody is authoritative for
     // PLAYER-operated ship controls. A rescued/detained person cannot
@@ -11079,6 +11099,10 @@ bool PersistentWorld::submit(const Command& command, FailPoint fail) {
        command.action==Action::RequestUndock ||
        command.action==Action::RequestJump ||
        command.action==Action::FireTrainingWeapon ||
+       command.action==Action::SetHardpointPower ||
+       command.action==Action::SetCyberIsolation ||
+       command.action==Action::ConfigureCyberModule ||
+       command.action==Action::HackConfuse ||
        command.action==Action::SalvageWreck){
         const auto person=world_.player_people_.find(command.issuer);
         if(person!=world_.player_people_.end() &&
@@ -11092,6 +11116,10 @@ bool PersistentWorld::submit(const Command& command, FailPoint fail) {
     if(command.action==Action::Thrust ||
        command.action==Action::RequestDock ||
        command.action==Action::RequestUndock ||
+       command.action==Action::SetHardpointPower ||
+       command.action==Action::SetCyberIsolation ||
+       command.action==Action::ConfigureCyberModule ||
+       command.action==Action::HackConfuse ||
        command.action==Action::RequestJump){
         for(const auto& [id,flight]:world_.npc_flight_orders_){
             (void)id;
@@ -11149,6 +11177,95 @@ bool PersistentWorld::submit_testing_gate_operations(EntityId forward,EntityId r
     if(!next.submit(c))return false;
     store_->commit(next,generation_,resource_origin_,credit_origin_,&c,{},{},{},fail);
     world_.swap(next);++generation_;
+    return true;
+}
+bool PersistentWorld::submit_npc_cyber_attack(
+    PlayerId owner,EntityId attacking_ship,std::uint64_t pilot_npc,
+    std::uint64_t observer_npc,EntityId target,
+    std::uint64_t command_id,FailPoint fail) {
+    if(!owner || owner==Simulation::kServerAuthority ||
+       !attacking_ship || !target || attacking_ship==target ||
+       !pilot_npc || !observer_npc || !command_id ||
+       command_id>=(std::uint64_t{1}<<62) ||
+       store_->npc_busy_this_tick(pilot_npc,world_.tick()) ||
+       store_->npc_busy_this_tick(observer_npc,world_.tick()))
+        return false;
+    const auto* ship=world_.find(attacking_ship);
+    const auto* opponent=world_.find(target);
+    const auto& crew=world_.npc_records();
+    const auto p=crew.find(pilot_npc),w=crew.find(observer_npc);
+    if(!ship || !opponent || ship->type!=EntityType::Ship ||
+       opponent->type!=EntityType::Ship ||
+       ship->owner_id!=owner || opponent->owner_id==owner ||
+       !world_.colony_ship(attacking_ship) ||
+       !world_.passenger_needs_enabled() ||
+       !ship->fitting.intrusion_emitter() ||
+       p==crew.end() || w==crew.end() ||
+       p->second.home_ship!=attacking_ship ||
+       p->second.location!=attacking_ship ||
+       p->second.role!=NpcRole::Ship ||
+       p->second.transport_id ||
+       w->second.home_ship!=attacking_ship ||
+       w->second.location!=attacking_ship ||
+       w->second.transport_id ||
+       !world_.npc_available_for_duty(pilot_npc) ||
+       !world_.npc_available_for_duty(observer_npc))
+        return false;
+    // The original v102 admission receipt also reserves the named real
+    // operator for this tick. It prevents two cyber requests (or two
+    // observers acting as duplicate controllers) from scheduling the same
+    // physical NPC or ship concurrently, including after a host restart.
+    for(const auto& [id,prior]:world_.npc_cyber_operators()){
+        (void)id;
+        if(prior.admitted_tick==world_.tick() &&
+           (prior.attacking_ship==attacking_ship ||
+            prior.pilot_npc==pilot_npc ||
+            prior.observer_npc==observer_npc ||
+            prior.pilot_npc==observer_npc ||
+            prior.observer_npc==pilot_npc))
+            return false;
+    }
+    // A tactical operator cannot steal an NPC navigator's exclusive
+    // control of a physically moving ship.
+    for(const auto& [id,flight]:world_.npc_flight_orders()){
+        (void)id;
+        if(flight.ship==attacking_ship &&
+           (flight.phase==NpcFlightPhase::Planned ||
+            flight.phase==NpcFlightPhase::InTransit))return false;
+    }
+    // Recompute a fresh original named-NPC sensory observation. A supplied
+    // target ID or an old territorial complaint is not a verified contact.
+    const auto observed=local_colony_watch_contacts(attacking_ship,observer_npc);
+    const auto found=std::find_if(observed.begin(),observed.end(),
+        [&](const colony_defense::Contact& c){
+            return c.source==attacking_ship && c.foreign_ship==target &&
+                   c.foreign_owner==opponent->owner_id &&
+                   c.observer_npc==observer_npc &&
+                   c.world_tick==world_.tick();
+        });
+    if(found==observed.end())return false;
+    Command command{};
+    command.id=command_id;
+    command.sequence=command_id;
+    command.execute_tick=world_.tick()+1;
+    command.issuer=owner;
+    command.actor=attacking_ship;
+    command.target=target;
+    command.action=Action::HackConfuse;
+    auto next=world_;
+    if(!next.submit(command) ||
+       next.npc_cyber_operators_.size()>=10000 ||
+       next.npc_cyber_operators_.count(command_id))return false;
+    next.npc_cyber_operators_.emplace(command_id,NpcCyberOperator{
+        command_id,owner,attacking_ship,target,pilot_npc,observer_npc,
+        world_.tick()});
+    next.snapshot_version_=std::max(next.snapshot_version_,102);
+    // The pilot/observer provenance and native command commit in the
+    // SAME original SQLite generation, never in an orphan side journal.
+    store_->commit(next,generation_,resource_origin_,credit_origin_,
+                   &command,{},{},{},fail);
+    world_.swap(next);
+    ++generation_;
     return true;
 }
 bool PersistentWorld::submit_npc_mining_work(std::uint64_t npc_id,EntityId ship,EntityId rock,

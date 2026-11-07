@@ -1,0 +1,179 @@
+name: SHIP-STATUS consolidated native + live-game acceptance (01–07E)
+on:
+  pull_request:
+    paths:
+      - 'include/galaxy/ShipStatusEffects.hpp'
+      - 'include/galaxy/ShipStatusFitting.hpp'
+      - 'include/galaxy/Simulation.hpp'
+      - 'include/galaxy/Persistence.hpp'
+      - 'src/Simulation.cpp'
+      - 'src/Persistence.cpp'
+      - 'tests/SHIPSTATUS02_AuthoritativePersistenceTests.cpp'
+      - 'tests/SHIPSTATUS03_PhysicalHackingTests.cpp'
+      - 'tests/SHIPSTATUS04_NpcCyberTacticsTests.cpp'
+      - 'tests/SHIPSTATUS05_SupervisorTests.cpp'
+      - 'tests/SHIPSTATUS06_FleetCyberTests.cpp'
+      - 'tests/SHIPSTATUS07_CyberIncidentJournalTests.cpp'
+      - 'tests/SHIPSTATUS07_StealthSensorTests.cpp'
+      - 'tests/SHIPSTATUS07_ViewPrivacyTests.cpp'
+      - 'tests/SHIPSTATUS07D_SecurityDeskTests.cpp'
+      - 'tests/SHIPSTATUS07E_HailAbuseTests.cpp'
+      - 'tests/SHIPSTATUS07E_HailAbuseCockpitTests.js'
+      - 'include/galaxy/ShipHailJournal.hpp'
+      - 'include/galaxy/NpcHailSupervisor.hpp'
+      - 'tests/SHIPSTATUS07F_NpcHailSupervisorTests.cpp'
+      - 'tests/SHIPSTATUS07G_TwoHumanSecurityTests.cpp'
+      - 'tests/SHIPSTATUS07G_LiveTwoHumanHostTests.py'
+      - 'tests/SHIPSTATUS07G_PrivateRelayTests.py'
+      - 'tests/SHIPSTATUS07H_SecurityOnlyClientTests.js'
+      - 'include/galaxy/ShipNotificationOutbox.hpp'
+      - 'include/galaxy/ColonyLawAgency.hpp'
+      - 'include/galaxy/ShipCommsReview.hpp'
+      - 'tests/SHIPSTATUS07I_DurableOutboxTests.cpp'
+      - 'tests/SHIPSTATUS07J_LawAgencyTests.cpp'
+      - 'tests/SHIPSTATUS07I07J_SecurityDeskTests.js'
+      - 'tests/SHIPSTATUS07G_LinuxChromiumTwoHumanTests.py'
+      - 'viewer/security-only.html'
+      - 'viewer/security-only.js'
+      - 'tests/COMBAT01A_RealShipWeaponTests.cpp'
+      - 'tests/SHIPSTATUS07D_SecurityDeskTests.js'
+      - 'tests/SHIPSTATUS07D_SecurityRelayTests.py'
+      - 'tests/SHIPSTATUS07D_LiveSecurityHostTests.py'
+      - 'tests/SHIPSTATUS07D_InstalledBrowserTests.py'
+      - 'include/galaxy/SecurityDeskHost.hpp'
+      - 'include/galaxy/TerritoryJournal.hpp'
+      - 'src/TerritoryJournal.cpp'
+      - 'viewer/security-desk.js'
+      - 'src/ClientContract.cpp'
+      - 'tests/ClientContractTests.cpp'
+      - 'include/galaxy/ShipSensorProfile.hpp'
+      - 'include/galaxy/CyberSecurityResponse.hpp'
+      - 'src/ColonyDefense.cpp'
+      - 'include/galaxy/CyberIncidentJournal.hpp'
+      - 'src/CyberIncidentJournal.cpp'
+      - 'tests/SHIPSTATUS06_LiveCyberHostTests.py'
+      - 'tests/SHIPSTATUS06_InstalledBrowserTests.py'
+      - 'tests/SHIPSTATUS05_CyberCockpitTests.js'
+      - 'include/galaxy/NpcCyberSupervisor.hpp'
+      - 'src/colony_live_host.cpp'
+      - 'viewer/cyber-controls.js'
+      - 'viewer/interactive.html'
+      - 'viewer/interactive.js'
+      - 'live/interactive_relay.py'
+      - 'tests/SHIPSTATUS05_CyberRelayTests.py'
+      - 'include/galaxy/TerritorialCyberEvidence.hpp'
+      - 'include/galaxy/NpcCyberTactics.hpp'
+      - 'src/ColonyConflict.cpp'
+      - 'tests/SHIPSTATUS01_ConfusionTests.cpp'
+      - 'CMakeLists.txt'
+      - 'docs/engineering/ACTIVE_WORK_AND_ACCEPTANCE_2026-11-06.md'
+      - '.github/workflows/ship-status02-authoritative.yml'
+  workflow_dispatch:
+concurrency:
+  group: sg-status-integrated-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  native_and_live_game:
+    name: Integrated native + live game (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & (Join-Path $env:VCPKG_INSTALLATION_ROOT 'vcpkg.exe') install sqlite3:x64-windows --clean-after-build
+          if ($LASTEXITCODE -ne 0) { throw 'SQLite SDK installation failed' }
+      - if: runner.os == 'Linux'
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tc=Join-Path $env:VCPKG_INSTALLATION_ROOT 'scripts/buildsystems/vcpkg.cmake'
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$tc" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'native configuration failed' }
+      # One coherent native test gate for outstanding STATUS-VERIFY-01/02/03.
+      # Windows validates the real native executable, NOT a Windows browser
+      # or a packaged Windows installer (deferred until native 3D assets).
+      - name: Compile original game and security acceptance targets
+        run: cmake --build build --config Release --parallel 2 --target galaxy_ship_status07i_outbox_tests galaxy_ship_status07j_law_agency_tests galaxy_ship_status07g_two_human_tests galaxy_combat01a_ship_weapon_tests galaxy_ship_status07f_npc_hail_tests galaxy_ship_status07e_hail_abuse_tests galaxy_ship_status07d_security_desk_tests galaxy_client_contract_tests galaxy_ship_status07_view_privacy_tests galaxy_ship_status07_sensor_tests galaxy_ship_status07_incident_tests galaxy_ship_status06_fleet_cyber_tests galaxy_ship_status05_supervisor_tests galaxy_colony_live_host galaxy_shipping_status_bridge galaxy_ship_status04_npc_cyber_tests galaxy_ship_status03_physical_hacking_tests galaxy_ship_status02_authoritative_tests galaxy_ship_status01_confusion_tests galaxy_play10_exploration_tests
+      - name: Original world, physical 2-owner hailing, cyber evidence and recovery
+        run: ctest --test-dir build -C Release --output-on-failure -R "^galaxy_(ship_status(01_confusion|02_authoritative|03_physical_hacking|04_npc_cyber|05_supervisor|05_cockpit|06_fleet_cyber|06_live_cyber|07_incident|07_sensors|07_view_privacy|07d_security_desk|07e_hail_abuse|07f_npc_hail|07g_two_human|07i_outbox|07j_law_agency)|combat01a_ship_weapon|play10_exploration|kernel_tests|client_contract_tests)$"
+      - name: Verify live relay and cockpit syntax
+        shell: bash
+        run: |
+          node --check viewer/cyber-controls.js
+          node --check viewer/security-desk.js
+          node --check viewer/security-only.js
+          node --check viewer/interactive.js
+          python -m py_compile live/interactive_relay.py tests/SHIPSTATUS07G_LiveTwoHumanHostTests.py tests/SHIPSTATUS07G_PrivateRelayTests.py tests/SHIPSTATUS07G_LinuxChromiumTwoHumanTests.py
+          python tests/SHIPSTATUS07G_PrivateRelayTests.py
+          python tests/SHIPSTATUS05_CyberRelayTests.py
+          python tests/SHIPSTATUS07D_SecurityRelayTests.py
+          python -m py_compile tests/SHIPSTATUS06_LiveCyberHostTests.py tests/SHIPSTATUS06_InstalledBrowserTests.py tests/SHIPSTATUS07D_LiveSecurityHostTests.py tests/SHIPSTATUS07D_InstalledBrowserTests.py
+          node tests/SHIPSTATUS05_CyberCockpitTests.js
+          node tests/SHIPSTATUS07D_SecurityDeskTests.js
+          node tests/SHIPSTATUS07E_HailAbuseCockpitTests.js
+          node tests/SHIPSTATUS07H_SecurityOnlyClientTests.js
+          node tests/SHIPSTATUS07I07J_SecurityDeskTests.js
+      - name: Actual authenticated original host + relay (Windows/Linux, no installation)
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            host="build/Release/galaxy_colony_live_host.exe"
+            bridge="build/Release/galaxy_shipping_status_bridge.exe"
+          else
+            host="build/galaxy_colony_live_host"
+            bridge="build/galaxy_shipping_status_bridge"
+          fi
+          python tests/SHIPSTATUS07D_LiveSecurityHostTests.py \
+            --host "$host" --relay live/interactive_relay.py \
+            --bridge "$bridge"
+      - name: Actual private two-human security transport in original native game (Windows/Linux)
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            host="build/Release/galaxy_colony_live_host.exe"
+            bridge="build/Release/galaxy_shipping_status_bridge.exe"
+            fixture="build/Release/galaxy_ship_status07g_two_human_tests.exe"
+          else
+            host="build/galaxy_colony_live_host"
+            bridge="build/galaxy_shipping_status_bridge"
+            fixture="build/galaxy_ship_status07g_two_human_tests"
+          fi
+          python tests/SHIPSTATUS07G_LiveTwoHumanHostTests.py \
+            --fixture "$fixture" --host "$host" \
+            --relay live/interactive_relay.py --bridge "$bridge"
+      - name: Real Linux Chromium → running original game (source-built, no installation)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          python -m pip install --disable-pip-version-check playwright
+          python -m playwright install --with-deps chromium
+          python tests/SHIPSTATUS06_InstalledBrowserTests.py \
+            --host build/galaxy_colony_live_host \
+            --relay live/interactive_relay.py \
+            --bridge build/galaxy_shipping_status_bridge
+          python tests/SHIPSTATUS07D_InstalledBrowserTests.py \
+            --host build/galaxy_colony_live_host \
+            --relay live/interactive_relay.py \
+            --bridge build/galaxy_shipping_status_bridge
+          # The actual Chromium client for the *second human*, isolated
+          # from SGVIEW, runs only on Linux. It does not masquerade as a
+          # Windows installed-game or a Windows 3D game acceptance.
+          python tests/SHIPSTATUS07G_LinuxChromiumTwoHumanTests.py \
+            --fixture build/galaxy_ship_status07g_two_human_tests \
+            --host build/galaxy_colony_live_host \
+            --relay live/interactive_relay.py \
+            --bridge build/galaxy_shipping_status_bridge

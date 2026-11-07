@@ -165,6 +165,97 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
  </div>
  <div id="assistStatus" class="help" role="status" aria-live="polite">Manual flight. Select an asteroid or your home outpost to engage travel assist.</div>
 </section>
+<section aria-labelledby="cyberTitle" style="border:1px solid #496c85;border-radius:10px;padding:12px;margin:10px 0">
+ <h2 id="cyberTitle">Cyber warfare · Ship modules</h2>
+ <div class="help">Physical intrusion emitter, passive firewall and isolated control lines. Effects temporarily change the ship's native module state—not your manual flight controls. Build ordinary colony modules before fitting equipment.</div>
+ <div id="cyberStatus" class="help" role="status" aria-live="polite">Waiting for committed ship electronics.</div>
+ <div id="cyberDefense" class="help" role="status" aria-live="polite">Waiting for committed defense state.</div>
+ <div id="cyberAlert" class="help" role="status" aria-live="polite">No incoming cyber attack reported.</div>
+ <div id="cyberSensorStatus" class="help" role="status" aria-live="polite">Awaiting real fitted sensors and stealth status.</div>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <button type="button" id="cyberFitEmitter" disabled>Fit intrusion emitter</button>
+  <button type="button" id="cyberRemoveEmitter" disabled>Remove emitter</button>
+  <button type="button" id="cyberFitFirewall" disabled>Fit firewall</button>
+  <button type="button" id="cyberRemoveFirewall" disabled>Remove firewall</button>
+  <button type="button" id="cyberFitStealth" disabled>Fit stealth baffle</button>
+  <button type="button" id="cyberRemoveStealth" disabled>Remove stealth baffle</button>
+  <button type="button" id="cyberFitCounterSensor" disabled>Fit counter-ECM sensors</button>
+  <button type="button" id="cyberRemoveCounterSensor" disabled>Remove counter-ECM sensors</button>
+ </div>
+ <div class="help">Stealth and counter-ECM require manufactured modules in actual support slots. Stealth narrows detection range; powered scanners and strong arrays recover contacts. Sensor descriptions cannot prove a pilot's identity without a verified hail.</div>
+ <div class="help" style="margin-bottom:6px">Module power and isolation operate on fitted hardpoints. Changes take effect only after the simulation commits its next tick.</div>
+ <div id="cyberModuleList" role="group" aria-label="Native ship module controls"></div>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <label>Observed foreign ship <select id="cyberTarget"><option value="">No valid local target</option></select></label>
+  <button id="cyberAttack" type="button" class="primary" disabled>Attempt Confusion attack</button>
+ </div>
+ <div id="cyberFeedback" class="help" role="status" aria-live="polite">No attack queued. Real targets require an operating emitter and physical range.</div>
+ <div class="help">A refused attack may be out of range, blocked by module isolation, or within the equipment cooldown. NPC ships follow the same rules. All attack outcomes are decided by the native world.</div>
+</section>
+<section aria-labelledby="securityDeskTitle" style="border:1px solid #60848b;border-radius:10px;padding:12px;margin:10px 0">
+ <h2 id="securityDeskTitle">Ship hails &amp; colony security cases</h2>
+ <div class="help">A visual contact is not a verified identity. Staying silent preserves anonymity unless other evidence proves who controlled the ship. A verified voluntary hail identifies the current ship controller and can link earlier incidents to that hull, but does not itself prove who committed a past offense.</div>
+ <div id="securityDeskStatus" class="help" role="status" aria-live="polite">Awaiting authenticated local security journal.</div>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <button type="button" id="securityRefresh">Refresh security records</button>
+  <label>Claim radius (mm) <input id="securityClaimRadius" type="number" min="1" max="5000" step="100" value="3000" style="width:85px"></label>
+  <button type="button" id="securityClaim" disabled>Establish claim</button>
+ </div>
+ <div class="help">Claims are policy declarations around a real existing colony ship, not free police stations. Recording a suspected vessel does not grant weapons or arrest authority.</div>
+ <h3>Observed foreign vessels</h3>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <label>Contact <select id="securityContact"><option value="">No acquired contact</option></select></label>
+  <button type="button" id="securityWarn" disabled>Send territorial warning</button>
+  <button type="button" id="securityCallShip" disabled>Hail observed ship</button>
+ </div>
+ <div class="help">The first direct hail identifies the calling account to the recipient, not the recipient to the caller. The recipient may identify itself or decline; unanswered calls are not proof of identity. Repeated unsolicited hails after a verified identification or explicit refusal incur escalating native communication penalties.</div>
+ <div id="securityCommsPenalty" class="help" role="status" aria-live="polite">No communications abuse penalty.</div>
+ <h3>Incoming direct ship hails</h3>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <label>Incoming hail <select id="securityCallInbox"><option value="">No incoming ship call</option></select></label>
+  <button type="button" id="securityIdentifyCaller" disabled>Identify my ship to caller</button>
+  <button type="button" id="securityDeclineCaller" disabled>Decline this hail</button>
+ </div>
+ <div id="securityCommsComplaints" class="help" role="log" aria-label="Hail harassment complaints">No communications abuse complaints.</div>
+ <h3>Durable private notifications</h3>
+ <div id="securityNotificationList" class="help" role="log" aria-label="Owner-private durable notification delivery">Waiting for original SQLite security outbox.</div>
+ <h3>Colony law agency · evidence referral only</h3>
+ <div class="help">A territorial claim alone is not a police agency. A current government must appoint a distinct physically present NPC officer, and a separate qualified NPC independently reviews an original complaint. This grants no guilt, warrant, armed response, arrest or seizure.</div>
+ <div id="securityAgencyStatus" class="help" role="status">No appointed agency.</div>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <button id="securityAgencyEstablish" type="button" disabled>Appoint staffed colony agency</button>
+  <label>Verified complaint <select id="securityAgencyComplaint"><option value="">No verified complaint</option></select></label>
+  <button id="securityAgencyRefer" type="button" disabled>Refer evidence to appointed agency</button>
+ </div>
+ <div id="securityAgencyReferrals" class="help" role="log" aria-label="Independent verified law-agency referrals">No verified agency referrals.</div>
+ <h3>Nonviolent NPC investigative work</h3>
+ <div class="help">An existing, assigned NPC officer may approach an actually witnessed hull under an independently verified case referral, using the original Patrol flight/work rules. A live match to the reported caller is a lead, NOT evidence that this hull committed the older offense. No stop, search, boarding, arrest or gunfire is authorized. A busy or unqualified pilot cannot be silently replaced.</div>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <label>Agency referral <select id="securityAgencyInvestigationReferral"><option value="">No admitted referral</option></select></label>
+  <button id="securityAgencyInvestigate" type="button" disabled>Order supervised nonviolent approach to selected observed contact</button>
+ </div>
+ <div id="securityAgencyInvestigations" class="help" role="log" aria-label="Original NPC patrol execution evidence">No investigations admitted.</div>
+ <h3>Security incident records</h3>
+ <div id="securityCaseList" class="help" role="log" aria-label="Witnessed cyber incident cases">No cases loaded.</div>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <label>Case <select id="securityCaseSelect"><option value="">No recorded case</option></select></label>
+  <button type="button" id="securityPatrol" disabled>Investigate observed match (nonviolent)</button>
+ </div>
+ <div class="help">Patrol requests require strong installed sensors, qualified NPC crew, and a current matching physical contact. Similar-looking ships may be innocent.</div>
+ <h3>Voluntary hail from your piloted ship</h3>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <label>Foreign jurisdiction <select id="securityDestination"><option value="">No witnessed foreign claim</option></select></label>
+  <button type="button" id="securityHail" disabled>Identify my ship by hail</button>
+ </div>
+ <h3>Incoming territorial hails</h3>
+ <div class="controls" style="padding:8px 0;gap:6px">
+  <label>Pending notice <select id="securityNotice"><option value="">No pending notice</option></select></label>
+  <button type="button" id="securityAcknowledge" disabled>Acknowledge notice</button>
+  <button type="button" id="securityRefuse" disabled>Refuse notice</button>
+ </div>
+ <div id="securityDeskFeedback" class="help" role="status" aria-live="polite">No security action submitted.</div>
+ <div class="help">No automatic hail is sent when you enter someone else's territory. Staying silent is an intentional choice. Hailing or replying is authenticated, logged, and may reveal the controlling account for that vessel, but never creates a retroactive crime conviction.</div>
+</section>
 <section aria-labelledby="combatTitle" style="border:1px solid #7b4752;border-radius:10px;padding:12px;margin:10px 0">
  <h2 id="combatTitle">Ship combat · Training weapons</h2>
  <div class="help">An uncrewed practice drone starts nearby. Rotate with Q/E to aim; the native weapon checks a 12 km range, 90° forward cone, finite charges and a two-tick cooldown. No civilian or colony attacks in this first slice.</div>
@@ -337,6 +428,8 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
 <script src="cargo-return.js"></script>
 <script src="expedition-feedback.js"></script>
 <script src="colony.js"></script>
+<script src="cyber-controls.js"></script>
+<script src="security-desk.js"></script>
 <script src="interactive.js"></script>
 <script src="colony-shipping.js"></script>
 </body>

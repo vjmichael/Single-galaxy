@@ -5,6 +5,7 @@ Browser POSTs choose a small allowlisted action, never player identity, ship ID,
 command ID, target ID, tick, or SQL. Not an untrusted multiplayer authority.
 """
 import argparse
+from collections import deque
 import base64
 import hmac
 import hashlib
@@ -30,6 +31,10 @@ STATIC={
     '/viewer/recordings.js':'viewer/recordings.js',
     '/viewer/viewer.js':'viewer/viewer.js',
     '/viewer/colony.js':'viewer/colony.js',
+    '/viewer/cyber-controls.js':'viewer/cyber-controls.js',
+    '/viewer/security-desk.js':'viewer/security-desk.js',
+    '/viewer/security-only.html':'viewer/security-only.html',
+    '/viewer/security-only.js':'viewer/security-only.js',
     '/viewer/opening-guide.js':'viewer/opening-guide.js',
     '/viewer/flight-controls.js':'viewer/flight-controls.js',
     '/viewer/flight-camera.js':'viewer/flight-camera.js',
@@ -80,7 +85,8 @@ def authenticate_account(rows,username,password):
     return row if hmac.compare_digest(candidate,expected) else None
 
 class SharedRuntime:
-    def __init__(self,exe,db,tick_ms,max_ticks,qa_mode=False,authenticated=False):
+    def __init__(self,exe,db,tick_ms,max_ticks,qa_mode=False,authenticated=False,
+                 human_owners=None):
         self.cv=threading.Condition()
         self.frames=[]
         self.survey_events=[]
@@ -91,7 +97,20 @@ class SharedRuntime:
         self.cmd_lock=threading.Lock()
         self.token=secrets.token_urlsafe(32)
         self.authenticated=authenticated
+        self.human_owners=frozenset(human_owners or (7,))
+        if authenticated and (7 not in self.human_owners or
+                len(self.human_owners)>64 or
+                any(type(p)!=int or not 1<=p<=9007199254740991
+                    for p in self.human_owners)):
+            raise ValueError('Invalid trusted human-owner roster')
+        self.private_colony_events=deque(maxlen=4096)
+        self.private_event_sequence=0
         env=os.environ.copy()
+        if authenticated:
+            # Account roster travels only to the trusted native host process,
+            # never to the browser. Real ship ownership is rechecked natively.
+            env['SG_AUTHENTICATED_HUMAN_OWNERS']=','.join(
+                str(p) for p in sorted(self.human_owners))
         # The relay is local-only and QA commands are disabled unless the
         # explicit developer CLI switch is present. Not a multiplayer authority.
         env['SINGLE_GALAXY_QA_MODE']='1' if qa_mode else '0'
@@ -105,6 +124,21 @@ class SharedRuntime:
     def _read_stderr(self):
         for raw in self.proc.stderr:
             line=raw.decode('ascii',errors='replace').rstrip('\n')
+            if line.startswith('PRIVATE|'):
+                # Host-only owner-addressed frame. Never forward this wrapper
+                # on the ordinary global colony broadcast or SGVIEW stream.
+                m=re.fullmatch(r'PRIVATE\|([1-9][0-9]{0,15})\|(COLONY\|1\|[0-9]+\|SECURITY_[A-Z_]+(?:\|[A-Za-z0-9_-]+)*)',line)
+                if m and len(line)<=1400:
+                    target=int(m.group(1))
+                    if target in self.human_owners and target!=7:
+                        with self.cv:
+                            encoded=base64.b64encode(
+                                m.group(2).encode('ascii')).decode('ascii')
+                            self.private_event_sequence+=1
+                            self.private_colony_events.append(
+                                (self.private_event_sequence,target,encoded))
+                            self.cv.notify_all()
+                continue
             if line.startswith('COLONY|1|'):
                 if len(line)<=180 and re.fullmatch(r'[a-zA-Z0-9_|-]+',line):
                     with self.cv:
@@ -152,7 +186,13 @@ class SharedRuntime:
 
     def send(self,command,principal=None):
         if self.authenticated:
-            if principal!=7:raise PermissionError('This colony ship belongs to player 7')
+            if principal not in self.human_owners:
+                raise PermissionError('Unknown authenticated account')
+            if principal!=7 and not (command=='SECURITY_REFRESH' or
+                    command.startswith('SECURITY_CALL|') or
+                    command.startswith('SECURITY_CALL_REPLY|') or
+                    command.startswith('SECURITY_NOTIFICATION_ACK|')):
+                raise PermissionError('Secondary account has security-only access')
             command='AUTH|'+str(principal)+'|'+command
         with self.cmd_lock:
             if self.finished or self.proc.poll() is not None:
@@ -207,7 +247,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def _session_payload(self,principal):
         return {'ok':True,'username':principal['username'],'playerId':principal['playerId'],
-                'csrf':principal['csrf'],'writes':False,'colonyWrites':principal['playerId']==7,'colony_mode':principal['playerId']==7,
+                'csrf':principal['csrf'],'writes':False,'colonyWrites':principal['playerId']==7,
+                'securityWrites':principal['playerId'] in self.server.runtime.human_owners,
+                'securityOnly':principal['playerId']!=7,
+                'colony_mode':principal['playerId']==7,
                 'tick_ms':self.server.tick_ms,'max_ticks':self.server.max_ticks}
 
     def _same_origin(self):
@@ -268,6 +311,87 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return answer
 
 
+    def _security_only_events(self,principal):
+        # Secondary human account: never subscribe to SGVIEW, surveying,
+        # native host stdout, or player 7's ordinary COLONY events. Each
+        # private message carries a host-verified owner envelope, removed
+        # before dispatching to this exact authenticated session.
+        rt=self.server.runtime
+        who=principal['playerId']
+        if who==7 or who not in rt.human_owners:
+            self._json(403,{'error':'Wrong private stream principal'});return
+        # A new authenticated SSE connection must not replay unrelated
+        # previous-session status from a volatile process-wide ring. Snapshot
+        # the high-water mark *before* asking the single native world writer
+        # for this owner's fresh SQLite-backed security read model.
+        with rt.cv:
+            cursor=rt.private_event_sequence
+        try:
+            rt.send('SECURITY_REFRESH',principal=who)
+        except (RuntimeError,PermissionError,BrokenPipeError):
+            self._json(409,{'error':'Original security host unavailable'});return
+        self.send_response(200)
+        self.send_header('Content-Type','text/event-stream; charset=utf-8')
+        self.send_header('Cache-Control','no-store')
+        self.send_header('X-Content-Type-Options','nosniff')
+        self.send_header('Connection','close')
+        self.end_headers()
+        # This connection sees only events after its captured high-water
+        # mark, including the just-requested native refresh. Historical
+        # in-memory frames belong to older subscriptions, not this login.
+        try:
+            while True:
+                current=self._principal()
+                if not current or current['session_id']!=principal['session_id']:
+                    self.wfile.write(b'event: failed\ndata: Session expired\n\n')
+                    self.wfile.flush();return
+                with rt.cv:
+                    rt.cv.wait_for(
+                        lambda:cursor<rt.private_event_sequence or rt.finished,
+                        timeout=3)
+                    # A connected subscriber can also fall behind the 4096
+                    # slot process ring. Detect that loss; do not silently
+                    # present a partial security desk as complete.
+                    latest=rt.private_event_sequence
+                    oldest=latest-len(rt.private_colony_events)+1
+                    missed=cursor<oldest-1
+                    entries=[] if missed else [
+                        (owner_id,data) for seq,owner_id,data
+                        in rt.private_colony_events if seq>cursor]
+                    cursor=latest
+                    done=rt.finished
+                    error=rt.error
+                if missed:
+                    self.wfile.write(
+                        b'event: resync\ndata: Native security refresh required\n\n')
+                    self.wfile.flush()
+                    try:
+                        # Native source of truth; never rebuild contacts,
+                        # identities or complaints from untrusted SSE frames.
+                        rt.send('SECURITY_REFRESH',principal=who)
+                    except (RuntimeError,PermissionError,BrokenPipeError):
+                        self.wfile.write(
+                            b'event: failed\ndata: Security host unavailable\n\n')
+                        self.wfile.flush();return
+                    continue
+                sent=False
+                for recipient,data in entries:
+                    if recipient!=who:continue
+                    self.wfile.write(('event: colony\ndata: '+data+'\n\n').encode('ascii'))
+                    sent=True
+                if sent:self.wfile.flush()
+                if done and cursor>=rt.private_event_sequence:
+                    if error:
+                        self.wfile.write(('event: failed\ndata: '+str(error).replace(
+                            '\n',' ')[:150]+'\n\n').encode('ascii'))
+                    else:self.wfile.write(b'event: complete\ndata: finished\n\n')
+                    self.wfile.flush();return
+                if not sent:
+                    self.wfile.write(b': keepalive\n\n');self.wfile.flush()
+        except (BrokenPipeError,ConnectionResetError,TimeoutError,OSError):
+            pass
+        finally:self.close_connection=True
+
     def do_GET(self):
         if not self._host_ok():
             self._json(403,{'error':'Local host required'});return
@@ -285,17 +409,28 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self._json(503,{'ok':False,'error':'Shipment authority unavailable'})
             return
         if url.path=='/session':
-            if self.server.accounts and (not principal or principal['playerId']!=7):
-                self._json(403,{'error':'Colony owner session required'});return
+            if self.server.accounts and (not principal or
+                principal['playerId'] not in self.server.runtime.human_owners):
+                self._json(403,{'error':'Authenticated owner session required'});return
+            if self.server.accounts and principal['playerId']!=7:
+                self._json(200,{'token':principal['csrf'],'qa_mode':False,
+                    'colony_mode':False,'security_only':True,
+                    'tick_ms':self.server.tick_ms,
+                    'max_ticks':self.server.max_ticks,
+                    'commands':['colonySecurityRefresh','colonySecurityCall',
+                                'colonySecurityCallReply','colonySecurityNotifyAck']});return
             self._json(200,{'token':principal['csrf'] if self.server.accounts else self.server.runtime.token,'qa_mode':self.server.qa_mode,'colony_mode':self.server.colony_mode,'tick_ms':self.server.tick_ms,
-                'max_ticks':self.server.max_ticks,'commands':(['thrust','yaw','colonyFireTraining','colonySalvageWreck','colonyDockBase','colonyUndockBase','colonyUnloadBase','colonyLoadBase','colonyScan','colonyConfigureScanner','colonyProbeDeploy','colonyProbeScan','colonyProbeRecover','colonySignatureScan','colonyCelestialScan','colonyPlanetSurvey','colonyPlanetCrew','colonyPlanetStatus','colonyPlanetPolicy','colonyPlanetShuttle','colonyLocalWorkPost','colonyLocalWorkStatus','colonyLocalWorkCancel','colonyFreightLoad','colonyFreightDispatch','colonyFreightDeliver','colonyFreightStatus','colonyLocalWorkPostToColony','colonyShipyardBuild','colonyShipyardAssign','colonyShipyardStatus','colonyFreighterBuild','colonyFreighterCommission','colonyFreighterStatus','colonyFreighterPilotStatus','colonyFreighterThrust','colonyFreighterYaw','colonyFreighterTravel','colonyFleetStatus','colonyFleetSelect','colonyFleetWorkPost','colonyYardContractPost','colonyYardContractAccept','colonyYardContractFund','colonyYardContractDeliver','colonyYardContractStatus','colonyWorkDelegateShip','colonyWorkCancel','colonyWorkStatus','colonyPlanetBuild','colonyPlanetEquip','colonyPlanetSupply','colonyPlanetGrow','colonyPlanetExtract','colonyPlanetRetrieve','colonyPlanetSupport','colonyEnvironmentScan','colonyProbeFocus','colonyProbeCancel','colonyDroneLaunch','colonyMine','colonyRefine','colonyFabricate','colonyBuild','colonyMineTarget','colonyProcess','colonyFabricateMaterial','colonyPlant','colonyHarvest','colonyRecycleWater','colonyRecycleCompost','colonyOxygen','colonyLifeWater','colonyFarmBuild','colonyFarmStaff','colonyFarmStock','colonyHabBuild','colonyHabResidents','colonyHabStock','colonyUtilityBuild','colonyUtilityRepair','colonyUtilitySpares','colonyUtilityStaff','colonyUtilityAuto','colonyCommunityBuild','colonyCommunityStaff','colonyCommunityStock','colonyClinicBuild','colonyClinicStaff','colonyClinicStock','colonyReclaimerBuild','colonyWaterworksBuild','colonyWaterworksFeed','colonyPolicySet','colonyPolicyStaff','colonySafetyAssess','colonySafetyPreflight'] if self.server.colony_mode else ['thrust','mine','stop','undock','dock','unload','load','sell','travelA','travelB','travelGate','travelHop','jump','jumpHop','directional','probeDeploy','probeScan','probeRecover','surveyArchive','surveyHistory','surveyPublish','planRoute'])});return
+                'max_ticks':self.server.max_ticks,'commands':(['thrust','yaw','colonyFireTraining','colonyFireShip','colonySalvageWreck','colonyDockBase','colonyUndockBase','colonyUnloadBase','colonyLoadBase','colonyScan','colonyConfigureScanner','colonyCyberFit','colonyCyberPower','colonyCyberIsolate','colonyCyberAttack','colonySecurityRefresh','colonySecurityClaim','colonySecurityWarn','colonySecurityHail','colonySecurityReply','colonySecurityPatrol','colonySecurityCall','colonySecurityCallReply','colonySecurityNotifyAck','colonySecurityAgencyEstablish','colonySecurityAgencyRefer','colonySecurityAgencyInvestigate','colonyProbeDeploy','colonyProbeScan','colonyProbeRecover','colonySignatureScan','colonyCelestialScan','colonyPlanetSurvey','colonyPlanetCrew','colonyPlanetStatus','colonyPlanetPolicy','colonyPlanetShuttle','colonyLocalWorkPost','colonyLocalWorkStatus','colonyLocalWorkCancel','colonyFreightLoad','colonyFreightDispatch','colonyFreightDeliver','colonyFreightStatus','colonyLocalWorkPostToColony','colonyShipyardBuild','colonyShipyardAssign','colonyShipyardStatus','colonyFreighterBuild','colonyFreighterCommission','colonyFreighterStatus','colonyFreighterPilotStatus','colonyFreighterThrust','colonyFreighterYaw','colonyFreighterTravel','colonyFleetStatus','colonyFleetSelect','colonyFleetWorkPost','colonyYardContractPost','colonyYardContractAccept','colonyYardContractFund','colonyYardContractDeliver','colonyYardContractStatus','colonyWorkDelegateShip','colonyWorkCancel','colonyWorkStatus','colonyPlanetBuild','colonyPlanetEquip','colonyPlanetSupply','colonyPlanetGrow','colonyPlanetExtract','colonyPlanetRetrieve','colonyPlanetSupport','colonyEnvironmentScan','colonyProbeFocus','colonyProbeCancel','colonyDroneLaunch','colonyMine','colonyRefine','colonyFabricate','colonyBuild','colonyMineTarget','colonyProcess','colonyFabricateMaterial','colonyPlant','colonyHarvest','colonyRecycleWater','colonyRecycleCompost','colonyOxygen','colonyLifeWater','colonyFarmBuild','colonyFarmStaff','colonyFarmStock','colonyHabBuild','colonyHabResidents','colonyHabStock','colonyUtilityBuild','colonyUtilityRepair','colonyUtilitySpares','colonyUtilityStaff','colonyUtilityAuto','colonyCommunityBuild','colonyCommunityStaff','colonyCommunityStock','colonyClinicBuild','colonyClinicStaff','colonyClinicStock','colonyReclaimerBuild','colonyWaterworksBuild','colonyWaterworksFeed','colonyPolicySet','colonyPolicyStaff','colonySafetyAssess','colonySafetyPreflight'] if self.server.colony_mode else ['thrust','mine','stop','undock','dock','unload','load','sell','travelA','travelB','travelGate','travelHop','jump','jumpHop','directional','probeDeploy','probeScan','probeRecover','surveyArchive','surveyHistory','surveyPublish','planRoute'])});return
         if url.path in STATIC:
             file=ROOT/STATIC[url.path]
             self._send(200,file.read_bytes(),MIME[file.suffix]);return
         if url.path!='/events':
             self._json(404,{'error':'Not found'});return
-        if self.server.accounts and (not principal or principal['playerId']!=7):
-            self._json(403,{'error':'Colony owner session required'});return
+        if self.server.accounts and (not principal or
+                principal['playerId'] not in self.server.runtime.human_owners):
+            self._json(403,{'error':'Authenticated owner session required'});return
+        if self.server.accounts and principal['playerId']!=7:
+            self._security_only_events(principal);return
         self.send_response(200)
         self.send_header('Content-Type','text/event-stream; charset=utf-8')
         self.send_header('Cache-Control','no-store')
@@ -346,8 +481,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.path!='/command':
             self._json(404,{'error':'Not found'});return
         principal=self._principal()
-        if self.server.accounts and (not principal or principal['playerId']!=7):
-            self._json(403,{'error':'Colony owner session required'});return
+        if self.server.accounts and (not principal or
+                principal['playerId'] not in self.server.runtime.human_owners):
+            self._json(403,{'error':'Authenticated owner session required'});return
         origin='http://127.0.0.1:'+str(self.server.server_port)
         if self.headers.get('Origin')!=origin or self.headers.get('Content-Type')!='application/json':
             self._json(403,{'error':'Same-origin JSON requests only'});return
@@ -359,10 +495,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if not isinstance(doc,dict) or not isinstance(doc.get('token'),str) or not hmac.compare_digest(doc['token'],principal['csrf'] if self.server.accounts else self.server.runtime.token):
                 self._json(403,{'error':'Invalid session token'});return
             action=doc.get('action')
+            if self.server.accounts and principal['playerId']!=7 and action not in (
+                    'colonySecurityRefresh','colonySecurityCall',
+                    'colonySecurityCallReply','colonySecurityNotifyAck'):
+                self._json(403,{'error':'Security-only owner cannot control the world'});return
             if self.server.colony_mode:
-                if action not in ('thrust','yaw','colonyDockBase','colonyUndockBase','colonyUnloadBase','colonyLoadBase','colonyScan','colonyMine','colonyRefine','colonyFabricate','colonyBuild','colonyMineTarget','colonyProcess','colonyFabricateMaterial','colonyPlant','colonyHarvest','colonyRecycleWater','colonyRecycleCompost','colonyOxygen','colonyLifeWater','colonyFarmBuild','colonyFarmStaff','colonyFarmStock','colonyHabBuild','colonyHabResidents','colonyHabStock','colonyUtilityBuild','colonyUtilityRepair','colonyUtilitySpares','colonyUtilityStaff','colonyUtilityAuto','colonyCommunityBuild','colonyCommunityStaff','colonyCommunityStock','colonyClinicBuild','colonyClinicStaff','colonyClinicStock','colonyReclaimerBuild','colonyWaterworksBuild','colonyWaterworksFeed','colonyPolicySet','colonyPolicyStaff','colonySafetyAssess','colonySafetyPreflight','colonyPlanetSurvey','colonyPlanetCrew','colonyPlanetStatus','colonyPlanetPolicy','colonyPlanetShuttle','colonyLocalWorkPost','colonyLocalWorkStatus','colonyLocalWorkCancel','colonyFreightLoad','colonyFreightDispatch','colonyFreightDeliver','colonyFreightStatus','colonyLocalWorkPostToColony','colonyShipyardBuild','colonyShipyardAssign','colonyShipyardStatus','colonyFreighterBuild','colonyFreighterCommission','colonyFreighterStatus','colonyFreighterPilotStatus','colonyFreighterThrust','colonyFreighterYaw','colonyFreighterTravel','colonyFleetStatus','colonyFleetSelect','colonyFleetWorkPost','colonyYardContractPost','colonyYardContractAccept','colonyYardContractFund','colonyYardContractDeliver','colonyYardContractStatus','colonyWorkDelegateShip','colonyWorkCancel','colonyWorkStatus','colonyPlanetBuild','colonyPlanetEquip','colonyPlanetSupply','colonyPlanetGrow','colonyPlanetExtract','colonyPlanetRetrieve','colonyPlanetSupport','colonyCelestialScan','colonyEnvironmentScan','colonyProbeDeploy','colonyProbeScan','colonyProbeRecover','colonySignatureScan','colonyProbeFocus','colonyProbeCancel','colonyDroneLaunch','colonyFrameTravel'):
+                if action not in ('thrust','yaw','colonyFireTraining','colonyFireShip','colonyDockBase','colonyUndockBase','colonyUnloadBase','colonyLoadBase','colonyScan','colonyMine','colonyRefine','colonyFabricate','colonyBuild','colonyMineTarget','colonyProcess','colonyFabricateMaterial','colonyPlant','colonyHarvest','colonyRecycleWater','colonyRecycleCompost','colonyOxygen','colonyLifeWater','colonyFarmBuild','colonyFarmStaff','colonyFarmStock','colonyHabBuild','colonyHabResidents','colonyHabStock','colonyUtilityBuild','colonyUtilityRepair','colonyUtilitySpares','colonyUtilityStaff','colonyUtilityAuto','colonyCommunityBuild','colonyCommunityStaff','colonyCommunityStock','colonyClinicBuild','colonyClinicStaff','colonyClinicStock','colonyReclaimerBuild','colonyWaterworksBuild','colonyWaterworksFeed','colonyPolicySet','colonyPolicyStaff','colonySafetyAssess','colonySafetyPreflight','colonyPlanetSurvey','colonyPlanetCrew','colonyPlanetStatus','colonyPlanetPolicy','colonyPlanetShuttle','colonyLocalWorkPost','colonyLocalWorkStatus','colonyLocalWorkCancel','colonyFreightLoad','colonyFreightDispatch','colonyFreightDeliver','colonyFreightStatus','colonyLocalWorkPostToColony','colonyShipyardBuild','colonyShipyardAssign','colonyShipyardStatus','colonyFreighterBuild','colonyFreighterCommission','colonyFreighterStatus','colonyFreighterPilotStatus','colonyFreighterThrust','colonyFreighterYaw','colonyFreighterTravel','colonyFleetStatus','colonyFleetSelect','colonyFleetWorkPost','colonyYardContractPost','colonyYardContractAccept','colonyYardContractFund','colonyYardContractDeliver','colonyYardContractStatus','colonyWorkDelegateShip','colonyWorkCancel','colonyWorkStatus','colonyPlanetBuild','colonyPlanetEquip','colonyPlanetSupply','colonyPlanetGrow','colonyPlanetExtract','colonyPlanetRetrieve','colonyPlanetSupport','colonyCelestialScan','colonyEnvironmentScan','colonyProbeDeploy','colonyProbeScan','colonyProbeRecover','colonySignatureScan','colonyProbeFocus','colonyProbeCancel','colonyDroneLaunch','colonyFrameTravel','colonyCyberFit','colonyCyberPower','colonyCyberIsolate','colonyCyberAttack','colonySecurityRefresh','colonySecurityClaim','colonySecurityWarn','colonySecurityHail','colonySecurityReply','colonySecurityPatrol','colonySecurityCall','colonySecurityCallReply','colonySecurityNotifyAck','colonySecurityAgencyEstablish','colonySecurityAgencyRefer','colonySecurityAgencyInvestigate'):
                     self._json(403,{'error':'Unavailable in colony-first mode'});return
-            elif action in ('colonyScan','colonyMine','colonyRefine','colonyFabricate','colonyBuild','colonyMineTarget','colonyProcess','colonyFabricateMaterial','colonyPlant','colonyHarvest','colonyRecycleWater','colonyRecycleCompost','colonyOxygen','colonyLifeWater','colonyFarmBuild','colonyFarmStaff','colonyFarmStock','colonyHabBuild','colonyHabResidents','colonyHabStock','colonyUtilityBuild','colonyUtilityRepair','colonyUtilitySpares','colonyUtilityStaff','colonyUtilityAuto','colonyCommunityBuild','colonyCommunityStaff','colonyCommunityStock','colonyClinicBuild','colonyClinicStaff','colonyClinicStock','colonyReclaimerBuild','colonyWaterworksBuild','colonyWaterworksFeed','colonyPolicySet','colonyPolicyStaff','colonySafetyAssess','colonySafetyPreflight'):
+            elif action in ('colonyFireTraining','colonyFireShip','colonyScan','colonyMine','colonyRefine','colonyFabricate','colonyBuild','colonyMineTarget','colonyProcess','colonyFabricateMaterial','colonyPlant','colonyHarvest','colonyRecycleWater','colonyRecycleCompost','colonyOxygen','colonyLifeWater','colonyFarmBuild','colonyFarmStaff','colonyFarmStock','colonyHabBuild','colonyHabResidents','colonyHabStock','colonyUtilityBuild','colonyUtilityRepair','colonyUtilitySpares','colonyUtilityStaff','colonyUtilityAuto','colonyCommunityBuild','colonyCommunityStaff','colonyCommunityStock','colonyClinicBuild','colonyClinicStaff','colonyClinicStock','colonyReclaimerBuild','colonyWaterworksBuild','colonyWaterworksFeed','colonyPolicySet','colonyPolicyStaff','colonySafetyAssess','colonySafetyPreflight','colonyCyberFit','colonyCyberPower','colonyCyberIsolate','colonyCyberAttack','colonySecurityRefresh','colonySecurityClaim','colonySecurityWarn','colonySecurityHail','colonySecurityReply','colonySecurityPatrol','colonySecurityCall','colonySecurityCallReply','colonySecurityNotifyAck','colonySecurityAgencyEstablish','colonySecurityAgencyRefer','colonySecurityAgencyInvestigate'):
                 self._json(403,{'error':'Colony mode disabled'});return
             if action in ('qaRoute','qaStop','qaGate') and not self.server.qa_mode:
                 # An unauthorized attempt is explicitly rejected and logged,
@@ -710,6 +850,107 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if type(probe)!=int or not 1<=probe<=1000000000000000:
                     raise ValueError('Invalid physical survey probe ID')
                 command=('PROBE_SCAN' if action=='colonyProbeScan' else 'PROBE_RECOVER')+'|'+str(probe)
+            elif action=='colonySecurityRefresh' and set(doc)=={'token','action'}:
+                command='SECURITY_REFRESH'
+            elif action=='colonySecurityClaim' and set(doc)=={'token','action','radius'}:
+                radius=doc['radius']
+                if type(radius)!=int or not 1<=radius<=5000:
+                    raise ValueError('Invalid territorial claim radius')
+                command=f'SECURITY_CLAIM|{radius}'
+            elif action=='colonySecurityWarn' and set(doc)=={'token','action','ship'}:
+                target=doc['ship']
+                if type(target)!=int or not 1<=target<=1000000000000000:
+                    raise ValueError('Invalid observed vessel')
+                command=f'SECURITY_WARN|{target}'
+            elif action=='colonySecurityHail' and set(doc)=={'token','action','colony'}:
+                target=doc['colony']
+                if type(target)!=int or not 1<=target<=1000000000000000:
+                    raise ValueError('Invalid real foreign jurisdiction')
+                command=f'SECURITY_HAIL|{target}'
+            elif action=='colonySecurityReply' and set(doc)=={
+                    'token','action','colony','notice','choice'}:
+                colony,notice,choice=doc['colony'],doc['notice'],doc['choice']
+                if type(colony)!=int or not 1<=colony<=1000000000000000 or (
+                   type(notice)!=str or not 1<=len(notice)<=19 or
+                   not notice.isascii() or not notice.isdecimal() or
+                   notice[0]=='0' or int(notice)>=(1<<63)) or (
+                   type(choice)!=str or choice not in ('acknowledge','refuse')):
+                    raise ValueError('Invalid original notice reply')
+                command=f'SECURITY_REPLY|{colony}|{notice}|'+(
+                    'ACK' if choice=='acknowledge' else 'REFUSE')
+            elif action=='colonySecurityPatrol' and set(doc)=={
+                    'token','action','case','ship'}:
+                case_id,ship=doc['case'],doc['ship']
+                # Original SQLite case IDs may exceed JS's 53-bit number
+                # precision; receive canonical DECIMAL STRINGS, not floats.
+                if type(case_id)!=str or not 1<=len(case_id)<=19 or (
+                   not case_id.isascii() or not case_id.isdecimal() or
+                   case_id[0]=='0' or int(case_id)>=(1<<62)) or (
+                   type(ship)!=int or not 1<=ship<=1000000000000000):
+                    raise ValueError('Invalid original case or observed vessel')
+                command=f'SECURITY_PATROL|{case_id}|{ship}'
+            elif action=='colonySecurityNotifyAck' and set(doc)=={
+                    'token','action','sequence'}:
+                seq=doc['sequence']
+                if type(seq)!=str or not 1<=len(seq)<=19 or (
+                    not seq.isascii() or not seq.isdecimal() or
+                    seq[0]=='0' or int(seq)>=(1<<63)):
+                    raise ValueError('Invalid owner-scoped notification receipt')
+                command='SECURITY_NOTIFICATION_ACK|'+seq
+            elif action=='colonySecurityAgencyEstablish' and set(doc)=={
+                    'token','action'}:
+                command='SECURITY_AGENCY_ESTABLISH'
+            elif action=='colonySecurityAgencyRefer','colonySecurityAgencyInvestigate' and set(doc)=={
+                    'token','action','complaint'}:
+                complaint=doc['complaint']
+                if type(complaint)!=str or not 1<=len(complaint)<=19 or (
+                    not complaint.isascii() or not complaint.isdecimal() or
+                    complaint[0]=='0' or int(complaint)>=(1<<63)):
+                    raise ValueError('Invalid original verified complaint reference')
+                command='SECURITY_AGENCY_REFER|'+complaint
+            elif action=='colonySecurityAgencyInvestigate' and set(doc)=={
+                    'token','action','referral','ship'}:
+                referral,ship=doc['referral'],doc['ship']
+                if type(referral)!=str or not 1<=len(referral)<=19 or (
+                    not referral.isascii() or not referral.isdecimal() or
+                    referral[0]=='0' or int(referral)>=(1<<40)) or (
+                    type(ship)!=int or not 1<=ship<=1000000000000000):
+                    raise ValueError('Invalid original referral or observed ship')
+                command='SECURITY_AGENCY_INVESTIGATE|'+referral+'|'+str(ship)
+            elif action=='colonySecurityCall' and set(doc)=={
+                    'token','action','ship'}:
+                ship=doc['ship']
+                if type(ship)!=int or not 1<=ship<=1000000000000000:
+                    raise ValueError('Invalid observed ship to hail')
+                command=f'SECURITY_CALL|{ship}'
+            elif action=='colonySecurityCallReply' and set(doc)=={
+                    'token','action','request','choice'}:
+                call,choice=doc['request'],doc['choice']
+                if type(call)!=str or not 1<=len(call)<=19 or (
+                   not call.isascii() or not call.isdecimal() or
+                   call[0]=='0' or int(call)>=(1<<63)) or (
+                   type(choice)!=str or choice not in ('identify','decline')):
+                    raise ValueError('Invalid authenticated hail response')
+                command='SECURITY_CALL_REPLY|'+call+'|'+(
+                    'IDENTIFY' if choice=='identify' else 'DECLINE')
+            elif action=='colonyCyberFit' and set(doc)=={'token','action','device','install'}:
+                device,install=doc['device'],doc['install']
+                if type(device)!=str or device not in (
+                    'emitter','firewall','stealth','counterSensor') or type(install)!=bool:
+                    raise ValueError('Invalid physical cyber/stealth fitting')
+                module={'emitter':3,'firewall':4,'stealth':5,
+                        'counterSensor':6}[device]
+                command=f'CYBER_FIT|{module if install else -module}'
+            elif action in ('colonyCyberPower','colonyCyberIsolate') and set(doc)=={'token','action','slot','enabled'}:
+                slot,enabled=doc['slot'],doc['enabled']
+                if type(slot)!=int or slot not in (0,1) or type(enabled)!=bool:
+                    raise ValueError('Invalid module control')
+                command=f'{"CYBER_POWER" if action=="colonyCyberPower" else "CYBER_ISOLATE"}|{slot}|{int(enabled)}'
+            elif action=='colonyCyberAttack' and set(doc)=={'token','action','target'}:
+                target=doc['target']
+                if type(target)!=int or not 1<=target<=1000000000000000:
+                    raise ValueError('Invalid physical cyber target')
+                command=f'CYBER_ATTACK|{target}'
             elif action=='colonyConfigureScanner' and set(doc)=={'token','action','mode'}:
                 mode=doc['mode']
                 if type(mode)!=int or mode not in (1,-1):
@@ -853,6 +1094,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if type(target)!=int or not 1<=target<=100000000 or type(amount)!=int or not 1<=amount<=10:
                     raise ValueError('Invalid salvage request')
                 command=f'SALVAGE_WRECK|{target}|{amount}'
+            elif action=='colonyFireShip' and set(doc)=={
+                    'token','action','target'}:
+                target=doc['target']
+                if type(target)!=int or not 1<=target<=1000000000000000:
+                    raise ValueError('Invalid physically acquired enemy ship')
+                command=f'FIRE_SHIP|{target}'
             elif action=='colonyFireTraining' and set(doc)=={'token','action','target'}:
                 target=doc['target']
                 if type(target)!=int or not 1<=target<=100000000:
@@ -899,7 +1146,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._json(202,{'status':'queued_not_committed'})
         except (ValueError,UnicodeDecodeError,json.JSONDecodeError) as exc:
             self._json(400,{'error':str(exc)[:120]})
-        except (BrokenPipeError,RuntimeError) as exc:
+        except (BrokenPipeError,RuntimeError,PermissionError) as exc:
             self._json(409,{'error':str(exc)[:120]})
 
 class Server(http.server.ThreadingHTTPServer):
@@ -932,7 +1179,9 @@ def run(args=None):
     with tempfile.TemporaryDirectory(prefix='galaxy-interactive-') as tmp:
         save=opt.save.resolve() if opt.save else pathlib.Path(tmp)/'world.sqlite'
         save.parent.mkdir(parents=True,exist_ok=True)
-        rt=SharedRuntime(opt.host_exe.resolve(),save,opt.tick_ms,opt.max_ticks,opt.qa_test,authenticated=bool(accounts))
+        rt=SharedRuntime(opt.host_exe.resolve(),save,opt.tick_ms,opt.max_ticks,opt.qa_test,
+            authenticated=bool(accounts),
+            human_owners={a['playerId'] for a in accounts.values()} if accounts else {7})
         rt.db=save
         try:
             with Server(('127.0.0.1',opt.port),Handler) as server:

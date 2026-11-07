@@ -8,10 +8,15 @@
 #include "galaxy/ClientContract.hpp"
 #include "galaxy/FleetSelection.hpp"
 #include "galaxy/ColonySafety.hpp"
+#include "galaxy/NpcCyberSupervisor.hpp"
+#include "galaxy/NpcHailSupervisor.hpp"
+#include "galaxy/ShipSensorProfile.hpp"
+#include "galaxy/SecurityDeskHost.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <stdexcept>
 #include <iostream>
@@ -77,6 +82,9 @@ constexpr PlayerId owner=7;
 constexpr std::int64_t sensor_mm=Simulation::kLocalSurveyRangeMm;
 std::string pending;
 std::vector<std::string> commands;
+// UI-only correlation. The actual command/effect and recovery receipts are
+// owned by the canonical PersistentWorld; this map never grants authority.
+std::map<std::uint64_t,unsigned> awaiting_cyber_results;
 void poll_input(){
     char data[1024];
     for(int n=0;n<4;++n){
@@ -124,6 +132,110 @@ std::int64_t integer(const std::string& s){
 }
 void announce(const Simulation& w,const std::string& text){
     std::cerr<<"COLONY|1|"<<w.tick()<<'|'<<text<<'\n'<<std::flush;
+}
+// A verified *human account's* private security desk never shares the
+// global owner-7 SGVIEW, colony diagnostics, or per-owner private evidence.
+// The locally trusted relay strips this wrapper and filters by principal.
+void announce_security_for(const Simulation& w,PlayerId recipient,
+                           const std::string& value) {
+    if(recipient==owner) { announce(w,value);return; }
+    std::cerr<<"PRIVATE|"<<recipient<<"|COLONY|1|"<<w.tick()
+             <<'|'<<value<<'\n'<<std::flush;
+}
+std::set<PlayerId> trusted_human_owners(bool authenticated) {
+    std::set<PlayerId> humans{owner};
+    if(!authenticated)return humans;
+    const char* raw=std::getenv("SG_AUTHENTICATED_HUMAN_OWNERS");
+    if(!raw || !*raw)return humans;
+    // Split by comma using only canonical positive decimal account IDs.
+    std::istringstream in(raw);
+    std::string item;
+    humans.clear();
+    while(std::getline(in,item,',')){
+        const auto value=integer(item);
+        if(value<=0 || value>9007199254740991LL ||
+           !humans.insert(PlayerId(value)).second)
+            throw std::invalid_argument("invalid human owner manifest");
+    }
+    if(humans.size()>64 || !humans.count(owner))
+        throw std::invalid_argument("local home account missing");
+    return humans;
+}
+// SHIP-STATUS-07: private world ownership is not optical identification.
+// Suppress the source ID when the real viewer lacks a live sensor contact.
+EntityId perceived_cyber_source(const Simulation& w,
+    EntityId viewer,EntityId remote) {
+    const auto* own=w.find(viewer),*other=w.find(remote);
+    if(!own || !other || own->type!=EntityType::Ship ||
+       other->type!=EntityType::Ship ||
+       !w.same_local_frame(viewer,remote))return 0;
+    const auto radius=ship_sensors::detection_range_mm(w,*own,*other);
+    const auto dx=double(own->position.x)-other->position.x;
+    const auto dy=double(own->position.y)-other->position.y;
+    return std::hypot(dx,dy)<=double(radius)?remote:0;
+}
+// SHIP-STATUS-05: read-only cockpit from one authoritative physical ship.
+// A frame displays actual fitted hardware and effective native module state,
+// never a client-assumed equipment grant or a speculative attack outcome.
+void cyber_status(const Simulation& w,EntityId ship) {
+    const auto* hull=w.find(ship);
+    if(!hull || hull->type!=EntityType::Ship || hull->owner_id!=owner)return;
+    const auto until=hull->last_hack_tick &&
+        w.tick()<hull->last_hack_tick+Simulation::kHackCooldownTicks?
+        hull->last_hack_tick+Simulation::kHackCooldownTicks-w.tick():0;
+    announce(w,"CYBER_STATUS|"+std::to_string(ship)+"|"+
+        std::to_string(hull->fitting.intrusion_emitter()?1:0)+"|"+
+        std::to_string(hull->fitting.cyber_firewall()?1:0)+"|"+
+        std::to_string(until)+"|"+
+        std::to_string(w.colony_ship(ship)?1:0));
+    for(std::uint8_t slot=0;slot<2;++slot) {
+        const auto hw=hull->fitting.hardpoints[slot];
+        announce(w,"CYBER_MODULE|"+std::to_string(ship)+"|"+
+            std::to_string(unsigned(slot))+"|"+std::to_string(unsigned(hw))+"|"+
+            std::to_string(hull->hardpoint_requested_on[slot]?1:0)+"|"+
+            std::to_string(w.hardpoint_effective_on(ship,slot)?1:0)+"|"+
+            std::to_string(hull->hardpoint_isolated[slot]?1:0));
+    }
+    // Defensive read model is derived from the current original-world
+    // effects, not the intended button state or an uncommitted attack.
+    std::uint64_t remaining=0,source=0,exposed=0;
+    for(const auto& effect:w.status_effects().records()){
+        if(effect.target_ship!=ship ||
+           w.tick()<effect.started_tick || w.tick()>=effect.expires_tick)
+            continue;
+        remaining=effect.expires_tick-w.tick();
+        source=perceived_cyber_source(w,ship,effect.source_ship);
+        exposed=effect.targets.size();
+        break; // the native kernel does not permit overlapping effects
+    }
+    announce(w,"CYBER_DEFENSE|"+std::to_string(ship)+"|"+
+        std::to_string(remaining)+"|"+std::to_string(source)+"|"+
+        std::to_string(exposed));
+    bool scanner_online=false;
+    for(std::uint8_t slot=0;slot<2;++slot)
+        if(hull->fitting.hardpoints[slot]==1 &&
+           w.hardpoint_effective_on(ship,slot))scanner_online=true;
+    announce(w,"CYBER_SENSORS|"+std::to_string(ship)+"|"+
+        std::to_string(hull->fitting.stealth_baffle()?1:0)+"|"+
+        std::to_string(hull->fitting.counter_ecm_array()?1:0)+"|"+
+        std::to_string(scanner_online?1:0));
+    announce(w,"CYBER_TARGETS_RESET|"+std::to_string(ship));
+    for(const auto& [id,target]:w.entities()){
+        if(id==ship || target.type!=EntityType::Ship || target.training_drone ||
+           !target.owner_id || target.owner_id==hull->owner_id ||
+           target.system_id!=hull->system_id ||
+           !w.same_local_frame(ship,id) ||
+           target.dock_state!=DockState::InSpace)continue;
+        const auto dx=double(target.position.x)-hull->position.x;
+        const auto dy=double(target.position.y)-hull->position.y;
+        const auto distance=std::hypot(dx,dy);
+        if(distance>double(Simulation::kHackRangeMm) ||
+           distance>double(ship_sensors::detection_range_mm(
+               w,*hull,target)))continue;
+        announce(w,"CYBER_TARGET|"+std::to_string(ship)+"|"+
+            std::to_string(id)+"|"+std::to_string(
+                static_cast<std::uint64_t>(distance)));
+    }
 }
 void status(const Simulation& w,EntityId ship,bool replay_discoveries=false){
     const auto* s=w.find(ship);const auto* c=w.colony_ship(ship);
@@ -1696,10 +1808,50 @@ void apply(PersistentWorld& world,EntityId ship,FleetSelection& fleet,const std:
             const auto mode=integer(v[1]);
             if(mode!=1 && mode!=-1)throw std::invalid_argument("invalid scanner fit mode");
             c.action=Action::ConfigureExplorationScanner;c.amount=mode;
+        }else if(v.size()==2 && v[0]=="CYBER_FIT"){
+            const auto mode=integer(v[1]);
+            if(mode!=3 && mode!=-3 && mode!=4 && mode!=-4 &&
+               mode!=5 && mode!=-5 && mode!=6 && mode!=-6)
+                throw std::invalid_argument("invalid cyber/stealth fitting");
+            if(!fleet.is_ready(world.world(),fleet.piloted()))
+                throw std::invalid_argument("cockpit unavailable");
+            c.actor=fleet.piloted();
+            c.action=Action::ConfigureCyberModule;c.amount=mode;
+        }else if(v.size()==3 &&
+                 (v[0]=="CYBER_POWER" || v[0]=="CYBER_ISOLATE")){
+            const auto slot=integer(v[1]),enabled=integer(v[2]);
+            if(slot<0 || slot>1 || (enabled!=0 && enabled!=1))
+                throw std::invalid_argument("invalid cyber control");
+            if(!fleet.is_ready(world.world(),fleet.piloted()))
+                throw std::invalid_argument("cockpit unavailable");
+            c.actor=fleet.piloted();
+            c.action=v[0]=="CYBER_POWER"?Action::SetHardpointPower:
+                Action::SetCyberIsolation;
+            c.amount=slot*2+enabled;
+        }else if(v.size()==2 && v[0]=="CYBER_ATTACK"){
+            const auto target=integer(v[1]);
+            if(target<=0 || target>1000000000000000LL)
+                throw std::invalid_argument("invalid cyber target");
+            if(!fleet.is_ready(world.world(),fleet.piloted()))
+                throw std::invalid_argument("cockpit unavailable");
+            c.actor=fleet.piloted();c.target=static_cast<EntityId>(target);
+            c.action=Action::HackConfuse;
         }else if(v.size()==2 && v[0]=="FIRE_TRAINING"){
             const auto id=integer(v[1]);
             if(id<=0||id>100000000)throw std::invalid_argument("invalid combat target");
             c.action=Action::FireTrainingWeapon;c.target=static_cast<EntityId>(id);
+        }else if(v.size()==2 && v[0]=="FIRE_SHIP"){
+            const auto id=integer(v[1]);
+            if(id<=0 || id>1000000000000000LL)
+                throw std::invalid_argument("invalid physical combat target");
+            if(!fleet.is_ready(world.world(),fleet.piloted()))
+                throw std::invalid_argument("selected combat vessel unavailable");
+            c.actor=fleet.piloted();
+            c.action=Action::FireShipWeapon;
+            c.target=static_cast<EntityId>(id);
+            // Never trust the client's claimed range, aim, identity,
+            // ammunition, crew status or lawfulness. Original Simulation
+            // independently checks all impact preconditions at execute.
         }else if(v.size()==1 && v[0]=="DOCK_BASE"){
             const auto* self=world.world().find(ship);
             if(!self)throw std::invalid_argument("ship missing");
@@ -1884,6 +2036,12 @@ void apply(PersistentWorld& world,EntityId ship,FleetSelection& fleet,const std:
             c.action=Action::ConstructOutpost;c.amount=1;
         }else throw std::invalid_argument("bad command");
         if(!world.submit(c))throw std::invalid_argument("rejected submission");
+        const unsigned cyber_kind=
+            c.action==Action::ConfigureCyberModule?1:
+            (c.action==Action::SetHardpointPower ||
+             c.action==Action::SetCyberIsolation)?2:
+            c.action==Action::HackConfuse?3:0;
+        if(cyber_kind)awaiting_cyber_results.emplace(c.id,cyber_kind);
         // The host emits the result only after the next committed tick.
     }catch(const std::exception&){announce(world.world(),"ERROR|INVALID_INPUT");}
 }
@@ -1900,6 +2058,7 @@ int main(int argc,char** argv){
         auto ms=integer(argv[2]),max_ticks=integer(argv[3]);
         if(ms<20||ms>5000||max_ticks<5||max_ticks>1200)throw std::invalid_argument("invalid run limits");
         WorldWriterLease single_writer(argv[1]);
+        const auto human_owners=trusted_human_owners(authenticated_transport);
         Simulation genesis(0xB70B);
         const auto initial_ship=genesis.add_colony_ship(owner,{0,0},60,24);
         EntityId ship=initial_ship;
@@ -1937,6 +2096,24 @@ int main(int argc,char** argv){
                 }
             if(!ship)throw std::runtime_error("no colony ship for authenticated owner");
         }
+        // SHIP-STATUS-07D: both append-only evidence journals share the
+        // ORIGINAL authoritative SQLite game file. No duplicate world writer.
+        std::unique_ptr<colony_disposition::TerritoryJournal> territory;
+        std::unique_ptr<colony_disposition::CyberIncidentJournal> cases;
+        std::unique_ptr<ship_comms::Journal> communications;
+        std::unique_ptr<ship_notifications::Outbox> notifications;
+        std::unique_ptr<colony_law::Agency> law_agency;
+        try {
+            territory=std::make_unique<colony_disposition::TerritoryJournal>(argv[1]);
+            cases=std::make_unique<colony_disposition::CyberIncidentJournal>(argv[1]);
+            communications=std::make_unique<ship_comms::Journal>(argv[1]);
+            notifications=std::make_unique<ship_notifications::Outbox>(argv[1]);
+            law_agency=std::make_unique<colony_law::Agency>(argv[1]);
+        }catch(const std::exception& ex) {
+            std::cerr<<"SECURITY_DESK_UNAVAILABLE "<<ex.what()<<'\n';
+            law_agency.reset();notifications.reset();
+            territory.reset();cases.reset();communications.reset();
+        }
         // PLAY-13B: the v67 world is the authoritative discovery source.
         // This sidecar is an owner-scoped, rebuildable navigation/survey index.
         // Every host restart replays committed native discoveries idempotently.
@@ -1970,9 +2147,67 @@ int main(int argc,char** argv){
         std::cout<<encode_frame(bridge.snapshot())<<std::flush;
         announce(world.world(),was_saved?"RESUMED":"NEW_COLONY");
         status(world.world(),ship,true);
+        cyber_status(world.world(),fleet.piloted());
+        if(territory && cases){
+            colony_disposition::security_desk::capture_current_tick(
+                world,*territory,*cases,owner,
+                [&](const std::string& msg){announce(world.world(),msg);});
+            colony_disposition::security_desk::snapshot(
+                world,*territory,*cases,owner,ship,fleet.piloted(),
+                [&](const std::string& msg){announce(world.world(),msg);},
+                communications.get(),notifications.get(),law_agency.get());
+        }else announce(world.world(),"SECURITY_ERROR|CASE_DESK_UNAVAILABLE");
         // The initial selection is always the actual home ship. A browser
         // may restore a prior preference, but native selection revalidates it.
+        // Security journals can commit several original-world identity
+        // receipts in one tick. Never reuse their event IDs after a host
+        // crash/restart just because world generation advanced fewer times.
         std::uint64_t nonce=900000000000ULL+world.generation();
+        if(territory)for(const auto& e:territory->history())
+            nonce=std::max(nonce,e.event_id);
+        if(law_agency)nonce=std::max(nonce,law_agency->max_event());
+        if(communications){
+            for(const auto& e:communications->history())
+                nonce=std::max(nonce,e.event_id);
+            // Compact nuisance events after the tenth detailed receipt
+            // are also durable host-generated identities. Reconcile them
+            // or the first command after restart could reuse a penalty ID.
+            for(const auto& p:communications->overflow_history())
+                nonce=std::max(nonce,p.last_event);
+        }
+        for(const auto& e:world.world().events())
+            nonce=std::max(nonce,e.command_id);
+        if(nonce>=static_cast<std::uint64_t>(
+           std::numeric_limits<std::int64_t>::max()-100000))
+            throw std::runtime_error("native command/evidence nonce exhausted");
+        // No second game instance: an account can use only a colony that
+        // *already exists* in the same canonical world. Lowest owned colony
+        // is the initial security-only cockpit; full multi-ship selection is
+        // deliberately a separate multiplayer feature.
+        const auto human_home=[&](PlayerId who)->EntityId {
+            if(!human_owners.count(who))return 0;
+            EntityId first=0;
+            for(const auto& [id,e]:world.world().entities())
+                if(e.type==EntityType::Ship && e.owner_id==who &&
+                   world.world().colony_ship(id) &&
+                   (!first || id<first))first=id;
+            return first;
+        };
+        const auto emit_desk=[&](PlayerId who,const std::string& item){
+            announce_security_for(world.world(),who,item);
+        };
+        const auto snapshot_for=[&](PlayerId who){
+            const auto home=human_home(who);
+            if(!home || !territory || !cases){
+                emit_desk(who,"SECURITY_ERROR|"+
+                    std::string(home?"CASE_DESK_UNAVAILABLE":"NO_OWNED_COLONY"));
+                return;
+            }
+            colony_disposition::security_desk::snapshot(world,*territory,
+                *cases,who,home,who==owner?fleet.piloted():home,
+                [&](const std::string& item){emit_desk(who,item);},
+                communications.get(),notifications.get(),law_agency.get());
+        };
         std::set<std::uint64_t> pending_scans,pending_probe_scans;
         std::size_t known_discoveries=world.world().discoveries().size();
         const auto report_count=[&](){
@@ -1987,7 +2222,15 @@ int main(int argc,char** argv){
             poll_input();
             const auto to_apply=std::move(commands);commands.clear();
             for(const auto& line:to_apply){
-                if(!authenticated_transport){apply(world,ship,fleet,line,nonce,owner,pending_scans,pending_probe_scans,survey_knowledge.get());continue;}
+                if(!authenticated_transport){
+                    // Security identity must originate from authenticated
+                    // relay transport. A local test pipe is not a hail.
+                    if(line.rfind("SECURITY_",0)==0)
+                        announce(world.world(),"SECURITY_RESULT|DENIED|0");
+                    else apply(world,ship,fleet,line,nonce,owner,
+                        pending_scans,pending_probe_scans,survey_knowledge.get());
+                    continue;
+                }
                 // The trusted relay supplies a resolved account ID over our
                 // private stdin pipe; unprefixed/forged/foreign commands fail
                 // closed even if relay validation is accidentally bypassed.
@@ -1996,10 +2239,70 @@ int main(int argc,char** argv){
                     if(line.substr(0,first)!="AUTH"||second==std::string::npos)
                         throw std::invalid_argument("unauthenticated native command");
                     const auto principal=integer(line.substr(first+1,second-first-1));
-                    if(principal!=static_cast<std::int64_t>(owner))
-                        throw std::invalid_argument("foreign colony command");
-                    apply(world,ship,fleet,line.substr(second+1),nonce,static_cast<PlayerId>(principal),pending_scans,pending_probe_scans,survey_knowledge.get());
-                }catch(const std::exception&){announce(world.world(),"ERROR|UNAUTHORIZED_PRINCIPAL");}
+                    if(principal<=0 || !human_owners.count(
+                          static_cast<PlayerId>(principal)))
+                        throw std::invalid_argument("unknown human principal");
+                    const auto who=static_cast<PlayerId>(principal);
+                    const auto operation=line.substr(second+1);
+                    if(operation.rfind("SECURITY_",0)==0){
+                        // Only direct hailing/answering and private refresh
+                        // are enabled for secondary human accounts. Neither
+                        // owner-7 fleet commands nor case records cross over.
+                        if(who!=owner &&
+                           operation!="SECURITY_REFRESH" &&
+                           operation.rfind("SECURITY_CALL|",0)!=0 &&
+                           operation.rfind("SECURITY_CALL_REPLY|",0)!=0 &&
+                           operation.rfind("SECURITY_NOTIFICATION_ACK|",0)!=0)
+                            throw std::invalid_argument(
+                                "foreign owner cannot administer colony");
+                        const auto home=human_home(who);
+                        if(!home || !territory || !cases){
+                            snapshot_for(who);
+                            continue;
+                        }
+                        colony_disposition::security_desk::execute(
+                            split(operation),world,*territory,*cases,
+                            who,home,who==owner?fleet.piloted():home,nonce,
+                            [&](const std::string& msg){
+                                emit_desk(who,msg);
+                            },communications.get(),notifications.get(),law_agency.get());
+                        // On an actual changed durable call/reply record,
+                        // notify each genuinely registered *human* owner
+                        // using its private snapshot, never another user's
+                        // global world frames or broadcast telemetry.
+                        if(communications &&
+                           (operation.rfind("SECURITY_CALL|",0)==0 ||
+                            operation.rfind("SECURITY_CALL_REPLY|",0)==0)){
+                            // A compact 11th+ penalty updates its existing
+                            // row, so comparing row counts would miss it.
+                            // Every physically authorized recipient receives
+                            // only a fresh owner-scoped case/inbox snapshot.
+                            for(const auto receiver:human_owners)
+                                if(receiver!=who && human_home(receiver))
+                                    snapshot_for(receiver);
+                        }
+                    }else{
+                        if(who!=owner)
+                            throw std::invalid_argument(
+                                "secondary account has no flight authority");
+                        apply(world,ship,fleet,operation,nonce,who,
+                            pending_scans,pending_probe_scans,
+                            survey_knowledge.get());
+                    }
+                }catch(const std::exception&){
+                    // No potentially foreign private result goes to
+                    // the primary owner's public colony telemetry.
+                    const auto parsed=split(line);
+                    if(parsed.size()>=3 && parsed[0]=="AUTH"){
+                        try{
+                            const auto id=integer(parsed[1]);
+                            if(id>0 && human_owners.count(PlayerId(id))){
+                                emit_desk(PlayerId(id),
+                                    "SECURITY_ERROR|CASE_DESK_UNAVAILABLE");
+                            }
+                        }catch(const std::exception&){}
+                    }
+                }
             }
             const auto old=world.world().events().size();
             std::map<PlanetarySiteKey,std::uint8_t> prior_shuttle_phases;
@@ -2023,6 +2326,66 @@ int main(int argc,char** argv){
                 if(leg.owner==owner && leg.source_ship==ship)
                     prior_freight.emplace(id,leg.stage);
             world.step();
+            // Run the same finite, original-world cyber command path on
+            // committed ticks. There are no autonomous host-owned attackers
+            // at genesis; only genuinely constructed NPC colonies with an
+            // existing predatory government and fabricated emitter may act.
+            // Reconcile genuine same-tick attacks, including after a host
+            // crash before its separate evidence insert. Only original native
+            // witnesses inside previously claimed territory may file cases.
+            if(territory && cases){
+                const auto added=
+                    colony_disposition::security_desk::capture_current_tick(
+                    world,*territory,*cases,owner,
+                    [&](const std::string& msg){
+                        announce(world.world(),msg);
+                    });
+                if(added)colony_disposition::security_desk::snapshot(
+                    world,*territory,*cases,owner,ship,fleet.piloted(),
+                    [&](const std::string& msg){announce(world.world(),msg);},
+                    communications.get(),notifications.get(),law_agency.get());
+            }
+            // NPC hailing operates on the same real occupied colony ships
+            // and original signed contact journal as direct player hails.
+            // The local desktop currently has exactly one authenticated
+            // human owner; future multiplayer must supply a real NPC-owner
+            // registry before using this auto-responder for foreign owners.
+            if(communications && territory && cases &&
+               world.world().tick()%10==0){
+                try{
+                    const auto replied=npc_hail::supervise(
+                        world,*communications,owner,nonce,human_owners);
+                    const auto initiated=npc_hail::initiate(
+                        world,*communications,*territory,owner,nonce,human_owners);
+                    if(replied.answered || initiated.submitted){
+                        colony_disposition::security_desk::snapshot(
+                            world,*territory,*cases,owner,ship,fleet.piloted(),
+                            [&](const std::string& msg){
+                                announce(world.world(),msg);
+                            },communications.get(),notifications.get(),law_agency.get());
+                    }
+                }catch(const std::exception& ex){
+                    std::cerr<<"NPC_HAIL_SUPERVISION_UNAVAILABLE "<<ex.what()<<'\n';
+                    announce(world.world(),"SECURITY_ERROR|COMMS_UNAVAILABLE");
+                }
+            }
+            const auto cyber_pulse=npc_cyber::supervise(world,owner);
+            if(cyber_pulse.approaches &&
+               world.world().find(cyber_pulse.last_approaching_ship) &&
+               world.world().find(cyber_pulse.last_approaching_ship)->owner_id==owner){
+                announce(world.world(),"NPC_CYBER_APPROACH_QUEUED|"+
+                    std::to_string(cyber_pulse.last_approaching_ship)+"|"+
+                    std::to_string(cyber_pulse.last_approach_target)+"|"+
+                    std::to_string(cyber_pulse.last_flight));
+            }
+            if(cyber_pulse.queued &&
+               world.world().find(cyber_pulse.last_attacking_ship) &&
+               world.world().find(cyber_pulse.last_attacking_ship)->owner_id==owner){
+                announce(world.world(),"NPC_CYBER_QUEUED|"+
+                    std::to_string(cyber_pulse.last_attacking_ship)+"|"+
+                    std::to_string(cyber_pulse.last_target_ship)+"|"+
+                    std::to_string(cyber_pulse.last_command));
+            }
             if(fleet.reconcile(world.world())) {
                 announce(world.world(),"FLEET_FALLBACK|"+
                     std::to_string(fleet.piloted())+"|"+
@@ -2246,8 +2609,29 @@ int main(int argc,char** argv){
                 // Do not mark discovery complete until the committed journal
                 // actually gains the observation after the response interval.
                 pending_probe_scans.erase(ev.command_id);
+                // Original immutable NPC operator receipt proves this was
+                // an actual foreign cyber attempt on the piloted physical
+                // ship. Never label a queued threat as an applied effect.
+                if(const auto it=world.world().npc_cyber_operators().find(
+                       ev.command_id);
+                   it!=world.world().npc_cyber_operators().end() &&
+                   it->second.target_ship==fleet.piloted()){
+                    announce(world.world(),"CYBER_INCOMING|"+
+                        std::to_string(it->second.target_ship)+"|"+
+                        std::to_string(perceived_cyber_source(world.world(),
+                            fleet.piloted(),it->second.attacking_ship))+"|"+
+                        std::to_string(ev.command_id)+"|"+
+                        to_string(ev.result));
+                }
                 announce(world.world(),"RESULT|"+std::to_string(ev.command_id)+"|"+
                     to_string(ev.result)+"|"+std::to_string(ev.transferred));
+                if(const auto cyber=awaiting_cyber_results.find(ev.command_id);
+                   cyber!=awaiting_cyber_results.end()){
+                    announce(world.world(),"CYBER_RESULT|"+
+                        std::to_string(ev.command_id)+"|"+
+                        std::to_string(cyber->second)+"|"+to_string(ev.result));
+                    awaiting_cyber_results.erase(cyber);
+                }
             }
             const auto reports_now=report_count();
             if(world.world().discoveries().size()!=known_discoveries ||
@@ -2260,6 +2644,7 @@ int main(int argc,char** argv){
             }
             std::cout<<encode_frame(bridge.after_committed_step(world.world()))<<std::flush;
             status(world.world(),ship,scanned);
+            cyber_status(world.world(),fleet.piloted());
             // Player cockpit is not the home colony's management actor.
             // Publish these independently so camera, heading and supplies
             // describe the hull actually selected for flight.

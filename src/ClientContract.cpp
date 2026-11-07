@@ -1,4 +1,5 @@
 #include "galaxy/ClientContract.hpp"
+#include "galaxy/ShipSensorProfile.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -68,14 +69,38 @@ ClientProjection project(const Simulation& world, PlayerId owner = 0, EntityId f
         // No remote celestial frame may leak via snapshot, delta or inventory.
         // owner=0 retains the legacy public test adapter semantics.
         if(viewer_ship && !world.same_local_frame(viewer_ship,id))continue;
-        p.entities.emplace(id,e);
+        Entity presented=e;
+        if(viewer_ship && e.type==EntityType::Ship &&
+           e.owner_id!=owner && id!=viewer_ship){
+            const auto* observer=world.find(viewer_ship);
+            if(!observer)throw std::runtime_error(
+                "viewer observation vessel vanished");
+            const auto radius=ship_sensors::detection_range_mm(
+                world,*observer,e);
+            const auto dx=e.position.x-observer->position.x;
+            const auto dy=e.position.y-observer->position.y;
+            if(dx < -radius || dx>radius || dy < -radius || dy>radius ||
+               static_cast<std::uint64_t>(dx*dx+dy*dy)>
+               static_cast<std::uint64_t>(radius*radius))
+                continue;
+            // This is a perceived foreign hull track, not a verified owner
+            // or access to its private cargo. No hail -> anonymous.
+            presented.owner_id=0;
+            presented.cargo=0;
+            presented.ore=0;
+        }
+        p.entities.emplace(id,presented);
         if(e.type==EntityType::Ship && e.dock_state!=DockState::InSpace)
             p.docks.emplace(id,DockTelemetry{e.dock_state,e.dock_station,e.transition_ticks});
         if(e.type==EntityType::Ship && e.jump_state!=ShipJumpState::Ready)
             p.jumps.emplace(id,JumpTelemetry{e.jump_state,e.pending_gate,e.jump_ticks});
     }
-    for(const auto& [id,j]:world.active_mining())
-        if(p.entities.count(id) && p.entities.count(j.target))p.mining.emplace(id,j);
+    for(const auto& [id,j]:world.active_mining()) {
+        const auto* worker=world.find(id);
+        if(p.entities.count(id) && p.entities.count(j.target) &&
+           (!owner || (worker && worker->owner_id==owner)))
+            p.mining.emplace(id,j);
+    }
     for(const auto& [key,h]:world.hangars())
         if(p.entities.count(key.first) && (!owner || key.second==owner))p.hangars.emplace(key,h);
     for(const auto& [id,m]:world.markets())
@@ -95,7 +120,7 @@ void validate_projection(const ClientProjection& p) {
     for (const auto& [id,e] : p.entities) {
         if (id == 0 || id != e.id || e.system_id != p.system_id ||
             static_cast<unsigned>(e.type) > 4 || e.ore < 0 || e.cargo < 0 || e.cargo_capacity < 0 ||
-            (e.type == EntityType::Ship && (e.owner_id == 0 || e.cargo_capacity == 0 || e.cargo > e.cargo_capacity || e.ore != 0)) ||
+            (e.type == EntityType::Ship && (e.cargo_capacity == 0 || e.cargo > e.cargo_capacity || e.ore != 0)) ||
             (e.type == EntityType::Asteroid && (e.owner_id != 0 || e.cargo != 0 || e.cargo_capacity != 0)) ||
             (e.type == EntityType::Wreck && (e.owner_id == 0 || e.ore != 0 || e.cargo_capacity == 0 || e.cargo > e.cargo_capacity)) ||
             ((e.type == EntityType::Station || e.type == EntityType::Stargate) &&

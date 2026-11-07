@@ -20,7 +20,7 @@ endif()
 add_library(galaxy_kernel STATIC src/PlanetaryAgriculture.cpp src/Simulation.cpp src/ColonyResilience.cpp
   src/ColonyRecovery.cpp src/ColonyPolicy.cpp src/PopulationCohorts.cpp
     src/ColonyWaterSupply.cpp src/Persistence.cpp src/EconomyPrototype.cpp src/QuantifiedProduction.cpp src/Inventory.cpp src/InventoryLogistics.cpp src/FactoryLayout.cpp src/BlueprintConstruction.cpp src/HostBlueprintRegistry.cpp src/ClientContract.cpp src/Galaxy.cpp src/Navigation.cpp src/GateTransit.cpp src/Region.cpp
-  src/ColdColonyNeeds.cpp src/MacroNeeds.cpp src/ColonySafety.cpp src/ColonySafetyJournal.cpp src/ColonySafetyNotice.cpp src/ColonyDefense.cpp src/ColonyConflict.cpp src/TerritoryJournal.cpp src/ColonyEvacuation.cpp src/ColonyFamilyDeparture.cpp src/NpcAppearanceGenome.cpp src/MedicalSocietyBridge.cpp src/DependentIncidentAccounting.cpp src/DependentIncidentJournal.cpp src/DependentGuardianship.cpp src/SplitRescueIntent.cpp src/RegionalCheckpointStore.cpp src/RegionalPopulationAudit.cpp src/RegionalEventScheduler.cpp src/RegionalModeAuthority.cpp src/RegionalFactoryHandoff.cpp src/RegionalProductionNetwork.cpp src/RegionalShipmentReconciliation.cpp src/ShipmentManifest.cpp src/ThirdPartyShipment.cpp src/CanonicalShippingHost.cpp src/ShipmentStatusView.cpp
+  src/ColdColonyNeeds.cpp src/MacroNeeds.cpp src/ColonySafety.cpp src/ColonySafetyJournal.cpp src/ColonySafetyNotice.cpp src/ColonyDefense.cpp src/ColonyConflict.cpp src/TerritoryJournal.cpp src/CyberIncidentJournal.cpp src/ColonyEvacuation.cpp src/ColonyFamilyDeparture.cpp src/NpcAppearanceGenome.cpp src/MedicalSocietyBridge.cpp src/DependentIncidentAccounting.cpp src/DependentIncidentJournal.cpp src/DependentGuardianship.cpp src/SplitRescueIntent.cpp src/RegionalCheckpointStore.cpp src/RegionalPopulationAudit.cpp src/RegionalEventScheduler.cpp src/RegionalModeAuthority.cpp src/RegionalFactoryHandoff.cpp src/RegionalProductionNetwork.cpp src/RegionalShipmentReconciliation.cpp src/ShipmentManifest.cpp src/ThirdPartyShipment.cpp src/CanonicalShippingHost.cpp src/ShipmentStatusView.cpp
   src/RegionalHostCommands.cpp src/RegionalInterestManager.cpp src/RegionalCustodyLedger.cpp src/RegionalPersistentWorldBridge.cpp)
 target_include_directories(galaxy_kernel PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(galaxy_kernel PUBLIC SQLite::SQLite3)
@@ -1673,4 +1673,195 @@ if(BUILD_TESTING)
   add_test(NAME galaxy_disposition03c_travel_clearance
     COMMAND galaxy_disposition03c_travel_clearance_tests)
   set_tests_properties(galaxy_disposition03c_travel_clearance PROPERTIES TIMEOUT 300)
+endif()
+
+# SHIP-STATUS-01: deterministic temporary module-control confusion prototype.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status01_confusion_tests
+    tests/SHIPSTATUS01_ConfusionTests.cpp)
+  target_link_libraries(galaxy_ship_status01_confusion_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status01_confusion
+    COMMAND galaxy_ship_status01_confusion_tests)
+  set_tests_properties(galaxy_ship_status01_confusion PROPERTIES TIMEOUT 300)
+endif()
+
+# SHIP-STATUS-02: native command gating and same-world SQLite/v100 recovery.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status02_authoritative_tests
+    tests/SHIPSTATUS02_AuthoritativePersistenceTests.cpp)
+  target_link_libraries(galaxy_ship_status02_authoritative_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status02_authoritative
+    COMMAND galaxy_ship_status02_authoritative_tests)
+  set_tests_properties(galaxy_ship_status02_authoritative PROPERTIES TIMEOUT 300)
+endif()
+
+# SHIP-STATUS-03: real fabricated emitter/firewall, native attack and recovery.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status03_physical_hacking_tests
+    tests/SHIPSTATUS03_PhysicalHackingTests.cpp)
+  target_link_libraries(galaxy_ship_status03_physical_hacking_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status03_physical_hacking
+    COMMAND galaxy_ship_status03_physical_hacking_tests)
+  set_tests_properties(galaxy_ship_status03_physical_hacking PROPERTIES TIMEOUT 300)
+endif()
+
+# SHIP-STATUS-04: original NPC cyber operator and territorial attack evidence.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status04_npc_cyber_tests
+    tests/SHIPSTATUS04_NpcCyberTacticsTests.cpp)
+  target_link_libraries(galaxy_ship_status04_npc_cyber_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status04_npc_cyber
+    COMMAND galaxy_ship_status04_npc_cyber_tests)
+  set_tests_properties(galaxy_ship_status04_npc_cyber PROPERTIES TIMEOUT 300)
+endif()
+
+# SHIP-STATUS-05: one native recurring original-world NPC supervisor.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status05_supervisor_tests
+    tests/SHIPSTATUS05_SupervisorTests.cpp)
+  target_link_libraries(galaxy_ship_status05_supervisor_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status05_supervisor
+    COMMAND galaxy_ship_status05_supervisor_tests)
+  set_tests_properties(galaxy_ship_status05_supervisor PROPERTIES TIMEOUT 300)
+  find_program(SG_STATUS05_NODE NAMES node node.exe)
+  if(SG_STATUS05_NODE)
+    add_test(NAME galaxy_ship_status05_cockpit
+      COMMAND ${SG_STATUS05_NODE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/SHIPSTATUS05_CyberCockpitTests.js)
+  endif()
+endif()
+
+# SHIP-STATUS-06: same authoritative patrol flight, physical rendezvous,
+# governed NPC cyber attack and committed player defense read model.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status06_fleet_cyber_tests
+    tests/SHIPSTATUS06_FleetCyberTests.cpp)
+  target_link_libraries(galaxy_ship_status06_fleet_cyber_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status06_fleet_cyber
+    COMMAND galaxy_ship_status06_fleet_cyber_tests)
+  set_tests_properties(galaxy_ship_status06_fleet_cyber PROPERTIES TIMEOUT 300)
+endif()
+
+if(BUILD_TESTING)
+  find_package(Python3 COMPONENTS Interpreter QUIET)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME galaxy_ship_status06_live_cyber
+      COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/SHIPSTATUS06_LiveCyberHostTests.py
+        --host $<TARGET_FILE:galaxy_colony_live_host>
+        --relay ${CMAKE_CURRENT_SOURCE_DIR}/live/interactive_relay.py
+        --bridge $<TARGET_FILE:galaxy_shipping_status_bridge>)
+    set_tests_properties(galaxy_ship_status06_live_cyber PROPERTIES TIMEOUT 90)
+  endif()
+endif()
+
+# SHIP-STATUS-07: intake verified same-tick original cyber aggression as an
+# immutable independent case. It has no crime/attack/arrest powers.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status07_incident_tests
+    tests/SHIPSTATUS07_CyberIncidentJournalTests.cpp)
+  target_link_libraries(galaxy_ship_status07_incident_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status07_incident
+    COMMAND galaxy_ship_status07_incident_tests)
+  set_tests_properties(galaxy_ship_status07_incident PROPERTIES TIMEOUT 300)
+endif()
+
+# SHIP-STATUS-07B: original material-backed stealth, acquired anonymous
+# contacts, powered sensor hierarchy, and canonical v103 restart.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status07_sensor_tests
+    tests/SHIPSTATUS07_StealthSensorTests.cpp)
+  target_link_libraries(galaxy_ship_status07_sensor_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status07_sensors
+    COMMAND galaxy_ship_status07_sensor_tests)
+  set_tests_properties(galaxy_ship_status07_sensors PROPERTIES TIMEOUT 300)
+endif()
+
+# SHIP-STATUS-07C: scoped player graphical visibility, real native
+# hide/reacquire deltas and foreign owner/cargo non-disclosure.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status07_view_privacy_tests
+    tests/SHIPSTATUS07_ViewPrivacyTests.cpp)
+  target_link_libraries(galaxy_ship_status07_view_privacy_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status07_view_privacy
+    COMMAND galaxy_ship_status07_view_privacy_tests)
+  set_tests_properties(galaxy_ship_status07_view_privacy PROPERTIES TIMEOUT 300)
+endif()
+
+# SHIP-STATUS-07D: native authenticated owner-scoped security desk, real
+# voluntary territorial hails, prior cyber evidence, and SQLite recovery.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status07d_security_desk_tests
+    tests/SHIPSTATUS07D_SecurityDeskTests.cpp)
+  target_link_libraries(galaxy_ship_status07d_security_desk_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status07d_security_desk
+    COMMAND galaxy_ship_status07d_security_desk_tests)
+  set_tests_properties(galaxy_ship_status07d_security_desk PROPERTIES TIMEOUT 300)
+endif()
+
+# SHIP-STATUS-07E: immutable original ship-to-ship hail contacts, verified
+# identity replies and nuisance escalation without fabricated police powers.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status07e_hail_abuse_tests
+    tests/SHIPSTATUS07E_HailAbuseTests.cpp)
+  target_link_libraries(galaxy_ship_status07e_hail_abuse_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status07e_hail_abuse
+    COMMAND galaxy_ship_status07e_hail_abuse_tests)
+  set_tests_properties(galaxy_ship_status07e_hail_abuse PROPERTIES TIMEOUT 300)
+endif()
+
+# STATUS-COMMS-01 / STATUS-NPC-01: original governance, real finite
+# on-duty NPC operator, authenticated direct hail identity/decline/silence
+# and durable restart. This is native original-game, not a mock world.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status07f_npc_hail_tests
+    tests/SHIPSTATUS07F_NpcHailSupervisorTests.cpp)
+  target_link_libraries(galaxy_ship_status07f_npc_hail_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status07f_npc_hail
+    COMMAND galaxy_ship_status07f_npc_hail_tests)
+  set_tests_properties(galaxy_ship_status07f_npc_hail PROPERTIES TIMEOUT 300)
+endif()
+
+# COMBAT-PHYSICAL-01A: original C++/SQLite physical ship-to-ship finite
+# ammunition, real sensor/yaw/hull/wreck and protected crew custody v104.
+if(BUILD_TESTING)
+  add_executable(galaxy_combat01a_ship_weapon_tests
+    tests/COMBAT01A_RealShipWeaponTests.cpp)
+  target_link_libraries(galaxy_combat01a_ship_weapon_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_combat01a_ship_weapon
+    COMMAND galaxy_combat01a_ship_weapon_tests)
+  set_tests_properties(galaxy_combat01a_ship_weapon PROPERTIES TIMEOUT 300)
+endif()
+
+# STATUS-07G: two genuine human owner IDs in a deliberately seeded ORIGINAL
+# test world, with no automatic production second ship or global SGVIEW leak.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status07g_two_human_tests
+    tests/SHIPSTATUS07G_TwoHumanSecurityTests.cpp)
+  target_link_libraries(galaxy_ship_status07g_two_human_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status07g_two_human
+    COMMAND galaxy_ship_status07g_two_human_tests)
+  set_tests_properties(galaxy_ship_status07g_two_human PROPERTIES TIMEOUT 300)
+endif()
+
+# SHIP-STATUS-07I: original same-transaction durable owner notification outbox
+# with owner-scoped replay, idempotent ACK, adversarial rollback and restart.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status07i_outbox_tests
+    tests/SHIPSTATUS07I_DurableOutboxTests.cpp)
+  target_link_libraries(galaxy_ship_status07i_outbox_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status07i_outbox
+    COMMAND galaxy_ship_status07i_outbox_tests)
+  set_tests_properties(galaxy_ship_status07i_outbox PROPERTIES TIMEOUT 300)
+endif()
+
+# SHIP-STATUS-07J: original staffed government appointment and independently
+# witnessed verified nuisance intake. No verdict, warrant, police or weapons.
+if(BUILD_TESTING)
+  add_executable(galaxy_ship_status07j_law_agency_tests
+    tests/SHIPSTATUS07J_LawAgencyTests.cpp)
+  target_link_libraries(galaxy_ship_status07j_law_agency_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_ship_status07j_law_agency
+    COMMAND galaxy_ship_status07j_law_agency_tests)
+  set_tests_properties(galaxy_ship_status07j_law_agency PROPERTIES TIMEOUT 300)
 endif()

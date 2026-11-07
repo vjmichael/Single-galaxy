@@ -1,4 +1,6 @@
 #include "galaxy/Simulation.hpp"
+#include "galaxy/ShipStatusFitting.hpp"
+#include "galaxy/ShipSensorProfile.hpp"
 #include "galaxy/WorkPlanning.hpp"
 #include "galaxy/Navigation.hpp"
 #include "galaxy/ShipInteractionPreflight.hpp"
@@ -1248,6 +1250,7 @@ bool Simulation::can_depart_colony(const Command& c) const {
     return true;
 }
 bool Simulation::submit(const Command& c) {
+    if(ship_status_.contains_id(c.id))return false;
     if(colony_departures_.count(c.actor) || colony_departures_.count(c.target))return false;
     // Building a hull never creates a pilot. A manufactured uncommissioned
     // vessel is physically present but not authorized to run ship commands.
@@ -1288,6 +1291,35 @@ bool Simulation::submit(const Command& c) {
            !c.passenger_ids.empty() || c.secondary_receiver || c.secondary_transport)return false;
         snapshot_version_=std::max(snapshot_version_,64);
     }
+    // v100: desired state of a fitted hardpoint: amount=slot*2+enabled.
+    if(c.action==Action::SetHardpointPower){
+        if(!c.id || !c.actor || c.target || c.amount<0 || c.amount>3 ||
+           c.thrust_x || c.thrust_y || c.transport_id ||
+           !c.passenger_ids.empty() || c.secondary_receiver ||
+           c.secondary_transport)return false;
+        snapshot_version_=std::max(snapshot_version_,100);
+    }
+    if(c.action==Action::ConfigureCyberModule ||
+       c.action==Action::SetCyberIsolation ||
+       c.action==Action::HackConfuse){
+        if(!c.id || !c.actor || c.thrust_x || c.thrust_y ||
+           c.transport_id || !c.passenger_ids.empty() ||
+           c.secondary_receiver || c.secondary_transport)return false;
+        if(c.action==Action::ConfigureCyberModule &&
+           (c.target || (c.amount!=3 && c.amount!=-3 &&
+                         c.amount!=4 && c.amount!=-4 &&
+                         c.amount!=5 && c.amount!=-5 &&
+                         c.amount!=6 && c.amount!=-6)))return false;
+        if(c.action==Action::SetCyberIsolation &&
+           (c.target || c.amount<0 || c.amount>3))return false;
+        if(c.action==Action::HackConfuse &&
+           (!c.target || c.target==c.actor || c.amount ||
+            c.id>=(std::uint64_t{1}<<62)))return false;
+        snapshot_version_=std::max(snapshot_version_,
+            c.action==Action::ConfigureCyberModule &&
+            (c.amount==5 || c.amount==-5 ||
+             c.amount==6 || c.amount==-6)?103:101);
+    }
     if(c.action==Action::SurveyLocal){
         if(!c.id || !c.actor || c.target || c.amount || c.thrust_x || c.thrust_y ||
            c.transport_id || !c.passenger_ids.empty() ||
@@ -1301,12 +1333,14 @@ bool Simulation::submit(const Command& c) {
            c.secondary_receiver || c.secondary_transport)return false;
         snapshot_version_=std::max(snapshot_version_,62);
     }
-    if(c.action==Action::FireTrainingWeapon){
+    if(c.action==Action::FireTrainingWeapon ||
+       c.action==Action::FireShipWeapon){
         if(!c.id||!c.actor||!c.target||c.actor==c.target||
            c.thrust_x||c.thrust_y||c.amount||c.transport_id||
            !c.passenger_ids.empty()||c.secondary_receiver||c.secondary_transport)
             return false;
-        snapshot_version_=std::max(snapshot_version_,62);
+        snapshot_version_=std::max(snapshot_version_,
+            c.action==Action::FireShipWeapon?104:62);
     }
     const bool register_child=c.action==Action::HostRegisterDependent;
     if(register_child){
@@ -2074,6 +2108,9 @@ Event Simulation::execute(const Command& c) {
             if(frame!=ship_frames_.end() && frame->second.anchor_body &&
                c.action!=Action::Thrust &&
                c.action!=Action::SurveyLocal &&
+               c.action!=Action::SetHardpointPower &&
+               c.action!=Action::SetCyberIsolation &&
+               c.action!=Action::HackConfuse &&
                c.action!=Action::Mine &&
                c.action!=Action::StartMining &&
                c.action!=Action::StopMining){
@@ -2081,6 +2118,25 @@ Event Simulation::execute(const Command& c) {
             }
             if(target!=entities_.end() && !same_local_frame(c.actor,c.target)){
                 result.result=Outcome::OutOfRange;return result;
+            }
+        }
+    }
+    // SHIP-STATUS-04: an NPC-operator receipt is checked AGAIN at native
+    // execution, not just at the host's earlier scheduling tick. A crew
+    // transfer, casualty or hijack cannot remotely animate its old vessel.
+    if(c.action==Action::HackConfuse){
+        const auto attribution=npc_cyber_operators_.find(c.id);
+        if(attribution!=npc_cyber_operators_.end()){
+            const auto& o=attribution->second;
+            const auto pilot=npcs_.find(o.pilot_npc);
+            if(o.owner!=c.issuer || o.attacking_ship!=c.actor ||
+               o.target_ship!=c.target || pilot==npcs_.end() ||
+               pilot->second.home_ship!=c.actor ||
+               pilot->second.location!=c.actor ||
+               pilot->second.role!=NpcRole::Ship ||
+               pilot->second.transport_id ||
+               !npc_available_for_duty(o.pilot_npc)){
+                result.result=Outcome::Unauthorized;return result;
             }
         }
     }
@@ -2240,7 +2296,8 @@ Event Simulation::execute(const Command& c) {
     // GRSM-01b: host-authorized deterministic physical incidents. These are
     // simulation state transitions, NOT user-invokable reputation events.
     // Combat/damage resolution will eventually authorize these outcomes.
-    if(c.action==Action::FireTrainingWeapon || c.action==Action::Thrust || c.action==Action::RequestJump ||
+    if(c.action==Action::FireTrainingWeapon || c.action==Action::FireShipWeapon ||
+       c.action==Action::Thrust || c.action==Action::RequestJump ||
        c.action==Action::RequestDock || c.action==Action::RequestUndock){
         for(const auto& [id,v]:voyages_){(void)id;
             if(v.ferry==c.actor && v.status==3){result.result=Outcome::InTransition;return result;}
@@ -2947,6 +3004,10 @@ Event Simulation::execute(const Command& c) {
             if(actor.dock_state!=DockState::InSpace){result.result=Outcome::NotInSpace;return result;}
             if(actor.jump_state!=ShipJumpState::Ready){result.result=Outcome::InTransition;return result;}
             if(!actor.fitting.probe_launcher()){result.result=Outcome::NoResources;return result;}
+            const auto probe_slot=actor.fitting.hardpoints[0]==2?0u:1u;
+            if(!hardpoint_effective_on(c.actor,static_cast<std::uint8_t>(probe_slot))){
+                result.result=Outcome::ModuleOffline;return result;
+            }
             if(c.action==Action::LaunchGeologicalDrone){
                 if(!actor.survey_probes_carried){result.result=Outcome::NoResources;return result;}
                 if(survey_probes_.size()>=1000){result.result=Outcome::InvalidArgument;return result;}
@@ -3095,6 +3156,174 @@ Event Simulation::execute(const Command& c) {
             }
             snapshot_version_=std::max(snapshot_version_,66);return result;
         }
+        case Action::SetHardpointPower: {
+            const auto slot=static_cast<std::uint8_t>(c.amount/2);
+            if(slot>=2 || !actor.fitting.hardpoints[slot]) {
+                result.result=Outcome::InvalidTarget;return result;
+            }
+            actor.hardpoint_requested_on[slot]=(c.amount%2)==1;
+            snapshot_version_=std::max(snapshot_version_,100);
+            result.result=Outcome::Applied;return result;
+        }
+        case Action::SetCyberIsolation: {
+            const auto slot=static_cast<std::uint8_t>(c.amount/2);
+            if(slot>=2 || !actor.fitting.hardpoints[slot]){
+                result.result=Outcome::InvalidTarget;return result;
+            }
+            // A manual/isolated control line cannot be spoofed by the
+            // remote emitter; the physically installed module remains.
+            actor.hardpoint_isolated[slot]=(c.amount%2)==1;
+            snapshot_version_=std::max(snapshot_version_,101);
+            result.result=Outcome::Applied;return result;
+        }
+        case Action::ConfigureCyberModule: {
+            const auto colony=colony_ships_.find(c.actor);
+            if(colony==colony_ships_.end()){
+                result.result=Outcome::NotColonyShip;return result;
+            }
+            if(actor.dock_state!=DockState::InSpace ||
+               actor.velocity.x || actor.velocity.y ||
+               actor.jump_state!=ShipJumpState::Ready) {
+                result.result=actor.dock_state!=DockState::InSpace?
+                    Outcome::NotInSpace:Outcome::ShipMoving;
+                return result;
+            }
+            const bool installing=c.amount>0;
+            const auto type=std::uint8_t(c.amount>0?c.amount:-c.amount);
+            const bool emitter=type==3;
+            // 3 intrusion emitter, 4 firewall, 5 stealth baffle, 6
+            // high-resolution counter-ECM sensor array. No free hardware.
+            const std::uint8_t hardware=emitter?3:
+                type==4?1:type==5?2:3;
+            auto& rack=emitter?actor.fitting.hardpoints:actor.fitting.support;
+            if(installing) {
+                if(colony->second.modules<=0){
+                    result.result=Outcome::NoResources;return result;
+                }
+                if(std::find(rack.begin(),rack.end(),hardware)!=rack.end()){
+                    result.result=Outcome::InvalidArgument;return result;
+                }
+                const auto empty=std::find(rack.begin(),rack.end(),0);
+                if(empty==rack.end()){
+                    result.result=Outcome::CargoFull;return result;
+                }
+                const auto slot=static_cast<std::size_t>(empty-rack.begin());
+                *empty=hardware;
+                if(emitter) {
+                    actor.hardpoint_requested_on[slot]=true;
+                    actor.hardpoint_isolated[slot]=false;
+                }
+                --colony->second.modules; // one real fabricated 2-tonne module
+            } else {
+                const auto installed=std::find(rack.begin(),rack.end(),hardware);
+                if(installed==rack.end()){
+                    result.result=Outcome::InvalidTarget;return result;
+                }
+                const auto slot=static_cast<std::size_t>(installed-rack.begin());
+                if(emitter)for(const auto& effect:ship_status_.records()) {
+                    if(effect.target_ship!=c.actor ||
+                       tick_<effect.started_tick || tick_>=effect.expires_tick)
+                        continue;
+                    for(const auto& key:effect.targets)
+                        if(key.rack==0 && key.slot==slot && key.hardware==3){
+                            result.result=Outcome::InTransition;return result;
+                        }
+                }
+                *installed=0;
+                if(emitter){
+                    actor.hardpoint_requested_on[slot]=true;
+                    actor.hardpoint_isolated[slot]=false;
+                }
+                ++colony->second.modules; // material returns to the original cargo
+            }
+            snapshot_version_=std::max(snapshot_version_,
+                (type==5 || type==6)?103:101);
+            result.result=Outcome::Applied;return result;
+        }
+        case Action::HackConfuse: {
+            if(!actor.fitting.intrusion_emitter()){
+                result.result=Outcome::NoResources;return result;
+            }
+            const auto emitter_slot=actor.fitting.hardpoints[0]==3?0u:1u;
+            if(!hardpoint_effective_on(c.actor,
+                    static_cast<std::uint8_t>(emitter_slot))) {
+                result.result=Outcome::ModuleOffline;return result;
+            }
+            if(actor.dock_state!=DockState::InSpace ||
+               actor.jump_state!=ShipJumpState::Ready) {
+                result.result=Outcome::InTransition;return result;
+            }
+            if(actor.last_hack_tick &&
+               tick_>=actor.last_hack_tick &&
+               tick_-actor.last_hack_tick<kHackCooldownTicks){
+                result.result=Outcome::CooldownActive;return result;
+            }
+            const auto target_it=entities_.find(c.target);
+            if(target_it==entities_.end() ||
+               target_it->second.type!=EntityType::Ship) {
+                result.result=Outcome::InvalidTarget;return result;
+            }
+            const auto& defender=target_it->second;
+            if(!defender.owner_id ||
+               defender.owner_id==actor.owner_id) {
+                result.result=Outcome::Unauthorized;return result;
+            }
+            if(protected_from_attack(c.target) ||
+               defender.dock_state!=DockState::InSpace) {
+                result.result=Outcome::InTransition;return result;
+            }
+            if(defender.system_id!=actor.system_id ||
+               !same_local_frame(c.actor,c.target)) {
+                result.result=Outcome::OutOfRange;return result;
+            }
+            // Never trust a guessed target entity ID from the browser or
+            // an autonomous NPC. Native sensor acquisition is mandatory at
+            // the actual execution tick, not merely at target-list render.
+            // A baffle can therefore make a vessel invisible to a nearby
+            // emitter until its carrier approaches or installs stronger
+            // original material-backed detection hardware.
+            const auto acquisition=ship_sensors::detection_range_mm(
+                *this,actor,defender);
+            const auto physical_distance=std::hypot(
+                double(defender.position.x)-actor.position.x,
+                double(defender.position.y)-actor.position.y);
+            if(physical_distance>double(kHackRangeMm) ||
+               physical_distance>double(acquisition)) {
+                result.result=Outcome::OutOfRange;return result;
+            }
+            const std::array<bool,2> exposed{{
+                bool(defender.fitting.hardpoints[0]),
+                bool(defender.fitting.hardpoints[1])}};
+            const auto roster=ship_status::fitted_controls(defender,
+                defender.hardpoint_requested_on,exposed,
+                defender.hardpoint_isolated);
+            // One real fitted passive firewall subtracts 60 attack points.
+            // Unplugged manually isolated modules cannot be attacked at all.
+            ship_status::Effect effect{};
+            effect.id=c.id | (std::uint64_t{1}<<63);
+            effect.source_ship=c.actor;
+            effect.target_ship=c.target;
+            effect.started_tick=tick_;
+            effect.expires_tick=tick_+
+                (defender.fitting.cyber_firewall()?kHackDurationTicks/2:
+                 kHackDurationTicks);
+            effect.pulse_ticks=2;
+            effect.intensity=100;
+            effect.resistance=defender.fitting.cyber_firewall()?60:0;
+            std::uint64_t seed=rng_state_ ^ (c.id*0x9e3779b97f4a7c15ULL)
+                                    ^ c.target;
+            seed=(seed^(seed>>30))*0xbf58476d1ce4e5b9ULL;
+            seed=(seed^(seed>>27))*0x94d049bb133111ebULL;
+            effect.seed=(seed^(seed>>31))|1ULL;
+            // The original world owns both receipt and target status.
+            // A resisted attack still expends this emission's cooldown.
+            actor.last_hack_tick=tick_;
+            snapshot_version_=std::max(snapshot_version_,101);
+            if(!ship_status_.inflict_confusion(effect,roster,tick_)) {
+                result.result=Outcome::AttackResisted;return result;
+            }
+            result.result=Outcome::Applied;return result;
+        }
         case Action::ConfigureExplorationScanner: {
             const auto cit=colony_ships_.find(c.actor);
             if(cit==colony_ships_.end()){result.result=Outcome::NotColonyShip;return result;}
@@ -3104,16 +3333,34 @@ Event Simulation::execute(const Command& c) {
             }
             if(actor.jump_state!=ShipJumpState::Ready){result.result=Outcome::InTransition;return result;}
             const auto installed=actor.fitting.exploration_scanner();
+            // A compromised fitted module must not be removed and then
+            // reinstalled into the same slot/type to evade the immutable
+            // effect ancestry or silently transfer an old effect to new gear.
+            for(const auto& effect:ship_status_.records())
+                if(effect.target_ship==c.actor &&
+                   tick_>=effect.started_tick &&
+                   tick_<effect.expires_tick)
+                    for(const auto& key:effect.targets)
+                        if(key.rack==0 && key.hardware==1){
+                            result.result=Outcome::InTransition;return result;
+                        }
             if(c.amount==1){
                 if(installed){result.result=Outcome::InvalidArgument;return result;}
                 if(cit->second.modules<=0){result.result=Outcome::NoResources;return result;}
                 auto& rack=actor.fitting.hardpoints;
                 const auto slot=std::find(rack.begin(),rack.end(),0);
                 if(slot==rack.end()){result.result=Outcome::CargoFull;return result;}
-                *slot=1;--cit->second.modules;
+                *slot=1;
+                actor.hardpoint_requested_on[static_cast<std::size_t>(slot-rack.begin())]=true;
+                --cit->second.modules;
             }else{
                 if(!installed){result.result=Outcome::InvalidArgument;return result;}
-                for(auto& module:actor.fitting.hardpoints)if(module==1){module=0;break;}
+                for(std::size_t slot=0;slot<2;++slot)
+                    if(actor.fitting.hardpoints[slot]==1){
+                        actor.fitting.hardpoints[slot]=0;
+                        actor.hardpoint_requested_on[slot]=true;
+                        break;
+                    }
                 ++cit->second.modules;
             }
             snapshot_version_=std::max(snapshot_version_,64);
@@ -3123,6 +3370,10 @@ Event Simulation::execute(const Command& c) {
             if(actor.dock_state!=DockState::InSpace){result.result=Outcome::NotInSpace;return result;}
             if(actor.jump_state!=ShipJumpState::Ready){result.result=Outcome::InTransition;return result;}
             if(!actor.fitting.exploration_scanner()){result.result=Outcome::NoResources;return result;}
+            const auto scanner_slot=actor.fitting.hardpoints[0]==1?0u:1u;
+            if(!hardpoint_effective_on(c.actor,static_cast<std::uint8_t>(scanner_slot))){
+                result.result=Outcome::ModuleOffline;return result;
+            }
             constexpr auto range=kLocalSurveyRangeMm;
             std::vector<DiscoveryRecord> candidates;
             for(const auto& [id,e]:entities_){
@@ -3171,6 +3422,96 @@ Event Simulation::execute(const Command& c) {
             actor.cargo+=moved;wreck.cargo-=moved;
             result.transferred=moved;result.result=Outcome::Applied;
             snapshot_version_=std::max(snapshot_version_,62);
+            return result;
+        }
+        case Action::FireShipWeapon: {
+            // COMBAT-PHYSICAL-01A: native ship-to-ship projectile impact,
+            // consuming the SAME finite original fitted starter weapon
+            // charge used by training combat. No generated ammo or second
+            // combat writer. The sensor and yaw are checked at EXECUTION,
+            // not trusted from the browser's target list.
+            if(actor.type!=EntityType::Ship ||
+               actor.dock_state!=DockState::InSpace){
+                result.result=Outcome::NotInSpace;return result;
+            }
+            if(actor.jump_state!=ShipJumpState::Ready){
+                result.result=Outcome::InTransition;return result;
+            }
+            const auto it=entities_.find(c.target);
+            if(it==entities_.end() || it->second.type!=EntityType::Ship ||
+               it->second.training_drone ||
+               !it->second.owner_id ||
+               it->second.owner_id==actor.owner_id ||
+               it->second.hull<=0){
+                result.result=Outcome::InvalidTarget;return result;
+            }
+            auto& target=it->second;
+            if(target.dock_state!=DockState::InSpace ||
+               target.jump_state!=ShipJumpState::Ready){
+                result.result=Outcome::InTransition;return result;
+            }
+            if(!same_local_frame(actor.id,target.id)){
+                result.result=Outcome::OutOfRange;return result;
+            }
+            const auto dx=target.position.x-actor.position.x;
+            const auto dy=target.position.y-actor.position.y;
+            const auto distance=std::hypot(double(dx),double(dy));
+            const auto sensed=ship_sensors::detection_range_mm(
+                *this,actor,target);
+            if(distance>double(kTrainingWeaponRangeMm) ||
+               distance>double(sensed)){
+                result.result=Outcome::OutOfRange;return result;
+            }
+            if(actor.weapon_charges<=0){
+                result.result=Outcome::NoResources;return result;
+            }
+            if(actor.last_weapon_tick &&
+               tick_-actor.last_weapon_tick<kTrainingWeaponCooldownTicks){
+                result.result=Outcome::CooldownActive;return result;
+            }
+            const double radians=double(actor.heading_deg)*
+                3.14159265358979323846/180.0;
+            const double along=double(dx)*std::cos(radians)+
+                double(dy)*std::sin(radians);
+            const double lateral=double(dy)*std::cos(radians)-
+                double(dx)*std::sin(radians);
+            if(along<=0 || std::abs(lateral)>along){
+                result.result=Outcome::OutOfRange;return result;
+            }
+            // Crew and dependents have real, permanent identities. Until
+            // their physical injury/rescue/custody rules are connected,
+            // only unoccupied non-colony hulls may reach zero and wreck.
+            const bool lives_aboard=
+                people_physically_aboard(target.id)!=0 ||
+                children_physically_aboard(target.id)!=0 ||
+                colony_ships_.count(target.id)!=0;
+            const auto floor=lives_aboard?std::int64_t{1}:std::int64_t{0};
+            const auto possible=std::max<std::int64_t>(
+                0,target.hull-floor);
+            if(!possible){
+                result.result=Outcome::AttackResisted;return result;
+            }
+            const auto damage=std::min(possible,kShipWeaponDamage);
+            --actor.weapon_charges;
+            actor.last_weapon_tick=tick_;
+            target.hull-=damage;
+            result.transferred=damage; // exact damage in original event
+            if(target.hull==0){
+                // Same physical wreck semantics as original host-authorized
+                // ship loss; cargo and ownership survive as salvage claims.
+                stop_mining(target.id,Outcome::NotInSpace);
+                target.type=EntityType::Wreck;
+                target.weapon_charges=0;
+                target.last_weapon_tick=0;
+                target.training_drone=false;
+                target.velocity={};
+                if(target.manufactured_order_id)
+                    ship_frames_.erase(target.id);
+                activity_events_.push_back({tick_,ActivityKind::ShipDestroyed,
+                    c.id,c.actor,c.target,Outcome::Applied,0});
+            }
+            snapshot_version_=std::max(snapshot_version_,104);
+            result.result=Outcome::Applied;
             return result;
         }
         case Action::FireTrainingWeapon: {
@@ -8107,7 +8448,8 @@ std::optional<AstronomicalProfile> Simulation::scan_celestial_profile(
     PlayerId owner,EntityId ship) const {
     const auto it=entities_.find(ship);
     if(!owner||it==entities_.end()||it->second.type!=EntityType::Ship||
-       it->second.owner_id!=owner||!it->second.fitting.exploration_scanner())
+       it->second.owner_id!=owner||!it->second.fitting.exploration_scanner() ||
+       !hardpoint_effective_on(ship,it->second.fitting.hardpoints[0]==1?0:1))
         return std::nullopt;
     // Shared versioned single-galaxy seed, never the mutable resource RNG.
     return generate_astronomical_profile(kAstronomicalGalaxySeed,it->second.system_id);
@@ -8116,7 +8458,8 @@ std::optional<Simulation::EnvironmentSurvey> Simulation::scan_environment(
     PlayerId owner,EntityId ship) const {
     const auto it=entities_.find(ship);
     if(!owner||it==entities_.end()||it->second.type!=EntityType::Ship||
-       it->second.owner_id!=owner||!it->second.fitting.exploration_scanner())
+       it->second.owner_id!=owner||!it->second.fitting.exploration_scanner() ||
+       !hardpoint_effective_on(ship,it->second.fitting.hardpoints[0]==1?0:1))
         return std::nullopt;
     const auto profile=scan_celestial_profile(owner,ship);
     if(!profile)return std::nullopt;
@@ -8138,7 +8481,9 @@ std::vector<Simulation::SignatureHint> Simulation::coarse_probe_signatures(
     const auto carrier=entities_.find(ship);
     if(!owner||carrier==entities_.end()||carrier->second.type!=EntityType::Ship||
        carrier->second.owner_id!=owner||
-       !carrier->second.fitting.exploration_scanner())return {};
+       !carrier->second.fitting.exploration_scanner() ||
+       !hardpoint_effective_on(ship,carrier->second.fitting.hardpoints[0]==1?0:1))
+        return {};
     constexpr std::int64_t q=5000000; // 5 km coarse bins; no secret exact coordinates
     const double radius=double(range_mm); // host-enforced discovery envelope
     std::vector<SignatureHint> result;
@@ -8161,6 +8506,59 @@ void Simulation::configure_probe_report_tick_ms(std::uint64_t tick_ms) {
     probe_report_delay_ticks_=(10000ULL+tick_ms-1)/tick_ms;
     snapshot_version_=std::max(snapshot_version_,68);
 }
+bool Simulation::hardpoint_effective_on(EntityId ship,std::uint8_t slot) const {
+    const auto* vessel=find(ship);
+    if(!vessel || vessel->type!=EntityType::Ship ||
+       slot>=2 || !vessel->fitting.hardpoints[slot])return false;
+    std::array<bool,2> exposed{{false,false}};
+    for(const auto& e:ship_status_.records()){
+        if(e.target_ship!=ship || tick_<e.started_tick ||
+           tick_>=e.expires_tick)continue;
+        for(const auto& k:e.targets)
+            if(k.rack==0 && k.slot<2 &&
+               vessel->fitting.hardpoints[k.slot]==k.hardware)
+                exposed[k.slot]=true;
+    }
+    const auto modules=ship_status::fitted_controls(*vessel,
+        vessel->hardpoint_requested_on,exposed,vessel->hardpoint_isolated);
+    for(const auto& m:ship_status_.project(ship,tick_,modules))
+        if(m.key.rack==0 && m.key.slot==slot)return m.effective_on;
+    return false;
+}
+
+bool Simulation::install_testing_confusion(EntityId source,EntityId target,
+    std::uint64_t effect_id,std::uint64_t random_seed,
+    std::uint64_t duration_ticks,std::uint32_t pulse_ticks,
+    std::uint8_t intensity,std::uint8_t resistance,
+    std::uint8_t exposed_hardpoint_mask) {
+    // Not a player action or evidence of real hacking equipment.
+    const auto* a=find(source),*b=find(target);
+    if(!a || !b || a->type!=EntityType::Ship ||
+       b->type!=EntityType::Ship || !a->owner_id || !b->owner_id ||
+       a->owner_id==b->owner_id || source==target ||
+       a->system_id!=b->system_id || !same_local_frame(source,target) ||
+       std::hypot(double(a->position.x)-b->position.x,
+                  double(a->position.y)-b->position.y)>
+                  double(kTrainingWeaponRangeMm) ||
+       !duration_ticks || duration_ticks>ship_status::Engine::kMaxDurationTicks ||
+       tick_>std::numeric_limits<std::uint64_t>::max()-duration_ticks ||
+       !exposed_hardpoint_mask || (exposed_hardpoint_mask&~std::uint8_t{3}) ||
+       submitted_ids_.count(effect_id))
+        return false;
+    const std::array<bool,2> exposed{{
+        bool(exposed_hardpoint_mask&1),bool(exposed_hardpoint_mask&2)}};
+    ship_status::Effect attack{};
+    attack.id=effect_id;attack.source_ship=source;attack.target_ship=target;
+    attack.started_tick=tick_;attack.expires_tick=tick_+duration_ticks;
+    attack.seed=random_seed;attack.pulse_ticks=pulse_ticks;
+    attack.intensity=intensity;attack.resistance=resistance;
+    const auto roster=ship_status::fitted_controls(
+        *b,b->hardpoint_requested_on,exposed,{{false,false}});
+    if(!ship_status_.inflict_confusion(attack,roster,tick_))return false;
+    snapshot_version_=std::max(snapshot_version_,100);
+    return true;
+}
+
 void Simulation::step() {
     if (tick_ == std::numeric_limits<std::uint64_t>::max()) throw std::overflow_error("tick counter exhausted");
     ++tick_;
@@ -8365,7 +8763,7 @@ void Simulation::steps(std::uint64_t count) {
 
 std::string Simulation::canonical_state() const {
     std::ostringstream out;
-    out << ( snapshot_version_ >= 99 ? "galaxy-kernel-v99|" : snapshot_version_ >= 98 ? "galaxy-kernel-v98|" : snapshot_version_ >= 97 ? "galaxy-kernel-v97|" : snapshot_version_ >= 96 ? "galaxy-kernel-v96|" : snapshot_version_ >= 95 ? "galaxy-kernel-v95|" : snapshot_version_ >= 94 ? "galaxy-kernel-v94|" : snapshot_version_ >= 93 ? "galaxy-kernel-v93|" : snapshot_version_ >= 92 ? "galaxy-kernel-v92|" : snapshot_version_ >= 91 ? "galaxy-kernel-v91|" : snapshot_version_ >= 90 ? "galaxy-kernel-v90|" : snapshot_version_ >= 89 ? "galaxy-kernel-v89|" : snapshot_version_ >= 88 ? "galaxy-kernel-v88|" : snapshot_version_ >= 87 ? "galaxy-kernel-v87|" : snapshot_version_ >= 86 ? "galaxy-kernel-v86|" : snapshot_version_ >= 85 ? "galaxy-kernel-v85|" : snapshot_version_ >= 84 ? "galaxy-kernel-v84|" : snapshot_version_ >= 83 ? "galaxy-kernel-v83|" : snapshot_version_ >= 82 ? "galaxy-kernel-v82|" : snapshot_version_ >= 81 ? "galaxy-kernel-v81|" : snapshot_version_ >= 80 ? "galaxy-kernel-v80|" : snapshot_version_ >= 79 ? "galaxy-kernel-v79|" : snapshot_version_ >= 78 ? "galaxy-kernel-v78|" : snapshot_version_ >= 77 ? "galaxy-kernel-v77|" : snapshot_version_ >= 76 ? "galaxy-kernel-v76|" : snapshot_version_ >= 75 ? "galaxy-kernel-v75|" : snapshot_version_ >= 74 ? "galaxy-kernel-v74|" : snapshot_version_ >= 73 ? "galaxy-kernel-v73|" : snapshot_version_ >= 72 ? "galaxy-kernel-v72|" : snapshot_version_ >= 71 ? "galaxy-kernel-v71|" : snapshot_version_ >= 70 ? "galaxy-kernel-v70|" : snapshot_version_ >= 69 ? "galaxy-kernel-v69|" : snapshot_version_ >= 68 ? "galaxy-kernel-v68|" : snapshot_version_ >= 67 ? "galaxy-kernel-v67|" : snapshot_version_ >= 66 ? "galaxy-kernel-v66|" : snapshot_version_ >= 65 ? "galaxy-kernel-v65|" : snapshot_version_ >= 64 ? "galaxy-kernel-v64|" : snapshot_version_ >= 63 ? "galaxy-kernel-v63|" : snapshot_version_ >= 62 ? "galaxy-kernel-v62|" : snapshot_version_ >= 61 ? "galaxy-kernel-v61|" : snapshot_version_ >= 60 ? "galaxy-kernel-v60|" : snapshot_version_ >= 59 ? "galaxy-kernel-v59|" : snapshot_version_ >= 58 ? "galaxy-kernel-v58|" : snapshot_version_ >= 57 ? "galaxy-kernel-v57|" : snapshot_version_ >= 53 ? "galaxy-kernel-v53|" : snapshot_version_ >= 52 ? "galaxy-kernel-v52|" : snapshot_version_ >= 49 ? "galaxy-kernel-v49|" : snapshot_version_ >= 48 ? "galaxy-kernel-v48|" : snapshot_version_ >= 44 ? "galaxy-kernel-v44|" : snapshot_version_ >= 41 ? "galaxy-kernel-v41|" : snapshot_version_ >= 40 ? "galaxy-kernel-v40|" : snapshot_version_ >= 39 ? "galaxy-kernel-v39|" : snapshot_version_ >= 38 ? "galaxy-kernel-v38|" : snapshot_version_ >= 37 ? "galaxy-kernel-v37|" : snapshot_version_ >= 36 ? "galaxy-kernel-v36|" : snapshot_version_ >= 35 ? "galaxy-kernel-v35|" : snapshot_version_ >= 34 ? "galaxy-kernel-v34|" : snapshot_version_ >= 33 ? "galaxy-kernel-v33|" : snapshot_version_ >= 32 ? "galaxy-kernel-v32|" : snapshot_version_ >= 31 ? "galaxy-kernel-v31|" : snapshot_version_ >= 30 ? "galaxy-kernel-v30|" : snapshot_version_ >= 29 ? "galaxy-kernel-v29|" : snapshot_version_ >= 28 ? "galaxy-kernel-v28|" : snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
+    out << ( snapshot_version_ >= 104 ? "galaxy-kernel-v104|" : snapshot_version_ >= 103 ? "galaxy-kernel-v103|" : snapshot_version_ >= 102 ? "galaxy-kernel-v102|" : snapshot_version_ >= 101 ? "galaxy-kernel-v101|" : snapshot_version_ >= 100 ? "galaxy-kernel-v100|" : snapshot_version_ >= 99 ? "galaxy-kernel-v99|" : snapshot_version_ >= 98 ? "galaxy-kernel-v98|" : snapshot_version_ >= 97 ? "galaxy-kernel-v97|" : snapshot_version_ >= 96 ? "galaxy-kernel-v96|" : snapshot_version_ >= 95 ? "galaxy-kernel-v95|" : snapshot_version_ >= 94 ? "galaxy-kernel-v94|" : snapshot_version_ >= 93 ? "galaxy-kernel-v93|" : snapshot_version_ >= 92 ? "galaxy-kernel-v92|" : snapshot_version_ >= 91 ? "galaxy-kernel-v91|" : snapshot_version_ >= 90 ? "galaxy-kernel-v90|" : snapshot_version_ >= 89 ? "galaxy-kernel-v89|" : snapshot_version_ >= 88 ? "galaxy-kernel-v88|" : snapshot_version_ >= 87 ? "galaxy-kernel-v87|" : snapshot_version_ >= 86 ? "galaxy-kernel-v86|" : snapshot_version_ >= 85 ? "galaxy-kernel-v85|" : snapshot_version_ >= 84 ? "galaxy-kernel-v84|" : snapshot_version_ >= 83 ? "galaxy-kernel-v83|" : snapshot_version_ >= 82 ? "galaxy-kernel-v82|" : snapshot_version_ >= 81 ? "galaxy-kernel-v81|" : snapshot_version_ >= 80 ? "galaxy-kernel-v80|" : snapshot_version_ >= 79 ? "galaxy-kernel-v79|" : snapshot_version_ >= 78 ? "galaxy-kernel-v78|" : snapshot_version_ >= 77 ? "galaxy-kernel-v77|" : snapshot_version_ >= 76 ? "galaxy-kernel-v76|" : snapshot_version_ >= 75 ? "galaxy-kernel-v75|" : snapshot_version_ >= 74 ? "galaxy-kernel-v74|" : snapshot_version_ >= 73 ? "galaxy-kernel-v73|" : snapshot_version_ >= 72 ? "galaxy-kernel-v72|" : snapshot_version_ >= 71 ? "galaxy-kernel-v71|" : snapshot_version_ >= 70 ? "galaxy-kernel-v70|" : snapshot_version_ >= 69 ? "galaxy-kernel-v69|" : snapshot_version_ >= 68 ? "galaxy-kernel-v68|" : snapshot_version_ >= 67 ? "galaxy-kernel-v67|" : snapshot_version_ >= 66 ? "galaxy-kernel-v66|" : snapshot_version_ >= 65 ? "galaxy-kernel-v65|" : snapshot_version_ >= 64 ? "galaxy-kernel-v64|" : snapshot_version_ >= 63 ? "galaxy-kernel-v63|" : snapshot_version_ >= 62 ? "galaxy-kernel-v62|" : snapshot_version_ >= 61 ? "galaxy-kernel-v61|" : snapshot_version_ >= 60 ? "galaxy-kernel-v60|" : snapshot_version_ >= 59 ? "galaxy-kernel-v59|" : snapshot_version_ >= 58 ? "galaxy-kernel-v58|" : snapshot_version_ >= 57 ? "galaxy-kernel-v57|" : snapshot_version_ >= 53 ? "galaxy-kernel-v53|" : snapshot_version_ >= 52 ? "galaxy-kernel-v52|" : snapshot_version_ >= 49 ? "galaxy-kernel-v49|" : snapshot_version_ >= 48 ? "galaxy-kernel-v48|" : snapshot_version_ >= 44 ? "galaxy-kernel-v44|" : snapshot_version_ >= 41 ? "galaxy-kernel-v41|" : snapshot_version_ >= 40 ? "galaxy-kernel-v40|" : snapshot_version_ >= 39 ? "galaxy-kernel-v39|" : snapshot_version_ >= 38 ? "galaxy-kernel-v38|" : snapshot_version_ >= 37 ? "galaxy-kernel-v37|" : snapshot_version_ >= 36 ? "galaxy-kernel-v36|" : snapshot_version_ >= 35 ? "galaxy-kernel-v35|" : snapshot_version_ >= 34 ? "galaxy-kernel-v34|" : snapshot_version_ >= 33 ? "galaxy-kernel-v33|" : snapshot_version_ >= 32 ? "galaxy-kernel-v32|" : snapshot_version_ >= 31 ? "galaxy-kernel-v31|" : snapshot_version_ >= 30 ? "galaxy-kernel-v30|" : snapshot_version_ >= 29 ? "galaxy-kernel-v29|" : snapshot_version_ >= 28 ? "galaxy-kernel-v28|" : snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
         << '|' << rng_state_ << '\n';
     if (snapshot_version_>=5) for(const auto system:systems_)out<<"system|"<<system<<'\n';
     if(snapshot_version_>=68)out<<"probelatency|"<<probe_report_delay_ticks_<<'\n';
@@ -8578,7 +8976,29 @@ std::string Simulation::canonical_state() const {
         }
         if(snapshot_version_>=65)out<<'|'<<unsigned(e.survey_probes_carried);
         if(snapshot_version_>=91)out<<'|'<<e.manufactured_order_id;
+        if(snapshot_version_>=100)
+            for(const auto on:e.hardpoint_requested_on)out<<'|'<<(on?1:0);
+        if(snapshot_version_>=101){
+            for(const auto isolated:e.hardpoint_isolated)out<<'|'<<(isolated?1:0);
+            out<<'|'<<e.last_hack_tick;
+        }
         out << '\n';
+    }
+    if(snapshot_version_>=100)for(const auto& e:ship_status_.records()){
+        out<<"shipstatus|"<<e.id<<'|'<<e.source_ship<<'|'<<e.target_ship
+           <<'|'<<e.started_tick<<'|'<<e.expires_tick<<'|'<<e.seed
+           <<'|'<<e.pulse_ticks<<'|'<<unsigned(e.intensity)
+           <<'|'<<unsigned(e.resistance)<<'|'<<e.targets.size();
+        for(const auto& key:e.targets)
+            out<<'|'<<unsigned(key.rack)<<'|'<<unsigned(key.slot)
+               <<'|'<<unsigned(key.hardware);
+        out<<'\n';
+    }
+    if(snapshot_version_>=102)for(const auto& [id,o]:npc_cyber_operators_) {
+        (void)id;
+        out<<"npccyber|"<<o.command_id<<'|'<<o.owner<<'|'
+           <<o.attacking_ship<<'|'<<o.pilot_npc<<'|'<<o.observer_npc
+           <<'|'<<o.target_ship<<'|'<<o.admitted_tick<<'\n';
     }
     if (snapshot_version_ >= 6) {
         for(const auto& [pair,op]:gate_ops_)
@@ -8914,6 +9334,9 @@ std::string to_string(Outcome o) {
         case Outcome::GateOffline: return "GATE_OFFLINE";
         case Outcome::NotColonyShip: return "NOT_COLONY_SHIP";
         case Outcome::InsufficientCrew: return "INSUFFICIENT_CREW";
+        case Outcome::ModuleOffline: return "MODULE_OFFLINE";
+        case Outcome::CooldownActive: return "COOLDOWN_ACTIVE";
+        case Outcome::AttackResisted: return "ATTACK_RESISTED";
     }
     return "UNKNOWN";
 }
@@ -8964,16 +9387,18 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
     if (!std::getline(in, line)) throw std::runtime_error("snapshot: missing header");
     auto h = fields(line);
     require_fields(h, 5);
-    if (h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27" && h[0] != "galaxy-kernel-v28" && h[0] != "galaxy-kernel-v29" && h[0] != "galaxy-kernel-v30" && h[0] != "galaxy-kernel-v31" && h[0] != "galaxy-kernel-v32" && h[0] != "galaxy-kernel-v33" && h[0] != "galaxy-kernel-v34" && h[0] != "galaxy-kernel-v35" && h[0] != "galaxy-kernel-v36" && h[0] != "galaxy-kernel-v37" && h[0] != "galaxy-kernel-v38" && h[0] != "galaxy-kernel-v39" && h[0] != "galaxy-kernel-v40" && h[0] != "galaxy-kernel-v41" && h[0] != "galaxy-kernel-v44" && h[0] != "galaxy-kernel-v48" && h[0] != "galaxy-kernel-v49" && h[0] != "galaxy-kernel-v52" && h[0] != "galaxy-kernel-v53" && h[0] != "galaxy-kernel-v57" && h[0] != "galaxy-kernel-v58" && h[0] != "galaxy-kernel-v59" && h[0] != "galaxy-kernel-v60" && h[0] != "galaxy-kernel-v61" && h[0] != "galaxy-kernel-v62" && h[0] != "galaxy-kernel-v63" && h[0] != "galaxy-kernel-v64" && h[0] != "galaxy-kernel-v65" && h[0] != "galaxy-kernel-v66" && h[0] != "galaxy-kernel-v67" && h[0] != "galaxy-kernel-v68" && h[0] != "galaxy-kernel-v69" && h[0] != "galaxy-kernel-v70" && h[0] != "galaxy-kernel-v71" && h[0] != "galaxy-kernel-v72" && h[0] != "galaxy-kernel-v73" && h[0] != "galaxy-kernel-v74" && h[0] != "galaxy-kernel-v75" && h[0] != "galaxy-kernel-v76" && h[0] != "galaxy-kernel-v77" && h[0] != "galaxy-kernel-v78" && h[0] != "galaxy-kernel-v79" && h[0] != "galaxy-kernel-v80" && h[0] != "galaxy-kernel-v81" && h[0] != "galaxy-kernel-v82" && h[0] != "galaxy-kernel-v83" && h[0] != "galaxy-kernel-v84" && h[0] != "galaxy-kernel-v85" && h[0] != "galaxy-kernel-v86" && h[0] != "galaxy-kernel-v87" && h[0] != "galaxy-kernel-v88" && h[0] != "galaxy-kernel-v89" && h[0] != "galaxy-kernel-v90" && h[0] != "galaxy-kernel-v91" && h[0] != "galaxy-kernel-v92" && h[0] != "galaxy-kernel-v93" && h[0] != "galaxy-kernel-v94" && h[0] != "galaxy-kernel-v95" && h[0] != "galaxy-kernel-v96" && h[0] != "galaxy-kernel-v97" && h[0] != "galaxy-kernel-v98" && h[0] != "galaxy-kernel-v99") throw std::runtime_error("snapshot: unsupported version");
+    if (h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27" && h[0] != "galaxy-kernel-v28" && h[0] != "galaxy-kernel-v29" && h[0] != "galaxy-kernel-v30" && h[0] != "galaxy-kernel-v31" && h[0] != "galaxy-kernel-v32" && h[0] != "galaxy-kernel-v33" && h[0] != "galaxy-kernel-v34" && h[0] != "galaxy-kernel-v35" && h[0] != "galaxy-kernel-v36" && h[0] != "galaxy-kernel-v37" && h[0] != "galaxy-kernel-v38" && h[0] != "galaxy-kernel-v39" && h[0] != "galaxy-kernel-v40" && h[0] != "galaxy-kernel-v41" && h[0] != "galaxy-kernel-v44" && h[0] != "galaxy-kernel-v48" && h[0] != "galaxy-kernel-v49" && h[0] != "galaxy-kernel-v52" && h[0] != "galaxy-kernel-v53" && h[0] != "galaxy-kernel-v57" && h[0] != "galaxy-kernel-v58" && h[0] != "galaxy-kernel-v59" && h[0] != "galaxy-kernel-v60" && h[0] != "galaxy-kernel-v61" && h[0] != "galaxy-kernel-v62" && h[0] != "galaxy-kernel-v63" && h[0] != "galaxy-kernel-v64" && h[0] != "galaxy-kernel-v65" && h[0] != "galaxy-kernel-v66" && h[0] != "galaxy-kernel-v67" && h[0] != "galaxy-kernel-v68" && h[0] != "galaxy-kernel-v69" && h[0] != "galaxy-kernel-v70" && h[0] != "galaxy-kernel-v71" && h[0] != "galaxy-kernel-v72" && h[0] != "galaxy-kernel-v73" && h[0] != "galaxy-kernel-v74" && h[0] != "galaxy-kernel-v75" && h[0] != "galaxy-kernel-v76" && h[0] != "galaxy-kernel-v77" && h[0] != "galaxy-kernel-v78" && h[0] != "galaxy-kernel-v79" && h[0] != "galaxy-kernel-v80" && h[0] != "galaxy-kernel-v81" && h[0] != "galaxy-kernel-v82" && h[0] != "galaxy-kernel-v83" && h[0] != "galaxy-kernel-v84" && h[0] != "galaxy-kernel-v85" && h[0] != "galaxy-kernel-v86" && h[0] != "galaxy-kernel-v87" && h[0] != "galaxy-kernel-v88" && h[0] != "galaxy-kernel-v89" && h[0] != "galaxy-kernel-v90" && h[0] != "galaxy-kernel-v91" && h[0] != "galaxy-kernel-v92" && h[0] != "galaxy-kernel-v93" && h[0] != "galaxy-kernel-v94" && h[0] != "galaxy-kernel-v95" && h[0] != "galaxy-kernel-v96" && h[0] != "galaxy-kernel-v97" && h[0] != "galaxy-kernel-v98" && h[0] != "galaxy-kernel-v99" && h[0] != "galaxy-kernel-v100" && h[0] != "galaxy-kernel-v101" && h[0] != "galaxy-kernel-v102" && h[0] != "galaxy-kernel-v103" && h[0] != "galaxy-kernel-v104") throw std::runtime_error("snapshot: unsupported version");
     const auto sys = u64(h[1]);
     if (sys == 0 || sys > std::numeric_limits<std::uint32_t>::max())
         throw std::runtime_error("snapshot: invalid system");
     Simulation result(u64(h[4]), static_cast<std::uint32_t>(sys));
-    result.snapshot_version_ = h[0] == "galaxy-kernel-v99" ? 99 : h[0] == "galaxy-kernel-v98" ? 98 : h[0] == "galaxy-kernel-v97" ? 97 : h[0] == "galaxy-kernel-v96" ? 96 : h[0] == "galaxy-kernel-v95" ? 95 : h[0] == "galaxy-kernel-v94" ? 94 : h[0] == "galaxy-kernel-v93" ? 93 : h[0] == "galaxy-kernel-v92" ? 92 : h[0] == "galaxy-kernel-v91" ? 91 : h[0] == "galaxy-kernel-v90" ? 90 : h[0] == "galaxy-kernel-v89" ? 89 : h[0] == "galaxy-kernel-v88" ? 88 : h[0] == "galaxy-kernel-v87" ? 87 : h[0] == "galaxy-kernel-v86" ? 86 : h[0] == "galaxy-kernel-v85" ? 85 : h[0] == "galaxy-kernel-v84" ? 84 : h[0] == "galaxy-kernel-v83" ? 83 : h[0] == "galaxy-kernel-v82" ? 82 : h[0] == "galaxy-kernel-v81" ? 81 : h[0] == "galaxy-kernel-v80" ? 80 : h[0] == "galaxy-kernel-v79" ? 79 : h[0] == "galaxy-kernel-v78" ? 78 : h[0] == "galaxy-kernel-v77" ? 77 : h[0] == "galaxy-kernel-v76" ? 76 : h[0] == "galaxy-kernel-v75" ? 75 : h[0] == "galaxy-kernel-v74" ? 74 : h[0] == "galaxy-kernel-v73" ? 73 : h[0] == "galaxy-kernel-v72" ? 72 : h[0] == "galaxy-kernel-v71" ? 71 : h[0] == "galaxy-kernel-v70" ? 70 : h[0] == "galaxy-kernel-v69" ? 69 : h[0] == "galaxy-kernel-v68" ? 68 : h[0] == "galaxy-kernel-v67" ? 67 : h[0] == "galaxy-kernel-v66" ? 66 : h[0] == "galaxy-kernel-v65" ? 65 : h[0] == "galaxy-kernel-v64" ? 64 : h[0] == "galaxy-kernel-v63" ? 63 : h[0] == "galaxy-kernel-v62" ? 62 : h[0] == "galaxy-kernel-v61" ? 61 : h[0] == "galaxy-kernel-v60" ? 60 : h[0] == "galaxy-kernel-v59" ? 59 : h[0] == "galaxy-kernel-v58" ? 58 : h[0] == "galaxy-kernel-v57" ? 57 : h[0] == "galaxy-kernel-v53" ? 53 : h[0] == "galaxy-kernel-v52" ? 52 : h[0] == "galaxy-kernel-v49" ? 49 : h[0] == "galaxy-kernel-v48" ? 48 : h[0] == "galaxy-kernel-v44" ? 44 : h[0] == "galaxy-kernel-v41" ? 41 : h[0] == "galaxy-kernel-v40" ? 40 : h[0] == "galaxy-kernel-v39" ? 39 : h[0] == "galaxy-kernel-v38" ? 38 : h[0] == "galaxy-kernel-v37" ? 37 : h[0] == "galaxy-kernel-v36" ? 36 : h[0] == "galaxy-kernel-v35" ? 35 : h[0] == "galaxy-kernel-v34" ? 34 : h[0] == "galaxy-kernel-v33" ? 33 : h[0] == "galaxy-kernel-v32" ? 32 : h[0] == "galaxy-kernel-v31" ? 31 : h[0] == "galaxy-kernel-v30" ? 30 : h[0] == "galaxy-kernel-v29" ? 29 : h[0] == "galaxy-kernel-v28" ? 28 : h[0] == "galaxy-kernel-v27" ? 27 : h[0] == "galaxy-kernel-v26" ? 26 : h[0] == "galaxy-kernel-v25" ? 25 : h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
+    result.snapshot_version_ = h[0] == "galaxy-kernel-v104" ? 104 : h[0] == "galaxy-kernel-v103" ? 103 : h[0] == "galaxy-kernel-v102" ? 102 : h[0] == "galaxy-kernel-v101" ? 101 : h[0] == "galaxy-kernel-v100" ? 100 : h[0] == "galaxy-kernel-v99" ? 99 : h[0] == "galaxy-kernel-v98" ? 98 : h[0] == "galaxy-kernel-v97" ? 97 : h[0] == "galaxy-kernel-v96" ? 96 : h[0] == "galaxy-kernel-v95" ? 95 : h[0] == "galaxy-kernel-v94" ? 94 : h[0] == "galaxy-kernel-v93" ? 93 : h[0] == "galaxy-kernel-v92" ? 92 : h[0] == "galaxy-kernel-v91" ? 91 : h[0] == "galaxy-kernel-v90" ? 90 : h[0] == "galaxy-kernel-v89" ? 89 : h[0] == "galaxy-kernel-v88" ? 88 : h[0] == "galaxy-kernel-v87" ? 87 : h[0] == "galaxy-kernel-v86" ? 86 : h[0] == "galaxy-kernel-v85" ? 85 : h[0] == "galaxy-kernel-v84" ? 84 : h[0] == "galaxy-kernel-v83" ? 83 : h[0] == "galaxy-kernel-v82" ? 82 : h[0] == "galaxy-kernel-v81" ? 81 : h[0] == "galaxy-kernel-v80" ? 80 : h[0] == "galaxy-kernel-v79" ? 79 : h[0] == "galaxy-kernel-v78" ? 78 : h[0] == "galaxy-kernel-v77" ? 77 : h[0] == "galaxy-kernel-v76" ? 76 : h[0] == "galaxy-kernel-v75" ? 75 : h[0] == "galaxy-kernel-v74" ? 74 : h[0] == "galaxy-kernel-v73" ? 73 : h[0] == "galaxy-kernel-v72" ? 72 : h[0] == "galaxy-kernel-v71" ? 71 : h[0] == "galaxy-kernel-v70" ? 70 : h[0] == "galaxy-kernel-v69" ? 69 : h[0] == "galaxy-kernel-v68" ? 68 : h[0] == "galaxy-kernel-v67" ? 67 : h[0] == "galaxy-kernel-v66" ? 66 : h[0] == "galaxy-kernel-v65" ? 65 : h[0] == "galaxy-kernel-v64" ? 64 : h[0] == "galaxy-kernel-v63" ? 63 : h[0] == "galaxy-kernel-v62" ? 62 : h[0] == "galaxy-kernel-v61" ? 61 : h[0] == "galaxy-kernel-v60" ? 60 : h[0] == "galaxy-kernel-v59" ? 59 : h[0] == "galaxy-kernel-v58" ? 58 : h[0] == "galaxy-kernel-v57" ? 57 : h[0] == "galaxy-kernel-v53" ? 53 : h[0] == "galaxy-kernel-v52" ? 52 : h[0] == "galaxy-kernel-v49" ? 49 : h[0] == "galaxy-kernel-v48" ? 48 : h[0] == "galaxy-kernel-v44" ? 44 : h[0] == "galaxy-kernel-v41" ? 41 : h[0] == "galaxy-kernel-v40" ? 40 : h[0] == "galaxy-kernel-v39" ? 39 : h[0] == "galaxy-kernel-v38" ? 38 : h[0] == "galaxy-kernel-v37" ? 37 : h[0] == "galaxy-kernel-v36" ? 36 : h[0] == "galaxy-kernel-v35" ? 35 : h[0] == "galaxy-kernel-v34" ? 34 : h[0] == "galaxy-kernel-v33" ? 33 : h[0] == "galaxy-kernel-v32" ? 32 : h[0] == "galaxy-kernel-v31" ? 31 : h[0] == "galaxy-kernel-v30" ? 30 : h[0] == "galaxy-kernel-v29" ? 29 : h[0] == "galaxy-kernel-v28" ? 28 : h[0] == "galaxy-kernel-v27" ? 27 : h[0] == "galaxy-kernel-v26" ? 26 : h[0] == "galaxy-kernel-v25" ? 25 : h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
     result.tick_ = u64(h[2]);
     result.next_entity_id_ = u64(h[3]);
     if (result.next_entity_id_ == 0) throw std::runtime_error("snapshot: invalid next entity ID");
     std::set<std::uint64_t> pending_ids, event_ids;
+    std::ostringstream parsed_status;
+    parsed_status<<"ship-status-v1\n";
     std::set<std::uint32_t> parsed_systems;
     std::size_t records = 0;
     while (std::getline(in, line)) {
@@ -9627,8 +10052,36 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             d.system=static_cast<std::uint32_t>(system);
             if(!result.discoveries_.emplace(std::make_pair(d.owner,d.site),d).second)
                 throw std::runtime_error("snapshot: duplicate discovery");
+        } else if(f[0]=="shipstatus" && result.snapshot_version_>=100) {
+            if(f.size()<11)throw std::runtime_error("snapshot: truncated ship status");
+            const auto count=u64(f[10]);
+            if(count==0 || count>ship_status::Engine::kMaxAffectedModules)
+                throw std::runtime_error("snapshot: invalid status slot count");
+            require_fields(f,11+3*static_cast<std::size_t>(count));
+            parsed_status<<"C";
+            for(std::size_t j=1;j<f.size();++j)parsed_status<<' '<<f[j];
+            parsed_status<<'\n';
+        } else if(f[0]=="npccyber" && result.snapshot_version_>=102) {
+            require_fields(f,8);
+            NpcCyberOperator order{};
+            order.command_id=u64(f[1]);
+            order.owner=u64(f[2]);
+            order.attacking_ship=u64(f[3]);
+            order.pilot_npc=u64(f[4]);
+            order.observer_npc=u64(f[5]);
+            order.target_ship=u64(f[6]);
+            order.admitted_tick=u64(f[7]);
+            if(!order.command_id || !order.owner ||
+               !order.attacking_ship || !order.target_ship ||
+               !order.pilot_npc || !order.observer_npc ||
+               order.attacking_ship==order.target_ship ||
+               order.admitted_tick>result.tick_ ||
+               result.npc_cyber_operators_.size()>=10000 ||
+               !result.npc_cyber_operators_.emplace(
+                   order.command_id,order).second)
+                throw std::runtime_error("snapshot: invalid NPC cyber operator receipt");
         } else if (f[0] == "entity") {
-            require_fields(f, result.snapshot_version_>=91 ? 36 : result.snapshot_version_>=65 ? 35 : result.snapshot_version_>=64 ? 34 : result.snapshot_version_>=62 ? 27 : result.snapshot_version_>=61 ? 23 : result.snapshot_version_>=5 ? 22 : result.snapshot_version_ >= 3 ? 15 : 12);
+            require_fields(f, result.snapshot_version_>=101 ? 41 : result.snapshot_version_>=100 ? 38 : result.snapshot_version_>=91 ? 36 : result.snapshot_version_>=65 ? 35 : result.snapshot_version_>=64 ? 34 : result.snapshot_version_>=62 ? 27 : result.snapshot_version_>=61 ? 23 : result.snapshot_version_>=5 ? 22 : result.snapshot_version_ >= 3 ? 15 : 12);
             Entity e;
             e.id = u64(f[1]);
             const auto es = u64(f[2]), type = u64(f[3]);
@@ -9678,7 +10131,12 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             if(result.snapshot_version_>=64){
                 for(int j=0;j<7;++j){
                     const auto value=u64(f[27+j]);
-                    if(value>(j<2?(result.snapshot_version_>=65?2u:1u):0u))
+                    const unsigned maximum=j<2?
+                        (result.snapshot_version_>=101?3u:
+                         result.snapshot_version_>=65?2u:1u):
+                        (result.snapshot_version_>=103 && j<4?3u:
+                         result.snapshot_version_>=101 && j<4?1u:0u);
+                    if(value>maximum)
                         throw std::runtime_error("snapshot: unavailable ship module type");
                     if(e.type!=EntityType::Ship && e.type!=EntityType::Wreck && value)
                         throw std::runtime_error("snapshot: modules installed on nonship");
@@ -9694,11 +10152,37 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                     e.survey_probes_carried=static_cast<std::uint8_t>(count);
                     if(e.fitting.hardpoints[0]==2 && e.fitting.hardpoints[1]==2)
                         throw std::runtime_error("snapshot: duplicate probe launcher");
+                if(result.snapshot_version_>=101 &&
+                   ((e.fitting.hardpoints[0]==3 && e.fitting.hardpoints[1]==3) ||
+                    (e.fitting.support[0]!=0 &&
+                     e.fitting.support[0]==e.fitting.support[1])))
+                    throw std::runtime_error("snapshot: duplicated physical cyber equipment");
                 }
                 if(e.fitting.hardpoints[0]==1 && e.fitting.hardpoints[1]==1)
                     throw std::runtime_error("snapshot: duplicate unique exploration scanner");
                 if(e.training_drone && e.fitting.exploration_scanner())
                     throw std::runtime_error("snapshot: drone has colony survey scanner");
+            }
+            if(result.snapshot_version_>=100){
+                for(std::size_t slot=0;slot<2;++slot){
+                    const auto requested=u64(f[36+slot]);
+                    if(requested>1 || (!e.fitting.hardpoints[slot] && !requested))
+                        throw std::runtime_error("snapshot: invalid hardpoint intent");
+                    e.hardpoint_requested_on[slot]=requested!=0;
+                }
+            }
+            if(result.snapshot_version_>=101){
+                for(std::size_t slot=0;slot<2;++slot){
+                    const auto bit=u64(f[38+slot]);
+                    if(bit>1 || (bit && !e.fitting.hardpoints[slot]))
+                        throw std::runtime_error("snapshot: forged cyber isolation");
+                    e.hardpoint_isolated[slot]=bit!=0;
+                }
+                e.last_hack_tick=u64(f[40]);
+                if(e.last_hack_tick>result.tick_ ||
+                   (e.last_hack_tick && e.type!=EntityType::Ship &&
+                    e.type!=EntityType::Wreck))
+                    throw std::runtime_error("snapshot: forged cyber emission receipt");
             }
             if(result.snapshot_version_>=91){
                 e.manufactured_order_id=u64(f[35]);
@@ -10347,7 +10831,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             c.id = u64(f[1]); c.execute_tick = u64(f[2]); c.sequence = u64(f[3]);
             c.issuer = u64(f[4]); c.actor = u64(f[5]); c.target = u64(f[6]);
             auto action = u64(f[7]);
-            if (action > (result.snapshot_version_ >= 69 ? static_cast<unsigned>(Action::CancelSurveyFocus) : result.snapshot_version_ >= 66 ? static_cast<unsigned>(Action::LaunchGeologicalDrone) : result.snapshot_version_ >= 65 ? static_cast<unsigned>(Action::RecoverSurveyProbe) : result.snapshot_version_ >= 64 ? static_cast<unsigned>(Action::ConfigureExplorationScanner) : result.snapshot_version_ >= 63 ? static_cast<unsigned>(Action::SurveyLocal) : result.snapshot_version_ >= 62 ? static_cast<unsigned>(Action::SalvageWreck) : result.snapshot_version_ >= 59 ? static_cast<unsigned>(Action::HostRegisterDependent) : result.snapshot_version_ >= 58 ? static_cast<unsigned>(Action::HostColonyDeparture) : result.snapshot_version_ >= 56 ? static_cast<unsigned>(Action::HostTransferConsignedStock) : result.snapshot_version_ >= 53 ? static_cast<unsigned>(Action::HostReturnConstructedStock) : result.snapshot_version_ >= 52 ? static_cast<unsigned>(Action::HostEscrowConstructedStock) : result.snapshot_version_ >= 48 ? static_cast<unsigned>(Action::HostSplitEvacuatePassengers) : result.snapshot_version_ >= 41 ? static_cast<unsigned>(Action::HostSettleMigrant) : result.snapshot_version_ >= 39 ? static_cast<unsigned>(Action::HostMobileStabilize) : result.snapshot_version_ >= 38 ? static_cast<unsigned>(Action::HostTreatInjuries) : result.snapshot_version_ >= 37 ? static_cast<unsigned>(Action::HostResolveMixedFerryLoss) : result.snapshot_version_ >= 36 ? static_cast<unsigned>(Action::HostDestroyPassengerFerry) : result.snapshot_version_ >= 35 ? static_cast<unsigned>(Action::HostEvacuatePassengers) : result.snapshot_version_ >= 32 ? static_cast<unsigned>(Action::HostDisembarkPassengers) : result.snapshot_version_ >= 30 ? static_cast<unsigned>(Action::CompleteConveyorRoute) : result.snapshot_version_ >= 29 ? static_cast<unsigned>(Action::PlaceFactoryEquipment) : result.snapshot_version_ >= 28 ? static_cast<unsigned>(Action::ConstructWorkshopLink) : result.snapshot_version_ >= 27 ? static_cast<unsigned>(Action::ConstructStorageLink) : result.snapshot_version_ >= 26 ? static_cast<unsigned>(Action::TransferStorageNodeStack) : result.snapshot_version_ >= 25 ? static_cast<unsigned>(Action::TransferStorageStack) : result.snapshot_version_ >= 24 ? static_cast<unsigned>(Action::TransferWorkshopStack) : result.snapshot_version_ >= 23 ? static_cast<unsigned>(Action::TransferWorkshopFinalOutput) : result.snapshot_version_ >= 22 ? static_cast<unsigned>(Action::TransferWorkshopOutput) : result.snapshot_version_ >= 21 ? static_cast<unsigned>(Action::HostCrewLoss) : result.snapshot_version_ >= 20 ? static_cast<unsigned>(Action::AssignFarmMentor) : result.snapshot_version_ >= 19 ? static_cast<unsigned>(Action::AssignPolicyInspectors) : result.snapshot_version_ >= 18 ? static_cast<unsigned>(Action::TransferWaterworksFeed) : result.snapshot_version_ >= 17 ? static_cast<unsigned>(Action::ConstructReclaimer) : result.snapshot_version_ >= 16 ? static_cast<unsigned>(Action::AssignClinicStaff) : result.snapshot_version_ >= 15 ? static_cast<unsigned>(Action::AssignCommunityStaff) : result.snapshot_version_ >= 14 ? static_cast<unsigned>(Action::SetUtilityMaintenance) : result.snapshot_version_ >= 13 ? static_cast<unsigned>(Action::RepairUtility) : result.snapshot_version_ >= 12 ? static_cast<unsigned>(Action::AssignHabitatResidents) : result.snapshot_version_ >= 11 ? static_cast<unsigned>(Action::AssignFarmWorkers) : result.snapshot_version_ >= 10 ? static_cast<unsigned>(Action::LoadLifeWater) : result.snapshot_version_ >= 9 ? static_cast<unsigned>(Action::FabricateMaterialModule) : result.snapshot_version_ >= 7 ? static_cast<unsigned>(Action::ConstructOutpost) : result.snapshot_version_ >= 6 ? static_cast<unsigned>(Action::DeliverGateSpares) : result.snapshot_version_ >= 5 ? static_cast<unsigned>(Action::SetGatePairOnline) : result.snapshot_version_ >= 4 ? static_cast<unsigned>(Action::SellOre) : static_cast<unsigned>(Action::UnloadOre))) throw std::runtime_error("snapshot: invalid action");
+            if (action > (result.snapshot_version_ >= 104 ? static_cast<unsigned>(Action::FireShipWeapon) : result.snapshot_version_ >= 101 ? static_cast<unsigned>(Action::HackConfuse) : result.snapshot_version_ >= 100 ? static_cast<unsigned>(Action::SetHardpointPower) : result.snapshot_version_ >= 69 ? static_cast<unsigned>(Action::CancelSurveyFocus) : result.snapshot_version_ >= 66 ? static_cast<unsigned>(Action::LaunchGeologicalDrone) : result.snapshot_version_ >= 65 ? static_cast<unsigned>(Action::RecoverSurveyProbe) : result.snapshot_version_ >= 64 ? static_cast<unsigned>(Action::ConfigureExplorationScanner) : result.snapshot_version_ >= 63 ? static_cast<unsigned>(Action::SurveyLocal) : result.snapshot_version_ >= 62 ? static_cast<unsigned>(Action::SalvageWreck) : result.snapshot_version_ >= 59 ? static_cast<unsigned>(Action::HostRegisterDependent) : result.snapshot_version_ >= 58 ? static_cast<unsigned>(Action::HostColonyDeparture) : result.snapshot_version_ >= 56 ? static_cast<unsigned>(Action::HostTransferConsignedStock) : result.snapshot_version_ >= 53 ? static_cast<unsigned>(Action::HostReturnConstructedStock) : result.snapshot_version_ >= 52 ? static_cast<unsigned>(Action::HostEscrowConstructedStock) : result.snapshot_version_ >= 48 ? static_cast<unsigned>(Action::HostSplitEvacuatePassengers) : result.snapshot_version_ >= 41 ? static_cast<unsigned>(Action::HostSettleMigrant) : result.snapshot_version_ >= 39 ? static_cast<unsigned>(Action::HostMobileStabilize) : result.snapshot_version_ >= 38 ? static_cast<unsigned>(Action::HostTreatInjuries) : result.snapshot_version_ >= 37 ? static_cast<unsigned>(Action::HostResolveMixedFerryLoss) : result.snapshot_version_ >= 36 ? static_cast<unsigned>(Action::HostDestroyPassengerFerry) : result.snapshot_version_ >= 35 ? static_cast<unsigned>(Action::HostEvacuatePassengers) : result.snapshot_version_ >= 32 ? static_cast<unsigned>(Action::HostDisembarkPassengers) : result.snapshot_version_ >= 30 ? static_cast<unsigned>(Action::CompleteConveyorRoute) : result.snapshot_version_ >= 29 ? static_cast<unsigned>(Action::PlaceFactoryEquipment) : result.snapshot_version_ >= 28 ? static_cast<unsigned>(Action::ConstructWorkshopLink) : result.snapshot_version_ >= 27 ? static_cast<unsigned>(Action::ConstructStorageLink) : result.snapshot_version_ >= 26 ? static_cast<unsigned>(Action::TransferStorageNodeStack) : result.snapshot_version_ >= 25 ? static_cast<unsigned>(Action::TransferStorageStack) : result.snapshot_version_ >= 24 ? static_cast<unsigned>(Action::TransferWorkshopStack) : result.snapshot_version_ >= 23 ? static_cast<unsigned>(Action::TransferWorkshopFinalOutput) : result.snapshot_version_ >= 22 ? static_cast<unsigned>(Action::TransferWorkshopOutput) : result.snapshot_version_ >= 21 ? static_cast<unsigned>(Action::HostCrewLoss) : result.snapshot_version_ >= 20 ? static_cast<unsigned>(Action::AssignFarmMentor) : result.snapshot_version_ >= 19 ? static_cast<unsigned>(Action::AssignPolicyInspectors) : result.snapshot_version_ >= 18 ? static_cast<unsigned>(Action::TransferWaterworksFeed) : result.snapshot_version_ >= 17 ? static_cast<unsigned>(Action::ConstructReclaimer) : result.snapshot_version_ >= 16 ? static_cast<unsigned>(Action::AssignClinicStaff) : result.snapshot_version_ >= 15 ? static_cast<unsigned>(Action::AssignCommunityStaff) : result.snapshot_version_ >= 14 ? static_cast<unsigned>(Action::SetUtilityMaintenance) : result.snapshot_version_ >= 13 ? static_cast<unsigned>(Action::RepairUtility) : result.snapshot_version_ >= 12 ? static_cast<unsigned>(Action::AssignHabitatResidents) : result.snapshot_version_ >= 11 ? static_cast<unsigned>(Action::AssignFarmWorkers) : result.snapshot_version_ >= 10 ? static_cast<unsigned>(Action::LoadLifeWater) : result.snapshot_version_ >= 9 ? static_cast<unsigned>(Action::FabricateMaterialModule) : result.snapshot_version_ >= 7 ? static_cast<unsigned>(Action::ConstructOutpost) : result.snapshot_version_ >= 6 ? static_cast<unsigned>(Action::DeliverGateSpares) : result.snapshot_version_ >= 5 ? static_cast<unsigned>(Action::SetGatePairOnline) : result.snapshot_version_ >= 4 ? static_cast<unsigned>(Action::SellOre) : static_cast<unsigned>(Action::UnloadOre))) throw std::runtime_error("snapshot: invalid action");
             c.action = static_cast<Action>(action);
             auto tx = i64(f[8]), ty = i64(f[9]);
             if (tx < std::numeric_limits<int>::min() || tx > std::numeric_limits<int>::max() ||
@@ -10593,7 +11077,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             Event ev;
             ev.tick = u64(f[1]); ev.command_id = u64(f[2]);
             auto outcome = u64(f[3]);
-            if (outcome > (result.snapshot_version_ >= 7 ? static_cast<std::uint64_t>(Outcome::InsufficientCrew) : result.snapshot_version_ >= 5 ? static_cast<std::uint64_t>(Outcome::GateOffline) : result.snapshot_version_ >= 4 ? static_cast<std::uint64_t>(Outcome::InsufficientFunds) : static_cast<std::uint64_t>(Outcome::HangarFull)))
+            if (outcome > (result.snapshot_version_ >= 101 ? static_cast<std::uint64_t>(Outcome::AttackResisted) : result.snapshot_version_ >= 100 ? static_cast<std::uint64_t>(Outcome::ModuleOffline) : result.snapshot_version_ >= 7 ? static_cast<std::uint64_t>(Outcome::InsufficientCrew) : result.snapshot_version_ >= 5 ? static_cast<std::uint64_t>(Outcome::GateOffline) : result.snapshot_version_ >= 4 ? static_cast<std::uint64_t>(Outcome::InsufficientFunds) : static_cast<std::uint64_t>(Outcome::HangarFull)))
                 throw std::runtime_error("snapshot: invalid outcome");
             ev.result = static_cast<Outcome>(outcome);
             ev.transferred = i64(f[4]);
@@ -12107,6 +12591,82 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 throw std::runtime_error("snapshot: orphaned deceased legal residence");
         }
     }
+    if(result.snapshot_version_>=100){
+        result.ship_status_=ship_status::Engine::decode(parsed_status.str());
+        for(const auto& effect:result.ship_status_.records()){
+            const auto source=result.entities_.find(effect.source_ship);
+            const auto target=result.entities_.find(effect.target_ship);
+            if(source==result.entities_.end() || target==result.entities_.end() ||
+               (source->second.type!=EntityType::Ship &&
+                source->second.type!=EntityType::Wreck) ||
+               (target->second.type!=EntityType::Ship &&
+                target->second.type!=EntityType::Wreck) ||
+               effect.started_tick>result.tick_ ||
+               result.submitted_ids_.count(effect.id) ||
+               source->second.owner_id==target->second.owner_id)
+                throw std::runtime_error("snapshot: invalid ship status source or target");
+            // Historical records outlive removable hardware. An ACTIVE
+            // effect must still address the genuine original fitting; after
+            // expiration it may describe safely removed equipment.
+            if(effect.expires_tick>result.tick_)
+                for(const auto& key:effect.targets)
+                    if(key.rack!=0 || key.slot>=2 ||
+                       target->second.fitting.hardpoints[key.slot]!=key.hardware)
+                        throw std::runtime_error("snapshot: active status module mismatch");
+            if(result.snapshot_version_>=101 &&
+               (effect.id & (std::uint64_t{1}<<63))) {
+                const auto native_command=effect.id & ~(std::uint64_t{1}<<63);
+                const auto proven=std::find_if(result.events_.begin(),
+                    result.events_.end(),[&](const Event& event){
+                        return event.command_id==native_command &&
+                               event.result==Outcome::Applied &&
+                               event.tick==effect.started_tick;
+                    });
+                if(!native_command ||
+                   native_command>=(std::uint64_t{1}<<62) ||
+                   proven==result.events_.end() ||
+                   effect.expires_tick-effect.started_tick!=
+                     (effect.resistance==60?kHackDurationTicks/2:
+                      kHackDurationTicks) ||
+                   effect.pulse_ticks!=2 || effect.intensity!=100 ||
+                   (effect.resistance!=0 && effect.resistance!=60) ||
+                   source->second.last_hack_tick<effect.started_tick)
+                    throw std::runtime_error("snapshot: forged physical hacking receipt");
+            }
+        }
+    }
+    if(result.snapshot_version_>=102)
+        for(const auto& [command_id,order]:result.npc_cyber_operators_){
+            const auto source=result.entities_.find(order.attacking_ship);
+            const auto target=result.entities_.find(order.target_ship);
+            if(command_id!=order.command_id ||
+               !result.submitted_ids_.count(command_id) ||
+               source==result.entities_.end() ||
+               target==result.entities_.end() ||
+               (source->second.type!=EntityType::Ship &&
+                source->second.type!=EntityType::Wreck) ||
+               (target->second.type!=EntityType::Ship &&
+                target->second.type!=EntityType::Wreck) ||
+               source->second.owner_id!=order.owner ||
+               target->second.owner_id==order.owner)
+                throw std::runtime_error("snapshot: orphan NPC cyber attribution");
+            bool original_command=false;
+            for(const auto& [due,commands]:result.commands_){
+                (void)due;
+                for(const auto& command:commands)
+                    if(command.id==command_id &&
+                       command.action==Action::HackConfuse &&
+                       command.issuer==order.owner &&
+                       command.actor==order.attacking_ship &&
+                       command.target==order.target_ship)
+                        original_command=true;
+            }
+            for(const auto& event:result.events_)
+                if(event.command_id==command_id)
+                    original_command=true; // immutable original execution receipt
+            if(!original_command)
+                throw std::runtime_error("snapshot: NPC cyber order lacks original command");
+        }
     if (result.canonical_state() != bytes)
         throw std::runtime_error("snapshot: noncanonical or out-of-order records");
     return result;
@@ -12120,6 +12680,8 @@ void Simulation::swap(Simulation& other) noexcept {
     swap(next_entity_id_, other.next_entity_id_);
     swap(rng_state_, other.rng_state_);
     entities_.swap(other.entities_);
+    swap(ship_status_,other.ship_status_);
+    npc_cyber_operators_.swap(other.npc_cyber_operators_);
     ship_frames_.swap(other.ship_frames_);
     generated_local_regions_.swap(other.generated_local_regions_);
     local_entity_anchors_.swap(other.local_entity_anchors_);
@@ -12205,7 +12767,10 @@ std::int64_t Simulation::total_ore() const {
             throw std::overflow_error("invalid colony material stacks");
         colony_cargo_kg+=physical_kg;
         const auto& eq=entities_.at(id);
-        const auto installed=(eq.fitting.exploration_scanner()?1:0)+(eq.fitting.probe_launcher()?1:0);
+        const auto installed=(eq.fitting.exploration_scanner()?1:0)+
+            (eq.fitting.probe_launcher()?1:0)+
+            (eq.fitting.intrusion_emitter()?1:0)+
+            (eq.fitting.cyber_firewall()?1:0);
         const auto deployed=std::count_if(survey_probes_.begin(),survey_probes_.end(),
             [id](const auto& row){return row.second.carrier==id;});
         const auto mass=c.refined+2*(c.modules+installed+eq.survey_probes_carried+
