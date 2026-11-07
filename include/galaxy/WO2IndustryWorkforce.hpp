@@ -282,6 +282,8 @@ inline std::optional<Command> approved_original_trade_training(
     const auto* power=world.utility(site);
     const auto person=world.npc_records().find(npc);
     if(!shop || !power || !power->powered || power->condition<=0 ||
+       power->stored_energy<1 ||
+       power->consumed_energy==std::numeric_limits<std::int64_t>::max() ||
        shop->scrap_kg>=1000 ||
        (trade==WorkshopTrade::Cut ? shop->aluminum_kg<1 :
            !shop->finisher_installed || shop->panels_kg<1) ||
