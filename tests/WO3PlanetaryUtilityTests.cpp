@@ -113,6 +113,28 @@ int main() {
     CHECK(w.world().workshop_trade_certified(builder,WorkshopTrade::Shape));
     act(w,ship,290,Action::AssignUtilityTechnicians,orbital,0);
     act(w,ship,291,Action::AssignHabitatResidents,orbital,-2);
+    // A second actual named worker earns three physical Shape credits
+    // before deployment. Supervisor relief must not conjure a certificate.
+    std::uint64_t trained_partner=0;
+    for(const auto& [id,n]:w.world().npc_records()) {
+        if(id!=builder && id!=operator_id && n.home_ship==ship &&
+           n.location==ship && n.role==NpcRole::Ship &&
+           w.world().npc_available_for_duty(id)) {
+            trained_partner=id;
+            break;
+        }
+    }
+    CHECK(trained_partner);
+    w.steps(60);
+    CHECK(w.world().workshop(orbital)->panels_kg>=3);
+    for(std::uint64_t id=310;id<313;++id) {
+        const auto training=workforce02::approved_original_trade_training(
+            w.world(),7,ship,orbital,trained_partner,WorkshopTrade::Shape,id,true);
+        CHECK(training && w.submit(*training));w.step();
+        CHECK(w.world().events().back().result==Outcome::Applied);
+    }
+    CHECK(w.world().workshop_trade_certified(
+        trained_partner,WorkshopTrade::Shape));
     CHECK(w.world().npc_records().at(builder).location==ship);
     CHECK(w.world().npc_available_for_duty(builder));
     CHECK(w.begin_celestial_transit(7,ship,chosen.body,90001));
@@ -122,8 +144,8 @@ int main() {
         if(n.home_ship==ship && n.location==ship && n.role==NpcRole::Ship)
             crew.push_back(id);
     CHECK(crew.size()>=4);
-    const auto partner=*std::find_if(crew.begin(),crew.end(),
-                                   [builder](auto id){return id!=builder;});
+    const auto partner=trained_partner;
+    CHECK(std::find(crew.begin(),crew.end(),partner)!=crew.end());
     CHECK(w.build_planetary_site(7,ship,chosen.body,chosen.lat,chosen.lon,
                                 builder,partner));
     w.steps(4);
@@ -191,6 +213,46 @@ int main() {
     CHECK(w.world().planetary_sites().at(key).utility_progress==progress);
     CHECK(w.pause_planetary_surface_utility(7,ship,key,false));
     w.steps(10);
+    const auto before_handover=w.world().planetary_sites().at(key);
+    CHECK(before_handover.utility_phase==1);
+    CHECK(!w.handover_planetary_surface_utility(
+        8,ship,key,builder,partner,81600));
+    CHECK(!w.handover_planetary_surface_utility(
+        7,ship,key,pilot,partner,81600));
+    bool failed_handover=false;
+    try {
+        (void)w.handover_planetary_surface_utility(
+            7,ship,key,builder,partner,81600,FailPoint::AfterSnapshotWrite);
+    }catch(const std::exception&){failed_handover=true;}
+    CHECK(failed_handover);
+    CHECK(w.world().planetary_sites().at(key).utility_supervisor==builder);
+    CHECK(w.handover_planetary_surface_utility(
+        7,ship,key,builder,partner,81600));
+    CHECK(!w.handover_planetary_surface_utility(
+        7,ship,key,builder,partner,81600));
+    const auto& after_handover=w.world().planetary_sites().at(key);
+    CHECK(after_handover.utility_supervisor==partner &&
+          after_handover.utility_order_id==before_handover.utility_order_id &&
+          after_handover.utility_progress==before_handover.utility_progress &&
+          after_handover.embodied_ore==before_handover.embodied_ore &&
+          after_handover.utility_handovers.size()==1 &&
+          after_handover.utility_handovers.front().request_id==81600);
+    CHECK(w.world().total_ore()==initial_mass);
+    CHECK(w.world().canonical_state().rfind("galaxy-kernel-v112|",0)==0);
+    CHECK(Simulation::from_snapshot(w.world().canonical_state()).state_hash()==
+          w.world().state_hash());
+    // A forged last replacement without its real chain must be rejected.
+    auto forged=w.world().canonical_state();
+    const auto handover=forged.find("planetutilityhandover|");
+    CHECK(handover!=std::string::npos);
+    const auto eol=forged.find('\n',handover);
+    const auto last=forged.rfind('|',eol);
+    CHECK(last!=std::string::npos);
+    forged.replace(last+1,eol-last-1,"999999");
+    bool denied=false;
+    try {(void)Simulation::from_snapshot(forged);}
+    catch(const std::exception&){denied=true;}
+    CHECK(denied);
     const auto pending=(folder/"utility_pending.sqlite").string();
     PersistentWorld::recover_copy(db,pending);
     PersistentWorld recovered(pending,Simulation(8));
