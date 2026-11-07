@@ -9733,6 +9733,11 @@ bool Simulation::transfer_planetary_shuttle_visitor(PlayerId owner,EntityId ship
     auto sh=planetary_shuttles_.find(key);
     auto site=planetary_sites_.find(key);
     auto person=npcs_.find(npc);
+    // A booked ART02 parent, including the second birth parent, cannot
+    // disembark alone from a physically accompanied dependent.
+    if(sh!=planetary_shuttles_.end() && sh->second.family.stage &&
+       (npc==sh->second.family.guardian_id ||
+        npc==sh->second.family.co_parent_id))return false;
     if(!owner || !npc || sh==planetary_shuttles_.end() ||
        site==planetary_sites_.end() || person==npcs_.end() ||
        sh->second.owner!=owner || sh->second.source_ship!=ship ||
