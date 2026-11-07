@@ -160,6 +160,7 @@ static void anchored_nonships_and_swap(){
         const auto* rock=original.find(id);
         CHECK(rock && rock->type==EntityType::Asteroid &&
               original.local_entity_anchors().at(id)==body.id);
+        CHECK(original.same_local_frame(ship,id)); // no artificial view wall
         const auto location=galactic::advance(*frame,
             {rock->position.x,rock->position.y,rock->position_z_mm});
         CHECK(location && rock->physical_galactic==*location);
