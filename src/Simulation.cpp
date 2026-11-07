@@ -1290,9 +1290,17 @@ bool Simulation::submit(const Command& c) {
     if(snapshot_version_>=109)
         for(const auto& [key,site]:planetary_sites_) {
             (void)key;
-            if(c.id && c.id==site.housing_order_id)return false;
+            if(c.id && (c.id==site.housing_order_id ||
+                        c.id==site.utility_order_id))return false;
             for(const auto request:site.founder_consent_requests)
                 if(request && request==c.id)return false;
+            for(const auto& [resident,proof]:site.visitor_residency) {
+                (void)resident;
+                if(c.id && (c.id==proof[1] || c.id==proof[2]))
+                    return false;
+            }
+            for(const auto& relief:site.utility_handovers)
+                if(c.id && c.id==relief.request_id)return false;
         }
     if(colony_departures_.count(c.actor) || colony_departures_.count(c.target))return false;
     // Building a hull never creates a pilot. A manufactured uncommissioned
