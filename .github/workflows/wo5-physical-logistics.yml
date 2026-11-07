@@ -23,6 +23,7 @@ on:
       - 'include/galaxy/Simulation.hpp'
       - 'include/galaxy/Persistence.hpp'
       - 'CMakeLists.txt'
+      - '.github/workflows/wo5-physical-logistics.yml'
       - '.github/workflows/wo4-resource-demand.yml'
   workflow_dispatch:
 concurrency:
@@ -47,7 +48,7 @@ jobs:
           expected="${{ github.event.pull_request.head.sha || github.sha }}"
           actual="$(git rev-parse HEAD)"
           echo "Requested WO5 source: $expected"
-          echo "Running WO4 source:   $actual"
+          echo "Running WO5 source:   $actual"
           test "$actual" = "$expected"
           cmake --version
       - name: Install system SQLite SDK
