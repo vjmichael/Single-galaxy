@@ -179,8 +179,11 @@ public:
         std::uint64_t visitor,std::uint64_t visiting_ship,
         std::uint64_t event,std::uint64_t related,
         std::uint64_t tick){
-        if(!owner || !colony || !event ||
-           (visitor && (!visiting_ship || visitor==owner)))
+        // An invitation has an authenticated owner but no physical
+        // visitor ship yet; witnessed warnings and replies require one.
+        if(!owner || !colony || !event || visitor==owner ||
+           (visitor && !visiting_ship && original_kind!=2 &&
+            original_kind!=3))
             throw std::invalid_argument("invalid original territory routing");
         std::uint32_t kind=8;
         switch(original_kind){
