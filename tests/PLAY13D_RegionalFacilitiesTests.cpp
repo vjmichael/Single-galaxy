@@ -1160,6 +1160,15 @@ static void scenario(const fs::path& db, bool farming,
             }
             CHECK(w.post_intercolony_work_order(7,ship,key,
                 ShuttleCargo::Nutrients,100,77007,freighter,receiver));
+            // WO5-B: an atomically posted pickup is still NOT a loaded
+            // carrier; original freight receipts prove the distinction.
+            const auto awaiting=logistics05::inspect_original_freight_evidence(
+                w.world(),7,77007);
+            CHECK(awaiting &&
+                  awaiting->original_stage==
+                      IntercolonyFreightStage::AwaitingPickup &&
+                  !awaiting->actual_arrival_proved &&
+                  awaiting->physically_carried_kg==0);
             if(delegated){
                 CHECK(w.delegate_transport_work_order(
                     7,ship,94007,WorkTaskKind::LocalDelivery,77007));
