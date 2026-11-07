@@ -495,6 +495,11 @@ struct OasisExtractor {
 // PLAY-13D.3: one persistent facility per physical body+surface cell.
 // All module tonnage is retained in embodied_ore. All stored resources are kg.
 // The ship remains the physical logistics origin; no free settlement population.
+// WO3-D/v112: one original owner-approved reassignment is an immutable
+// ticked chain link. The vector is bounded and persisted with the site.
+struct PlanetaryUtilityHandover {
+    std::uint64_t request_id=0, tick=0, previous=0, replacement=0;
+};
 struct PlanetarySiteFacility {
     planetary::PlanetaryRegionKey region{};
     PlayerId owner=0;
@@ -549,6 +554,7 @@ struct PlanetarySiteFacility {
     std::int64_t stored_electricity=0,brine_kg=0;
     std::uint64_t utility_powered_cycles=0,hvac_cycles=0,utility_outages=0;
     std::int64_t water_recycled_kg=0,oxygen_recycled_kg=0;
+    std::vector<PlanetaryUtilityHandover> utility_handovers{};
     // WO3-E/v111: historical arrivals and voluntary departures of actual
     // independent adult visitors. {descent receipt, admit request, exit request};
     // an exit receipt remains forever to prevent request/identity replay.
@@ -1379,6 +1385,11 @@ public:
         std::uint64_t qualified_supervisor);
     bool pause_planetary_surface_utility(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,bool pause);
+    // Approved physical supervisor relief. Never restarts the 60-tick
+    // construction or alters committed structural material.
+    bool handover_planetary_surface_utility(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t previous,
+        std::uint64_t replacement,std::uint64_t request_id);
     // Admission of an already physically deployed named founder with
     // trusted owner + voluntary-consent attestation and unique request ID.
     // Does not invent NPCs or transfer visitors without arrival evidence.
