@@ -1,0 +1,52 @@
+name: WO3 original planetary colonies and facility operations
+on:
+  pull_request:
+    paths:
+      - 'include/galaxy/WO3ColonyOperations.hpp'
+      - 'tests/WO3ColonyOperationsTests.cpp'
+      - 'src/Simulation.cpp'
+      - 'include/galaxy/Simulation.hpp'
+      - 'src/Persistence.cpp'
+      - 'CMakeLists.txt'
+      - '.github/workflows/wo3-colony-operations.yml'
+  workflow_dispatch:
+concurrency:
+  group: sg-wo3-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  physical-colony:
+    name: Original planet and outpost native SQLite (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SQLite SDK (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlite3-dev
+      - name: Install SQLite SDK (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vcpkg = Join-Path $env:VCPKG_INSTALLATION_ROOT 'vcpkg.exe'
+          if (-not (Test-Path $vcpkg)) { throw 'Windows vcpkg SDK missing' }
+          & $vcpkg install sqlite3:x64-windows --clean-after-build
+          if ($LASTEXITCODE -ne 0) { throw 'SQLite SDK installation failed' }
+      - name: Configure original Linux kernel
+        if: runner.os == 'Linux'
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+      - name: Configure original Windows kernel
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tc = Join-Path $env:VCPKG_INSTALLATION_ROOT 'scripts/buildsystems/vcpkg.cmake'
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$tc" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'Windows original kernel configure failed' }
+      - name: Compile WO3 plus actual colony, industry and NPC regressions
+        run: cmake --build build --config Release --parallel 2 --target galaxy_wo3_colony_operations_tests galaxy_b70_colony_core_tests galaxy_b70e_colony_farms_tests galaxy_b70f_habitation_tests galaxy_b70l_waterworks_tests galaxy_econ02a_workshop_tests galaxy_play13d_planetary_agriculture_tests galaxy_industry01_native_tests galaxy_wo2_industry_workforce_tests
+      - name: Prove physical facility, named resident and independent SQLite recovery
+        run: ctest --test-dir build -C Release --output-on-failure -R "^galaxy_(wo3_colony_operations|b70_colony_core_tests|b70e_colony_farms_tests|b70f_habitation_tests|b70l_waterworks_tests|econ02a_workshop_tests|play13d_planetary_agriculture|industry01_native_binding|wo2_industry_workforce)$"
