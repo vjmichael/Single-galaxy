@@ -8718,6 +8718,7 @@ std::optional<transport::Manifest> Simulation::planetary_transport_manifest(
     add_stock(transport::ResourceGood::Water,vessel.water_kg);
     add_stock(transport::ResourceGood::Food,vessel.food_kg);
     add_stock(transport::ResourceGood::Nutrients,vessel.nutrients_kg);
+    add_stock(transport::ResourceGood::Oxygen,vessel.oxygen_kg);
     if(vessel.housing_module)
         manifest.contents.push_back({transport::GoodKind::Equipment,
             transport::kPlanetaryHousingModuleEquipmentId,1,2000});
@@ -8748,22 +8749,31 @@ bool Simulation::load_planetary_shuttle(PlayerId owner,EntityId ship,
        hull->second.dock_state!=DockState::InSpace ||
        hull->second.jump_state!=ShipJumpState::Ready ||
        life==life_support_.end() || kg<=0 || kg>1000 ||
-       cargo>ShuttleCargo::Nutrients ||
+       cargo>ShuttleCargo::Oxygen ||
        (shuttle->second.flight_phase!=0 && shuttle->second.flight_phase!=2))
        return false;
     auto& held=cargo==ShuttleCargo::Water?shuttle->second.water_kg:
-        (cargo==ShuttleCargo::Food?shuttle->second.food_kg:shuttle->second.nutrients_kg);
+        cargo==ShuttleCargo::Food?shuttle->second.food_kg:
+        cargo==ShuttleCargo::Nutrients?shuttle->second.nutrients_kg:
+                                       shuttle->second.oxygen_kg;
     auto& from=shuttle->second.flight_phase==0?
         (cargo==ShuttleCargo::Water?life->second.water_kg:
-         (cargo==ShuttleCargo::Food?life->second.food_kg:life->second.nutrients_kg)):
+         cargo==ShuttleCargo::Food?life->second.food_kg:
+         cargo==ShuttleCargo::Nutrients?life->second.nutrients_kg:
+                                        life->second.oxygen_kg):
         (cargo==ShuttleCargo::Water?site->second.water_kg:
-         (cargo==ShuttleCargo::Food?site->second.food_kg:site->second.nutrients_kg));
+         cargo==ShuttleCargo::Food?site->second.food_kg:
+         cargo==ShuttleCargo::Nutrients?site->second.nutrients_kg:
+                                        site->second.oxygen_kg);
     const auto& state=shuttle->second;
     if(from<kg || held>1000-kg ||
-       state.water_kg+state.food_kg+state.nutrients_kg>1000-kg)return false;
+       state.water_kg+state.food_kg+state.nutrients_kg+
+        state.oxygen_kg>1000-kg)return false;
     from-=kg;held+=kg;
     if(cargo==ShuttleCargo::Nutrients)
         snapshot_version_=std::max(snapshot_version_,87);
+    if(cargo==ShuttleCargo::Oxygen)
+        snapshot_version_=std::max(snapshot_version_,109);
     return true;
 }
 bool Simulation::unload_planetary_shuttle(PlayerId owner,EntityId ship,
@@ -8787,20 +8797,28 @@ bool Simulation::unload_planetary_shuttle(PlayerId owner,EntityId ship,
        hull->second.dock_state!=DockState::InSpace ||
        hull->second.jump_state!=ShipJumpState::Ready ||
        life==life_support_.end() || kg<=0 || kg>1000 ||
-       cargo>ShuttleCargo::Nutrients ||
+       cargo>ShuttleCargo::Oxygen ||
        (shuttle->second.flight_phase!=0 && shuttle->second.flight_phase!=2))
        return false;
     auto& held=cargo==ShuttleCargo::Water?shuttle->second.water_kg:
-        (cargo==ShuttleCargo::Food?shuttle->second.food_kg:shuttle->second.nutrients_kg);
+        cargo==ShuttleCargo::Food?shuttle->second.food_kg:
+        cargo==ShuttleCargo::Nutrients?shuttle->second.nutrients_kg:
+                                       shuttle->second.oxygen_kg;
     auto& to=shuttle->second.flight_phase==0?
         (cargo==ShuttleCargo::Water?life->second.water_kg:
-         (cargo==ShuttleCargo::Food?life->second.food_kg:life->second.nutrients_kg)):
+         cargo==ShuttleCargo::Food?life->second.food_kg:
+         cargo==ShuttleCargo::Nutrients?life->second.nutrients_kg:
+                                        life->second.oxygen_kg):
         (cargo==ShuttleCargo::Water?site->second.water_kg:
-         (cargo==ShuttleCargo::Food?site->second.food_kg:site->second.nutrients_kg));
+         cargo==ShuttleCargo::Food?site->second.food_kg:
+         cargo==ShuttleCargo::Nutrients?site->second.nutrients_kg:
+                                        site->second.oxygen_kg);
     if(held<kg || to>1000000-kg)return false;
     held-=kg;to+=kg;
     if(cargo==ShuttleCargo::Nutrients)
         snapshot_version_=std::max(snapshot_version_,87);
+    if(cargo==ShuttleCargo::Oxygen)
+        snapshot_version_=std::max(snapshot_version_,109);
     return true;
 }
 bool Simulation::assign_planetary_shuttle_pilot(PlayerId owner,EntityId ship,
@@ -9840,7 +9858,8 @@ std::string Simulation::canonical_state() const {
                     out<<'|'<<npc<<'|'<<receipt;
             }
             if(snapshot_version_>=87)out<<'|'<<v.nutrients_kg;
-            if(snapshot_version_>=109)out<<'|'<<unsigned(v.housing_module);
+            if(snapshot_version_>=109)
+                out<<'|'<<v.oxygen_kg<<'|'<<unsigned(v.housing_module);
             out<<'\n';
         }
     if(snapshot_version_>=88)
@@ -10492,7 +10511,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                                 throw std::runtime_error("snapshot: too many visitor receipts");
                             require_fields(f,receipts_offset+1+2*static_cast<std::size_t>(receipts)+
                                 (result.snapshot_version_>=87?1:0)+
-                                (result.snapshot_version_>=109?1:0));
+                                (result.snapshot_version_>=109?2:0));
                         }else require_fields(f,duty_offset+1+static_cast<std::size_t>(duty));
                     }else require_fields(f,offset+1+static_cast<std::size_t>(visitors));
                 }else require_fields(f,17+static_cast<std::size_t>(count));
@@ -10505,8 +10524,11 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             PlanetaryShuttleState state{owner,ship,pilot,mass,water,food};
             if(result.snapshot_version_>=87)
                 state.nutrients_kg=i64(f[result.snapshot_version_>=109?
-                                          f.size()-2:f.size()-1]);
+                                          f.size()-3:f.size()-1]);
             if(result.snapshot_version_>=109) {
+                state.oxygen_kg=i64(f[f.size()-2]);
+                if(state.oxygen_kg<0 || state.oxygen_kg>1000)
+                    throw std::runtime_error("snapshot: invalid shuttle oxygen");
                 const auto module=u64(f.back());
                 if(module>1)
                     throw std::runtime_error("snapshot: invalid shuttle module rack");
@@ -14368,7 +14390,9 @@ std::int64_t Simulation::total_ore() const {
            v.water_kg<0 || v.food_kg<0 || v.nutrients_kg<0 || v.water_kg>1000 ||
            v.food_kg>1000-v.water_kg ||
            v.nutrients_kg>1000-v.water_kg-v.food_kg ||
-            v.housing_module>1 ||
+           v.oxygen_kg<0 ||
+           v.oxygen_kg>1000-v.water_kg-v.food_kg-v.nutrients_kg ||
+           v.housing_module>1 ||
            !colony_ships_.count(v.source_ship) ||
            total>std::numeric_limits<std::int64_t>::max()-v.dry_mass_ore)
             throw std::overflow_error("invalid source-backed shuttle");
@@ -14445,7 +14469,7 @@ std::int64_t Simulation::total_ore() const {
                 throw std::overflow_error("invalid shuttle pilot custody");
         }
         total+=v.dry_mass_ore+2*v.housing_module;
-        const auto held=v.water_kg+v.food_kg+v.nutrients_kg;
+        const auto held=v.water_kg+v.food_kg+v.nutrients_kg+v.oxygen_kg;
         if(held>1000000000LL-life_mass_kg)
             throw std::overflow_error("invalid shuttle held stock");
         life_mass_kg+=held;
