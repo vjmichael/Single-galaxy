@@ -5,6 +5,7 @@
 #include "galaxy/Simulation.hpp"
 #include <cstdint>
 #include <initializer_list>
+#include <limits>
 #include <optional>
 #include <string>
 
@@ -19,6 +20,10 @@ struct OriginalFreightEvidence {
     IntercolonyFreightStage original_stage=IntercolonyFreightStage::AwaitingPickup;
     std::uint64_t native_loaded_tick=0,original_arrival_receipt=0;
     std::int64_t physically_carried_kg=0;
+    // Cargo of a NEWER, separate original work order may be on the same
+    // reused real freighter. This belongs to that other native receipt,
+    // never to an already delivered consignment.
+    std::int64_t other_loaded_same_good_kg=0;
     bool actual_arrival_proved=false;
 };
 inline std::optional<OriginalFreightEvidence> inspect_original_freight_evidence(
@@ -91,9 +96,25 @@ inline std::optional<OriginalFreightEvidence> inspect_original_freight_evidence(
     }
     case IntercolonyFreightStage::Delivered: {
         if(!f.loaded_tick || !f.arrival_receipt ||
-           p.stage!=LocalDeliveryStage::Complete || present ||
+           p.stage!=LocalDeliveryStage::Complete ||
            !manifest->contents.empty())
             return std::nullopt;
+        // A real carrier can legitimately accept a SECOND finite pickup
+        // after the first trip was delivered. Do not make an old receipt
+        // disappear merely because the ship now holds the next shipment
+        // of the same good. Attribute every kg to a distinct ORIGINAL
+        // currently-Loaded order on that exact hull; never to this receipt.
+        std::int64_t other_loaded=0;
+        for(const auto& [other_id,other]:world.intercolony_freight()){
+            if(other_id==order_id || other.carrier_ship!=f.carrier_ship ||
+               other.cargo!=f.cargo ||
+               other.stage!=IntercolonyFreightStage::Loaded)continue;
+            if(other.kilograms<=0 || other.kilograms>
+                    std::numeric_limits<std::int64_t>::max()-other_loaded)
+                return std::nullopt;
+            other_loaded+=other.kilograms;
+        }
+        if(present!=other_loaded)return std::nullopt;
         const auto arrival=world.completed_celestial_transits().find(
             f.arrival_receipt);
         if(arrival==world.completed_celestial_transits().end() ||
@@ -101,6 +122,8 @@ inline std::optional<OriginalFreightEvidence> inspect_original_freight_evidence(
            arrival->second.ship!=f.carrier_ship ||
            arrival->second.completed_tick<f.loaded_tick)
             return std::nullopt;
+        view.other_loaded_same_good_kg=other_loaded;
+        view.physically_carried_kg=0; // the delivered lot has left the hull
         view.actual_arrival_proved=true;
         return view;
     }
