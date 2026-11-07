@@ -1290,6 +1290,13 @@ static void scenario(const fs::path& db, bool farming,
                       WorkDirectiveStatus::Fulfilled);
                 CHECK(w.world().work_directives().at(94008).status==
                       WorkDirectiveStatus::Active);
+                const auto in_flight=logistics05::inspect_native_contract_status(
+                    w.world(),7,77007,94007,94008);
+                CHECK(in_flight &&
+                      in_flight->native_pickup==LocalDeliveryStage::Complete &&
+                      in_flight->native_freight==IntercolonyFreightStage::Loaded &&
+                      !in_flight->real_delivery_confirmed &&
+                      in_flight->original_pilot!=0);
             }
             if(autonomous){
                 CHECK(w.queue_npc_flight(7,freighter,autonomous_pilot,
@@ -1307,6 +1314,16 @@ static void scenario(const fs::path& db, bool farming,
                 w.step();
                 CHECK(w.world().work_directives().at(94008).status==
                       WorkDirectiveStatus::Fulfilled);
+                const auto delivered=logistics05::inspect_native_contract_status(
+                    w.world(),7,77007,94007,94008);
+                CHECK(delivered &&
+                      delivered->pickup_status==WorkDirectiveStatus::Fulfilled &&
+                      delivered->freight_status==WorkDirectiveStatus::Fulfilled &&
+                      delivered->native_freight==IntercolonyFreightStage::Delivered &&
+                      delivered->original_arrival_receipt==99023 &&
+                      delivered->real_delivery_confirmed);
+                CHECK(!logistics05::inspect_native_contract_status(
+                    w.world(),8,77007,94007,94008));
             }else CHECK(w.deliver_intercolony_freight(7,77007));
             CHECK(w.world().intercolony_freight().at(77007).arrival_receipt==99023);
             CHECK(w.world().life_support(receiver)->nutrients_kg==to_before+300);
