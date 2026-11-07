@@ -4531,7 +4531,8 @@ Event Simulation::execute(const Command& c) {
                     assigned=worker;
                     result.result=Outcome::Applied;return result;
                 }
-                if(c.action==Action::TrainWorkshopTrade){
+                if(c.action==Action::TrainWorkshopTrade ||
+                   c.action==Action::MentorWorkshopTrade){
                     // Authoritative execution rechecks the owner, custody,
                     // installed station, real supply and duty. A queued order
                     // may become invalid between approval and this tick.
@@ -4549,6 +4550,38 @@ Event Simulation::execute(const Command& c) {
                        (trade==WorkshopTrade::Shape && !w.finisher_installed) ||
                        !npc_available_for_duty(npc_id)){
                         result.result=Outcome::InvalidTarget;return result;
+                    }
+                    const bool mentoring=c.action==Action::MentorWorkshopTrade;
+                    std::uint64_t mentor_id=0,mentor_appointment=0;
+                    if(mentoring){
+                        mentor_id=w.supervisor_npc_id;
+                        mentor_appointment=w.supervisor_appointment_id;
+                        const auto mentor=npcs_.find(mentor_id);
+                        if(!mentor_id || !mentor_appointment || mentor_id==npc_id ||
+                           w.supervisor_trade!=trade || !mentor ||
+                           w.last_mentored_tick==tick_ ||
+                           !workshop_trade_certified(mentor_id,trade) ||
+                           mentor->second.home_ship!=c.actor ||
+                           mentor->second.location!=c.target ||
+                           mentor->second.assigned_site!=c.target ||
+                           mentor->second.role!=NpcRole::Habitat ||
+                           mentor->second.transport_id || mentor->second.mentor_id ||
+                           !npc_available_for_duty(mentor_id)){
+                            result.result=Outcome::InvalidTarget;return result;
+                        }
+                        for(const auto& [site,shop]:workshops_){
+                            (void)site;
+                            if(shop.operator_npc_id==mentor_id ||
+                               shop.finisher_npc_id==mentor_id){
+                                result.result=Outcome::InvalidTarget;return result;
+                            }
+                        }
+                        for(const auto& [id,shift]:medic_shifts_){
+                            (void)id;
+                            if(shift.medic_id==mentor_id && shift.end_tick>tick_){
+                                result.result=Outcome::InvalidTarget;return result;
+                            }
+                        }
                     }
                     unsigned trained=0;
                     for(const auto& credit:ni->second.industrial_training){
@@ -4611,7 +4644,9 @@ Event Simulation::execute(const Command& c) {
                     --utility->second.stored_energy;
                     ++utility->second.consumed_energy;
                     ni->second.industrial_training.push_back(
-                        NpcTradeTraining{c.id,tick_,c.target,trade});
+                        NpcTradeTraining{c.id,tick_,c.target,trade,
+                                         mentor_id,mentor_appointment});
+                    if(mentoring)w.last_mentored_tick=tick_;
                     result.transferred=1;
                     result.result=Outcome::Applied;return result;
                 }
