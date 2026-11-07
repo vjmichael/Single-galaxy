@@ -3720,8 +3720,10 @@ Event Simulation::execute(const Command& c) {
                             }
                             const auto where=site!=entities_.end()?site->second.position:probe.position;
                             DiscoveryRecord report{probe.owner,
-                                probe.drone_target,probe.system,where,tick_,true,
-                                probe.taxonomy};
+                                probe.drone_target,
+                                snapshot_version_>=121 && site!=entities_.end()?
+                                    site->second.system_id:probe.system,
+                                where,tick_,true,probe.taxonomy};
                             if(snapshot_version_>=121){
                                 report.location_z_mm=site!=entities_.end()?
                                     site->second.position_z_mm:probe.position_z_mm;
