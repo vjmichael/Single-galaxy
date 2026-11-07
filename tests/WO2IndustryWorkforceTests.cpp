@@ -528,6 +528,32 @@ int main() {
         CHECK(shifts.world().workshop(site)->operator_npc_id==0);
         CHECK(shifts.world().workshop(site)->cancelled_pending_shifts.empty());
         CHECK(shifts.world().total_material_kg()==initial_mass);
+        // Two separately owner-approved, nonoverlapping future shifts can
+        // replace one another at the exact end-exclusive boundary.
+        const auto first_start=shifts.world().tick()+1;
+        const auto first_end=first_start+2;
+        auto first_shift=workforce02::approved_original_workshop_shift(
+            shifts.world(),7,ship,site,false,first_id,
+            first_start,first_end,440,true);
+        auto next_shift=workforce02::approved_original_workshop_shift(
+            shifts.world(),7,ship,site,false,second_id,
+            first_end,first_end+2,441,true);
+        CHECK(first_shift.has_value() && next_shift.has_value());
+        CHECK(shifts.submit(*first_shift));
+        CHECK(shifts.submit(*next_shift));
+        shifts.step();
+        CHECK(shifts.world().workshop(site)->operator_npc_id==first_id);
+        shifts.step();
+        CHECK(shifts.world().workshop(site)->operator_npc_id==first_id);
+        shifts.step(); // end of first, start of second, zero phantom overlap
+        CHECK(shifts.world().events().back().command_id==441 &&
+              shifts.world().events().back().result==Outcome::Applied);
+        CHECK(shifts.world().workshop(site)->operator_npc_id==second_id);
+        CHECK(shifts.world().workshop(site)->shifts[0].command_id==441);
+        shifts.steps(2);
+        CHECK(shifts.world().workshop(site)->operator_npc_id==0);
+        CHECK(!shifts.world().workshop(site)->shifts[0].command_id);
+        CHECK(shifts.world().total_material_kg()==initial_mass);
         const auto finished_copy=(folder/"wo2i_recovered.sqlite").string();
         PersistentWorld::recover_copy(db,finished_copy);
         PersistentWorld recovered(finished_copy,Simulation(555));
