@@ -230,6 +230,14 @@ int main() {
         }
         CHECK(w.world().workshop_trade_certified(second_id,WorkshopTrade::Shape));
         CHECK(!w.world().workshop_trade_certified(second_id,WorkshopTrade::Cut));
+        // The actual original workshop staffing view reads the same durable
+        // qualification without inventing an employment or training roster.
+        const auto post_training=workforce02::plan_original_workshop(
+            w.world(),7,ship,site);
+        CHECK(post_training[1].gate==workforce02::StaffGate::Ready);
+        CHECK(post_training[1].suggested_npc==second_id);
+        CHECK(workforce02::inspect_trade_qualification(
+            w.world(),second_id,WorkshopTrade::Shape).certified);
         CHECK(w.world().npc_records().at(first_id).industrial_training.size()==3);
         // No duplicate or foreign training receipt can be used to fabricate
         // a credential when restoring the independently validated world.
