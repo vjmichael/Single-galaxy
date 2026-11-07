@@ -8706,7 +8706,7 @@ std::optional<transport::Manifest> Simulation::planetary_transport_manifest(
     manifest.flight_receipt=manifest.in_transit?vessel.flight_request:
         (returning?vessel.descent_receipt:vessel.ascent_receipt);
     manifest.seat_capacity=3;
-    manifest.cargo_capacity_kg=1000;
+    manifest.cargo_capacity_kg=vessel.housing_module?3000:1000;
     for(const auto id:vessel.passenger_ids)
         manifest.contents.push_back({transport::GoodKind::Npc,id,1,0});
     const auto add_stock=[&](transport::ResourceGood kind,std::int64_t kilograms){
