@@ -457,6 +457,7 @@ inline std::optional<Command> approved_workshop_job(
     WorkshopTrade trade,std::uint32_t batches,std::uint64_t id,
     bool owner_confirmed) {
     if(!owner_confirmed || !id || world.has_command_id(id) ||
+       id>static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) ||
        !batches || batches>50 ||
        world.tick()==std::numeric_limits<std::uint64_t>::max())
         return std::nullopt;
