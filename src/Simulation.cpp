@@ -11530,6 +11530,61 @@ void Simulation::step() {
     // destination is coarse; only a real sensor-distance check identifies it.
     if(snapshot_version_>=69)for(auto& [id,probe]:survey_probes_) {
         if(!probe.focus_site||probe.drone_phase)continue;
+        if(snapshot_version_>=121){
+            if(!probe.galactic_authoritative)
+                throw std::runtime_error("unproven original 3D probe custody");
+            constexpr std::int64_t step_mm=5000000;
+            const bool arrived=move_galactic_toward(probe.galactic_position,
+                probe.galactic_focus,step_mm,probe.position,probe.position_z_mm);
+            if(!arrived)continue;
+            const auto target=entities_.find(probe.focus_site);
+            if(target!=entities_.end() &&
+               target->second.type==EntityType::Asteroid &&
+               target->second.system_id==probe.system){
+                const auto& real=target->second;
+                if(!within_galactic_range(real.physical_galactic,
+                    probe.galactic_position,kProbeScanRangeMm) &&
+                   within_galactic_range(real.physical_galactic,
+                    probe.galactic_position,step_mm)){
+                    // Fine waypoint is revealed only after the probe actually
+                    // arrives in the coarse 5km 3D envelope.
+                    probe.galactic_focus=coarse_galactic_point(
+                        real.physical_galactic,25000);
+                    const auto quant=[](std::int64_t v){
+                        constexpr std::int64_t q=25000;
+                        const auto base=(v/q)*q;
+                        const auto r=v%q;
+                        const auto shift=r>=q/2?q:r<=-q/2?-q:0;
+                        return galactic::checked_add(base,shift).value_or(base);
+                    };
+                    probe.focus_waypoint={quant(real.position.x),
+                        quant(real.position.y)};
+                    probe.focus_z_mm=quant(real.position_z_mm);
+                    continue;
+                }
+                const auto key=std::make_pair(probe.owner,probe.focus_site);
+                if(within_galactic_range(real.physical_galactic,
+                        probe.galactic_position,kProbeScanRangeMm) &&
+                   !discoveries_.count(key)&&
+                   !pending_probe_discoveries_.count(key)&&
+                   pending_probe_discoveries_.size()+discoveries_.size()<10000 &&
+                   probe_report_delay_ticks_<=
+                       std::numeric_limits<std::uint64_t>::max()-tick_){
+                    DiscoveryRecord report{probe.owner,probe.focus_site,
+                        probe.system,real.position,tick_,
+                        geology_.count(probe.focus_site)!=0};
+                    report.location_z_mm=real.position_z_mm;
+                    report.galactic_location=real.physical_galactic;
+                    report.galactic_authoritative=true;
+                    pending_probe_discoveries_.emplace(key,
+                        PendingProbeDiscovery{report,probe.carrier,id,
+                            tick_+probe_report_delay_ticks_});
+                }
+            }
+            probe.focus_site=0;probe.focus_waypoint={};
+            probe.focus_z_mm=0;probe.galactic_focus=probe.galactic_position;
+            continue;
+        }
         auto& p=probe.position;
         const auto waypoint=probe.focus_waypoint;
         constexpr std::int64_t step_mm=5000000; // 5 km per simulation tick
@@ -11580,6 +11635,30 @@ void Simulation::step() {
     if(snapshot_version_>=66)for(auto& [id,p]:survey_probes_){
         (void)id;
         if(p.drone_phase!=1 && p.drone_phase!=2)continue;
+        if(snapshot_version_>=121){
+            if(!p.galactic_authoritative)
+                throw std::runtime_error("unproven 3D geological drone");
+            const auto target=entities_.find(p.drone_target);
+            const auto destination=p.drone_phase==1 &&
+                target!=entities_.end() &&
+                target->second.type==EntityType::Asteroid &&
+                target->second.system_id==p.system?
+                    target->second.physical_galactic:p.galactic_home;
+            const bool arrived=move_galactic_toward(p.galactic_position,
+                destination,2000,p.position,p.position_z_mm);
+            if(!arrived)continue;
+            if(p.drone_phase==2){p.drone_phase=3;continue;}
+            if(target!=entities_.end() &&
+               target->second.type==EntityType::Asteroid &&
+               target->second.system_id==p.system &&
+               geology_.count(p.drone_target)){
+                p.sample_ore=0;
+                p.taxonomy=1+static_cast<std::uint8_t>(
+                    geology_.at(p.drone_target).taxonomy);
+            }
+            p.drone_phase=2;
+            continue;
+        }
         const auto& destination=p.drone_phase==1?
             (entities_.count(p.drone_target)?entities_.at(p.drone_target).position:p.drone_home):
             p.drone_home;
@@ -11612,16 +11691,27 @@ void Simulation::step() {
         const auto dx=p.position.x-ship->second.position.x;
         const auto dy=p.position.y-ship->second.position.y;
         constexpr auto range=kDroneControlRangeMm;
-        if(dx<-range || dx>range || dy<-range || dy>range ||
-           dx*dx+dy*dy>range*range)continue;
+        if(snapshot_version_>=121 ?
+           !within_galactic_range(p.galactic_position,
+                                 ship->second.physical_galactic,range) :
+           (dx<-range || dx>range || dy<-range || dy>range ||
+            dx*dx+dy*dy>range*range))continue;
         const auto key=std::make_pair(p.owner,p.drone_target);
         if(auto d=discoveries_.find(key);d!=discoveries_.end()){
             d->second.survey_taxonomy=p.taxonomy;
         }else if(discoveries_.size()<10000){
             const auto rock=entities_.find(p.drone_target);
             const auto position=rock!=entities_.end()?rock->second.position:p.position;
-            discoveries_.emplace(key,DiscoveryRecord{p.owner,p.drone_target,
-                p.system,position,tick_,true,p.taxonomy});
+            DiscoveryRecord found{p.owner,p.drone_target,
+                p.system,position,tick_,true,p.taxonomy};
+            if(snapshot_version_>=121){
+                found.location_z_mm=rock!=entities_.end()?
+                    rock->second.position_z_mm:p.position_z_mm;
+                found.galactic_location=rock!=entities_.end()?
+                    rock->second.physical_galactic:p.galactic_position;
+                found.galactic_authoritative=true;
+            }
+            discoveries_.emplace(key,found);
         }
     }
     // v68: release verified discoveries after the ten-second nominal delay.
@@ -11646,7 +11736,11 @@ void Simulation::step() {
             }
             const auto dx=probe->second.position.x-carrier->second.position.x;
             const auto dy=probe->second.position.y-carrier->second.position.y;
-            if(!within_deep_probe_link(dx,dy)){
+            if(snapshot_version_>=121 ?
+               !within_galactic_range(probe->second.galactic_position,
+                   carrier->second.physical_galactic,
+                   kDeepSpaceProbeCommsRangeMm) :
+               !within_deep_probe_link(dx,dy)){
                 ++it;continue;
             }
         }
