@@ -8378,10 +8378,12 @@ std::int64_t& supply_stack(ColonyLifeSupport& life,ShuttleCargo cargo) {
 bool freight_berth(const Entity& a,const Entity& b) {
     if(a.type!=EntityType::Ship || b.type!=EntityType::Ship ||
        a.dock_state!=DockState::InSpace || b.dock_state!=DockState::InSpace ||
-       a.jump_state!=ShipJumpState::Ready || b.jump_state!=ShipJumpState::Ready ||
-       a.system_id!=b.system_id)return false;
+       a.jump_state!=ShipJumpState::Ready || b.jump_state!=ShipJumpState::Ready)
+        return false;
     if(a.physical_galactic_authoritative || b.physical_galactic_authoritative)
+        // In v120 the physical berth is not bounded by original star labels.
         return within_native_3d_range(a,b,Simulation::kDockingRangeMm);
+    if(a.system_id!=b.system_id)return false;
     const auto dx=a.position.x-b.position.x;
     const auto dy=a.position.y-b.position.y;
     constexpr auto limit=Simulation::kDockingRangeMm;
