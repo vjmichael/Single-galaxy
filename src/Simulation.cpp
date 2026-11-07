@@ -1301,6 +1301,8 @@ bool Simulation::submit(const Command& c) {
             }
             for(const auto& relief:site.utility_handovers)
                 if(c.id && c.id==relief.request_id)return false;
+            for(const auto& project:site.production_projects)
+                if(c.id && c.id==project.order_id)return false;
         }
     if(colony_departures_.count(c.actor) || colony_departures_.count(c.target))return false;
     // Building a hull never creates a pilot. A manufactured uncommissioned
@@ -14710,6 +14712,46 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             std::set<std::uint64_t> founded_npcs,request_ids;
             for(const auto& [key,site]:result.planetary_sites_) {
                 (void)key;
+                if(result.snapshot_version_>=113) {
+                    std::size_t active_builds=0;
+                    for(std::size_t i=0;i<site.production_projects.size();++i) {
+                        const auto& p=site.production_projects[i];
+                        if(!p.phase)continue;
+                        const bool installed=i==0?site.farm:site.extractor;
+                        if(site.housing_phase!=2 || site.utility_phase!=2 ||
+                           (p.phase==1 && installed) ||
+                           (p.phase==2 && !installed) ||
+                           (p.phase==1 && ++active_builds>1) ||
+                           !p.order_id || !p.supervisor ||
+                           !request_ids.insert(p.order_id).second ||
+                           result.submitted_ids_.count(p.order_id) ||
+                           result.shuttle_flight_request_ids_.count(p.order_id) ||
+                           result.local_delivery_orders_.count(p.order_id) ||
+                           result.voyages_.count(p.order_id) ||
+                           result.pending_celestial_transits_.count(p.order_id) ||
+                           result.completed_celestial_transits_.count(p.order_id) ||
+                           p.order_id==site.housing_order_id ||
+                           p.order_id==site.utility_order_id)
+                            throw std::runtime_error("snapshot: invalid production project admission");
+                        const auto worker=result.npcs_.find(p.supervisor);
+                        const auto dead=result.casualties_.find(p.supervisor);
+                        if(worker==result.npcs_.end() &&
+                           dead==result.casualties_.end())
+                            throw std::runtime_error("snapshot: missing original production builder");
+                        const auto& named=worker!=result.npcs_.end()?
+                            worker->second:dead->second.identity;
+                        if(named.home_ship!=site.source_ship ||
+                           std::find(site.delegated_npcs.begin(),
+                                     site.delegated_npcs.end(),
+                                     p.supervisor)==site.delegated_npcs.end() ||
+                           std::count_if(named.industrial_training.begin(),
+                               named.industrial_training.end(),
+                               [](const NpcTradeTraining& credit){
+                                   return credit.trade==WorkshopTrade::Shape;
+                               })<3)
+                            throw std::runtime_error("snapshot: unqualified physical production builder");
+                    }
+                }
                 if(result.snapshot_version_>=110 && site.utility_phase) {
                     if(!site.utility_order_id ||
                        !request_ids.insert(site.utility_order_id).second ||
