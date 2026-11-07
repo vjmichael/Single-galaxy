@@ -9492,6 +9492,110 @@ bool Simulation::assign_planetary_shuttle_pilot(PlayerId owner,EntityId ship,
 }
 
 
+// WO3-E: booking is private host authority, not a new ART02 parentage
+// registry. PersistentWorld proves the original birth/custody SQLite rows
+// before invoking this, in the same single-writer world operation.
+bool Simulation::book_planetary_shuttle_family(PlayerId host_principal,
+        PlayerId owner,EntityId ship,const PlanetarySiteKey& key,
+        std::uint64_t guardian,std::uint64_t co_parent,
+        const std::vector<std::uint64_t>& children,std::uint64_t request_id) {
+    if(host_principal!=kServerAuthority || !owner || owner==kServerAuthority ||
+       !request_id || request_id==std::numeric_limits<std::uint64_t>::max() ||
+       !guardian || guardian==co_parent || children.empty() ||
+       children.size()>2 || !std::is_sorted(children.begin(),children.end()) ||
+       std::adjacent_find(children.begin(),children.end())!=children.end() ||
+       submitted_ids_.count(request_id) ||
+       shuttle_flight_request_ids_.count(request_id) ||
+       voyages_.count(request_id) || local_delivery_orders_.count(request_id) ||
+       pending_celestial_transits_.count(request_id) ||
+       completed_celestial_transits_.count(request_id) ||
+       (legacy_planetary_residence_import_ &&
+        legacy_planetary_residence_import_->host_request_id==request_id))
+        return false;
+    const auto sh=planetary_shuttles_.find(key);
+    const auto site=planetary_sites_.find(key);
+    const auto hull=entities_.find(ship);
+    if(sh==planetary_shuttles_.end() || site==planetary_sites_.end() ||
+       hull==entities_.end() || hull->second.owner_id!=owner ||
+       sh->second.owner!=owner || sh->second.source_ship!=ship ||
+       site->second.owner!=owner || site->second.source_ship!=ship ||
+       site->second.spaceport_phase!=3 || sh->second.flight_phase!=0 ||
+       sh->second.family.stage || !sh->second.pilot_npc ||
+       sh->second.pilot_npc==guardian ||
+       sh->second.pilot_npc==co_parent)return false;
+    for(const auto& [other_key,other]:planetary_shuttles_) {
+        (void)other_key;
+        if(other.family.booking_request==request_id ||
+           other.family.outbound_receipt==request_id ||
+           other.family.return_receipt==request_id)return false;
+    }
+    for(const auto& [other_key,other]:planetary_sites_) {
+        (void)other_key;
+        if(other.housing_order_id==request_id ||
+           other.utility_order_id==request_id)return false;
+        for(const auto& p:other.production_projects)
+            if(p.order_id==request_id)return false;
+        for(const auto& [person,proof]:other.visitor_residency) {
+            (void)person;
+            if(proof[1]==request_id || proof[2]==request_id)return false;
+        }
+    }
+    const auto permitted=[&](std::uint64_t adult) {
+        const auto person=npcs_.find(adult);
+        if(person==npcs_.end() || person->second.home_ship!=ship ||
+           person->second.location!=ship ||
+           person->second.assigned_site!=ship ||
+           person->second.role!=NpcRole::Ship ||
+           person->second.transport_id || !npc_available_for_duty(adult))
+            return false;
+        for(const auto& [other_key,other]:planetary_shuttles_) {
+            if(other_key==key)continue;
+            if(other.pilot_npc==adult ||
+               std::binary_search(other.passenger_ids.begin(),
+                                  other.passenger_ids.end(),adult) ||
+               std::binary_search(other.disembarked_ids.begin(),
+                                  other.disembarked_ids.end(),adult))
+                return false;
+        }
+        return true;
+    };
+    if(!permitted(guardian) || (co_parent && !permitted(co_parent)))
+        return false;
+    const auto& aboard=sh->second.passenger_ids;
+    if(std::binary_search(aboard.begin(),aboard.end(),guardian) ||
+       (co_parent && std::binary_search(aboard.begin(),aboard.end(),co_parent)) ||
+       aboard.size()+children.size()+1+(co_parent?1:0)>3)return false;
+    for(auto id:children){
+        const auto dep=physical_dependents_.find(id);
+        if(id<(1ULL<<62) || dep==physical_dependents_.end() ||
+           dep->second.home_ship!=ship || dep->second.location!=ship ||
+           (dep->second.guardian_id!=guardian &&
+            dep->second.guardian_id!=co_parent) ||
+           npcs_.count(id) || casualties_.count(id))return false;
+    }
+    // A guardian cannot board without every one of their physically
+    // registered co-located dependents. SQLite checks both birth parents.
+    for(const auto& [id,dep]:physical_dependents_) {
+        if(dep.guardian_id!=guardian &&
+           (!co_parent || dep.guardian_id!=co_parent))continue;
+        if(dep.home_ship==ship && dep.location==ship &&
+           !std::binary_search(children.begin(),children.end(),id))
+            return false;
+        if(dep.home_ship==ship && dep.location!=ship)return false;
+    }
+    auto& loaded=sh->second.passenger_ids;
+    loaded.insert(std::lower_bound(loaded.begin(),loaded.end(),guardian),guardian);
+    if(co_parent)
+        loaded.insert(std::lower_bound(loaded.begin(),loaded.end(),co_parent),
+                      co_parent);
+    auto& family=sh->second.family;
+    family.guardian_id=guardian;family.co_parent_id=co_parent;
+    family.booking_request=request_id;family.child_ids=children;
+    family.stage=1;
+    snapshot_version_=std::max(snapshot_version_,116);
+    return true;
+}
+
 bool Simulation::book_planetary_shuttle_passenger(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,std::uint64_t npc,bool board) {
     auto sh=planetary_shuttles_.find(key);
