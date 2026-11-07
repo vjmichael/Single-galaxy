@@ -1,5 +1,6 @@
 #include "galaxy/WO3ColonyOperations.hpp"
 #include "galaxy/Persistence.hpp"
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <iostream>
