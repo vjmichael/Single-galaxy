@@ -4473,6 +4473,7 @@ Event Simulation::execute(const Command& c) {
                     const auto npc=npcs_.find(worker);
                     const auto hab=habitats_.find(c.target);
                     if(sh.command_id || assigned || (slot==1 && !w.finisher_installed) ||
+                       w.supervisor_npc_id==worker ||
                        npc==npcs_.end() || hab==habitats_.end() ||
                        hab->second.source_ship!=c.actor || hab->second.residents<=0 ||
                        npc->second.home_ship!=c.actor ||
@@ -4485,7 +4486,8 @@ Event Simulation::execute(const Command& c) {
                     }
                     for(const auto& [other_site,shop]:workshops_){
                         (void)other_site;
-                        if(shop.operator_npc_id==worker || shop.finisher_npc_id==worker){
+                        if(shop.operator_npc_id==worker || shop.finisher_npc_id==worker ||
+                           shop.supervisor_npc_id==worker){
                             result.result=Outcome::InvalidTarget;return result;
                         }
                         for(const auto& other:shop.shifts)
@@ -4558,7 +4560,7 @@ Event Simulation::execute(const Command& c) {
                         mentor_appointment=w.supervisor_appointment_id;
                         const auto mentor=npcs_.find(mentor_id);
                         if(!mentor_id || !mentor_appointment || mentor_id==npc_id ||
-                           w.supervisor_trade!=trade || !mentor ||
+                           w.supervisor_trade!=trade || mentor==npcs_.end() ||
                            w.last_mentored_tick==tick_ ||
                            !workshop_trade_certified(mentor_id,trade) ||
                            mentor->second.home_ship!=c.actor ||
@@ -4599,7 +4601,8 @@ Event Simulation::execute(const Command& c) {
                     for(const auto& [other_site,shop]:workshops_){
                         (void)other_site;
                         if(shop.operator_npc_id==npc_id ||
-                           shop.finisher_npc_id==npc_id){
+                           shop.finisher_npc_id==npc_id ||
+                           shop.supervisor_npc_id==npc_id){
                             result.result=Outcome::InvalidTarget;return result;
                         }
                     }
