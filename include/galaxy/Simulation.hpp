@@ -1,6 +1,7 @@
 #pragma once
 
 #include "galaxy/Inventory.hpp"
+#include "galaxy/GalacticPhysicalPosition.hpp"
 #include "galaxy/Astronomy.hpp"
 #include "galaxy/PlanetaryGeography.hpp"
 #include "galaxy/NpcTransport.hpp"
@@ -961,6 +962,10 @@ struct Entity {
     // emission cooldown. Both live on this original durable physical ship.
     std::array<bool,2> hardpoint_isolated{{false,false}};
     std::uint64_t last_hack_tick=0;
+    // SPACE-04C/v120: the original physical coordinate. XY/Z above are
+    // compatibility projections and are never long-distance authority.
+    galactic::Point physical_galactic{};
+    bool physical_galactic_authoritative=false;
 };
 
 // PLAY-10: first observation is a durable owner-scoped fact; the source entity
@@ -1299,6 +1304,14 @@ public:
     // bounded XY movement until the host opts into v119 3D mode.
     void enable_native_3d_physics();
     bool native_3d_physics() const {return snapshot_version_>=119;}
+    // Explicit, versioned upgrade with independently registered immutable
+    // original-star origins. Never infer absolute geography from client XY.
+    void enable_native_galactic_physics(
+        const std::map<std::uint32_t,galactic::Point>& registered_origins);
+    bool native_galactic_physics() const {return snapshot_version_>=120;}
+    const std::map<std::uint32_t,galactic::Point>& galactic_system_origins() const {
+        return galactic_system_origins_;
+    }
     const std::map<EntityId,ShipFrameCustody>& ship_frames() const {return ship_frames_;}
     const std::map<std::uint64_t,PendingCelestialTransit>& pending_celestial_transits() const {
         return pending_celestial_transits_;
@@ -1752,6 +1765,9 @@ private:
 
     std::uint32_t system_id_;
     std::set<std::uint32_t> systems_;
+    // v120 original snapshot owns the immutable system geography after
+    // a verified host import; SQLite origin registry remains provenance.
+    std::map<std::uint32_t,galactic::Point> galactic_system_origins_;
     std::uint64_t tick_ = 0;
     std::uint64_t next_entity_id_ = 1;
     std::uint64_t rng_state_;
