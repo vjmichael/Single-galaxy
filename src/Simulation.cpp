@@ -3186,7 +3186,7 @@ Event Simulation::execute(const Command& c) {
             ship.hull=0;ship.weapon_charges=0;ship.last_weapon_tick=0;ship.training_drone=false;
             // Preserve former ship owner for salvage claims and victim attribution.
             // The Wreck entity is never an executable player ship.
-            ship.velocity={};
+            ship.velocity={};ship.velocity_z_mm_per_tick=0;
             activity_events_.push_back({tick_,ActivityKind::ShipDestroyed,c.id,c.actor,c.target,Outcome::Applied,0});
             snapshot_version_=std::max(snapshot_version_,21);
             result.result=Outcome::Applied;return result;
