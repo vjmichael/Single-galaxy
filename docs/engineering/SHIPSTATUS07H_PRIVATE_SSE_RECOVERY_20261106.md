@@ -24,6 +24,8 @@ The 07H repair:
 - More than 4,096 private records delivered after subscription trigger `resync`, discard the truncated prefix/suffix, request a second native refresh, deliver only the new owner-8 security snapshot, and terminate cleanly.
 - The existing secondary-account native command allowlist remains intact; owner 8 is not granted flight, cargo, combat, territory or police authority.
 
+The `tests/SHIPSTATUS07H_SecurityOnlyClientTests.js` regression runs the actual standalone browser JavaScript with controlled DOM, EventSource and authenticated-session fixtures, asserting that a `resync` clears stale private UI without logout, rejects SGVIEW and owner envelopes, resumes native security frames, restricts commands, and closes on session failure. It is registered in the **existing unified** Windows/Linux syntax and relay test step. Execution is still pending.
+
 The original `SHIPSTATUS07G_LiveTwoHumanHostTests.py` and Linux Chromium two-human source-built smoke remain the real-host integration gates, not substitutes for installed Windows game acceptance. The unified workflow already runs this Python regression; actual **execution and any subsequent failure repairs remain open**. No new CI matrix or independent stacked PR is required.
 
 ## Security invariants
