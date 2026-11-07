@@ -96,10 +96,12 @@ public:
                 SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX,nullptr)!=SQLITE_OK)
                 throw std::runtime_error("agency must use original SQLite world");
             sqlite3_busy_timeout(db_,10000);
-            Stmt q(db_,"SELECT 1 FROM sqlite_master WHERE "
-                "type='table' AND name='snapshots'");
-            if(sqlite3_step(q.p)!=SQLITE_ROW)
-                throw std::runtime_error("agency refuses a fake second world");
+            {
+                Stmt q(db_,"SELECT 1 FROM sqlite_master WHERE "
+                    "type='table' AND name='snapshots'");
+                if(sqlite3_step(q.p)!=SQLITE_ROW)
+                    throw std::runtime_error("agency refuses a fake second world");
+            }
             sql(db_,"CREATE TABLE IF NOT EXISTS sg_colony_law07j ("
                 "event INTEGER PRIMARY KEY,owner INTEGER NOT NULL,"
                 "colony INTEGER NOT NULL,government INTEGER NOT NULL,"
