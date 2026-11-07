@@ -113,7 +113,7 @@ struct PhysicalCelestialBody {
 };
 
 enum class EntityType { Ship, Asteroid, Station, Stargate, Wreck };
-enum class Action { Thrust, Mine, StartMining, StopMining, RequestUndock, RequestDock, UnloadOre, LoadOre, SellOre, RequestJump, SetGatePairOnline, SetGateStaff, DeliverGateSpares, RefineOre, FabricateModule, ConstructOutpost, RefineMineral, FabricateMaterialModule, PlantCrops, HarvestCrops, RecycleWater, RecycleCompost, ProduceOxygen, LoadLifeWater, ConstructFarm, TransferFarmStock, AssignFarmWorkers, ConstructHabitat, TransferHabitatStock, AssignHabitatResidents, ConstructUtility, RepairUtility, TransferUtilitySpares, AssignUtilityTechnicians, SetUtilityMaintenance, ConstructCommunity, TransferCommunityStock, AssignCommunityStaff, ConstructClinic, TransferClinicStock, AssignClinicStaff, ConstructReclaimer, ConstructWaterworks, TransferWaterworksFeed, SetPolicyAssurance, AssignPolicyInspectors, AssignFarmMentor, HostDestroyShip, HostCrewLoss, ConstructWorkshop, TransferWorkshopFeed, AssignWorkshopOperator, TransferWorkshopOutput, ConstructWorkshopFinisher, AssignWorkshopFinisher, TransferWorkshopFinalOutput, TransferWorkshopStack, ConstructStorage, TransferStorageStack, ConstructStorageNode, TransferStorageNodeStack, ConstructStorageLink, ConstructWorkshopLink, PlaceFactoryEquipment, PlaceConveyorCell, CompleteConveyorRoute, HostEmbarkPassengers, HostDisembarkPassengers, HostStrandFerry, HostResumeFerry, HostEvacuatePassengers, HostDestroyPassengerFerry, HostResolveMixedFerryLoss, HostTrainMedic, HostTriageRescued, HostTreatInjuries, HostScheduleMedicShift, HostLoadMedicalKit, HostMobileStabilize, HostSettleMigrant, HostSplitEvacuatePassengers, HostEscrowConstructedStock, HostReturnConstructedStock, HostTransferConsignedStock, HostColonyDeparture, HostRegisterDependent, FireTrainingWeapon, SalvageWreck, SurveyLocal, ConfigureExplorationScanner, DeploySurveyProbe, ScanSurveyProbe, RecoverSurveyProbe, LaunchGeologicalDrone, FocusSurveyProbe, CancelSurveyFocus, SetHardpointPower, ConfigureCyberModule, SetCyberIsolation, HackConfuse, FireShipWeapon, TrainWorkshopTrade, StartWorkshopShift, CancelWorkshopShift, RelieveWorkshopShift };
+enum class Action { Thrust, Mine, StartMining, StopMining, RequestUndock, RequestDock, UnloadOre, LoadOre, SellOre, RequestJump, SetGatePairOnline, SetGateStaff, DeliverGateSpares, RefineOre, FabricateModule, ConstructOutpost, RefineMineral, FabricateMaterialModule, PlantCrops, HarvestCrops, RecycleWater, RecycleCompost, ProduceOxygen, LoadLifeWater, ConstructFarm, TransferFarmStock, AssignFarmWorkers, ConstructHabitat, TransferHabitatStock, AssignHabitatResidents, ConstructUtility, RepairUtility, TransferUtilitySpares, AssignUtilityTechnicians, SetUtilityMaintenance, ConstructCommunity, TransferCommunityStock, AssignCommunityStaff, ConstructClinic, TransferClinicStock, AssignClinicStaff, ConstructReclaimer, ConstructWaterworks, TransferWaterworksFeed, SetPolicyAssurance, AssignPolicyInspectors, AssignFarmMentor, HostDestroyShip, HostCrewLoss, ConstructWorkshop, TransferWorkshopFeed, AssignWorkshopOperator, TransferWorkshopOutput, ConstructWorkshopFinisher, AssignWorkshopFinisher, TransferWorkshopFinalOutput, TransferWorkshopStack, ConstructStorage, TransferStorageStack, ConstructStorageNode, TransferStorageNodeStack, ConstructStorageLink, ConstructWorkshopLink, PlaceFactoryEquipment, PlaceConveyorCell, CompleteConveyorRoute, HostEmbarkPassengers, HostDisembarkPassengers, HostStrandFerry, HostResumeFerry, HostEvacuatePassengers, HostDestroyPassengerFerry, HostResolveMixedFerryLoss, HostTrainMedic, HostTriageRescued, HostTreatInjuries, HostScheduleMedicShift, HostLoadMedicalKit, HostMobileStabilize, HostSettleMigrant, HostSplitEvacuatePassengers, HostEscrowConstructedStock, HostReturnConstructedStock, HostTransferConsignedStock, HostColonyDeparture, HostRegisterDependent, FireTrainingWeapon, SalvageWreck, SurveyLocal, ConfigureExplorationScanner, DeploySurveyProbe, ScanSurveyProbe, RecoverSurveyProbe, LaunchGeologicalDrone, FocusSurveyProbe, CancelSurveyFocus, SetHardpointPower, ConfigureCyberModule, SetCyberIsolation, HackConfuse, FireShipWeapon, TrainWorkshopTrade, StartWorkshopShift, CancelWorkshopShift, RelieveWorkshopShift, AppointWorkshopSupervisor, MentorWorkshopTrade, ApproveWorkshopJob, CancelWorkshopJob };
 enum class Outcome { Applied, InvalidActor, Unauthorized, InvalidTarget, OutOfRange, InvalidArgument, NoResources, CargoFull, NotMining, NotInSpace, NotDocked, InTransition, ShipMoving, HangarFull, InsufficientFunds, WrongSystem, GateOffline, NotColonyShip, InsufficientCrew, ModuleOffline, CooldownActive, AttackResisted };
 enum class ActivityKind { AsteroidDespawned, AutoMiningTransfer, MiningStopped, Undocked, Docked, JumpCompleted, ShipDestroyed, NpcLost, AutoStorageTransfer, NpcRendezvous, PlayerRescued };
 enum class DockState { InSpace, Docked, Undocking, Docking };
@@ -264,6 +264,9 @@ struct NpcTradeTraining {
     std::uint64_t command_id=0, tick=0;
     EntityId workshop_site=0;
     WorkshopTrade trade=WorkshopTrade::Cut;
+    // WO2-J: absent on solitary WO2-H practice; immutable original mentor
+    // and appointment receipt IDs for supervised physical practice.
+    std::uint64_t mentor_id=0,supervisor_appointment_id=0;
 };
 struct NpcRecord {
     std::uint64_t id=0;
@@ -717,6 +720,17 @@ struct WorkshopShift {
         return command_id && start_tick<=tick && tick<end_tick;
     }
 };
+// One explicit owner-approved work program per installed real machine.
+// Only the actual native completed_batches counter can satisfy its quota.
+struct WorkshopJobApproval {
+    std::uint64_t command_id=0,supervisor_appointment_id=0;
+    std::uint64_t approved_tick=0,baseline_batches=0;
+    std::uint32_t target_batches=0;
+    std::uint64_t supervisor_npc_id=0;
+    std::uint64_t achieved(std::uint64_t actual) const noexcept {
+        return actual>baseline_batches?actual-baseline_batches:0;
+    }
+};
 struct OutpostWorkshop {
     EntityId source_ship=0;
     std::int64_t embodied_ore=2; // consumes one real construction module
@@ -739,6 +753,11 @@ struct OutpostWorkshop {
     // per shop. The pending commands remain in the original SQLite journal,
     // and execute as rejected instead of silently disappearing on recovery.
     std::set<std::uint64_t> cancelled_pending_shifts{};
+    // WO2-J: the *existing* workshop owns this appointment. A manager is a
+    // real local certified NPC, never an independently created worker.
+    std::uint64_t supervisor_npc_id=0,supervisor_appointment_id=0;
+    WorkshopTrade supervisor_trade=WorkshopTrade::Cut;
+    std::array<WorkshopJobApproval,2> approved_jobs{};
 };
 // ECON-02B2b: player-built, site-bound 4 m3 mixed-stack container.
 // For this first real-world gate only one can be built at each outpost.
