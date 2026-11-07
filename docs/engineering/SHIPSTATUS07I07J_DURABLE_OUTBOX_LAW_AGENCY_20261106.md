@@ -42,3 +42,8 @@ The original combined `.github/workflows/ship-status02-authoritative.yml` now in
 ## Next independent development
 
 Extend the transactional outbox producer pattern to **other authoritative event journals** (especially witnessed cyber case creation and territorial notices), and add explicitly acknowledged per-owner historical notification browsing if desired. Connect lawful, resource-backed agency investigative tasks with independent authorization and controlled physical NPC navigation before any NPC arrests or coercive responses; adopt due process/appeals independently. 3D graphics and installed native Windows acceptance remain deferred by project direction.
+
+
+## Continuation / supersession — STATUS-07K/07L
+
+The later user-directed work extends the original 07I/07J implementation without replacing its SQLite outbox, law agency or world writer. [See 07K/07L active engineering specification](SHIPSTATUS07K07L_TERRITORY_CYBER_NOTIFICATIONS_NATIVE_INVESTIGATION_20261106.md) for same-transaction territory/cyber notification producers, legacy 7→15 schema migration, staff-qualified native Patrol investigation admission and source-flight crash/restart reconciliation. The original 07I/07J evidence/authority rules remain mandatory. Native exact-head CI acceptance is still pending; installed Windows 3D remains deferred.
