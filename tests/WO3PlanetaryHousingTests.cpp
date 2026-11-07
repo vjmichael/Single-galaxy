@@ -158,7 +158,9 @@ int main() {
         const auto census=colony03::audit_planetary_surface(
             migrated,7,ship,key);
         CHECK(census && !census->permanent_housing_installed &&
-              census->unused_housing_capacity==0);
+              census->unused_housing_capacity==0 &&
+              census->historical_legal_address_holders==1 &&
+              census->original_permanent_residents==0);
         CHECK(Simulation::from_snapshot(migrated.canonical_state()).
               state_hash()==migrated.state_hash());
         auto forged=migrated.canonical_state();
