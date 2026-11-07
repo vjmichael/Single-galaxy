@@ -910,6 +910,10 @@ public:
     bool set_planetary_housing_pause(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,bool pause,
         FailPoint fail=FailPoint::None);
+    bool settle_planetary_founder(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc_id,
+        std::uint64_t request_id,bool voluntary_consent_attested,
+        FailPoint fail=FailPoint::None);
     // Player's finite local logistics work board. NPC fulfillment advances
     // only within the existing atomic world step; no parallel job database.
     // One atomic construction admission: the same committed world debits
