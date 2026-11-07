@@ -99,15 +99,42 @@ bool execute(const std::string& executable,const CellProcessTask& task,
                                &limits,sizeof(limits))){
         close(job);close(readpipe);close(writepipe);return false;
     }
-    STARTUPINFOW startup{};
-    startup.cb=sizeof(startup);
-    startup.dwFlags=STARTF_USESTDHANDLES;
-    startup.hStdOutput=writepipe;
-    startup.hStdError=writepipe;
-    startup.hStdInput=GetStdHandle(STD_INPUT_HANDLE);
-    const bool started=CreateProcessW(binary.c_str(),writable.data(),
-        nullptr,nullptr,TRUE,CREATE_NO_WINDOW|CREATE_SUSPENDED,
-        nullptr,nullptr,&startup,&child)!=FALSE;
+    // Never inherit arbitrary original host/SQLite/IPC handles.
+    // Windows' explicit handle-list attribute permits only a private
+    // read-only NUL input and this child's bounded report output pipe.
+    HANDLE input=CreateFileW(L"NUL",GENERIC_READ,
+        FILE_SHARE_READ|FILE_SHARE_WRITE,&attrs,OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,nullptr);
+    if(input==INVALID_HANDLE_VALUE){
+        close(job);close(readpipe);close(writepipe);return false;
+    }
+    SIZE_T bytes=0;
+    (void)InitializeProcThreadAttributeList(nullptr,1,0,&bytes);
+    if(!bytes){
+        close(input);close(job);close(readpipe);close(writepipe);return false;
+    }
+    std::vector<unsigned char> backing(bytes);
+    STARTUPINFOEXW startup{};
+    startup.StartupInfo.cb=sizeof(startup);
+    startup.StartupInfo.dwFlags=STARTF_USESTDHANDLES;
+    startup.StartupInfo.hStdOutput=writepipe;
+    startup.StartupInfo.hStdError=writepipe;
+    startup.StartupInfo.hStdInput=input;
+    startup.lpAttributeList=
+        reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(backing.data());
+    if(!InitializeProcThreadAttributeList(startup.lpAttributeList,1,0,&bytes)){
+        close(input);close(job);close(readpipe);close(writepipe);return false;
+    }
+    HANDLE allowed[2]={writepipe,input};
+    const bool restricted=UpdateProcThreadAttribute(startup.lpAttributeList,
+        0,PROC_THREAD_ATTRIBUTE_HANDLE_LIST,allowed,sizeof(allowed),
+        nullptr,nullptr)!=FALSE;
+    const bool started=restricted &&
+        CreateProcessW(binary.c_str(),writable.data(),nullptr,nullptr,TRUE,
+            CREATE_NO_WINDOW|CREATE_SUSPENDED|EXTENDED_STARTUPINFO_PRESENT,
+            nullptr,nullptr,&startup.StartupInfo,&child)!=FALSE;
+    DeleteProcThreadAttributeList(startup.lpAttributeList);
+    close(input);
     close(writepipe);
     if(!started){close(job);close(readpipe);return false;}
     const bool assigned=AssignProcessToJobObject(job,child.hProcess)!=FALSE;
