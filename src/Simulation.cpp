@@ -3480,6 +3480,14 @@ Event Simulation::execute(const Command& c) {
                 }
                 DeployedSurveyProbe drone{c.id,c.actor,c.issuer,actor.system_id,actor.position,tick_};
                 drone.drone_phase=1;drone.drone_target=c.target;drone.drone_home=actor.position;
+                if(snapshot_version_>=121){
+                    drone.position_z_mm=actor.position_z_mm;
+                    drone.drone_home_z_mm=actor.position_z_mm;
+                    drone.galactic_position=actor.physical_galactic;
+                    drone.galactic_home=actor.physical_galactic;
+                    drone.galactic_focus=actor.physical_galactic;
+                    drone.galactic_authoritative=true;
+                }
                 survey_probes_.emplace(c.id,drone);
                 --actor.survey_probes_carried;
                 result.transferred=1;result.result=Outcome::Applied;
@@ -3494,12 +3502,19 @@ Event Simulation::execute(const Command& c) {
                     result.result=Outcome::InvalidTarget;return result;
                 }
                 auto& survey=probe_it->second;
-                if(!within_deep_probe_link(survey.position.x-actor.position.x,
+                if(snapshot_version_>=121 ?
+                   !within_galactic_range(survey.galactic_position,
+                      actor.physical_galactic,kDeepSpaceProbeCommsRangeMm) :
+                   !within_deep_probe_link(survey.position.x-actor.position.x,
                                            survey.position.y-actor.position.y)){
                     result.result=Outcome::OutOfRange;return result;
                 }
                 if(c.action==Action::CancelSurveyFocus){
                     survey.focus_site=0;survey.focus_waypoint={};
+                    if(snapshot_version_>=121){
+                        survey.focus_z_mm=0;
+                        survey.galactic_focus=survey.galactic_position;
+                    }
                     result.result=Outcome::Applied;return result;
                 }
                 if(survey.focus_site){
@@ -3515,13 +3530,28 @@ Event Simulation::execute(const Command& c) {
                 }
                 survey.focus_site=found->id;
                 survey.focus_waypoint=found->coarse;
+                if(snapshot_version_>=121){
+                    const auto& physical=entities_.at(found->id);
+                    survey.focus_z_mm=found->coarse_z_mm;
+                    survey.galactic_focus=coarse_galactic_point(
+                        physical.physical_galactic,5000000);
+                }
                 snapshot_version_=std::max(snapshot_version_,69);
                 result.result=Outcome::Applied;
             }else if(c.action==Action::DeploySurveyProbe){
                 if(!actor.survey_probes_carried){result.result=Outcome::NoResources;return result;}
                 if(survey_probes_.size()>=1000){result.result=Outcome::InvalidArgument;return result;}
-                survey_probes_.emplace(c.id,DeployedSurveyProbe{
-                    c.id,c.actor,c.issuer,actor.system_id,actor.position,tick_});
+                DeployedSurveyProbe probe{
+                    c.id,c.actor,c.issuer,actor.system_id,actor.position,tick_};
+                if(snapshot_version_>=121){
+                    probe.position_z_mm=actor.position_z_mm;
+                    probe.drone_home_z_mm=actor.position_z_mm;
+                    probe.galactic_position=actor.physical_galactic;
+                    probe.galactic_home=actor.physical_galactic;
+                    probe.galactic_focus=actor.physical_galactic;
+                    probe.galactic_authoritative=true;
+                }
+                survey_probes_.emplace(c.id,probe);
                 --actor.survey_probes_carried;
                 result.transferred=1;result.result=Outcome::Applied;
             }else{
@@ -3539,7 +3569,10 @@ Event Simulation::execute(const Command& c) {
                     // so this limit will become meaningful with cosmic scaling.
                     const auto dx=probe.position.x-actor.position.x;
                     const auto dy=probe.position.y-actor.position.y;
-                    if(!within_deep_probe_link(dx,dy)){
+                    if(snapshot_version_>=121 ?
+                       !within_galactic_range(probe.galactic_position,
+                          actor.physical_galactic,kDeepSpaceProbeCommsRangeMm):
+                       !within_deep_probe_link(dx,dy)){
                         result.result=Outcome::OutOfRange;return result;
                     }
                     std::vector<DiscoveryRecord> candidates;
@@ -11367,12 +11400,16 @@ std::vector<Simulation::SignatureHint> Simulation::coarse_probe_signatures(
     for(const auto& [id,e]:entities_) {
         if(e.type!=EntityType::Asteroid||e.system_id!=carrier->second.system_id||
            !same_local_frame(ship,id)||discoveries_.count({owner,id}))continue;
-        if(std::hypot(double(e.position.x)-carrier->second.position.x,
+        if(snapshot_version_>=121){
+            if(!within_galactic_range(e.physical_galactic,
+                carrier->second.physical_galactic,range_mm))continue;
+        }else if(std::hypot(double(e.position.x)-carrier->second.position.x,
                       double(e.position.y)-carrier->second.position.y)>radius)continue;
         const auto quant=[](std::int64_t value){
             return (value>=0 ? (value+q/2)/q : -((-value+q/2)/q))*q;
         };
-        result.push_back({id,{quant(e.position.x),quant(e.position.y)},5000000});
+        result.push_back({id,{quant(e.position.x),quant(e.position.y)},
+            5000000,snapshot_version_>=121?quant(e.position_z_mm):0});
         if(result.size()>=128)break;
     }
     return result;
