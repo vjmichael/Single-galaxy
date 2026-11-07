@@ -517,6 +517,16 @@ struct PlanetaryServiceProject {
     std::uint64_t stalled_ticks=0,completed_tick=0,powered_cycles=0;
     bool paused=false;
 };
+// WO3-E/v118: one owner-attested, physically admitted ART02 household.
+/// Original high-range dependents are NOT workers or generated NPCs.
+/// Return receipts remain immutable even after all members reach home.
+struct PlanetaryHouseholdResidence {
+    std::uint64_t co_parent_id=0,booking_request=0,arrival_receipt=0;
+    std::uint64_t admission_request=0,admission_tick=0;
+    std::uint64_t return_request=0,return_tick=0;
+    std::uint8_t consent_mask=0; // both original parent attestations (3)
+    std::vector<std::uint64_t> child_ids;
+};
 struct PlanetarySiteFacility {
     planetary::PlanetaryRegionKey region{};
     PlayerId owner=0;
@@ -580,6 +590,7 @@ struct PlanetarySiteFacility {
     // Each project has one exact material escrow and qualified original NPC.
     std::array<PlanetaryServiceProject,2> service_projects{};
     std::array<std::vector<PlanetaryUtilityHandover>,2> service_handovers{};
+    std::map<std::uint64_t,PlanetaryHouseholdResidence> households{}; // v118
     // WO3-E/v111: historical arrivals and voluntary departures of actual
     // independent adult visitors. {descent receipt, admit request, exit request};
     // an exit receipt remains forever to prevent request/identity replay.
@@ -1495,6 +1506,18 @@ public:
         std::uint64_t request_id);
     // After verified return to the parent ship, clear the active family
     // booking while retaining its immutable once-used original request ID.
+    // v118: an explicit approved ART02 family census/physical residency
+    // bridge, NOT ordinary adult visitor immigration. PersistentWorld must
+    // complete matched SQLite family+regional effects in its writer lock.
+    bool settle_planetary_household(PlayerId host_principal,PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,
+        std::uint64_t request_id,bool guardian_consent,bool co_parent_consent);
+    bool book_planetary_household_return(PlayerId host_principal,PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,
+        std::uint64_t guardian,std::uint64_t request_id);
+    bool finalize_planetary_household_return(PlayerId host_principal,
+        PlayerId owner,EntityId ship,const PlanetarySiteKey& key,
+        std::uint64_t guardian,std::uint64_t request_id);
     bool release_planetary_shuttle_family(PlayerId host_principal,
         PlayerId owner,EntityId ship,const PlanetarySiteKey& key);
     bool book_planetary_shuttle_passenger(PlayerId owner,EntityId ship,
