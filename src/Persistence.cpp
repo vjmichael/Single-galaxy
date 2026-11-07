@@ -9364,6 +9364,35 @@ bool PersistentWorld::set_planetary_housing_pause(PlayerId owner,EntityId ship,
     return true;
 }
 
+bool PersistentWorld::start_planetary_surface_utility(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,std::uint64_t id,
+        std::uint64_t supervisor,FailPoint fail) {
+    auto next=world_;
+    if(!next.start_planetary_surface_utility(owner,ship,key,id,supervisor))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 surface utility fabricated physical matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::pause_planetary_surface_utility(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,bool pause,FailPoint fail) {
+    auto next=world_;
+    if(!next.pause_planetary_surface_utility(owner,ship,key,pause))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 surface utility pause changed physical matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
 bool PersistentWorld::settle_planetary_founder(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,std::uint64_t npc_id,std::uint64_t request_id,
         bool voluntary_consent_attested,FailPoint fail) {
