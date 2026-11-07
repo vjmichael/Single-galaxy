@@ -1,4 +1,5 @@
 #include "galaxy/CyberIncidentJournal.hpp"
+#include "galaxy/ShipNotificationOutbox.hpp"
 #include "galaxy/ShipSensorProfile.hpp"
 #include <sqlite3.h>
 #include <algorithm>
@@ -114,6 +115,7 @@ CyberIncidentJournal::CyberIncidentJournal(
             if(sqlite3_step(schema.stmt)!=SQLITE_ROW)
                 throw std::runtime_error("cyber casebook requires original world snapshots");
         }
+        ship_notifications::Outbox::ensure_schema(state_->db);
         exec(state_->db,"PRAGMA foreign_keys=ON");
         exec(state_->db,
             "CREATE TABLE IF NOT EXISTS sg_ship_status07_incidents ("
@@ -404,6 +406,16 @@ bool CyberIncidentJournal::intake(
                     sqlite3_errmsg(state_->db));
         if(fail==CyberIntakeFailPoint::AfterInsert)
             throw std::runtime_error("cyber casebook injected crash before COMMIT");
+        const auto* jurisdiction=world.world().find(colony);
+        if(!jurisdiction || !jurisdiction->owner_id)
+            throw std::runtime_error("missing original jurisdiction owner");
+        // Neither an anonymous case nor an observed signature reveals who
+        // controlled the attacking ship. Original case + both actual
+        // recipient notices are committed/rolled back as one SQLite unit.
+        ship_notifications::Outbox::record_cyber_case(state_->db,
+            jurisdiction->owner_id,colony,case_record.victim_owner,
+            case_record.victim_ship,case_record.case_id,
+            case_record.command_id,case_record.world_tick);
         exec(state_->db,"COMMIT");
         transaction=false;
         return true;
@@ -526,6 +538,15 @@ bool CyberIncidentJournal::link_authenticated_hail(
                 throw std::runtime_error("native cyber hail link insert failed");
             previous=link.digest;
         }
+        // There may be several earlier original cases linked by a single
+        // later authorized hail. Notify the genuine jurisdiction once and
+        // leave each separate immutable link in the source casebook.
+        const auto* source=world.world().find(jurisdiction_colony);
+        if(!source || !source->owner_id || to_link.empty())
+            throw std::runtime_error("later hail link has no jurisdiction");
+        ship_notifications::Outbox::record_cyber_link(state_->db,
+            source->owner_id,actual_hail_reply_event,visitor_ship,
+            authenticated_owner,to_link.front().case_id,world.world().tick());
         exec(state_->db,"COMMIT");
         committed=true;
         return true;
