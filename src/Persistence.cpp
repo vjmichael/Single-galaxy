@@ -9082,6 +9082,19 @@ bool PersistentWorld::book_planetary_shuttle_family(PlayerId owner,
     ++generation_;
     return true;
 }
+bool PersistentWorld::release_planetary_shuttle_family(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,FailPoint fail) {
+    auto next=world_;
+    if(!next.release_planetary_shuttle_family(
+        Simulation::kServerAuthority,owner,ship,key))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("family return clearance altered matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
 bool PersistentWorld::book_planetary_shuttle_passenger(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,std::uint64_t npc,bool board,FailPoint fail) {
     for(const auto& [id,p]:world_.pending_celestial_transits_) {
