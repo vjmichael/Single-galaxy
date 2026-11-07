@@ -4078,13 +4078,30 @@ public:
                    order->second.issuer!=ship->owner_id ||
                    order->second.thrust_x!=static_cast<int>(slot+1) ||
                    order->second.amount!=static_cast<std::int64_t>(job.target_batches) ||
-                   job.supervisor_appointment_id!=shop.supervisor_appointment_id ||
-                   job.supervisor_npc_id!=shop.supervisor_npc_id ||
+                   (shop.supervisor_npc_id &&
+                    (job.supervisor_appointment_id!=shop.supervisor_appointment_id ||
+                     job.supervisor_npc_id!=shop.supervisor_npc_id)) ||
                    ev->second.tick!=order->second.execute_tick ||
                    ev->second.tick!=job.approved_tick ||
                    ev->second.result!=Outcome::Applied ||
                    ev->second.transferred!=0)
                     throw std::runtime_error("SQLite: job missing original owner approval");
+                // Supervisor withdrawal does not erase the owner's quota.
+                // Independently prove the original prior appointment even
+                // when the active manager slot is empty/suspended.
+                const auto app=journal_commands.find(job.supervisor_appointment_id);
+                const auto appointment=event_by_id.find(job.supervisor_appointment_id);
+                if(app==journal_commands.end() || appointment==event_by_id.end() ||
+                   app->second.action!=Action::AppointWorkshopSupervisor ||
+                   app->second.actor!=shop.source_ship ||
+                   app->second.issuer!=ship->owner_id ||
+                   app->second.target!=site ||
+                   app->second.amount!=static_cast<std::int64_t>(job.supervisor_npc_id) ||
+                   app->second.thrust_x!=static_cast<int>(slot+1) ||
+                   appointment->second.result!=Outcome::Applied ||
+                   appointment->second.tick!=app->second.execute_tick ||
+                   appointment->second.tick>=job.approved_tick)
+                    throw std::runtime_error("SQLite: suspended job has no genuine supervisor provenance");
             }
         }
         // WO2-H/J: original SQLite accepted-command history proves the exact
