@@ -186,6 +186,13 @@ int main() {
     CHECK(recovered.settle_planetary_founder(7,ship,key,roster[0],81300,true));
     CHECK(recovered.settle_planetary_founder(7,ship,key,roster[1],81301,true));
     CHECK(recovered.world().state_hash()==w.world().state_hash());
+    Command forged_reuse{};
+    forged_reuse.id=81300;
+    forged_reuse.sequence=81300;
+    forged_reuse.execute_tick=w.world().tick()+1;
+    forged_reuse.issuer=7;forged_reuse.actor=ship;
+    forged_reuse.action=Action::Thrust;
+    CHECK(!w.submit(forged_reuse)); // original founder admission owns this ID
     CHECK((w.world().npc_records().at(roster[0]).legal_residence()==
         transport::Endpoint{transport::LocationKind::PlanetarySite,
                             w.world().planetary_sites().at(key).surface_location}));
