@@ -7172,7 +7172,8 @@ public:
                 const std::vector<ActivityEvent>& activity_delta, FailPoint fail,
                 const NpcMiningAssignment* npc_mining_assignment=nullptr,
                 const NpcFabricationAssignment* npc_fabrication_assignment=nullptr,
-                const std::function<void(sqlite3*,std::uint64_t)>& society_effect={}) {
+                const std::function<void(sqlite3*,std::uint64_t)>& society_effect={},
+                const NativeCellWorkerTick* cell_worker_token=nullptr) {
         if (state.total_ore() != origin || state.total_credits() != credit_origin)
             throw std::runtime_error("resource or credit conservation violation");
         const auto bytes = state.canonical_state();
@@ -7871,6 +7872,66 @@ public:
             // solely in original Simulation. A fault rolls both back.
             spatial::record_native_world_commit(
                 db_,state,expected_generation,next);
+            // SPACE-05: one authoritative admission point for EVERY native
+            // world-changing PersistentWorld API. Previously only step()
+            // checked leases, so submit/host operations could bypass them.
+            // This executes after the original spatial-index update but
+            // before COMMIT, inside the same BEGIN IMMEDIATE lock.
+            Statement lease_table(db_,"SELECT COUNT(*) FROM sqlite_master "
+               "WHERE type='table' AND name='sg_spatial_worker_lease'");
+            if(!lease_table.row())
+                throw std::runtime_error("spatial worker registry unreadable");
+            if(sqlite3_column_int64(lease_table.get(),0)==0){
+                if(cell_worker_token)
+                    throw std::runtime_error("no worker registry for leased commit");
+            }else{
+                Statement lease_count(db_,"SELECT COUNT(*) FROM sg_spatial_worker_lease");
+                if(!lease_count.row())
+                    throw std::runtime_error("spatial lease count unreadable");
+                const auto count=sqlite3_column_int64(lease_count.get(),0);
+                if(count==0){
+                    if(cell_worker_token)
+                        throw std::runtime_error("no active lease for worker commit");
+                }else{
+                    // A multi-cell ownership table is NOT permission to
+                    // parallelize this still-monolithic physical Simulation.
+                    if(count!=1 || !cell_worker_token)
+                        throw std::runtime_error(
+                            "leased world mutation requires a unique fenced worker");
+                    const auto& token=*cell_worker_token;
+                    if(!spatial::parse_scope(token.canonical_cell_scope) ||
+                       token.trusted_worker.empty() ||
+                       token.trusted_worker.size()>128 ||
+                       !token.worker_epoch || !token.region_generation ||
+                       !token.checkpoint_revision)
+                        throw std::runtime_error("invalid worker commit token");
+                    Statement lease(db_,"SELECT a.worker,a.epoch,a.region_generation,"
+                      "a.checkpoint_revision,r.generation,r.checkpoint_revision,r.phase "
+                      "FROM sg_spatial_worker_lease a "
+                      "JOIN sg_regional_mode_authority r ON r.scope=a.scope "
+                      "WHERE a.scope=?");
+                    lease.text(1,token.canonical_cell_scope);
+                    if(!lease.row())
+                        throw std::runtime_error("worker lacks regional authority");
+                    const auto worker=sqlite3_column_text(lease.get(),0);
+                    if(!worker ||
+                       reinterpret_cast<const char*>(worker)!=token.trusted_worker ||
+                       sqlite3_column_int64(lease.get(),1)!=
+                           static_cast<sqlite3_int64>(token.worker_epoch) ||
+                       sqlite3_column_int64(lease.get(),2)!=
+                           static_cast<sqlite3_int64>(token.region_generation) ||
+                       sqlite3_column_int64(lease.get(),3)!=
+                           static_cast<sqlite3_int64>(token.checkpoint_revision) ||
+                       sqlite3_column_int64(lease.get(),4)!=
+                           static_cast<sqlite3_int64>(token.region_generation) ||
+                       sqlite3_column_int64(lease.get(),5)!=
+                           static_cast<sqlite3_int64>(token.checkpoint_revision) ||
+                       sqlite3_column_int(lease.get(),6)!=0 ||
+                       !spatial::verify_native_index(db_,state,next))
+                        throw std::runtime_error(
+                            "stale, forged or conflicting worker world commit");
+                }
+            }
             if(society_effect)society_effect(db_,next);
             // AUTO-04D.2: same exclusive world transaction; no second writer.
             colony_safety::journal::record_world_commit(db_,state,expected_generation,next);
@@ -14277,47 +14338,10 @@ void PersistentWorld::step_with_cell_worker(
     // *after* the exact new world/spatial index is inserted and before COMMIT.
     // Worker takeover, region handoff or stale world changes are serialized
     // with this same lock. A refusal rolls back the entire simulated tick.
-    const auto authorize=[&](sqlite3* db,std::uint64_t next_generation){
-        Statement present(db,"SELECT COUNT(*) FROM sqlite_master "
-          "WHERE type='table' AND name='sg_spatial_worker_lease'");
-        if(!present.row())throw std::runtime_error("missing lease metadata");
-        const bool has_table=sqlite3_column_int64(present.get(),0)!=0;
-        if(!has_table){
-            if(token)throw std::runtime_error("missing worker lease");
-            return;
-        }
-        Statement count(db,"SELECT COUNT(*) FROM sg_spatial_worker_lease");
-        if(!count.row())throw std::runtime_error("invalid lease registry");
-        const auto active=sqlite3_column_int64(count.get(),0);
-        if(active==0){
-            if(token)throw std::runtime_error("missing live cell worker");
-            return;
-        }
-        // A leased world cannot be ticked through the un-fenced entrypoint.
-        // Until cell-local partitioned simulation is independently proved,
-        // multi-cell leases are explicitly NOT independent world writers.
-        if(!token || active!=1)
-            throw std::runtime_error("native world tick requires unique leased worker");
-        Statement lease(db,"SELECT a.worker,a.epoch,a.region_generation,"
-          "a.checkpoint_revision,r.generation,r.checkpoint_revision,r.phase "
-          "FROM sg_spatial_worker_lease a "
-          "JOIN sg_regional_mode_authority r ON r.scope=a.scope "
-          "WHERE a.scope=?");
-        lease.text(1,token->canonical_cell_scope);
-        if(!lease.row())throw std::runtime_error("worker missing regional authority");
-        const auto worker=sqlite3_column_text(lease.get(),0);
-        if(!worker || reinterpret_cast<const char*>(worker)!=token->trusted_worker ||
-           sqlite3_column_int64(lease.get(),1)!=static_cast<sqlite3_int64>(token->worker_epoch) ||
-           sqlite3_column_int64(lease.get(),2)!=static_cast<sqlite3_int64>(token->region_generation) ||
-           sqlite3_column_int64(lease.get(),3)!=static_cast<sqlite3_int64>(token->checkpoint_revision) ||
-           sqlite3_column_int64(lease.get(),4)!=static_cast<sqlite3_int64>(token->region_generation) ||
-           sqlite3_column_int64(lease.get(),5)!=static_cast<sqlite3_int64>(token->checkpoint_revision) ||
-           sqlite3_column_int(lease.get(),6)!=0 ||
-           !spatial::verify_native_index(db,next,next_generation))
-            throw std::runtime_error("stale, forged or conflicting native worker tick");
-    };
+    // Store::commit is the final admission authority for both worker
+    // ticks and EVERY other world mutation, under the original SQLite lock.
     store_->commit(next, generation_, resource_origin_, credit_origin_, nullptr,
-                   new_events, due, new_activity, fail,nullptr,nullptr,authorize);
+                   new_events, due, new_activity, fail,nullptr,nullptr,{},token);
     world_.swap(next);
     ++generation_;
 }
