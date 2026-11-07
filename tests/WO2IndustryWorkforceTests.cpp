@@ -424,6 +424,16 @@ int main() {
         CHECK(proposal->action==Action::StartWorkshopShift &&
               proposal->execute_tick==start && proposal->thrust_y==4);
         CHECK(shifts.submit(*proposal));
+        // Original accepted future commitments cannot double-book a named
+        // worker or the same machine slot over overlapping windows.
+        Command same_slot=*proposal;
+        same_slot.id=413;same_slot.sequence=413;
+        same_slot.amount=static_cast<std::int64_t>(second_id);
+        CHECK(!shifts.submit(same_slot));
+        Command same_worker=*proposal;
+        same_worker.id=414;same_worker.sequence=414;
+        same_worker.thrust_x=2;
+        CHECK(!shifts.submit(same_worker));
         CHECK(!workforce02::approved_original_workshop_shift(
             shifts.world(),7,ship,site,false,first_id,start,finish,410,true));
         const auto pending=(folder/"wo2i_pending.sqlite").string();
