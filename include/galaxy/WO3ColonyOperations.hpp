@@ -236,6 +236,7 @@ struct PlanetarySiteAudit {
     std::int64_t water_kg=0,food_kg=0,nutrients_kg=0,oxygen_kg=0;
     std::uint64_t declared_workers=0,physical_delegates=0;
     std::uint64_t named_surface_visitors=0;
+    std::int64_t current_surface_consumers=0; // delegated crew plus physically present shuttle people
     bool shuttle_installed=false,permanent_housing_installed=false;
     bool staffed_by_original_named_npcs=false;
     std::uint8_t physically_delivered_modules=0,housing_phase=0;
@@ -299,6 +300,7 @@ inline std::optional<PlanetarySiteAudit> audit_planetary_surface(
         if(sh.flight_phase==2)
             next_tick_people+=1+static_cast<std::int64_t>(sh.passenger_ids.size());
     }
+    a.current_surface_consumers=next_tick_people;
     a.support_healthy_now=s.food_kg>=next_tick_people &&
         s.water_kg>=next_tick_people &&
         s.oxygen_kg>=next_tick_people;
@@ -345,6 +347,7 @@ struct SurfaceSupply {
     std::int64_t baseline_ten_tick_oxygen_periods=0;
     std::int64_t baseline_ten_tick_reserve_periods=0;
     std::uint64_t permanent_named_residents=0;
+    std::int64_t current_surface_consumers=0; // conservative next provisioning window
     std::uint64_t past_supported_cycles=0,past_shortage_cycles=0;
     bool shuttle_installed=false,shuttle_on_surface=false;
     bool food_production_installed=false,water_extractor_installed=false;
@@ -362,6 +365,7 @@ inline SurfaceSupply assess_surface_supplies(
     if(!audit || site==world.planetary_sites().end())return out;
     const auto& s=site->second;
     out.permanent_named_residents=audit->original_permanent_residents;
+    out.current_surface_consumers=audit->current_surface_consumers;
     out.past_supported_cycles=s.housing_supported_cycles;
     out.past_shortage_cycles=s.housing_shortages;
     out.shuttle_installed=audit->shuttle_installed;
@@ -376,11 +380,16 @@ inline SurfaceSupply assess_surface_supplies(
     out.loss_bearing_recycling_operated=s.utility_phase==2 &&
         (s.water_recycled_kg>0 || s.oxygen_recycled_kg>0);
     out.retained_recycling_brine_kg=s.brine_kg;
-    // Original on-site crew use TWO kg every TEN simulation ticks;
-    // temporary visitors have further needs and can shorten this runway.
-    out.baseline_ten_tick_food_periods=s.food_kg/2;
-    out.baseline_ten_tick_water_periods=s.water_kg/2;
-    out.baseline_ten_tick_oxygen_periods=s.oxygen_kg/2;
+    // Original builders use two kg per ten ticks; passengers, landed pilot
+    // and disembarked visitors additionally consume real stock every 20
+    // ticks. Charging every current person for *each* 10-tick forecast
+    // period deliberately underestimates runway rather than promising an
+    // unsupported margin near the next 20-tick shuttle ration event.
+    const auto reserve_ration=std::max<std::int64_t>(
+        2,out.current_surface_consumers);
+    out.baseline_ten_tick_food_periods=s.food_kg/reserve_ration;
+    out.baseline_ten_tick_water_periods=s.water_kg/reserve_ration;
+    out.baseline_ten_tick_oxygen_periods=s.oxygen_kg/reserve_ration;
     out.baseline_ten_tick_reserve_periods=std::min({
         out.baseline_ten_tick_food_periods,
         out.baseline_ten_tick_water_periods,
@@ -388,9 +397,9 @@ inline SurfaceSupply assess_surface_supplies(
     if(s.housing_phase!=2)out.gate=SurfaceSupplyGate::NotYetHoused;
     else if(!audit->staffed_by_original_named_npcs)
         out.gate=SurfaceSupplyGate::NamedWorkersUnavailable;
-    else if(s.food_kg<2)out.gate=SurfaceSupplyGate::FoodShortage;
-    else if(s.water_kg<2)out.gate=SurfaceSupplyGate::WaterShortage;
-    else if(s.oxygen_kg<2)out.gate=SurfaceSupplyGate::OxygenShortage;
+    else if(s.food_kg<reserve_ration)out.gate=SurfaceSupplyGate::FoodShortage;
+    else if(s.water_kg<reserve_ration)out.gate=SurfaceSupplyGate::WaterShortage;
+    else if(s.oxygen_kg<reserve_ration)out.gate=SurfaceSupplyGate::OxygenShortage;
     else out.gate=SurfaceSupplyGate::ImportDependent;
     // Solar electricity and HVAC are now physical installed services.
     // Recycling retains brine/solid residue and cannot claim perfect closure.
