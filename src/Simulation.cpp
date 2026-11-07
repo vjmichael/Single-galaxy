@@ -3473,9 +3473,13 @@ Event Simulation::execute(const Command& c) {
                    !within_native_3d_range(actor,asteroid,range)){
                     result.result=Outcome::OutOfRange;return result;
                 }
-                const auto dx=asteroid.position.x-actor.position.x;
-                const auto dy=asteroid.position.y-actor.position.y;
-                if(dx<-range||dx>range||dy<-range||dy>range||dx*dx+dy*dy>range*range){
+                const auto dx=snapshot_version_>=121?0:
+                    asteroid.position.x-actor.position.x;
+                const auto dy=snapshot_version_>=121?0:
+                    asteroid.position.y-actor.position.y;
+                if(snapshot_version_<121 &&
+                   (dx<-range||dx>range||dy<-range||dy>range||
+                    dx*dx+dy*dy>range*range)){
                     result.result=Outcome::OutOfRange;return result;
                 }
                 DeployedSurveyProbe drone{c.id,c.actor,c.issuer,actor.system_id,actor.position,tick_};
