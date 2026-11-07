@@ -5755,7 +5755,11 @@ void Simulation::process_workshops(){
         }
         const auto u=utilities_.find(site);
         const auto n=npcs_.find(w.operator_npc_id);
-        const bool staff=w.operator_npc_id && n!=npcs_.end() &&
+        const auto& cut_job=w.approved_jobs[0];
+        const bool cut_quota_available=!cut_job.command_id ||
+            cut_job.achieved(w.completed_batches)<cut_job.target_batches;
+        const bool staff=cut_quota_available &&
+            w.operator_npc_id && n!=npcs_.end() &&
             n->second.home_ship==w.source_ship &&
             n->second.location==site && n->second.role==NpcRole::Habitat &&
             habitats_.count(site) && habitats_.at(site).residents>0 &&
@@ -5796,7 +5800,11 @@ void Simulation::process_workshops(){
             // Shared finite panel buffer and scrap container create real
             // downstream/upstream backpressure with no virtual delivery.
             const auto fn=npcs_.find(w.finisher_npc_id);
-            const bool fn_staff=w.finisher_npc_id && fn!=npcs_.end() &&
+            const auto& shape_job=w.approved_jobs[1];
+            const bool shape_quota_available=!shape_job.command_id ||
+                shape_job.achieved(w.finisher_batches)<shape_job.target_batches;
+            const bool fn_staff=shape_quota_available &&
+                w.finisher_npc_id && fn!=npcs_.end() &&
                 fn->second.home_ship==w.source_ship && fn->second.location==site &&
                 fn->second.role==NpcRole::Habitat &&
                 habitats_.count(site) && habitats_.at(site).residents>0 &&
