@@ -4,6 +4,7 @@
 #include "galaxy/CanonicalShippingHost.hpp"
 #include "galaxy/WO5ManufacturedFreight.hpp"
 #include "galaxy/WO5ManufacturedEvidence.hpp"
+#include "galaxy/WO5RegionalRecovery.hpp"
 #include "galaxy/ShipmentStatusView.hpp"
 #include "galaxy/ClientContract.hpp"
 #include "galaxy/NpcAppearanceGenome.hpp"
@@ -351,6 +352,15 @@ int main(){
   // v59: real owner cutovers while both physical lots are still aboard
   // the independent carrier. Ownership flips must not reissue either cargo.
   const auto loaded_mass=w.world().total_material_kg();
+  const auto original_epoch=owner.state();
+  const auto original_audit=logistics05::observe_native_regional_recovery(
+      path,w,region,owner,7,original_epoch.generation,
+      original_epoch.checkpoint_revision);
+  ck(original_audit && original_audit->mode==re::SimulationOwner::Cold &&
+     original_audit->phase==re::TransitionPhase::Stable &&
+     !original_audit->may_consider_detailed_only_work &&
+     original_audit->original_world_generation==w.generation(),
+     "WO5-E world and cold epoch are not bound to same original SQLite");
   reject([&]{(void)net.promote("v59-transit-promote",ind::NetworkFault::AfterPayload);},
          "failed cold-to-detailed commit was accepted");
   ck(owner.state().phase==re::TransitionPhase::ToDetailed,"prepared transition was not retained");
@@ -359,10 +369,37 @@ int main(){
   reject([&]{(void)game_host.transition_region("different-handoff",re::SimulationOwner::Detailed);},
          "stale conflicting host ownership transition accepted");
   (void)game_host.transition_region("v59-transit-promote",re::SimulationOwner::Detailed);
+  const auto detailed_epoch=owner.state();
+  ck(!logistics05::observe_native_regional_recovery(
+      path,w,region,owner,7,original_epoch.generation,
+      original_epoch.checkpoint_revision),
+      "WO5-E accepted a stale cold owner epoch after native detailed promotion");
+  const auto detailed_audit=logistics05::observe_native_regional_recovery(
+      path,w,region,owner,7,detailed_epoch.generation,
+      detailed_epoch.checkpoint_revision);
+  const auto still_loaded=logistics05::inspect_manufactured_evidence(
+      w.world(),wo5_status,8,frames);
+  ck(detailed_audit &&
+     detailed_audit->may_consider_detailed_only_work &&
+     detailed_audit->original_world_generation==w.generation() &&
+     still_loaded &&
+     still_loaded->phase==logistics05::ManufacturedPhase::PhysicallyLoaded,
+     "WO5-E detailed epoch lost original finished-goods carrier custody");
   reject([&]{(void)net.demote("v59-transit-demote",ind::NetworkFault::AfterEvent);},
          "failed detailed-to-cold commit was accepted");
   ck(owner.state().phase==re::TransitionPhase::ToCold,"demotion intent vanished during injected failure");
   (void)game_host.transition_region("v59-transit-demote",re::SimulationOwner::Cold);
+  const auto cold_again=owner.state();
+  const auto audited_cold=logistics05::observe_native_regional_recovery(
+      path,w,region,owner,7,cold_again.generation,
+      cold_again.checkpoint_revision);
+  ck(audited_cold &&
+     audited_cold->phase==re::TransitionPhase::Stable &&
+     audited_cold->mode==re::SimulationOwner::Cold &&
+     !audited_cold->may_consider_detailed_only_work &&
+     audited_cold->original_world_generation==w.generation() &&
+     w.world().ship_inventory_snapshot(carrier).amount("good/aluminum_frames")==1,
+     "WO5-E cold recovery lost physically in-transit original frames");
   shipping::verify_regional_shipment_boundaries(path);
   { re::CheckpointStore unrelated(path,"remote-unrelated"); region_seed(unrelated);
     re::RegionalModeAuthority remote_owner(unrelated);remote_owner.enroll();
@@ -473,6 +510,16 @@ int main(){
   // once, not replay two historical cargo arrivals as cold macro events.
   (void)game_host.transition_region("v59-delivered-promote",re::SimulationOwner::Detailed);
   (void)game_host.transition_region("v59-delivered-demote",re::SimulationOwner::Cold);
+  const auto finished_epoch=owner.state();
+  const auto finished_audit=logistics05::observe_native_regional_recovery(
+      path,w,region,owner,7,finished_epoch.generation,
+      finished_epoch.checkpoint_revision);
+  ck(finished_audit && finished_audit->mode==re::SimulationOwner::Cold &&
+     finished_audit->phase==re::TransitionPhase::Stable &&
+     finished_audit->original_world_generation==w.generation() &&
+     !finished_audit->has_unresolved_original_freight &&
+     w.world().total_material_kg()==conserved,
+     "WO5-E settled original cargo changed after return to cold owner");
   shipping::verify_regional_shipment_boundaries(path);
   {sqlite3* db=nullptr;ck(sqlite3_open(path.c_str(),&db)==SQLITE_OK,"v59 boundary audit DB unavailable");
    sqlite3_stmt* q=nullptr;
