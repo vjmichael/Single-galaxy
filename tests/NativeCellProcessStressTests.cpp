@@ -27,8 +27,10 @@ int main(int argc,char** argv){
                     const CellProcessTask request{
                         "spatial/v2/s"+std::to_string(id+1)+
                           "/q0,0,0/c"+std::to_string(round)+",0,0",
-                        "healthy-"+std::to_string(id),100+round,
-                        0xabc012345ULL+round,static_cast<std::size_t>(id+1),
+                        "healthy-"+std::to_string(id),
+                        static_cast<std::uint64_t>(100+round),
+                        0xabc012345ULL+static_cast<std::uint64_t>(round),
+                        static_cast<std::size_t>(id+1),
                         static_cast<std::uint8_t>(id%3)};
                     const auto result=run_cell_process(
                         binary,request,std::chrono::milliseconds(2000));
