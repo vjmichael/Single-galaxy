@@ -9,6 +9,8 @@ on:
       - 'include/galaxy/SeamlessSpatialOwnership.hpp'
       - 'include/galaxy/SeamlessCellWorker.hpp'
       - 'include/galaxy/GalacticCoordinates.hpp'
+      - 'include/galaxy/GalacticFloatingFrame.hpp'
+      - 'tests/GalacticFloatingFrameTests.cpp'
       - 'include/galaxy/GalacticSystemRegistry.hpp'
       - 'tests/SeamlessSpatialOwnershipTests.cpp'
       - 'include/galaxy/WO5RegionalFreightFence.hpp'
@@ -94,9 +96,9 @@ jobs:
           cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$tc" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
           if ($LASTEXITCODE -ne 0) { throw 'Windows original configure failed' }
       - name: Build WO5 physically routed freight and upstream WO3/WO4 regressions
-        run: cmake --build build --config Release --parallel 2 --target galaxy_seamless_spatial_ownership_tests galaxy_econ03c7modeauthoritytests galaxy_econ03c8bworldreconciliationtests v59_region_scoped_handoff v59_multi_destination_host v59_third_party_custody v59_world_finished_goods_logistics galaxy_shipping_status_bridge galaxy_wo5_physical_logistics_tests galaxy_play13d_regional_facilities_tests galaxy_wo4_resource_demand_tests galaxy_wo4_material_allocation_tests galaxy_wo3_colony_operations_tests galaxy_wo3_planetary_housing_tests galaxy_wo3_planetary_utility_tests galaxy_wo2_industry_workforce_tests
+        run: cmake --build build --config Release --parallel 2 --target galaxy_floating_frame_tests galaxy_seamless_spatial_ownership_tests galaxy_econ03c7modeauthoritytests galaxy_econ03c8bworldreconciliationtests v59_region_scoped_handoff v59_multi_destination_host v59_third_party_custody v59_world_finished_goods_logistics galaxy_shipping_status_bridge galaxy_wo5_physical_logistics_tests galaxy_play13d_regional_facilities_tests galaxy_wo4_resource_demand_tests galaxy_wo4_material_allocation_tests galaxy_wo3_colony_operations_tests galaxy_wo3_planetary_housing_tests galaxy_wo3_planetary_utility_tests galaxy_wo2_industry_workforce_tests
       - name: Verify physical shuttle and freight receipts, rollback and independent SQLite recovery
-        run: ctest --test-dir build -C Release --output-on-failure --output-junit build/wo5-native-results.xml -R "^(v59_(multi_destination_host|region_scoped_handoff|third_party_custody|world_finished_goods_logistics)|galaxy_(seamless_spatial_ownership|econ03c7modeauthoritytests|econ03c8bworldreconciliationtests|shipping_transport_real_world_tests|work01c_native_transport_executors|wo5_physical_logistics|wo4_resource_demand|wo4_material_allocation|wo3_planetary_utility|wo3_planetary_housing|ship01c_manufactured_freight|flight04b_real_freight))$"
+        run: ctest --test-dir build -C Release --output-on-failure --output-junit build/wo5-native-results.xml -R "^(v59_(multi_destination_host|region_scoped_handoff|third_party_custody|world_finished_goods_logistics)|galaxy_(floating_frame|seamless_spatial_ownership|econ03c7modeauthoritytests|econ03c8bworldreconciliationtests|shipping_transport_real_world_tests|work01c_native_transport_executors|wo5_physical_logistics|wo4_resource_demand|wo4_material_allocation|wo3_planetary_utility|wo3_planetary_housing|ship01c_manufactured_freight|flight04b_real_freight))$"
       - name: Retain executed native test evidence
         if: always()
         uses: actions/upload-artifact@v4
