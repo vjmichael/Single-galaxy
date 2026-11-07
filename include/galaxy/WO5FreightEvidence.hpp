@@ -4,6 +4,7 @@
 // remain the sole physical truth. No second mutable shipment balance/status.
 #include "galaxy/Simulation.hpp"
 #include <cstdint>
+#include <initializer_list>
 #include <optional>
 #include <string>
 
