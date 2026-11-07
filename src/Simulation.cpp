@@ -8718,6 +8718,9 @@ std::optional<transport::Manifest> Simulation::planetary_transport_manifest(
     add_stock(transport::ResourceGood::Water,vessel.water_kg);
     add_stock(transport::ResourceGood::Food,vessel.food_kg);
     add_stock(transport::ResourceGood::Nutrients,vessel.nutrients_kg);
+    if(vessel.housing_module)
+        manifest.contents.push_back({transport::GoodKind::Equipment,
+            transport::kPlanetaryHousingModuleEquipmentId,1,2000});
     // The order in which canonical inventories are enumerated is fixed.
     // No separate NPC roster, cargo stock or delivery receipt is created.
     return manifest.valid()?std::optional<transport::Manifest>(std::move(manifest)):
