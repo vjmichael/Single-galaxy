@@ -8,6 +8,7 @@
 #include <chrono>
 #include <filesystem>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 using namespace galaxy;
 namespace fs=std::filesystem;
@@ -51,6 +52,46 @@ int main(){
     remote.position.x=std::numeric_limits<std::int64_t>::min();
     far.position.x=std::numeric_limits<std::int64_t>::max();
     CHECK(assist_to_object(remote,far,0).thrust_x==1);
+
+    // A ship above the target's XY projection cannot use an orbital shadow
+    // to mine, dock or fire on a physically distant target. Exactly the same
+    // original command/event journal is used; no fake test-only entity.
+    Simulation altitude(772);
+    const auto flyer=altitude.add_colony_ship(7,{0,0},100,8);
+    const auto dummy=altitude.add_training_drone({0,0});
+    const auto station=altitude.add_station({0,0});
+    const auto rock=altitude.add_asteroid({0,0},100);
+    altitude.provision_colony_genesis(flyer,1000,1000,1000,1000,1000);
+    altitude.enable_native_3d_physics();
+    for(std::uint64_t i=0;i<12;++i){
+        CHECK(altitude.submit(thrust(8000+i,flyer,
+                                    altitude.tick()+1,0,0,1)));
+        altitude.step();
+    }
+    CHECK(altitude.find(flyer)->position_z_mm>
+          Simulation::kTrainingWeaponRangeMm);
+    const auto mass_before=altitude.total_ore();
+    Command fire{};
+    fire.id=9011;fire.sequence=fire.id;fire.execute_tick=altitude.tick()+1;
+    fire.issuer=7;fire.actor=flyer;fire.target=dummy;
+    fire.action=Action::FireTrainingWeapon;
+    CHECK(altitude.submit(fire));
+    Command dock=fire;
+    dock.id=9012;dock.sequence=dock.id;dock.target=station;
+    dock.action=Action::RequestDock;
+    CHECK(altitude.submit(dock));
+    Command mine=fire;
+    mine.id=9013;mine.sequence=mine.id;mine.target=rock;
+    mine.action=Action::Mine;mine.amount=1;
+    CHECK(altitude.submit(mine));
+    altitude.step();
+    std::size_t altitude_denials=0;
+    for(const auto& e:altitude.events())
+        if((e.command_id==9011 || e.command_id==9012 ||
+            e.command_id==9013) &&
+           e.result==Outcome::OutOfRange)++altitude_denials;
+    CHECK(altitude_denials==3 && altitude.total_ore()==mass_before &&
+          altitude.find(flyer)->weapon_charges==12);
 
     const auto root=fs::temp_directory_path()/
         ("sg_native3d_"+std::to_string(std::chrono::steady_clock::now().
