@@ -225,15 +225,93 @@ function validateLegacyUnits(catalog, audit) {
   return {ok:errors.length===0,errors,stats:{native_items:seen.size}};
 }
 
-module.exports={validateCatalog,validateLegacyUnits};
+
+function validateUseContracts(catalog,use) {
+  const errors=[],err=x=>errors.push(x);
+  if(!use || use.schema_version!==1 ||
+    use.status!=="stage1_demand_contracts_no_live_npc_mutation")
+    return {ok:false,errors:["use contracts not staged or wrong schema"]};
+  if(!use.principles || !Object.values(use.principles).every(x=>x===true))
+    err("use contracts must preserve explicit non-magical resource principles");
+  const items=new Map(catalog.items.map(x=>[x.id,x]));
+  const services=new Set(catalog.services.map(x=>x.id));
+  const valid=x=>typeof x==="string" && /^[a-z_]+$/.test(x);
+  const needs=new Set();
+  for(const x of Array.isArray(use.needs)?use.needs:[]) {
+    if(!x || !valid(x.id) || needs.has(x.id) || !valid(x.priority) || !valid(x.access))
+      err("invalid need category");
+    else needs.add(x.id);
+  }
+  if(needs.size<6)err("insufficient real needs categories");
+  const used=new Set();
+  for(const [list,kind] of [["durables","durable"],["consumables","consumable"]]) {
+    for(const x of Array.isArray(use[list])?use[list]:[]){
+      const item=items.get(x && x.item);
+      if(!item || item.lifecycle!==kind || used.has(x.item))
+        err("unregistered or duplicate "+kind+" use profile");
+      else used.add(x.item);
+      if(!Array.isArray(x.need_ids)||!x.need_ids.length ||
+         x.need_ids.some(y=>!needs.has(y)))
+        err("unknown needs for "+(x&&x.item));
+      if(kind==="durable"){
+        if(x.condition_max!==100 || !valid(x.shared_access) ||
+           !valid(x.maintenance) || x.maintenance==="free_renewal")
+          err("durable capacity or maintenance is not physical");
+      }else{
+        if(!valid(x.shelf_policy)||!valid(x.on_spoil_mass_fraction))
+          err("no physical spoilage policy");
+        if(x.on_spoil_to!==null &&
+          (!items.has(x.on_spoil_to)||items.get(x.on_spoil_to).lifecycle!=="waste"))
+          err("spoilage must preserve physical waste");
+      }
+    }
+  }
+  if(!used.size)err("no genuine use profiles");
+  const named=new Set();
+  for(const s of Array.isArray(use.services)?use.services:[]) {
+    if(!s || !services.has(s.service) || named.has(s.service))
+      err("unknown or duplicate service use contract");
+    else named.add(s.service);
+    if(!valid(s.use_mode)||!valid(s.physical_effect)||!valid(s.capacity) ||
+       !Array.isArray(s.demand_needs)||!s.demand_needs.length ||
+       s.demand_needs.some(x=>!needs.has(x)))
+      err("service missing physical capacity or demand");
+    if(s.environmental_byproduct!==null &&
+       (!items.has(s.environmental_byproduct) ||
+       items.get(s.environmental_byproduct).lifecycle!=="waste"))
+      err("service byproduct must be waste material");
+  }
+  if(named.size!==services.size)err("not all source services covered");
+  for(const x of Array.isArray(use.substitutions)?use.substitutions:[]){
+    if(!x||!valid(x.id)||!Array.isArray(x.satisfies)||!x.satisfies.length ||
+       x.satisfies.some(y=>!needs.has(y)) ||
+       !Array.isArray(x.items)||!x.items.length ||
+       x.items.some(y=>!items.has(y)) ||
+       !valid(x.policy))
+      err("invalid substitution group");
+  }
+  for(const x of Array.isArray(use.variants)?use.variants:[])
+    if(!x || !items.has(x.item_family) || x.new_catalog_item_required!==false ||
+       !Array.isArray(x.tags) || !x.tags.length || x.tags.some(y=>!valid(y)))
+      err("cosmetic variants must not multiply item codes");
+  if(!use.event_contract ||
+     use.event_contract.migration!=="later_society_system_requires_real_destination_transport_and_consented_household_custody" ||
+     use.event_contract.service!=="real_staff_duration_equipment_and_consumables_with_original_world_commit")
+     err("demand does not grant free service or automatic migration");
+  return {ok:errors.length===0,errors,stats:{needs:needs.size,use_profiles:used.size,services:named.size}};
+}
+
+module.exports={validateCatalog,validateLegacyUnits,validateUseContracts};
 if (require.main===module) {
   const input=process.argv[2] || path.join(__dirname,"..","data","industry","industry01_candidate_catalog.json");
   const catalog=JSON.parse(fs.readFileSync(input,"utf8"));
   const result=validateCatalog(catalog);
   const legacy=JSON.parse(fs.readFileSync(path.join(__dirname,"..","data","industry","industry01_legacy_units.json"),"utf8"));
   const original=validateLegacyUnits(catalog,legacy);
-  result.errors.push(...original.errors);
-  result.ok=result.ok&&original.ok;
+  const use=JSON.parse(fs.readFileSync(path.join(__dirname,"..","data","industry","industry01_use_contracts.json"),"utf8"));
+  const useAudit=validateUseContracts(catalog,use);
+  result.errors.push(...original.errors,...useAudit.errors);
+  result.ok=result.ok&&original.ok&&useAudit.ok;
   if(!result.ok){for(const e of result.errors)console.error("INDUSTRY-01: "+e);process.exitCode=1;}
   else console.log("INDUSTRY-01 candidate validated:",JSON.stringify(result.stats));
 }
