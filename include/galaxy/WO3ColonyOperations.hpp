@@ -362,10 +362,18 @@ inline std::optional<PlanetarySiteAudit> audit_planetary_surface(
         (void)person;
         if(proof[2]==0)++active_admitted_visitors;
     }
+    // The original legal-residence census ALREADY includes adult visitors.
+    // Subtracting active visitors a second time silently erases real beds.
+    // The two physical founding delegates reserve beds even if they have not
+    // formally changed their original legal residence yet.
+    const auto permanent_other_residents=std::max<std::int64_t>(
+        0,static_cast<std::int64_t>(a.original_permanent_residents)-
+          active_admitted_visitors);
+    const auto occupied_beds=std::max<std::int64_t>(
+        static_cast<std::int64_t>(a.physical_delegates),
+        permanent_other_residents)+active_admitted_visitors;
     a.unused_housing_capacity=a.permanent_housing_installed?
-        std::max<std::int64_t>(0,4-static_cast<std::int64_t>(
-            std::max(a.original_permanent_residents,a.physical_delegates))-
-            active_admitted_visitors):0;
+        std::max<std::int64_t>(0,4-occupied_beds):0;
     return a;
 }
 
