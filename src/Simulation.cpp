@@ -6885,15 +6885,37 @@ bool Simulation::handover_planetary_surface_utility(PlayerId owner,EntityId ship
     const auto& s=it->second;
     if(!s.utility_handovers.empty() &&
        s.utility_handovers.back().tick>=tick_)return false;
-    if(std::find(s.delegated_npcs.begin(),s.delegated_npcs.end(),
-                 replacement)==s.delegated_npcs.end())return false;
     const auto worker=npcs_.find(replacement);
     if(worker==npcs_.end() || worker->second.home_ship!=ship ||
        worker->second.location!=s.surface_location ||
-       worker->second.assigned_site!=s.surface_location ||
-       worker->second.role!=NpcRole::PlanetarySurface ||
-       !workshop_trade_certified(replacement,WorkshopTrade::Shape) ||
-       !npc_available_for_duty(replacement))return false;
+       !workshop_trade_certified(replacement,WorkshopTrade::Shape))
+        return false;
+    const bool original_builder=
+        std::find(s.delegated_npcs.begin(),s.delegated_npcs.end(),
+                  replacement)!=s.delegated_npcs.end() &&
+        worker->second.assigned_site==s.surface_location &&
+        worker->second.role==NpcRole::PlanetarySurface &&
+        npc_available_for_duty(replacement);
+    // A relief worker may instead be a REAL disembarked shuttle visitor with
+    // an owner-approved original temporary work duty and individual arrival
+    // proof. Ordinary passengers/visitors have no supervisory authority.
+    const auto shuttle=planetary_shuttles_.find(key);
+    const bool duty_visitor=shuttle!=planetary_shuttles_.end() &&
+        worker->second.assigned_site==ship &&
+        worker->second.role==NpcRole::Ship &&
+        !worker->second.transport_id &&
+        std::binary_search(shuttle->second.duty_ids.begin(),
+                           shuttle->second.duty_ids.end(),replacement) &&
+        std::binary_search(shuttle->second.disembarked_ids.begin(),
+                           shuttle->second.disembarked_ids.end(),replacement) &&
+        shuttle->second.visitor_arrival_receipts.count(replacement) &&
+        npc_transport_arrival(
+            shuttle->second.visitor_arrival_receipts.at(replacement),
+            replacement).has_value() &&
+        (npc_health_status(replacement)==NpcHealthStatus::Healthy ||
+         npc_health_status(replacement)==NpcHealthStatus::Treated ||
+         npc_health_status(replacement)==NpcHealthStatus::Recovered);
+    if(!original_builder && !duty_visitor)return false;
     for(const auto& [other_key,other]:planetary_sites_) {
         (void)other_key;
         if(request_id==other.housing_order_id ||
@@ -9572,11 +9594,34 @@ void Simulation::process_planetary_surface_operations() {
             if(site.utility_paused || site.workforce_policy ||
                supervisor==npcs_.end() ||
                supervisor->second.location!=site.surface_location ||
-               supervisor->second.assigned_site!=site.surface_location ||
-               supervisor->second.role!=NpcRole::PlanetarySurface ||
                !workshop_trade_certified(site.utility_supervisor,
                                          WorkshopTrade::Shape) ||
-               !npc_available_for_duty(site.utility_supervisor))
+               !([&]() {
+                   const bool deployed=
+                       supervisor->second.assigned_site==site.surface_location &&
+                       supervisor->second.role==NpcRole::PlanetarySurface &&
+                       npc_available_for_duty(site.utility_supervisor);
+                   if(deployed)return true;
+                   const auto shuttle=planetary_shuttles_.find(key);
+                   if(shuttle==planetary_shuttles_.end() ||
+                      supervisor->second.assigned_site!=site.source_ship ||
+                      supervisor->second.role!=NpcRole::Ship ||
+                      supervisor->second.transport_id ||
+                      !std::binary_search(
+                          shuttle->second.duty_ids.begin(),
+                          shuttle->second.duty_ids.end(),
+                          site.utility_supervisor))
+                       return false;
+                   const auto arrival=shuttle->second.visitor_arrival_receipts.find(
+                       site.utility_supervisor);
+                   const auto health=npc_health_status(site.utility_supervisor);
+                   return arrival!=shuttle->second.visitor_arrival_receipts.end() &&
+                       npc_transport_arrival(arrival->second,
+                                             site.utility_supervisor).has_value() &&
+                       (health==NpcHealthStatus::Healthy ||
+                        health==NpcHealthStatus::Treated ||
+                        health==NpcHealthStatus::Recovered);
+               }()))
                 ++site.utility_stalled_ticks;
             else if(++site.utility_progress>=60) {
                 site.utility_progress=60;
