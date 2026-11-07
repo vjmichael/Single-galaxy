@@ -939,6 +939,60 @@ int main() {
         CHECK(recovered.world().npc_records().at(second_id).
               industrial_training.back().mentor_id==first_id);
         CHECK(recovered.world().total_material_kg()==initial);
+        // The SECOND installed original machine is equally real: appointment,
+        // panel-consuming shape mentorship, one actual shaped-frame batch,
+        // physical cap and SQLite replay must all use the same original NPCs.
+        const auto shape_db=(folder/"wo2j_shape_supervisor.sqlite").string();
+        PersistentWorld::recover_copy(management_db,shape_db);
+        {
+            PersistentWorld shaped(shape_db,Simulation(1056));
+            CHECK(send(shaped,ship,740,Action::AssignWorkshopOperator,site,0).
+                  result==Outcome::Applied);
+            CHECK(shaped.world().workshop_trade_certified(second_id,WorkshopTrade::Shape));
+            auto appoint_shape=workforce02::approved_workshop_supervisor(
+                shaped.world(),7,ship,site,WorkshopTrade::Shape,second_id,741,true);
+            CHECK(appoint_shape.has_value() && shaped.submit(*appoint_shape));
+            shaped.step();
+            CHECK(shaped.world().events().back().result==Outcome::Applied);
+            auto shape_job=workforce02::approved_workshop_job(
+                shaped.world(),7,ship,site,WorkshopTrade::Shape,1,742,true);
+            CHECK(shape_job.has_value() && shaped.submit(*shape_job));
+            shaped.step();
+            CHECK(shaped.world().events().back().result==Outcome::Applied);
+            const auto baseline=shaped.world().workshop(site)->finisher_batches;
+            CHECK(shaped.world().workshop(site)->panels_kg>=21 ||
+                  shaped.world().workshop(site)->reserved_panels_kg==20);
+            auto practice=workforce02::approved_workshop_mentorship(
+                shaped.world(),7,ship,site,WorkshopTrade::Shape,first_id,743,true);
+            CHECK(practice.has_value() && shaped.submit(*practice));
+            shaped.step();
+            CHECK(shaped.world().events().back().result==Outcome::Applied &&
+                  shaped.world().events().back().transferred==1);
+            const auto& shape_credit=shaped.world().npc_records().at(first_id).
+                industrial_training.back();
+            CHECK(shape_credit.trade==WorkshopTrade::Shape &&
+                  shape_credit.mentor_id==second_id &&
+                  shape_credit.supervisor_appointment_id==741);
+            CHECK(send(shaped,ship,744,Action::AssignWorkshopFinisher,site,
+                       static_cast<std::int64_t>(first_id)).result==Outcome::Applied);
+            shaped.steps(15);
+            CHECK(shaped.world().workshop(site)->finisher_batches==baseline+1);
+            shaped.steps(15);
+            CHECK(shaped.world().workshop(site)->finisher_batches==baseline+1);
+            const auto shape_board=workforce02::workshop_job_board(
+                shaped.world(),7,ship,site);
+            CHECK(shape_board[1].fulfilled && shape_board[1].physically_completed==1 &&
+                  shape_board[1].approval_command==742 && !shape_board[1].suspended);
+            CHECK(shaped.world().total_material_kg()==initial);
+            const auto shape_replay=(folder/"wo2j_shape_recovered.sqlite").string();
+            PersistentWorld::recover_copy(shape_db,shape_replay);
+            PersistentWorld reopened(shape_replay,Simulation(1057));
+            CHECK(reopened.world().workshop(site)->finisher_batches==baseline+1);
+            CHECK(reopened.world().workshop(site)->approved_jobs[1].command_id==742);
+            CHECK(reopened.world().npc_records().at(first_id).
+                  industrial_training.back().supervisor_appointment_id==741);
+            CHECK(reopened.world().total_material_kg()==initial);
+        }
     }
     // Independently read the SAME original SQLite resource journal. Six
     // successful per-NPC practice commands must produce exactly six
