@@ -333,8 +333,11 @@ inline std::optional<PlanetarySiteAudit> audit_planetary_surface(
     if(shuttle!=world.planetary_shuttles().end()) {
         const auto& sh=shuttle->second;
         next_tick_people+=static_cast<std::int64_t>(sh.disembarked_ids.size());
-        if(sh.flight_phase==2)
+        if(sh.flight_phase==2) {
             next_tick_people+=1+static_cast<std::int64_t>(sh.passenger_ids.size());
+            if(sh.family.stage==2)
+                next_tick_people+=static_cast<std::int64_t>(sh.family.child_ids.size());
+        }
     }
     a.current_surface_consumers=next_tick_people;
     a.support_healthy_now=s.food_kg>=next_tick_people &&
