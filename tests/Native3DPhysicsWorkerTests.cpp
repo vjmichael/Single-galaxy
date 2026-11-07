@@ -97,10 +97,20 @@ int main(){
                                epoch.generation,epoch.checkpoint_revision};
     const auto unchanged=w.world().canonical_state();
     const auto before=w.generation();
+    // All ORIGINAL mutation entrypoints must now enforce the lease, not
+    // just a worker-driven physics tick. A refused submit cannot retain
+    // a phantom pending command, receipt, cargo or tick.
+    const auto attempted=thrust(1003,ship,w.world().tick()+1,0,0,0);
+    refused([&]{(void)w.submit(attempted);});
+    refused([&]{w.configure_probe_report_tick_ms(700);});
     refused([&]{w.step();});
+    CHECK(!w.world().has_command_id(attempted.id));
     CHECK(w.world().canonical_state()==unchanged && w.generation()==before);
+    CHECK(w.submit_as_cell_worker(attempted,token));
+    CHECK(w.world().has_command_id(attempted.id) &&
+          w.generation()==before+1);
     w.step_as_cell_worker(token);
-    CHECK(w.generation()==before+1 && w.world().tick()==3);
+    CHECK(w.generation()==before+2 && w.world().tick()==3);
     // Stale worker epoch, even under the same region owner, cannot advance
     // the original physics or create another cargo/simulation tick.
     const auto replacement=spatial::transfer_cell_worker(db,*cell,
@@ -109,6 +119,9 @@ int main(){
     const auto stable=w.world().canonical_state();
     const auto before_replay=w.generation();
     refused([&]{w.step_as_cell_worker(token);});
+    refused([&]{(void)w.submit_as_cell_worker(
+        thrust(1004,ship,w.world().tick()+1,0,0,0),token);});
+    CHECK(!w.world().has_command_id(1004));
     CHECK(w.generation()==before_replay &&
           w.world().canonical_state()==stable);
     NativeCellWorkerTick successor{scope,"worker-b",replacement.epoch,
