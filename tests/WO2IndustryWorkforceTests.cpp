@@ -399,6 +399,102 @@ int main() {
         CHECK(restarted.world().workshop_trade_certified(second_id,WorkshopTrade::Shape));
         CHECK(restarted.world().total_material_kg()==initial_mass);
     }
+    // WO2-I: one owner-authorized, bounded shift on the SAME original
+    // workshop. Future accepted commands survive SQLite restart but do not
+    // employ anyone until the actual execute tick.
+    {
+        PersistentWorld shifts(db,Simulation(40001));
+        applied(shifts,ship,400,Action::AssignWorkshopOperator,site,0);
+        applied(shifts,ship,401,Action::AssignWorkshopFinisher,site,0);
+        CHECK(shifts.world().workshop(site)->operator_npc_id==0);
+        CHECK(shifts.world().workshop(site)->finisher_npc_id==0);
+        const auto start=shifts.world().tick()+3;
+        const auto finish=start+4;
+        CHECK(!workforce02::approved_original_workshop_shift(
+            shifts.world(),7,ship,site,false,first_id,start,finish,410,false));
+        CHECK(!workforce02::approved_original_workshop_shift(
+            shifts.world(),8,ship,site,false,first_id,start,finish,410,true));
+        CHECK(!workforce02::approved_original_workshop_shift(
+            shifts.world(),7,ship,site,false,999999,start,finish,410,true));
+        CHECK(!workforce02::approved_original_workshop_shift(
+            shifts.world(),7,ship,site,false,first_id,start,start+10001,410,true));
+        auto proposal=workforce02::approved_original_workshop_shift(
+            shifts.world(),7,ship,site,false,first_id,start,finish,410,true);
+        CHECK(proposal.has_value());
+        CHECK(proposal->action==Action::StartWorkshopShift &&
+              proposal->execute_tick==start && proposal->thrust_y==4);
+        CHECK(shifts.submit(*proposal));
+        CHECK(!workforce02::approved_original_workshop_shift(
+            shifts.world(),7,ship,site,false,first_id,start,finish,410,true));
+        const auto pending=(folder/"wo2i_pending.sqlite").string();
+        PersistentWorld::recover_copy(db,pending);
+        {
+            PersistentWorld reopened(pending,Simulation(9999));
+            CHECK(reopened.world().workshop(site)->operator_npc_id==0);
+            CHECK(reopened.world().has_command_id(410));
+            reopened.steps(3);
+            CHECK(reopened.world().workshop(site)->operator_npc_id==first_id);
+            CHECK(reopened.world().workshop(site)->shifts[0].command_id==410);
+            CHECK(reopened.world().workshop(site)->shifts[0].end_tick==finish);
+            CHECK(reopened.world().total_material_kg()==initial_mass);
+        }
+        shifts.steps(2);
+        CHECK(shifts.world().workshop(site)->operator_npc_id==0);
+        shifts.step();
+        CHECK(shifts.world().workshop(site)->operator_npc_id==first_id);
+        CHECK(shifts.world().workshop(site)->shifts[0].command_id==410);
+        CHECK(shifts.world().total_material_kg()==initial_mass);
+        const auto shift_snapshot=shifts.world().canonical_state();
+        CHECK(Simulation::from_snapshot(shift_snapshot).workshop(site)->
+              shifts[0].command_id==410);
+        auto forged=shift_snapshot;
+        const auto marker=forged.find("workshopshift|");
+        CHECK(marker!=std::string::npos);
+        const auto line_end=forged.find('\n',marker);
+        CHECK(line_end!=std::string::npos);
+        // One record cannot be duplicated to claim two original shifts.
+        forged.insert(line_end+1,forged.substr(marker,line_end-marker+1));
+        bool refused=false;
+        try{(void)Simulation::from_snapshot(forged);}
+        catch(const std::exception&){refused=true;}
+        CHECK(refused);
+        CHECK(!workforce02::approved_original_workshop_shift_cancel(
+            shifts.world(),8,ship,site,false,410,411,true));
+        CHECK(!workforce02::approved_original_workshop_shift_cancel(
+            shifts.world(),7,ship,site,false,410,411,false));
+        auto cancel=workforce02::approved_original_workshop_shift_cancel(
+            shifts.world(),7,ship,site,false,410,411,true);
+        CHECK(cancel.has_value());
+        CHECK(shifts.submit(*cancel));
+        shifts.step();
+        CHECK(shifts.world().events().back().command_id==411 &&
+              shifts.world().events().back().result==Outcome::Applied);
+        CHECK(shifts.world().workshop(site)->operator_npc_id==0);
+        CHECK(!shifts.world().workshop(site)->shifts[0].command_id);
+        CHECK(send(shifts,ship,412,Action::CancelWorkshopShift,site,410,1).
+              result==Outcome::InvalidTarget);
+        // Relief is a real new owner-approved shift; expiry releases only the
+        // actual worker slot without fabricating labor, input or output.
+        const auto relief_start=shifts.world().tick()+1;
+        auto relief=workforce02::approved_original_workshop_shift(
+            shifts.world(),7,ship,site,true,second_id,relief_start,
+            relief_start+2,420,true);
+        CHECK(relief.has_value());
+        CHECK(shifts.submit(*relief));
+        shifts.step();
+        CHECK(shifts.world().workshop(site)->finisher_npc_id==second_id);
+        CHECK(shifts.world().workshop(site)->shifts[1].command_id==420);
+        shifts.steps(2);
+        CHECK(shifts.world().workshop(site)->finisher_npc_id==0);
+        CHECK(!shifts.world().workshop(site)->shifts[1].command_id);
+        CHECK(shifts.world().total_material_kg()==initial_mass);
+        const auto finished_copy=(folder/"wo2i_recovered.sqlite").string();
+        PersistentWorld::recover_copy(db,finished_copy);
+        PersistentWorld recovered(finished_copy,Simulation(555));
+        CHECK(recovered.world().workshop(site)->operator_npc_id==0);
+        CHECK(recovered.world().workshop(site)->finisher_npc_id==0);
+        CHECK(recovered.world().total_material_kg()==initial_mass);
+    }
     // Independently read the SAME original SQLite resource journal. Six
     // successful per-NPC practice commands must produce exactly six
     // mass-conserving inventory-to-scrap transfers, not shadow skill XP.
