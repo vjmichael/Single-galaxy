@@ -4343,7 +4343,16 @@ Event Simulation::execute(const Command& c) {
                         job={};
                         result.result=Outcome::Applied;return result;
                     }
+                    const auto supervisor=npcs_.find(w.supervisor_npc_id);
                     if(job.command_id || !w.supervisor_npc_id ||
+                       !w.supervisor_appointment_id ||
+                       supervisor==npcs_.end() ||
+                       supervisor->second.home_ship!=c.actor ||
+                       supervisor->second.location!=c.target ||
+                       supervisor->second.assigned_site!=c.target ||
+                       supervisor->second.role!=NpcRole::Habitat ||
+                       !npc_available_for_duty(w.supervisor_npc_id) ||
+                       occupied_native_shipyard(w.supervisor_npc_id) ||
                        w.supervisor_trade!=static_cast<WorkshopTrade>(c.thrust_x) ||
                        (slot==1 && !w.finisher_installed)){
                         result.result=Outcome::InvalidTarget;return result;
