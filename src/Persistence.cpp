@@ -621,6 +621,88 @@ public:
         children.text(2,std::to_string(adult_id));
         return children.row(); // conservative for unproven custody/death
     }
+    // Original ART02 and original physical-child bridge are both required.
+    // Even the co-parent's children must form ONE complete, colocated set.
+    // The same predicate is evaluated during booking and again at takeoff.
+    bool valid_planetary_family_births(const Simulation& world,EntityId ship,
+        std::uint64_t guardian,std::uint64_t co_parent,
+        const std::vector<std::uint64_t>& children) const {
+        if(!ship || !guardian || guardian==co_parent || children.empty() ||
+           children.size()>2 || !std::is_sorted(children.begin(),children.end()) ||
+           std::adjacent_find(children.begin(),children.end())!=children.end())
+            return false;
+        Statement table(db_,"SELECT name FROM sqlite_master WHERE type='table' "
+                         "AND name IN ('npc_family_births','sg_med_society_birth',"
+                         "'sg_colony_physical_child_authority','npc_family_moves')");
+        std::set<std::string> tables;
+        while(table.row())tables.insert(sqlite_str(table.get(),0));
+        if(tables.size()!=4)return false;
+        Statement births(db_,"SELECT child_id,parent_a,parent_b,settlement,scope "
+            "FROM npc_family_births WHERE parent_a=? OR parent_b=? "
+            "OR parent_a=? OR parent_b=? ORDER BY child_id");
+        births.text(1,std::to_string(guardian));
+        births.text(2,std::to_string(guardian));
+        births.text(3,std::to_string(co_parent));
+        births.text(4,std::to_string(co_parent));
+        std::vector<std::uint64_t> original;
+        std::string common_scope;
+        while(births.row()){
+            const auto id=parse_u64(sqlite3_column_text(births.get(),0));
+            const auto a=parse_u64(sqlite3_column_text(births.get(),1));
+            const auto b=parse_u64(sqlite3_column_text(births.get(),2));
+            const auto birthplace=parse_u64(sqlite3_column_text(births.get(),3));
+            const auto scope=sqlite_str(births.get(),4);
+            if(id<(1ULL<<62) || !id || !birthplace || !ship ||
+               scope.empty() || (co_parent &&
+                !((a==guardian && b==co_parent) ||
+                  (a==co_parent && b==guardian))) ||
+               (a!=guardian && b!=guardian &&
+                (!co_parent || (a!=co_parent && b!=co_parent))) ||
+               birthplace!=ship ||
+               (!common_scope.empty() && scope!=common_scope))
+                return false;
+            common_scope=scope;
+            const auto physical=world.physical_dependents().find(id);
+            if(physical==world.physical_dependents().end() ||
+               physical->second.home_ship!=ship ||
+               (physical->second.guardian_id!=guardian &&
+                physical->second.guardian_id!=co_parent) ||
+               world.npc_records().count(id) ||
+               world.npc_casualties().count(id))
+                return false;
+            Statement bridge(db_,"SELECT guardian_id,home_ship,command_id "
+                "FROM sg_colony_physical_child_authority WHERE child_id=?");
+            bridge.text(1,std::to_string(id));
+            if(!bridge.row() ||
+               parse_u64(sqlite3_column_text(bridge.get(),0))!=
+                    physical->second.guardian_id ||
+               parse_u64(sqlite3_column_text(bridge.get(),1))!=ship ||
+               parse_u64(sqlite3_column_text(bridge.get(),2))!=
+                    physical->second.registration_command ||
+               bridge.row())return false;
+            Statement natal(db_,"SELECT 1 FROM sg_med_society_birth "
+                "WHERE child_id=? AND family_scope=? AND home_ship=?");
+            natal.text(1,std::to_string(id));natal.text(2,scope);
+            natal.text(3,std::to_string(ship));
+            if(!natal.row() || natal.row())return false;
+            Statement dead(db_,"SELECT 1 FROM npc_family_deaths "
+                "WHERE scope=? AND npc_id=? LIMIT 1");
+            dead.text(1,scope);dead.text(2,std::to_string(id));
+            if(dead.row())return false;
+            // Flight is physical visitation, not a legal residence change.
+            // Born children with prior ART02 residence changes may not
+            // silently move through a ship-home-only contract.
+            Statement moved(db_,"SELECT destination FROM npc_family_moves "
+                "WHERE scope=? AND npc_id=? ORDER BY rowid DESC LIMIT 1");
+            moved.text(1,scope);moved.text(2,std::to_string(id));
+            if(moved.row() &&
+               parse_u64(sqlite3_column_text(moved.get(),0))!=ship)
+                return false;
+            original.push_back(id);
+            if(original.size()>2)return false;
+        }
+        return original==children;
+    }
     std::string sqlite_path() const {
         const char* path=sqlite3_db_filename(db_,"main");
         if(!path)throw std::runtime_error("world SQLite file path unavailable");
