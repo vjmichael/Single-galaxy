@@ -1303,6 +1303,9 @@ bool Simulation::submit(const Command& c) {
                 if(c.id && c.id==relief.request_id)return false;
             for(const auto& project:site.production_projects)
                 if(c.id && c.id==project.order_id)return false;
+            for(const auto& history:site.production_handovers)
+                for(const auto& handover:history)
+                    if(c.id && c.id==handover.request_id)return false;
         }
     if(colony_departures_.count(c.actor) || colony_departures_.count(c.target))return false;
     // Building a hull never creates a pilot. A manufactured uncommissioned
@@ -9575,6 +9578,9 @@ bool Simulation::launch_planetary_shuttle(PlayerId owner,EntityId ship,
             if(relief.request_id==request_id)return false;
         for(const auto& project:existing.production_projects)
             if(project.order_id==request_id)return false;
+        for(const auto& history:existing.production_handovers)
+            for(const auto& handover:history)
+                if(handover.request_id==request_id)return false;
         for(const auto& [person,proof]:existing.visitor_residency) {
             (void)person;
             if(proof[1]==request_id || proof[2]==request_id)return false;
