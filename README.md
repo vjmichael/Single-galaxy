@@ -6,6 +6,8 @@ In the released game's intended opening, one player colony ship with finite NPC 
 
 ## Current active development and unfinished acceptance (2026-11-06)
 
+**INDUSTRY-01 active first implementation slice (owner priority):** Started a separately stacked additive, *research-only* [96-item / 69-recipe / 8-service candidate](docs/engineering/INDUSTRY01_FIRST_PASS_CATALOG_20261106.md) with independent deterministic material-conservation, provenance and no-automatic-legacy-conversion validation. This is not a second world inventory or completed native NPC industry integration. See [the 20-stage priority](docs/engineering/PROJECT_DEVELOPMENT_SEQUENCE_20261106.md).
+
 **OWNER-DIRECTED FUTURE DEVELOPMENT ORDER (November 6, evening):** Industry **real-world research and coherent recipes** now comes first, followed by NPC work, planetary settlements, resource distribution, linked logistics, planet generation, society, galaxy travel, security, staged 3D asset work, later player gameplay, invite-only multiplayer, scaling and repeated major build/test cycles. The precise **20-stage sequence** is [recorded here](docs/engineering/PROJECT_DEVELOPMENT_SEQUENCE_20261106.md) and the [initial source-grounded industry recipe research brief](docs/engineering/INDUSTRY_SUPPLY_CHAIN_RECIPE_RESEARCH_20261106.md) explains product categories, shared materials, demand and the existing inventory/workshop gap. The security/combat branch status below is **not** the newest global feature priority; existing PR tests remain open and native regression is continuous.
 
 
