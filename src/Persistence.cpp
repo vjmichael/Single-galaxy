@@ -9797,8 +9797,10 @@ bool PersistentWorld::commit_planetary_household_settlement(
         [&](std::uint64_t id){return world_.npc_records().count(id)!=0;});
     const auto source=family.family_census(origin);
     std::uint64_t dest_count=0,dest_revision=0;
+    bool destination_registered=false;
     try {
         const auto target=family.family_census(destination);
+        destination_registered=true;
         dest_count=target.current_population;dest_revision=target.revision;
     }catch(const std::out_of_range&) {
         if(p.returning)return false; // original ship must already exist
@@ -9853,7 +9855,7 @@ bool PersistentWorld::commit_planetary_household_settlement(
             throw std::runtime_error("household birth or custody changed");
         NpcAppearanceStore joined(db,p.family_scope,p.family_seed,
             [&](std::uint64_t id){return next.npc_records().count(id)!=0;});
-        if(!p.returning && !dest_revision)
+        if(!p.returning && !destination_registered)
             joined.register_settlement(destination,0);
         const auto actual_src=joined.family_census(origin);
         const auto actual_dst=joined.family_census(destination);
