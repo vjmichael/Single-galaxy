@@ -6,6 +6,7 @@
 // and match the exact original committed physical world generation/hash.
 #include "galaxy/GalacticCoordinates.hpp"
 #include "galaxy/Persistence.hpp"
+#include "galaxy/SeamlessSpatialOwnership.hpp"
 #include <sqlite3.h>
 #include <cstdint>
 #include <limits>
