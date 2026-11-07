@@ -1,4 +1,5 @@
 #include "galaxy/WO4MaterialAllocation.hpp"
+#include "galaxy/WO4GoodsRegional.hpp"
 #include <chrono>
 #include <filesystem>
 #include <iostream>
@@ -34,6 +35,9 @@ int main() {
     Simulation genesis(98024);
     const auto ship=genesis.add_colony_ship(7,{0,0},300,8);
     genesis.provision_colony_genesis(ship,1000,3000,1000,1000,1000);
+    const auto distant_receiver=genesis.add_colony_ship(7,{40000,0},100,5);
+    genesis.provision_colony_genesis(
+        distant_receiver,100,100,100,300,400);
     const auto rock=genesis.add_asteroid({1000,0},100);
     const auto silicate=genesis.add_geological_asteroid(
         {1000,0},AsteroidClass::Silicate,30,2500);
@@ -99,6 +103,49 @@ int main() {
     CHECK(!propose_original_storage_allocation(
         world.world(),7,ship,site,NativeMaterial::Aluminum,
         Priority::Production,100,before_ship-100));
+    // WO4-E native material demand across a real *separate* colony ship:
+    // prioritize the owner's maintenance order before production, protect
+    // the original supplier's retained cargo and never book a carrier.
+    const auto demand_hash=world.world().state_hash();
+    const std::vector<MaterialNeed> materials{
+        {distant_receiver,NativeMaterial::Aluminum,Priority::Production,50},
+        {distant_receiver,NativeMaterial::Aluminum,Priority::Maintenance,80}
+    };
+    const std::array<std::int64_t,4> retained{{
+        before_ship-200,0,0,0
+    }};
+    CHECK(!propose_regional_material_freight(
+        world.world(),7,materials,retained,false));
+    CHECK(!propose_regional_material_freight(
+        world.world(),8,materials,retained,true));
+    const auto requests=propose_regional_material_freight(
+        world.world(),7,materials,retained,true);
+    CHECK(requests && requests->still_current(world.world()));
+    CHECK(requests->unbooked_requests.size()==2);
+    CHECK(requests->unbooked_requests[0].purpose==Priority::Maintenance &&
+          requests->unbooked_requests[0].proposed_kg==80 &&
+          requests->unbooked_requests[0].source_ship==ship &&
+          requests->unbooked_requests[0].destination==distant_receiver &&
+          requests->unbooked_requests[0].carrier_route_and_original_host_approval_required);
+    CHECK(requests->unbooked_requests[1].purpose==Priority::Production &&
+          requests->unbooked_requests[1].proposed_kg==20);
+    CHECK(requests->uncovered_kg.size()==2 &&
+          requests->uncovered_kg[0]==30 &&
+          requests->uncovered_kg[1]==0);
+    // No regional cargo, reserves or work orders were actually created.
+    CHECK(world.world().state_hash()==demand_hash);
+    CHECK(world.world().ship_inventory_snapshot(ship).
+          amount("good/aluminum")==before_ship-100);
+    // Same original ship -> its own storage is a local native transfer,
+    // NOT a second regional freight request from the same source inventory.
+    const std::vector<MaterialNeed> local{
+        {site,NativeMaterial::Aluminum,Priority::Production,80}
+    };
+    const auto no_double=propose_regional_material_freight(
+        world.world(),7,local,retained,true);
+    CHECK(no_double && no_double->unbooked_requests.empty() &&
+          no_double->uncovered_kg[0]==80);
+
     // Independent SQLite copied world sees only one actual 100kg delivery.
     const auto duplicate=(folder/"recovered.sqlite").string();
     PersistentWorld::recover_copy(db,duplicate);
