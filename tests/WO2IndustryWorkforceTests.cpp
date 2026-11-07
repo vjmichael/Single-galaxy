@@ -195,17 +195,26 @@ int main() {
                 double_book.issuer=7;double_book.actor=ship;double_book.target=site;
                 double_book.action=Action::AssignWorkshopOperator;
                 double_book.amount=static_cast<std::int64_t>(first_id);
+                // A second independent training command in this same tick
+                // cannot create two units of practice/credit for one person.
+                Command duplicate_practice=*training;
+                duplicate_practice.id=289;duplicate_practice.sequence=289;
+                CHECK(w.submit(duplicate_practice));
                 CHECK(w.submit(double_book));
             }
             w.step();
             const auto& outcomes=w.world().events();
             if(training_id==270){
-                CHECK(outcomes.size()>=2);
-                CHECK(outcomes[outcomes.size()-2].command_id==training_id &&
-                      outcomes[outcomes.size()-2].result==Outcome::Applied &&
-                      outcomes[outcomes.size()-2].transferred==1);
+                CHECK(outcomes.size()>=3);
+                CHECK(outcomes[outcomes.size()-3].command_id==training_id &&
+                      outcomes[outcomes.size()-3].result==Outcome::Applied &&
+                      outcomes[outcomes.size()-3].transferred==1);
+                CHECK(outcomes[outcomes.size()-2].command_id==289 &&
+                      outcomes[outcomes.size()-2].result==Outcome::InvalidTarget &&
+                      outcomes[outcomes.size()-2].transferred==0);
                 CHECK(outcomes.back().command_id==290 &&
-                      outcomes.back().result==Outcome::InvalidTarget);
+                      outcomes.back().result==Outcome::InvalidTarget &&
+                      outcomes.back().transferred==0);
                 CHECK(w.world().workshop(site)->operator_npc_id==0);
             }else{
                 CHECK(outcomes.back().command_id==training_id &&
