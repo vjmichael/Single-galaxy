@@ -6988,6 +6988,204 @@ bool Simulation::handover_planetary_surface_utility(PlayerId owner,EntityId ship
 // for this project have already arrived in the original surface module rack.
 // Both original trades build a structural installation under Shape certification;
 // the resulting farm/extractor uses the existing real inventories and work policy.
+// WO3-D/v117: two more real surface module families. The original
+// housing_module rack delivers the SAME physical 2-tonne items to this site;
+// no independent or instant facility constructor exists.
+bool Simulation::start_planetary_service_build(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool annex,std::uint64_t order_id,
+        std::uint64_t supervisor) {
+    const auto index=annex?std::size_t{0}:std::size_t{1};
+    auto site=planetary_sites_.find(key);
+    const auto ship_entity=entities_.find(ship);
+    const auto frame=ship_frames_.find(ship);
+    if(!owner || owner==kServerAuthority || !order_id ||
+       order_id==std::numeric_limits<std::uint64_t>::max() || !supervisor ||
+       site==planetary_sites_.end() ||
+       ship_entity==entities_.end() || ship_entity->second.owner_id!=owner ||
+       !colony_ships_.count(ship) || frame==ship_frames_.end() ||
+       frame->second.anchor_body!=std::get<0>(key) ||
+       site->second.owner!=owner || site->second.source_ship!=ship ||
+       site->second.spaceport_phase!=3 || site->second.housing_phase!=2 ||
+       site->second.utility_phase!=2 || site->second.workforce_policy ||
+       site->second.housing_modules!=2 ||
+       site->second.food_kg<2 || site->second.water_kg<2 ||
+       site->second.oxygen_kg<2 ||
+       site->second.service_projects[index].phase ||
+       site->second.service_projects[1-index].phase==1 ||
+       std::any_of(site->second.production_projects.begin(),
+                   site->second.production_projects.end(),
+                   [](const auto& p){return p.phase==1;}) ||
+       submitted_ids_.count(order_id) ||
+       shuttle_flight_request_ids_.count(order_id) ||
+       planetary_family_booking_ids_.count(order_id) ||
+       pending_celestial_transits_.count(order_id) ||
+       completed_celestial_transits_.count(order_id) ||
+       local_delivery_orders_.count(order_id) || voyages_.count(order_id) ||
+       (legacy_planetary_residence_import_ &&
+        legacy_planetary_residence_import_->host_request_id==order_id))
+        return false;
+    for(const auto& [other_key,other]:planetary_sites_) {
+        (void)other_key;
+        if(order_id==other.housing_order_id ||
+           order_id==other.utility_order_id)return false;
+        for(const auto& project:other.production_projects)
+            if(project.order_id==order_id)return false;
+        for(const auto& project:other.service_projects)
+            if(project.order_id==order_id)return false;
+        for(const auto& chain:other.production_handovers)
+            for(const auto& r:chain)
+                if(r.request_id==order_id)return false;
+        for(const auto& chain:other.service_handovers)
+            for(const auto& r:chain)
+                if(r.request_id==order_id)return false;
+        for(const auto& r:other.utility_handovers)
+            if(r.request_id==order_id)return false;
+        for(const auto id:other.founder_consent_requests)
+            if(id==order_id)return false;
+        for(const auto& [person,proof]:other.visitor_residency) {
+            (void)person;
+            if(proof[1]==order_id || proof[2]==order_id)return false;
+        }
+    }
+    const auto person=npcs_.find(supervisor);
+    if(person==npcs_.end() || person->second.home_ship!=ship ||
+       person->second.location!=site->second.surface_location ||
+       !workshop_trade_certified(supervisor,WorkshopTrade::Shape))
+        return false;
+    const bool delegated=
+        std::find(site->second.delegated_npcs.begin(),
+                  site->second.delegated_npcs.end(),supervisor)!=
+                  site->second.delegated_npcs.end() &&
+        person->second.assigned_site==site->second.surface_location &&
+        person->second.role==NpcRole::PlanetarySurface &&
+        npc_available_for_duty(supervisor);
+    const auto shuttle=planetary_shuttles_.find(key);
+    const auto health=npc_health_status(supervisor);
+    const bool visiting=shuttle!=planetary_shuttles_.end() &&
+        person->second.assigned_site==ship &&
+        person->second.role==NpcRole::Ship &&
+        !person->second.transport_id &&
+        std::binary_search(shuttle->second.duty_ids.begin(),
+                           shuttle->second.duty_ids.end(),supervisor) &&
+        std::binary_search(shuttle->second.disembarked_ids.begin(),
+                           shuttle->second.disembarked_ids.end(),supervisor) &&
+        shuttle->second.visitor_arrival_receipts.count(supervisor) &&
+        npc_transport_arrival(
+            shuttle->second.visitor_arrival_receipts.at(supervisor),
+            supervisor).has_value() &&
+        (health==NpcHealthStatus::Healthy ||
+         health==NpcHealthStatus::Treated ||
+         health==NpcHealthStatus::Recovered);
+    if(!delegated && !visiting)return false;
+    for(const auto id:site->second.delegated_npcs)
+        if(!id || !npc_available_for_duty(id))return false;
+    auto& ground=site->second;
+    ground.housing_modules-=2;
+    ground.embodied_ore+=4;
+    auto& p=ground.service_projects[index];
+    p.phase=1;p.progress=0;p.order_id=order_id;
+    p.supervisor=supervisor;p.stalled_ticks=0;
+    p.completed_tick=0;p.powered_cycles=0;p.paused=false;
+    snapshot_version_=std::max(snapshot_version_,117);
+    return true;
+}
+
+bool Simulation::pause_planetary_service_build(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool annex,bool pause) {
+    const auto site=planetary_sites_.find(key);
+    if(!owner || owner==kServerAuthority || site==planetary_sites_.end() ||
+       site->second.owner!=owner || site->second.source_ship!=ship ||
+       !entities_.count(ship) || entities_.at(ship).owner_id!=owner)
+        return false;
+    auto& project=site->second.service_projects[annex?0:1];
+    if(project.phase!=1 || project.paused==pause)return false;
+    project.paused=pause;
+    return true;
+}
+
+bool Simulation::handover_planetary_service_build(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool annex,std::uint64_t previous,
+        std::uint64_t replacement,std::uint64_t request_id) {
+    const auto site=planetary_sites_.find(key);
+    if(!owner || owner==kServerAuthority || !previous || !replacement ||
+       previous==replacement || !request_id ||
+       request_id==std::numeric_limits<std::uint64_t>::max() ||
+       site==planetary_sites_.end() ||
+       !entities_.count(ship) || entities_.at(ship).owner_id!=owner ||
+       site->second.owner!=owner || site->second.source_ship!=ship ||
+       site->second.workforce_policy ||
+       submitted_ids_.count(request_id) ||
+       shuttle_flight_request_ids_.count(request_id) ||
+       planetary_family_booking_ids_.count(request_id) ||
+       pending_celestial_transits_.count(request_id) ||
+       completed_celestial_transits_.count(request_id) ||
+       local_delivery_orders_.count(request_id) || voyages_.count(request_id) ||
+       (legacy_planetary_residence_import_ &&
+        legacy_planetary_residence_import_->host_request_id==request_id))
+        return false;
+    const auto index=annex?std::size_t{0}:std::size_t{1};
+    auto& st=site->second;
+    auto& p=st.service_projects[index];
+    auto& chain=st.service_handovers[index];
+    if(p.phase!=1 || p.supervisor!=previous || chain.size()>=16 ||
+       (!chain.empty() && chain.back().tick>=tick_))
+        return false;
+    for(const auto& [key,other]:planetary_sites_) {
+        (void)key;
+        if(request_id==other.housing_order_id ||
+           request_id==other.utility_order_id)return false;
+        for(const auto& work:other.service_projects)
+            if(work.order_id==request_id)return false;
+        for(const auto& work:other.production_projects)
+            if(work.order_id==request_id)return false;
+        for(const auto& history:other.service_handovers)
+            for(const auto& relief:history)
+                if(relief.request_id==request_id)return false;
+        for(const auto& history:other.production_handovers)
+            for(const auto& relief:history)
+                if(relief.request_id==request_id)return false;
+        for(const auto& relief:other.utility_handovers)
+            if(relief.request_id==request_id)return false;
+        for(const auto id:other.founder_consent_requests)
+            if(id==request_id)return false;
+        for(const auto& [person,proof]:other.visitor_residency) {
+            (void)person;
+            if(proof[1]==request_id || proof[2]==request_id)return false;
+        }
+    }
+    const auto npc=npcs_.find(replacement);
+    if(npc==npcs_.end() || npc->second.home_ship!=ship ||
+       npc->second.location!=st.surface_location ||
+       !workshop_trade_certified(replacement,WorkshopTrade::Shape))
+        return false;
+    const bool delegated=
+        std::find(st.delegated_npcs.begin(),st.delegated_npcs.end(),
+                  replacement)!=st.delegated_npcs.end() &&
+        npc->second.assigned_site==st.surface_location &&
+        npc->second.role==NpcRole::PlanetarySurface &&
+        npc_available_for_duty(replacement);
+    const auto shuttle=planetary_shuttles_.find(key);
+    const auto health=npc_health_status(replacement);
+    const bool visitor=shuttle!=planetary_shuttles_.end() &&
+        npc->second.assigned_site==ship && npc->second.role==NpcRole::Ship &&
+        !npc->second.transport_id &&
+        std::binary_search(shuttle->second.duty_ids.begin(),
+                           shuttle->second.duty_ids.end(),replacement) &&
+        std::binary_search(shuttle->second.disembarked_ids.begin(),
+                           shuttle->second.disembarked_ids.end(),replacement) &&
+        shuttle->second.visitor_arrival_receipts.count(replacement) &&
+        npc_transport_arrival(
+            shuttle->second.visitor_arrival_receipts.at(replacement),
+            replacement).has_value() &&
+        (health==NpcHealthStatus::Healthy ||
+         health==NpcHealthStatus::Treated ||
+         health==NpcHealthStatus::Recovered);
+    if(!delegated && !visitor)return false;
+    chain.push_back({request_id,tick_,previous,replacement});
+    p.supervisor=replacement;
+    return true;
+}
+
 bool Simulation::start_planetary_production_build(PlayerId owner,EntityId ship,
     const PlanetarySiteKey& key,bool farm,std::uint64_t order_id,
     std::uint64_t supervisor) {
