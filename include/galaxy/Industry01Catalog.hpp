@@ -21,6 +21,7 @@ struct Recipe {
     std::vector<Ingredient> inputs,outputs;
     std::string native_binding;
 };
+struct Recovery { Recipe recipe;std::string recovered_item; };
 struct Service {
     std::string code,result;
     std::vector<std::string> staff,site_capabilities,consumables,equipment;
@@ -31,6 +32,7 @@ struct LegacyUnit {
 };
 const std::vector<Item>& items();
 const std::vector<Recipe>& recipes();
+const std::vector<Recovery>& recovery_recipes();
 const std::vector<Service>& services();
 const std::vector<LegacyUnit>& legacy_units();
 const Item* find_item(const std::string& code) noexcept;
