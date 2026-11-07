@@ -9166,12 +9166,16 @@ void Simulation::process_planetary_surface_operations() {
             }
         if(ready<2) {
             if(site.housing_phase==1)++site.housing_stalled_ticks;
+            if(site.housing_phase==2 && tick_%20==0)
+                ++site.housing_shortages;
             if(site.spaceport_phase==3 && site.workforce_policy &&
                tick_%20==0){++site.stalled_cycles;site.last_work_tick=tick_;}
             continue; // injured, missing or unavailable crew pause work
         }
         if(site.food_kg<2 || site.water_kg<2 || site.oxygen_kg<2) {
             if(site.housing_phase==1)++site.housing_stalled_ticks;
+            if(site.housing_phase==2 && tick_%20==0)
+                ++site.housing_shortages;
             if(site.spaceport_phase==3 && site.workforce_policy &&
                tick_%20==0){++site.stalled_cycles;site.last_work_tick=tick_;}
             continue; // resupply before construction or work can resume
