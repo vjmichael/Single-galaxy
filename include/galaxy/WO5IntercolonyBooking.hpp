@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <limits>
 #include <optional>
+#include <stdexcept>
 
 namespace galaxy::logistics05 {
 
