@@ -167,9 +167,9 @@ int main() {
     CHECK(recovered.settle_planetary_founder(7,ship,key,roster[0],81300,true));
     CHECK(recovered.settle_planetary_founder(7,ship,key,roster[1],81301,true));
     CHECK(recovered.world().state_hash()==w.world().state_hash());
-    CHECK(w.world().npc_records().at(roster[0]).legal_residence()==
+    CHECK((w.world().npc_records().at(roster[0]).legal_residence()==
         transport::Endpoint{transport::LocationKind::PlanetarySite,
-                            w.world().planetary_sites().at(key).surface_location});
+                            w.world().planetary_sites().at(key).surface_location}));
     CHECK(w.world().total_ore()==initial_mass);
     const auto audit=colony03::audit_planetary_surface(
         w.world(),7,ship,key);
