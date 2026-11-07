@@ -238,6 +238,13 @@ struct PlanetarySiteAudit {
     std::uint64_t named_surface_visitors=0;
     bool shuttle_installed=false,permanent_housing_installed=false;
     bool staffed_by_original_named_npcs=false;
+    std::uint8_t physically_delivered_modules=0,housing_phase=0;
+    std::uint64_t housing_progress=0,housing_order_id=0;
+    std::uint64_t housing_stalled_ticks=0;
+    std::uint64_t housing_completed_tick=0;
+    std::int64_t unused_housing_capacity=0; // 4 initial beds; no future free population
+    std::uint64_t original_permanent_residents=0;
+    bool support_healthy_now=false; // site has >=2kg of each local vital stock
 };
 inline std::optional<PlanetarySiteAudit> audit_planetary_surface(
     const Simulation& world,PlayerId owner,EntityId ship,
@@ -257,6 +264,14 @@ inline std::optional<PlanetarySiteAudit> audit_planetary_surface(
     a.declared_workers=s.assigned_workers>0?
         static_cast<std::uint64_t>(s.assigned_workers):0;
     a.shuttle_installed=world.planetary_shuttles().count(key)!=0;
+    a.physically_delivered_modules=s.housing_modules;
+    a.housing_phase=s.housing_phase;
+    a.housing_progress=s.housing_progress;
+    a.housing_order_id=s.housing_order_id;
+    a.housing_stalled_ticks=s.housing_stalled_ticks;
+    a.housing_completed_tick=s.housing_completed_tick;
+    a.permanent_housing_installed=s.housing_phase==2;
+    a.support_healthy_now=s.food_kg>=2 && s.water_kg>=2 && s.oxygen_kg>=2;
     for(const auto npc_id:s.delegated_npcs){
         if(!npc_id)continue;
         const auto it_n=world.npc_records().find(npc_id);
@@ -268,12 +283,19 @@ inline std::optional<PlanetarySiteAudit> audit_planetary_surface(
     }
     for(const auto& [id,npc]:world.npc_records()){
         (void)id;
+        if(a.permanent_housing_installed &&
+           npc.legal_residence()==transport::Endpoint{
+               transport::LocationKind::PlanetarySite,s.surface_location})
+            ++a.original_permanent_residents;
         if(npc.location==s.surface_location &&
            npc.role==NpcRole::PlanetarySurface &&
            npc.home_ship==ship)++a.named_surface_visitors;
     }
     a.staffed_by_original_named_npcs=
         a.physical_delegates==a.declared_workers && a.declared_workers!=0;
+    a.unused_housing_capacity=a.permanent_housing_installed?
+        std::max<std::int64_t>(0,4-static_cast<std::int64_t>(
+            a.original_permanent_residents)):0;
     return a;
 }
 
