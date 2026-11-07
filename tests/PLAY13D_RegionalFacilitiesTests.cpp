@@ -1343,6 +1343,30 @@ static void scenario(const fs::path& db, bool farming,
                       in_flight->native_freight==IntercolonyFreightStage::Loaded &&
                       !in_flight->real_delivery_confirmed &&
                       in_flight->original_pilot!=0);
+                // WO5-E second physical boundary: the shuttle finished
+                // its journey, but the SEALED 100kg are still on the
+                // freighter and must not be transformed into cold macro
+                // inventory while crossing a regional owner epoch.
+                regional_events::CheckpointStore cp(
+                    db.string(),"wo5-native-freight");
+                regional_events::RegionalModeAuthority authority(cp);
+                const auto token=authority.state();
+                const auto loaded_audit=logistics05::observe_native_regional_recovery(
+                    db.string(),w,cp,authority,7,token.generation,
+                    token.checkpoint_revision);
+                CHECK(loaded_audit && loaded_audit->loaded==1 &&
+                      loaded_audit->awaiting==0 &&
+                      loaded_audit->has_unresolved_original_freight);
+                bool cannot_cutover=false;
+                try{
+                    (void)authority.prepare("wo5-loaded-cutover",
+                        regional_events::SimulationOwner::Detailed,
+                        token.generation,token.checkpoint_revision,
+                        token.boundary_tick);
+                }catch(const std::exception&){cannot_cutover=true;}
+                CHECK(cannot_cutover &&
+                      authority.state().phase==
+                          regional_events::TransitionPhase::Stable);
             }
             if(delegated){
                 // WO5-D: the original named-NPC navigation service moves
