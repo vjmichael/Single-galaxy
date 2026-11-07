@@ -70,9 +70,9 @@ inline std::optional<Cell> parse_scope(const std::string& text) {
         return scope(result)==text?std::optional<Cell>(result):std::nullopt;
     }catch(const std::exception&){return std::nullopt;}
 }
-// Current native physics is a two-axis local projection of its already
-// persisted 3D cosmic frame. This computes exact ORIGINAL cosmic position;
-// it does NOT mint a second z coordinate or hide the legacy ±1000km clamp.
+// The original v119 native ship has three persisted physical axes; older
+// snapshots resolve z=0. This projects the SAME canonical ship, not a
+// secondary position ledger. The old XY clamp applies only to v118 saves.
 inline std::optional<CosmicPosition> cosmic_ship(
     const Simulation& world,EntityId ship) {
     const auto* e=world.find(ship);
@@ -84,7 +84,7 @@ inline std::optional<CosmicPosition> cosmic_ship(
         frame.anchor_body_id=it->second.anchor_body;
         frame.origin=it->second.origin;
     }
-    return local_to_cosmic(frame,{e->position.x,e->position.y,0});
+    return local_to_cosmic(frame,{e->position.x,e->position.y,e->position_z_mm});
 }
 inline std::optional<Cell> ship_cell(const Simulation& world,EntityId id){
     const auto* e=world.find(id);
