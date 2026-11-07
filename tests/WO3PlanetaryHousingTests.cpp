@@ -4,6 +4,7 @@
 #include <chrono>
 #include <filesystem>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -87,6 +88,97 @@ int main() {
     w.steps(240);
     CHECK(w.world().planetary_spaceport_operational(choice.body,
                                                    choice.lat,choice.lon));
+    // WO3-E: reconstruct a historical v86 source *without modern housing*.
+    // Existing original NPC identity #0 already holds the real surface job.
+    // A legacy legal address is not a new arrival or an occupied modern bed.
+    {
+        const auto original=w.world().canonical_state();
+        const auto header_end=original.find('|');
+        CHECK(header_end!=std::string::npos);
+        const auto version=std::stoull(original.substr(
+            std::string("galaxy-kernel-v").size(),
+            header_end-std::string("galaxy-kernel-v").size()));
+        CHECK(version>=78 && version<109);
+        std::istringstream input(original);
+        std::ostringstream old_state;
+        std::string line;
+        while(std::getline(input,line)){
+            if(line.rfind("galaxy-kernel-v",0)==0)
+                line.replace(0,header_end,"galaxy-kernel-v86");
+            else if(line.rfind("npc|",0)==0){
+                const auto next=line.find('|',4);
+                CHECK(next!=std::string::npos);
+                const auto id=std::stoull(line.substr(4,next-4));
+                if(version>=86) {
+                    const auto last=line.rfind('|');
+                    CHECK(last!=std::string::npos);
+                    const auto prior=line.rfind('|',last-1);
+                    CHECK(prior!=std::string::npos);
+                    line.erase(prior);
+                }
+                line+="|"+std::to_string(id==roster[0]?3:1)+"|"+
+                    std::to_string(id==roster[0]?
+                        w.world().planetary_sites().at(key).surface_location:ship);
+            }
+            old_state<<line<<'\n';
+        }
+        const auto restored_old=Simulation::from_snapshot(old_state.str());
+        CHECK(restored_old.canonical_state()==old_state.str());
+        const auto historical_resident=restored_old.npc_records().at(roster[0]);
+        CHECK(historical_resident.legal_residence()==
+              (transport::Endpoint{transport::LocationKind::PlanetarySite,
+                  w.world().planetary_sites().at(key).surface_location}));
+        const auto history_db=(dir/"legacy_v86.sqlite").string();
+        PersistentWorld history(history_db,restored_old);
+        const auto historical_hash=history.world().state_hash();
+        CHECK(!history.host_import_legacy_planetary_residences(
+            7,86501));
+        CHECK(history.world().state_hash()==historical_hash);
+        bool failed_write=false;
+        try {
+            (void)history.host_import_legacy_planetary_residences(
+                Simulation::kServerAuthority,86501,
+                FailPoint::AfterSnapshotWrite);
+        }catch(const std::exception&){failed_write=true;}
+        CHECK(failed_write && history.world().state_hash()==historical_hash);
+        CHECK(history.host_import_legacy_planetary_residences(
+            Simulation::kServerAuthority,86501));
+        CHECK(!history.host_import_legacy_planetary_residences(
+            Simulation::kServerAuthority,86501));
+        const auto& migrated=history.world();
+        CHECK(migrated.canonical_state().rfind("galaxy-kernel-v115|",0)==0);
+        const auto& imported=migrated.legacy_planetary_residence_import();
+        CHECK(imported && imported->source_version==86 &&
+              imported->source_hash==historical_hash &&
+              imported->host_request_id==86501 &&
+              imported->legal_addresses.size()==1 &&
+              imported->legal_addresses.at(roster[0])==
+                  w.world().planetary_sites().at(key).surface_location);
+        CHECK(migrated.total_ore()==initial_mass);
+        const auto census=colony03::audit_planetary_surface(
+            migrated,7,ship,key);
+        CHECK(census && !census->permanent_housing_installed &&
+              census->unused_housing_capacity==0);
+        CHECK(Simulation::from_snapshot(migrated.canonical_state()).
+              state_hash()==migrated.state_hash());
+        auto forged=migrated.canonical_state();
+        const auto field=forged.find("planetlegacyimport|");
+        CHECK(field!=std::string::npos);
+        const auto request=forged.find("|86501|",field);
+        CHECK(request!=std::string::npos);
+        forged.replace(request,7,"|0|");
+        bool denied=false;
+        try{(void)Simulation::from_snapshot(forged);}
+        catch(const std::exception&){denied=true;}
+        CHECK(denied);
+        const auto historical_copy=(dir/"legacy_copy.sqlite").string();
+        PersistentWorld::recover_copy(history_db,historical_copy);
+        PersistentWorld recovered(historical_copy,Simulation(613));
+        CHECK(recovered.world().state_hash()==migrated.state_hash());
+        CHECK(recovered.world().legacy_planetary_residence_import().
+              has_value());
+        CHECK(recovered.world().total_ore()==initial_mass);
+    }
     CHECK(!w.start_planetary_housing(7,ship,key,81200));
     const auto before_house=colony03::assess_surface_supplies(
         w.world(),7,ship,key);
