@@ -3962,6 +3962,32 @@ public:
         // The shift may expire without an extra command, but its source
         // admission must never be faked or reassigned in a snapshot.
         for(const auto& [site,shop]:restored.workshops()){
+            // A pending shift cancellation is evidence of a real owner
+            // cancellation command, never an arbitrary skipped appointment.
+            for(const auto canceled:shop.cancelled_pending_shifts){
+                const auto original=journal_commands.find(canceled);
+                bool cancellation_proven=false;
+                if(original!=journal_commands.end() &&
+                   original->second.action==Action::StartWorkshopShift &&
+                   original->second.target==site &&
+                   original->second.actor==shop.source_ship){
+                    for(const auto& [id,command]:journal_commands){
+                        const auto receipt=event_by_id.find(id);
+                        if(command.action==Action::CancelWorkshopShift &&
+                           command.actor==shop.source_ship &&
+                           command.target==site &&
+                           command.thrust_x==original->second.thrust_x &&
+                           command.amount==static_cast<std::int64_t>(canceled) &&
+                           receipt!=event_by_id.end() &&
+                           receipt->second.result==Outcome::Applied &&
+                           receipt->second.tick<original->second.execute_tick){
+                            cancellation_proven=true;break;
+                        }
+                    }
+                }
+                if(!cancellation_proven)
+                    throw std::runtime_error("SQLite: workshop pending cancellation lacks original owner receipt");
+            }
             for(unsigned slot=0;slot<2;++slot){
                 const auto& shift=shop.shifts[slot];
                 if(!shift.command_id)continue;
