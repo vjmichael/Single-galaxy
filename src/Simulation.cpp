@@ -6920,7 +6920,7 @@ bool Simulation::settle_planetary_visitor(PlayerId owner,EntityId ship,
        shuttle_flight_request_ids_.count(request_id) ||
        local_delivery_orders_.count(request_id) ||
        voyages_.count(request_id))return false;
-    const auto& n=person->second;
+    auto& n=person->second;
     if(n.home_ship!=ship || n.location!=it->second.surface_location ||
        n.assigned_site!=ship || n.role!=NpcRole::Ship || n.transport_id ||
        n.legal_residence()!=transport::Endpoint{
