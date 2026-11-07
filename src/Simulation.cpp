@@ -3580,11 +3580,22 @@ Event Simulation::execute(const Command& c) {
                     for(const auto& [id,e]:entities_){
                         if(e.type!=EntityType::Asteroid || e.system_id!=probe.system)continue;
                         const auto dx=e.position.x-probe.position.x,dy=e.position.y-probe.position.y;
-                        if(dx< -r || dx>r || dy< -r || dy>r || dx*dx+dy*dy>r*r)continue;
+                        if(snapshot_version_>=121){
+                            if(!within_galactic_range(e.physical_galactic,
+                                probe.galactic_position,r))continue;
+                        }else if(dx< -r || dx>r || dy< -r || dy>r ||
+                                  dx*dx+dy*dy>r*r)continue;
                         const auto key=std::make_pair(c.issuer,id);
-                        if(!discoveries_.count(key)&&!pending_probe_discoveries_.count(key))
-                            candidates.push_back(DiscoveryRecord{c.issuer,id,e.system_id,e.position,
-                                tick_,(geology_.count(id)!=0||local_deposit_taxonomy(id).has_value())});
+                        if(!discoveries_.count(key)&&!pending_probe_discoveries_.count(key)){
+                            DiscoveryRecord observation{c.issuer,id,e.system_id,e.position,
+                                tick_,(geology_.count(id)!=0||local_deposit_taxonomy(id).has_value())};
+                            if(snapshot_version_>=121){
+                                observation.location_z_mm=e.position_z_mm;
+                                observation.galactic_location=e.physical_galactic;
+                                observation.galactic_authoritative=true;
+                            }
+                            candidates.push_back(observation);
+                        }
                     }
                     if(pending_probe_discoveries_.size()>10000-discoveries_.size()||
                        candidates.size()>10000-discoveries_.size()-pending_probe_discoveries_.size()||
@@ -3607,7 +3618,10 @@ Event Simulation::execute(const Command& c) {
                     constexpr auto r=kProbeRecoveryRangeMm;
                     const auto dx=probe.position.x-actor.position.x;
                     const auto dy=probe.position.y-actor.position.y;
-                    if(dx< -r || dx>r || dy< -r || dy>r || dx*dx+dy*dy>r*r){
+                    if(snapshot_version_>=121 ?
+                       !within_galactic_range(probe.galactic_position,
+                          actor.physical_galactic,r) :
+                       (dx< -r || dx>r || dy< -r || dy>r || dx*dx+dy*dy>r*r)){
                         result.result=Outcome::OutOfRange;return result;
                     }
                     if(probe.focus_site || (probe.drone_phase && probe.drone_phase!=3)){
@@ -3628,9 +3642,17 @@ Event Simulation::execute(const Command& c) {
                                 result.result=Outcome::InvalidArgument;return result;
                             }
                             const auto where=site!=entities_.end()?site->second.position:probe.position;
-                            discoveries_.emplace(key,DiscoveryRecord{probe.owner,
+                            DiscoveryRecord report{probe.owner,
                                 probe.drone_target,probe.system,where,tick_,true,
-                                probe.taxonomy});
+                                probe.taxonomy};
+                            if(snapshot_version_>=121){
+                                report.location_z_mm=site!=entities_.end()?
+                                    site->second.position_z_mm:probe.position_z_mm;
+                                report.galactic_location=site!=entities_.end()?
+                                    site->second.physical_galactic:probe.galactic_position;
+                                report.galactic_authoritative=true;
+                            }
+                            discoveries_.emplace(key,report);
                         }else discoveries_.at(key).survey_taxonomy=probe.taxonomy;
                     }
                     ++actor.survey_probes_carried;
