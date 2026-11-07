@@ -278,7 +278,7 @@ Simulation::Simulation(std::uint64_t seed, std::uint32_t system_id)
 bool Simulation::same_local_frame(EntityId a,EntityId b) const {
     const auto* x=find(a);
     const auto* y=find(b);
-    if(!x||!y||x->system_id!=y->system_id)return false;
+    if(!x||!y)return false;
     if(snapshot_version_>=120){
         // An orbital/local frame is a view and navigation attachment, NOT
         // a collision or interaction wall. Both original entities have
@@ -287,6 +287,7 @@ bool Simulation::same_local_frame(EntityId a,EntityId b) const {
         return x->physical_galactic_authoritative &&
                y->physical_galactic_authoritative;
     }
+    if(x->system_id!=y->system_id)return false;
     const auto ax=ship_frames_.find(a),ay=ship_frames_.find(b);
     const auto li=local_entity_anchors_.find(a);
     const auto ri=local_entity_anchors_.find(b);
@@ -2507,7 +2508,8 @@ Outcome Simulation::mine_status(const Entity& actor, EntityId target) const {
     const auto it = entities_.find(target);
     if (it == entities_.end()) return depleted_.count(target) ? Outcome::NoResources : Outcome::InvalidTarget;
     const auto& asteroid = it->second;
-    if (asteroid.type != EntityType::Asteroid || asteroid.system_id != actor.system_id)
+    if (asteroid.type != EntityType::Asteroid ||
+        (snapshot_version_<120 && asteroid.system_id != actor.system_id))
         return Outcome::InvalidTarget;
     if(!same_local_frame(actor.id,target))return Outcome::OutOfRange;
     const auto* deposit=geology(target);
@@ -3962,7 +3964,8 @@ Event Simulation::execute(const Command& c) {
             constexpr auto range=kLocalSurveyRangeMm;
             std::vector<DiscoveryRecord> candidates;
             for(const auto& [id,e]:entities_){
-                if(e.type!=EntityType::Asteroid || e.system_id!=actor.system_id ||
+                if(e.type!=EntityType::Asteroid ||
+                   (snapshot_version_<120 && e.system_id!=actor.system_id) ||
                    !same_local_frame(c.actor,id))continue;
                 if(snapshot_version_>=119 &&
                    !within_native_3d_range(actor,e,range))continue;
@@ -4285,7 +4288,9 @@ Event Simulation::execute(const Command& c) {
             if (!station || station->type != EntityType::Station) {
                 result.result = Outcome::InvalidTarget; return result;
             }
-            if(station->system_id!=actor.system_id){result.result=Outcome::WrongSystem;return result;}
+            if(snapshot_version_<120 && station->system_id!=actor.system_id){
+                result.result=Outcome::WrongSystem;return result;
+            }
             if(snapshot_version_>=119 &&
                !within_native_3d_range(actor,*station,kDockingRangeMm)){
                 result.result=Outcome::OutOfRange;return result;
@@ -4392,7 +4397,9 @@ Event Simulation::execute(const Command& c) {
             if(actor.jump_state!=ShipJumpState::Ready){result.result=Outcome::InTransition;return result;}
             const auto* gate=find(c.target);
             if(!gate || gate->type!=EntityType::Stargate){result.result=Outcome::InvalidTarget;return result;}
-            if(gate->system_id!=actor.system_id){result.result=Outcome::WrongSystem;return result;}
+            if(snapshot_version_<120 && gate->system_id!=actor.system_id){
+                result.result=Outcome::WrongSystem;return result;
+            }
             if(!gate->gate_online){result.result=Outcome::GateOffline;return result;}
             if(snapshot_version_>=119 &&
                !within_native_3d_range(actor,*gate,kJumpActivationMm)){
@@ -5975,8 +5982,10 @@ void Simulation::process_jump_transitions() {
             ship.jump_state=ShipJumpState::Ready;continue;
         }
         const auto* gate=find(ship.pending_gate);
-        if(!gate || gate->type!=EntityType::Stargate || gate->system_id!=ship.system_id ||
-           !systems_.count(gate->gate_destination))throw std::logic_error("committed jump lost endpoint");
+        if(!gate || gate->type!=EntityType::Stargate ||
+           (snapshot_version_<120 && gate->system_id!=ship.system_id) ||
+           !systems_.count(gate->gate_destination))
+            throw std::logic_error("committed jump lost endpoint");
         const auto destination=gate->gate_destination;
         const auto gate_id=ship.pending_gate;
         const auto sign=(id%2)?-1:1;
@@ -15557,7 +15566,8 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 throw std::runtime_error("snapshot: invalid gate destination system");
             if(e.type==EntityType::Ship && e.jump_state==ShipJumpState::Jumping){
                 const auto* gate=result.find(e.pending_gate);
-                if(!gate || gate->type!=EntityType::Stargate || gate->system_id!=e.system_id)
+                if(!gate || gate->type!=EntityType::Stargate ||
+                   (result.snapshot_version_<120 && gate->system_id!=e.system_id))
                     throw std::runtime_error("snapshot: jumping ship has no valid origin gate");
             }
         }
@@ -16178,7 +16188,8 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
         if (entity.type != EntityType::Ship || entity.dock_state == DockState::InSpace) continue;
         const auto it = result.entities_.find(entity.dock_station);
         if (it == result.entities_.end() || it->second.type != EntityType::Station ||
-            it->second.system_id!=entity.system_id ||
+            (result.snapshot_version_<120 &&
+             it->second.system_id!=entity.system_id) ||
             !result.hangar(entity.dock_station, entity.owner_id))
             throw std::runtime_error("snapshot: dock state references missing station or private hangar");
         if ((entity.dock_state == DockState::Docked || entity.dock_state == DockState::Undocking) &&
