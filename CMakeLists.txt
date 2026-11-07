@@ -1907,3 +1907,12 @@ if(BUILD_TESTING)
     target_link_libraries(galaxy_wo4_resource_demand_tests PRIVATE galaxy_kernel)
     add_test(NAME galaxy_wo4_resource_demand COMMAND galaxy_wo4_resource_demand_tests)
 endif()
+
+
+# WO4-C native industrial stockpile: existing material cargo -> constructed
+# storage, original command journal, conservation and copied SQLite recovery.
+if(BUILD_TESTING)
+    add_executable(galaxy_wo4_material_allocation_tests tests/WO4MaterialAllocationTests.cpp)
+    target_link_libraries(galaxy_wo4_material_allocation_tests PRIVATE galaxy_kernel)
+    add_test(NAME galaxy_wo4_material_allocation COMMAND galaxy_wo4_material_allocation_tests)
+endif()
