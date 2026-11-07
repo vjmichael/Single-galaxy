@@ -1,5 +1,6 @@
 #include "galaxy/Persistence.hpp"
 #include "galaxy/SeamlessCellSupervisor.hpp"
+#include "galaxy/NativeCellProcessRunner.hpp"
 #include "galaxy/GalacticSystemRegistry.hpp"
 #include "galaxy/RegionalCheckpointStore.hpp"
 #include "galaxy/RegionalModeAuthority.hpp"
@@ -126,7 +127,8 @@ static void galaxy_and_probes(const fs::path& root){
     CHECK(vertical.events().back().result==Outcome::Applied);
     CHECK(vertical.pending_probe_report_count()==0);
 }
-static void multi_cell_supervision(const fs::path& root){
+static void multi_cell_supervision(const fs::path& root,
+    const std::string& worker_binary,const std::string& hang_binary){
     const auto db=(root/"multi.sqlite").string();
     Simulation initial(77112);
     const auto ship1=initial.add_colony_ship(7,{0,0},100,8);
@@ -159,8 +161,18 @@ static void multi_cell_supervision(const fs::path& root){
     };
     const auto l1=register_cell(*cell1,"worker-A");
     const auto l2=register_cell(*cell2,"worker-B");
+    // Both real physical cells have independently fenced worker leases.
+    // A hung OS child cannot commit the original world or evade watchdog.
+    spatial::NativeMultiCellSupervisor stalled(db,w);
+    stalled.register_worker(l1);stalled.register_worker(l2);
+    stalled.use_native_process_workers(hang_binary);
+    const auto baseline=w.generation();
+    denied([&]{stalled.run_next_tick("hung-workers");});
+    CHECK(stalled.last_failed_cells().size()==2 &&
+          w.generation()==baseline);
     spatial::NativeMultiCellSupervisor supervisor(db,w);
     supervisor.register_worker(l1);supervisor.register_worker(l2);
+    supervisor.use_native_process_workers(worker_binary);
     CHECK(supervisor.worker_count()==2);
     const auto start=w.generation(),tick=w.world().tick();
     denied([&]{w.step();});
@@ -198,7 +210,7 @@ static void multi_cell_supervision(const fs::path& root){
         successor.region_generation,successor.checkpoint_revision,
         "abandoned-3"});});
 }
-int main(){
+int main(int argc,char** argv){
     const auto root=fs::temp_directory_path()/
         ("sg_space_04c_05b_"+std::to_string(
            std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -206,8 +218,14 @@ int main(){
     struct Cleanup{fs::path path;~Cleanup(){
         std::error_code ec;fs::remove_all(path,ec);}} cleanup{root};
     try{
+        CHECK(argc==3 && argv[1] && argv[2]);
+        const spatial::CellProcessTask task{
+            "spatial/v2/s1/q0,0,0/c0,0,0","worker-A",1,1234567,2,1};
+        CHECK(spatial::run_cell_process(argv[1],task).passed);
+        CHECK(!spatial::run_cell_process(argv[2],task,
+            std::chrono::milliseconds(50)).passed);
         galaxy_and_probes(root);
-        multi_cell_supervision(root);
+        multi_cell_supervision(root,argv[1],argv[2]);
         std::cout<<"PASS exact original galactic 3D, probe persistence and "
                     "durable multi-cell single-writer supervision\n";
         return 0;
