@@ -24,6 +24,7 @@ inline void command(sqlite3* db,const char* text) {
         throw std::runtime_error("galactic original system registry: "+reason);
     }
 }
+} // namespace registry
 struct Query {
     sqlite3_stmt* q=nullptr;
     explicit Query(sqlite3* db,const char* source) {
