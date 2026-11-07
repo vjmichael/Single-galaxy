@@ -27,7 +27,7 @@ const std::vector<Item>& items(){static const std::vector<Item> x={
   {"bulk/grain","food","g","feedstock",1ULL,1300ULL,{}},
   {"bulk/vegetables","food","g","feedstock",1ULL,1200ULL,{}},
   {"bulk/clean_water","water","g","feedstock",1ULL,1000ULL,{}},
-  {"bulk/dirty_water","water","g","feedstock",1ULL,1050ULL,{}},
+  {"bulk/dirty_water","water","g","waste",1ULL,1050ULL,{}},
   {"bulk/detergent","chemistry","g","feedstock",1ULL,1100ULL,{}},
   {"bulk/ink","chemistry","g","feedstock",1ULL,1000ULL,{}},
   {"part/metal_panel","construction","count","intermediate",30000ULL,50000000ULL,{}},
