@@ -233,7 +233,8 @@
      agencyReady;
    const caseChoice=selected('securityAgencyComplaint');
    el('securityAgencyRefer').disabled=!agencyReady||
-     !complaints.has(caseChoice);
+     !complaints.has(caseChoice) ||
+     [...agencyReferrals.values()].some(r=>r.complaint===caseChoice);
    const agencyNode=el('securityAgencyReferrals');
    agencyNode.replaceChildren();
    if(!agencyReferrals.size){
@@ -296,7 +297,11 @@
    for(const c of complaints.values()){
      const item=document.createElement('div');
      const checked=reviews.get(c.id);
-     const reviewText=checked?.status===4?
+     const alreadyReferred=[...agencyReferrals.values()]
+       .some(r=>r.complaint===c.id);
+     const reviewText=alreadyReferred?
+       ' · formally referred to appointed law agency for independent intake; no verdict':
+       checked?.status===4?
        ' · named duty reviewer confirmed; awaiting actual law agency':
        checked?.status===3?' · no on-duty reviewer':
        checked?.status===2?' · no territorial jurisdiction claim':
