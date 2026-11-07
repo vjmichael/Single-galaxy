@@ -6140,6 +6140,9 @@ public:
             Statement table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
                                 "AND name='sg_society_migration'");
             const bool has_migration=table.row();
+            Statement planetary_household_table(db_,"SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='sg_planet_household_migration'");
+            const bool has_planetary_household=planetary_household_table.row();
             for(const auto& [id,c]:journal_commands){
                 if(c.action!=Action::HostSettleMigrant)continue;
                 const auto ev=event_by_id.find(id);
@@ -6157,10 +6160,35 @@ public:
                 Statement receipt(db_,"SELECT command_id FROM sg_regional_command_receipt "
                     "WHERE actor='society-migration-host'");
                 while(receipt.row()){
-                    if(!has_migration)throw std::runtime_error("SQLite: orphaned regional migration");
-                    Statement q(db_,"SELECT 1 FROM sg_society_migration WHERE command_id=?");
-                    q.text(1,sqlite_str(receipt.get(),0));
-                    if(!q.row() || q.row())throw std::runtime_error("SQLite: regional migration unlinked");
+                    // The v118 planetary family writer commits a distinct
+                    // receipt, but uses the same original regional authority.
+                    // Exactly one of the older migrant or new household
+                    // transactions must own each regional migration command.
+                    const auto id=sqlite_str(receipt.get(),0);
+                    bool linked=false;
+                    if(has_migration){
+                        Statement old(db_,"SELECT 1 FROM sg_society_migration "
+                                          "WHERE command_id=?");
+                        old.text(1,id);
+                        if(old.row()){
+                            if(old.row())throw std::runtime_error(
+                                "SQLite: duplicate society migration");
+                            linked=true;
+                        }
+                    }
+                    if(has_planetary_household){
+                        Statement household(db_,"SELECT 1 FROM sg_planet_household_migration "
+                                                 "WHERE request_id=?");
+                        household.text(1,id);
+                        if(household.row()){
+                            if(household.row() || linked)
+                                throw std::runtime_error(
+                                    "SQLite: colliding planetary and society migration");
+                            linked=true;
+                        }
+                    }
+                    if(!linked)
+                        throw std::runtime_error("SQLite: regional migration unlinked");
                 }
             }
             Statement family_table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
@@ -6179,6 +6207,27 @@ public:
                         if(linked.row()){
                             if(linked.row())throw std::runtime_error("duplicate evacuation family move");
                             continue; // audited against the full world receipt below
+                        }
+                    }
+                    // The v118 household move writes THREE ART02 events
+                    // (guardian, co-parent and the existing registered child).
+                    // These are owned by the same atomic planetary receipt,
+                    // not by the older HostSettleMigrant command.
+                    if(has_planetary_household){
+                        Statement household(db_,"SELECT 1 FROM sg_planet_household_migration "
+                            "WHERE family_scope=? AND "
+                            "(request_id=? OR coparent_event=? OR child_event=?)");
+                        const auto scope=sqlite_str(q.get(),0);
+                        const auto event=sqlite_str(q.get(),1);
+                        household.text(1,scope);
+                        household.text(2,event);
+                        household.text(3,event);
+                        household.text(4,event);
+                        if(household.row()){
+                            if(household.row())
+                                throw std::runtime_error(
+                                    "SQLite: family event linked to multiple planetary households");
+                            continue; // validated against all three ART02 moves below
                         }
                     }
                     if(!has_migration)throw std::runtime_error("SQLite: family move without world effect");
@@ -6211,6 +6260,146 @@ public:
                             throw std::runtime_error("SQLite: household family move unlinked");
                     }else if(effect.row())
                         throw std::runtime_error("SQLite: duplicate family migration effect");
+                }
+            }
+            // WO3-E/v118: independently reconcile every legal household
+            // receipt against all three ART02 moves, the same regional
+            // transaction and the before/after original-world snapshots.
+            // A root, co-parent or child event cannot be accepted by merely
+            // existing in a table without its original family and site proof.
+            if(has_planetary_household){
+                Statement households(db_,"SELECT request_id,world_generation,tick,"
+                    "origin,destination,guardian,coparent,child,returning,"
+                    "family_scope,region_scope,region_revision,owner_generation,"
+                    "coparent_event,child_event FROM sg_planet_household_migration");
+                while(households.row()){
+                    const auto request=parse_u64(sqlite3_column_text(households.get(),0));
+                    const auto gen=sqlite3_column_int64(households.get(),1);
+                    const auto tick=sqlite3_column_int64(households.get(),2);
+                    const auto origin=parse_u64(sqlite3_column_text(households.get(),3));
+                    const auto destination=parse_u64(sqlite3_column_text(households.get(),4));
+                    const auto guardian=parse_u64(sqlite3_column_text(households.get(),5));
+                    const auto parent=parse_u64(sqlite3_column_text(households.get(),6));
+                    const auto child=parse_u64(sqlite3_column_text(households.get(),7));
+                    const auto returning=sqlite3_column_int64(households.get(),8);
+                    const auto scope=sqlite_str(households.get(),9);
+                    const auto region_scope=sqlite_str(households.get(),10);
+                    const auto region_revision=sqlite3_column_int64(households.get(),11);
+                    const auto owner_generation=sqlite3_column_int64(households.get(),12);
+                    const auto coparent_event=parse_u64(sqlite3_column_text(households.get(),13));
+                    const auto child_event=parse_u64(sqlite3_column_text(households.get(),14));
+                    if(!request || request%16 || request>
+                           std::numeric_limits<std::uint64_t>::max()-2 ||
+                       coparent_event!=request+1 || child_event!=request+2 ||
+                       gen<=1 || static_cast<std::uint64_t>(gen)>generation ||
+                       tick<=0 || !origin || !destination || origin==destination ||
+                       !guardian || !parent || guardian==parent ||
+                       child<(std::uint64_t{1}<<62) ||
+                       (returning!=0 && returning!=1) ||
+                       scope.empty() || region_scope.empty() ||
+                       region_revision<2 || owner_generation<1)
+                        throw std::runtime_error("SQLite: invalid planetary household receipt");
+                    const std::vector<std::pair<std::uint64_t,std::uint64_t>> members{
+                        {request,guardian},{coparent_event,parent},{child_event,child}};
+                    for(const auto& member:members){
+                        Statement move(db_,"SELECT npc_id,origin,destination,tick "
+                            "FROM npc_family_moves WHERE scope=? AND event_id=?");
+                        move.text(1,scope);
+                        move.text(2,std::to_string(member.first));
+                        if(!move.row() ||
+                           parse_u64(sqlite3_column_text(move.get(),0))!=member.second ||
+                           parse_u64(sqlite3_column_text(move.get(),1))!=origin ||
+                           parse_u64(sqlite3_column_text(move.get(),2))!=destination ||
+                           sqlite3_column_int64(move.get(),3)!=tick || move.row())
+                            throw std::runtime_error(
+                                "SQLite: planetary household ART02 move missing or forged");
+                    }
+                    Statement region(db_,"SELECT actor,request,revision,outcome "
+                        "FROM sg_regional_command_receipt WHERE scope=? AND command_id=?");
+                    region.text(1,region_scope);
+                    region.text(2,std::to_string(request));
+                    if(!region.row() ||
+                       sqlite_str(region.get(),0)!="society-migration-host" ||
+                       sqlite_str(region.get(),1)!="society-migration-generation:"+
+                           std::to_string(tick)+":"+
+                           (returning?"surface:home":"home:surface")+
+                           ":household:3" ||
+                       sqlite3_column_int64(region.get(),2)!=region_revision ||
+                       sqlite3_column_int64(region.get(),3)!=1 || region.row())
+                        throw std::runtime_error(
+                            "SQLite: planetary household regional receipt missing");
+                    const auto read_state=[&](std::int64_t g){
+                        Statement snapshot(db_,"SELECT state FROM snapshots WHERE generation=?");
+                        snapshot.i64(1,g);
+                        if(!snapshot.row())throw std::runtime_error(
+                            "SQLite: planetary household world checkpoint missing");
+                        const auto* data=sqlite3_column_blob(snapshot.get(),0);
+                        const int n=sqlite3_column_bytes(snapshot.get(),0);
+                        if(!data || n<=0)throw std::runtime_error(
+                            "SQLite: empty planetary household world checkpoint");
+                        const std::string bytes(static_cast<const char*>(data),
+                                                static_cast<std::size_t>(n));
+                        if(snapshot.row())throw std::runtime_error(
+                            "SQLite: duplicate planetary household world checkpoint");
+                        return Simulation::from_snapshot(bytes);
+                    };
+                    const auto before=read_state(gen-1),after=read_state(gen);
+                    if(after.tick()!=static_cast<std::uint64_t>(tick) ||
+                       before.tick()!=after.tick() ||
+                       before.npc_records().size()!=after.npc_records().size() ||
+                       before.physical_dependents().size()!=
+                           after.physical_dependents().size())
+                        throw std::runtime_error(
+                            "SQLite: household migration changed world identities");
+                    bool matched=false;
+                    for(const auto& [key,site]:after.planetary_sites()){
+                        const auto entry=site.households.find(guardian);
+                        if(entry==site.households.end())continue;
+                        const auto& h=entry->second;
+                        if(h.co_parent_id!=parent || h.child_ids.size()!=1 ||
+                           h.child_ids.front()!=child ||
+                           (returning ? h.return_request!=request :
+                                        h.admission_request!=request))
+                            continue;
+                        const auto surface=site.surface_location;
+                        if((returning && (origin!=surface ||
+                                          destination!=site.source_ship)) ||
+                           (!returning && (origin!=site.source_ship ||
+                                           destination!=surface)) ||
+                           matched)
+                            throw std::runtime_error(
+                                "SQLite: planetary household endpoint mismatch");
+                        const auto earlier=before.planetary_sites().find(key);
+                        if(earlier==before.planetary_sites().end())
+                            throw std::runtime_error(
+                                "SQLite: household site missing before admission");
+                        const auto prev=earlier->second.households.find(guardian);
+                        if((!returning && prev!=earlier->second.households.end()) ||
+                           (returning && (prev==earlier->second.households.end() ||
+                                           prev->second.return_request ||
+                                           prev->second.admission_request!=h.admission_request)))
+                            throw std::runtime_error(
+                                "SQLite: household did not make one legal transition");
+                        for(const auto adult:{guardian,parent}){
+                            const auto b=before.npc_records().find(adult);
+                            const auto a=after.npc_records().find(adult);
+                            if(b==before.npc_records().end() ||
+                               a==after.npc_records().end() ||
+                               b->second.legal_residence().id!=origin ||
+                               a->second.legal_residence().id!=destination)
+                                throw std::runtime_error(
+                                    "SQLite: household adult legal residence mismatch");
+                        }
+                        const auto dependent=after.physical_dependents().find(child);
+                        if(dependent==after.physical_dependents().end() ||
+                           dependent->second.location!=
+                               (returning?site.source_ship:surface))
+                            throw std::runtime_error(
+                                "SQLite: household child custody mismatch");
+                        matched=true;
+                    }
+                    if(!matched)throw std::runtime_error(
+                        "SQLite: planetary household receipt has no world transition");
                 }
             }
             if(has_migration){
