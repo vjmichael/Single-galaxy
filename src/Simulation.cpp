@@ -1125,7 +1125,17 @@ EntityId Simulation::add_gate(std::uint32_t origin, Vector2 position,
         throw std::invalid_argument("invalid stargate link");
     Entity gate;gate.type=EntityType::Stargate;gate.position=position;
     gate.gate_destination=destination;gate.gate_arrival=arrival;gate.gate_online=true;
+    // A gate belongs to the immutable physical origin of ITS system, not
+    // necessarily the original world's default system (system_id_).
+    if(snapshot_version_>=120 && !galactic_system_origins_.count(origin))
+        throw std::runtime_error("new gate system has no original star origin");
     const auto id=add_entity(gate);entities_.at(id).system_id=origin;
+    if(snapshot_version_>=120){
+        const auto exact=galactic::advance(galactic_system_origins_.at(origin),
+            {position.x,position.y,0});
+        if(!exact)throw std::overflow_error("new gate galactic sector exhausted");
+        entities_.at(id).physical_galactic=*exact;
+    }
     snapshot_version_=std::max(snapshot_version_,5);return id;
 }
 void Simulation::configure_gate_operations(EntityId first, EntityId second,
@@ -5839,8 +5849,31 @@ Event Simulation::execute(const Command& c) {
                 industry.modules-=4;
                 Entity station;station.type=EntityType::Station;
                 station.owner_id=actor.owner_id;station.position=site;
+                // A newly constructed outpost occupies the precise original
+                // ship's actual 3D/galactic coordinates, never an unrelated
+                // default system and never a remote finite XY coincidence.
+                if(snapshot_version_>=120 &&
+                   !actor.physical_galactic_authoritative)
+                    throw std::runtime_error("outpost build lost physical ship pose");
+                const auto ship_absolute=snapshot_version_>=120 ?
+                    std::optional<galactic::Point>(actor.physical_galactic):
+                    std::nullopt;
                 const auto id=add_entity(station);
                 entities_.at(id).system_id=actor.system_id;
+                if(ship_absolute){
+                    const auto dx=static_cast<long double>(site.x)-
+                                  static_cast<long double>(actor.position.x);
+                    const auto dy=static_cast<long double>(site.y)-
+                                  static_cast<long double>(actor.position.y);
+                    if(std::fabs(dx)>kDockingRangeMm ||
+                       std::fabs(dy)>kDockingRangeMm)
+                        throw std::runtime_error("outpost build left physical berth");
+                    const auto exact=galactic::advance(*ship_absolute,
+                        {static_cast<std::int64_t>(dx),
+                         static_cast<std::int64_t>(dy),0});
+                    if(!exact)throw std::overflow_error("outpost build sector exhausted");
+                    entities_.at(id).physical_galactic=*exact;
+                }
                 built_outposts_.emplace(id,BuiltOutpost{actor.id,8});
                 hangars_.emplace(std::make_pair(id,actor.owner_id),StationHangar{0,1000});
                 result.transferred=8;
