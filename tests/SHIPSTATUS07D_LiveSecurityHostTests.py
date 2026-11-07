@@ -73,7 +73,7 @@ def run(host, relay, bridge):
             assert code == 200 and security_session["security_only"]
             assert security_session["commands"] == [
                 "colonySecurityRefresh","colonySecurityCall",
-                "colonySecurityCallReply"]
+                "colonySecurityCallReply","colonySecurityNotifyAck"]
             assert "colonyCyberAttack" not in security_session["commands"]
             assert request(port, "POST", "/command", {
                 "token": foreign["csrf"],"action":"colonyCyberAttack",
