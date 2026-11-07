@@ -4045,8 +4045,50 @@ public:
                     throw std::runtime_error("SQLite: workshop current worker lacks latest relief proof");
             }
         }
-        // WO2-H: original SQLite accepted-command history proves the exact
-        // worker, trade and site of each qualification. Matching any generic
+        // WO2-J: the installed shop supervisor and bounded owner-approved
+        // batch program must point to original applied owner commands.
+        for(const auto& [site,shop]:restored.workshops()){
+            const auto* ship=restored.find(shop.source_ship);
+            if(shop.supervisor_npc_id){
+                const auto app=journal_commands.find(shop.supervisor_appointment_id);
+                const auto ev=event_by_id.find(shop.supervisor_appointment_id);
+                if(!ship || app==journal_commands.end() ||
+                   ev==event_by_id.end() ||
+                   app->second.action!=Action::AppointWorkshopSupervisor ||
+                   app->second.amount!=static_cast<std::int64_t>(shop.supervisor_npc_id) ||
+                   app->second.actor!=shop.source_ship ||
+                   app->second.target!=site ||
+                   app->second.issuer!=ship->owner_id ||
+                   app->second.thrust_x!=static_cast<int>(shop.supervisor_trade) ||
+                   ev->second.result!=Outcome::Applied ||
+                   ev->second.tick!=app->second.execute_tick ||
+                   ev->second.transferred!=0)
+                    throw std::runtime_error("SQLite: supervisor missing original owner appointment");
+            }
+            for(unsigned slot=0;slot<2;++slot){
+                const auto& job=shop.approved_jobs[slot];
+                if(!job.command_id)continue;
+                const auto order=journal_commands.find(job.command_id);
+                const auto ev=event_by_id.find(job.command_id);
+                if(!ship || order==journal_commands.end() ||
+                   ev==event_by_id.end() ||
+                   order->second.action!=Action::ApproveWorkshopJob ||
+                   order->second.actor!=shop.source_ship ||
+                   order->second.target!=site ||
+                   order->second.issuer!=ship->owner_id ||
+                   order->second.thrust_x!=static_cast<int>(slot+1) ||
+                   order->second.amount!=static_cast<std::int64_t>(job.target_batches) ||
+                   job.supervisor_appointment_id!=shop.supervisor_appointment_id ||
+                   job.supervisor_npc_id!=shop.supervisor_npc_id ||
+                   ev->second.tick!=order->second.execute_tick ||
+                   ev->second.tick!=job.approved_tick ||
+                   ev->second.result!=Outcome::Applied ||
+                   ev->second.transferred!=0)
+                    throw std::runtime_error("SQLite: job missing original owner approval");
+            }
+        }
+        // WO2-H/J: original SQLite accepted-command history proves the exact
+        // worker, trade, supervisor and site of each qualification. Matching any generic
         // Applied event is NOT enough to fabricate a credential for another NPC.
         std::set<std::uint64_t> verified_training;
         const auto verify_training=[&](const NpcRecord& npc) {
