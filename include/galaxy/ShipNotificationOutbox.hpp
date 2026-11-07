@@ -226,6 +226,30 @@ public:
         if(!jurisdiction_owner || !hail || !visiting_ship ||
            !controller || !linked_case)
             throw std::invalid_argument("invalid authenticated later link");
+        // Multiple original cyber cases may be associated with the SAME
+        // later voluntary hail, including on a later supervised intake
+        // pass. They still have separate immutable casebook links, but this
+        // owner must not get multiple identical "new identity" deliveries.
+        // A matching already-committed routing is idempotent, not a reason
+        // to roll back newly discovered original linked cases.
+        {
+            Statement prior(db,"SELECT peer_ship,peer_owner FROM "
+                "sg_ship_notifications07i WHERE owner=? AND kind=15 "
+                "AND source_event=?");
+            if(sqlite3_bind_int64(prior.ptr,1,num(jurisdiction_owner))!=SQLITE_OK ||
+               sqlite3_bind_int64(prior.ptr,2,num(hail))!=SQLITE_OK)
+                throw std::runtime_error("cyber identity notice lookup bind");
+            const auto status=sqlite3_step(prior.ptr);
+            if(status==SQLITE_ROW){
+                if(val(prior.ptr,0)!=visiting_ship ||
+                   val(prior.ptr,1)!=controller)
+                    throw std::runtime_error(
+                        "reused hail has conflicting controller identity");
+                return;
+            }
+            if(status!=SQLITE_DONE)
+                throw std::runtime_error("cyber identity notice lookup");
+        }
         insert(db,jurisdiction_owner,15,hail,visiting_ship,
                controller,linked_case,tick);
     }
