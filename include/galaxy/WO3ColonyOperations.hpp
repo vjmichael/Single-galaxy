@@ -262,6 +262,7 @@ struct PlanetarySiteAudit {
     std::int64_t recycled_water_kg=0,recycled_oxygen_kg=0;
     std::int64_t unused_housing_capacity=0; // 4 initial beds; no future free population
     std::uint64_t original_permanent_residents=0;
+    std::uint64_t historical_legal_address_holders=0; // not modern settled beds
     bool support_healthy_now=false; // site has >=2kg of each local vital stock
 };
 inline std::optional<PlanetarySiteAudit> audit_planetary_surface(
@@ -349,8 +350,12 @@ inline std::optional<PlanetarySiteAudit> audit_planetary_surface(
             ++a.physical_delegates;
     }
     for(const auto& [id,npc]:world.npc_records()){
-        (void)id;
-        if(a.permanent_housing_installed &&
+        const auto& old=world.legacy_planetary_residence_import();
+        const bool historical_address=old &&
+            old->legal_addresses.count(id) &&
+            old->legal_addresses.at(id)==s.surface_location;
+        if(historical_address)++a.historical_legal_address_holders;
+        else if(a.permanent_housing_installed &&
            npc.legal_residence()==transport::Endpoint{
                transport::LocationKind::PlanetarySite,s.surface_location})
             ++a.original_permanent_residents;
