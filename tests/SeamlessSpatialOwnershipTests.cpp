@@ -1,4 +1,5 @@
 #include "galaxy/SeamlessCellWorker.hpp"
+#include "galaxy/GalacticCoordinates.hpp"
 #include "galaxy/Persistence.hpp"
 #include "galaxy/RegionalModeAuthority.hpp"
 #include "galaxy/RegionalCheckpointStore.hpp"
@@ -50,6 +51,42 @@ int main(){
     CHECK(!spatial::parse_scope("spatial/v1/s7/x-0/y3/z-4"));
     CHECK(!spatial::parse_scope("spatial/v1/s7/x-1/y3/z-4/extra"));
     CHECK(!spatial::parse_scope("spatial/v1/s0/x0/y0/z0"));
+    // SPACE-04A: real galaxy-scale precision math. Sector boundaries
+    // normalize without stopping speed, changing galaxy identity or
+    // converting a physical 3D coordinate to a legacy 2D projection.
+    constexpr auto sector=galactic::kSectorEdgeMm;
+    const galactic::Point huge{
+        {946073000,sector-5},{-946073000,0},{1234567,sector-1}};
+    CHECK(huge.valid()); // hundreds of millions of sectors: galactic scale
+    const auto moved=galactic::advance(
+        huge,{10,-1,2});
+    CHECK(moved && moved->x.sector==946073001 &&
+          moved->x.millimeters==5 &&
+          moved->y.sector==-946073001 &&
+          moved->y.millimeters==sector-1 &&
+          moved->z.sector==1234568 &&
+          moved->z.millimeters==1);
+    const auto first_cell=galactic::cell(huge);
+    const auto next_cell=galactic::cell(*moved);
+    CHECK(first_cell && next_cell && !(*first_cell==*next_cell) &&
+          galactic::scope(*first_cell)!=galactic::scope(*next_cell));
+    const auto relative=galactic::nearby_displacement(*moved,huge);
+    CHECK(relative && relative->x_mm==10 &&
+          relative->y_mm==-1 && relative->z_mm==2);
+    const auto negative_overflow=galactic::normalize(
+        {0,0},std::numeric_limits<std::int64_t>::min());
+    CHECK(negative_overflow && negative_overflow->valid() &&
+          negative_overflow->sector<-9000);
+    CHECK(!galactic::advance(
+        {{{std::numeric_limits<std::int64_t>::max(),sector-1},
+          {0,0},{0,0}}},{1,0,0}));
+    const auto origin=galactic::at_system_origin(
+        huge,{100,200,-300});
+    CHECK(origin && origin->valid() &&
+          origin->x.sector==946073001 &&
+          origin->x.millimeters==95 &&
+          origin->z.sector==1234567 &&
+          origin->z.millimeters==sector-301);
     const auto directory=fs::temp_directory_path()/
         ("sg_spatial_"+std::to_string(std::chrono::steady_clock::now().
                                     time_since_epoch().count()));
