@@ -993,6 +993,16 @@ int main() {
             PersistentWorld shaped(shape_db,Simulation(1056));
             CHECK(send(shaped,ship,740,Action::AssignWorkshopOperator,site,0).
                   result==Outcome::Applied);
+            // The shape-chain test needs actual panel inventory, not an
+            // assumed residual from another workshop test. Have the original
+            // cut machine physically make panel feed with its named worker,
+            // then release the worker before supervised shape practice.
+            CHECK(send(shaped,ship,745,Action::AssignWorkshopOperator,site,
+                       static_cast<std::int64_t>(first_id)).result==Outcome::Applied);
+            shaped.steps(15);
+            CHECK(shaped.world().workshop(site)->panels_kg>=21);
+            CHECK(send(shaped,ship,746,Action::AssignWorkshopOperator,site,0).
+                  result==Outcome::Applied);
             CHECK(shaped.world().workshop_trade_certified(second_id,WorkshopTrade::Shape));
             auto appoint_shape=workforce02::approved_workshop_supervisor(
                 shaped.world(),7,ship,site,WorkshopTrade::Shape,second_id,741,true);
