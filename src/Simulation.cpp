@@ -6664,6 +6664,93 @@ bool Simulation::build_planetary_shuttle(PlayerId owner,EntityId ship,const Plan
     snapshot_version_=std::max(snapshot_version_,80);
     return true;
 }
+
+bool Simulation::transfer_planetary_housing_module(PlayerId owner,EntityId ship,
+    const PlanetarySiteKey& key,bool load) {
+    auto site=planetary_sites_.find(key);
+    auto shuttle=planetary_shuttles_.find(key);
+    auto colony=colony_ships_.find(ship);
+    const auto hull=entities_.find(ship);
+    const auto frame=ship_frames_.find(ship);
+    if(!owner || owner==kServerAuthority || std::get<3>(key)!=1 ||
+       site==planetary_sites_.end() || shuttle==planetary_shuttles_.end() ||
+       colony==colony_ships_.end() || hull==entities_.end() ||
+       frame==ship_frames_.end() || hull->second.owner_id!=owner ||
+       frame->second.anchor_body!=std::get<0>(key) ||
+       hull->second.dock_state!=DockState::InSpace ||
+       hull->second.jump_state!=ShipJumpState::Ready ||
+       site->second.owner!=owner || site->second.source_ship!=ship ||
+       site->second.spaceport_phase!=3 ||
+       shuttle->second.owner!=owner || shuttle->second.source_ship!=ship ||
+       (shuttle->second.flight_phase!=0 && shuttle->second.flight_phase!=2))
+        return false;
+    // Existing shuttle external construction rack: ONE real two-tonne
+    // module, separate from the 1-tonne internal water/food hold.
+    auto& rack=shuttle->second.housing_module;
+    if(load) {
+        if(rack) return false;
+        if(shuttle->second.flight_phase==0) {
+            if(colony->second.modules<1)return false;
+            --colony->second.modules;
+        }else {
+            if(!site->second.housing_modules)return false;
+            --site->second.housing_modules;
+        }
+        rack=1;
+    }else {
+        if(rack!=1)return false;
+        if(shuttle->second.flight_phase==0) {
+            if(colony->second.modules>=100000000)return false;
+            ++colony->second.modules;
+        }else {
+            if(site->second.housing_modules>=2)return false;
+            ++site->second.housing_modules;
+        }
+        rack=0;
+    }
+    snapshot_version_=std::max(snapshot_version_,109);
+    return true;
+}
+
+bool Simulation::start_planetary_housing(PlayerId owner,EntityId ship,
+    const PlanetarySiteKey& key,std::uint64_t order_id) {
+    const auto it=planetary_sites_.find(key);
+    if(!owner || owner==kServerAuthority || !order_id ||
+       order_id==std::numeric_limits<std::uint64_t>::max() ||
+       it==planetary_sites_.end() || !colony_ships_.count(ship) ||
+       !entities_.count(ship) || entities_.at(ship).owner_id!=owner ||
+       it->second.owner!=owner || it->second.source_ship!=ship ||
+       it->second.spaceport_phase!=3 || it->second.housing_phase ||
+       it->second.housing_modules<2 || it->second.workforce_policy ||
+       it->second.food_kg<2 || it->second.water_kg<2 ||
+       it->second.oxygen_kg<2 || submitted_ids_.count(order_id) ||
+       shuttle_flight_request_ids_.count(order_id) ||
+       local_delivery_orders_.count(order_id) ||
+       voyages_.count(order_id))return false;
+    for(const auto& [site_id,other]:planetary_sites_) {
+        (void)site_id;
+        if(other.housing_order_id==order_id)return false;
+    }
+    for(const auto id:it->second.delegated_npcs) {
+        const auto n=npcs_.find(id);
+        if(!id || n==npcs_.end() || n->second.home_ship!=ship ||
+           n->second.location!=it->second.surface_location ||
+           n->second.assigned_site!=it->second.surface_location ||
+           n->second.role!=NpcRole::PlanetarySurface ||
+           !npc_available_for_duty(id))return false;
+    }
+    auto& site=it->second;
+    site.housing_modules-=2;
+    site.embodied_ore+=4; // two physically delivered original modules
+    site.housing_phase=1;
+    site.housing_progress=0;
+    site.housing_order_id=order_id;
+    site.housing_stalled_ticks=0;
+    site.housing_completed_tick=0;
+    snapshot_version_=std::max(snapshot_version_,109);
+    return true;
+}
+
 bool Simulation::post_local_delivery_order(PlayerId owner,EntityId board_ship,
        const PlanetarySiteKey& key,ShuttleCargo cargo,
        std::int64_t kilograms,std::uint64_t order_id) {
@@ -9007,11 +9094,13 @@ void Simulation::process_planetary_surface_operations() {
                    health==NpcHealthStatus::Recovered)++ready;
             }
         if(ready<2) {
+            if(site.housing_phase==1)++site.housing_stalled_ticks;
             if(site.spaceport_phase==3 && site.workforce_policy &&
                tick_%20==0){++site.stalled_cycles;site.last_work_tick=tick_;}
             continue; // injured, missing or unavailable crew pause work
         }
         if(site.food_kg<2 || site.water_kg<2 || site.oxygen_kg<2) {
+            if(site.housing_phase==1)++site.housing_stalled_ticks;
             if(site.spaceport_phase==3 && site.workforce_policy &&
                tick_%20==0){++site.stalled_cycles;site.last_work_tick=tick_;}
             continue; // resupply before construction or work can resume
@@ -9024,6 +9113,18 @@ void Simulation::process_planetary_surface_operations() {
             site.oxygen_kg-=2;
             site.co2_kg+=2;
             ++site.worker_support_cycles;
+        }
+        if(site.housing_phase==1) {
+            // No manufacturing on acceptance: only real original world
+            // ticks, locally provisioned named staff and paused competing
+            // planetary workforce policy advance actual building.
+            if(site.spaceport_phase==3 && !site.workforce_policy) {
+                if(++site.housing_progress>=80) {
+                    site.housing_progress=80;
+                    site.housing_phase=2;
+                    site.housing_completed_tick=tick_;
+                }
+            }else ++site.housing_stalled_ticks;
         }
         if(site.spaceport_phase==3) {
             // Autonomous policies run on a bounded world-tick cadence. No
