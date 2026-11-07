@@ -2273,11 +2273,13 @@ Outcome Simulation::mine_status(const Entity& actor, EntityId target) const {
     if (asteroid.type != EntityType::Asteroid || asteroid.system_id != actor.system_id)
         return Outcome::InvalidTarget;
     if(!same_local_frame(actor.id,target))return Outcome::OutOfRange;
-    const auto dx = actor.position.x - asteroid.position.x;
-    const auto dy = actor.position.y - asteroid.position.y;
     const auto* deposit=geology(target);
     // Surface mining: full radius matters for kilometre-scale physical deposits.
     const std::int64_t access=kMiningRangeMm+(deposit ? deposit->radius_m*1000 : 0);
+    if(snapshot_version_>=119 && !within_native_3d_range(actor,asteroid,access))
+        return Outcome::OutOfRange; // before potentially overflowing XY subtraction
+    const auto dx = actor.position.x - asteroid.position.x;
+    const auto dy = actor.position.y - asteroid.position.y;
     if(snapshot_version_>=119 ? !within_native_3d_range(actor,asteroid,access) :
        (dx < -access || dx > access || dy < -access || dy > access ||
         dx*dx + dy*dy > access*access)) return Outcome::OutOfRange;
@@ -3636,6 +3638,8 @@ Event Simulation::execute(const Command& c) {
             for(const auto& [id,e]:entities_){
                 if(e.type!=EntityType::Asteroid || e.system_id!=actor.system_id ||
                    !same_local_frame(c.actor,id))continue;
+                if(snapshot_version_>=119 &&
+                   !within_native_3d_range(actor,e,range))continue;
                 const auto dx=e.position.x-actor.position.x,dy=e.position.y-actor.position.y;
                 if(snapshot_version_>=119 ? !within_native_3d_range(actor,e,range) :
                    (dx<-range || dx>range || dy<-range || dy>range ||
@@ -3668,6 +3672,10 @@ Event Simulation::execute(const Command& c) {
             auto& wreck=it->second;
             if(wreck.system_id!=actor.system_id){result.result=Outcome::WrongSystem;return result;}
             constexpr auto range=kSalvageRangeMm;
+            if(snapshot_version_>=119 &&
+               !within_native_3d_range(actor,wreck,range)){
+                result.result=Outcome::OutOfRange;return result;
+            }
             const auto dx=wreck.position.x-actor.position.x;
             const auto dy=wreck.position.y-actor.position.y;
             if(snapshot_version_>=119 ? !within_native_3d_range(actor,wreck,range) :
@@ -3712,11 +3720,15 @@ Event Simulation::execute(const Command& c) {
             if(!same_local_frame(actor.id,target.id)){
                 result.result=Outcome::OutOfRange;return result;
             }
+            if(snapshot_version_>=119 &&
+               !within_native_3d_range(actor,target,kTrainingWeaponRangeMm)){
+                result.result=Outcome::OutOfRange;return result;
+            }
             const auto dx=target.position.x-actor.position.x;
             const auto dy=target.position.y-actor.position.y;
             const auto distance=snapshot_version_>=119 ?
                 std::hypot(double(dx),double(dy),
-                           double(target.position_z_mm-actor.position_z_mm)) :
+                           (double(target.position_z_mm)-double(actor.position_z_mm))) :
                 std::hypot(double(dx),double(dy));
             const auto sensed=ship_sensors::detection_range_mm(
                 *this,actor,target);
@@ -3738,7 +3750,7 @@ Event Simulation::execute(const Command& c) {
             const double lateral=double(dy)*std::cos(radians)-
                 double(dx)*std::sin(radians);
             if(along<=0 || (snapshot_version_>=119 ?
-                std::hypot(lateral,double(target.position_z_mm-actor.position_z_mm))>along :
+                std::hypot(lateral,(double(target.position_z_mm)-double(actor.position_z_mm)))>along :
                 std::abs(lateral)>along)){
                 result.result=Outcome::OutOfRange;return result;
             }
@@ -3789,6 +3801,10 @@ Event Simulation::execute(const Command& c) {
             }
             auto& drone=it->second;
             if(drone.system_id!=actor.system_id){result.result=Outcome::WrongSystem;return result;}
+            if(snapshot_version_>=119 &&
+               !within_native_3d_range(actor,drone,kTrainingWeaponRangeMm)){
+                result.result=Outcome::OutOfRange;return result;
+            }
             const auto dx=drone.position.x-actor.position.x;
             const auto dy=drone.position.y-actor.position.y;
             constexpr auto range=kTrainingWeaponRangeMm;
@@ -3918,6 +3934,10 @@ Event Simulation::execute(const Command& c) {
                 result.result = Outcome::InvalidTarget; return result;
             }
             if(station->system_id!=actor.system_id){result.result=Outcome::WrongSystem;return result;}
+            if(snapshot_version_>=119 &&
+               !within_native_3d_range(actor,*station,kDockingRangeMm)){
+                result.result=Outcome::OutOfRange;return result;
+            }
             const auto dx = actor.position.x - station->position.x;
             const auto dy = actor.position.y - station->position.y;
             if (snapshot_version_>=119 ?
