@@ -986,6 +986,33 @@
       "cargo_mm3_per_unit": 1400,
       "lifecycle": "waste",
       "need_tags": []
+    },
+    {
+      "id": "bulk/aluminum_panels",
+      "group": "metals",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 400,
+      "lifecycle": "intermediate",
+      "need_tags": []
+    },
+    {
+      "id": "bulk/aluminum_frames",
+      "group": "metals",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 450,
+      "lifecycle": "intermediate",
+      "need_tags": []
+    },
+    {
+      "id": "bulk/carbon_feed",
+      "group": "chemistry",
+      "unit": "g",
+      "mass_g_per_unit": 1,
+      "cargo_mm3_per_unit": 1000,
+      "lifecycle": "intermediate",
+      "need_tags": []
     }
   ],
   "recipes": [
@@ -2910,6 +2937,64 @@
         "doe"
       ],
       "quantities": "illustrative_game_balance"
+    },
+    {
+      "id": "native_cut_aluminum_panel",
+      "site_capability": "cut",
+      "work_ticks": 5,
+      "energy_kj": 100,
+      "inputs": [
+        {
+          "item": "bulk/aluminum",
+          "qty": 20000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "bulk/aluminum_panels",
+          "qty": 19000
+        },
+        {
+          "item": "bulk/aluminum_scrap",
+          "qty": 1000
+        }
+      ],
+      "source_ids": [
+        "usgs",
+        "doe",
+        "epa"
+      ],
+      "quantities": "illustrative_game_balance",
+      "native_production_binding": "original_quantified_line_panel"
+    },
+    {
+      "id": "native_shape_aluminum_frame",
+      "site_capability": "shape",
+      "work_ticks": 5,
+      "energy_kj": 100,
+      "inputs": [
+        {
+          "item": "bulk/aluminum_panels",
+          "qty": 20000
+        }
+      ],
+      "outputs": [
+        {
+          "item": "bulk/aluminum_frames",
+          "qty": 19000
+        },
+        {
+          "item": "bulk/aluminum_scrap",
+          "qty": 1000
+        }
+      ],
+      "source_ids": [
+        "usgs",
+        "doe",
+        "epa"
+      ],
+      "quantities": "illustrative_game_balance",
+      "native_production_binding": "original_quantified_line_frame"
     }
   ],
   "services": [
@@ -3118,6 +3203,106 @@
       "legacy_code": "good/freight_water",
       "proposed_item": null,
       "authoritative_conversion": "distinct_sealed_cargo_not_ordinary_recipe_stock"
+    },
+    {
+      "legacy_code": "good/aluminum_panels",
+      "proposed_item": "bulk/aluminum_panels",
+      "authoritative_conversion": "unresolved_do_not_automatically_convert"
+    },
+    {
+      "legacy_code": "good/aluminum_frames",
+      "proposed_item": "bulk/aluminum_frames",
+      "authoritative_conversion": "unresolved_do_not_automatically_convert"
+    },
+    {
+      "legacy_code": "good/aluminum_scrap",
+      "proposed_item": "bulk/aluminum_scrap",
+      "authoritative_conversion": "unresolved_do_not_automatically_convert"
+    },
+    {
+      "legacy_code": "good/carbon_feed",
+      "proposed_item": "bulk/carbon_feed",
+      "authoritative_conversion": "unresolved_do_not_automatically_convert"
+    },
+    {
+      "legacy_code": "good/sulfur",
+      "proposed_item": null,
+      "authoritative_conversion": "unresolved_do_not_automatically_convert"
+    },
+    {
+      "legacy_code": "tailings",
+      "proposed_item": null,
+      "authoritative_conversion": "unresolved_do_not_automatically_convert"
+    },
+    {
+      "legacy_code": "ore",
+      "proposed_item": null,
+      "authoritative_conversion": "unresolved_do_not_automatically_convert"
+    },
+    {
+      "legacy_code": "refined",
+      "proposed_item": null,
+      "authoritative_conversion": "unresolved_do_not_automatically_convert"
+    },
+    {
+      "legacy_code": "construction_module",
+      "proposed_item": null,
+      "authoritative_conversion": "unresolved_do_not_automatically_convert"
+    },
+    {
+      "legacy_code": "mineral/serpentine",
+      "proposed_item": null,
+      "authoritative_conversion": "unresolved_do_not_automatically_convert"
+    },
+    {
+      "legacy_code": "mineral/saponite",
+      "proposed_item": null,
+      "authoritative_conversion": "unresolved_do_not_automatically_convert"
+    },
+    {
+      "legacy_code": "mineral/magnetite",
+      "proposed_item": null,
+      "authoritative_conversion": "unresolved_do_not_automatically_convert"
+    },
+    {
+      "legacy_code": "mineral/pyrrhotite",
+      "proposed_item": null,
+      "authoritative_conversion": "unresolved_do_not_automatically_convert"
+    },
+    {
+      "legacy_code": "mineral/carbonates",
+      "proposed_item": null,
+      "authoritative_conversion": "unresolved_do_not_automatically_convert"
+    },
+    {
+      "legacy_code": "mineral/olivine",
+      "proposed_item": null,
+      "authoritative_conversion": "unresolved_do_not_automatically_convert"
+    },
+    {
+      "legacy_code": "mineral/pyroxene",
+      "proposed_item": null,
+      "authoritative_conversion": "unresolved_do_not_automatically_convert"
+    },
+    {
+      "legacy_code": "mineral/nickel_iron",
+      "proposed_item": null,
+      "authoritative_conversion": "unresolved_do_not_automatically_convert"
+    },
+    {
+      "legacy_code": "mineral/other",
+      "proposed_item": null,
+      "authoritative_conversion": "unresolved_do_not_automatically_convert"
+    },
+    {
+      "legacy_code": "mineral/plagioclase",
+      "proposed_item": null,
+      "authoritative_conversion": "unresolved_do_not_automatically_convert"
+    },
+    {
+      "legacy_code": "mineral/troilite",
+      "proposed_item": null,
+      "authoritative_conversion": "unresolved_do_not_automatically_convert"
     }
   ]
 }
