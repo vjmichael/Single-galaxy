@@ -522,6 +522,13 @@ struct PlanetarySiteFacility {
     std::uint64_t stalled_cycles=0;
     std::uint64_t auto_extracted_kg=0;
     std::uint64_t repair_cycles=0;
+    // WO3-B/v109: material on this exact surface cell, delivered by the
+    // existing shuttle external module rack. A module is TWO ore-equivalent
+    // tonnes, not a kg of food or a remotely teleported ship resource.
+    std::uint8_t housing_modules=0; // 0..2 unconsumed local modules
+    std::uint8_t housing_phase=0; // 0 absent, 1 constructing, 2 complete
+    std::uint64_t housing_progress=0, housing_order_id=0;
+    std::uint64_t housing_stalled_ticks=0, housing_completed_tick=0;
 };
 using PlanetarySiteKey = std::tuple<std::uint64_t,std::uint16_t,std::uint16_t,std::uint32_t>;
 // PLAY-13D: cargo identity is independent of player/NPC transport roles.
@@ -556,6 +563,9 @@ struct PlanetaryShuttleState {
     // v87: finite third cargo type. Appended to retain all old positional
     // aggregate construction and v80-v86 snapshot compatibility.
     std::int64_t nutrients_kg=0;
+    // WO3-B/v109: one 2-tonne external construction module. Separate from
+    // the existing 1-tonne internal consumables cargo hold and flight fuel.
+    std::uint8_t housing_module=0;
 };
 // PLAY-13D.4F: finite local work board at the player's existing colony ship.
 // Multiple jobs may be posted, with only one claimed site-to-orbit delivery
@@ -1325,6 +1335,14 @@ public:
 
     // Install only with more real manufactured modules and appropriate ground.
     bool build_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key);
+    // Original planetary shuttle module rack: load/unload only at the
+    // corresponding physically landed surface or the owner orbital berth.
+    bool transfer_planetary_housing_module(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool load);
+    // Commit one original-world, owner-authorized finite construction job
+    // from TWO modules physically delivered to the same surface site.
+    bool start_planetary_housing(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t order_id);
     bool load_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,bool water,std::int64_t kg);
     bool unload_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,bool water,std::int64_t kg);
     // Typed manifest: water, food and extracted nutrients use one physical
