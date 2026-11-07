@@ -5755,9 +5755,9 @@ void Simulation::process_workshops(){
     // The same QuantifiedLine kernel powers visible and remote work: we do
     // not animate conveyor items when the colony owner is far away.
     for(auto& [site,w]:workshops_){
-        // WO2-J: physical supervisor custody is not a detached job title.
-        // Revoking an unavailable person also revokes any associated quota
-        // authority; original materials and machine slots remain intact.
+        // WO2-J: losing a supervisor suspends the owner's approved quota
+        // in place. Never delete the quota and thereby resume unrestricted
+        // legacy manufacturing without a new explicit owner decision.
         if(w.supervisor_npc_id){
             const auto n=npcs_.find(w.supervisor_npc_id);
             const bool present=n!=npcs_.end() &&
@@ -5769,7 +5769,8 @@ void Simulation::process_workshops(){
             if(!present){
                 w.supervisor_npc_id=0;
                 w.supervisor_appointment_id=0;
-                w.approved_jobs={};
+                // Existing jobs retain their original supervisor and
+                // approval command for accountable owner cancellation.
             }
         }
         // WO2-I: expiry is authoritative and deterministic even when a line
@@ -5797,7 +5798,9 @@ void Simulation::process_workshops(){
         const auto n=npcs_.find(w.operator_npc_id);
         const auto& cut_job=w.approved_jobs[0];
         const bool cut_quota_available=!cut_job.command_id ||
-            cut_job.achieved(w.completed_batches)<cut_job.target_batches;
+            (w.supervisor_npc_id==cut_job.supervisor_npc_id &&
+             w.supervisor_appointment_id==cut_job.supervisor_appointment_id &&
+             cut_job.achieved(w.completed_batches)<cut_job.target_batches);
         const bool staff=cut_quota_available &&
             w.operator_npc_id && n!=npcs_.end() &&
             n->second.home_ship==w.source_ship &&
@@ -5842,7 +5845,9 @@ void Simulation::process_workshops(){
             const auto fn=npcs_.find(w.finisher_npc_id);
             const auto& shape_job=w.approved_jobs[1];
             const bool shape_quota_available=!shape_job.command_id ||
-                shape_job.achieved(w.finisher_batches)<shape_job.target_batches;
+                (w.supervisor_npc_id==shape_job.supervisor_npc_id &&
+                 w.supervisor_appointment_id==shape_job.supervisor_appointment_id &&
+                 shape_job.achieved(w.finisher_batches)<shape_job.target_batches);
             const bool fn_staff=shape_quota_available &&
                 w.finisher_npc_id && fn!=npcs_.end() &&
                 fn->second.home_ship==w.source_ship && fn->second.location==site &&
@@ -12504,10 +12509,12 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 const auto& job=w.approved_jobs[slot];
                 if(!job.command_id)continue;
                 const auto actual=slot==0?w.completed_batches:w.finisher_batches;
-                if(!w.supervisor_npc_id ||
-                   job.supervisor_npc_id!=w.supervisor_npc_id ||
-                   job.supervisor_appointment_id!=w.supervisor_appointment_id ||
-                   w.supervisor_trade!=static_cast<WorkshopTrade>(slot+1) ||
+                if(!job.supervisor_npc_id ||
+                   !job.supervisor_appointment_id ||
+                   (w.supervisor_npc_id &&
+                    (job.supervisor_npc_id!=w.supervisor_npc_id ||
+                     job.supervisor_appointment_id!=w.supervisor_appointment_id ||
+                     w.supervisor_trade!=static_cast<WorkshopTrade>(slot+1))) ||
                    job.baseline_batches>actual ||
                    !result.submitted_ids_.count(job.command_id) ||
                    !std::any_of(result.events_.begin(),result.events_.end(),
