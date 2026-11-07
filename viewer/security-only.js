@@ -36,7 +36,7 @@ window.GalaxyColonyCommand=async function(action,args={}){
   // UI schema is redundant, not authoritative; Python and native C++
   // validate exact payload, owner and physical ship independently.
   const data=await json('/command',Object.assign(
-   {token:csrf,action},args));
+   {},args,{token:csrf,action}));
   if(data.status!=='queued_not_committed')throw Error('Unexpected result');
   return true;
  }catch(error){
