@@ -6970,6 +6970,7 @@ bool Simulation::start_planetary_production_build(PlayerId owner,EntityId ship,
        site->second.housing_modules!=2 || site->second.food_kg<2 ||
        site->second.water_kg<2 || site->second.oxygen_kg<2 ||
        site->second.production_projects[index].phase ||
+       site->second.production_projects[1-index].phase==1 ||
        (farm ? (site->second.farm ||
            !geography->landscape.region.farming_possible) :
            (site->second.extractor ||
@@ -9734,6 +9735,32 @@ void Simulation::process_planetary_surface_operations() {
                 site.utility_completed_tick=tick_;
             }
         }
+        for(std::size_t i=0;i<site.production_projects.size();++i) {
+            auto& project=site.production_projects[i];
+            if(project.phase!=1)continue;
+            const auto builder=npcs_.find(project.supervisor);
+            if(project.paused || site.workforce_policy ||
+               builder==npcs_.end() ||
+               builder->second.home_ship!=site.source_ship ||
+               builder->second.location!=site.surface_location ||
+               builder->second.assigned_site!=site.surface_location ||
+               builder->second.role!=NpcRole::PlanetarySurface ||
+               !workshop_trade_certified(project.supervisor,
+                                         WorkshopTrade::Shape) ||
+               !npc_available_for_duty(project.supervisor)) {
+                ++project.stalled_ticks;
+                continue;
+            }
+            if(++project.progress>=40) {
+                project.progress=40;
+                project.phase=2;
+                project.completed_tick=tick_;
+                // These are the existing original production mechanisms,
+                // not new material sources or independent industry copies.
+                if(i==0)site.farm=true;
+                else site.extractor=true;
+            }
+        }
         if(site.housing_phase==2 && tick_%20==0) {
             // The two named deployed residents already consume original
             // supplies in the ten-tick worker-support rule above. This is
@@ -9818,6 +9845,7 @@ bool Simulation::equip_planetary_site(PlayerId owner,EntityId ship,
     const auto source=farm?std::optional<planetary::PlanetaryRegionKey>{}:
         planetary_oasis_source_region(owner,ship,body);
     if(!site || !owner || it==planetary_sites_.end() ||
+       it->second.production_projects[farm?0:1].phase!=0 ||
        it->second.owner!=owner || it->second.spaceport_phase!=3 || it->second.source_ship!=ship ||
        frame==ship_frames_.end() || frame->second.anchor_body!=body ||
        colony==colony_ships_.end() || colony->second.modules<2 ||
