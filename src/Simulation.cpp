@@ -314,7 +314,10 @@ void Simulation::enable_native_galactic_physics(
         if(origin==origins.end() || !origin->second.valid())
             throw std::runtime_error("missing or noncanonical real star origin");
     }
-    for(auto& [id,e]:entities_){
+    // Resolve every exact pose before altering any entity. A malformed
+    // anchor or sector overflow cannot partially migrate an in-memory world.
+    std::map<EntityId,galactic::Point> migrated;
+    for(const auto& [id,e]:entities_){
         auto absolute=origins.at(e.system_id);
         CosmicPosition relative_frame{};
         if(e.type==EntityType::Ship){
@@ -341,7 +344,11 @@ void Simulation::enable_native_galactic_physics(
         const auto physical=galactic::advance(absolute,
             {e.position.x,e.position.y,e.position_z_mm});
         if(!physical)throw std::overflow_error("galactic physical genesis overflow");
-        e.physical_galactic=*physical;
+        migrated.emplace(id,*physical);
+    }
+    for(const auto& [id,point]:migrated){
+        auto& e=entities_.at(id);
+        e.physical_galactic=point;
         e.physical_galactic_authoritative=true;
     }
     galactic_system_origins_=origins;
