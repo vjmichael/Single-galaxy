@@ -4097,7 +4097,8 @@ public:
                 const auto applied=event_by_id.find(credit.command_id);
                 if(!verified_training.insert(credit.command_id).second ||
                    command==journal_commands.end() ||
-                   command->second.action!=Action::TrainWorkshopTrade ||
+                   (command->second.action!=Action::TrainWorkshopTrade &&
+                    command->second.action!=Action::MentorWorkshopTrade) ||
                    command->second.issuer==Simulation::kServerAuthority ||
                    command->second.amount!=static_cast<std::int64_t>(npc.id) ||
                    command->second.target!=credit.workshop_site ||
@@ -4107,6 +4108,26 @@ public:
                    applied->second.tick!=credit.tick ||
                    applied->second.transferred!=1)
                     throw std::runtime_error("SQLite: industrial certification contradicts original NPC command");
+                const bool mentored=command->second.action==Action::MentorWorkshopTrade;
+                if(mentored!=(credit.mentor_id!=0))
+                    throw std::runtime_error("SQLite: industrial mentorship receipt type mismatch");
+                if(mentored){
+                    const auto app=journal_commands.find(credit.supervisor_appointment_id);
+                    const auto appointment=event_by_id.find(credit.supervisor_appointment_id);
+                    if(!credit.mentor_id || !credit.supervisor_appointment_id ||
+                       app==journal_commands.end() || appointment==event_by_id.end() ||
+                       app->second.action!=Action::AppointWorkshopSupervisor ||
+                       app->second.actor!=command->second.actor ||
+                       app->second.issuer!=command->second.issuer ||
+                       app->second.target!=credit.workshop_site ||
+                       app->second.amount!=static_cast<std::int64_t>(credit.mentor_id) ||
+                       app->second.thrust_x!=static_cast<int>(credit.trade) ||
+                       appointment->second.result!=Outcome::Applied ||
+                       appointment->second.tick>=credit.tick ||
+                       appointment->second.tick!=app->second.execute_tick)
+                        throw std::runtime_error("SQLite: forged or foreign workshop mentor appointment");
+                }else if(credit.supervisor_appointment_id)
+                    throw std::runtime_error("SQLite: solitary practice forged mentor evidence");
             }
         };
         for(const auto& [id,npc]:restored.npc_records()){
@@ -4116,7 +4137,8 @@ public:
             (void)id;verify_training(dead.identity);
         }
         for(const auto& [id,command]:journal_commands){
-            if(command.action!=Action::TrainWorkshopTrade)continue;
+            if(command.action!=Action::TrainWorkshopTrade &&
+               command.action!=Action::MentorWorkshopTrade)continue;
             const auto event=event_by_id.find(id);
             if(event!=event_by_id.end() && event->second.result==Outcome::Applied &&
                !verified_training.count(id) &&
