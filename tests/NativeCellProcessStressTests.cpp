@@ -14,8 +14,9 @@ using namespace galaxy::spatial;
 #define CHECK(X) do {if(!(X))throw std::runtime_error( #X );}while(false)
 int main(int argc,char** argv){
     try{
-        CHECK(argc==4);
-        const std::string binary(argv[1]),hung(argv[2]),detached(argv[3]);
+        CHECK(argc==5);
+        const std::string binary(argv[1]),hung(argv[2]),
+                          detached(argv[3]),fork_fence(argv[4]);
         constexpr int workers=4, rounds=20;
         std::vector<double> elapsed_ms;
         elapsed_ms.reserve(workers*rounds);
@@ -62,6 +63,7 @@ int main(int argc,char** argv){
         CHECK(std::chrono::steady_clock::now()-inherited_start<
               std::chrono::milliseconds(3000));
 #endif
+        CHECK(run_cell_process(fork_fence,request).passed);
         CHECK(run_cell_process(binary,request).passed);
         CHECK(!run_cell_process(binary,CellProcessTask{
             request.scope,request.worker,0,request.original_hash,
