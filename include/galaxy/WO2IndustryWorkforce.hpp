@@ -106,6 +106,24 @@ inline std::vector<Slot> plan_original_workshop(const Simulation& world,
     // Compute exclusions once, even for thousands of actual named NPCs.
     const auto next_tick=world.tick()+1;
     const auto occupied=occupied_named_workers(world,next_tick);
+    // Prefer verifiable trade practice evidence without invalidating the
+    // legacy staffing eligibility of existing installed workshops.
+    // Ties go to the lowest stable original NPC identity.
+    const auto preferred=[&](bool second,std::uint64_t skip)->std::uint64_t {
+        const auto trade=second?WorkshopTrade::Shape:WorkshopTrade::Cut;
+        std::uint64_t best=0;
+        std::uint32_t best_units=0;
+        for(const auto& [id,npc]:world.npc_records()){
+            if(id==skip || !id || id>1000000 ||
+               npc.home_ship!=home_ship || npc.location!=site ||
+               npc.assigned_site!=site || npc.role!=NpcRole::Habitat ||
+               npc.mentor_id || !world.npc_available_for_duty(id) ||
+               occupied.count(id))continue;
+            const auto units=world.workshop_training_units(id,trade);
+            if(!best || units>best_units){best=id;best_units=units;}
+        }
+        return best;
+    };
     for(unsigned n=0;n<2;++n) {
         const bool second=n!=0;
         Slot row{};
@@ -123,19 +141,9 @@ inline std::vector<Slot> plan_original_workshop(const Simulation& world,
             row.work_state=state_of(world,site,second,*workshop);
             if(row.assigned_npc)row.gate=StaffGate::AlreadyStaffed;
             else {
-                row.gate=StaffGate::NoFreeQualifiedPerson;
-                for(const auto& [id,npc]:world.npc_records()){
-                    if(id==0 || id>1000000 || npc.home_ship!=home_ship ||
-                       npc.location!=site || npc.assigned_site!=site ||
-                       npc.role!=NpcRole::Habitat ||
-                       npc.mentor_id || !world.npc_available_for_duty(id) ||
-                       occupied.count(id)!=0)
-                        continue;
-                    // Native workshop baseline does not infer a new skill
-                    // license. A constructed station and existing Habitat
-                    // worker role are the real credentials for now.
-                    row.suggested_npc=id;row.gate=StaffGate::Ready;break;
-                }
+                row.suggested_npc=preferred(second,0);
+                row.gate=row.suggested_npc?StaffGate::Ready:
+                                           StaffGate::NoFreeQualifiedPerson;
             }
         }
         out.push_back(row);
@@ -144,18 +152,9 @@ inline std::vector<Slot> plan_original_workshop(const Simulation& world,
     // suggest the same free worker for two simultaneously ready positions.
     if(out.size()==2 && out[0].suggested_npc &&
        out[1].suggested_npc==out[0].suggested_npc){
-        out[1].gate=StaffGate::NoFreeQualifiedPerson;
-        out[1].suggested_npc=0;
-        for(const auto& [id,npc]:world.npc_records()){
-            if(id==out[0].suggested_npc || id==0 || id>1000000 ||
-               npc.home_ship!=home_ship || npc.location!=site ||
-               npc.assigned_site!=site || npc.role!=NpcRole::Habitat ||
-               npc.mentor_id || !world.npc_available_for_duty(id) ||
-               occupied.count(id)!=0)continue;
-            out[1].suggested_npc=id;
-            out[1].gate=StaffGate::Ready;
-            break;
-        }
+        out[1].suggested_npc=preferred(true,out[0].suggested_npc);
+        out[1].gate=out[1].suggested_npc?StaffGate::Ready:
+                                             StaffGate::NoFreeQualifiedPerson;
     }
     return out;
 }
