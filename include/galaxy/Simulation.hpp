@@ -549,6 +549,10 @@ struct PlanetarySiteFacility {
     std::int64_t stored_electricity=0,brine_kg=0;
     std::uint64_t utility_powered_cycles=0,hvac_cycles=0,utility_outages=0;
     std::int64_t water_recycled_kg=0,oxygen_recycled_kg=0;
+    // WO3-E/v111: historical arrivals and voluntary departures of actual
+    // independent adult visitors. {descent receipt, admit request, exit request};
+    // an exit receipt remains forever to prevent request/identity replay.
+    std::map<std::uint64_t,std::array<std::uint64_t,3>> visitor_residency{};
 };
 using PlanetarySiteKey = std::tuple<std::uint64_t,std::uint16_t,std::uint16_t,std::uint32_t>;
 // PLAY-13D: cargo identity is independent of player/NPC transport roles.
@@ -1379,6 +1383,16 @@ public:
     // trusted owner + voluntary-consent attestation and unique request ID.
     // Does not invent NPCs or transfer visitors without arrival evidence.
     bool settle_planetary_founder(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc_id,
+        std::uint64_t request_id,bool voluntary_consent_attested);
+    // Arrivals are only actual original-shuttle disembarkations with
+    // per-person retained descent receipts. Existing adults, no new NPCs.
+    bool settle_planetary_visitor(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc_id,
+        std::uint64_t request_id,bool voluntary_consent_attested);
+    // Only a physically landed original shuttle can reboard a voluntary
+    // departing resident; change of legal residence and seat is one mutation.
+    bool depart_planetary_visitor(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,std::uint64_t npc_id,
         std::uint64_t request_id,bool voluntary_consent_attested);
     bool load_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,bool water,std::int64_t kg);
