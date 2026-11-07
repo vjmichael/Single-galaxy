@@ -1953,12 +1953,14 @@ if(BUILD_TESTING)
   add_test(NAME galaxy_native_3d_worker COMMAND galaxy_native_3d_worker_tests)
 endif()
 
+find_package(Threads REQUIRED)
+
 # SPACE-04C/04D/05B: native high-order coordinates, 3D probes and bounded
 # active multi-cell original-world supervisor. Runs on Windows and Linux.
 if(BUILD_TESTING)
   add_executable(galaxy_native_galactic_supervisor_tests
     tests/NativeGalacticProbeSupervisorTests.cpp)
-  target_link_libraries(galaxy_native_galactic_supervisor_tests PRIVATE galaxy_kernel)
+  target_link_libraries(galaxy_native_galactic_supervisor_tests PRIVATE galaxy_kernel Threads::Threads)
   add_test(NAME galaxy_native_galactic_supervisor
            COMMAND galaxy_native_galactic_supervisor_tests)
 endif()
