@@ -145,7 +145,7 @@ int main(){
         const auto recovered=agency.investigations(world,8,b);
         CHECK(recovered.size()==1 && recovered.front().native_flight_present &&
               recovered.front().order_id==8000 &&
-              recovered.front().officer==appointment.officer);
+              recovered.front().officer==agency.appointments().front().officer);
         CHECK(agency.max_event()>=8000);
         CHECK(world.world().npc_flight_orders().count(8000)==1);
         CHECK(agency.referrals(7,b).empty());
