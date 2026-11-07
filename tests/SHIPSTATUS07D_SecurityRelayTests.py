@@ -58,6 +58,8 @@ for action, args, line in [
      "SECURITY_AGENCY_ESTABLISH"),
     ("colonySecurityAgencyRefer", {"complaint": "90002"},
      "SECURITY_AGENCY_REFER|90002"),
+    ("colonySecurityAgencyInvestigate", {"referral": "7000", "ship": 22},
+     "SECURITY_AGENCY_INVESTIGATE|7000|22"),
     ("colonyFireShip", {"target": 10023}, "FIRE_SHIP|10023"),
     ("colonySecurityCall", {"ship": 999}, "SECURITY_CALL|999"),
     ("colonySecurityCallReply",
@@ -95,6 +97,12 @@ for action, args in [
     ("colonySecurityAgencyRefer", {"complaint": "0005"}),
     ("colonySecurityAgencyRefer", {"complaint": "1", "police": True}),
     ("colonySecurityAgencyEstablish", {"officerNpc": 5}),
+    ("colonySecurityAgencyInvestigate", {"referral": 7000, "ship": 22}),
+    ("colonySecurityAgencyInvestigate", {"referral": "0", "ship": 22}),
+    ("colonySecurityAgencyInvestigate", {"referral": "1099511627776", "ship": 22}),
+    ("colonySecurityAgencyInvestigate", {"referral": "7000", "ship": 0}),
+    ("colonySecurityAgencyInvestigate",
+     {"referral": "7000", "ship": 22, "warrant": True}),
     ("colonyFireShip", {"target": True}),
     ("colonyFireShip", {"target": 0}),
     ("colonyFireShip", {"target": "10023"}),
@@ -164,7 +172,8 @@ for action, payload in [
     ("colonySecurityHail", {"colony": 2}),
     ("colonySecurityWarn", {"ship": 3}),
     ("colonySecurityAgencyEstablish", {}),
-    ("colonySecurityAgencyRefer", {"complaint": "90002"})
+    ("colonySecurityAgencyRefer", {"complaint": "90002"}),
+    ("colonySecurityAgencyInvestigate", {"referral": "7000", "ship": 22})
 ]:
     status, sent = submit(action,payload,principal=8)
     assert status == 403 and not sent,(action,status,sent)
