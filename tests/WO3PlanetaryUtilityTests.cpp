@@ -635,6 +635,14 @@ int main() {
             departure.expected_destination_family_revision=4;
             departure.origin_colony="surface";
             departure.destination_colony="home";
+            const auto before_departure=service.world().state_hash();
+            bool failed_return=false;
+            try {
+                (void)service.commit_planetary_household_settlement(
+                    departure,FailPoint::AfterSnapshotWrite);
+            }catch(const std::exception&){failed_return=true;}
+            CHECK(failed_return &&
+                  service.world().state_hash()==before_departure);
             CHECK(service.commit_planetary_household_settlement(departure));
             CHECK(service.world().npc_records().at(guardian).legal_residence()==
                   (transport::Endpoint{transport::LocationKind::ColonyShip,ship}));
@@ -643,6 +651,19 @@ int main() {
             CHECK(service.world().planetary_shuttles().at(key).passenger_ids.empty());
             CHECK(service.world().planetary_sites().at(key).
                   households.at(guardian).return_request==85536);
+            // A saved household must not be forgeable by replacing the
+            // consent/return request; restore cross-checks the actual two
+            // parents, original physical child and immutable receipts.
+            auto forged_household=service.world().canonical_state();
+            const auto household_line=forged_household.find("planethousehold|");
+            CHECK(household_line!=std::string::npos);
+            const auto return_field=forged_household.find("|85536|",household_line);
+            CHECK(return_field!=std::string::npos);
+            forged_household.replace(return_field,7,"|0|");
+            bool household_tamper_denied=false;
+            try{(void)Simulation::from_snapshot(forged_household);}
+            catch(const std::exception&){household_tamper_denied=true;}
+            CHECK(household_tamper_denied);
             CHECK(region.load()->scheduler.colony("surface").population==0);
             CHECK(region.load()->scheduler.colony("home").population==
                   original_ship_count+1);
