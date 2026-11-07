@@ -187,11 +187,31 @@ int main() {
                 queued.step();
                 CHECK(queued.world().workshop_training_units(first_id,WorkshopTrade::Cut)==1);
                 CHECK(queued.world().total_material_kg()==initial_mass);
+                // Same committed tick: original command ordering executes
+                // practice first, then rejects occupation of the same worker.
+                Command double_book{};
+                double_book.id=290;double_book.sequence=290;
+                double_book.execute_tick=w.world().tick()+1;
+                double_book.issuer=7;double_book.actor=ship;double_book.target=site;
+                double_book.action=Action::AssignWorkshopOperator;
+                double_book.amount=static_cast<std::int64_t>(first_id);
+                CHECK(w.submit(double_book));
             }
             w.step();
-            CHECK(w.world().events().back().command_id==training_id &&
-                  w.world().events().back().result==Outcome::Applied &&
-                  w.world().events().back().transferred==1);
+            const auto& outcomes=w.world().events();
+            if(training_id==270){
+                CHECK(outcomes.size()>=2);
+                CHECK(outcomes[outcomes.size()-2].command_id==training_id &&
+                      outcomes[outcomes.size()-2].result==Outcome::Applied &&
+                      outcomes[outcomes.size()-2].transferred==1);
+                CHECK(outcomes.back().command_id==290 &&
+                      outcomes.back().result==Outcome::InvalidTarget);
+                CHECK(w.world().workshop(site)->operator_npc_id==0);
+            }else{
+                CHECK(outcomes.back().command_id==training_id &&
+                      outcomes.back().result==Outcome::Applied &&
+                      outcomes.back().transferred==1);
+            }
             CHECK(w.world().utility(site)->consumed_energy>=before_power+1);
             CHECK(w.world().workshop(site)->scrap_kg>=before_scrap+1);
             CHECK(w.world().total_material_kg()==original_training_mass);
