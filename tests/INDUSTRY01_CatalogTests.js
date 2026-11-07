@@ -20,7 +20,7 @@ test("INDUSTRY-01 candidate validates; no world-facing material or consumption s
   assert.deepEqual(result.errors,[]);
   assert.equal(result.ok,true);
   assert.deepEqual(result.stats,{items:100,recipes:71,recovery_recipes:3,services:8,legacy_mappings:28});
-  assert.equal(original.status,"research_candidate_not_world_authoritative");
+  assert.equal(original.status,"research_candidates_with_two_exact_native_bindings");
   assert.ok(original.recipes.every(x=>x.quantities==="illustrative_game_balance"));
   assert.ok(original.legacy_bridge.every(x=>x.authoritative_conversion!=="automatic"));
 });
@@ -148,4 +148,13 @@ test("real-world numerical claims are distinguished from provisional game yields
   assert.ok(original.research_calibration.length>=5);
   assert.ok(original.research_calibration.every(x=>x.numeric_status!=="real_world_verified_yield"));
   rejects(c=>c.research_calibration[0].numeric_status="real_world_verified_yield","invalid process research calibration");
+});
+
+test("no extra native process and no old-save batch mutation can be registered",()=>{
+  rejects(c=>c.recipes.find(x=>x.id==="native_cut_aluminum_panel").inputs[0].qty=19999,
+    "original save-compatible native recipe contract drift");
+  rejects(c=>c.recipes.find(x=>x.id==="native_shape_aluminum_frame").outputs[0].qty=19001,
+    "original save-compatible native recipe contract drift");
+  rejects(c=>c.recipes.find(x=>x.id==="assemble_camera").native_production_binding="original_quantified_line_panel",
+    "only two original native recipes may be bound");
 });
