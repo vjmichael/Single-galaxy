@@ -684,7 +684,17 @@ int main() {
             managed.world(),8,ship,site,WorkshopTrade::Cut,1,711,true));
         auto job=workforce02::approved_workshop_job(
             managed.world(),7,ship,site,WorkshopTrade::Cut,1,711,true);
-        CHECK(job.has_value() && managed.submit(*job));
+        CHECK(job.has_value());
+        // Read-only proposal checks are not authority. Host submission also
+        // rejects a stolen owner's exact command and a forged station target.
+        Command foreign_job=*job;
+        foreign_job.id=721;foreign_job.sequence=721;foreign_job.issuer=8;
+        CHECK(!managed.submit(foreign_job));
+        Command cross_site_job=*job;
+        cross_site_job.id=722;cross_site_job.sequence=722;
+        cross_site_job.target=ship; // a ship is not the original installed workshop
+        CHECK(!managed.submit(cross_site_job));
+        CHECK(managed.submit(*job));
         managed.step();
         CHECK(managed.world().events().back().command_id==711);
         CHECK(managed.world().events().back().result==Outcome::Applied);
@@ -700,7 +710,11 @@ int main() {
             managed.world(),7,ship,site,WorkshopTrade::Cut,first_id,712,true));
         auto mentor=workforce02::approved_workshop_mentorship(
             managed.world(),7,ship,site,WorkshopTrade::Cut,second_id,712,true);
-        CHECK(mentor.has_value() && managed.submit(*mentor));
+        CHECK(mentor.has_value());
+        Command foreign_mentor=*mentor;
+        foreign_mentor.id=723;foreign_mentor.sequence=723;foreign_mentor.issuer=8;
+        CHECK(!managed.submit(foreign_mentor));
+        CHECK(managed.submit(*mentor));
         Command duplicate_mentorship=*mentor;
         duplicate_mentorship.id=716;duplicate_mentorship.sequence=716;
         CHECK(managed.submit(duplicate_mentorship));
