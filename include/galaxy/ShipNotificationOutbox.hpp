@@ -173,14 +173,21 @@ public:
         if(!owner || !sequence)return false;
         sql(db_,"BEGIN IMMEDIATE");
         try{
-            Statement lookup(db_,"SELECT acked FROM sg_ship_notifications07i "
-                "WHERE seq=? AND owner=?");
-            sqlite3_bind_int64(lookup.ptr,1,num(sequence));
-            sqlite3_bind_int64(lookup.ptr,2,num(owner));
-            if(sqlite3_step(lookup.ptr)!=SQLITE_ROW){
+            int previous=-1;
+            {
+                Statement lookup(db_,"SELECT acked FROM sg_ship_notifications07i "
+                    "WHERE seq=? AND owner=?");
+                sqlite3_bind_int64(lookup.ptr,1,num(sequence));
+                sqlite3_bind_int64(lookup.ptr,2,num(owner));
+                const auto step=sqlite3_step(lookup.ptr);
+                if(step==SQLITE_ROW)
+                    previous=sqlite3_column_int(lookup.ptr,0);
+                else if(step!=SQLITE_DONE)
+                    throw std::runtime_error("outbox ACK lookup failed");
+            }
+            if(previous<0){
                 sql(db_,"ROLLBACK");return false;
             }
-            const auto previous=sqlite3_column_int(lookup.ptr,0);
             if(previous==0){
                 Statement change(db_,"UPDATE sg_ship_notifications07i "
                     "SET acked=1 WHERE seq=? AND owner=? AND acked=0");
