@@ -1307,6 +1307,11 @@ bool Simulation::submit(const Command& c) {
                 if(c.id && c.id==relief.request_id)return false;
             for(const auto& project:site.production_projects)
                 if(c.id && c.id==project.order_id)return false;
+            for(const auto& project:site.service_projects)
+                if(c.id && c.id==project.order_id)return false;
+            for(const auto& history:site.service_handovers)
+                for(const auto& handover:history)
+                    if(c.id && c.id==handover.request_id)return false;
             for(const auto& history:site.production_handovers)
                 for(const auto& handover:history)
                     if(c.id && c.id==handover.request_id)return false;
@@ -10054,6 +10059,11 @@ bool Simulation::launch_planetary_shuttle(PlayerId owner,EntityId ship,
             if(relief.request_id==request_id)return false;
         for(const auto& project:existing.production_projects)
             if(project.order_id==request_id)return false;
+        for(const auto& project:existing.service_projects)
+            if(project.order_id==request_id)return false;
+        for(const auto& history:existing.service_handovers)
+            for(const auto& h:history)
+                if(h.request_id==request_id)return false;
         for(const auto& history:existing.production_handovers)
             for(const auto& handover:history)
                 if(handover.request_id==request_id)return false;
