@@ -262,7 +262,54 @@ int main(){
     CHECK(commit_owner_approved_local_vital(
         recovered,planned->grants[0],allocation_policy,10,true).status==
         CommitStatus::Refused);
-    std::cout<<"WO4-A-E original demand, priority, native allocation, profiles, region and copied SQLite: OK\n";
+    // WO4-F: deliberately interrupt the ORIGINAL durable SQLite command
+    // execution after its first receipt write. The real world/supplies must
+    // remain unchanged, pending command preserved, then the same ID applies
+    // ONCE on legitimate retry. No private WO4 state is reconstructed.
+    const auto faildb=(folder/"fault.sqlite").string();
+    PersistentWorld::recover_copy(db,faildb);
+    {
+        PersistentWorld fault(faildb,Simulation(47008));
+        const auto now=observe_owner_world(fault.world(),7,ship,Policy{4,1});
+        CHECK(now && now->still_current(fault.world()));
+        const auto live_plan=plan_local_vitals(
+            *now,fault.world(),allocation_policy);
+        CHECK(live_plan && !live_plan->grants.empty());
+        const auto next_grant=std::find_if(
+            live_plan->grants.begin(),live_plan->grants.end(),
+            [](const Grant& g){return g.vital==Vital::Water;});
+        CHECK(next_grant!=live_plan->grants.end());
+        const auto unchanged=fault.world().state_hash();
+        bool interrupted=false;
+        try {
+            (void)commit_owner_approved_local_vital(
+                fault,*next_grant,allocation_policy,11,true,
+                FailPoint::AfterReceiptWrite);
+        }catch(const std::exception&){interrupted=true;}
+        CHECK(interrupted);
+        CHECK(fault.world().state_hash()==unchanged);
+        CHECK(fault.world().has_command_id(11));
+        fault.step(); // original durable pending command, not resubmission
+        CHECK(fault.world().events().back().command_id==11 &&
+              fault.world().events().back().result==Outcome::Applied &&
+              fault.world().events().back().transferred==
+                  next_grant->quantity_kg);
+        CHECK(fault.world().total_material_kg()==starting_mass);
+        const auto committed_once=fault.world().state_hash();
+        CHECK(commit_owner_approved_local_vital(
+            fault,*next_grant,allocation_policy,11,true).status==
+            CommitStatus::Refused);
+        CHECK(fault.world().state_hash()==committed_once);
+    }
+    {
+        const auto independent=(folder/"fault_recovered.sqlite").string();
+        PersistentWorld::recover_copy(faildb,independent);
+        PersistentWorld restored(independent,Simulation(47009));
+        CHECK(restored.world().has_command_id(11));
+        CHECK(restored.world().total_material_kg()==starting_mass);
+        CHECK(restored.world().habitat(site)->life.water_kg==8);
+    }
+    std::cout<<"WO4-A-F original demand, allocation, native receipts, profiles, regional board, SQLite rollback and recovery: OK\n";
     return 0;
  }catch(const std::exception& e){
     std::cerr<<e.what()<<'\n';
