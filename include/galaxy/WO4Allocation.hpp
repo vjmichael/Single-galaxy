@@ -101,7 +101,12 @@ inline std::optional<AllocationPlan> plan_local_vitals(
                     need.one_window_kg:need.reserve_target_kg;
                 const auto currently=need.physically_present_kg+assigned[i];
                 const auto shortage=std::max<std::int64_t>(0,goal-currently);
-                const auto take=std::min(available,shortage);
+                // Native habitat/farm stock-transfer command caps each bin
+                // at 100,000,000 kg. Never promise an engine-denied transfer.
+                constexpr std::int64_t kOriginalBinCap=100000000;
+                const auto remaining_capacity=std::max<std::int64_t>(0,
+                    kOriginalBinCap-currently);
+                const auto take=std::min({available,shortage,remaining_capacity});
                 if(take<=0)continue;
                 Grant g{};
                 g.owner=plan.owner;g.source_ship=plan.source_ship;
