@@ -49,7 +49,7 @@ class Outbox {
                        std::uint32_t kind,std::uint64_t event,
                        std::uint64_t peer_ship,std::uint64_t peer_owner,
                        std::uint64_t related,std::uint64_t tick){
-        if(!owner || !event || !peer_ship || kind<1 || kind>7)
+        if(!owner || !event || !peer_ship || kind<1 || kind>15)
             throw std::invalid_argument("outbox requires original owner, hull and event");
         Statement s(db,"INSERT INTO sg_ship_notifications07i "
             "(owner,kind,source_event,peer_ship,peer_owner,related,world_tick) "
@@ -69,7 +69,7 @@ public:
         sql(db,"CREATE TABLE IF NOT EXISTS sg_ship_notifications07i ("
             "seq INTEGER PRIMARY KEY AUTOINCREMENT,"
             "owner INTEGER NOT NULL CHECK(owner>0),"
-            "kind INTEGER NOT NULL CHECK(kind BETWEEN 1 AND 7),"
+            "kind INTEGER NOT NULL CHECK(kind BETWEEN 1 AND 15),"
             "source_event INTEGER NOT NULL CHECK(source_event>0),"
             "peer_ship INTEGER NOT NULL CHECK(peer_ship>0),"
             "peer_owner INTEGER NOT NULL CHECK(peer_owner>=0),"
@@ -77,6 +77,51 @@ public:
             "world_tick INTEGER NOT NULL CHECK(world_tick>=0),"
             "acked INTEGER NOT NULL DEFAULT 0 CHECK(acked IN (0,1)),"
             "UNIQUE(owner,source_event,kind))");
+        // 07I saves already carry CHECK(kind BETWEEN 1 AND 7). SQLite
+        // cannot widen a CHECK in place; preserve all sequence numbers,
+        // original-owner routing and ACK bits with a single rollback-safe
+        // schema-only migration (never infer historical recipients).
+        bool legacy=false;
+        {
+            Statement q(db,"SELECT sql FROM sqlite_master WHERE "
+                "type='table' AND name='sg_ship_notifications07i'");
+            if(sqlite3_step(q.ptr)==SQLITE_ROW){
+                const auto* raw=sqlite3_column_text(q.ptr,0);
+                const std::string ddl=raw?
+                    reinterpret_cast<const char*>(raw):"";
+                legacy=ddl.find("kind BETWEEN 1 AND 7")!=std::string::npos;
+            }
+        }
+        if(legacy){
+            sql(db,"BEGIN IMMEDIATE");
+            try{
+                sql(db,"DROP TRIGGER IF EXISTS sg_ship_notifications07i_immutable");
+                sql(db,"DROP TRIGGER IF EXISTS sg_ship_notifications07i_no_delete");
+                sql(db,"DROP INDEX IF EXISTS sg_ship_notifications07i_pending");
+                sql(db,"ALTER TABLE sg_ship_notifications07i RENAME TO "
+                    "sg_ship_notifications07i_legacy");
+                sql(db,"CREATE TABLE sg_ship_notifications07i ("
+                    "seq INTEGER PRIMARY KEY AUTOINCREMENT,"
+                    "owner INTEGER NOT NULL CHECK(owner>0),"
+                    "kind INTEGER NOT NULL CHECK(kind BETWEEN 1 AND 15),"
+                    "source_event INTEGER NOT NULL CHECK(source_event>0),"
+                    "peer_ship INTEGER NOT NULL CHECK(peer_ship>0),"
+                    "peer_owner INTEGER NOT NULL CHECK(peer_owner>=0),"
+                    "related INTEGER NOT NULL CHECK(related>=0),"
+                    "world_tick INTEGER NOT NULL CHECK(world_tick>=0),"
+                    "acked INTEGER NOT NULL DEFAULT 0 CHECK(acked IN (0,1)),"
+                    "UNIQUE(owner,source_event,kind))");
+                sql(db,"INSERT INTO sg_ship_notifications07i "
+                    "(seq,owner,kind,source_event,peer_ship,peer_owner,"
+                    "related,world_tick,acked) "
+                    "SELECT seq,owner,kind,source_event,peer_ship,peer_owner,"
+                    "related,world_tick,acked FROM sg_ship_notifications07i_legacy");
+                sql(db,"DROP TABLE sg_ship_notifications07i_legacy");
+                sql(db,"COMMIT");
+            }catch(...){
+                sqlite3_exec(db,"ROLLBACK",nullptr,nullptr,nullptr);throw;
+            }
+        }
         sql(db,"CREATE INDEX IF NOT EXISTS sg_ship_notifications07i_pending "
             "ON sg_ship_notifications07i(owner,acked,seq)");
         sql(db,"CREATE TRIGGER IF NOT EXISTS sg_ship_notifications07i_immutable "
@@ -124,6 +169,63 @@ public:
         std::uint64_t complaint,std::uint64_t tick){
         insert(db,owner,7,referral,colony,0,complaint,tick);
     }
+    // 07K: territory source events are immutable and already validate real
+    // owner, original jurisdiction, witness and voluntary identity. The
+    // visitor receives only the public colony hull, not a synthetic owner
+    // disclosure. Only an explicitly voluntary hail reveals visiting owner
+    // to the receiving colony.
+    static void record_territory(sqlite3* db,int original_kind,
+        std::uint64_t owner,std::uint64_t colony,
+        std::uint64_t visitor,std::uint64_t visiting_ship,
+        std::uint64_t event,std::uint64_t related,
+        std::uint64_t tick){
+        if(!owner || !colony || !event ||
+           (visitor && (!visiting_ship || visitor==owner)))
+            throw std::invalid_argument("invalid original territory routing");
+        std::uint32_t kind=8;
+        switch(original_kind){
+        case 1: case 2: case 3:kind=8;break; // claim and invitations
+        case 4:kind=9;break;                 // witnessed warning
+        case 7: case 8:kind=10;break;        // verified notice decision
+        case 5:kind=11;break;                // verified trespass
+        case 6:kind=12;break;                // recorded expulsion
+        case 9:kind=13;break;                // voluntary identity disclosure
+        default:throw std::invalid_argument("unknown original territory event");
+        }
+        insert(db,owner,kind,event,
+            visiting_ship?visiting_ship:colony,
+            kind==13?visitor:0,related,tick);
+        if(visitor)
+            insert(db,visitor,kind,event,colony,0,related,tick);
+    }
+    // 07K: a witnessed cyber case is still anonymous. No later controller,
+    // suspected account or observed silhouette is presented as the attacker.
+    static void record_cyber_case(sqlite3* db,
+        std::uint64_t jurisdiction_owner,std::uint64_t colony,
+        std::uint64_t victim_owner,std::uint64_t victim_ship,
+        std::uint64_t original_case,std::uint64_t command,
+        std::uint64_t tick){
+        if(!jurisdiction_owner || !colony || !victim_owner ||
+           !victim_ship || !original_case || !command)
+            throw std::invalid_argument("invalid original cyber intake");
+        insert(db,jurisdiction_owner,14,original_case,colony,0,command,tick);
+        if(victim_owner!=jurisdiction_owner)
+            insert(db,victim_owner,14,original_case,victim_ship,
+                0,command,tick);
+    }
+    // 07K: a later authenticated controller is not proof of who operated
+    // the hull during the older cyber incident. Emit once per native hail,
+    // while the original linked-case journal retains every case association.
+    static void record_cyber_link(sqlite3* db,
+        std::uint64_t jurisdiction_owner,std::uint64_t hail,
+        std::uint64_t visiting_ship,std::uint64_t controller,
+        std::uint64_t linked_case,std::uint64_t tick){
+        if(!jurisdiction_owner || !hail || !visiting_ship ||
+           !controller || !linked_case)
+            throw std::invalid_argument("invalid authenticated later link");
+        insert(db,jurisdiction_owner,15,hail,visiting_ship,
+               controller,linked_case,tick);
+    }
     explicit Outbox(const std::string& existing_world){
         try{
             if(sqlite3_open_v2(existing_world.c_str(),&db_,
@@ -162,7 +264,7 @@ public:
             row.source_event=val(q.ptr,2);row.peer_ship=val(q.ptr,3);
             row.peer_owner=val(q.ptr,4);row.related=val(q.ptr,5);
             row.world_tick=val(q.ptr,6);
-            if(!row.sequence || row.kind<1 || row.kind>7 ||
+            if(!row.sequence || row.kind<1 || row.kind>15 ||
                !row.source_event || !row.peer_ship)
                 throw std::runtime_error("noncanonical durable notification");
             result.push_back(row);
