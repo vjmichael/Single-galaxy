@@ -138,7 +138,8 @@ inline std::optional<Snapshot> observe_owner_world(
            children>static_cast<std::uint64_t>(
                 std::numeric_limits<std::int64_t>::max())-adults)
             return std::nullopt;
-        aboard=static_cast<std::uint64_t>(adults+children);
+        aboard=static_cast<std::uint64_t>(adults)+
+               static_cast<std::uint64_t>(children);
     }
     if(!add(CompartmentKind::ColonyShip,source_ship,PlanetarySiteKey{},
             aboard,
