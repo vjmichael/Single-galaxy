@@ -481,6 +481,12 @@ public:
     std::uint64_t colony_notification_opportunity_count() const;
     std::uint64_t colony_notification_acknowledgement_count() const;
     bool submit(const Command& command, FailPoint fail = FailPoint::None);
+    // SPACE-05: host-only leased submission. Runs all original player,
+    // NPC, shipping and command authorization, then revalidates the worker
+    // inside the same SQLite writer transaction as this command receipt.
+    bool submit_as_cell_worker(const Command& command,
+                               const NativeCellWorkerTick& token,
+                               FailPoint fail = FailPoint::None);
     // SHIP-STATUS-02: explicit trusted fixture to verify atomic world effects.
     // No real hacker hardware exists yet: NEVER expose as a player/network API.
     // Final attack admission will require original fitted emitter and legal
@@ -1235,6 +1241,9 @@ public:
 
 
 private:
+    bool submit_with_cell_worker(const Command& command,
+                                 const NativeCellWorkerTick* token,
+                                 FailPoint fail);
     void step_with_cell_worker(const NativeCellWorkerTick* token,
                                FailPoint fail);
 
