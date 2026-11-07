@@ -14196,6 +14196,21 @@ void PersistentWorld::settle_constructed_stock(const Command& command,
     world_.swap(next);++generation_;
 }
 
+void PersistentWorld::enable_native_3d_physics(FailPoint fail) {
+    if(world_.native_3d_physics())return;
+    auto next=world_;
+    next.enable_native_3d_physics();
+    // Refuse to publish a nonroundtripping or physically lossy migration.
+    if(Simulation::from_snapshot(next.canonical_state()).state_hash()!=
+       next.state_hash() || next.total_ore()!=resource_origin_ ||
+       next.total_credits()!=credit_origin_)
+        throw std::runtime_error("SPACE-04B native 3D migration not lossless");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,
+                   nullptr,{},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+}
+
 void PersistentWorld::step(FailPoint fail) {
     auto next = world_;
     const auto before = next.events().size();
