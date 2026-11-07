@@ -185,6 +185,10 @@ bool execute(const std::string& executable,const CellProcessTask& task,
     const auto checksum=std::to_string(task.original_hash);
     const auto ships=std::to_string(task.physical_ships);
     const auto detail=std::to_string(task.detail);
+    // Precompute the descriptor ceiling in the parent. The child is forked
+    // from a multi-threaded supervisor and must not call sysconf or use
+    // libc allocation/locks before its execv.
+    const long descriptor_limit=sysconf(_SC_OPEN_MAX);
     const pid_t pid=fork();
     if(pid<0){close(fds[0]);close(fds[1]);return false;}
     if(pid==0){
@@ -201,9 +205,8 @@ bool execute(const std::string& executable,const CellProcessTask& task,
         stripped=syscall(SYS_close_range,3U,~0U,0U)==0;
 #endif
         if(!stripped){
-            const long end=sysconf(_SC_OPEN_MAX);
-            if(end<3 || end>65536)_exit(125);
-            for(int fd=3;fd<end;++fd)(void)close(fd);
+            if(descriptor_limit<3 || descriptor_limit>65536)_exit(125);
+            for(int fd=3;fd<descriptor_limit;++fd)(void)close(fd);
         }
         const rlimit address{256ULL*1024*1024,256ULL*1024*1024};
         const rlimit cpu{2,2};
