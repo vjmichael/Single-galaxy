@@ -305,6 +305,14 @@ int main() {
           active_relief->utility_supervisor_present &&
           active_relief->utility_supervisor_certified &&
           active_relief->utility_supervisor_has_temp_duty);
+    Command replay{};
+    replay.id=81602;
+    replay.sequence=81602;
+    replay.execute_tick=w.world().tick()+1;
+    replay.issuer=7;
+    replay.actor=ship;
+    replay.action=Action::Thrust;
+    CHECK(!w.submit(replay)); // host cannot reuse immutable relief proof
     CHECK(w.world().canonical_state().rfind("galaxy-kernel-v112|",0)==0);
     CHECK(Simulation::from_snapshot(w.world().canonical_state()).state_hash()==
           w.world().state_hash());
