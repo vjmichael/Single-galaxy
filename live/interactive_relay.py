@@ -319,6 +319,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         who=principal['playerId']
         if who==7 or who not in rt.human_owners:
             self._json(403,{'error':'Wrong private stream principal'});return
+        # A new authenticated SSE connection must not replay unrelated
+        # previous-session status from a volatile process-wide ring. Snapshot
+        # the high-water mark *before* asking the single native world writer
+        # for this owner's fresh SQLite-backed security read model.
+        with rt.cv:
+            cursor=rt.private_event_sequence
         try:
             rt.send('SECURITY_REFRESH',principal=who)
         except (RuntimeError,PermissionError,BrokenPipeError):
@@ -329,10 +335,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header('X-Content-Type-Options','nosniff')
         self.send_header('Connection','close')
         self.end_headers()
-        # Reconnection may replay *this owner's* earlier private receipts
-        # from the current bounded process ring; the durable native refresh
-        # reconstructs pending calls from SQLite even after host restart.
-        cursor=0
+        # This connection sees only events after its captured high-water
+        # mark, including the just-requested native refresh. Historical
+        # in-memory frames belong to older subscriptions, not this login.
         try:
             while True:
                 current=self._principal()
@@ -343,17 +348,31 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     rt.cv.wait_for(
                         lambda:cursor<rt.private_event_sequence or rt.finished,
                         timeout=3)
-                    # A bounded process ring never blocks later calls when
-                    # older streams disconnect; gap recovery comes from the
-                    # authoritative SECURITY_REFRESH on reconnect.
+                    # A connected subscriber can also fall behind the 4096
+                    # slot process ring. Detect that loss; do not silently
+                    # present a partial security desk as complete.
                     latest=rt.private_event_sequence
                     oldest=latest-len(rt.private_colony_events)+1
-                    entries=[(owner_id,data) for seq,owner_id,data
-                        in rt.private_colony_events
-                        if seq>=max(cursor+1,oldest)]
+                    missed=cursor<oldest-1
+                    entries=[] if missed else [
+                        (owner_id,data) for seq,owner_id,data
+                        in rt.private_colony_events if seq>cursor]
                     cursor=latest
                     done=rt.finished
                     error=rt.error
+                if missed:
+                    self.wfile.write(
+                        b'event: resync\ndata: Native security refresh required\n\n')
+                    self.wfile.flush()
+                    try:
+                        # Native source of truth; never rebuild contacts,
+                        # identities or complaints from untrusted SSE frames.
+                        rt.send('SECURITY_REFRESH',principal=who)
+                    except (RuntimeError,PermissionError,BrokenPipeError):
+                        self.wfile.write(
+                            b'event: failed\ndata: Security host unavailable\n\n')
+                        self.wfile.flush();return
+                    continue
                 sent=False
                 for recipient,data in entries:
                     if recipient!=who:continue
