@@ -4028,11 +4028,16 @@ public:
                        change.execute_tick>=shift.end_tick ||
                        applied->second.tick!=change.execute_tick ||
                        applied->second.transferred!=0 ||
-                       (last_relief_tick && change.execute_tick<=last_relief_tick))
+                       change.execute_tick==last_relief_tick)
                         throw std::runtime_error("SQLite: workshop relief contradicted original owner or chronology");
-                    last_relief=id;
-                    last_relief_tick=change.execute_tick;
-                    current_worker=static_cast<std::uint64_t>(change.thrust_y);
+                    // Command IDs need not increase with tick order.
+                    // The event's applied tick, not its arbitrary ID, orders
+                    // the latest authoritative replacement.
+                    if(change.execute_tick>last_relief_tick){
+                        last_relief=id;
+                        last_relief_tick=change.execute_tick;
+                        current_worker=static_cast<std::uint64_t>(change.thrust_y);
+                    }
                 }
                 if(last_relief!=shift.relief_command_id ||
                    current_worker!=shift.worker)
