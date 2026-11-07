@@ -14335,6 +14335,20 @@ void PersistentWorld::enable_native_galactic_physics(
     ++generation_;
 }
 
+void PersistentWorld::enable_native_3d_probes(FailPoint fail){
+    if(world_.native_3d_probes())return;
+    auto next=world_;
+    next.enable_native_3d_probes();
+    if(Simulation::from_snapshot(next.canonical_state()).state_hash()!=
+       next.state_hash() || next.total_ore()!=resource_origin_ ||
+       next.total_credits()!=credit_origin_)
+        throw std::runtime_error("v121 3D probes migration not lossless");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,
+                   nullptr,{},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+}
+
 void PersistentWorld::step(FailPoint fail) {
     step_with_cell_worker(nullptr,fail);
 }
