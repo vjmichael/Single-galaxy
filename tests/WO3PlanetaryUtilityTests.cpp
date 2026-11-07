@@ -478,6 +478,14 @@ int main() {
           handed.production_handovers[0][0].request_id==81900 &&
           handed.production_handovers[0][0].previous==trained_visitor &&
           handed.production_handovers[0][0].replacement==builder);
+    const auto changed_supervisor=colony03::audit_planetary_surface(
+        w.world(),7,ship,key);
+    CHECK(changed_supervisor &&
+          changed_supervisor->production_phases[0]==1 &&
+          changed_supervisor->production_progress[0]==frozen &&
+          changed_supervisor->production_order_ids[0]==81800 &&
+          changed_supervisor->production_handover_count[0]==1 &&
+          changed_supervisor->production_last_handover_id[0]==81900);
     CHECK(w.world().canonical_state().rfind("galaxy-kernel-v114|",0)==0);
     CHECK(w.world().state_hash()==twin.world().state_hash());
     // Inactive visitor duty never resumes; the real replacement supervises.
