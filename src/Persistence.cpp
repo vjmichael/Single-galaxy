@@ -9393,6 +9393,23 @@ bool PersistentWorld::pause_planetary_surface_utility(PlayerId owner,
     return true;
 }
 
+// The original PersistentWorld clone/SQLite commit is the only authority
+// for supervisor changes; failed copies never expose partial handovers.
+bool PersistentWorld::handover_planetary_surface_utility(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,std::uint64_t previous,
+        std::uint64_t replacement,std::uint64_t request_id,FailPoint fail) {
+    auto next=world_;
+    if(!next.handover_planetary_surface_utility(
+         owner,ship,key,previous,replacement,request_id))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 utility relief altered physical matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
 bool PersistentWorld::settle_planetary_founder(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,std::uint64_t npc_id,std::uint64_t request_id,
         bool voluntary_consent_attested,FailPoint fail) {
