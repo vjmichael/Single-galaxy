@@ -15208,6 +15208,65 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                    other.family.booking_request==family.booking_request)
                     throw std::runtime_error("snapshot: reused family approval");
         }
+    // v118 permanently records admitted / departed ACTUAL households.
+    // A residing child is in real planetary custody even after the shuttle
+    // family manifest is released; never require an imaginary NPC clone.
+    std::set<std::uint64_t> planetary_household_children,household_receipts;
+    if(result.snapshot_version_>=118)
+        for(const auto& [key,site]:result.planetary_sites_) {
+            const auto sh=result.planetary_shuttles_.find(key);
+            std::int64_t current_children=0;
+            for(const auto& [guardian,house]:site.households) {
+                if(sh==result.planetary_shuttles_.end() ||
+                   site.housing_phase!=2 ||
+                   site.service_projects[0].phase!=2 ||
+                   house.consent_mask!=3 || !house.co_parent_id ||
+                   guardian==house.co_parent_id ||
+                   house.child_ids.size()!=1 ||
+                   !result.planetary_family_booking_ids_.count(
+                       house.booking_request) ||
+                   !result.shuttle_flight_request_ids_.count(
+                       house.arrival_receipt) ||
+                   !household_receipts.insert(house.admission_request).second ||
+                   (house.return_request &&
+                    !household_receipts.insert(house.return_request).second))
+                    throw std::runtime_error("snapshot: unapproved household residence");
+                const auto child=house.child_ids.front();
+                const auto dep=result.physical_dependents_.find(child);
+                if(dep==result.physical_dependents_.end() ||
+                   dep->second.home_ship!=site.source_ship ||
+                   (dep->second.guardian_id!=guardian &&
+                    dep->second.guardian_id!=house.co_parent_id) ||
+                   !planetary_household_children.insert(child).second)
+                    throw std::runtime_error("snapshot: repeated/unowned household child");
+                const auto expected_legal=house.return_request?
+                    transport::Endpoint{transport::LocationKind::ColonyShip,
+                                        site.source_ship}:
+                    transport::Endpoint{transport::LocationKind::PlanetarySite,
+                                        site.surface_location};
+                for(const auto adult:{guardian,house.co_parent_id}) {
+                    const auto n=result.npcs_.find(adult);
+                    if(n==result.npcs_.end() ||
+                       n->second.home_ship!=site.source_ship ||
+                       n->second.legal_residence()!=expected_legal)
+                        throw std::runtime_error("snapshot: household parent legal address mismatch");
+                }
+                if(!house.return_request) {
+                    ++current_children;
+                    const auto bound=sh->second.family.stage>=5 &&
+                        sh->second.family.guardian_id==guardian &&
+                        sh->second.family.co_parent_id==house.co_parent_id &&
+                        sh->second.family.child_ids==house.child_ids;
+                    if(dep->second.location!=site.surface_location &&
+                       !bound)
+                        throw std::runtime_error("snapshot: active child missing from planet");
+                    planetary_child_berths.insert(child);
+                }else if(dep->second.location!=site.source_ship)
+                    throw std::runtime_error("snapshot: returned child missing home custody");
+            }
+            if(current_children>6)
+                throw std::runtime_error("snapshot: unsupported planetary housing density");
+        }
     if(result.snapshot_version_>=59)for(const auto& [id,d]:result.physical_dependents_){
         const auto g=result.npcs_.find(d.guardian_id);
         if(g==result.npcs_.end() || result.npcs_.count(id) || result.casualties_.count(id) ||
