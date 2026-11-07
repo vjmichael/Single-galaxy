@@ -3895,14 +3895,21 @@ Event Simulation::execute(const Command& c) {
                    !same_local_frame(c.actor,id))continue;
                 if(snapshot_version_>=119 &&
                    !within_native_3d_range(actor,e,range))continue;
-                const auto dx=e.position.x-actor.position.x,dy=e.position.y-actor.position.y;
+                const auto dx=snapshot_version_>=120?0:e.position.x-actor.position.x;
+                const auto dy=snapshot_version_>=120?0:e.position.y-actor.position.y;
                 if(snapshot_version_>=119 ? !within_native_3d_range(actor,e,range) :
                    (dx<-range || dx>range || dy<-range || dy>range ||
                     dx*dx+dy*dy>range*range))continue;
                 auto key=std::make_pair(c.issuer,id);
                 if(!discoveries_.count(key)){
-                    candidates.push_back(DiscoveryRecord{c.issuer,id,e.system_id,e.position,
-                        tick_,geology_.count(id)!=0});
+                    DiscoveryRecord report{c.issuer,id,e.system_id,e.position,
+                        tick_,geology_.count(id)!=0};
+                    if(snapshot_version_>=121){
+                        report.location_z_mm=e.position_z_mm;
+                        report.galactic_location=e.physical_galactic;
+                        report.galactic_authoritative=true;
+                    }
+                    candidates.push_back(report);
                 }
             }
             if(candidates.size()>10000-discoveries_.size()){
@@ -8232,6 +8239,8 @@ bool freight_berth(const Entity& a,const Entity& b) {
        a.dock_state!=DockState::InSpace || b.dock_state!=DockState::InSpace ||
        a.jump_state!=ShipJumpState::Ready || b.jump_state!=ShipJumpState::Ready ||
        a.system_id!=b.system_id)return false;
+    if(a.physical_galactic_authoritative || b.physical_galactic_authoritative)
+        return within_native_3d_range(a,b,Simulation::kDockingRangeMm);
     const auto dx=a.position.x-b.position.x;
     const auto dy=a.position.y-b.position.y;
     constexpr auto limit=Simulation::kDockingRangeMm;
@@ -11519,9 +11528,11 @@ bool Simulation::install_testing_confusion(EntityId source,EntityId target,
        b->type!=EntityType::Ship || !a->owner_id || !b->owner_id ||
        a->owner_id==b->owner_id || source==target ||
        a->system_id!=b->system_id || !same_local_frame(source,target) ||
-       std::hypot(double(a->position.x)-b->position.x,
-                  double(a->position.y)-b->position.y)>
-                  double(kTrainingWeaponRangeMm) ||
+       (snapshot_version_>=120 ?
+         !within_native_3d_range(*a,*b,kTrainingWeaponRangeMm) :
+         std::hypot(double(a->position.x)-b->position.x,
+                    double(a->position.y)-b->position.y)>
+                    double(kTrainingWeaponRangeMm)) ||
        !duration_ticks || duration_ticks>ship_status::Engine::kMaxDurationTicks ||
        tick_>std::numeric_limits<std::uint64_t>::max()-duration_ticks ||
        !exposed_hardpoint_mask || (exposed_hardpoint_mask&~std::uint8_t{3}) ||
