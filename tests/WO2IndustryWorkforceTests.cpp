@@ -827,6 +827,67 @@ int main() {
                   halted_batches);
             CHECK(suspended_replay.world().total_material_kg()==initial);
         }
+        // A workshop supervisor must remain the SAME named NPC while the
+        // original WO2-I machine shift performs one atomic worker handoff.
+        // A new finite local resident supplies the replacement; no phantom
+        // staffing pool or independently executed job is introduced.
+        const auto handoff_db=(folder/"wo2j_managed_handoff.sqlite").string();
+        PersistentWorld::recover_copy(management_db,handoff_db);
+        {
+            PersistentWorld combined(handoff_db,Simulation(1054));
+            CHECK(send(combined,ship,730,Action::CancelWorkshopJob,site,711,1).
+                  result==Outcome::Applied);
+            CHECK(send(combined,ship,731,Action::AssignWorkshopOperator,site,0).
+                  result==Outcome::Applied);
+            CHECK(send(combined,ship,732,Action::AssignHabitatResidents,site,1).
+                  result==Outcome::Applied);
+            std::uint64_t replacement=0;
+            for(const auto& [id,n]:combined.world().npc_records())
+                if(id!=first_id && id!=second_id && n.home_ship==ship &&
+                   n.location==site && n.assigned_site==site &&
+                   n.role==NpcRole::Habitat)replacement=id;
+            CHECK(replacement>0 && replacement!=first_id);
+            auto program=workforce02::approved_workshop_job(
+                combined.world(),7,ship,site,WorkshopTrade::Cut,2,733,true);
+            CHECK(program.has_value() && combined.submit(*program));
+            combined.step();
+            CHECK(combined.world().events().back().result==Outcome::Applied);
+            const auto begin=combined.world().tick()+2;
+            auto duty=workforce02::approved_original_workshop_shift(
+                combined.world(),7,ship,site,false,second_id,
+                begin,begin+12,734,true);
+            CHECK(duty.has_value() && combined.submit(*duty));
+            combined.steps(2);
+            CHECK(combined.world().workshop(site)->shifts[0].command_id==734 &&
+                  combined.world().workshop(site)->operator_npc_id==second_id);
+            auto handover=workforce02::approved_original_workshop_shift_relief(
+                combined.world(),7,ship,site,false,734,replacement,735,true);
+            CHECK(handover.has_value() && combined.submit(*handover));
+            combined.step();
+            CHECK(combined.world().events().back().result==Outcome::Applied);
+            CHECK(combined.world().workshop(site)->operator_npc_id==replacement &&
+                  combined.world().workshop(site)->shifts[0].worker==replacement &&
+                  combined.world().workshop(site)->shifts[0].relief_command_id==735 &&
+                  combined.world().workshop(site)->supervisor_npc_id==first_id &&
+                  combined.world().workshop(site)->approved_jobs[0].command_id==733);
+            CHECK(combined.world().total_material_kg()==initial);
+            const auto handoff_copy=(folder/"wo2j_managed_handoff_recovered.sqlite").string();
+            PersistentWorld::recover_copy(handoff_db,handoff_copy);
+            {
+                PersistentWorld reopened(handoff_copy,Simulation(1055));
+                CHECK(reopened.world().workshop(site)->operator_npc_id==replacement);
+                CHECK(reopened.world().workshop(site)->shifts[0].relief_command_id==735);
+                CHECK(reopened.world().workshop(site)->supervisor_appointment_id==710);
+                CHECK(reopened.world().workshop(site)->approved_jobs[0].command_id==733);
+                CHECK(reopened.world().total_material_kg()==initial);
+            }
+            combined.steps(18);
+            const auto board_after_handoff=workforce02::workshop_job_board(
+                combined.world(),7,ship,site);
+            CHECK(board_after_handoff[0].physically_completed<=2);
+            CHECK(combined.world().workshop(site)->operator_npc_id==0);
+            CHECK(combined.world().total_material_kg()==initial);
+        }
         auto fake=managed.world().canonical_state();
         const auto mentor_marker=fake.find("npctraining|"+
             std::to_string(second_id)+"|712|");
