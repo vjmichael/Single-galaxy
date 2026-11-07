@@ -3537,9 +3537,12 @@ Event Simulation::execute(const Command& c) {
             // original material-backed detection hardware.
             const auto acquisition=ship_sensors::detection_range_mm(
                 *this,actor,defender);
-            const auto physical_distance=std::hypot(
-                double(defender.position.x)-actor.position.x,
-                double(defender.position.y)-actor.position.y);
+            const auto physical_distance=snapshot_version_>=119 ?
+                std::hypot(double(defender.position.x)-actor.position.x,
+                           double(defender.position.y)-actor.position.y,
+                           double(defender.position_z_mm)-actor.position_z_mm) :
+                std::hypot(double(defender.position.x)-actor.position.x,
+                           double(defender.position.y)-actor.position.y);
             if(physical_distance>double(kHackRangeMm) ||
                physical_distance>double(acquisition)) {
                 result.result=Outcome::OutOfRange;return result;
@@ -3633,8 +3636,9 @@ Event Simulation::execute(const Command& c) {
                 if(e.type!=EntityType::Asteroid || e.system_id!=actor.system_id ||
                    !same_local_frame(c.actor,id))continue;
                 const auto dx=e.position.x-actor.position.x,dy=e.position.y-actor.position.y;
-                if(dx<-range || dx>range || dy<-range || dy>range ||
-                   dx*dx+dy*dy>range*range)continue;
+                if(snapshot_version_>=119 ? !within_native_3d_range(actor,e,range) :
+                   (dx<-range || dx>range || dy<-range || dy>range ||
+                    dx*dx+dy*dy>range*range))continue;
                 auto key=std::make_pair(c.issuer,id);
                 if(!discoveries_.count(key)){
                     candidates.push_back(DiscoveryRecord{c.issuer,id,e.system_id,e.position,
@@ -3665,8 +3669,9 @@ Event Simulation::execute(const Command& c) {
             constexpr auto range=kSalvageRangeMm;
             const auto dx=wreck.position.x-actor.position.x;
             const auto dy=wreck.position.y-actor.position.y;
-            if(dx< -range || dx>range || dy< -range || dy>range ||
-               dx*dx+dy*dy>range*range){result.result=Outcome::OutOfRange;return result;}
+            if(snapshot_version_>=119 ? !within_native_3d_range(actor,wreck,range) :
+               (dx< -range || dx>range || dy< -range || dy>range ||
+                dx*dx+dy*dy>range*range)){result.result=Outcome::OutOfRange;return result;}
             if(wreck.cargo==0){result.result=Outcome::NoResources;return result;}
             const auto free_liters=actor.cargo_capacity*1000-loaded_cargo_liters(actor);
             if(free_liters<1000){result.result=Outcome::CargoFull;return result;}
