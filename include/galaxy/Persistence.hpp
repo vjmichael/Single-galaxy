@@ -910,6 +910,11 @@ public:
     bool set_planetary_housing_pause(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,bool pause,
         FailPoint fail=FailPoint::None);
+    bool start_planetary_surface_utility(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t order_id,
+        std::uint64_t qualified_supervisor,FailPoint fail=FailPoint::None);
+    bool pause_planetary_surface_utility(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool pause,FailPoint fail=FailPoint::None);
     bool settle_planetary_founder(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,std::uint64_t npc_id,
         std::uint64_t request_id,bool voluntary_consent_attested,
