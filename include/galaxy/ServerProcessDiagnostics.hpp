@@ -24,6 +24,22 @@ struct ProcessIncident {
     bool core_opt_in=false;
     std::string stderr_tail;
 };
+// Stderr is arbitrary bytes; emit ASCII-safe JSON even for invalid UTF-8.
+// This preserves a byte-level representation without invoking a text decoder.
+inline std::string json_stderr_bytes(std::string_view input,
+                                     std::size_t max_bytes=8192) {
+    constexpr char hex[]="0123456789abcdef";
+    std::string out="\"";
+    const auto size=std::min(input.size(),max_bytes);
+    for(std::size_t i=0;i<size;++i){
+        const unsigned char c=static_cast<unsigned char>(input[i]);
+        if(c=='"' || c=='\\') {out+='\\';out+=static_cast<char>(c);}
+        else if(c<0x20 || c>=0x7f) {
+            out+="\\u00";out+=hex[c>>4];out+=hex[c&15];
+        } else out+=static_cast<char>(c);
+    }
+    return out+'\"';
+}
 inline bool record_process_incident(const std::filesystem::path& save,
                                     const ProcessIncident& incident) noexcept {
     namespace fs=std::filesystem;
@@ -61,7 +77,7 @@ inline bool record_process_incident(const std::filesystem::path& save,
             <<",\"last_world_generation\":"<<incident.last_world_generation
             <<",\"breadcrumb_count\":"<<incident.breadcrumb_count
             <<",\"core_opt_in\":"<<(incident.core_opt_in?"true":"false")
-            <<",\"stderr_tail\":"<<json_string(incident.stderr_tail,8192)<<"}\n";
+            <<",\"stderr_tail\":"<<json_stderr_bytes(incident.stderr_tail,8192)<<"}\n";
         file.flush();
         const bool success=file.good();file.close();
         if(!success || !file.good()){fs::remove(partial,ec);return false;}
