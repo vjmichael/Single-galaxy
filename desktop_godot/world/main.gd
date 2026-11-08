@@ -150,10 +150,10 @@ func _build_hud() -> void:
 	subtitle.text = "LOCAL MOVEMENT TEST ONLY — NOT CONNECTED TO NATIVE GALAXY"
 	contents.add_child(subtitle)
 	status_label = Label.new()
-	status_label.text = "WASD walk   Mouse look   F8 persistent native FPS   F7 read-only contacts   Esc release mouse"
+	status_label.text = "WASD walk   Mouse look   P persistent native FPS   O read-only contacts   Esc release mouse"
 	contents.add_child(status_label)
 	native_label = Label.new()
-	native_label.text = "NATIVE: F8 enters persistent ship interior; F7 is read-only contact view"
+	native_label.text = "NATIVE: P enters persistent ship interior; O is read-only contact view"
 	contents.add_child(native_label)
 	fps_label = Label.new()
 	fps_label.position = Vector2(16, 105)
@@ -169,7 +169,7 @@ func _on_inspected(display_name: String) -> void:
 	status_label.text = "Inspected: " + display_name + " (prototype only; no native action)"
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F8:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_P:
 		if native_player_session.is_active():
 			native_player_session.stop("NATIVE FPS stopped by player; pose saved")
 		else:
@@ -178,12 +178,12 @@ func _unhandled_input(event: InputEvent) -> void:
 			native_player_session.start()
 		get_viewport().set_input_as_handled()
 		return
-	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F7:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_O:
 		if native_player_session.is_active():
-			_on_native_status("F7 read-only disabled while F8 authoritative writer is active")
+			_on_native_status("O read-only disabled while P authoritative writer is active")
 			return
 		if native_session.is_active():
-			native_session.stop("READ ONLY — stopped by player; last verified frame retained; F7 reconnects")
+			native_session.stop("READ ONLY — stopped by player; last verified frame retained; O reconnects")
 		else:
 			native_session.start()
 		get_viewport().set_input_as_handled()
@@ -217,7 +217,7 @@ func _on_native_snapshot(frame: Dictionary) -> void:
 	# Native SGVIEW X/Y horizontal millimeters are mapped to viewer X/Z. Y=3 is
 	# explicitly illustrative, NOT an authoritative 3D player or ship altitude.
 	if is_instance_valid(native_label):
-		native_label.text = "NATIVE READ ONLY (F7 stop): tick %d | system %d | ship #%d | %d contacts" % [
+		native_label.text = "NATIVE READ ONLY (O stop): tick %d | system %d | ship #%d | %d contacts" % [
 			frame["tick"], frame["system"], frame["ship_id"], frame["contacts"].size()]
 	for child in native_markers.get_children():
 		child.queue_free()

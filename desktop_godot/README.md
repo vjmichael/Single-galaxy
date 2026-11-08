@@ -74,3 +74,7 @@ For an independent **real Windows native process test**, double-click
 against a fresh temporary SQLite save, checks ticks 0–3 then 3–5, and creates
 `SingleGalaxy_NativeBridge_Windows_Evidence.zip` for review. It does **not**
 claim Godot UI success or authority over the local FPS character.
+
+## FP3D-02G: editor-safe native controls
+
+Godot's editor reserves **F7** to pause and **F8** to stop the running game, even during play testing. The game therefore uses **P** to start/stop persistent native FPS movement and **O** to start/stop the read-only observer. **WASD** remains walking, **Esc** releases mouse capture. Do not map runtime actions to F7/F8; pressing them in editor-driven sessions may pause or terminate the project. The exported standalone game and actual Windows reconnect/save behavior remain separate runtime acceptance gates.

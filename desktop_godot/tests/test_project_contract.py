@@ -26,4 +26,7 @@ assert 'LOCAL MOVEMENT TEST ONLY' in scene
 assert 'WebGL' not in scene and '127.0.0.1' not in scene
 assert not any(x in player+scene+keys for x in ['WebSocketPeer','HTTPClient','HTTPRequest','WebSocketMultiplayerPeer','OS.execute','create_process'])
 assert not list(p.rglob('*.png')) and not list(p.rglob('*.jpg'))
-print('PASS 20/20 source-level project and separation assertions; Godot runtime NOT executed')
+# Editor F7 pauses and F8 stops the project; native game commands must not use them.
+assert 'event.keycode == KEY_P' in scene and 'event.keycode == KEY_O' in scene
+assert 'event.keycode == KEY_F8' not in scene and 'event.keycode == KEY_F7' not in scene
+print('PASS 22/22 source-level project, separation and safe native hotkey assertions; Godot runtime NOT executed')
