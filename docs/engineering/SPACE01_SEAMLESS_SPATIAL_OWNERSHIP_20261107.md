@@ -296,3 +296,26 @@ This is **direct local evidence for the specific POSIX pipe hang and the post-ex
 At draft PR #95 SHA `143f633ef214ba68bb5e659127ead1ecedbfeb5c`, SPACE workflow [run 42428375364](https://github.com/vjmichael/Single-galaxy/actions/runs/42428375364) finished `failure` on both Windows 2022 and Ubuntu 24.04 **with zero executed steps in each job** (job IDs `128571533536` / `128571533757`). This supplies no CMake output or test evidence. WO3/WO4/WO5 were queued when checked. [Runner issue #90](https://github.com/vjmichael/Single-galaxy/issues/90) remains the external acceptance gate; a passing isolated Linux seccomp harness is *not* a full-world CTest.
 
 **Review safeguards:** The synchronized detached-pipe fixture is now denied process creation by SPACE-05F's seccomp policy during the normal hardened worker test. Therefore it cannot, by itself, reproduce the earlier post-exit inherited-pipe block inside the hardened process. The original independent Linux harness is the measured proof of blocking vs nonblocking behavior; the new native fork-denial fixture separately proves process creation is refused. Do not conflate those distinct safeguards.
+
+
+## SPACE-05H — executed exact-source native Linux worker and coordinate regression (2026-11-07)
+
+**Actual executed component-level native evidence, NOT full-game or native-Windows acceptance.** The full checkout is inaccessible from the available container because the private GitHub repository cannot be reached directly over its network. Exact component files were retrieved using the connected GitHub repository source interface and verified by local `git hash-object` against GitHub blob SHA values before compiling with CMake/Ninja. The new standalone project `tests/native_components/CMakeLists.txt` uses the **original repository's worker runner, executable, fixtures, stress test, and high-order property test** with no dummy `galaxy_kernel` implementation; it links the OS worker component, not the original physical world.
+
+One **real native compiler failure** was observed after extending the test to 4 lanes × 1000 rounds: with `-Wall -Wextra -Werror`, GCC rejected the comparison of the unsigned `elapsed_ms.size()` to the signed runtime `workers*rounds`. Corrected the test to compare `std::size_t` quantities, committed to PR #95, and reran all three toolchain configurations.
+
+### Completed CMake/Ninja + CTest runs
+
+| Actual environment | 80 native OS launches | 4,000 native OS launches | 200,004 independent 128-bit coordinate oracle cases | Extended-run avg / p95 / max |
+| --- | --- | --- | --- | --- |
+| Debian Linux GCC 14.2, Release, `-Wall -Wextra -Werror` | **PASS** | **PASS** | **PASS** | 5.66924 / 6.65904 / 17.3232 ms |
+| Debian Linux Clang 17, Release, `-Wall -Wextra -Werror` | **PASS** | **PASS** | **PASS** | 5.53153 / 5.93363 / 40.9318 ms |
+| Debian Linux Clang 17, RelWithDebInfo + UBSan `-Werror` | **PASS** | **PASS** | **PASS** | 5.73271 / 6.31931 / 23.4998 ms |
+
+All nine CTest executions passed: **4,080 genuine successful OS worker starts per environment**, plus three intentionally hung-process terminations per worker-stress test, kernel-level fork-denial attestation, fail-closed detached pipe behavior, exact forged-report rejection, and 200,004 high-order normalizations against a test-only `__int128` oracle per environment. No sanitizer findings were emitted. These measurements are native **process-start/report** times, not game frame times. Occasional maximum worker launches were tens of milliseconds even though p95 was about 6 ms.
+
+- Reproducible standalone source build instructions and scope: `tests/native_components/README.md`.
+- SHA checks: `NativeCellProcessRunner.cpp` blob `36839b0a74aa65811164fcc7f1d06f619f2d7ebb`; corrected `NativeCellProcessStressTests.cpp` `a7412c00a228c894aa9ef9adfb01f0852675782a`; `GalacticPhysicalPosition.hpp` `11e308ddaa4142ecae50537333dbd01c8b1324a5`. The underlying worker fixtures and independent oracle were also exact blob-matched.
+- Production `CMakeLists.txt` now registers `galaxy_native_cell_process_long_stress` as the **same source executable** with `1000` rounds and a 120-second CTest cap. The Windows/Linux SPACE workflow selects this name at the exact PR head, in addition to the existing original full-game regressions.
+
+**Acceptance boundary remains strict:** The user requested real regression execution; the isolated native Linux worker subsystem and arithmetic oracle now have real passing compilation and execution evidence. The **original complete game CMake build, the 256-tick/4-occupied-cell `PersistentWorld` SQLite regression, full cross-system action tests, WO3-F/WO4-F/WO5-F, true Windows native worker compilation/execution, and the installed 3D client remain OPEN**. GitHub Actions still reports failed jobs with zero executed steps, so the CI failure is not a code-test outcome. No full-game or Windows acceptance may be promoted based on these component passes alone. Continue monitoring runner blocker #90 and arrange a native full-repository checkout/build environment before closing any integration gate.
