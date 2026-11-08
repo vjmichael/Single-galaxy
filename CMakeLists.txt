@@ -2041,6 +2041,9 @@ endif()
 add_executable(galaxy_server_dx_supervisor src/server_dx_supervisor.cpp)
 target_include_directories(galaxy_server_dx_supervisor PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include)
+if(WIN32)
+  target_link_libraries(galaxy_server_dx_supervisor PRIVATE Dbghelp Advapi32)
+endif()
 if(BUILD_TESTING)
   add_executable(galaxy_server_dx_fault_child tests/ServerDx02FaultChild.cpp)
   target_include_directories(galaxy_server_dx_fault_child PRIVATE
