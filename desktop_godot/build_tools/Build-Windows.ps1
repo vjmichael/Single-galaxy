@@ -2,7 +2,7 @@
 # Needs only Windows 10/11 PowerShell 5.1+, disk space and HTTPS to GitHub.
 # It never downloads or executes plugins, scripts or build tools from strangers.
 [CmdletBinding()]
-param([switch]$LaunchAfterExport)
+param([switch]$LaunchAfterExport, [string]$ExistingGodotExe = "")
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -52,17 +52,41 @@ function Fetch-VerifiedAsset([object]$release, [string]$fileName) {
         if ($actual -ne $hex) {Remove-Item -LiteralPath $output -Force; throw "Cached $fileName digest mismatch"}
         Record-Gate "verify-$fileName" 'PASS' 'Previously downloaded official asset verified'
     } else {
+        # PowerShell 5.1's Invoke-WebRequest can fail partway through a >1 GB file.
+        # Use Windows curl.exe (HTTPS only), preserving .part for continuation.
         $tmp = "$output.part"
-        if (Test-Path -LiteralPath $tmp) {Remove-Item -LiteralPath $tmp -Force}
-        Write-Host "Downloading $fileName from the official Godot GitHub release (templates may exceed 1 GB)..."
-        Invoke-WebRequest -Uri $asset.browser_download_url -UseBasicParsing -TimeoutSec 1800 -OutFile $tmp
+        $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
+        if ($null -eq $curl) {throw 'Windows curl.exe unavailable: cannot resume official asset downloads'}
+        $success = $false
+        for ($attempt = 1; $attempt -le 3; $attempt++) {
+            $have = 0L
+            if (Test-Path -LiteralPath $tmp) {$have = (Get-Item -LiteralPath $tmp).Length}
+            Write-Host "Downloading official $fileName (attempt $attempt/3; resumable cache $have bytes)..."
+            & $curl.Source '--fail' '--location' '--show-error' '--retry' '5' '--retry-delay' '3' '--connect-timeout' '30' '--continue-at' '-' '--proto' '=https' '--proto-redir' '=https' '--output' $tmp ([string]$asset.browser_download_url)
+            if ($LASTEXITCODE -eq 0) {$success = $true; break}
+            Record-Gate "download-retry-$fileName" 'RETRY' "curl exit $LASTEXITCODE, partial file retained: $tmp"
+            Start-Sleep -Seconds 3
+        }
+        if (-not $success) {throw "Official download interrupted after 3 retries; partial file kept at $tmp for later continuation"}
+        if ((Get-Item -LiteralPath $tmp).Length -ne [int64]$asset.size) {
+            throw "Partial official asset $fileName; bytes do not match release size; retaining $tmp for resume"
+        }
         $actual = (Get-FileHash -LiteralPath $tmp -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($actual -ne $hex) {Remove-Item -LiteralPath $tmp -Force; throw "Downloaded $fileName SHA256 mismatch"}
         Move-Item -LiteralPath $tmp -Destination $output -Force
-        Record-Gate "verify-$fileName" 'PASS' 'Official release digest matched downloaded archive'
+        Record-Gate "verify-$fileName" 'PASS' 'Official release SHA256 and size match verified resumable download'
     }
     if ((Get-Item -LiteralPath $output).Length -ne [int64]$asset.size) {throw "Official asset $fileName size mismatch"}
     return [pscustomobject]@{Path=$output;SHA256=$hex}
+}
+function Check-LocalEditor([string]$candidate) {
+    if ([string]::IsNullOrWhiteSpace($candidate)) {return $false}
+    if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) {throw "Local Godot editor not found: $candidate"}
+    $version = (& $candidate '--version' 2>&1 | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $version -notmatch '^4\.7\.2\.stable') {
+        throw "Local Godot editor must report 4.7.2.stable, got '$version'"
+    }
+    return $true
 }
 function Extract-ZipMember([string]$archivePath,[string]$fileName,[string]$outPath) {
     $zip = [IO.Compression.ZipFile]::OpenRead($archivePath)
@@ -104,18 +128,42 @@ function Verify-PE64([string]$path) {
 
 try {
     $state.stage = 'download-official-release'
-    $release = Official-Release
-    $editor = Fetch-VerifiedAsset $release $editorName
-    $state.editor_sha256 = $editor.SHA256
-    $editorExe = Join-Path $cacheDir 'Godot_v4.7.2-stable_win64.exe'
-    Extract-ZipMember $editor.Path 'Godot_v4.7.2-stable_win64.exe' $editorExe
-    Record-Gate 'editor-extract' 'PASS' 'Verified official x64 Godot editor extracted locally; no installation'
+    # Explicit or PATH-selected installed 4.7.2 editor avoids a redundant download.
+    # Its provenance is USER-INSTALLED, not falsely labeled official-SHA-verified.
+    $editorExe = $null
+    if (-not [string]::IsNullOrWhiteSpace($ExistingGodotExe)) {
+        $editorExe = [IO.Path]::GetFullPath($ExistingGodotExe)
+        [void](Check-LocalEditor $editorExe)
+    } else {
+        foreach ($name in @('godot.exe', 'Godot.exe')) {
+            $installed = Get-Command $name -ErrorAction SilentlyContinue
+            if ($null -ne $installed) {
+                try {
+                    if (Check-LocalEditor $installed.Source) {$editorExe = $installed.Source; break}
+                } catch {Write-Host "Ignoring PATH Godot: $($_.Exception.Message)"}
+            }
+        }
+    }
+    $release = $null
+    if ($editorExe) {
+        $state.editor_provenance = 'user-installed-Godot-version-verified-no-official-asset-digest'
+        Record-Gate 'existing-editor' 'PASS' "Using locally installed Godot 4.7.2; SHA256 release authenticity NOT independently verified: $editorExe"
+    } else {
+        $release = Official-Release
+        $editor = Fetch-VerifiedAsset $release $editorName
+        $state.editor_sha256 = $editor.SHA256
+        $editorExe = Join-Path $cacheDir 'Godot_v4.7.2-stable_win64.exe'
+        Extract-ZipMember $editor.Path 'Godot_v4.7.2-stable_win64.exe' $editorExe
+        $state.editor_provenance = 'official-sha256-verified-release'
+        Record-Gate 'editor-extract' 'PASS' 'Verified official x64 Godot editor extracted locally; no installation'
+    }
 
     $state.stage = 'export-templates'
     $templateRoot = Join-Path $env:APPDATA "Godot\export_templates\$godotEngineVersion"
     $templateExe = Join-Path $templateRoot 'windows_release_x86_64.exe'
     # Existing templates may be user-installed; do not claim validated release hash in that case.
     if (-not (Test-Path -LiteralPath $templateExe)) {
+        if ($null -eq $release) {$release = Official-Release}
         $templates = Fetch-VerifiedAsset $release $templatesName
         $state.template_sha256 = $templates.SHA256
         Extract-ZipMember $templates.Path 'windows_release_x86_64.exe' $templateExe
