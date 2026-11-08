@@ -291,6 +291,67 @@ static void cross_system_physical_contact(){
     CHECK(Simulation::from_snapshot(survey.canonical_state()).canonical_state()
           ==survey.canonical_state());
 }
+// SPACE-04I: exact physical outpost genesis is source-authoritative even
+// when its local XY compatibility field crosses a galactic sector. The
+// nearest station is checked in the real world, not a catalogue label.
+static void cross_system_outpost_genesis(){
+    Simulation seed(4912);
+    seed.add_system(2);
+    const auto ship=seed.add_colony_ship(7,{0,0},60,24);
+    const auto rock=seed.add_asteroid({1800,0},40);
+    seed.enable_native_3d_physics();
+    constexpr auto edge=galactic::kSectorEdgeMm;
+    const galactic::Point star1{{55,edge-500},{10,1000},{12,1000}};
+    const galactic::Point star2{{56,500},{10,1000},{12,1000}};
+    seed.enable_native_galactic_physics({{1,star1},{2,star2}});
+    auto applied=[&](std::uint64_t id,Action action,
+                     EntityId target,std::int64_t amount){
+        CHECK(seed.submit(command(id,ship,seed.tick()+1,
+                                  action,target,0,0,amount)));
+        seed.step();
+        CHECK(seed.events().back().result==Outcome::Applied);
+    };
+    applied(61001,Action::Mine,rock,16);
+    applied(61002,Action::RefineOre,0,16);
+    applied(61003,Action::FabricateModule,0,4);
+    CHECK(seed.colony_ship(ship)->modules==4);
+    const auto before=seed.canonical_state();
+    const auto ore=seed.total_ore();
+    const auto crew=seed.colony_ship(ship)->crew;
+    CHECK(Simulation::from_snapshot(before).canonical_state()==before);
+
+    Simulation blocked=Simulation::from_snapshot(before);
+    const auto foreign=blocked.add_station_in_system(2,{250,0});
+    CHECK(blocked.find(foreign)->physical_galactic.x.sector==56);
+    CHECK(blocked.submit(command(61004,ship,blocked.tick()+1,
+        Action::ConstructOutpost)));
+    blocked.step();
+    CHECK(blocked.events().back().result==Outcome::InvalidTarget);
+    CHECK(blocked.built_outposts().empty() &&
+          blocked.colony_ship(ship)->modules==4 &&
+          blocked.total_ore()==ore);
+    CHECK(Simulation::from_snapshot(blocked.canonical_state())
+          .canonical_state()==blocked.canonical_state());
+
+    Simulation built=Simulation::from_snapshot(before);
+    const auto ship_location=built.find(ship)->physical_galactic;
+    const auto exact=galactic::advance(ship_location,{1000,0,0});
+    CHECK(exact && exact->x.sector==56 && exact->x.millimeters==500);
+    CHECK(built.submit(command(61005,ship,built.tick()+1,
+        Action::ConstructOutpost)));
+    built.step();
+    CHECK(built.events().back().result==Outcome::Applied);
+    CHECK(built.built_outposts().size()==1);
+    const auto outpost=built.built_outposts().begin()->first;
+    CHECK(built.find(outpost)->physical_galactic==*exact &&
+          built.find(outpost)->system_id==1 &&
+          built.colony_ship(ship)->modules==0 &&
+          built.colony_ship(ship)->crew==crew &&
+          built.total_ore()==ore);
+    CHECK(Simulation::from_snapshot(built.canonical_state()).canonical_state()
+          ==built.canonical_state());
+}
+
 static void multi_cell_supervision(const fs::path& root,
     const std::string& worker_binary,const std::string& hang_binary){
     const auto db=(root/"multi.sqlite").string();
@@ -554,6 +615,7 @@ int main(int argc,char** argv){
         galaxy_and_probes(root);
         anchored_nonships_and_swap();
         cross_system_physical_contact();
+        cross_system_outpost_genesis();
         multi_cell_supervision(root,argv[1],argv[2]);
         sustained_multi_cell_endurance(root,argv[1]);
         std::cout<<"PASS exact original galactic 3D, probe persistence and "
