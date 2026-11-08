@@ -21,6 +21,7 @@ int main(int argc,char** argv){
         report.kind="worker_failure";
         report.role="native_cell_worker";
         report.reason="preflight_failed";
+        report.detail="original host denied native cell preflight";
         report.worker_scope="spatial/v2/s1,2,3";
         report.worker_epoch=47;
         report.last_committed_tick=99;
