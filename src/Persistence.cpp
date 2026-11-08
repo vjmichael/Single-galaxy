@@ -12573,6 +12573,57 @@ bool PersistentWorld::submit_testing_ship_confusion(
     return true;
 }
 
+
+bool PersistentWorld::submit_cockpit_flight_checked(
+        const Command& command,std::uint64_t expected_seat_sequence,FailPoint fail){
+    // Internal friend-only gateway. External PersistentWorld::submit rejects
+    // the reserved cockpit-command ID namespace.
+    constexpr std::uint64_t cockpit_tag=std::uint64_t{1}<<60;
+    constexpr std::uint64_t other_tags=std::uint64_t{3}<<61;
+    if(!(command.id&cockpit_tag)||(command.id&other_tags)||
+       !expected_seat_sequence||
+       (command.action!=Action::Thrust&&command.action!=Action::RequestUndock)||
+       command.issuer==0||command.issuer==Simulation::kServerAuthority||
+       !command.actor||command.execute_tick!=world_.tick()+1||
+       command.target||command.transport_id||!command.passenger_ids.empty()||
+       command.secondary_receiver||command.secondary_transport||
+       world_.has_pending_cockpit_flight())return false;
+    const auto* ship=world_.find(command.actor);
+    const auto person=world_.player_people().find(command.issuer);
+    if(!ship||ship->type!=EntityType::Ship||
+       ship->owner_id!=command.issuer||
+       person==world_.player_people().end()||
+       person->second.owner!=command.issuer||
+       person->second.state!=PlayerPersonState::AboardOwnShip||
+       person->second.home_ship!=command.actor||
+       person->second.physical_ship!=command.actor)return false;
+    for(const auto& [id,flight]:world_.npc_flight_orders()){
+        (void)id;
+        if(flight.ship==command.actor&&
+           (flight.phase==NpcFlightPhase::Planned||
+            flight.phase==NpcFlightPhase::InTransit))return false;
+    }
+    // Original world command acceptance is a separate native journal commit.
+    // Seat state is revalidated UNDER its SQLite BEGIN IMMEDIATE lock.
+    auto next=world_;
+    if(!next.submit(command))return false;
+    const auto require_seat=[&](sqlite3* db,std::uint64_t){
+        Statement q(db,"SELECT ship,seated,seq FROM sg_fp3d03a_seat WHERE owner=?");
+        q.i64(1,static_cast<std::int64_t>(command.issuer));
+        if(!q.row()||
+           sqlite3_column_int64(q.get(),0)!=static_cast<sqlite3_int64>(command.actor)||
+           sqlite3_column_int(q.get(),1)!=1||
+           sqlite3_column_int64(q.get(),2)!=
+               static_cast<sqlite3_int64>(expected_seat_sequence)||
+           q.row())throw std::runtime_error("cockpit seat authorization changed inside writer");
+    };
+    store_->commit(next,generation_,resource_origin_,credit_origin_,&command,
+                   {},{},{},fail,nullptr,nullptr,require_seat);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
 bool PersistentWorld::submit(const Command& command, FailPoint fail) {
     return submit_with_cell_worker(command,nullptr,fail);
 }
@@ -12584,8 +12635,10 @@ bool PersistentWorld::submit_as_cell_worker(
 bool PersistentWorld::submit_with_cell_worker(
         const Command& command,const NativeCellWorkerTick* token,
         FailPoint fail) {
-    // This identity space is reserved for host-generated NPC flight commands.
-    // An outside player/worker cannot create the corresponding native receipt.
+    // Reserved native NPC and cockpit command IDs cannot be submitted via
+    // ordinary client/worker APIs. Cockpit admission requires trusted seat proof.
+    if((command.id & (std::uint64_t{1}<<60)) &&
+       !(command.id & (std::uint64_t{3}<<61)))return false;
     if((command.id & (std::uint64_t{1}<<61)) &&
        !(command.id & (std::uint64_t{1}<<62)))return false;
     // Physical command actor must already inhabit the worker's genuine
