@@ -2066,3 +2066,15 @@ if(BUILD_TESTING)
     set_tests_properties(galaxy_server_dx_game_hosts PROPERTIES TIMEOUT 240)
   endif()
 endif()
+
+# SGDX-02 Windows NTFS incident ACLs are used in native game-host and
+# original worker-diagnostic paths, not only by the external dump utility.
+if(WIN32)
+  foreach(dx_target IN ITEMS
+      galaxy_kernel galaxy_colony_live_host galaxy_interactive_host
+      galaxy_server_diagnostics_tests galaxy_server_dx_fault_child)
+    if(TARGET ${dx_target})
+      target_link_libraries(${dx_target} PRIVATE Advapi32)
+    endif()
+  endforeach()
+endif()
