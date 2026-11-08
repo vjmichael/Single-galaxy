@@ -107,6 +107,29 @@ def check(supervisor, child):
         ok, item, _ = run("clean", record_clean=True)
         assert ok.returncode == 0 and item["reason"] == "clean_exit"
 
+        if os.name == "nt":
+            # The Windows Job Object must kill a genuine child->grandchild
+            # tree on timeout, not merely terminate the parent process.
+            import ctypes
+            from ctypes import wintypes
+            descendant, item, _ = run("descendant", timeout_ms=450)
+            assert descendant.returncode == 124 and item["reason"] == "timeout"
+            assert descendant.stdout.startswith("DESCENDANT=")
+            pid = int(descendant.stdout.split("=",1)[1].strip())
+            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel.OpenProcess.argtypes = [wintypes.DWORD,wintypes.BOOL,wintypes.DWORD]
+            kernel.OpenProcess.restype = wintypes.HANDLE
+            kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE,wintypes.DWORD]
+            kernel.WaitForSingleObject.restype = wintypes.DWORD
+            kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+            handle = kernel.OpenProcess(0x00100000,False,pid)
+            if handle:
+                try:
+                    if kernel.WaitForSingleObject(handle,0) != 0:
+                        raise AssertionError("Job Object left real descendant running")
+                finally:
+                    kernel.CloseHandle(handle)
+
         if os.name != "nt":
             # Process-tree timeout must reap the group, not just the parent.
             survivor, item, _ = run("descendant", timeout_ms=220)
