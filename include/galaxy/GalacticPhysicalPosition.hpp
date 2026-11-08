@@ -38,9 +38,10 @@ inline std::optional<Axis> normalize(Axis initial,std::int64_t delta_mm){
     // initial.mm + remainder lies in [0,2*edge); int64 safe.
     const auto total=initial.millimeters+remainder;
     const auto carry=total>=kSectorEdgeMm?1:0;
-    auto shifted=checked_add(initial.sector,quotient);
-    if(!shifted)return std::nullopt;
-    shifted=checked_add(*shifted,carry);
+    // Combine the normalized sector delta before checking overflow.
+    // At INT64_MIN, a negative quotient and positive carry can cancel;
+    // rejecting the intermediate sum would incorrectly forbid legal motion.
+    const auto shifted=checked_add(initial.sector,quotient+carry);
     if(!shifted)return std::nullopt;
     return Axis{*shifted,total-carry*kSectorEdgeMm};
 }
