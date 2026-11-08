@@ -175,6 +175,7 @@ try {
     Run-Godot 'project-import' @('--headless','--path',$rootDir,'--editor','--quit')
     Run-Godot 'runtime-smoke' @('--headless','--path',$rootDir,'--script','res://tests/godot_smoke.gd')
     Run-Godot 'native-projection-contract' @('--headless','--path',$rootDir,'--script','res://tests/native_projection_smoke.gd')
+    Run-Godot 'native-player-protocol' @('--headless','--path',$rootDir,'--script','res://tests/native_player_protocol_smoke.gd')
 
     $state.stage = 'export-release'
     $gameExe = Join-Path $buildDir 'SingleGalaxy_Graybox.exe'
@@ -202,6 +203,21 @@ try {
     }
 
 
+    # FP3D-02F: the authoritative FPS writer is an OWNED process, not a PCK script.
+    # Never claim native movement works if this PE has not been bundled.
+    $playerExe = Join-Path $rootDir 'native\galaxy_desktop_player_host.exe'
+    if (Test-Path -LiteralPath $playerExe) {
+        Verify-PE64 $playerExe
+        New-Item -ItemType Directory -Force -Path $stagedNative | Out-Null
+        Copy-Item -LiteralPath $playerExe -Destination (Join-Path $stagedNative 'galaxy_desktop_player_host.exe') -Force
+        $state.native_player_sha256 = (Get-FileHash -LiteralPath $playerExe -Algorithm SHA256).Hash.ToLowerInvariant()
+        $state.native_player_bytes = (Get-Item -LiteralPath $playerExe).Length
+        Record-Gate 'native-player-host' 'PASS' 'Authoritative C++ SQLite FPS child bundled; physical Windows F8 acceptance still required'
+        $nativePackaged = $true
+    } else {
+        Record-Gate 'native-player-host' 'SKIP' 'Native FPS host absent; F8 clearly reports missing host and keeps local preview mode'
+    }
+
     $state.stage = 'license'
     $licensePath = Join-Path $buildDir 'GODOT_LICENSE.txt'
     if (-not (Test-Path -LiteralPath $licensePath)) {
@@ -212,8 +228,8 @@ try {
     @'
 Single-Galaxy standalone graybox (FP3D-02A development preview)
 Double-click SingleGalaxy_Graybox.exe. No Godot editor or Python install required.
-WASD=move; mouse=look; Shift=sprint; Space=jump; E=inspect; F7=read-only native view; Esc=release mouse.
-F7 optionally reads actual native C++ ship and contacts from SQLite through child-process pipes. No player walking, movement or cargo commands are sent to the native simulation yet.
+WASD=walk/mouse look; F8=authoritative persistent native FPS inside original owned ship; F7=read-only contact diagnostic; Esc=release mouse.
+F8 optionally sends bounded WASD moves to an adjacent native C++ host. Native SQLite atomically commits world STEP, player pose and movement receipt. F7 remains read-only. Native FPS interior collisions are a prototype and do not yet match all Godot scene walls.
 Actual physical Windows GPU, collision and usability acceptance is still required.
 Godot MIT terms: GODOT_LICENSE.txt
 '@ | Set-Content -LiteralPath $readme -Encoding UTF8

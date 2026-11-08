@@ -4,6 +4,7 @@ extends Node3D
 
 const PLAYER_SCRIPT := preload("res://world/player_controller.gd")
 const NATIVE_SESSION := preload("res://world/native_session.gd")
+const NATIVE_PLAYER_SESSION := preload("res://world/native_player_session.gd")
 const MONOCHROME := Color(0.76, 0.76, 0.76, 1.0)
 var material: StandardMaterial3D
 var player: CharacterBody3D
@@ -11,6 +12,7 @@ var status_label: Label
 var fps_label: Label
 var native_label: Label
 var native_session
+var native_player_session
 var native_markers: Node3D
 var _fps_accumulator := 0.0
 
@@ -31,6 +33,11 @@ func _ready() -> void:
 	native_session = NATIVE_SESSION.new()
 	native_session.native_snapshot.connect(_on_native_snapshot)
 	native_session.status_changed.connect(_on_native_status)
+	native_player_session = NATIVE_PLAYER_SESSION.new()
+	native_player_session.pose_received.connect(_on_native_player_pose)
+	native_player_session.status_changed.connect(_on_native_player_status)
+	native_player_session.connection_changed.connect(_on_native_player_connection)
+	player.native_motion_intent.connect(_on_native_player_intent)
 
 func _setup_environment() -> void:
 	var env := Environment.new()
@@ -143,10 +150,10 @@ func _build_hud() -> void:
 	subtitle.text = "LOCAL MOVEMENT TEST ONLY — NOT CONNECTED TO NATIVE GALAXY"
 	contents.add_child(subtitle)
 	status_label = Label.new()
-	status_label.text = "WASD walk   Mouse look   Shift sprint   Space jump   E inspect   F7 native view   Esc release mouse"
+	status_label.text = "WASD walk   Mouse look   F8 persistent native FPS   F7 read-only contacts   Esc release mouse"
 	contents.add_child(status_label)
 	native_label = Label.new()
-	native_label.text = "NATIVE: offline (F7 read-only C++ feed, if host is installed)"
+	native_label.text = "NATIVE: F8 enters persistent ship interior; F7 is read-only contact view"
 	contents.add_child(native_label)
 	fps_label = Label.new()
 	fps_label.position = Vector2(16, 105)
@@ -162,12 +169,43 @@ func _on_inspected(display_name: String) -> void:
 	status_label.text = "Inspected: " + display_name + " (prototype only; no native action)"
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F8:
+		if native_player_session.is_active():
+			native_player_session.stop("NATIVE FPS stopped by player; pose saved")
+		else:
+			if native_session.is_active():
+				native_session.stop("Read-only observer stopped for native FPS writer")
+			native_player_session.start()
+		get_viewport().set_input_as_handled()
+		return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F7:
+		if native_player_session.is_active():
+			_on_native_status("F7 read-only disabled while F8 authoritative writer is active")
+			return
 		if native_session.is_active():
 			native_session.stop("READ ONLY — stopped by player; last verified frame retained; F7 reconnects")
 		else:
 			native_session.start()
 		get_viewport().set_input_as_handled()
+
+func _on_native_player_connection(connected: bool) -> void:
+	if is_instance_valid(player):
+		player.use_native_authority(connected)
+
+func _on_native_player_intent(heading: Vector3) -> void:
+	if native_player_session != null:
+		native_player_session.submit_motion(heading)
+
+func _on_native_player_pose(pose: Dictionary) -> void:
+	# The Godot avatar is positioned from ACKNOWLEDGED native SQL state ONLY.
+	# Vertical eye/physics meshes remain placeholder until full 3D native geometry.
+	if is_instance_valid(player):
+		player.global_position = Vector3(float(pose["x_mm"]) / 1000.0,
+			1.45, float(pose["z_mm"]) / 1000.0)
+
+func _on_native_player_status(message: String) -> void:
+	if is_instance_valid(native_label):
+		native_label.text = message
 
 func _on_native_status(message: String) -> void:
 	if is_instance_valid(native_label):
@@ -203,10 +241,14 @@ func _on_native_snapshot(frame: Dictionary) -> void:
 func _exit_tree() -> void:
 	if native_session != null:
 		native_session.stop("Native client closed")
+	if native_player_session != null:
+		native_player_session.stop("Native FPS client closed")
 
 func _process(delta: float) -> void:
 	if native_session != null:
 		native_session.poll()
+	if native_player_session != null:
+		native_player_session.poll()
 
 	_fps_accumulator += delta
 	if _fps_accumulator >= 0.5 and is_instance_valid(fps_label):

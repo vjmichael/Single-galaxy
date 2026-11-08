@@ -3,6 +3,12 @@ extends CharacterBody3D
 ## No browser, no ship thrust, no persistence, no weapons or fake remote control.
 
 signal inspected(display_name: String)
+signal native_motion_intent(heading: Vector3)
+var authoritative_mode := false
+
+func use_native_authority(enabled: bool) -> void:
+	authoritative_mode = enabled
+	velocity = Vector3.ZERO
 
 const WALK_SPEED := 5.0
 const RUN_SPEED := 7.5
@@ -49,6 +55,15 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 
 func _physics_process(delta: float) -> void:
+	if authoritative_mode:
+		# Native mode NEVER applies Godot movement or jumps. Only the trusted
+		# C++ operation-journal transaction may advance the player position.
+		velocity = Vector3.ZERO
+		if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and get_window().has_focus():
+			var axis := Input.get_vector("fps_left", "fps_right", "fps_forward", "fps_backward")
+			var direction := (global_transform.basis * Vector3(axis.x, 0.0, axis.y)).normalized()
+			native_motion_intent.emit(direction)
+		return
 	# The arrow keys NEVER generate thrust while on foot. No input auto-repeat needed.
 	if not is_on_floor():
 		velocity.y -= GRAVITY * delta

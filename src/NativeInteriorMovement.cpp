@@ -68,7 +68,7 @@ public:
     void commit(){exec(db_,"COMMIT");complete_=true;}
 };
 }
-InteriorMovement::InteriorMovement(const std::string& path,const PersistentWorld& world):world_(world){
+InteriorMovement::InteriorMovement(const std::string& path,PersistentWorld& world):world_(world){
     if(sqlite3_open_v2(path.c_str(),&db_,SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX,nullptr)!=SQLITE_OK){
         const auto s=std::string("SQLite open failed: ")+(db_?sqlite3_errmsg(db_):"unknown");
         sqlite3_close(db_);db_=nullptr;throw std::runtime_error(s);
@@ -189,42 +189,64 @@ Pose InteriorMovement::current(PlayerId owner){
 }
 bool InteriorMovement::move(PlayerId owner,std::uint64_t expected,std::uint64_t receipt,
                             std::int64_t dx,std::int64_t dz,MoveFailPoint fault){
-    // Distinguish invalid player command from corrupted persistent state.
-    if(!owner || !valid_person(owner, world_.world().player_people().count(owner) ? world_.world().player_people().at(owner).physical_ship : 0) ||
-       !receipt || receipt>std::uint64_t(std::numeric_limits<std::int64_t>::max()) ||
-       dx>kMaxStep||dx< -kMaxStep||dz>kMaxStep||dz< -kMaxStep)
-        return false;
-    Transaction transaction(db_);
-    verify_world_generation();
-    auto p=load_or_origin(owner);
-    if(expected!=p.sequence || world_.world().tick()<=p.world_tick ||
-       world_.generation()<=p.world_generation ||
+    // The host supplies trusted_owner, never a client-selected identity.
+    // Bad control messages do not advance the canonical simulation tick.
+    if(!owner || !receipt ||
+       receipt>std::uint64_t(std::numeric_limits<std::int64_t>::max()) ||
+       dx>kMaxStep||dx< -kMaxStep||dz>kMaxStep||dz< -kMaxStep ||
+       !world_.world().player_people().count(owner))return false;
+    const auto p=current(owner); // independently replays receipts before admission
+    if(!valid_person(owner,p.ship) || expected!=p.sequence ||
        !physical_step(p.x_mm,p.z_mm,p.x_mm+dx,p.z_mm+dz))return false;
-    const auto n=p.sequence+1, t=world_.world().tick(),g=world_.generation();
-    verify_step_receipt(g,t);
-    const auto nxt=digest(owner,p.ship,n,t,g,receipt,p.x_mm,p.z_mm,p.x_mm+dx,p.z_mm+dz,p.digest);
-    Stmt ins(db_,"INSERT INTO sg_fp3d02c_step VALUES(?,?,?,?,?,?,?,?,?,?,?,?)");
-    ins.val(1,signed_id(owner));ins.val(2,signed_id(n));ins.val(3,signed_id(receipt));
-    ins.val(4,signed_id(p.ship));ins.val(5,p.x_mm);ins.val(6,p.z_mm);
-    ins.val(7,p.x_mm+dx);ins.val(8,p.z_mm+dz);
-    ins.val(9,signed_id(t));ins.val(10,signed_id(g));ins.str(11,p.digest);ins.str(12,nxt);
-    try {ins.done();} catch(const std::runtime_error&) {
-        // A repeated receipt is a denied command. Disk errors or corrupt
-        // schema are NOT ordinary invalid input; preserve their diagnosis.
-        const int ec=sqlite3_extended_errcode(db_);
-        if(ec==SQLITE_CONSTRAINT_UNIQUE || ec==SQLITE_CONSTRAINT_PRIMARYKEY)
-            return false;
-        throw;
+    {
+        Stmt duplicate(db_,"SELECT 1 FROM sg_fp3d02c_step WHERE receipt=?");
+        duplicate.val(1,signed_id(receipt));
+        if(duplicate.next())return false;
     }
-    if(fault==MoveFailPoint::AfterStepReceipt)
-        throw std::runtime_error("injected crash after movement receipt");
-    Stmt put(db_,"UPDATE sg_fp3d02c_pose SET x_mm=?,z_mm=?,seq=?,world_tick=?,world_gen=?,tip=? WHERE owner=? AND seq=?");
-    put.val(1,p.x_mm+dx);put.val(2,p.z_mm+dz);put.val(3,signed_id(n));
-    put.val(4,signed_id(t));put.val(5,signed_id(g));put.str(6,nxt);
-    put.val(7,signed_id(owner));put.val(8,signed_id(expected));put.done();
-    if(sqlite3_changes(db_)!=1)throw std::runtime_error("concurrent movement writer detected");
-    if(fault==MoveFailPoint::AfterPoseUpdate)
-        throw std::runtime_error("injected crash after movement pose update");
-    transaction.commit();return true;
+    // One ORIGINAL world tick, its operation_log STEP and the interior pose
+    // all commit with a SINGLE SQLite Store::commit writer transaction.
+    // An exception at either injection point rolls back ALL THREE records.
+    world_.step_with_cell_worker(nullptr,FailPoint::None,
+        [&](sqlite3* writer,std::uint64_t generation){
+            const auto t=world_.world().tick()+1;
+            const auto n=p.sequence+1;
+            Stmt op(writer,"SELECT kind,tick,state_hash FROM operation_log WHERE generation=?");
+            op.val(1,signed_id(generation));
+            if(!op.next() || op.i(0)!=2 || std::uint64_t(op.i(1))!=t ||
+               op.s(2).empty() || op.next())
+                throw std::runtime_error("atomic native STEP missing before movement receipt");
+            Stmt old(writer,"SELECT ship,x_mm,y_mm,z_mm,seq,world_tick,world_gen,tip "
+                            "FROM sg_fp3d02c_pose WHERE owner=?");
+            old.val(1,signed_id(owner));
+            if(!old.next() || std::uint64_t(old.i(0))!=p.ship ||
+               old.i(1)!=p.x_mm || old.i(2)!=0 || old.i(3)!=p.z_mm ||
+               std::uint64_t(old.i(4))!=p.sequence || old.s(7)!=p.digest ||
+               old.i(5)!=static_cast<std::int64_t>(p.world_tick) ||
+               old.i(6)!=static_cast<std::int64_t>(p.world_generation) || old.next())
+                throw std::runtime_error("atomic FPS pose compare-and-swap failed");
+            const auto next_digest=digest(owner,p.ship,n,t,generation,receipt,
+                p.x_mm,p.z_mm,p.x_mm+dx,p.z_mm+dz,p.digest);
+            Stmt insert(writer,"INSERT INTO sg_fp3d02c_step VALUES(?,?,?,?,?,?,?,?,?,?,?,?)");
+            insert.val(1,signed_id(owner));insert.val(2,signed_id(n));
+            insert.val(3,signed_id(receipt));insert.val(4,signed_id(p.ship));
+            insert.val(5,p.x_mm);insert.val(6,p.z_mm);
+            insert.val(7,p.x_mm+dx);insert.val(8,p.z_mm+dz);
+            insert.val(9,signed_id(t));insert.val(10,signed_id(generation));
+            insert.str(11,p.digest);insert.str(12,next_digest);insert.done();
+            if(fault==MoveFailPoint::AfterStepReceipt)
+                throw std::runtime_error("injected crash after atomic movement receipt");
+            Stmt put(writer,"UPDATE sg_fp3d02c_pose SET x_mm=?,z_mm=?,seq=?,world_tick=?,"
+                            "world_gen=?,tip=? WHERE owner=? AND seq=?");
+            put.val(1,p.x_mm+dx);put.val(2,p.z_mm+dz);put.val(3,signed_id(n));
+            put.val(4,signed_id(t));put.val(5,signed_id(generation));
+            put.str(6,next_digest);put.val(7,signed_id(owner));put.val(8,signed_id(expected));
+            put.done();
+            if(sqlite3_changes(writer)!=1)
+                throw std::runtime_error("atomic FPS pose update lost writer race");
+            if(fault==MoveFailPoint::AfterPoseUpdate)
+                throw std::runtime_error("injected crash after atomic movement pose");
+        });
+    return true;
 }
+
 } // namespace galaxy::fp3d
