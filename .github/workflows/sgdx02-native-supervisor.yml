@@ -10,6 +10,7 @@ on:
       - 'include/galaxy/ServerBreadcrumb.hpp'
       - 'tests/ServerDx02FaultChild.cpp'
       - 'tests/SGDX02SupervisorTests.py'
+      - 'tests/SGDX02SqliteRecoveryTests.py'
       - 'tests/sgdx02/CMakeLists.txt'
       - '.github/workflows/sgdx02-native-supervisor.yml'
   workflow_dispatch:
