@@ -1,5 +1,7 @@
 # Build/release gate: native Godot 4.7.2 stable
 
+**Windows one-click build:** double-click `BUILD_WINDOWS.cmd`. It downloads pinned official Godot assets, verifies GitHub release SHA256, runs Godot project import and native headless smoke, exports x64 executable and writes a ZIP containing the build evidence on success or failure. See `build_tools/WINDOWS_ACCEPTANCE.md`. This script has not been executed on Windows in the current environment.
+
 This is the **standalone game** transition, not a browser or Python relay.
 
 ## Reproducible tooling
