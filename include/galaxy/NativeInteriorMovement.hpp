@@ -14,6 +14,7 @@ enum class SeatFailPoint { None, AfterSeatReceipt, AfterSeatUpdate };
 // Ship-local acceleration uses the ORIGINAL 2D yaw/velocity integrator.
 // Yaw is 15 degrees per accepted command; port/starboard are translational
 // strafe, NOT fictional pitch. Vertical pitch/roll remain separate gates.
+enum class PilotFailPoint { None, AfterAcceptance };
 enum class PilotControl { Undock, YawLeft, YawRight, Forward, Reverse,
                           StrafePort, StrafeStarboard, Counterthrust };
 struct FlightState {
@@ -64,7 +65,7 @@ public:
     // an interrupted pending command blocks future host sessions until repaired.
     std::optional<Outcome> pilot(PlayerId trusted_owner,
         std::uint64_t expected_seat_sequence,std::uint64_t command_id,
-        PilotControl control);
+        PilotControl control,PilotFailPoint fault=PilotFailPoint::None);
     FlightState flight_state(PlayerId trusted_owner);
 
 private:
