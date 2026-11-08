@@ -5,6 +5,7 @@ extends CharacterBody3D
 signal inspected(display_name: String)
 signal native_motion_intent(heading: Vector3)
 signal native_seat_intent()
+signal native_ship_intents(actions: PackedStringArray)
 var native_seated := false
 var authoritative_mode := false
 
@@ -70,7 +71,29 @@ func _physics_process(delta: float) -> void:
 		if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and get_window().has_focus():
 			if Input.is_action_just_pressed("fps_inspect"):
 				native_seat_intent.emit()
-			if not native_seated:
+			if native_seated:
+				# Only intentional physical control requests. C++ retains ship motion,
+				# yaw, thrust admission and persistent world authority.
+				var pilot_actions := PackedStringArray()
+				if Input.is_action_just_pressed("ship_undock"):
+					pilot_actions.append("UND")
+				if Input.is_action_pressed("ship_counterthrust"):
+					pilot_actions.append("BRAKE")
+				if Input.is_action_pressed("ship_yaw_left"):
+					pilot_actions.append("LEFT")
+				if Input.is_action_pressed("ship_yaw_right"):
+					pilot_actions.append("RIGHT")
+				if Input.is_action_pressed("ship_strafe_port"):
+					pilot_actions.append("PORT")
+				if Input.is_action_pressed("ship_strafe_starboard"):
+					pilot_actions.append("STAR")
+				if Input.is_action_pressed("ship_thrust_forward"):
+					pilot_actions.append("FWD")
+				if Input.is_action_pressed("ship_thrust_reverse"):
+					pilot_actions.append("REV")
+				if not pilot_actions.is_empty():
+					native_ship_intents.emit(pilot_actions)
+			else:
 				var axis := Input.get_vector("fps_left", "fps_right", "fps_forward", "fps_backward")
 				var direction := (global_transform.basis * Vector3(axis.x, 0.0, axis.y)).normalized()
 				native_motion_intent.emit(direction)
