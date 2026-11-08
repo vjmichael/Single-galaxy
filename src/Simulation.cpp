@@ -410,7 +410,8 @@ bool Simulation::valid_position(Vector2 p) const {
            p.y >= -kWorldBoundMm && p.y <= kWorldBoundMm;
 }
 
-EntityId Simulation::add_entity(Entity entity) {
+EntityId Simulation::add_entity(Entity entity,
+    std::optional<galactic::Point> original_physical) {
     if (!valid_position(entity.position)) throw std::invalid_argument("entity out of system bounds");
     if (next_entity_id_ == std::numeric_limits<EntityId>::max()) throw std::overflow_error("entity IDs exhausted");
     entity.id = next_entity_id_;
@@ -421,11 +422,22 @@ EntityId Simulation::add_entity(Entity entity) {
         const auto registered=galactic_system_origins_.find(entity.system_id);
         if(registered==galactic_system_origins_.end())
             throw std::runtime_error("new physical entity has no real star origin");
-        const auto physical=galactic::advance(registered->second,
-            {entity.position.x,entity.position.y,entity.position_z_mm});
-        if(!physical)throw std::overflow_error("galactic entity genesis overflow");
-        entity.physical_galactic=*physical;
+        if(original_physical){
+            if(!original_physical->valid())
+                throw std::invalid_argument("invalid original physical placement");
+            // Only original Simulation internals may supply this exact
+            // authority. Avoid reconstructing it from a saturated legacy
+            // rendering projection, even temporarily.
+            entity.physical_galactic=*original_physical;
+        }else{
+            const auto physical=galactic::advance(registered->second,
+                {entity.position.x,entity.position.y,entity.position_z_mm});
+            if(!physical)throw std::overflow_error("galactic entity genesis overflow");
+            entity.physical_galactic=*physical;
+        }
         entity.physical_galactic_authoritative=true;
+    }else if(original_physical){
+        throw std::invalid_argument("original high-order placement in legacy world");
     }
     const auto id = entity.id;
     entities_.emplace(id, entity);
