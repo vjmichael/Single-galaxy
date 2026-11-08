@@ -102,6 +102,23 @@ void InteriorMovement::verify_world_generation()const{
     if(!q.next() || q.i(0)<1 || std::uint64_t(q.i(0))!=world_.generation())
         throw std::runtime_error("world generation mismatch: reject stale or independent pose writer");
 }
+void InteriorMovement::verify_step_receipt(std::uint64_t generation,std::uint64_t tick)const{
+    if(generation==0 || tick==0)
+        throw std::runtime_error("movement requires committed native world tick");
+    // Snapshot compaction removes older checkpoint rows while retaining the
+    // authoritative operation_log history. Never require a compacted snapshot;
+    // compare checksums when one remains, otherwise validate the exact native
+    // operation kind/tick and its persisted hash.
+    Stmt op(db_,"SELECT o.kind,o.tick,o.state_hash,s.checksum,s.format "
+                "FROM operation_log o LEFT JOIN snapshots s "
+                "ON s.generation=o.generation WHERE o.generation=?");
+    op.val(1,signed_id(generation));
+    if(!op.next() || op.i(0)!=2 || std::uint64_t(op.i(1))!=tick ||
+       op.s(2).empty() ||
+       (sqlite3_column_type(op.p,3)!=SQLITE_NULL &&
+           (op.s(2)!=op.s(3) || op.i(4)!=1)) || op.next())
+        throw std::runtime_error("movement lacks native committed STEP journal proof");
+}
 bool InteriorMovement::valid_person(PlayerId owner,EntityId ship)const{
     if(!owner || !ship)return false;
     const auto& people=world_.world().player_people();
@@ -155,6 +172,7 @@ void InteriorMovement::verify_chain(const Pose& p){
            current_tick>p.world_tick || current_gen>p.world_generation || prior!=prev ||
            d!=digest(p.owner,p.ship,n,current_tick,current_gen,receipt,x,z,to_x,to_z,prior))
             throw std::runtime_error("movement receipt chain invalid");
+        verify_step_receipt(current_gen,current_tick);
         seq=n;tick=current_tick;gen=current_gen;x=to_x;z=to_z;prev=d;
     }
     if(seq!=p.sequence || x!=p.x_mm || z!=p.z_mm || prev!=p.digest ||
@@ -170,7 +188,7 @@ Pose InteriorMovement::current(PlayerId owner){
     return p;
 }
 bool InteriorMovement::move(PlayerId owner,std::uint64_t expected,std::uint64_t receipt,
-                            std::int64_t dx,std::int64_t dz){
+                            std::int64_t dx,std::int64_t dz,MoveFailPoint fault){
     // Distinguish invalid player command from corrupted persistent state.
     if(!owner || !valid_person(owner, world_.world().player_people().count(owner) ? world_.world().player_people().at(owner).physical_ship : 0) ||
        !receipt || receipt>std::uint64_t(std::numeric_limits<std::int64_t>::max()) ||
@@ -183,18 +201,30 @@ bool InteriorMovement::move(PlayerId owner,std::uint64_t expected,std::uint64_t 
        world_.generation()<=p.world_generation ||
        !physical_step(p.x_mm,p.z_mm,p.x_mm+dx,p.z_mm+dz))return false;
     const auto n=p.sequence+1, t=world_.world().tick(),g=world_.generation();
+    verify_step_receipt(g,t);
     const auto nxt=digest(owner,p.ship,n,t,g,receipt,p.x_mm,p.z_mm,p.x_mm+dx,p.z_mm+dz,p.digest);
     Stmt ins(db_,"INSERT INTO sg_fp3d02c_step VALUES(?,?,?,?,?,?,?,?,?,?,?,?)");
     ins.val(1,signed_id(owner));ins.val(2,signed_id(n));ins.val(3,signed_id(receipt));
     ins.val(4,signed_id(p.ship));ins.val(5,p.x_mm);ins.val(6,p.z_mm);
     ins.val(7,p.x_mm+dx);ins.val(8,p.z_mm+dz);
     ins.val(9,signed_id(t));ins.val(10,signed_id(g));ins.str(11,p.digest);ins.str(12,nxt);
-    try {ins.done();} catch(const std::runtime_error&) {return false;} // duplicate receipt
+    try {ins.done();} catch(const std::runtime_error&) {
+        // A repeated receipt is a denied command. Disk errors or corrupt
+        // schema are NOT ordinary invalid input; preserve their diagnosis.
+        const int ec=sqlite3_extended_errcode(db_);
+        if(ec==SQLITE_CONSTRAINT_UNIQUE || ec==SQLITE_CONSTRAINT_PRIMARYKEY)
+            return false;
+        throw;
+    }
+    if(fault==MoveFailPoint::AfterStepReceipt)
+        throw std::runtime_error("injected crash after movement receipt");
     Stmt put(db_,"UPDATE sg_fp3d02c_pose SET x_mm=?,z_mm=?,seq=?,world_tick=?,world_gen=?,tip=? WHERE owner=? AND seq=?");
     put.val(1,p.x_mm+dx);put.val(2,p.z_mm+dz);put.val(3,signed_id(n));
     put.val(4,signed_id(t));put.val(5,signed_id(g));put.str(6,nxt);
     put.val(7,signed_id(owner));put.val(8,signed_id(expected));put.done();
     if(sqlite3_changes(db_)!=1)throw std::runtime_error("concurrent movement writer detected");
+    if(fault==MoveFailPoint::AfterPoseUpdate)
+        throw std::runtime_error("injected crash after movement pose update");
     transaction.commit();return true;
 }
 } // namespace galaxy::fp3d
