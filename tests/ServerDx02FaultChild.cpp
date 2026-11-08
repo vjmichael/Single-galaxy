@@ -6,6 +6,7 @@
 #include <iostream>
 #include <string>
 #include <thread>
+#include <vector>
 #ifdef _WIN32
 #define NOMINMAX
 #include <windows.h>
@@ -77,7 +78,23 @@ int main(int argc,char** argv){
     if(mode=="hang"){
         for(;;)std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
-#ifndef _WIN32
+#ifdef _WIN32
+    if(mode=="descendant"){
+        wchar_t executable[MAX_PATH]{};
+        const DWORD len=GetModuleFileNameW(nullptr,executable,MAX_PATH);
+        if(!len || len>=MAX_PATH)return 72;
+        std::wstring cmd=L"\"" + std::wstring(executable) + L"\" hang";
+        std::vector<wchar_t> mutable_cmd(cmd.begin(),cmd.end());
+        mutable_cmd.push_back(L'\0');
+        STARTUPINFOW si{};si.cb=sizeof(si);
+        PROCESS_INFORMATION child{};
+        if(!CreateProcessW(executable,mutable_cmd.data(),nullptr,nullptr,
+             FALSE,CREATE_NO_WINDOW,nullptr,nullptr,&si,&child))return 72;
+        std::cout<<"DESCENDANT="<<child.dwProcessId<<"\n"<<std::flush;
+        CloseHandle(child.hThread);CloseHandle(child.hProcess);
+        for(;;)std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+#else
     if(mode=="descendant"){
         const pid_t child=fork();
         if(child==0){
