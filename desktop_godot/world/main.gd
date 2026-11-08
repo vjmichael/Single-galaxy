@@ -38,6 +38,7 @@ func _ready() -> void:
 	native_player_session.status_changed.connect(_on_native_player_status)
 	native_player_session.connection_changed.connect(_on_native_player_connection)
 	player.native_motion_intent.connect(_on_native_player_intent)
+	player.native_seat_intent.connect(_on_native_player_seat_intent)
 
 func _setup_environment() -> void:
 	var env := Environment.new()
@@ -150,7 +151,7 @@ func _build_hud() -> void:
 	subtitle.text = "LOCAL MOVEMENT TEST ONLY — NOT CONNECTED TO NATIVE GALAXY"
 	contents.add_child(subtitle)
 	status_label = Label.new()
-	status_label.text = "WASD walk   Mouse look   P persistent native FPS   O read-only contacts   Esc release mouse"
+	status_label.text = "WASD walk   E cockpit seat/stand (native P)   Mouse look   P native FPS   O contacts   Esc mouse"
 	contents.add_child(status_label)
 	native_label = Label.new()
 	native_label.text = "NATIVE: P enters persistent ship interior; O is read-only contact view"
@@ -192,6 +193,10 @@ func _on_native_player_connection(connected: bool) -> void:
 	if is_instance_valid(player):
 		player.use_native_authority(connected)
 
+func _on_native_player_seat_intent() -> void:
+	if native_player_session != null:
+		native_player_session.toggle_seat()
+
 func _on_native_player_intent(heading: Vector3) -> void:
 	if native_player_session != null:
 		native_player_session.submit_motion(heading)
@@ -200,6 +205,7 @@ func _on_native_player_pose(pose: Dictionary) -> void:
 	# The Godot avatar is positioned from ACKNOWLEDGED native SQL state ONLY.
 	# Vertical eye/physics meshes remain placeholder until full 3D native geometry.
 	if is_instance_valid(player):
+		player.use_native_seat(bool(pose["seated"]))
 		player.global_position = Vector3(float(pose["x_mm"]) / 1000.0,
 			1.45, float(pose["z_mm"]) / 1000.0)
 
