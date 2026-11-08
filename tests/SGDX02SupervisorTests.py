@@ -71,6 +71,12 @@ def check(supervisor, child):
         assert len(item["stderr_tail"]) <= 8192
         assert "TAIL-MARKER" in item["stderr_tail"]
 
+        binary, item, _ = run("binary")
+        assert binary.returncode == 23
+        assert item["reason"] == "nonzero_exit"
+        assert "binary-tail:" in item["stderr_tail"]
+        assert chr(0xff) in item["stderr_tail"] and chr(0) in item["stderr_tail"]
+
         ok, item, _ = run("clean", record_clean=True)
         assert ok.returncode == 0 and item["reason"] == "clean_exit"
 
