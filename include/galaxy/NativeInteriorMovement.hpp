@@ -8,6 +8,8 @@ namespace galaxy::fp3d {
 // FP3D-02C prototype: a native HOST-ONLY on-foot pose in the registered
 // player's own ship interior. XYZ millimeters, Y=0 floor. This is NOT yet a
 // disembark, networking, Godot movement, or remote actor-authorization API.
+enum class MoveFailPoint { None, AfterStepReceipt, AfterPoseUpdate };
+
 struct Pose {
     PlayerId owner=0;
     EntityId ship=0;
@@ -31,12 +33,16 @@ public:
     // sequence and unique receipt prevent replay and buffered command floods.
     // Input direction is constrained by world geometry; no diagonal speed gain.
     bool move(PlayerId trusted_owner,std::uint64_t expected_sequence,
-              std::uint64_t receipt_id,std::int64_t dx_mm,std::int64_t dz_mm);
+              std::uint64_t receipt_id,std::int64_t dx_mm,std::int64_t dz_mm,
+              MoveFailPoint fault=MoveFailPoint::None);
 private:
     sqlite3* db_=nullptr;
     const PersistentWorld& world_;
     bool valid_person(PlayerId owner,EntityId ship)const;
     void verify_world_generation()const;
+    // Each movement must be bound to a real committed native kind=2 STEP,
+    // with the original snapshot checksum/tick, not a synthetic counter.
+    void verify_step_receipt(std::uint64_t generation,std::uint64_t tick)const;
     Pose load_or_origin(PlayerId owner);
     void verify_chain(const Pose& pose);
 };
