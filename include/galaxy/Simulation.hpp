@@ -1728,7 +1728,9 @@ private:
         std::uint8_t intensity,std::uint8_t resistance,
         std::uint8_t exposed_hardpoint_mask);
     std::uint64_t random_u64();
-    EntityId add_entity(Entity entity);
+    // Trusted internal physical placement only; never supplied by a player command.
+    EntityId add_entity(Entity entity,
+        std::optional<galactic::Point> original_physical=std::nullopt);
     Event execute(const Command& command);
     bool can_depart_colony(const Command& command) const;
     bool valid_position(Vector2 position) const;

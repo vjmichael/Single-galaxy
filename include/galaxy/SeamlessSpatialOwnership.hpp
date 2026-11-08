@@ -133,6 +133,17 @@ inline std::optional<CosmicPosition> cosmic_ship(
         frame.anchor_body_id=it->second.anchor_body;
         frame.origin=it->second.origin;
     }
+    // v119 native physical motion is no longer clamped to the v118 local
+    // view boundary. This derived cell index must follow the actual ship,
+    // even when it crosses that old rendering limit. Preserve checked
+    // arithmetic and the recorded frame origin; never wrap or truncate.
+    if(world.native_3d_physics()){
+        const auto x=checked_cosmic_add(frame.origin.x_mm,e->position.x);
+        const auto y=checked_cosmic_add(frame.origin.y_mm,e->position.y);
+        const auto z=checked_cosmic_add(frame.origin.z_mm,e->position_z_mm);
+        if(!x||!y||!z)return std::nullopt;
+        return CosmicPosition{*x,*y,*z};
+    }
     return local_to_cosmic(frame,{e->position.x,e->position.y,e->position_z_mm});
 }
 inline std::optional<Cell> ship_cell(const Simulation& world,EntityId id){

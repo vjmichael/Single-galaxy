@@ -151,7 +151,10 @@ static void focus_mission() {
    try{(void)Simulation::from_snapshot(corrupt);}
    catch(const std::exception&){rejected=true;}
    CHECK(rejected);
-   CHECK(run(w,order(w,5,ship,Action::RecoverSurveyProbe,probe))==Outcome::InTransition);
+   // The probe has already moved roughly 10 km from the carrier. Physical
+   // recovery must fail by range before its still-active focus is considered;
+   // a queued mission is not permission to teleport the device aboard.
+   CHECK(run(w,order(w,5,ship,Action::RecoverSurveyProbe,probe))==Outcome::OutOfRange);
   }
   {
    PersistentWorld w(db,Simulation(22));

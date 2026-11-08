@@ -3,6 +3,8 @@
 // stdout SGVIEW frames; stderr bounded COLONY telemetry for the local relay.
 #include "galaxy/Simulation.hpp"
 #include "galaxy/Persistence.hpp"
+#include "galaxy/ServerDiagnostics.hpp"
+#include "galaxy/ServerBreadcrumb.hpp"
 #include "galaxy/OrbitalShuttleCommands.hpp"
 #include "galaxy/Galaxy.hpp"
 #include "galaxy/ClientContract.hpp"
@@ -1562,7 +1564,8 @@ void apply(PersistentWorld& world,EntityId ship,FleetSelection& fleet,const std:
                     std::uint64_t(body),std::uint16_t(latitude),
                     std::uint16_t(longitude),integer(v[4]));
             } else {
-                const auto kind=v[4],kg=integer(v[5]);
+                const auto kind=v[4];
+                const auto kg=integer(v[5]);
                 if(type=="PLANET_SUPPORT") {
                     if(kind!="FOOD" && kind!="OXYGEN")
                         throw std::invalid_argument("invalid surface crew supply material");
@@ -1662,7 +1665,7 @@ void apply(PersistentWorld& world,EntityId ship,FleetSelection& fleet,const std:
                 std::to_string(band.radius_milli_au)+"|"+
                 std::to_string(band.eccentricity_permille)+"|"+
                 std::to_string(static_cast<unsigned>(band.zone)));
-        const bodies=world.world().scan_physical_celestials(principal,ship);
+        const auto bodies=world.world().scan_physical_celestials(principal,ship);
         for(const auto& body:bodies)
             announce(world.world(),"CELESTIAL_BODY|"+std::to_string(body.id)+"|"+
                 std::to_string(body.parent_id)+"|"+
@@ -2051,6 +2054,7 @@ int main(int argc,char** argv){
         std::cerr<<"usage: galaxy_colony_live_host SAVE.sqlite TICK_MS MAX_TICKS [--authenticated-transport]\n";return 2;
     }
     const bool authenticated_transport=argc==5;
+    server_dx::Progress diagnostic_progress{};
     try{
 #ifdef _WIN32
         if(_setmode(_fileno(stdout),_O_BINARY)==-1)throw std::runtime_error("binary stdout failed");
@@ -2075,6 +2079,8 @@ int main(int argc,char** argv){
         // No stations, other ships, markets, factions or gates at start.
         const bool was_saved=fs::exists(argv[1]);
         PersistentWorld world(argv[1],std::move(genesis));
+        diagnostic_progress={world.world().tick(),world.generation(),"startup"};
+        server_dx::committed_breadcrumb(world.world().tick(),world.generation());
         // v68: translate the nominal 10-second report into durable game ticks
         // using this host session's actual fixed-step duration.
         world.configure_probe_report_tick_ms(static_cast<std::uint64_t>(ms));
@@ -2325,7 +2331,10 @@ int main(int argc,char** argv){
             for(const auto& [id,leg]:world.world().intercolony_freight())
                 if(leg.owner==owner && leg.source_ship==ship)
                     prior_freight.emplace(id,leg.stage);
+            diagnostic_progress.phase="world_step";
             world.step();
+            diagnostic_progress={world.world().tick(),world.generation(),"post_commit"};
+            server_dx::committed_breadcrumb(world.world().tick(),world.generation());
             // Run the same finite, original-world cyber command path on
             // committed ticks. There are no autonomous host-owned attackers
             // at genesis; only genuinely constructed NPC colonies with an
@@ -2669,5 +2678,11 @@ int main(int argc,char** argv){
         }
         std::cerr<<"B7_0E COLONY HOST COMPLETED generation="<<world.generation()<<'\n';
         return 0;
-    }catch(const std::exception& e){std::cerr<<"B7_0E COLONY HOST FAILED "<<e.what()<<'\n';return 1;}
+    }catch(const std::exception& e){
+        server_dx::record_exception(argv[1],"colony_live_host",e.what(),diagnostic_progress);
+        std::cerr<<"B7_0E COLONY HOST FAILED "<<e.what()<<'\n';return 1;
+    }catch(...){
+        server_dx::record_exception(argv[1],"colony_live_host","unknown native exception",diagnostic_progress);
+        std::cerr<<"B7_0E COLONY HOST FAILED unknown exception\n";return 1;
+    }
 }

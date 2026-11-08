@@ -803,7 +803,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     allowed=(('FOOD','WATER') if action=='colonyPlanetRetrieve'
                              else ('FOOD','OXYGEN') if action=='colonyPlanetSupport'
                              else ('WATER','NUTRIENTS'))
-                    if type(resource)!=str or resource not in allowed or
+                    if (type(resource)!=str or resource not in allowed or
                        type(kg)!=int or not 1<=kg<=10000 or
                        (action=='colonyPlanetExtract' and (kg<1000 or kg%1000))):
                         raise ValueError('Invalid planetary resource request')
@@ -900,7 +900,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             elif action=='colonySecurityAgencyEstablish' and set(doc)=={
                     'token','action'}:
                 command='SECURITY_AGENCY_ESTABLISH'
-            elif action=='colonySecurityAgencyRefer','colonySecurityAgencyInvestigate' and set(doc)=={
+            elif action=='colonySecurityAgencyRefer' and set(doc)=={
                     'token','action','complaint'}:
                 complaint=doc['complaint']
                 if type(complaint)!=str or not 1<=len(complaint)<=19 or (

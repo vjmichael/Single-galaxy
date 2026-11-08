@@ -23,6 +23,7 @@
 
 namespace galaxy {
 namespace {
+EntityId shuttle_transit_custody_id(const PlanetarySiteKey& key);
 constexpr int kPlacementBound=1000000; // coordinate safety, not room size
 std::uint32_t placement_node(std::int64_t n){
     return n==-1?kWorkshopConveyorNode:static_cast<std::uint32_t>(n);
@@ -410,7 +411,8 @@ bool Simulation::valid_position(Vector2 p) const {
            p.y >= -kWorldBoundMm && p.y <= kWorldBoundMm;
 }
 
-EntityId Simulation::add_entity(Entity entity) {
+EntityId Simulation::add_entity(Entity entity,
+    std::optional<galactic::Point> original_physical) {
     if (!valid_position(entity.position)) throw std::invalid_argument("entity out of system bounds");
     if (next_entity_id_ == std::numeric_limits<EntityId>::max()) throw std::overflow_error("entity IDs exhausted");
     entity.id = next_entity_id_;
@@ -421,11 +423,22 @@ EntityId Simulation::add_entity(Entity entity) {
         const auto registered=galactic_system_origins_.find(entity.system_id);
         if(registered==galactic_system_origins_.end())
             throw std::runtime_error("new physical entity has no real star origin");
-        const auto physical=galactic::advance(registered->second,
-            {entity.position.x,entity.position.y,entity.position_z_mm});
-        if(!physical)throw std::overflow_error("galactic entity genesis overflow");
-        entity.physical_galactic=*physical;
+        if(original_physical){
+            if(!original_physical->valid())
+                throw std::invalid_argument("invalid original physical placement");
+            // Only original Simulation internals may supply this exact
+            // authority. Avoid reconstructing it from a saturated legacy
+            // rendering projection, even temporarily.
+            entity.physical_galactic=*original_physical;
+        }else{
+            const auto physical=galactic::advance(registered->second,
+                {entity.position.x,entity.position.y,entity.position_z_mm});
+            if(!physical)throw std::overflow_error("galactic entity genesis overflow");
+            entity.physical_galactic=*physical;
+        }
         entity.physical_galactic_authoritative=true;
+    }else if(original_physical){
+        throw std::invalid_argument("original high-order placement in legacy world");
     }
     const auto id = entity.id;
     entities_.emplace(id, entity);
@@ -685,7 +698,11 @@ const HabitatFacility* Simulation::habitat(EntityId outpost) const {
     return it==habitats_.end()?nullptr:&it->second;
 }
 void Simulation::enable_individual_workforce(){
-    if(snapshot_version_>=20 || !npcs_.empty() || tick_!=0 || !submitted_ids_.empty())
+    // Genesis equipment can raise the snapshot version before the existing
+    // finite colony crew are assigned identities. Never mint crew after a
+    // tick, command, or prior NPC identity has already been created.
+    if(npc_next_seen_ || next_npc_id_!=1 || !npcs_.empty() ||
+       tick_!=0 || !submitted_ids_.empty() || !commands_.empty())
         throw std::invalid_argument("individual workforce migration requires unused genesis world");
     npc_next_seen_=true;
     for(const auto& [ship,c]:colony_ships_){
@@ -705,7 +722,7 @@ void Simulation::enable_individual_workforce(){
             }
     }
     if(npcs_.empty())throw std::invalid_argument("no colony population to materialize");
-    snapshot_version_=31;
+    snapshot_version_=std::max(snapshot_version_,31);
 }
 std::optional<transport::NpcTransport> Simulation::npc_transport_arrival(
         std::uint64_t receipt,std::uint64_t npc_id) const {
@@ -1431,7 +1448,8 @@ bool Simulation::can_depart_colony(const Command& c) const {
        !receiver_life || source->type!=EntityType::Ship ||
        receiver->type!=EntityType::Ship ||
        source->owner_id!=receiver->owner_id ||
-       source->system_id!=receiver->system_id ||
+       (snapshot_version_<120 &&
+        source->system_id!=receiver->system_id) ||
        source->jump_state!=ShipJumpState::Ready ||
        receiver->jump_state!=ShipJumpState::Ready ||
        source->dock_state!=DockState::InSpace ||
@@ -1440,7 +1458,9 @@ bool Simulation::can_depart_colony(const Command& c) const {
        to->second.crew>1000-static_cast<std::int64_t>(c.passenger_ids.size()) ||
        passengers_aboard(c.actor) || passengers_aboard(c.target))return false;
     const auto near=[&](const Entity* origin){
-        if(!origin || origin->system_id!=receiver->system_id)return false;
+        if(!origin ||
+           (snapshot_version_<120 &&
+            origin->system_id!=receiver->system_id))return false;
         if(snapshot_version_>=119 &&
            !within_native_3d_range(*origin,*receiver,kDockingRangeMm))return false;
         const auto dx=snapshot_version_>=120?0:origin->position.x-receiver->position.x;
@@ -1752,7 +1772,9 @@ bool Simulation::submit(const Command& c) {
            second->dock_state!=DockState::InSpace||
            first->jump_state!=ShipJumpState::Ready||
            second->jump_state!=ShipJumpState::Ready||
-           source->system_id!=first->system_id||source->system_id!=second->system_id)
+           (snapshot_version_<120 &&
+            (source->system_id!=first->system_id ||
+             source->system_id!=second->system_id)))
             return false;
         for(const auto receiver:{first,second}){
             if(snapshot_version_>=119 &&
@@ -2024,7 +2046,10 @@ bool Simulation::submit(const Command& c) {
         if(ship==entities_.end() || endpoint==entities_.end() ||
            ship->second.type!=EntityType::Ship || endpoint->second.type!=EntityType::Ship ||
            !colony_ships_.count(c.actor) || !colony_ships_.count(c.target) ||
-           ship->second.system_id!=endpoint->second.system_id)return false;
+           (ship->second.system_id!=endpoint->second.system_id &&
+            !(snapshot_version_>=120 &&
+              (c.action==Action::HostEvacuatePassengers ||
+               c.action==Action::HostResolveMixedFerryLoss))))return false;
         if(incident_action && (ship->second.jump_state!=ShipJumpState::Ready ||
            ship->second.dock_state!=DockState::InSpace))return false;
         if(c.action==Action::HostEvacuatePassengers || c.action==Action::HostResolveMixedFerryLoss){
@@ -2688,7 +2713,8 @@ Event Simulation::execute(const Command& c) {
            built->second.source_colony_ship!=storage->second.source_ship||
            built->second.source_colony_ship==c.actor||
            entities_.at(built->second.source_colony_ship).owner_id!=site->second.owner_id||
-           ship->second.system_id!=site->second.system_id){
+           (snapshot_version_<120 &&
+            ship->second.system_id!=site->second.system_id)){
             result.result=Outcome::InvalidTarget;return result;
         }
         const auto& vehicle=ship->second;
@@ -2829,7 +2855,9 @@ Event Simulation::execute(const Command& c) {
                ship->second.type!=EntityType::Ship || site->second.type!=EntityType::Station ||
                !colony_ships_.count(c.actor) || cl==clinics_.end() ||
                ship->second.owner_id!=site->second.owner_id ||
-               ship->second.system_id!=site->second.system_id || c.amount<1 || c.amount>100){
+               (snapshot_version_<120 &&
+                ship->second.system_id!=site->second.system_id) ||
+               c.amount<1 || c.amount>100){
                 result.result=Outcome::InvalidTarget;return result;
             }
             if(snapshot_version_>=119 &&
@@ -2892,7 +2920,8 @@ Event Simulation::execute(const Command& c) {
                    within_native_3d_range(ship,site,kDockingRangeMm)){
                     const auto dx=snapshot_version_>=120?0:ship.position.x-site.position.x,dy=snapshot_version_>=120?0:ship.position.y-site.position.y;
                     crew=ship.type==EntityType::Ship && ship.owner_id==site.owner_id &&
-                         ship.system_id==site.system_id && dx>=-kDockingRangeMm && dx<=kDockingRangeMm &&
+                         (snapshot_version_>=120 || ship.system_id==site.system_id) &&
+                         dx>=-kDockingRangeMm && dx<=kDockingRangeMm &&
                          dy>=-kDockingRangeMm && dy<=kDockingRangeMm &&
                          dx*dx+dy*dy<=kDockingRangeMm*kDockingRangeMm;
                 }
@@ -2956,7 +2985,8 @@ Event Simulation::execute(const Command& c) {
            medic==npcs_.end() || training==named_medics_.end() || training->second.units<3 ||
            medic->second.role!=NpcRole::Habitat || medic->second.location!=c.target ||
            medic->second.assigned_site!=c.target || clinic->second.medics<1 ||
-           ship->second.system_id!=station->second.system_id ||
+           (snapshot_version_<120 &&
+            ship->second.system_id!=station->second.system_id) ||
            ship->second.owner_id!=station->second.owner_id){
             result.result=Outcome::InvalidTarget;return result;
         }
@@ -3100,8 +3130,10 @@ Event Simulation::execute(const Command& c) {
            first->type!=EntityType::Ship||second->type!=EntityType::Ship||
            c.actor==c.target||c.actor==c.secondary_receiver||
            c.target==c.secondary_receiver||
-           source->system_id!=first->system_id||
-           source->system_id!=second->system_id||source->jump_state!=ShipJumpState::Ready||
+           (snapshot_version_<120 &&
+            (source->system_id!=first->system_id ||
+             source->system_id!=second->system_id))||
+           source->jump_state!=ShipJumpState::Ready||
            first->jump_state!=ShipJumpState::Ready||
            second->jump_state!=ShipJumpState::Ready||
            source->dock_state!=DockState::InSpace||
@@ -3194,7 +3226,10 @@ Event Simulation::execute(const Command& c) {
         if(ship==entities_.end() || endpoint==entities_.end() ||
            ship->second.type!=EntityType::Ship || endpoint->second.type!=EntityType::Ship ||
            !colony_ships_.count(c.actor) || !colony_ships_.count(c.target) ||
-           ship->second.system_id!=endpoint->second.system_id){
+           (ship->second.system_id!=endpoint->second.system_id &&
+            !(snapshot_version_>=120 &&
+              (c.action==Action::HostEvacuatePassengers ||
+               c.action==Action::HostResolveMixedFerryLoss)))){
             result.result=Outcome::InvalidTarget;return result;
         }
         auto ids=c.passenger_ids;std::sort(ids.begin(),ids.end());
@@ -3434,8 +3469,20 @@ Event Simulation::execute(const Command& c) {
             const auto attacker=entities_.find(c.actor), victim=entities_.find(c.target);
             if(attacker==entities_.end() || victim==entities_.end() || c.actor==c.target ||
                attacker->second.type!=EntityType::Ship || victim->second.type!=EntityType::Ship ||
-               attacker->second.system_id!=victim->second.system_id || colony_ships_.count(c.target))
+               (snapshot_version_<120 &&
+                attacker->second.system_id!=victim->second.system_id) ||
+               colony_ships_.count(c.target))
                 {result.result=Outcome::InvalidTarget;return result;}
+            // SPACE-05K: a star-catalogue ID is not a physical barrier in
+            // continuous v120+ space, nor can the trusted host turn an
+            // arbitrary remote ship into wreckage. Honor the same genuine
+            // galactic weapon envelope used by ordinary combat. Legacy
+            // pre-v120 save/incident semantics remain unchanged.
+            if(snapshot_version_>=120 &&
+               (!same_local_frame(c.actor,c.target) ||
+                !within_native_3d_range(attacker->second,victim->second,
+                                         kTrainingWeaponRangeMm)))
+                {result.result=Outcome::OutOfRange;return result;}
             auto& ship=victim->second;
             if(ship.dock_state!=DockState::InSpace || ship.jump_state!=ShipJumpState::Ready)
                 {result.result=Outcome::InTransition;return result;}
@@ -4471,7 +4518,8 @@ Event Simulation::execute(const Command& c) {
             if(!site || !built_outposts_.count(c.target) ||
                site->type!=EntityType::Station || site->owner_id!=actor.owner_id ||
                built_outposts_.at(c.target).source_colony_ship!=c.actor ||
-               site->system_id!=actor.system_id){result.result=Outcome::InvalidTarget;return result;}
+               (snapshot_version_<120 &&
+                site->system_id!=actor.system_id)){result.result=Outcome::InvalidTarget;return result;}
             if(actor.jump_state!=ShipJumpState::Ready ||
                (actor.dock_state!=DockState::InSpace && actor.dock_station!=c.target)){
                 result.result=Outcome::InTransition;return result;
@@ -5840,44 +5888,52 @@ Event Simulation::execute(const Command& c) {
                 if(actor.dock_state!=DockState::InSpace){result.result=Outcome::NotInSpace;return result;}
                 if(actor.velocity.x!=0 || actor.velocity.y!=0){result.result=Outcome::ShipMoving;return result;}
                 if(industry.modules<4){result.result=Outcome::NoResources;return result;}
-                Vector2 site{actor.position.x+1000,actor.position.y};
-                if(!valid_position(site)){result.result=Outcome::OutOfRange;return result;}
+                // Original v120+ physical placement must NOT be derived
+                // from saturating, render-only int64 XY compatibility fields.
+                std::optional<galactic::Point> exact;
+                Vector2 site{};
+                if(snapshot_version_>=120){
+                    if(!actor.physical_galactic_authoritative ||
+                       !actor.physical_galactic.valid())
+                        throw std::runtime_error("outpost build lost original pose");
+                    if(actor.velocity_z_mm_per_tick)
+                        {result.result=Outcome::ShipMoving;return result;}
+                    exact=galactic::advance(actor.physical_galactic,{1000,0,0});
+                    if(!exact){result.result=Outcome::OutOfRange;return result;}
+                    site=actor.position; // legacy compatibility only
+                    const auto limit=std::numeric_limits<std::int64_t>::max()-1000;
+                    site.x=site.x>limit ?
+                        std::numeric_limits<std::int64_t>::max():site.x+1000;
+                }else{
+                    if(actor.position.x>std::numeric_limits<std::int64_t>::max()-1000)
+                        {result.result=Outcome::OutOfRange;return result;}
+                    site={actor.position.x+1000,actor.position.y};
+                    if(!valid_position(site))
+                        {result.result=Outcome::OutOfRange;return result;}
+                }
+                Entity station;station.type=EntityType::Station;
+                station.owner_id=actor.owner_id;station.position=site;
+                station.system_id=actor.system_id;
+                if(exact){
+                    station.physical_galactic=*exact;
+                    station.physical_galactic_authoritative=true;
+                }
                 for(const auto& [id,e]:entities_){
                     (void)id;
-                    if(e.type==EntityType::Station && e.system_id==actor.system_id &&
-                       e.position.x-site.x>=-2500 && e.position.x-site.x<=2500 &&
-                       e.position.y-site.y>=-2500 && e.position.y-site.y<=2500){
+                    if(e.type!=EntityType::Station)continue;
+                    if(exact){
+                        if(!e.physical_galactic_authoritative)
+                            throw std::runtime_error("unproven nearby station pose");
+                        if(within_native_3d_range(station,e,2500))
+                            {result.result=Outcome::InvalidTarget;return result;}
+                    }else if(e.system_id==actor.system_id &&
+                        e.position.x-site.x>=-2500 && e.position.x-site.x<=2500 &&
+                        e.position.y-site.y>=-2500 && e.position.y-site.y<=2500){
                         result.result=Outcome::InvalidTarget;return result;
                     }
                 }
                 industry.modules-=4;
-                Entity station;station.type=EntityType::Station;
-                station.owner_id=actor.owner_id;station.position=site;
-                station.system_id=actor.system_id;
-                // A newly constructed outpost occupies the precise original
-                // ship's actual 3D/galactic coordinates, never an unrelated
-                // default system and never a remote finite XY coincidence.
-                if(snapshot_version_>=120 &&
-                   !actor.physical_galactic_authoritative)
-                    throw std::runtime_error("outpost build lost physical ship pose");
-                const auto ship_absolute=snapshot_version_>=120 ?
-                    std::optional<galactic::Point>(actor.physical_galactic):
-                    std::nullopt;
-                const auto id=add_entity(station);
-                if(ship_absolute){
-                    const auto dx=static_cast<long double>(site.x)-
-                                  static_cast<long double>(actor.position.x);
-                    const auto dy=static_cast<long double>(site.y)-
-                                  static_cast<long double>(actor.position.y);
-                    if(std::fabs(dx)>kDockingRangeMm ||
-                       std::fabs(dy)>kDockingRangeMm)
-                        throw std::runtime_error("outpost build left physical berth");
-                    const auto exact=galactic::advance(*ship_absolute,
-                        {static_cast<std::int64_t>(dx),
-                         static_cast<std::int64_t>(dy),0});
-                    if(!exact)throw std::overflow_error("outpost build sector exhausted");
-                    entities_.at(id).physical_galactic=*exact;
-                }
+                const auto id=add_entity(station,exact);
                 built_outposts_.emplace(id,BuiltOutpost{actor.id,8});
                 hangars_.emplace(std::make_pair(id,actor.owner_id),StationHangar{0,1000});
                 result.transferred=8;
@@ -6781,7 +6837,8 @@ void Simulation::process_oasis_extractors() {
         const auto frame=ship_frames_.find(id);
         const auto c=colony_ships_.find(id);
         const auto l=life_support_.find(id);
-        if(!ship || !c || !l || frame==ship_frames_.end() ||
+        if(!ship || c==colony_ships_.end() || l==life_support_.end() ||
+           frame==ship_frames_.end() ||
            frame->second.anchor_body!=rig.body ||
            ship->dock_state!=DockState::InSpace ||
            ship->jump_state!=ShipJumpState::Ready || !rig.condition)
@@ -7033,6 +7090,10 @@ void Simulation::ensure_ship_frame_registry() {
     snapshot_version_=std::max(snapshot_version_,71);
 }
 void Simulation::ensure_physical_celestial_systems() {
+    // v70 snapshots require the colony's existing aggregate crew to be
+    // represented by named NPCs. Only unused genesis worlds can convert.
+    if(!npc_next_seen_ && npcs_.empty() && !colony_ships_.empty())
+        enable_individual_workforce();
     const auto current=physical_celestial_systems_;
     for(const auto system:systems_){
         const auto generated=physical_bodies_for_system(system);
@@ -8520,8 +8581,10 @@ bool Simulation::queue_shipyard_freighter(PlayerId owner,
             return false;
     }
     const EntityId ship=yard->second.colony_ship;
-    const auto e=entities_.find(ship),inventory=colony_ships_.find(ship);
-    const auto life=life_support_.find(ship),frame=ship_frames_.find(ship);
+    const auto e=entities_.find(ship);
+    const auto inventory=colony_ships_.find(ship);
+    const auto life=life_support_.find(ship);
+    const auto frame=ship_frames_.find(ship);
     if(e==entities_.end() || inventory==colony_ships_.end() ||
        life==life_support_.end() || frame==ship_frames_.end() ||
        e->second.type!=EntityType::Ship ||
@@ -8911,7 +8974,8 @@ bool Simulation::queue_npc_flight(PlayerId owner,EntityId ship,
         std::uint64_t pilot,std::uint64_t destination,
         std::uint64_t id,std::uint64_t transit,
         NpcFlightPurpose purpose){
-    const auto e=entities_.find(ship),frame=ship_frames_.find(ship);
+    const auto e=entities_.find(ship);
+    const auto frame=ship_frames_.find(ship);
     const auto selected_pilot=select_npc_flight_pilot(ship,pilot);
     if(!id || id>=(std::uint64_t{1}<<50) || !transit ||
        transit>=(std::uint64_t{1}<<50) ||
@@ -8954,7 +9018,8 @@ bool Simulation::queue_npc_station_docking(
        vessel->second.type!=EntityType::Ship ||
        station->second.type!=EntityType::Station ||
        vessel->second.owner_id!=owner ||
-       vessel->second.system_id!=station->second.system_id ||
+       (snapshot_version_<120 &&
+        vessel->second.system_id!=station->second.system_id) ||
        !same_local_frame(ship,target) ||
        !colony_ships_.count(ship) || !life_support_.count(ship) ||
        vessel->second.jump_state!=ShipJumpState::Ready ||
@@ -8988,6 +9053,10 @@ bool Simulation::queue_npc_station_docking(
     order.pilot_npc=selected;order.station=target;
     order.mode=NpcFlightMode::LocalDock;order.purpose=purpose;
     order.posted_tick=tick_;
+    // FLIGHT-02 upgrades legacy colony snapshots to v96. Materialize
+    // their existing ships' durable celestial frames before the snapshot
+    // format requires explicit per-ship frame custody.
+    if(snapshot_version_<71)ensure_ship_frame_registry();
     npc_flight_orders_.emplace(id,order);
     snapshot_version_=std::max(snapshot_version_,96);
     return true;
@@ -9114,7 +9183,8 @@ bool Simulation::queue_npc_ship_rendezvous(
        vessel->second.type!=EntityType::Ship ||
        destination->second.type!=EntityType::Ship ||
        vessel->second.owner_id!=owner ||
-       vessel->second.system_id!=destination->second.system_id ||
+       (snapshot_version_<120 &&
+        vessel->second.system_id!=destination->second.system_id) ||
        ship==target || !same_local_frame(ship,target) ||
        !colony_ships_.count(ship) || !life_support_.count(ship) ||
        vessel->second.jump_state!=ShipJumpState::Ready ||
@@ -9253,7 +9323,7 @@ bool Simulation::complete_native_celestial_transit(std::uint64_t id){
     seed_celestial_local_region(p.destination_body);
     auto& ship=entities_.at(p.ship);
     auto& frame=ship_frames_.at(p.ship);
-    frame={plan.destination_frame.system,plan.destination_frame.anchor_body,
+    frame={plan.destination_frame.system,plan.destination_frame.anchor_body_id,
            plan.destination_frame.origin};
     ship.position=plan.arrival_position;
     ship.velocity=plan.arrival_velocity;
@@ -9299,7 +9369,8 @@ void Simulation::process_npc_flight_navigation(){
                ship->second.type!=EntityType::Ship ||
                station->second.type!=(rendezvous?EntityType::Ship:EntityType::Station) ||
                ship->second.owner_id!=order.owner ||
-               ship->second.system_id!=station->second.system_id ||
+               (snapshot_version_<120 &&
+                ship->second.system_id!=station->second.system_id) ||
                order.ship==order.station ||
                !same_local_frame(order.ship,order.station)){
                 if(rendezvous){
@@ -9367,7 +9438,30 @@ void Simulation::process_npc_flight_navigation(){
                 continue;
             }
             if(actual.dock_state!=DockState::InSpace)continue;
-            const auto nav=assist_to_object(actual,station->second,1500);
+            // This navigation command is scheduled for the NEXT tick,
+            // after current velocity has already advanced the ship once.
+            // Predict that passive motion for guidance only; the original
+            // authoritative Simulation still executes all actual movement.
+            Entity projected=actual;
+            const auto future_axis=[](std::int64_t at,std::int64_t speed){
+                const auto next=galactic::checked_add(at,speed);
+                return next.value_or(speed<0 ?
+                    std::numeric_limits<std::int64_t>::min() :
+                    std::numeric_limits<std::int64_t>::max());
+            };
+            projected.position.x=future_axis(actual.position.x,actual.velocity.x);
+            projected.position.y=future_axis(actual.position.y,actual.velocity.y);
+            projected.position_z_mm=future_axis(actual.position_z_mm,
+                                                actual.velocity_z_mm_per_tick);
+            if(actual.physical_galactic_authoritative){
+                const auto next=galactic::advance(actual.physical_galactic,
+                    {actual.velocity.x,actual.velocity.y,
+                     actual.velocity_z_mm_per_tick});
+                if(!next)throw std::overflow_error(
+                    "NPC guidance cannot represent next physical galactic point");
+                projected.physical_galactic=*next;
+            }
+            const auto nav=assist_to_object(projected,station->second,1500);
             if(nav.arrived){
                 if(rendezvous){
                     // Already at the berth still requires an ORIGINAL
@@ -11676,7 +11770,8 @@ bool Simulation::install_testing_confusion(EntityId source,EntityId target,
     if(!a || !b || a->type!=EntityType::Ship ||
        b->type!=EntityType::Ship || !a->owner_id || !b->owner_id ||
        a->owner_id==b->owner_id || source==target ||
-       a->system_id!=b->system_id || !same_local_frame(source,target) ||
+       (snapshot_version_<120 && a->system_id!=b->system_id) ||
+       !same_local_frame(source,target) ||
        (snapshot_version_>=120 ?
          !within_native_3d_range(*a,*b,kTrainingWeaponRangeMm) :
          std::hypot(double(a->position.x)-b->position.x,
@@ -13079,7 +13174,8 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             require_fields(f,13);
             const auto id=u64(f[1]),owner=u64(f[2]),ship=u64(f[3]);
             const auto body=u64(f[4]),lat=u64(f[5]),lon=u64(f[6]),rev=u64(f[7]);
-            const auto cargo=u64(f[8]),kg=i64(f[9]),pilot=u64(f[10]);
+            const auto cargo=u64(f[8]),pilot=u64(f[10]);
+            const auto kg=i64(f[9]);
             const auto stage=u64(f[11]),created=u64(f[12]);
             if(!id || id>=(std::uint64_t{1}<<50) ||
                !owner || owner==kServerAuthority || !ship || !body ||
@@ -13164,8 +13260,9 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             const auto id=u64(f[1]),owner=u64(f[2]),
                 ship=u64(f[3]),kind=u64(f[4]),
                 source=u64(f[5]),dependency=u64(f[6]),
-                first=u64(f[7]),second=u64(f[8]),
-                provisions=i64(f[9]),status=u64(f[10]),
+                first=u64(f[7]),second=u64(f[8]);
+            const auto provisions=i64(f[9]);
+            const auto status=u64(f[10]),
                 blocked=u64(f[11]),posted=u64(f[12]),
                 updated=u64(f[13]),resolved=u64(f[14]);
             if(!id || id>=(std::uint64_t{1}<<50) ||
@@ -13316,7 +13413,8 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 (result.snapshot_version_>=79?33:(result.snapshot_version_>=78?26:15)));
             const auto body=u64(f[1]),lat=u64(f[2]),lon=u64(f[3]),
                        rev=u64(f[4]),owner=u64(f[5]),ship=u64(f[6]);
-            const auto mass=i64(f[7]),farm=u64(f[8]),extractor=u64(f[9]);
+            const auto mass=i64(f[7]);
+            const auto farm=u64(f[8]),extractor=u64(f[9]);
             const auto water=i64(f[10]),nutrients=i64(f[11]),
                        food=i64(f[12]),wastewater=i64(f[13]);
             const auto cycles=u64(f[14]);
@@ -13346,9 +13444,10 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 auto& site=result.planetary_sites_.at(
                     PlanetarySiteKey{body,std::uint16_t(lat),std::uint16_t(lon),1});
                 const auto phase=u64(f[15]),progress=u64(f[16]),needed=u64(f[17]),
-                           location=u64(f[18]),npc1=u64(f[19]),npc2=u64(f[20]),
-                           workers=i64(f[21]),oxygen=i64(f[22]),co2=i64(f[23]),
-                           organic=i64(f[24]),support=u64(f[25]);
+                           location=u64(f[18]),npc1=u64(f[19]),npc2=u64(f[20]);
+                const auto workers=i64(f[21]),oxygen=i64(f[22]),co2=i64(f[23]),
+                           organic=i64(f[24]);
+                const auto support=u64(f[25]);
                 if(phase<1 || phase>3 || needed!=240 || progress>240 ||
                    !location || (workers!=2 && !(workers==0 && phase==3 &&
                      npc1==0 && npc2==0)) || oxygen<0 || co2<0 ||
@@ -13435,10 +13534,11 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                         const auto stage=u64(f[46]),built=u64(f[47]),
                             order_id=u64(f[48]),supervisor=u64(f[49]),
                             stalled=u64(f[50]),finished=u64(f[51]),
-                            paused=u64(f[52]),energy=i64(f[53]),
-                            brine=i64(f[54]),powered=u64(f[55]),
-                            hvac=u64(f[56]),outages=u64(f[57]),
-                            water_out=i64(f[58]),oxygen_out=i64(f[59]);
+                            paused=u64(f[52]);
+                         const auto energy=i64(f[53]),brine=i64(f[54]);
+                         const auto powered=u64(f[55]),hvac=u64(f[56]),
+                             outages=u64(f[57]);
+                         const auto water_out=i64(f[58]),oxygen_out=i64(f[59]);
                         if(stage>2 || built>60 || paused>1 ||
                            energy<0 || energy>120 || brine<0 || brine>1000000 ||
                            water_out<0 || oxygen_out<0 ||
@@ -13695,7 +13795,8 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 throw std::runtime_error("snapshot: duplicate visitor residence");
         } else if(f[0]=="oasisextractor" && result.snapshot_version_>=76) {
             require_fields(f,8);
-            const auto ship=u64(f[1]),body=u64(f[2]),mass=i64(f[3]);
+            const auto ship=u64(f[1]),body=u64(f[2]);
+            const auto mass=i64(f[3]);
             const auto workers=u64(f[4]),condition=u64(f[5]),
                        energy=u64(f[6]),cycles=u64(f[7]);
             if(!ship || !body || mass!=4 || workers!=2 || condition>100 ||
@@ -13785,7 +13886,8 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
         } else if(f[0]=="celestial" && result.snapshot_version_>=70) {
             require_fields(f,10);
             const auto system=u64(f[1]),id=u64(f[2]),kind=u64(f[3]),parent=u64(f[4]);
-            const auto orbit=u64(f[5]),x=i64(f[6]),y=i64(f[7]),z=i64(f[8]),radius=u64(f[9]);
+            const auto orbit=u64(f[5]),radius=u64(f[9]);
+            const auto x=i64(f[6]),y=i64(f[7]),z=i64(f[8]);
             if(!system||system>std::numeric_limits<std::uint32_t>::max()||
                !id||kind>3||!radius||radius>kCosmicLimitMm||
                orbit>300000||
@@ -16585,7 +16687,8 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                      flight.phase==NpcFlightPhase::InTransit) &&
                     (target==result.entities_.end() ||
                      target->second.type!=(rendezvous?EntityType::Ship:EntityType::Station) ||
-                     target->second.system_id!=ship->second.system_id ||
+                     (result.snapshot_version_<120 &&
+                      target->second.system_id!=ship->second.system_id) ||
                      !result.same_local_frame(flight.ship,flight.station))))
                     throw std::runtime_error("snapshot: impossible NPC docking target");
                 if(flight.local_commands){
@@ -16609,7 +16712,39 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                            event.tick>=flight.started_tick &&
                            event.tick<=flight.resolved_tick)
                             dock_receipt=true;
-                    if(!applied || !dock_receipt || (!rendezvous && !docked))
+                    // Arrival is a historical physical fact. A later real
+                    // departure cannot retroactively make it a false arrival.
+                    // Keep the original applied docking command and Docked
+                    // receipt mandatory, and additionally prove departure.
+                    bool departed_after_arrival=false;
+                    if(!rendezvous && !docked)
+                        for(const auto& event:result.activity_events_)
+                            if(event.kind==ActivityKind::Undocked &&
+                               event.actor==flight.ship &&
+                               event.target==flight.station &&
+                               event.tick>flight.resolved_tick &&
+                               event.result==Outcome::Applied)
+                                departed_after_arrival=true;
+                    bool departing_in_progress=false;
+                    if(!rendezvous && !docked && !departed_after_arrival &&
+                       ship->second.dock_state==DockState::Undocking &&
+                       ship->second.dock_station==flight.station &&
+                       ship->second.transition_ticks>=1 &&
+                       ship->second.transition_ticks<=kDockTransitionTicks &&
+                       result.tick_>flight.resolved_tick){
+                        // The physical undocking countdown may not yet have
+                        // produced its completion event. Require the applied
+                        // original-world command at the transition start.
+                        const auto command_tick=result.tick_-
+                            (kDockTransitionTicks-ship->second.transition_ticks);
+                        for(const auto& ev:result.events_)
+                            if(ev.tick==command_tick &&
+                               ev.result==Outcome::Applied)
+                                departing_in_progress=true;
+                    }
+                    if(!applied || !dock_receipt ||
+                       (!rendezvous && !docked && !departed_after_arrival &&
+                        !departing_in_progress))
                         throw std::runtime_error("snapshot: false NPC local arrival");
                 }
                 if(!rendezvous && flight.phase==NpcFlightPhase::InTransit &&

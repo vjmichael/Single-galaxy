@@ -1,0 +1,113 @@
+name: SGDX-02 original game hosts and worker containment
+on:
+  pull_request:
+    paths:
+      - 'src/colony_live_host.cpp'
+      - 'src/interactive_host.cpp'
+      - 'src/server_dx_supervisor.cpp'
+      - 'src/NativeCellProcessRunner.cpp'
+      - 'include/galaxy/SeamlessCellSupervisor.hpp'
+      - 'include/galaxy/Server*.hpp'
+      - 'tests/SGDX*.py'
+      - 'tests/NativeCellProcessStressTests.cpp'
+      - 'CMakeLists.txt'
+      - '.github/workflows/sgdx02-original-game.yml'
+  workflow_dispatch:
+jobs:
+  windows-diagnostics-acceptance:
+    name: Supported MSVC x64, real Job Object and crash-time minidump acceptance
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Configure using genuine native Visual Studio 2022 MSVC x64
+        shell: pwsh
+        run: |
+          cmake -S tests/sgdx02 -B build/sgdx02-msvc-gate -G "Visual Studio 17 2022" -A x64 -DSGDX_REQUIRE_NATIVE_MSVC=ON
+          if ($LASTEXITCODE -ne 0) { throw "Native MSVC x64 configure failed" }
+          $compiler = Get-ChildItem -Path build/sgdx02-msvc-gate/CMakeFiles -Filter CMakeCXXCompiler.cmake -Recurse | Select-Object -First 1
+          if (-not $compiler) { throw "Missing real CMake compiler provenance" }
+          Get-Content $compiler.FullName | Set-Content sgdx02-native-compiler.txt
+          $evidence = Get-Content sgdx02-native-compiler.txt -Raw
+          if ($evidence -notmatch 'CMAKE_CXX_COMPILER_ID "MSVC"') {
+            throw "Windows gate did not use the genuine MSVC compiler"
+          }
+          git rev-parse HEAD | Set-Content sgdx02-native-source-sha.txt
+      - name: Build actual supervisor and native fault child with MSVC
+        shell: pwsh
+        run: |
+          cmake --build build/sgdx02-msvc-gate --config Release --parallel 2 --target galaxy_server_dx_supervisor galaxy_server_dx_fault_child
+          if ($LASTEXITCODE -ne 0) { throw "Supported Windows MSVC build failed" }
+      - name: Run actual Windows exception, MDMP, Job Object and SQLite acceptance
+        shell: pwsh
+        run: |
+          ctest --test-dir build/sgdx02-msvc-gate -C Release -R "^(sgdx02_supervisor|sgdx02_sqlite_recovery)$" --timeout 120 --output-on-failure --output-junit build/sgdx02-msvc-gate/sgdx02-windows-msvc.xml
+          if ($LASTEXITCODE -ne 0) { throw "Real Windows diagnostics acceptance failed: original-game recovery is blocked" }
+      - name: Retain source, compiler and CTest evidence (not private crash dumps)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sgdx02-supported-msvc-windows-${{ github.sha }}
+          path: |
+            sgdx02-native-source-sha.txt
+            sgdx02-native-compiler.txt
+            build/sgdx02-msvc-gate/sgdx02-windows-msvc.xml
+            build/sgdx02-msvc-gate/Testing/Temporary/LastTest.log
+          if-no-files-found: warn
+
+  original-game-sgdx:
+    needs: windows-diagnostics-acceptance
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Record exact checked out source
+        shell: bash
+        run: |
+          git rev-parse HEAD | tee sgdx02-source-sha.txt
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Configure Linux original game
+        if: runner.os == 'Linux'
+        shell: bash
+        run: cmake -S . -B build/sgdx02-real -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+      - name: Configure Windows original game
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: cmake -S . -B build/sgdx02-real -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+      - name: Build actual original hosts and native workers
+        shell: bash
+        run: |
+          cmake --build build/sgdx02-real --config Release --parallel 2 --target galaxy_colony_live_host galaxy_interactive_host galaxy_native_cell_worker galaxy_server_dx_supervisor galaxy_server_dx_fault_child galaxy_server_diagnostics_tests galaxy_native_cell_process_stress_tests galaxy_native_cell_hang_worker galaxy_native_cell_detached_pipe_worker galaxy_native_cell_fork_fence_worker galaxy_native_galactic_supervisor_tests
+      - name: Run original host and worker SGDX tests
+        shell: bash
+        run: |
+          ctest --test-dir build/sgdx02-real -C Release \
+            -R "^(galaxy_server_diagnostics|galaxy_server_diagnostics_native_hosts|galaxy_server_dx_supervisor|galaxy_server_dx_game_hosts|galaxy_server_dx_sqlite_recovery|galaxy_native_cell_process_stress|galaxy_native_galactic_supervisor)$" \
+            --output-on-failure --timeout 180 \
+            --output-junit build/sgdx02-real/sgdx02-original-junit.xml \
+            2>&1 | tee sgdx02-real-ctest.log
+          test ${PIPESTATUS[0]} -eq 0
+      - name: Retain compiler and CTest evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sgdx02-original-${{ matrix.os }}-${{ github.sha }}
+          path: |
+            sgdx02-source-sha.txt
+            sgdx02-real-ctest.log
+            build/sgdx02-real/sgdx02-original-junit.xml
+            build/sgdx02-real/Testing/Temporary/LastTest.log
+          if-no-files-found: warn

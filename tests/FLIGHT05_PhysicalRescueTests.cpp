@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
+#include <set>
 using namespace galaxy;
 #define CHECK(v) do{if(!(v))throw std::runtime_error(std::string("AUTO04D3E: ")+#v+" line "+std::to_string(__LINE__));}while(false)
 int main(){
@@ -12,6 +13,7 @@ try{
     const auto path=(std::filesystem::temp_directory_path()/
       ("sg_flight05_rescue_"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count())+".sqlite")).string();
     std::int64_t mass=0;EntityId source=0,origin=0,receiver=0,understocked=0;
+    std::set<std::uint64_t> original_npc_ids;
     {
         Simulation initial(700433);
         source=initial.add_colony_ship(7,{0,0},100,4);
@@ -28,6 +30,9 @@ try{
         initial.enable_medical_workforce_rules();
         initial.enable_passenger_life_support();
         CHECK(initial.npc_records().size()==28);
+        for(const auto& item:initial.npc_records())
+            original_npc_ids.insert(item.first);
+        CHECK(original_npc_ids.size()==28);
         mass=initial.total_material_kg();
         PersistentWorld w(path,std::move(initial));
         Command board{};
@@ -110,6 +115,11 @@ try{
         CHECK(w.world().passengers_aboard(source)==0);
         CHECK(w.world().passengers_aboard(receiver)==4);
         CHECK(w.world().npc_records().size()==28);
+        // An unchanged count cannot conceal a replaced or cloned passenger.
+        std::set<std::uint64_t> actual_npc_ids;
+        for(const auto& item:w.world().npc_records())
+            actual_npc_ids.insert(item.first);
+        CHECK(actual_npc_ids==original_npc_ids);
         CHECK(w.world().colony_ship(source)->crew==4); // native ship crew NOT falsely rescued
         CHECK(w.world().total_material_kg()==mass);
         const auto receiver_food=w.world().life_support(receiver)->food_kg;
@@ -131,6 +141,10 @@ try{
         CHECK(recovered.world().passengers_aboard(receiver)==4);
         CHECK(recovered.world().colony_ship(source)->crew==4);
         CHECK(recovered.world().npc_records().size()==28);
+        std::set<std::uint64_t> recovered_npc_ids;
+        for(const auto& item:recovered.world().npc_records())
+            recovered_npc_ids.insert(item.first);
+        CHECK(recovered_npc_ids==original_npc_ids);
         CHECK(recovered.world().total_material_kg()==mass);
     }
     std::filesystem::remove(path);

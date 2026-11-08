@@ -1,0 +1,53 @@
+name: SGDX-02 native supervisor fault matrix
+on:
+  pull_request:
+    paths:
+      - 'src/server_dx_supervisor.cpp'
+      - 'include/galaxy/ServerProcessDiagnostics.hpp'
+      - 'include/galaxy/ServerDiagnostics.hpp'
+      - 'include/galaxy/ServerWindowsMinidump.hpp'
+      - 'include/galaxy/ServerWindowsPrivate.hpp'
+      - 'include/galaxy/ServerBreadcrumb.hpp'
+      - 'tests/ServerDx02FaultChild.cpp'
+      - 'tests/SGDX02SupervisorTests.py'
+      - 'tests/SGDX02SqliteRecoveryTests.py'
+      - 'tests/sgdx02/CMakeLists.txt'
+      - '.github/workflows/sgdx02-native-supervisor.yml'
+  workflow_dispatch:
+jobs:
+  native-supervisor:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Configure and build (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          cmake -S tests/sgdx02 -B build/sgdx02 -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/sgdx02 --parallel 2
+      - name: Configure and build (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake -S tests/sgdx02 -B build/sgdx02 -G "Visual Studio 17 2022" -A x64
+          cmake --build build/sgdx02 --config Release --parallel 2
+      - name: Verify native supervisor
+        shell: bash
+        run: |
+          ctest --test-dir build/sgdx02 -C Release --output-on-failure --output-junit build/sgdx02/sgdx02-junit.xml
+      - name: Upload executed CTest evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sgdx02-native-${{ matrix.os }}-${{ github.sha }}
+          path: |
+            build/sgdx02/sgdx02-junit.xml
+            build/sgdx02/Testing/Temporary/LastTest.log
+          if-no-files-found: warn

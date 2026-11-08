@@ -1972,6 +1972,10 @@ add_executable(galaxy_native_cell_worker src/native_cell_worker.cpp)
 if(BUILD_TESTING)
   add_executable(galaxy_native_cell_hang_worker tests/NativeCellHangWorker.cpp)
   target_link_libraries(galaxy_native_cell_hang_worker PRIVATE Threads::Threads)
+  add_executable(galaxy_native_cell_detached_pipe_worker
+    tests/NativeCellDetachedPipeWorker.cpp)
+  add_executable(galaxy_native_cell_fork_fence_worker
+    tests/NativeCellForkFenceWorker.cpp)
 endif()
 
 # SPACE-05C: independent 4x20 native process admission endurance and
@@ -1984,11 +1988,27 @@ if(BUILD_TESTING)
   add_test(NAME galaxy_native_cell_process_stress
     COMMAND galaxy_native_cell_process_stress_tests
       $<TARGET_FILE:galaxy_native_cell_worker>
-      $<TARGET_FILE:galaxy_native_cell_hang_worker>)
+      $<TARGET_FILE:galaxy_native_cell_hang_worker>
+      $<TARGET_FILE:galaxy_native_cell_detached_pipe_worker>
+      $<TARGET_FILE:galaxy_native_cell_fork_fence_worker>)
+  # Extended real-process endurance: 4 physical cell lanes x 1000 starts.
+  # Same original worker source and timeout/containment assertions.
+  add_test(NAME galaxy_native_cell_process_long_stress
+    COMMAND galaxy_native_cell_process_stress_tests
+      $<TARGET_FILE:galaxy_native_cell_worker>
+      $<TARGET_FILE:galaxy_native_cell_hang_worker>
+      $<TARGET_FILE:galaxy_native_cell_detached_pipe_worker>
+      $<TARGET_FILE:galaxy_native_cell_fork_fence_worker>
+      1000)
+  set_tests_properties(galaxy_native_cell_process_long_stress
+    PROPERTIES TIMEOUT 120)
 endif()
 
 # SPACE-04C/04D/05B: native high-order coordinates, 3D probes and bounded
 # active multi-cell original-world supervisor. Runs on Windows and Linux.
+# SPACE-05J: opt-in 1,024 original-world SQLite ticks, not a component mock.
+option(SPACE_ENABLE_1024_ENDURANCE
+  "Register prolonged 1,024-tick four-cell original-world native worker acceptance" OFF)
 if(BUILD_TESTING)
   add_executable(galaxy_native_galactic_supervisor_tests
     tests/NativeGalacticProbeSupervisorTests.cpp)
@@ -1997,4 +2017,83 @@ if(BUILD_TESTING)
            COMMAND galaxy_native_galactic_supervisor_tests
              $<TARGET_FILE:galaxy_native_cell_worker>
              $<TARGET_FILE:galaxy_native_cell_hang_worker>)
+  if(SPACE_ENABLE_1024_ENDURANCE)
+    add_test(NAME galaxy_native_galactic_supervisor_1024
+             COMMAND galaxy_native_galactic_supervisor_tests
+               $<TARGET_FILE:galaxy_native_cell_worker>
+               $<TARGET_FILE:galaxy_native_cell_hang_worker>)
+    set_tests_properties(galaxy_native_galactic_supervisor_1024 PROPERTIES
+      ENVIRONMENT "SPACE_ENDURANCE_TICKS=1024"
+      TIMEOUT 900
+      LABELS "space;original-world;endurance;sqlite")
+  endif()
+endif()
+
+# SGDX-01: private host-incident evidence is independently testable without
+# constructing a second world or modifying the authoritative SQLite writer.
+if(BUILD_TESTING)
+  add_executable(galaxy_server_diagnostics_tests tests/ServerDiagnosticsTests.cpp)
+  target_include_directories(galaxy_server_diagnostics_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  add_test(NAME galaxy_server_diagnostics COMMAND galaxy_server_diagnostics_tests)
+endif()
+
+# SGDX-01 actual native-host catch path, distinct from the isolated component.
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+  add_test(NAME galaxy_server_diagnostics_native_hosts
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/SGDX01HostExceptionTests.py
+      $<TARGET_FILE:galaxy_colony_live_host>
+      $<TARGET_FILE:galaxy_interactive_host>)
+  set_tests_properties(galaxy_server_diagnostics_native_hosts
+    PROPERTIES TIMEOUT 40)
+endif()
+
+# SGDX-02: independent native host/worker supervisor. It never links to or
+# mutates the authoritative game kernel; game stdout is forwarded unchanged.
+add_executable(galaxy_server_dx_supervisor src/server_dx_supervisor.cpp)
+target_include_directories(galaxy_server_dx_supervisor PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/include)
+if(WIN32)
+  target_link_libraries(galaxy_server_dx_supervisor PRIVATE Dbghelp Advapi32)
+endif()
+if(BUILD_TESTING)
+  add_executable(galaxy_server_dx_fault_child tests/ServerDx02FaultChild.cpp)
+  target_include_directories(galaxy_server_dx_fault_child PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(galaxy_server_dx_fault_child PRIVATE Threads::Threads)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME galaxy_server_dx_supervisor
+      COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/SGDX02SupervisorTests.py
+        $<TARGET_FILE:galaxy_server_dx_supervisor>
+        $<TARGET_FILE:galaxy_server_dx_fault_child>)
+    set_tests_properties(galaxy_server_dx_supervisor PROPERTIES TIMEOUT 120)
+
+    add_test(NAME galaxy_server_dx_sqlite_recovery
+      COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/SGDX02SqliteRecoveryTests.py
+        $<TARGET_FILE:galaxy_server_dx_supervisor>)
+    set_tests_properties(galaxy_server_dx_sqlite_recovery PROPERTIES TIMEOUT 90)
+    add_test(NAME galaxy_server_dx_game_hosts
+      COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/SGDX02GameHostTests.py
+        $<TARGET_FILE:galaxy_server_dx_supervisor>
+        $<TARGET_FILE:galaxy_colony_live_host>
+        $<TARGET_FILE:galaxy_interactive_host>
+        $<TARGET_FILE:galaxy_native_cell_worker>)
+    set_tests_properties(galaxy_server_dx_game_hosts PROPERTIES TIMEOUT 240)
+  endif()
+endif()
+
+# SGDX-02 Windows NTFS incident ACLs are used in native game-host and
+# original worker-diagnostic paths, not only by the external dump utility.
+if(WIN32)
+  foreach(dx_target IN ITEMS
+      galaxy_kernel galaxy_colony_live_host galaxy_interactive_host
+      galaxy_server_diagnostics_tests galaxy_server_dx_fault_child)
+    if(TARGET ${dx_target})
+      target_link_libraries(${dx_target} PRIVATE Advapi32)
+    endif()
+  endforeach()
 endif()

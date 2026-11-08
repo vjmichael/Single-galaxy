@@ -174,7 +174,7 @@ int main(){
             CHECK(e_at!=std::string::npos);
             const auto e_end=altered.find('\n',e_at);
             CHECK(e_end!=std::string::npos);
-            const auto expected_suffix="|92001";
+            const std::string expected_suffix="|92001";
             CHECK(altered.compare(e_end-expected_suffix.size(),
                 expected_suffix.size(),expected_suffix)==0);
             altered.replace(e_end-expected_suffix.size(),

@@ -490,7 +490,8 @@ bool CyberIncidentJournal::link_authenticated_hail(
     try {
         exec(state_->db,"BEGIN IMMEDIATE");
         verify();
-        const auto cases=history(),prior=hail_history();
+        const auto cases=history();
+        const auto prior=hail_history();
         std::vector<CyberIncidentCase> to_link;
         for(const auto& c:cases){
             if(c.jurisdiction_colony!=jurisdiction_colony ||

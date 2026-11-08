@@ -116,7 +116,7 @@ void real_v14_migration(const fs::path& root){
         CHECK(w.appraise_witnessed_incident(obs,0,PhysicalAppraisalStance::Damaging,95));
         CHECK(w.recent_physical_appraisals().size()==1);
     }
-    sql(db,"DROP TABLE npc_fabrication_executions; DROP TABLE npc_fabrication_execution_meta; DROP TABLE npc_fabrication_assignments; DROP TABLE npc_fabrication_assignment_meta; DROP TABLE npc_mining_executions; DROP TABLE npc_mining_execution_meta; DROP TABLE npc_mining_assignments; DROP TABLE npc_mining_assignment_meta; DROP TABLE incident_role_receipts; DROP TABLE incident_role_meta; PRAGMA user_version=14;");
+    sql(db,"DROP TABLE npc_fabrication_executions; DROP TABLE npc_fabrication_execution_meta; DROP TABLE npc_fabrication_assignments; DROP TABLE npc_fabrication_assignment_meta; DROP TABLE npc_mining_executions; DROP TABLE npc_mining_execution_meta; DROP TABLE npc_mining_assignments; DROP TABLE npc_mining_assignment_meta; DROP TABLE incident_role_receipts; DROP TABLE incident_role_meta; DROP TABLE IF EXISTS sg_native_npc_commands; PRAGMA user_version=14;");
     {
         PersistentWorld w(db.string(),Simulation(44));
         CHECK(w.recent_incident_roles().empty());

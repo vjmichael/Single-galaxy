@@ -29,7 +29,7 @@ int main(){
         ship.velocity=freighter.velocity;
         CHECK(assist_to_object(ship,freighter,1500).arrived);
         // Moving target changes its actual position: no stale waypoint.
-        freighter.position.x+=250;
+        freighter.position.x+=500; // clear the 250 mm arrival tolerance
         CHECK(!assist_to_object(ship,freighter,1500).arrived);
         // Never authorize arbitrary systems or self-approach.
         bool rejected=false;

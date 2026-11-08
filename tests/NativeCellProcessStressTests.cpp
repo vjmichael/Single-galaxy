@@ -14,9 +14,14 @@ using namespace galaxy::spatial;
 #define CHECK(X) do {if(!(X))throw std::runtime_error( #X );}while(false)
 int main(int argc,char** argv){
     try{
-        CHECK(argc==3);
-        const std::string binary(argv[1]),hung(argv[2]);
-        constexpr int workers=4, rounds=20;
+        CHECK(argc==5 || argc==6);
+        const std::string binary(argv[1]),hung(argv[2]),
+                          detached(argv[3]),fork_fence(argv[4]);
+        // The only extended mode is the audited four-cell 4,000-launch
+        // workload. The ordinary fast native CTest remains at 4x20.
+        constexpr int workers=4;
+        const int rounds=argc==6 ? 1000 : 20;
+        if(argc==6)CHECK(std::string(argv[5])=="1000");
         std::vector<double> elapsed_ms;
         elapsed_ms.reserve(workers*rounds);
         for(int round=0;round<rounds;++round){
@@ -41,7 +46,8 @@ int main(int argc,char** argv){
             }
             for(auto& job:pending)elapsed_ms.push_back(job.get());
         }
-        CHECK(elapsed_ms.size()==workers*rounds);
+        CHECK(elapsed_ms.size()==static_cast<std::size_t>(workers)*
+                                 static_cast<std::size_t>(rounds));
         const auto total=std::accumulate(elapsed_ms.begin(),elapsed_ms.end(),0.0);
         std::sort(elapsed_ms.begin(),elapsed_ms.end());
         CHECK(elapsed_ms.front()>0 && elapsed_ms.back()<2000);
@@ -52,6 +58,17 @@ int main(int argc,char** argv){
             CHECK(!run_cell_process(hung,request,
                 std::chrono::milliseconds(40)).passed);
         }
+#ifndef _WIN32
+        // A child that calls setsid() can keep stdout open outside the
+        // original process group after its leader exits successfully.
+        // The host must not block in read() until that descendant dies.
+        const auto inherited_start=std::chrono::steady_clock::now();
+        CHECK(!run_cell_process(detached,request,
+            std::chrono::milliseconds(1200)).passed);
+        CHECK(std::chrono::steady_clock::now()-inherited_start<
+              std::chrono::milliseconds(3000));
+#endif
+        CHECK(run_cell_process(fork_fence,request).passed);
         CHECK(run_cell_process(binary,request).passed);
         CHECK(!run_cell_process(binary,CellProcessTask{
             request.scope,request.worker,0,request.original_hash,

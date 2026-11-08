@@ -41,7 +41,10 @@ NavigationDecision assist_to_object(const Entity& ship,const Entity& target,
                                     std::int64_t stand_off_mm) {
     if(ship.type!=EntityType::Ship || ship.dock_state!=DockState::InSpace ||
        ship.jump_state!=ShipJumpState::Ready ||
-       target.id==ship.id || ship.system_id!=target.system_id ||
+       target.id==ship.id ||
+       (ship.system_id!=target.system_id &&
+        (!ship.physical_galactic_authoritative ||
+         !target.physical_galactic_authoritative)) ||
        stand_off_mm<0 || stand_off_mm>Simulation::kWorldBoundMm)
         throw std::invalid_argument("invalid physical object approach");
     if(ship.physical_galactic_authoritative ||

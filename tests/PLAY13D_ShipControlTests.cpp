@@ -13,6 +13,8 @@ int main(){
     static_assert(!npc.control.can_run_delegated_npc_order(44,false));
     static_assert(!npc.control.can_run_delegated_npc_order(45,true));
     static_assert(!user.control.can_run_delegated_npc_order(7,true));
-    assert(UserShip{99,9}.control.can_issue_player_order(9));
-    assert(!NpcShip{99,19,9}.control.can_issue_player_order(9));
+    // Runtime checks must remain active in Release (-DNDEBUG) builds.
+    // Macro assert cannot parse brace-initializer commas as one argument.
+    if(!UserShip{99,9}.control.can_issue_player_order(9))return 1;
+    if(NpcShip{99,19,9}.control.can_issue_player_order(9))return 1;
 }
