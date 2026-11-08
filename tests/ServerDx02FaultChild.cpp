@@ -1,0 +1,52 @@
+#include "galaxy/ServerBreadcrumb.hpp"
+#include <chrono>
+#include <csignal>
+#include <cstdint>
+#include <iostream>
+#include <string>
+#include <thread>
+#ifndef _WIN32
+#include <sys/types.h>
+#include <unistd.h>
+#endif
+int main(int argc,char** argv){
+    if(argc!=2)return 64;
+    const std::string mode(argv[1]);
+    galaxy::server_dx::committed_breadcrumb(17,19);
+    galaxy::server_dx::committed_breadcrumb(18,20);
+    if(mode=="clean"){
+        std::cout<<"SGVIEW|1|unmodified\n";
+        return 0;
+    }
+    if(mode=="error"){
+        std::cerr<<"fault-child: expected failure\n";
+        return 7;
+    }
+    if(mode=="segv"){
+        std::raise(SIGSEGV);
+        return 40;
+    }
+    if(mode=="abort"){
+        std::raise(SIGABRT);
+        return 40;
+    }
+    if(mode=="stderr"){
+        std::cerr<<std::string(40000,'X')<<"TAIL-MARKER\n";
+        return 21;
+    }
+    if(mode=="hang"){
+        for(;;)std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+#ifndef _WIN32
+    if(mode=="descendant"){
+        const pid_t child=fork();
+        if(child==0){
+            for(;;)std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        if(child<0)return 72;
+        std::cout<<"DESCENDANT="<<child<<"\n"<<std::flush;
+        for(;;)std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+#endif
+    return 65;
+}
