@@ -22,9 +22,14 @@ assert 'return\n\t# The arrow keys' in c # native branch returns before local mo
 assert 'player.native_motion_intent.connect(' in m
 assert 'player.global_position = Vector3(float(pose["x_mm"]) / 1000.0' in m
 assert 'native_player_session.pose_received.connect' in m
-assert 'KEY_F8' in m and 'KEY_F7' in m
+assert 'KEY_P' in m and 'KEY_O' in m and 'KEY_F8' not in m and 'KEY_F7' not in m
 assert 'player.use_native_authority(connected)' in m
+assert 'player.native_seat_intent.connect' in m
+assert 'player.use_native_seat(bool(pose["seated"]))' in m
+assert 'func toggle_seat()' in p and 'SEAT|%d|%d|%d|%d' in p
+assert 'seat_sequence != _seat_sequence + 1' in p
+assert 'if not native_seated:' in c and 'native_seat_intent.emit()' in c
 assert 'native-player-protocol' in b
 assert "'native-player-host' 'PASS'" in b
 assert "'native-player-host' 'SKIP'" in b
-print('FP3D02F PASS: Godot source stays untrusted; host-ACK-only movement, bounded rate, focus and local pipe lifecycle')
+print('FP3D03A PASS: Godot source stays untrusted; host-ACK-only movement, bounded rate, focus and local pipe lifecycle')
