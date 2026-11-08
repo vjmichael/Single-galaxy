@@ -803,7 +803,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     allowed=(('FOOD','WATER') if action=='colonyPlanetRetrieve'
                              else ('FOOD','OXYGEN') if action=='colonyPlanetSupport'
                              else ('WATER','NUTRIENTS'))
-                    if type(resource)!=str or resource not in allowed or
+                    if (type(resource)!=str or resource not in allowed or
                        type(kg)!=int or not 1<=kg<=10000 or
                        (action=='colonyPlanetExtract' and (kg<1000 or kg%1000))):
                         raise ValueError('Invalid planetary resource request')
