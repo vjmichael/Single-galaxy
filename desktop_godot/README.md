@@ -90,3 +90,8 @@ New source-only increment on top of the editor-safe P/O controls:
 - The creator is testing directly in an already-installed Godot editor; **do not require BUILD_WINDOWS.cmd** to launch or test the GDScript scene. Actual rebuilt Windows host, Godot gameplay, and installed export acceptance remain pending.
 
 See [the FP3D-03A source and acceptance ledger](../docs/engineering/FP3D03A_COCKPIT_SEAT_SOURCE.md). Controller support and remappable bindings remain deferred to [issue #111](https://github.com/vjmichael/Single-galaxy/issues/111).
+
+## FP3D-03B — Native original-ship flight controls (source development)
+The prototype now links the native cockpit seat to **the original C++ ship simulation**, not a fake Godot motion model. With P native session active and E seated, A/D sends original ship yaw, W/S sends lateral strafing, Up/Down sends forward/reverse thrust, B sends counterthrust, U requests original undock. The HUD reports the **actual** original ship's position, velocity, heading and dock state from validated native SHIP packets. Godot editor F7/F8 remain reserved and controller remapping remains deferred.
+
+This source revision requires an **updated native C++ player host executable**. An older pre-FP3D-03B Windows host is incompatible even if it launches. The Windows builder performs a real native command/restart smoke and fails rather than labeling such a host compatible. Source-only review is not Windows acceptance. The creator already has Godot installed; **BUILD_WINDOWS.cmd is not required for in-editor play**. Full C++ compile, Godot runtime, pilot movement/camera geometry and original regression evidence remain open. See the engineering [flight ledger](../docs/engineering/FP3D03B_ORIGINAL_SHIP_FLIGHT.md).
