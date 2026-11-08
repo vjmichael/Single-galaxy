@@ -238,3 +238,38 @@ A real failure mode remained in SPACE-05C's native process supervisor: its post-
 On Debian Linux x86-64 with **GCC 14.2 / C++17**, a standalone fork/process-group/report-read harness recreating the runner's affected post-exit control flow was compiled and executed against the same synchronized detached-pipe fixture source. The old blocking-read version observed a clean leader exit but waited **5001 ms** for detached descendant EOF (reported zero bytes), failing a 3000 ms limit. The updated nonblocking-read version observed the clean leader exit, returned **`EAGAIN` / -1 in 5 ms**, and passed the prompt-refusal threshold. Both compilations used `-Wall -Wextra -Werror -O2`.
 
 This is **direct local evidence for the specific POSIX pipe hang and the post-exit `O_NONBLOCK` remedy**, not an assertion that the full repository `NativeCellProcessRunner.cpp`, the CMake-linked `galaxy_kernel`, Windows Job Objects, multi-cell persistent ticks, or WO3/4/5 native regressions compiled or passed. Those exact-head native requirements remain OPEN.
+
+
+## EvEmu continuation — SPACE-05F/05G and SPACE-04H (2026-11-07)
+
+**Source implemented on stacked draft PR #95; no Windows/full original native PASS.** The native SPACE workflow at earlier exact PR #95 SHA `4940d98b` returned failed Windows/Linux jobs with **no execution steps**, consistent with runner blocker #90. Revalidation must target the eventual exact final head; prior failed provisioning is not a C++ test failure.
+
+### SPACE-05F — fail-closed Linux one-shot worker descendant containment
+
+- Linux OS child sets `PR_SET_PDEATHSIG(SIGKILL)`, checks its original parent after installation to close the fork-parent death race, enables `PR_SET_NO_NEW_PRIVS`, then installs an inherited raw kernel seccomp-BPF filter before `execve`. It denies `clone`, `clone3`, `fork`, `vfork`, `setsid`, `setpgid`, `unshare` and `setns` with `EPERM`. Failure to apply any mandatory containment step exits before worker code can execute. The original process group, CPU/RLIMIT_AS, exact stdout protocol and host-only original SQLite writer remain intact.
+- A one-shot read-only summary worker has **no legitimate descendant-spawning requirement**. This hardening prevents the previously demonstrated detached-`setsid` stdout survivor from escaping the job group. It is deliberately *not* a general sandbox for arbitrary scripting plugins, identity isolation, private filesystem protection or a future worker that needs subprocesses; those require separate approval and OS boundaries.
+- `NativeCellForkFenceWorker.cpp` is an explicit native acceptance fixture. It generates the exact expected worker report **only if Linux fork returns `EPERM`**, so absent kernel enforcement cannot be misreported as a pass. The existing detached-pipe survivor and hung-worker fixtures remain. CMake and the SPACE Windows/Linux exact-head workflow compile and supply all the fixtures.
+- Independent local Debian C++17 check actually **executed** in an isolated harness using the same `sock_filter` and seccomp installation code: **GCC 14.2 PASS** and **Clang 17 PASS**, each observing `fork`, `setsid` and `setpgid` denied with `EPERM`. This validates the Linux kernel filter in isolation, **not** the repository's full native link, installed Windows worker, or physical game state.
+
+### SPACE-05G — sustained original-world four-cell integration regression
+
+- Expanded `galaxy_native_galactic_supervisor` source with **256 original SQLite world ticks**, four concurrently admitted read-only OS cell workers, four finite ore deposits, a finite NPC census, normal life support, a single committed physical tick per generation, seven supervisor object restarts and four independent SQLite backup/reopen checkpoints.
+- At deliberately injected snapshot-write failures, the test asserts no original tick/world-state mutation, then resumes the **same durable dispatch ID** without double-advancing the world. It checks all four actual cells participate, original entity IDs/census and ore remain unchanged, and logs median/p95/max per-tick wall latency without inventing guaranteed gameplay frame rates.
+- This test **has been added to source but has NOT executed as full kernel CTest**. CPU/RSS of a long-lived daemon, frame-cadence stutter in an installed native client, and live network stress remain separate open acceptance.
+
+### SPACE-04H — foreign catalogue labels must not become artificial proximity walls
+
+- Corrected `assist_to_object` to use **two valid authoritative high-order galactic poses** instead of requiring identical `system_id`; if either pose is nonauthoritative, the legacy provenance guard remains fail-closed.
+- Corrected native >=v120 NPC local docking/rendezvous **admission, active navigation and snapshot validation** so a physical object adjacent across a star-catalogue label is not treated as unreachable. Old snapshots retain strict system-locale rules. Added direct cross-system navigation, far-object negative test and named-NPC nearby foreign-station docking/snapshot roundtrip to the existing native test source.
+- Corrected selected native >=v120 **3D-near** outpost operations, consigned-stock handoff, local medical kit, medic training and physical triage checks. These paths retain existing owner/source/real docking-distance, real resource, NPC and original command provenance checks. Old-version guards remain intact. The test-only confusion/status path also uses actual 3D range in native worlds.
+- The exact-head SPACE matrix now includes historical `galaxy_flight02_local_docking` and `galaxy_flight03_native_rendezvous`, plus new cross-star navigation and four-cell tests; native results remain **OPEN** until actual test steps execute.
+
+### Remaining cross-system audit gates (not declared closed)
+
+1. **Outpost genesis at saturated legacy coordinates**: `Action::BuildOutpost` still forms `actor.position.x+1000` before a checked high-order physical placement and uses an XY/same-system prebuild station overlap filter. This may overflow near a saturated legacy projection or miss a physically overlapping station across catalogue labels. Replace it with checked high-order candidate geometry and guarded physical station exclusion before accepting full 3D building.
+2. **Physical NPC evacuation / split-rescue / passenger host transfer**: several legacy same-`system_id` guards remain. Do not remove them without checking that every action, including the ordinary embark/disembark route, has a verified original 3D-near receipt and no remote passenger transfer.
+3. **Host ship destruction**: `Action::HostDestroyShip` remains system-bound but is not clearly 3D-range-fenced at that entrypoint. Blindly dropping the system check could authorize distant instant destruction. Require original weapon/incident provenance before cross-system eligibility.
+4. **Geographical star-system membership and gateway endpoints**: durable star origins, source-specific orbital bodies, real gate-pair IDs, freight system route records and replay witnesses remain *semantic catalogue geography*. Never globally erase system equality checks in these records.
+5. **Full native and installed evidence**: obtain actual exact-head Windows/Linux CMake/CTest, original WO3–WO5 regressions, Linux subprocess CPU/RSS tracking, longer multiplayer/cold-cell cadence tests and ultimately real installed 3D world/render acceptance. GitHub Actions issue #90 is still open. Source implementation and isolated Linux filter checks must not be promoted to acceptance.
+
+**Physical invariant:** A cell or star label is never a collision wall; player/NPC actions still require real physical proximity and original permission. Multiple read-only workers never acquire multiple original physical writers.
