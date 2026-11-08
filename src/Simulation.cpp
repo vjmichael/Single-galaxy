@@ -3469,8 +3469,20 @@ Event Simulation::execute(const Command& c) {
             const auto attacker=entities_.find(c.actor), victim=entities_.find(c.target);
             if(attacker==entities_.end() || victim==entities_.end() || c.actor==c.target ||
                attacker->second.type!=EntityType::Ship || victim->second.type!=EntityType::Ship ||
-               attacker->second.system_id!=victim->second.system_id || colony_ships_.count(c.target))
+               (snapshot_version_<120 &&
+                attacker->second.system_id!=victim->second.system_id) ||
+               colony_ships_.count(c.target))
                 {result.result=Outcome::InvalidTarget;return result;}
+            // SPACE-05K: a star-catalogue ID is not a physical barrier in
+            // continuous v120+ space, nor can the trusted host turn an
+            // arbitrary remote ship into wreckage. Honor the same genuine
+            // galactic weapon envelope used by ordinary combat. Legacy
+            // pre-v120 save/incident semantics remain unchanged.
+            if(snapshot_version_>=120 &&
+               (!same_local_frame(c.actor,c.target) ||
+                !within_native_3d_range(attacker->second,victim->second,
+                                         kTrainingWeaponRangeMm)))
+                {result.result=Outcome::OutOfRange;return result;}
             auto& ship=victim->second;
             if(ship.dock_state!=DockState::InSpace || ship.jump_state!=ShipJumpState::Ready)
                 {result.result=Outcome::InTransition;return result;}
