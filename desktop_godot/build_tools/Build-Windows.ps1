@@ -224,7 +224,7 @@ try {
         Copy-Item -LiteralPath $playerExe -Destination (Join-Path $stagedNative 'galaxy_desktop_player_host.exe') -Force
         $state.native_player_sha256 = (Get-FileHash -LiteralPath $playerExe -Algorithm SHA256).Hash.ToLowerInvariant()
         $state.native_player_bytes = (Get-Item -LiteralPath $playerExe).Length
-        Record-Gate 'native-player-host' 'PASS' 'Authoritative C++ SQLite FPS child bundled; physical Windows P/E interaction acceptance still required'
+        Record-Gate 'native-player-host' 'PASS' 'Original C++ cockpit flight and FPS child bundled; physical Windows gameplay acceptance still required'
         $nativePackaged = $true
     } else {
         Record-Gate 'native-player-host' 'SKIP' 'Native FPS host absent; P clearly reports missing host and keeps local preview mode'
@@ -240,8 +240,8 @@ try {
     @'
 Single-Galaxy standalone graybox (FP3D-02A development preview)
 Double-click SingleGalaxy_Graybox.exe. No Godot editor or Python install required.
-WASD=walk/mouse look; P=authoritative native FPS session; E=host-confirmed cockpit sit/stand when P active; O=read-only contact diagnostic; Esc=release mouse.
-P connects a native C++ child host. WASD sends bounded walking intent; E requests cockpit seat/stand. Every accepted action commits original world STEP and an immutable pose/mode receipt atomically in SQLite. O remains read-only. Native seat coordinates and interior collisions are prototypes and do not yet match all Godot scene objects.
+ON FOOT: WASD walk/mouse look. P=authoritative native session, E=host-confirmed sit/stand, O=read-only contacts, Esc=release mouse.
+SEATED: A/D original yaw, W/S original lateral thrust, Up/Down original forward/reverse propulsion, B counterthrust, U real undock. Ship state on screen comes from the original C++ simulation. Walking/seat receipts retain their atomic original STEP transactions. Flight retains distinct original command admission and world STEP receipts; interrupted accepted commands must be recovered, not replayed silently. Native seat geometry remains a prototype.
 Actual physical Windows GPU, collision and usability acceptance is still required.
 Godot MIT terms: GODOT_LICENSE.txt
 '@ | Set-Content -LiteralPath $readme -Encoding UTF8
