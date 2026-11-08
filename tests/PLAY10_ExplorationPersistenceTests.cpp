@@ -1,4 +1,5 @@
 #include "galaxy/Persistence.hpp"
+#include <sqlite3.h>
 #include <chrono>
 #include <filesystem>
 #include <iostream>
@@ -37,6 +38,21 @@ int main(){
    CHECK(run(w,order(w,2,ship,Action::SurveyLocal))==Outcome::Applied);
    CHECK(w.world().events().back().transferred==1);
    CHECK(w.world().discoveries().size()==1);
+   // Observations remain in historical_events with their count; they
+   // must NEVER mint resource_ledger transfers of ore or probe devices.
+   sqlite3* audit=nullptr;
+   CHECK(sqlite3_open_v2(db.c_str(),&audit,SQLITE_OPEN_READONLY,nullptr)==SQLITE_OK);
+   sqlite3_stmt* ledger=nullptr;
+   CHECK(sqlite3_prepare_v2(audit,
+      "SELECT COUNT(*) FROM resource_ledger WHERE command_id='2'",-1,
+      &ledger,nullptr)==SQLITE_OK);
+   CHECK(sqlite3_step(ledger)==SQLITE_ROW && sqlite3_column_int64(ledger,0)==0);
+   sqlite3_finalize(ledger);ledger=nullptr;
+   CHECK(sqlite3_prepare_v2(audit,
+      "SELECT transferred FROM historical_events WHERE command_id='2'",-1,
+      &ledger,nullptr)==SQLITE_OK);
+   CHECK(sqlite3_step(ledger)==SQLITE_ROW && sqlite3_column_int64(ledger,0)==1);
+   sqlite3_finalize(ledger);sqlite3_close(audit);
    const auto rec=w.world().discoveries().at({7,rock});
    CHECK(rec.first_tick==w.world().tick());
    CHECK(rec.location.x==2000 && rec.system==1 && !rec.geological);
