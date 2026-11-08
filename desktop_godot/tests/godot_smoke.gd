@@ -1,0 +1,51 @@
+extends SceneTree
+## Runtime acceptance for Godot 4.7.2, requires official binary.
+## Run: godot --headless --path desktop_godot --script res://tests/godot_smoke.gd
+
+func _initialize() -> void:
+	call_deferred("_run")
+
+func _run() -> void:
+	var main := load("res://world/main.tscn") as PackedScene
+	if main == null:
+		_fail("main scene could not load")
+		return
+	var root_scene := main.instantiate()
+	root.add_child(root_scene)
+	await process_frame
+	var player := root_scene.get_node_or_null("LocalGrayboxPerson_NOT_NATIVE_PLAYER") as CharacterBody3D
+	if player == null or player.get_node_or_null("Camera3D") == null:
+		_fail("player/camera was not created")
+		return
+	var colliders := 0
+	for node in root_scene.get_children():
+		if node is StaticBody3D:
+			colliders += 1
+	if colliders < 12:
+		_fail("expected actual 3D colliders")
+		return
+	var forward_bindings := InputMap.action_get_events("fps_forward")
+	if forward_bindings.size() != 1 or not (forward_bindings[0] is InputEventKey):
+		_fail("bad walking input binding")
+		return
+	if forward_bindings[0].physical_keycode != KEY_W:
+		_fail("on-foot W was not bound to walking")
+		return
+	var start_position := player.global_position
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	Input.action_press("fps_forward")
+	for tick in range(16):
+		await physics_frame
+	Input.action_release("fps_forward")
+	await physics_frame
+	# A headless window has no OS focus. Do not demand movement in unfocused
+	# tests; the important security property is NO movement without focus.
+	if not get_window().has_focus() and not is_equal_approx(start_position.z, player.global_position.z):
+		_fail("unfocused control changed horizontal position")
+		return
+	print("FP3D-02A GODOT runtime smoke PASS: scene, real collisions, first-person camera, bindings and focus guard")
+	quit(0)
+
+func _fail(why: String) -> void:
+	push_error("FP3D-02A GODOT runtime smoke FAILED: " + why)
+	quit(1)
