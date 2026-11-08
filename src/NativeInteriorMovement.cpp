@@ -412,4 +412,102 @@ bool InteriorMovement::set_seated(PlayerId owner,std::uint64_t expected,
     return true;
 }
 
+
+FlightState InteriorMovement::flight_state(PlayerId owner){
+    const auto pose=current(owner);
+    const auto* ship=world_.world().find(pose.ship);
+    if(!ship||ship->type!=EntityType::Ship||ship->owner_id!=owner)
+        throw std::runtime_error("authoritative flight ship unavailable");
+    return FlightState{ship->id,world_.world().tick(),world_.generation(),
+        ship->position.x,ship->position.y,ship->position_z_mm,
+        ship->velocity.x,ship->velocity.y,ship->velocity_z_mm_per_tick,
+        ship->heading_deg,ship->dock_state};
+}
+std::optional<Outcome> InteriorMovement::pilot(PlayerId owner,
+        std::uint64_t expected_seat_sequence,std::uint64_t command_id,
+        PilotControl control,PilotFailPoint fault){
+    // This path never accepts an actor, ship ID, player ID or thrust vector
+    // from the client. The original player-person and seat receipt decide.
+    constexpr std::uint64_t cockpit_tag=std::uint64_t{1}<<60;
+    constexpr std::uint64_t other_tags=std::uint64_t{3}<<61;
+    if(!owner||!command_id||!(command_id&cockpit_tag)||
+       (command_id&other_tags))return std::nullopt;
+    const auto pose=current(owner);
+    if(!valid_person(owner,pose.ship)||!pose.seated||
+       pose.seat_sequence!=expected_seat_sequence ||
+       world_.world().has_pending_cockpit_flight())return std::nullopt;
+    const auto* ship=world_.world().find(pose.ship);
+    if(!ship||ship->type!=EntityType::Ship||ship->owner_id!=owner)
+        return std::nullopt;
+    // The original flight engine models yaw in the XY plane. Quantize
+    // horizontal thrust to the closest cardinal axis; no local translation.
+    // Counterthrust opposes ORIGINAL velocity, without overshooting a
+    // sub-250 mm/tick residual. Finer braking is future physics work.
+    const int quarter=((int(ship->heading_deg)+45)/90)%4;
+    int forward_x=0,forward_y=0;
+    switch(quarter){
+        case 0:forward_x=1;break;
+        case 1:forward_y=1;break;
+        case 2:forward_x=-1;break;
+        default:forward_y=-1;break;
+    }
+    Command c{};
+    c.id=command_id;
+    c.sequence=command_id;
+    c.execute_tick=world_.world().tick()+1;
+    c.issuer=owner;
+    c.actor=pose.ship;
+    c.action=Action::Thrust;
+    switch(control){
+        case PilotControl::Undock:
+            c.action=Action::RequestUndock;break;
+        case PilotControl::YawLeft:c.amount=-15;break;
+        case PilotControl::YawRight:c.amount=15;break;
+        case PilotControl::Forward:
+            c.thrust_x=forward_x;c.thrust_y=forward_y;break;
+        case PilotControl::Reverse:
+            c.thrust_x=-forward_x;c.thrust_y=-forward_y;break;
+        case PilotControl::StrafePort:
+            c.thrust_x=forward_y;c.thrust_y=-forward_x;break;
+        case PilotControl::StrafeStarboard:
+            c.thrust_x=-forward_y;c.thrust_y=forward_x;break;
+        case PilotControl::Counterthrust:
+            if(ship->velocity.x>=Simulation::kAccelerationMmPerTick2)c.thrust_x=-1;
+            else if(ship->velocity.x<=-Simulation::kAccelerationMmPerTick2)c.thrust_x=1;
+            if(ship->velocity.y>=Simulation::kAccelerationMmPerTick2)c.thrust_y=-1;
+            else if(ship->velocity.y<=-Simulation::kAccelerationMmPerTick2)c.thrust_y=1;
+            // Do not claim exact zero or reverse tiny residual velocity.
+            if(!c.thrust_x&&!c.thrust_y)return std::nullopt;
+            break;
+        default:return std::nullopt;
+    }
+    if(!world_.submit_cockpit_flight_checked(c,expected_seat_sequence))
+        return std::nullopt;
+    if(fault==PilotFailPoint::AfterAcceptance)
+        throw std::runtime_error("injected cockpit flight after original acceptance");
+    // Separate original STEP log, not a phantom client-authoritative update.
+    // If interrupted between submit and step, the pending cockpit command is
+    // recoverably visible and the next host refuses to process new inputs.
+    const auto before=world_.world().events().size();
+    world_.step();
+    const auto& events=world_.world().events();
+    if(events.size()<=before)
+        throw std::runtime_error("flight accepted but original STEP event missing");
+    std::optional<Outcome> result;
+    for(std::size_t i=before;i<events.size();++i)
+        if(events[i].command_id==c.id)result=events[i].result;
+    if(!result)throw std::runtime_error("flight command lacks execution receipt");
+    if(control==PilotControl::Undock&&*result==Outcome::Applied){
+        // Original docking state transitions require two further world ticks.
+        // Only advance bounded canonical simulation; never set dock_state
+        // directly or fabricate a completion receipt.
+        for(int i=0;i<Simulation::kDockTransitionTicks+1;++i){
+            const auto* current=world_.world().find(pose.ship);
+            if(!current||current->dock_state!=DockState::Undocking)break;
+            world_.step();
+        }
+    }
+    return result;
+}
+
 } // namespace galaxy::fp3d

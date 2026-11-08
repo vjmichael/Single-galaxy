@@ -35,6 +35,8 @@ try {
   $first=Read-Frame $p 'initial'
   Expect (($first.Count -eq 13) -and ($first[0] -eq 'POSE') -and ($first[1] -eq '1') -and ($first[4] -eq '0')) 'Invalid initial native pose'
   $epoch=$first[2]
+  $initialShip=Read-Frame $p 'initial-ship'
+  Expect (($initialShip.Count -eq 17) -and ($initialShip[0] -eq 'SHIP') -and ($initialShip[2] -eq $epoch) -and ($initialShip[3] -eq '0')) 'Missing initial original ship frame'
   Start-Sleep -Milliseconds 75
   $p.StandardInput.WriteLine("MOVE|$epoch|1|0|80|0")
   $p.StandardInput.Flush()
@@ -46,7 +48,27 @@ try {
   $sit=Read-Frame $p 'seat'
   Expect (($sit.Count -eq 13) -and ($sit[0] -eq 'ACK') -and ($sit[4] -eq '1') -and ($sit[11] -eq '1') -and ($sit[12] -eq '1')) 'Native cockpit sit did not commit'
   Start-Sleep -Milliseconds 75
-  $p.StandardInput.WriteLine("SEAT|$epoch|3|1|0")
+  $p.StandardInput.WriteLine("FLIGHT|$epoch|3|1|UND")
+  $p.StandardInput.Flush()
+  $undock=Read-Frame $p 'native-undock'
+  Expect (($undock.Count -eq 17) -and ($undock[0] -eq 'SHIP') -and ($undock[5] -eq '0') -and ($undock[16] -eq '0')) 'Original ship did not undock'
+  Start-Sleep -Milliseconds 75
+  $p.StandardInput.WriteLine("FLIGHT|$epoch|4|1|RIGHT")
+  $p.StandardInput.Flush()
+  $yaw=Read-Frame $p 'native-yaw'
+  Expect (($yaw.Count -eq 17) -and ($yaw[0] -eq 'SHIP') -and ($yaw[5] -eq '0') -and ($yaw[15] -eq '15')) 'Original ship yaw not applied'
+  Start-Sleep -Milliseconds 75
+  $p.StandardInput.WriteLine("FLIGHT|$epoch|5|1|FWD")
+  $p.StandardInput.Flush()
+  $thrust=Read-Frame $p 'native-thrust'
+  Expect (($thrust.Count -eq 17) -and ($thrust[0] -eq 'SHIP') -and ($thrust[5] -eq '0') -and ([int64]$thrust[12] -gt 0)) 'Original ship thrust absent'
+  Start-Sleep -Milliseconds 75
+  $p.StandardInput.WriteLine("FLIGHT|$epoch|6|1|BRAKE")
+  $p.StandardInput.Flush()
+  $brake=Read-Frame $p 'native-brake'
+  Expect (($brake.Count -eq 17) -and ($brake[0] -eq 'SHIP') -and ([int64]$brake[12] -lt [int64]$thrust[12])) 'Original ship did not counterthrust'
+  Start-Sleep -Milliseconds 75
+  $p.StandardInput.WriteLine("SEAT|$epoch|7|1|0")
   $p.StandardInput.Flush()
   $stand=Read-Frame $p 'stand'
   Expect (($stand.Count -eq 13) -and ($stand[0] -eq 'ACK') -and ($stand[11] -eq '0') -and ($stand[12] -eq '2')) 'Native cockpit stand did not commit'
@@ -59,11 +81,13 @@ try {
   $q=Start-Native
   $reopened=Read-Frame $q 'restarted'
   Expect (($reopened.Count -eq 13) -and ($reopened[0] -eq 'POSE') -and ($reopened[4] -eq '1') -and ($reopened[5] -eq '80') -and ($reopened[2] -ne $epoch) -and ($reopened[11] -eq '0') -and ($reopened[12] -eq '2')) 'Restart did not recover committed pose with a fresh session'
+  $recoveredShip=Read-Frame $q 'recovered-original-ship'
+  Expect (($recoveredShip.Count -eq 17) -and ($recoveredShip[0] -eq 'SHIP') -and ($recoveredShip[15] -eq '15') -and ($recoveredShip[16] -eq '0')) 'Original ship yaw/dock state not recovered'
   $q.StandardInput.WriteLine('QUIT')
   $q.StandardInput.Flush()
   Expect ($q.WaitForExit(5000) -and $q.ExitCode -eq 0) 'Second native host did not exit cleanly'
   $q.Dispose()
-  $events.Add('RESULT PASS: Windows x64 native movement, cockpit transitions and SQLite restart')
+  $events.Add('RESULT PASS: Windows x64 native movement, cockpit flight, original ship controls and SQLite restart')
   $events | Set-Content -LiteralPath (Join-Path $report 'summary.txt')
   Write-Host ($events[-1]) -ForegroundColor Green
 } catch {

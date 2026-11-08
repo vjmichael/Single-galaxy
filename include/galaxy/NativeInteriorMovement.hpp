@@ -2,6 +2,7 @@
 #include "galaxy/Persistence.hpp"
 #include <cstdint>
 #include <string>
+#include <optional>
 #include <sqlite3.h>
 
 namespace galaxy::fp3d {
@@ -10,6 +11,19 @@ namespace galaxy::fp3d {
 // disembark, networking, Godot movement, or remote actor-authorization API.
 enum class MoveFailPoint { None, AfterStepReceipt, AfterPoseUpdate };
 enum class SeatFailPoint { None, AfterSeatReceipt, AfterSeatUpdate };
+// Ship-local acceleration uses the ORIGINAL 2D yaw/velocity integrator.
+// Yaw is 15 degrees per accepted command; port/starboard are translational
+// strafe, NOT fictional pitch. Vertical pitch/roll remain separate gates.
+enum class PilotFailPoint { None, AfterAcceptance };
+enum class PilotControl { Undock, YawLeft, YawRight, Forward, Reverse,
+                          StrafePort, StrafeStarboard, Counterthrust };
+struct FlightState {
+    EntityId ship=0;
+    std::uint64_t tick=0,generation=0;
+    std::int64_t x=0,y=0,z=0,vx=0,vy=0,vz=0;
+    std::uint16_t heading=0;
+    DockState dock=DockState::Docked;
+};
 
 struct Pose {
     PlayerId owner=0;
@@ -46,6 +60,14 @@ public:
     bool set_seated(PlayerId trusted_owner,std::uint64_t expected_seat_sequence,
                     std::uint64_t receipt_id,bool want_seated,
                     SeatFailPoint fault=SeatFailPoint::None);
+    // Seat-checked original flight commands. No local vehicle-physics clone.
+    // Command acceptance and execution are separate canonical journal commits;
+    // an interrupted pending command blocks future host sessions until repaired.
+    std::optional<Outcome> pilot(PlayerId trusted_owner,
+        std::uint64_t expected_seat_sequence,std::uint64_t command_id,
+        PilotControl control,PilotFailPoint fault=PilotFailPoint::None);
+    FlightState flight_state(PlayerId trusted_owner);
+
 private:
     sqlite3* db_=nullptr;
     PersistentWorld& world_;

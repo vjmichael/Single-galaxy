@@ -41,12 +41,37 @@ template<class T>bool number(std::string_view s,T& out){
     auto [p,ec]=std::from_chars(begin,end,out);
     return ec==std::errc{}&&p==end;
 }
-void send_pose(const char* action,std::uint64_t session,std::uint64_t request,const Pose& p){
+void send_pose(const char* action,std::uint64_t session,std::uint64_t request,
+               const Pose& p,const PersistentWorld& world){
     std::cout<<action<<"|1|"<<session<<'|'<<request<<'|'<<p.sequence<<'|'
-             <<p.x_mm<<'|'<<p.y_mm<<'|'<<p.z_mm<<'|'<<p.world_tick<<'|'
-             <<p.world_generation<<'|'<<p.ship<<'|'<<(p.seated?1:0)<<'|'<<p.seat_sequence<<'\n'<<std::flush;
+             <<p.x_mm<<'|'<<p.y_mm<<'|'<<p.z_mm<<'|'<<world.world().tick()<<'|'
+             <<world.generation()<<'|'<<p.ship<<'|'<<(p.seated?1:0)<<'|'<<p.seat_sequence<<'\n'<<std::flush;
     if(!std::cout)throw std::runtime_error("Godot process read pipe closed");
 }
+
+void send_ship(std::uint64_t session,std::uint64_t req,std::uint64_t command_id,
+               Outcome outcome,const FlightState& f){
+    // Grounded in the ORIGINAL ship Entity, NEVER client-predicted motion.
+    std::cout<<"SHIP|1|"<<session<<'|'<<req<<'|'<<command_id<<'|'
+             <<static_cast<int>(outcome)<<'|'<<f.ship<<'|'<<f.tick<<'|'<<f.generation
+             <<'|'<<f.x<<'|'<<f.y<<'|'<<f.z
+             <<'|'<<f.vx<<'|'<<f.vy<<'|'<<f.vz
+             <<'|'<<f.heading<<'|'<<static_cast<int>(f.dock)<<'\n'<<std::flush;
+    if(!std::cout)throw std::runtime_error("Godot flight observation pipe closed");
+}
+bool flight_action(std::string_view name,PilotControl& out){
+    if(name=="UND")out=PilotControl::Undock;
+    else if(name=="LEFT")out=PilotControl::YawLeft;
+    else if(name=="RIGHT")out=PilotControl::YawRight;
+    else if(name=="FWD")out=PilotControl::Forward;
+    else if(name=="REV")out=PilotControl::Reverse;
+    else if(name=="PORT")out=PilotControl::StrafePort;
+    else if(name=="STAR")out=PilotControl::StrafeStarboard;
+    else if(name=="BRAKE")out=PilotControl::Counterthrust;
+    else return false;
+    return true;
+}
+
 void deny(std::uint64_t id,const char* reason){
     std::cout<<"DENY|1|"<<id<<'|'<<reason<<'\n'<<std::flush;
 }
@@ -65,11 +90,17 @@ int main(int argc,char** argv){
             throw std::runtime_error("player-person bootstrap refused");
         PersistentWorld world(save.string(),std::move(seed));
         InteriorMovement person(save.string(),world);
+        if(world.world().has_pending_cockpit_flight())
+            throw std::runtime_error("Interrupted cockpit flight command pending in original journal; refusing silent replay");
         const std::uint64_t session=new_epoch();
         const std::uint64_t receipt_start=new_epoch();
+        // Reserved signed-positive command ID namespace, unique per child session.
+        const std::uint64_t flight_base=(std::uint64_t{1}<<60) |
+            ((new_epoch()&((std::uint64_t{1}<<60)-1)) & ~((std::uint64_t{1}<<20)-1));
         std::uint64_t latest_request=0,attempts=0;
         const auto frame=person.current(kLocalOwner);
-        send_pose("POSE",session,0,frame);
+        send_pose("POSE",session,0,frame,world);
+        send_ship(session,0,0,Outcome::Applied,person.flight_state(kLocalOwner));
         auto last_move=std::chrono::steady_clock::now()-std::chrono::milliseconds(100);
         std::string line;
         while(std::getline(std::cin,line)){
@@ -79,7 +110,8 @@ int main(int argc,char** argv){
             const auto fields=split(line);
             const bool walking=fields.size()==6&&fields[0]=="MOVE";
             const bool seating=fields.size()==5&&fields[0]=="SEAT";
-            if(!walking&&!seating){deny(0,"malformed");continue;}
+            const bool flying=fields.size()==5&&fields[0]=="FLIGHT";
+            if(!walking&&!seating&&!flying){deny(0,"malformed");continue;}
             std::uint64_t supplied_session=0,req=0,expected=0,desired=0;
             std::int64_t dx=0,dz=0;
             if(!number(fields[1],supplied_session)||!number(fields[2],req)||
@@ -104,6 +136,21 @@ int main(int argc,char** argv){
                 deny(req,"receipt-range");continue;
             }
             const auto previous=person.current(kLocalOwner);
+            if(flying){
+                PilotControl action=PilotControl::Forward;
+                if(req>10000||!flight_action(fields[4],action)){
+                    deny(req,"invalid-flight-action");continue;
+                }
+                if(!previous.seated || expected!=previous.seat_sequence){
+                    deny(req,"not-seated-or-stale-seat");continue;
+                }
+                const auto command_id=flight_base|req;
+                const auto outcome=person.pilot(kLocalOwner,expected,command_id,action);
+                if(!outcome){deny(req,"native-flight-refused");continue;}
+                last_move=now;
+                send_ship(session,req,command_id,*outcome,person.flight_state(kLocalOwner));
+                continue;
+            }
             if(walking&&expected!=previous.sequence){deny(req,"stale-pose");continue;}
             if(seating&&expected!=previous.seat_sequence){deny(req,"stale-seat");continue;}
             if(walking&&!person.move(kLocalOwner,expected,receipt,dx,dz)){
@@ -113,7 +160,7 @@ int main(int argc,char** argv){
                 deny(req,"seat-or-custody");continue;
             }
             last_move=now;
-            send_pose("ACK",session,req,person.current(kLocalOwner));
+            send_pose("ACK",session,req,person.current(kLocalOwner),world);
         }
         return 0; // stdio EOF = OS client disconnected; never invent a command
     }catch(const std::exception& e){

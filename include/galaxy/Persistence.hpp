@@ -1252,6 +1252,13 @@ public:
 
 
 private:
+    // Only friend fp3d::InteriorMovement can reach this path. The original
+    // acceptance and step journals stay separate. The seat revision is checked
+    // under the command acceptance writer lock; the host must immediately
+    // execute or refuse an interrupted pending command on restart.
+    bool submit_cockpit_flight_checked(
+        const Command& command,std::uint64_t expected_seat_sequence,
+        FailPoint fail=FailPoint::None);
     bool submit_with_cell_worker(const Command& command,
                                  const NativeCellWorkerTick* token,
                                  FailPoint fail);
