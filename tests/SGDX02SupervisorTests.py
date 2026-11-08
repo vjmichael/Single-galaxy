@@ -10,6 +10,45 @@ import tempfile
 import time
 
 
+
+def assert_windows_private_acl(path):
+    """Verify real NTFS DACLs, not POSIX mode bits or filename conventions."""
+    import ctypes
+    from ctypes import wintypes
+    advapi = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    advapi.GetNamedSecurityInfoW.argtypes = [
+        wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD,
+        ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
+        ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
+    advapi.GetNamedSecurityInfoW.restype = wintypes.DWORD
+    advapi.ConvertSecurityDescriptorToStringSecurityDescriptorW.argtypes = [
+        ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD,
+        ctypes.POINTER(ctypes.c_wchar_p), ctypes.c_void_p]
+    advapi.ConvertSecurityDescriptorToStringSecurityDescriptorW.restype = wintypes.BOOL
+    kernel.LocalFree.argtypes = [ctypes.c_void_p]
+    kernel.LocalFree.restype = ctypes.c_void_p
+    descriptor = ctypes.c_void_p()
+    rc = advapi.GetNamedSecurityInfoW(
+        str(path), 1, 4, None, None, None, None, ctypes.byref(descriptor))
+    assert rc == 0 and descriptor.value, (str(path), "GetNamedSecurityInfoW", rc)
+    sddl = ctypes.c_wchar_p()
+    try:
+        assert advapi.ConvertSecurityDescriptorToStringSecurityDescriptorW(
+            descriptor, 1, 4, ctypes.byref(sddl), None), str(path)
+        assert sddl.value, str(path)
+        # Protected DACL with SYSTEM and the current user only. Reject
+        # common globally accessible and built-in group access grants.
+        text = sddl.value
+        assert "D:P" in text and ";;;SY)" in text, (str(path), text)
+        for excessive in (";;;WD)", ";;;BU)", ";;;AU)", ";;;BG)", ";;;AN)"):
+            assert excessive not in text, (str(path), text)
+    finally:
+        if sddl.value is not None:
+            kernel.LocalFree(ctypes.cast(sddl, ctypes.c_void_p))
+        kernel.LocalFree(descriptor)
+
+
 def check(supervisor, child):
     with tempfile.TemporaryDirectory(prefix="sgdx02_") as tmp:
         root = pathlib.Path(tmp)
@@ -67,6 +106,11 @@ def check(supervisor, child):
             assert "expected failure" in item["stderr_tail"]
         assert str(save) not in json.dumps(item)
         assert failed.stdout == ""
+        if os.name == "nt":
+            directory = pathlib.Path(str(save) + ".diagnostics")
+            assert_windows_private_acl(directory)
+            for path in directory.glob("process-*.json"):
+                assert_windows_private_acl(path)
 
         crashed, item, _ = run("segv")
         if os.name == "nt":
@@ -89,6 +133,7 @@ def check(supervisor, child):
             assert len(dumps) == 1, "opt-in second-chance dump missing"
             assert dumps[0].read_bytes()[:4] == b"MDMP", "not a Windows minidump"
             assert 32 <= dumps[0].stat().st_size <= 64*1024*1024
+            assert_windows_private_acl(dumps[0])
 
         aborted, item, _ = run("abort")
         assert aborted.returncode != 0
