@@ -131,6 +131,7 @@ function resize() {
 }
 function draw() {
   const state=visualState()||selectedState();if(!state)return;
+  window.GalaxyFirstPersonUI?.update(state);
   const w=canvas.clientWidth,h=canvas.clientHeight;if(!w||!h)return;
   ctx.clearRect(0,0,w,h);
   const gradient=ctx.createRadialGradient(w*.45,h*.4,0,w*.5,h*.5,Math.max(w,h)*.8);
@@ -266,5 +267,6 @@ canvas.addEventListener('wheel',event=>{
 },{passive:false});
 window.addEventListener('resize',resize);
 setScenario('ten',window.GalaxyRecordings?.ten||'');
+window.GalaxyFirstPersonUI=window.GalaxyFirstPerson?.init();
 resize();requestAnimationFrame(animate);
 })();
