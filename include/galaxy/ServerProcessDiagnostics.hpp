@@ -17,6 +17,7 @@ struct ProcessIncident {
     std::string worker_scope;
     std::uint64_t worker_epoch=0;
     std::string reason;
+    std::string detail;
     std::int64_t pid=0;
     int exit_code=-1;
     int signal_number=0;
@@ -75,6 +76,7 @@ inline bool record_process_incident(const std::filesystem::path& save,
             <<",\"worker_scope\":"<<json_string(incident.worker_scope,256)
             <<",\"worker_epoch\":"<<incident.worker_epoch
             <<",\"reason\":"<<json_string(incident.reason,48)
+            <<",\"detail\":"<<json_string(incident.detail,512)
             <<",\"pid\":"<<incident.pid
             <<",\"exit_code\":"<<incident.exit_code
             <<",\"signal\":"<<incident.signal_number
