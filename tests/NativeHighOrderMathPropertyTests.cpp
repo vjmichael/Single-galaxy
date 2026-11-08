@@ -36,6 +36,14 @@ int main(){
     check({std::numeric_limits<std::int64_t>::min(),0},-1);
     check({7,kSectorEdgeMm-100},250);
     check({7,0},-250);
-    std::cout<<"PASS 200004 original high-order galactic axis normalizations "
+    // Regression: quotient=-1 plus carry=1 is a legal net zero sector
+    // move at INT64_MIN; intermediate overflow must not reject it.
+    check({std::numeric_limits<std::int64_t>::min(),kSectorEdgeMm-1},-1);
+    check({std::numeric_limits<std::int64_t>::min(),kSectorEdgeMm-1},-2);
+    check({std::numeric_limits<std::int64_t>::min(),kSectorEdgeMm/2},-1);
+    check({std::numeric_limits<std::int64_t>::min(),1},-1);
+    check({std::numeric_limits<std::int64_t>::min(),kSectorEdgeMm-1},
+          -kSectorEdgeMm+1);
+    std::cout<<"PASS 200009 original high-order galactic axis normalizations "
                 "against independent 128-bit oracle\n";
 }
