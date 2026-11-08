@@ -1991,6 +1991,17 @@ if(BUILD_TESTING)
       $<TARGET_FILE:galaxy_native_cell_hang_worker>
       $<TARGET_FILE:galaxy_native_cell_detached_pipe_worker>
       $<TARGET_FILE:galaxy_native_cell_fork_fence_worker>)
+  # Extended real-process endurance: 4 physical cell lanes x 1000 starts.
+  # Same original worker source and timeout/containment assertions.
+  add_test(NAME galaxy_native_cell_process_long_stress
+    COMMAND galaxy_native_cell_process_stress_tests
+      $<TARGET_FILE:galaxy_native_cell_worker>
+      $<TARGET_FILE:galaxy_native_cell_hang_worker>
+      $<TARGET_FILE:galaxy_native_cell_detached_pipe_worker>
+      $<TARGET_FILE:galaxy_native_cell_fork_fence_worker>
+      1000)
+  set_tests_properties(galaxy_native_cell_process_long_stress
+    PROPERTIES TIMEOUT 120)
 endif()
 
 # SPACE-04C/04D/05B: native high-order coordinates, 3D probes and bounded
