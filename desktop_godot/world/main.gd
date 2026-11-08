@@ -3,11 +3,15 @@ extends Node3D
 ## Godot physics collisions. NOT a replacement writer for native galaxy state.
 
 const PLAYER_SCRIPT := preload("res://world/player_controller.gd")
+const NATIVE_SESSION := preload("res://world/native_session.gd")
 const MONOCHROME := Color(0.76, 0.76, 0.76, 1.0)
 var material: StandardMaterial3D
 var player: CharacterBody3D
 var status_label: Label
 var fps_label: Label
+var native_label: Label
+var native_session
+var native_markers: Node3D
 var _fps_accumulator := 0.0
 
 func _ready() -> void:
@@ -20,6 +24,13 @@ func _ready() -> void:
 	_build_objects()
 	_build_player()
 	_build_hud()
+	# Native world observations are optional. The local character is NOT synchronized.
+	native_markers = Node3D.new()
+	native_markers.name = "NativeReadOnlyContacts_NOT_COLLISIONS"
+	add_child(native_markers)
+	native_session = NATIVE_SESSION.new()
+	native_session.native_snapshot.connect(_on_native_snapshot)
+	native_session.status_changed.connect(_on_native_status)
 
 func _setup_environment() -> void:
 	var env := Environment.new()
@@ -132,8 +143,11 @@ func _build_hud() -> void:
 	subtitle.text = "LOCAL MOVEMENT TEST ONLY — NOT CONNECTED TO NATIVE GALAXY"
 	contents.add_child(subtitle)
 	status_label = Label.new()
-	status_label.text = "WASD walk   Mouse look   Shift sprint   Space jump   E inspect   Esc release mouse"
+	status_label.text = "WASD walk   Mouse look   Shift sprint   Space jump   E inspect   F7 native view   Esc release mouse"
 	contents.add_child(status_label)
+	native_label = Label.new()
+	native_label.text = "NATIVE: offline (F7 read-only C++ feed, if host is installed)"
+	contents.add_child(native_label)
 	fps_label = Label.new()
 	fps_label.position = Vector2(16, 105)
 	fps_label.add_theme_font_size_override("font_size", 15)
@@ -147,7 +161,49 @@ func _build_hud() -> void:
 func _on_inspected(display_name: String) -> void:
 	status_label.text = "Inspected: " + display_name + " (prototype only; no native action)"
 
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F7:
+		native_session.start()
+		get_viewport().set_input_as_handled()
+
+func _on_native_status(message: String) -> void:
+	if is_instance_valid(native_label):
+		native_label.text = "NATIVE: " + message
+
+func _on_native_snapshot(frame: Dictionary) -> void:
+	# Render verified native contacts as NON-COLLIDING visual indicators only.
+	# Native SGVIEW X/Y horizontal millimeters are mapped to viewer X/Z. Y=3 is
+	# explicitly illustrative, NOT an authoritative 3D player or ship altitude.
+	if is_instance_valid(native_label):
+		native_label.text = "NATIVE READ ONLY: tick %d | system %d | ship #%d | %d contacts" % [
+			frame["tick"], frame["system"], frame["ship_id"], frame["contacts"].size()]
+	for child in native_markers.get_children():
+		child.queue_free()
+	for c in frame["contacts"]:
+		var dx := float(c["x_mm"] - frame["x_mm"]) / 1000.0
+		var dz := -float(c["y_mm"] - frame["y_mm"]) / 1000.0
+		if absf(dx) > 120.0 or absf(dz) > 120.0:
+			continue
+		var marker := MeshInstance3D.new()
+		marker.name = "ReadOnlyContact_%d" % c["id"]
+		var primitive := SphereMesh.new()
+		primitive.radius = 0.4 if c["kind"] == 0 else 0.7
+		primitive.height = primitive.radius * 2.0
+		primitive.radial_segments = 6
+		primitive.rings = 2
+		marker.mesh = primitive
+		marker.material_override = material
+		marker.position = Vector3(dx, 3.0, dz)
+		native_markers.add_child(marker)
+
+func _exit_tree() -> void:
+	if native_session != null:
+		native_session.stop("Native client closed")
+
 func _process(delta: float) -> void:
+	if native_session != null:
+		native_session.poll()
+
 	_fps_accumulator += delta
 	if _fps_accumulator >= 0.5 and is_instance_valid(fps_label):
 		fps_label.text = "FPS: %d | Godot physics 60 Hz | primitive monochrome scene" % Engine.get_frames_per_second()
