@@ -2156,3 +2156,11 @@ if(BUILD_TESTING)
       ${CMAKE_CURRENT_BINARY_DIR}/fp3d03b-flight.sqlite)
   set_tests_properties(galaxy_fp3d03b_cockpit_flight PROPERTIES TIMEOUT 90)
 endif()
+
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+  add_test(NAME galaxy_fp3d03b_native_flight_pipe
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/FP3D03B_CockpitPipeTests.py
+      $<TARGET_FILE:galaxy_desktop_player_host>)
+  set_tests_properties(galaxy_fp3d03b_native_flight_pipe PROPERTIES TIMEOUT 90)
+endif()
