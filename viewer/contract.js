@@ -151,11 +151,16 @@
   function validateState(s) {
     if (!s.system || s.entities.size > 100000 || s.mining.size > 100000) throw new Error('Invalid world state');
     for (const [id,e] of s.entities) {
-      if (id <= 0 || e.id !== id || e.system !== s.system || e.entityType < 0 || e.entityType > 3 ||
+      if (id <= 0 || e.id !== id || e.system !== s.system || e.entityType < 0 || e.entityType > 4 ||
           e.ore < 0 || e.cargo < 0 || e.capacity < 0) throw new Error('Invalid entity');
-      if (e.entityType === 0 && (!e.owner || !e.capacity || e.cargo > e.capacity || e.ore !== 0))
-        throw new Error('Invalid ship');
+      // A foreign hull's owner is deliberately masked to 0 by the native
+      // projection. Its cargo must remain private; this grants no pilot authority.
+      if (e.entityType === 0 && (!e.capacity || e.cargo > e.capacity || e.ore !== 0 ||
+          (e.owner === 0 && e.cargo !== 0))) throw new Error('Invalid ship');
       if (e.entityType === 1 && (e.owner || e.cargo || e.capacity)) throw new Error('Invalid asteroid');
+      // Wreck kind 4 is part of the native game and may contain finite salvage.
+      if (e.entityType === 4 && (!e.owner || !e.capacity || e.ore !== 0 ||
+          e.cargo > e.capacity)) throw new Error('Invalid wreck');
       if ((e.entityType === 2 || e.entityType === 3) && ((e.entityType === 3 && e.owner) || e.ore || e.cargo || e.capacity)) throw new Error('Invalid station');
     }
     if (s.docks.size > s.entities.size || s.hangars.size > 100000) throw new Error('Invalid station state size');
