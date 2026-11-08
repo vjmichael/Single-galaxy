@@ -14,10 +14,14 @@ using namespace galaxy::spatial;
 #define CHECK(X) do {if(!(X))throw std::runtime_error( #X );}while(false)
 int main(int argc,char** argv){
     try{
-        CHECK(argc==5);
+        CHECK(argc==5 || argc==6);
         const std::string binary(argv[1]),hung(argv[2]),
                           detached(argv[3]),fork_fence(argv[4]);
-        constexpr int workers=4, rounds=20;
+        // The only extended mode is the audited four-cell 4,000-launch
+        // workload. The ordinary fast native CTest remains at 4x20.
+        constexpr int workers=4;
+        const int rounds=argc==6 ? 1000 : 20;
+        if(argc==6)CHECK(std::string(argv[5])=="1000");
         std::vector<double> elapsed_ms;
         elapsed_ms.reserve(workers*rounds);
         for(int round=0;round<rounds;++round){
