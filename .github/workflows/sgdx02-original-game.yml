@@ -1,0 +1,66 @@
+name: SGDX-02 original game hosts and worker containment
+on:
+  pull_request:
+    paths:
+      - 'src/colony_live_host.cpp'
+      - 'src/interactive_host.cpp'
+      - 'src/server_dx_supervisor.cpp'
+      - 'src/NativeCellProcessRunner.cpp'
+      - 'include/galaxy/SeamlessCellSupervisor.hpp'
+      - 'include/galaxy/Server*.hpp'
+      - 'tests/SGDX*.py'
+      - 'tests/NativeCellProcessStressTests.cpp'
+      - 'CMakeLists.txt'
+      - '.github/workflows/sgdx02-original-game.yml'
+  workflow_dispatch:
+jobs:
+  original-game-sgdx:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Record exact checked out source
+        shell: bash
+        run: |
+          git rev-parse HEAD | tee sgdx02-source-sha.txt
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Configure Linux original game
+        if: runner.os == 'Linux'
+        shell: bash
+        run: cmake -S . -B build/sgdx02-real -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+      - name: Configure Windows original game
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: cmake -S . -B build/sgdx02-real -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+      - name: Build actual original hosts and native workers
+        shell: bash
+        run: |
+          cmake --build build/sgdx02-real --config Release --parallel 2 --target galaxy_colony_live_host galaxy_interactive_host galaxy_native_cell_worker galaxy_server_dx_supervisor galaxy_server_dx_fault_child galaxy_server_diagnostics_tests galaxy_native_cell_process_stress_tests galaxy_native_cell_hang_worker galaxy_native_cell_detached_pipe_worker galaxy_native_cell_fork_fence_worker galaxy_native_galactic_supervisor_tests
+      - name: Run original host and worker SGDX tests
+        shell: bash
+        run: |
+          ctest --test-dir build/sgdx02-real -C Release \
+            -R "^(galaxy_server_diagnostics|galaxy_server_diagnostics_native_hosts|galaxy_server_dx_supervisor|galaxy_server_dx_game_hosts|galaxy_server_dx_sqlite_recovery|galaxy_native_cell_process_stress|galaxy_native_galactic_supervisor)$" \
+            --output-on-failure --timeout 180 \
+            --output-junit build/sgdx02-real/sgdx02-original-junit.xml \
+            2>&1 | tee sgdx02-real-ctest.log
+          test ${PIPESTATUS[0]} -eq 0
+      - name: Retain compiler and CTest evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sgdx02-original-${{ matrix.os }}-${{ github.sha }}
+          path: |
+            sgdx02-source-sha.txt
+            sgdx02-real-ctest.log
+            build/sgdx02-real/sgdx02-original-junit.xml
+            build/sgdx02-real/Testing/Temporary/LastTest.log
+          if-no-files-found: warn
