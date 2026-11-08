@@ -59,6 +59,7 @@ for count in "$jobs" "$test_jobs"; do
 done
 cmake -S "$root" -B "$build_dir" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF \
+  -DSPACE_ENABLE_1024_ENDURANCE=ON \
   2>&1 | tee "$evidence_dir/configure.log"
 cmake --build "$build_dir" --parallel "$jobs" --target galaxy_kernel \
   2>&1 | tee "$evidence_dir/kernel-build.log"
@@ -67,7 +68,24 @@ cmake --build "$build_dir" --parallel "$jobs" \
 ctest --test-dir "$build_dir" -N \
   2>&1 | tee "$evidence_dir/test-inventory.log"
 ctest --test-dir "$build_dir" --parallel "$test_jobs" \
+  -E "^galaxy_native_galactic_supervisor_1024$" \
   --output-on-failure --timeout 180 --output-junit "$evidence_dir/ctest-results.xml" \
   2>&1 | tee "$evidence_dir/ctest.log"
+# SPACE-05J full original-world 1024-tick acceptance is a separate mandatory
+# run with its own longer timeout, JUnit and visible throughput metrics.
+ctest --test-dir "$build_dir" -N -R "^galaxy_native_galactic_supervisor_1024$" \
+  2>&1 | tee "$evidence_dir/1024-test-inventory.log"
+grep -q "Total Tests: 1" "$evidence_dir/1024-test-inventory.log" || {
+  printf "Missing the registered original 1024-tick simulation test.\n" >&2
+  exit 65
+}
+ctest --test-dir "$build_dir" -C Release \
+  -R "^galaxy_native_galactic_supervisor_1024$" \
+  --verbose --timeout 900 --output-junit "$evidence_dir/1024-results.xml" \
+  2>&1 | tee "$evidence_dir/1024-ctest.log"
+grep -q "100% tests passed" "$evidence_dir/1024-ctest.log" || {
+  printf "Native 1024-tick test has no passing acceptance evidence.\n" >&2
+  exit 65
+}
 cp -f "$build_dir/Testing/Temporary/LastTest.log" "$evidence_dir/LastTest.log" || true
 printf 'PASS full native Linux kernel and registered CTest suite at %s\n' "$actual"
