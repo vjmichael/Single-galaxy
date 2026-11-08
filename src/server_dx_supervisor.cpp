@@ -246,11 +246,33 @@ static int run(const Args& args){
         command_line+=quote(widen(token));
     }
     const auto executable=widen(args.command.front());
+    // Preserve the game's original stdout/stdin/stderr stream handles.
+    // Never write SGDX data to the player's SGVIEW stdout channel.
+    const HANDLE source_in=GetStdHandle(STD_INPUT_HANDLE);
+    const HANDLE source_out=GetStdHandle(STD_OUTPUT_HANDLE);
+    const HANDLE source_err=GetStdHandle(STD_ERROR_HANDLE);
+    HANDLE child_in=nullptr,child_out=nullptr,child_err=nullptr;
+    const auto duplicate=[&](HANDLE source,HANDLE& dest){
+        return source && source!=INVALID_HANDLE_VALUE &&
+          DuplicateHandle(GetCurrentProcess(),source,GetCurrentProcess(),&dest,
+                          0,TRUE,DUPLICATE_SAME_ACCESS);
+    };
+    if(!duplicate(source_in,child_in) || !duplicate(source_out,child_out) ||
+       !duplicate(source_err,child_err)){
+        if(child_in)CloseHandle(child_in);
+        if(child_out)CloseHandle(child_out);
+        if(child_err)CloseHandle(child_err);
+        CloseHandle(job);
+        throw std::runtime_error("cannot inherit native game stream handles");
+    }
     STARTUPINFOW si{};si.cb=sizeof(si);
+    si.dwFlags=STARTF_USESTDHANDLES;
+    si.hStdInput=child_in;si.hStdOutput=child_out;si.hStdError=child_err;
     PROCESS_INFORMATION pi{};
     const auto started=Clock::now();
     const BOOL launched=CreateProcessW(executable.c_str(),command_line.data(),
-        nullptr,nullptr,FALSE,CREATE_SUSPENDED,nullptr,nullptr,&si,&pi);
+        nullptr,nullptr,TRUE,CREATE_SUSPENDED,nullptr,nullptr,&si,&pi);
+    CloseHandle(child_in);CloseHandle(child_out);CloseHandle(child_err);
     if(!launched){CloseHandle(job);throw std::runtime_error("CreateProcess failed");}
     if(!AssignProcessToJobObject(job,pi.hProcess)){
         TerminateProcess(pi.hProcess,1);CloseHandle(pi.hThread);CloseHandle(pi.hProcess);
