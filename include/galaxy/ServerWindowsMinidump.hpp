@@ -6,6 +6,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include "galaxy/ServerWindowsPrivate.hpp"
 #include <DbgHelp.h>
 #include <sddl.h>
 #include <aclapi.h>
@@ -15,55 +16,7 @@
 #include <string>
 #include <vector>
 namespace galaxy::server_dx::windows_dump {
-struct ScopedPrivateSecurity {
-    PSECURITY_DESCRIPTOR descriptor=nullptr;
-    ~ScopedPrivateSecurity(){if(descriptor)LocalFree(descriptor);}
-    bool initialize() {
-        HANDLE token=nullptr;
-        if(!OpenProcessToken(GetCurrentProcess(),TOKEN_QUERY,&token))return false;
-        DWORD bytes=0;
-        (void)GetTokenInformation(token,TokenUser,nullptr,0,&bytes);
-        std::vector<unsigned char> user(bytes);
-        const bool obtained=bytes && GetTokenInformation(
-            token,TokenUser,user.data(),bytes,&bytes);
-        CloseHandle(token);
-        if(!obtained)return false;
-        LPWSTR sid=nullptr;
-        if(!ConvertSidToStringSidW(
-            reinterpret_cast<TOKEN_USER*>(user.data())->User.Sid,&sid))return false;
-        const std::wstring sddl=L"D:P(A;;FA;;;SY)(A;;FA;;;" +
-                                 std::wstring(sid)+L")";
-        LocalFree(sid);
-        return ConvertStringSecurityDescriptorToSecurityDescriptorW(
-            sddl.c_str(),SDDL_REVISION_1,&descriptor,nullptr)!=FALSE;
-    }
-    SECURITY_ATTRIBUTES attributes()const {
-        SECURITY_ATTRIBUTES sa{};
-        sa.nLength=sizeof(sa);sa.lpSecurityDescriptor=descriptor;
-        sa.bInheritHandle=FALSE;return sa;
-    }
-    bool protect_directory(const std::wstring& dir) const{
-        // A junction/symlink must never redirect sensitive dumps elsewhere.
-        DWORD attr=GetFileAttributesW(dir.c_str());
-        if(attr==INVALID_FILE_ATTRIBUTES){
-            auto sa=attributes();
-            if(!CreateDirectoryW(dir.c_str(),&sa) &&
-               GetLastError()!=ERROR_ALREADY_EXISTS)return false;
-            attr=GetFileAttributesW(dir.c_str());
-        }
-        if(attr==INVALID_FILE_ATTRIBUTES ||
-           !(attr&FILE_ATTRIBUTE_DIRECTORY) ||
-           (attr&FILE_ATTRIBUTE_REPARSE_POINT))return false;
-        BOOL present=FALSE,defaulted=FALSE;
-        PACL dacl=nullptr;
-        if(!GetSecurityDescriptorDacl(descriptor,&present,&dacl,&defaulted) ||
-           !present || !dacl)return false;
-        return SetNamedSecurityInfoW(const_cast<LPWSTR>(dir.c_str()),
-            SE_FILE_OBJECT,DACL_SECURITY_INFORMATION|
-            PROTECTED_DACL_SECURITY_INFORMATION,
-            nullptr,nullptr,dacl,nullptr)==ERROR_SUCCESS;
-    }
-};
+using ScopedPrivateSecurity=galaxy::server_dx::windows_private::ScopedSecurity;
 inline bool capture_second_chance(
     const std::filesystem::path& save,
     const PROCESS_INFORMATION& process,
