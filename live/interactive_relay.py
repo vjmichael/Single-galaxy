@@ -900,7 +900,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             elif action=='colonySecurityAgencyEstablish' and set(doc)=={
                     'token','action'}:
                 command='SECURITY_AGENCY_ESTABLISH'
-            elif action=='colonySecurityAgencyRefer','colonySecurityAgencyInvestigate' and set(doc)=={
+            elif action=='colonySecurityAgencyRefer' and set(doc)=={
                     'token','action','complaint'}:
                 complaint=doc['complaint']
                 if type(complaint)!=str or not 1<=len(complaint)<=19 or (
