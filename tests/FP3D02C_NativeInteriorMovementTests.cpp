@@ -66,13 +66,14 @@ int main(int argc,char** argv){
    need(motion.set_seated(7,1,202,false),"atomic cockpit stand");
    need(!motion.current(7).seated&&motion.current(7).seat_sequence==2,"stand receipt accepted");
    need(count(save,"SELECT COUNT(*) FROM sg_fp3d03a_seat_event")==2,"two immutable seat receipts");
+   const auto baseline_generation=world.generation(),baseline_tick=world.world().tick();
    const auto baseline=count(save,"SELECT COUNT(*) FROM operation_log");
    bool fault1=false;
    try{(void)motion.move(7,0,100,80,0,MoveFailPoint::AfterStepReceipt);}
    catch(const std::exception& e){fault1=std::string(e.what()).find("injected crash")!=std::string::npos;}
    need(fault1,"receipt fault injected");
-   need(motion.current(7).sequence==0 && world.generation()==start_gen &&
-        world.world().tick()==start_tick && count(save,"SELECT COUNT(*) FROM operation_log")==baseline,
+   need(motion.current(7).sequence==0 && world.generation()==baseline_generation &&
+        world.world().tick()==baseline_tick && count(save,"SELECT COUNT(*) FROM operation_log")==baseline,
         "receipt injection MUST rollback operation log + world + pose atomically");
    need(motion.move(7,0,100,80,0),"atomic first movement");
    auto a=motion.current(7);
