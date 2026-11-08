@@ -9,6 +9,8 @@ def connected(path):
                        stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,bufsize=1)
     initial=p.stdout.readline().strip().split('|')
     assert len(initial)==13 and initial[:2]==['POSE','1'], initial
+    ship=p.stdout.readline().strip().split('|')
+    assert len(ship)==17 and ship[:3]==['SHIP','1',initial[2]] and ship[3:5]==['0','0'] and ship[6]==initial[10],ship
     return p,int(initial[2]),int(initial[4]),tuple(map(int,initial[5:8]))
 
 def query(p,line):
