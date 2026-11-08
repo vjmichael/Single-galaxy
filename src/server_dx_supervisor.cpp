@@ -13,6 +13,7 @@
 #ifdef _WIN32
 #define NOMINMAX
 #include <windows.h>
+#include "galaxy/ServerWindowsMinidump.hpp"
 #else
 #include <cerrno>
 #include <charconv>
@@ -33,7 +34,7 @@ using Clock=std::chrono::steady_clock;
 struct Args {
     std::string save,role,build_sha;
     int timeout_ms=60000;
-    bool record_clean=false,allow_core=false;
+    bool record_clean=false,allow_core=false,windows_minidump=false;
     std::vector<std::string> command;
 };
 static Args parse(int argc,char** argv){
@@ -56,6 +57,7 @@ static Args parse(int argc,char** argv){
             }
         }else if(arg=="--record-clean")a.record_clean=true;
         else if(arg=="--allow-core")a.allow_core=true;
+        else if(arg=="--windows-minidump")a.windows_minidump=true;
         else throw std::invalid_argument("invalid supervisor option");
     }
     for(;i<argc;++i)a.command.emplace_back(argv[i]);
@@ -69,6 +71,8 @@ static Args parse(int argc,char** argv){
     }
     #ifdef _WIN32
     if(a.allow_core)throw std::invalid_argument("OS core collection is Linux-only");
+    #else
+    if(a.windows_minidump)throw std::invalid_argument("Windows minidumps require Windows");
     #endif
     for(const char c:a.role)
         if(!((c>='a'&&c<='z')||(c>='A'&&c<='Z')||
@@ -282,17 +286,77 @@ static int run(const Args& args){
     PROCESS_INFORMATION pi{};
     const auto started=Clock::now();
     const BOOL launched=CreateProcessW(executable.c_str(),command_line.data(),
-        nullptr,nullptr,TRUE,CREATE_SUSPENDED,nullptr,nullptr,&si,&pi);
+        nullptr,nullptr,TRUE,CREATE_SUSPENDED |
+          (args.windows_minidump?DEBUG_ONLY_THIS_PROCESS:0),nullptr,nullptr,&si,&pi);
     CloseHandle(child_in);CloseHandle(child_out);CloseHandle(child_err);
     if(!launched){CloseHandle(job);throw std::runtime_error("CreateProcess failed");}
     if(!AssignProcessToJobObject(job,pi.hProcess)){
         TerminateProcess(pi.hProcess,1);CloseHandle(pi.hThread);CloseHandle(pi.hProcess);
         CloseHandle(job);throw std::runtime_error("Job Object assignment failed");
     }
-    ResumeThread(pi.hThread);
-    const DWORD outcome=WaitForSingleObject(pi.hProcess,static_cast<DWORD>(args.timeout_ms));
-    if(outcome==WAIT_TIMEOUT)TerminateJobObject(job,124);
-    if(outcome!=WAIT_OBJECT_0 && outcome!=WAIT_TIMEOUT)TerminateJobObject(job,1);
+    if(ResumeThread(pi.hThread)==static_cast<DWORD>(-1)){
+        TerminateJobObject(job,1);
+        WaitForSingleObject(pi.hProcess,INFINITE);
+        CloseHandle(pi.hThread);CloseHandle(pi.hProcess);CloseHandle(job);
+        throw std::runtime_error("could not resume supervised game");
+    }
+    bool timed_out=false,crashed=false,dump_written=false;
+    std::wstring dump_name;
+    DWORD outcome=WAIT_OBJECT_0;
+    if(args.windows_minidump){
+        // Debug the DIRECT game process only. Its descendants remain in the
+        // kill-on-close Job Object, not a substitute for game authorization.
+        // A second-chance EXCEPTION_DEBUG_EVENT occurs BEFORE the OS kills
+        // an unhandled crashing process. Capture it while the thread is held.
+        bool exited=false;
+        auto stop_at=started+std::chrono::milliseconds(args.timeout_ms);
+        while(!exited){
+            DEBUG_EVENT event{};
+            if(WaitForDebugEvent(&event,50)){
+                DWORD reply=DBG_CONTINUE;
+                if(event.dwDebugEventCode==CREATE_PROCESS_DEBUG_EVENT &&
+                   event.u.CreateProcessInfo.hFile)
+                    CloseHandle(event.u.CreateProcessInfo.hFile);
+                if(event.dwDebugEventCode==LOAD_DLL_DEBUG_EVENT &&
+                   event.u.LoadDll.hFile)
+                    CloseHandle(event.u.LoadDll.hFile);
+                if(event.dwDebugEventCode==EXCEPTION_DEBUG_EVENT){
+                    const auto code=event.u.Exception.ExceptionRecord.ExceptionCode;
+                    if(event.u.Exception.dwFirstChance){
+                        // Never swallow real C++/SEH errors. The Windows loader
+                        // uses an initial breakpoint to initialize a debugger.
+                        reply=code==EXCEPTION_BREAKPOINT?DBG_CONTINUE:
+                                                   DBG_EXCEPTION_NOT_HANDLED;
+                    }else {
+                        crashed=true;reply=DBG_EXCEPTION_NOT_HANDLED;
+                        if(!dump_written)
+                            dump_written=dx::windows_dump::capture_second_chance(
+                                args.save,pi,event,dump_name);
+                    }
+                }
+                if(event.dwDebugEventCode==EXIT_PROCESS_DEBUG_EVENT)
+                    exited=true;
+                if(!ContinueDebugEvent(event.dwProcessId,event.dwThreadId,reply)){
+                    TerminateJobObject(job,1);
+                    break;
+                }
+            }else if(GetLastError()!=ERROR_SEM_TIMEOUT){
+                TerminateJobObject(job,1);
+                break;
+            }
+            if(!timed_out && Clock::now()>=stop_at && !exited){
+                timed_out=true;outcome=WAIT_TIMEOUT;
+                TerminateJobObject(job,124);
+                stop_at=Clock::now()+std::chrono::seconds(3);
+            }
+            if(timed_out && Clock::now()>=stop_at)break;
+        }
+    }else{
+        outcome=WaitForSingleObject(pi.hProcess,static_cast<DWORD>(args.timeout_ms));
+        if(outcome==WAIT_TIMEOUT){timed_out=true;TerminateJobObject(job,124);}
+        if(outcome!=WAIT_OBJECT_0 && outcome!=WAIT_TIMEOUT)
+            TerminateJobObject(job,1);
+    }
     WaitForSingleObject(pi.hProcess,INFINITE);
     DWORD status=1;GetExitCodeProcess(pi.hProcess,&status);
     dx::ProcessIncident incident;
@@ -300,7 +364,12 @@ static int run(const Args& args){
     incident.pid=static_cast<std::int64_t>(pi.dwProcessId);
     incident.elapsed_ms=elapsed_ms(started);
     incident.exit_code=static_cast<int>(status);
-    incident.reason=outcome==WAIT_TIMEOUT?"timeout":status==0?"clean_exit":"nonzero_exit";
+    incident.reason=timed_out?"timeout":crashed?"unhandled_exception":
+                  status==0?"clean_exit":"nonzero_exit";
+    if(args.windows_minidump)
+        incident.detail=crashed?
+            (dump_written?"crash-time minidump recorded":"crash-time minidump unavailable"):
+            "no second-chance exception observed";
     CloseHandle(pi.hThread);CloseHandle(pi.hProcess);CloseHandle(job);
     if(incident.exit_code!=0 || args.record_clean)
         if(!dx::record_process_incident(args.save,incident))
