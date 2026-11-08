@@ -41,10 +41,11 @@ template<class T>bool number(std::string_view s,T& out){
     auto [p,ec]=std::from_chars(begin,end,out);
     return ec==std::errc{}&&p==end;
 }
-void send_pose(const char* action,std::uint64_t session,std::uint64_t request,const Pose& p){
+void send_pose(const char* action,std::uint64_t session,std::uint64_t request,
+               const Pose& p,const PersistentWorld& world){
     std::cout<<action<<"|1|"<<session<<'|'<<request<<'|'<<p.sequence<<'|'
-             <<p.x_mm<<'|'<<p.y_mm<<'|'<<p.z_mm<<'|'<<p.world_tick<<'|'
-             <<p.world_generation<<'|'<<p.ship<<'|'<<(p.seated?1:0)<<'|'<<p.seat_sequence<<'\n'<<std::flush;
+             <<p.x_mm<<'|'<<p.y_mm<<'|'<<p.z_mm<<'|'<<world.world().tick()<<'|'
+             <<world.generation()<<'|'<<p.ship<<'|'<<(p.seated?1:0)<<'|'<<p.seat_sequence<<'\n'<<std::flush;
     if(!std::cout)throw std::runtime_error("Godot process read pipe closed");
 }
 void deny(std::uint64_t id,const char* reason){
@@ -69,7 +70,7 @@ int main(int argc,char** argv){
         const std::uint64_t receipt_start=new_epoch();
         std::uint64_t latest_request=0,attempts=0;
         const auto frame=person.current(kLocalOwner);
-        send_pose("POSE",session,0,frame);
+        send_pose("POSE",session,0,frame,world);
         auto last_move=std::chrono::steady_clock::now()-std::chrono::milliseconds(100);
         std::string line;
         while(std::getline(std::cin,line)){
@@ -113,7 +114,7 @@ int main(int argc,char** argv){
                 deny(req,"seat-or-custody");continue;
             }
             last_move=now;
-            send_pose("ACK",session,req,person.current(kLocalOwner));
+            send_pose("ACK",session,req,person.current(kLocalOwner),world);
         }
         return 0; // stdio EOF = OS client disconnected; never invent a command
     }catch(const std::exception& e){
