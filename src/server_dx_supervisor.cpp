@@ -64,6 +64,9 @@ static Args parse(int argc,char** argv){
             if(!((c>='0'&&c<='9')||(c>='a'&&c<='f')||(c>='A'&&c<='F')))
                 throw std::invalid_argument("build SHA must be hexadecimal");
     }
+    #ifdef _WIN32
+    if(a.allow_core)throw std::invalid_argument("OS core collection is Linux-only");
+    #endif
     for(const char c:a.role)
         if(!((c>='a'&&c<='z')||(c>='A'&&c<='Z')||
              (c>='0'&&c<='9')||c=='_'||c=='-'))
