@@ -4,6 +4,7 @@
 #include "galaxy/ClientContract.hpp"
 #include "galaxy/Persistence.hpp"
 #include "galaxy/ServerDiagnostics.hpp"
+#include "galaxy/ServerBreadcrumb.hpp"
 #include "galaxy/Navigation.hpp"
 #include "galaxy/Galaxy.hpp"
 #include "galaxy/Region.hpp"
@@ -209,6 +210,7 @@ int main(int argc,char** argv) {
         }
         PersistentWorld world(save.string(),std::move(initial));
         diagnostic_progress={world.world().tick(),world.generation(),"startup"};
+        server_dx::committed_breadcrumb(world.world().tick(),world.generation());
         // Hidden catalog sites stay server-side; ordinary SGVIEW only sends local real entities.
         const GalaxyMap& survey_map=region.map;
         SurveySensors probes(survey_map);
@@ -441,6 +443,7 @@ int main(int argc,char** argv) {
             diagnostic_progress.phase="world_step";
             world.step();  // SQLite commit before publishing effects to subscribers.
             diagnostic_progress={world.world().tick(),world.generation(),"post_commit"};
+            server_dx::committed_breadcrumb(world.world().tick(),world.generation());
             for(const auto& [from,to,online]:qa_gate_changes) {
                 const auto* a=world.world().find(region.gate(from,to));
                 const auto* b=world.world().find(region.gate(to,from));
