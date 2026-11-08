@@ -9,6 +9,8 @@
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <set>
 #include <vector>
@@ -413,6 +415,34 @@ static void multi_cell_supervision(const fs::path& root,
     denied([&]{stalled.run_next_tick("hung-workers");});
     CHECK(stalled.last_failed_cells().size()==2 &&
           w.generation()==baseline);
+    // SGDX-02 original-world integration: two REAL denied native workers
+    // must produce two separate private records, never game-state changes.
+    const fs::path diagnostic_dir=db+".diagnostics";
+    CHECK(fs::is_directory(diagnostic_dir));
+    std::size_t dx_failures=0;
+    std::set<std::string> reported_cells;
+    for(const auto& entry:fs::directory_iterator(diagnostic_dir)){
+        if(!entry.is_regular_file() ||
+           entry.path().filename().string().rfind("process-",0)!=0 ||
+           entry.path().extension()!=".json")continue;
+        std::ifstream evidence(entry.path(),std::ios::binary);
+        CHECK(evidence.good());
+        const std::string record((std::istreambuf_iterator<char>(evidence)),
+                                 std::istreambuf_iterator<char>());
+        CHECK(record.find("\"schema\":\"SGDX-02\"")!=std::string::npos &&
+              record.find("\"kind\":\"worker_failure\"")!=std::string::npos &&
+              record.find("\"role\":\"native_cell_worker\"")!=std::string::npos &&
+              record.find("\"reason\":\"preflight_failed\"")!=std::string::npos &&
+              record.find("\"last_world_generation\":"+
+                          std::to_string(baseline))!=std::string::npos);
+        if(record.find(spatial::scope(*cell1))!=std::string::npos)
+            reported_cells.insert(spatial::scope(*cell1));
+        if(record.find(spatial::scope(*cell2))!=std::string::npos)
+            reported_cells.insert(spatial::scope(*cell2));
+        ++dx_failures;
+    }
+    CHECK(dx_failures==2 && reported_cells.size()==2);
+    CHECK(w.generation()==baseline); // DX never becomes another writer
     spatial::NativeMultiCellSupervisor supervisor(db,w);
     supervisor.register_worker(l1);supervisor.register_worker(l2);
     supervisor.use_native_process_workers(worker_binary);
