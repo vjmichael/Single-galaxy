@@ -22,22 +22,24 @@ class InteriorMovement {
 public:
     // Must be called by the trusted *same-process host* holding the original
     // verified PersistentWorld. No browser or Godot writes SQLite directly.
-    InteriorMovement(const std::string& sqlite_path,const PersistentWorld& world);
+    InteriorMovement(const std::string& sqlite_path,PersistentWorld& world);
     ~InteriorMovement();
     InteriorMovement(const InteriorMovement&)=delete;
     InteriorMovement& operator=(const InteriorMovement&)=delete;
     // Creates the origin record only when the original native persona is
     // registered, aboard their OWN original hull, and the snapshot is current.
     Pose current(PlayerId trusted_owner);
-    // One <=100mm planar step per actual native simulation tick. Expected
-    // sequence and unique receipt prevent replay and buffered command floods.
+    // Atomic path: one <=100mm planar input step advances one authoritative world tick
+    // and writes movement pose/receipt in the SAME SQLite BEGIN IMMEDIATE/COMMIT
+    // as operation_log STEP and canonical snapshot. No second SQLite writer.
+    // Expected sequence and unique receipt prevent replay and command floods.
     // Input direction is constrained by world geometry; no diagonal speed gain.
     bool move(PlayerId trusted_owner,std::uint64_t expected_sequence,
               std::uint64_t receipt_id,std::int64_t dx_mm,std::int64_t dz_mm,
               MoveFailPoint fault=MoveFailPoint::None);
 private:
     sqlite3* db_=nullptr;
-    const PersistentWorld& world_;
+    PersistentWorld& world_;
     bool valid_person(PlayerId owner,EntityId ship)const;
     void verify_world_generation()const;
     // Each movement must be bound to a real committed native kind=2 STEP,
