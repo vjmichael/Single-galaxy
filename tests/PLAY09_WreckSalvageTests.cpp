@@ -2,6 +2,7 @@
 #include <chrono>
 #include <filesystem>
 #include <iostream>
+#include <sqlite3.h>
 #include <stdexcept>
 #include <string>
 using namespace galaxy;
@@ -34,7 +35,12 @@ int main(){
    CHECK(seed.total_ore()==12);
    PersistentWorld w(db,std::move(seed));
    CHECK(run(w,cmd(w,1,ship,drone,Action::SalvageWreck,6))==Outcome::InvalidTarget);
+   // Real native weapons have a 2-tick firing cooldown. Command IDs are
+   // not elapsed world ticks; do not submit three shots in consecutive ticks.
+   bool first_shot=true;
    for(auto id:{2ULL,4ULL,6ULL}){
+    if(!first_shot)w.step();
+    first_shot=false;
     CHECK(run(w,cmd(w,id,ship,drone,Action::FireTrainingWeapon))==Outcome::Applied);
    }
    CHECK(w.world().find(drone)->type==EntityType::Wreck);
@@ -69,6 +75,21 @@ int main(){
    CHECK(w.world().find(farDrone)->cargo==6);
    CHECK(w.world().total_ore()==12);
   }
+  // Independently corrupt the durable salvage endpoint without modifying the
+  // original snapshot. Recovery must refuse the forged material destination.
+  sqlite3* tamper=nullptr;
+  CHECK(sqlite3_open(recovered.c_str(),&tamper)==SQLITE_OK);
+  const int altered=sqlite3_exec(tamper,
+    "UPDATE resource_ledger SET destination_id='forged-ship:9999' "
+    "WHERE reason='wreck_salvage_transfer' AND command_id='9'",
+    nullptr,nullptr,nullptr);
+  const int changed=sqlite3_changes(tamper);
+  sqlite3_close(tamper);
+  CHECK(altered==SQLITE_OK && changed==1);
+  bool refused_forgery=false;
+  try {PersistentWorld forged(recovered,Simulation(99));(void)forged;}
+  catch(const std::exception&){refused_forgery=true;}
+  CHECK(refused_forgery);
   fs::remove_all(dir);
   std::cout<<"PASS PLAY-09 conserved, authorized, persistent wreck material recovery\n";
   return 0;
