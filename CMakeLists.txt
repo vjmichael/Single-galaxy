@@ -2035,3 +2035,31 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
   set_tests_properties(galaxy_server_diagnostics_native_hosts
     PROPERTIES TIMEOUT 40)
 endif()
+
+# SGDX-02: independent native host/worker supervisor. It never links to or
+# mutates the authoritative game kernel; game stdout is forwarded unchanged.
+add_executable(galaxy_server_dx_supervisor src/server_dx_supervisor.cpp)
+target_include_directories(galaxy_server_dx_supervisor PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/include)
+if(BUILD_TESTING)
+  add_executable(galaxy_server_dx_fault_child tests/ServerDx02FaultChild.cpp)
+  target_include_directories(galaxy_server_dx_fault_child PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(galaxy_server_dx_fault_child PRIVATE Threads::Threads)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME galaxy_server_dx_supervisor
+      COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/SGDX02SupervisorTests.py
+        $<TARGET_FILE:galaxy_server_dx_supervisor>
+        $<TARGET_FILE:galaxy_server_dx_fault_child>)
+    set_tests_properties(galaxy_server_dx_supervisor PROPERTIES TIMEOUT 120)
+    add_test(NAME galaxy_server_dx_game_hosts
+      COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/SGDX02GameHostTests.py
+        $<TARGET_FILE:galaxy_server_dx_supervisor>
+        $<TARGET_FILE:galaxy_colony_live_host>
+        $<TARGET_FILE:galaxy_interactive_host>
+        $<TARGET_FILE:galaxy_native_cell_worker>)
+    set_tests_properties(galaxy_server_dx_game_hosts PROPERTIES TIMEOUT 240)
+  endif()
+endif()
