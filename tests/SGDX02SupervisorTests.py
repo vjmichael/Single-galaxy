@@ -17,7 +17,7 @@ def check(supervisor, child):
 
         def run(mode, *, timeout_ms=3000, record_clean=False, allow_core=False):
             args = [supervisor, "--save", str(save), "--role", "game_host",
-                    "--timeout-ms", str(timeout_ms)]
+                    "--build-sha", "f" * 40, "--timeout-ms", str(timeout_ms)]
             if record_clean:
                 args.append("--record-clean")
             if allow_core:
@@ -36,6 +36,7 @@ def check(supervisor, child):
         failed, item, _ = run("error")
         assert failed.returncode == 7 and item["exit_code"] == 7
         assert item["reason"] == "nonzero_exit"
+        assert item["build_sha"] == "f" * 40
         assert item["last_committed_tick"] == 18
         assert item["last_world_generation"] == 20
         assert item["breadcrumb_count"] == 2
