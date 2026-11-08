@@ -46,7 +46,8 @@ int main(int argc,char** argv){
             }
             for(auto& job:pending)elapsed_ms.push_back(job.get());
         }
-        CHECK(elapsed_ms.size()==workers*rounds);
+        CHECK(elapsed_ms.size()==static_cast<std::size_t>(workers)*
+                                 static_cast<std::size_t>(rounds));
         const auto total=std::accumulate(elapsed_ms.begin(),elapsed_ms.end(),0.0);
         std::sort(elapsed_ms.begin(),elapsed_ms.end());
         CHECK(elapsed_ms.front()>0 && elapsed_ms.back()<2000);
