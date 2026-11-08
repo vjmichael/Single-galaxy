@@ -317,6 +317,7 @@ static void cross_system_ship_destruction_custody(){
     Simulation world(4817);
     world.add_system(2);
     const auto attacker=world.add_colony_ship(7,{0,0},100,4);
+    world.provision_colony_genesis(attacker,1000,1000,1000,1000,1000);
     const auto near_drone=world.add_training_drone({2000,0});
     const auto remote_drone=world.add_training_drone({250000,0});
     world.enable_native_3d_physics();
@@ -328,6 +329,32 @@ static void cross_system_ship_destruction_custody(){
     const auto foreign_rock=world.add_asteroid_in_system(2,{-750,0},12);
     CHECK(world.same_local_frame(attacker,foreign_rock));
     CHECK(world.find(attacker)->system_id!=world.find(foreign_rock)->system_id);
+    // Physically cross an actual fold-gate: the attacker is now filed under
+    // star TWO while the nearby drone is still filed under star ONE. Their
+    // absolute 3D separation is within normal weapon range.
+    const auto passage=world.add_gate(1,{0,0},2,{0,0});
+    CHECK(world.submit(command(62000,attacker,world.tick()+1,
+                               Action::RequestJump,passage)));
+    world.step();
+    CHECK(world.events().back().result==Outcome::Applied);
+    bool completed_jump=false;
+    for(int i=0;i<100;++i){
+        const auto* vessel=world.find(attacker);
+        if(vessel->system_id==2 && vessel->jump_state==ShipJumpState::Ready){
+            completed_jump=true;break;
+        }
+        world.step();
+    }
+    CHECK(completed_jump);
+    CHECK(world.find(attacker)->system_id==2 &&
+          world.find(near_drone)->system_id==1 &&
+          world.same_local_frame(attacker,near_drone));
+    const auto separation=galactic::nearby_displacement(
+        world.find(attacker)->physical_galactic,
+        world.find(near_drone)->physical_galactic);
+    CHECK(separation && std::llabs(separation->x_mm)<12000 &&
+          std::llabs(separation->y_mm)<12000 &&
+          std::llabs(separation->z_mm)<12000);
     const auto ore=world.total_ore(),entities=world.entities().size();
     const auto npcs=world.npc_records().size();
     const auto id_before=world.find(near_drone)->id;
