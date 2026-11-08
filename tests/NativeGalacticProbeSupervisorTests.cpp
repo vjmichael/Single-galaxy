@@ -185,7 +185,7 @@ static void cross_system_physical_contact(){
     // different stars. Distant targets still fail real native range checks.
     Simulation physical(4812);
     physical.add_system(2);
-    const auto ship=physical.add_ship(7,{0,0},100);
+    const auto ship=physical.add_colony_ship(7,{0,0},100,4);
     physical.add_asteroid({400000,0},9);
     physical.enable_native_3d_physics();
     const galactic::Point star1{{0,1000000},{0,1000000},{0,1000000}};
@@ -202,8 +202,19 @@ static void cross_system_physical_contact(){
     // even when a physically adjacent station has another catalogue label.
     CHECK(assist_to_object(*physical.find(ship),*physical.find(station),0).arrived);
     CHECK(!assist_to_object(*physical.find(ship),*physical.find(remote),0).arrived);
-    CHECK(physical.mine_status(*physical.find(ship),rock)==Outcome::Applied);
-    CHECK(physical.mine_status(*physical.find(ship),remote)==Outcome::OutOfRange);
+    // Exercise the public original command path; mine_status is intentionally
+    // private and cannot be called by a native integration test.
+    const auto mining_outcome=[&](EntityId target,std::uint64_t id){
+        auto isolated=Simulation::from_snapshot(physical.canonical_state());
+        CHECK(isolated.submit(command(id,ship,isolated.tick()+1,
+            Action::Mine,target,0,0,1)));
+        isolated.step();
+        CHECK(!isolated.events().empty());
+        CHECK(isolated.events().back().command_id==id);
+        return isolated.events().back().result;
+    };
+    CHECK(mining_outcome(rock,50040)==Outcome::Applied);
+    CHECK(mining_outcome(remote,50041)==Outcome::OutOfRange);
     CHECK(spatial::touching(
         spatial::Cell{1,0,0,0,true,0,0,0},
         spatial::Cell{2,1,0,0,true,0,0,0}));
@@ -225,7 +236,7 @@ static void cross_system_physical_contact(){
     // The same physical crossing applies to fold-gate admission.
     Simulation jumping(4813);
     jumping.add_system(2);
-    const auto jumper=jumping.add_ship(7,{0,0},100);
+    const auto jumper=jumping.add_colony_ship(7,{0,0},100,4);
     jumping.enable_native_3d_physics();
     jumping.enable_native_galactic_physics({{1,star1},{2,star2}});
     const auto gate2=jumping.add_gate(2,{-750,0},1,{1000,0});
@@ -328,7 +339,7 @@ static void cross_system_outpost_genesis(){
     const auto original_ore=blocked.total_ore();
     const auto original_crew=blocked.colony_ship(ship)->crew;
     CHECK(blocked.submit(command(61004,ship,blocked.tick()+1,
-        Action::ConstructOutpost)));
+        Action::ConstructOutpost,0,0,0,1)));
     blocked.step();
     CHECK(blocked.events().back().result==Outcome::InvalidTarget);
     CHECK(blocked.built_outposts().empty() &&
@@ -344,7 +355,7 @@ static void cross_system_outpost_genesis(){
     const auto exact=galactic::advance(ship_location,{1000,0,0});
     CHECK(exact && exact->x.sector==56 && exact->x.millimeters==500);
     CHECK(built.submit(command(61005,ship,built.tick()+1,
-        Action::ConstructOutpost)));
+        Action::ConstructOutpost,0,0,0,1)));
     built.step();
     CHECK(built.events().back().result==Outcome::Applied);
     CHECK(built.built_outposts().size()==1);
@@ -406,11 +417,12 @@ static void multi_cell_supervision(const fs::path& root,
     supervisor.use_native_process_workers(worker_binary);
     CHECK(supervisor.worker_count()==2);
     // Command admission is also globally leased, not merely the tick path.
-    // An unauthorized command cannot strand a speculative writer claim.
+    // An invalid stale command cannot strand a speculative writer claim.
     const auto unmodified=w.generation();
+    auto stale_command=command(8001,ship2,w.world().tick(),
+                               Action::Thrust,0,0,0,1);
     CHECK(!supervisor.submit_original_command(
-        command(8001,ship2,w.world().tick()+1,Action::Thrust,0,0,0,1),
-        "rejected-command"));
+        stale_command,"rejected-command"));
     CHECK(w.generation()==unmodified &&
           !w.world().has_command_id(8001));
     CHECK(supervisor.submit_original_command(
