@@ -309,6 +309,7 @@ static int run(const Args& args){
         // A second-chance EXCEPTION_DEBUG_EVENT occurs BEFORE the OS kills
         // an unhandled crashing process. Capture it while the thread is held.
         bool exited=false;
+        bool initial_debug_breakpoint=false;
         auto stop_at=started+std::chrono::milliseconds(args.timeout_ms);
         while(!exited){
             DEBUG_EVENT event{};
@@ -325,8 +326,10 @@ static int run(const Args& args){
                     if(event.u.Exception.dwFirstChance){
                         // Never swallow real C++/SEH errors. The Windows loader
                         // uses an initial breakpoint to initialize a debugger.
-                        reply=code==EXCEPTION_BREAKPOINT?DBG_CONTINUE:
-                                                   DBG_EXCEPTION_NOT_HANDLED;
+                        if(code==EXCEPTION_BREAKPOINT && !initial_debug_breakpoint){
+                            initial_debug_breakpoint=true;
+                            reply=DBG_CONTINUE;
+                        }else reply=DBG_EXCEPTION_NOT_HANDLED;
                     }else {
                         crashed=true;reply=DBG_EXCEPTION_NOT_HANDLED;
                         if(!dump_written)
