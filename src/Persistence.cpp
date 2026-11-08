@@ -20,6 +20,7 @@
 
 #include <filesystem>
 #include <cerrno>
+#include <cstring>
 #ifdef _WIN32
 #include <io.h>
 #include <fcntl.h>
@@ -740,7 +741,7 @@ public:
         Statement version(db_, "PRAGMA user_version");
         if (!version.row()) throw std::runtime_error("SQLite: no schema version");
         const int v = sqlite3_column_int(version.get(), 0);
-        if (v < 0 || v > 17) throw std::runtime_error("SQLite: incompatible schema version");
+        if (v < 0 || v > 18) throw std::runtime_error("SQLite: incompatible schema version");
         if (v == 0) {
             run(db_, "BEGIN IMMEDIATE");
             try {
@@ -1191,6 +1192,30 @@ public:
                 run(db_,"CREATE TRIGGER npc_fabrication_execution_no_delete BEFORE DELETE ON npc_fabrication_executions "
                     "BEGIN SELECT RAISE(ABORT,'fabrication execution immutable'); END");
                 run(db_,"PRAGMA user_version=17");run(db_,"COMMIT");
+            }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
+        }
+        if(v<=17){
+            // The original world-step operation_log kind=2 cannot contain a
+            // command payload. Native pilot admissions use a separate
+            // append-only companion receipt with original writer provenance.
+            run(db_,"BEGIN IMMEDIATE");
+            try {
+                run(db_,"CREATE TABLE sg_native_npc_commands("
+                    "id TEXT PRIMARY KEY REFERENCES receipts(id),"
+                    "generation INTEGER NOT NULL CHECK(generation>0),"
+                    "command TEXT NOT NULL,"
+                    "pilot TEXT NOT NULL,"
+                    "world_hash TEXT NOT NULL,"
+                    "digest TEXT NOT NULL)");
+                run(db_,"CREATE INDEX sg_native_npc_commands_generation "
+                    "ON sg_native_npc_commands(generation)");
+                run(db_,"CREATE TRIGGER sg_native_npc_commands_no_update "
+                    "BEFORE UPDATE ON sg_native_npc_commands "
+                    "BEGIN SELECT RAISE(ABORT,'native command immutable'); END");
+                run(db_,"CREATE TRIGGER sg_native_npc_commands_no_delete "
+                    "BEFORE DELETE ON sg_native_npc_commands "
+                    "BEGIN SELECT RAISE(ABORT,'native command immutable'); END");
+                run(db_,"PRAGMA user_version=18");run(db_,"COMMIT");
             }catch(...){sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);throw;}
         }
         } catch (...) { sqlite3_close_v2(db_); db_ = nullptr; throw; }
@@ -4070,6 +4095,61 @@ public:
                 const auto c = decode_command(reinterpret_cast<const char*>(raw));
                 if (!journal_commands.emplace(c.id, c).second || !restored.has_command_id(c.id))
                     throw std::runtime_error("SQLite: duplicate/unknown command in operation journal");
+            }
+        }
+        // A native NPC flight command is emitted INSIDE a trusted world tick.
+        // Its separate immutable companion row and normal receipt must agree
+        // with the original step hash, source flight, pilot and command ID.
+        // Historic snapshots may be pruned; a source-bound digest survives.
+        {
+            Statement native(db_,"SELECT id,generation,command,pilot,world_hash,digest "
+                "FROM sg_native_npc_commands ORDER BY generation,id");
+            while(native.row()){
+                const auto id=parse_u64(sqlite3_column_text(native.get(),0));
+                const auto g=sqlite3_column_int64(native.get(),1);
+                if(g<=1 || !restored.has_command_id(id))
+                    throw std::runtime_error("SQLite: invalid original NPC admission row");
+                const auto command=sqlite_str(native.get(),2);
+                const auto c=decode_command(command);
+                const auto pilot=parse_u64(sqlite3_column_text(native.get(),3));
+                const auto world_hash=sqlite_str(native.get(),4);
+                const auto digest=sqlite_str(native.get(),5);
+                constexpr std::uint64_t tag=std::uint64_t{1}<<61;
+                const auto flight_id=(c.id & ~tag)>>9;
+                const auto seq=c.id & 511;
+                if(c.id!=id || !(id & tag) || (id & (std::uint64_t{1}<<62)) ||
+                   !flight_id || flight_id>=(std::uint64_t{1}<<40) || !seq ||
+                   id!=(tag|(flight_id<<9)|seq) || c.sequence!=id ||
+                   (c.action!=Action::Thrust &&
+                    c.action!=Action::RequestDock &&
+                    c.action!=Action::RequestUndock) || !pilot)
+                    throw std::runtime_error("SQLite: forged native flight identity");
+                const auto signed_body=std::to_string(id)+"|"+
+                    std::to_string(g)+"|"+command+"|"+
+                    std::to_string(pilot)+"|"+world_hash;
+                if(digest!=social_digest("original-npc-flight-v1",signed_body))
+                    throw std::runtime_error("SQLite: native flight immutable provenance altered");
+                Statement source(db_,"SELECT kind,state_hash FROM operation_log "
+                    "WHERE generation=?");
+                source.i64(1,g);
+                if(!source.row() || sqlite3_column_int(source.get(),0)!=2 ||
+                   sqlite_str(source.get(),1)!=world_hash || source.row())
+                    throw std::runtime_error("SQLite: native flight missing original writer step");
+                Statement rec(db_,"SELECT accepted_generation FROM receipts WHERE id=?");
+                rec.text(1,std::to_string(id));
+                if(!rec.row() || sqlite3_column_int64(rec.get(),0)!=g || rec.row())
+                    throw std::runtime_error("SQLite: native flight receipt generation mismatch");
+                const auto flight=restored.npc_flight_orders().find(flight_id);
+                if(flight==restored.npc_flight_orders().end() ||
+                   flight->second.owner!=c.issuer ||
+                   flight->second.ship!=c.actor ||
+                   flight->second.pilot_npc!=pilot ||
+                   (flight->second.mode!=NpcFlightMode::LocalDock &&
+                    flight->second.mode!=NpcFlightMode::LocalRendezvous) ||
+                   flight->second.local_commands<seq)
+                    throw std::runtime_error("SQLite: native flight absent from original crew lineage");
+                if(!journal_commands.emplace(id,c).second)
+                    throw std::runtime_error("SQLite: duplicate autonomous command history");
             }
         }
         // WO2-I: original SQLite accepted-command history proves the exact
@@ -7224,7 +7304,8 @@ public:
                 const NpcMiningAssignment* npc_mining_assignment=nullptr,
                 const NpcFabricationAssignment* npc_fabrication_assignment=nullptr,
                 const std::function<void(sqlite3*,std::uint64_t)>& society_effect={},
-                const NativeCellWorkerTick* cell_worker_token=nullptr) {
+                const NativeCellWorkerTick* cell_worker_token=nullptr,
+                const std::vector<Command>& generated_native_commands={}) {
         if (state.total_ore() != origin || state.total_credits() != credit_origin)
             throw std::runtime_error("resource or credit conservation violation");
         const auto bytes = state.canonical_state();
@@ -7258,6 +7339,51 @@ public:
                 receipt.text(1, std::to_string(accepted->id));
                 receipt.i64(2, static_cast<std::int64_t>(next));
                 receipt.execute();
+            }
+            // An NPC autopilot command is generated only by the trusted
+            // original Simulation step. Accept it in that very SAME SQLite
+            // transaction; execution remains a later verified world tick.
+            constexpr std::uint64_t kNativeFlightTag=std::uint64_t{1}<<61;
+            for(const auto& c:generated_native_commands){
+                const auto flight_id=(c.id & ~kNativeFlightTag)>>9;
+                const auto seq=c.id & 511;
+                const auto flight=state.npc_flight_orders().find(flight_id);
+                if(!(c.id & kNativeFlightTag) || (c.id & (std::uint64_t{1}<<62)) ||
+                   !flight_id || flight_id>=(std::uint64_t{1}<<40) ||
+                   !seq || c.id!=(kNativeFlightTag | (flight_id<<9) | seq) ||
+                   c.sequence!=c.id || c.execute_tick!=state.tick()+1 ||
+                   (c.action!=Action::Thrust &&
+                    c.action!=Action::RequestDock &&
+                    c.action!=Action::RequestUndock) ||
+                   flight==state.npc_flight_orders().end() ||
+                   flight->second.last_local_command!=c.id ||
+                   flight->second.local_commands!=seq ||
+                   flight->second.ship!=c.actor ||
+                   flight->second.owner!=c.issuer ||
+                   (flight->second.mode!=NpcFlightMode::LocalDock &&
+                    flight->second.mode!=NpcFlightMode::LocalRendezvous))
+                    throw std::runtime_error("unauthorized native NPC command receipt");
+                Statement receipt(db_,"INSERT INTO receipts(id,accepted_generation) VALUES(?,?)");
+                receipt.text(1,std::to_string(c.id));
+                receipt.i64(2,static_cast<std::int64_t>(next));
+                receipt.execute();
+                if(sqlite3_changes(db_)!=1)
+                    throw std::runtime_error("native NPC command acceptance not unique");
+                const auto signed_body=std::to_string(c.id)+"|"+
+                    std::to_string(next)+"|"+command_record(c)+"|"+
+                    std::to_string(flight->second.pilot_npc)+"|"+
+                    std::to_string(state.state_hash());
+                Statement provenance(db_,"INSERT INTO sg_native_npc_commands("
+                    "id,generation,command,pilot,world_hash,digest) VALUES(?,?,?,?,?,?)");
+                provenance.text(1,std::to_string(c.id));
+                provenance.i64(2,static_cast<std::int64_t>(next));
+                provenance.text(3,command_record(c));
+                provenance.text(4,std::to_string(flight->second.pilot_npc));
+                provenance.text(5,std::to_string(state.state_hash()));
+                provenance.text(6,social_digest("original-npc-flight-v1",signed_body));
+                provenance.execute();
+                if(sqlite3_changes(db_)!=1)
+                    throw std::runtime_error("native NPC provenance not unique");
             }
             if(npc_mining_assignment){
                 const auto& e=*npc_mining_assignment;
@@ -9353,6 +9479,12 @@ PersistentWorld::PersistentWorld(const std::string& path, Simulation initial_wor
     if (!store_->restore(world_, generation_, resource_origin_, credit_origin_)) {
         if (world_.tick() != 0 || !world_.events().empty() || world_.accepted_command_count() != 0)
             throw std::invalid_argument("initial world must be at tick zero without commands");
+        // Some original genesis worlds receive scanner/probe equipment
+        // (and hence snapshot v64+) before named crew enrollment. Convert
+        // only the already-existing finite crew at first SQLite genesis.
+        if(!world_.npc_next_seen_ && world_.npcs_.empty() &&
+           !world_.colony_ships_.empty())
+            world_.enable_individual_workforce();
         resource_origin_ = world_.total_ore();
         credit_origin_ = world_.total_credits();
         store_->commit(world_, 0, resource_origin_, credit_origin_, nullptr, {}, {}, {}, FailPoint::None);
@@ -12422,6 +12554,10 @@ bool PersistentWorld::submit_as_cell_worker(
 bool PersistentWorld::submit_with_cell_worker(
         const Command& command,const NativeCellWorkerTick* token,
         FailPoint fail) {
+    // This identity space is reserved for host-generated NPC flight commands.
+    // An outside player/worker cannot create the corresponding native receipt.
+    if((command.id & (std::uint64_t{1}<<61)) &&
+       !(command.id & (std::uint64_t{1}<<62)))return false;
     // Physical command actor must already inhabit the worker's genuine
     // original cell. Target range remains owned by original Simulation;
     // a scope string is never a shortcut for player/crew authorization.
@@ -14522,6 +14658,17 @@ void PersistentWorld::step_with_cell_worker(
             throw std::runtime_error("dependent travelers need atomic child custody step");
     }
     next.step();
+    // Capture precisely those new native commands created INSIDE this
+    // simulation tick, not already accepted host/player commands.
+    std::vector<Command> generated_native_commands;
+    if(const auto at=next.commands_.find(next.tick()+1);
+       at!=next.commands_.end()){
+        for(const auto& c:at->second)
+            if(!world_.submitted_ids_.count(c.id) &&
+               (c.id & (std::uint64_t{1}<<61)) &&
+               !(c.id & (std::uint64_t{1}<<62)))
+                generated_native_commands.push_back(c);
+    }
     const std::vector<Event> new_events(next.events().begin() + static_cast<std::ptrdiff_t>(before), next.events().end());
     const std::vector<ActivityEvent> new_activity(
         next.activity_events().begin() + static_cast<std::ptrdiff_t>(before_activity), next.activity_events().end());
@@ -14532,7 +14679,8 @@ void PersistentWorld::step_with_cell_worker(
     // Store::commit is the final admission authority for both worker
     // ticks and EVERY other world mutation, under the original SQLite lock.
     store_->commit(next, generation_, resource_origin_, credit_origin_, nullptr,
-                   new_events, due, new_activity, fail,nullptr,nullptr,{},token);
+                   new_events, due, new_activity, fail,nullptr,nullptr,{},token,
+                   generated_native_commands);
     world_.swap(next);
     ++generation_;
 }
