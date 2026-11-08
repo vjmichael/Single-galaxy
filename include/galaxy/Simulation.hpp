@@ -922,7 +922,9 @@ struct ShipFitting {
 };
 struct Entity {
     EntityId id = 0;
-    std::uint32_t system_id = 1;
+    // Zero is the unassigned genesis-system sentinel consumed by
+    // Simulation::add_entity. Explicit cross-star creation sets a real ID.
+    std::uint32_t system_id = 0;
     EntityType type = EntityType::Ship;
     PlayerId owner_id = 0; // 0 denotes environment-owned object
     Vector2 position{};
