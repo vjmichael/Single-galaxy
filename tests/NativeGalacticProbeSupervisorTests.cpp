@@ -7,6 +7,7 @@
 #include "galaxy/RegionalModeAuthority.hpp"
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <memory>
 #include <set>
@@ -501,7 +502,8 @@ static void multi_cell_supervision(const fs::path& root,
 // failpoint/recovery and repeated supervisor restarts. It must not describe
 // itself as four independent parallel physical simulation writers.
 static void sustained_multi_cell_endurance(const fs::path& root,
-    const std::string& native_worker){
+    const std::string& native_worker, int endurance_ticks){
+    CHECK(endurance_ticks==256 || endurance_ticks==1024);
     const auto db=(root/"endurance.sqlite").string();
     Simulation simulation(77113);
     std::vector<EntityId> ships;
@@ -556,8 +558,8 @@ static void sustained_multi_cell_endurance(const fs::path& root,
     attach(*supervisor);
     std::set<std::string> selected_cells;
     std::vector<double> tick_ms;
-    tick_ms.reserve(256);
-    for(int i=0;i<256;++i){
+    tick_ms.reserve(static_cast<std::size_t>(endurance_ticks));
+    for(int i=0;i<endurance_ticks;++i){
         if(i>0 && i%32==0){
             supervisor.reset(); // actual host object/worker selector restart
             supervisor=std::make_unique<spatial::NativeMultiCellSupervisor>(db,w);
@@ -635,7 +637,13 @@ int main(int argc,char** argv){
         cross_system_physical_contact();
         cross_system_outpost_genesis();
         multi_cell_supervision(root,argv[1],argv[2]);
-        sustained_multi_cell_endurance(root,argv[1]);
+        int endurance_ticks=256;
+        if(const char* selected=std::getenv("SPACE_ENDURANCE_TICKS")){
+            const std::string value(selected);
+            CHECK(value=="256" || value=="1024");
+            endurance_ticks=(value=="1024")?1024:256;
+        }
+        sustained_multi_cell_endurance(root,argv[1],endurance_ticks);
         std::cout<<"PASS exact original galactic 3D, probe persistence and "
                     "durable multi-cell single-writer supervision\n";
         return 0;
