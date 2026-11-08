@@ -12,6 +12,7 @@
 namespace galaxy::server_dx {
 struct ProcessIncident {
     std::string role;
+    std::string build_sha;
     std::string reason;
     std::int64_t pid=0;
     int exit_code=-1;
@@ -50,6 +51,7 @@ inline bool record_process_incident(const std::filesystem::path& save,
         file<<"{\"schema\":\"SGDX-02\",\"kind\":\"process_exit\""
             <<",\"epoch_ms\":"<<epoch_ms
             <<",\"role\":"<<json_string(incident.role,80)
+            <<",\"build_sha\":"<<json_string(incident.build_sha,40)
             <<",\"reason\":"<<json_string(incident.reason,48)
             <<",\"pid\":"<<incident.pid
             <<",\"exit_code\":"<<incident.exit_code
