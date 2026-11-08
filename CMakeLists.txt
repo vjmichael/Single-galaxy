@@ -2056,6 +2056,12 @@ if(BUILD_TESTING)
         $<TARGET_FILE:galaxy_server_dx_supervisor>
         $<TARGET_FILE:galaxy_server_dx_fault_child>)
     set_tests_properties(galaxy_server_dx_supervisor PROPERTIES TIMEOUT 120)
+
+    add_test(NAME galaxy_server_dx_sqlite_recovery
+      COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/SGDX02SqliteRecoveryTests.py
+        $<TARGET_FILE:galaxy_server_dx_supervisor>)
+    set_tests_properties(galaxy_server_dx_sqlite_recovery PROPERTIES TIMEOUT 90)
     add_test(NAME galaxy_server_dx_game_hosts
       COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/SGDX02GameHostTests.py
