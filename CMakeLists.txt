@@ -2097,3 +2097,12 @@ if(WIN32)
     endif()
   endforeach()
 endif()
+
+# SPACE-05M: exact-source snapshot upgrade and multi-star genesis boundary.
+if(BUILD_TESTING)
+  add_executable(galaxy_space05m_upgrade_boundaries_tests
+    tests/SPACE05M_SnapshotMigrationGenesisTests.cpp)
+  target_link_libraries(galaxy_space05m_upgrade_boundaries_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_space05m_upgrade_boundaries
+    COMMAND galaxy_space05m_upgrade_boundaries_tests)
+endif()

@@ -5079,7 +5079,8 @@ public:
                 // Pre-v2 snapshots can have valid mining receipts predating the
                 // operation journal. No hangar transfer existed before B5.
                 ++expected_transfers;
-            } else if (cmd->second.action==Action::ScanSurveyProbe ||
+            } else if (cmd->second.action==Action::SurveyLocal ||
+                       cmd->second.action==Action::ScanSurveyProbe ||
                        cmd->second.action==Action::FireTrainingWeapon ||
                        cmd->second.action==Action::FireShipWeapon) {
                 // Observation counts and weapon damage are not physical stock transfers.
@@ -7484,9 +7485,12 @@ public:
                 history.text(10,record);
                 history.text(11,historical_digest(historical_id,next,ev,record));
                 history.execute();
-                // Probe scans count observed contacts in the command receipt;
-                // observation counts are not physical inventory transfers.
+                // SurveyLocal and ScanSurveyProbe return observed contact
+                // counts, not ore/kg or probe devices transferred. Still
+                // journal the original historical command receipt, but do
+                // NOT synthesize a material ledger movement from telemetry.
                 if (ev.result == Outcome::Applied && ev.transferred > 0 &&
+                    due->second.action != Action::SurveyLocal &&
                     due->second.action != Action::ScanSurveyProbe &&
                     due->second.action != Action::FireTrainingWeapon &&
                     due->second.action != Action::FireShipWeapon) {

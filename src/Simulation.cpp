@@ -1549,6 +1549,7 @@ bool Simulation::can_depart_colony(const Command& c) const {
     return true;
 }
 bool Simulation::submit(const Command& c) {
+    const bool upgrading_pre_frame_snapshot = snapshot_version_<71;
     if((legacy_planetary_residence_import_ &&
         c.id==legacy_planetary_residence_import_->host_request_id) ||
         planetary_family_booking_ids_.count(c.id))
@@ -2504,6 +2505,12 @@ bool Simulation::submit(const Command& c) {
         c.action==Action::HostDestroyPassengerFerry?36:35);
     if(c.action==Action::TrainWorkshopTrade)
         snapshot_version_=std::max(snapshot_version_,105);
+    // Any queued post-v71 command must have durable custody for every
+    // existing ship before its new-version snapshot can be persisted.
+    // Never populate these in from_snapshot(): missing records there are
+    // potential forgery and must remain a hard readback failure.
+    if(upgrading_pre_frame_snapshot && snapshot_version_>=71)
+        ensure_ship_frame_registry();
     submitted_ids_.insert(c.id);
     commands_[c.execute_tick].push_back(c);
     return true;
@@ -7080,7 +7087,11 @@ void Simulation::seed_celestial_local_region(std::uint64_t body_id) {
 void Simulation::ensure_ship_frame_registry() {
     // This upgrades existing physical ships only; it does not relocate anything.
     // Future host arrivals must use separately verified transit receipts.
-    if(snapshot_version_<70)ensure_physical_celestial_systems();
+    // The feature that promoted the snapshot may already have raised the
+    // numeric schema above v70. Check the actual astronomy records rather
+    // than assuming its version flag proves physical genesis happened.
+    if(physical_celestial_systems_.size()!=systems_.size())
+        ensure_physical_celestial_systems();
     for(const auto& [id,entity]:entities_) {
         if(entity.type==EntityType::Ship) {
             const auto [it,inserted]=ship_frames_.emplace(
@@ -9074,6 +9085,9 @@ bool Simulation::register_player_person(PlayerId owner,EntityId aboard){
        it->second.dock_state==DockState::Docking ||
        it->second.dock_state==DockState::Undocking ||
        it->second.jump_state==ShipJumpState::Jumping)return false;
+    // v98 is younger than the v71 celestial-frame contract. The real
+    // existing hull must be registered, not inferred during readback.
+    if(snapshot_version_<71)ensure_ship_frame_registry();
     player_people_.emplace(owner,PlayerPerson{
         owner,aboard,aboard,PlayerPersonState::AboardOwnShip,0,tick_,0,tick_});
     snapshot_version_=std::max(snapshot_version_,98);
@@ -11796,12 +11810,16 @@ bool Simulation::install_testing_confusion(EntityId source,EntityId target,
     attack.intensity=intensity;attack.resistance=resistance;
     const auto roster=ship_status::fitted_controls(
         *b,b->hardpoint_requested_on,exposed,{{false,false}});
+    // Test-only v100 status installation may be the first high-version
+    // operation on a legacy named-crew genesis world.
+    if(snapshot_version_<71)ensure_ship_frame_registry();
     if(!ship_status_.inflict_confusion(attack,roster,tick_))return false;
     snapshot_version_=std::max(snapshot_version_,100);
     return true;
 }
 
 void Simulation::step() {
+    const bool upgrading_pre_frame_snapshot = snapshot_version_<71;
     if (tick_ == std::numeric_limits<std::uint64_t>::max()) throw std::overflow_error("tick counter exhausted");
     ++tick_;
     // WO2-I: end-exclusive releases precede this tick's ordered commands.
@@ -12134,6 +12152,11 @@ void Simulation::step() {
             if (entity.position.y == -kWorldBoundMm && entity.velocity.y < 0) entity.velocity.y = 0;
         }
     }
+    // Execution can introduce a post-v71 feature even when its queued
+    // command was accepted on an older schema. Materialize original ship
+    // frames before emitting the higher-version checkpoint.
+    if(upgrading_pre_frame_snapshot && snapshot_version_>=71)
+        ensure_ship_frame_registry();
     // New mining cycles use the moved position to check actual range per tick.
     process_automatic_mining();
     // Legacy v1 checkpoints can contain zero-ore rocks; clean them up on the next tick.
@@ -17655,6 +17678,7 @@ void Simulation::swap(Simulation& other) noexcept {
     shipyard_customer_orders_.swap(other.shipyard_customer_orders_);
     work_directives_.swap(other.work_directives_);
     npc_flight_orders_.swap(other.npc_flight_orders_);
+    player_people_.swap(other.player_people_); // preserve v98 person identity across atomic commit
     shuttle_flight_request_ids_.swap(other.shuttle_flight_request_ids_);
     planetary_family_booking_ids_.swap(other.planetary_family_booking_ids_);
     pending_celestial_transits_.swap(other.pending_celestial_transits_);
