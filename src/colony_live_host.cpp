@@ -1562,7 +1562,8 @@ void apply(PersistentWorld& world,EntityId ship,FleetSelection& fleet,const std:
                     std::uint64_t(body),std::uint16_t(latitude),
                     std::uint16_t(longitude),integer(v[4]));
             } else {
-                const auto kind=v[4],kg=integer(v[5]);
+                const auto kind=v[4];
+                const auto kg=integer(v[5]);
                 if(type=="PLANET_SUPPORT") {
                     if(kind!="FOOD" && kind!="OXYGEN")
                         throw std::invalid_argument("invalid surface crew supply material");
@@ -1662,7 +1663,7 @@ void apply(PersistentWorld& world,EntityId ship,FleetSelection& fleet,const std:
                 std::to_string(band.radius_milli_au)+"|"+
                 std::to_string(band.eccentricity_permille)+"|"+
                 std::to_string(static_cast<unsigned>(band.zone)));
-        const bodies=world.world().scan_physical_celestials(principal,ship);
+        const auto bodies=world.world().scan_physical_celestials(principal,ship);
         for(const auto& body:bodies)
             announce(world.world(),"CELESTIAL_BODY|"+std::to_string(body.id)+"|"+
                 std::to_string(body.parent_id)+"|"+
