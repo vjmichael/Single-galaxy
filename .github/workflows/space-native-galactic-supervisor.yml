@@ -22,6 +22,8 @@ on:
       - 'src/Simulation.cpp'
       - 'src/Persistence.cpp'
       - 'src/Navigation.cpp'
+      - 'tests/FLIGHT02_LocalDockingTests.cpp'
+      - 'tests/FLIGHT03_NativeRendezvousTests.cpp'
       - 'tests/NativeGalacticProbeSupervisorTests.cpp'
       - 'tests/Native3DPhysicsWorkerTests.cpp'
       - 'tests/PLAY12_ProbeLifecycleTests.cpp'
@@ -75,12 +77,12 @@ jobs:
           cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$tc" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
           if ($LASTEXITCODE -ne 0) { throw 'native Windows configure failure' }
       - name: Build new and legacy native acceptance
-        run: cmake --build build --config Release --parallel 2 --target galaxy_native_cell_worker galaxy_native_cell_hang_worker galaxy_native_cell_detached_pipe_worker galaxy_native_cell_fork_fence_worker galaxy_native_cell_process_stress_tests galaxy_native_galactic_supervisor_tests galaxy_native_3d_worker_tests galaxy_play12_probe_tests galaxy_flight03_object_approach_tests galaxy_flight04_interaction_preflight_tests galaxy_flight04b_interaction_executors_tests galaxy_seamless_spatial_ownership_tests galaxy_play13d_regional_facilities_tests galaxy_wo3_colony_operations_tests galaxy_wo3_planetary_housing_tests galaxy_wo3_planetary_utility_tests galaxy_wo4_resource_demand_tests galaxy_wo4_material_allocation_tests galaxy_wo5_physical_logistics_tests
+        run: cmake --build build --config Release --parallel 2 --target galaxy_native_cell_worker galaxy_native_cell_hang_worker galaxy_native_cell_detached_pipe_worker galaxy_native_cell_fork_fence_worker galaxy_native_cell_process_stress_tests galaxy_native_galactic_supervisor_tests galaxy_native_3d_worker_tests galaxy_play12_probe_tests galaxy_flight02_local_docking_tests galaxy_flight03_native_rendezvous_tests galaxy_flight03_object_approach_tests galaxy_flight04_interaction_preflight_tests galaxy_flight04b_interaction_executors_tests galaxy_seamless_spatial_ownership_tests galaxy_play13d_regional_facilities_tests galaxy_wo3_colony_operations_tests galaxy_wo3_planetary_housing_tests galaxy_wo3_planetary_utility_tests galaxy_wo4_resource_demand_tests galaxy_wo4_material_allocation_tests galaxy_wo5_physical_logistics_tests
       - name: Build independent high-order 128-bit property oracle (Linux)
         if: runner.os == 'Linux'
         run: cmake --build build --parallel 2 --target galaxy_high_order_math_property_tests
       - name: Execute high-order, probe, supervisor and regression tests
-        run: ctest --test-dir build -C Release --output-on-failure --output-junit build/space-v121-results.xml -R "^(galaxy_high_order_math_property|galaxy_native_cell_process_stress|galaxy_native_galactic_supervisor|galaxy_native_3d_worker|galaxy_play12_probes|galaxy_flight03_object_approach|galaxy_flight04_interaction_preflight|galaxy_flight04b_interaction_executors|galaxy_flight04b_real_freight|galaxy_work01c_native_transport_executors|galaxy_wo3_colony_operations|galaxy_wo3_planetary_housing|galaxy_wo3_planetary_utility|galaxy_wo4_resource_demand|galaxy_wo4_material_allocation|galaxy_wo5_physical_logistics|galaxy_seamless_spatial_ownership)$"
+        run: ctest --test-dir build -C Release --output-on-failure --output-junit build/space-v121-results.xml -R "^(galaxy_high_order_math_property|galaxy_native_cell_process_stress|galaxy_native_galactic_supervisor|galaxy_native_3d_worker|galaxy_play12_probes|galaxy_flight02_local_docking|galaxy_flight03_native_rendezvous|galaxy_flight03_object_approach|galaxy_flight04_interaction_preflight|galaxy_flight04b_interaction_executors|galaxy_flight04b_real_freight|galaxy_work01c_native_transport_executors|galaxy_wo3_colony_operations|galaxy_wo3_planetary_housing|galaxy_wo3_planetary_utility|galaxy_wo4_resource_demand|galaxy_wo4_material_allocation|galaxy_wo5_physical_logistics|galaxy_seamless_spatial_ownership)$"
       - name: Archive exact-head test evidence
         if: always()
         uses: actions/upload-artifact@v4
