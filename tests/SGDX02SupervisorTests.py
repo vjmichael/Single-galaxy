@@ -96,6 +96,34 @@ def check(supervisor, child):
                 if stat.exists() and stat.read_text().split()[2] != "Z":
                     raise AssertionError("descendant remained active after timeout")
 
+            # A supervisor SIGKILL must not leave its directly supervised
+            # authoritative game process running without diagnostics.
+            guardian = subprocess.Popen(
+                [supervisor, "--save", str(save), "--role", "game_host",
+                 "--timeout-ms", "5000", "--", child, "pid-hang"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            try:
+                first = guardian.stdout.readline().strip()
+                if not first.startswith("CHILD_PID="):
+                    raise AssertionError("fixture did not start supervised process")
+                target_pid = int(first.split("=", 1)[1])
+                guardian.kill()
+                guardian.wait(timeout=5)
+                deadline = time.monotonic() + 3
+                while time.monotonic() < deadline:
+                    stat = pathlib.Path(f"/proc/{target_pid}/stat")
+                    if not stat.exists() or stat.read_text().split()[2] in ("Z", "X"):
+                        break
+                    time.sleep(0.05)
+                else:
+                    raise AssertionError("supervised game survived guardian SIGKILL")
+            finally:
+                if guardian.poll() is None:
+                    guardian.kill()
+                    guardian.wait(timeout=5)
+                guardian.stdout.close()
+                guardian.stderr.close()
+
             directory = pathlib.Path(str(save) + ".diagnostics")
             assert directory.stat().st_mode & 0o077 == 0
             for path in directory.glob("process-*.json"):
