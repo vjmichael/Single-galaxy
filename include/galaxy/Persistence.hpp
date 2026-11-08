@@ -17,6 +17,7 @@
 namespace galaxy {
 namespace industry {class RegionalProductionNetwork;}
 namespace shipping {class ThirdPartyRegistry;}
+namespace fp3d {class InteriorMovement;}
 // Failures occur inside an SQLite transaction, before durable COMMIT.
 enum class FailPoint { None, AfterReceiptWrite, AfterSnapshotWrite, AfterFirstSplitReceiver };
 
@@ -457,6 +458,7 @@ struct NativeCellWorkerTick {
 class PersistentWorld {
     friend class industry::RegionalProductionNetwork;
     friend class shipping::ThirdPartyRegistry;
+    friend class fp3d::InteriorMovement;
 public:
     // If the SQLite file is new, persist the supplied initial world.
     // For an existing database, load authoritative saved world and ignore initial state.
@@ -1253,8 +1255,11 @@ private:
     bool submit_with_cell_worker(const Command& command,
                                  const NativeCellWorkerTick* token,
                                  FailPoint fail);
+    // Trusted on-foot controller attaches its already-validated pose receipt
+    // to the ORIGINAL world snapshot/STEP/journal transaction; not public IPC.
     void step_with_cell_worker(const NativeCellWorkerTick* token,
-                               FailPoint fail);
+                               FailPoint fail,
+                               const std::function<void(sqlite3*,std::uint64_t)>& trusted_interior_effect={});
 
     // Only the trusted regional production bridge may attach a physical
     // inventory escrow effect to this canonical world command.
