@@ -22,7 +22,7 @@ assert 'return\n\t# The arrow keys' in c # native branch returns before local mo
 assert 'player.native_motion_intent.connect(' in m
 assert 'player.global_position = Vector3(float(pose["x_mm"]) / 1000.0' in m
 assert 'native_player_session.pose_received.connect' in m
-assert 'KEY_F8' in m and 'KEY_F7' in m
+assert 'KEY_P' in m and 'KEY_O' in m and 'KEY_F8' not in m and 'KEY_F7' not in m
 assert 'player.use_native_authority(connected)' in m
 assert 'native-player-protocol' in b
 assert "'native-player-host' 'PASS'" in b
