@@ -108,7 +108,7 @@ jobs:
           printf '%s\n' "$inventory"
           [[ "$inventory" == *'Total Tests: 1'* ]] ||
             { echo "FATAL: 1024-tick original-world test was not registered"; exit 4; }
-          ctest --test-dir build -C Release --output-on-failure --timeout 900 \
+          ctest --test-dir build -C Release --verbose --output-on-failure --timeout 900 \
             --output-junit build/space-1024-results.xml \
             -R '^galaxy_native_galactic_supervisor_1024
         uses: actions/upload-artifact@v4
@@ -124,6 +124,10 @@ jobs:
             2>&1 | tee space-1024-ctest.log
           grep -q '100% tests passed' space-1024-ctest.log ||
             { echo "FATAL: original 1024-tick end-to-end acceptance not green"; exit 5; }
+          grep -q 'original four-cell sustained native tick count=1024' space-1024-ctest.log ||
+            { echo "FATAL: test did not execute 1024 original-world ticks"; exit 6; }
+          grep -q 'host_restarts=31 deliberate_rollbacks=28 independent_sqlite_recoveries=16' space-1024-ctest.log ||
+            { echo "FATAL: test did not prove expected restart/rollback/SQLite cadence"; exit 7; }
       - name: Archive exact-head test evidence
         if: always()
         uses: actions/upload-artifact@v4
