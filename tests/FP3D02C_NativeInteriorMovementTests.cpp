@@ -109,6 +109,7 @@ int main(int argc,char** argv){
    std::uint64_t seq=4;
    for(std::uint64_t i=0;i<7;++i){need(motion.move(7,seq,109+i,100,0),"advance towards obstacle");++seq;}
    a=motion.current(7);need(a.x_mm==800,"obstacle approach");
+   need(!motion.set_seated(7,2,210,true),"seat interaction outside cockpit denied");
    const auto prior=world.generation();
    need(!motion.move(7,seq,117,100,0),"collision must block 340mm capsule");
    need(world.generation()==prior && motion.current(7).sequence==seq,
