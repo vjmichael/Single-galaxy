@@ -40,7 +40,7 @@ func _run() -> void:
 	await physics_frame
 	# A headless window has no OS focus. Do not demand movement in unfocused
 	# tests; the important security property is NO movement without focus.
-	if not get_window().has_focus() and not is_equal_approx(start_position.z, player.global_position.z):
+	if not root.has_focus() and not is_equal_approx(start_position.z, player.global_position.z):
 		_fail("unfocused control changed horizontal position")
 		return
 	print("FP3D-02A GODOT runtime smoke PASS: scene, real collisions, first-person camera, bindings and focus guard")
