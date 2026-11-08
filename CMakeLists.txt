@@ -2119,3 +2119,17 @@ if(BUILD_TESTING)
   add_test(NAME galaxy_space05m_upgrade_boundaries
     COMMAND galaxy_space05m_upgrade_boundaries_tests)
 endif()
+
+# FP3D-02C: host-only bounded walking inside registered owned hull.
+# Durable receipts live in the native SQLite world, but full operation-log
+# reconciliation and Godot command authorization are future gates.
+add_library(galaxy_fp3d02c_interior STATIC src/NativeInteriorMovement.cpp)
+target_link_libraries(galaxy_fp3d02c_interior PUBLIC galaxy_kernel SQLite::SQLite3)
+target_include_directories(galaxy_fp3d02c_interior PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+if(BUILD_TESTING)
+  add_executable(galaxy_fp3d02c_interior_tests tests/FP3D02C_NativeInteriorMovementTests.cpp)
+  target_link_libraries(galaxy_fp3d02c_interior_tests PRIVATE galaxy_fp3d02c_interior)
+  add_test(NAME galaxy_fp3d02c_interior_authority
+    COMMAND galaxy_fp3d02c_interior_tests ${CMAKE_CURRENT_BINARY_DIR}/fp3d02c-test.sqlite)
+  set_tests_properties(galaxy_fp3d02c_interior_authority PROPERTIES TIMEOUT 90)
+endif()
