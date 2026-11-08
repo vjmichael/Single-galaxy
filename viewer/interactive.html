@@ -138,14 +138,15 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
 </section>
 <section aria-labelledby="flightTitle" style="border:1px solid #31445c;border-radius:10px;padding:12px;margin:10px 0">
  <h2 id="flightTitle">Flight deck · Manual piloting</h2>
- <div class="help">Arrow keys or WASD: world-axis thrust · Q/E: yaw left/right (15°) · Space: neutral drift. Use the mouse controls if preferred. Yaw changes the ship’s saved heading; world-axis thrust is unchanged for now.</div>
+ <div class="help">Arrow keys or WASD: world-axis thrust · Q/E: yaw left/right (15°) · Space: coast (no thrust). Use the mouse controls if preferred. Yaw changes the ship’s saved heading; world-axis thrust is unchanged for now.</div>
  <div class="controls" style="padding:8px 0;gap:6px">
   <button type="button" id="flightLeft">←</button><button type="button" id="flightUp">↑</button>
   <button type="button" id="flightDown">↓</button><button type="button" id="flightRight">→</button>
-  <button type="button" id="flightDrift">Neutral drift</button>
+  <button type="button" id="flightDrift">Coast (no thrust)</button><button type="button" id="flightBrake" class="primary">Brake to zero (B)</button>
   <button type="button" id="flightYawLeft">⟲ Yaw left</button>
   <button type="button" id="flightYawRight">Yaw right ⟳</button>
  </div>
+ <div class="help" id="flightBrakeStatus" role="status" aria-live="polite">No automatic thrust. Brake to zero if your saved ship is moving; Coast does not stop momentum.</div>
  <div class="help">Current heading: <strong id="flightHeading">—</strong></div>
  <div class="help" id="flightTelemetry" role="status" aria-live="polite">Awaiting authoritative ship location and nearby asteroids.</div>
  <div class="controls" style="padding:8px 0;gap:6px">
@@ -383,7 +384,7 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
 <div class="help" id="maintenanceViability">No delegated maintenance readiness assessment yet.</div>
 <div class="help" id="utilityViability">No local utility installed yet.</div>
 <div class="help" id="utilityTelemetry" style="white-space:pre-wrap">No utility telemetry.</div>
-<div class="controls" style="padding:5px 0;gap:5px"><button id="colonyLeft">← Thrust</button><button id="colonyRight">→ Thrust</button><button id="colonyUp">↑ Thrust</button><button id="colonyDown">↓ Thrust</button><button id="colonyDrift">Drift</button></div>
+<div class="controls" style="padding:5px 0;gap:5px"><button id="colonyLeft">← Thrust</button><button id="colonyRight">→ Thrust</button><button id="colonyUp">↑ Thrust</button><button id="colonyDown">↓ Thrust</button><button id="colonyDrift">Coast (no thrust)</button></div>
 <div class="help">Mining targets the closest asteroid; the server checks surface distance, hold capacity and material stock. Thrust is physical, not teleportation. Larger asteroids hold millions of tonnes, not 10 fictional ore units.</div>
 <h2 style="margin-top:14px">Scanned geological deposits</h2><div id="colonyGeology" style="max-height:200px;overflow:auto"></div>
 <h2 style="margin-top:14px">Colony command results</h2><div id="colonyEvents" style="white-space:pre-wrap" class="help">Awaiting colony telemetry…</div></div>
@@ -422,6 +423,7 @@ input[type=file]{display:none}.error{color:#ffb3a8;background:#3d1f24;border:1px
 <script src="survey.js"></script>
 <script src="opening-guide.js"></script>
 <script src="flight-controls.js"></script>
+<script src="flight-brake.js"></script>
 <script src="flight-camera.js"></script>
 <script src="exploration-journal.js"></script>
 <script src="travel-assist.js"></script>
