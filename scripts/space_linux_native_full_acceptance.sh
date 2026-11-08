@@ -87,5 +87,13 @@ grep -q "100% tests passed" "$evidence_dir/1024-ctest.log" || {
   printf "Native 1024-tick test has no passing acceptance evidence.\n" >&2
   exit 65
 }
+grep -q "original four-cell sustained native tick count=1024" "$evidence_dir/1024-ctest.log" || {
+  printf "Expected 1024 real ticks, received a substituted/short fixture.\n" >&2
+  exit 65
+}
+grep -q "host_restarts=31 deliberate_rollbacks=28 independent_sqlite_recoveries=16" "$evidence_dir/1024-ctest.log" || {
+  printf "Expected recovery cadence was not observed.\n" >&2
+  exit 65
+}
 cp -f "$build_dir/Testing/Temporary/LastTest.log" "$evidence_dir/LastTest.log" || true
 printf 'PASS full native Linux kernel and registered CTest suite at %s\n' "$actual"
