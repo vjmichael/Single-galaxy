@@ -2144,3 +2144,15 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
       $<TARGET_FILE:galaxy_desktop_player_host>)
   set_tests_properties(galaxy_fp3d02f_local_authorized_pipe PROPERTIES TIMEOUT 90)
 endif()
+
+# FP3D-03B — original Simulation cockpit piloting and recovery acceptance.
+# Uses the same native SQLite/kernel and actual binary as the desktop game.
+if(BUILD_TESTING)
+  add_executable(galaxy_fp3d03b_cockpit_flight_tests
+    tests/FP3D03B_CockpitFlightTests.cpp)
+  target_link_libraries(galaxy_fp3d03b_cockpit_flight_tests PRIVATE galaxy_fp3d02c_interior)
+  add_test(NAME galaxy_fp3d03b_cockpit_flight
+    COMMAND galaxy_fp3d03b_cockpit_flight_tests
+      ${CMAKE_CURRENT_BINARY_DIR}/fp3d03b-flight.sqlite)
+  set_tests_properties(galaxy_fp3d03b_cockpit_flight PROPERTIES TIMEOUT 90)
+endif()
