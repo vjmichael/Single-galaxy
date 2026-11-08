@@ -2015,3 +2015,12 @@ if(BUILD_TESTING)
              $<TARGET_FILE:galaxy_native_cell_worker>
              $<TARGET_FILE:galaxy_native_cell_hang_worker>)
 endif()
+
+# SGDX-01: private host-incident evidence is independently testable without
+# constructing a second world or modifying the authoritative SQLite writer.
+if(BUILD_TESTING)
+  add_executable(galaxy_server_diagnostics_tests tests/ServerDiagnosticsTests.cpp)
+  target_include_directories(galaxy_server_diagnostics_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  add_test(NAME galaxy_server_diagnostics COMMAND galaxy_server_diagnostics_tests)
+endif()
