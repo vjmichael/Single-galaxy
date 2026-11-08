@@ -41,6 +41,11 @@ printf '%s\n' "$actual" > "$evidence_dir/exact-head.sha"
 on_exit(){
   local exit_code=$?
   printf 'exit_code=%s\nsha=%s\n' "$exit_code" "$actual" > "$evidence_dir/acceptance-status.txt"
+  # Classify any real CTest JUnit even when CTest fails under pipefail.
+  # A failed classifier must never turn a failing native build green.
+  if [[ -s "$evidence_dir/ctest-results.xml" ]] && command -v python3 >/dev/null 2>&1; then
+    python3 "$root/scripts/space_classify_ctest.py"       "$evidence_dir/ctest-results.xml"       --json-out "$evidence_dir/ctest-failure-classification.json"       > "$evidence_dir/ctest-failure-classification.log" 2>&1 || true
+  fi
   printf 'Native evidence: %s\n' "$evidence_dir" >&2
 }
 trap on_exit EXIT
