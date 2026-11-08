@@ -5858,44 +5858,52 @@ Event Simulation::execute(const Command& c) {
                 if(actor.dock_state!=DockState::InSpace){result.result=Outcome::NotInSpace;return result;}
                 if(actor.velocity.x!=0 || actor.velocity.y!=0){result.result=Outcome::ShipMoving;return result;}
                 if(industry.modules<4){result.result=Outcome::NoResources;return result;}
-                Vector2 site{actor.position.x+1000,actor.position.y};
-                if(!valid_position(site)){result.result=Outcome::OutOfRange;return result;}
+                // Original v120+ physical placement must NOT be derived
+                // from saturating, render-only int64 XY compatibility fields.
+                std::optional<galactic::Point> exact;
+                Vector2 site{};
+                if(snapshot_version_>=120){
+                    if(!actor.physical_galactic_authoritative ||
+                       !actor.physical_galactic.valid())
+                        throw std::runtime_error("outpost build lost original pose");
+                    if(actor.velocity_z_mm_per_tick)
+                        {result.result=Outcome::ShipMoving;return result;}
+                    exact=galactic::advance(actor.physical_galactic,{1000,0,0});
+                    if(!exact){result.result=Outcome::OutOfRange;return result;}
+                    site=actor.position; // legacy compatibility only
+                    const auto limit=std::numeric_limits<std::int64_t>::max()-1000;
+                    site.x=site.x>limit ?
+                        std::numeric_limits<std::int64_t>::max():site.x+1000;
+                }else{
+                    if(actor.position.x>std::numeric_limits<std::int64_t>::max()-1000)
+                        {result.result=Outcome::OutOfRange;return result;}
+                    site={actor.position.x+1000,actor.position.y};
+                    if(!valid_position(site))
+                        {result.result=Outcome::OutOfRange;return result;}
+                }
+                Entity station;station.type=EntityType::Station;
+                station.owner_id=actor.owner_id;station.position=site;
+                station.system_id=actor.system_id;
+                if(exact){
+                    station.physical_galactic=*exact;
+                    station.physical_galactic_authoritative=true;
+                }
                 for(const auto& [id,e]:entities_){
                     (void)id;
-                    if(e.type==EntityType::Station && e.system_id==actor.system_id &&
-                       e.position.x-site.x>=-2500 && e.position.x-site.x<=2500 &&
-                       e.position.y-site.y>=-2500 && e.position.y-site.y<=2500){
+                    if(e.type!=EntityType::Station)continue;
+                    if(exact){
+                        if(!e.physical_galactic_authoritative)
+                            throw std::runtime_error("unproven nearby station pose");
+                        if(within_native_3d_range(station,e,2500))
+                            {result.result=Outcome::InvalidTarget;return result;}
+                    }else if(e.system_id==actor.system_id &&
+                        e.position.x-site.x>=-2500 && e.position.x-site.x<=2500 &&
+                        e.position.y-site.y>=-2500 && e.position.y-site.y<=2500){
                         result.result=Outcome::InvalidTarget;return result;
                     }
                 }
                 industry.modules-=4;
-                Entity station;station.type=EntityType::Station;
-                station.owner_id=actor.owner_id;station.position=site;
-                station.system_id=actor.system_id;
-                // A newly constructed outpost occupies the precise original
-                // ship's actual 3D/galactic coordinates, never an unrelated
-                // default system and never a remote finite XY coincidence.
-                if(snapshot_version_>=120 &&
-                   !actor.physical_galactic_authoritative)
-                    throw std::runtime_error("outpost build lost physical ship pose");
-                const auto ship_absolute=snapshot_version_>=120 ?
-                    std::optional<galactic::Point>(actor.physical_galactic):
-                    std::nullopt;
-                const auto id=add_entity(station);
-                if(ship_absolute){
-                    const auto dx=static_cast<long double>(site.x)-
-                                  static_cast<long double>(actor.position.x);
-                    const auto dy=static_cast<long double>(site.y)-
-                                  static_cast<long double>(actor.position.y);
-                    if(std::fabs(dx)>kDockingRangeMm ||
-                       std::fabs(dy)>kDockingRangeMm)
-                        throw std::runtime_error("outpost build left physical berth");
-                    const auto exact=galactic::advance(*ship_absolute,
-                        {static_cast<std::int64_t>(dx),
-                         static_cast<std::int64_t>(dy),0});
-                    if(!exact)throw std::overflow_error("outpost build sector exhausted");
-                    entities_.at(id).physical_galactic=*exact;
-                }
+                const auto id=add_entity(station,exact);
                 built_outposts_.emplace(id,BuiltOutpost{actor.id,8});
                 hangars_.emplace(std::make_pair(id,actor.owner_id),StationHangar{0,1000});
                 result.transferred=8;
