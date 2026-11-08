@@ -4481,6 +4481,7 @@ public:
         Statement ledger(db_, "SELECT command_id,tick,amount,reason,source_id,destination_id FROM resource_ledger ORDER BY id");
         bool saw_genesis = false;
         std::size_t transfers = 0;
+        std::size_t salvage_transfers = 0;
         std::size_t hangar_transfers = 0;
         std::size_t load_transfers = 0;
         std::size_t sale_transfers = 0;
@@ -4546,6 +4547,19 @@ public:
                      std::to_string(cmd->second.target) != reinterpret_cast<const char*>(sqlite3_column_text(ledger.get(), 4)) ||
                      std::to_string(cmd->second.actor) != reinterpret_cast<const char*>(sqlite3_column_text(ledger.get(), 5))))
                     throw std::runtime_error("SQLite: mining ledger source or destination mismatch");
+            } else if (reason == "wreck_salvage_transfer") {
+                ++salvage_transfers;
+                const auto id = parse_u64(sqlite3_column_text(ledger.get(),0));
+                const auto ev = event_by_id.find(id);
+                const auto cmd = journal_commands.find(id);
+                if(ev==event_by_id.end() || cmd==journal_commands.end() ||
+                   cmd->second.action!=Action::SalvageWreck ||
+                   ev->second.result!=Outcome::Applied ||
+                   ev->second.transferred<=0 || ev->second.transferred!=amount ||
+                   ev->second.tick!=static_cast<std::uint64_t>(sqlite3_column_int64(ledger.get(),1)) ||
+                   sqlite_str(ledger.get(),4)!=std::to_string(cmd->second.target) ||
+                   sqlite_str(ledger.get(),5)!=std::to_string(cmd->second.actor))
+                    throw std::runtime_error("SQLite: salvage ledger source, destination or receipt mismatch");
             } else if (reason == "hangar_transfer") {
                 ++hangar_transfers;
                 const auto id = parse_u64(sqlite3_column_text(ledger.get(), 0));
@@ -5048,6 +5062,7 @@ public:
             throw std::runtime_error("SQLite: missing auto mining resource ledger rows");
         std::size_t expected_probe_device_transfers=0;
         std::size_t expected_transfers = 0;
+        std::size_t expected_salvage_transfers = 0;
         std::size_t expected_hangar_transfers = 0;
         std::size_t expected_load_transfers = 0;
         std::size_t expected_sale_transfers = 0;
@@ -5064,14 +5079,18 @@ public:
                 // Pre-v2 snapshots can have valid mining receipts predating the
                 // operation journal. No hangar transfer existed before B5.
                 ++expected_transfers;
-            } else if (cmd->second.action==Action::ScanSurveyProbe) {
-                // Discovery counts are not physical resource transfers.
+            } else if (cmd->second.action==Action::ScanSurveyProbe ||
+                       cmd->second.action==Action::FireTrainingWeapon ||
+                       cmd->second.action==Action::FireShipWeapon) {
+                // Observation counts and weapon damage are not physical stock transfers.
+                // Their outcome remains journaled, never forged as ore creation.
                 continue;
             } else if (cmd->second.action==Action::DeploySurveyProbe ||
                        cmd->second.action==Action::LaunchGeologicalDrone ||
                        cmd->second.action==Action::RecoverSurveyProbe)
                 ++expected_probe_device_transfers;
             else if (cmd->second.action == Action::Mine) ++expected_transfers;
+            else if (cmd->second.action == Action::SalvageWreck) ++expected_salvage_transfers;
             else if (cmd->second.action == Action::UnloadOre) ++expected_hangar_transfers;
             else if (cmd->second.action == Action::LoadOre) ++expected_load_transfers;
             else if (cmd->second.action == Action::SellOre) ++expected_sale_transfers;
@@ -5125,7 +5144,8 @@ public:
         }
         if (!saw_genesis ||
             probe_device_transfers!=expected_probe_device_transfers ||
-            transfers != expected_transfers || hangar_transfers != expected_hangar_transfers ||
+            transfers != expected_transfers || salvage_transfers != expected_salvage_transfers ||
+            hangar_transfers != expected_hangar_transfers ||
             load_transfers != expected_load_transfers || sale_transfers != expected_sale_transfers ||
             refine_transfers!=expected_refine || fabricate_transfers!=expected_fabricate ||
             build_transfers!=expected_build ||
@@ -7467,13 +7487,16 @@ public:
                 // Probe scans count observed contacts in the command receipt;
                 // observation counts are not physical inventory transfers.
                 if (ev.result == Outcome::Applied && ev.transferred > 0 &&
-                    due->second.action != Action::ScanSurveyProbe) {
+                    due->second.action != Action::ScanSurveyProbe &&
+                    due->second.action != Action::FireTrainingWeapon &&
+                    due->second.action != Action::FireShipWeapon) {
                     const auto cmd = due_commands.find(ev.command_id);
                     if (cmd == due_commands.end() ||
                         (cmd->second.action != Action::DeploySurveyProbe &&
                          cmd->second.action != Action::LaunchGeologicalDrone &&
                          cmd->second.action != Action::RecoverSurveyProbe &&
-                         cmd->second.action != Action::Mine && cmd->second.action != Action::UnloadOre &&
+                         cmd->second.action != Action::Mine && cmd->second.action != Action::SalvageWreck &&
+                         cmd->second.action != Action::UnloadOre &&
                          cmd->second.action != Action::LoadOre && cmd->second.action != Action::SellOre &&
                          cmd->second.action != Action::RefineOre &&
                          cmd->second.action != Action::FabricateModule &&
@@ -7513,7 +7536,7 @@ public:
                          cmd->second.action!=Action::ConstructStorageLink &&
                          cmd->second.action!=Action::ConstructWorkshopLink &&
                          cmd->second.action!=Action::PlaceConveyorCell))
-                        throw std::runtime_error("unmatched resource transfer event");
+                        throw std::runtime_error("unmatched resource transfer event: command="+std::to_string(ev.command_id)+" action="+(cmd==due_commands.end()?std::string("missing"):std::to_string(static_cast<unsigned>(cmd->second.action)))+" amount="+std::to_string(ev.transferred));
                     Statement ledger(db_, "INSERT INTO resource_ledger(generation,tick,command_id,source_id,destination_id,amount,reason) VALUES(?,?,?,?,?,?,?)");
                     ledger.i64(1, static_cast<std::int64_t>(next));
                     ledger.i64(2, static_cast<std::int64_t>(ev.tick));
@@ -7535,10 +7558,13 @@ public:
                         ledger.text(7,recovered?"probe_device_recovered":
                             cmd->second.action==Action::LaunchGeologicalDrone?
                             "geological_drone_deployed":"survey_probe_deployed");
-                    } else if (cmd->second.action == Action::Mine) {
+                    } else if (cmd->second.action == Action::Mine ||
+                               cmd->second.action == Action::SalvageWreck) {
                         ledger.text(4, std::to_string(cmd->second.target));
                         ledger.text(5, std::to_string(cmd->second.actor));
-                        ledger.i64(6, ev.transferred); ledger.text(7, "mining_transfer");
+                        ledger.i64(6, ev.transferred);
+                        ledger.text(7,cmd->second.action==Action::SalvageWreck?
+                            "wreck_salvage_transfer":"mining_transfer");
                     } else if(cmd->second.action==Action::RefineMineral ||
                               cmd->second.action==Action::FabricateMaterialModule){
                         const auto refine=cmd->second.action==Action::RefineMineral;

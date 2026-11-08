@@ -185,8 +185,8 @@ int main(){
   send_as(w,9313,10,alternate_receiver,Action::RequestJump,gate);
   w.steps(Simulation::kJumpTransitTicks+Simulation::kArrivalCloakTicks+1);
   ck(w.world().find(alternate_receiver)->system_id==2,"replacement receiver did not cross systems");
-  for(int i=0;i<1;++i)send_as(w,9320+static_cast<std::uint64_t>(i),10,alternate_receiver,Action::Thrust,0,1,1);
-  for(int i=0;i<1;++i)send_as(w,9324+static_cast<std::uint64_t>(i),10,alternate_receiver,Action::Thrust,0,1,-1);
+  for(int i=0;i<1;++i)send_as(w,9320+static_cast<std::uint64_t>(i),10,alternate_receiver,Action::Thrust,0,0,1);
+  for(int i=0;i<1;++i)send_as(w,9324+static_cast<std::uint64_t>(i),10,alternate_receiver,Action::Thrust,0,0,-1);
   ck(w.world().find(alternate_receiver)->velocity.x==0,"replacement warehouse founding ship did not brake");
   send_as(w,9330,10,alternate_receiver,Action::ConstructOutpost);
   EntityId alternate_site=0;
@@ -440,8 +440,8 @@ int main(){
   w.steps(Simulation::kJumpTransitTicks+Simulation::kArrivalCloakTicks+1);
   ck(w.world().find(carrier)->system_id==2,"carrier never completed outbound jump");
   // The carrier must actually enter range of receiver 9's warehouse.
-  for(int i=0;i<10;++i)send_as(w,9600+static_cast<std::uint64_t>(i),8,carrier,Action::Thrust,0,1,-1);
-  for(int i=0;i<10;++i)send_as(w,9610+static_cast<std::uint64_t>(i),8,carrier,Action::Thrust,0,1,1);
+  for(int i=0;i<10;++i)send_as(w,9600+static_cast<std::uint64_t>(i),8,carrier,Action::Thrust,0,0,-1);
+  for(int i=0;i<10;++i)send_as(w,9610+static_cast<std::uint64_t>(i),8,carrier,Action::Thrust,0,0,1);
   ck(w.world().find(carrier)->velocity.x==0,"carrier did not brake at receiver");
   for(const auto fail:{FailPoint::AfterReceiptWrite,FailPoint::AfterSnapshotWrite}){
     const auto before=w.world().tick();
@@ -480,8 +480,8 @@ int main(){
   std::cerr<<"v58 carrier at x="<<sx<<" replacement x="<<tx<<"\n";
   // Move the carrier to replacement warehouse; cargo stays aboard until
   // local distance, finite storage capacity and the canonical world commit.
-  for(int i=0;i<10;++i)send_as(w,9630+static_cast<std::uint64_t>(i),8,carrier,Action::Thrust,0,1,1);
-  for(int i=0;i<10;++i)send_as(w,9640+static_cast<std::uint64_t>(i),8,carrier,Action::Thrust,0,1,-1);
+  for(int i=0;i<10;++i)send_as(w,9630+static_cast<std::uint64_t>(i),8,carrier,Action::Thrust,0,0,1);
+  for(int i=0;i<10;++i)send_as(w,9640+static_cast<std::uint64_t>(i),8,carrier,Action::Thrust,0,0,-1);
   std::cerr<<"v58 carrier after approach x="<<w.world().find(carrier)->position.x<<" replacement x="<<tx<<"\n";
   for(const auto fail:{FailPoint::AfterReceiptWrite,FailPoint::AfterSnapshotWrite}){
     const auto before=w.world().tick();
