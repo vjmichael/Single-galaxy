@@ -698,7 +698,11 @@ const HabitatFacility* Simulation::habitat(EntityId outpost) const {
     return it==habitats_.end()?nullptr:&it->second;
 }
 void Simulation::enable_individual_workforce(){
-    if(snapshot_version_>=20 || !npcs_.empty() || tick_!=0 || !submitted_ids_.empty())
+    // Genesis equipment can raise the snapshot version before the existing
+    // finite colony crew are assigned identities. Never mint crew after a
+    // tick, command, or prior NPC identity has already been created.
+    if(npc_next_seen_ || next_npc_id_!=1 || !npcs_.empty() ||
+       tick_!=0 || !submitted_ids_.empty() || !commands_.empty())
         throw std::invalid_argument("individual workforce migration requires unused genesis world");
     npc_next_seen_=true;
     for(const auto& [ship,c]:colony_ships_){
@@ -718,7 +722,7 @@ void Simulation::enable_individual_workforce(){
             }
     }
     if(npcs_.empty())throw std::invalid_argument("no colony population to materialize");
-    snapshot_version_=31;
+    snapshot_version_=std::max(snapshot_version_,31);
 }
 std::optional<transport::NpcTransport> Simulation::npc_transport_arrival(
         std::uint64_t receipt,std::uint64_t npc_id) const {
@@ -7074,6 +7078,10 @@ void Simulation::ensure_ship_frame_registry() {
     snapshot_version_=std::max(snapshot_version_,71);
 }
 void Simulation::ensure_physical_celestial_systems() {
+    // v70 snapshots require the colony's existing aggregate crew to be
+    // represented by named NPCs. Only unused genesis worlds can convert.
+    if(!npc_next_seen_ && npcs_.empty() && !colony_ships_.empty())
+        enable_individual_workforce();
     const auto current=physical_celestial_systems_;
     for(const auto system:systems_){
         const auto generated=physical_bodies_for_system(system);
@@ -9418,7 +9426,30 @@ void Simulation::process_npc_flight_navigation(){
                 continue;
             }
             if(actual.dock_state!=DockState::InSpace)continue;
-            const auto nav=assist_to_object(actual,station->second,1500);
+            // This navigation command is scheduled for the NEXT tick,
+            // after current velocity has already advanced the ship once.
+            // Predict that passive motion for guidance only; the original
+            // authoritative Simulation still executes all actual movement.
+            Entity projected=actual;
+            const auto future_axis=[](std::int64_t at,std::int64_t speed){
+                const auto next=galactic::checked_add(at,speed);
+                return next.value_or(speed<0 ?
+                    std::numeric_limits<std::int64_t>::min() :
+                    std::numeric_limits<std::int64_t>::max());
+            };
+            projected.position.x=future_axis(actual.position.x,actual.velocity.x);
+            projected.position.y=future_axis(actual.position.y,actual.velocity.y);
+            projected.position_z_mm=future_axis(actual.position_z_mm,
+                                                actual.velocity_z_mm_per_tick);
+            if(actual.physical_galactic_authoritative){
+                const auto next=galactic::advance(actual.physical_galactic,
+                    {actual.velocity.x,actual.velocity.y,
+                     actual.velocity_z_mm_per_tick});
+                if(!next)throw std::overflow_error(
+                    "NPC guidance cannot represent next physical galactic point");
+                projected.physical_galactic=*next;
+            }
+            const auto nav=assist_to_object(projected,station->second,1500);
             if(nav.arrived){
                 if(rendezvous){
                     // Already at the berth still requires an ORIGINAL
@@ -16669,7 +16700,39 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                            event.tick>=flight.started_tick &&
                            event.tick<=flight.resolved_tick)
                             dock_receipt=true;
-                    if(!applied || !dock_receipt || (!rendezvous && !docked))
+                    // Arrival is a historical physical fact. A later real
+                    // departure cannot retroactively make it a false arrival.
+                    // Keep the original applied docking command and Docked
+                    // receipt mandatory, and additionally prove departure.
+                    bool departed_after_arrival=false;
+                    if(!rendezvous && !docked)
+                        for(const auto& event:result.activity_events_)
+                            if(event.kind==ActivityKind::Undocked &&
+                               event.actor==flight.ship &&
+                               event.target==flight.station &&
+                               event.tick>flight.resolved_tick &&
+                               event.result==Outcome::Applied)
+                                departed_after_arrival=true;
+                    bool departing_in_progress=false;
+                    if(!rendezvous && !docked && !departed_after_arrival &&
+                       ship->second.dock_state==DockState::Undocking &&
+                       ship->second.dock_station==flight.station &&
+                       ship->second.transition_ticks>=1 &&
+                       ship->second.transition_ticks<=kDockTransitionTicks &&
+                       result.tick_>flight.resolved_tick){
+                        // The physical undocking countdown may not yet have
+                        // produced its completion event. Require the applied
+                        // original-world command at the transition start.
+                        const auto command_tick=result.tick_-
+                            (kDockTransitionTicks-ship->second.transition_ticks);
+                        for(const auto& ev:result.events_)
+                            if(ev.tick==command_tick &&
+                               ev.result==Outcome::Applied)
+                                departing_in_progress=true;
+                    }
+                    if(!applied || !dock_receipt ||
+                       (!rendezvous && !docked && !departed_after_arrival &&
+                        !departing_in_progress))
                         throw std::runtime_error("snapshot: false NPC local arrival");
                 }
                 if(!rendezvous && flight.phase==NpcFlightPhase::InTransit &&
