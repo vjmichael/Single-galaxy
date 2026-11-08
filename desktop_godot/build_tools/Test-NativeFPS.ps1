@@ -39,7 +39,7 @@ try {
   $p.StandardInput.WriteLine("MOVE|$epoch|1|0|80|0")
   $p.StandardInput.Flush()
   $ack=Read-Frame $p 'move'
-  Expect (($ack.Count -eq 11) -and ($ack[0] -eq 'ACK') -and ($ack[4] -eq '1') -and ($ack[5] -eq '80')) 'First move not committed'
+  Expect (($ack.Count -eq 13) -and ($ack[0] -eq 'ACK') -and ($ack[4] -eq '1') -and ($ack[5] -eq '80')) 'First move not committed'
   Start-Sleep -Milliseconds 75
   $p.StandardInput.WriteLine("SEAT|$epoch|2|0|1")
   $p.StandardInput.Flush()
@@ -58,7 +58,7 @@ try {
   $p.Dispose()
   $q=Start-Native
   $reopened=Read-Frame $q 'restarted'
-  Expect (($reopened.Count -eq 11) -and ($reopened[0] -eq 'POSE') -and ($reopened[4] -eq '1') -and ($reopened[5] -eq '80') -and ($reopened[2] -ne $epoch) -and ($reopened[11] -eq '0') -and ($reopened[12] -eq '2')) 'Restart did not recover committed pose with a fresh session'
+  Expect (($reopened.Count -eq 13) -and ($reopened[0] -eq 'POSE') -and ($reopened[4] -eq '1') -and ($reopened[5] -eq '80') -and ($reopened[2] -ne $epoch) -and ($reopened[11] -eq '0') -and ($reopened[12] -eq '2')) 'Restart did not recover committed pose with a fresh session'
   $q.StandardInput.WriteLine('QUIT')
   $q.StandardInput.Flush()
   Expect ($q.WaitForExit(5000) -and $q.ExitCode -eq 0) 'Second native host did not exit cleanly'
