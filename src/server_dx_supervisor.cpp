@@ -28,7 +28,7 @@
 namespace dx=galaxy::server_dx;
 using Clock=std::chrono::steady_clock;
 struct Args {
-    std::string save,role;
+    std::string save,role,build_sha;
     int timeout_ms=60000;
     bool record_clean=false,allow_core=false;
     std::vector<std::string> command;
@@ -39,11 +39,14 @@ static Args parse(int argc,char** argv){
     for(;i<argc;++i){
         const std::string arg=argv[i];
         if(arg=="--") {++i;break;}
-        if((arg=="--save" || arg=="--role" || arg=="--timeout-ms") && i+1<argc){
+        if((arg=="--save" || arg=="--role" || arg=="--build-sha" || arg=="--timeout-ms") && i+1<argc){
             const std::string value=argv[++i];
             if(arg=="--save")a.save=value;
             else if(arg=="--role")a.role=value;
+            else if(arg=="--build-sha")a.build_sha=value;
             else {
+                if(value.empty() || value.find_first_not_of("0123456789")!=std::string::npos)
+                    throw std::invalid_argument("timeout must be decimal");
                 const auto value_long=std::stoll(value);
                 if(value_long<1 || value_long>3600000)throw std::invalid_argument("timeout out of range");
                 a.timeout_ms=static_cast<int>(value_long);
@@ -55,6 +58,12 @@ static Args parse(int argc,char** argv){
     for(;i<argc;++i)a.command.emplace_back(argv[i]);
     if(a.save.empty() || a.command.empty() || a.role.empty() || a.role.size()>40)
         throw std::invalid_argument("missing save/role/command");
+    if(!a.build_sha.empty()){
+        if(a.build_sha.size()!=40)throw std::invalid_argument("build SHA must be 40 hex digits");
+        for(const char c:a.build_sha)
+            if(!((c>='0'&&c<='9')||(c>='a'&&c<='f')||(c>='A'&&c<='F')))
+                throw std::invalid_argument("build SHA must be hexadecimal");
+    }
     for(const char c:a.role)
         if(!((c>='a'&&c<='z')||(c>='A'&&c<='Z')||
              (c>='0'&&c<='9')||c=='_'||c=='-'))
@@ -109,7 +118,8 @@ static int run(const Args& args){
     ::close(logs[1]);::close(crumbs[1]);
     std::signal(SIGINT,on_interrupt);std::signal(SIGTERM,on_interrupt);
     dx::ProcessIncident incident;
-    incident.pid=pid;incident.role=args.role;incident.core_opt_in=args.allow_core;
+    incident.pid=pid;incident.role=args.role;incident.build_sha=args.build_sha;
+    incident.core_opt_in=args.allow_core;
     bool timed_out=false,cancelled=false,reaped=false,log_open=true,crumb_open=true;
     int status=0;
     std::string pending;
@@ -250,7 +260,8 @@ static int run(const Args& args){
     WaitForSingleObject(pi.hProcess,INFINITE);
     DWORD status=1;GetExitCodeProcess(pi.hProcess,&status);
     dx::ProcessIncident incident;
-    incident.role=args.role;incident.pid=static_cast<std::int64_t>(pi.dwProcessId);
+    incident.role=args.role;incident.build_sha=args.build_sha;
+    incident.pid=static_cast<std::int64_t>(pi.dwProcessId);
     incident.elapsed_ms=elapsed_ms(started);
     incident.exit_code=static_cast<int>(status);
     incident.reason=outcome==WAIT_TIMEOUT?"timeout":status==0?"clean_exit":"nonzero_exit";
