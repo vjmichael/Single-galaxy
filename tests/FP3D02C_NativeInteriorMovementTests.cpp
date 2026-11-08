@@ -39,6 +39,33 @@ int main(int argc,char** argv){
         "denied inputs cannot advance world");
    try{motion.current(8);throw std::runtime_error("foreign player should fail");}
    catch(const std::runtime_error& e){need(std::string(e.what())=="missing authorized physical player","wrong foreign error");}
+   const auto seat_base_generation=world.generation();
+   const auto seat_base_logs=count(save,"SELECT COUNT(*) FROM operation_log");
+   bool seat_fault=false;
+   try{(void)motion.set_seated(7,0,201,true,SeatFailPoint::AfterSeatReceipt);}
+   catch(const std::exception& e){seat_fault=std::string(e.what()).find("injected cockpit")!=std::string::npos;}
+   need(seat_fault,"seat receipt fault injected");
+   need(!motion.current(7).seated&&motion.current(7).seat_sequence==0&&
+        world.generation()==seat_base_generation&&
+        count(save,"SELECT COUNT(*) FROM operation_log")==seat_base_logs,
+        "failed seat receipt must rollback original world and cockpit state");
+   need(motion.set_seated(7,0,201,true),"atomic cockpit sit");
+   auto seated=motion.current(7);
+   need(seated.seated&&seated.seat_sequence==1,"seat receipt accepted");
+   const auto seated_generation=world.generation();
+   need(!motion.move(7,0,205,80,0),"cannot walk while seated");
+   need(!motion.set_seated(8,1,206,false),"foreign seat transition rejected");
+   need(!motion.set_seated(7,0,207,false),"stale seat sequence rejected");
+   need(world.generation()==seated_generation,"denied commands cannot tick cockpit");
+   bool stand_fault=false;
+   try{(void)motion.set_seated(7,1,202,false,SeatFailPoint::AfterSeatUpdate);}
+   catch(const std::exception& e){stand_fault=std::string(e.what()).find("injected cockpit")!=std::string::npos;}
+   need(stand_fault,"stand update fault injected");
+   need(motion.current(7).seated&&motion.current(7).seat_sequence==1&&
+        world.generation()==seated_generation,"stand fault must rollback completely");
+   need(motion.set_seated(7,1,202,false),"atomic cockpit stand");
+   need(!motion.current(7).seated&&motion.current(7).seat_sequence==2,"stand receipt accepted");
+   need(count(save,"SELECT COUNT(*) FROM sg_fp3d03a_seat_event")==2,"two immutable seat receipts");
    const auto baseline=count(save,"SELECT COUNT(*) FROM operation_log");
    bool fault1=false;
    try{(void)motion.move(7,0,100,80,0,MoveFailPoint::AfterStepReceipt);}
@@ -74,7 +101,8 @@ int main(int argc,char** argv){
    Simulation fallback(0xC021);PersistentWorld world(save,std::move(fallback));
    InteriorMovement motion(save,world);
    auto a=motion.current(7);
-   need(a.sequence==3 && a.x_mm==140 && a.z_mm==-20,
+   need(a.sequence==3 && a.x_mm==140 && a.z_mm==-20 &&
+        !a.seated && a.seat_sequence==2,
         "atomic movement survives real SQLite recovery");
    need(motion.move(7,3,108,-40,0),"resume atomic walking after restart");
    std::uint64_t seq=4;
@@ -91,6 +119,14 @@ int main(int argc,char** argv){
    tamper(save,"UPDATE operation_log SET kind=2 WHERE generation=2");
    need(motion.current(7).sequence==seq,"restored STEP provenance valid");
   }
+  tamper(save,"UPDATE sg_fp3d03a_seat SET seated=1 WHERE owner=7");
+  {
+   Simulation fallback(0xC021);PersistentWorld world(save,std::move(fallback));
+   InteriorMovement motion(save,world);bool rejected=false;
+   try{(void)motion.current(7);}catch(const std::exception&){rejected=true;}
+   need(rejected,"tampered cockpit state rejected after restart");
+  }
+  tamper(save,"UPDATE sg_fp3d03a_seat SET seated=0 WHERE owner=7");
   tamper(save,"UPDATE sg_fp3d02c_pose SET x_mm=x_mm+1 WHERE owner=7");
   {
    Simulation fallback(0xC021);PersistentWorld world(save,std::move(fallback));
@@ -99,7 +135,7 @@ int main(int argc,char** argv){
    need(refused,"tampered world pose refused on restart");
   }
   std::cout<<"FP3D02F PASS: ONE SQLite transaction for world STEP+snapshot+pose+receipt,"
-           <<" fault rollback, recovery, spoof/collision rejection\n";
+           <<" cockpit seat/stand rollback, recovery, spoof/collision rejection\n";
  }catch(const std::exception& e){std::cerr<<"FP3D02F FAIL: "<<e.what()<<'\n';return 1;}
  return 0;
 }
