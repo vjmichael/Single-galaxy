@@ -48,6 +48,11 @@ int main(int argc,char** argv){
         std::cerr<<std::string(40000,'X')<<"TAIL-MARKER\n";
         return 21;
     }
+    if(mode=="binary"){
+        std::cerr<<"binary-tail:"<<static_cast<char>(0xff)
+                 <<static_cast<char>(0x00)<<static_cast<char>(0x80)<<"\n";
+        return 23;
+    }
     if(mode=="hang"){
         for(;;)std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
