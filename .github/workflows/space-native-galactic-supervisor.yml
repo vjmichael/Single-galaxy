@@ -92,35 +92,13 @@ jobs:
           set -euo pipefail
           expected="${{ github.event.pull_request.head.sha || github.sha }}"
           test "$(git rev-parse HEAD)" = "$expected"
-          inventory="$(ctest --test-dir build -C Release -N -R '^galaxy_native_galactic_supervisor_1024
-        uses: actions/upload-artifact@v4
-        with:
-          name: space-v121-${{ matrix.os }}-${{ github.event.pull_request.head.sha || github.sha }}
-          path: |
-            build/space-v121-results.xml
-            build/space-1024-results.xml
-            space-1024-ctest.log
-            build/Testing/Temporary/LastTest.log
-            build/Testing/Temporary/LastTestsFailed.log
-          if-no-files-found: warn
-          retention-days: 14
-)"
+          inventory="$(ctest --test-dir build -C Release -N -R '^galaxy_native_galactic_supervisor_1024$')"
           printf '%s\n' "$inventory"
           [[ "$inventory" == *'Total Tests: 1'* ]] ||
             { echo "FATAL: 1024-tick original-world test was not registered"; exit 4; }
           ctest --test-dir build -C Release --verbose --output-on-failure --timeout 900 \
             --output-junit build/space-1024-results.xml \
-            -R '^galaxy_native_galactic_supervisor_1024
-        uses: actions/upload-artifact@v4
-        with:
-          name: space-v121-${{ matrix.os }}-${{ github.event.pull_request.head.sha || github.sha }}
-          path: |
-            build/space-v121-results.xml
-            build/Testing/Temporary/LastTest.log
-            build/Testing/Temporary/LastTestsFailed.log
-          if-no-files-found: warn
-          retention-days: 14
- \
+            -R '^galaxy_native_galactic_supervisor_1024$' \
             2>&1 | tee space-1024-ctest.log
           grep -q '100% tests passed' space-1024-ctest.log ||
             { echo "FATAL: original 1024-tick end-to-end acceptance not green"; exit 5; }
@@ -135,6 +113,8 @@ jobs:
           name: space-v121-${{ matrix.os }}-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
             build/space-v121-results.xml
+            build/space-1024-results.xml
+            space-1024-ctest.log
             build/Testing/Temporary/LastTest.log
             build/Testing/Temporary/LastTestsFailed.log
           if-no-files-found: warn
