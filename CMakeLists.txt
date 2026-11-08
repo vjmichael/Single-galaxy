@@ -84,6 +84,19 @@ target_link_libraries(galaxy_live_scenario_host PRIVATE galaxy_kernel)
 add_executable(galaxy_interactive_host src/interactive_host.cpp)
 target_link_libraries(galaxy_interactive_host PRIVATE galaxy_kernel)
 
+# FP3D-02B.0 opt-in direct desktop C++ view, no browser or Python relay.
+# Child stdin is intentionally ignored: no game command authority exposed yet.
+add_executable(galaxy_desktop_readonly_host src/desktop_readonly_host.cpp)
+target_link_libraries(galaxy_desktop_readonly_host PRIVATE galaxy_kernel)
+if(BUILD_TESTING)
+  find_package(Python3 COMPONENTS Interpreter QUIET)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME galaxy_fp3d02b_native_desktop_readonly
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/FP3D02B_ReadonlyDesktopPipeTests.py
+              $<TARGET_FILE:galaxy_desktop_readonly_host>)
+  endif()
+endif()
+
 # B5 game-start station, undock/dock lifecycle and private local hangar acceptance.
 if(BUILD_TESTING)
     add_executable(galaxy_station_lifecycle_tests tests/StationLifecycleTests.cpp)
