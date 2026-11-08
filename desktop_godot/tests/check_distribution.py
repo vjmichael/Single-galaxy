@@ -10,8 +10,12 @@ for file in required:
     if not (root/file).is_file():
         raise AssertionError(f"missing expected game source: {file}")
 for file in root.rglob("*"):
+    if "__pycache__" in file.parts or ".godot" in file.parts or ".sg-tool-cache" in file.parts or "build" in file.parts:
+        continue
     if file.is_file() and file.suffix.lower() in {".html",".js",".pyc",".png",".jpg",".jpeg",".webp"}:
         raise AssertionError(f"unexpected web/asset file {file}")
 assert "Windows Desktop" in (root/"export_presets.cfg").read_text()
 assert "binary_format/embed_pck=true" in (root/"export_presets.cfg").read_text()
-print("PASS: standard Windows/Linux native export presets and asset-free source checks; no executable claimed")
+assert (root/"BUILD_WINDOWS.cmd").is_file()
+assert (root/"build_tools/Build-Windows.ps1").is_file()
+print("PASS: native export presets, official one-click Windows builder and asset-free source checks; no executable claimed")

@@ -2,3 +2,7 @@
 build/
 *.tmp
 *.log
+.sg-tool-cache/
+build/
+SingleGalaxy_Windows_Build_Evidence.zip
+SingleGalaxy_Graybox_Windows_x64.zip
