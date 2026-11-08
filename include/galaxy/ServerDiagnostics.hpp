@@ -10,6 +10,9 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#ifdef _WIN32
+#include "galaxy/ServerWindowsPrivate.hpp"
+#endif
 
 namespace galaxy::server_dx {
 struct Progress {
@@ -42,11 +45,17 @@ inline bool record_exception(const std::filesystem::path& save_path,
         dir+=".diagnostics";
         std::error_code ec;
         if(fs::is_symlink(dir,ec))return false;
+#ifdef _WIN32
+        windows_private::ScopedSecurity security;
+        if(!security.initialize() || !security.protect_directory(dir.wstring()))
+            return false;
+#else
         fs::create_directories(dir,ec);
         if(ec)return false;
         fs::permissions(dir,fs::perms::owner_all,
                         fs::perm_options::replace,ec);
         if(ec)return false;
+#endif
         const auto epoch_ms=std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count();
         const auto stamp=std::chrono::steady_clock::now().time_since_epoch().count();
@@ -54,11 +63,21 @@ inline bool record_exception(const std::filesystem::path& save_path,
                         std::to_string(stamp)+".json";
         const fs::path final=dir/name;
         const fs::path partial=dir/(name+".tmp");
+#ifdef _WIN32
+        // Create with explicit user-and-SYSTEM ACL, before content exists.
+        auto private_attrs=security.attributes();
+        HANDLE private_file=CreateFileW(partial.c_str(),GENERIC_WRITE,0,
+            &private_attrs,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,nullptr);
+        if(private_file==INVALID_HANDLE_VALUE)return false;
+        CloseHandle(private_file);
+#endif
         std::ofstream file(partial,std::ios::binary|std::ios::trunc);
         if(!file)return false;
+#ifndef _WIN32
         fs::permissions(partial,fs::perms::owner_read|fs::perms::owner_write,
                         fs::perm_options::replace,ec);
         if(ec){file.close();fs::remove(partial,ec);return false;}
+#endif
         file<<"{\"schema\":\"SGDX-01\",\"kind\":\"unhandled_exception\","
                "\"epoch_ms\":"<<epoch_ms
             <<",\"host\":"<<json_string(host_role,80)
