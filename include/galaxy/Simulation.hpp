@@ -1294,6 +1294,20 @@ public:
 
     // Rejects duplicate or past-tick commands; does not execute immediately.
     bool submit(const Command& command);
+    // Fail-closed recovery guard for a cockpit command admitted into the
+    // original journal but not yet executed by the supervised native host.
+    bool has_pending_cockpit_flight() const {
+        constexpr std::uint64_t tag=std::uint64_t{1}<<60;
+        constexpr std::uint64_t other=(std::uint64_t{3}<<61);
+        for(const auto& [tick,commands]:commands_){
+            (void)tick;
+            for(const auto& command:commands)
+                if((command.id & tag) && !(command.id & other) &&
+                   (command.action==Action::Thrust ||
+                    command.action==Action::RequestUndock))return true;
+        }
+        return false;
+    }
     // Simulation is the sole ship and status owner. This projection is used
     // INSIDE native module commands and by player/NPC read models alike.
     bool hardpoint_effective_on(EntityId ship,std::uint8_t slot) const;
