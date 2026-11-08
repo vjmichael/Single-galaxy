@@ -10,6 +10,7 @@
  const GUIDE_KEY='single-galaxy:skip-opening-guide:v1';
  function flightInput(key,editable=false,repeat=false,alt=false,ctrl=false,meta=false){
    if(editable||repeat||alt||ctrl||meta)return null;
+   if(key==='b'||key==='B')return {action:'brake',extra:{}};
    if(Object.prototype.hasOwnProperty.call(YAW_KEYS,key))return {action:'yaw',extra:{delta:YAW_KEYS[key]}};
    return !Object.prototype.hasOwnProperty.call(KEYS,key)?
       null:{action:'thrust',extra:{x:KEYS[key][0],y:KEYS[key][1]}};
