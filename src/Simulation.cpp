@@ -23,6 +23,7 @@
 
 namespace galaxy {
 namespace {
+EntityId shuttle_transit_custody_id(const PlanetarySiteKey& key);
 constexpr int kPlacementBound=1000000; // coordinate safety, not room size
 std::uint32_t placement_node(std::int64_t n){
     return n==-1?kWorkshopConveyorNode:static_cast<std::uint32_t>(n);
@@ -6820,7 +6821,8 @@ void Simulation::process_oasis_extractors() {
         const auto frame=ship_frames_.find(id);
         const auto c=colony_ships_.find(id);
         const auto l=life_support_.find(id);
-        if(!ship || !c || !l || frame==ship_frames_.end() ||
+        if(!ship || c==colony_ships_.end() || l==life_support_.end() ||
+           frame==ship_frames_.end() ||
            frame->second.anchor_body!=rig.body ||
            ship->dock_state!=DockState::InSpace ||
            ship->jump_state!=ShipJumpState::Ready || !rig.condition)
@@ -8559,8 +8561,10 @@ bool Simulation::queue_shipyard_freighter(PlayerId owner,
             return false;
     }
     const EntityId ship=yard->second.colony_ship;
-    const auto e=entities_.find(ship),inventory=colony_ships_.find(ship);
-    const auto life=life_support_.find(ship),frame=ship_frames_.find(ship);
+    const auto e=entities_.find(ship);
+    const auto inventory=colony_ships_.find(ship);
+    const auto life=life_support_.find(ship);
+    const auto frame=ship_frames_.find(ship);
     if(e==entities_.end() || inventory==colony_ships_.end() ||
        life==life_support_.end() || frame==ship_frames_.end() ||
        e->second.type!=EntityType::Ship ||
@@ -8950,7 +8954,8 @@ bool Simulation::queue_npc_flight(PlayerId owner,EntityId ship,
         std::uint64_t pilot,std::uint64_t destination,
         std::uint64_t id,std::uint64_t transit,
         NpcFlightPurpose purpose){
-    const auto e=entities_.find(ship),frame=ship_frames_.find(ship);
+    const auto e=entities_.find(ship);
+    const auto frame=ship_frames_.find(ship);
     const auto selected_pilot=select_npc_flight_pilot(ship,pilot);
     if(!id || id>=(std::uint64_t{1}<<50) || !transit ||
        transit>=(std::uint64_t{1}<<50) ||
@@ -9294,7 +9299,7 @@ bool Simulation::complete_native_celestial_transit(std::uint64_t id){
     seed_celestial_local_region(p.destination_body);
     auto& ship=entities_.at(p.ship);
     auto& frame=ship_frames_.at(p.ship);
-    frame={plan.destination_frame.system,plan.destination_frame.anchor_body,
+    frame={plan.destination_frame.system,plan.destination_frame.anchor_body_id,
            plan.destination_frame.origin};
     ship.position=plan.arrival_position;
     ship.velocity=plan.arrival_velocity;
@@ -13122,7 +13127,8 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             require_fields(f,13);
             const auto id=u64(f[1]),owner=u64(f[2]),ship=u64(f[3]);
             const auto body=u64(f[4]),lat=u64(f[5]),lon=u64(f[6]),rev=u64(f[7]);
-            const auto cargo=u64(f[8]),kg=i64(f[9]),pilot=u64(f[10]);
+            const auto cargo=u64(f[8]),pilot=u64(f[10]);
+            const auto kg=i64(f[9]);
             const auto stage=u64(f[11]),created=u64(f[12]);
             if(!id || id>=(std::uint64_t{1}<<50) ||
                !owner || owner==kServerAuthority || !ship || !body ||
@@ -13207,8 +13213,9 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             const auto id=u64(f[1]),owner=u64(f[2]),
                 ship=u64(f[3]),kind=u64(f[4]),
                 source=u64(f[5]),dependency=u64(f[6]),
-                first=u64(f[7]),second=u64(f[8]),
-                provisions=i64(f[9]),status=u64(f[10]),
+                first=u64(f[7]),second=u64(f[8]);
+            const auto provisions=i64(f[9]);
+            const auto status=u64(f[10]),
                 blocked=u64(f[11]),posted=u64(f[12]),
                 updated=u64(f[13]),resolved=u64(f[14]);
             if(!id || id>=(std::uint64_t{1}<<50) ||
@@ -13359,7 +13366,8 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 (result.snapshot_version_>=79?33:(result.snapshot_version_>=78?26:15)));
             const auto body=u64(f[1]),lat=u64(f[2]),lon=u64(f[3]),
                        rev=u64(f[4]),owner=u64(f[5]),ship=u64(f[6]);
-            const auto mass=i64(f[7]),farm=u64(f[8]),extractor=u64(f[9]);
+            const auto mass=i64(f[7]);
+            const auto farm=u64(f[8]),extractor=u64(f[9]);
             const auto water=i64(f[10]),nutrients=i64(f[11]),
                        food=i64(f[12]),wastewater=i64(f[13]);
             const auto cycles=u64(f[14]);
@@ -13389,9 +13397,10 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 auto& site=result.planetary_sites_.at(
                     PlanetarySiteKey{body,std::uint16_t(lat),std::uint16_t(lon),1});
                 const auto phase=u64(f[15]),progress=u64(f[16]),needed=u64(f[17]),
-                           location=u64(f[18]),npc1=u64(f[19]),npc2=u64(f[20]),
-                           workers=i64(f[21]),oxygen=i64(f[22]),co2=i64(f[23]),
-                           organic=i64(f[24]),support=u64(f[25]);
+                           location=u64(f[18]),npc1=u64(f[19]),npc2=u64(f[20]);
+                const auto workers=i64(f[21]),oxygen=i64(f[22]),co2=i64(f[23]),
+                           organic=i64(f[24]);
+                const auto support=u64(f[25]);
                 if(phase<1 || phase>3 || needed!=240 || progress>240 ||
                    !location || (workers!=2 && !(workers==0 && phase==3 &&
                      npc1==0 && npc2==0)) || oxygen<0 || co2<0 ||
@@ -13478,10 +13487,11 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                         const auto stage=u64(f[46]),built=u64(f[47]),
                             order_id=u64(f[48]),supervisor=u64(f[49]),
                             stalled=u64(f[50]),finished=u64(f[51]),
-                            paused=u64(f[52]),energy=i64(f[53]),
-                            brine=i64(f[54]),powered=u64(f[55]),
-                            hvac=u64(f[56]),outages=u64(f[57]),
-                            water_out=i64(f[58]),oxygen_out=i64(f[59]);
+                            paused=u64(f[52]);
+                         const auto energy=i64(f[53]),brine=i64(f[54]);
+                         const auto powered=u64(f[55]),hvac=u64(f[56]),
+                             outages=u64(f[57]);
+                         const auto water_out=i64(f[58]),oxygen_out=i64(f[59]);
                         if(stage>2 || built>60 || paused>1 ||
                            energy<0 || energy>120 || brine<0 || brine>1000000 ||
                            water_out<0 || oxygen_out<0 ||
@@ -13738,7 +13748,8 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 throw std::runtime_error("snapshot: duplicate visitor residence");
         } else if(f[0]=="oasisextractor" && result.snapshot_version_>=76) {
             require_fields(f,8);
-            const auto ship=u64(f[1]),body=u64(f[2]),mass=i64(f[3]);
+            const auto ship=u64(f[1]),body=u64(f[2]);
+            const auto mass=i64(f[3]);
             const auto workers=u64(f[4]),condition=u64(f[5]),
                        energy=u64(f[6]),cycles=u64(f[7]);
             if(!ship || !body || mass!=4 || workers!=2 || condition>100 ||
@@ -13828,7 +13839,8 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
         } else if(f[0]=="celestial" && result.snapshot_version_>=70) {
             require_fields(f,10);
             const auto system=u64(f[1]),id=u64(f[2]),kind=u64(f[3]),parent=u64(f[4]);
-            const auto orbit=u64(f[5]),x=i64(f[6]),y=i64(f[7]),z=i64(f[8]),radius=u64(f[9]);
+            const auto orbit=u64(f[5]),radius=u64(f[9]);
+            const auto x=i64(f[6]),y=i64(f[7]),z=i64(f[8]);
             if(!system||system>std::numeric_limits<std::uint32_t>::max()||
                !id||kind>3||!radius||radius>kCosmicLimitMm||
                orbit>300000||
