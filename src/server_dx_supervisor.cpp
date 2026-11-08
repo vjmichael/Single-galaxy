@@ -20,6 +20,9 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/resource.h>
+#ifdef __linux__
+#include <sys/prctl.h>
+#endif
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -97,9 +100,17 @@ static int run(const Args& args){
         throw std::runtime_error("cannot create native supervisor pipes");
     nonblocking(logs[0]);nonblocking(crumbs[0]);nonblocking(crumbs[1]);
     const auto started=Clock::now();
+    const pid_t supervisor_pid=::getpid();
     const pid_t pid=::fork();
     if(pid<0)throw std::runtime_error("fork failed");
     if(pid==0){
+#ifdef __linux__
+        // If the supervisor is SIGKILLed, the native game must not silently
+        // continue without its authoritative process guardian. A parent-death
+        // signal survives execve; checking getppid closes the fork/prctl race.
+        if(::prctl(PR_SET_PDEATHSIG,SIGKILL)!=0 || ::getppid()!=supervisor_pid)
+            ::_exit(127);
+#endif
         (void)::setpgid(0,0);
         ::close(logs[0]);::close(crumbs[0]);
         if(::dup2(logs[1],STDERR_FILENO)<0)::_exit(127);
