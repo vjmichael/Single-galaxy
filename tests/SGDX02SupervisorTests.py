@@ -29,6 +29,23 @@ def check(supervisor, child):
             records = sorted(directory.glob("process-*.json")) if directory.exists() else []
             return result, json.loads(records[-1].read_text()) if records else None, records
 
+        # A genuine parent-side worker refusal is NOT a child process exit.
+        worker_save = root / "worker-failure.sqlite"
+        event = subprocess.run([child, "worker-report", str(worker_save)],
+                               capture_output=True, timeout=10, check=False)
+        assert event.returncode == 0
+        worker_report = list(pathlib.Path(str(worker_save)+".diagnostics").glob("process-*.json"))
+        assert len(worker_report) == 1
+        report = json.loads(worker_report[0].read_text(encoding="utf-8"))
+        assert report["kind"] == "worker_failure"
+        assert report["role"] == "native_cell_worker"
+        assert report["worker_scope"] == "spatial/v2/s1,2,3"
+        assert report["worker_epoch"] == 47
+        assert report["last_committed_tick"] == 99
+        assert report["last_world_generation"] == 103
+        assert report["reason"] == "preflight_failed"
+        assert report["exit_code"] == -1 and report["pid"] == 0
+
         clean, item, _ = run("clean")
         assert clean.returncode == 0 and clean.stdout == "SGVIEW|1|unmodified\n"
         assert item is None, "clean process should not produce an incident"
