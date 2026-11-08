@@ -295,45 +295,51 @@ static void cross_system_physical_contact(){
 // when its local XY compatibility field crosses a galactic sector. The
 // nearest station is checked in the real world, not a catalogue label.
 static void cross_system_outpost_genesis(){
-    Simulation seed(4912);
-    seed.add_system(2);
-    const auto ship=seed.add_colony_ship(7,{0,0},60,24);
-    const auto rock=seed.add_asteroid({1800,0},40);
-    seed.enable_native_3d_physics();
+    Simulation genesis(4912);
+    genesis.add_system(2);
+    const auto ship=genesis.add_colony_ship(7,{0,0},60,24);
+    const auto rock=genesis.add_asteroid({1800,0},40);
+    genesis.enable_native_3d_physics();
     constexpr auto edge=galactic::kSectorEdgeMm;
     const galactic::Point star1{{55,edge-500},{10,1000},{12,1000}};
     const galactic::Point star2{{56,500},{10,1000},{12,1000}};
-    seed.enable_native_galactic_physics({{1,star1},{2,star2}});
-    auto applied=[&](std::uint64_t id,Action action,
+    genesis.enable_native_galactic_physics({{1,star1},{2,star2}});
+    const auto genesis_state=genesis.canonical_state();
+    auto prepare=[&](Simulation& simulation){
+        auto run=[&](std::uint64_t id,Action action,
                      EntityId target,std::int64_t amount){
-        CHECK(seed.submit(command(id,ship,seed.tick()+1,
-                                  action,target,0,0,amount)));
-        seed.step();
-        CHECK(seed.events().back().result==Outcome::Applied);
+            CHECK(simulation.submit(command(id,ship,simulation.tick()+1,
+                                            action,target,0,0,amount)));
+            simulation.step();
+            CHECK(simulation.events().back().result==Outcome::Applied);
+        };
+        run(61001,Action::Mine,rock,16);
+        run(61002,Action::RefineOre,0,16);
+        run(61003,Action::FabricateModule,0,4);
+        CHECK(simulation.colony_ship(ship)->modules==4);
     };
-    applied(61001,Action::Mine,rock,16);
-    applied(61002,Action::RefineOre,0,16);
-    applied(61003,Action::FabricateModule,0,4);
-    CHECK(seed.colony_ship(ship)->modules==4);
-    const auto before=seed.canonical_state();
-    const auto ore=seed.total_ore();
-    const auto crew=seed.colony_ship(ship)->crew;
-    CHECK(Simulation::from_snapshot(before).canonical_state()==before);
 
-    Simulation blocked=Simulation::from_snapshot(before);
+    // Real star/system membership is seeded only at genesis, never after
+    // gameplay begins. Competing environments replay identical ore work.
+    Simulation blocked=Simulation::from_snapshot(genesis_state);
     const auto foreign=blocked.add_station_in_system(2,{250,0});
     CHECK(blocked.find(foreign)->physical_galactic.x.sector==56);
+    prepare(blocked);
+    const auto original_ore=blocked.total_ore();
+    const auto original_crew=blocked.colony_ship(ship)->crew;
     CHECK(blocked.submit(command(61004,ship,blocked.tick()+1,
         Action::ConstructOutpost)));
     blocked.step();
     CHECK(blocked.events().back().result==Outcome::InvalidTarget);
     CHECK(blocked.built_outposts().empty() &&
           blocked.colony_ship(ship)->modules==4 &&
-          blocked.total_ore()==ore);
+          blocked.colony_ship(ship)->crew==original_crew &&
+          blocked.total_ore()==original_ore);
     CHECK(Simulation::from_snapshot(blocked.canonical_state())
           .canonical_state()==blocked.canonical_state());
 
-    Simulation built=Simulation::from_snapshot(before);
+    Simulation built=Simulation::from_snapshot(genesis_state);
+    prepare(built);
     const auto ship_location=built.find(ship)->physical_galactic;
     const auto exact=galactic::advance(ship_location,{1000,0,0});
     CHECK(exact && exact->x.sector==56 && exact->x.millimeters==500);
@@ -346,8 +352,8 @@ static void cross_system_outpost_genesis(){
     CHECK(built.find(outpost)->physical_galactic==*exact &&
           built.find(outpost)->system_id==1 &&
           built.colony_ship(ship)->modules==0 &&
-          built.colony_ship(ship)->crew==crew &&
-          built.total_ore()==ore);
+          built.colony_ship(ship)->crew==original_crew &&
+          built.total_ore()==original_ore);
     CHECK(Simulation::from_snapshot(built.canonical_state()).canonical_state()
           ==built.canonical_state());
 }
