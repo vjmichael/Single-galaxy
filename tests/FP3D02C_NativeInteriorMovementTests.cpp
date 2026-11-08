@@ -36,7 +36,14 @@ int main(int argc,char** argv){
    }
    need(!motion.move(7,0,100,80,0),"movement cannot run at same native tick");
    native.step();
-   need(motion.move(7,0,100,80,0),"real world-tick movement");
+   bool crashed_before_commit=false;
+   try { (void)motion.move(7,0,100,80,0,MoveFailPoint::AfterStepReceipt); }
+   catch(const std::runtime_error& e) {
+     crashed_before_commit=std::string(e.what()).find("injected crash")!=std::string::npos;
+   }
+   need(crashed_before_commit,"receipt-stage crash simulated");
+   need(motion.current(7).sequence==0,"receipt-stage rollback leaves pose and receipt unchanged");
+   need(motion.move(7,0,100,80,0),"real world-tick movement after rollback");
    need(!motion.move(7,1,101,80,0),"cannot move twice in one tick");
    need(!motion.move(7,0,102,80,0),"stale sequence rejected");
    need(!motion.move(8,0,103,80,0),"unregistered player rejected");
@@ -45,7 +52,14 @@ int main(int argc,char** argv){
    native.step();
    need(!motion.move(7,1,104,100,100),"diagonal speed gain rejected");
    need(!motion.move(7,1,105,0,0),"null step rejected");
-   need(motion.move(7,1,106,60,80),"bounded diagonal succeeds");
+   bool crashed_after_pose=false;
+   try { (void)motion.move(7,1,106,60,80,MoveFailPoint::AfterPoseUpdate); }
+   catch(const std::runtime_error& e) {
+     crashed_after_pose=std::string(e.what()).find("injected crash")!=std::string::npos;
+   }
+   need(crashed_after_pose,"pose-stage crash simulated");
+   need(motion.current(7).sequence==1,"pose-stage rollback is atomic with receipt");
+   need(motion.move(7,1,106,60,80),"bounded diagonal succeeds after rollback");
    a=motion.current(7);
    need(a.x_mm==140 && a.z_mm==80 && a.sequence==2,"diagonal movement state");
    native.step();
@@ -75,6 +89,17 @@ int main(int argc,char** argv){
    recovered.step();
    need(!motion.move(7,seq,117,100,0),"capsule collision prevents solid crate entry");
    need(motion.current(7).sequence==seq,"collision did not consume receipt");
+   // A receipt cannot merely claim a numeric world generation. Its referenced
+   // operation MUST be the original committed kind=2 STEP and snapshot checksum.
+   tamper(save,"UPDATE operation_log SET kind=0 WHERE generation=2");
+   bool rejected_forged_journal=false;
+   try { (void)motion.current(7); }
+   catch(const std::runtime_error& e) {
+     rejected_forged_journal=std::string(e.what()).find("STEP journal proof")!=std::string::npos;
+   }
+   need(rejected_forged_journal,"movement forged generation without native STEP refused");
+   tamper(save,"UPDATE operation_log SET kind=2 WHERE generation=2");
+   need(motion.current(7).sequence==seq,"valid restored journal verifies");
   }
   // Deliberate corruption of tip; a casual stale state write is not accepted.
   tamper(save,"UPDATE sg_fp3d02c_pose SET x_mm=x_mm+1 WHERE owner=7");
@@ -86,7 +111,7 @@ int main(int argc,char** argv){
    try{(void)motion.current(7);}catch(const std::runtime_error&){rejected=true;}
    need(rejected,"forged pose must not bypass receipt replay");
   }
-  std::cout<<"FP3D02C PASS: native identity, one-step/tick, bounds, stale/duplicate, restart and corruption refusal\n";
+  std::cout<<"FP3D02E PASS: native identity, STEP journal provenance, rollback fault injection, bounded motion, restart and corruption refusal\n";
  }catch(const std::exception& e){std::cerr<<"FP3D02C FAIL: "<<e.what()<<'\n';return 1;}
  return 0;
 }
