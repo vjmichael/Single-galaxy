@@ -53,6 +53,12 @@ int main(int argc,char** argv){
                  <<static_cast<char>(0x00)<<static_cast<char>(0x80)<<"\n";
         return 23;
     }
+#ifndef _WIN32
+    if(mode=="pid-hang"){
+        std::cout<<"CHILD_PID="<<getpid()<<"\n"<<std::flush;
+        for(;;)std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+#endif
     if(mode=="hang"){
         for(;;)std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
