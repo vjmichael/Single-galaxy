@@ -5,7 +5,7 @@ config_version=5
 [application]
 config/name="Single-Galaxy — Graybox FPS"
 run/main_scene="res://world/main.tscn"
-config/description="Single-Galaxy standalone FPS input and geometry prototype; native authoritative bridge pending"
+config/description="Single-Galaxy standalone FPS input and geometry prototype; read-only native C++ bridge optional; person authority pending"
 
 [display]
 window/size/viewport_width=1280

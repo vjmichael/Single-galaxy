@@ -44,3 +44,33 @@ The existing Single-Galaxy C++ kernel, SQLite persistence, operation journal, us
 Double-click `BUILD_WINDOWS.cmd` from this unpacked source tree on Windows 10/11. The script uses only PowerShell and official Godot 4.7.2 release binaries: it downloads the pinned editor and export-template archive with release SHA-256 verification, runs actual Godot import and headless scene tests, exports the Windows x64 executable, and writes a verified-PE build status. The desktop app runs without the editor after successful export.
 
 The template archive download is large (about 1.2 GB) unless matching templates are already installed. **This automation has not been run on Windows here**; any Godot or export failure will be recorded in `SingleGalaxy_Windows_Build_Evidence.zip`. It will not automatically install anything else or access your native galaxy save data. See `build_tools/WINDOWS_ACCEPTANCE.md`.
+
+
+### FP3D-02B: real native C++ read-only feed (optional)
+
+Press **F7** in the graybox to start a child process named
+`native/galaxy_desktop_readonly_host.exe` on Windows (or the Linux equivalent).
+The C++ process owns a durable SQLite save in Godot's user data directory,
+advances the actual simulation, decodes and independently verifies canonical
+SGVIEW frames, and emits strictly bounded `SGDESK|1` snapshots through a
+local **stdio pipe** (no HTTP, Python relay, or browser). Godot consumes the
+observed ship and contacts and draws monochrome **non-colliding marker spheres**
+relative to the native ship in the scene. The marker Y coordinate is only
+illustrative; native world X/Y in millimeters become 3D viewer X/Z.
+
+**This is not yet authoritative on-foot movement, boarding, mining or combat.**
+The local FPS controller never writes its position into the native game. Native
+host standard input is intentionally not parsed as game commands. Stream
+identity, sequence and masked ownership are checked before display. The
+native host exits after 120 committed 50ms steps to bound the test. Click F7
+again to start another read-only session from the same persisted SQLite save.
+
+Windows preview imports `winsqlite3.dll` (Windows 10/11) and Microsoft VC++
+x64 runtime DLLs; they are not bundled. Real Windows child process startup
+and Godot pipe-read acceptance remain **OPEN** until independently observed.
+
+For an independent **real Windows native process test**, double-click
+`TEST_NATIVE_BRIDGE_WINDOWS.cmd`. It launches the actual C++ executable twice
+against a fresh temporary SQLite save, checks ticks 0–3 then 3–5, and creates
+`SingleGalaxy_NativeBridge_Windows_Evidence.zip` for review. It does **not**
+claim Godot UI success or authority over the local FPS character.
