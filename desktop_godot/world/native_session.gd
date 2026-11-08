@@ -51,7 +51,7 @@ func start() -> void:
 		return
 	var path := _host_path()
 	if not FileAccess.file_exists(path):
-		_emit_status("Native host missing at: " + path + " | F7 retry")
+		_emit_status("Native host missing at: " + path + " | O retry")
 		return
 	var save := OS.get_user_data_dir().path_join("fp3d_native_readonly.sqlite")
 	_parser.reset()
@@ -59,13 +59,13 @@ func start() -> void:
 	_verified_packets = 0
 	var result := OS.execute_with_pipe(path, PackedStringArray([save, "600"]), false)
 	if result.is_empty() or not result.has("stdio") or not result.has("pid"):
-		_emit_status("Native host could not start | F7 retry; see user://sg_native_bridge_status.log")
+		_emit_status("Native host could not start | O retry; see user://sg_native_bridge_status.log")
 		return
 	_stdio = result["stdio"]
 	_stderr = result.get("stderr")
 	_pid = result["pid"]
 	_active = true
-	_emit_status("READ ONLY — native C++ telemetry connecting; F7 stops")
+	_emit_status("READ ONLY — native C++ telemetry connecting; O stops")
 
 func poll() -> void:
 	if not _active:
@@ -73,10 +73,10 @@ func poll() -> void:
 	_drain()
 	if _active and not OS.is_process_running(_pid):
 		# The host is intentionally bounded. Never erase the verified last frame.
-		var reason := "READ ONLY — native stream completed at tick %d (%d verified packets); F7 reconnects" % [
+		var reason := "READ ONLY — native stream completed at tick %d (%d verified packets); O reconnects" % [
 			_last_verified_tick, _verified_packets]
 		if _verified_packets == 0:
-			reason = "READ ONLY — native host ended with no verified frames; see status log; F7 retry"
+			reason = "READ ONLY — native host ended with no verified frames; see status log; O retry"
 		var detail := _read_stderr()
 		if not detail.is_empty():
 			reason += " | native error: " + detail
