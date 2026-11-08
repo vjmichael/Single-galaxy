@@ -2,7 +2,11 @@
 setlocal
 cd /d "%~dp0"
 echo Single-Galaxy Standalone Graybox - official Godot Windows build and smoke tests
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0build_tools\Build-Windows.ps1"
+if defined SG_GODOT_EXE (
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0build_tools\Build-Windows.ps1" -ExistingGodotExe "%SG_GODOT_EXE%"
+) else (
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0build_tools\Build-Windows.ps1"
+)
 set "SG_RESULT=%ERRORLEVEL%"
 if not "%SG_RESULT%"=="0" (
   echo.
