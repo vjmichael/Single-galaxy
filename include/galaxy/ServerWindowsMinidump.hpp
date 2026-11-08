@@ -7,7 +7,7 @@
 #endif
 #include <windows.h>
 #include "galaxy/ServerWindowsPrivate.hpp"
-#include <DbgHelp.h>
+#include "galaxy/ServerWindowsMinidumpApi.hpp"
 #include <sddl.h>
 #include <aclapi.h>
 #include <algorithm>
