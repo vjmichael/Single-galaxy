@@ -44,7 +44,7 @@ template<class T>bool number(std::string_view s,T& out){
 void send_pose(const char* action,std::uint64_t session,std::uint64_t request,const Pose& p){
     std::cout<<action<<"|1|"<<session<<'|'<<request<<'|'<<p.sequence<<'|'
              <<p.x_mm<<'|'<<p.y_mm<<'|'<<p.z_mm<<'|'<<p.world_tick<<'|'
-             <<p.world_generation<<'|'<<p.ship<<'\n'<<std::flush;
+             <<p.world_generation<<'|'<<p.ship<<'|'<<(p.seated?1:0)<<'|'<<p.seat_sequence<<'\n'<<std::flush;
     if(!std::cout)throw std::runtime_error("Godot process read pipe closed");
 }
 void deny(std::uint64_t id,const char* reason){
@@ -77,21 +77,22 @@ int main(int argc,char** argv){
             if(line=="QUIT")return 0;
             if(line.size()>kMaxLine){deny(0,"oversize");continue;}
             const auto fields=split(line);
-            if(fields.size()!=6||fields[0]!="MOVE"){
-                deny(0,"malformed");continue;
-            }
-            std::uint64_t supplied_session=0,req=0,expected=0;
+            const bool walking=fields.size()==6&&fields[0]=="MOVE";
+            const bool seating=fields.size()==5&&fields[0]=="SEAT";
+            if(!walking&&!seating){deny(0,"malformed");continue;}
+            std::uint64_t supplied_session=0,req=0,expected=0,desired=0;
             std::int64_t dx=0,dz=0;
             if(!number(fields[1],supplied_session)||!number(fields[2],req)||
-               !number(fields[3],expected)||!number(fields[4],dx)||
-               !number(fields[5],dz)){
+               !number(fields[3],expected)||
+               (walking&&(!number(fields[4],dx)||!number(fields[5],dz)))||
+               (seating&&(!number(fields[4],desired)||desired>1))){
                 deny(0,"bad-integer");continue;
             }
             if(supplied_session!=session){deny(req,"session");continue;}
             if(req<=latest_request||req>1000000000ULL){deny(req,"replayed-request");continue;}
-            latest_request=req; // a denied request cannot later be replayed
-            if(dx==0&&dz==0){deny(req,"zero-step");continue;}
-            if(dx>100||dx< -100||dz>100||dz< -100||dx*dx+dz*dz>10000){
+            latest_request=req; // denied requests cannot be replayed
+            if(walking&&dx==0&&dz==0){deny(req,"zero-step");continue;}
+            if(walking&&(dx>100||dx< -100||dz>100||dz< -100||dx*dx+dz*dz>10000)){
                 deny(req,"speed");continue;
             }
             const auto now=std::chrono::steady_clock::now();
@@ -102,9 +103,14 @@ int main(int argc,char** argv){
             if(receipt>std::uint64_t(std::numeric_limits<std::int64_t>::max())){
                 deny(req,"receipt-range");continue;
             }
-            if(expected!=person.current(kLocalOwner).sequence){deny(req,"stale-pose");continue;}
-            if(!person.move(kLocalOwner,expected,receipt,dx,dz)){
+            const auto previous=person.current(kLocalOwner);
+            if(walking&&expected!=previous.sequence){deny(req,"stale-pose");continue;}
+            if(seating&&expected!=previous.seat_sequence){deny(req,"stale-seat");continue;}
+            if(walking&&!person.move(kLocalOwner,expected,receipt,dx,dz)){
                 deny(req,"physical-or-custody");continue;
+            }
+            if(seating&&!person.set_seated(kLocalOwner,expected,receipt,desired!=0)){
+                deny(req,"seat-or-custody");continue;
             }
             last_move=now;
             send_pose("ACK",session,req,person.current(kLocalOwner));
