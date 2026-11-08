@@ -103,7 +103,7 @@ int main(){
      const auto end=forged.find('\n',row);
      CHECK(end!=std::string::npos);
      auto text=forged.substr(row,end-row);
-     const auto marker="|99802|";
+     const std::string marker="|99802|";
      const auto at=text.find(marker);
      CHECK(at!=std::string::npos);
      text.replace(at,marker.size(),"|99804|");
