@@ -4,10 +4,18 @@ extends CharacterBody3D
 
 signal inspected(display_name: String)
 signal native_motion_intent(heading: Vector3)
+signal native_seat_intent()
+var native_seated := false
 var authoritative_mode := false
 
 func use_native_authority(enabled: bool) -> void:
 	authoritative_mode = enabled
+	if not enabled:
+		native_seated = false
+	velocity = Vector3.ZERO
+
+func use_native_seat(seated: bool) -> void:
+	native_seated = seated
 	velocity = Vector3.ZERO
 
 const WALK_SPEED := 5.0
@@ -60,9 +68,12 @@ func _physics_process(delta: float) -> void:
 		# C++ operation-journal transaction may advance the player position.
 		velocity = Vector3.ZERO
 		if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and get_window().has_focus():
-			var axis := Input.get_vector("fps_left", "fps_right", "fps_forward", "fps_backward")
-			var direction := (global_transform.basis * Vector3(axis.x, 0.0, axis.y)).normalized()
-			native_motion_intent.emit(direction)
+			if Input.is_action_just_pressed("fps_inspect"):
+				native_seat_intent.emit()
+			if not native_seated:
+				var axis := Input.get_vector("fps_left", "fps_right", "fps_forward", "fps_backward")
+				var direction := (global_transform.basis * Vector3(axis.x, 0.0, axis.y)).normalized()
+				native_motion_intent.emit(direction)
 		return
 	# The arrow keys NEVER generate thrust while on foot. No input auto-repeat needed.
 	if not is_on_floor():

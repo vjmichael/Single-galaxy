@@ -12,6 +12,9 @@ var _stderr: FileAccess
 var _active := false
 var _session := 0
 var _sequence := -1
+var _seat_sequence := -1
+var _seated := false
+var _pending_kind := ""
 var _generation := -1
 var _tick := -1
 var _next_request := 1
@@ -56,6 +59,9 @@ func start() -> void:
 	_active = true
 	_session = 0
 	_sequence = -1
+	_seat_sequence = -1
+	_seated = false
+	_pending_kind = ""
 	_generation = -1
 	_tick = -1
 	_next_request = 1
@@ -104,12 +110,13 @@ func _accept_line(line: String) -> void:
 		var request := int(parts[2])
 		if request == _pending:
 			_pending = 0
+			_pending_kind = ""
 		_status("NATIVE DENIED move #%d: %s; no position advanced" % [request, parts[3]])
 		return
-	if parts.size() != 11 or parts[1] != "1" or (parts[0] != "POSE" and parts[0] != "ACK"):
+	if parts.size() != 13 or parts[1] != "1" or (parts[0] != "POSE" and parts[0] != "ACK"):
 		stop("Native player protocol frame invalid")
 		return
-	for i in range(2, 11):
+	for i in range(2, 13):
 		if not _integer(parts[i]):
 			stop("Native player protocol nonnumeric field")
 			return
@@ -122,7 +129,9 @@ func _accept_line(line: String) -> void:
 	var tick := int(parts[8])
 	var generation := int(parts[9])
 	var ship := int(parts[10])
-	if session <= 0 or ship <= 0 or abs(x) > 8000 or abs(z) > 8000 or y != 0 or seq < 0 or tick < 0 or generation < 1:
+	var seated_number := int(parts[11])
+	var seat_sequence := int(parts[12])
+	if session <= 0 or ship <= 0 or abs(x) > 8000 or abs(z) > 8000 or y != 0 or seq < 0 or tick < 0 or generation < 1 or (seated_number != 0 and seated_number != 1) or seat_sequence < 0:
 		stop("Native pose fields out of bounds")
 		return
 	if parts[0] == "POSE":
@@ -131,18 +140,32 @@ func _accept_line(line: String) -> void:
 			return
 		_session = session
 	else:
-		if session != _session or request != _pending or seq != _sequence + 1 or tick <= _tick or generation <= _generation:
-			stop("Native move acknowledgement has invalid sequence or identity")
+		if session != _session or request != _pending or tick <= _tick or generation <= _generation:
+			stop("Native action acknowledgement has invalid identity or journal generation")
+			return
+		if _pending_kind == "MOVE":
+			if seq != _sequence + 1 or seat_sequence != _seat_sequence or (seated_number == 1) != _seated:
+				stop("Native walking acknowledgement mismatches committed movement or seat mode")
+				return
+		elif _pending_kind == "SEAT":
+			if seq != _sequence or seat_sequence != _seat_sequence + 1 or (seated_number == 1) == _seated:
+				stop("Native cockpit acknowledgement mismatches committed seat transition")
+				return
+		else:
+			stop("Unrequested native acknowledgement")
 			return
 		_pending = 0
+		_pending_kind = ""
 	_sequence = seq
+	_seat_sequence = seat_sequence
+	_seated = seated_number == 1
 	_tick = tick
 	_generation = generation
-	pose_received.emit({"x_mm":x,"y_mm":y,"z_mm":z,"seq":seq,"tick":tick,"gen":generation,"ship":ship})
-	_status("NATIVE AUTHORITATIVE FPS (P stop): step %d / tick %d / ship %d" % [seq,tick,ship])
+	pose_received.emit({"x_mm":x,"y_mm":y,"z_mm":z,"seq":seq,"tick":tick,"gen":generation,"ship":ship,"seated":_seated,"seat_seq":_seat_sequence})
+	_status("NATIVE %s (P stop): walk step %d / seat receipt %d / tick %d" % ["SEATED" if _seated else "ON FOOT",seq,_seat_sequence,tick])
 
 func submit_motion(heading: Vector3) -> void:
-	if not _active or _session <= 0 or _pending != 0:
+	if not _active or _session <= 0 or _pending != 0 or _seated:
 		return
 	if heading.length_squared() < 0.001:
 		return
@@ -157,9 +180,25 @@ func submit_motion(heading: Vector3) -> void:
 	var req := _next_request
 	_next_request += 1
 	_pending = req
+	_pending_kind = "MOVE"
 	_last_send_msec = now
 	if not _stdout.store_line("MOVE|%d|%d|%d|%d|%d" % [_session,req,_sequence,dx,dz]):
 		stop("Native player command pipe write failed; saved pose will be verified on reconnect")
+		return
+	_stdout.flush()
+
+func toggle_seat() -> void:
+	# E requests a cockpit transition; only the C++ host may commit the result.
+	if not _active or _session <= 0 or _pending != 0:
+		return
+	var req := _next_request
+	_next_request += 1
+	_pending = req
+	_pending_kind = "SEAT"
+	_last_send_msec = Time.get_ticks_msec()
+	var desired := 0 if _seated else 1
+	if not _stdout.store_line("SEAT|%d|%d|%d|%d" % [_session,req,_seat_sequence,desired]):
+		stop("Native cockpit command pipe write failed; prior state retained")
 		return
 	_stdout.flush()
 
@@ -171,5 +210,6 @@ func stop(message: String = "Native player stopped; last committed pose retained
 	_stdout = null
 	_stderr = null
 	_pending = 0
+	_pending_kind = ""
 	connection_changed.emit(false)
 	_status(message)

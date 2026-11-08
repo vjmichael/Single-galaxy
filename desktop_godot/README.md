@@ -78,3 +78,15 @@ claim Godot UI success or authority over the local FPS character.
 ## FP3D-02G: editor-safe native controls
 
 Godot's editor reserves **F7** to pause and **F8** to stop the running game, even during play testing. The game therefore uses **P** to start/stop persistent native FPS movement and **O** to start/stop the read-only observer. **WASD** remains walking, **Esc** releases mouse capture. Do not map runtime actions to F7/F8; pressing them in editor-driven sessions may pause or terminate the project. The exported standalone game and actual Windows reconnect/save behavior remain separate runtime acceptance gates.
+
+## FP3D-03A: authoritative in-ship cockpit seat/stand (development source)
+
+New source-only increment on top of the editor-safe P/O controls:
+
+- **P:** connect/disconnect original native authoritative movement; **WASD:** native walking when on foot; **E:** request sit/stand near the prototype cockpit at native X/Z within 600 mm of interior origin; **O:** read-only observer; **Esc:** release cursor.
+- The native C++ host now requires a reviewed **13-field POSE/ACK** response containing both the original walking sequence and a separate immutable seat-transition sequence. Godot changes mode only after verified native ACK. A seated person cannot walk or jump; there is not yet ship thrust.
+- Native world STEP, cockpit receipt and seat state commit atomically; SQLite restart and tamper-check tests are in source. The game scene's visible ship is **not yet spatially aligned** with the native cockpit test room, so this is not a finished in-world cockpit interaction.
+- A Windows host compiled for the previous 11-field protocol **must be rebuilt** to test this source. The Windows export gate now checks the local native child protocol and SQLite restart before bundling a host and declaring it compatible.
+- The creator is testing directly in an already-installed Godot editor; **do not require BUILD_WINDOWS.cmd** to launch or test the GDScript scene. Actual rebuilt Windows host, Godot gameplay, and installed export acceptance remain pending.
+
+See [the FP3D-03A source and acceptance ledger](../docs/engineering/FP3D03A_COCKPIT_SEAT_SOURCE.md). Controller support and remappable bindings remain deferred to [issue #111](https://github.com/vjmichael/Single-galaxy/issues/111).

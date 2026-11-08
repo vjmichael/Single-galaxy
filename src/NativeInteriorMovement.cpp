@@ -59,6 +59,21 @@ bool physical_step(std::int64_t a,std::int64_t b,std::int64_t x,std::int64_t z){
     // Each command <=100mm; cannot tunnel through a 340mm capsule obstacle.
     return inside(a,b)&&inside(x,z);
 }
+
+std::string seat_digest(PlayerId owner,EntityId ship,std::uint64_t seq,
+                        std::uint64_t tick,std::uint64_t generation,std::uint64_t receipt,
+                        bool before,bool after,const std::string& prev){
+    std::ostringstream out;
+    out<<"FP3D03A-v1|"<<owner<<'|'<<ship<<'|'<<seq<<'|'<<tick<<'|'<<generation
+       <<'|'<<receipt<<'|'<<int(before)<<'|'<<int(after)<<'|'<<prev;
+    std::uint64_t h=14695981039346656037ULL;
+    for(unsigned char c:out.str()){h^=c;h*=1099511628211ULL;}
+    return std::to_string(h); // consistency check, not a cryptographic signature
+}
+bool near_cockpit(std::int64_t x,std::int64_t z){
+    return x>=-600&&x<=600&&z>=-600&&z<=600;
+}
+
 class Transaction {
     sqlite3* db_;
     bool complete_=false;
@@ -93,6 +108,26 @@ InteriorMovement::InteriorMovement(const std::string& path,PersistentWorld& worl
              "BEGIN SELECT RAISE(ABORT,'immutable movement receipts'); END");
         exec(db_,"CREATE TRIGGER IF NOT EXISTS sg_fp3d02c_step_no_delete BEFORE DELETE ON sg_fp3d02c_step "
              "BEGIN SELECT RAISE(ABORT,'immutable movement receipts'); END");
+
+        exec(db_,"CREATE TABLE IF NOT EXISTS sg_fp3d03a_seat("
+            "owner INTEGER PRIMARY KEY CHECK(owner>0),ship INTEGER NOT NULL CHECK(ship>0),"
+            "seated INTEGER NOT NULL CHECK(seated IN(0,1)),seq INTEGER NOT NULL CHECK(seq>=0),"
+            "world_tick INTEGER NOT NULL CHECK(world_tick>=0),world_gen INTEGER NOT NULL CHECK(world_gen>0),"
+            "tip TEXT NOT NULL,FOREIGN KEY(owner) REFERENCES sg_fp3d02c_pose(owner))");
+        exec(db_,"CREATE TABLE IF NOT EXISTS sg_fp3d03a_seat_event("
+            "owner INTEGER NOT NULL,seq INTEGER NOT NULL CHECK(seq>0),"
+            "receipt INTEGER NOT NULL UNIQUE CHECK(receipt>0),ship INTEGER NOT NULL,"
+            "from_seated INTEGER NOT NULL CHECK(from_seated IN(0,1)),"
+            "to_seated INTEGER NOT NULL CHECK(to_seated IN(0,1)),"
+            "world_tick INTEGER NOT NULL,world_gen INTEGER NOT NULL,"
+            "prev_tip TEXT NOT NULL,digest TEXT NOT NULL,"
+            "PRIMARY KEY(owner,seq),FOREIGN KEY(owner) REFERENCES sg_fp3d03a_seat(owner))");
+        exec(db_,"CREATE TRIGGER IF NOT EXISTS sg_fp3d03a_seat_event_no_update "
+            "BEFORE UPDATE ON sg_fp3d03a_seat_event BEGIN "
+            "SELECT RAISE(ABORT,'immutable seat receipts'); END");
+        exec(db_,"CREATE TRIGGER IF NOT EXISTS sg_fp3d03a_seat_event_no_delete "
+            "BEFORE DELETE ON sg_fp3d03a_seat_event BEGIN "
+            "SELECT RAISE(ABORT,'immutable seat receipts'); END");
         transaction.commit();
     } catch(...) {sqlite3_close(db_);db_=nullptr;throw;}
 }
@@ -180,10 +215,69 @@ void InteriorMovement::verify_chain(const Pose& p){
        (seq==0 && p.digest!="genesis-v1"))
         throw std::runtime_error("pose does not match independently replayed receipts");
 }
+
+void InteriorMovement::verify_seat_chain(const Pose& pose)const{
+    Stmt events(db_,"SELECT seq,receipt,ship,from_seated,to_seated,world_tick,"
+                    "world_gen,prev_tip,digest FROM sg_fp3d03a_seat_event "
+                    "WHERE owner=? ORDER BY seq");
+    events.val(1,signed_id(pose.owner));
+    std::uint64_t n=0,last_tick=0,last_gen=0;
+    bool seated=false;
+    std::string tip="seat-genesis-v1";
+    while(events.next()){
+        const auto seq=std::uint64_t(events.i(0)),receipt=std::uint64_t(events.i(1));
+        const auto ship=std::uint64_t(events.i(2));
+        const auto from=events.i(3),to=events.i(4);
+        const auto tick=std::uint64_t(events.i(5)),gen=std::uint64_t(events.i(6));
+        if(seq!=n+1||!receipt||ship!=pose.ship||from!=int(seated)||
+           to==from||tick<=last_tick||gen<=last_gen||
+           tick>world_.world().tick()||gen>world_.generation()||
+           events.s(7)!=tip||
+           events.s(8)!=seat_digest(pose.owner,pose.ship,seq,tick,gen,receipt,
+                                    from!=0,to!=0,tip))
+            throw std::runtime_error("cockpit transition receipt chain invalid");
+        verify_step_receipt(gen,tick);
+        n=seq;last_tick=tick;last_gen=gen;seated=to!=0;tip=events.s(8);
+    }
+    if(n!=pose.seat_sequence||seated!=pose.seated)
+        throw std::runtime_error("cockpit state differs from immutable receipts");
+    Stmt row(db_,"SELECT world_tick,world_gen,tip FROM sg_fp3d03a_seat WHERE owner=?");
+    row.val(1,signed_id(pose.owner));
+    if(!row.next()||row.s(2)!=tip||
+       (n>0&&(std::uint64_t(row.i(0))!=last_tick||
+              std::uint64_t(row.i(1))!=last_gen))||row.next())
+        throw std::runtime_error("cockpit state tip mismatch");
+}
+void InteriorMovement::load_seat(Pose& pose){
+    Stmt seat(db_,"SELECT ship,seated,seq,world_tick,world_gen,tip "
+                  "FROM sg_fp3d03a_seat WHERE owner=?");
+    seat.val(1,signed_id(pose.owner));
+    if(seat.next()){
+        const auto ship=std::uint64_t(seat.i(0));
+        const auto seated=seat.i(1),seq=seat.i(2),tick=seat.i(3),gen=seat.i(4);
+        if(ship!=pose.ship||(seated!=0&&seated!=1)||seq<0||tick<0||gen<1||
+           std::uint64_t(tick)>world_.world().tick()||
+           std::uint64_t(gen)>world_.generation()||seat.s(5).empty()||seat.next())
+            throw std::runtime_error("invalid persisted cockpit state");
+        pose.seated=seated!=0;
+        pose.seat_sequence=std::uint64_t(seq);
+    }else{
+        Stmt put(db_,"INSERT INTO sg_fp3d03a_seat VALUES(?,?,?,?,?,?,?)");
+        put.val(1,signed_id(pose.owner));put.val(2,signed_id(pose.ship));
+        put.val(3,0);put.val(4,0);
+        put.val(5,signed_id(world_.world().tick()));
+        put.val(6,signed_id(world_.generation()));
+        put.str(7,"seat-genesis-v1");put.done();
+        pose.seated=false;pose.seat_sequence=0;
+    }
+    verify_seat_chain(pose);
+}
+
 Pose InteriorMovement::current(PlayerId owner){
     Transaction transaction(db_);
     verify_world_generation();
     Pose p=load_or_origin(owner);
+    load_seat(p);
     transaction.commit();
     return p;
 }
@@ -196,12 +290,15 @@ bool InteriorMovement::move(PlayerId owner,std::uint64_t expected,std::uint64_t 
        dx>kMaxStep||dx< -kMaxStep||dz>kMaxStep||dz< -kMaxStep ||
        !world_.world().player_people().count(owner))return false;
     const auto p=current(owner); // independently replays receipts before admission
-    if(!valid_person(owner,p.ship) || expected!=p.sequence ||
+    if(!valid_person(owner,p.ship) || p.seated || expected!=p.sequence ||
        !physical_step(p.x_mm,p.z_mm,p.x_mm+dx,p.z_mm+dz))return false;
     {
         Stmt duplicate(db_,"SELECT 1 FROM sg_fp3d02c_step WHERE receipt=?");
         duplicate.val(1,signed_id(receipt));
         if(duplicate.next())return false;
+        Stmt seat_duplicate(db_,"SELECT 1 FROM sg_fp3d03a_seat_event WHERE receipt=?");
+        seat_duplicate.val(1,signed_id(receipt));
+        if(seat_duplicate.next())return false;
     }
     // One ORIGINAL world tick, its operation_log STEP and the interior pose
     // all commit with a SINGLE SQLite Store::commit writer transaction.
@@ -245,6 +342,72 @@ bool InteriorMovement::move(PlayerId owner,std::uint64_t expected,std::uint64_t 
                 throw std::runtime_error("atomic FPS pose update lost writer race");
             if(fault==MoveFailPoint::AfterPoseUpdate)
                 throw std::runtime_error("injected crash after atomic movement pose");
+        });
+    return true;
+}
+
+bool InteriorMovement::set_seated(PlayerId owner,std::uint64_t expected,
+                                  std::uint64_t receipt,bool desired,SeatFailPoint fault){
+    if(!owner||!receipt||
+       receipt>std::uint64_t(std::numeric_limits<std::int64_t>::max())||
+       !world_.world().player_people().count(owner))return false;
+    const auto p=current(owner);
+    // The cockpit is a real bounded zone of THIS ship interior, not a teleport.
+    // Standing leaves the player at the same validated physical position.
+    if(!valid_person(owner,p.ship)||p.seat_sequence!=expected||
+       p.seated==desired||!near_cockpit(p.x_mm,p.z_mm))return false;
+    {
+        Stmt used_seat(db_,"SELECT 1 FROM sg_fp3d03a_seat_event WHERE receipt=?");
+        used_seat.val(1,signed_id(receipt));
+        if(used_seat.next())return false;
+        Stmt used_move(db_,"SELECT 1 FROM sg_fp3d02c_step WHERE receipt=?");
+        used_move.val(1,signed_id(receipt));
+        if(used_move.next())return false;
+    }
+    world_.step_with_cell_worker(nullptr,FailPoint::None,
+        [&](sqlite3* writer,std::uint64_t generation){
+            const auto tick=world_.world().tick()+1;
+            const auto seq=p.seat_sequence+1;
+            Stmt op(writer,"SELECT kind,tick,state_hash FROM operation_log WHERE generation=?");
+            op.val(1,signed_id(generation));
+            if(!op.next()||op.i(0)!=2||std::uint64_t(op.i(1))!=tick||
+               op.s(2).empty()||op.next())
+                throw std::runtime_error("cockpit change missing native STEP");
+            Stmt before(writer,"SELECT ship,seated,seq,tip FROM sg_fp3d03a_seat WHERE owner=?");
+            before.val(1,signed_id(owner));
+            if(!before.next()||std::uint64_t(before.i(0))!=p.ship||
+               before.i(1)!=int(p.seated)||std::uint64_t(before.i(2))!=expected)
+                throw std::runtime_error("atomic cockpit state compare-and-swap failed");
+            const std::string prior=before.s(3);
+            if(before.next()||prior.empty())
+                throw std::runtime_error("atomic cockpit state ambiguous");
+            // No intervening walking in a different persisted pose.
+            Stmt old(writer,"SELECT ship,x_mm,z_mm,seq FROM sg_fp3d02c_pose WHERE owner=?");
+            old.val(1,signed_id(owner));
+            if(!old.next()||std::uint64_t(old.i(0))!=p.ship||
+               old.i(1)!=p.x_mm||old.i(2)!=p.z_mm||
+               std::uint64_t(old.i(3))!=p.sequence||old.next())
+                throw std::runtime_error("atomic cockpit pose changed");
+            const auto next=seat_digest(owner,p.ship,seq,tick,generation,receipt,
+                                        p.seated,desired,prior);
+            Stmt event(writer,"INSERT INTO sg_fp3d03a_seat_event VALUES(?,?,?,?,?,?,?,?,?,?)");
+            event.val(1,signed_id(owner));event.val(2,signed_id(seq));
+            event.val(3,signed_id(receipt));event.val(4,signed_id(p.ship));
+            event.val(5,p.seated?1:0);event.val(6,desired?1:0);
+            event.val(7,signed_id(tick));event.val(8,signed_id(generation));
+            event.str(9,prior);event.str(10,next);event.done();
+            if(fault==SeatFailPoint::AfterSeatReceipt)
+                throw std::runtime_error("injected cockpit receipt rollback");
+            Stmt update(writer,"UPDATE sg_fp3d03a_seat SET seated=?,seq=?,"
+                        "world_tick=?,world_gen=?,tip=? WHERE owner=? AND seq=?");
+            update.val(1,desired?1:0);update.val(2,signed_id(seq));
+            update.val(3,signed_id(tick));update.val(4,signed_id(generation));
+            update.str(5,next);update.val(6,signed_id(owner));
+            update.val(7,signed_id(expected));update.done();
+            if(sqlite3_changes(writer)!=1)
+                throw std::runtime_error("atomic cockpit writer race");
+            if(fault==SeatFailPoint::AfterSeatUpdate)
+                throw std::runtime_error("injected cockpit pose rollback");
         });
     return true;
 }

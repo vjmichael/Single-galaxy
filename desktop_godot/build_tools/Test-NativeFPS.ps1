@@ -33,13 +33,23 @@ try {
   Expect (Test-Path -LiteralPath $exe) "Native Windows PE missing: $exe"
   $p=Start-Native
   $first=Read-Frame $p 'initial'
-  Expect (($first.Count -eq 11) -and ($first[0] -eq 'POSE') -and ($first[1] -eq '1') -and ($first[4] -eq '0')) 'Invalid initial native pose'
+  Expect (($first.Count -eq 13) -and ($first[0] -eq 'POSE') -and ($first[1] -eq '1') -and ($first[4] -eq '0')) 'Invalid initial native pose'
   $epoch=$first[2]
   Start-Sleep -Milliseconds 75
   $p.StandardInput.WriteLine("MOVE|$epoch|1|0|80|0")
   $p.StandardInput.Flush()
   $ack=Read-Frame $p 'move'
-  Expect (($ack.Count -eq 11) -and ($ack[0] -eq 'ACK') -and ($ack[4] -eq '1') -and ($ack[5] -eq '80')) 'First move not committed'
+  Expect (($ack.Count -eq 13) -and ($ack[0] -eq 'ACK') -and ($ack[4] -eq '1') -and ($ack[5] -eq '80')) 'First move not committed'
+  Start-Sleep -Milliseconds 75
+  $p.StandardInput.WriteLine("SEAT|$epoch|2|0|1")
+  $p.StandardInput.Flush()
+  $sit=Read-Frame $p 'seat'
+  Expect (($sit.Count -eq 13) -and ($sit[0] -eq 'ACK') -and ($sit[4] -eq '1') -and ($sit[11] -eq '1') -and ($sit[12] -eq '1')) 'Native cockpit sit did not commit'
+  Start-Sleep -Milliseconds 75
+  $p.StandardInput.WriteLine("SEAT|$epoch|3|1|0")
+  $p.StandardInput.Flush()
+  $stand=Read-Frame $p 'stand'
+  Expect (($stand.Count -eq 13) -and ($stand[0] -eq 'ACK') -and ($stand[11] -eq '0') -and ($stand[12] -eq '2')) 'Native cockpit stand did not commit'
   $p.StandardInput.WriteLine('QUIT')
   $p.StandardInput.Flush()
   Expect ($p.WaitForExit(5000) -and $p.ExitCode -eq 0) 'First native host did not exit cleanly'
@@ -48,12 +58,12 @@ try {
   $p.Dispose()
   $q=Start-Native
   $reopened=Read-Frame $q 'restarted'
-  Expect (($reopened.Count -eq 11) -and ($reopened[0] -eq 'POSE') -and ($reopened[4] -eq '1') -and ($reopened[5] -eq '80') -and ($reopened[2] -ne $epoch)) 'Restart did not recover committed pose with a fresh session'
+  Expect (($reopened.Count -eq 13) -and ($reopened[0] -eq 'POSE') -and ($reopened[4] -eq '1') -and ($reopened[5] -eq '80') -and ($reopened[2] -ne $epoch) -and ($reopened[11] -eq '0') -and ($reopened[12] -eq '2')) 'Restart did not recover committed pose with a fresh session'
   $q.StandardInput.WriteLine('QUIT')
   $q.StandardInput.Flush()
   Expect ($q.WaitForExit(5000) -and $q.ExitCode -eq 0) 'Second native host did not exit cleanly'
   $q.Dispose()
-  $events.Add('RESULT PASS: Windows x64 native movement and SQLite restart')
+  $events.Add('RESULT PASS: Windows x64 native movement, cockpit transitions and SQLite restart')
   $events | Set-Content -LiteralPath (Join-Path $report 'summary.txt')
   Write-Host ($events[-1]) -ForegroundColor Green
 } catch {

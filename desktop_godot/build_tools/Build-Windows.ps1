@@ -208,14 +208,26 @@ try {
     $playerExe = Join-Path $rootDir 'native\galaxy_desktop_player_host.exe'
     if (Test-Path -LiteralPath $playerExe) {
         Verify-PE64 $playerExe
+        # A valid PE can still be an incompatible old 11-field FPS host.
+        # Run an actual isolated Windows child/SQLite test before declaring
+        # this bundle compatible with the 13-field native cockpit client.
+        $nativeSmoke = Join-Path $rootDir 'build_tools\\Test-NativeFPS.ps1'
+        $nativeSmokeLog = Join-Path $logsDir 'native-player-windows-runtime.log'
+        try {
+            & $nativeSmoke 2>&1 | Out-File -FilePath $nativeSmokeLog -Encoding UTF8
+            Record-Gate 'native-player-runtime' 'PASS' 'Actual native process MOVE/SEAT/restart receipts checked; Windows UI interaction still unverified'
+        } catch {
+            Record-Gate 'native-player-runtime' 'FAIL' "Native host failed 13-field compatibility/SQLite test; see $nativeSmokeLog and native FPS evidence ZIP"
+            throw
+        }
         New-Item -ItemType Directory -Force -Path $stagedNative | Out-Null
         Copy-Item -LiteralPath $playerExe -Destination (Join-Path $stagedNative 'galaxy_desktop_player_host.exe') -Force
         $state.native_player_sha256 = (Get-FileHash -LiteralPath $playerExe -Algorithm SHA256).Hash.ToLowerInvariant()
         $state.native_player_bytes = (Get-Item -LiteralPath $playerExe).Length
-        Record-Gate 'native-player-host' 'PASS' 'Authoritative C++ SQLite FPS child bundled; physical Windows F8 acceptance still required'
+        Record-Gate 'native-player-host' 'PASS' 'Authoritative C++ SQLite FPS child bundled; physical Windows P/E interaction acceptance still required'
         $nativePackaged = $true
     } else {
-        Record-Gate 'native-player-host' 'SKIP' 'Native FPS host absent; F8 clearly reports missing host and keeps local preview mode'
+        Record-Gate 'native-player-host' 'SKIP' 'Native FPS host absent; P clearly reports missing host and keeps local preview mode'
     }
 
     $state.stage = 'license'
@@ -228,8 +240,8 @@ try {
     @'
 Single-Galaxy standalone graybox (FP3D-02A development preview)
 Double-click SingleGalaxy_Graybox.exe. No Godot editor or Python install required.
-WASD=walk/mouse look; F8=authoritative persistent native FPS inside original owned ship; F7=read-only contact diagnostic; Esc=release mouse.
-F8 optionally sends bounded WASD moves to an adjacent native C++ host. Native SQLite atomically commits world STEP, player pose and movement receipt. F7 remains read-only. Native FPS interior collisions are a prototype and do not yet match all Godot scene walls.
+WASD=walk/mouse look; P=authoritative native FPS session; E=host-confirmed cockpit sit/stand when P active; O=read-only contact diagnostic; Esc=release mouse.
+P connects a native C++ child host. WASD sends bounded walking intent; E requests cockpit seat/stand. Every accepted action commits original world STEP and an immutable pose/mode receipt atomically in SQLite. O remains read-only. Native seat coordinates and interior collisions are prototypes and do not yet match all Godot scene objects.
 Actual physical Windows GPU, collision and usability acceptance is still required.
 Godot MIT terms: GODOT_LICENSE.txt
 '@ | Set-Content -LiteralPath $readme -Encoding UTF8
