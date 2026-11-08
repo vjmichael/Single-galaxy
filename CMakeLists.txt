@@ -2133,3 +2133,14 @@ if(BUILD_TESTING)
     COMMAND galaxy_fp3d02c_interior_tests ${CMAKE_CURRENT_BINARY_DIR}/fp3d02c-test.sqlite)
   set_tests_properties(galaxy_fp3d02c_interior_authority PROPERTIES TIMEOUT 90)
 endif()
+
+# FP3D-02F: true native-world atomic movement from local Godot child stdio.
+# No Python/browser/HTTP relay; client inputs are bounded and identity is not client-selected.
+add_executable(galaxy_desktop_player_host src/desktop_player_host.cpp)
+target_link_libraries(galaxy_desktop_player_host PRIVATE galaxy_fp3d02c_interior)
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+  add_test(NAME galaxy_fp3d02f_local_authorized_pipe
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/FP3D02F_DesktopCommandPipelineTests.py
+      $<TARGET_FILE:galaxy_desktop_player_host>)
+  set_tests_properties(galaxy_fp3d02f_local_authorized_pipe PROPERTIES TIMEOUT 90)
+endif()
