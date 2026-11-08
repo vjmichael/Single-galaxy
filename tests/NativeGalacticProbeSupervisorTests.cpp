@@ -686,7 +686,7 @@ static void sustained_multi_cell_endurance(const fs::path& root,
              <<" cell_selections=";
     for(const auto& item:selected_cells)
         std::cout<<item.first<<":"<<item.second<<";";
-    std::cout<<"\\n";
+    std::cout<<"\n";
 }
 
 int main(int argc,char** argv){
