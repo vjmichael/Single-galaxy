@@ -4,6 +4,7 @@
 #include "galaxy/Simulation.hpp"
 #include "galaxy/Persistence.hpp"
 #include "galaxy/ServerDiagnostics.hpp"
+#include "galaxy/ServerBreadcrumb.hpp"
 #include "galaxy/OrbitalShuttleCommands.hpp"
 #include "galaxy/Galaxy.hpp"
 #include "galaxy/ClientContract.hpp"
@@ -2079,6 +2080,7 @@ int main(int argc,char** argv){
         const bool was_saved=fs::exists(argv[1]);
         PersistentWorld world(argv[1],std::move(genesis));
         diagnostic_progress={world.world().tick(),world.generation(),"startup"};
+        server_dx::committed_breadcrumb(world.world().tick(),world.generation());
         // v68: translate the nominal 10-second report into durable game ticks
         // using this host session's actual fixed-step duration.
         world.configure_probe_report_tick_ms(static_cast<std::uint64_t>(ms));
@@ -2332,6 +2334,7 @@ int main(int argc,char** argv){
             diagnostic_progress.phase="world_step";
             world.step();
             diagnostic_progress={world.world().tick(),world.generation(),"post_commit"};
+            server_dx::committed_breadcrumb(world.world().tick(),world.generation());
             // Run the same finite, original-world cyber command path on
             // committed ticks. There are no autonomous host-owned attackers
             // at genesis; only genuinely constructed NPC colonies with an
