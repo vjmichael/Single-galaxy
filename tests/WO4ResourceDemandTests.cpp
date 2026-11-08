@@ -289,6 +289,9 @@ int main(){
             [](const Grant& g){return g.vital==Vital::Water;});
         CHECK(next_grant!=live_plan->grants.end());
         const auto unchanged=fault.world().state_hash();
+        const auto unchanged_tick=fault.world().tick();
+        const auto unchanged_habitat_water=
+            fault.world().habitat(site)->life.water_kg;
         bool interrupted=false;
         try {
             (void)commit_owner_approved_local_vital(
@@ -296,7 +299,14 @@ int main(){
                 FailPoint::AfterReceiptWrite);
         }catch(const std::exception&){interrupted=true;}
         CHECK(interrupted);
-        CHECK(fault.world().state_hash()==unchanged);
+        // The native command submission itself is a durable transaction:
+        // pending command 11 necessarily changes the state hash before
+        // the fault-injected execution tick. Only the execution/physical
+        // inventory must remain unchanged after its rolled-back receipt.
+        CHECK(fault.world().state_hash()!=unchanged);
+        CHECK(fault.world().tick()==unchanged_tick);
+        CHECK(fault.world().habitat(site)->life.water_kg==
+              unchanged_habitat_water);
         CHECK(fault.world().has_command_id(11));
         fault.step(); // original durable pending command, not resubmission
         CHECK(fault.world().events().back().command_id==11 &&
