@@ -53,7 +53,7 @@ function setScenario(name, raw, custom=false) {
       top:(ymin+ymax)/2-span*.7,bottom:(ymin+ymax)/2+span*.7};
     timeline=applied;index=0;scenario=name;playing=false;since=0;
     el('play').textContent='▶ Play';
-    cameraBounds(projected);
+    cameraBounds(applied[0]);
     el('progress').max=String(timeline.length-1);
     el('sceneName').textContent=names[name]||'IMPORTED RECORDING';
     el('description').textContent=descriptions[name]||'Validated local SGVIEW v1 recording from your simulation.';
@@ -68,8 +68,9 @@ function update() {
   el('progress').value=String(index);el('indexText').textContent=`${index} / ${timeline.length-1}`;
   const entities=[...f.entities.values()];
   const chosen=window.GalaxyActivePilotedShipId;
+  // A masked foreign ship (owner=0) must never become our fallback cockpit.
   const ship=(chosen?entities.find(e=>e.id===chosen&&e.entityType===0&&e.owner===7):null)||
-    (!chosen?entities.find(e=>e.entityType===0):null);
+    (!chosen?entities.find(e=>e.entityType===0&&e.owner===7):null);
   const rocks=entities.filter(e=>e.entityType===1);
   const total=rocks.reduce((sum,e)=>sum+e.ore,0);
   el('cargo').textContent=ship?`${ship.cargo} / ${ship.capacity}`:'—';
@@ -172,6 +173,14 @@ function draw() {
     ctx.setLineDash([4,3]);ctx.beginPath();ctx.arc(p.x,p.y,12,0,Math.PI*2);ctx.stroke();ctx.restore();
     label('JUMP GATE',p.x,p.y+31,'#9ce8be');
   }
+  for(const e of entities.filter(e=>e.entityType===4)) {
+    const p=xy(e.x,e.y);
+    ctx.save();ctx.translate(p.x,p.y);
+    ctx.strokeStyle='#faad80';ctx.lineWidth=2;ctx.setLineDash([4,3]);
+    ctx.beginPath();ctx.moveTo(-17,-10);ctx.lineTo(2,-5);ctx.lineTo(17,-16);
+    ctx.lineTo(10,12);ctx.lineTo(-6,5);ctx.lineTo(-17,12);ctx.closePath();ctx.stroke();
+    ctx.restore();label('WRECK #'+e.id,p.x,p.y+30,'#faad80');
+  }
   for(const e of entities.filter(e=>e.entityType===0)) {
     const active=window.GalaxyActivePilotedShipId;
     const isPiloted=window.GalaxyColonyMode&&active===e.id;
@@ -184,7 +193,7 @@ function draw() {
     ctx.strokeStyle='rgba(98,225,245,.18)';ctx.beginPath();ctx.arc(p.x,p.y,39,0,Math.PI*2);ctx.stroke();
     label(isPiloted?'ACTIVE SHIP #'+e.id:
       window.GalaxyColonyMode&&e.owner===7&&e.id===window.GalaxyColonyHomeShipId?
-        'HOME COLONY #'+e.id:'SHIP #'+e.id,p.x,p.y-28,'#b8f7ff');
+        'HOME COLONY #'+e.id:(e.owner===0?'UNIDENTIFIED CONTACT #'+e.id:'SHIP #'+e.id),p.x,p.y-28,'#b8f7ff');
   }
   ctx.font='11px monospace';ctx.fillStyle='#6584a4';ctx.textAlign='left';ctx.fillText('GALAXY / SYSTEM '+state.system+' / TICK '+state.tick,16,h-19);
 }
