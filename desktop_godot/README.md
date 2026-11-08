@@ -38,3 +38,9 @@ The existing Single-Galaxy C++ kernel, SQLite persistence, operation journal, us
 ## Unit/source-level tests
 
 `python3 tests/test_project_contract.py` runs static source checks. They are **not** proof that Godot's runtime or a Windows export has executed. The next gate requires the actual 4.7.2 Godot editor and matching export templates.
+
+## One-click Windows test and export path (FP3D-02A-WINTEST)
+
+Double-click `BUILD_WINDOWS.cmd` from this unpacked source tree on Windows 10/11. The script uses only PowerShell and official Godot 4.7.2 release binaries: it downloads the pinned editor and export-template archive with release SHA-256 verification, runs actual Godot import and headless scene tests, exports the Windows x64 executable, and writes a verified-PE build status. The desktop app runs without the editor after successful export.
+
+The template archive download is large (about 1.2 GB) unless matching templates are already installed. **This automation has not been run on Windows here**; any Godot or export failure will be recorded in `SingleGalaxy_Windows_Build_Evidence.zip`. It will not automatically install anything else or access your native galaxy save data. See `build_tools/WINDOWS_ACCEPTANCE.md`.
