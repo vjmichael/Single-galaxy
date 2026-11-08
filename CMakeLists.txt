@@ -2006,6 +2006,9 @@ endif()
 
 # SPACE-04C/04D/05B: native high-order coordinates, 3D probes and bounded
 # active multi-cell original-world supervisor. Runs on Windows and Linux.
+# SPACE-05J: opt-in 1,024 original-world SQLite ticks, not a component mock.
+option(SPACE_ENABLE_1024_ENDURANCE
+  "Register prolonged 1,024-tick four-cell original-world native worker acceptance" OFF)
 if(BUILD_TESTING)
   add_executable(galaxy_native_galactic_supervisor_tests
     tests/NativeGalacticProbeSupervisorTests.cpp)
@@ -2014,6 +2017,16 @@ if(BUILD_TESTING)
            COMMAND galaxy_native_galactic_supervisor_tests
              $<TARGET_FILE:galaxy_native_cell_worker>
              $<TARGET_FILE:galaxy_native_cell_hang_worker>)
+  if(SPACE_ENABLE_1024_ENDURANCE)
+    add_test(NAME galaxy_native_galactic_supervisor_1024
+             COMMAND galaxy_native_galactic_supervisor_tests
+               $<TARGET_FILE:galaxy_native_cell_worker>
+               $<TARGET_FILE:galaxy_native_cell_hang_worker>)
+    set_tests_properties(galaxy_native_galactic_supervisor_1024 PROPERTIES
+      ENVIRONMENT "SPACE_ENDURANCE_TICKS=1024"
+      TIMEOUT 900
+      LABELS "space;original-world;endurance;sqlite")
+  endif()
 endif()
 
 # SGDX-01: private host-incident evidence is independently testable without
