@@ -62,7 +62,7 @@ def test(supervisor):
             con.execute("INSERT INTO inventory VALUES(1,10)")
             con.execute("CREATE TABLE receipts(id TEXT PRIMARY KEY, amount INTEGER NOT NULL)")
         prefix=[supervisor,"--save",str(db),"--role","sqlite_recovery",
-                "--build-sha","a"*40,"--timeout-ms","400","--"]
+                "--build-sha","a"*40,"--timeout-ms","1500","--"]
         trial=subprocess.run(prefix+[sys.executable,"-c",attempt_script(),str(db),"hang"],
                              capture_output=True,text=True,timeout=12,check=False)
         assert trial.returncode == 124, (trial.returncode,trial.stderr[:200])
