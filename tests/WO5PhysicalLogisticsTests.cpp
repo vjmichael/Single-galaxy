@@ -103,6 +103,11 @@ int main() {
     CHECK(w.world().intercolony_freight().empty());
     CHECK(w.world().state_hash()==original &&
           w.world().total_ore()==mass);
+    // recover_copy requires an earlier durable physical snapshot rather
+    // than inventing a replacement from genesis alone. Advance a real
+    // original-world checkpoint without changing any cargo custody.
+    w.step();
+    CHECK(w.world().total_ore()==mass);
     const auto copy=(folder/"copy.sqlite").string();
     PersistentWorld::recover_copy(db,copy);
     PersistentWorld restored(copy,Simulation(94106));
