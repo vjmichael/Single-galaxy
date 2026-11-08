@@ -296,6 +296,9 @@ bool InteriorMovement::move(PlayerId owner,std::uint64_t expected,std::uint64_t 
         Stmt duplicate(db_,"SELECT 1 FROM sg_fp3d02c_step WHERE receipt=?");
         duplicate.val(1,signed_id(receipt));
         if(duplicate.next())return false;
+        Stmt seat_duplicate(db_,"SELECT 1 FROM sg_fp3d03a_seat_event WHERE receipt=?");
+        seat_duplicate.val(1,signed_id(receipt));
+        if(seat_duplicate.next())return false;
     }
     // One ORIGINAL world tick, its operation_log STEP and the interior pose
     // all commit with a SINGLE SQLite Store::commit writer transaction.
