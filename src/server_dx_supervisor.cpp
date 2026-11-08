@@ -280,14 +280,38 @@ static int run(const Args& args){
         CloseHandle(job);
         throw std::runtime_error("cannot inherit native game stream handles");
     }
-    STARTUPINFOW si{};si.cb=sizeof(si);
-    si.dwFlags=STARTF_USESTDHANDLES;
-    si.hStdInput=child_in;si.hStdOutput=child_out;si.hStdError=child_err;
+    SIZE_T attributes_bytes=0;
+    (void)InitializeProcThreadAttributeList(nullptr,1,0,&attributes_bytes);
+    if(!attributes_bytes){
+        CloseHandle(child_in);CloseHandle(child_out);CloseHandle(child_err);
+        CloseHandle(job);
+        throw std::runtime_error("native handle-list sizing failed");
+    }
+    std::vector<unsigned char> attribute_storage(attributes_bytes);
+    STARTUPINFOEXW si{};si.StartupInfo.cb=sizeof(si);
+    si.StartupInfo.dwFlags=STARTF_USESTDHANDLES;
+    si.StartupInfo.hStdInput=child_in;
+    si.StartupInfo.hStdOutput=child_out;
+    si.StartupInfo.hStdError=child_err;
+    si.lpAttributeList=reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(
+        attribute_storage.data());
+    if(!InitializeProcThreadAttributeList(si.lpAttributeList,1,0,&attributes_bytes)){
+        CloseHandle(child_in);CloseHandle(child_out);CloseHandle(child_err);
+        CloseHandle(job);
+        throw std::runtime_error("native handle-list setup failed");
+    }
+    HANDLE allowed[3]={child_in,child_out,child_err};
+    const bool restricted=UpdateProcThreadAttribute(si.lpAttributeList,0,
+        PROC_THREAD_ATTRIBUTE_HANDLE_LIST,allowed,sizeof(allowed),
+        nullptr,nullptr)!=FALSE;
     PROCESS_INFORMATION pi{};
     const auto started=Clock::now();
-    const BOOL launched=CreateProcessW(executable.c_str(),command_line.data(),
-        nullptr,nullptr,TRUE,CREATE_SUSPENDED |
-          (args.windows_minidump?DEBUG_ONLY_THIS_PROCESS:0),nullptr,nullptr,&si,&pi);
+    const BOOL launched=restricted && CreateProcessW(
+        executable.c_str(),command_line.data(),nullptr,nullptr,TRUE,
+        CREATE_SUSPENDED|EXTENDED_STARTUPINFO_PRESENT|
+          (args.windows_minidump?DEBUG_ONLY_THIS_PROCESS:0),
+        nullptr,nullptr,&si.StartupInfo,&pi);
+    DeleteProcThreadAttributeList(si.lpAttributeList);
     CloseHandle(child_in);CloseHandle(child_out);CloseHandle(child_err);
     if(!launched){CloseHandle(job);throw std::runtime_error("CreateProcess failed");}
     if(!AssignProcessToJobObject(job,pi.hProcess)){
