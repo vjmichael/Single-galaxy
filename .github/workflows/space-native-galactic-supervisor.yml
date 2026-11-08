@@ -15,6 +15,7 @@ on:
       - 'tests/NativeCellDetachedPipeWorker.cpp'
       - 'tests/NativeCellForkFenceWorker.cpp'
       - 'tests/NativeCellProcessStressTests.cpp'
+      - 'tests/native_components/CMakeLists.txt'
       - 'tests/NativeHighOrderMathPropertyTests.cpp'
       - 'include/galaxy/ShipInteractionPreflight.hpp'
       - 'include/galaxy/Simulation.hpp'
@@ -83,7 +84,7 @@ jobs:
         if: runner.os == 'Linux'
         run: cmake --build build --parallel 2 --target galaxy_high_order_math_property_tests
       - name: Execute high-order, probe, supervisor and regression tests
-        run: ctest --test-dir build -C Release --output-on-failure --output-junit build/space-v121-results.xml -R "^(galaxy_high_order_math_property|galaxy_native_cell_process_stress|galaxy_native_galactic_supervisor|galaxy_native_3d_worker|galaxy_play01_opening|galaxy_play12_probes|galaxy_flight02_local_docking|galaxy_flight03_native_rendezvous|galaxy_flight03_object_approach|galaxy_flight04_interaction_preflight|galaxy_flight04b_interaction_executors|galaxy_flight04b_real_freight|galaxy_work01c_native_transport_executors|galaxy_wo3_colony_operations|galaxy_wo3_planetary_housing|galaxy_wo3_planetary_utility|galaxy_wo4_resource_demand|galaxy_wo4_material_allocation|galaxy_wo5_physical_logistics|galaxy_seamless_spatial_ownership)$"
+        run: ctest --test-dir build -C Release --output-on-failure --output-junit build/space-v121-results.xml -R "^(galaxy_high_order_math_property|galaxy_native_cell_process_stress|galaxy_native_cell_process_long_stress|galaxy_native_galactic_supervisor|galaxy_native_3d_worker|galaxy_play01_opening|galaxy_play12_probes|galaxy_flight02_local_docking|galaxy_flight03_native_rendezvous|galaxy_flight03_object_approach|galaxy_flight04_interaction_preflight|galaxy_flight04b_interaction_executors|galaxy_flight04b_real_freight|galaxy_work01c_native_transport_executors|galaxy_wo3_colony_operations|galaxy_wo3_planetary_housing|galaxy_wo3_planetary_utility|galaxy_wo4_resource_demand|galaxy_wo4_material_allocation|galaxy_wo5_physical_logistics|galaxy_seamless_spatial_ownership)$"
       - name: Archive exact-head test evidence
         if: always()
         uses: actions/upload-artifact@v4
