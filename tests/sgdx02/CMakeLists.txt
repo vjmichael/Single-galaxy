@@ -7,6 +7,9 @@ get_filename_component(GAME_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
 add_executable(galaxy_server_dx_supervisor
   "${GAME_ROOT}/src/server_dx_supervisor.cpp")
 target_include_directories(galaxy_server_dx_supervisor PRIVATE "${GAME_ROOT}/include")
+if(WIN32)
+  target_link_libraries(galaxy_server_dx_supervisor PRIVATE Dbghelp Advapi32)
+endif()
 add_executable(galaxy_server_dx_fault_child
   "${GAME_ROOT}/tests/ServerDx02FaultChild.cpp")
 target_include_directories(galaxy_server_dx_fault_child PRIVATE "${GAME_ROOT}/include")
