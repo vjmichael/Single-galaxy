@@ -425,7 +425,7 @@ FlightState InteriorMovement::flight_state(PlayerId owner){
 }
 std::optional<Outcome> InteriorMovement::pilot(PlayerId owner,
         std::uint64_t expected_seat_sequence,std::uint64_t command_id,
-        PilotControl control){
+        PilotControl control,PilotFailPoint fault){
     // This path never accepts an actor, ship ID, player ID or thrust vector
     // from the client. The original player-person and seat receipt decide.
     constexpr std::uint64_t cockpit_tag=std::uint64_t{1}<<60;
@@ -483,6 +483,8 @@ std::optional<Outcome> InteriorMovement::pilot(PlayerId owner,
     }
     if(!world_.submit_cockpit_flight_checked(c,expected_seat_sequence))
         return std::nullopt;
+    if(fault==PilotFailPoint::AfterAcceptance)
+        throw std::runtime_error("injected cockpit flight after original acceptance");
     // Separate original STEP log, not a phantom client-authoritative update.
     // If interrupted between submit and step, the pending cockpit command is
     // recoverably visible and the next host refuses to process new inputs.
