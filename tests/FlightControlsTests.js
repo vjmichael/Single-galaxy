@@ -4,8 +4,12 @@ test('keyboard maps to existing native thrust, never commands from form inputs',
  assert.deepEqual(flightInput('ArrowLeft'),{action:'thrust',extra:{x:-1,y:0}});
  assert.deepEqual(flightInput('w'),{action:'thrust',extra:{x:0,y:-1}});
  assert.deepEqual(flightInput(' '),{action:'thrust',extra:{x:0,y:0}});
+ assert.deepEqual(flightInput('b'),{action:'brake',extra:{}});
+ assert.deepEqual(flightInput('B'),{action:'brake',extra:{}});
  for(const key of ['Escape','Enter','Tab'])assert.equal(flightInput(key),null);
  assert.equal(flightInput('d',true),null);
+ assert.equal(flightInput('b',true),null);
+ assert.equal(flightInput('b',false,true),null);
  assert.equal(flightInput('d',false,true),null);
  assert.equal(flightInput('d',false,false,true),null);
  assert.equal(flightInput('d',false,false,false,true),null);
