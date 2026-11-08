@@ -9,6 +9,7 @@ namespace galaxy::fp3d {
 // player's own ship interior. XYZ millimeters, Y=0 floor. This is NOT yet a
 // disembark, networking, Godot movement, or remote actor-authorization API.
 enum class MoveFailPoint { None, AfterStepReceipt, AfterPoseUpdate };
+enum class SeatFailPoint { None, AfterSeatReceipt, AfterSeatUpdate };
 
 struct Pose {
     PlayerId owner=0;
@@ -16,6 +17,8 @@ struct Pose {
     std::int64_t x_mm=0,y_mm=0,z_mm=0;
     std::uint64_t sequence=0,world_tick=0,world_generation=0;
     std::string digest;
+    bool seated=false; // host-journaled cockpit state, NOT ship propulsion or disembarkation
+    std::uint64_t seat_sequence=0;
 };
 
 class InteriorMovement {
@@ -37,6 +40,12 @@ public:
     bool move(PlayerId trusted_owner,std::uint64_t expected_sequence,
               std::uint64_t receipt_id,std::int64_t dx_mm,std::int64_t dz_mm,
               MoveFailPoint fault=MoveFailPoint::None);
+    // Host-only transition at the ship's native cockpit interaction zone.
+    // Accepted transition commits original STEP + immutable receipt + seat state
+    // together; a seated person cannot issue walking MOVE commands.
+    bool set_seated(PlayerId trusted_owner,std::uint64_t expected_seat_sequence,
+                    std::uint64_t receipt_id,bool want_seated,
+                    SeatFailPoint fault=SeatFailPoint::None);
 private:
     sqlite3* db_=nullptr;
     PersistentWorld& world_;
@@ -47,5 +56,7 @@ private:
     void verify_step_receipt(std::uint64_t generation,std::uint64_t tick)const;
     Pose load_or_origin(PlayerId owner);
     void verify_chain(const Pose& pose);
+    void load_seat(Pose& pose);
+    void verify_seat_chain(const Pose& pose)const;
 };
 } // namespace galaxy::fp3d
