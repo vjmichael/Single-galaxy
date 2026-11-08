@@ -38,6 +38,7 @@ concurrency:
 jobs:
   original-native:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 50
     name: Exact-head original physical SQLite (${{ matrix.os }})
     strategy:
       fail-fast: false
@@ -70,13 +71,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'vcpkg SQLite SDK failure' }
       - name: Configure native Linux
         if: runner.os == 'Linux'
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF -DSPACE_ENABLE_1024_ENDURANCE=ON
       - name: Configure native Windows
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $tc = Join-Path $env:VCPKG_INSTALLATION_ROOT 'scripts/buildsystems/vcpkg.cmake'
-          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$tc" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$tc" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF -DSPACE_ENABLE_1024_ENDURANCE=ON
           if ($LASTEXITCODE -ne 0) { throw 'native Windows configure failure' }
       - name: Build new and legacy native acceptance
         run: cmake --build build --config Release --parallel 2 --target galaxy_native_cell_worker galaxy_native_cell_hang_worker galaxy_native_cell_detached_pipe_worker galaxy_native_cell_fork_fence_worker galaxy_native_cell_process_stress_tests galaxy_native_galactic_supervisor_tests galaxy_native_3d_worker_tests galaxy_play01_opening_tests galaxy_play12_probe_tests galaxy_flight02_local_docking_tests galaxy_flight03_native_rendezvous_tests galaxy_flight03_object_approach_tests galaxy_flight04_interaction_preflight_tests galaxy_flight04b_interaction_executors_tests galaxy_seamless_spatial_ownership_tests galaxy_play13d_regional_facilities_tests galaxy_wo3_colony_operations_tests galaxy_wo3_planetary_housing_tests galaxy_wo3_planetary_utility_tests galaxy_wo4_resource_demand_tests galaxy_wo4_material_allocation_tests galaxy_wo5_physical_logistics_tests
@@ -85,6 +86,44 @@ jobs:
         run: cmake --build build --parallel 2 --target galaxy_high_order_math_property_tests
       - name: Execute high-order, probe, supervisor and regression tests
         run: ctest --test-dir build -C Release --output-on-failure --output-junit build/space-v121-results.xml -R "^(galaxy_high_order_math_property|galaxy_native_cell_process_stress|galaxy_native_cell_process_long_stress|galaxy_native_galactic_supervisor|galaxy_native_3d_worker|galaxy_play01_opening|galaxy_play12_probes|galaxy_flight02_local_docking|galaxy_flight03_native_rendezvous|galaxy_flight03_object_approach|galaxy_flight04_interaction_preflight|galaxy_flight04b_interaction_executors|galaxy_flight04b_real_freight|galaxy_work01c_native_transport_executors|galaxy_wo3_colony_operations|galaxy_wo3_planetary_housing|galaxy_wo3_planetary_utility|galaxy_wo4_resource_demand|galaxy_wo4_material_allocation|galaxy_wo5_physical_logistics|galaxy_seamless_spatial_ownership)$"
+      - name: SPACE-05J original-world 1024-tick four-cell crash/recovery acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="${{ github.event.pull_request.head.sha || github.sha }}"
+          test "$(git rev-parse HEAD)" = "$expected"
+          inventory="$(ctest --test-dir build -C Release -N -R '^galaxy_native_galactic_supervisor_1024
+        uses: actions/upload-artifact@v4
+        with:
+          name: space-v121-${{ matrix.os }}-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            build/space-v121-results.xml
+            build/space-1024-results.xml
+            space-1024-ctest.log
+            build/Testing/Temporary/LastTest.log
+            build/Testing/Temporary/LastTestsFailed.log
+          if-no-files-found: warn
+          retention-days: 14
+)"
+          printf '%s\n' "$inventory"
+          [[ "$inventory" == *'Total Tests: 1'* ]] ||
+            { echo "FATAL: 1024-tick original-world test was not registered"; exit 4; }
+          ctest --test-dir build -C Release --output-on-failure --timeout 900 \
+            --output-junit build/space-1024-results.xml \
+            -R '^galaxy_native_galactic_supervisor_1024
+        uses: actions/upload-artifact@v4
+        with:
+          name: space-v121-${{ matrix.os }}-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            build/space-v121-results.xml
+            build/Testing/Temporary/LastTest.log
+            build/Testing/Temporary/LastTestsFailed.log
+          if-no-files-found: warn
+          retention-days: 14
+ \
+            2>&1 | tee space-1024-ctest.log
+          grep -q '100% tests passed' space-1024-ctest.log ||
+            { echo "FATAL: original 1024-tick end-to-end acceptance not green"; exit 5; }
       - name: Archive exact-head test evidence
         if: always()
         uses: actions/upload-artifact@v4
