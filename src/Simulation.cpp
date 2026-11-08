@@ -1443,7 +1443,8 @@ bool Simulation::can_depart_colony(const Command& c) const {
        !receiver_life || source->type!=EntityType::Ship ||
        receiver->type!=EntityType::Ship ||
        source->owner_id!=receiver->owner_id ||
-       source->system_id!=receiver->system_id ||
+       (snapshot_version_<120 &&
+        source->system_id!=receiver->system_id) ||
        source->jump_state!=ShipJumpState::Ready ||
        receiver->jump_state!=ShipJumpState::Ready ||
        source->dock_state!=DockState::InSpace ||
@@ -1452,7 +1453,9 @@ bool Simulation::can_depart_colony(const Command& c) const {
        to->second.crew>1000-static_cast<std::int64_t>(c.passenger_ids.size()) ||
        passengers_aboard(c.actor) || passengers_aboard(c.target))return false;
     const auto near=[&](const Entity* origin){
-        if(!origin || origin->system_id!=receiver->system_id)return false;
+        if(!origin ||
+           (snapshot_version_<120 &&
+            origin->system_id!=receiver->system_id))return false;
         if(snapshot_version_>=119 &&
            !within_native_3d_range(*origin,*receiver,kDockingRangeMm))return false;
         const auto dx=snapshot_version_>=120?0:origin->position.x-receiver->position.x;
@@ -1764,7 +1767,9 @@ bool Simulation::submit(const Command& c) {
            second->dock_state!=DockState::InSpace||
            first->jump_state!=ShipJumpState::Ready||
            second->jump_state!=ShipJumpState::Ready||
-           source->system_id!=first->system_id||source->system_id!=second->system_id)
+           (snapshot_version_<120 &&
+            (source->system_id!=first->system_id ||
+             source->system_id!=second->system_id)))
             return false;
         for(const auto receiver:{first,second}){
             if(snapshot_version_>=119 &&
@@ -2036,7 +2041,10 @@ bool Simulation::submit(const Command& c) {
         if(ship==entities_.end() || endpoint==entities_.end() ||
            ship->second.type!=EntityType::Ship || endpoint->second.type!=EntityType::Ship ||
            !colony_ships_.count(c.actor) || !colony_ships_.count(c.target) ||
-           ship->second.system_id!=endpoint->second.system_id)return false;
+           (ship->second.system_id!=endpoint->second.system_id &&
+            !(snapshot_version_>=120 &&
+              (c.action==Action::HostEvacuatePassengers ||
+               c.action==Action::HostResolveMixedFerryLoss))))return false;
         if(incident_action && (ship->second.jump_state!=ShipJumpState::Ready ||
            ship->second.dock_state!=DockState::InSpace))return false;
         if(c.action==Action::HostEvacuatePassengers || c.action==Action::HostResolveMixedFerryLoss){
@@ -3117,8 +3125,10 @@ Event Simulation::execute(const Command& c) {
            first->type!=EntityType::Ship||second->type!=EntityType::Ship||
            c.actor==c.target||c.actor==c.secondary_receiver||
            c.target==c.secondary_receiver||
-           source->system_id!=first->system_id||
-           source->system_id!=second->system_id||source->jump_state!=ShipJumpState::Ready||
+           (snapshot_version_<120 &&
+            (source->system_id!=first->system_id ||
+             source->system_id!=second->system_id))||
+           source->jump_state!=ShipJumpState::Ready||
            first->jump_state!=ShipJumpState::Ready||
            second->jump_state!=ShipJumpState::Ready||
            source->dock_state!=DockState::InSpace||
@@ -3211,7 +3221,10 @@ Event Simulation::execute(const Command& c) {
         if(ship==entities_.end() || endpoint==entities_.end() ||
            ship->second.type!=EntityType::Ship || endpoint->second.type!=EntityType::Ship ||
            !colony_ships_.count(c.actor) || !colony_ships_.count(c.target) ||
-           ship->second.system_id!=endpoint->second.system_id){
+           (ship->second.system_id!=endpoint->second.system_id &&
+            !(snapshot_version_>=120 &&
+              (c.action==Action::HostEvacuatePassengers ||
+               c.action==Action::HostResolveMixedFerryLoss)))){
             result.result=Outcome::InvalidTarget;return result;
         }
         auto ids=c.passenger_ids;std::sort(ids.begin(),ids.end());
