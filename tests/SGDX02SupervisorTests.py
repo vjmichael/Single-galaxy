@@ -20,6 +20,8 @@ def check(supervisor, child):
                     "--build-sha", "f" * 40, "--timeout-ms", str(timeout_ms)]
             if record_clean:
                 args.append("--record-clean")
+            if os.name == "nt" and mode == "segv":
+                args.append("--windows-minidump")
             if allow_core:
                 args.append("--allow-core")
             args += ["--", child, mode]
@@ -74,6 +76,13 @@ def check(supervisor, child):
                 assert ("UndefinedBehaviorSanitizer" in item["stderr_tail"]
                         or "AddressSanitizer" in item["stderr_tail"])
         assert item["core_opt_in"] is False
+        if os.name == "nt":
+            assert item["reason"] == "unhandled_exception"
+            assert item["detail"] == "crash-time minidump recorded"
+            dumps = list((pathlib.Path(str(save)+".diagnostics")).glob("crash-*.dmp"))
+            assert len(dumps) == 1, "opt-in second-chance dump missing"
+            assert dumps[0].read_bytes()[:4] == b"MDMP", "not a Windows minidump"
+            assert 32 <= dumps[0].stat().st_size <= 64*1024*1024
 
         aborted, item, _ = run("abort")
         assert aborted.returncode != 0
