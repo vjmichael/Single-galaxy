@@ -6,6 +6,7 @@
 #include "galaxy/SeamlessCellWorker.hpp"
 #include "galaxy/Persistence.hpp"
 #include "galaxy/NativeCellProcessRunner.hpp"
+#include "galaxy/ServerProcessDiagnostics.hpp"
 #include <sqlite3.h>
 #include <algorithm>
 #include <cstddef>
@@ -318,8 +319,10 @@ public:
                 world_.generation(),world_.world().state_hash(),ships,
                 static_cast<std::uint8_t>(grade)};
             const auto result=run_cell_process(process_executable_,request);
-            if(!result.passed)
+            if(!result.passed){
+                record_native_worker_failure(request.scope,leased->second.epoch,result.reason);
                 throw std::runtime_error("native OS command worker unavailable");
+            }
         }
         const auto token=claim_original_writer(
             db_,world_,leased->second,claim_id,true);
@@ -392,8 +395,11 @@ public:
             const CellProcessTask request{pending_scope,selected->second.worker,
                 world_.generation(),world_.world().state_hash(),ships,
                 static_cast<std::uint8_t>(grade)};
-            if(!run_cell_process(process_executable_,request).passed)
+            const auto result=run_cell_process(process_executable_,request);
+            if(!result.passed){
+                record_native_worker_failure(request.scope,selected->second.epoch,result.reason);
                 throw std::runtime_error("pending native process failed health preflight");
+            }
         }
         const auto token=claim_original_writer(db_,world_,selected->second,
                                                 pending_claim,true);
@@ -449,10 +455,12 @@ public:
             try{
                 auto report=pending[i].get();
                 if(report)eligible.push_back(*report);
-            }catch(const std::exception&){
+            }catch(const std::exception& error){
                 auto at=leases_.begin();
                 std::advance(at,static_cast<std::ptrdiff_t>(i));
                 last_failed_.push_back(at->first);
+                if(!process_executable_.empty())
+                    record_native_worker_failure(at->first,at->second.epoch,error.what());
             }
         }
         if(eligible.empty())
@@ -477,6 +485,27 @@ public:
         return last_failed_;
     }
 private:
+    // Parent-side diagnostic only. It cannot authorize a process or advance
+    // physical state, and an evidence write failure never changes gameplay.
+    void record_native_worker_failure(const std::string& cell_scope,
+                                      std::uint64_t epoch,
+                                      const std::string& detail) const noexcept {
+        if(process_executable_.empty())return;
+        try{
+            server_dx::ProcessIncident event;
+            event.kind="worker_failure";
+            event.role="native_cell_worker";
+            event.reason="preflight_failed";
+            event.detail=detail;
+            event.worker_scope=cell_scope;
+            event.worker_epoch=epoch;
+            event.last_committed_tick=world_.world().tick();
+            event.last_world_generation=world_.generation();
+            // Worker process PID/exit code are unavailable from the current
+            // bounded runner API; never invent them or call this process_exit.
+            (void)server_dx::record_process_incident(db_,event);
+        }catch(...){} // diagnostics cannot become an alternate failure mode
+    }
     std::string db_;
     PersistentWorld& world_;
     std::size_t limit_;
