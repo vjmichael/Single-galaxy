@@ -1,0 +1,27 @@
+{
+  "artifact": "FP3D-02A-WINTEST Godot portable source + official offline Windows build script",
+  "date": "2026-11-08",
+  "godot_release": "4.7.2-stable",
+  "parent_pr": 103,
+  "sha256": {
+    ".gitignore": "7719b2f20a5734420efb6dd8bef678a3887933731dcd8bfc20ae3a15507cd585",
+    "BUILD_AND_TEST.md": "dbc235dc1a8c8cb36da11068cb805cddd73a70af7654fea1e1f17dc11f14de1f",
+    "BUILD_WINDOWS.cmd": "3e0099af8948e56ac73af070b570a97150d9f7ec1177ddb9f554fb715f2c0eba",
+    "README.md": "94475f12ddb47dd817e724e46cc097af9a516ae4bc3d4b5d35815f4aeceff7ba",
+    "RUN_GAME.cmd": "260c2714548a1bedbe83cd69f62c89784172f0affcfe90c5634ebebf0fb658aa",
+    "build_tools/Build-Windows.ps1": "9707d2ab312f013a76c3ef58bdea88f8dc2ffb74d0f8ce3d2b59322b33d19759",
+    "build_tools/KNOWN_GATES.md": "2cae1070bd0dec9c8d17184b051243ec10eeb674ace2b35422eb7f905a74a1ae",
+    "build_tools/WINDOWS_ACCEPTANCE.md": "791696ae9d48ae81a7d8bf28fa8dd9ae487d7d7c4eb8e3dd1a5f15e998cced1b",
+    "export_presets.cfg": "8439f68936da17901df0f743cca2aac9f1774b91589d98d31c85cfac089904f2",
+    "project.godot": "13283b8cfb849a3f2f9f74b9c397eef4e1b93110c0305646a8b8bdbb746f0010",
+    "tests/check_distribution.py": "a1bcea56bb54204464bb15890cb4a131a31b6a0bc4942ba13afde11aa3bd23b7",
+    "tests/godot_smoke.gd": "27879e3e89726a02faef0a441bbf32f72635c63d7caf78788440be4e8692d4c1",
+    "tests/test_project_contract.py": "69946857dc2c42e37df11f0763529689bf39629e7d1833d2bf5c47f6076f5045",
+    "tests/test_windows_builder.py": "af62162e33beff604eacce6af0e9a34b60bc1854b7a048a0b14688ed0fe12247",
+    "world/input_contract.gd": "79eafb7af201cee614f37ea824310ad0a82a12a1c7ff8b0288ab5e21267c8462",
+    "world/main.gd": "f574e597a9d32a8fc335dedc67490179e17ce50434a02c8473076a7515353b38",
+    "world/main.tscn": "82b7292fda7d695cf8f00dd5b1ec828684a55aa389f619707f6cb95e640cb1ab",
+    "world/player_controller.gd": "55187b2d606c30c988fff8adbe234cd348795db2f2a1259480208bcd8ab9879c"
+  },
+  "status": "SOURCE_ONLY_NO_RUNTIME_ACCEPTANCE"
+}
