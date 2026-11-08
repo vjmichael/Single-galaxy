@@ -147,7 +147,7 @@ void migration_16_to_17(const fs::path& dir){
         CHECK(!w.verified_npc_fabrication_execution(555,1));
     }
     sql(file,"DROP TABLE npc_fabrication_executions; DROP TABLE npc_fabrication_execution_meta; "
-        "DROP TABLE npc_fabrication_assignments; DROP TABLE npc_fabrication_assignment_meta; PRAGMA user_version=16;");
+        "DROP TABLE npc_fabrication_assignments; DROP TABLE npc_fabrication_assignment_meta; DROP TABLE IF EXISTS sg_native_npc_commands; PRAGMA user_version=16;");
     {
         PersistentWorld w(file.string(),Simulation(99));
         CHECK(w.recent_npc_fabrication_assignments().empty());
