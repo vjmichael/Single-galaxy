@@ -63,7 +63,7 @@ func start() -> void:
 	_last_send_msec = -10000
 	_buffer.clear()
 	connection_changed.emit(true)
-	_status("F8 NATIVE PLAYER: waiting for verified initial pose; no local walking")
+	_status("P NATIVE PLAYER: waiting for verified initial pose; no local walking")
 
 func poll() -> void:
 	if not _active:
@@ -139,7 +139,7 @@ func _accept_line(line: String) -> void:
 	_tick = tick
 	_generation = generation
 	pose_received.emit({"x_mm":x,"y_mm":y,"z_mm":z,"seq":seq,"tick":tick,"gen":generation,"ship":ship})
-	_status("NATIVE AUTHORITATIVE FPS (F8 stop): step %d / tick %d / ship %d" % [seq,tick,ship])
+	_status("NATIVE AUTHORITATIVE FPS (P stop): step %d / tick %d / ship %d" % [seq,tick,ship])
 
 func submit_motion(heading: Vector3) -> void:
 	if not _active or _session <= 0 or _pending != 0:
