@@ -4,6 +4,9 @@ on:
     paths:
       - 'src/server_dx_supervisor.cpp'
       - 'include/galaxy/ServerProcessDiagnostics.hpp'
+      - 'include/galaxy/ServerDiagnostics.hpp'
+      - 'include/galaxy/ServerWindowsMinidump.hpp'
+      - 'include/galaxy/ServerWindowsPrivate.hpp'
       - 'include/galaxy/ServerBreadcrumb.hpp'
       - 'tests/ServerDx02FaultChild.cpp'
       - 'tests/SGDX02SupervisorTests.py'
