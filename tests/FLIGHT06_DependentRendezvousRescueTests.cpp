@@ -50,6 +50,9 @@ int main(){
         auto ferry=initial.add_colony_ship(7,{0,0},100,6);
         auto rescue=initial.add_colony_ship(7,{0,0},100,6);
         auto dest=initial.add_colony_ship(7,{0,0},100,6);
+        // NPC rescue navigation requires a real supported life-support hold.
+        // Supply finite resources at genesis; never waive worker admission.
+        initial.provision_colony_genesis(rescue,1000,1000,1000,1000,1000);
         initial.enable_individual_workforce();initial.upgrade_assignment_snapshot_format();
         initial.enable_medical_workforce_rules();
         PersistentWorld w(path,std::move(initial));
