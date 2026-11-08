@@ -21,7 +21,7 @@ $logsDir = Join-Path $buildDir 'acceptance'
 New-Item -ItemType Directory -Force -Path $cacheDir, $buildDir, $logsDir | Out-Null
 $startedUtc = [DateTime]::UtcNow.ToString('o')
 $results = New-Object 'System.Collections.Generic.List[object]'
-$state = [ordered]@{stage='initialization'; status='FAILED'; release_tag=$tag; started_utc=$startedUtc; completed_utc=$null; editor_sha256=$null; template_sha256=$null; executable_sha256=$null; executable_bytes=$null; gate_results=$results; error=$null}
+$state = [ordered]@{stage='initialization'; status='FAILED'; release_tag=$tag; started_utc=$startedUtc; completed_utc=$null; editor_sha256=$null; template_sha256=$null; executable_sha256=$null; executable_bytes=$null; native_host_sha256=$null; native_host_bytes=$null; gate_results=$results; error=$null}
 $exitCode = 1
 
 function Record-Gate([string]$name, [string]$status, [string]$detail) {
@@ -126,6 +126,7 @@ try {
     Run-Godot 'engine-version' @('--version')
     Run-Godot 'project-import' @('--headless','--path',$rootDir,'--editor','--quit')
     Run-Godot 'runtime-smoke' @('--headless','--path',$rootDir,'--script','res://tests/godot_smoke.gd')
+    Run-Godot 'native-projection-contract' @('--headless','--path',$rootDir,'--script','res://tests/native_projection_smoke.gd')
 
     $state.stage = 'export-release'
     $gameExe = Join-Path $buildDir 'SingleGalaxy_Graybox.exe'
@@ -135,6 +136,23 @@ try {
     $state.executable_sha256 = (Get-FileHash -LiteralPath $gameExe -Algorithm SHA256).Hash.ToLowerInvariant()
     $state.executable_bytes = (Get-Item -LiteralPath $gameExe).Length
     Record-Gate 'windows-x64-pe-inspection' 'PASS' "PE32+ AMD64, $($state.executable_bytes) bytes"
+    # FP3D-02B: the desktop C++ observer is a separate native process next
+    # to the exported game. Godot never imports or executes it from a PCK.
+    $nativeExe = Join-Path $rootDir 'native\galaxy_desktop_readonly_host.exe'
+    $stagedNative = Join-Path $buildDir 'native'
+    $nativePackaged = $false
+    if (Test-Path -LiteralPath $nativeExe) {
+        Verify-PE64 $nativeExe
+        New-Item -ItemType Directory -Force -Path $stagedNative | Out-Null
+        Copy-Item -LiteralPath $nativeExe -Destination (Join-Path $stagedNative 'galaxy_desktop_readonly_host.exe') -Force
+        $state.native_host_sha256 = (Get-FileHash -LiteralPath $nativeExe -Algorithm SHA256).Hash.ToLowerInvariant()
+        $state.native_host_bytes = (Get-Item -LiteralPath $nativeExe).Length
+        Record-Gate 'native-readonly-host' 'PASS' 'Native Windows x64 PE bundled adjacent to game; OS runtime test still required'
+        $nativePackaged = $true
+    } else {
+        Record-Gate 'native-readonly-host' 'SKIP' 'No host binary; F7 reports native observer unavailable'
+    }
+
 
     $state.stage = 'license'
     $licensePath = Join-Path $buildDir 'GODOT_LICENSE.txt'
@@ -146,8 +164,8 @@ try {
     @'
 Single-Galaxy standalone graybox (FP3D-02A development preview)
 Double-click SingleGalaxy_Graybox.exe. No Godot editor or Python install required.
-WASD=move; mouse=look; Shift=sprint; Space=jump; E=inspect; Esc=release mouse.
-This is a LOCAL MOVEMENT PROTOTYPE. Native C++ galaxy, persistence, cargo and combat are NOT connected yet.
+WASD=move; mouse=look; Shift=sprint; Space=jump; E=inspect; F7=read-only native view; Esc=release mouse.
+F7 optionally reads actual native C++ ship and contacts from SQLite through child-process pipes. No player walking, movement or cargo commands are sent to the native simulation yet.
 Actual physical Windows GPU, collision and usability acceptance is still required.
 Godot MIT terms: GODOT_LICENSE.txt
 '@ | Set-Content -LiteralPath $readme -Encoding UTF8
@@ -168,7 +186,9 @@ Godot MIT terms: GODOT_LICENSE.txt
     if ($exitCode -eq 0) {
         $deliverable = Join-Path $rootDir 'SingleGalaxy_Graybox_Windows_x64.zip'
         if (Test-Path $deliverable) {Remove-Item $deliverable -Force}
-        Compress-Archive -LiteralPath @((Join-Path $buildDir 'SingleGalaxy_Graybox.exe'),(Join-Path $buildDir 'GODOT_LICENSE.txt'),(Join-Path $buildDir 'READ_FIRST.txt')) -DestinationPath $deliverable -Force
+        $packagePaths = @((Join-Path $buildDir 'SingleGalaxy_Graybox.exe'),(Join-Path $buildDir 'GODOT_LICENSE.txt'),(Join-Path $buildDir 'READ_FIRST.txt'))
+        if ($nativePackaged) {$packagePaths += $stagedNative}
+        Compress-Archive -LiteralPath $packagePaths -DestinationPath $deliverable -Force
         Write-Host "Standalone export: $deliverable"
         if ($LaunchAfterExport) {Start-Process -FilePath (Join-Path $buildDir 'SingleGalaxy_Graybox.exe')}
     }
