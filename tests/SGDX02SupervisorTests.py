@@ -44,6 +44,7 @@ def check(supervisor, child):
         assert report["last_committed_tick"] == 99
         assert report["last_world_generation"] == 103
         assert report["reason"] == "preflight_failed"
+        assert report["detail"] == "original host denied native cell preflight"
         assert report["exit_code"] == -1 and report["pid"] == 0
 
         clean, item, _ = run("clean")
