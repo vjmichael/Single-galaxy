@@ -8,6 +8,7 @@ const NATIVE_PLAYER_SESSION := preload("res://world/native_player_session.gd")
 const MONOCHROME := Color(0.76, 0.76, 0.76, 1.0)
 var material: StandardMaterial3D
 var player: CharacterBody3D
+var scope_label: Label
 var status_label: Label
 var fps_label: Label
 var native_label: Label
@@ -147,9 +148,9 @@ func _build_hud() -> void:
 	title.text = "SINGLE-GALAXY | STANDALONE GRAYBOX FPS 0.0.1"
 	title.add_theme_font_size_override("font_size", 18)
 	contents.add_child(title)
-	var subtitle := Label.new()
-	subtitle.text = "LOCAL MOVEMENT TEST ONLY — NOT CONNECTED TO NATIVE GALAXY"
-	contents.add_child(subtitle)
+	scope_label = Label.new()
+	scope_label.text = "LOCAL MOVEMENT TEST ONLY — NOT CONNECTED TO NATIVE GALAXY"
+	contents.add_child(scope_label)
 	status_label = Label.new()
 	status_label.text = "WASD walk   E cockpit seat/stand (native P)   Mouse look   P native FPS   O contacts   Esc mouse"
 	contents.add_child(status_label)
@@ -192,6 +193,8 @@ func _unhandled_input(event: InputEvent) -> void:
 func _on_native_player_connection(connected: bool) -> void:
 	if is_instance_valid(player):
 		player.use_native_authority(connected)
+	if is_instance_valid(scope_label):
+		scope_label.text = "NATIVE IN-SHIP POSE + COCKPIT STATE (TEST ROOM; NO FLIGHT/DISEMBARK)" if connected else "LOCAL MOVEMENT TEST ONLY — NOT CONNECTED TO NATIVE GALAXY"
 
 func _on_native_player_seat_intent() -> void:
 	if native_player_session != null:
