@@ -11,8 +11,11 @@
 #include <vector>
 namespace galaxy::server_dx {
 struct ProcessIncident {
+    std::string kind="process_exit";
     std::string role;
     std::string build_sha;
+    std::string worker_scope;
+    std::uint64_t worker_epoch=0;
     std::string reason;
     std::int64_t pid=0;
     int exit_code=-1;
@@ -64,10 +67,13 @@ inline bool record_process_incident(const std::filesystem::path& save,
         fs::permissions(partial,fs::perms::owner_read|fs::perms::owner_write,
                         fs::perm_options::replace,ec);
         if(ec){file.close();fs::remove(partial,ec);return false;}
-        file<<"{\"schema\":\"SGDX-02\",\"kind\":\"process_exit\""
+        file<<"{\"schema\":\"SGDX-02\",\"kind\":"
+            <<json_string(incident.kind,48)
             <<",\"epoch_ms\":"<<epoch_ms
             <<",\"role\":"<<json_string(incident.role,80)
             <<",\"build_sha\":"<<json_string(incident.build_sha,40)
+            <<",\"worker_scope\":"<<json_string(incident.worker_scope,256)
+            <<",\"worker_epoch\":"<<incident.worker_epoch
             <<",\"reason\":"<<json_string(incident.reason,48)
             <<",\"pid\":"<<incident.pid
             <<",\"exit_code\":"<<incident.exit_code
