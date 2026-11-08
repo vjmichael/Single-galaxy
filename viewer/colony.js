@@ -603,7 +603,9 @@
     }
     if(t==='COMBAT_TARGET'){
       if(v.length!==6)throw Error('Malformed combat target');
-      return {...e,id:numeric(v[4],100000000),hull:numeric(v[5],100)};
+      const id=numeric(v[4],100000000);
+      if(!id)throw Error('Invalid combat target ID');
+      return {...e,id,hull:numeric(v[5],100)};
     }
     if(t==='HEADING'){
       if(v.length!==5)throw Error('Bad ship heading');
