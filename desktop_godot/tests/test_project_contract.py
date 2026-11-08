@@ -8,6 +8,7 @@ scene=(p/'world/main.gd').read_text()
 keys=(p/'world/input_contract.gd').read_text()
 assert 'main_scene="res://world/main.tscn"' in project
 assert 'gl_compatibility' in project
+assert (p/'tests/godot_smoke.gd').is_file()
 assert 'extends CharacterBody3D' in player
 assert 'move_and_slide()' in player
 assert 'InputEventMouseMotion' in player
