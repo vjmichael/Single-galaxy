@@ -28,8 +28,15 @@ assert 'player.native_seat_intent.connect' in m
 assert 'player.use_native_seat(bool(pose["seated"]))' in m
 assert 'func toggle_seat()' in p and 'SEAT|%d|%d|%d|%d' in p
 assert 'seat_sequence != _seat_sequence + 1' in p
-assert 'if not native_seated:' in c and 'native_seat_intent.emit()' in c
+assert 'if native_seated:' in c and 'native_seat_intent.emit()' in c
+assert 'native_ship_intents.emit(pilot_actions)' in c
+assert 'player.native_ship_intents.connect(' in m
+assert 'native_player_session.submit_flight(actions)' in m
+assert 'ship_state_received.connect' in m
+assert 'func submit_flight(actions: PackedStringArray)' in p
+assert 'func _accept_ship(parts: PackedStringArray)' in p
+assert 'not _seated' in p and '_pending_kind != "FLIGHT"' in p
 assert 'native-player-protocol' in b
 assert "'native-player-host' 'PASS'" in b
 assert "'native-player-host' 'SKIP'" in b
-print('FP3D03A PASS: Godot source stays untrusted; host-ACK-only movement, bounded rate, focus and local pipe lifecycle')
+print('FP3D03B PASS: Godot source stays untrusted; host-ACK-only movement, bounded rate, focus and local pipe lifecycle')
