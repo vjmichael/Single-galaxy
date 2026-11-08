@@ -14,7 +14,54 @@ on:
       - '.github/workflows/sgdx02-original-game.yml'
   workflow_dispatch:
 jobs:
+  windows-diagnostics-acceptance:
+    name: Supported MSVC x64, real Job Object and crash-time minidump acceptance
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Configure using genuine native Visual Studio 2022 MSVC x64
+        shell: pwsh
+        run: |
+          cmake -S tests/sgdx02 -B build/sgdx02-msvc-gate -G "Visual Studio 17 2022" -A x64 -DSGDX_REQUIRE_NATIVE_MSVC=ON
+          if ($LASTEXITCODE -ne 0) { throw "Native MSVC x64 configure failed" }
+          $compiler = Get-ChildItem -Path build/sgdx02-msvc-gate/CMakeFiles -Filter CMakeCXXCompiler.cmake -Recurse | Select-Object -First 1
+          if (-not $compiler) { throw "Missing real CMake compiler provenance" }
+          Get-Content $compiler.FullName | Set-Content sgdx02-native-compiler.txt
+          $evidence = Get-Content sgdx02-native-compiler.txt -Raw
+          if ($evidence -notmatch 'CMAKE_CXX_COMPILER_ID "MSVC"') {
+            throw "Windows gate did not use the genuine MSVC compiler"
+          }
+          git rev-parse HEAD | Set-Content sgdx02-native-source-sha.txt
+      - name: Build actual supervisor and native fault child with MSVC
+        shell: pwsh
+        run: |
+          cmake --build build/sgdx02-msvc-gate --config Release --parallel 2 --target galaxy_server_dx_supervisor galaxy_server_dx_fault_child
+          if ($LASTEXITCODE -ne 0) { throw "Supported Windows MSVC build failed" }
+      - name: Run actual Windows exception, MDMP, Job Object and SQLite acceptance
+        shell: pwsh
+        run: |
+          ctest --test-dir build/sgdx02-msvc-gate -C Release -R "^(sgdx02_supervisor|sgdx02_sqlite_recovery)$" --timeout 120 --output-on-failure --output-junit build/sgdx02-msvc-gate/sgdx02-windows-msvc.xml
+          if ($LASTEXITCODE -ne 0) { throw "Real Windows diagnostics acceptance failed: original-game recovery is blocked" }
+      - name: Retain source, compiler and CTest evidence (not private crash dumps)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sgdx02-supported-msvc-windows-${{ github.sha }}
+          path: |
+            sgdx02-native-source-sha.txt
+            sgdx02-native-compiler.txt
+            build/sgdx02-msvc-gate/sgdx02-windows-msvc.xml
+            build/sgdx02-msvc-gate/Testing/Temporary/LastTest.log
+          if-no-files-found: warn
+
   original-game-sgdx:
+    needs: windows-diagnostics-acceptance
     strategy:
       fail-fast: false
       matrix:
