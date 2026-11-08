@@ -9,7 +9,9 @@
 #include <DbgHelp.h>
 #include <sddl.h>
 #include <aclapi.h>
+#include <algorithm>
 #include <filesystem>
+#include <system_error>
 #include <string>
 #include <vector>
 namespace galaxy::server_dx::windows_dump {
@@ -82,9 +84,9 @@ inline bool capture_second_chance(
         const std::wstring name=L"crash-"+std::to_wstring(number.QuadPart)+
             L"-"+std::to_wstring(process.dwProcessId)+L".dmp";
         const std::filesystem::path dest=directory/name;
-        const auto sa=security.attributes();
+        auto sa=security.attributes();
         HANDLE file=CreateFileW(dest.c_str(),GENERIC_WRITE,0,
-            const_cast<SECURITY_ATTRIBUTES*>(&sa),CREATE_NEW,
+            &sa,CREATE_NEW,
             FILE_ATTRIBUTE_NORMAL|FILE_FLAG_WRITE_THROUGH,nullptr);
         if(file==INVALID_HANDLE_VALUE)return false;
 
