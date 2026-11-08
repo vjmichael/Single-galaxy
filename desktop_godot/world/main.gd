@@ -12,6 +12,7 @@ var scope_label: Label
 var status_label: Label
 var fps_label: Label
 var native_label: Label
+var ship_label: Label
 var native_session
 var native_player_session
 var native_markers: Node3D
@@ -36,10 +37,12 @@ func _ready() -> void:
 	native_session.status_changed.connect(_on_native_status)
 	native_player_session = NATIVE_PLAYER_SESSION.new()
 	native_player_session.pose_received.connect(_on_native_player_pose)
+	native_player_session.ship_state_received.connect(_on_native_ship_state)
 	native_player_session.status_changed.connect(_on_native_player_status)
 	native_player_session.connection_changed.connect(_on_native_player_connection)
 	player.native_motion_intent.connect(_on_native_player_intent)
 	player.native_seat_intent.connect(_on_native_player_seat_intent)
+	player.native_ship_intents.connect(_on_native_ship_intents)
 
 func _setup_environment() -> void:
 	var env := Environment.new()
@@ -152,11 +155,14 @@ func _build_hud() -> void:
 	scope_label.text = "LOCAL MOVEMENT TEST ONLY — NOT CONNECTED TO NATIVE GALAXY"
 	contents.add_child(scope_label)
 	status_label = Label.new()
-	status_label.text = "WASD walk   E cockpit seat/stand (native P)   Mouse look   P native FPS   O contacts   Esc mouse"
+	status_label.text = "P native | E sit/stand | ON FOOT: WASD walk | SEATED: AD yaw, WS strafe, arrows thrust, B brake, U undock"
 	contents.add_child(status_label)
 	native_label = Label.new()
 	native_label.text = "NATIVE: P enters persistent ship interior; O is read-only contact view"
 	contents.add_child(native_label)
+	ship_label = Label.new()
+	ship_label.text = "SHIP: native physical state not yet verified"
+	contents.add_child(ship_label)
 	fps_label = Label.new()
 	fps_label.position = Vector2(16, 105)
 	fps_label.add_theme_font_size_override("font_size", 15)
@@ -193,8 +199,25 @@ func _unhandled_input(event: InputEvent) -> void:
 func _on_native_player_connection(connected: bool) -> void:
 	if is_instance_valid(player):
 		player.use_native_authority(connected)
+	if not connected and is_instance_valid(ship_label):
+		ship_label.text = "SHIP: native host disconnected; previous readout not live"
 	if is_instance_valid(scope_label):
 		scope_label.text = "NATIVE IN-SHIP POSE + COCKPIT STATE (TEST ROOM; NO FLIGHT/DISEMBARK)" if connected else "LOCAL MOVEMENT TEST ONLY — NOT CONNECTED TO NATIVE GALAXY"
+
+func _on_native_ship_intents(actions: PackedStringArray) -> void:
+	if native_player_session != null:
+		native_player_session.submit_flight(actions)
+
+func _on_native_ship_state(ship: Dictionary) -> void:
+	if not is_instance_valid(ship_label):
+		return
+	var states := ["IN SPACE", "DOCKED", "UNDOCKING", "DOCKING"]
+	var dock: int = int(ship["dock"])
+	ship_label.text = "ORIGINAL SHIP #%d | %s | yaw %d° | position (%.1f, %.1f, %.1f)m | velocity (%d, %d, %d)mm/tick" % [
+		int(ship["ship"]), states[dock], int(ship["heading"]),
+		float(ship["x_mm"]) / 1000.0, float(ship["y_mm"]) / 1000.0,
+		float(ship["z_mm"]) / 1000.0,
+		int(ship["vx"]), int(ship["vy"]), int(ship["vz"])]
 
 func _on_native_player_seat_intent() -> void:
 	if native_player_session != null:
