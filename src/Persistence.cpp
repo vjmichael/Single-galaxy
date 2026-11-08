@@ -14633,7 +14633,8 @@ void PersistentWorld::step_as_cell_worker(
     step_with_cell_worker(&token,fail);
 }
 void PersistentWorld::step_with_cell_worker(
-        const NativeCellWorkerTick* token,FailPoint fail) {
+        const NativeCellWorkerTick* token,FailPoint fail,
+        const std::function<void(sqlite3*,std::uint64_t)>& trusted_interior_effect) {
     // SPACE-05: no active-worker authorization can make an ordinary host
     // tick into a distributed writer. One original SQLite writer remains.
     if(token){
@@ -14709,7 +14710,7 @@ void PersistentWorld::step_with_cell_worker(
     // Store::commit is the final admission authority for both worker
     // ticks and EVERY other world mutation, under the original SQLite lock.
     store_->commit(next, generation_, resource_origin_, credit_origin_, nullptr,
-                   new_events, due, new_activity, fail,nullptr,nullptr,{},token,
+                   new_events, due, new_activity, fail,nullptr,nullptr,trusted_interior_effect,token,
                    generated_native_commands);
     world_.swap(next);
     ++generation_;
