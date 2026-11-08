@@ -309,6 +309,65 @@ static void cross_system_physical_contact(){
 // SPACE-04I: exact physical outpost genesis is source-authoritative even
 // when its local XY compatibility field crosses a galactic sector. The
 // nearest station is checked in the real world, not a catalogue label.
+// SPACE-05K: cross-sector physical interaction integrity. A catalogue
+// grouping may never grant a remote, server-authorized ship destruction.
+// The only durable wreck is the same physical entity, retaining cargo and
+// owner; no second NPC/ship or free ore appears after snapshot recovery.
+static void cross_system_ship_destruction_custody(){
+    Simulation world(4817);
+    world.add_system(2);
+    const auto attacker=world.add_colony_ship(7,{0,0},100,4);
+    const auto near_drone=world.add_training_drone({2000,0});
+    const auto remote_drone=world.add_training_drone({250000,0});
+    world.enable_native_3d_physics();
+    const galactic::Point first{{0,1000000},{0,1000000},{0,1000000}};
+    const galactic::Point second{{0,1001000},{0,1000000},{0,1000000}};
+    world.enable_native_galactic_physics({{1,first},{2,second}});
+    // A genuine nearby resource is allowed to cross the neighbouring
+    // star's catalogue; the unrelated remote hull is not.
+    const auto foreign_rock=world.add_asteroid_in_system(2,{-750,0},12);
+    CHECK(world.same_local_frame(attacker,foreign_rock));
+    CHECK(world.find(attacker)->system_id!=world.find(foreign_rock)->system_id);
+    const auto ore=world.total_ore(),entities=world.entities().size();
+    const auto npcs=world.npc_records().size();
+    const auto id_before=world.find(near_drone)->id;
+    CHECK(world.find(near_drone)->cargo==6 &&
+          world.find(remote_drone)->cargo==6);
+    const auto fire=[&](std::uint64_t id,EntityId target){
+        Command c=command(id,attacker,world.tick()+1,
+                          Action::HostDestroyShip,target);
+        c.issuer=Simulation::kServerAuthority;
+        CHECK(world.submit(c));
+        world.step();
+        CHECK(world.events().back().command_id==id);
+        return world.events().back().result;
+    };
+    CHECK(fire(62010,remote_drone)==Outcome::OutOfRange);
+    CHECK(world.find(remote_drone)->type==EntityType::Ship &&
+          world.find(remote_drone)->cargo==6 &&
+          world.entities().size()==entities && world.total_ore()==ore);
+    CHECK(fire(62011,near_drone)==Outcome::Applied);
+    CHECK(world.find(near_drone)->type==EntityType::Wreck &&
+          world.find(near_drone)->id==id_before &&
+          world.find(near_drone)->cargo==6 &&
+          world.find(near_drone)->owner_id==8 &&
+          world.total_ore()==ore &&
+          world.entities().size()==entities &&
+          world.npc_records().size()==npcs);
+    CHECK(fire(62012,near_drone)==Outcome::InvalidTarget);
+    CHECK(world.total_ore()==ore &&
+          world.entities().size()==entities);
+    const auto bytes=world.canonical_state();
+    const auto replay=Simulation::from_snapshot(bytes);
+    CHECK(replay.canonical_state()==bytes &&
+          replay.find(near_drone)->type==EntityType::Wreck &&
+          replay.find(near_drone)->cargo==6 &&
+          replay.find(remote_drone)->type==EntityType::Ship &&
+          replay.total_ore()==ore &&
+          replay.entities().size()==entities &&
+          replay.npc_records().size()==npcs);
+}
+
 static void cross_system_outpost_genesis(){
     Simulation genesis(4912);
     genesis.add_system(2);
@@ -706,6 +765,7 @@ int main(int argc,char** argv){
         galaxy_and_probes(root);
         anchored_nonships_and_swap();
         cross_system_physical_contact();
+        cross_system_ship_destruction_custody();
         cross_system_outpost_genesis();
         multi_cell_supervision(root,argv[1],argv[2]);
         int endurance_ticks=256;
