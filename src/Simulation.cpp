@@ -9033,6 +9033,10 @@ bool Simulation::queue_npc_station_docking(
     order.pilot_npc=selected;order.station=target;
     order.mode=NpcFlightMode::LocalDock;order.purpose=purpose;
     order.posted_tick=tick_;
+    // FLIGHT-02 upgrades legacy colony snapshots to v96. Materialize
+    // their existing ships' durable celestial frames before the snapshot
+    // format requires explicit per-ship frame custody.
+    if(snapshot_version_<71)ensure_ship_frame_registry();
     npc_flight_orders_.emplace(id,order);
     snapshot_version_=std::max(snapshot_version_,96);
     return true;
