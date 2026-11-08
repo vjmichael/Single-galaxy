@@ -1,0 +1,133 @@
+#pragma once
+// SGDX-02 Windows opt-in crash-time minidump. Called ONLY by a separate
+// debugger supervisor at a second-chance exception, before child termination.
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <DbgHelp.h>
+#include <sddl.h>
+#include <aclapi.h>
+#include <filesystem>
+#include <string>
+#include <vector>
+namespace galaxy::server_dx::windows_dump {
+struct ScopedPrivateSecurity {
+    PSECURITY_DESCRIPTOR descriptor=nullptr;
+    ~ScopedPrivateSecurity(){if(descriptor)LocalFree(descriptor);}
+    bool initialize() {
+        HANDLE token=nullptr;
+        if(!OpenProcessToken(GetCurrentProcess(),TOKEN_QUERY,&token))return false;
+        DWORD bytes=0;
+        (void)GetTokenInformation(token,TokenUser,nullptr,0,&bytes);
+        std::vector<unsigned char> user(bytes);
+        const bool obtained=bytes && GetTokenInformation(
+            token,TokenUser,user.data(),bytes,&bytes);
+        CloseHandle(token);
+        if(!obtained)return false;
+        LPWSTR sid=nullptr;
+        if(!ConvertSidToStringSidW(
+            reinterpret_cast<TOKEN_USER*>(user.data())->User.Sid,&sid))return false;
+        const std::wstring sddl=L"D:P(A;;FA;;;SY)(A;;FA;;;" +
+                                 std::wstring(sid)+L")";
+        LocalFree(sid);
+        return ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl.c_str(),SDDL_REVISION_1,&descriptor,nullptr)!=FALSE;
+    }
+    SECURITY_ATTRIBUTES attributes()const {
+        SECURITY_ATTRIBUTES sa{};
+        sa.nLength=sizeof(sa);sa.lpSecurityDescriptor=descriptor;
+        sa.bInheritHandle=FALSE;return sa;
+    }
+    bool protect_directory(const std::wstring& dir) const{
+        // A junction/symlink must never redirect sensitive dumps elsewhere.
+        DWORD attr=GetFileAttributesW(dir.c_str());
+        if(attr==INVALID_FILE_ATTRIBUTES){
+            auto sa=attributes();
+            if(!CreateDirectoryW(dir.c_str(),&sa) &&
+               GetLastError()!=ERROR_ALREADY_EXISTS)return false;
+            attr=GetFileAttributesW(dir.c_str());
+        }
+        if(attr==INVALID_FILE_ATTRIBUTES ||
+           !(attr&FILE_ATTRIBUTE_DIRECTORY) ||
+           (attr&FILE_ATTRIBUTE_REPARSE_POINT))return false;
+        BOOL present=FALSE,defaulted=FALSE;
+        PACL dacl=nullptr;
+        if(!GetSecurityDescriptorDacl(descriptor,&present,&dacl,&defaulted) ||
+           !present || !dacl)return false;
+        return SetNamedSecurityInfoW(const_cast<LPWSTR>(dir.c_str()),
+            SE_FILE_OBJECT,DACL_SECURITY_INFORMATION|
+            PROTECTED_DACL_SECURITY_INFORMATION,
+            nullptr,nullptr,dacl,nullptr)==ERROR_SUCCESS;
+    }
+};
+inline bool capture_second_chance(
+    const std::filesystem::path& save,
+    const PROCESS_INFORMATION& process,
+    const DEBUG_EVENT& event,
+    std::wstring& saved_basename) noexcept{
+    try {
+        ScopedPrivateSecurity security;
+        if(!security.initialize())return false; // no dump without private ACL
+        std::filesystem::path directory=save;
+        directory+=L".diagnostics";
+        const std::wstring dir=directory.wstring();
+        if(!security.protect_directory(dir))return false;
+        FILETIME timestamp{};
+        GetSystemTimeAsFileTime(&timestamp);
+        ULARGE_INTEGER number{};
+        number.LowPart=timestamp.dwLowDateTime;
+        number.HighPart=timestamp.dwHighDateTime;
+        const std::wstring name=L"crash-"+std::to_wstring(number.QuadPart)+
+            L"-"+std::to_wstring(process.dwProcessId)+L".dmp";
+        const std::filesystem::path dest=directory/name;
+        const auto sa=security.attributes();
+        HANDLE file=CreateFileW(dest.c_str(),GENERIC_WRITE,0,
+            const_cast<SECURITY_ATTRIBUTES*>(&sa),CREATE_NEW,
+            FILE_ATTRIBUTE_NORMAL|FILE_FLAG_WRITE_THROUGH,nullptr);
+        if(file==INVALID_HANDLE_VALUE)return false;
+
+        CONTEXT context{};
+        context.ContextFlags=CONTEXT_FULL;
+        HANDLE thread=OpenThread(THREAD_GET_CONTEXT|THREAD_QUERY_INFORMATION,
+                                FALSE,event.dwThreadId);
+        const bool has_context=thread && GetThreadContext(thread,&context);
+        if(thread)CloseHandle(thread);
+        EXCEPTION_RECORD record=event.u.Exception.ExceptionRecord;
+        EXCEPTION_POINTERS pointers{};
+        pointers.ExceptionRecord=&record;
+        pointers.ContextRecord=&context;
+        MINIDUMP_EXCEPTION_INFORMATION info{};
+        info.ThreadId=event.dwThreadId;
+        info.ExceptionPointers=&pointers;
+        info.ClientPointers=FALSE;
+        const BOOL written=MiniDumpWriteDump(process.hProcess,
+            process.dwProcessId,file,
+            static_cast<MINIDUMP_TYPE>(MiniDumpNormal|MiniDumpWithThreadInfo),
+            has_context?&info:nullptr,nullptr,nullptr);
+        LARGE_INTEGER length{};
+        const bool size_ok=GetFileSizeEx(file,&length) &&
+            length.QuadPart>=32 && length.QuadPart<=64LL*1024*1024;
+        CloseHandle(file);
+        if(!written || !size_ok){
+            DeleteFileW(dest.c_str());return false;
+        }
+        saved_basename=name;
+        // Always cap retention, including repeated crash loops.
+        std::vector<std::filesystem::path> dumps;
+        for(const auto& item:std::filesystem::directory_iterator(directory)){
+            if(item.is_regular_file() &&
+               item.path().filename().wstring().rfind(L"crash-",0)==0 &&
+               item.path().extension()==L".dmp")dumps.push_back(item.path());
+        }
+        std::sort(dumps.begin(),dumps.end());
+        for(std::size_t i=0;dumps.size()>4 && i<dumps.size()-4;++i){
+            std::error_code ec;
+            std::filesystem::remove(dumps[i],ec);
+        }
+        return true;
+    }catch(...){return false;}
+}
+} // namespace galaxy::server_dx::windows_dump
+#endif
