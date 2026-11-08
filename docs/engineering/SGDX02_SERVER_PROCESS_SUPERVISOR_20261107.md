@@ -26,7 +26,7 @@ A complete isolated CMake/Ninja Release build was run with the exact committed S
 - GCC 14.2: CTest 1/1 PASS.
 - Clang 17: CTest 1/1 PASS.
 - Clang 17 with UndefinedBehaviorSanitizer: CTest 1/1 PASS. The sanitizer may intercept a SIGSEGV and exit nonzero itself; the test verifies that trace rather than inventing a raw kernel signal.
-- The Python test launches a real compiled C++ child repeatedly: clean SGVIEW stdout, nonzero exit, actual SIGSEGV and SIGABRT (on Linux), deliberate hung child, 40 KiB stderr burst with 8 KiB tail, two successful commit breadcrumbs before fatal exit, descendant process termination on timeout, sixteen-entry incident rotation, private POSIX permissions, symlink refusal, caller build SHA and explicit clean-exit recording. Result is real subprocess behavior, not mocked JSON.
+- The Python test launches a real compiled C++ child repeatedly: clean SGVIEW stdout, nonzero exit, actual SIGSEGV and SIGABRT (on Linux), deliberate hung child, 40 KiB stderr burst with 8 KiB tail, **invalid UTF-8/NUL stderr that still produces parseable ASCII-safe JSON**, two successful commit breadcrumbs before fatal exit, descendant process termination on timeout, sixteen-entry incident rotation, private POSIX permissions, symlink refusal, caller build SHA and explicit clean-exit recording. Result is real subprocess behavior, not mocked JSON.
 - Native source Git blob hashes were compared against the GitHub committed files before acceptance. An evidence ZIP containing exact source, JUnit, compiler/CTest logs and SHA-256 manifest is supplied in conversation.
 
 ## Exact game/native and Windows gates (not accepted)
