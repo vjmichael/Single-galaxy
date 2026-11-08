@@ -2024,3 +2024,14 @@ if(BUILD_TESTING)
     ${CMAKE_CURRENT_SOURCE_DIR}/include)
   add_test(NAME galaxy_server_diagnostics COMMAND galaxy_server_diagnostics_tests)
 endif()
+
+# SGDX-01 actual native-host catch path, distinct from the isolated component.
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+  add_test(NAME galaxy_server_diagnostics_native_hosts
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/SGDX01HostExceptionTests.py
+      $<TARGET_FILE:galaxy_colony_live_host>
+      $<TARGET_FILE:galaxy_interactive_host>)
+  set_tests_properties(galaxy_server_diagnostics_native_hosts
+    PROPERTIES TIMEOUT 40)
+endif()
