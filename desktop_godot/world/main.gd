@@ -163,19 +163,23 @@ func _on_inspected(display_name: String) -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F7:
-		native_session.start()
+		if native_session.is_active():
+			native_session.stop("READ ONLY — stopped by player; last verified frame retained; F7 reconnects")
+		else:
+			native_session.start()
 		get_viewport().set_input_as_handled()
 
 func _on_native_status(message: String) -> void:
 	if is_instance_valid(native_label):
 		native_label.text = "NATIVE: " + message
+		# Keep the reason visible until another explicit user action changes it.
 
 func _on_native_snapshot(frame: Dictionary) -> void:
 	# Render verified native contacts as NON-COLLIDING visual indicators only.
 	# Native SGVIEW X/Y horizontal millimeters are mapped to viewer X/Z. Y=3 is
 	# explicitly illustrative, NOT an authoritative 3D player or ship altitude.
 	if is_instance_valid(native_label):
-		native_label.text = "NATIVE READ ONLY: tick %d | system %d | ship #%d | %d contacts" % [
+		native_label.text = "NATIVE READ ONLY (F7 stop): tick %d | system %d | ship #%d | %d contacts" % [
 			frame["tick"], frame["system"], frame["ship_id"], frame["contacts"].size()]
 	for child in native_markers.get_children():
 		child.queue_free()
