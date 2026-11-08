@@ -70,7 +70,8 @@ test('the live scanner exposes radius and does not fake unfinished modes',()=>{
  const relay=read('live/interactive_relay.py');
  for(const id of ['signatureRange','signatureMode','signatureScan','signatureTarget','signatureFocus','signatureCancel'])
    assert.ok(html.includes('id="'+id+'"'));
- assert.ok(html.includes('Celestial (survey preview)'));
+ assert.ok(html.includes('<option value="celestial">Celestial catalogue</option>'));
+ assert.ok(html.includes('<option value="environmental">Environment survey</option>'));
  assert.ok(relay.includes("command=f'SIGNATURES|{radius}'"));
  assert.ok(host.includes('coarse_probe_signatures(principal,ship,radius)'));
 });
