@@ -75,7 +75,7 @@ func _physics_process(delta: float) -> void:
 				# Only intentional physical control requests. C++ retains ship motion,
 				# yaw, thrust admission and persistent world authority.
 				var pilot_actions := PackedStringArray()
-				if Input.is_action_just_pressed("ship_undock"):
+				if Input.is_action_pressed("ship_undock"):
 					pilot_actions.append("UND")
 				if Input.is_action_pressed("ship_counterthrust"):
 					pilot_actions.append("BRAKE")
