@@ -13,6 +13,7 @@
 #include <iterator>
 #include <memory>
 #include <set>
+#include <map>
 #include <vector>
 #include <iostream>
 #include <stdexcept>
@@ -541,7 +542,7 @@ static void sustained_multi_cell_endurance(const fs::path& root,
         const auto ship=simulation.add_colony_ship(
             static_cast<PlayerId>(20+i),
             {static_cast<std::int64_t>(i)*200000000,0},100,8);
-        // Prove finite original ore and NPC state through 256 ticks;
+        // Prove finite ore and NPC identities through 256 or 1024 ticks;
         // provide enough ordinary life support that this regression tests
         // worker conservation, not intentionally induced starvation.
         simulation.provision_colony_genesis(
@@ -560,6 +561,15 @@ static void sustained_multi_cell_endurance(const fs::path& root,
     const auto baseline_ore=w.world().total_ore();
     const auto baseline_npcs=w.world().npc_records().size();
     const auto baseline_entities=w.world().entities().size();
+    // Match original identities, not just totals, across independent SQLite recovery.
+    std::set<std::uint64_t> baseline_npc_ids;
+    for(const auto& item:w.world().npc_records())
+        baseline_npc_ids.insert(item.first);
+    std::set<EntityId> baseline_entity_ids;
+    for(const auto& item:w.world().entities())
+        baseline_entity_ids.insert(item.first);
+    CHECK(baseline_npc_ids.size()==baseline_npcs &&
+          baseline_entity_ids.size()==baseline_entities);
     std::vector<spatial::WorkerLease> leases;
     for(int i=0;i<4;++i){
         const auto cell=spatial::ship_cell(w.world(),ships[i]);
@@ -586,11 +596,15 @@ static void sustained_multi_cell_endurance(const fs::path& root,
         CHECK(host.worker_count()==4);
     };
     attach(*supervisor);
-    std::set<std::string> selected_cells;
+    std::map<std::string,std::size_t> selected_cells;
+    std::size_t deliberate_rollbacks=0;
+    std::size_t restarted_hosts=0;
+    std::size_t independently_recovered=0;
     std::vector<double> tick_ms;
     tick_ms.reserve(static_cast<std::size_t>(endurance_ticks));
     for(int i=0;i<endurance_ticks;++i){
         if(i>0 && i%32==0){
+            ++restarted_hosts;
             supervisor.reset(); // actual host object/worker selector restart
             supervisor=std::make_unique<spatial::NativeMultiCellSupervisor>(db,w);
             attach(*supervisor);
@@ -602,6 +616,7 @@ static void sustained_multi_cell_endurance(const fs::path& root,
         const auto dispatch="endurance-"+std::to_string(i);
         spatial::NativeMultiCellSupervisor::Committed completed;
         if(i%37==17){
+            ++deliberate_rollbacks;
             denied([&]{
                 (void)supervisor->run_next_tick(dispatch,
                     FailPoint::AfterSnapshotWrite);
@@ -618,7 +633,13 @@ static void sustained_multi_cell_endurance(const fs::path& root,
         }
         tick_ms.push_back(std::chrono::duration<double,std::milli>(
             std::chrono::steady_clock::now()-start).count());
-        selected_cells.insert(completed.scope);
+        ++selected_cells[completed.scope];
+        // Every completion must come from one of the four authorized leases.
+        CHECK(std::any_of(leases.begin(),leases.end(),
+            [&](const spatial::WorkerLease& lease){
+                return completed.scope==spatial::scope(lease.cell) &&
+                       completed.worker==lease.worker;
+            }));
         CHECK(w.generation()==initial_generation+1 &&
               w.world().tick()==initial_tick+1 &&
               completed.world_generation==w.generation() &&
@@ -633,19 +654,39 @@ static void sustained_multi_cell_endurance(const fs::path& root,
         if((i+1)%64==0){
             const auto copy=(root/("endurance-"+std::to_string(i)+".sqlite")).string();
             PersistentWorld::recover_copy(db,copy);
+            ++independently_recovered;
             PersistentWorld recovered(copy,Simulation(1));
             CHECK(recovered.generation()==w.generation() &&
                   recovered.world().canonical_state()==w.world().canonical_state());
+            // Retain the exact named NPC/object identities across restart.
+            std::set<std::uint64_t> recovered_npc_ids;
+            for(const auto& item:recovered.world().npc_records())
+                recovered_npc_ids.insert(item.first);
+            std::set<EntityId> recovered_entity_ids;
+            for(const auto& item:recovered.world().entities())
+                recovered_entity_ids.insert(item.first);
+            CHECK(recovered_npc_ids==baseline_npc_ids &&
+                  recovered_entity_ids==baseline_entity_ids);
         }
     }
     CHECK(selected_cells.size()==4);
+    for(const auto& item:selected_cells)CHECK(item.second>0);
+    CHECK(restarted_hosts==static_cast<std::size_t>((endurance_ticks-1)/32));
+    CHECK(independently_recovered==static_cast<std::size_t>(endurance_ticks/64));
+    CHECK(deliberate_rollbacks==
+          static_cast<std::size_t>((endurance_ticks-1-17)/37+1));
     std::sort(tick_ms.begin(),tick_ms.end());
     std::cout<<"SPACE-05G original four-cell sustained native tick count="
              <<tick_ms.size()<<" p50_ms="<<tick_ms[tick_ms.size()/2]
              <<" p95_ms="<<tick_ms[tick_ms.size()*95/100]
              <<" max_ms="<<tick_ms.back()
-             <<" no duplicated ships/NPCs/ore, 8 host restarts and "
-               "independent recovered SQLite checkpoints\\n";
+             <<" no duplicated ships/NPCs/ore, host_restarts="<<restarted_hosts
+             <<" deliberate_rollbacks="<<deliberate_rollbacks
+             <<" independent_sqlite_recoveries="<<independently_recovered
+             <<" cell_selections=";
+    for(const auto& item:selected_cells)
+        std::cout<<item.first<<":"<<item.second<<";";
+    std::cout<<"\\n";
 }
 
 int main(int argc,char** argv){
