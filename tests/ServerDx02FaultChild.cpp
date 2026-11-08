@@ -1,4 +1,5 @@
 #include "galaxy/ServerBreadcrumb.hpp"
+#include "galaxy/ServerProcessDiagnostics.hpp"
 #include <chrono>
 #include <csignal>
 #include <cstdint>
@@ -13,8 +14,21 @@
 #include <unistd.h>
 #endif
 int main(int argc,char** argv){
-    if(argc!=2)return 64;
+    if(argc<2)return 64;
     const std::string mode(argv[1]);
+    if(mode=="worker-report" && argc==3){
+        galaxy::server_dx::ProcessIncident report;
+        report.kind="worker_failure";
+        report.role="native_cell_worker";
+        report.reason="preflight_failed";
+        report.worker_scope="spatial/v2/s1,2,3";
+        report.worker_epoch=47;
+        report.last_committed_tick=99;
+        report.last_world_generation=103;
+        report.stderr_tail="real child rejected original worker task";
+        return galaxy::server_dx::record_process_incident(argv[2],report)?0:81;
+    }
+    if(argc!=2)return 64;
 #ifdef _WIN32
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
 #endif
