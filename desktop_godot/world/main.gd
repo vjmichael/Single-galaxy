@@ -205,6 +205,9 @@ func _build_ship_interior() -> void:
 	_solid_box("Ship interior aft wall", Vector3(0, 2, 8), Vector3(16, 4, 0.3))
 	_solid_box("Ship interior forward bulkhead", Vector3(0, 2, -8), Vector3(16, 4, 0.3))
 	_solid_box("Native cockpit console (visual)", Vector3(0, 0.85, -2.1), Vector3(3.5, 1.4, 0.7))
+	# The native original movement collision map has a crate at X=1.2..2.0m,
+	# Z=-0.5..0.5m. Draw/collide at those exact dimensions, not a phantom wall.
+	_solid_box("Native interior cargo obstruction", Vector3(1.6, 0.8, 0), Vector3(0.8, 1.6, 1.0))
 	_solid_box("Cockpit windscreen upper frame", Vector3(0, 2.75, -5.5), Vector3(5.6, 0.2, 0.3))
 
 static func native_rock_visual_offset(contact: Dictionary) -> Vector3:
@@ -317,7 +320,7 @@ func _build_hud() -> void:
 	scope_label.text = "LOCAL MOVEMENT TEST ONLY — NOT CONNECTED TO NATIVE GALAXY"
 	contents.add_child(scope_label)
 	status_label = Label.new()
-	status_label.text = "H station, E board | R refinery terminal | P cockpit, E sit | WASD walk | A/D yaw, arrows thrust, B brake"
+	status_label.text = "H station, E board/exit | R refinery | P cockpit, E sit | WASD walk | A/D yaw, arrows thrust | B brake, G dock"
 	contents.add_child(status_label)
 	native_label = Label.new()
 	native_label.text = "NATIVE: H enters station player test. Walk toward marked hatch (0,0), E boards. P switches to ship cockpit."

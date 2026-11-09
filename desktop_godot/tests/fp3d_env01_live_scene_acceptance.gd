@@ -49,6 +49,11 @@ func _undocked() -> bool:
 	var n = _game.native_player_session
 	return n._active and n._pending == 0 and n._dock_state == 0
 
+func _docked() -> bool:
+	_poll_native()
+	var n = _game.native_player_session
+	return n._active and n._pending == 0 and n._dock_state == 1
+
 func _flight_done() -> bool:
 	_poll_native()
 	var n = _game.native_player_session
@@ -112,6 +117,20 @@ func _run() -> void:
 		session.submit_flight(PackedStringArray(["UND"]))
 		if not (await _await_condition(Callable(self, "_undocked"))):
 			_fail("original ship did not complete undock")
+	if _error.is_empty():
+		# Real owner must be able to return to the physically near station.
+		# This is the ORIGINAL C++ docking action, not Godot teleportation.
+		await create_timer(0.13).timeout
+		session.submit_flight(PackedStringArray(["DCK"]))
+		if not (await _await_condition(Callable(self, "_docked"))):
+			_fail("original C++ return docking near station failed")
+		elif _game._last_native_dock != 1 or not _game.ship_space.visible:
+			_fail("real docking did not restore visible cabin state")
+	if _error.is_empty():
+		await create_timer(0.13).timeout
+		session.submit_flight(PackedStringArray(["UND"]))
+		if not (await _await_condition(Callable(self, "_undocked"))):
+			_fail("second original launch after docking failed")
 	if _error.is_empty():
 		_game._external_requested = true
 		_game._show_native_location(false)

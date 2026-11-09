@@ -21,6 +21,7 @@ const PILOT_KEYS := {
 	"ship_thrust_reverse": KEY_DOWN,
 	"ship_counterthrust": KEY_B,
 	"ship_undock": KEY_U,
+	"ship_dock": KEY_G,
 }
 
 static func install() -> void:

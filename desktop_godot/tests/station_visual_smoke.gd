@@ -34,8 +34,17 @@ func _run() -> void:
         return
     var station_bodies := station.find_children("*", "StaticBody3D", true, false)
     var cabin_bodies := cabin.find_children("*", "StaticBody3D", true, false)
-    if station_bodies.size() < 10 or cabin_bodies.size() < 5:
+    if station_bodies.size() < 10 or cabin_bodies.size() < 7:
         _fail("station/cabin real collider inventory incomplete")
+        return
+    var native_crate := cabin.get_node_or_null("Native interior cargo obstruction") as StaticBody3D
+    if native_crate == null or native_crate.position.distance_to(Vector3(1.6,0.8,0.0)) > 0.001:
+        _fail("visible cabin cargo obstruction does not match native movement map")
+        return
+    var native_shape := native_crate.get_node_or_null("CollisionShape3D") as CollisionShape3D
+    if native_shape == null or not (native_shape.shape is BoxShape3D) or
+            (native_shape.shape as BoxShape3D).size.distance_to(Vector3(0.8,1.6,1.0)) > 0.001:
+        _fail("Godot cabin collider does not match original native obstacle")
         return
     if station.get_node_or_null("Station_Hangar_Entry_At_Zero") == null:
         _fail("hangar entry hatch missing")

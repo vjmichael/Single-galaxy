@@ -77,6 +77,8 @@ func _physics_process(delta: float) -> void:
 				var pilot_actions := PackedStringArray()
 				if Input.is_action_pressed("ship_undock"):
 					pilot_actions.append("UND")
+				if Input.is_action_just_pressed("ship_dock"):
+					pilot_actions.append("DCK")
 				if Input.is_action_pressed("ship_counterthrust"):
 					pilot_actions.append("BRAKE")
 				if Input.is_action_pressed("ship_yaw_left"):
