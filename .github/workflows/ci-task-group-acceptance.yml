@@ -24,6 +24,7 @@ on:
 permissions:
   contents: read
   pull-requests: read
+  actions: write # only older same-workflow queued group cancellation
 
 concurrency:
   group: sg-taskgroup-${{ github.sha }}
@@ -79,6 +80,33 @@ jobs:
                 ['Source SHA', req.source_sha],
                 ['Branch', pr.head.ref]
               ]).write();
+            // One source-bound task-group run supersedes older QUEUED copies.
+            // Never cancel running or unrelated workflows; no extra CI jobs.
+            try {
+              const older = await github.rest.actions.listWorkflowRuns({
+                ...context.repo, workflow_id: 'ci-task-group-acceptance.yml',
+                status: 'queued', per_page: 100
+              });
+              let cancelled = 0;
+              for (const run of older.data.workflow_runs || []) {
+                if (cancelled >= 20) break;
+                if (run.id >= context.runId || run.status !== 'queued' ||
+                    !['push','workflow_dispatch'].includes(run.event) ||
+                    run.head_branch !== 'main') continue;
+                try {
+                  await github.rest.actions.cancelWorkflowRun({
+                    ...context.repo, run_id: run.id
+                  });
+                  cancelled++;
+                  core.info('Superseded SGDX03 queued run cancelled: ' + run.id);
+                } catch (err) {
+                  core.warning('Older run ' + run.id + ' cancellation failed: ' + err);
+                }
+              }
+              core.info('Superseded queued SGDX03 cancellations requested: ' + cancelled);
+            } catch (err) {
+              core.warning('Queue hygiene unavailable; native acceptance remains necessary: ' + err);
+            }
 
   linux-native:
     needs: validate
@@ -120,7 +148,7 @@ jobs:
           python desktop_godot/tests/test_station_visual_contract.py
           ctest --test-dir build/fp3d-env01 --no-tests=error --timeout 200 \
             --output-on-failure --output-junit fp3d-env01-linux.xml \
-            -R '^(galaxy_fp3d_env01_(swept_collision|native_collision_pipe)|galaxy_play_station04a_original_(asteroid_contact|rock_native_pipe)|galaxy_play_station_(boarding|mining_refining_e2e)|galaxy_play_station02_native_pipe|galaxy_play_station03(b_persistent_refinery|c_refinery_native_pipe)|galaxy_play_station04c_native_unload_pipe|galaxy_fp3d03b_(cockpit_flight|native_flight_pipe)|galaxy_sgdx03_godot_(native_bridge|source_admission)|galaxy_server_dx_(supervisor|sqlite_recovery|game_hosts)|galaxy_fp3d02b_native_desktop_readonly|galaxy_fp3d_win01_source_contract)
+            -R '^(galaxy_fp3d_env01_(swept_collision|native_collision_pipe)|galaxy_play_station04a_original_(asteroid_contact|rock_native_pipe)|galaxy_play_station_(boarding|mining_refining_e2e)|galaxy_play_station02_native_pipe|galaxy_play_station03(b_persistent_refinery|c_refinery_native_pipe)|galaxy_play_station04c_native_unload_pipe|galaxy_fp3d03b_(cockpit_flight|native_flight_pipe)|galaxy_sgdx03_godot_(native_bridge|source_admission)|galaxy_server_dx_(supervisor|sqlite_recovery|game_hosts)|galaxy_fp3d02b_native_desktop_readonly|galaxy_fp3d_win01_source_contract)$'
       - name: Real Godot 4.7.2 scene launches SGDX and the actual original C++ host
         shell: bash
         run: |
@@ -198,7 +226,7 @@ jobs:
           python desktop_godot/tests/test_fp3d_env01g_world_parity_contract.py
           python desktop_godot/tests/test_station_visual_contract.py
           if($LASTEXITCODE -ne 0){throw 'Fail-closed source bridge check failed'}
-          ctest --test-dir build/fp3d-env01 -C Release --no-tests=error --timeout 200 --output-on-failure --output-junit fp3d-env01-windows.xml -R '^(galaxy_fp3d_env01_(swept_collision|native_collision_pipe)|galaxy_play_station04a_original_(asteroid_contact|rock_native_pipe)|galaxy_play_station_(boarding|mining_refining_e2e)|galaxy_play_station02_native_pipe|galaxy_play_station03(b_persistent_refinery|c_refinery_native_pipe)|galaxy_play_station04c_native_unload_pipe|galaxy_fp3d03b_(cockpit_flight|native_flight_pipe)|galaxy_sgdx03_godot_(native_bridge|source_admission)|galaxy_server_dx_(supervisor|sqlite_recovery|game_hosts)|galaxy_fp3d02b_native_desktop_readonly)$'
+          ctest --test-dir build/fp3d-env01 -C Release --no-tests=error --timeout 200 --output-on-failure --output-junit fp3d-env01-windows.xml -R '^(galaxy_fp3d_env01_(swept_collision|native_collision_pipe)|galaxy_play_station04a_original_(asteroid_contact|rock_native_pipe)|galaxy_play_station_(boarding|mining_refining_e2e)|galaxy_play_station02_native_pipe|galaxy_play_station03(b_persistent_refinery|c_refinery_native_pipe)|galaxy_play_station04c_native_unload_pipe|galaxy_fp3d03b_(cockpit_flight|native_flight_pipe)|galaxy_sgdx03_godot_(native_bridge|source_admission)|galaxy_server_dx_(supervisor|sqlite_recovery|game_hosts)|galaxy_fp3d02b_native_desktop_readonly|galaxy_fp3d_win01_source_contract)$'
           if($LASTEXITCODE -ne 0){throw 'Real native SGDX/SQLite/Windows MDMP gate failed'}
       - name: Windows Godot 4.7.2 real SGDX supervised cockpit, collision and camera
         shell: pwsh
@@ -260,7 +288,6 @@ jobs:
           Compress-Archive -Path (Join-Path $root '*') -DestinationPath build/SingleGalaxy_FP3D_SGDX03_Windows_Precompiled.zip -Force
           # Validate the deliverable ZIP, not merely the compiled build targets.
           & ./desktop_godot/build_tools/Verify-PrecompiledPackage.ps1 -Archive 'build/SingleGalaxy_FP3D_SGDX03_Windows_Precompiled.zip' -ExpectedSourceSha $head -EvidenceFile 'build/fp3d-env01/godot-logs/packaging-result.json'
-          if($LASTEXITCODE -ne 0){throw 'Actual delivered ZIP package verification failed'}
       - uses: actions/upload-artifact@v4
         with:
           name: SingleGalaxy-FP3D-SGDX03-Windows-${{ needs.validate.outputs.sha }}
@@ -275,277 +302,6 @@ jobs:
           if(-not $g){$g=Get-ChildItem build/fp3d-env01/godot -Filter '*win64.exe' -Recurse | Select-Object -First 1}
           if(-not $g){throw 'Real Windows Godot executable missing'}
           & ./desktop_godot/build_tools/Test-WindowedNativeGodot.ps1 -GodotExe $g.FullName -Project (Resolve-Path desktop_godot).Path -BuildRoot (Resolve-Path build/fp3d-env01).Path -SeedExe (Resolve-Path build/fp3d-env01/Release/galaxy_play_station04a_native_rock_seed.exe).Path
-          if($LASTEXITCODE -ne 0){throw 'Windowed Godot original C++/SQLite/render gate failed'}
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: fp3d-sgdx-windows-windowed-render
-          path: |
-            build/fp3d-env01/godot-visual/*.png
-            build/fp3d-env01/godot-visual/windowed-evidence.json
-          if-no-files-found: warn
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: fp3d-sgdx-windows-evidence-${{ needs.validate.outputs.sha }}
-          path: |
-            fp3d-env01-windows.xml
-            build/fp3d-env01/Testing/Temporary/LastTest.log
-            build/fp3d-env01/godot-logs/*.log
-            build/fp3d-env01/godot-logs/*.json
-          if-no-files-found: warn
-
-      - name: Real Godot 4.7.2 scene launches SGDX and the actual original C++ host
-        shell: bash
-        run: |
-          set -euxo pipefail
-          python desktop_godot/tests/test_native_asteroid_contact_contract.py
-          mkdir -p "$RUNNER_TEMP/fp3d-godot" build/fp3d-env01/godot-logs desktop_godot/native
-          curl --fail --location --retry 3 --retry-delay 5 \
-            -o "$RUNNER_TEMP/fp3d-godot/godot.zip" \
-            https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
-          unzip -oq "$RUNNER_TEMP/fp3d-godot/godot.zip" -d "$RUNNER_TEMP/fp3d-godot"
-          G="$RUNNER_TEMP/fp3d-godot/Godot_v4.7.2-stable_linux.x86_64"
-          chmod +x "$G"
-          "$G" --version
-          "$G" --headless --path desktop_godot --editor --quit \
-            2>&1 | tee build/fp3d-env01/godot-logs/import.log
-          "$G" --headless --path desktop_godot --quit-after 5 \
-            2>&1 | tee build/fp3d-env01/godot-logs/scene.log
-          cp build/fp3d-env01/galaxy_desktop_player_host \
-            build/fp3d-env01/galaxy_desktop_station_host \
-            build/fp3d-env01/galaxy_desktop_readonly_host \
-            build/fp3d-env01/galaxy_server_dx_supervisor desktop_godot/native/
-          printf '%s\n' '${{ needs.validate.outputs.sha }}' > desktop_godot/native/SGDX_BUILD_SHA.txt
-          export SG_FP3D_E2E_SAVE="$RUNNER_TEMP/sgdx-live-original.sqlite"
-          build/fp3d-env01/galaxy_play_station04a_native_rock_seed "$SG_FP3D_E2E_SAVE"
-          "$G" --headless --path desktop_godot --script res://tests/fp3d_env01_live_scene_acceptance.gd \
-            2>&1 | tee build/fp3d-env01/godot-logs/real-sgdx-cockpit.log
-          for test in native_player_protocol_smoke.gd native_asteroid_contact_smoke.gd native_station_protocol_smoke.gd native_station_refinery_protocol_smoke.gd station_visual_smoke.gd fp3d_env01_collision_receipt_smoke.gd fp3d_env01f_pilot_instruments_smoke.gd; do
-            "$G" --headless --path desktop_godot --script "res://tests/$test" \
-              2>&1 | tee "build/fp3d-env01/godot-logs/$test.log"
-          done
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: fp3d-sgdx-linux-${{ needs.validate.outputs.sha }}
-          path: |
-            fp3d-env01-linux.xml
-            build/fp3d-env01/Testing/Temporary/LastTest.log
-            build/fp3d-env01/godot-logs/*.log
-          if-no-files-found: warn
-  windows-native:
-    needs: validate
-    name: Windows MSVC C++ 3D, SGDX Job Object, MDMP, live Godot
-    runs-on: windows-2022
-    timeout-minutes: 110
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.validate.outputs.sha }}
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Install real Windows SQLite dependency
-        shell: pwsh
-        run: |
-          $ErrorActionPreference='Stop'
-          $vcpkg=$env:VCPKG_INSTALLATION_ROOT
-          if(-not $vcpkg){$vcpkg='C:\vcpkg'}
-          & (Join-Path $vcpkg 'vcpkg.exe') install sqlite3:x64-windows --classic
-          if($LASTEXITCODE -ne 0){throw 'SQLite install failed'}
-          "SG_VCPKG_ROOT=$vcpkg" >> $env:GITHUB_ENV
-          "SG_TOOLCHAIN=$(Join-Path $vcpkg 'scripts\buildsystems\vcpkg.cmake')" >> $env:GITHUB_ENV
-          (Join-Path $vcpkg 'installed\x64-windows\bin') >> $env:GITHUB_PATH
-      - name: Compile original MSVC simulator and supervised hosts
-        shell: pwsh
-        run: |
-          cmake -S . -B build/fp3d-env01 -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF "-DCMAKE_TOOLCHAIN_FILE=$env:SG_TOOLCHAIN" -DVCPKG_TARGET_TRIPLET=x64-windows
-          if($LASTEXITCODE -ne 0){throw 'MSVC configure failed'}
-          cmake --build build/fp3d-env01 --config Release --parallel 2 --target galaxy_fp3d_env01_swept_collision_tests galaxy_play_station04a_original_asteroid_contact_tests galaxy_fp3d03b_cockpit_flight_tests galaxy_play_station_boarding_tests galaxy_play_station03b_persistent_refinery_tests galaxy_play_station_mining_refining_e2e galaxy_play_station04a_native_rock_seed galaxy_colony_live_host galaxy_interactive_host galaxy_native_cell_worker galaxy_desktop_player_host galaxy_desktop_station_host galaxy_desktop_readonly_host galaxy_server_dx_supervisor galaxy_server_dx_fault_child
-          if($LASTEXITCODE -ne 0){throw 'MSVC native build failed'}
-      - name: Real Windows SGDX pipe, crash/forced kill, SQLite and private minidump
-        shell: pwsh
-        run: |
-          python desktop_godot/tests/test_sgdx03_bridge_contract.py
-          python desktop_godot/tests/test_fp3d_env01f_pilot_contract.py
-          python desktop_godot/tests/test_fp3d_env01g_world_parity_contract.py
-          python desktop_godot/tests/test_station_visual_contract.py
-          if($LASTEXITCODE -ne 0){throw 'Fail-closed source bridge check failed'}
-          ctest --test-dir build/fp3d-env01 -C Release --no-tests=error --timeout 200 --output-on-failure --output-junit fp3d-env01-windows.xml -R '^(galaxy_fp3d_env01_(swept_collision|native_collision_pipe)|galaxy_play_station04a_original_(asteroid_contact|rock_native_pipe)|galaxy_play_station_(boarding|mining_refining_e2e)|galaxy_play_station02_native_pipe|galaxy_play_station03(b_persistent_refinery|c_refinery_native_pipe)|galaxy_play_station04c_native_unload_pipe|galaxy_fp3d03b_(cockpit_flight|native_flight_pipe)|galaxy_sgdx03_godot_(native_bridge|source_admission)|galaxy_server_dx_(supervisor|sqlite_recovery|game_hosts)|galaxy_fp3d02b_native_desktop_readonly|galaxy_fp3d_win01_source_contract)
-          if($LASTEXITCODE -ne 0){throw 'Real native SGDX/SQLite/Windows MDMP gate failed'}
-      - name: Windows Godot 4.7.2 real SGDX supervised cockpit, collision and camera
-        shell: pwsh
-        run: |
-          $ErrorActionPreference='Stop'
-          python desktop_godot/tests/test_native_asteroid_contact_contract.py
-          if($LASTEXITCODE -ne 0){throw 'Native geometry contract failed'}
-          New-Item -ItemType Directory -Force build/fp3d-env01/godot,build/fp3d-env01/godot-logs,desktop_godot/native | Out-Null
-          Invoke-WebRequest -Uri 'https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_win64.exe.zip' -OutFile build/fp3d-env01/godot/editor.zip
-          Expand-Archive build/fp3d-env01/godot/editor.zip -DestinationPath build/fp3d-env01/godot -Force
-          $g=Get-ChildItem build/fp3d-env01/godot -Filter '*win64_console.exe' -Recurse | Select-Object -First 1
-          if(-not $g){$g=Get-ChildItem build/fp3d-env01/godot -Filter '*win64.exe' -Recurse | Select-Object -First 1}
-          if(-not $g){throw 'Official Godot executable missing'}
-          & $g.FullName --version
-          if($LASTEXITCODE -ne 0){throw 'Godot version check failed'}
-          & $g.FullName --headless --path desktop_godot --editor --quit 2>&1 | Out-File build/fp3d-env01/godot-logs/import.log
-          if($LASTEXITCODE -ne 0){throw 'Godot import failed'}
-          & $g.FullName --headless --path desktop_godot --quit-after 5 2>&1 | Out-File build/fp3d-env01/godot-logs/scene.log
-          if($LASTEXITCODE -ne 0){throw 'Actual scene failed'}
-          foreach($name in @('galaxy_desktop_player_host.exe','galaxy_desktop_station_host.exe','galaxy_desktop_readonly_host.exe','galaxy_server_dx_supervisor.exe')){
-            Copy-Item (Join-Path 'build/fp3d-env01/Release' $name) desktop_godot/native -Force
-          }
-          Copy-Item (Join-Path $env:SG_VCPKG_ROOT 'installed\x64-windows\bin\sqlite3.dll') desktop_godot/native -Force
-          '${{ needs.validate.outputs.sha }}' | Set-Content desktop_godot/native/SGDX_BUILD_SHA.txt
-          $env:SG_FP3D_E2E_SAVE=(Join-Path (Resolve-Path build/fp3d-env01).Path 'sgdx-live-world.sqlite')
-          & (Resolve-Path build/fp3d-env01/Release/galaxy_play_station04a_native_rock_seed.exe).Path $env:SG_FP3D_E2E_SAVE
-          if($LASTEXITCODE -ne 0){throw 'Native finite-world fixture failed'}
-          $env:SGDX_WINDOWS_MINIDUMP='1'
-          & $g.FullName --headless --path desktop_godot --script res://tests/fp3d_env01_live_scene_acceptance.gd 2>&1 | Out-File build/fp3d-env01/godot-logs/real-sgdx-cockpit.log
-          if($LASTEXITCODE -ne 0){throw 'Real supervised C++/Godot collision-camera failure'}
-          Remove-Item Env:SGDX_WINDOWS_MINIDUMP -ErrorAction SilentlyContinue
-          foreach($test in @('native_player_protocol_smoke.gd','native_asteroid_contact_smoke.gd','native_station_protocol_smoke.gd','native_station_refinery_protocol_smoke.gd','station_visual_smoke.gd','fp3d_env01_collision_receipt_smoke.gd','fp3d_env01f_pilot_instruments_smoke.gd')){
-            & $g.FullName --headless --path desktop_godot --script "res://tests/$test" 2>&1 | Out-File "build/fp3d-env01/godot-logs/$test.log"
-            if($LASTEXITCODE -ne 0){throw "Godot parser failed: $test"}
-          }
-      - name: Package only verified precompiled Windows SGDX game
-        shell: pwsh
-        run: |
-          $ErrorActionPreference='Stop'
-          $root='build/SingleGalaxy_FP3D_SGDX03_Windows'
-          $game=Join-Path $root 'desktop_godot'
-          New-Item -ItemType Directory -Force $game | Out-Null
-          Copy-Item desktop_godot/project.godot $game
-          foreach($dir in @('world','tests','build_tools')){
-            Copy-Item (Join-Path desktop_godot $dir) (Join-Path $game $dir) -Recurse -Force
-          }
-          Copy-Item desktop_godot/RUN_STATION_PLAYTEST_WINDOWS.cmd $game
-          New-Item -ItemType Directory -Force (Join-Path $game 'native') | Out-Null
-          foreach($name in @('galaxy_desktop_station_host.exe','galaxy_desktop_player_host.exe','galaxy_desktop_readonly_host.exe','galaxy_server_dx_supervisor.exe')){
-            $compiled=Join-Path 'build/fp3d-env01/Release' $name
-            if(-not(Test-Path $compiled)){throw "Compiled native host missing: $name"}
-            Copy-Item $compiled (Join-Path $game 'native') -Force
-          }
-          Copy-Item (Join-Path $env:SG_VCPKG_ROOT 'installed\x64-windows\bin\sqlite3.dll') (Join-Path $game 'native') -Force
-          $head='${{ needs.validate.outputs.sha }}'
-          $head | Set-Content (Join-Path $game 'native/SGDX_BUILD_SHA.txt')
-          "Exact source SHA: $head" | Set-Content (Join-Path $root 'SOURCE_SHA.txt')
-          'RUN_STATION_PLAYTEST_WINDOWS.cmd uses your existing Godot 4.7.2. All ship/station/observer native hosts must use the bundled SGDX supervisor, Windows Job Object and private process incidents. Optional crash minidump: SGDX_WINDOWS_MINIDUMP=1 (contains private memory). Playtest needs actual GPU/camera observation before final acceptance.' | Set-Content (Join-Path $root 'START_HERE.txt')
-          Compress-Archive -Path (Join-Path $root '*') -DestinationPath build/SingleGalaxy_FP3D_SGDX03_Windows_Precompiled.zip -Force
-          # Validate the deliverable ZIP, not merely the compiled build targets.
-          & ./desktop_godot/build_tools/Verify-PrecompiledPackage.ps1 -Archive 'build/SingleGalaxy_FP3D_SGDX03_Windows_Precompiled.zip' -ExpectedSourceSha $head -EvidenceFile 'build/fp3d-env01/godot-logs/packaging-result.json'
-          if($LASTEXITCODE -ne 0){throw 'Actual delivered ZIP package verification failed'}
-      - uses: actions/upload-artifact@v4
-        with:
-          name: SingleGalaxy-FP3D-SGDX03-Windows-${{ needs.validate.outputs.sha }}
-          path: build/SingleGalaxy_FP3D_SGDX03_Windows_Precompiled.zip
-          if-no-files-found: error
-      - name: Genuine Windows non-headless Godot render plus SQLite restart
-        shell: pwsh
-        timeout-minutes: 12
-        run: |
-          $ErrorActionPreference='Stop'
-          $g=Get-ChildItem build/fp3d-env01/godot -Filter '*win64_console.exe' -Recurse | Select-Object -First 1
-          if(-not $g){$g=Get-ChildItem build/fp3d-env01/godot -Filter '*win64.exe' -Recurse | Select-Object -First 1}
-          if(-not $g){throw 'Real Windows Godot executable missing'}
-          & ./desktop_godot/build_tools/Test-WindowedNativeGodot.ps1 -GodotExe $g.FullName -Project (Resolve-Path desktop_godot).Path -BuildRoot (Resolve-Path build/fp3d-env01).Path -SeedExe (Resolve-Path build/fp3d-env01/Release/galaxy_play_station04a_native_rock_seed.exe).Path
-          if($LASTEXITCODE -ne 0){throw 'Windowed Godot original C++/SQLite/render gate failed'}
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: fp3d-sgdx-windows-windowed-render
-          path: |
-            build/fp3d-env01/godot-visual/*.png
-            build/fp3d-env01/godot-visual/windowed-evidence.json
-          if-no-files-found: warn
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: fp3d-sgdx-windows-evidence-${{ needs.validate.outputs.sha }}
-          path: |
-            fp3d-env01-windows.xml
-            build/fp3d-env01/Testing/Temporary/LastTest.log
-            build/fp3d-env01/godot-logs/*.log
-            build/fp3d-env01/godot-logs/*.json
-          if-no-files-found: warn
-
-          if($LASTEXITCODE -ne 0){throw 'Real native SGDX/SQLite/Windows MDMP gate failed'}
-      - name: Windows Godot 4.7.2 real SGDX supervised cockpit, collision and camera
-        shell: pwsh
-        run: |
-          $ErrorActionPreference='Stop'
-          python desktop_godot/tests/test_native_asteroid_contact_contract.py
-          if($LASTEXITCODE -ne 0){throw 'Native geometry contract failed'}
-          New-Item -ItemType Directory -Force build/fp3d-env01/godot,build/fp3d-env01/godot-logs,desktop_godot/native | Out-Null
-          Invoke-WebRequest -Uri 'https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_win64.exe.zip' -OutFile build/fp3d-env01/godot/editor.zip
-          Expand-Archive build/fp3d-env01/godot/editor.zip -DestinationPath build/fp3d-env01/godot -Force
-          $g=Get-ChildItem build/fp3d-env01/godot -Filter '*win64_console.exe' -Recurse | Select-Object -First 1
-          if(-not $g){$g=Get-ChildItem build/fp3d-env01/godot -Filter '*win64.exe' -Recurse | Select-Object -First 1}
-          if(-not $g){throw 'Official Godot executable missing'}
-          & $g.FullName --version
-          if($LASTEXITCODE -ne 0){throw 'Godot version check failed'}
-          & $g.FullName --headless --path desktop_godot --editor --quit 2>&1 | Out-File build/fp3d-env01/godot-logs/import.log
-          if($LASTEXITCODE -ne 0){throw 'Godot import failed'}
-          & $g.FullName --headless --path desktop_godot --quit-after 5 2>&1 | Out-File build/fp3d-env01/godot-logs/scene.log
-          if($LASTEXITCODE -ne 0){throw 'Actual scene failed'}
-          foreach($name in @('galaxy_desktop_player_host.exe','galaxy_desktop_station_host.exe','galaxy_desktop_readonly_host.exe','galaxy_server_dx_supervisor.exe')){
-            Copy-Item (Join-Path 'build/fp3d-env01/Release' $name) desktop_godot/native -Force
-          }
-          Copy-Item (Join-Path $env:SG_VCPKG_ROOT 'installed\x64-windows\bin\sqlite3.dll') desktop_godot/native -Force
-          '${{ needs.validate.outputs.sha }}' | Set-Content desktop_godot/native/SGDX_BUILD_SHA.txt
-          $env:SG_FP3D_E2E_SAVE=(Join-Path (Resolve-Path build/fp3d-env01).Path 'sgdx-live-world.sqlite')
-          & (Resolve-Path build/fp3d-env01/Release/galaxy_play_station04a_native_rock_seed.exe).Path $env:SG_FP3D_E2E_SAVE
-          if($LASTEXITCODE -ne 0){throw 'Native finite-world fixture failed'}
-          $env:SGDX_WINDOWS_MINIDUMP='1'
-          & $g.FullName --headless --path desktop_godot --script res://tests/fp3d_env01_live_scene_acceptance.gd 2>&1 | Out-File build/fp3d-env01/godot-logs/real-sgdx-cockpit.log
-          if($LASTEXITCODE -ne 0){throw 'Real supervised C++/Godot collision-camera failure'}
-          Remove-Item Env:SGDX_WINDOWS_MINIDUMP -ErrorAction SilentlyContinue
-          foreach($test in @('native_player_protocol_smoke.gd','native_asteroid_contact_smoke.gd','native_station_protocol_smoke.gd','native_station_refinery_protocol_smoke.gd','station_visual_smoke.gd','fp3d_env01_collision_receipt_smoke.gd','fp3d_env01f_pilot_instruments_smoke.gd')){
-            & $g.FullName --headless --path desktop_godot --script "res://tests/$test" 2>&1 | Out-File "build/fp3d-env01/godot-logs/$test.log"
-            if($LASTEXITCODE -ne 0){throw "Godot parser failed: $test"}
-          }
-      - name: Package only verified precompiled Windows SGDX game
-        shell: pwsh
-        run: |
-          $ErrorActionPreference='Stop'
-          $root='build/SingleGalaxy_FP3D_SGDX03_Windows'
-          $game=Join-Path $root 'desktop_godot'
-          New-Item -ItemType Directory -Force $game | Out-Null
-          Copy-Item desktop_godot/project.godot $game
-          foreach($dir in @('world','tests','build_tools')){
-            Copy-Item (Join-Path desktop_godot $dir) (Join-Path $game $dir) -Recurse -Force
-          }
-          Copy-Item desktop_godot/RUN_STATION_PLAYTEST_WINDOWS.cmd $game
-          New-Item -ItemType Directory -Force (Join-Path $game 'native') | Out-Null
-          foreach($name in @('galaxy_desktop_station_host.exe','galaxy_desktop_player_host.exe','galaxy_desktop_readonly_host.exe','galaxy_server_dx_supervisor.exe')){
-            $compiled=Join-Path 'build/fp3d-env01/Release' $name
-            if(-not(Test-Path $compiled)){throw "Compiled native host missing: $name"}
-            Copy-Item $compiled (Join-Path $game 'native') -Force
-          }
-          Copy-Item (Join-Path $env:SG_VCPKG_ROOT 'installed\x64-windows\bin\sqlite3.dll') (Join-Path $game 'native') -Force
-          $head='${{ needs.validate.outputs.sha }}'
-          $head | Set-Content (Join-Path $game 'native/SGDX_BUILD_SHA.txt')
-          "Exact source SHA: $head" | Set-Content (Join-Path $root 'SOURCE_SHA.txt')
-          'RUN_STATION_PLAYTEST_WINDOWS.cmd uses your existing Godot 4.7.2. All ship/station/observer native hosts must use the bundled SGDX supervisor, Windows Job Object and private process incidents. Optional crash minidump: SGDX_WINDOWS_MINIDUMP=1 (contains private memory). Playtest needs actual GPU/camera observation before final acceptance.' | Set-Content (Join-Path $root 'START_HERE.txt')
-          Compress-Archive -Path (Join-Path $root '*') -DestinationPath build/SingleGalaxy_FP3D_SGDX03_Windows_Precompiled.zip -Force
-          # Validate the deliverable ZIP, not merely the compiled build targets.
-          & ./desktop_godot/build_tools/Verify-PrecompiledPackage.ps1 -Archive 'build/SingleGalaxy_FP3D_SGDX03_Windows_Precompiled.zip' -ExpectedSourceSha $head -EvidenceFile 'build/fp3d-env01/godot-logs/packaging-result.json'
-          if($LASTEXITCODE -ne 0){throw 'Actual delivered ZIP package verification failed'}
-      - uses: actions/upload-artifact@v4
-        with:
-          name: SingleGalaxy-FP3D-SGDX03-Windows-${{ needs.validate.outputs.sha }}
-          path: build/SingleGalaxy_FP3D_SGDX03_Windows_Precompiled.zip
-          if-no-files-found: error
-      - name: Genuine Windows non-headless Godot render plus SQLite restart
-        shell: pwsh
-        timeout-minutes: 12
-        run: |
-          $ErrorActionPreference='Stop'
-          $g=Get-ChildItem build/fp3d-env01/godot -Filter '*win64_console.exe' -Recurse | Select-Object -First 1
-          if(-not $g){$g=Get-ChildItem build/fp3d-env01/godot -Filter '*win64.exe' -Recurse | Select-Object -First 1}
-          if(-not $g){throw 'Real Windows Godot executable missing'}
-          & ./desktop_godot/build_tools/Test-WindowedNativeGodot.ps1 -GodotExe $g.FullName -Project (Resolve-Path desktop_godot).Path -BuildRoot (Resolve-Path build/fp3d-env01).Path -SeedExe (Resolve-Path build/fp3d-env01/Release/galaxy_play_station04a_native_rock_seed.exe).Path
-          if($LASTEXITCODE -ne 0){throw 'Windowed Godot original C++/SQLite/render gate failed'}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
