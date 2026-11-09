@@ -1,0 +1,78 @@
+name: PLAY-STATION-03B native original-world refinery and SQLite
+
+on:
+  push:
+    branches: [sg/play-station03b-persistent-refinery-20261108]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: station03b-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - name: Native SQLite and compiler SDKs (runner only)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsqlite3-dev ninja-build
+      - name: Build exact C++ kernel and four targeted tests
+        run: |
+          set -euxo pipefail
+          cmake -S . -B build/sg03b -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_BENCHMARKS=OFF -DBUILD_TESTING=ON
+          cmake --build build/sg03b --parallel 2 --target galaxy_play_station03b_persistent_refinery_tests galaxy_play_station03a_refinery_ledger_tests galaxy_play_station_boarding_tests galaxy_play_station_mining_refining_e2e
+      - name: Execute physical source→hangar→station refined SQLite recovery tests
+        run: |
+          set -euxo pipefail
+          ctest --test-dir build/sg03b --no-tests=error --timeout 180 --output-on-failure --output-junit station03b-linux-ctest.xml -R '^galaxy_play_station(03b_persistent_refinery|03a_refinery_ledger|_boarding|_mining_refining_e2e)$'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: station03b-linux-${{ github.sha }}
+          path: |
+            station03b-linux-ctest.xml
+            build/sg03b/Testing/Temporary/LastTest.log
+            build/sg03b/CMakeFiles/CMakeConfigureLog.yaml
+          if-no-files-found: warn
+
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 85
+    steps:
+      - uses: actions/checkout@v4
+      - name: Native SQLite via vcpkg on GitHub Windows runner
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $root=$env:VCPKG_INSTALLATION_ROOT
+          if(-not $root){$root='C:\vcpkg'}
+          & (Join-Path $root 'vcpkg.exe') install sqlite3:x64-windows --classic
+          if($LASTEXITCODE -ne 0){throw 'Hosted SQLite dependency failed'}
+          "SG_TOOLCHAIN=$(Join-Path $root 'scripts\buildsystems\vcpkg.cmake')" >> $env:GITHUB_ENV
+          (Join-Path $root 'installed\x64-windows\bin') >> $env:GITHUB_PATH
+      - name: Compile original C++ world and four regressions using MSVC
+        shell: pwsh
+        run: |
+          cmake -S . -B build/sg03b -G "Visual Studio 17 2022" -A x64 -DBUILD_BENCHMARKS=OFF -DBUILD_TESTING=ON "-DCMAKE_TOOLCHAIN_FILE=$env:SG_TOOLCHAIN" -DVCPKG_TARGET_TRIPLET=x64-windows
+          if($LASTEXITCODE -ne 0){throw 'MSVC configure failed'}
+          cmake --build build/sg03b --config Release --parallel 2 --target galaxy_play_station03b_persistent_refinery_tests galaxy_play_station03a_refinery_ledger_tests galaxy_play_station_boarding_tests galaxy_play_station_mining_refining_e2e
+          if($LASTEXITCODE -ne 0){throw 'MSVC original kernel compile failed'}
+      - name: Execute actual Windows SQLite recover/tamper/refine E2E
+        shell: pwsh
+        run: |
+          ctest --test-dir build/sg03b -C Release --no-tests=error --timeout 180 --output-on-failure --output-junit station03b-windows-ctest.xml -R '^galaxy_play_station(03b_persistent_refinery|03a_refinery_ledger|_boarding|_mining_refining_e2e)$'
+          if($LASTEXITCODE -ne 0){throw 'Windows persistent refinery test failed'}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: station03b-windows-${{ github.sha }}
+          path: |
+            station03b-windows-ctest.xml
+            build/sg03b/Testing/Temporary/LastTest.log
+            build/sg03b/CMakeFiles/CMakeConfigureLog.yaml
+          if-no-files-found: warn
