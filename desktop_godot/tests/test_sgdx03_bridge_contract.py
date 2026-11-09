@@ -20,9 +20,10 @@ checks={
         "args.append(host)" in launcher and "args.append_array(host_args)" in launcher,
     "per-world diagnostic sidecar":"--save" in launcher and '"--role"' in launcher,
     "Windows memory dumps explicit":"SGDX_WINDOWS_MINIDUMP" in launcher,
-    "normal host QUIT and strong fault kill":all(
-        'store_line("QUIT")' in source and 'OS.kill(_pid)' in source
-        for source in sources.values()),
+    "normal writer QUIT and strong fault kill":all(
+        'store_line("QUIT")' in sources[name] and 'OS.kill(_pid)' in sources[name]
+        for name in ("ship","station")) and
+        'OS.kill(_pid)' in sources["observer"],
     "interactive mode remains fully supervised":'args.interactive?INFINITE' in supervisor
         and "!args.interactive" in supervisor
         and "JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE" in supervisor
