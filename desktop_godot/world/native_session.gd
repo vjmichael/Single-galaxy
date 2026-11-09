@@ -1,4 +1,5 @@
 extends RefCounted
+const SGDX_LAUNCH := preload("res://world/sgdx_process_launch.gd")
 ## FP3D-02B.0: opt-in child stdio pipe, NO browser, HTTP or Python.
 ## Only reads a native host; no game command is forwarded yet.
 signal native_snapshot(frame: Dictionary)
@@ -41,10 +42,7 @@ func _init() -> void:
 
 func _host_path() -> String:
 	var name := "galaxy_desktop_readonly_host.exe" if OS.get_name() == "Windows" else "galaxy_desktop_readonly_host"
-	# Development run: source-directory native/; exported runtime: adjacent native/.
-	if OS.has_feature("editor"):
-		return ProjectSettings.globalize_path("res://native/" + name)
-	return OS.get_executable_path().get_base_dir().path_join("native").path_join(name)
+	return SGDX_LAUNCH.native_host_path(name)
 
 func start() -> void:
 	if _active:
@@ -57,7 +55,12 @@ func start() -> void:
 	_parser.reset()
 	_last_verified_tick = -1
 	_verified_packets = 0
-	var result := OS.execute_with_pipe(path, PackedStringArray([save, "600"]), false)
+	var spec := SGDX_LAUNCH.supervised_command(save, "godot_observer", path,
+		PackedStringArray([save, "600"]))
+	if spec.is_empty():
+		_emit_status("SGDX supervisor unavailable: refusing unsupervised native observer")
+		return
+	var result := OS.execute_with_pipe(spec["path"], spec["args"], false)
 	if result.is_empty() or not result.has("stdio") or not result.has("pid"):
 		_emit_status("Native host could not start | O retry; see user://sg_native_bridge_status.log")
 		return

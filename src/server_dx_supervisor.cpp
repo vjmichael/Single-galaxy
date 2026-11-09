@@ -34,7 +34,7 @@ using Clock=std::chrono::steady_clock;
 struct Args {
     std::string save,role,build_sha;
     int timeout_ms=60000;
-    bool record_clean=false,allow_core=false,windows_minidump=false;
+    bool record_clean=false,allow_core=false,windows_minidump=false,interactive=false;
     std::vector<std::string> command;
 };
 static Args parse(int argc,char** argv){
@@ -55,7 +55,8 @@ static Args parse(int argc,char** argv){
                 if(value_long<1 || value_long>3600000)throw std::invalid_argument("timeout out of range");
                 a.timeout_ms=static_cast<int>(value_long);
             }
-        }else if(arg=="--record-clean")a.record_clean=true;
+        }else if(arg=="--interactive")a.interactive=true;
+        else if(arg=="--record-clean")a.record_clean=true;
         else if(arg=="--allow-core")a.allow_core=true;
         else if(arg=="--windows-minidump")a.windows_minidump=true;
         else throw std::invalid_argument("invalid supervisor option");
@@ -188,7 +189,7 @@ static int run(const Args& args){
                 (void)::kill(-pid,SIGKILL);
             }else if(done<0 && errno!=EINTR)throw std::runtime_error("waitpid failed");
         }
-        if(!reaped && (elapsed_ms(started)>=static_cast<std::uint64_t>(args.timeout_ms)
+        if(!reaped && ((!args.interactive && elapsed_ms(started)>=static_cast<std::uint64_t>(args.timeout_ms))
                        || interrupted)){
             timed_out=!interrupted;cancelled=interrupted;
             (void)::kill(-pid,SIGKILL);(void)::kill(pid,SIGKILL);
@@ -371,7 +372,7 @@ static int run(const Args& args){
                 TerminateJobObject(job,1);
                 break;
             }
-            if(!timed_out && Clock::now()>=stop_at && !exited){
+            if(!args.interactive && !timed_out && Clock::now()>=stop_at && !exited){
                 timed_out=true;outcome=WAIT_TIMEOUT;
                 TerminateJobObject(job,124);
                 stop_at=Clock::now()+std::chrono::seconds(3);
@@ -379,7 +380,7 @@ static int run(const Args& args){
             if(timed_out && Clock::now()>=stop_at)break;
         }
     }else{
-        outcome=WaitForSingleObject(pi.hProcess,static_cast<DWORD>(args.timeout_ms));
+        outcome=WaitForSingleObject(pi.hProcess,args.interactive?INFINITE:static_cast<DWORD>(args.timeout_ms));
         if(outcome==WAIT_TIMEOUT){timed_out=true;TerminateJobObject(job,124);}
         if(outcome!=WAIT_OBJECT_0 && outcome!=WAIT_TIMEOUT)
             TerminateJobObject(job,1);

@@ -1,4 +1,5 @@
 extends RefCounted
+const SGDX_LAUNCH := preload("res://world/sgdx_process_launch.gd")
 ## PLAY-STATION-02: optional explicit fixture, original C++ station person.
 ## This bridge never sets person/ship location in SQLite from Godot.
 signal person_received(person: Dictionary)
@@ -42,13 +43,7 @@ func _status(message: String) -> void:
 
 func _host_path() -> String:
 	var binary := "galaxy_desktop_station_host.exe" if OS.get_name() == "Windows" else "galaxy_desktop_station_host"
-	# The installed editor binary can launch a project directly (without the
-	# editor workspace). Prefer this project's freshly built source-host path
-	# whenever present; packaged exports use the adjacent native/ directory.
-	var project_host := ProjectSettings.globalize_path("res://native/" + binary)
-	if FileAccess.file_exists(project_host):
-		return project_host
-	return OS.get_executable_path().get_base_dir().path_join("native").path_join(binary)
+	return SGDX_LAUNCH.native_host_path(binary)
 
 func start() -> void:
 	if _active:
@@ -60,7 +55,12 @@ func start() -> void:
 	# Same original game world as the native in-ship cockpit host, but never
 	# two writers at once. The host creates fixtures only for a NEW save.
 	var save := OS.get_user_data_dir().path_join("single_galaxy_station_test.sqlite")
-	var result := OS.execute_with_pipe(exe, PackedStringArray([save, "--explicit-test-station"]), false)
+	var spec := SGDX_LAUNCH.supervised_command(save, "godot_station", exe,
+		PackedStringArray([save, "--explicit-test-station"]))
+	if spec.is_empty():
+		_status("SGDX supervisor missing or invalid save path; refusing unsupervised station writer")
+		return
+	var result := OS.execute_with_pipe(spec["path"], spec["args"], false)
 	if result.is_empty() or not result.has("stdio") or not result.has("pid"):
 		_status("Native station host launch failed")
 		return
@@ -81,7 +81,7 @@ func start() -> void:
 	_refinery_lots.clear()
 	_refinery_minerals.clear()
 	connection_changed.emit(true)
-	_status("Native station: waiting for original person state")
+	_status("SGDX-SUPERVISED station: waiting for original person state")
 
 func poll() -> void:
 	if not _active:

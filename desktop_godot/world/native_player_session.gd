@@ -1,4 +1,5 @@
 extends RefCounted
+const SGDX_LAUNCH := preload("res://world/sgdx_process_launch.gd")
 ## FP3D-02F: local Godot child stdio, bounded MOVE request protocol.
 ## Only the C++ host commits pose and native STEP; Godot cannot write SQLite.
 signal pose_received(pose: Dictionary)
@@ -56,13 +57,7 @@ func _status(message: String) -> void:
 
 func _host_path() -> String:
 	var binary := "galaxy_desktop_player_host.exe" if OS.get_name() == "Windows" else "galaxy_desktop_player_host"
-	# The installed editor binary can launch a project directly (without the
-	# editor workspace). Prefer this project's freshly built source-host path
-	# whenever present; packaged exports use the adjacent native/ directory.
-	var project_host := ProjectSettings.globalize_path("res://native/" + binary)
-	if FileAccess.file_exists(project_host):
-		return project_host
-	return OS.get_executable_path().get_base_dir().path_join("native").path_join(binary)
+	return SGDX_LAUNCH.native_host_path(binary)
 
 func start(save_override: String = "") -> void:
 	if _active:
@@ -72,7 +67,11 @@ func start(save_override: String = "") -> void:
 		_status("NATIVE PLAYER HOST MISSING: " + path)
 		return
 	var save := save_override if not save_override.is_empty() else OS.get_user_data_dir().path_join("single_galaxy_authoritative.sqlite")
-	var result := OS.execute_with_pipe(path, PackedStringArray([save]), false)
+	var spec := SGDX_LAUNCH.supervised_command(save, "godot_ship", path, PackedStringArray([save]))
+	if spec.is_empty():
+		_status("SGDX supervisor missing or invalid save path; refusing unsupervised cockpit")
+		return
+	var result := OS.execute_with_pipe(spec["path"], spec["args"], false)
 	if result.is_empty() or not result.has("stdio") or not result.has("pid"):
 		_status("NATIVE PLAYER HOST LAUNCH FAILED")
 		return
@@ -98,7 +97,7 @@ func start(save_override: String = "") -> void:
 	_last_send_msec = -10000
 	_buffer.clear()
 	connection_changed.emit(true)
-	_status("P NATIVE PLAYER: waiting for verified initial pose; no local walking")
+	_status("P SGDX-SUPERVISED PLAYER: waiting for original POSE; no local walking")
 
 func poll() -> void:
 	if not _active:
