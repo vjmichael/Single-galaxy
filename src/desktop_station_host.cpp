@@ -55,7 +55,7 @@ int main(int argc,char** argv){
   (void)seed.add_colony_ship(8,{15000,0},8,2);
   // Explicit test-station genesis ONLY: a single persistent finite asteroid.
   // Existing saves ignore this seed. A visual Godot sample never adds ore.
-  (void)seed.add_geological_asteroid({12500,0},AsteroidClass::Metallic,2,5000);
+  (void)seed.add_geological_asteroid({25000,0},AsteroidClass::Metallic,10,900);
   seed.enable_native_galactic_physics({{1,galactic::Point{{0,100000},{0,100000},{0,100000}}}});
   PersistentWorld world(save.string(),std::move(seed));
   if(fresh){
