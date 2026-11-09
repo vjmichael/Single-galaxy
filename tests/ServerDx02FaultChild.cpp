@@ -36,6 +36,31 @@ int main(int argc,char** argv){
 #endif
     galaxy::server_dx::committed_breadcrumb(17,19);
     galaxy::server_dx::committed_breadcrumb(18,20);
+    if(mode=="pipe"){
+#ifdef _WIN32
+        const auto pid=GetCurrentProcessId();
+#else
+        const auto pid=getpid();
+#endif
+        std::cout<<"READY|"<<pid<<"\n"<<std::flush;
+        std::string line;
+        while(std::getline(std::cin,line)){
+            if(line=="QUIT"){std::cout<<"BYE|CLEAN\n"<<std::flush;return 0;}
+            if(line=="CRASH"){
+#ifdef _WIN32
+                RaiseException(EXCEPTION_ACCESS_VIOLATION,EXCEPTION_NONCONTINUABLE,0,nullptr);
+#else
+                std::raise(SIGSEGV);
+#endif
+                return 40;
+            }
+            if(line=="HANG")for(;;)std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            if(line.size()>1024)return 64;
+            std::cout<<"ECHO|"<<line<<"\n"<<std::flush;
+            galaxy::server_dx::committed_breadcrumb(19,21);
+        }
+        return 0;
+    }
     if(mode=="clean"){
         std::cout<<"SGVIEW|1|unmodified\n";
         return 0;

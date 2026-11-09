@@ -1,4 +1,5 @@
 #include "galaxy/NativeWriterLease.hpp"
+#include "galaxy/ServerBreadcrumb.hpp"
 // FP3D-02F: no-browser, no-Python native desktop command ingress.
 // Stdio is an OS-local child pipe; host owns the fixed single-player authority.
 // Every accepted MOVE commits world STEP, receipt, pose in one original transaction.
@@ -197,6 +198,7 @@ int main(int argc,char** argv){
                 const auto outcome=person.pilot(kLocalOwner,expected,command_id,action);
                 if(!outcome){deny(req,"native-flight-refused");continue;}
                 last_move=now;
+                galaxy::server_dx::committed_breadcrumb(world.world().tick(),world.generation());
                 send_ship(session,req,command_id,*outcome,person.flight_state(kLocalOwner));
                 send_rock_contact(session,req,world,previous.ship);
                 continue;
@@ -210,6 +212,7 @@ int main(int argc,char** argv){
                 deny(req,"seat-or-custody");continue;
             }
             last_move=now;
+            galaxy::server_dx::committed_breadcrumb(world.world().tick(),world.generation());
             send_pose("ACK",session,req,person.current(kLocalOwner),world);
         }
         return 0; // stdio EOF = OS client disconnected; never invent a command

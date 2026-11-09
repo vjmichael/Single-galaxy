@@ -1,4 +1,5 @@
 #include "galaxy/NativeWriterLease.hpp"
+#include "galaxy/ServerBreadcrumb.hpp"
 // PLAY-STATION-02 development-native station spawn and boarding bridge.
 // Real person, original SQLite world and exact berth custody; fixture-only hull.
 #include "galaxy/Persistence.hpp"
@@ -126,6 +127,7 @@ int main(int argc,char** argv){
        // Original SQLite STEP commits both the event and physical inventory.
        // Exception means the process fails closed; do not emit an ACK.
        world.step();
+       galaxy::server_dx::committed_breadcrumb(world.world().tick(),world.generation());
        const auto& event=world.world().events().back();
        if(event.command_id!=c.id)
           throw std::runtime_error("refinery world journal did not return exact command");
@@ -150,6 +152,7 @@ int main(int argc,char** argv){
     deny(req,"station-custody-or-distance");continue;
    }
    last=now;
+   galaxy::server_dx::committed_breadcrumb(world.world().tick(),world.generation());
    send(session,req,world);
   }
   return 0;
