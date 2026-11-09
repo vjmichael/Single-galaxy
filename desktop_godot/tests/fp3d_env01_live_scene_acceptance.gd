@@ -90,6 +90,9 @@ func _run() -> void:
 		if not (await _await_condition(Callable(self, "_seat_ready"))):
 			_fail("real owner could not seat in original cockpit")
 	if _error.is_empty():
+		# Honor the existing 110ms original cockpit rate gate. An immediate
+		# undock after SEAT ACK is correctly ignored by the production client.
+		await create_timer(0.13).timeout
 		session.submit_flight(PackedStringArray(["UND"]))
 		if not (await _await_condition(Callable(self, "_undocked"))):
 			_fail("original ship did not complete undock")
