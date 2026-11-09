@@ -607,6 +607,14 @@ std::uint64_t latest_generation(sqlite3* db) {
 
 class PersistentWorld::Store {
 public:
+    bool station_receipt_used(std::uint64_t receipt) const {
+        Statement t(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='sg_station_player_action'");
+        if(!t.row())return false;
+        Statement q(db_,"SELECT 1 FROM sg_station_player_action WHERE receipt=?");
+        q.i64(1,static_cast<std::int64_t>(receipt));
+        return q.row();
+    }
     bool manifest_transfer_allowed(const Command& c) const {return shipping::manifest_transfer_authorized(db_,c) && shipping::third_party_transfer_authorized(db_,c);}
     // A canonical PhysicalDependent stores one guardian, while ART02 retains
     // both birth parents. Until planetary family berths are atomic, an adult
@@ -9825,6 +9833,62 @@ bool PersistentWorld::register_player_person(PlayerId owner,EntityId aboard,
     world_.swap(next);++generation_;
     return true;
 }
+bool PersistentWorld::register_player_at_station(PlayerId owner,EntityId station,FailPoint fail){
+    auto next=world_;
+    if(!next.register_player_at_station(owner,station))return false;
+    if(next.total_ore()!=resource_origin_||next.total_credits()!=credit_origin_)
+        throw std::logic_error("player station registration changed world resources");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);++generation_;
+    return true;
+}
+bool PersistentWorld::station_player_action(PlayerId owner,EntityId station,
+        EntityId ship,StationPlayerAction action,std::int64_t dx,std::int64_t dz,
+        std::uint64_t receipt,FailPoint fail){
+    if(!receipt || receipt>=static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) ||
+       store_->station_receipt_used(receipt))return false;
+    // Prevalidate on a copy. The original trusted world STEP remains the only
+    // source of tick advancement; full admission is reevaluated after STEP.
+    auto preview=world_;
+    if(!preview.station_player_action(owner,station,ship,action,dx,dz,receipt))
+        return false;
+    const auto expected_generation=generation_;
+    step_with_cell_worker(nullptr,fail,
+        [&](sqlite3* db,std::uint64_t committed){
+            // Record one action receipt under the SAME canonical SQLite writer
+            // as original world STEP, snapshot and generation, never in Godot.
+            if(committed!=expected_generation+1)
+                throw std::runtime_error("station transfer generation race");
+            run(db,"CREATE TABLE IF NOT EXISTS sg_station_player_action("
+                "receipt INTEGER PRIMARY KEY CHECK(receipt>0),"
+                "owner INTEGER NOT NULL,station INTEGER NOT NULL,"
+                "ship INTEGER NOT NULL,action INTEGER NOT NULL CHECK(action BETWEEN 1 AND 3),"
+                "tick INTEGER NOT NULL,generation INTEGER NOT NULL)");
+            Statement check(db,"SELECT kind,tick FROM operation_log WHERE generation=?");
+            check.i64(1,static_cast<std::int64_t>(committed));
+            if(!check.row() || sqlite3_column_int(check.get(),0)!=2 ||
+               sqlite3_column_int64(check.get(),1)!=
+                    static_cast<std::int64_t>(world_.tick()+1) || check.row())
+                throw std::runtime_error("station transfer lacks original world STEP");
+            Statement put(db,"INSERT INTO sg_station_player_action VALUES(?,?,?,?,?,?,?)");
+            put.i64(1,static_cast<std::int64_t>(receipt));
+            put.i64(2,static_cast<std::int64_t>(owner));
+            put.i64(3,static_cast<std::int64_t>(station));
+            put.i64(4,static_cast<std::int64_t>(ship));
+            put.i64(5,static_cast<int>(action));
+            put.i64(6,static_cast<std::int64_t>(world_.tick()+1));
+            put.i64(7,static_cast<std::int64_t>(committed));
+            put.execute();
+            if(sqlite3_changes(db)!=1)
+                throw std::runtime_error("station transfer receipt not unique");
+        },
+        [&](Simulation& next){
+            if(!next.station_player_action(owner,station,ship,action,dx,dz,receipt))
+                throw std::runtime_error("station custody changed during STEP");
+        });
+    return true;
+}
 bool PersistentWorld::grant_player_rescue_consent(
     PlayerId owner,EntityId receiver,std::uint64_t consent_id,FailPoint fail){
     auto next=world_;
@@ -14687,7 +14751,8 @@ void PersistentWorld::step_as_cell_worker(
 }
 void PersistentWorld::step_with_cell_worker(
         const NativeCellWorkerTick* token,FailPoint fail,
-        const std::function<void(sqlite3*,std::uint64_t)>& trusted_interior_effect) {
+        const std::function<void(sqlite3*,std::uint64_t)>& trusted_interior_effect,
+        const std::function<void(Simulation&)>& trusted_station_mutation) {
     // SPACE-05: no active-worker authorization can make an ordinary host
     // tick into a distributed writer. One original SQLite writer remains.
     if(token){
@@ -14742,6 +14807,7 @@ void PersistentWorld::step_with_cell_worker(
             throw std::runtime_error("dependent travelers need atomic child custody step");
     }
     next.step();
+    if(trusted_station_mutation)trusted_station_mutation(next);
     // Capture precisely those new native commands created INSIDE this
     // simulation tick, not already accepted host/player commands.
     std::vector<Command> generated_native_commands;
