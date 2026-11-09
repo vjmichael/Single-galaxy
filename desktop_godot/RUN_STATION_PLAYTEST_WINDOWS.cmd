@@ -1,18 +1,18 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-echo Single-Galaxy PLAY-STATION-02: station to cockpit original C++ test
-echo Uses your EXISTING Godot 4.7.2 editor; no export templates or editor download.
-echo A supported Windows C++ compiler, CMake and SQLite headers/library are required.
+echo Single-Galaxy PLAY-STATION-02 - precompiled Windows native host game
+echo No CMake, Visual Studio, Python, Godot download, or game export templates required.
+echo Uses your EXISTING Godot 4.7.2 editor.
 echo.
-PowerShell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0build_tools\Test-StationGodot.ps1"
+PowerShell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0build_tools\Launch-PrebuiltStation.ps1"
 set "rc=%ERRORLEVEL%"
 echo.
 if not "%rc%"=="0" (
-  echo ACCEPTANCE NOT PASSED - see build\station-visual-acceptance\logs and evidence ZIP.
+  echo PLAYTEST BLOCKED - see playtest-logs and SingleGalaxy_Station_Playtest_Evidence.zip
+  echo If native hosts are missing, download the compiled Windows artifact from PR 119 Actions.
 ) else (
-  echo Native and headless Godot tests passed; human camera/visual gameplay still needs review.
+  echo Godot window exited; camera and human gameplay verification are separate.
 )
-echo Evidence: SingleGalaxy_Station_Visual_Windows_Evidence.zip
 pause
 exit /b %rc%
