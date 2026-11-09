@@ -70,12 +70,17 @@ inline Result refine_one_tonne(StationHangar& hangar, OreLot& lot,
         sum+=phase.permille;
         const auto it=plant.mineral_kg.find(phase.name);
         if(it!=plant.mineral_kg.end() &&
-           it->second>1000000000-phase.permille)
+           (it->second<0 || it->second>1000000000-phase.permille))
             return {Status::StockFull,0};
     }
     if(sum!=1000 || plant.processed_tonnes>=1000000000 ||
        tick>std::numeric_limits<std::uint64_t>::max()-4)
         return {Status::InvalidLot,0};
+    // Prepare a complete output inventory before touching the source; map
+    // allocation failures must never leave ore debited but minerals absent.
+    auto proposed=plant.mineral_kg;
+    for(const auto& phase:profile)
+        proposed[phase.name]+=phase.permille;
     // All checks passed. Commit ore -> named kilograms exactly once.
     --lot.remaining_tonnes;
     --hangar.ore;
@@ -83,8 +88,7 @@ inline Result refine_one_tonne(StationHangar& hangar, OreLot& lot,
     ++plant.processed_tonnes;
     plant.ready_tick=tick+4;
     plant.last_receipt=receipt;
-    for(const auto& phase:profile)
-        plant.mineral_kg[phase.name]+=phase.permille;
+    plant.mineral_kg.swap(proposed);
     return {Status::Applied,1000};
 }
 } // namespace galaxy::station_refining
