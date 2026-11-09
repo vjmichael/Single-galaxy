@@ -69,13 +69,16 @@ try {
   if($env:SGDX_WINDOWS_MINIDUMP -eq '1'){
     Write-Warning 'Opt-in crash minidumps may capture private process memory.'
   }
+  $CliGodotExe=$GodotExe
   if([string]::IsNullOrWhiteSpace($GodotExe)){
     # The player receives the entire engine with the exact native ZIP.
     # No PATH/editor picker, web download, installer or silent substitute.
     $GodotExe=Join-Path $project 'runtime\Godot_v4.7.2-stable_win64.exe'
     $engineManifest=Join-Path $project 'runtime\GODOT_RUNTIME_SHA256.txt'
+    $CliGodotExe=Join-Path $project 'runtime\Godot_v4.7.2-stable_win64_console.exe'
+    $cliManifest=Join-Path $project 'runtime\GODOT_CONSOLE_SHA256.txt'
     $engineLicense=Join-Path $project 'runtime\LICENSE.txt'
-    foreach($file in @($GodotExe,$engineManifest,$engineLicense)){
+    foreach($file in @($GodotExe,$engineManifest,$CliGodotExe,$cliManifest,$engineLicense)){
       if(-not(Test-Path -LiteralPath $file -PathType Leaf)){
         throw "Precompiled ZIP missing verified bundled Godot runtime/licensing: $file"
       }
@@ -88,11 +91,22 @@ try {
     if($actual -cne $expected){
       throw "Bundled Godot SHA-256 does not match release-derived package manifest"
     }
-    Write-Host "Verified bundled Godot engine SHA-256 $actual"
+    # Official Windows Godot console wrapper owns the real child process and
+    # propagates its exit code under Windows PowerShell 5.1.
+    $cliExpected=(Get-Content -LiteralPath $cliManifest -Raw).Trim().ToLowerInvariant()
+    if($cliExpected -notmatch '^[0-9a-f]{64}$'){
+      throw "Bundled Godot console wrapper SHA-256 manifest malformed"
+    }
+    $cliActual=Get-LocalSha256 $CliGodotExe
+    if($cliActual -cne $cliExpected){
+      throw "Bundled Godot console wrapper SHA-256 does not match release-derived package manifest"
+    }
+    Write-Host "Verified bundled Godot engine SHA-256 $actual; CLI wrapper SHA-256 $cliActual"
   } else {
     # Explicit diagnostic override only; never silently fallback on a
     # user's installed editor or substitute a different major engine.
     $GodotExe=[IO.Path]::GetFullPath($GodotExe)
+    $CliGodotExe=$GodotExe
     Write-Warning "Developer -GodotExe override selected; not self-contained package acceptance."
   }
   if(-not(Test-Path -LiteralPath $GodotExe -PathType Leaf)){
@@ -120,7 +134,7 @@ try {
       # The exact extracted ZIP's engine must execute each real parser/scene
       # check under a bounded lifetime. Godot may return exit 0 despite
       # reporting GDScript parser errors, so inspect BOTH real output streams.
-      $p=Start-Process -FilePath $GodotExe -ArgumentList $suite -NoNewWindow -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+      $p=Start-Process -FilePath $CliGodotExe -ArgumentList $suite -NoNewWindow -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
       try {
         Wait-Process -Id $p.Id -Timeout 90 -ErrorAction Stop
       } catch {
@@ -132,8 +146,11 @@ try {
         (Get-Content -LiteralPath $stdout -Raw -ErrorAction SilentlyContinue | Out-String) +
         (Get-Content -LiteralPath $stderr -Raw -ErrorAction SilentlyContinue | Out-String)
       )
-      if($p.ExitCode -ne 0 -or $output -match '(?im)SCRIPT ERROR:|ERROR: Failed to load script|Parse Error:|Error at \('){
-        throw "Installed Godot parser or scene smoke #$index failed. See $stdout and $stderr. Game was not launched."
+      $exited=$p.HasExited
+      $code=if($exited){$p.ExitCode}else{-9999}
+      $errors=($output -match '(?im)SCRIPT ERROR:|ERROR: Failed to load script|Parse Error:|Error at \(')
+      if(-not $exited -or $code -ne 0 -or $errors){
+        throw "Bundled Godot console smoke #$index failed: exited=$exited code=$code parser_error=$errors executable=$CliGodotExe. See $stdout and $stderr. Game was not launched."
       }
     }
     Write-Host 'Bundled Godot 4.7.2 parser/scene checks passed.'
@@ -178,6 +195,7 @@ try {
     task='FP3D-WIN02-BUNDLED-RUNTIME';godot=$GodotExe
     engine_mode=if($GodotExe -eq (Join-Path $project 'runtime\Godot_v4.7.2-stable_win64.exe')){'BUNDLED-VERIFIED'}else{'EXPLICIT-DEVELOPER-OVERRIDE'}
     engine_sha256=if(Test-Path -LiteralPath $GodotExe -PathType Leaf){(Get-LocalSha256 $GodotExe)}else{''}
+    godot_console_sha256=if($CliGodotExe -and (Test-Path -LiteralPath $CliGodotExe -PathType Leaf)){(Get-LocalSha256 $CliGodotExe)}else{''}
     native_station_hash=if(Test-Path $station){(Get-LocalSha256 $station).ToUpperInvariant()}else{''}
     native_cockpit_hash=if(Test-Path $pilot){(Get-LocalSha256 $pilot).ToUpperInvariant()}else{''}
     sgdx_supervisor_hash=if(Test-Path $supervisor){(Get-LocalSha256 $supervisor).ToUpperInvariant()}else{''}
