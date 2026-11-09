@@ -85,5 +85,5 @@ func _initialize() -> void:
 	if not failures.is_empty():
 		quit(1)
 	else:
-		print("FP3D-ENV-01F pilot instruments PASS: 14 synthetic read-only native-receipt checks; engine/runtime/GPU gates still open")
+		print("FP3D-ENV-01F pilot instruments PASS: 15 synthetic read-only native-receipt checks; engine/runtime/GPU gates still open")
 		quit(0)
