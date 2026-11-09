@@ -1,0 +1,194 @@
+name: PLAY-STATION-03C original native refinery terminal and Godot
+
+on:
+  push:
+    branches: [sg/play-station03c-native-refinery-terminal-20261108]
+    paths:
+      - 'src/**'
+      - 'include/**'
+      - 'tests/**'
+      - 'desktop_godot/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/play-station03c-native-ui.yml'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sg03c-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux original-world native pipe, SQLite and Godot parser
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Compile original kernel using GitHub runner's SQLite SDK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libsqlite3-dev ninja-build unzip
+          cmake -S . -B build/sg03c -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_BENCHMARKS=OFF -DBUILD_TESTING=ON
+          cmake --build build/sg03c --parallel 2 --target \
+            galaxy_desktop_station_host galaxy_desktop_player_host \
+            galaxy_play_station03b_persistent_refinery_tests \
+            galaxy_play_station03a_refinery_ledger_tests \
+            galaxy_play_station_boarding_tests \
+            galaxy_fp3d03b_cockpit_flight_tests
+      - name: Real original C++ + SQLite station-refinery and boarding regressions
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ctest --test-dir build/sg03c --no-tests=error --timeout 180 --output-on-failure \
+            --output-junit station03c-linux.xml \
+            -R '^galaxy_(play_station(03c_refinery_native_pipe|03b_persistent_refinery|03a_refinery_ledger|02_native_pipe|_boarding)|fp3d03b_(cockpit_flight|native_flight_pipe))$'
+      - name: Reject malformed Godot source/preload contracts before engine
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python desktop_godot/tests/test_gdscript_preload_sanity.py
+          python desktop_godot/tests/test_refinery_terminal_contract.py
+          python desktop_godot/tests/test_station_boarding_contract.py
+      - name: Download pinned real Godot 4.7.2 on GitHub Linux runner only
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p "$RUNNER_TEMP/sg-godot"
+          curl --fail --location --retry 3 --retry-delay 5 \
+            -o "$RUNNER_TEMP/sg-godot/editor.zip" \
+            https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
+          unzip -oq "$RUNNER_TEMP/sg-godot/editor.zip" -d "$RUNNER_TEMP/sg-godot"
+          chmod +x "$RUNNER_TEMP/sg-godot/Godot_v4.7.2-stable_linux.x86_64"
+          "$RUNNER_TEMP/sg-godot/Godot_v4.7.2-stable_linux.x86_64" --version | tee build/sg03c/godot-version.txt
+          grep -q '^4.7.2.stable' build/sg03c/godot-version.txt
+      - name: Run real Godot 4.7.2 parser and refinery GUI smoke
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p build/sg03c/godot-evidence
+          G="$RUNNER_TEMP/sg-godot/Godot_v4.7.2-stable_linux.x86_64"
+          "$G" --headless --path desktop_godot --editor --quit 2>&1 | tee build/sg03c/godot-evidence/import.log
+          for script in godot_smoke.gd station_visual_smoke.gd native_station_protocol_smoke.gd native_station_refinery_protocol_smoke.gd; do
+            "$G" --headless --path desktop_godot --script "res://tests/$script" \
+              2>&1 | tee "build/sg03c/godot-evidence/$script.log"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sg03c-linux-native-godot-${{ github.sha }}
+          path: |
+            station03c-linux.xml
+            build/sg03c/Testing/Temporary/LastTest.log
+            build/sg03c/godot-evidence/*.log
+            build/sg03c/godot-version.txt
+            build/sg03c/CMakeFiles/CMakeConfigureLog.yaml
+          if-no-files-found: warn
+
+  windows:
+    name: Windows MSVC original refinery/boarding + real Godot, prebuilt artifact
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install SQLite on GitHub runner only
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $vcpkg=$env:VCPKG_INSTALLATION_ROOT
+          if(-not $vcpkg){$vcpkg='C:\vcpkg'}
+          & (Join-Path $vcpkg 'vcpkg.exe') install sqlite3:x64-windows --classic
+          if($LASTEXITCODE -ne 0){throw 'GitHub MSVC SQLite build prerequisite failed'}
+          "SG_TOOLCHAIN=$(Join-Path $vcpkg 'scripts\buildsystems\vcpkg.cmake')" >> $env:GITHUB_ENV
+          (Join-Path $vcpkg 'installed\x64-windows\bin') >> $env:GITHUB_PATH
+      - name: Build current original C++ native station/cockpit/refining on Windows
+        shell: pwsh
+        run: |
+          cmake -S . -B build/sg03c -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF "-DCMAKE_TOOLCHAIN_FILE=$env:SG_TOOLCHAIN" -DVCPKG_TARGET_TRIPLET=x64-windows
+          if($LASTEXITCODE -ne 0){throw 'MSVC CMake configure failed'}
+          cmake --build build/sg03c --config Release --parallel 2 --target galaxy_desktop_station_host galaxy_desktop_player_host galaxy_play_station03b_persistent_refinery_tests galaxy_play_station03a_refinery_ledger_tests galaxy_play_station_boarding_tests galaxy_fp3d03b_cockpit_flight_tests
+          if($LASTEXITCODE -ne 0){throw 'Real MSVC build failed'}
+      - name: Test actual Windows native refinery original SQLite process
+        shell: pwsh
+        run: |
+          ctest --test-dir build/sg03c -C Release --no-tests=error --timeout 180 --output-on-failure --output-junit station03c-windows.xml -R '^galaxy_(play_station(03c_refinery_native_pipe|03b_persistent_refinery|03a_refinery_ledger|02_native_pipe|_boarding)|fp3d03b_(cockpit_flight|native_flight_pipe))$'
+          if($LASTEXITCODE -ne 0){throw 'MSVC original refinery/boarding SQLite acceptance failed'}
+      - name: Download pinned official Godot Windows editor onto GitHub runner
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force -Path build/sg03c/godot -ErrorAction Stop | Out-Null
+          Invoke-WebRequest -Uri 'https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_win64.exe.zip' -OutFile build/sg03c/godot/editor.zip
+          Expand-Archive build/sg03c/godot/editor.zip -DestinationPath build/sg03c/godot -Force
+          $g=Get-ChildItem build/sg03c/godot -Filter '*win64_console.exe' -Recurse | Select-Object -First 1
+          if(-not $g){$g=Get-ChildItem build/sg03c/godot -Filter '*win64.exe' -Recurse | Select-Object -First 1}
+          if(-not $g){throw 'Official Windows Godot 4.7.2 binary not found'}
+          "SG_GODOT=$($g.FullName)" >> $env:GITHUB_ENV
+      - name: Run actual Godot project parser, station, and refinery terminal smokes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $g=$env:SG_GODOT
+          New-Item -ItemType Directory -Force -Path build/sg03c/godot-evidence | Out-Null
+          & $g --version
+          if($LASTEXITCODE -ne 0){throw 'Godot Windows 4.7.2 version query failed'}
+          & $g --headless --path desktop_godot --editor --quit 2>&1 | Out-File build/sg03c/godot-evidence/import.log
+          if($LASTEXITCODE -ne 0){throw 'Godot Windows project parser failed'}
+          foreach($s in @('godot_smoke.gd','station_visual_smoke.gd','native_station_protocol_smoke.gd','native_station_refinery_protocol_smoke.gd')){
+            & $g --headless --path desktop_godot --script "res://tests/$s" 2>&1 | Out-File "build/sg03c/godot-evidence/$s.log"
+            if($LASTEXITCODE -ne 0){throw "Real Godot Windows scene/parser failed $s"}
+          }
+      - name: Stage tested precompiled Windows native hosts + project (NO user CMake)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $ziproot='build/SingleGalaxy_Station_03C_Windows'
+          $game=Join-Path $ziproot 'desktop_godot'
+          New-Item -ItemType Directory -Force -Path $game | Out-Null
+          Copy-Item desktop_godot/project.godot $game -Force
+          foreach($d in @('world','tests','build_tools')){
+            Copy-Item (Join-Path 'desktop_godot' $d) (Join-Path $game $d) -Recurse -Force
+          }
+          Copy-Item desktop_godot/RUN_STATION_PLAYTEST_WINDOWS.cmd $game -Force
+          New-Item -ItemType Directory -Force -Path (Join-Path $game 'native') | Out-Null
+          foreach($name in @('galaxy_desktop_station_host.exe','galaxy_desktop_player_host.exe')){
+            $exe=Join-Path build/sg03c/Release $name
+            if(-not (Test-Path $exe)){throw "Verified native Windows host missing: $name"}
+            Copy-Item $exe (Join-Path $game 'native') -Force
+          }
+          $vcpkg=$env:VCPKG_INSTALLATION_ROOT
+          if(-not $vcpkg){$vcpkg='C:\vcpkg'}
+          $dlls=Join-Path $vcpkg 'installed\x64-windows\bin'
+          if(-not (Test-Path (Join-Path $dlls 'sqlite3.dll'))){throw 'SQLite runtime DLL missing'}
+          Get-ChildItem $dlls -Filter '*.dll' -File | ForEach-Object { Copy-Item $_.FullName (Join-Path $game 'native') -Force }
+          # Run the same process test from the STAGED, independently compiled EXEs.
+          python tests/PLAY_STATION_03C_RefineryHostPipeTests.py build/sg03c/Release/galaxy_play_station03b_persistent_refinery_tests.exe (Join-Path $game 'native/galaxy_desktop_station_host.exe')
+          if($LASTEXITCODE -ne 0){throw 'Packaged real Windows station host failed SQLite refinery pipe'}
+          "Original committed SHA: ${{ github.sha }}" | Set-Content (Join-Path $ziproot 'SOURCE_SHA.txt')
+          "Extract, open desktop_godot/RUN_STATION_PLAYTEST_WINDOWS.cmd, select your existing Godot 4.7.2 editor. No CMake/VS on your PC. A refinery requires a legitimately installed plant and actual unloaded ore in the world save." | Set-Content (Join-Path $ziproot 'README_START.txt')
+          Compress-Archive (Join-Path $ziproot '*') -DestinationPath build/SingleGalaxy_Station_03C_Windows_Precompiled.zip -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SingleGalaxy-Station-03C-Windows-Precompiled-${{ github.sha }}
+          path: build/SingleGalaxy_Station_03C_Windows_Precompiled.zip
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sg03c-windows-native-godot-evidence-${{ github.sha }}
+          path: |
+            station03c-windows.xml
+            build/sg03c/Testing/Temporary/LastTest.log
+            build/sg03c/godot-evidence/*.log
+            build/sg03c/CMakeFiles/CMakeConfigureLog.yaml
+          if-no-files-found: warn
