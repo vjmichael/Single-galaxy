@@ -14,6 +14,7 @@ windowed = (project / "build_tools/Test-WindowedNativeGodot.ps1").read_text(enco
 guide = (root / "docs/engineering/FP3D_WINDOWS_PHYSICAL_ACCEPTANCE.md").read_text(encoding="utf-8")
 engine_license = (project / "third_party/GODOT_LICENSE.txt").read_text(encoding="utf-8")
 tamper = (project / "build_tools/Test-BundledRuntimeTamper.ps1").read_text(encoding="utf-8")
+root_launcher = (project / "START_SINGLE_GALAXY_WINDOWS.cmd").read_text(encoding="utf-8")
 
 checks = {
     "real-window-not-headless": (
@@ -103,6 +104,13 @@ checks = {
         and "Bundled Godot SHA-256 does not match release-derived package manifest" in tamper
         and "Set-Content -LiteralPath $manifest -Value $original" in tamper
         and "EXPECTED_HASH_REFUSAL_VERIFIED" in tamper
+    ),
+    "self-contained-one-double-click-zip-root": (
+        "START_SINGLE_GALAXY_WINDOWS.cmd" in package
+        and "RUN_STATION_PLAYTEST_WINDOWS.cmd" in root_launcher
+        and "PowerShell.exe" not in root_launcher
+        and "curl" not in root_launcher.lower()
+        and "START_SINGLE_GALAXY_WINDOWS.cmd" in guide
     ),
     "not-falsely-accepted-on-window-close": (
         "WINDOW-CLOSED-NEEDS-MANUAL-OBSERVATION" in gui_launcher
