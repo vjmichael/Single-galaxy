@@ -13,6 +13,7 @@ package = (project / "build_tools/Verify-PrecompiledPackage.ps1").read_text(enco
 windowed = (project / "build_tools/Test-WindowedNativeGodot.ps1").read_text(encoding="utf-8")
 guide = (root / "docs/engineering/FP3D_WINDOWS_PHYSICAL_ACCEPTANCE.md").read_text(encoding="utf-8")
 engine_license = (project / "third_party/GODOT_LICENSE.txt").read_text(encoding="utf-8")
+tamper = (project / "build_tools/Test-BundledRuntimeTamper.ps1").read_text(encoding="utf-8")
 
 checks = {
     "real-window-not-headless": (
@@ -95,6 +96,13 @@ checks = {
         and "BUNDLED-PACKAGE-HEADLESS-PREFLIGHT-VERIFIED-NO-GPU-CLAIM" in gui_launcher
         and "WINDOW-CLOSED-NEEDS-MANUAL-OBSERVATION" in gui_launcher
         and "SingleGalaxy_Station_Playtest_Evidence.zip" in gui_launcher
+    ),
+    "windows-bundled-engine-mismatch-refused": (
+        "WindowsPowerShell\\v1.0\\powershell.exe" in tamper
+        and "Set-Content -LiteralPath $manifest -Value $wrong" in tamper
+        and "Bundled Godot SHA-256 does not match release-derived package manifest" in tamper
+        and "Set-Content -LiteralPath $manifest -Value $original" in tamper
+        and "EXPECTED_HASH_REFUSAL_VERIFIED" in tamper
     ),
     "not-falsely-accepted-on-window-close": (
         "WINDOW-CLOSED-NEEDS-MANUAL-OBSERVATION" in gui_launcher
