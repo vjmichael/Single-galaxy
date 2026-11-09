@@ -111,12 +111,17 @@ int main(int argc,char** argv){
         {
             PersistentWorld world(path,std::move(seed));
             for(std::uint64_t id=1;id<=150;++id){
+                const auto before_position=world.world().find(ship)->position.x;
                 REQUIRE(send(world,id,ship,1).result==Outcome::Applied);
                 const auto& activity=world.world().activity_events();
                 for(const auto& e:activity)
                     if(e.kind==ActivityKind::ShipAsteroidContact &&
                        e.actor==ship && e.target==rock){
                         contact_tick=e.tick;
+                        // The last impact tick must move the hull up to its
+                        // *actual* first safe millimetre, not freeze the
+                        // entire 250..20,000mm step at its starting pose.
+                        REQUIRE(world.world().find(ship)->position.x>before_position);
                     }
                 if(contact_tick)break;
             }
