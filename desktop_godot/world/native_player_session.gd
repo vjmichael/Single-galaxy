@@ -52,8 +52,12 @@ func _status(message: String) -> void:
 
 func _host_path() -> String:
 	var binary := "galaxy_desktop_player_host.exe" if OS.get_name() == "Windows" else "galaxy_desktop_player_host"
-	if OS.has_feature("editor"):
-		return ProjectSettings.globalize_path("res://native/" + binary)
+	# The installed editor binary can launch a project directly (without the
+	# editor workspace). Prefer this project's freshly built source-host path
+	# whenever present; packaged exports use the adjacent native/ directory.
+	var project_host := ProjectSettings.globalize_path("res://native/" + binary)
+	if FileAccess.file_exists(project_host):
+		return project_host
 	return OS.get_executable_path().get_base_dir().path_join("native").path_join(binary)
 
 func start(save_override: String = "") -> void:
