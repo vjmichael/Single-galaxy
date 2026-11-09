@@ -81,9 +81,22 @@ try {
       $index++
       $stdout=Join-Path $logDir "godot-$index-stdout.log"
       $stderr=Join-Path $logDir "godot-$index-stderr.log"
-      $p=Start-Process -FilePath $GodotExe -ArgumentList $suite -NoNewWindow -Wait -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
-      $errorText=Get-Content -LiteralPath $stderr -Raw -ErrorAction SilentlyContinue | Out-String
-      if($p.ExitCode -ne 0 -or $errorText -match '(?m)^(SCRIPT ERROR|ERROR:|Parser Error:)'){
+      # The exact extracted ZIP's engine must execute each real parser/scene
+      # check under a bounded lifetime. Godot may return exit 0 despite
+      # reporting GDScript parser errors, so inspect BOTH real output streams.
+      $p=Start-Process -FilePath $GodotExe -ArgumentList $suite -NoNewWindow -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+      try {
+        Wait-Process -Id $p.Id -Timeout 90 -ErrorAction Stop
+      } catch {
+        Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+        throw "Bundled Godot headless smoke #$index timed out. See $stdout and $stderr. Game was not launched."
+      }
+      $p.Refresh()
+      $output=(
+        (Get-Content -LiteralPath $stdout -Raw -ErrorAction SilentlyContinue | Out-String) +
+        (Get-Content -LiteralPath $stderr -Raw -ErrorAction SilentlyContinue | Out-String)
+      )
+      if($p.ExitCode -ne 0 -or $output -match '(?im)SCRIPT ERROR:|ERROR: Failed to load script|Parse Error:|Error at \('){
         throw "Installed Godot parser or scene smoke #$index failed. See $stdout and $stderr. Game was not launched."
       }
     }
