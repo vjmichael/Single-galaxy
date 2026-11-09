@@ -1,3 +1,4 @@
+#include "galaxy/NativeWriterLease.hpp"
 // PLAY-STATION-02 development-native station spawn and boarding bridge.
 // Real person, original SQLite world and exact berth custody; fixture-only hull.
 #include "galaxy/Persistence.hpp"
@@ -43,6 +44,7 @@ int main(int argc,char** argv){
   if(save.empty()||save.string().size()>1024||
     (!save.parent_path().empty()&&!fs::exists(save.parent_path())))
     throw std::runtime_error("invalid native station save path");
+  NativeWriterLease custody(save);
   const bool fresh=!fs::exists(save);
   // This optional fixture does NOT alter ordinary Single-Galaxy genesis.
   Simulation seed(0x5202);
