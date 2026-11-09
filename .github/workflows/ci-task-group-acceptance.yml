@@ -158,6 +158,8 @@ jobs:
           curl --fail --location --retry 3 --retry-delay 5 \
             -o "$RUNNER_TEMP/fp3d-godot/godot.zip" \
             https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
+          # Official godotengine/godot-builds 4.7.2-stable release asset digest.
+          echo "cadd3204e728a35d3f13adb7fd0d7902636b79f6b95c40c265eb73b6c35329e4  $RUNNER_TEMP/fp3d-godot/godot.zip" | sha256sum -c -
           unzip -oq "$RUNNER_TEMP/fp3d-godot/godot.zip" -d "$RUNNER_TEMP/fp3d-godot"
           G="$RUNNER_TEMP/fp3d-godot/Godot_v4.7.2-stable_linux.x86_64"
           chmod +x "$G"
@@ -236,6 +238,8 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'Native geometry contract failed'}
           New-Item -ItemType Directory -Force build/fp3d-env01/godot,build/fp3d-env01/godot-logs,desktop_godot/native | Out-Null
           Invoke-WebRequest -Uri 'https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_win64.exe.zip' -OutFile build/fp3d-env01/godot/editor.zip
+          # Official godotengine/godot-builds 4.7.2-stable Windows release digest.
+          if((Get-FileHash build/fp3d-env01/godot/editor.zip -Algorithm SHA256).Hash.ToLowerInvariant() -cne '731980f9608d61333e5baf54a2ef17210acc7a538446c0cb9969f002aca1e953'){throw 'Official Godot Windows download SHA256 mismatch'}
           Expand-Archive build/fp3d-env01/godot/editor.zip -DestinationPath build/fp3d-env01/godot -Force
           $g=Get-ChildItem build/fp3d-env01/godot -Filter '*win64_console.exe' -Recurse | Select-Object -First 1
           if(-not $g){$g=Get-ChildItem build/fp3d-env01/godot -Filter '*win64.exe' -Recurse | Select-Object -First 1}
