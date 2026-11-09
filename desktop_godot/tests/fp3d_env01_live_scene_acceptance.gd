@@ -291,6 +291,8 @@ func _run() -> void:
 				break
 	if _error.is_empty() and not collided:
 		_fail("no real swept collision reached after 70 original forward commands")
+	var committed_ship := _ship_frames[-1].duplicate(true) if not _ship_frames.is_empty() else {}
+	var committed_rock := _rock_frames[-1].duplicate(true) if not _rock_frames.is_empty() else {}
 	if is_instance_valid(_game) and is_instance_valid(_game.native_player_session):
 		var sgdx_pid: int = _game.native_player_session.process_id()
 		_game.native_player_session.stop("SGDX-03 integrated native acceptance closed", true)
@@ -317,9 +319,57 @@ func _run() -> void:
 						break
 			if not found_real_receipt:
 				_fail("Godot bypassed SGDX or clean original process evidence missing")
+	# Reopen the SAME original SQLite world through a NEW real SGDX guardian.
+	# The committed collision pose, finite rock and ore stock must be identical.
+	# Reconnect's initial ROCK frame must NOT replay the old impact.
+	if _error.is_empty() and not committed_ship.is_empty() and not committed_rock.is_empty():
+		var restored = NATIVE_SHIP.new()
+		restored.pose_received.connect(_game._on_native_player_pose)
+		restored.ship_state_received.connect(_game._on_native_ship_state)
+		restored.asteroid_contact_received.connect(_game._on_native_asteroid_contact)
+		restored.connection_changed.connect(_game._on_native_player_connection)
+		restored.status_changed.connect(_game._on_native_player_status)
+		restored.ship_state_received.connect(_on_ship)
+		restored.asteroid_contact_received.connect(_on_rock)
+		_game.native_player_session = restored
+		restored.start(path)
+		if not (await _await_condition(Callable(self, "_native_ready"))):
+			_fail("real SGDX restart did not recover original POSE, SHIP and ROCK")
+		else:
+			var resumed_ship := _ship_frames[-1]
+			var resumed_rock := _rock_frames[-1]
+			for name in ["ship", "tick", "gen", "x_mm", "y_mm", "z_mm", "vx", "vy", "vz", "dock"]:
+				if int(resumed_ship[name]) != int(committed_ship[name]):
+					_fail("SQLite restart changed authoritative ship field " + name)
+					break
+			if _error.is_empty() and (not bool(resumed_rock["found"]) or
+					int(resumed_rock["rock"]) != int(committed_rock["rock"]) or
+					int(resumed_rock["ore_tonnes"]) != int(committed_rock["ore_tonnes"]) or
+					int(resumed_rock["cargo_tonnes"]) != int(committed_rock["cargo_tonnes"]) or
+					int(resumed_rock["impact_rock"]) != 0):
+				_fail("SQLite restart changed finite original asteroid/cargo or replayed collision")
+			if _error.is_empty():
+				_game._external_requested = true
+				_game._show_native_location(false)
+				if not _game.exterior_camera.current or not _game.native_asteroid_mesh.visible:
+					_fail("actual Godot camera/asteroid failed after native restart")
+				else:
+					await _capture_visible("04-restarted-world", resumed_ship, resumed_rock)
+		var restored_pid: int = restored.process_id()
+		if restored.is_active():
+			restored.stop("SGDX-03 native restart acceptance finished", true)
+		if restored_pid > 0:
+			for attempt in range(80):
+				if not OS.is_process_running(restored_pid):
+					break
+				await create_timer(0.05).timeout
+			if OS.is_process_running(restored_pid) and _error.is_empty():
+				_fail("restarted SGDX guardian failed to release SQLite writer")
+	if _error.is_empty():
+		_save_visible_manifest()
 	await process_frame
 	if not _error.is_empty():
 		quit(1)
 	else:
-		print("FP3D-ENV-01E LIVE GODOT SCENE + ORIGINAL C++ HOST PASS: true undock, forward flight, safe contact, physical rock, camera yaw/translation and SQLite native receipts")
+		print("FP3D-ENV-01E LIVE GODOT SCENE + ORIGINAL C++ HOST PASS: true undock, docking, forward flight, safe contact, visual camera yaw/translation, SGDX QUIT and SAME SQLite world restart")
 		quit(0)
