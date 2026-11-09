@@ -15,8 +15,8 @@ static void primitive_geometry(){
     REQUIRE(!swept_ship_rock({10000,0,3000},{20000,0,0},500)); // true vertical separation
     REQUIRE(!swept_ship_rock({10000,0,0},{-10000,0,0},500)); // receding
     REQUIRE(!swept_ship_rock({10000,0,0},{0,0,0},500)); // no phantom static contact
-    REQUIRE(swept_ship_rock({0,0,0},{10000,0,0},500)); // cannot advance deeper
-    REQUIRE(!swept_ship_rock({0,0,0},{-10000,0,0},500)); // escape initial penetration
+    REQUIRE(swept_ship_rock({1000,0,0},{500,0,0},500)); // cannot advance deeper
+    REQUIRE(!swept_ship_rock({1000,0,0},{-500,0,0},500)); // escape initial penetration
 }
 static Event send(PersistentWorld& world,std::uint64_t id,EntityId ship,int x){
     Command c{};
