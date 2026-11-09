@@ -111,6 +111,13 @@ checks = {
         and "WINDOW-CLOSED-NEEDS-MANUAL-OBSERVATION" in gui_launcher
         and "SingleGalaxy_Station_Playtest_Evidence.zip" in gui_launcher
     ),
+    "actual-windows-powershell5-clean-bundle-not-only-pwsh7": (
+        "powershell-5_1-clean-stdout.log" in tamper
+        and "powershell-5_1-clean-preflight.json" in tamper
+        and "BUNDLED-PACKAGE-HEADLESS-PREFLIGHT-VERIFIED-NO-GPU-CLAIM" in tamper
+        and "clean_powershell5_preflight='PASS'" in tamper
+        and "Real Windows PowerShell 5.1 could not run the unmodified bundled" in tamper
+    ),
     "windows-bundled-engine-mismatch-refused": (
         "WindowsPowerShell\\v1.0\\powershell.exe" in tamper
         and "Set-Content -LiteralPath $manifest -Value $wrong" in tamper
