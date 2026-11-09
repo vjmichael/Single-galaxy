@@ -15,6 +15,8 @@ jobs:
     timeout-minutes: 65
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -52,6 +54,11 @@ jobs:
           "$G" --version
           "$G" --headless --path desktop_godot --editor --quit 2>&1 | tee build/fp3d-env01/godot-logs/import.log
           "$G" --headless --path desktop_godot --quit-after 5 2>&1 | tee build/fp3d-env01/godot-logs/actual-scene.log
+          mkdir -p desktop_godot/native
+          cp build/fp3d-env01/galaxy_desktop_player_host desktop_godot/native/
+          export SG_FP3D_E2E_SAVE="$RUNNER_TEMP/fp3d-env01-live.sqlite"
+          build/fp3d-env01/galaxy_play_station04a_native_rock_seed "$SG_FP3D_E2E_SAVE"
+          "$G" --headless --path desktop_godot --script res://tests/fp3d_env01_live_scene_acceptance.gd             2>&1 | tee build/fp3d-env01/godot-logs/live-native-scene.log
           for test in native_player_protocol_smoke.gd native_asteroid_contact_smoke.gd fp3d_env01_collision_receipt_smoke.gd; do
             "$G" --headless --path desktop_godot --script "res://tests/$test" \
               2>&1 | tee "build/fp3d-env01/godot-logs/$test.log"
@@ -71,6 +78,8 @@ jobs:
     timeout-minutes: 100
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -89,7 +98,7 @@ jobs:
         run: |
           cmake -S . -B build/fp3d-env01 -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF "-DCMAKE_TOOLCHAIN_FILE=$env:SG_TOOLCHAIN" -DVCPKG_TARGET_TRIPLET=x64-windows
           if($LASTEXITCODE -ne 0){throw 'MSVC configure failed'}
-          cmake --build build/fp3d-env01 --config Release --parallel 2 --target galaxy_fp3d_env01_swept_collision_tests galaxy_play_station04a_original_asteroid_contact_tests galaxy_fp3d03b_cockpit_flight_tests galaxy_play_station04a_native_rock_seed galaxy_desktop_player_host
+          cmake --build build/fp3d-env01 --config Release --parallel 2 --target galaxy_fp3d_env01_swept_collision_tests galaxy_play_station04a_original_asteroid_contact_tests galaxy_fp3d03b_cockpit_flight_tests galaxy_play_station04a_native_rock_seed galaxy_desktop_player_host galaxy_desktop_station_host
           if($LASTEXITCODE -ne 0){throw 'MSVC compile failed'}
       - name: Real Windows native collision, child pipe and SQLite recovery
         shell: pwsh
@@ -114,10 +123,49 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'Godot import failure'}
           & $g.FullName --headless --path desktop_godot --quit-after 5 2>&1 | Out-File build/fp3d-env01/godot-logs/actual-scene.log
           if($LASTEXITCODE -ne 0){throw 'Godot actual scene failure'}
+          New-Item -ItemType Directory -Force desktop_godot/native | Out-Null
+          Copy-Item build/fp3d-env01/Release/galaxy_desktop_player_host.exe desktop_godot/native -Force
+          $sqliteBin=Join-Path $env:VCPKG_INSTALLATION_ROOT 'installed\x64-windows\bin\sqlite3.dll'
+          if(-not(Test-Path $sqliteBin)){throw 'Actual Windows SQLite DLL not found'}
+          Copy-Item $sqliteBin desktop_godot/native -Force
+          $env:SG_FP3D_E2E_SAVE=(Join-Path (Resolve-Path build/fp3d-env01).Path 'live_native_world.sqlite')
+          & build/fp3d-env01/Release/galaxy_play_station04a_native_rock_seed.exe $env:SG_FP3D_E2E_SAVE
+          if($LASTEXITCODE -ne 0){throw 'Actual C++ finite rock fixture failed'}
+          & $g.FullName --headless --path desktop_godot --script res://tests/fp3d_env01_live_scene_acceptance.gd 2>&1 | Out-File build/fp3d-env01/godot-logs/live-native-scene.log
+          if($LASTEXITCODE -ne 0){throw 'Godot and original C++ integrated live flight / camera / impact failed'}
           foreach($test in @('native_player_protocol_smoke.gd','native_asteroid_contact_smoke.gd','fp3d_env01_collision_receipt_smoke.gd')){
             & $g.FullName --headless --path desktop_godot --script "res://tests/$test" 2>&1 | Out-File "build/fp3d-env01/godot-logs/$test.log"
             if($LASTEXITCODE -ne 0){throw "Godot script failure: $test"}
           }
+      - name: Package compiled Windows test game without downloading Godot onto user PC
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $root='build/SingleGalaxy_FP3D_01E_Windows'
+          $game=Join-Path $root 'desktop_godot'
+          New-Item -ItemType Directory -Force $game | Out-Null
+          Copy-Item desktop_godot/project.godot $game -Force
+          foreach($dir in @('world','tests','build_tools')){
+            Copy-Item (Join-Path desktop_godot $dir) (Join-Path $game $dir) -Recurse -Force
+          }
+          Copy-Item desktop_godot/RUN_STATION_PLAYTEST_WINDOWS.cmd $game -Force
+          New-Item -ItemType Directory -Force (Join-Path $game 'native') | Out-Null
+          foreach($name in @('galaxy_desktop_station_host.exe','galaxy_desktop_player_host.exe')){
+            $binary=Join-Path 'build/fp3d-env01/Release' $name
+            if(-not(Test-Path $binary)){throw "Missing real compiled host: $name"}
+            Copy-Item $binary (Join-Path $game 'native') -Force
+          }
+          $sqliteBin=Join-Path $env:VCPKG_INSTALLATION_ROOT 'installed\x64-windows\bin\sqlite3.dll'
+          Copy-Item $sqliteBin (Join-Path $game 'native') -Force
+          $head='${{ github.event.pull_request.head.sha || github.sha }}'
+          "Exact source HEAD: $head" | Set-Content (Join-Path $root 'SOURCE_SHA.txt')
+          'Run desktop_godot/RUN_STATION_PLAYTEST_WINDOWS.cmd using the Godot 4.7.2 editor you already installed. H opens real station, E boards, P cockpit, E sits, U undocks, V shows exterior camera, WASD steers. The world and ore persist in SQLite. No automatic module fitting or resource grants.' | Set-Content (Join-Path $root 'START_HERE.txt')
+          Compress-Archive -Path (Join-Path $root '*') -DestinationPath build/SingleGalaxy_FP3D_01E_Windows.zip -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SingleGalaxy-FP3D-01E-Windows-Precompiled-${{ github.event.pull_request.head.sha || github.sha }}
+          path: build/SingleGalaxy_FP3D_01E_Windows.zip
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: always()
         with:
