@@ -54,6 +54,15 @@ try{
     $events.Add('exclusive-writer-denied '+$candidate.Exe)
     $contender.Dispose();$contender=$null
   }
+  # Forcibly terminated native host must release OS writer ownership.
+  $initialSession = $first[2]
+  $ownedShip = [uint64]$first[11]
+  $stationProc.Kill()
+  Expect ($stationProc.WaitForExit(5000)) 'Aborted station process was not reaped'
+  $stationProc.Dispose();$stationProc=$null
+  $stationProc=Launch $stationExe ('"'+$save+'" --explicit-test-station')
+  $first=Frame $stationProc 'station-crash-restart'
+  Expect (($first[2] -ne $initialSession) -and ($first[6] -eq '4') -and ([uint64]$first[11] -eq $ownedShip)) 'Crash restart changed player location or gifted a ship'
   Expect (($first.Count -eq 13) -and ($first[0] -eq 'PERSON') -and ($first[1] -eq '2') -and ($first[6] -eq '4') -and ($first[9] -eq '1600') -and ($first[8] -eq '0')) 'Not initially inside station'
   $epoch=$first[2];$generation=[uint64]$first[5];$ship=[uint64]$first[11]
   Expect ($ship -gt 0) 'No actual owned docked ship available'
