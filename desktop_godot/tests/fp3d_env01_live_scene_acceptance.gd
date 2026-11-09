@@ -291,8 +291,8 @@ func _run() -> void:
 				break
 	if _error.is_empty() and not collided:
 		_fail("no real swept collision reached after 70 original forward commands")
-	var committed_ship := _ship_frames[-1].duplicate(true) if not _ship_frames.is_empty() else {}
-	var committed_rock := _rock_frames[-1].duplicate(true) if not _rock_frames.is_empty() else {}
+	var committed_ship: Dictionary = _ship_frames[-1].duplicate(true) if not _ship_frames.is_empty() else {}
+	var committed_rock: Dictionary = _rock_frames[-1].duplicate(true) if not _rock_frames.is_empty() else {}
 	if is_instance_valid(_game) and is_instance_valid(_game.native_player_session):
 		var sgdx_pid: int = _game.native_player_session.process_id()
 		_game.native_player_session.stop("SGDX-03 integrated native acceptance closed", true)
