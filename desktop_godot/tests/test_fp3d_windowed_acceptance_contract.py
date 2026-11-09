@@ -147,6 +147,15 @@ checks = {
         and "Extracted official Godot console companion missing or tampered" in tamper
         and "$cleanResult.godot_console_sha256 -cne $consoleOriginal" in tamper
     ),
+    "windows-powershell5-waits-on-original-process-not-unrelated-pid": (
+        "$p.WaitForExit(90000)" in gui_launcher
+        and "$p.WaitForExit()" in gui_launcher
+        and "$p.Refresh()" in gui_launcher
+        and "$null -eq $exitValue" in gui_launcher
+        and "$code=[int]$exitValue" in gui_launcher
+        and "Wait-Process -Id $p.Id -Timeout 90" not in gui_launcher
+        and "code=$code parser_error=$errors" in gui_launcher
+    ),
     "not-falsely-accepted-on-window-close": (
         "WINDOW-CLOSED-NEEDS-MANUAL-OBSERVATION" in gui_launcher
         and "human_gpu_visual_approval" in scene
