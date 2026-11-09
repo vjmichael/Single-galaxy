@@ -256,7 +256,9 @@ func _accept_ship(parts: PackedStringArray) -> void:
 func _accept_original_asteroid(parts: PackedStringArray) -> void:
 	# One snapshot per verified original SHIP tick; never an independent oracle.
 	var present := parts[0] == "ROCK"
-	if (present and parts.size() != 17) or (not present and parts.size() != 10) or parts[1] != "1":
+	# v125 appends 2 original-contact receipt fields; older 04A worlds keep
+	# the original packet exactly. Never infer physics merely from Godot.
+	if (present and parts.size() not in [17, 19]) or (not present and parts.size() not in [10, 12]) or parts[1] != "1":
 		stop("Malformed original-world asteroid frame")
 		return
 	for i in range(2, parts.size()):
@@ -299,6 +301,15 @@ func _accept_original_asteroid(parts: PackedStringArray) -> void:
 		cargo = int(parts[7])
 		capacity = int(parts[8])
 		installed = int(parts[9])
+	var impact_rock := 0
+	var impact_tick := 0
+	if parts.size() == 19 or parts.size() == 12:
+		var impact_index := 17 if present else 10
+		impact_rock = int(parts[impact_index])
+		impact_tick = int(parts[impact_index + 1])
+		if impact_rock < 0 or ((impact_rock == 0) != (impact_tick == 0)) or 			(impact_rock > 0 and (impact_rock == ship or impact_tick != tick or _dock_state != 0)):
+			stop("Unverifiable original solid-contact receipt")
+			return
 	if cargo < 0 or capacity < 0 or cargo > capacity or capacity > 1000000000 or installed not in [0, 1]:
 		stop("Native ore stock or mining tool status invalid")
 		return
@@ -306,7 +317,8 @@ func _accept_original_asteroid(parts: PackedStringArray) -> void:
 	asteroid_contact_received.emit({"found":present,"rock":rock_id,
 		"ore_tonnes":ore,"dx_mm":dx,"dy_mm":dy,"dz_mm":dz,"radius_mm":radius,
 		"taxonomy":taxonomy,"ship":ship,"tick":tick,"generation":generation,
-		"cargo_tonnes":cargo,"cargo_capacity":capacity,"mining_tool_online":installed})
+		"cargo_tonnes":cargo,"cargo_capacity":capacity,"mining_tool_online":installed,
+		"impact_rock":impact_rock,"impact_tick":impact_tick})
 
 func submit_flight(actions: PackedStringArray) -> void:
 	if not _active or _session <= 0 or not _seated or not _initial_ship_seen or \

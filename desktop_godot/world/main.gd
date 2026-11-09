@@ -201,6 +201,13 @@ func _build_ship_interior() -> void:
 	_solid_box("Native cockpit console (visual)", Vector3(0, 0.85, -2.1), Vector3(3.5, 1.4, 0.7))
 	_solid_box("Cockpit windscreen upper frame", Vector3(0, 2.75, -5.5), Vector3(5.6, 0.2, 0.3))
 
+static func native_rock_visual_offset(contact: Dictionary) -> Vector3:
+	# Original X/Y/Z in millimeters -> Godot local X/-Z and up Y in metres.
+	# This is a camera-relative projection, not physics or world navigation.
+	return Vector3(float(contact["dx_mm"]) / 1000.0,
+		float(contact["dz_mm"]) / 1000.0,
+		-float(contact["dy_mm"]) / 1000.0)
+
 func _build_native_space_preview() -> void:
 	# External visual projection only, populated from the original C++ rock
 	# contact. No static ore props, no Godot miner, no fake collision authority.
@@ -237,6 +244,11 @@ func _show_native_location(in_station: bool) -> void:
 				body.collision_mask = 0 if in_station or exterior else 1
 	if is_instance_valid(space_preview):
 		space_preview.visible = exterior
+		if exterior and is_instance_valid(player):
+			# Keep the observed rock relative to the ship's current viewer,
+			# not a fixed station/world origin; the original C++ pose is
+			# NEVER changed by this visual-only camera anchor.
+			space_preview.global_position = player.global_position
 
 func _build_player() -> void:
 	player = CharacterBody3D.new()
@@ -497,9 +509,7 @@ func _on_native_asteroid_contact(contact: Dictionary) -> void:
 	if found:
 		# Original world X/Y/Z -> Godot horizontal X/Z and vertical Y.
 		# Relative render projection stays within 30 metres of native ship.
-		native_asteroid_mesh.position = Vector3(
-			float(contact["dx_mm"]) / 1000.0, float(contact["dz_mm"]) / 1000.0,
-			-float(contact["dy_mm"]) / 1000.0)
+		native_asteroid_mesh.position = native_rock_visual_offset(contact)
 		var visual_radius := maxf(0.3, float(contact["radius_mm"]) / 1000.0)
 		native_asteroid_mesh.scale = Vector3.ONE * visual_radius
 		var range_m := Vector3(float(contact["dx_mm"]),float(contact["dy_mm"]),float(contact["dz_mm"])).length() / 1000.0
@@ -510,6 +520,9 @@ func _on_native_asteroid_contact(contact: Dictionary) -> void:
 		asteroid_label.text = "No original asteroid within 30m | ship cargo %d/%d t | mining tool: %s" % [
 			int(contact["cargo_tonnes"]),int(contact["cargo_capacity"]),
 			"ONLINE" if int(contact["mining_tool_online"]) == 1 else "NOT FITTED"]
+	if int(contact.get("impact_rock", 0)) > 0:
+		asteroid_label.text += " | ORIGINAL SOLID CONTACT: asteroid #%d at tick %d (velocity stopped)" % [
+			int(contact["impact_rock"]), int(contact["impact_tick"])]
 
 func _on_native_player_seat_intent() -> void:
 	if native_station_session != null and native_station_session.is_active():
