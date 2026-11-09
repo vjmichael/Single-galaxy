@@ -1,7 +1,7 @@
 {
   "schema": "SG-CI-GATE-01",
   "task_group": "SGDX03",
-  "source_sha": "3186678f09d6eee576ae614775927e091ada3809",
+  "source_sha": "e0ebd74fd8fbe8adac523fa11aa56e25e04d0905",
   "pr_number": 125,
-  "note": "One consolidated SGDX03 FP3D group rerun after independently executed native GCC 17/17 fixes; include Windows MSVC, Linux, SGDX crash/recovery, Godot 4.7.2, finite ore/refinery. Installed physical Windows GPU/camera still requires creator playtest."
+  "note": "One consolidated SGDX03+FP3D-ENV-01+PLAY-STATION-04C exact-head Windows MSVC/Linux/Godot/SQLite/MDMP gate. Independently compiled GCC14.2 Debug and Release local 18/18 native tests PASS. Verify actual Windows and real Godot; installed physical non-headless GPU/camera remains separate. Avoid per-commit CI."
 }
