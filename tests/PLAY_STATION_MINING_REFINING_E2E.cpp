@@ -145,6 +145,12 @@ int main(int argc,char** argv) {
             w.steps(2);
             CHECK(w.world().find(ship)->dock_state==DockState::Docked);
             CHECK(station_launch::available_ship(w.world(),7,station)==ship);
+            // Mining cannot be performed by the station or an on-foot player.
+            Command hand_mining{};hand_mining.id=++id;hand_mining.sequence=id;
+            hand_mining.execute_tick=w.world().tick()+1;hand_mining.issuer=7;
+            hand_mining.actor=station;hand_mining.target=asteroid;
+            hand_mining.action=Action::Mine;hand_mining.amount=1;
+            CHECK(!w.submit(hand_mining));
             // Player cannot mine an asteroid while parked in station.
             result=execute(w,id,7,ship,Action::Mine,asteroid,1);
             CHECK(result.result==Outcome::NotInSpace);
