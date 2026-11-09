@@ -1,5 +1,6 @@
-# Precompiled original C++ station/cockpit, existing Godot 4.7.2 editor.
-# No CMake, VS, Python, download, installer or export templates on user's PC.
+# Self-contained native station/cockpit with bundled pinned Godot 4.7.2 runtime.
+# No compiler, installed Godot editor, Python, download or export templates.
+# -GodotExe is a deliberate developer override, not a default fallback.
 [CmdletBinding()]
 param([string]$GodotExe="",[switch]$SkipHeadlessSmoke)
 Set-StrictMode -Version Latest
@@ -29,31 +30,40 @@ try {
   if($env:SGDX_WINDOWS_MINIDUMP -eq '1'){
     Write-Warning 'Opt-in crash minidumps may capture private process memory.'
   }
-  if(-not [string]::IsNullOrWhiteSpace($GodotExe)){
-    $GodotExe=[IO.Path]::GetFullPath($GodotExe)
-  } elseif(-not [string]::IsNullOrWhiteSpace($env:SINGLE_GALAXY_GODOT_EXE)){
-    $GodotExe=[IO.Path]::GetFullPath($env:SINGLE_GALAXY_GODOT_EXE)
+  if([string]::IsNullOrWhiteSpace($GodotExe)){
+    # The player receives the entire engine with the exact native ZIP.
+    # No PATH/editor picker, web download, installer or silent substitute.
+    $GodotExe=Join-Path $project 'runtime\Godot_v4.7.2-stable_win64.exe'
+    $engineManifest=Join-Path $project 'runtime\GODOT_RUNTIME_SHA256.txt'
+    $engineLicense=Join-Path $project 'runtime\LICENSE.txt'
+    foreach($file in @($GodotExe,$engineManifest,$engineLicense)){
+      if(-not(Test-Path -LiteralPath $file -PathType Leaf)){
+        throw "Precompiled ZIP missing verified bundled Godot runtime/licensing: $file"
+      }
+    }
+    $expected=(Get-Content -LiteralPath $engineManifest -Raw).Trim().ToLowerInvariant()
+    if($expected -notmatch '^[0-9a-f]{64}$'){
+      throw "Bundled Godot SHA-256 manifest malformed"
+    }
+    $actual=(Get-FileHash -LiteralPath $GodotExe -Algorithm SHA256).Hash.ToLowerInvariant()
+    if($actual -cne $expected){
+      throw "Bundled Godot SHA-256 does not match release-derived package manifest"
+    }
+    Write-Host "Verified bundled Godot engine SHA-256 $actual"
   } else {
-    foreach($name in @('Godot.exe','godot.exe','Godot_v4.7.2-stable_win64.exe')){
-      $candidate=Get-Command $name -ErrorAction SilentlyContinue
-      if($candidate){$GodotExe=$candidate.Source;break}
-    }
-    if([string]::IsNullOrWhiteSpace($GodotExe)){
-      Add-Type -AssemblyName System.Windows.Forms
-      $dialog=New-Object System.Windows.Forms.OpenFileDialog
-      $dialog.Title='Select your EXISTING Godot 4.7.2 editor'
-      $dialog.Filter='Godot editor (*.exe)|*.exe'
-      if($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK){$GodotExe=$dialog.FileName}
-    }
+    # Explicit diagnostic override only; never silently fallback on a
+    # user's installed editor or substitute a different major engine.
+    $GodotExe=[IO.Path]::GetFullPath($GodotExe)
+    Write-Warning "Developer -GodotExe override selected; not self-contained package acceptance."
   }
-  if(-not (Test-Path -LiteralPath $GodotExe -PathType Leaf)){
-    throw 'Existing Godot editor not found; select the Godot 4.7.2 executable.'
+  if(-not(Test-Path -LiteralPath $GodotExe -PathType Leaf)){
+    throw "Bundled Godot 4.7.2 engine missing: $GodotExe"
   }
   $version=(& $GodotExe --version 2>&1 | Out-String).Trim()
   if($LASTEXITCODE -ne 0 -or $version -notmatch '^4\.7\.2\.stable'){
     throw "Expected already-installed Godot 4.7.2.stable; got $version"
   }
-  Write-Host "Using installed Godot $version"
+  Write-Host "Using Windows Godot $version from $GodotExe"
   if(-not $SkipHeadlessSmoke){
     $suites=@(
       @('--headless','--path',('"' + $project + '"'),'--editor','--quit'),
@@ -74,7 +84,7 @@ try {
         throw "Installed Godot parser or scene smoke #$index failed. See $stdout and $stderr. Game was not launched."
       }
     }
-    Write-Host 'Actual installed-Godot parser/scene checks passed.'
+    Write-Host 'Bundled Godot 4.7.2 parser/scene checks passed.'
   }
   # Screenshot key is opt-in; captures ONLY the game viewport plus read-only
   # verified original C++ frames. No Windows desktop/screen recording.
@@ -106,7 +116,9 @@ try {
     }
   }
   $manifest=[ordered]@{
-    task='PLAY-STATION-02';godot=$GodotExe
+    task='FP3D-WIN02-BUNDLED-RUNTIME';godot=$GodotExe
+    engine_mode=if($GodotExe -eq (Join-Path $project 'runtime\Godot_v4.7.2-stable_win64.exe')){'BUNDLED-VERIFIED'}else{'EXPLICIT-DEVELOPER-OVERRIDE'}
+    engine_sha256=if(Test-Path -LiteralPath $GodotExe -PathType Leaf){(Get-FileHash -LiteralPath $GodotExe -Algorithm SHA256).Hash.ToLowerInvariant()}else{''}
     native_station_hash=if(Test-Path $station){(Get-FileHash $station -Algorithm SHA256).Hash}else{''}
     native_cockpit_hash=if(Test-Path $pilot){(Get-FileHash $pilot -Algorithm SHA256).Hash}else{''}
     sgdx_supervisor_hash=if(Test-Path $supervisor){(Get-FileHash $supervisor -Algorithm SHA256).Hash}else{''}
