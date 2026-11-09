@@ -2313,3 +2313,14 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
   set_tests_properties(galaxy_sgdx03_godot_source_admission PROPERTIES
     TIMEOUT 20 LABELS "sgdx;source-only")
 endif()
+
+# FP3D-WIN-01 source-wiring preflight: not native or GPU acceptance itself.
+# The single END-OF-GROUP Windows/Linux workflow must subsequently execute
+# MSVC, real Godot 4.7.2 on-screen viewport, package and physical-play gates.
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+  add_test(NAME galaxy_fp3d_win01_source_contract
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/desktop_godot/tests/test_fp3d_windowed_acceptance_contract.py)
+  set_tests_properties(galaxy_fp3d_win01_source_contract
+    PROPERTIES TIMEOUT 20 LABELS "source-only;windows-playtest")
+endif()
