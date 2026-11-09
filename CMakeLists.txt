@@ -2210,3 +2210,15 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
       $<TARGET_FILE:galaxy_desktop_player_host>)
   set_tests_properties(galaxy_play_station02_native_pipe PROPERTIES TIMEOUT 90)
 endif()
+
+# PLAY-STATION-03B — persistent original-world ore provenance, actual built
+# station refinery, source-stock recovery and SQLite STEP receipt integrity.
+if(BUILD_TESTING)
+  add_executable(galaxy_play_station03b_persistent_refinery_tests
+    tests/PLAY_STATION_03B_PersistentRefineryTests.cpp)
+  target_link_libraries(galaxy_play_station03b_persistent_refinery_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play_station03b_persistent_refinery
+    COMMAND galaxy_play_station03b_persistent_refinery_tests
+      ${CMAKE_CURRENT_BINARY_DIR}/play_station03b.sqlite)
+  set_tests_properties(galaxy_play_station03b_persistent_refinery PROPERTIES TIMEOUT 120)
+endif()
