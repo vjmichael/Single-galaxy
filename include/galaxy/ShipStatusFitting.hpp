@@ -1,7 +1,7 @@
 #pragma once
 // Read the EXISTING fitted ship entity. This is not a new module registry.
-// Installed hardpoint IDs 1 scanner, 2 probe launcher and 3 intrusion
-// emitter are exposed; the passive firewall is in the support rack.
+// Installed hardpoint IDs 1 scanner, 2 probe launcher, 3 intrusion emitter
+// and 4 physical mining drill are exposed; firewall is in the support rack.
 // The trusted host supplies a verified compromise surface and operator intent.
 #include "galaxy/Simulation.hpp"
 #include "galaxy/ShipStatusEffects.hpp"

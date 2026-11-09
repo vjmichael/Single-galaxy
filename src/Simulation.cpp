@@ -1710,11 +1710,12 @@ bool Simulation::submit(const Command& c) {
         snapshot_version_=std::max(snapshot_version_,100);
     }
     if(c.action==Action::ConfigureMiningTool){
+        // Do not migrate legacy games merely because a new command was sent.
+        if(snapshot_version_<124)return false;
         if(!c.id || !c.actor || c.target || (c.amount!=1 && c.amount!=-1) ||
            c.thrust_x || c.thrust_y || c.transport_id ||
            !c.passenger_ids.empty() || c.secondary_receiver || c.secondary_transport)
             return false;
-        snapshot_version_=std::max(snapshot_version_,124);
     }
     if(c.action==Action::ConfigureCyberModule ||
        c.action==Action::SetCyberIsolation ||
@@ -2637,13 +2638,19 @@ Outcome Simulation::mine_status(const Entity& actor, EntityId target) const {
     if (actor.jump_state != ShipJumpState::Ready) return Outcome::InTransition;
     if(snapshot_version_>=124) {
         const bool powered_drill =
-            (actor.fitting.hardpoints[0]==4 && hardpoint_effective_on(actor.id,0)) ||
-            (actor.fitting.hardpoints[1]==4 && hardpoint_effective_on(actor.id,1));
+            (actor.fitting.hardpoints[0]==4 && actor.hardpoint_requested_on[0] &&
+             hardpoint_effective_on(actor.id,0)) ||
+            (actor.fitting.hardpoints[1]==4 && actor.hardpoint_requested_on[1] &&
+             hardpoint_effective_on(actor.id,1));
         if(!powered_drill)return Outcome::ModuleOffline;
+        const auto colony=colony_ships_.find(actor.id);
+        if(colony==colony_ships_.end() || colony->second.crew<1)
+            return Outcome::InsufficientCrew;
         const auto person=player_people_.find(actor.owner_id);
-        if(person!=player_people_.end() &&
-           (person->second.state!=PlayerPersonState::AboardOwnShip ||
-            person->second.physical_ship!=actor.id))return Outcome::Unauthorized;
+        if(person==player_people_.end() ||
+           person->second.state!=PlayerPersonState::AboardOwnShip ||
+           person->second.physical_ship!=actor.id)
+            return Outcome::Unauthorized;
     }
     const auto it = entities_.find(target);
     if (it == entities_.end()) return depleted_.count(target) ? Outcome::NoResources : Outcome::InvalidTarget;
