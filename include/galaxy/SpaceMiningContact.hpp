@@ -76,7 +76,7 @@ inline std::optional<Contact> nearest_original_asteroid(
     if(distance>kContactRangeMm*kContactRangeMm || distance>=nearest)continue;
     nearest=distance;
     const auto* geology=world.geology(id);
-    const auto taxonomy=geology?static_cast<std::uint8_t>(geology->taxonomy):3;
+    const std::uint8_t taxonomy=geology?static_cast<std::uint8_t>(geology->taxonomy):std::uint8_t{3};
     const auto radius=geology?std::min<std::int64_t>(geology->radius_m,10000)*1000:500;
     best={id,rock->ore,*dx,*dy,*dz,radius,taxonomy,
           tool_online(world,*ship),ship->cargo,ship->cargo_capacity,truncated};
