@@ -2222,3 +2222,15 @@ if(BUILD_TESTING)
       ${CMAKE_CURRENT_BINARY_DIR}/play_station03b.sqlite)
   set_tests_properties(galaxy_play_station03b_persistent_refinery PROPERTIES TIMEOUT 120)
 endif()
+
+# PLAY-STATION-03C: real station child-host refinery terminal, actual SQLite
+# source lots, native command execution, independent restart + mineral readback.
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+  add_test(NAME galaxy_play_station03c_refinery_native_pipe
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/PLAY_STATION_03C_RefineryHostPipeTests.py
+      $<TARGET_FILE:galaxy_play_station03b_persistent_refinery_tests>
+      $<TARGET_FILE:galaxy_desktop_station_host>)
+  set_tests_properties(galaxy_play_station03c_refinery_native_pipe
+    PROPERTIES TIMEOUT 180)
+endif()

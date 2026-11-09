@@ -3,11 +3,13 @@
 // Real person, original SQLite world and exact berth custody; fixture-only hull.
 #include "galaxy/Persistence.hpp"
 #include "galaxy/StationLaunch.hpp"
+#include "galaxy/StationRefineryProtocol.hpp"
 #include <charconv>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <iostream>
+#include <limits>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -73,7 +75,9 @@ int main(int argc,char** argv){
    const bool walking=f.size()==6&&f[0]=="WALK";
    const bool boarding=f.size()==5&&f[0]=="BOARD";
    const bool exiting=f.size()==5&&f[0]=="EXIT";
-   if(!walking&&!boarding&&!exiting){deny(0,"malformed");continue;}
+   const bool view=f.size()==5&&f[0]=="REFVIEW";
+   const bool refine=f.size()==5&&f[0]=="REFINE";
+   if(!walking&&!boarding&&!exiting&&!view&&!refine){deny(0,"malformed");continue;}
    std::uint64_t requested_session=0,req=0,expected=0,ship=0;
    std::int64_t dx=0,dz=0;
    if(!parse(f[1],requested_session)||!parse(f[2],req)||!parse(f[3],expected)||
@@ -86,6 +90,47 @@ int main(int argc,char** argv){
    const auto now=std::chrono::steady_clock::now();
    if(now-last<std::chrono::milliseconds(45)){deny(req,"rate");continue;}
    const auto& person=world.world().player_people().at(kOwner);
+   if(view || refine){
+    if(!station_refinery_protocol::accessible(person) ||
+       (view && ship!=person.physical_station)){
+       deny(req,"refinery-terminal-distance-or-custody");continue;
+    }
+    int result=0;
+    std::int64_t transferred=0;
+    if(refine){
+       const auto* plant=world.world().station_refinery(person.physical_station);
+       // A target lot ID is never a mass, a facility ID or client-selected actor.
+       if(!plant || plant->owner!=kOwner || ship==0 ||
+          ship>static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) ||
+          !world.world().station_ore_lots().count(ship)){
+          deny(req,"no-owned-refinery-or-lot");continue;
+       }
+       Command c{};
+       c.id=receipt_prefix|req;
+       c.sequence=c.id;
+       c.execute_tick=world.world().tick()+1;
+       c.action=Action::RefineStationOre;
+       c.actor=plant->source_ship;
+       c.target=person.physical_station;
+       c.issuer=kOwner;
+       c.amount=static_cast<std::int64_t>(ship);
+       if(!world.submit(c)){
+          deny(req,"original-world-command-not-authorized");continue;
+       }
+       // Original SQLite STEP commits both the event and physical inventory.
+       // Exception means the process fails closed; do not emit an ACK.
+       world.step();
+       const auto& event=world.world().events().back();
+       if(event.command_id!=c.id)
+          throw std::runtime_error("refinery world journal did not return exact command");
+       result=event.result==Outcome::Applied?1:2;
+       transferred=event.transferred;
+    }
+    last=now;
+    std::cout<<station_refinery_protocol::make_snapshot(world,kOwner,session,req,result,transferred)<<std::flush;
+    if(!std::cout)throw std::runtime_error("refinery terminal stdout disconnected");
+    continue;
+   }
    EntityId station=person.physical_station;
    if(exiting){
     const auto* vessel=world.world().find(person.physical_ship);
