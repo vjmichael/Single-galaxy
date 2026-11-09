@@ -168,6 +168,19 @@ func _run() -> void:
 				if not _game.asteroid_label.text.contains("ORIGINAL SOLID CONTACT"):
 					_fail("original collision event not displayed by actual game HUD")
 					break
+				# The actual scene must derive target bearing and conservative
+				# 5.2m-hull clearance only from this SAME verified ship/rock tick.
+				if not is_instance_valid(_game.flight_instrument_label) or \
+						not _game.flight_instrument_label.text.contains("TARGET #") or \
+						not _game.flight_instrument_label.text.contains("VERIFIED IMPACT"):
+					_fail("read-only pilot instrument did not join real original impact receipt")
+					break
+				var instrument: Dictionary = MAIN.FLIGHT_INSTRUMENTS.from_verified_frames(sh, rock)
+				if instrument.is_empty() or \
+						absf(float(instrument["clearance_m"])) > 0.1 or \
+						absf(float(instrument["bearing_deg"])) > 5.0:
+					_fail("real original-world target bearing or hull clearance is inconsistent")
+					break
 				break
 	if _error.is_empty() and not collided:
 		_fail("no real swept collision reached after 70 original forward commands")
