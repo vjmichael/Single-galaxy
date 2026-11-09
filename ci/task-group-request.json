@@ -1,7 +1,7 @@
 {
   "schema": "SG-CI-GATE-01",
   "task_group": "SGDX03",
-  "source_sha": "2086e65e329eb8ce59742e510c2ea158e51a5959",
+  "source_sha": "bb532cd6226a64adbaec8963143c5e5be13cf801",
   "pr_number": 125,
-  "note": "ONE consolidated SGDX03+FP3D-WIN02 current-head Windows x64 MSVC/SQLite/SGDX/MDMP + Linux real Godot 4.7.2/native gate. Repairs four demonstrated Windows WinError32 leaked Python SQLite connections with deterministic contextlib.closing. Package verifies official Godot release asset SHA256, bundles PE64 engine+MIT licence with native hosts, re-extracts ZIP, runs actual bundled engine headless smoke and a malicious digest refusal using Windows PowerShell 5.1, then attempts real non-headless packaged 3D collision/SQLite restart. Preceding run 42679508383 compiled MSVC but failed CTest 15/19 from SQLite test cleanup; new repairs NOT YET ACCEPTED. Physical creator GPU visual judgment remains separate; do not unlock manufacturing mining equipment."
+  "note": "One consolidated SGDX03+FP3D-WIN02 final current-head native Windows/Linux/Godot/ZIP/render gate. Prior genuine MSVC 17/19 proves all four SQLite WinError32 fixes PASS, but SGDX-02 supervisor and SGDX-03 bridge failed because real second-chance Windows private MDMP unavailable. Try true second-chance DbgHelp MiniDumpWithThreadInfo then protected MiniDumpNormal, surface non-sensitive Win32 failure stage; no fake MDMP, tests still require MDMP/private NTFS ACL. One Windows task group also gathers Godot and installed ZIP evidence even if native failures, but final gate remains hard failed and ZIP never published unless native/Godot/package passed. Linux Godot process/download bounded after older runners hung. Physical creator GPU playtest deferred until verified artifact exists; PR stays draft, mining modules deferred."
 }
