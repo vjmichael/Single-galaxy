@@ -6,6 +6,21 @@ param([string]$GodotExe="",[switch]$SkipHeadlessSmoke,[switch]$VerifyOnly)
 Set-StrictMode -Version Latest
 $ErrorActionPreference="Stop"
 
+# Mixed pwsh 7 -> Windows PowerShell 5.1 test invocation can inherit a
+# PSModulePath without the OS's ordinary built-in modules. Restore the
+# Windows-installed module directory; no new package or network access.
+# Built-in ConvertTo-Json and Compress-Archive remain required to create
+# original-source, fail-closed local evidence.
+if($PSVersionTable.PSEdition -eq 'Desktop'){
+  $winModules=Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\Modules'
+  if(Test-Path -LiteralPath $winModules -PathType Container){
+    $paths=@($env:PSModulePath -split ';')
+    if($paths -notcontains $winModules){
+      $env:PSModulePath=$winModules+';'+$env:PSModulePath
+    }
+  }
+}
+
 # The single-click player path must work under Windows PowerShell 5.1 even
 # when Microsoft.PowerShell.Utility/Get-FileHash is missing. The .NET SHA-256
 # engine is built into Windows and is not a new dependency or authority.
