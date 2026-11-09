@@ -150,12 +150,13 @@ jobs:
             --output-on-failure --output-junit fp3d-env01-linux.xml \
             -R '^(galaxy_fp3d_env01_(swept_collision|native_collision_pipe)|galaxy_play_station04a_original_(asteroid_contact|rock_native_pipe)|galaxy_play_station_(boarding|mining_refining_e2e)|galaxy_play_station02_native_pipe|galaxy_play_station03(b_persistent_refinery|c_refinery_native_pipe)|galaxy_play_station04c_native_unload_pipe|galaxy_fp3d03b_(cockpit_flight|native_flight_pipe)|galaxy_sgdx03_godot_(native_bridge|source_admission)|galaxy_server_dx_(supervisor|sqlite_recovery|game_hosts)|galaxy_fp3d02b_native_desktop_readonly|galaxy_fp3d_win01_source_contract)$'
       - name: Real Godot 4.7.2 scene launches SGDX and the actual original C++ host
+        timeout-minutes: 22
         shell: bash
         run: |
           set -euxo pipefail
           python desktop_godot/tests/test_native_asteroid_contact_contract.py
           mkdir -p "$RUNNER_TEMP/fp3d-godot" build/fp3d-env01/godot-logs desktop_godot/native
-          curl --fail --location --retry 3 --retry-delay 5 \
+          curl --fail --location --retry 3 --retry-delay 5 --connect-timeout 20 --max-time 180 \
             -o "$RUNNER_TEMP/fp3d-godot/godot.zip" \
             https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
           # Official godotengine/godot-builds 4.7.2-stable release asset digest.
@@ -164,9 +165,9 @@ jobs:
           G="$RUNNER_TEMP/fp3d-godot/Godot_v4.7.2-stable_linux.x86_64"
           chmod +x "$G"
           "$G" --version
-          "$G" --headless --path desktop_godot --editor --quit \
+          timeout --signal=TERM --kill-after=8s 100s "$G" --headless --path desktop_godot --editor --quit \
             2>&1 | tee build/fp3d-env01/godot-logs/import.log
-          "$G" --headless --path desktop_godot --quit-after 5 \
+          timeout --signal=TERM --kill-after=8s 75s "$G" --headless --path desktop_godot --quit-after 5 \
             2>&1 | tee build/fp3d-env01/godot-logs/scene.log
           cp build/fp3d-env01/galaxy_desktop_player_host \
             build/fp3d-env01/galaxy_desktop_station_host \
@@ -175,10 +176,10 @@ jobs:
           printf '%s\n' '${{ needs.validate.outputs.sha }}' > desktop_godot/native/SGDX_BUILD_SHA.txt
           export SG_FP3D_E2E_SAVE="$RUNNER_TEMP/sgdx-live-original.sqlite"
           build/fp3d-env01/galaxy_play_station04a_native_rock_seed "$SG_FP3D_E2E_SAVE"
-          "$G" --headless --path desktop_godot --script res://tests/fp3d_env01_live_scene_acceptance.gd \
+          timeout --signal=TERM --kill-after=8s 180s "$G" --headless --path desktop_godot --script res://tests/fp3d_env01_live_scene_acceptance.gd \
             2>&1 | tee build/fp3d-env01/godot-logs/real-sgdx-cockpit.log
           for test in native_player_protocol_smoke.gd native_asteroid_contact_smoke.gd native_station_protocol_smoke.gd native_station_refinery_protocol_smoke.gd station_visual_smoke.gd fp3d_env01_collision_receipt_smoke.gd fp3d_env01f_pilot_instruments_smoke.gd; do
-            "$G" --headless --path desktop_godot --script "res://tests/$test" \
+            timeout --signal=TERM --kill-after=8s 90s "$G" --headless --path desktop_godot --script "res://tests/$test" \
               2>&1 | tee "build/fp3d-env01/godot-logs/$test.log"
           done
       - uses: actions/upload-artifact@v4
