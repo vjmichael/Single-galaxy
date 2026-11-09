@@ -221,6 +221,8 @@ jobs:
           cmake --build build/fp3d-env01 --config Release --parallel 2 --target galaxy_fp3d_env01_swept_collision_tests galaxy_play_station04a_original_asteroid_contact_tests galaxy_fp3d03b_cockpit_flight_tests galaxy_play_station_boarding_tests galaxy_play_station03b_persistent_refinery_tests galaxy_play_station_mining_refining_e2e galaxy_play_station04a_native_rock_seed galaxy_colony_live_host galaxy_interactive_host galaxy_native_cell_worker galaxy_desktop_player_host galaxy_desktop_station_host galaxy_desktop_readonly_host galaxy_server_dx_supervisor galaxy_server_dx_fault_child
           if($LASTEXITCODE -ne 0){throw 'MSVC native build failed'}
       - name: Real Windows SGDX pipe, crash/forced kill, SQLite and private minidump
+        id: native-gate
+        continue-on-error: true
         shell: pwsh
         run: |
           python desktop_godot/tests/test_sgdx03_bridge_contract.py
@@ -231,6 +233,8 @@ jobs:
           ctest --test-dir build/fp3d-env01 -C Release --no-tests=error --timeout 200 --output-on-failure --output-junit fp3d-env01-windows.xml -R '^(galaxy_fp3d_env01_(swept_collision|native_collision_pipe)|galaxy_play_station04a_original_(asteroid_contact|rock_native_pipe)|galaxy_play_station_(boarding|mining_refining_e2e)|galaxy_play_station02_native_pipe|galaxy_play_station03(b_persistent_refinery|c_refinery_native_pipe)|galaxy_play_station04c_native_unload_pipe|galaxy_fp3d03b_(cockpit_flight|native_flight_pipe)|galaxy_sgdx03_godot_(native_bridge|source_admission)|galaxy_server_dx_(supervisor|sqlite_recovery|game_hosts)|galaxy_fp3d02b_native_desktop_readonly|galaxy_fp3d_win01_source_contract)$'
           if($LASTEXITCODE -ne 0){throw 'Real native SGDX/SQLite/Windows MDMP gate failed'}
       - name: Windows Godot 4.7.2 real SGDX supervised cockpit, collision and camera
+        id: godot-gate
+        continue-on-error: true
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
@@ -267,6 +271,8 @@ jobs:
             if($LASTEXITCODE -ne 0){throw "Godot parser failed: $test"}
           }
       - name: Package only verified precompiled Windows SGDX game
+        id: package-gate
+        continue-on-error: true
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
@@ -340,11 +346,15 @@ jobs:
           # extracted engine digest, require exact hash refusal, restore.
           & ./desktop_godot/build_tools/Test-BundledRuntimeTamper.ps1 -ExtractedGame $installedGame -EvidenceDirectory 'build/fp3d-env01/godot-logs'
       - uses: actions/upload-artifact@v4
+        if: steps.native-gate.outcome == 'success' && steps.godot-gate.outcome == 'success' && steps.package-gate.outcome == 'success'
         with:
           name: SingleGalaxy-FP3D-SGDX03-Windows-${{ needs.validate.outputs.sha }}
           path: build/SingleGalaxy_FP3D_SGDX03_Windows_Precompiled.zip
           if-no-files-found: error
       - name: Genuine Windows non-headless Godot render plus SQLite restart
+        id: window-gate
+        continue-on-error: true
+        if: steps.package-gate.outcome == 'success'
         shell: pwsh
         timeout-minutes: 12
         run: |
@@ -373,3 +383,22 @@ jobs:
             build/fp3d-env01/godot-logs/*.log
             build/fp3d-env01/godot-logs/*.json
           if-no-files-found: warn
+      - name: Enforce ALL real native, Godot, packaged Windows and windowed gates
+        if: always()
+        shell: pwsh
+        run: |
+          # continue-on-error is only to collect evidence; preserve hard failure.
+          $gate=@{
+            'native-MSVC-SQLite-private-MDMP'='${{ steps.native-gate.outcome }}'
+            'actual-Godot-4.7.2-engine'='${{ steps.godot-gate.outcome }}'
+            'real-extracted-selfcontained-ZIP'='${{ steps.package-gate.outcome }}'
+            'nonheadless-render-4-original-frames'='${{ steps.window-gate.outcome }}'
+          }
+          $failed=@($gate.Keys | Where-Object { $gate[$_] -ne 'success' })
+          foreach($key in ($gate.Keys | Sort-Object)){
+            Write-Host ("{0}: {1}" -f $key, $gate[$key])
+          }
+          if($failed.Count -gt 0){
+            throw ("SGDX03 Windows group NOT ACCEPTED: " + ($failed -join ", "))
+          }
+          Write-Host 'All Windows native, Godot, packaged ZIP and windowed gates PASS'
