@@ -172,6 +172,21 @@ func _build_station() -> void:
 	_solid_box("Hangar gangway", Vector3(0, 0.015, -4.5), Vector3(1.6, 0.03, 9))
 	# Visual marker only. The original host authorizes access at (3m,0m).
 	_solid_box("Station refinery terminal (R)", Vector3(3.0, 0.85, 0), Vector3(0.65, 1.7, 0.65))
+	# Actual C++ station-person walk envelope is +/-8m in both axes.
+	# Visual perimeter strips are noncolliding: only the native original
+	# player transaction owns movement admission and station obstacles.
+	var native_limit := Node3D.new()
+	native_limit.name = "NativeStationWalkEnvelope_16m_VisualOnly"
+	_geometry_parent.add_child(native_limit)
+	for i in range(4):
+		var strip := MeshInstance3D.new()
+		strip.name = "native_walk_boundary_" + str(i)
+		var bar := BoxMesh.new()
+		bar.size = Vector3(16.0, 0.02, 0.04) if i < 2 else Vector3(0.04, 0.02, 16.0)
+		strip.mesh = bar
+		strip.material_override = material
+		strip.position = Vector3(0.0, 0.025, -8.0 if i == 0 else 8.0) if i < 2 else Vector3(-8.0 if i == 2 else 8.0, 0.025, 0.0)
+		native_limit.add_child(strip)
 
 func _build_objects() -> void:
 	_solid_cylinder("NPC prototype — no arms", Vector3(0.0, 1.0, -5.0), 2, 0.38)
