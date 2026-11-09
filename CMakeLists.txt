@@ -2235,6 +2235,19 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
     PROPERTIES TIMEOUT 180)
 endif()
 
+# PLAY-STATION-04C: a real previously mined geological tonne still aboard
+# a docked owned ship; host verifies terminal range, original one-tonne
+# UNLOAD, lot identity, subsequent 1000kg refinery and SQLite restart.
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+  add_test(NAME galaxy_play_station04c_native_unload_pipe
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/PLAY_STATION_04C_UnloadPipeTests.py
+      $<TARGET_FILE:galaxy_play_station03b_persistent_refinery_tests>
+      $<TARGET_FILE:galaxy_desktop_station_host>)
+  set_tests_properties(galaxy_play_station04c_native_unload_pipe
+    PROPERTIES TIMEOUT 180 LABELS "native;sqlite;physical-unload")
+endif()
+
 # PLAY-STATION-04A: original 3D rock-contact and finite unmined-ore snapshot
 # without any Godot-side asteroid authority or default mining equipment.
 if(BUILD_TESTING)
