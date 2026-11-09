@@ -49,12 +49,12 @@ func _run() -> void:
 
     # Synthesize the *visual consumer* of an already-verified original PERSON.
     # This test does not write SQLite or grant ship authority to the UI.
-    stage._on_native_station_person({"state":4,"station":1,"ship":0,
+    stage.call("_on_native_station_person", {"state":4,"station":1,"ship":0,
         "eligible_ship":2,"x_mm":1600,"z_mm":0})
     if not station.visible or cabin.visible or absf(player.global_position.x - 1.6) > 0.001:
         _fail("station PERSON was not projected to station geometry")
         return
-    stage._on_native_station_person({"state":0,"station":1,"ship":2,
+    stage.call("_on_native_station_person", {"state":0,"station":1,"ship":2,
         "eligible_ship":2,"x_mm":0,"z_mm":0})
     if station.visible or not cabin.visible:
         _fail("BOARD PERSON did not switch visible location")
@@ -62,13 +62,13 @@ func _run() -> void:
     if not _is_active(station_bodies, false) or not _is_active(cabin_bodies, true):
         _fail("invisible station walls still block boarded player")
         return
-    stage._on_native_player_pose({"x_mm":0,"y_mm":0,"z_mm":0,"seated":true})
-    if not player.native_seated or not cabin.visible:
+    stage.call("_on_native_player_pose", {"x_mm":0,"y_mm":0,"z_mm":0,"seated":true})
+    if not bool(player.get("native_seated")) or not cabin.visible:
         _fail("ship POSE did not preserve cockpit authority projection")
         return
-    stage._on_native_station_person({"state":4,"station":1,"ship":0,
+    stage.call("_on_native_station_person", {"state":4,"station":1,"ship":0,
         "eligible_ship":2,"x_mm":0,"z_mm":0})
-    if not station.visible or cabin.visible or player.native_seated:
+    if not station.visible or cabin.visible or bool(player.get("native_seated")):
         _fail("disembark PERSON did not restore station and clear seat")
         return
     if not _is_active(station_bodies, true) or not _is_active(cabin_bodies, false):
