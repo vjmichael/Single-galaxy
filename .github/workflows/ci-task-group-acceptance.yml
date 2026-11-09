@@ -314,8 +314,27 @@ jobs:
           ) | Set-Content -LiteralPath (Join-Path $runtime 'PROVENANCE.txt')
           'Double-click desktop_godot/RUN_STATION_PLAYTEST_WINDOWS.cmd. Includes pinned Godot 4.7.2 Windows runtime and original C++/SQLite hosts; no installation, compiler or download. All ship/station/observer hosts must use bundled SGDX supervisor and Windows Job Object. Optional crash minidump SGDX_WINDOWS_MINIDUMP=1 contains private memory. Human GPU/camera approval still required.' | Set-Content (Join-Path $root 'START_HERE.txt')
           Compress-Archive -Path (Join-Path $root '*') -DestinationPath build/SingleGalaxy_FP3D_SGDX03_Windows_Precompiled.zip -Force
-          # Validate the deliverable ZIP, not merely the compiled build targets.
-          & ./desktop_godot/build_tools/Verify-PrecompiledPackage.ps1 -Archive 'build/SingleGalaxy_FP3D_SGDX03_Windows_Precompiled.zip' -ExpectedSourceSha $head -EvidenceFile 'build/fp3d-env01/godot-logs/packaging-result.json'
+          # Validate the DELIVERABLE ZIP, then execute the unpacked artifact's
+          # own included Godot, original scene, native hosts and headless smoke.
+          # Source-tree tests alone cannot validate the player's packaged ZIP.
+          $bundle='build/SingleGalaxy_FP3D_SGDX03_Windows_Precompiled.zip'
+          & ./desktop_godot/build_tools/Verify-PrecompiledPackage.ps1 -Archive $bundle -ExpectedSourceSha $head -EvidenceFile 'build/fp3d-env01/godot-logs/packaging-result.json'
+          $installed='build/fp3d-env01/installed-image'
+          New-Item -ItemType Directory -Force $installed | Out-Null
+          Expand-Archive -LiteralPath $bundle -DestinationPath $installed -Force
+          $installedGame=Join-Path $installed 'desktop_godot'
+          & (Join-Path $installedGame 'build_tools/Launch-PrebuiltStation.ps1') -VerifyOnly
+          $resultPath=Join-Path $installedGame 'playtest-logs/result.json'
+          if(-not(Test-Path -LiteralPath $resultPath -PathType Leaf)){
+            throw 'Packaged self-contained launcher did not produce native/Godot result'
+          }
+          $report=Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json
+          if($report.result -cne 'BUNDLED-PACKAGE-HEADLESS-PREFLIGHT-VERIFIED-NO-GPU-CLAIM' -or
+             $report.engine_mode -cne 'BUNDLED-VERIFIED' -or
+             $report.build_sha -cne $head){
+            throw 'Extracted Windows package failed exact-SHA native/bundled-engine smoke; no published ZIP allowed'
+          }
+          Copy-Item -LiteralPath $resultPath -Destination 'build/fp3d-env01/godot-logs/installed-package-preflight.json' -Force
       - uses: actions/upload-artifact@v4
         with:
           name: SingleGalaxy-FP3D-SGDX03-Windows-${{ needs.validate.outputs.sha }}
@@ -326,10 +345,12 @@ jobs:
         timeout-minutes: 12
         run: |
           $ErrorActionPreference='Stop'
-          $g=Get-ChildItem build/fp3d-env01/godot -Filter '*win64_console.exe' -Recurse | Select-Object -First 1
-          if(-not $g){$g=Get-ChildItem build/fp3d-env01/godot -Filter '*win64.exe' -Recurse | Select-Object -First 1}
-          if(-not $g){throw 'Real Windows Godot executable missing'}
-          & ./desktop_godot/build_tools/Test-WindowedNativeGodot.ps1 -GodotExe $g.FullName -Project (Resolve-Path desktop_godot).Path -BuildRoot (Resolve-Path build/fp3d-env01).Path -SeedExe (Resolve-Path build/fp3d-env01/Release/galaxy_play_station04a_native_rock_seed.exe).Path
+          $installedGame=(Resolve-Path 'build/fp3d-env01/installed-image/desktop_godot').Path
+          $bundledGodot=Join-Path $installedGame 'runtime/Godot_v4.7.2-stable_win64.exe'
+          if(-not(Test-Path -LiteralPath $bundledGodot -PathType Leaf)){
+            throw 'Real extracted ZIP missing Godot runtime; refusing alternate system editor'
+          }
+          & ./desktop_godot/build_tools/Test-WindowedNativeGodot.ps1 -GodotExe $bundledGodot -Project $installedGame -BuildRoot (Resolve-Path build/fp3d-env01).Path -SeedExe (Resolve-Path build/fp3d-env01/Release/galaxy_play_station04a_native_rock_seed.exe).Path
       - uses: actions/upload-artifact@v4
         if: always()
         with:
