@@ -54,3 +54,57 @@ actual Godot/Linux/Windows runtime execution is still **OPEN**. No clean exit,
 Windows MDMP, GPU scene, or crash-recovery acceptance is claimed solely from
 these source changes. The FP3D-ENV-01/SGDX workflow on the updated PR #125 head
 must actually execute its native and Godot tests before this gate can close.
+
+## 2026-11-09 independent native Linux group evidence — 18/18
+
+An actual GitHub Actions **immutable source-export** run
+[42673704458](https://github.com/vjmichael/Single-galaxy/actions/runs/42673704458)
+produced artifact `SingleGalaxy-exact-head-source-1cdc2d4f` for source SHA
+`1cdc2d4f5f6684e53aded6f220908a5263905166`; the downloaded tarball
+passed its embedded SHA-256 checksum. The only subsequent implementation
+change before this evidence was the SGDX03 test-only bounded-pipe-read repair,
+Git blob `ffd288675a89b82f969809a494ba620ad1d3dc63`, independently
+matched via `git hash-object` to the commit on PR #125
+`eeb329a1f683ea01bca1871d36c6081c9e808973`.
+No native source files changed between these two PR heads.
+
+**Real Linux machine-run evidence (not simulated / not GH-hosted acceptance):**
+Debian Linux x86_64, GCC 14.2, CMake 3.31.6, Ninja and SQLite 3.46.1.
+`cmake -S . -B build/native -G Ninja -DCMAKE_BUILD_TYPE=Debug
+-DCMAKE_CXX_FLAGS="-O0 -g0" -DBUILD_TESTING=ON
+-DBUILD_BENCHMARKS=OFF` configured successfully. Actual kernel, station,
+cockpit, observer, SGDX guardian and fault child, native cell worker, colony and
+interactive hosts, all listed collision/boarding/ore/refinery test executables
+compiled and linked. Python source contracts and py_compile also passed.
+`ctest --test-dir build/native --no-tests=error --timeout 60
+--output-on-failure -R <the exact main task-group Linux regex>`
+completed as a **single local CTest process** with **18/18 PASS**, exit
+code 0, 37.40 seconds real elapsed. These 18 include supervised crash,
+child/guardian kill and SQLite recovery; original headless C++ ship–rock
+contact and docking, station person walk/boarding, the new
+`galaxy_play_station04c_native_unload_pipe`, original source-tagged
+1 tonne unload -> 1000kg refinery, restart/integrity, full interactive
+simulation hosts and SGDX03 native bridge. Test-only Godot source admission
+passed but this machine did not execute the Godot engine.
+
+A real reproducibility issue was observed: command-tool-attached foreground
+invocations of this long CTest group sometimes stopped showing completion
+at the SGDX03 native bridge, although the bridge succeeded when run separately
+and wrote its terminal PASS output. In PR commit `eeb329a`, the test now
+bounds **every** native-pipe response using a platform-independent daemon
+reader thread and explicit 15-second deadline, closes the guardian on timeout
+and reports the exact response phase; no false receipts or silent retries.
+A detached **whole group** then finished cleanly with 18/18 PASS, proving
+the full group can complete. This does **not** prove the foreground harness
+symptom can never recur; the actual Windows CI runner still must execute.
+
+**Not accepted by this Linux evidence:** real Windows/MSVC x64 compiler and
+runtime, MDMP bytes/NTFS ACL in Windows, Godot 4.7.2 headless native scene,
+non-headless Windows GPU/camera/collision, precompiled installer/ZIP artifact
+and the full player-generated mining equipment loop. The original
+[42669612497](https://github.com/vjmichael/Single-galaxy/actions/runs/42669612497)
+was pinned to **older** source `3186678f...`, and its Windows/Linux
+workers were queued rather than accepted. Request exactly **one** new gate
+on the final current PR head after group closeout and repair any real failures
+from its logs. PR #125 remains draft. No manufactured mining module is
+unlocked from this Linux result.
