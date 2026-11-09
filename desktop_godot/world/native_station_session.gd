@@ -6,6 +6,8 @@ signal status_changed(message: String)
 signal connection_changed(connected: bool)
 
 var _pid := -1
+var _last_shutdown_pid := -1
+var _last_shutdown_msec := -10000
 var _stdout: FileAccess
 var _stderr: FileAccess
 var _active := false
@@ -20,6 +22,15 @@ var _person := {}
 
 func is_active() -> bool:
 	return _active
+
+func process_id() -> int:
+	# Track even a just-stopped writer. A rapid H -> P or P -> H must
+	# not race its lingering SQLite WAL lock after an explicit stop.
+	if _active:
+		return _pid
+	if _last_shutdown_pid > 0 and Time.get_ticks_msec() - _last_shutdown_msec < 3000:
+		return _last_shutdown_pid
+	return -1
 
 func _status(message: String) -> void:
 	status_changed.emit(message)
@@ -193,6 +204,9 @@ func interact_hangar() -> void:
 	_send("%s|%d|%d|%d|%d" % [verb, _session, req, _generation, target])
 
 func stop(message: String = "Station session closed") -> void:
+	if _pid > 0:
+		_last_shutdown_pid = _pid
+		_last_shutdown_msec = Time.get_ticks_msec()
 	if _active and _pid > 0 and OS.is_process_running(_pid):
 		OS.kill(_pid)
 	_pid = -1
