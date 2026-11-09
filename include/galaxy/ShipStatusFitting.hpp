@@ -18,7 +18,7 @@ inline std::vector<ModuleControl> fitted_controls(
     if(ship.type!=EntityType::Ship)return modules;
     for(std::uint8_t slot=0;slot<2;++slot) {
         const auto hardware=ship.fitting.hardpoints[slot];
-        if(hardware!=1 && hardware!=2 && hardware!=3)continue;
+        if(hardware!=1 && hardware!=2 && hardware!=3 && hardware!=4)continue;
         modules.push_back({ModuleKey{0,slot,hardware},
             pilot_intent[slot],host_verified_attack_surface[slot],
             isolated[slot]});

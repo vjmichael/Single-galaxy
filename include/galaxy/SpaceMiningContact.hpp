@@ -12,7 +12,7 @@
 namespace galaxy::space_mining_view {
 constexpr std::int64_t kContactRangeMm=30000;
 constexpr std::size_t kMaxSystemEntitiesScanned=8192;
-constexpr std::uint8_t kMiningToolHardpoint=4; // RESERVED future installed module
+constexpr std::uint8_t kMiningToolHardpoint=4; // Manufactured two-tonne fitted drill
 struct Contact {
   EntityId rock=0;
   std::int64_t ore_tonnes=0;
