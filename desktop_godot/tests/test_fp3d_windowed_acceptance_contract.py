@@ -138,19 +138,23 @@ checks = {
         "runtime\\Godot_v4.7.2-stable_win64_console.exe" in gui_launcher
         and "GODOT_CONSOLE_SHA256.txt" in gui_launcher
         and "Get-LocalSha256 $CliGodotExe" in gui_launcher
-        and "Start-Process -FilePath $CliGodotExe" in gui_launcher
+        and "$info.FileName=$CliGodotExe" in gui_launcher
+        and "$child.Start()" in gui_launcher
         and "Start-Process -FilePath $GodotExe" in gui_launcher
-        and "$exited=[bool]$p.HasExited" in gui_launcher
+        and "$child.HasExited" in gui_launcher
         and "godot_console_sha256=" in gui_launcher
         and "Verify-Pe64 $console" in package
         and "godot_console_companion_pe64_sha256" in package
         and "Extracted official Godot console companion missing or tampered" in tamper
         and "$cleanResult.godot_console_sha256 -cne $consoleOriginal" in tamper
     ),
-    "windows-powershell5-waits-on-original-process-not-unrelated-pid": (
-        "$p.WaitForExit(90000)" in gui_launcher
-        and "$p.WaitForExit()" in gui_launcher
-        and "$p.Refresh()" in gui_launcher
+    "windows-powershell5-real-dotnet-process-typed-exit-and-bounded-dual-pipes": (
+        "New-Object System.Diagnostics.ProcessStartInfo" in gui_launcher
+        and "New-Object System.Diagnostics.Process" in gui_launcher
+        and "$child.StandardOutput.ReadToEndAsync()" in gui_launcher
+        and "$child.StandardError.ReadToEndAsync()" in gui_launcher
+        and "$child.WaitForExit(90000)" in gui_launcher
+        and "$child.ExitCode" in gui_launcher
         and "$null -eq $exitValue" in gui_launcher
         and "$code=[int]$exitValue" in gui_launcher
         and "Wait-Process -Id $p.Id -Timeout 90" not in gui_launcher
