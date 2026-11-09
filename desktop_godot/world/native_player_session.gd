@@ -73,7 +73,8 @@ func start(save_override: String = "") -> void:
 	if not FileAccess.file_exists(path):
 		_status("NATIVE PLAYER HOST MISSING: " + path)
 		return
-	var save := save_override if not save_override.is_empty() else OS.get_user_data_dir().path_join("single_galaxy_authoritative.sqlite")
+	var explicit_mining_save := OS.get_environment("SG_04B_TEST_SAVE")
+	var save := save_override if not save_override.is_empty() else explicit_mining_save if not explicit_mining_save.is_empty() else OS.get_user_data_dir().path_join("single_galaxy_authoritative.sqlite")
 	var result := OS.execute_with_pipe(path, PackedStringArray([save]), false)
 	if result.is_empty() or not result.has("stdio") or not result.has("pid"):
 		_status("NATIVE PLAYER HOST LAUNCH FAILED")

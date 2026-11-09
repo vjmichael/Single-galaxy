@@ -318,7 +318,8 @@ func _advance_native_handoff() -> void:
 		last_station_player_state = -1 # only fresh native PERSON can unlock P
 		native_station_session.start()
 	elif destination == "ship":
-		var save_override := OS.get_user_data_dir().path_join("single_galaxy_station_test.sqlite") if station_test_save_selected else ""
+		var mining_save := OS.get_environment("SG_04B_TEST_SAVE")
+		var save_override := mining_save if not mining_save.is_empty() else OS.get_user_data_dir().path_join("single_galaxy_station_test.sqlite") if station_test_save_selected else ""
 		native_player_session.start(save_override)
 	# If launching the replacement failed, do not keep an inert authority lock.
 	if is_instance_valid(player) and not native_station_session.is_active() and not native_player_session.is_active():
