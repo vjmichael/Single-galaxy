@@ -189,7 +189,7 @@ Command decode_command(const std::string& record) {
                 throw std::runtime_error("recovery: malformed split rescue envelope");
         }
     }
-    if (in >> extra || action < 0 || action > static_cast<int>(Action::CancelWorkshopJob) || c.id == 0 || c.issuer == 0)
+    if (in >> extra || action < 0 || action > static_cast<int>(Action::RefineStationOre) || c.id == 0 || c.issuer == 0)
         throw std::runtime_error("recovery: invalid command journal values");
     c.action = static_cast<Action>(action);
     if (command_record(c) != record) throw std::runtime_error("recovery: noncanonical command journal");
@@ -4491,6 +4491,7 @@ public:
         std::size_t transfers = 0;
         std::size_t salvage_transfers = 0;
         std::size_t hangar_transfers = 0;
+        std::size_t actual_station_install=0,actual_station_process=0;
         std::size_t load_transfers = 0;
         std::size_t sale_transfers = 0;
         std::size_t refine_transfers=0, fabricate_transfers=0, build_transfers=0;
@@ -4627,6 +4628,27 @@ public:
                     reason=="fabrication_transfer" ? "modules:" : "outpost:")+std::to_string(cmd->second.actor)!=
                       reinterpret_cast<const char*>(sqlite3_column_text(ledger.get(),5)))
                     throw std::runtime_error("SQLite: colony transformation ledger mismatch");
+            } else if(reason=="station_refinery_install_t" || reason=="station_refinery_process_kg"){
+                const bool install=reason=="station_refinery_install_t";
+                if(install)++actual_station_install;else ++actual_station_process;
+                const auto id=parse_u64(sqlite3_column_text(ledger.get(),0));
+                const auto ev=event_by_id.find(id);const auto cmd=journal_commands.find(id);
+                if(ev==event_by_id.end() || cmd==journal_commands.end() ||
+                   cmd->second.action!=(install?Action::BuildStationRefinery:Action::RefineStationOre) ||
+                   ev->second.result!=Outcome::Applied || ev->second.transferred!=amount ||
+                   amount!=(install?4:1000) ||
+                   ev->second.tick!=static_cast<std::uint64_t>(sqlite3_column_int64(ledger.get(),1)) ||
+                   sqlite3_column_type(ledger.get(),4)!=SQLITE_TEXT ||
+                   sqlite3_column_type(ledger.get(),5)!=SQLITE_TEXT)
+                    throw std::runtime_error("SQLite: station refinery applied receipt mismatch");
+                const auto& c=cmd->second;
+                const auto src=install?"modules:"+std::to_string(c.actor):
+                    "hangar:"+std::to_string(c.target)+":owner:"+std::to_string(c.issuer);
+                const auto dst=install?"station-refinery:"+std::to_string(c.target):
+                    "station-minerals:"+std::to_string(c.target)+":owner:"+std::to_string(c.issuer);
+                if(src!=reinterpret_cast<const char*>(sqlite3_column_text(ledger.get(),4)) ||
+                   dst!=reinterpret_cast<const char*>(sqlite3_column_text(ledger.get(),5)))
+                    throw std::runtime_error("SQLite: refinery physical endpoints mismatch");
             } else if (reason=="mineral_refining_kg" || reason=="material_fabrication_t"){
                 const bool refine=reason=="mineral_refining_kg";
                 if(refine)++mineral_refine_transfers;else ++material_fabricate_transfers;
@@ -5075,6 +5097,7 @@ public:
         std::size_t expected_load_transfers = 0;
         std::size_t expected_sale_transfers = 0;
         std::size_t expected_refine=0,expected_fabricate=0,expected_build=0;
+        std::size_t expected_station_install=0,expected_station_process=0;
         std::size_t expected_mineral_refine=0,expected_material_fabricate=0;
         std::size_t expected_life_transfers=0,expected_farm_builds=0,expected_farm_stock_transfers=0;
         std::size_t expected_habitat_builds=0, expected_habitat_transfers=0;
@@ -5103,6 +5126,8 @@ public:
             else if (cmd->second.action == Action::UnloadOre) ++expected_hangar_transfers;
             else if (cmd->second.action == Action::LoadOre) ++expected_load_transfers;
             else if (cmd->second.action == Action::SellOre) ++expected_sale_transfers;
+            else if (cmd->second.action == Action::BuildStationRefinery) ++expected_station_install;
+            else if (cmd->second.action == Action::RefineStationOre) ++expected_station_process;
             else if (cmd->second.action == Action::RefineOre) ++expected_refine;
             else if (cmd->second.action == Action::FabricateModule) ++expected_fabricate;
             else if (cmd->second.action == Action::ConstructOutpost) ++expected_build;
@@ -5158,6 +5183,8 @@ public:
             load_transfers != expected_load_transfers || sale_transfers != expected_sale_transfers ||
             refine_transfers!=expected_refine || fabricate_transfers!=expected_fabricate ||
             build_transfers!=expected_build ||
+            actual_station_install!=expected_station_install ||
+            actual_station_process!=expected_station_process ||
             mineral_refine_transfers!=expected_mineral_refine ||
             material_fabricate_transfers!=expected_material_fabricate ||
             life_transfers!=expected_life_transfers ||
@@ -7510,6 +7537,8 @@ public:
                          cmd->second.action != Action::Mine && cmd->second.action != Action::SalvageWreck &&
                          cmd->second.action != Action::UnloadOre &&
                          cmd->second.action != Action::LoadOre && cmd->second.action != Action::SellOre &&
+                         cmd->second.action != Action::BuildStationRefinery &&
+                         cmd->second.action != Action::RefineStationOre &&
                          cmd->second.action != Action::RefineOre &&
                          cmd->second.action != Action::FabricateModule &&
                          cmd->second.action != Action::ConstructOutpost &&
@@ -7806,6 +7835,22 @@ public:
                         ledger.text(5,life_ledger_destination(cmd->second));
                         ledger.i64(6,ev.transferred);
                         ledger.text(7,"life_support_transform_kg");
+                    } else if(cmd->second.action==Action::BuildStationRefinery ||
+                              cmd->second.action==Action::RefineStationOre){
+                        // These are original STEP receipts, committed under
+                        // the same BEGIN IMMEDIATE as material and snapshot.
+                        const auto& c=cmd->second;
+                        if(ev.transferred!=(c.action==Action::BuildStationRefinery?4:1000))
+                            throw std::runtime_error("station refinery amount mismatch");
+                        ledger.text(4,c.action==Action::BuildStationRefinery?
+                            "modules:"+std::to_string(c.actor):
+                            "hangar:"+std::to_string(c.target)+":owner:"+std::to_string(c.issuer));
+                        ledger.text(5,c.action==Action::BuildStationRefinery?
+                            "station-refinery:"+std::to_string(c.target):
+                            "station-minerals:"+std::to_string(c.target)+":owner:"+std::to_string(c.issuer));
+                        ledger.i64(6,ev.transferred);
+                        ledger.text(7,c.action==Action::BuildStationRefinery?
+                            "station_refinery_install_t":"station_refinery_process_kg");
                     } else if(cmd->second.action==Action::RefineOre ||
                               cmd->second.action==Action::FabricateModule ||
                               cmd->second.action==Action::ConstructOutpost){
