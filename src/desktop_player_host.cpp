@@ -69,6 +69,23 @@ void send_rock_contact(std::uint64_t session,std::uint64_t req,
         throw std::runtime_error("original owned ship missing for rock telemetry");
     const auto rock=space_mining_view::nearest_original_asteroid(
         world.world(),kLocalOwner,ship_id);
+    EntityId contact_rock=0;
+    std::uint64_t contact_tick=0;
+    const bool swept=world.world().native_swept_asteroid_collision_enabled();
+    // Only a genuine current original STEP contact; no replay on reconnect.
+    if(swept && req) {
+        const auto& history=world.world().activity_events();
+        for(auto it=history.rbegin();it!=history.rend();++it) {
+            if(it->tick<world.world().tick())break;
+            if(it->tick==world.world().tick() &&
+               it->kind==ActivityKind::ShipAsteroidContact &&
+               it->actor==ship_id && it->result==Outcome::Applied) {
+                contact_rock=it->target;
+                contact_tick=it->tick;
+                break;
+            }
+        }
+    }
     if(rock) {
         std::cout<<"ROCK|1|"<<session<<'|'<<req<<'|'<<ship_id<<'|'
                  <<world.world().tick()<<'|'<<world.generation()<<'|'
@@ -76,13 +93,16 @@ void send_rock_contact(std::uint64_t session,std::uint64_t req,
                  <<rock->x_mm<<'|'<<rock->y_mm<<'|'<<rock->z_mm<<'|'
                  <<rock->radius_mm<<'|'<<unsigned(rock->taxonomy)<<'|'
                  <<rock->cargo_tonnes<<'|'<<rock->cargo_capacity_tonnes<<'|'
-                 <<(rock->mining_tool_online?1:0)<<'\n'<<std::flush;
+                 <<(rock->mining_tool_online?1:0);
+        if(swept)std::cout<<'|'<<contact_rock<<'|'<<contact_tick;
+        std::cout<<'\n'<<std::flush;
     } else {
         std::cout<<"ROCKNONE|1|"<<session<<'|'<<req<<'|'<<ship_id<<'|'
                  <<world.world().tick()<<'|'<<world.generation()<<'|'
                  <<ship->cargo<<'|'<<ship->cargo_capacity<<'|'
-                 <<(space_mining_view::tool_online(world.world(),*ship)?1:0)
-                 <<'\n'<<std::flush;
+                 <<(space_mining_view::tool_online(world.world(),*ship)?1:0);
+        if(swept)std::cout<<'|'<<contact_rock<<'|'<<contact_tick;
+        std::cout<<'\n'<<std::flush;
     }
     if(!std::cout)throw std::runtime_error("Godot original-rock observation pipe closed");
 }

@@ -15,6 +15,7 @@ int main(int argc,char** argv){
   (void)seed.add_colony_ship(8,{15000,0},8,2);
   const auto rock=seed.add_geological_asteroid({25000,0},AsteroidClass::Metallic,10,900);
   seed.enable_native_galactic_physics({{1,galactic::Point{{0,100000},{0,100000},{0,100000}}}});
+  seed.enable_native_swept_asteroid_collision(); // new test-only world
   if(!seed.register_player_person(7,ship))throw std::runtime_error("fixture real owned person refused");
   PersistentWorld world(argv[1],std::move(seed));
   const auto* r=world.world().find(rock);

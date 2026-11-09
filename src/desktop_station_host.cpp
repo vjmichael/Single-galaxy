@@ -57,6 +57,9 @@ int main(int argc,char** argv){
   // Existing saves ignore this seed. A visual Godot sample never adds ore.
   (void)seed.add_geological_asteroid({25000,0},AsteroidClass::Metallic,10,900);
   seed.enable_native_galactic_physics({{1,galactic::Point{{0,100000},{0,100000},{0,100000}}}});
+  // Opt in ONLY the genesis of this explicit test station. Existing
+  // SQLite worlds must load their own original rules and resources.
+  seed.enable_native_swept_asteroid_collision();
   PersistentWorld world(save.string(),std::move(seed));
   if(fresh){
    if(!world.register_player_at_station(kOwner,test_station))

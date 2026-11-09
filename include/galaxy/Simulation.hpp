@@ -1317,6 +1317,9 @@ public:
     // FP3D-ENV-01: opt-in real 3D obstacle contact for NEW galactic worlds.
     // Separate from experimental ship-module research. Older saves keep their physics.
     void enable_native_swept_asteroid_collision();
+    bool native_swept_asteroid_collision_enabled() const {
+        return snapshot_version_>=125;
+    }
     const StationMarket* market(EntityId station_id) const;
     std::int64_t wallet(PlayerId owner) const;
     const std::map<EntityId, StationMarket>& markets() const { return markets_; }
