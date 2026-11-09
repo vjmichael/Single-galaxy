@@ -191,76 +191,76 @@ func _accept_line(line: String) -> void:
 	_status("NATIVE %s (P stop): walk step %d / seat receipt %d / tick %d" % ["SEATED" if _seated else "ON FOOT",seq,_seat_sequence,tick])
 
 func _accept_ship(parts: PackedStringArray) -> void:
-    # Physical ship telemetry comes ONLY from the native host. The initial
-    # frame is paired with POSE; subsequent frames need one pending FLIGHT.
-    if parts[1] != "1":
-        stop("Bad native ship protocol version")
-        return
-    for i in range(2, 17):
-        if not _integer(parts[i]):
-            stop("Native ship frame has nonnumeric field")
-            return
-    var session := int(parts[2])
-    var request := int(parts[3])
-    var command_id := int(parts[4])
-    var outcome := int(parts[5])
-    var ship := int(parts[6])
-    var tick := int(parts[7])
-    var generation := int(parts[8])
-    var px := int(parts[9])
-    var py := int(parts[10])
-    var pz := int(parts[11])
-    var vx := int(parts[12])
-    var vy := int(parts[13])
-    var vz := int(parts[14])
-    var heading := int(parts[15])
-    var dock := int(parts[16])
-    if session != _session or ship != _ship or ship <= 0 or tick < 0 or generation < 1 or \
-        outcome < 0 or outcome > 128 or heading < 0 or heading >= 360 or dock < 0 or dock > 3 or \
-        abs(vx) > 20000 or abs(vy) > 20000 or abs(vz) > 20000 or \
-        abs(px) > 1000000000000000 or abs(py) > 1000000000000000 or abs(pz) > 1000000000000000:
-        stop("Native ship identity, physics or bounds invalid")
-        return
-    if request == 0:
-        if _initial_ship_seen or command_id != 0 or tick != _tick or generation != _generation:
-            stop("Unexpected initial native ship frame")
-            return
-        _initial_ship_seen = true
-    else:
-        if not _initial_ship_seen or _pending_kind != "FLIGHT" or request != _pending or \
-            command_id < 1152921504606846976 or tick <= _tick or generation <= _generation:
-            stop("Unrequested or stale native flight acknowledgement")
-            return
-        _pending = 0
-        _pending_kind = ""
-        _tick = tick
-        _generation = generation
-    ship_state_received.emit({"ship":ship,"command_id":command_id,"outcome":outcome,
-        "tick":tick,"gen":generation,"x_mm":px,"y_mm":py,"z_mm":pz,
-        "vx":vx,"vy":vy,"vz":vz,"heading":heading,"dock":dock})
-    if request != 0 and outcome != 0:
-        _status("Original ship command rejected with outcome code %d (native journal retained)" % outcome)
+	# Physical ship telemetry comes ONLY from the native host. The initial
+	# frame is paired with POSE; subsequent frames need one pending FLIGHT.
+	if parts[1] != "1":
+		stop("Bad native ship protocol version")
+		return
+	for i in range(2, 17):
+		if not _integer(parts[i]):
+			stop("Native ship frame has nonnumeric field")
+			return
+	var session := int(parts[2])
+	var request := int(parts[3])
+	var command_id := int(parts[4])
+	var outcome := int(parts[5])
+	var ship := int(parts[6])
+	var tick := int(parts[7])
+	var generation := int(parts[8])
+	var px := int(parts[9])
+	var py := int(parts[10])
+	var pz := int(parts[11])
+	var vx := int(parts[12])
+	var vy := int(parts[13])
+	var vz := int(parts[14])
+	var heading := int(parts[15])
+	var dock := int(parts[16])
+	if session != _session or ship != _ship or ship <= 0 or tick < 0 or generation < 1 or \
+		outcome < 0 or outcome > 128 or heading < 0 or heading >= 360 or dock < 0 or dock > 3 or \
+		abs(vx) > 20000 or abs(vy) > 20000 or abs(vz) > 20000 or \
+		abs(px) > 1000000000000000 or abs(py) > 1000000000000000 or abs(pz) > 1000000000000000:
+		stop("Native ship identity, physics or bounds invalid")
+		return
+	if request == 0:
+		if _initial_ship_seen or command_id != 0 or tick != _tick or generation != _generation:
+			stop("Unexpected initial native ship frame")
+			return
+		_initial_ship_seen = true
+	else:
+		if not _initial_ship_seen or _pending_kind != "FLIGHT" or request != _pending or \
+			command_id < 1152921504606846976 or tick <= _tick or generation <= _generation:
+			stop("Unrequested or stale native flight acknowledgement")
+			return
+		_pending = 0
+		_pending_kind = ""
+		_tick = tick
+		_generation = generation
+	ship_state_received.emit({"ship":ship,"command_id":command_id,"outcome":outcome,
+		"tick":tick,"gen":generation,"x_mm":px,"y_mm":py,"z_mm":pz,
+		"vx":vx,"vy":vy,"vz":vz,"heading":heading,"dock":dock})
+	if request != 0 and outcome != 0:
+		_status("Original ship command rejected with outcome code %d (native journal retained)" % outcome)
 
 func submit_flight(actions: PackedStringArray) -> void:
-    if not _active or _session <= 0 or not _seated or not _initial_ship_seen or \
-        _pending != 0 or actions.is_empty():
-        return
-    var now := Time.get_ticks_msec()
-    if now - _last_send_msec < 110:
-        return
-    # Rotate through held action candidates, so simultaneous yaw and forward
-    # propulsion each reach the native original simulation across ticks.
-    var verb := actions[_flight_cycle % actions.size()]
-    _flight_cycle += 1
-    var req := _next_request
-    _next_request += 1
-    _pending = req
-    _pending_kind = "FLIGHT"
-    _last_send_msec = now
-    if not _stdout.store_line("FLIGHT|%d|%d|%d|%s" % [_session,req,_seat_sequence,verb]):
-        stop("Native flight command pipe write failed; world state must be reverified")
-        return
-    _stdout.flush()
+	if not _active or _session <= 0 or not _seated or not _initial_ship_seen or \
+		_pending != 0 or actions.is_empty():
+		return
+	var now := Time.get_ticks_msec()
+	if now - _last_send_msec < 110:
+		return
+	# Rotate through held action candidates, so simultaneous yaw and forward
+	# propulsion each reach the native original simulation across ticks.
+	var verb := actions[_flight_cycle % actions.size()]
+	_flight_cycle += 1
+	var req := _next_request
+	_next_request += 1
+	_pending = req
+	_pending_kind = "FLIGHT"
+	_last_send_msec = now
+	if not _stdout.store_line("FLIGHT|%d|%d|%d|%s" % [_session,req,_seat_sequence,verb]):
+		stop("Native flight command pipe write failed; world state must be reverified")
+		return
+	_stdout.flush()
 
 func submit_motion(heading: Vector3) -> void:
 	if not _active or _session <= 0 or _pending != 0 or _seated:
