@@ -179,3 +179,48 @@ Windows jobs run and upload passing logs and visual evidence. Earlier 18/18
 local GCC Debug and Release native Linux tests remain independently verified,
 but do not accept the new Godot windowed path. Do not unlock experimental
 ship modules or free gameplay mining from source-only evidence.
+
+## 2026-11-09 actual hosted Godot 4.7.2 / Windows acceptance follow-up
+
+The preceding source-progress status above has been superseded by **real**
+compilation and runtime evidence. In consolidated Actions
+[42713897568](https://github.com/vjmichael/Single-galaxy/actions/runs/42713897568)
+the exact source `d5f5e8102f28d014c0b399100fa420a7a9a94e5f` passed **19/19
+Linux native CTests**, verified Godot 4.7.2 import and live scene parser,
+and executed the actual Godot SceneTree → supervised SGDX → original
+C++ flight/SQLite host for **real undock, return docking, forward flight,
+swept solid asteroid contact, native GUI/camera projection, clean SGDX
+quit, and re-open of the SAME persisted SQLite world**. The runtime printed
+`FP3D-ENV-01E LIVE GODOT SCENE + ORIGINAL C++ HOST PASS` (not a synthetic
+native receipt). Original station, cockpit, asteroid, and refinery packet
+smoke tests also passed through the real Godot engine.
+
+**New genuine failure:** the subsequent
+`desktop_godot/tests/station_visual_smoke.gd` test failed at the
+original cargo crate's physics shape. The world creates the genuine
+`CollisionShape3D.new()` as an unnamed child; Godot 4.7.2 gives such
+nodes runtime-generated names, so test code looking for a fixed child
+path `"CollisionShape3D"` falsely returned null even though the physical
+crate exists. The test has been repaired to find precisely **one real
+CollisionShape3D child by type**, then independently verify its
+`BoxShape3D` and original `0.8 × 1.6 × 1.0 m` dimensions. A source
+contract guards against reintroducing a fixed auto-generated node name.
+The full group run therefore **failed** (as required) and the new repair
+has not yet been native accepted.
+
+Prior real Windows MSVC/SQLite/Job Object/private-MDMP group
+[42709161929](https://github.com/vjmichael/Single-galaxy/actions/runs/42709161929)
+passed **19/19 native Windows CTests** and verified source identity,
+the x64 PE and bundled MIT Godot engine inside an extracted Windows
+precompiled ZIP. That package could **not** be published because
+packaged real-Godot parser smoke failed on the then-unrepaired 4.7.2
+refinery inferred-value errors. Those exact Boolean/Dictionary/Array
+typing failures have since been repaired and protected by source
+admission. The current repaired package and Godot visual smoke
+must still receive an exact-head consolidated rerun before any Windows
+release artifact or approval.
+
+**No user physical-PC GPU pass**, sustained interactive camera quality,
+actual Windows-installed application, non-headless four-frame renderer
+acceptance, or manufactured/fitted ship mining equipment is claimed.
+Keep PR #125 **draft** until every corresponding gate has real evidence.
