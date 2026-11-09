@@ -2234,3 +2234,16 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
   set_tests_properties(galaxy_play_station03c_refinery_native_pipe
     PROPERTIES TIMEOUT 180)
 endif()
+
+# PLAY-STATION-04A: original 3D rock-contact and finite unmined-ore snapshot
+# without any Godot-side asteroid authority or default mining equipment.
+if(BUILD_TESTING)
+  add_executable(galaxy_play_station04a_original_asteroid_contact_tests
+    tests/PLAY_STATION_04A_ContactTests.cpp)
+  target_link_libraries(galaxy_play_station04a_original_asteroid_contact_tests
+    PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play_station04a_original_asteroid_contact
+    COMMAND galaxy_play_station04a_original_asteroid_contact_tests)
+  set_tests_properties(galaxy_play_station04a_original_asteroid_contact
+    PROPERTIES TIMEOUT 40)
+endif()
