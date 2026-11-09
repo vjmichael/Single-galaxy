@@ -1,7 +1,7 @@
 {
   "schema": "SG-CI-GATE-01",
   "task_group": "SGDX03",
-  "source_sha": "e0ebd74fd8fbe8adac523fa11aa56e25e04d0905",
+  "source_sha": "4019e611d2a1fcb9f7ea36424fe009485d53b2f5",
   "pr_number": 125,
-  "note": "One consolidated SGDX03+FP3D-ENV-01+PLAY-STATION-04C exact-head Windows MSVC/Linux/Godot/SQLite/MDMP gate. Independently compiled GCC14.2 Debug and Release local 18/18 native tests PASS. Verify actual Windows and real Godot; installed physical non-headless GPU/camera remains separate. Avoid per-commit CI."
+  "note": "One END-OF-GROUP SGDX03+FP3D-WIN01 Windows x64 MSVC native/SQLite/private MDMP, exact-source ZIP/PE/SHA verification, official Godot 4.7.2 SHA256, headless Godot source/scene, genuine non-headless original C++ dock/asteroid/restart pixels and Linux CTest. Independently reproduced GCC14.2 Debug/Release 18-of-18 original native tests; not evidence of Windows acceptance. Supersede older queued group runs; physical creator GPU play remains independent and unapproved until real on-PC evidence."
 }
