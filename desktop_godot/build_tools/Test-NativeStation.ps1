@@ -41,6 +41,19 @@ try{
   Expect (Test-Path -LiteralPath $pilotExe) "Missing cockpit host $pilotExe"
   $stationProc=Launch $stationExe ('"'+$save+'" --explicit-test-station')
   $first=Frame $stationProc 'station-spawn'
+  # A second host, even the cockpit binary, must not open this world while
+  # the first process still holds its operating-system writer lease.
+  foreach($candidate in @(
+    @{Exe=$stationExe;Args=('"'+$save+'" --explicit-test-station')},
+    @{Exe=$pilotExe;Args=('"'+$save+'"')}
+  )){
+    $contender=Launch $candidate.Exe $candidate.Args
+    Expect ($contender.WaitForExit(5000) -and $contender.ExitCode -ne 0) 'Competing native world writer was admitted'
+    $rejection=$contender.StandardError.ReadToEnd()
+    Expect ($rejection -match 'native writer already active') 'Competing writer did not fail with locked-world evidence'
+    $events.Add('exclusive-writer-denied '+$candidate.Exe)
+    $contender.Dispose();$contender=$null
+  }
   Expect (($first.Count -eq 13) -and ($first[0] -eq 'PERSON') -and ($first[1] -eq '2') -and ($first[6] -eq '4') -and ($first[9] -eq '1600') -and ($first[8] -eq '0')) 'Not initially inside station'
   $epoch=$first[2];$generation=[uint64]$first[5];$ship=[uint64]$first[11]
   Expect ($ship -gt 0) 'No actual owned docked ship available'
@@ -79,7 +92,7 @@ try{
   Write-Host $events[-1] -ForegroundColor Red
   throw
 }finally{
-  foreach($name in @('stationProc','pilotProc','afterProc')){
+  foreach($name in @('stationProc','pilotProc','afterProc','contender')){
     $var=Get-Variable -Name $name -ErrorAction SilentlyContinue
     if($var -and $var.Value){try{if(-not $var.Value.HasExited){$var.Value.Kill()};$var.Value.Dispose()}catch{}}
   }
