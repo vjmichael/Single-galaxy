@@ -1,5 +1,5 @@
 # PLAY-STATION-04B: installed ship mining and exact one-tonne extraction
-Status: draft implementation; native CI and Windows gameplay acceptance not yet verified.
+Status: experimental draft **deferred by creator** until the native/Godot 3D world works; acceptance remains open.
 
 This is a stacked 04A follow-on, using the same original C++ simulation, SQLite
 journal and geological custody lots. Version 124 is opt-in only during new-world
@@ -36,3 +36,7 @@ Acceptance requires real Windows and Linux native builds, C++ module/mass
 invariants, real original child-stdio extraction and restart evidence, Godot
 runtime parsing, and eventual installed physical Windows verification. Source
 checks and synthetic Godot frames are separate evidence, not completion.
+
+## New priority: World first, modules later
+
+Per creator decision (2026-11-08), stop working on ship module fabrication, slot fitting, power and variant design until the original 3D world and collision/visual play loop work on Windows. This branch's fitted mining tool is an **unaccepted experimental prototype**, not the approved final module architecture. Continue with FP3D-ENV-01 (issue #114) and Godot 3D world acceptance on a **separate branch from 04A**, without relying on this module work. Keep draft PR #124; revisit this source only after 3D acceptance. Details: `SHIP_MODULES_POST_3D_WORLD_ROADMAP.md`.
