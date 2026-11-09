@@ -104,8 +104,10 @@ try {
   $runtime=Join-Path $game 'runtime'
   $engine=Join-Path $runtime 'Godot_v4.7.2-stable_win64.exe'
   $engineHashPath=Join-Path $runtime 'GODOT_RUNTIME_SHA256.txt'
+  $console=Join-Path $runtime 'Godot_v4.7.2-stable_win64_console.exe'
+  $consoleHashPath=Join-Path $runtime 'GODOT_CONSOLE_SHA256.txt'
   $engineLicense=Join-Path $runtime 'LICENSE.txt'
-  foreach($file in @($engine,$engineHashPath,$engineLicense)){
+  foreach($file in @($engine,$engineHashPath,$console,$consoleHashPath,$engineLicense)){
     if(-not(Test-Path -LiteralPath $file -PathType Leaf)){
       throw "Bundled Godot 4.7.2 Windows engine/hash/license absent: $file"
     }
@@ -118,6 +120,15 @@ try {
   if($actualHash -cne $engineHash){
     throw 'Bundled Godot runtime hash fails after re-extracting the delivered ZIP'
   }
+  $consoleHash=(Get-Content -LiteralPath $consoleHashPath -Raw).Trim().ToLowerInvariant()
+  if($consoleHash -notmatch '^[0-9a-f]{64}$'){
+    throw 'Bundled Godot console companion SHA-256 manifest malformed'
+  }
+  $consoleActual=Verify-Pe64 $console
+  if($consoleActual -cne $consoleHash){
+    throw 'Bundled Godot console wrapper SHA-256 does not match executable in delivered ZIP'
+  }
+  $checks['godot_console_companion_pe64_sha256']=$consoleActual
   $licenseText=Get-Content -LiteralPath $engineLicense -Raw
   if($licenseText -notmatch 'Godot Engine contributors' -or
      $licenseText -notmatch 'Permission is hereby granted, free of charge' -or
@@ -133,6 +144,7 @@ try {
   $launcher=Get-Content -LiteralPath (Join-Path $game 'build_tools/Launch-PrebuiltStation.ps1') -Raw
   if($launcher -notmatch 'SGDX_BUILD_SHA' -or $launcher -notmatch 'galaxy_server_dx_supervisor' -or
      $launcher -notmatch 'GODOT_RUNTIME_SHA256' -or
+     $launcher -notmatch 'GODOT_CONSOLE_SHA256' -or
      $launcher -notmatch '4\.7\.2' -or $launcher -notmatch 'Start-Process'){
     throw 'Package is missing supervised native/Godot version/windowed launch enforcement'
   }
