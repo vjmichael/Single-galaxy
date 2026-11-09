@@ -26,6 +26,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  windows-runner-probe:
+    name: Minimal Windows runner diagnostic (no build, no dependencies)
+    runs-on: windows-2022
+    timeout-minutes: 5
+    steps:
+      - name: Prove GitHub can actually start a hosted Windows runner
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\sg-probe" | Out-Null
+          "started_utc=$((Get-Date).ToUniversalTime().ToString('o'))" | Set-Content "$env:RUNNER_TEMP\sg-probe\runner.txt"
+          "os=$env:RUNNER_OS" | Add-Content "$env:RUNNER_TEMP\sg-probe\runner.txt"
+          "architecture=$env:PROCESSOR_ARCHITECTURE" | Add-Content "$env:RUNNER_TEMP\sg-probe\runner.txt"
+          "cmake=$((Get-Command cmake -ErrorAction SilentlyContinue).Source)" | Add-Content "$env:RUNNER_TEMP\sg-probe\runner.txt"
+          "msvc=$($env:VSINSTALLDIR)" | Add-Content "$env:RUNNER_TEMP\sg-probe\runner.txt"
+          Get-Content "$env:RUNNER_TEMP\sg-probe\runner.txt"
+          "SG Windows hosted runner booted successfully" >> $env:GITHUB_STEP_SUMMARY
+      - name: Preserve minimal Windows runner startup proof
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: SG-Windows-Runner-Probe-${{ github.sha }}
+          path: ${{ runner.temp }}/sg-probe/runner.txt
+          if-no-files-found: warn
   godot-parse:
     name: Real Godot 4.7.2 parser and scene contract
     runs-on: ubuntu-24.04
