@@ -4,6 +4,7 @@ extends SceneTree
 ## This checks scene graph, camera, model and native contact; headless CI
 ## cannot establish human-visible rendered pixels or driver/GPU acceptance.
 const MAIN := preload("res://world/main.gd")
+const NATIVE_SHIP := preload("res://world/native_player_session.gd")
 const COLLISION_RADIUS_M := 15.201 # 10m original rock + 5.2m greybox ship + 1mm skin.
 var _game
 var _ship_frames: Array[Dictionary] = []
@@ -86,7 +87,22 @@ func _run() -> void:
 	elif _rock_frames.is_empty() or _rock_frames[-1]["impact_rock"] != 0:
 		_fail("initial fixture forged or replayed original collision")
 	else:
-		session.toggle_seat()
+		# Exercise the actual Godot admission path with a live original SGDX
+		# guardian whose saved stop timestamp is deliberately over 3s old.
+		# A second same-role writer must NOT even be launched.
+		var live_guardian: int = session.process_id()
+		var attempted_overlap = NATIVE_SHIP.new()
+		attempted_overlap._last_shutdown_pid = live_guardian
+		attempted_overlap._last_shutdown_msec = Time.get_ticks_msec() - 10000
+		if live_guardian <= 0 or attempted_overlap.process_id() != live_guardian:
+			_fail("expired SGDX PID tracking lost a still-running native guardian")
+		else:
+			attempted_overlap.start(path)
+			if attempted_overlap.is_active():
+				attempted_overlap.stop("Rejected overlapping original native writer")
+				_fail("Godot launched an overlapping writer despite live SGDX custody")
+		if _error.is_empty():
+			session.toggle_seat()
 		if not (await _await_condition(Callable(self, "_seat_ready"))):
 			_fail("real owner could not seat in original cockpit")
 	if _error.is_empty():
