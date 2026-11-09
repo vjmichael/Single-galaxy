@@ -19,7 +19,15 @@ Then compiled a separate real original `PersistentWorld` SQLite test fixture con
 
 Native tests cannot prove Godot 4.7.2 actually renders the mesh on the user's physical Windows GPU. A separate synthetic Godot parser smoke and a Windows/Linux exact-head CI workflow are added. Its precompiled Windows ZIP is **not** published until MSVC native tests, SQLite native pipe and real Godot parser checks pass.
 
-## 04B — genuine equipped ship mining (not yet complete)
+## 2026-11-08 creator order: first finish 3D, defer ship modules
+
+**This overrides the older 04B→04C dependency order below.** Do not design or expand mining-tool hardpoints, ship module crafting, slots, power, or fitting UI until the native 3D world actually works in Godot on Windows. Draft PR #124 is retained as an unaccepted **experimental proof-of-concept**, not a prerequisite to fixing the world. Native ship-only mining must remain unavailable on unfitted hulls; do not replace a proper module with free mining or hand tools.
+
+**Active next task: FP3D-ENV-01 (issue #114, PR #125):** original high-order 3D ship/asteroid physical collision, bounded swept contact, durable outcome, and Windows/Linux tests. Next: render parity, camera/interior/exterior station transitions, ship control and real installed Godot playtest. Then revisit production module design and the actual one-tonne mining/return/refining gameplay. Existing 04A work is the clean world-first ancestor; do not import experimental 04B module code into the physics branch.
+
+---
+
+## Historical 04B plan — experimental and deferred until 3D acceptance
 
 1. Introduce a **manufacturable, material-backed fitted mining module** occupying a valid ship rack, with finite consumed resources, engineering prerequisites and power/operative state. No automatic install on every hull; zero ability after all vessels are destroyed. Distinguish real mining tool from survey scanner and weapons.
 2. Bind a cockpit mining action (e.g. `M`) to a selected original asteroid ID and a valid seated, undocked, existing owned ship with the real fitted powered module and cargo space. Original `Simulation::submit` and `PersistentWorld::step` must commit **one exact tonne** of transferred ore, never a local Godot reward.
