@@ -42,8 +42,11 @@ func _run() -> void:
         _fail("visible cabin cargo obstruction does not match native movement map")
         return
     var native_shape := native_crate.get_node_or_null("CollisionShape3D") as CollisionShape3D
-    if native_shape == null or not (native_shape.shape is BoxShape3D) or
-            (native_shape.shape as BoxShape3D).size.distance_to(Vector3(0.8,1.6,1.0)) > 0.001:
+    if native_shape == null:
+        _fail("Godot cabin obstacle collision shape absent")
+        return
+    var native_box := native_shape.shape as BoxShape3D
+    if native_box == null or native_box.size.distance_to(Vector3(0.8,1.6,1.0)) > 0.001:
         _fail("Godot cabin collider does not match original native obstacle")
         return
     if station.get_node_or_null("Station_Hangar_Entry_At_Zero") == null:
