@@ -51,7 +51,7 @@ with tempfile.TemporaryDirectory() as temp:
     assert dock[0]=="SHIP" and dock[5]=="0" and dock[16]=="1",dock
     assert [int(dock[9]),int(dock[10]),int(dock[11])]==[0,0,0],dock
     # No client-given actor identity or arbitrary vector ever enters FLIGHT.
-    assert send(p,f"FLIGHT|{epoch}|11|1|X1000")==["DENY","1","11","invalid-flight-action"]
+    assert send(p,f"FLIGHT|{epoch}|12|1|X1000")==["DENY","1","12","invalid-flight-action"]
     p.stdin.write("QUIT\n");p.stdin.flush()
     assert p.wait(timeout=4)==0,p.stderr.read()
     with sqlite3.connect(save) as db:

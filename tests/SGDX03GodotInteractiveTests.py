@@ -125,7 +125,7 @@ def check_faults(root):
         from SGDX02SupervisorTests import assert_windows_private_acl
         assert_windows_private_acl(dumps[0])
     else:
-        assert incident["signal_number"] == signal.SIGSEGV, incident
+        assert incident["signal"] == signal.SIGSEGV, incident  # native ServerProcessDiagnostics JSON key
 
     timed = root / "pipe-timeout.sqlite"
     result = subprocess.run(command(timed, fault, "pipe", interactive=False),

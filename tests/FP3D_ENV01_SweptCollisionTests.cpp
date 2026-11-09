@@ -100,6 +100,10 @@ static void real_station_collision_test(const std::string& save) {
         Simulation seed(0xE21);
         station=seed.add_station({0,0});
         (void)seed.spawn_ship_docked(7,station,12,24);
+        // Original native galactic genesis requires actual finite colony
+        // population. Reuse the station-host test's two-person colony ship;
+        // never synthesize unnamed workers during the SQLite checkpoint.
+        (void)seed.add_colony_ship(8,{15000,0},8,2);
         seed.enable_native_galactic_physics({
             {1,galactic::Point{{0,100000},{0,100000},{0,100000}}}});
         seed.enable_native_swept_asteroid_collision();

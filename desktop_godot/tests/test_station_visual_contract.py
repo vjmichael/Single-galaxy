@@ -15,13 +15,14 @@ cockpit_client = (root / "world/native_player_session.gd").read_text(encoding="u
 
 checks = {
     "avatar-height-matches-capsule": "const AVATAR_CENTER_HEIGHT_M := 0.90" in main,
-    "station-host-in-project": 'var project_host := ProjectSettings.globalize_path("res://native/" + binary)' in station_client,
-    "cockpit-host-in-project": 'var project_host := ProjectSettings.globalize_path("res://native/" + binary)' in cockpit_client,
+    "station-host-supervised-project-binary": "SGDX_LAUNCH.native_host_path(binary)" in station_client and 'SGDX_LAUNCH.supervised_command(save, "godot_station", exe,' in station_client and 'OS.execute_with_pipe(spec["path"], spec["args"], false)' in station_client,
+    "cockpit-host-supervised-project-binary": "SGDX_LAUNCH.native_host_path(binary)" in cockpit_client and 'SGDX_LAUNCH.supervised_command(save, "godot_ship", path, PackedStringArray([save]))' in cockpit_client and 'OS.execute_with_pipe(spec["path"], spec["args"], false)' in cockpit_client,
+    "refuse-unguarded-native-launch": "refusing unsupervised" in station_client and "refusing unsupervised" in cockpit_client,
     "station-room": '"StationInterior_Prototype"' in main,
     "cabin-room": '"ShipInterior_Prototype"' in main,
     "hatch": '"Station_Hangar_Entry_At_Zero"' in main,
     "separate-physics": "for body in station_space.get_children()" in main and "for body in ship_space.get_children()" in main,
-    "no-invisible-collision": "body.collision_layer = 0 if in_station else 1" in main and "body.collision_layer = 1 if in_station else 0" in main,
+    "no-invisible-collision": "body.collision_layer = 0 if in_station or exterior else 1" in main and "body.collision_layer = 1 if in_station else 0" in main and "body.collision_mask = 0 if in_station or exterior else 1" in main,
     "native-station-frame-only": "_show_native_location(last_station_player_state == 4)" in main,
     "native-pose-frame-only": '_record_native_projection("POSE", pose)' in main and '_show_native_location(false) # verified original owned ship pose' in main,
     "native-ship-telemetry": '_record_native_projection("SHIP", ship)' in main,
