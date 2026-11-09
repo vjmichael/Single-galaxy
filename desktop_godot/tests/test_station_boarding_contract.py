@@ -7,6 +7,19 @@ f = (root/'world/native_player_session.gd').read_text()
 b = (root/'build_tools/Build-Windows.ps1').read_text()
 assert 'KEY_H' in m and 'KEY_F8' not in m and 'KEY_F7' not in m
 assert 'native_station_session.start()' in m
+# A station <-> cockpit handoff must not race the two native SQLite writers.
+assert 'native_station_session.process_id()' in m
+assert 'native_player_session.process_id()' in m
+assert 'func _advance_native_handoff()' in m
+assert 'OS.is_process_running(_handoff_pid)' in m
+assert 'Native writer handoff aborted' in m
+assert 'last_station_player_state = -1' in m
+assert 'player.use_native_authority(true) # no unjournaled walking during handoff' in m
+assert 'func process_id() -> int' in s and 'func process_id() -> int' in f
+assert '_last_shutdown_pid' in s and '_last_shutdown_msec' in s
+assert '_last_shutdown_pid' in f and '_last_shutdown_msec' in f
+assert 'var exiting_pid: int = native_player_session.process_id()' in m
+assert 'var exiting_pid: int = native_station_session.process_id()' in m
 assert 'last_station_player_state != 0' in m and 'Board your existing ship first' in m
 assert 'native_station_session.stop("Station writer closed before ship cockpit session")' in m
 assert 'station_test_save_selected' in m and 'single_galaxy_station_test.sqlite' in m
