@@ -19,6 +19,11 @@ var native_label: Label
 var ship_label: Label
 var station_space: Node3D
 var ship_space: Node3D
+var space_preview: Node3D
+var native_asteroid_mesh: MeshInstance3D
+var asteroid_label: Label
+var _external_requested := false
+var _last_native_dock := -1
 var _geometry_parent: Node3D
 var native_session
 var native_player_session
@@ -52,6 +57,7 @@ func _ready() -> void:
 	_geometry_parent = ship_space
 	_build_ship_interior()
 	_geometry_parent = null
+	_build_native_space_preview()
 	_show_native_location(true) # station first; only native PERSON/POSE chooses later
 	_build_player()
 	_build_hud()
@@ -65,6 +71,7 @@ func _ready() -> void:
 	native_player_session = NATIVE_PLAYER_SESSION.new()
 	native_player_session.pose_received.connect(_on_native_player_pose)
 	native_player_session.ship_state_received.connect(_on_native_ship_state)
+	native_player_session.asteroid_contact_received.connect(_on_native_asteroid_contact)
 	native_player_session.status_changed.connect(_on_native_player_status)
 	native_player_session.connection_changed.connect(_on_native_player_connection)
 	player.native_motion_intent.connect(_on_native_player_intent)
@@ -194,6 +201,23 @@ func _build_ship_interior() -> void:
 	_solid_box("Native cockpit console (visual)", Vector3(0, 0.85, -2.1), Vector3(3.5, 1.4, 0.7))
 	_solid_box("Cockpit windscreen upper frame", Vector3(0, 2.75, -5.5), Vector3(5.6, 0.2, 0.3))
 
+func _build_native_space_preview() -> void:
+	# External visual projection only, populated from the original C++ rock
+	# contact. No static ore props, no Godot miner, no fake collision authority.
+	space_preview = Node3D.new()
+	space_preview.name = "NativeAsteroidExternalView"
+	space_preview.visible = false
+	add_child(space_preview)
+	native_asteroid_mesh = MeshInstance3D.new()
+	native_asteroid_mesh.name = "OriginalAsteroid_VisualOnly"
+	var sphere := SphereMesh.new()
+	sphere.radius = 1.0
+	sphere.height = 2.0
+	native_asteroid_mesh.mesh = sphere
+	native_asteroid_mesh.material_override = material
+	native_asteroid_mesh.visible = false
+	space_preview.add_child(native_asteroid_mesh)
+
 func _show_native_location(in_station: bool) -> void:
 	# The only callers after genesis are verified native PERSON and POSE frames.
 	# This never relocates a real PlayerPerson or writes a second world.
@@ -204,12 +228,15 @@ func _show_native_location(in_station: bool) -> void:
 			if body is CollisionObject3D:
 				body.collision_layer = 1 if in_station else 0
 				body.collision_mask = 1 if in_station else 0
+	var exterior := not in_station and _external_requested and _last_native_dock == 0
 	if is_instance_valid(ship_space):
-		ship_space.visible = not in_station
+		ship_space.visible = not in_station and not exterior
 		for body in ship_space.get_children():
 			if body is CollisionObject3D:
-				body.collision_layer = 0 if in_station else 1
-				body.collision_mask = 0 if in_station else 1
+				body.collision_layer = 0 if in_station or exterior else 1
+				body.collision_mask = 0 if in_station or exterior else 1
+	if is_instance_valid(space_preview):
+		space_preview.visible = exterior
 
 func _build_player() -> void:
 	player = CharacterBody3D.new()
@@ -241,6 +268,9 @@ func _build_hud() -> void:
 	native_label = Label.new()
 	native_label.text = "NATIVE: H enters station player test. Walk toward marked hatch (0,0), E boards. P switches to ship cockpit."
 	contents.add_child(native_label)
+	asteroid_label = Label.new()
+	asteroid_label.text = "ASTEROID: awaiting verified original ship contact"
+	contents.add_child(asteroid_label)
 	ship_label = Label.new()
 	ship_label.text = "SHIP: native physical state not yet verified"
 	contents.add_child(ship_label)
@@ -295,6 +325,14 @@ func _advance_native_handoff() -> void:
 		player.use_native_authority(false)
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_V:
+		if native_player_session != null and native_player_session.is_active() and _last_native_dock == 0 and last_station_player_state == 0:
+			_external_requested = not _external_requested
+			_show_native_location(false)
+		else:
+			_on_native_player_status("External V view requires your real undocked ship")
+		get_viewport().set_input_as_handled()
+		return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_R:
 		if native_station_session == null or not native_station_session.is_active() or last_station_player_state != 4:
 			_on_native_player_status("Connect as a real station resident with H before using refinery")
@@ -414,8 +452,12 @@ func _on_native_station_person(person: Dictionary) -> void:
 
 func _on_native_player_connection(connected: bool) -> void:
 	# Process start alone is NOT proof of ship custody; wait for POSE.
-	if not connected and not station_test_save_selected:
-		_show_native_location(true)
+	if not connected:
+		_external_requested = false
+		if is_instance_valid(native_asteroid_mesh):
+			native_asteroid_mesh.visible = false
+		if not station_test_save_selected:
+			_show_native_location(true)
 	if is_instance_valid(player):
 		player.use_native_authority(connected)
 	if not connected and is_instance_valid(ship_label):
@@ -433,11 +475,41 @@ func _on_native_ship_state(ship: Dictionary) -> void:
 		return
 	var states := ["IN SPACE", "DOCKED", "UNDOCKING", "DOCKING"]
 	var dock: int = int(ship["dock"])
+	_last_native_dock = dock
+	if dock != 0:
+		_external_requested = false
+	_show_native_location(last_station_player_state == 4)
 	ship_label.text = "ORIGINAL SHIP #%d | %s | yaw %d° | position (%.1f, %.1f, %.1f)m | velocity (%d, %d, %d)mm/tick" % [
 		int(ship["ship"]), states[dock], int(ship["heading"]),
 		float(ship["x_mm"]) / 1000.0, float(ship["y_mm"]) / 1000.0,
 		float(ship["z_mm"]) / 1000.0,
 		int(ship["vx"]), int(ship["vy"]), int(ship["vz"])]
+
+func _on_native_asteroid_contact(contact: Dictionary) -> void:
+	# Real original ship snapshot, never a client-spawned resource.
+	if native_player_session == null or not native_player_session.is_active():
+		return
+	_record_native_projection("ROCK", contact)
+	if not is_instance_valid(native_asteroid_mesh):
+		return
+	var found := bool(contact["found"])
+	native_asteroid_mesh.visible = found
+	if found:
+		# Original world X/Y/Z -> Godot horizontal X/Z and vertical Y.
+		# Relative render projection stays within 30 metres of native ship.
+		native_asteroid_mesh.position = Vector3(
+			float(contact["dx_mm"]) / 1000.0, float(contact["dz_mm"]) / 1000.0,
+			-float(contact["dy_mm"]) / 1000.0)
+		var visual_radius := maxf(0.3, float(contact["radius_mm"]) / 1000.0)
+		native_asteroid_mesh.scale = Vector3.ONE * visual_radius
+		var range_m := Vector3(float(contact["dx_mm"]),float(contact["dy_mm"]),float(contact["dz_mm"])).length() / 1000.0
+		asteroid_label.text = "ROCK #%d | %.1fm | %d t finite ore | ship cargo %d/%d t | mining tool: %s | V exterior" % [
+			int(contact["rock"]),range_m,int(contact["ore_tonnes"]),int(contact["cargo_tonnes"]),
+			int(contact["cargo_capacity"]),"ONLINE" if int(contact["mining_tool_online"]) == 1 else "NOT FITTED"]
+	else:
+		asteroid_label.text = "No original asteroid within 30m | ship cargo %d/%d t | mining tool: %s" % [
+			int(contact["cargo_tonnes"]),int(contact["cargo_capacity"]),
+			"ONLINE" if int(contact["mining_tool_online"]) == 1 else "NOT FITTED"]
 
 func _on_native_player_seat_intent() -> void:
 	if native_station_session != null and native_station_session.is_active():
