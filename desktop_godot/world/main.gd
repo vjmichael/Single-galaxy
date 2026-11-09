@@ -347,9 +347,8 @@ func _on_native_station_person(person: Dictionary) -> void:
 			float(person["z_mm"])/1000.0]
 
 func _on_native_player_connection(connected: bool) -> void:
-	if connected:
-		_show_native_location(false)
-	elif not station_test_save_selected:
+	# Process start alone is NOT proof of ship custody; wait for POSE.
+	if not connected and not station_test_save_selected:
 		_show_native_location(true)
 	if is_instance_valid(player):
 		player.use_native_authority(connected)
