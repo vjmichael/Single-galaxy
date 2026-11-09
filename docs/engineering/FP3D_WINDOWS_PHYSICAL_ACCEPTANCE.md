@@ -37,12 +37,19 @@ not per-file or per-commit CI:
 3. Real Godot 4.7.2 headless parser, original host/collision/dock test, and
    native-source ingestion must exit zero. All native gameplay writes remain
    through `PersistentWorld` with the sole SQLite writer lease.
-4. Package four x64 native hosts, SQLite x64 DLL, SGDX SHA manifest and original
-   Godot sources/launch scripts in
-   `SingleGalaxy_FP3D_SGDX03_Windows_Precompiled.zip`.
-   `Verify-PrecompiledPackage.ps1` extracts that same ZIP and rejects wrong PE
-   machine/format, wrong source SHA, missing native or Godot files and any
-   included private `.dmp` or `.sqlite` data. Windows signing remains deferred.
+4. Package four x64 native hosts, SQLite x64 DLL, SGDX SHA manifest, original
+   Godot scene and the **official Godot 4.7.2 Windows executable** inside
+   `SingleGalaxy_FP3D_SGDX03_Windows_Precompiled.zip`. The workflow pins
+   upstream official Godot `Godot_v4.7.2-stable_win64.exe.zip` SHA-256
+   `731980f9608d61333e5baf54a2ef17210acc7a538446c0cb9969f002aca1e953`
+   before extracting it, then copies the actual PE64 engine into
+   `desktop_godot/runtime/`. The package includes its own executable
+   SHA-256 manifest and the **upstream MIT license**. Do not depend on a
+   separately installed Godot editor, internet download or OS file picker.
+   `Verify-PrecompiledPackage.ps1` re-extracts the delivered ZIP and rejects
+   wrong PE machine/format, missing/mismatched bundled engine SHA-256/license,
+   wrong source SHA, missing native or scene files, and private `.dmp` or
+   `.sqlite` data. Windows signing remains deferred.
 5. In a **non-headless** on-screen Godot process, seed a separate original
    finite-asteroid SQLite world and execute
    `fp3d_env01_live_scene_acceptance.gd`. The actual window must generate
@@ -64,10 +71,13 @@ and label that a physical GPU pass.
 After a **real** Windows package artifact exists, extract it to a writable
 folder. Do **not** use an old ZIP or build from source on the user's PC.
 Double-click `desktop_godot/RUN_STATION_PLAYTEST_WINDOWS.cmd`. The launcher
-checks x64 native hosts, SGDX presence, source SHA manifest and the user's
-**existing** Godot **4.7.2 stable** editor, then runs native Godot smoke tests
-and opens the window. No Docker, Python, Visual Studio, CMake, compiler
-installation or automatic Godot download is part of this playtest.
+checks native hosts, SGDX, exact source SHA and the **bundled** Godot 4.7.2
+runtime's SHA-256 and version, then runs the actual packaged scene's Godot
+smoke tests and opens the window. The default path uses the included editor
+executable strictly as a game engine. No Docker, Python, Visual Studio,
+CMake, separate Godot installation, file picker, compile or download is
+required on the owner's PC. The optional `-GodotExe` PowerShell argument is
+an explicit developer override and must not count as the bundled-package gate.
 
 Check the following **in order** in the actual window; F11 is optional
 explicit capture of **the game viewport only**. Each F11 screenshot has a
@@ -132,3 +142,26 @@ powered and source-provenanced mining tool; use the existing original C++
 `Mine` command to debit exactly one tonne, then verify cargo, docking,
 `UNLOAD`, tagged station lot, `REFINE`, 1000kg named minerals and restart on
 the same Windows installation. PR #124 remains experimental until that time.
+
+## 4. FP3D-WIN-02 — self-contained player runtime (subsequent task)
+
+**Source implementation:** PR #125 now stages a bundled, official MIT-licensed
+Godot 4.7.2 Windows x64 executable with SHA-256 verification alongside the
+compiled SGDX/C++ game hosts. The double-click launcher defaults to the
+bundled runtime; no editor picker, PATH fallback, downloading Godot or
+software build tooling. A user-specified `-GodotExe` exists only for developer
+diagnostics and is clearly marked as **not** package acceptance.
+
+Acceptance additionally requires executing the actual precompiled ZIP's
+`RUN_STATION_PLAYTEST_WINDOWS.cmd` on Windows with no installed Godot.
+A corrupt or missing engine, license or digest must fail closed rather than
+silently selecting a system editor. A zero-exit window is still
+`WINDOW-CLOSED-NEEDS-MANUAL-OBSERVATION`, never automatic physical GPU
+approval. A future NSIS-installed distribution remains a *separate*
+packaging/delivery enhancement; this ZIP is a self-contained alpha playtest,
+**not** an NSIS-installed application.
+
+**Evidence status:** source/CI packaging and validation contract committed;
+no current-head Windows runner build or self-contained real-PC launch result
+has yet been received. The existing consolidated native task-group request
+must be refreshed only **once** when this new group is ready, not per commit.
