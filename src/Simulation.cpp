@@ -1,6 +1,7 @@
 #include "galaxy/StationRefineryBatch.hpp"
 #include "galaxy/Industry01Catalog.hpp"
 #include "galaxy/Simulation.hpp"
+#include "galaxy/NativeStationWalkGeometry.hpp"
 #include "galaxy/GalacticCoordinates.hpp"
 #include "galaxy/NativeSweptCollision.hpp"
 #include "galaxy/ShipStatusFitting.hpp"
@@ -9363,7 +9364,9 @@ bool Simulation::station_player_action(PlayerId owner,EntityId station,
            dx>100||dx< -100||dz>100||dz< -100||(!dx&&!dz)||
            dx*dx+dz*dz>10000||
            person.station_x_mm+dx>8000||person.station_x_mm+dx< -8000||
-           person.station_z_mm+dz>8000||person.station_z_mm+dz< -8000)
+           person.station_z_mm+dz>8000||person.station_z_mm+dz< -8000||
+           (snapshot_version_>=125 && !station_walk::clear(
+               person.station_x_mm+dx,person.station_z_mm+dz)))
             return false;
         person.station_x_mm+=dx;person.station_z_mm+=dz;
     }else if(action==StationPlayerAction::Board){

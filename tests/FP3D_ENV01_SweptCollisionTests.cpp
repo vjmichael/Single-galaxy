@@ -1,5 +1,7 @@
 // FP3D-ENV-01 — portable integer swept collision and original-world replay.
 #include "galaxy/NativeSweptCollision.hpp"
+#include "galaxy/NativeStationWalkGeometry.hpp"
+#include "galaxy/StationRefineryProtocol.hpp"
 #include "galaxy/GalacticCoordinates.hpp"
 #include <limits>
 #include "galaxy/Persistence.hpp"
@@ -81,11 +83,57 @@ static Event send(PersistentWorld& world,std::uint64_t id,EntityId ship,int x){
             return world.world().events()[i];
     throw std::runtime_error("original STEP event absent");
 }
+static void real_station_collision_test(const std::string& save) {
+    std::error_code ec;
+    for(auto tail:{"","-wal","-shm"})std::filesystem::remove(save+tail,ec);
+    REQUIRE(station_walk::clear(1600,0));
+    REQUIRE(station_walk::clear(0,0));
+    REQUIRE(station_walk::clear(2200,0));
+    REQUIRE(!station_walk::clear(2300,0)); // native capsule vs solid crate
+    REQUIRE(!station_walk::clear(-2300,-2500));
+    REQUIRE(!station_walk::clear(0,-5000));
+    REQUIRE(!station_walk::clear(-5000,0));
+    REQUIRE(!station_walk::clear(5000,0));
+    REQUIRE(!station_walk::clear(8100,0));
+    EntityId station=0;
+    {
+        Simulation seed(0xE21);
+        station=seed.add_station({0,0});
+        (void)seed.spawn_ship_docked(7,station,12,24);
+        seed.enable_native_galactic_physics({
+            {1,galactic::Point{{0,100000},{0,100000},{0,100000}}}});
+        seed.enable_native_swept_asteroid_collision();
+        PersistentWorld world(save,std::move(seed));
+        REQUIRE(world.register_player_at_station(7,station));
+        std::uint64_t receipt=500;
+        for(int step=0;step<6;++step)
+            REQUIRE(world.station_player_action(7,station,0,
+                StationPlayerAction::Walk,100,0,++receipt));
+        REQUIRE(world.world().player_people().at(7).station_x_mm==2200);
+        const auto prior=world.world().canonical_state();
+        REQUIRE(!world.station_player_action(7,station,0,
+            StationPlayerAction::Walk,100,0,++receipt));
+        REQUIRE(world.world().canonical_state()==prior);
+        for(int step=0;step<2;++step)
+            REQUIRE(world.station_player_action(7,station,0,
+                StationPlayerAction::Walk,-100,0,++receipt));
+        REQUIRE(world.world().player_people().at(7).station_x_mm==2000);
+        REQUIRE(station_refinery_protocol::accessible(
+            world.world().player_people().at(7)));
+    }
+    {
+        PersistentWorld recovered(save,Simulation(0xE21));
+        REQUIRE(recovered.world().player_people().at(7).station_x_mm==2000);
+        REQUIRE(recovered.world().player_people().at(7).physical_station==station);
+    }
+    for(auto tail:{"","-wal","-shm"})std::filesystem::remove(save+tail,ec);
+}
 int main(int argc,char** argv){
     if(argc!=2)return 2;
     primitive_geometry();
     high_order_seam_geometry();
     const std::string path=argv[1];
+    real_station_collision_test(path+".walk");
     const auto cleanup=[&]{
         std::error_code ec;
         for(auto suffix:{"","-wal","-shm"})
@@ -159,7 +207,7 @@ int main(int argc,char** argv){
             REQUIRE(has_real_contact);
         }
         cleanup();
-        std::cout<<"FP3D-ENV-01 original native collision, inter-sector X/Y/Z seams and 100km cell crossings PASS: integer swept obstacles, fast/tangent/vertical/miss/escape, no rock penetration, bounded movement, real durable event, unchanged ore/hull/mass, SQLite restart\n";
+        std::cout<<"FP3D-ENV-01 original native collision, station geometry/terminal SQLite, inter-sector X/Y/Z seams and 100km cell crossings PASS: integer swept obstacles, fast/tangent/vertical/miss/escape, no rock penetration, bounded movement, real durable event, unchanged ore/hull/mass, SQLite restart\n";
         return 0;
     }catch(const std::exception& e){std::cerr<<e.what()<<'\n';cleanup();return 1;}
 }
