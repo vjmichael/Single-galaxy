@@ -22,6 +22,7 @@ var _last_send := -10000
 var _buffer := PackedByteArray()
 var _person := {}
 var _refinery_receiving := false
+var _pending_refinery_kind := "" # VIEW, REFINE or UNLOAD; never reuse a stale receipt
 var _refinery_header := {}
 var _refinery_lots: Array[Dictionary] = []
 var _refinery_minerals := {}
@@ -83,6 +84,7 @@ func start() -> void:
 	_generation = -1
 	_tick = -1
 	_pending = 0
+	_pending_refinery_kind = ""
 	_next_request = 1
 	_last_send = -10000
 	_buffer.clear()
@@ -136,6 +138,7 @@ func _accept_line(line: String) -> void:
 		var req := int(f[2])
 		if req == _pending:
 			_pending = 0
+			_pending_refinery_kind = ""
 			_refinery_receiving = false
 			_refinery_header.clear()
 			_refinery_lots.clear()
@@ -186,7 +189,7 @@ func _accept_line(line: String) -> void:
 func _accept_refinery_line(f: PackedStringArray) -> void:
 	var kind := f[0]
 	if kind == "REFHEAD":
-		if f.size() != 18 or _refinery_receiving or _pending <= 0:
+		if f.size() != 18 or _refinery_receiving or _pending <= 0 or _pending_refinery_kind.is_empty():
 			stop("Unexpected refinery snapshot header")
 			return
 		for i in range(2, 18):
@@ -260,10 +263,11 @@ func _accept_refinery_line(f: PackedStringArray) -> void:
 		var total := 0
 		for amount in _refinery_minerals.values():
 			total += int(amount)
-		if int(f[4]) != int(_refinery_header["tick"]) or int(f[5]) != int(_refinery_header["generation"]) or int(f[6]) != _refinery_lots.size() or int(f[7]) != _refinery_minerals.size() or total != int(_refinery_header["mineral_total_kg"]) or result not in [0, 1, 2, 3, 4] or (result == 1 and transferred != 1000) or (result == 3 and transferred != 1) or (result not in [1, 3] and transferred != 0):
+		if int(f[4]) != int(_refinery_header["tick"]) or int(f[5]) != int(_refinery_header["generation"]) or int(f[6]) != _refinery_lots.size() or int(f[7]) != _refinery_minerals.size() or total != int(_refinery_header["mineral_total_kg"]) or result not in [0, 1, 2, 3, 4] or (result == 1 and transferred != 1000) or (result == 3 and transferred != 1) or (result not in [1, 3] and transferred != 0) or (_pending_refinery_kind == "VIEW" and result != 0) or (_pending_refinery_kind == "REFINE" and result not in [1, 2]) or (_pending_refinery_kind == "UNLOAD" and result not in [3, 4]):
 			stop("Refinery snapshot and original commit receipt mismatch")
 			return
 		_refinery_receiving = false
+		_pending_refinery_kind = ""
 		_generation = int(f[5])
 		_tick = int(f[4])
 		_pending = 0
@@ -288,6 +292,7 @@ func request_refinery_view() -> void:
 	var request := _next_request
 	_next_request += 1
 	_pending = request
+	_pending_refinery_kind = "VIEW"
 	_last_send = Time.get_ticks_msec()
 	_send("REFVIEW|%d|%d|%d|%d" % [_session,request,_generation,int(_person["station"])])
 
@@ -298,6 +303,7 @@ func submit_refining(lot_id: int) -> void:
 	var request := _next_request
 	_next_request += 1
 	_pending = request
+	_pending_refinery_kind = "REFINE"
 	_last_send = Time.get_ticks_msec()
 	_send("REFINE|%d|%d|%d|%d" % [_session,request,_generation,lot_id])
 
@@ -315,6 +321,7 @@ func unload_owned_ship_tonne() -> void:
 	var request := _next_request
 	_next_request += 1
 	_pending = request
+	_pending_refinery_kind = "UNLOAD"
 	_last_send = Time.get_ticks_msec()
 	_send("UNLOAD|%d|%d|%d|%d" % [_session,request,_generation,ship_id])
 
@@ -388,5 +395,6 @@ func stop(message: String = "Station session closed", graceful: bool = false) ->
 	_stdout = null
 	_stderr = null
 	_pending = 0
+	_pending_refinery_kind = ""
 	connection_changed.emit(false)
 	_status(message)
