@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """PLAY-STATION-04C: real native owner/dock/ore custody through SQLite."""
 from pathlib import Path
+from contextlib import closing
 import sqlite3
 import subprocess
 import sys
@@ -114,7 +115,7 @@ with tempfile.TemporaryDirectory() as folder:
         [str(fixture), db, "--03c-verify"],
         capture_output=True, text=True, timeout=45)
     assert verified.returncode == 0, (verified.stdout, verified.stderr)
-    with sqlite3.connect(db) as saved:
+    with closing(sqlite3.connect(db)) as saved:
         assert saved.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
 
     process, first = launch()
