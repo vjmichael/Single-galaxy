@@ -86,7 +86,11 @@ checks = {
     "default-uses-verified-bundled-godot-no-picker": (
         "runtime\\Godot_v4.7.2-stable_win64.exe" in gui_launcher
         and "GODOT_RUNTIME_SHA256.txt" in gui_launcher
-        and "Get-FileHash -LiteralPath $GodotExe" in gui_launcher
+        and "Get-LocalSha256 $GodotExe" in gui_launcher
+        and "System.Security.Cryptography.SHA256" in gui_launcher
+        and "$hasher.Dispose()" in gui_launcher
+        and "$stream.Dispose()" in gui_launcher
+        and "(Get-FileHash " not in gui_launcher
         and "Developer -GodotExe override selected" in gui_launcher
         and "OpenFileDialog" not in gui_launcher
         and "Get-Command $name" not in gui_launcher
