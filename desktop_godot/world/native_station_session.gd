@@ -34,8 +34,12 @@ func process_id() -> int:
 	# not race its lingering SQLite WAL lock after an explicit stop.
 	if _active:
 		return _pid
-	if _last_shutdown_pid > 0 and Time.get_ticks_msec() - _last_shutdown_msec < 3000:
-		return _last_shutdown_pid
+	# Never forget a still-running guardian merely because three seconds passed.
+	# A later same-role restart must not bypass the SQLite writer handoff.
+	if _last_shutdown_pid > 0:
+		if OS.is_process_running(_last_shutdown_pid):
+			return _last_shutdown_pid
+		_last_shutdown_pid = -1
 	return -1
 
 func _status(message: String) -> void:
@@ -48,6 +52,13 @@ func _host_path() -> String:
 func start() -> void:
 	if _active:
 		return
+	# A previous QUIT may be delayed by a blocked host or SQLite flush.
+	# Do not start a second writer for this role while its SGDX custodian lives.
+	if _last_shutdown_pid > 0:
+		if OS.is_process_running(_last_shutdown_pid):
+			_status("Previous SGDX writer still alive; refusing overlapping native session")
+			return
+		_last_shutdown_pid = -1
 	var exe := _host_path()
 	if not FileAccess.file_exists(exe):
 		_status("STATION native host missing: " + exe)
