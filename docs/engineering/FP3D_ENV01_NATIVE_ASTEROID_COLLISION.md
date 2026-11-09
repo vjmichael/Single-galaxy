@@ -76,3 +76,68 @@ one-task-group CI gate (no per-commit workflows). Ship modules remain
 **Acceptance state:** implementation and test recipes are committed to the
 draft branch, not yet executed on the exact new Windows/Linux PR head.
 Do not treat synthetic/contract checks as genuine Godot/SQLite/GPU evidence.
+
+
+## FP3D-ENV-01G/H — authoritative station return and collidable FPS environment
+
+**2026-11-09 implementation group, proposed native acceptance head:** final SHA
+must be read from PR #125 before dispatch. These changes integrate the already
+existing native docking/refinery/ore world rather than creating alternate data.
+
+- **01G return docking:** `G` is a cockpit-only intent, delivered as `DCK`
+  to the protected native player host. `NativeDockingTarget.hpp` selects a
+  genuine in-system station from the ORIGINAL authoritative entity registry,
+  only for an owned stationary ship in original 2.5m docking range and the
+  correct local 3D/galactic frame; no client-selected station ID. The existing
+  seat-protected original `PersistentWorld::submit_cockpit_flight_checked`
+  now supports the original `Action::RequestDock`. The original simulator
+  owns docking eligibility, transition ticks, berth placement, SQLite events
+  and ownership. The interrupted-cockpit-flight guard recognizes pending
+  `RequestDock` too, preventing crash/restart permission replay.
+- **Return journey tests:** original `FP3D03B_CockpitFlightTests` now covers
+  stationary real docking, no stale dock station after undocking, no double
+  docking, repeat undock after docking, remote-station refusal, original SQLite
+  recovery and deliberately interrupted **pending docking**. The real child
+  protocol test now sends `DCK`, sees a true berthed original `SHIP` frame,
+  restarts SQLite, and undocks once more. Godot's real SGDX/C++ scene test
+  docks, restores ship interior, undocks and then flies into the authentic
+  asteroid before verifying source collision and target display.
+- **01H FPS collider parity:** the original 340mm-radius station player
+  capsule now avoids the pictured terminal/crate region, resource crate #01,
+  prototype NPC cylinder and hallway walls in explicitly opted-in
+  `snapshot_version >= 125` native test worlds. Older 120–124 saves do
+  **not** silently acquire new station collision rules. The ship interior
+  also renders the existing true C++ crate obstacle at x=1.6m, z=0, with
+  exactly the same width/depth. Four noncolliding visual strips show
+  the original +/-8m station movement envelope.
+- **Physical refinery access:** the old terminal's 700mm interaction radius
+  was almost completely inside the inflated physical crate collider; the
+  read-only admission radius is now 1,200mm. Original authority, presence,
+  actual station residency, and real source-lot/plant ownership are still
+  enforced. The original 03C station-refinery source protocol remains in use.
+- **Integrated regression:** the original `FP3D_ENV01_SweptCollisionTests`
+  includes a real SQLite station-walk/collider and restart proof. The
+  consolidated `main` task-group workflow adds original boarding,
+  refinery-native-pipe, persistent 03B refinery, and existing one-tonne
+  mining/cargo/refining native conservation tests, plus actual Godot
+  station visual, native protocol and live original C++ scene tests.
+  `test_fp3d_env01g_world_parity_contract.py` checks source joins but
+  is **not** native or rendered execution evidence.
+
+**Do not overstate completion:** PR #125 remains draft until the exact-head
+Linux native + Godot and Windows MSVC native + Godot grouped CI jobs return real
+results. The physical installed Windows GPU/camera, real mouse-controlled
+boarding/docking, frame pacing and collision visual placement must be observed
+on the packaged game, not inferred from a headless CI scene. Station/ship and
+ship/ship collision layers, precise hull shapes beyond a conservative sphere,
+spatial broadphase scaling, and full return from distant rock remain future
+physical reliability gates.
+
+**Next group, after installed visual acceptance:** complete actual original
+ship-mounted mining tool manufacturing/equipment integration (deferred
+experimental PR #124 is not an accepted production module), one-tonne
+finite-rock-to-ship cargo, return to real station berth, `UnloadOre` custody,
+a physically constructed station refinery, exact kg mineral output, and
+save/restart/last-ship loss. No free drill, hand mining, client ore, or
+fabricated replacement ship. Use one acceptance gate at group completion,
+not a CI job per implementation commit.
