@@ -1,3 +1,4 @@
+#include "galaxy/StationRefineryBatch.hpp"
 #include "galaxy/Industry01Catalog.hpp"
 #include "galaxy/Simulation.hpp"
 #include "galaxy/GalacticCoordinates.hpp"
@@ -1221,6 +1222,69 @@ std::int64_t Simulation::wallet(PlayerId owner) const {
     return it == wallets_.end() ? 0 : it->second;
 }
 
+void Simulation::enable_station_ore_provenance() {
+    if(tick_ || !submitted_ids_.empty())
+        throw std::invalid_argument("station ore tracking must be enabled at genesis");
+    snapshot_version_=std::max(snapshot_version_,123);
+}
+const StationRefineryPlant* Simulation::station_refinery(EntityId station) const {
+    const auto it=station_refineries_.find(station);
+    return it==station_refineries_.end()?nullptr:&it->second;
+}
+void Simulation::track_station_ore_mining(EntityId ship,EntityId rock,
+        std::uint64_t command,std::int64_t tonnes,std::uint8_t taxonomy) {
+    if(!tonnes || !ship || !command || !rock)return;
+    if(next_station_ore_lot_id_==std::numeric_limits<std::uint64_t>::max())
+        throw std::overflow_error("ore lot ID exhausted");
+    const auto* vessel=find(ship);
+    if(!vessel || !vessel->owner_id || taxonomy>3)
+        throw std::logic_error("invalid physical mined ore origin");
+    const auto id=next_station_ore_lot_id_++;
+    station_ore_lots_.emplace(id,StationOreCustodyLot{
+        id,command,tick_,0,rock,ship,0,vessel->owner_id,taxonomy,tonnes});
+}
+void Simulation::move_station_ore_lots(EntityId ship,EntityId station,PlayerId owner,
+        std::int64_t tonnes,bool to_station,std::uint64_t command) {
+    // Move tagged cargo first; any remaining bulk ore is explicitly unclassified.
+    // The amount has ALREADY passed the original physical capacity checks.
+    std::int64_t remaining=tonnes;
+    for(auto it=station_ore_lots_.begin();it!=station_ore_lots_.end() && remaining>0;){
+        auto& lot=it->second;
+        if(lot.source_ship!=ship || lot.owner!=owner ||
+           (to_station?lot.station!=0:lot.station!=station)) {++it;continue;}
+        const auto n=std::min(remaining,lot.tonnes);
+        if(n==lot.tonnes){
+            lot.station=to_station?station:0;
+            if(to_station)lot.unload_receipt=command;
+            ++it;
+        } else {
+            if(next_station_ore_lot_id_==std::numeric_limits<std::uint64_t>::max())
+                throw std::overflow_error("ore lot ID exhausted");
+            lot.tonnes-=n;
+            auto split=lot;
+            split.id=next_station_ore_lot_id_++;
+            split.station=to_station?station:0;
+            if(to_station)split.unload_receipt=command;
+            station_ore_lots_.emplace(split.id,split);
+            ++it;
+        }
+        remaining-=n;
+    }
+}
+void Simulation::consume_station_ore_lots(EntityId ship,EntityId station,PlayerId owner,
+        std::int64_t tonnes,bool at_station) {
+    std::int64_t remaining=tonnes;
+    for(auto it=station_ore_lots_.begin();it!=station_ore_lots_.end() && remaining>0;){
+        auto& lot=it->second;
+        if(lot.owner!=owner || lot.source_ship!=ship ||
+           (at_station?lot.station!=station:lot.station!=0)){++it;continue;}
+        const auto n=std::min(remaining,lot.tonnes);
+        remaining-=n;
+        lot.tonnes-=n;
+        if(!lot.tonnes)it=station_ore_lots_.erase(it);
+        else ++it;
+    }
+}
 const StationHangar* Simulation::hangar(EntityId station_id, PlayerId owner) const {
     auto it = hangars_.find({station_id, owner});
     return it == hangars_.end() ? nullptr : &it->second;
@@ -2169,6 +2233,14 @@ bool Simulation::submit(const Command& c) {
             (c.action==Action::SetGateStaff && (c.amount<0 || c.amount>16)) ||
             (c.action==Action::DeliverGateSpares && (c.amount<1 || c.amount>10000))) return false;
     } else if (c.issuer == kServerAuthority) return false;
+    if(c.action==Action::BuildStationRefinery || c.action==Action::RefineStationOre){
+        if(!c.actor || !c.target || c.thrust_x || c.thrust_y ||
+           c.transport_id || !c.passenger_ids.empty() ||
+           c.secondary_receiver || c.secondary_transport ||
+           (c.action==Action::BuildStationRefinery ? c.amount!=1 : c.amount<=0))
+            return false;
+        snapshot_version_=std::max(snapshot_version_,123);
+    }
     if(c.action==Action::RefineOre || c.action==Action::FabricateModule ||
        c.action==Action::ConstructOutpost || c.action==Action::RefineMineral ||
        c.action==Action::FabricateMaterialModule) {
