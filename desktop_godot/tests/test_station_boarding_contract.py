@@ -7,6 +7,12 @@ f = (root/'world/native_player_session.gd').read_text()
 b = (root/'build_tools/Build-Windows.ps1').read_text()
 assert 'KEY_H' in m and 'KEY_F8' not in m and 'KEY_F7' not in m
 assert 'native_station_session.start()' in m
+assert 'StationInterior_Prototype' in m and 'ShipInterior_Prototype' in m
+assert 'func _show_native_location(in_station: bool)' in m
+assert '_show_native_location(last_station_player_state == 4)' in m
+assert '_show_native_location(false) # verified original owned ship pose' in m
+assert '_show_native_location(true) # station first' in m
+assert '_geometry_parent.add_child(hatch)' in m
 # A station <-> cockpit handoff must not race the two native SQLite writers.
 assert 'native_station_session.process_id()' in m
 assert 'native_player_session.process_id()' in m
