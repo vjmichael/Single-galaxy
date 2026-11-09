@@ -2263,3 +2263,22 @@ if(BUILD_TESTING)
       PROPERTIES TIMEOUT 90)
   endif()
 endif()
+
+
+# PLAY-STATION-04B genuine fitted ship drill and SQLite source/cargo conservation.
+if(BUILD_TESTING)
+  add_executable(galaxy_play_station04b_original_mining_tests tests/PLAY_STATION_04B_MiningTests.cpp)
+  target_link_libraries(galaxy_play_station04b_original_mining_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play_station04b_original_mining COMMAND galaxy_play_station04b_original_mining_tests
+    ${CMAKE_CURRENT_BINARY_DIR}/play_station04b_mining.sqlite)
+  set_tests_properties(galaxy_play_station04b_original_mining PROPERTIES TIMEOUT 120)
+  add_executable(galaxy_play_station04b_native_mining_seed tests/PLAY_STATION_04B_NativeMiningSeed.cpp)
+  target_link_libraries(galaxy_play_station04b_native_mining_seed PRIVATE galaxy_kernel)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME galaxy_play_station04b_native_mining_pipe
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/PLAY_STATION_04B_NativeMiningPipeTests.py
+        $<TARGET_FILE:galaxy_play_station04b_native_mining_seed>
+        $<TARGET_FILE:galaxy_desktop_player_host>)
+    set_tests_properties(galaxy_play_station04b_native_mining_pipe PROPERTIES TIMEOUT 180)
+  endif()
+endif()

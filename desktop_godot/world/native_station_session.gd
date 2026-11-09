@@ -59,7 +59,8 @@ func start() -> void:
 		return
 	# Same original game world as the native in-ship cockpit host, but never
 	# two writers at once. The host creates fixtures only for a NEW save.
-	var save := OS.get_user_data_dir().path_join("single_galaxy_station_test.sqlite")
+	var explicit_mining_save := OS.get_environment("SG_04B_TEST_SAVE")
+	var save := explicit_mining_save if not explicit_mining_save.is_empty() else OS.get_user_data_dir().path_join("single_galaxy_station_test.sqlite")
 	var result := OS.execute_with_pipe(exe, PackedStringArray([save, "--explicit-test-station"]), false)
 	if result.is_empty() or not result.has("stdio") or not result.has("pid"):
 		_status("Native station host launch failed")
