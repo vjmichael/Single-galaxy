@@ -206,3 +206,25 @@ acceptance contracts are committed to draft PR #125 but require a fresh
 single end-of-task-group Windows/Linux/Godot/ZIP/windowed rerun.
 Physical creator Windows GPU camera quality, asteroid contact, docking
 and saved-world continuity still require real on-PC operator evidence.
+
+### 2026-11-09 actual Windows 5.1 repair refinement
+
+The exact Windows artifact of [run 42715286430](https://github.com/vjmichael/Single-galaxy/actions/runs/42715286430)
+contains both real `tampered-launch-stdout.log` and
+`tampered-launch-stderr.log`. The 5.1 child had inherited a restricted
+`PSModulePath` from the Actions PowerShell 7 parent and could not
+resolve `Get-FileHash`. The unrelated failure was *correctly not*
+interpreted as hash-mismatch protection; the original bundle was restored
+and the job was rejected.
+
+The portable repair computes SHA-256 directly with the built-in .NET
+cryptography API and closes the streams. For Windows PowerShell 5.1
+(`PSEdition=Desktop`), it also restores the system-owned
+`System32\WindowsPowerShell\v1.0\Modules` search path so the default
+Windows `ConvertTo-Json` and `Compress-Archive` evidence facilities
+remain available even when launched under a mixed pwsh 7/5.1 environment.
+The real 5.1 test **first runs the clean extracted game**, requires
+a source-verified `BUNDLED-VERIFIED` receipt and full six-suite native
+Godot parser pass, then tampers the engine hash and requires an exact
+SHA-256 mismatch refusal and `BLOCKED` receipt. This is still a real
+pending native gate, not a claim that the new repair passed.
