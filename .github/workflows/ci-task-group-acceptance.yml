@@ -103,6 +103,9 @@ jobs:
             galaxy_fp3d_env01_swept_collision_tests \
             galaxy_play_station04a_original_asteroid_contact_tests \
             galaxy_fp3d03b_cockpit_flight_tests \
+            galaxy_play_station_boarding_tests \
+            galaxy_play_station03b_persistent_refinery_tests \
+            galaxy_play_station_mining_refining_e2e \
             galaxy_play_station04a_native_rock_seed \
             galaxy_desktop_player_host galaxy_desktop_station_host galaxy_desktop_readonly_host \
             galaxy_server_dx_supervisor galaxy_server_dx_fault_child
@@ -112,9 +115,10 @@ jobs:
           set -euxo pipefail
           python desktop_godot/tests/test_sgdx03_bridge_contract.py
           python desktop_godot/tests/test_fp3d_env01f_pilot_contract.py
+          python desktop_godot/tests/test_fp3d_env01g_world_parity_contract.py
           ctest --test-dir build/fp3d-env01 --no-tests=error --timeout 200 \
             --output-on-failure --output-junit fp3d-env01-linux.xml \
-            -R '^(galaxy_fp3d_env01_(swept_collision|native_collision_pipe)|galaxy_play_station04a_original_(asteroid_contact|rock_native_pipe)|galaxy_fp3d03b_(cockpit_flight|native_flight_pipe)|galaxy_sgdx03_godot_(native_bridge|source_admission)|galaxy_server_dx_(supervisor|sqlite_recovery))$'
+            -R '^(galaxy_fp3d_env01_(swept_collision|native_collision_pipe)|galaxy_play_station04a_original_(asteroid_contact|rock_native_pipe)|galaxy_play_station_(boarding|02_native_pipe|mining_refining_e2e)|galaxy_play_station03(b_persistent_refinery|c_refinery_native_pipe)|galaxy_fp3d03b_(cockpit_flight|native_flight_pipe)|galaxy_sgdx03_godot_(native_bridge|source_admission)|galaxy_server_dx_(supervisor|sqlite_recovery))$'
       - name: Real Godot 4.7.2 scene launches SGDX and the actual original C++ host
         shell: bash
         run: |
@@ -141,7 +145,7 @@ jobs:
           build/fp3d-env01/galaxy_play_station04a_native_rock_seed "$SG_FP3D_E2E_SAVE"
           "$G" --headless --path desktop_godot --script res://tests/fp3d_env01_live_scene_acceptance.gd \
             2>&1 | tee build/fp3d-env01/godot-logs/real-sgdx-cockpit.log
-          for test in native_player_protocol_smoke.gd native_asteroid_contact_smoke.gd fp3d_env01_collision_receipt_smoke.gd fp3d_env01f_pilot_instruments_smoke.gd; do
+          for test in native_player_protocol_smoke.gd native_asteroid_contact_smoke.gd native_station_protocol_smoke.gd native_station_refinery_protocol_smoke.gd station_visual_smoke.gd fp3d_env01_collision_receipt_smoke.gd fp3d_env01f_pilot_instruments_smoke.gd; do
             "$G" --headless --path desktop_godot --script "res://tests/$test" \
               2>&1 | tee "build/fp3d-env01/godot-logs/$test.log"
           done
@@ -182,15 +186,16 @@ jobs:
         run: |
           cmake -S . -B build/fp3d-env01 -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF "-DCMAKE_TOOLCHAIN_FILE=$env:SG_TOOLCHAIN" -DVCPKG_TARGET_TRIPLET=x64-windows
           if($LASTEXITCODE -ne 0){throw 'MSVC configure failed'}
-          cmake --build build/fp3d-env01 --config Release --parallel 2 --target galaxy_fp3d_env01_swept_collision_tests galaxy_play_station04a_original_asteroid_contact_tests galaxy_fp3d03b_cockpit_flight_tests galaxy_play_station04a_native_rock_seed galaxy_desktop_player_host galaxy_desktop_station_host galaxy_desktop_readonly_host galaxy_server_dx_supervisor galaxy_server_dx_fault_child
+          cmake --build build/fp3d-env01 --config Release --parallel 2 --target galaxy_fp3d_env01_swept_collision_tests galaxy_play_station04a_original_asteroid_contact_tests galaxy_fp3d03b_cockpit_flight_tests galaxy_play_station_boarding_tests galaxy_play_station03b_persistent_refinery_tests galaxy_play_station_mining_refining_e2e galaxy_play_station04a_native_rock_seed galaxy_desktop_player_host galaxy_desktop_station_host galaxy_desktop_readonly_host galaxy_server_dx_supervisor galaxy_server_dx_fault_child
           if($LASTEXITCODE -ne 0){throw 'MSVC native build failed'}
       - name: Real Windows SGDX pipe, crash/forced kill, SQLite and private minidump
         shell: pwsh
         run: |
           python desktop_godot/tests/test_sgdx03_bridge_contract.py
           python desktop_godot/tests/test_fp3d_env01f_pilot_contract.py
+          python desktop_godot/tests/test_fp3d_env01g_world_parity_contract.py
           if($LASTEXITCODE -ne 0){throw 'Fail-closed source bridge check failed'}
-          ctest --test-dir build/fp3d-env01 -C Release --no-tests=error --timeout 200 --output-on-failure --output-junit fp3d-env01-windows.xml -R '^(galaxy_fp3d_env01_(swept_collision|native_collision_pipe)|galaxy_play_station04a_original_(asteroid_contact|rock_native_pipe)|galaxy_fp3d03b_(cockpit_flight|native_flight_pipe)|galaxy_sgdx03_godot_(native_bridge|source_admission)|galaxy_server_dx_(supervisor|sqlite_recovery))$'
+          ctest --test-dir build/fp3d-env01 -C Release --no-tests=error --timeout 200 --output-on-failure --output-junit fp3d-env01-windows.xml -R '^(galaxy_fp3d_env01_(swept_collision|native_collision_pipe)|galaxy_play_station04a_original_(asteroid_contact|rock_native_pipe)|galaxy_play_station_(boarding|02_native_pipe|mining_refining_e2e)|galaxy_play_station03(b_persistent_refinery|c_refinery_native_pipe)|galaxy_fp3d03b_(cockpit_flight|native_flight_pipe)|galaxy_sgdx03_godot_(native_bridge|source_admission)|galaxy_server_dx_(supervisor|sqlite_recovery))$'
           if($LASTEXITCODE -ne 0){throw 'Real native SGDX/SQLite/Windows MDMP gate failed'}
       - name: Windows Godot 4.7.2 real SGDX supervised cockpit, collision and camera
         shell: pwsh
@@ -222,7 +227,7 @@ jobs:
           & $g.FullName --headless --path desktop_godot --script res://tests/fp3d_env01_live_scene_acceptance.gd 2>&1 | Out-File build/fp3d-env01/godot-logs/real-sgdx-cockpit.log
           if($LASTEXITCODE -ne 0){throw 'Real supervised C++/Godot collision-camera failure'}
           Remove-Item Env:SGDX_WINDOWS_MINIDUMP -ErrorAction SilentlyContinue
-          foreach($test in @('native_player_protocol_smoke.gd','native_asteroid_contact_smoke.gd','fp3d_env01_collision_receipt_smoke.gd','fp3d_env01f_pilot_instruments_smoke.gd')){
+          foreach($test in @('native_player_protocol_smoke.gd','native_asteroid_contact_smoke.gd','native_station_protocol_smoke.gd','native_station_refinery_protocol_smoke.gd','station_visual_smoke.gd','fp3d_env01_collision_receipt_smoke.gd','fp3d_env01f_pilot_instruments_smoke.gd')){
             & $g.FullName --headless --path desktop_godot --script "res://tests/$test" 2>&1 | Out-File "build/fp3d-env01/godot-logs/$test.log"
             if($LASTEXITCODE -ne 0){throw "Godot parser failed: $test"}
           }
