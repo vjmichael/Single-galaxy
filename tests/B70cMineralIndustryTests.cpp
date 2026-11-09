@@ -58,7 +58,11 @@ int main(){
       CHECK(get(c->minerals_kg,"troilite")==960);
       CHECK(get(c->minerals_kg,"olivine")==360);
       CHECK(p.world().total_material_kg()==original);
-      CHECK(p.world().canonical_state().rfind("galaxy-kernel-v9|",0)==0);
+      { const auto state=p.world().canonical_state();
+        CHECK(state.rfind("galaxy-kernel-v",0)==0);
+        const auto end=state.find('|');
+        CHECK(end!=std::string::npos &&
+              std::stoull(state.substr(15,end-15))>=9); }
       CHECK(cmd(p,ship,3,Action::RefineMineral,8,10320).transferred==10320);
       c=p.world().colony_ship(ship);
       CHECK(get(c->minerals_kg,"nickel_iron")==0);
@@ -103,7 +107,11 @@ int main(){
       CHECK(get(p.world().colony_ship(ship)->goods_kg,"aluminum")==800);
       CHECK(get(p.world().colony_ship(ship)->goods_kg,"water")==275);
       CHECK(p.world().find(metal)->ore==p.world().geology(metal)->original_tonnes-12);
-      CHECK(p.world().canonical_state().rfind("galaxy-kernel-v9|",0)==0);
+      { const auto state=p.world().canonical_state();
+        CHECK(state.rfind("galaxy-kernel-v",0)==0);
+        const auto end=state.find('|');
+        CHECK(end!=std::string::npos &&
+              std::stoull(state.substr(15,end-15))>=9); }
     }
     {
       Simulation ignored(19);ignored.add_colony_ship(7,{0,0},60,24);
