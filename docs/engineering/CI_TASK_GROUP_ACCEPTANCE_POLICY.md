@@ -82,3 +82,29 @@ the actual OS jobs and independent artifacts pass.
 
 This rule is authoritative for Single-Galaxy development work. Apply the same
 principle to other project workstreams when their CI is modified.
+
+## Historical PR workflow retirement — verified 2026-11-09
+
+The owner-directed repository-level workflow retirement completed successfully:
+[run 42648372822](https://github.com/vjmichael/Single-galaxy/actions/runs/42648372822),
+[exact audit artifact](https://github.com/vjmichael/Single-galaxy/actions/runs/42648372822/artifacts/13687738989).
+
+- **79** registered active, historical branch-only workflows with prior
+  `pull_request` runs were set to `disabled_manually`; **0** API errors.
+- **3** default-branch control workflows remain active:
+  `ci-task-group-acceptance.yml`, `ci-queue-hygiene.yml`, and
+  `ci-retire-legacy-pr.yml`.
+- **1** further branch-only registered workflow,
+  `flight03-native-source-integration.yml`, was deliberately left active:
+  no previous `pull_request` runs were found, so its PR auto-trigger status
+  was not established. This is not an acceptance claim.
+- The old workflow files and test scripts remain in feature branches. A
+  disabled workflow will not auto-start and cannot be manually dispatched
+  or rerun until explicitly re-enabled. For reviewed native OS acceptance,
+  request the consolidated exact-head task-group workflow instead.
+- Disabling registered workflows **does not cancel already queued runs**;
+  `SG-CI-QUEUE-01` handles superseded queued-run cleanup separately.
+- Do not delete historical test suites or accidentally enable them during
+  later merges. Any deliberate re-enablement must be treated as a separate
+  reviewed task-group change, with restricted event triggers.
+
