@@ -108,11 +108,9 @@ func _read_stderr() -> String:
 
 func stop(message: String = "Native telemetry disconnected", graceful: bool = false) -> void:
 	if _active and _pid > 0 and OS.is_process_running(_pid):
-		if graceful and _stdio != null:
-			_stdio.store_line("QUIT")
-			_stdio.flush()
-		else:
-			OS.kill(_pid) # SGDX holds actual child/descendants, not a direct unsupervised host
+		# This bounded observer does not read stdin: it cannot receive QUIT.
+		# Kill the SGDX guardian, which owns the observer's process tree.
+		OS.kill(_pid)
 	_active = false
 	_pid = -1
 	_stdio = null
