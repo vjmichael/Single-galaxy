@@ -28,6 +28,21 @@ func _exercise() -> void:
 		push_error("03C synthetic original SQLite refining ACK and 1000kg stock mismatch")
 		quit(1)
 		return
+
+	# 04C: an independently validated one-tonne UNLOAD is not a 1000kg
+	# refinery receipt. The lot is visible only after original source frames.
+	session._pending = 3
+	session._accept_line("REFHEAD|3|123|3|6|4|1|1|2|1|1|2|4|1|1000|1|1|5")
+	session._accept_line("REFLOT|3|123|3|7|91|2|1|67890")
+	for part in ["nickel_iron|860", "troilite|80", "olivine|30", "pyroxene|15", "other|15"]:
+		session._accept_line("REFMIN|3|123|3|" + part)
+	session._accept_line("REFEND|3|123|3|6|4|1|5|3|1")
+	if states.size() != 3 or int(states[2]["result"]) != 3 or int(states[2]["unloaded_tonnes"]) != 1 or int(states[2]["transferred_kg"]) != 0 or session._generation != 4:
+		push_error("04C synthetic one-tonne unload interpreted incorrectly or not admitted")
+		quit(1)
+		return
+	# Fresh 03C and 04C terminal states must distinguish stock from ability
+	# to unload; no optimistic mass is shown on a mere button press.
 	var ui = TERMINAL.new()
 	root.add_child(ui)
 	await process_frame
@@ -36,10 +51,15 @@ func _exercise() -> void:
 		push_error("03C station UI selection or real cooldown guard failed")
 		quit(1)
 		return
+	ui.present(states[2])
+	if ui._lots.item_count != 1 or not ui._unload_button.disabled:
+		push_error("04C station UI failed to observe already unloaded rock lot")
+		quit(1)
+		return
 	ui.present(states[1])
 	if ui._lots.item_count != 0 or not ui._refine_button.disabled:
 		push_error("03C station UI displayed depleted physical ore as eligible")
 		quit(1)
 		return
-	print("PLAY-STATION-03C GODOT protocol+terminal smoke PASS (synthetic frames only; original world tested by native pipe CTest)")
+	print("PLAY-STATION-03C/04C GODOT protocol+terminal smoke PASS (synthetic frames only; original world tested by native pipe CTest)")
 	quit(0)
