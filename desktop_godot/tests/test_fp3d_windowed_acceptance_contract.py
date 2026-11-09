@@ -12,6 +12,7 @@ gui_launcher = (project / "build_tools/Launch-PrebuiltStation.ps1").read_text(en
 package = (project / "build_tools/Verify-PrecompiledPackage.ps1").read_text(encoding="utf-8")
 windowed = (project / "build_tools/Test-WindowedNativeGodot.ps1").read_text(encoding="utf-8")
 guide = (root / "docs/engineering/FP3D_WINDOWS_PHYSICAL_ACCEPTANCE.md").read_text(encoding="utf-8")
+engine_license = (project / "third_party/GODOT_LICENSE.txt").read_text(encoding="utf-8")
 
 checks = {
     "real-window-not-headless": (
@@ -70,6 +71,23 @@ checks = {
         "SG_FP3D_OPERATOR_CAPTURE_DIR" in game and
         "get_viewport().get_texture().get_image()" in game and
         "SG_FP3D_OPERATOR_CAPTURE_DIR" in gui_launcher
+    ),
+    "default-uses-verified-bundled-godot-no-picker": (
+        "runtime\\Godot_v4.7.2-stable_win64.exe" in gui_launcher
+        and "GODOT_RUNTIME_SHA256.txt" in gui_launcher
+        and "Get-FileHash -LiteralPath $GodotExe" in gui_launcher
+        and "Developer -GodotExe override selected" in gui_launcher
+        and "OpenFileDialog" not in gui_launcher
+        and "Get-Command $name" not in gui_launcher
+        and "SINGLE_GALAXY_GODOT_EXE" not in gui_launcher
+    ),
+    "package-requires-bundled-pe64-engine-and-mit": (
+        "Verify-Pe64 $engine" in package
+        and "GODOT_RUNTIME_SHA256.txt" in package
+        and "LICENSE.txt" in package
+        and "bundled_official_godot_pe64_sha256_license" in package
+        and "Godot Engine contributors" in engine_license
+        and "Permission is hereby granted, free of charge" in engine_license
     ),
     "not-falsely-accepted-on-window-close": (
         "WINDOW-CLOSED-NEEDS-MANUAL-OBSERVATION" in gui_launcher
