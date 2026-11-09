@@ -7,8 +7,8 @@ func _initialize() -> void:
 	s.asteroid_contact_received.connect(func(contact: Dictionary): contacts.append(contact))
 	s._accept_line("POSE|1|321|0|0|0|0|0|10|2|7|1|1")
 	s._accept_line("SHIP|1|321|0|0|0|7|10|2|0|0|0|0|0|0|0|0")
-	s._accept_line("ROCK|1|321|0|7|10|2|11|167|12500|0|0|2000|2|0|24|0")
-	if contacts.size() != 1 or not contacts[0]["found"] or contacts[0]["rock"] != 11 or contacts[0]["ore_tonnes"] != 167 or contacts[0]["mining_tool_online"] != 0:
+	s._accept_line("ROCK|1|321|0|7|10|2|11|3770|25000|0|0|10000|2|0|24|0")
+	if contacts.size() != 1 or not contacts[0]["found"] or contacts[0]["rock"] != 11 or contacts[0]["ore_tonnes"] != 3770 or contacts[0]["mining_tool_online"] != 0:
 		push_error("04A native asteroid contact not accepted from exact source frame")
 		quit(1)
 		return
