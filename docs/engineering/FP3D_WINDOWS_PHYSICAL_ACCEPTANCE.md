@@ -228,3 +228,39 @@ a source-verified `BUNDLED-VERIFIED` receipt and full six-suite native
 Godot parser pass, then tampers the engine hash and requires an exact
 SHA-256 mismatch refusal and `BLOCKED` receipt. This is still a real
 pending native gate, not a claim that the new repair passed.
+
+## FP3D-WIN02 PS5 and paired-engine acceptance (November 9, 2026)
+
+The latest actual Windows task-group gate
+[42717276991](https://github.com/vjmichael/Single-galaxy/actions/runs/42717276991)
+passed all 19 MSVC native CTests including private MDMP/SQLite, the native
+Godot 4.7.2 scene, the entire Linux native/Godot gate, and the actual
+self-contained ZIP PE64/engine/source/license check plus its SIX installed
+Godot headless smoke suites under PowerShell 7. The Windows PowerShell
+**5.1** positive launcher test failed at smoke #1 despite a normal-looking
+Godot editor-load transcript and no GDScript parser error. The prior test
+had started Godot's GUI-subsystem `win64.exe` directly as a command-line
+test child, a different process/exit-code path than an explicitly console
+hosted engine. Its failure is NOT a passing negative tamper test.
+
+**Source repair pending next native gate:** ship both authentic executables
+from the SAME official Godot 4.7.2 ZIP, which the group checks against its
+published SHA-256 before unpacking: GUI `Godot_v4.7.2-stable_win64.exe`
+for player window and companion
+`Godot_v4.7.2-stable_win64_console.exe` for all headless/CLI smokes.
+Verify each PE32+ x64 and independent SHA-256 manifest
+(`GODOT_RUNTIME_SHA256.txt` and `GODOT_CONSOLE_SHA256.txt`) on original
+archive, extracted package and the player's actual launcher. The console
+wrapper supervises the real GUI engine and returns a final child exit code.
+**Never** ignore nonzero exit codes, parser errors or missing screenshot
+frames. The actual Windows PowerShell 5.1 positive test MUST pass before
+corrupting only the GUI digest for a negative test; that test MUST fail for
+the exact reported hash mismatch, create a blocked receipt, and restore
+the original manifest. No published download until genuine Windows tests
+pass.
+
+The following four automatic windowed frames still require execution:
+docked cabin, exterior flight, stopped original asteroid impact, restarted
+SQLite world. A hosted runner's windowed screenshot is not the creator's
+physical Windows GPU/human camera acceptance. PR #125 remains DRAFT and
+manufactured ship mining equipment remains deferred.
