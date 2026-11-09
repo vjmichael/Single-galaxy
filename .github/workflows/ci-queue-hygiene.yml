@@ -152,3 +152,4 @@ jobs:
           name: sg-ci-queue-prune-${{ github.run_id }}
           path: sg-ci-queue-prune.json
           if-no-files-found: warn
+# Maintenance cleanup pass 2: task-group SGDX03 gate waiting, preserve workflow_dispatch acceptance.
