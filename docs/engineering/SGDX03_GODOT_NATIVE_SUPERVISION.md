@@ -167,3 +167,54 @@ executed in Windows CI. A single final task-group rerun is required; inspect
 actual CTest Windows results, original Godot 4.7.2 on Windows/Linux,
 minidumps/NTFS ACLs and the self-contained packaged ZIP before promotion.
 This is separate from the owner's physical GPU playtest.
+
+## 2026-11-09 second independent Windows run — real 17/19 and MDMP failure
+
+The later exact-head native group
+[42704827836](https://github.com/vjmichael/Single-galaxy/actions/runs/42704827836)
+compiled and linked the original C++/SGDX native executables using actual
+MSVC x64, then executed **19 Windows CTests**. **17 passed; two failed.**
+The four previously reproduced `WinError 32` SQLite-handle failures
+(`galaxy_server_dx_sqlite_recovery`, `galaxy_fp3d03b_native_flight_pipe`,
+`galaxy_play_station04c_native_unload_pipe`, and the SQLite parts of
+`galaxy_sgdx03_godot_native_bridge`) were all repaired by the explicit
+`contextlib.closing` changes and completed without the old errors.
+
+The remaining failures are both directly tied to **real crash-time Windows
+MDMP**: `galaxy_server_dx_supervisor` and
+`galaxy_sgdx03_godot_native_bridge`. The Python assertions genuinely
+received SGDX `reason=unhandled_exception` and
+`detail=crash-time minidump unavailable` for faulted process
+exit code `-1073741819` (Windows access violation). These are **real
+failures**, not allowed skips. The old workflow stopped before Windows
+Godot, package re-extraction and windowed acceptance, as intended.
+
+**Repair now implemented but native acceptance still OPEN:** The protected
+Windows second-chance debugger still captures while the original crashing
+thread is held by `EXCEPTION_DEBUG_EVENT`, with SGDX Job Object custody,
+user/SYSTEM-only diagnostic DACL and explicit opt-in. Attempt Microsoft's
+full `MiniDumpNormal|MiniDumpWithThreadInfo` first. If DbgHelp cannot
+emit optional thread information, reinitialize the same private output file
+and retry **once** with real `MiniDumpNormal` (not post-exit, not fake
+MDMP bytes, no privacy downgrade). On genuine failure the sidecar records
+only a bounded non-sensitive stage name and Win32 error code. Tests still
+require real `MDMP` file signature/size/NTFS private ACL and exact
+`crash-time minidump recorded` receipt before passing. The original
+Windows supervisor test also emits its sanitized incident on failure.
+
+The single group workflow now lets Windows native, Godot and package stages
+**collect independent failure evidence** in one run despite a failed
+previous stage, but a final always-enforced hard check **fails** if any
+native, actual Godot, delivered-ZIP or windowed renderer result failed.
+In particular the precompiled package artifact cannot be uploaded unless
+MSVC/native/real-Godot/package checks all passed; an unverified ZIP is never
+published as accepted. Hosted Linux Godot commands now have explicit
+process-level bounds: preceding Linux jobs remained stuck at the engine
+integration step with no complete artifact, so the newest group must report
+a controlled timeout instead of appearing to pass or consuming hours.
+
+**Current acceptance status:** genuine native Windows C++ compilation
+PASS, repaired original SQLite test scenarios PASS, Windows MDMP OPEN,
+Godot Windows/Linux scene OPEN, precompiled Windows runtime ZIP OPEN, hosted
+windowed screenshots OPEN, physical PC GPU gameplay OPEN. The draft PR
+cannot be promoted and manufactured mining equipment cannot be enabled.
