@@ -155,7 +155,7 @@ unlink of an open database, masking that resource leak; Windows correctly
 refuses deletion of the live handle. The four source tests have now been
 repaired with `contextlib.closing(sqlite3.connect(...))`; write transactions
 retain `with con:` to ensure commit/rollback before the explicit close.
-The repair covers all seven SQLite test connection contexts in these four
+The repair covers all eight SQLite test connection contexts in these four
 test programs. **No native broker or Windows process security bypass was
 added**, no ignore-errors deletion, fake passing receipt or Windows-only
 test skip.
