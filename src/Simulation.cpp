@@ -2154,6 +2154,7 @@ bool Simulation::submit(const Command& c) {
         c.action==Action::RequestDock || c.action==Action::Mine ||
         c.action==Action::StartMining || c.action==Action::StopMining))
         return false;
+
     if (passenger_action || medical_action || migration_action || escrow_action || return_action || consigned || colony_departure || register_child) { /* validated host command above */ }
     else if (c.action == Action::HostDestroyShip || c.action == Action::HostCrewLoss) {
         if(c.issuer != kServerAuthority || !c.actor || !c.target ||
