@@ -19,14 +19,14 @@ jobs:
       - name: Check out exact PR #125 task-group source
         uses: actions/checkout@v4
         with:
-          ref: 71917aa99aed790b6d2ba2a4598d5e20a94fead5
+          ref: 1cdc2d4f5f6684e53aded6f220908a5263905166
           persist-credentials: false
       - name: Verify immutable source SHA and export
         shell: bash
         run: |
           set -euo pipefail
           actual="$(git rev-parse HEAD)"
-          expected="71917aa99aed790b6d2ba2a4598d5e20a94fead5"
+          expected="1cdc2d4f5f6684e53aded6f220908a5263905166"
           test "$actual" = "$expected" || { echo "SOURCE SHA MISMATCH" >&2; exit 1; }
           name="single-galaxy-fp3d-source-$expected.tar.gz"
           tar -czf "$RUNNER_TEMP/$name" --exclude=.git --exclude=build -C "$GITHUB_WORKSPACE" .
@@ -34,8 +34,8 @@ jobs:
           printf 'SOURCE_SHA=%s\n' "$actual"
       - uses: actions/upload-artifact@v4
         with:
-          name: SingleGalaxy-exact-head-source-71917aa9
+          name: SingleGalaxy-exact-head-source-1cdc2d4f
           path: |
-            ${{ runner.temp }}/single-galaxy-fp3d-source-71917aa99aed790b6d2ba2a4598d5e20a94fead5.tar.gz
-            ${{ runner.temp }}/single-galaxy-fp3d-source-71917aa99aed790b6d2ba2a4598d5e20a94fead5.tar.gz.sha256
+            ${{ runner.temp }}/single-galaxy-fp3d-source-1cdc2d4f5f6684e53aded6f220908a5263905166.tar.gz
+            ${{ runner.temp }}/single-galaxy-fp3d-source-1cdc2d4f5f6684e53aded6f220908a5263905166.tar.gz.sha256
           if-no-files-found: error
