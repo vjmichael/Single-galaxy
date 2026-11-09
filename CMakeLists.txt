@@ -2271,4 +2271,12 @@ if(BUILD_TESTING)
   add_test(NAME galaxy_fp3d_env01_swept_collision COMMAND galaxy_fp3d_env01_swept_collision_tests
     ${CMAKE_CURRENT_BINARY_DIR}/fp3d_env01_collision.sqlite)
   set_tests_properties(galaxy_fp3d_env01_swept_collision PROPERTIES TIMEOUT 120)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME galaxy_fp3d_env01_native_collision_pipe
+      COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/FP3D_ENV01_NativeCollisionPipeTests.py
+        $<TARGET_FILE:galaxy_play_station04a_native_rock_seed>
+        $<TARGET_FILE:galaxy_desktop_player_host>)
+    set_tests_properties(galaxy_fp3d_env01_native_collision_pipe PROPERTIES TIMEOUT 150)
+  endif()
 endif()
