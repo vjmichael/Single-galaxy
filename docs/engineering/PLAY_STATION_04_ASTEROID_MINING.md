@@ -74,15 +74,17 @@ ship, refines that same lot to exactly 1000kg named minerals, and verifies
 Godot's synthetic 03C/04C parser smoke checks distinct result types; synthetic
 frames cannot substitute for native tests.
 
-**Evidence:** implementation, CTest registration and the additional native
-test have been committed to PR #125 with interim `[skip ci]`. The **single**
-central SGDX03 task-group Windows/Linux/Godot gate on main includes the 04C
-native test, but no 04C native run has completed on the updated source yet.
-As of source review, the preceding original SGDX03 run
-[42669612497](https://github.com/vjmichael/Single-galaxy/actions/runs/42669612497)
-had passed request authentication but Linux and Windows workers were queued,
-and that run was pinned to a **previous** PR head. It cannot accept the
-new 04C changes. No installed Windows physical GPU playtest is claimed.
+**Evidence:** this 04C bridge was independently compiled and executed in
+native GCC 14.2 Linux **Debug** and **Release**, with the complete 18/18
+group CTest passing twice (see `SGDX03_GODOT_NATIVE_SUPERVISION.md`).
+It includes actual C++/SQLite `galaxy_play_station04c_native_unload_pipe`,
+not just a synthetic Godot parser. Native Windows and real Godot scene
+execution remain open. The consolidated Windows/Linux group run
+[42679508383](https://github.com/vjmichael/Single-galaxy/actions/runs/42679508383)
+passed source authentication but its Windows and Linux jobs were still queued
+at the latest verified inspection; it is pinned to a now superseded source
+snapshot because additional FP3D-WIN02 package work occurred after dispatch.
+No Windows physical 3D GPU playtest or MSVC evidence is claimed.
 Full player mining remains unavailable because production equipment and
 authoritative mining ingress remain deferred.
 
@@ -100,3 +102,30 @@ authoritative mining ingress remain deferred.
 4. Run the complete live original-game `station -> board -> undock -> fly ->
    mine -> return -> dock -> unload -> refine -> inspect persistent minerals`
    playthrough, including crash/restart, resource conservation and no free hull.
+
+## FP3D-WIN02 self-contained alpha Windows ZIP — next unblocked delivery task
+
+The playable world must be testable without asking the creator to install
+Godot or developer tools. PR #125 now uses the official, release-digest-pinned
+MIT Godot 4.7.2 x64 engine **inside** the Windows precompiled native ZIP,
+with `runtime/GODOT_RUNTIME_SHA256.txt`, `runtime/LICENSE.txt` and
+`runtime/PROVENANCE.txt`. The double-click launcher uses only this bundled
+engine by default and refuses missing/mismatched bytes; a developer
+`-GodotExe` override is explicit and cannot pass bundled acceptance.
+No web fetch, PATH lookup or file picker is performed on the player's PC.
+
+The single central Windows CI group must re-extract that *actual* ZIP,
+validate PE64 machine and source/engine SHA, and run
+`Launch-PrebuiltStation.ps1 -VerifyOnly` **inside the extracted image**
+with the exact bundled Godot engine, live native host admission and real
+Godot parser/headless smoke tests. The following on-screen camera/rock/SQLite
+scene test also uses the copied, bundled runtime and project, rather than
+silently executing a Godot editor installed on the CI runner. The headless
+preflight result explicitly says **NO GPU CLAIM**; the physical Windows
+player validation still requires real viewport approval. The ZIP is a
+self-contained alpha, not yet an NSIS installer.
+
+**Status:** implementation and group-gate contracts committed without
+an additional per-file CI dispatch. The existing Windows runner has no
+available logs yet. This is not a successful Windows installation, and it
+does not unblock manufactured ship mining equipment.
