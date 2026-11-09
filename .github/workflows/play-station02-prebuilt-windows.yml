@@ -156,6 +156,21 @@ jobs:
             if (-not (Test-Path $p)) {throw "Native Windows binary $name not compiled"}
             Copy-Item $p (Join-Path $game 'native') -Force
           }
+          # vcpkg's dynamic SQLite is not installed on the user's PC.
+          # Copy the runtime DLL(s) into the SAME directory as both real hosts.
+          $vcpkg = $env:VCPKG_INSTALLATION_ROOT
+          if (-not $vcpkg) {$vcpkg='C:\vcpkg'}
+          $runtimeDir = Join-Path $vcpkg 'installed\x64-windows\bin'
+          $sqlite = Join-Path $runtimeDir 'sqlite3.dll'
+          if (-not (Test-Path $sqlite)) {throw "Packaged game missing Windows SQLite runtime: $sqlite"}
+          Get-ChildItem -Path $runtimeDir -Filter '*.dll' -File | ForEach-Object {
+            Copy-Item $_.FullName (Join-Path $game 'native') -Force
+          }
+          $packedStation=Join-Path $game 'native/galaxy_desktop_station_host.exe'
+          $packedCockpit=Join-Path $game 'native/galaxy_desktop_player_host.exe'
+          python tests/PLAY_STATION_02_DesktopPipeTests.py $packedStation $packedCockpit
+          if ($LASTEXITCODE -ne 0) {throw 'Precompiled staged Windows hosts failed actual original SQLite/child acceptance'}
+
           # Launcher expects build_tools/ as source checkout; preserve same path.
           New-Item -ItemType Directory -Force -Path (Join-Path $game 'build_tools') | Out-Null
           Move-Item (Join-Path $game 'Launch-PrebuiltStation.ps1') (Join-Path $game 'build_tools/Launch-PrebuiltStation.ps1') -Force
