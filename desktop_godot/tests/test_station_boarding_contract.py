@@ -39,5 +39,9 @@ assert 'NO AVAILABLE SHIP' in s and '"BOARD"' in s and '"EXIT"' in s
 assert '_pending != 0' in s and 'tick <= _tick' in s
 assert 'person_received.emit(_person.duplicate(true))' in s
 assert not any(x in s for x in ['HTTPRequest','WebSocketPeer','http://','https://','sqlite3_open','sqlite3_exec'])
+win=(root/'build_tools/Test-NativeStation.ps1').read_text()
+assert 'exclusive-writer-denied' in win
+assert 'station-crash-restart' in win
+assert 'Competing native world writer was admitted' in win
 assert 'native-station-protocol' in b and 'galaxy_desktop_station_host.exe' in b
 print('PLAY-STATION-02 Godot source integrity PASS: native fixture, ACK-only custody, real boarding gate, separate writers')
