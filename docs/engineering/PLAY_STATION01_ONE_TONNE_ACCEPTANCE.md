@@ -1,0 +1,20 @@
+# PLAY-STATION-01 — one-tonne station ⇄ ship ⇄ asteroid acceptance
+
+## Test purpose and design constraints
+This is a test fixture for an already-existing station, not a change to Single-Galaxy's normal start (one finite colony ship and crew, no free infrastructure). In a station-start test, player must be a real persistent person at a real station; a boarded/owned, intact, actually docked ship must exist. The server should never spawn a replacement hull when a ship is lost. Mining uses a ship and physical cargo; hand mining is prohibited. The asteroid provides one metric tonne of finite ore, delivered through docking and local inventory. Station refining must be a real station operation, not a resource teleport or a hidden shipboard fallback.
+
+## Executed original C++ source acceptance (2026-11-08)
+A new CTest `galaxy_play_station_mining_refining_e2e` builds and runs in the local Linux Release build against the existing exact FP3D-03B original kernel source. Test scenarios:
+
+1. **Fleet gate:** A station containing no owned ship has no available vessel; a foreign docked ship is not selectable. The read-only helper only returns an owned, extant, intact docked vessel with an appropriate crew when needed.
+2. **Bulk ore loop:** Existing colony ship docks, undocks through the real two-tick transition, uses actual propulsion and counterthrust, mines exactly 1 tonne from a finite bulk asteroid, returns, docks, unloads 1 tonne into the real station hangar, reloads it and refines it in the shipboard refinery while docked; the original SQLite journal and 1-tonne inventory are verified on restart. Docked mining is denied, foreign undocking is denied, asteroid depletion prevents repeat mining, and unloaded ore cannot be refined aboard until physically reloaded.
+3. **Classified geological ore:** A ship mines exactly 1 tonne from an original metallic geology-tagged asteroid, yielding 860 kg nickel-iron + 140 kg other named mineral fractions in ship mineral inventory; returns, docks, then processes the 860 kg nickel-iron with the existing *shipboard* `RefineMineral` action into 774 kg structural alloy and 86 kg tailings. `total_material_kg()` is conserved and read back from SQLite after restart.
+
+The native executable compiled and the CTest PASSed; this proves the existing physical loop. It does NOT prove a station-resident player-person, native boarding, a separately built/staffed station refinery, visual Godot navigation or installed Windows. Those are implementation milestones, not waived gates.
+
+## Outstanding milestones for the requested full playable test
+1. **STATION-PLAYER:** Journal a real player-person location at a station, with persistent boarding/disembarking and valid ship-selection custody. No phantom person simultaneously aboard and at the station.
+2. **SHIP AVAILABILITY:** Bind real station berth selector to station door/boarding interface and native host; if no intact owned ship is available, display no eligible ship and provide an actual player-construction path (do not grant a ship).
+3. **SPACE+MINING:** Place visible asteroid at original position, use ship-mounted mining equipment and safe distance, display exact one-tonne cargo in the native HUD. Ship mining equipment/capability must be checked in native simulation, not just by the UI.
+4. **STATION-REFINERY:** Add an owned, physically situated, powered/staffed local station refinery or an existing station-machine workflow that can transform actually unloaded ore into persistent mineral products with an explicit material/waste ledger. The existing `RefineOre` and `RefineMineral` actions operate aboard a colony ship and cannot honestly be called a station refinery.
+5. **E2E:** Actual Godot station spawn -> board -> undock -> maneuver -> mine -> return -> dock -> unload -> refinery output -> restart; enforce vessel destruction, no-ship recovery, wrong owner, out of range, full cargo, loss of workers/energy and real UI/camera synchronization on Windows/Linux.
