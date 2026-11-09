@@ -2,7 +2,7 @@
 # No compiler, installed Godot editor, Python, download or export templates.
 # -GodotExe is a deliberate developer override, not a default fallback.
 [CmdletBinding()]
-param([string]$GodotExe="",[switch]$SkipHeadlessSmoke)
+param([string]$GodotExe="",[switch]$SkipHeadlessSmoke,[switch]$VerifyOnly)
 Set-StrictMode -Version Latest
 $ErrorActionPreference="Stop"
 $project=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
@@ -13,6 +13,9 @@ $shaManifest=Join-Path $project 'native\SGDX_BUILD_SHA.txt'
 $logDir=Join-Path $project 'playtest-logs'
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 $pass=$false
+if($VerifyOnly -and $SkipHeadlessSmoke){
+  throw 'Package verification cannot skip bundled-engine headless smoke tests.'
+}
 try {
   foreach($exe in @($station,$pilot,$supervisor)){
     if(-not (Test-Path -LiteralPath $exe -PathType Leaf)){
@@ -86,14 +89,21 @@ try {
     }
     Write-Host 'Bundled Godot 4.7.2 parser/scene checks passed.'
   }
-  # Screenshot key is opt-in; captures ONLY the game viewport plus read-only
-  # verified original C++ frames. No Windows desktop/screen recording.
-  $env:SG_FP3D_OPERATOR_CAPTURE_DIR=$logDir
-  Write-Host 'Game controls: H station, WASD walk, E board/exit, P cockpit, E sit, V exterior, G dock, F11 capture game viewport.'
-  Write-Host 'For physical playtest evidence, press F11 at native station, docked cockpit, exterior flight, asteroid contact and after restart.'
-  $game=Start-Process -FilePath $GodotExe -ArgumentList @('--path',('"' + $project + '"')) -Wait -PassThru
-  Write-Host "Godot exited code $($game.ExitCode). Window close is NOT proof of physical gameplay acceptance."
-  $pass=$game.ExitCode -eq 0
+  if($VerifyOnly){
+    # Run ONLY the actual extracted ZIP's bundled engine and smoke suites.
+    # No Godot window / user input, and no physical-GPU PASS asserted.
+    Write-Host 'Verified packaged native host, bundled Godot SHA/version and actual Godot headless scenes. Physical 3D still unapproved.'
+    $pass=$true
+  } else {
+    # Screenshot key is opt-in; captures ONLY the game viewport plus read-only
+    # verified original C++ frames. No Windows desktop/screen recording.
+    $env:SG_FP3D_OPERATOR_CAPTURE_DIR=$logDir
+    Write-Host 'Game controls: H station, WASD walk, E board/exit, P cockpit, E sit, V exterior, G dock, F11 capture game viewport.'
+    Write-Host 'For physical playtest evidence, press F11 at native station, docked cockpit, exterior flight, asteroid contact and after restart.'
+    $game=Start-Process -FilePath $GodotExe -ArgumentList @('--path',('"' + $project + '"')) -Wait -PassThru
+    Write-Host "Godot exited code $($game.ExitCode). Window close is NOT proof of physical gameplay acceptance."
+    $pass=$game.ExitCode -eq 0
+  }
 } catch {
   Write-Host "PLAYTEST BLOCKED: $_" -ForegroundColor Red
 } finally {
@@ -126,7 +136,7 @@ try {
     verified_game_viewport_screenshots=$captureCount
     verified_native_frame_screenshots=$verifiedCaptureCount
     operator_visual_acceptance='NOT ATTESTED: review actual PNGs and original SQLite receipts'
-    result=if($pass){'WINDOW-CLOSED-NEEDS-MANUAL-OBSERVATION'}else{'BLOCKED'}
+    result=if(-not $pass){'BLOCKED'}elseif($VerifyOnly){'BUNDLED-PACKAGE-HEADLESS-PREFLIGHT-VERIFIED-NO-GPU-CLAIM'}else{'WINDOW-CLOSED-NEEDS-MANUAL-OBSERVATION'}
   }
   $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $logDir 'result.json') -Encoding UTF8
   $zip=Join-Path $project 'SingleGalaxy_Station_Playtest_Evidence.zip'
