@@ -166,3 +166,43 @@ packaging/delivery enhancement; this ZIP is a self-contained alpha playtest,
 no current-head Windows runner build or self-contained real-PC launch result
 has yet been received. The existing consolidated native task-group request
 must be refreshed only **once** when this new group is ready, not per commit.
+
+### 2026-11-09 native Windows PowerShell 5.1 packaging repair
+
+In real consolidated [Actions 42715286430](https://github.com/vjmichael/Single-galaxy/actions/runs/42715286430),
+**Linux C++ 19/19 + actual Godot 4.7.2 scene/smokes PASSED**, and the
+**Windows MSVC native/SQLite/private MDMP 19/19 PASSED**. The actual source
+Godot Windows parser/scene tests passed as well. The ZIP itself was
+constructed and re-extracted: `packaging-result.json` reported
+`BUNDLED_GODOT_AND_NATIVE_WINDOWS_PE64_VERIFIED`, and the bundled engine
+completed **all six** headless parser/scene smokes using modern PowerShell
+inside the extracted image.
+
+The security negative-test harness then launched the same
+`Launch-PrebuiltStation.ps1` through **real Windows PowerShell 5.1** to
+prove that a deliberately mismatched Godot binary SHA was rejected. The
+actual captured `tampered-launch-stderr.log` and
+`tampered-launch-stdout.log` showed the **real failure**:
+`The term 'Get-FileHash' is not recognized as the name of a cmdlet`.
+Thus the test correctly refused to give credit for a nonzero exit from
+an unrelated PowerShell module error. No positive verified ZIP was uploaded
+and automated non-headless screenshots were not executed.
+
+**Repair:** the player's portable launcher no longer depends on an
+installed PowerShell `Get-FileHash` cmdlet. It computes the exact SHA-256
+with Windows' existing `System.Security.Cryptography.SHA256` and
+`System.IO.File` APIs, closing both cryptographic and file handles
+deterministically. Original engine, native-host and operator screenshot
+identity checks retain SHA-256 strict equality; there is **no** bypass
+and no network dependency. The consolidated packaged gate now executes
+a **clean positive** headless smoke under actual
+`WindowsPowerShell\v1.0\powershell.exe` and independently verifies its
+`BUNDLED-VERIFIED` receipt before altering the extracted manifest;
+only then does it require a specific hash-mismatch refusal with
+`result=BLOCKED`, restore the original hash and verify source integrity.
+
+**Status:** this Windows 5.1 compatibility repair and positive/negative
+acceptance contracts are committed to draft PR #125 but require a fresh
+single end-of-task-group Windows/Linux/Godot/ZIP/windowed rerun.
+Physical creator Windows GPU camera quality, asteroid contact, docking
+and saved-world continuity still require real on-PC operator evidence.
