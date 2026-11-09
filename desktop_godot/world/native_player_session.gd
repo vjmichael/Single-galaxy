@@ -256,7 +256,7 @@ func _accept_ship(parts: PackedStringArray) -> void:
 func _accept_original_asteroid(parts: PackedStringArray) -> void:
 	# One snapshot per verified original SHIP tick; never an independent oracle.
 	var present := parts[0] == "ROCK"
-	if parts[1] != "1" or (present and parts.size() != 17) or (not present and parts.size() != 10):
+	if (present and parts.size() != 17) or (not present and parts.size() != 10) or parts[1] != "1":
 		stop("Malformed original-world asteroid frame")
 		return
 	for i in range(2, parts.size()):
