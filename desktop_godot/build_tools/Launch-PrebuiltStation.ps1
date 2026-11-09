@@ -136,20 +136,33 @@ try {
       # reporting GDScript parser errors, so inspect BOTH real output streams.
       $p=Start-Process -FilePath $CliGodotExe -ArgumentList $suite -NoNewWindow -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
       try {
-        Wait-Process -Id $p.Id -Timeout 90 -ErrorAction Stop
+        # PowerShell 5.1's Wait-Process -Id does NOT synchronize the
+        # original Start-Process -PassThru object reliably: the same
+        # observed clean native editor run had HasExited=True, but
+        # ExitCode=$null. Wait on THIS exact .NET Process object instead.
+        # Then verify its typed exit code, never accept null as success.
+        $completed=[bool]$p.WaitForExit(90000)
+        if(-not $completed){
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          throw "Bundled Godot headless smoke #$index timed out after 90 seconds"
+        }
+        $p.WaitForExit()
+        $p.Refresh()
+        $exited=[bool]$p.HasExited
+        $exitValue=$p.ExitCode
+        if(-not $exited -or $null -eq $exitValue){
+          throw "Bundled Godot smoke #$index has no confirmed process exit code under Windows PowerShell"
+        }
+        $code=[int]$exitValue
       } catch {
-        Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
-        throw "Bundled Godot headless smoke #$index timed out. See $stdout and $stderr. Game was not launched."
+        throw "Bundled Godot headless smoke #$index process wait failed: $_. See $stdout and $stderr. Game was not launched."
       }
-      $p.Refresh()
       $output=(
         (Get-Content -LiteralPath $stdout -Raw -ErrorAction SilentlyContinue | Out-String) +
         (Get-Content -LiteralPath $stderr -Raw -ErrorAction SilentlyContinue | Out-String)
       )
-      $exited=$p.HasExited
-      $code=if($exited){$p.ExitCode}else{-9999}
       $errors=($output -match '(?im)SCRIPT ERROR:|ERROR: Failed to load script|Parse Error:|Error at \(')
-      if(-not $exited -or $code -ne 0 -or $errors){
+      if($code -ne 0 -or $errors){
         throw "Bundled Godot console smoke #$index failed: exited=$exited code=$code parser_error=$errors executable=$CliGodotExe. See $stdout and $stderr. Game was not launched."
       }
     }
