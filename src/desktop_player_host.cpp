@@ -1,3 +1,4 @@
+#include "galaxy/NativeWriterLease.hpp"
 // FP3D-02F: no-browser, no-Python native desktop command ingress.
 // Stdio is an OS-local child pipe; host owns the fixed single-player authority.
 // Every accepted MOVE commits world STEP, receipt, pose in one original transaction.
@@ -83,6 +84,7 @@ int main(int argc,char** argv){
         if(save.empty()||save.string().size()>1024||
            (!save.parent_path().empty()&&!fs::exists(save.parent_path())))
             throw std::invalid_argument("invalid native world save path");
+        NativeWriterLease custody(save);
         Simulation seed(0xC021);
         const auto station=seed.add_station({0,0});
         const auto ship=seed.spawn_ship_docked(kLocalOwner,station,24,60);
