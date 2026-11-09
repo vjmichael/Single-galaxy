@@ -1,5 +1,6 @@
 name: CI one-time exact-head source evidence export
 
+# 2026-11-09 PR #125 exact immutable head; source transfer, not a native gate.
 # One-time *source transfer* for independent local Linux reproduction while
 # native Windows/Linux group runners are backlogged. Not an acceptance gate.
 on:
