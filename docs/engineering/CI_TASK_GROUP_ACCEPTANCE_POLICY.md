@@ -33,6 +33,28 @@ Simulation.cpp, or another shared implementation file.
 - Keep independent acceptance distinct from unit/source checks and from
   physical Windows GPU/render/camera playtesting.
 
+## Interim commits and the one explicit group gate
+
+For still-open historical PR branches whose legacy leaf workflows automatically
+trigger on every synchronize event, use `[skip ci]` in **interim implementation
+commit messages** until those old triggers have been retired. GitHub documents
+that this suppresses `push`/`pull_request` workflow starts; it does not
+suppress manually initiated or separate `push` requests on main. Do **not**
+use a skip marker on the final `ci/task-group-request.json` update. Because
+skipped required checks can remain Pending, do not merge on the strength of
+skipped checks: use the designated accepted group gate and then satisfy any
+required merge rules independently.
+
+The on-demand workflow `.github/workflows/ci-task-group-acceptance.yml` is
+the single exact-head entry point. At completion of a supported task group,
+update only `ci/task-group-request.json` on `main` with a task-group ID,
+the open PR number, and its exact current 40-hex source SHA. This triggers
+one authenticated Linux/Windows acceptance workflow that refuses stale SHAs.
+The initial group is SGDX03; configure and review other group recipes **at
+their group boundaries**, not on every small source edit. Direct manual
+`workflow_dispatch` is also available. A request is *not acceptance* until
+the actual OS jobs and independent artifacts pass.
+
 ## Queue hygiene and cancellation
 
 - Before an end-of-group gate, inspect queued/running runs. Cancel **queued**
