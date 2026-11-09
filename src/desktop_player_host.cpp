@@ -3,6 +3,7 @@
 // Stdio is an OS-local child pipe; host owns the fixed single-player authority.
 // Every accepted MOVE commits world STEP, receipt, pose in one original transaction.
 #include "galaxy/NativeInteriorMovement.hpp"
+#include "galaxy/SpaceMiningContact.hpp"
 #include <charconv>
 #include <chrono>
 #include <cstdint>
@@ -60,6 +61,31 @@ void send_ship(std::uint64_t session,std::uint64_t req,std::uint64_t command_id,
              <<'|'<<f.heading<<'|'<<static_cast<int>(f.dock)<<'\n'<<std::flush;
     if(!std::cout)throw std::runtime_error("Godot flight observation pipe closed");
 }
+void send_rock_contact(std::uint64_t session,std::uint64_t req,
+                       const PersistentWorld& world,EntityId ship_id) {
+    // Read-only bounded original physical geometry. No Godot mining authority.
+    const auto* ship=world.world().find(ship_id);
+    if(!ship || ship->owner_id!=kLocalOwner || ship->type!=EntityType::Ship)
+        throw std::runtime_error("original owned ship missing for rock telemetry");
+    const auto rock=space_mining_view::nearest_original_asteroid(
+        world.world(),kLocalOwner,ship_id);
+    if(rock) {
+        std::cout<<"ROCK|1|"<<session<<'|'<<req<<'|'<<ship_id<<'|'
+                 <<world.world().tick()<<'|'<<world.generation()<<'|'
+                 <<rock->rock<<'|'<<rock->ore_tonnes<<'|'
+                 <<rock->x_mm<<'|'<<rock->y_mm<<'|'<<rock->z_mm<<'|'
+                 <<rock->radius_mm<<'|'<<unsigned(rock->taxonomy)<<'|'
+                 <<rock->cargo_tonnes<<'|'<<rock->cargo_capacity_tonnes<<'|'
+                 <<(rock->mining_tool_online?1:0)<<'\n'<<std::flush;
+    } else {
+        std::cout<<"ROCKNONE|1|"<<session<<'|'<<req<<'|'<<ship_id<<'|'
+                 <<world.world().tick()<<'|'<<world.generation()<<'|'
+                 <<ship->cargo<<'|'<<ship->cargo_capacity<<'|'
+                 <<(space_mining_view::tool_online(world.world(),*ship)?1:0)
+                 <<'\n'<<std::flush;
+    }
+    if(!std::cout)throw std::runtime_error("Godot original-rock observation pipe closed");
+}
 bool flight_action(std::string_view name,PilotControl& out){
     if(name=="UND")out=PilotControl::Undock;
     else if(name=="LEFT")out=PilotControl::YawLeft;
@@ -103,6 +129,7 @@ int main(int argc,char** argv){
         const auto frame=person.current(kLocalOwner);
         send_pose("POSE",session,0,frame,world);
         send_ship(session,0,0,Outcome::Applied,person.flight_state(kLocalOwner));
+        send_rock_contact(session,0,world,frame.ship);
         auto last_move=std::chrono::steady_clock::now()-std::chrono::milliseconds(100);
         std::string line;
         while(std::getline(std::cin,line)){
@@ -151,6 +178,7 @@ int main(int argc,char** argv){
                 if(!outcome){deny(req,"native-flight-refused");continue;}
                 last_move=now;
                 send_ship(session,req,command_id,*outcome,person.flight_state(kLocalOwner));
+                send_rock_contact(session,req,world,previous.ship);
                 continue;
             }
             if(walking&&expected!=previous.sequence){deny(req,"stale-pose");continue;}

@@ -3,6 +3,7 @@ extends RefCounted
 ## Only the C++ host commits pose and native STEP; Godot cannot write SQLite.
 signal pose_received(pose: Dictionary)
 signal ship_state_received(ship: Dictionary)
+signal asteroid_contact_received(contact: Dictionary)
 signal status_changed(message: String)
 signal connection_changed(connected: bool)
 
@@ -17,6 +18,9 @@ var _session := 0
 var _sequence := -1
 var _ship := 0
 var _initial_ship_seen := false
+var _last_ship_telemetry_request := -1
+var _last_contact_request := -1
+var _dock_state := -1
 var _flight_cycle := 0
 var _seat_sequence := -1
 var _seated := false
@@ -80,6 +84,9 @@ func start(save_override: String = "") -> void:
 	_sequence = -1
 	_ship = 0
 	_initial_ship_seen = false
+	_last_ship_telemetry_request = -1
+	_last_contact_request = -1
+	_dock_state = -1
 	_flight_cycle = 0
 	_seat_sequence = -1
 	_seated = false
@@ -134,6 +141,9 @@ func _accept_line(line: String) -> void:
 			_pending = 0
 			_pending_kind = ""
 		_status("NATIVE DENIED action #%d: %s; original game did not accept it" % [request, parts[3]])
+		return
+	if parts.size() > 0 and (parts[0] == "ROCK" or parts[0] == "ROCKNONE"):
+		_accept_original_asteroid(parts)
 		return
 	if parts.size() == 17 and parts[0] == "SHIP":
 		_accept_ship(parts)
@@ -235,11 +245,68 @@ func _accept_ship(parts: PackedStringArray) -> void:
 		_pending_kind = ""
 		_tick = tick
 		_generation = generation
+	_last_ship_telemetry_request = request
+	_dock_state = dock
 	ship_state_received.emit({"ship":ship,"command_id":command_id,"outcome":outcome,
 		"tick":tick,"gen":generation,"x_mm":px,"y_mm":py,"z_mm":pz,
 		"vx":vx,"vy":vy,"vz":vz,"heading":heading,"dock":dock})
 	if request != 0 and outcome != 0:
 		_status("Original ship command rejected with outcome code %d (native journal retained)" % outcome)
+
+func _accept_original_asteroid(parts: PackedStringArray) -> void:
+	# One snapshot per verified original SHIP tick; never an independent oracle.
+	var present := parts[0] == "ROCK"
+	if (present and parts.size() != 17) or (not present and parts.size() != 10) or parts[1] != "1":
+		stop("Malformed original-world asteroid frame")
+		return
+	for i in range(2, parts.size()):
+		if not _integer(parts[i]):
+			stop("Non-numeric native asteroid field")
+			return
+	var session := int(parts[2])
+	var request := int(parts[3])
+	var ship := int(parts[4])
+	var tick := int(parts[5])
+	var generation := int(parts[6])
+	if session != _session or ship != _ship or tick != _tick or generation != _generation or request != _last_ship_telemetry_request or request <= _last_contact_request:
+		stop("Stale or unrequested asteroid contact")
+		return
+	var ore := 0
+	var rock_id := 0
+	var dx := 0
+	var dy := 0
+	var dz := 0
+	var radius := 0
+	var taxonomy := 3
+	var cargo := 0
+	var capacity := 0
+	var installed := 0
+	if present:
+		rock_id = int(parts[7])
+		ore = int(parts[8])
+		dx = int(parts[9])
+		dy = int(parts[10])
+		dz = int(parts[11])
+		radius = int(parts[12])
+		taxonomy = int(parts[13])
+		cargo = int(parts[14])
+		capacity = int(parts[15])
+		installed = int(parts[16])
+		if rock_id <= 0 or ore <= 0 or abs(dx) > 30000 or abs(dy) > 30000 or abs(dz) > 30000 or dx*dx+dy*dy+dz*dz > 900000000 or radius <= 0 or radius > 10000000 or taxonomy < 0 or taxonomy > 3 or _dock_state != 0:
+			stop("Asteroid contact invalid or impossible for original ship")
+			return
+	else:
+		cargo = int(parts[7])
+		capacity = int(parts[8])
+		installed = int(parts[9])
+	if cargo < 0 or capacity < 0 or cargo > capacity or capacity > 1000000000 or installed not in [0, 1]:
+		stop("Native ore stock or mining tool status invalid")
+		return
+	_last_contact_request = request
+	asteroid_contact_received.emit({"found":present,"rock":rock_id,
+		"ore_tonnes":ore,"dx_mm":dx,"dy_mm":dy,"dz_mm":dz,"radius_mm":radius,
+		"taxonomy":taxonomy,"ship":ship,"tick":tick,"generation":generation,
+		"cargo_tonnes":cargo,"cargo_capacity":capacity,"mining_tool_online":installed})
 
 func submit_flight(actions: PackedStringArray) -> void:
 	if not _active or _session <= 0 or not _seated or not _initial_ship_seen or \

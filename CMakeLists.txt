@@ -2234,3 +2234,32 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
   set_tests_properties(galaxy_play_station03c_refinery_native_pipe
     PROPERTIES TIMEOUT 180)
 endif()
+
+# PLAY-STATION-04A: original 3D rock-contact and finite unmined-ore snapshot
+# without any Godot-side asteroid authority or default mining equipment.
+if(BUILD_TESTING)
+  add_executable(galaxy_play_station04a_original_asteroid_contact_tests
+    tests/PLAY_STATION_04A_ContactTests.cpp)
+  target_link_libraries(galaxy_play_station04a_original_asteroid_contact_tests
+    PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play_station04a_original_asteroid_contact
+    COMMAND galaxy_play_station04a_original_asteroid_contact_tests)
+  set_tests_properties(galaxy_play_station04a_original_asteroid_contact
+    PROPERTIES TIMEOUT 40)
+endif()
+
+# PLAY-STATION-04A real child-stdio asteroid contact, same original SQLite world.
+if(BUILD_TESTING)
+  add_executable(galaxy_play_station04a_native_rock_seed
+    tests/PLAY_STATION_04A_NativeRockSeed.cpp)
+  target_link_libraries(galaxy_play_station04a_native_rock_seed PRIVATE galaxy_kernel)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME galaxy_play_station04a_original_rock_native_pipe
+      COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/PLAY_STATION_04A_NativeRockPipeTests.py
+        $<TARGET_FILE:galaxy_play_station04a_native_rock_seed>
+        $<TARGET_FILE:galaxy_desktop_player_host>)
+    set_tests_properties(galaxy_play_station04a_original_rock_native_pipe
+      PROPERTIES TIMEOUT 90)
+  endif()
+endif()
