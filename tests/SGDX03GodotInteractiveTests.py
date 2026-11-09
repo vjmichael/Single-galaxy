@@ -4,6 +4,7 @@ Usage: SCRIPT SUPERVISOR FAULT_CHILD NATIVE_PLAYER_HOST FINITE_ROCK_SEED
 This is native Windows/Linux acceptance, not a stubbed Godot frame.
 """
 import ctypes
+from contextlib import closing
 import json
 import queue
 import threading
@@ -222,7 +223,7 @@ def check_original_world(root):
     assert done["reason"] == "clean_exit" and done["role"] == "godot_ship",done
     if os.name != "nt":
         assert done["breadcrumb_count"] >= 2 and done["last_committed_tick"] >= 1,done
-    with sqlite3.connect(save) as con:
+    with closing(sqlite3.connect(save)) as con:
         assert con.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
     # The game reopens its real persisted world through a fresh *supervisor*.
     p2,pose2,ship2,rock2=start_original(save)
@@ -247,7 +248,7 @@ def check_original_world(root):
         "ROCK|1|" in records[2]), records[:4]
     restored = records[2].split("|")
     assert restored[7] == rock and restored[8] == stock
-    with sqlite3.connect(save) as con:
+    with closing(sqlite3.connect(save)) as con:
         assert con.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
     assert receipts(save)[-1]["reason"] == "clean_exit"
 
