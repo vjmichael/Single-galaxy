@@ -1,7 +1,7 @@
 {
   "schema": "SG-CI-GATE-01",
   "task_group": "SGDX03",
-  "source_sha": "4019e611d2a1fcb9f7ea36424fe009485d53b2f5",
+  "source_sha": "2086e65e329eb8ce59742e510c2ea158e51a5959",
   "pr_number": 125,
-  "note": "One END-OF-GROUP SGDX03+FP3D-WIN01 Windows x64 MSVC native/SQLite/private MDMP, exact-source ZIP/PE/SHA verification, official Godot 4.7.2 SHA256, headless Godot source/scene, genuine non-headless original C++ dock/asteroid/restart pixels and Linux CTest. Independently reproduced GCC14.2 Debug/Release 18-of-18 original native tests; not evidence of Windows acceptance. Supersede older queued group runs; physical creator GPU play remains independent and unapproved until real on-PC evidence."
+  "note": "ONE consolidated SGDX03+FP3D-WIN02 current-head Windows x64 MSVC/SQLite/SGDX/MDMP + Linux real Godot 4.7.2/native gate. Repairs four demonstrated Windows WinError32 leaked Python SQLite connections with deterministic contextlib.closing. Package verifies official Godot release asset SHA256, bundles PE64 engine+MIT licence with native hosts, re-extracts ZIP, runs actual bundled engine headless smoke and a malicious digest refusal using Windows PowerShell 5.1, then attempts real non-headless packaged 3D collision/SQLite restart. Preceding run 42679508383 compiled MSVC but failed CTest 15/19 from SQLite test cleanup; new repairs NOT YET ACCEPTED. Physical creator GPU visual judgment remains separate; do not unlock manufacturing mining equipment."
 }
