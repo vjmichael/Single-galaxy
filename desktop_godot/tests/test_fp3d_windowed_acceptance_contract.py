@@ -4,14 +4,14 @@ from pathlib import Path
 
 project = Path(__file__).resolve().parents[1]
 root = project.parent
-scene = (project / "tests/fp3d_env01_live_scene_acceptance.gd").read_text()
-game = (project / "world/main.gd").read_text()
-station = (project / "world/native_station_session.gd").read_text()
-flight = (project / "world/native_player_session.gd").read_text()
-gui_launcher = (project / "build_tools/Launch-PrebuiltStation.ps1").read_text()
-package = (project / "build_tools/Verify-PrecompiledPackage.ps1").read_text()
-windowed = (project / "build_tools/Test-WindowedNativeGodot.ps1").read_text()
-guide = (root / "docs/engineering/FP3D_WINDOWS_PHYSICAL_ACCEPTANCE.md").read_text()
+scene = (project / "tests/fp3d_env01_live_scene_acceptance.gd").read_text(encoding="utf-8")
+game = (project / "world/main.gd").read_text(encoding="utf-8")
+station = (project / "world/native_station_session.gd").read_text(encoding="utf-8")
+flight = (project / "world/native_player_session.gd").read_text(encoding="utf-8")
+gui_launcher = (project / "build_tools/Launch-PrebuiltStation.ps1").read_text(encoding="utf-8")
+package = (project / "build_tools/Verify-PrecompiledPackage.ps1").read_text(encoding="utf-8")
+windowed = (project / "build_tools/Test-WindowedNativeGodot.ps1").read_text(encoding="utf-8")
+guide = (root / "docs/engineering/FP3D_WINDOWS_PHYSICAL_ACCEPTANCE.md").read_text(encoding="utf-8")
 
 checks = {
     "real-window-not-headless": (
