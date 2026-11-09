@@ -327,6 +327,8 @@ func _build_hud() -> void:
 	contents.add_child(asteroid_label)
 	flight_instrument_label = Label.new()
 	flight_instrument_label.name = "ReadOnlyOriginalPilotInstrument"
+	flight_instrument_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	flight_instrument_label.custom_minimum_size = Vector2(650.0, 40.0)
 	flight_instrument_label.text = "FLIGHT SENSOR: awaiting matching original SHIP + ROCK receipts"
 	contents.add_child(flight_instrument_label)
 	ship_label = Label.new()
