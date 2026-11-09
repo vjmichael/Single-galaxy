@@ -27,13 +27,26 @@ func _run() -> void:
 	if not camera_found:
 		_fail("local player exists but has no attached Camera3D")
 		return
-	var colliders := 0
-	for node in root_scene.get_children():
-		if node is StaticBody3D:
-			colliders += 1
-	if colliders < 12:
-		_fail("expected actual 3D colliders")
+	# The original smoke only scanned root direct children. PLAY-STATION-02
+	# correctly parents collision bodies under StationInterior_Prototype and
+	# ShipInterior_Prototype, so count actual recursive physics geometry instead.
+	var station_space := root_scene.get_node_or_null("StationInterior_Prototype") as Node3D
+	var ship_space := root_scene.get_node_or_null("ShipInterior_Prototype") as Node3D
+	if station_space == null or ship_space == null:
+		_fail("station/cabin scene-root separation missing")
 		return
+	var station_bodies := station_space.find_children("*", "StaticBody3D", true, false)
+	var ship_bodies := ship_space.find_children("*", "StaticBody3D", true, false)
+	if station_bodies.size() < 10 or ship_bodies.size() < 5:
+		_fail("expected real 3D collision objects in both station and cabin")
+		return
+	if not station_space.visible or ship_space.visible:
+		_fail("new test scene did not start in station visual mode")
+		return
+	for body in ship_bodies:
+		if body.collision_layer != 0 or body.collision_mask != 0:
+			_fail("inactive cabin left invisible blocking colliders")
+			return
 	var forward_bindings := InputMap.action_get_events("fps_forward")
 	if forward_bindings.size() != 1 or not (forward_bindings[0] is InputEventKey):
 		_fail("bad walking input binding")
@@ -53,7 +66,7 @@ func _run() -> void:
 	if not root.has_focus() and not is_equal_approx(start_position.z, player.global_position.z):
 		_fail("unfocused control changed horizontal position")
 		return
-	print("FP3D-02A GODOT runtime smoke PASS: scene, real collisions, first-person camera, bindings and focus guard")
+	print("PLAY-STATION-02 GODOT scene smoke PASS: station/cabin hierarchy, physical collisions, camera, input and focus (not a native process test)")
 	quit(0)
 
 func _fail(why: String) -> void:

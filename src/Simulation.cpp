@@ -2144,6 +2144,17 @@ bool Simulation::submit(const Command& c) {
         }
     }else if(!medical_action && !migration_action && !colony_departure && !register_child && (c.transport_id || !c.passenger_ids.empty()))return false;
     if (c.id == 0 || c.execute_tick <= tick_ || c.issuer == 0 || submitted_ids_.count(c.id)) return false;
+    // A station-resident player may not teleoperate their absent ship.
+    // Reviewed native NPC-flight commands remain separately host-authorized.
+    if(const auto person=player_people_.find(c.issuer);
+       person!=player_people_.end() &&
+       person->second.state==PlayerPersonState::AtStation &&
+       !(c.id&(std::uint64_t{1}<<61)) &&
+       (c.action==Action::Thrust || c.action==Action::RequestUndock ||
+        c.action==Action::RequestDock || c.action==Action::Mine ||
+        c.action==Action::StartMining || c.action==Action::StopMining))
+        return false;
+
     if (passenger_action || medical_action || migration_action || escrow_action || return_action || consigned || colony_departure || register_child) { /* validated host command above */ }
     else if (c.action == Action::HostDestroyShip || c.action == Action::HostCrewLoss) {
         if(c.issuer != kServerAuthority || !c.actor || !c.target ||
@@ -9093,6 +9104,77 @@ bool Simulation::register_player_person(PlayerId owner,EntityId aboard){
     snapshot_version_=std::max(snapshot_version_,98);
     return true;
 }
+// PLAY-STATION-02 native station start. Does not create or grant ANY ship.
+bool Simulation::register_player_at_station(PlayerId owner,EntityId station){
+    if(!owner||owner==kServerAuthority||!station||snapshot_version_<120||
+       player_people_.count(owner)||player_people_.size()>=10000)return false;
+    const auto* site=find(station);
+    if(!site||site->type!=EntityType::Station)return false;
+    if(snapshot_version_<71)ensure_ship_frame_registry();
+    PlayerPerson p{};p.owner=owner;p.state=PlayerPersonState::AtStation;
+    p.physical_station=station;p.registered_tick=tick_;p.last_update_tick=tick_;
+    p.station_x_mm=1600; // station lobby, 1 m from 600-mm hangar hatch
+    player_people_.emplace(owner,p);
+    snapshot_version_=std::max(snapshot_version_,122);
+    return true;
+}
+bool Simulation::station_player_action(PlayerId owner,EntityId station,
+        EntityId ship,StationPlayerAction action,std::int64_t dx,
+        std::int64_t dz,std::uint64_t receipt){
+    if(!owner||owner==kServerAuthority||!station||!receipt||snapshot_version_<120||
+       receipt>=(std::uint64_t{1}<<60))return false;
+    auto it=player_people_.find(owner);
+    const auto* site=find(station);
+    if(it==player_people_.end()||!site||site->type!=EntityType::Station)return false;
+    for(const auto& [other,p]:player_people_){
+        (void)other;
+        if(p.last_receipt==receipt)return false;
+    }
+    auto& person=it->second;
+    if(action==StationPlayerAction::Walk){
+        if(ship || person.state!=PlayerPersonState::AtStation||
+           person.physical_ship||person.physical_station!=station||
+           dx>100||dx< -100||dz>100||dz< -100||(!dx&&!dz)||
+           dx*dx+dz*dz>10000||
+           person.station_x_mm+dx>8000||person.station_x_mm+dx< -8000||
+           person.station_z_mm+dz>8000||person.station_z_mm+dz< -8000)
+            return false;
+        person.station_x_mm+=dx;person.station_z_mm+=dz;
+    }else if(action==StationPlayerAction::Board){
+        if(dx||dz||!ship||person.state!=PlayerPersonState::AtStation||
+           person.physical_ship||person.physical_station!=station||
+           person.station_x_mm>600||person.station_x_mm< -600||
+           person.station_z_mm>600||person.station_z_mm< -600)
+            return false;
+        const auto* vessel=find(ship);
+        if(!vessel||vessel->type!=EntityType::Ship||vessel->hull<=0||
+           vessel->owner_id!=owner||vessel->dock_station!=station||
+           vessel->dock_state!=DockState::Docked||
+           vessel->jump_state!=ShipJumpState::Ready)return false;
+        if(const auto* colony=colony_ship(ship);colony&&colony->crew<=0)
+            return false;
+        // Physical player belongs to exactly one ship. No teleport to a
+        // foreign/unberthed hull; only change home after real boarding.
+        person.home_ship=ship;person.physical_ship=ship;
+        person.physical_station=0;person.station_x_mm=0;person.station_z_mm=0;
+        person.state=PlayerPersonState::AboardOwnShip;
+    }else if(action==StationPlayerAction::Disembark){
+        if(dx||dz||!ship||person.state!=PlayerPersonState::AboardOwnShip||
+           person.physical_ship!=ship||person.home_ship!=ship||
+           person.physical_station)return false;
+        const auto* vessel=find(ship);
+        if(!vessel||vessel->type!=EntityType::Ship||vessel->owner_id!=owner||
+           vessel->hull<=0||vessel->dock_state!=DockState::Docked||
+           vessel->dock_station!=station||
+           vessel->jump_state!=ShipJumpState::Ready)return false;
+        person.state=PlayerPersonState::AtStation;
+        person.physical_ship=0;person.physical_station=station;
+        person.station_x_mm=0;person.station_z_mm=0; // hatch threshold
+    }else return false;
+    person.last_receipt=receipt;person.last_update_tick=tick_;
+    snapshot_version_=std::max(snapshot_version_,122);
+    return true;
+}
 // NPC-RESP-02B: consent to a *specific actual rescue ship*.
 // This owner request is not a movement effect or a warrant.
 bool Simulation::grant_player_rescue_consent(
@@ -12175,7 +12257,7 @@ void Simulation::steps(std::uint64_t count) {
 
 std::string Simulation::canonical_state() const {
     std::ostringstream out;
-    out << ( snapshot_version_ >= 121 ? "galaxy-kernel-v121|" : snapshot_version_ >= 120 ? "galaxy-kernel-v120|" : snapshot_version_ >= 119 ? "galaxy-kernel-v119|" : snapshot_version_ >= 118 ? "galaxy-kernel-v118|" : snapshot_version_ >= 117 ? "galaxy-kernel-v117|" : snapshot_version_ >= 116 ? "galaxy-kernel-v116|" : snapshot_version_ >= 115 ? "galaxy-kernel-v115|" : snapshot_version_ >= 114 ? "galaxy-kernel-v114|" : snapshot_version_ >= 113 ? "galaxy-kernel-v113|" : snapshot_version_ >= 112 ? "galaxy-kernel-v112|" : snapshot_version_ >= 111 ? "galaxy-kernel-v111|" : snapshot_version_ >= 110 ? "galaxy-kernel-v110|" : snapshot_version_ >= 109 ? "galaxy-kernel-v109|" : snapshot_version_ >= 108 ? "galaxy-kernel-v108|" : snapshot_version_ >= 107 ? "galaxy-kernel-v107|" : snapshot_version_ >= 106 ? "galaxy-kernel-v106|" : snapshot_version_ >= 105 ? "galaxy-kernel-v105|" : snapshot_version_ >= 104 ? "galaxy-kernel-v104|" : snapshot_version_ >= 103 ? "galaxy-kernel-v103|" : snapshot_version_ >= 102 ? "galaxy-kernel-v102|" : snapshot_version_ >= 101 ? "galaxy-kernel-v101|" : snapshot_version_ >= 100 ? "galaxy-kernel-v100|" : snapshot_version_ >= 99 ? "galaxy-kernel-v99|" : snapshot_version_ >= 98 ? "galaxy-kernel-v98|" : snapshot_version_ >= 97 ? "galaxy-kernel-v97|" : snapshot_version_ >= 96 ? "galaxy-kernel-v96|" : snapshot_version_ >= 95 ? "galaxy-kernel-v95|" : snapshot_version_ >= 94 ? "galaxy-kernel-v94|" : snapshot_version_ >= 93 ? "galaxy-kernel-v93|" : snapshot_version_ >= 92 ? "galaxy-kernel-v92|" : snapshot_version_ >= 91 ? "galaxy-kernel-v91|" : snapshot_version_ >= 90 ? "galaxy-kernel-v90|" : snapshot_version_ >= 89 ? "galaxy-kernel-v89|" : snapshot_version_ >= 88 ? "galaxy-kernel-v88|" : snapshot_version_ >= 87 ? "galaxy-kernel-v87|" : snapshot_version_ >= 86 ? "galaxy-kernel-v86|" : snapshot_version_ >= 85 ? "galaxy-kernel-v85|" : snapshot_version_ >= 84 ? "galaxy-kernel-v84|" : snapshot_version_ >= 83 ? "galaxy-kernel-v83|" : snapshot_version_ >= 82 ? "galaxy-kernel-v82|" : snapshot_version_ >= 81 ? "galaxy-kernel-v81|" : snapshot_version_ >= 80 ? "galaxy-kernel-v80|" : snapshot_version_ >= 79 ? "galaxy-kernel-v79|" : snapshot_version_ >= 78 ? "galaxy-kernel-v78|" : snapshot_version_ >= 77 ? "galaxy-kernel-v77|" : snapshot_version_ >= 76 ? "galaxy-kernel-v76|" : snapshot_version_ >= 75 ? "galaxy-kernel-v75|" : snapshot_version_ >= 74 ? "galaxy-kernel-v74|" : snapshot_version_ >= 73 ? "galaxy-kernel-v73|" : snapshot_version_ >= 72 ? "galaxy-kernel-v72|" : snapshot_version_ >= 71 ? "galaxy-kernel-v71|" : snapshot_version_ >= 70 ? "galaxy-kernel-v70|" : snapshot_version_ >= 69 ? "galaxy-kernel-v69|" : snapshot_version_ >= 68 ? "galaxy-kernel-v68|" : snapshot_version_ >= 67 ? "galaxy-kernel-v67|" : snapshot_version_ >= 66 ? "galaxy-kernel-v66|" : snapshot_version_ >= 65 ? "galaxy-kernel-v65|" : snapshot_version_ >= 64 ? "galaxy-kernel-v64|" : snapshot_version_ >= 63 ? "galaxy-kernel-v63|" : snapshot_version_ >= 62 ? "galaxy-kernel-v62|" : snapshot_version_ >= 61 ? "galaxy-kernel-v61|" : snapshot_version_ >= 60 ? "galaxy-kernel-v60|" : snapshot_version_ >= 59 ? "galaxy-kernel-v59|" : snapshot_version_ >= 58 ? "galaxy-kernel-v58|" : snapshot_version_ >= 57 ? "galaxy-kernel-v57|" : snapshot_version_ >= 56 ? "galaxy-kernel-v56|" : snapshot_version_ >= 53 ? "galaxy-kernel-v53|" : snapshot_version_ >= 52 ? "galaxy-kernel-v52|" : snapshot_version_ >= 49 ? "galaxy-kernel-v49|" : snapshot_version_ >= 48 ? "galaxy-kernel-v48|" : snapshot_version_ >= 44 ? "galaxy-kernel-v44|" : snapshot_version_ >= 41 ? "galaxy-kernel-v41|" : snapshot_version_ >= 40 ? "galaxy-kernel-v40|" : snapshot_version_ >= 39 ? "galaxy-kernel-v39|" : snapshot_version_ >= 38 ? "galaxy-kernel-v38|" : snapshot_version_ >= 37 ? "galaxy-kernel-v37|" : snapshot_version_ >= 36 ? "galaxy-kernel-v36|" : snapshot_version_ >= 35 ? "galaxy-kernel-v35|" : snapshot_version_ >= 34 ? "galaxy-kernel-v34|" : snapshot_version_ >= 33 ? "galaxy-kernel-v33|" : snapshot_version_ >= 32 ? "galaxy-kernel-v32|" : snapshot_version_ >= 31 ? "galaxy-kernel-v31|" : snapshot_version_ >= 30 ? "galaxy-kernel-v30|" : snapshot_version_ >= 29 ? "galaxy-kernel-v29|" : snapshot_version_ >= 28 ? "galaxy-kernel-v28|" : snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
+    out << ( snapshot_version_ >= 122 ? "galaxy-kernel-v122|" : snapshot_version_ >= 121 ? "galaxy-kernel-v121|" : snapshot_version_ >= 120 ? "galaxy-kernel-v120|" : snapshot_version_ >= 119 ? "galaxy-kernel-v119|" : snapshot_version_ >= 118 ? "galaxy-kernel-v118|" : snapshot_version_ >= 117 ? "galaxy-kernel-v117|" : snapshot_version_ >= 116 ? "galaxy-kernel-v116|" : snapshot_version_ >= 115 ? "galaxy-kernel-v115|" : snapshot_version_ >= 114 ? "galaxy-kernel-v114|" : snapshot_version_ >= 113 ? "galaxy-kernel-v113|" : snapshot_version_ >= 112 ? "galaxy-kernel-v112|" : snapshot_version_ >= 111 ? "galaxy-kernel-v111|" : snapshot_version_ >= 110 ? "galaxy-kernel-v110|" : snapshot_version_ >= 109 ? "galaxy-kernel-v109|" : snapshot_version_ >= 108 ? "galaxy-kernel-v108|" : snapshot_version_ >= 107 ? "galaxy-kernel-v107|" : snapshot_version_ >= 106 ? "galaxy-kernel-v106|" : snapshot_version_ >= 105 ? "galaxy-kernel-v105|" : snapshot_version_ >= 104 ? "galaxy-kernel-v104|" : snapshot_version_ >= 103 ? "galaxy-kernel-v103|" : snapshot_version_ >= 102 ? "galaxy-kernel-v102|" : snapshot_version_ >= 101 ? "galaxy-kernel-v101|" : snapshot_version_ >= 100 ? "galaxy-kernel-v100|" : snapshot_version_ >= 99 ? "galaxy-kernel-v99|" : snapshot_version_ >= 98 ? "galaxy-kernel-v98|" : snapshot_version_ >= 97 ? "galaxy-kernel-v97|" : snapshot_version_ >= 96 ? "galaxy-kernel-v96|" : snapshot_version_ >= 95 ? "galaxy-kernel-v95|" : snapshot_version_ >= 94 ? "galaxy-kernel-v94|" : snapshot_version_ >= 93 ? "galaxy-kernel-v93|" : snapshot_version_ >= 92 ? "galaxy-kernel-v92|" : snapshot_version_ >= 91 ? "galaxy-kernel-v91|" : snapshot_version_ >= 90 ? "galaxy-kernel-v90|" : snapshot_version_ >= 89 ? "galaxy-kernel-v89|" : snapshot_version_ >= 88 ? "galaxy-kernel-v88|" : snapshot_version_ >= 87 ? "galaxy-kernel-v87|" : snapshot_version_ >= 86 ? "galaxy-kernel-v86|" : snapshot_version_ >= 85 ? "galaxy-kernel-v85|" : snapshot_version_ >= 84 ? "galaxy-kernel-v84|" : snapshot_version_ >= 83 ? "galaxy-kernel-v83|" : snapshot_version_ >= 82 ? "galaxy-kernel-v82|" : snapshot_version_ >= 81 ? "galaxy-kernel-v81|" : snapshot_version_ >= 80 ? "galaxy-kernel-v80|" : snapshot_version_ >= 79 ? "galaxy-kernel-v79|" : snapshot_version_ >= 78 ? "galaxy-kernel-v78|" : snapshot_version_ >= 77 ? "galaxy-kernel-v77|" : snapshot_version_ >= 76 ? "galaxy-kernel-v76|" : snapshot_version_ >= 75 ? "galaxy-kernel-v75|" : snapshot_version_ >= 74 ? "galaxy-kernel-v74|" : snapshot_version_ >= 73 ? "galaxy-kernel-v73|" : snapshot_version_ >= 72 ? "galaxy-kernel-v72|" : snapshot_version_ >= 71 ? "galaxy-kernel-v71|" : snapshot_version_ >= 70 ? "galaxy-kernel-v70|" : snapshot_version_ >= 69 ? "galaxy-kernel-v69|" : snapshot_version_ >= 68 ? "galaxy-kernel-v68|" : snapshot_version_ >= 67 ? "galaxy-kernel-v67|" : snapshot_version_ >= 66 ? "galaxy-kernel-v66|" : snapshot_version_ >= 65 ? "galaxy-kernel-v65|" : snapshot_version_ >= 64 ? "galaxy-kernel-v64|" : snapshot_version_ >= 63 ? "galaxy-kernel-v63|" : snapshot_version_ >= 62 ? "galaxy-kernel-v62|" : snapshot_version_ >= 61 ? "galaxy-kernel-v61|" : snapshot_version_ >= 60 ? "galaxy-kernel-v60|" : snapshot_version_ >= 59 ? "galaxy-kernel-v59|" : snapshot_version_ >= 58 ? "galaxy-kernel-v58|" : snapshot_version_ >= 57 ? "galaxy-kernel-v57|" : snapshot_version_ >= 56 ? "galaxy-kernel-v56|" : snapshot_version_ >= 53 ? "galaxy-kernel-v53|" : snapshot_version_ >= 52 ? "galaxy-kernel-v52|" : snapshot_version_ >= 49 ? "galaxy-kernel-v49|" : snapshot_version_ >= 48 ? "galaxy-kernel-v48|" : snapshot_version_ >= 44 ? "galaxy-kernel-v44|" : snapshot_version_ >= 41 ? "galaxy-kernel-v41|" : snapshot_version_ >= 40 ? "galaxy-kernel-v40|" : snapshot_version_ >= 39 ? "galaxy-kernel-v39|" : snapshot_version_ >= 38 ? "galaxy-kernel-v38|" : snapshot_version_ >= 37 ? "galaxy-kernel-v37|" : snapshot_version_ >= 36 ? "galaxy-kernel-v36|" : snapshot_version_ >= 35 ? "galaxy-kernel-v35|" : snapshot_version_ >= 34 ? "galaxy-kernel-v34|" : snapshot_version_ >= 33 ? "galaxy-kernel-v33|" : snapshot_version_ >= 32 ? "galaxy-kernel-v32|" : snapshot_version_ >= 31 ? "galaxy-kernel-v31|" : snapshot_version_ >= 30 ? "galaxy-kernel-v30|" : snapshot_version_ >= 29 ? "galaxy-kernel-v29|" : snapshot_version_ >= 28 ? "galaxy-kernel-v28|" : snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
         << '|' << rng_state_ << '\n';
     if (snapshot_version_>=5) for(const auto system:systems_)out<<"system|"<<system<<'\n';
     if(snapshot_version_>=120)for(const auto& [system,origin]:galactic_system_origins_)
@@ -12448,6 +12530,9 @@ std::string Simulation::canonical_state() const {
             if(snapshot_version_>=99)
                 out<<'|'<<p.consent_ship<<'|'<<p.consent_id
                    <<'|'<<p.rescue_flight;
+            if(snapshot_version_>=122)
+                out<<'|'<<p.physical_station<<'|'<<p.station_x_mm
+                   <<'|'<<p.station_z_mm;
             out<<'\n';
         }
     if(snapshot_version_>=81)
@@ -12999,12 +13084,12 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
     if (!std::getline(in, line)) throw std::runtime_error("snapshot: missing header");
     auto h = fields(line);
     require_fields(h, 5);
-    if (h[0] != "galaxy-kernel-v121" && h[0] != "galaxy-kernel-v120" && h[0] != "galaxy-kernel-v119" && h[0] != "galaxy-kernel-v118" && h[0] != "galaxy-kernel-v117" && h[0] != "galaxy-kernel-v116" && h[0] != "galaxy-kernel-v115" && h[0] != "galaxy-kernel-v114" && h[0] != "galaxy-kernel-v113" && h[0] != "galaxy-kernel-v112" && h[0] != "galaxy-kernel-v111" && h[0] != "galaxy-kernel-v110" && h[0] != "galaxy-kernel-v109" && h[0] != "galaxy-kernel-v108" && h[0] != "galaxy-kernel-v107" && h[0] != "galaxy-kernel-v106" && h[0] != "galaxy-kernel-v105" && h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27" && h[0] != "galaxy-kernel-v28" && h[0] != "galaxy-kernel-v29" && h[0] != "galaxy-kernel-v30" && h[0] != "galaxy-kernel-v31" && h[0] != "galaxy-kernel-v32" && h[0] != "galaxy-kernel-v33" && h[0] != "galaxy-kernel-v34" && h[0] != "galaxy-kernel-v35" && h[0] != "galaxy-kernel-v36" && h[0] != "galaxy-kernel-v37" && h[0] != "galaxy-kernel-v38" && h[0] != "galaxy-kernel-v39" && h[0] != "galaxy-kernel-v40" && h[0] != "galaxy-kernel-v41" && h[0] != "galaxy-kernel-v44" && h[0] != "galaxy-kernel-v48" && h[0] != "galaxy-kernel-v49" && h[0] != "galaxy-kernel-v52" && h[0] != "galaxy-kernel-v53" && h[0] != "galaxy-kernel-v56" && h[0] != "galaxy-kernel-v57" && h[0] != "galaxy-kernel-v58" && h[0] != "galaxy-kernel-v59" && h[0] != "galaxy-kernel-v60" && h[0] != "galaxy-kernel-v61" && h[0] != "galaxy-kernel-v62" && h[0] != "galaxy-kernel-v63" && h[0] != "galaxy-kernel-v64" && h[0] != "galaxy-kernel-v65" && h[0] != "galaxy-kernel-v66" && h[0] != "galaxy-kernel-v67" && h[0] != "galaxy-kernel-v68" && h[0] != "galaxy-kernel-v69" && h[0] != "galaxy-kernel-v70" && h[0] != "galaxy-kernel-v71" && h[0] != "galaxy-kernel-v72" && h[0] != "galaxy-kernel-v73" && h[0] != "galaxy-kernel-v74" && h[0] != "galaxy-kernel-v75" && h[0] != "galaxy-kernel-v76" && h[0] != "galaxy-kernel-v77" && h[0] != "galaxy-kernel-v78" && h[0] != "galaxy-kernel-v79" && h[0] != "galaxy-kernel-v80" && h[0] != "galaxy-kernel-v81" && h[0] != "galaxy-kernel-v82" && h[0] != "galaxy-kernel-v83" && h[0] != "galaxy-kernel-v84" && h[0] != "galaxy-kernel-v85" && h[0] != "galaxy-kernel-v86" && h[0] != "galaxy-kernel-v87" && h[0] != "galaxy-kernel-v88" && h[0] != "galaxy-kernel-v89" && h[0] != "galaxy-kernel-v90" && h[0] != "galaxy-kernel-v91" && h[0] != "galaxy-kernel-v92" && h[0] != "galaxy-kernel-v93" && h[0] != "galaxy-kernel-v94" && h[0] != "galaxy-kernel-v95" && h[0] != "galaxy-kernel-v96" && h[0] != "galaxy-kernel-v97" && h[0] != "galaxy-kernel-v98" && h[0] != "galaxy-kernel-v99" && h[0] != "galaxy-kernel-v100" && h[0] != "galaxy-kernel-v101" && h[0] != "galaxy-kernel-v102" && h[0] != "galaxy-kernel-v103" && h[0] != "galaxy-kernel-v104") throw std::runtime_error("snapshot: unsupported version");
+    if (h[0] != "galaxy-kernel-v122" && h[0] != "galaxy-kernel-v121" && h[0] != "galaxy-kernel-v120" && h[0] != "galaxy-kernel-v119" && h[0] != "galaxy-kernel-v118" && h[0] != "galaxy-kernel-v117" && h[0] != "galaxy-kernel-v116" && h[0] != "galaxy-kernel-v115" && h[0] != "galaxy-kernel-v114" && h[0] != "galaxy-kernel-v113" && h[0] != "galaxy-kernel-v112" && h[0] != "galaxy-kernel-v111" && h[0] != "galaxy-kernel-v110" && h[0] != "galaxy-kernel-v109" && h[0] != "galaxy-kernel-v108" && h[0] != "galaxy-kernel-v107" && h[0] != "galaxy-kernel-v106" && h[0] != "galaxy-kernel-v105" && h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27" && h[0] != "galaxy-kernel-v28" && h[0] != "galaxy-kernel-v29" && h[0] != "galaxy-kernel-v30" && h[0] != "galaxy-kernel-v31" && h[0] != "galaxy-kernel-v32" && h[0] != "galaxy-kernel-v33" && h[0] != "galaxy-kernel-v34" && h[0] != "galaxy-kernel-v35" && h[0] != "galaxy-kernel-v36" && h[0] != "galaxy-kernel-v37" && h[0] != "galaxy-kernel-v38" && h[0] != "galaxy-kernel-v39" && h[0] != "galaxy-kernel-v40" && h[0] != "galaxy-kernel-v41" && h[0] != "galaxy-kernel-v44" && h[0] != "galaxy-kernel-v48" && h[0] != "galaxy-kernel-v49" && h[0] != "galaxy-kernel-v52" && h[0] != "galaxy-kernel-v53" && h[0] != "galaxy-kernel-v56" && h[0] != "galaxy-kernel-v57" && h[0] != "galaxy-kernel-v58" && h[0] != "galaxy-kernel-v59" && h[0] != "galaxy-kernel-v60" && h[0] != "galaxy-kernel-v61" && h[0] != "galaxy-kernel-v62" && h[0] != "galaxy-kernel-v63" && h[0] != "galaxy-kernel-v64" && h[0] != "galaxy-kernel-v65" && h[0] != "galaxy-kernel-v66" && h[0] != "galaxy-kernel-v67" && h[0] != "galaxy-kernel-v68" && h[0] != "galaxy-kernel-v69" && h[0] != "galaxy-kernel-v70" && h[0] != "galaxy-kernel-v71" && h[0] != "galaxy-kernel-v72" && h[0] != "galaxy-kernel-v73" && h[0] != "galaxy-kernel-v74" && h[0] != "galaxy-kernel-v75" && h[0] != "galaxy-kernel-v76" && h[0] != "galaxy-kernel-v77" && h[0] != "galaxy-kernel-v78" && h[0] != "galaxy-kernel-v79" && h[0] != "galaxy-kernel-v80" && h[0] != "galaxy-kernel-v81" && h[0] != "galaxy-kernel-v82" && h[0] != "galaxy-kernel-v83" && h[0] != "galaxy-kernel-v84" && h[0] != "galaxy-kernel-v85" && h[0] != "galaxy-kernel-v86" && h[0] != "galaxy-kernel-v87" && h[0] != "galaxy-kernel-v88" && h[0] != "galaxy-kernel-v89" && h[0] != "galaxy-kernel-v90" && h[0] != "galaxy-kernel-v91" && h[0] != "galaxy-kernel-v92" && h[0] != "galaxy-kernel-v93" && h[0] != "galaxy-kernel-v94" && h[0] != "galaxy-kernel-v95" && h[0] != "galaxy-kernel-v96" && h[0] != "galaxy-kernel-v97" && h[0] != "galaxy-kernel-v98" && h[0] != "galaxy-kernel-v99" && h[0] != "galaxy-kernel-v100" && h[0] != "galaxy-kernel-v101" && h[0] != "galaxy-kernel-v102" && h[0] != "galaxy-kernel-v103" && h[0] != "galaxy-kernel-v104") throw std::runtime_error("snapshot: unsupported version");
     const auto sys = u64(h[1]);
     if (sys == 0 || sys > std::numeric_limits<std::uint32_t>::max())
         throw std::runtime_error("snapshot: invalid system");
     Simulation result(u64(h[4]), static_cast<std::uint32_t>(sys));
-    result.snapshot_version_ = h[0] == "galaxy-kernel-v121" ? 121 : h[0] == "galaxy-kernel-v120" ? 120 : h[0] == "galaxy-kernel-v119" ? 119 : h[0] == "galaxy-kernel-v118" ? 118 : h[0] == "galaxy-kernel-v117" ? 117 : h[0] == "galaxy-kernel-v116" ? 116 : h[0] == "galaxy-kernel-v115" ? 115 : h[0] == "galaxy-kernel-v114" ? 114 : h[0] == "galaxy-kernel-v113" ? 113 : h[0] == "galaxy-kernel-v112" ? 112 : h[0] == "galaxy-kernel-v111" ? 111 : h[0] == "galaxy-kernel-v110" ? 110 : h[0] == "galaxy-kernel-v109" ? 109 : h[0] == "galaxy-kernel-v108" ? 108 : h[0] == "galaxy-kernel-v107" ? 107 : h[0] == "galaxy-kernel-v106" ? 106 : h[0] == "galaxy-kernel-v105" ? 105 : h[0] == "galaxy-kernel-v104" ? 104 : h[0] == "galaxy-kernel-v103" ? 103 : h[0] == "galaxy-kernel-v102" ? 102 : h[0] == "galaxy-kernel-v101" ? 101 : h[0] == "galaxy-kernel-v100" ? 100 : h[0] == "galaxy-kernel-v99" ? 99 : h[0] == "galaxy-kernel-v98" ? 98 : h[0] == "galaxy-kernel-v97" ? 97 : h[0] == "galaxy-kernel-v96" ? 96 : h[0] == "galaxy-kernel-v95" ? 95 : h[0] == "galaxy-kernel-v94" ? 94 : h[0] == "galaxy-kernel-v93" ? 93 : h[0] == "galaxy-kernel-v92" ? 92 : h[0] == "galaxy-kernel-v91" ? 91 : h[0] == "galaxy-kernel-v90" ? 90 : h[0] == "galaxy-kernel-v89" ? 89 : h[0] == "galaxy-kernel-v88" ? 88 : h[0] == "galaxy-kernel-v87" ? 87 : h[0] == "galaxy-kernel-v86" ? 86 : h[0] == "galaxy-kernel-v85" ? 85 : h[0] == "galaxy-kernel-v84" ? 84 : h[0] == "galaxy-kernel-v83" ? 83 : h[0] == "galaxy-kernel-v82" ? 82 : h[0] == "galaxy-kernel-v81" ? 81 : h[0] == "galaxy-kernel-v80" ? 80 : h[0] == "galaxy-kernel-v79" ? 79 : h[0] == "galaxy-kernel-v78" ? 78 : h[0] == "galaxy-kernel-v77" ? 77 : h[0] == "galaxy-kernel-v76" ? 76 : h[0] == "galaxy-kernel-v75" ? 75 : h[0] == "galaxy-kernel-v74" ? 74 : h[0] == "galaxy-kernel-v73" ? 73 : h[0] == "galaxy-kernel-v72" ? 72 : h[0] == "galaxy-kernel-v71" ? 71 : h[0] == "galaxy-kernel-v70" ? 70 : h[0] == "galaxy-kernel-v69" ? 69 : h[0] == "galaxy-kernel-v68" ? 68 : h[0] == "galaxy-kernel-v67" ? 67 : h[0] == "galaxy-kernel-v66" ? 66 : h[0] == "galaxy-kernel-v65" ? 65 : h[0] == "galaxy-kernel-v64" ? 64 : h[0] == "galaxy-kernel-v63" ? 63 : h[0] == "galaxy-kernel-v62" ? 62 : h[0] == "galaxy-kernel-v61" ? 61 : h[0] == "galaxy-kernel-v60" ? 60 : h[0] == "galaxy-kernel-v59" ? 59 : h[0] == "galaxy-kernel-v58" ? 58 : h[0] == "galaxy-kernel-v57" ? 57 : h[0] == "galaxy-kernel-v56" ? 56 : h[0] == "galaxy-kernel-v53" ? 53 : h[0] == "galaxy-kernel-v52" ? 52 : h[0] == "galaxy-kernel-v49" ? 49 : h[0] == "galaxy-kernel-v48" ? 48 : h[0] == "galaxy-kernel-v44" ? 44 : h[0] == "galaxy-kernel-v41" ? 41 : h[0] == "galaxy-kernel-v40" ? 40 : h[0] == "galaxy-kernel-v39" ? 39 : h[0] == "galaxy-kernel-v38" ? 38 : h[0] == "galaxy-kernel-v37" ? 37 : h[0] == "galaxy-kernel-v36" ? 36 : h[0] == "galaxy-kernel-v35" ? 35 : h[0] == "galaxy-kernel-v34" ? 34 : h[0] == "galaxy-kernel-v33" ? 33 : h[0] == "galaxy-kernel-v32" ? 32 : h[0] == "galaxy-kernel-v31" ? 31 : h[0] == "galaxy-kernel-v30" ? 30 : h[0] == "galaxy-kernel-v29" ? 29 : h[0] == "galaxy-kernel-v28" ? 28 : h[0] == "galaxy-kernel-v27" ? 27 : h[0] == "galaxy-kernel-v26" ? 26 : h[0] == "galaxy-kernel-v25" ? 25 : h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
+    result.snapshot_version_ = h[0] == "galaxy-kernel-v122" ? 122 : h[0] == "galaxy-kernel-v121" ? 121 : h[0] == "galaxy-kernel-v120" ? 120 : h[0] == "galaxy-kernel-v119" ? 119 : h[0] == "galaxy-kernel-v118" ? 118 : h[0] == "galaxy-kernel-v117" ? 117 : h[0] == "galaxy-kernel-v116" ? 116 : h[0] == "galaxy-kernel-v115" ? 115 : h[0] == "galaxy-kernel-v114" ? 114 : h[0] == "galaxy-kernel-v113" ? 113 : h[0] == "galaxy-kernel-v112" ? 112 : h[0] == "galaxy-kernel-v111" ? 111 : h[0] == "galaxy-kernel-v110" ? 110 : h[0] == "galaxy-kernel-v109" ? 109 : h[0] == "galaxy-kernel-v108" ? 108 : h[0] == "galaxy-kernel-v107" ? 107 : h[0] == "galaxy-kernel-v106" ? 106 : h[0] == "galaxy-kernel-v105" ? 105 : h[0] == "galaxy-kernel-v104" ? 104 : h[0] == "galaxy-kernel-v103" ? 103 : h[0] == "galaxy-kernel-v102" ? 102 : h[0] == "galaxy-kernel-v101" ? 101 : h[0] == "galaxy-kernel-v100" ? 100 : h[0] == "galaxy-kernel-v99" ? 99 : h[0] == "galaxy-kernel-v98" ? 98 : h[0] == "galaxy-kernel-v97" ? 97 : h[0] == "galaxy-kernel-v96" ? 96 : h[0] == "galaxy-kernel-v95" ? 95 : h[0] == "galaxy-kernel-v94" ? 94 : h[0] == "galaxy-kernel-v93" ? 93 : h[0] == "galaxy-kernel-v92" ? 92 : h[0] == "galaxy-kernel-v91" ? 91 : h[0] == "galaxy-kernel-v90" ? 90 : h[0] == "galaxy-kernel-v89" ? 89 : h[0] == "galaxy-kernel-v88" ? 88 : h[0] == "galaxy-kernel-v87" ? 87 : h[0] == "galaxy-kernel-v86" ? 86 : h[0] == "galaxy-kernel-v85" ? 85 : h[0] == "galaxy-kernel-v84" ? 84 : h[0] == "galaxy-kernel-v83" ? 83 : h[0] == "galaxy-kernel-v82" ? 82 : h[0] == "galaxy-kernel-v81" ? 81 : h[0] == "galaxy-kernel-v80" ? 80 : h[0] == "galaxy-kernel-v79" ? 79 : h[0] == "galaxy-kernel-v78" ? 78 : h[0] == "galaxy-kernel-v77" ? 77 : h[0] == "galaxy-kernel-v76" ? 76 : h[0] == "galaxy-kernel-v75" ? 75 : h[0] == "galaxy-kernel-v74" ? 74 : h[0] == "galaxy-kernel-v73" ? 73 : h[0] == "galaxy-kernel-v72" ? 72 : h[0] == "galaxy-kernel-v71" ? 71 : h[0] == "galaxy-kernel-v70" ? 70 : h[0] == "galaxy-kernel-v69" ? 69 : h[0] == "galaxy-kernel-v68" ? 68 : h[0] == "galaxy-kernel-v67" ? 67 : h[0] == "galaxy-kernel-v66" ? 66 : h[0] == "galaxy-kernel-v65" ? 65 : h[0] == "galaxy-kernel-v64" ? 64 : h[0] == "galaxy-kernel-v63" ? 63 : h[0] == "galaxy-kernel-v62" ? 62 : h[0] == "galaxy-kernel-v61" ? 61 : h[0] == "galaxy-kernel-v60" ? 60 : h[0] == "galaxy-kernel-v59" ? 59 : h[0] == "galaxy-kernel-v58" ? 58 : h[0] == "galaxy-kernel-v57" ? 57 : h[0] == "galaxy-kernel-v56" ? 56 : h[0] == "galaxy-kernel-v53" ? 53 : h[0] == "galaxy-kernel-v52" ? 52 : h[0] == "galaxy-kernel-v49" ? 49 : h[0] == "galaxy-kernel-v48" ? 48 : h[0] == "galaxy-kernel-v44" ? 44 : h[0] == "galaxy-kernel-v41" ? 41 : h[0] == "galaxy-kernel-v40" ? 40 : h[0] == "galaxy-kernel-v39" ? 39 : h[0] == "galaxy-kernel-v38" ? 38 : h[0] == "galaxy-kernel-v37" ? 37 : h[0] == "galaxy-kernel-v36" ? 36 : h[0] == "galaxy-kernel-v35" ? 35 : h[0] == "galaxy-kernel-v34" ? 34 : h[0] == "galaxy-kernel-v33" ? 33 : h[0] == "galaxy-kernel-v32" ? 32 : h[0] == "galaxy-kernel-v31" ? 31 : h[0] == "galaxy-kernel-v30" ? 30 : h[0] == "galaxy-kernel-v29" ? 29 : h[0] == "galaxy-kernel-v28" ? 28 : h[0] == "galaxy-kernel-v27" ? 27 : h[0] == "galaxy-kernel-v26" ? 26 : h[0] == "galaxy-kernel-v25" ? 25 : h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
     result.tick_ = u64(h[2]);
     result.next_entity_id_ = u64(h[3]);
     if (result.next_entity_id_ == 0) throw std::runtime_error("snapshot: invalid next entity ID");
@@ -13217,19 +13302,30 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                     static_cast<LocalDeliveryStage>(stage),created}).second)
                 throw std::runtime_error("snapshot: invalid local delivery order");
         } else if(f[0]=="playerperson" && result.snapshot_version_>=98) {
-            require_fields(f,result.snapshot_version_>=99?12:9);
+            require_fields(f,result.snapshot_version_>=122?15:result.snapshot_version_>=99?12:9);
             const auto owner=u64(f[1]),home=u64(f[2]),physical=u64(f[3]),
                 state=u64(f[4]),custodian=u64(f[5]),registered=u64(f[6]),
                 receipt=u64(f[7]),updated=u64(f[8]);
             const auto consent_ship=result.snapshot_version_>=99?u64(f[9]):0;
             const auto consent_id=result.snapshot_version_>=99?u64(f[10]):0;
             const auto flight=result.snapshot_version_>=99?u64(f[11]):0;
-            if(!owner || owner==kServerAuthority || !home || !physical ||
-               state>unsigned(PlayerPersonState::Rescued) ||
+            const auto site=result.snapshot_version_>=122?u64(f[12]):0;
+            const auto x=result.snapshot_version_>=122?i64(f[13]):0;
+            const auto z=result.snapshot_version_>=122?i64(f[14]):0;
+            if(!owner || owner==kServerAuthority ||
+               (state==unsigned(PlayerPersonState::AtStation) ?
+                    (physical || !site || custodian || consent_ship ||
+                     consent_id || flight || x< -8000 || x>8000 ||
+                     z< -8000 || z>8000) :
+                    (!home || !physical || site || x || z)) ||
+               state>(result.snapshot_version_>=122?
+                      unsigned(PlayerPersonState::AtStation):
+                      unsigned(PlayerPersonState::Rescued)) ||
                (result.snapshot_version_<99 && state!=0) ||
                registered>result.tick_ || updated<registered ||
                updated>result.tick_ ||
-               (state==0 && (custodian || receipt || flight ||
+               (state==0 && (custodian ||
+                 (receipt && result.snapshot_version_<122) || flight ||
                  home!=physical ||
                  ((consent_ship==0)!=(consent_id==0)))) ||
                (state==1 && (!custodian || !receipt || !flight ||
@@ -13239,7 +13335,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                !result.player_people_.emplace(owner,PlayerPerson{
                    owner,home,physical,static_cast<PlayerPersonState>(state),
                    custodian,registered,receipt,updated,
-                   consent_ship,consent_id,flight}).second)
+                   consent_ship,consent_id,flight,site,x,z}).second)
                 throw std::runtime_error("snapshot: invalid player persona");
         } else if(f[0]=="npcflight" && result.snapshot_version_>=95) {
             require_fields(f,result.snapshot_version_>=96?16:12);
@@ -16651,6 +16747,18 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
         for(const auto& [owner,p]:result.player_people_){
             const auto ship=result.entities_.find(p.physical_ship);
             const auto home=result.entities_.find(p.home_ship);
+            if(p.state==PlayerPersonState::AtStation){
+                const auto site=result.entities_.find(p.physical_station);
+                if(result.snapshot_version_<122 ||
+                   site==result.entities_.end() ||
+                   site->second.type!=EntityType::Station ||
+                   (p.home_ship && (home==result.entities_.end() ||
+                      home->second.owner_id!=owner)) ||
+                   p.physical_ship || p.custodian || p.consent_ship ||
+                   p.consent_id || p.rescue_flight)
+                    throw std::runtime_error("snapshot: player station custody invalid");
+                continue;
+            }
             if(owner!=p.owner || home==result.entities_.end() ||
                home->second.owner_id!=owner ||
                ship==result.entities_.end() ||

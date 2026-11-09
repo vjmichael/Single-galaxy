@@ -174,8 +174,10 @@ try {
     Run-Godot 'engine-version' @('--version')
     Run-Godot 'project-import' @('--headless','--path',$rootDir,'--editor','--quit')
     Run-Godot 'runtime-smoke' @('--headless','--path',$rootDir,'--script','res://tests/godot_smoke.gd')
+    Run-Godot 'station-visual-scene-smoke' @('--headless','--path',$rootDir,'--script','res://tests/station_visual_smoke.gd')
     Run-Godot 'native-projection-contract' @('--headless','--path',$rootDir,'--script','res://tests/native_projection_smoke.gd')
     Run-Godot 'native-player-protocol' @('--headless','--path',$rootDir,'--script','res://tests/native_player_protocol_smoke.gd')
+    Run-Godot 'native-station-protocol' @('--headless','--path',$rootDir,'--script','res://tests/native_station_protocol_smoke.gd')
 
     $state.stage = 'export-release'
     $gameExe = Join-Path $buildDir 'SingleGalaxy_Graybox.exe'
@@ -230,6 +232,30 @@ try {
         Record-Gate 'native-player-host' 'SKIP' 'Native FPS host absent; P clearly reports missing host and keeps local preview mode'
     }
 
+    # PLAY-STATION-02: optional station host only bundled after ACTUAL native
+    # station->boarding->cockpit process handshake. Not UI acceptance.
+    $stationExe = Join-Path $rootDir 'native\galaxy_desktop_station_host.exe'
+    if (Test-Path -LiteralPath $stationExe) {
+        Verify-PE64 $stationExe
+        $stationSmoke = Join-Path $rootDir 'build_tools\Test-NativeStation.ps1'
+        $stationLog = Join-Path $logsDir 'native-station-windows-runtime.log'
+        try {
+            & $stationSmoke 2>&1 | Out-File -FilePath $stationLog -Encoding UTF8
+            Record-Gate 'native-station-runtime' 'PASS' 'Original C++ station->boarding->cockpit native child handoff passed; editor visuals still open'
+        } catch {
+            Record-Gate 'native-station-runtime' 'FAIL' "Native station handshake failed; see $stationLog"
+            throw
+        }
+        New-Item -ItemType Directory -Force -Path $stagedNative | Out-Null
+        Copy-Item -LiteralPath $stationExe -Destination (Join-Path $stagedNative 'galaxy_desktop_station_host.exe') -Force
+        $state.native_station_sha256 = (Get-FileHash -LiteralPath $stationExe -Algorithm SHA256).Hash.ToLowerInvariant()
+        $state.native_station_bytes = (Get-Item -LiteralPath $stationExe).Length
+        Record-Gate 'native-station-host' 'PASS' 'Original station-person test host bundled; game visuals unaccepted'
+        $nativePackaged = $true
+    } else {
+        Record-Gate 'native-station-host' 'SKIP' 'Station host absent; H reports unavailable and does not fake boarding'
+    }
+
     $state.stage = 'license'
     $licensePath = Join-Path $buildDir 'GODOT_LICENSE.txt'
     if (-not (Test-Path -LiteralPath $licensePath)) {
@@ -240,7 +266,7 @@ try {
     @'
 Single-Galaxy standalone graybox (FP3D-02A development preview)
 Double-click SingleGalaxy_Graybox.exe. No Godot editor or Python install required.
-ON FOOT: WASD walk/mouse look. P=authoritative native session, E=host-confirmed sit/stand, O=read-only contacts, Esc=release mouse.
+NATIVE STATION TEST (optional): H opens station-person fixture; WASD walks; E boards an existing owned ship. P switches to cockpit only after boarding. H on return can reopen station to disembark; no free hull.
 SEATED: A/D original yaw, W/S original lateral thrust, Up/Down original forward/reverse propulsion, B counterthrust, U real undock. Ship state on screen comes from the original C++ simulation. Walking/seat receipts retain their atomic original STEP transactions. Flight retains distinct original command admission and world STEP receipts; interrupted accepted commands must be recovered, not replayed silently. Native seat geometry remains a prototype.
 Actual physical Windows GPU, collision and usability acceptance is still required.
 Godot MIT terms: GODOT_LICENSE.txt

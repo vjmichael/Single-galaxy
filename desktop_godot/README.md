@@ -1,3 +1,13 @@
+## November 8 Windows feedback: no local CMake, distinguish source from compiled build
+
+The creator's real Windows Godot 4.7.2 editor started correctly, but **main.gd could not preload native_player_session.gd**, and the old testing CMD stopped at **cmake.exe missing**. The flight client contained mixed spaces/tabs indentation; source has been normalized and a regression check added. This specific Godot runtime failure is not closed until 4.7.2 loads the corrected script.
+
+For a **source ZIP before native binaries exist**, double-click `RUN_VISUAL_PREVIEW_WINDOWS.cmd`. It uses the already-installed editor, runs real Godot script/scene checks, and shows **visual station geometry only**. It needs no compiler but **cannot** exercise native boarding/mining. If it fails, share `SingleGalaxy_Godot_Visual_Only_Evidence.zip`.
+
+For the **compiled Windows game artifact** from the GitHub Actions `play-station02-prebuilt-windows.yml` workflow, extract the ZIP and double-click `RUN_STATION_PLAYTEST_WINDOWS.cmd`. This newer CMD calls `Launch-PrebuiltStation.ps1`: it uses the already-installed editor and bundled native C++ `.exe` and SQLite DLLs. It **does not invoke CMake**. The workflow does the Windows MSVC compilation, native pipe/SQLite tests and real Godot parser tests on GitHub's runner first. **Do not claim the artifact is ready until that exact workflow succeeds.** Current Actions runs are not yet accepted.
+
+`Test-StationGodot.ps1` remains a *developer-only source build* that requires CMake and a Windows C++ SDK; it is not the intended end-user one-click launch.
+
 # Single-Galaxy — Standalone Graybox FPS (FP3D-02A)
 
 **Status:** source implementation for a genuine native-window Godot 4.7.2 project; packaged Windows `.exe` and actual Godot runtime tests **not yet available**. This directory is **not** a web application. No browser, Python, local HTTP service, Docker, textures, external assets, or installed extensions are used.
@@ -95,3 +105,14 @@ See [the FP3D-03A source and acceptance ledger](../docs/engineering/FP3D03A_COCK
 The prototype now links the native cockpit seat to **the original C++ ship simulation**, not a fake Godot motion model. With P native session active and E seated, A/D sends original ship yaw, W/S sends lateral strafing, Up/Down sends forward/reverse thrust, B sends counterthrust, U requests original undock. The HUD reports the **actual** original ship's position, velocity, heading and dock state from validated native SHIP packets. Godot editor F7/F8 remain reserved and controller remapping remains deferred.
 
 This source revision requires an **updated native C++ player host executable**. An older pre-FP3D-03B Windows host is incompatible even if it launches. The Windows builder performs a real native command/restart smoke and fails rather than labeling such a host compatible. Source-only review is not Windows acceptance. The creator already has Godot installed; **BUILD_WINDOWS.cmd is not required for in-editor play**. Full C++ compile, Godot runtime, pilot movement/camera geometry and original regression evidence remain open. See the engineering [flight ledger](../docs/engineering/FP3D03B_ORIGINAL_SHIP_FLIGHT.md).
+
+
+### PLAY-STATION-02: Windows visual acceptance without a new Godot download
+
+**Development source, not yet installed-Windows accepted.** From the exact current PR #119 source checkout, double-click `RUN_STATION_PLAYTEST_WINDOWS.cmd` instead of `BUILD_WINDOWS.cmd`. It locates (or opens a file picker for) your **already installed** Godot 4.7.2 Windows editor. It does **not** download an editor or the approximately 1.2 GB export-template archive. A compatible Windows C++/CMake/SQLite development environment is required because the script recompiles **both** native writer hosts from this source; it never silently reuses an incompatible older player/seat executable.
+
+The script performs a real original-world station/boarding/cockpit native process acceptance, Godot project import, the repaired recursive-collider smoke, a separate two-room visual/hidden-collision smoke, and station/player protocol parser tests. Only if those pass does it open the interactive game.
+
+Run this intended visual scenario in the opened game: **H** station native; **WASD** from the persistently recorded station spawn to the highlighted hangar hatch; **E** board; **P** switch to the original ship cockpit; **E** sit; **U** undock; **A/D** yaw; **Up/Down** thrust; **B** counterthrust. After docking back at the station, switch P→H and press E to disembark. The full one-tonne asteroid mining/refining game loop remains a different acceptance gate. Godot creates bounded client-observed `PERSON`, `POSE` and `SHIP` projection records in `user://sg_station_visual_acceptance.jsonl` (not a second authoritative world). A Windows run saves source-build and native/engine logs, a JSON manifest and copied client observations in `SingleGalaxy_Station_Visual_Windows_Evidence.zip`. An observed native frame chain is **not** a substitute for manually checking navigation, camera, collision visuals or usability.
+
+The new tests only certify actual Godot runtime behavior after someone runs the real installed editor. Python source checks alone must not be reported as graphical acceptance. If Windows compilation cannot locate MSVC/SQLite, the script fails with explicit logs and does **not** declare a pass. Set `-Generator Ninja` when using an existing preconfigured Windows C++ development shell instead of Visual Studio's default generator.
