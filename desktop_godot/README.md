@@ -1,3 +1,13 @@
+## November 8 Windows feedback: no local CMake, distinguish source from compiled build
+
+The creator's real Windows Godot 4.7.2 editor started correctly, but **main.gd could not preload native_player_session.gd**, and the old testing CMD stopped at **cmake.exe missing**. The flight client contained mixed spaces/tabs indentation; source has been normalized and a regression check added. This specific Godot runtime failure is not closed until 4.7.2 loads the corrected script.
+
+For a **source ZIP before native binaries exist**, double-click `RUN_VISUAL_PREVIEW_WINDOWS.cmd`. It uses the already-installed editor, runs real Godot script/scene checks, and shows **visual station geometry only**. It needs no compiler but **cannot** exercise native boarding/mining. If it fails, share `SingleGalaxy_Godot_Visual_Only_Evidence.zip`.
+
+For the **compiled Windows game artifact** from the GitHub Actions `play-station02-prebuilt-windows.yml` workflow, extract the ZIP and double-click `RUN_STATION_PLAYTEST_WINDOWS.cmd`. This newer CMD calls `Launch-PrebuiltStation.ps1`: it uses the already-installed editor and bundled native C++ `.exe` and SQLite DLLs. It **does not invoke CMake**. The workflow does the Windows MSVC compilation, native pipe/SQLite tests and real Godot parser tests on GitHub's runner first. **Do not claim the artifact is ready until that exact workflow succeeds.** Current Actions runs are not yet accepted.
+
+`Test-StationGodot.ps1` remains a *developer-only source build* that requires CMake and a Windows C++ SDK; it is not the intended end-user one-click launch.
+
 # Single-Galaxy — Standalone Graybox FPS (FP3D-02A)
 
 **Status:** source implementation for a genuine native-window Godot 4.7.2 project; packaged Windows `.exe` and actual Godot runtime tests **not yet available**. This directory is **not** a web application. No browser, Python, local HTTP service, Docker, textures, external assets, or installed extensions are used.
