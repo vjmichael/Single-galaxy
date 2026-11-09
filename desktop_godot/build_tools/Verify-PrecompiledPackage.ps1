@@ -57,7 +57,7 @@ try {
   $native=Join-Path $game 'native'
   $manifest=(Get-Content -LiteralPath (Join-Path $native 'SGDX_BUILD_SHA.txt') -Raw).Trim()
   if($manifest -cne $ExpectedSourceSha){throw "Native SGDX build SHA mismatch: $manifest"}
-  $checks.source_and_native_manifest='PASS'
+  $checks['source_and_native_manifest']='PASS'
   foreach($file in @(
     'project.godot','RUN_STATION_PLAYTEST_WINDOWS.cmd',
     'build_tools/Launch-PrebuiltStation.ps1',
@@ -71,7 +71,7 @@ try {
       throw "Packaged Godot/control resource missing: $file"
     }
   }
-  $checks.godot_project_and_double_click_launcher='PASS'
+  $checks['godot_project_and_double_click_launcher']='PASS'
   $pe=@{}
   foreach($file in @(
     'galaxy_desktop_station_host.exe',
@@ -86,21 +86,21 @@ try {
     }
     $pe[$file]=Verify-Pe64 $full
   }
-  $checks.verified_windows_pe64=$pe
+  $checks['verified_windows_pe64']=$pe
   # No private machine data or crash dumps may enter the end-user archive.
   $forbidden=Get-ChildItem -LiteralPath $staging -File -Recurse |
     Where-Object { $_.Name -match '(?i)\.(dmp|mdmp|sqlite|sqlite-wal|sqlite-shm)$' }
   if($forbidden){throw "Archive contains private crash data or SQLite save: $($forbidden[0].FullName)"}
-  $checks.no_private_world_or_crash_dumps='PASS'
+  $checks['no_private_world_or_crash_dumps']='PASS'
   $launcher=Get-Content -LiteralPath (Join-Path $game 'build_tools/Launch-PrebuiltStation.ps1') -Raw
   if($launcher -notmatch 'SGDX_BUILD_SHA' -or $launcher -notmatch 'galaxy_server_dx_supervisor' -or
-     $launcher -notmatch '4\\.7\\.2' -or $launcher -notmatch 'Start-Process'){
+     $launcher -notmatch '4\.7\.2' -or $launcher -notmatch 'Start-Process'){
     throw 'Package is missing supervised native/Godot version/windowed launch enforcement'
   }
-  $checks.supervised_installed_windowed_entry='PASS'
-  $state.result='PACKAGE_STRUCTURE_AND_WINDOWS_PE64_VERIFIED'
+  $checks['supervised_installed_windowed_entry']='PASS'
+  $state['result']='PACKAGE_STRUCTURE_AND_WINDOWS_PE64_VERIFIED'
 } catch {
-  $state.error=$_.Exception.Message
+  $state['error']=$_.Exception.Message
   throw
 } finally {
   $parent=[IO.Path]::GetDirectoryName($evidencePath)
