@@ -4,12 +4,14 @@
 // Every accepted MOVE commits world STEP, receipt, pose in one original transaction.
 #include "galaxy/NativeInteriorMovement.hpp"
 #include "galaxy/SpaceMiningContact.hpp"
+#include <algorithm>
 #include <charconv>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -140,13 +142,23 @@ int main(int argc,char** argv){
             const bool walking=fields.size()==6&&fields[0]=="MOVE";
             const bool seating=fields.size()==5&&fields[0]=="SEAT";
             const bool flying=fields.size()==5&&fields[0]=="FLIGHT";
-            if(!walking&&!seating&&!flying){deny(0,"malformed");continue;}
+            const bool mining=fields.size()==5&&fields[0]=="MINE";
+            const bool fitting=fields.size()==5&&fields[0]=="FIT";
+            const bool unfitting=fields.size()==5&&fields[0]=="UNFIT";
+            const bool fabricating=fields.size()==5&&fields[0]=="FAB";
+            const bool powering=fields.size()==5&&fields[0]=="POWER";
+            const bool equipment=mining||fitting||unfitting||fabricating||powering;
+            if(!walking&&!seating&&!flying&&!equipment){deny(0,"malformed");continue;}
             std::uint64_t supplied_session=0,req=0,expected=0,desired=0;
             std::int64_t dx=0,dz=0;
+            std::uint64_t resource_arg=0;
             if(!number(fields[1],supplied_session)||!number(fields[2],req)||
                !number(fields[3],expected)||
                (walking&&(!number(fields[4],dx)||!number(fields[5],dz)))||
-               (seating&&(!number(fields[4],desired)||desired>1))){
+               (seating&&(!number(fields[4],desired)||desired>1)) ||
+               (equipment&&(!number(fields[4],resource_arg) ||
+                  (mining ? resource_arg==0 :
+                   powering ? resource_arg>1 : resource_arg!=1)))){
                 deny(0,"bad-integer");continue;
             }
             if(supplied_session!=session){deny(req,"session");continue;}
@@ -165,6 +177,66 @@ int main(int argc,char** argv){
                 deny(req,"receipt-range");continue;
             }
             const auto previous=person.current(kLocalOwner);
+            if(equipment){
+                if(req>10000 || !previous.seated ||
+                   expected!=previous.seat_sequence){
+                    deny(req,"not-seated-or-stale-seat");continue;
+                }
+                const auto* ship=world.world().find(previous.ship);
+                if(!ship || ship->type!=EntityType::Ship ||
+                   ship->owner_id!=kLocalOwner || ship->hull<=0){
+                    deny(req,"no-intact-owned-ship");continue;
+                }
+                Command c{};
+                c.id=flight_base|req;
+                c.sequence=c.id;
+                c.execute_tick=world.world().tick()+1;
+                c.issuer=kLocalOwner;
+                c.actor=previous.ship;
+                if(mining){
+                    // Original native contact can be selected; it is not ore authority.
+                    const auto nearby=space_mining_view::nearest_original_asteroid(
+                        world.world(),kLocalOwner,previous.ship);
+                    if(!nearby || nearby->rock!=resource_arg){
+                        deny(req,"not-native-rock-contact");continue;
+                    }
+                    c.action=Action::Mine;
+                    c.target=resource_arg;
+                    c.amount=1;
+                }else if(fitting || unfitting){
+                    c.action=Action::ConfigureMiningTool;
+                    c.amount=fitting?1:-1;
+                }else if(fabricating){
+                    c.action=Action::FabricateModule;
+                    c.amount=1;
+                }else{
+                    const auto& rack=ship->fitting.hardpoints;
+                    const auto it=std::find(rack.begin(),rack.end(),std::uint8_t{4});
+                    if(it==rack.end()){deny(req,"no-mining-module");continue;}
+                    c.action=Action::SetHardpointPower;
+                    c.amount=static_cast<std::int64_t>((it-rack.begin())*2+resource_arg);
+                }
+                const auto before=world.world().events().size();
+                if(!world.submit(c)){
+                    deny(req,"original-world-rejected-admission");continue;
+                }
+                // Interrupted reserved command is detected on next process start.
+                world.step();
+                const auto& events=world.world().events();
+                std::optional<Event> event;
+                for(std::size_t i=before;i<events.size();++i)
+                    if(events[i].command_id==c.id)event=events[i];
+                if(!event)throw std::runtime_error("equipment operation lacks original event");
+                if(mining && event->result==Outcome::Applied && event->transferred!=1)
+                    throw std::runtime_error("original mining transfer not exactly one tonne");
+                if((fitting||unfitting||fabricating) && event->result==Outcome::Applied &&
+                   event->transferred!=2)
+                    throw std::runtime_error("equipment material transfer not two tonnes");
+                last_move=now;
+                send_ship(session,req,c.id,event->result,person.flight_state(kLocalOwner));
+                send_rock_contact(session,req,world,previous.ship);
+                continue;
+            }
             if(flying){
                 PilotControl action=PilotControl::Forward;
                 if(req>10000||!flight_action(fields[4],action)){

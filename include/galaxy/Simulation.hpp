@@ -1340,7 +1340,11 @@ public:
             for(const auto& command:commands)
                 if((command.id & tag) && !(command.id & other) &&
                    (command.action==Action::Thrust ||
-                    command.action==Action::RequestUndock))return true;
+                    command.action==Action::RequestUndock ||
+                     command.action==Action::Mine ||
+                     command.action==Action::ConfigureMiningTool ||
+                     command.action==Action::SetHardpointPower ||
+                     command.action==Action::FabricateModule))return true;
         }
         return false;
     }
