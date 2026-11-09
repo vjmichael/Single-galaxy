@@ -12,6 +12,9 @@ cmd = (root / "RUN_STATION_PLAYTEST_WINDOWS.cmd").read_text(encoding="utf-8")
 player = (root / "world/player_controller.gd").read_text(encoding="utf-8")
 station_client = (root / "world/native_station_session.gd").read_text(encoding="utf-8")
 cockpit_client = (root / "world/native_player_session.gd").read_text(encoding="utf-8")
+station_host = (root.parent / "src/desktop_station_host.cpp").read_text(encoding="utf-8")
+terminal = (root / "world/refinery_terminal_ui.gd").read_text(encoding="utf-8")
+native_unload_test = (root.parent / "tests/PLAY_STATION_04C_UnloadPipeTests.py").read_text(encoding="utf-8")
 
 checks = {
     "avatar-height-matches-capsule": "const AVATAR_CENTER_HEIGHT_M := 0.90" in main,
@@ -41,7 +44,14 @@ checks = {
     "double-click-entry": "Launch-PrebuiltStation.ps1" in cmd,
     "prebuilt-launcher-replaces-local-compiler": "Test-StationGodot.ps1" not in cmd,
     "prebuilt-launcher-source": (root / "build_tools/Launch-PrebuiltStation.ps1").is_file(),
-    "suppress-fake-godot-walking": "if authoritative_mode:" in player and "native_motion_intent.emit(direction)" in player
+    "suppress-fake-godot-walking": "if authoritative_mode:" in player and "native_motion_intent.emit(direction)" in player,
+    "04c-original-unload-not-client-mass": 'const bool unload=f.size()==5&&f[0]=="UNLOAD"' in station_host and "c.action=Action::UnloadOre" in station_host and "c.amount=1;" in station_host and "station_launch::available_ship" in station_host,
+    "04c-host-sqlite-commit": 'world.step();' in station_host and 'result=event.result==Outcome::Applied?3:4;' in station_host and "station_refinery_protocol::make_snapshot" in station_host,
+    "04c-godot-request-bound-to-original-person": 'int(_person.get("eligible_ship", 0))' in station_client and '"UNLOAD|%d|%d|%d|%d"' in station_client,
+    "04c-separate-tonne-and-kg-receipts": '"unloaded_tonnes"' in station_client and '"transferred_kg"' in station_client and 'result not in [0, 1, 2, 3, 4]' in station_client,
+    "04c-godot-terminal-wire": 'refinery_terminal.unload_requested.connect(_on_native_unload_requested)' in main and 'native_station_session.unload_owned_ship_tonne()' in main and "signal unload_requested()" in terminal,
+    "04c-no-optimistic-inventory": 'unload_requested.emit()' in terminal and '_status.text = "Requesting one-tonne physical unload; awaiting original SQLite receipt..."' in terminal,
+    "04c-native-fixture-failure-recovery": "--04c-fixture" in native_unload_test and "PRAGMA integrity_check" in native_unload_test and "--03c-verify" in native_unload_test and "no-owned-docked-ship-with-ore" in native_unload_test
 }
 for name, ok in checks.items():
     assert ok, name
