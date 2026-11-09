@@ -9,6 +9,7 @@ sources={
     "observer":(root/"world/native_session.gd").read_text(),
 }
 supervisor=(root.parent/"src/server_dx_supervisor.cpp").read_text()
+dump_capture=(root.parent/"include/galaxy/ServerWindowsMinidump.hpp").read_text()
 checks={
     "all paths use strict SGDX helper":all(
         'SGDX_LAUNCH.supervised_command(' in source for source in sources.values()),
@@ -30,6 +31,21 @@ checks={
         and "PR_SET_PDEATHSIG" in supervisor,
     "opt-in Windows second-chance dump":"capture_second_chance(" in supervisor
         and "DEBUG_ONLY_THIS_PROCESS" in supervisor,
+    "real Windows DbgHelp retries minimal SECOND-CHANCE dump if thread-info fails":(
+        "MiniDumpNormal|MiniDumpWithThreadInfo" in dump_capture
+        and "file,MiniDumpNormal," in dump_capture
+        and "SetEndOfFile(file)" in dump_capture
+        and "capture_second_chance(" in supervisor
+        and "DEBUG_ONLY_THIS_PROCESS" in supervisor
+    ),
+    "sensitive Windows crash bytes never enter logs; stage-only failure receipt":(
+        "std::string* failure=nullptr" in dump_capture
+        and 'return fail("private_directory_acl"' in dump_capture
+        and 'return fail("dbghelp_threadinfo_then_normal"' in dump_capture
+        and "dump_failure.empty()" in supervisor
+        and "crash-time minidump recorded" in supervisor
+        and "ScopedPrivateSecurity security" in dump_capture
+    ),
     "expired three-second PID cannot hide live guardians":all(
         "if _last_shutdown_pid > 0:" in sources[name] and
         "if OS.is_process_running(_last_shutdown_pid):" in sources[name] and
