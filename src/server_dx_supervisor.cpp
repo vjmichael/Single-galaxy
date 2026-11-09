@@ -327,6 +327,7 @@ static int run(const Args& args){
     }
     bool timed_out=false,crashed=false,dump_written=false;
     std::wstring dump_name;
+    std::string dump_failure;
     DWORD outcome=WAIT_OBJECT_0;
     if(args.windows_minidump){
         // Debug the DIRECT game process only. Its descendants remain in the
@@ -359,7 +360,7 @@ static int run(const Args& args){
                         crashed=true;reply=DBG_EXCEPTION_NOT_HANDLED;
                         if(!dump_written)
                             dump_written=dx::windows_dump::capture_second_chance(
-                                args.save,pi,event,dump_name);
+                                args.save,pi,event,dump_name,&dump_failure);
                     }
                 }
                 if(event.dwDebugEventCode==EXIT_PROCESS_DEBUG_EVENT)
@@ -396,7 +397,9 @@ static int run(const Args& args){
                   status==0?"clean_exit":"nonzero_exit";
     if(args.windows_minidump)
         incident.detail=crashed?
-            (dump_written?"crash-time minidump recorded":"crash-time minidump unavailable"):
+            (dump_written?"crash-time minidump recorded":
+              "crash-time minidump unavailable"+
+              (dump_failure.empty()?std::string{}:" ["+dump_failure+"]")):
             "no second-chance exception observed";
     CloseHandle(pi.hThread);CloseHandle(pi.hProcess);CloseHandle(job);
     if(incident.exit_code!=0 || args.record_clean)
