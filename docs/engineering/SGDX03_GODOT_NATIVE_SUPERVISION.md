@@ -22,3 +22,35 @@ The production app opts into SGDX Windows **second-chance debugger minidumps** o
 - Windows precompiled ZIP must contain supervisor, station, cockpit and bounded observer executables, SQLite DLL, manifest, verified launch script and unchanged Godot project. Missing SGDX fails launch; do not fallback to direct C++.
 - **Still unverified** until an actual Windows desktop session: physical GPU rendering, real camera position/occlusion, frame pacing, ship collision in interactive play, restart under abrupt power loss, and all descended-process edge cases. Linux process groups + parent-death signal do not by themselves prove containment of every escape-capable grandchild; do not overstate it as cgroup-v2 custody.
 - Ship-module design remains deferred until authoritative 3D world/playable-space acceptance per creator's explicit decision.
+
+## SGDX-03A — delayed guardian handoff fencing (2026-11-09)
+
+Source review found that the original Godot station and cockpit sessions forgot a
+stopped SGDX supervisor PID after a fixed three-second bookkeeping window. If an
+old guardian was still alive (for example, hung during QUIT/SQLite shutdown),
+pressing H/P later could try to open another writer without checking that live
+PID. The SQLite single-writer lease could still reject an overlapping child, but
+client-side admission must fail *before* launching any overlapping process.
+
+- Both `native_player_session.gd` and `native_station_session.gd` now retain
+  and check the last guardian PID for as long as `OS.is_process_running` reports
+  it alive. Their same-role `start()` methods also reject a live previous PID.
+  Dead PID records are cleared on observation rather than after an arbitrary
+  time interval. A rare OS PID reuse fails closed rather than bypassing custody.
+- A failed P↔H handoff no longer turns local unauthoritative walking back on
+  while the prior writer is still alive. The operator receives a recovery/status
+  message and can retry after that guardian exits; no second native simulation
+  or SQLite writer is manufactured to repair the state.
+- The source contract now asserts indefinite live-PID tracking, same-role
+  overlap refusal, and fail-closed native handoff timeout.
+- The real Godot scene test, with an actual native C++ cockpit already running
+  under SGDX, constructs a second session whose prior-guardian timestamp is
+  **ten seconds old** but whose PID is the still-live SGDX supervisor. It requires
+  `process_id()` to retain that process and `start()` to refuse an overlapping
+  host. If regression occurs, it kills the accidental second session and fails.
+
+**Evidence status:** exact-head files and registered tests are committed;
+actual Godot/Linux/Windows runtime execution is still **OPEN**. No clean exit,
+Windows MDMP, GPU scene, or crash-recovery acceptance is claimed solely from
+these source changes. The FP3D-ENV-01/SGDX workflow on the updated PR #125 head
+must actually execute its native and Godot tests before this gate can close.
