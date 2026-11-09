@@ -32,7 +32,7 @@ jobs:
             galaxy_play_station04a_original_asteroid_contact_tests \
             galaxy_fp3d03b_cockpit_flight_tests \
             galaxy_play_station04a_native_rock_seed \
-            galaxy_desktop_player_host galaxy_desktop_station_host \
+            galaxy_desktop_player_host galaxy_desktop_station_host galaxy_desktop_readonly_host \
             galaxy_server_dx_supervisor galaxy_server_dx_fault_child
       - name: Real C++ collision, SGDX full duplex, crash, forced termination and SQLite restart
         shell: bash
@@ -61,6 +61,7 @@ jobs:
             2>&1 | tee build/fp3d-env01/godot-logs/scene.log
           cp build/fp3d-env01/galaxy_desktop_player_host \
             build/fp3d-env01/galaxy_desktop_station_host \
+            build/fp3d-env01/galaxy_desktop_readonly_host \
             build/fp3d-env01/galaxy_server_dx_supervisor desktop_godot/native/
           printf '%s\n' '${{ github.event.pull_request.head.sha || github.sha }}' > desktop_godot/native/SGDX_BUILD_SHA.txt
           export SG_FP3D_E2E_SAVE="$RUNNER_TEMP/sgdx-live-original.sqlite"
@@ -107,7 +108,7 @@ jobs:
         run: |
           cmake -S . -B build/fp3d-env01 -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF "-DCMAKE_TOOLCHAIN_FILE=$env:SG_TOOLCHAIN" -DVCPKG_TARGET_TRIPLET=x64-windows
           if($LASTEXITCODE -ne 0){throw 'MSVC configure failed'}
-          cmake --build build/fp3d-env01 --config Release --parallel 2 --target galaxy_fp3d_env01_swept_collision_tests galaxy_play_station04a_original_asteroid_contact_tests galaxy_fp3d03b_cockpit_flight_tests galaxy_play_station04a_native_rock_seed galaxy_desktop_player_host galaxy_desktop_station_host galaxy_server_dx_supervisor galaxy_server_dx_fault_child
+          cmake --build build/fp3d-env01 --config Release --parallel 2 --target galaxy_fp3d_env01_swept_collision_tests galaxy_play_station04a_original_asteroid_contact_tests galaxy_fp3d03b_cockpit_flight_tests galaxy_play_station04a_native_rock_seed galaxy_desktop_player_host galaxy_desktop_station_host galaxy_desktop_readonly_host galaxy_server_dx_supervisor galaxy_server_dx_fault_child
           if($LASTEXITCODE -ne 0){throw 'MSVC native build failed'}
       - name: Real Windows SGDX pipe, crash/forced kill, SQLite and private minidump
         shell: pwsh
@@ -134,7 +135,7 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'Godot import failed'}
           & $g.FullName --headless --path desktop_godot --quit-after 5 2>&1 | Out-File build/fp3d-env01/godot-logs/scene.log
           if($LASTEXITCODE -ne 0){throw 'Actual scene failed'}
-          foreach($name in @('galaxy_desktop_player_host.exe','galaxy_desktop_station_host.exe','galaxy_server_dx_supervisor.exe')){
+          foreach($name in @('galaxy_desktop_player_host.exe','galaxy_desktop_station_host.exe','galaxy_desktop_readonly_host.exe','galaxy_server_dx_supervisor.exe')){
             Copy-Item (Join-Path 'build/fp3d-env01/Release' $name) desktop_godot/native -Force
           }
           Copy-Item (Join-Path $env:SG_VCPKG_ROOT 'installed\x64-windows\bin\sqlite3.dll') desktop_godot/native -Force
@@ -163,7 +164,7 @@ jobs:
           }
           Copy-Item desktop_godot/RUN_STATION_PLAYTEST_WINDOWS.cmd $game
           New-Item -ItemType Directory -Force (Join-Path $game 'native') | Out-Null
-          foreach($name in @('galaxy_desktop_station_host.exe','galaxy_desktop_player_host.exe','galaxy_server_dx_supervisor.exe')){
+          foreach($name in @('galaxy_desktop_station_host.exe','galaxy_desktop_player_host.exe','galaxy_desktop_readonly_host.exe','galaxy_server_dx_supervisor.exe')){
             $compiled=Join-Path 'build/fp3d-env01/Release' $name
             if(-not(Test-Path $compiled)){throw "Compiled native host missing: $name"}
             Copy-Item $compiled (Join-Path $game 'native') -Force
