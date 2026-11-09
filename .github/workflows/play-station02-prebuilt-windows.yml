@@ -78,7 +78,9 @@ jobs:
 
   windows-package:
     name: MSVC Windows native hosts and downloadable precompiled Godot project
-    needs: godot-parse
+    # Native Windows compilation must never be skipped because an independent
+    # Linux Godot parser/download job failed. Windows has its OWN real Godot
+    # parser checks before any package can be uploaded.
     runs-on: windows-2022
     timeout-minutes: 80
     steps:
