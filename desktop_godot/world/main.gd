@@ -14,6 +14,9 @@ var status_label: Label
 var fps_label: Label
 var native_label: Label
 var ship_label: Label
+var station_space: Node3D
+var ship_space: Node3D
+var _geometry_parent: Node3D
 var native_session
 var native_player_session
 var native_station_session
@@ -33,8 +36,19 @@ func _ready() -> void:
 	material.roughness = 1.0
 	material.metallic = 0.0
 	_setup_environment()
+	station_space = Node3D.new()
+	station_space.name = "StationInterior_Prototype"
+	add_child(station_space)
+	_geometry_parent = station_space
 	_build_station()
 	_build_objects()
+	ship_space = Node3D.new()
+	ship_space.name = "ShipInterior_Prototype"
+	add_child(ship_space)
+	_geometry_parent = ship_space
+	_build_ship_interior()
+	_geometry_parent = null
+	_show_native_location(true) # station first; only native PERSON/POSE chooses later
 	_build_player()
 	_build_hud()
 	# Native world observations are optional. The local character is NOT synchronized.
@@ -90,7 +104,10 @@ func _solid_box(label: String, pos: Vector3, dimensions: Vector3) -> StaticBody3
 	shape.size = dimensions
 	collision.shape = shape
 	body.add_child(collision)
-	add_child(body)
+	if is_instance_valid(_geometry_parent):
+		_geometry_parent.add_child(body)
+	else:
+		add_child(body)
 	return body
 
 func _solid_cylinder(label: String, pos: Vector3, height: float, radius: float) -> StaticBody3D:
@@ -114,7 +131,10 @@ func _solid_cylinder(label: String, pos: Vector3, height: float, radius: float) 
 	shape.height = height
 	collider.shape = shape
 	body.add_child(collider)
-	add_child(body)
+	if is_instance_valid(_geometry_parent):
+		_geometry_parent.add_child(body)
+	else:
+		add_child(body)
 	return body
 
 func _build_station() -> void:
@@ -129,7 +149,7 @@ func _build_station() -> void:
 	_solid_box("Hall east wall", Vector3(5.0, 2.0, -7), Vector3(0.4, 4, 28))
 	_solid_box("Control room west", Vector3(-14, 2.0, -22), Vector3(18, 4, 0.4))
 	_solid_box("Control room east", Vector3(14, 2.0, -22), Vector3(18, 4, 0.4))
-	_solid_box("Landing strip", Vector3(17, 0.015, 8), Vector3(20, 0.03, 2))
+	_solid_box("Hangar gangway", Vector3(0, 0.015, -4.5), Vector3(1.6, 0.03, 9))
 
 func _build_objects() -> void:
 	_solid_cylinder("NPC prototype — no arms", Vector3(0.0, 1.0, -5.0), 2, 0.38)
@@ -138,10 +158,12 @@ func _build_objects() -> void:
 	_solid_box("Resource crate 02", Vector3(3, 0.45, 0), Vector3(0.9, 0.9, 0.9))
 	_solid_cylinder("Asteroid sample", Vector3(16, 1.3, 2), 2.6, 1.35)
 	# A silhouette made from boxes to prove scale and collision, not an asset pipeline.
-	_solid_box("Ship hull (placeholder)", Vector3(17.0, 1.25, -11.0), Vector3(8, 2.5, 3.2))
-	_solid_box("Ship wing L", Vector3(17.0, 0.65, -14.0), Vector3(4.2, 0.4, 4.0))
-	_solid_box("Ship wing R", Vector3(17.0, 0.65, -8.0), Vector3(4.2, 0.4, 4.0))
-	_solid_box("Docking control console", Vector3(7.6, 0.8, -12), Vector3(1.3, 1.6, 1.0))
+	# Visible hull aligned to the station hangar corridor. Boarding authority
+	# remains the original native (0,0) hatch, NOT a local mesh hitbox.
+	_solid_box("Docked owned ship hull (visual)", Vector3(0, 1.25, -11.0), Vector3(8, 2.5, 3.2))
+	_solid_box("Ship wing L (visual)", Vector3(0, 0.65, -14.0), Vector3(4.2, 0.4, 4.0))
+	_solid_box("Ship wing R (visual)", Vector3(0, 0.65, -8.0), Vector3(4.2, 0.4, 4.0))
+	_solid_box("Docking control console", Vector3(3.9, 0.8, -0.5), Vector3(1.3, 1.6, 1.0))
 	# Nonblocking floor marker aligned with native station hangar threshold.
 	var hatch := MeshInstance3D.new()
 	hatch.name = "Station_Hangar_Entry_At_Zero"
@@ -150,7 +172,26 @@ func _build_objects() -> void:
 	hatch.mesh = tile
 	hatch.material_override = material
 	hatch.position = Vector3(0.0, 0.02, 0.0)
-	add_child(hatch)
+	_geometry_parent.add_child(hatch)
+
+func _build_ship_interior() -> void:
+	# A separate visual cabin with the same 16 m prototype interior bounds as
+	# native FP3D02C. Switching visibility is NEVER a custody operation.
+	_solid_box("Ship interior floor", Vector3(0, -0.25, 0), Vector3(16, 0.5, 16))
+	_solid_box("Ship interior port wall", Vector3(-8, 2, 0), Vector3(0.3, 4, 16))
+	_solid_box("Ship interior starboard wall", Vector3(8, 2, 0), Vector3(0.3, 4, 16))
+	_solid_box("Ship interior aft wall", Vector3(0, 2, 8), Vector3(16, 4, 0.3))
+	_solid_box("Ship interior forward bulkhead", Vector3(0, 2, -8), Vector3(16, 4, 0.3))
+	_solid_box("Native cockpit console (visual)", Vector3(0, 0.85, -2.1), Vector3(3.5, 1.4, 0.7))
+	_solid_box("Cockpit windscreen upper frame", Vector3(0, 2.75, -5.5), Vector3(5.6, 0.2, 0.3))
+
+func _show_native_location(in_station: bool) -> void:
+	# The only callers after genesis are verified native PERSON and POSE frames.
+	# This never relocates a real PlayerPerson or writes a second world.
+	if is_instance_valid(station_space):
+		station_space.visible = in_station
+	if is_instance_valid(ship_space):
+		ship_space.visible = not in_station
 
 func _build_player() -> void:
 	player = CharacterBody3D.new()
@@ -285,6 +326,7 @@ func _on_native_station_connection(connected: bool) -> void:
 
 func _on_native_station_person(person: Dictionary) -> void:
 	last_station_player_state = int(person["state"])
+	_show_native_location(last_station_player_state == 4)
 	if is_instance_valid(player):
 		player.use_native_seat(false)
 		player.global_position = Vector3(float(person["x_mm"]) / 1000.0, 1.45,
@@ -296,6 +338,10 @@ func _on_native_station_person(person: Dictionary) -> void:
 			float(person["z_mm"])/1000.0]
 
 func _on_native_player_connection(connected: bool) -> void:
+	if connected:
+		_show_native_location(false)
+	elif not station_test_save_selected:
+		_show_native_location(true)
 	if is_instance_valid(player):
 		player.use_native_authority(connected)
 	if not connected and is_instance_valid(ship_label):
@@ -331,6 +377,7 @@ func _on_native_player_intent(heading: Vector3) -> void:
 		native_player_session.submit_motion(heading)
 
 func _on_native_player_pose(pose: Dictionary) -> void:
+	_show_native_location(false) # verified original owned ship pose
 	# The Godot avatar is positioned from ACKNOWLEDGED native SQL state ONLY.
 	# Vertical eye/physics meshes remain placeholder until full 3D native geometry.
 	if is_instance_valid(player):
