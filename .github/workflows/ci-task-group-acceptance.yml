@@ -266,6 +266,24 @@ jobs:
           name: SingleGalaxy-FP3D-SGDX03-Windows-${{ needs.validate.outputs.sha }}
           path: build/SingleGalaxy_FP3D_SGDX03_Windows_Precompiled.zip
           if-no-files-found: error
+      - name: Genuine Windows non-headless Godot render plus SQLite restart
+        shell: pwsh
+        timeout-minutes: 12
+        run: |
+          $ErrorActionPreference='Stop'
+          $g=Get-ChildItem build/fp3d-env01/godot -Filter '*win64_console.exe' -Recurse | Select-Object -First 1
+          if(-not $g){$g=Get-ChildItem build/fp3d-env01/godot -Filter '*win64.exe' -Recurse | Select-Object -First 1}
+          if(-not $g){throw 'Real Windows Godot executable missing'}
+          & ./desktop_godot/build_tools/Test-WindowedNativeGodot.ps1 -GodotExe $g.FullName -Project (Resolve-Path desktop_godot).Path -BuildRoot (Resolve-Path build/fp3d-env01).Path -SeedExe (Resolve-Path build/fp3d-env01/Release/galaxy_play_station04a_native_rock_seed.exe).Path
+          if($LASTEXITCODE -ne 0){throw 'Windowed Godot original C++/SQLite/render gate failed'}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fp3d-sgdx-windows-windowed-render
+          path: |
+            build/fp3d-env01/godot-visual/*.png
+            build/fp3d-env01/godot-visual/windowed-evidence.json
+          if-no-files-found: warn
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -274,4 +292,5 @@ jobs:
             fp3d-env01-windows.xml
             build/fp3d-env01/Testing/Temporary/LastTest.log
             build/fp3d-env01/godot-logs/*.log
+            build/fp3d-env01/godot-logs/*.json
           if-no-files-found: warn
