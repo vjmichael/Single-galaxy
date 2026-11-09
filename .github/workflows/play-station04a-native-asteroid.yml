@@ -1,0 +1,176 @@
+name: PLAY-STATION-04A original asteroid contact + Godot external view
+on:
+  push:
+    branches:
+      - sg/play-station04a-native-asteroid-contact-20261108
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: play-station04a-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux original C++ asteroid contact, real child SQLite and Godot 4.7.2
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Build original world and exact asteroid contact native targets
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libsqlite3-dev ninja-build unzip
+          cmake -S . -B build/sg04a -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+          cmake --build build/sg04a --parallel 2 --target \
+            galaxy_play_station04a_original_asteroid_contact_tests \
+            galaxy_play_station04a_native_rock_seed \
+            galaxy_desktop_player_host \
+            galaxy_fp3d03b_cockpit_flight_tests
+      - name: Execute real original Linux native source, flight, and pipe regressions
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ctest --test-dir build/sg04a --no-tests=error --timeout 120 --output-on-failure \
+            --output-junit sg04a-linux.xml \
+            -R '^galaxy_(play_station04a_original_(asteroid_contact|rock_native_pipe)|fp3d03b_(cockpit_flight|native_flight_pipe))$'
+      - name: Source invariants and real Godot 4.7.2 dependency
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python desktop_godot/tests/test_gdscript_preload_sanity.py
+          python desktop_godot/tests/test_native_asteroid_contact_contract.py
+          mkdir -p "$RUNNER_TEMP/sg04a-godot"
+          curl --fail --location --retry 3 --retry-delay 5 \
+            -o "$RUNNER_TEMP/sg04a-godot/godot.zip" \
+            https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
+          unzip -oq "$RUNNER_TEMP/sg04a-godot/godot.zip" -d "$RUNNER_TEMP/sg04a-godot"
+          chmod +x "$RUNNER_TEMP/sg04a-godot/Godot_v4.7.2-stable_linux.x86_64"
+          "$RUNNER_TEMP/sg04a-godot/Godot_v4.7.2-stable_linux.x86_64" --version
+      - name: Parse actual Godot scene, cockpit and asteroid receipt
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p build/sg04a/godot-logs
+          G="$RUNNER_TEMP/sg04a-godot/Godot_v4.7.2-stable_linux.x86_64"
+          "$G" --headless --path desktop_godot --editor --quit \
+            2>&1 | tee build/sg04a/godot-logs/import.log
+          for test in godot_smoke.gd station_visual_smoke.gd native_player_protocol_smoke.gd native_asteroid_contact_smoke.gd; do
+            "$G" --headless --path desktop_godot --script "res://tests/$test" \
+              2>&1 | tee "build/sg04a/godot-logs/$test.log"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: play-station04a-linux-native-and-godot-${{ github.sha }}
+          path: |
+            sg04a-linux.xml
+            build/sg04a/Testing/Temporary/LastTest.log
+            build/sg04a/godot-logs/*.log
+            build/sg04a/CMakeFiles/CMakeConfigureLog.yaml
+          if-no-files-found: warn
+
+  windows:
+    name: Windows original MSVC asteroid contact + native Godot build package
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install native SQLite on GitHub Windows runner only
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $vcpkg=$env:VCPKG_INSTALLATION_ROOT
+          if(-not $vcpkg){$vcpkg='C:\vcpkg'}
+          & (Join-Path $vcpkg 'vcpkg.exe') install sqlite3:x64-windows --classic
+          if($LASTEXITCODE -ne 0){throw 'GitHub Windows SQLite install failed'}
+          "SG_VCPKG_TOOLCHAIN=$(Join-Path $vcpkg 'scripts\buildsystems\vcpkg.cmake')" >> $env:GITHUB_ENV
+          (Join-Path $vcpkg 'installed\x64-windows\bin') >> $env:GITHUB_PATH
+      - name: Configure and compile genuine original C++ host and regression targets
+        shell: pwsh
+        run: |
+          cmake -S . -B build/sg04a -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF "-DCMAKE_TOOLCHAIN_FILE=$env:SG_VCPKG_TOOLCHAIN" -DVCPKG_TARGET_TRIPLET=x64-windows
+          if($LASTEXITCODE -ne 0){throw 'MSVC configure failed'}
+          cmake --build build/sg04a --config Release --parallel 2 --target galaxy_desktop_station_host galaxy_desktop_player_host galaxy_play_station04a_original_asteroid_contact_tests galaxy_play_station04a_native_rock_seed galaxy_fp3d03b_cockpit_flight_tests
+          if($LASTEXITCODE -ne 0){throw 'Native Windows build failed'}
+      - name: Run Windows original 3D asteroid and SQLite child-process tests
+        shell: pwsh
+        run: |
+          ctest --test-dir build/sg04a -C Release --no-tests=error --timeout 120 --output-on-failure --output-junit sg04a-windows.xml -R '^galaxy_(play_station04a_original_(asteroid_contact|rock_native_pipe)|fp3d03b_(cockpit_flight|native_flight_pipe))$'
+          if($LASTEXITCODE -ne 0){throw 'Genuine Windows source/pipe regression failure'}
+      - name: Download official Godot 4.7.2 on GitHub runner only
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force -Path build/sg04a/godot | Out-Null
+          Invoke-WebRequest -Uri 'https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_win64.exe.zip' -OutFile build/sg04a/godot/editor.zip
+          Expand-Archive build/sg04a/godot/editor.zip -DestinationPath build/sg04a/godot -Force
+          $g=Get-ChildItem build/sg04a/godot -Filter '*win64_console.exe' -Recurse | Select-Object -First 1
+          if(-not $g){$g=Get-ChildItem build/sg04a/godot -Filter '*win64.exe' -Recurse | Select-Object -First 1}
+          if(-not $g){throw 'Official Godot 4.7.2 editor missing'}
+          "SG_GODOT=$($g.FullName)" >> $env:GITHUB_ENV
+      - name: Run real Godot project, scene and original asteroid protocol smokes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force -Path build/sg04a/godot-logs | Out-Null
+          & $env:SG_GODOT --version
+          if($LASTEXITCODE -ne 0){throw 'Godot version check failed'}
+          & $env:SG_GODOT --headless --path desktop_godot --editor --quit 2>&1 | Out-File build/sg04a/godot-logs/import.log
+          if($LASTEXITCODE -ne 0){throw 'Godot project import failed'}
+          foreach($test in @('godot_smoke.gd','station_visual_smoke.gd','native_player_protocol_smoke.gd','native_asteroid_contact_smoke.gd')){
+            & $env:SG_GODOT --headless --path desktop_godot --script "res://tests/$test" 2>&1 | Out-File "build/sg04a/godot-logs/$test.log"
+            if($LASTEXITCODE -ne 0){throw "Real Godot Windows parser/smoke failed $test"}
+          }
+      - name: Stage precompiled Windows Godot project with native C++ and SQLite
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $root='build/SingleGalaxy_Station_04A_Windows'
+          $game=Join-Path $root 'desktop_godot'
+          New-Item -ItemType Directory -Force -Path $game | Out-Null
+          Copy-Item desktop_godot/project.godot $game -Force
+          foreach($dir in @('world','tests','build_tools')){
+            Copy-Item (Join-Path desktop_godot $dir) (Join-Path $game $dir) -Recurse -Force
+          }
+          Copy-Item desktop_godot/RUN_STATION_PLAYTEST_WINDOWS.cmd $game -Force
+          New-Item -ItemType Directory -Force -Path (Join-Path $game native) | Out-Null
+          foreach($name in @('galaxy_desktop_station_host.exe','galaxy_desktop_player_host.exe')){
+            $compiled=Join-Path 'build/sg04a/Release' $name
+            if(-not (Test-Path $compiled)){throw "Compiled original Windows binary missing: $name"}
+            Copy-Item $compiled (Join-Path $game native) -Force
+          }
+          $vcpkg=$env:VCPKG_INSTALLATION_ROOT
+          if(-not $vcpkg){$vcpkg='C:\vcpkg'}
+          $bin=Join-Path $vcpkg 'installed\x64-windows\bin'
+          if(-not (Test-Path (Join-Path $bin 'sqlite3.dll'))){throw 'Windows SQLite runtime missing'}
+          Get-ChildItem -Path $bin -Filter '*.dll' -File | ForEach-Object {Copy-Item $_.FullName (Join-Path $game native) -Force}
+          python tests/PLAY_STATION_04A_NativeRockPipeTests.py build/sg04a/Release/galaxy_play_station04a_native_rock_seed.exe (Join-Path $game 'native/galaxy_desktop_player_host.exe')
+          if($LASTEXITCODE -ne 0){throw 'Staged Windows rock-contact native host failed real SQLite test'}
+          "Exact original source SHA: ${{ github.sha }}" | Set-Content (Join-Path $root SOURCE_SHA.txt)
+          "This is the finite original asteroid VISUAL contact milestone. No free mining tool is installed. Extract and run desktop_godot/RUN_STATION_PLAYTEST_WINDOWS.cmd using your existing Godot 4.7.2 editor. No local CMake required." | Set-Content (Join-Path $root START_HERE.txt)
+          Compress-Archive -Path (Join-Path $root '*') -DestinationPath build/SingleGalaxy_Station_04A_Windows_Precompiled.zip -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SingleGalaxy-Station-04A-Windows-Precompiled-${{ github.sha }}
+          path: build/SingleGalaxy_Station_04A_Windows_Precompiled.zip
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: play-station04a-windows-evidence-${{ github.sha }}
+          path: |
+            sg04a-windows.xml
+            build/sg04a/Testing/Temporary/LastTest.log
+            build/sg04a/godot-logs/*.log
+            build/sg04a/CMakeFiles/CMakeConfigureLog.yaml
+          if-no-files-found: warn
