@@ -72,7 +72,8 @@ jobs:
                 owner,repo,run_id:supersededId,per_page:30
               });
               if(oldJobs.jobs.some(j=>j.status!=='queued' ||
-                   (j.runner_id && j.runner_id!==0) || j.started_at))
+                   (j.runner_id && j.runner_id!==0) ||
+                   (j.steps && j.steps.length>0)))
                 throw new Error('Refuse to cancel a job with an assigned runner');
               await github.rest.actions.cancelWorkflowRun({
                 owner,repo,run_id:supersededId
