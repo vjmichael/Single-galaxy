@@ -88,6 +88,8 @@ checks = {
         and "GODOT_RUNTIME_SHA256.txt" in gui_launcher
         and "Get-LocalSha256 $GodotExe" in gui_launcher
         and "System.Security.Cryptography.SHA256" in gui_launcher
+        and "System32\\WindowsPowerShell\\v1.0\\Modules" in gui_launcher
+        and "$PSVersionTable.PSEdition -eq 'Desktop'" in gui_launcher
         and "$hasher.Dispose()" in gui_launcher
         and "$stream.Dispose()" in gui_launcher
         and "(Get-FileHash " not in gui_launcher
