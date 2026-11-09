@@ -2187,6 +2187,18 @@ if(BUILD_TESTING)
   set_tests_properties(galaxy_play_station_boarding PROPERTIES TIMEOUT 90)
 endif()
 
+# PLAY-STATION-03A: isolated, exact-kg station batch engine tied to the
+# original kernel mineral_profile(). Full PersistentWorld action/journal
+# wiring remains a separate acceptance gate; this is NOT a full station run.
+if(BUILD_TESTING)
+  add_executable(galaxy_play_station03a_refinery_ledger_tests
+    tests/PLAY_STATION_03A_RefineryLedgerTests.cpp)
+  target_link_libraries(galaxy_play_station03a_refinery_ledger_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_play_station03a_refinery_ledger
+    COMMAND galaxy_play_station03a_refinery_ledger_tests)
+  set_tests_properties(galaxy_play_station03a_refinery_ledger PROPERTIES TIMEOUT 30)
+endif()
+
 # PLAY-STATION-02 standalone native station/boarding test fixture.
 add_executable(galaxy_desktop_station_host src/desktop_station_host.cpp)
 target_link_libraries(galaxy_desktop_station_host PRIVATE galaxy_kernel)

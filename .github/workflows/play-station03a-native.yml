@@ -1,0 +1,93 @@
+name: PLAY-STATION-03A original station refining batch tests
+
+on:
+  push:
+    branches: [sg/play-station03a-station-refinery-ledger-20261108]
+    paths:
+      - 'include/galaxy/StationRefineryBatch.hpp'
+      - 'tests/PLAY_STATION_03A_RefineryLedgerTests.cpp'
+      - 'CMakeLists.txt'
+      - '.github/workflows/play-station03a-native.yml'
+  pull_request:
+    paths:
+      - 'include/galaxy/StationRefineryBatch.hpp'
+      - 'tests/PLAY_STATION_03A_RefineryLedgerTests.cpp'
+      - 'CMakeLists.txt'
+      - '.github/workflows/play-station03a-native.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: play-station03a-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Real Linux original kernel + station refining CTest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native SQLite development runtime on GitHub-hosted Linux
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsqlite3-dev ninja-build
+      - name: Compile original C++ world plus exact station refinery test
+        run: |
+          set -euxo pipefail
+          cmake -S . -B build/sg03a -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+          cmake --build build/sg03a --target galaxy_play_station03a_refinery_ledger_tests --parallel 2
+      - name: Execute real native original-mineral-profile station refining test
+        run: |
+          set -euxo pipefail
+          ctest --test-dir build/sg03a --no-tests=error --output-on-failure -R '^galaxy_play_station03a_refinery_ledger$' --output-junit station03a-linux-ctest.xml
+      - name: Retain actual native evidence on failure and success
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: play-station03a-linux-${{ github.sha }}
+          path: |
+            station03a-linux-ctest.xml
+            build/sg03a/Testing/Temporary/LastTest.log
+            build/sg03a/CMakeFiles/CMakeConfigureLog.yaml
+          if-no-files-found: warn
+
+  windows:
+    name: Real Windows MSVC original kernel + station refining CTest
+    runs-on: windows-2022
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve SQLite with hosted vcpkg (never user's machine)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $vcpkg=$env:VCPKG_INSTALLATION_ROOT
+          if(-not $vcpkg){$vcpkg='C:\vcpkg'}
+          $exe=Join-Path $vcpkg 'vcpkg.exe'
+          if(-not (Test-Path $exe)){throw 'Hosted Windows vcpkg not found'}
+          & $exe install sqlite3:x64-windows --classic
+          if($LASTEXITCODE -ne 0){throw 'Hosted Windows SQLite dependency install failed'}
+          "SG_SQLITE_TOOLCHAIN=$(Join-Path $vcpkg 'scripts\buildsystems\vcpkg.cmake')" >> $env:GITHUB_ENV
+      - name: Configure and build actual MSVC x64 native test
+        shell: pwsh
+        run: |
+          cmake -S . -B build/sg03a -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF "-DCMAKE_TOOLCHAIN_FILE=$env:SG_SQLITE_TOOLCHAIN" -DVCPKG_TARGET_TRIPLET=x64-windows
+          if($LASTEXITCODE -ne 0){throw 'Original kernel Windows configure failed'}
+          cmake --build build/sg03a --config Release --parallel 2 --target galaxy_play_station03a_refinery_ledger_tests
+          if($LASTEXITCODE -ne 0){throw 'Original kernel Windows compile failed'}
+      - name: Execute real Windows original mineral refining CTest
+        shell: pwsh
+        run: |
+          ctest --test-dir build/sg03a -C Release --no-tests=error --output-on-failure -R '^galaxy_play_station03a_refinery_ledger$' --output-junit station03a-windows-ctest.xml
+          if($LASTEXITCODE -ne 0){throw 'Real original-kernel Windows station batch test failed'}
+      - name: Retain actual Windows native CTest and configure diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: play-station03a-windows-${{ github.sha }}
+          path: |
+            station03a-windows-ctest.xml
+            build/sg03a/Testing/Temporary/LastTest.log
+            build/sg03a/CMakeFiles/CMakeConfigureLog.yaml
+          if-no-files-found: warn
