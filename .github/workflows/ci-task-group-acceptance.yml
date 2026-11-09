@@ -288,7 +288,31 @@ jobs:
           $head='${{ needs.validate.outputs.sha }}'
           $head | Set-Content (Join-Path $game 'native/SGDX_BUILD_SHA.txt')
           "Exact source SHA: $head" | Set-Content (Join-Path $root 'SOURCE_SHA.txt')
-          'RUN_STATION_PLAYTEST_WINDOWS.cmd uses your existing Godot 4.7.2. All ship/station/observer native hosts must use the bundled SGDX supervisor, Windows Job Object and private process incidents. Optional crash minidump: SGDX_WINDOWS_MINIDUMP=1 (contains private memory). Playtest needs actual GPU/camera observation before final acceptance.' | Set-Content (Join-Path $root 'START_HERE.txt')
+          # Bundle the exact OFFICIAL engine already downloaded and verified
+          # against upstream 4.7.2-stable release archive SHA256 above.
+          # No separate installed editor, PATH lookup, net access or setup
+          # is required on the physical player's Windows PC.
+          $runtime=Join-Path $game 'runtime'
+          New-Item -ItemType Directory -Force $runtime | Out-Null
+          $upstreamGodot=Join-Path 'build/fp3d-env01/godot' 'Godot_v4.7.2-stable_win64.exe'
+          if(-not(Test-Path -LiteralPath $upstreamGodot -PathType Leaf)){
+            throw 'Official Godot 4.7.2 Windows engine missing after verified release ZIP extraction'
+          }
+          $runtimeGodot=Join-Path $runtime 'Godot_v4.7.2-stable_win64.exe'
+          Copy-Item -LiteralPath $upstreamGodot -Destination $runtimeGodot -Force
+          (Get-FileHash -LiteralPath $runtimeGodot -Algorithm SHA256).Hash.ToLowerInvariant() |
+            Set-Content -LiteralPath (Join-Path $runtime 'GODOT_RUNTIME_SHA256.txt') -NoNewline
+          Copy-Item -LiteralPath 'desktop_godot/third_party/GODOT_LICENSE.txt' -Destination (Join-Path $runtime 'LICENSE.txt') -Force
+          @(
+            'Godot Engine 4.7.2-stable upstream redistribution'
+            'Original asset: https://github.com/godotengine/godot-builds/releases/tag/4.7.2-stable'
+            'Official Windows archive: Godot_v4.7.2-stable_win64.exe.zip'
+            'Official archive SHA-256: 731980f9608d61333e5baf54a2ef17210acc7a538446c0cb9969f002aca1e953'
+            'Included executable SHA-256 is in GODOT_RUNTIME_SHA256.txt'
+            'License: MIT, see LICENSE.txt'
+            'This editor binary is bundled only as the current native Godot 3D runtime.'
+          ) | Set-Content -LiteralPath (Join-Path $runtime 'PROVENANCE.txt')
+          'Double-click desktop_godot/RUN_STATION_PLAYTEST_WINDOWS.cmd. Includes pinned Godot 4.7.2 Windows runtime and original C++/SQLite hosts; no installation, compiler or download. All ship/station/observer hosts must use bundled SGDX supervisor and Windows Job Object. Optional crash minidump SGDX_WINDOWS_MINIDUMP=1 contains private memory. Human GPU/camera approval still required.' | Set-Content (Join-Path $root 'START_HERE.txt')
           Compress-Archive -Path (Join-Path $root '*') -DestinationPath build/SingleGalaxy_FP3D_SGDX03_Windows_Precompiled.zip -Force
           # Validate the deliverable ZIP, not merely the compiled build targets.
           & ./desktop_godot/build_tools/Verify-PrecompiledPackage.ps1 -Archive 'build/SingleGalaxy_FP3D_SGDX03_Windows_Precompiled.zip' -ExpectedSourceSha $head -EvidenceFile 'build/fp3d-env01/godot-logs/packaging-result.json'
