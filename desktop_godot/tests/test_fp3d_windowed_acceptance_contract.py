@@ -134,6 +134,19 @@ checks = {
         and "curl" not in root_launcher.lower()
         and "START_SINGLE_GALAXY_WINDOWS.cmd" in guide
     ),
+    "official-console-companion-keeps-real-cli-exit-and-frontend-GUI-separate": (
+        "runtime\\Godot_v4.7.2-stable_win64_console.exe" in gui_launcher
+        and "GODOT_CONSOLE_SHA256.txt" in gui_launcher
+        and "Get-LocalSha256 $CliGodotExe" in gui_launcher
+        and "Start-Process -FilePath $CliGodotExe" in gui_launcher
+        and "Start-Process -FilePath $GodotExe" in gui_launcher
+        and "$exited=$p.HasExited" in gui_launcher
+        and "godot_console_sha256=" in gui_launcher
+        and "Verify-Pe64 $console" in package
+        and "godot_console_companion_pe64_sha256" in package
+        and "Extracted official Godot console companion missing or tampered" in tamper
+        and "$cleanResult.godot_console_sha256 -cne $consoleOriginal" in tamper
+    ),
     "not-falsely-accepted-on-window-close": (
         "WINDOW-CLOSED-NEEDS-MANUAL-OBSERVATION" in gui_launcher
         and "human_gpu_visual_approval" in scene
