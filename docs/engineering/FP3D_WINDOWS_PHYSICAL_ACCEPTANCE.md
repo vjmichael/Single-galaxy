@@ -264,3 +264,35 @@ docked cabin, exterior flight, stopped original asteroid impact, restarted
 SQLite world. A hosted runner's windowed screenshot is not the creator's
 physical Windows GPU/human camera acceptance. PR #125 remains DRAFT and
 manufactured ship mining equipment remains deferred.
+
+## Actual Windows PowerShell 5.1 diagnosis — run 42720754880
+
+[Exact-head native run 42720754880](https://github.com/vjmichael/Single-galaxy/actions/runs/42720754880)
+passed all 19 Windows MSVC native tests including SQLite, SGDX and real
+second-chance private MDMP, native Godot 4.7.2 and the entire Linux native
+and engine group. The actual ZIP passed x64 PE/source/license/GUI+console
+sha256 validation and SIX installed headless Godot scene tests under
+PowerShell 7. The genuine Windows PowerShell 5.1 positive test still
+**failed**, and its enhanced logs proved the precise failure: the
+correct authentic console wrapper emitted no script errors, the process
+object reported `HasExited=True`, but `ExitCode` was blank/null when read
+after `Wait-Process -Id`. This was a bad process-observation contract,
+not an observed failure of the original 3D simulation or a valid negative
+engine tamper denial. The group correctly blocked download and skipped
+the four-screen render.
+
+**New repair pending native evidence:** use `$p.WaitForExit(90000)` and
+`$p.WaitForExit()` on the **same** typed .NET process returned from
+`Start-Process -PassThru`, not a separate PID-only `Wait-Process`
+invocation. Refresh it, require `HasExited`, an explicitly NON-NULL
+numeric `ExitCode`, and no script errors in either output stream.
+Preserve bounded timeout and fail closed on missing/negative exit or
+untrustworthy Godot output. The positive Windows PowerShell 5.1
+headless tests and negative hash-mismatch denial **must both pass** in
+the next consolidated exact-head task-group gate; only then can we
+assert a self-contained Windows playtest ZIP is distribution-verified.
+
+Four genuine non-headless rendered frames (dock, exterior, collision,
+reopened SQLite world) and the creator's own physical-PC GPU judgment
+remain separate release criteria. Keep PR #125 in draft; do not unlock
+manufactured mining equipment.
