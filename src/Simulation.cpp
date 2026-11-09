@@ -1,3 +1,4 @@
+#include "galaxy/StationRefineryBatch.hpp"
 #include "galaxy/Industry01Catalog.hpp"
 #include "galaxy/Simulation.hpp"
 #include "galaxy/GalacticCoordinates.hpp"
@@ -1221,6 +1222,69 @@ std::int64_t Simulation::wallet(PlayerId owner) const {
     return it == wallets_.end() ? 0 : it->second;
 }
 
+void Simulation::enable_station_ore_provenance() {
+    if(tick_ || !submitted_ids_.empty())
+        throw std::invalid_argument("station ore tracking must be enabled at genesis");
+    snapshot_version_=std::max(snapshot_version_,123);
+}
+const StationRefineryPlant* Simulation::station_refinery(EntityId station) const {
+    const auto it=station_refineries_.find(station);
+    return it==station_refineries_.end()?nullptr:&it->second;
+}
+void Simulation::track_station_ore_mining(EntityId ship,EntityId rock,
+        std::uint64_t command,std::int64_t tonnes,std::uint8_t taxonomy) {
+    if(!tonnes || !ship || !command || !rock)return;
+    if(next_station_ore_lot_id_==std::numeric_limits<std::uint64_t>::max())
+        throw std::overflow_error("ore lot ID exhausted");
+    const auto* vessel=find(ship);
+    if(!vessel || !vessel->owner_id || taxonomy>3)
+        throw std::logic_error("invalid physical mined ore origin");
+    const auto id=next_station_ore_lot_id_++;
+    station_ore_lots_.emplace(id,StationOreCustodyLot{
+        id,command,tick_,0,rock,ship,0,vessel->owner_id,taxonomy,tonnes});
+}
+void Simulation::move_station_ore_lots(EntityId ship,EntityId station,PlayerId owner,
+        std::int64_t tonnes,bool to_station,std::uint64_t command) {
+    // Move tagged cargo first; any remaining bulk ore is explicitly unclassified.
+    // The amount has ALREADY passed the original physical capacity checks.
+    std::int64_t remaining=tonnes;
+    for(auto it=station_ore_lots_.begin();it!=station_ore_lots_.end() && remaining>0;){
+        auto& lot=it->second;
+        if(lot.source_ship!=ship || lot.owner!=owner ||
+           (to_station?lot.station!=0:lot.station!=station)) {++it;continue;}
+        const auto n=std::min(remaining,lot.tonnes);
+        if(n==lot.tonnes){
+            lot.station=to_station?station:0;
+            if(to_station)lot.unload_receipt=command;
+            ++it;
+        } else {
+            if(next_station_ore_lot_id_==std::numeric_limits<std::uint64_t>::max())
+                throw std::overflow_error("ore lot ID exhausted");
+            lot.tonnes-=n;
+            auto split=lot;
+            split.id=next_station_ore_lot_id_++;
+            split.station=to_station?station:0;
+            if(to_station)split.unload_receipt=command;
+            station_ore_lots_.emplace(split.id,split);
+            ++it;
+        }
+        remaining-=n;
+    }
+}
+void Simulation::consume_station_ore_lots(EntityId ship,EntityId station,PlayerId owner,
+        std::int64_t tonnes,bool at_station) {
+    std::int64_t remaining=tonnes;
+    for(auto it=station_ore_lots_.begin();it!=station_ore_lots_.end() && remaining>0;){
+        auto& lot=it->second;
+        if(lot.owner!=owner || lot.source_ship!=ship ||
+           (at_station?lot.station!=station:lot.station!=0)){++it;continue;}
+        const auto n=std::min(remaining,lot.tonnes);
+        remaining-=n;
+        lot.tonnes-=n;
+        if(!lot.tonnes)it=station_ore_lots_.erase(it);
+        else ++it;
+    }
+}
 const StationHangar* Simulation::hangar(EntityId station_id, PlayerId owner) const {
     auto it = hangars_.find({station_id, owner});
     return it == hangars_.end() ? nullptr : &it->second;
@@ -2169,6 +2233,14 @@ bool Simulation::submit(const Command& c) {
             (c.action==Action::SetGateStaff && (c.amount<0 || c.amount>16)) ||
             (c.action==Action::DeliverGateSpares && (c.amount<1 || c.amount>10000))) return false;
     } else if (c.issuer == kServerAuthority) return false;
+    if(c.action==Action::BuildStationRefinery || c.action==Action::RefineStationOre){
+        if(!c.actor || !c.target || c.thrust_x || c.thrust_y ||
+           c.transport_id || !c.passenger_ids.empty() ||
+           c.secondary_receiver || c.secondary_transport ||
+           (c.action==Action::BuildStationRefinery ? c.amount!=1 : c.amount<=0))
+            return false;
+        snapshot_version_=std::max(snapshot_version_,123);
+    }
     if(c.action==Action::RefineOre || c.action==Action::FabricateModule ||
        c.action==Action::ConstructOutpost || c.action==Action::RefineMineral ||
        c.action==Action::FabricateMaterialModule) {
@@ -4292,10 +4364,18 @@ Event Simulation::execute(const Command& c) {
             if (result.result != Outcome::Applied) return result;
             auto& rock = entities_.at(c.target);
             const auto n = std::min({c.amount, rock.ore, (actor.cargo_capacity*1000 - loaded_cargo_liters(actor))/1000});
-            if(n>0 && colony_ships_.count(c.actor) &&
-               (geology_.count(c.target)||local_deposit_taxonomy(c.target)))
+            const auto g=geology_.find(c.target);
+            const auto local=local_deposit_taxonomy(c.target);
+            const bool geological=g!=geology_.end() || local.has_value();
+            if(n>0 && snapshot_version_<123 && colony_ships_.count(c.actor) && geological)
                 transfer_geological_minerals(c.actor,c.target,n);
-            else actor.cargo += n;
+            else {
+                actor.cargo += n;
+                if(snapshot_version_>=123 && n>0)
+                    track_station_ore_mining(c.actor,c.target,c.id,n,
+                        g!=geology_.end()?static_cast<std::uint8_t>(g->second.taxonomy):
+                        local?static_cast<std::uint8_t>(*local):3);
+            }
             rock.ore -= n;
             result.transferred = n;
             if (rock.ore == 0) despawn(c.target, c.actor, 0);
@@ -4403,6 +4483,8 @@ Event Simulation::execute(const Command& c) {
                 result.result = Outcome::HangarFull; return result;
             }
             const auto moved = std::min({c.amount, actor.cargo, h->second.capacity - h->second.ore});
+            if(snapshot_version_>=123)
+                move_station_ore_lots(c.actor,actor.dock_station,c.issuer,moved,true,c.id);
             h->second.ore += moved;
             actor.cargo -= moved;
             result.transferred = moved;
@@ -4425,11 +4507,28 @@ Event Simulation::execute(const Command& c) {
             const auto h = hangars_.find({actor.dock_station,c.issuer});
             if (h == hangars_.end()) {result.result = Outcome::Unauthorized; return result;}
             if (h->second.ore == 0) {result.result = Outcome::NoResources; return result;}
+            // A second owned ship may not load or sell a geological tonne
+            // whose source/provenance still belongs to another physical hull.
+            // Bulk untagged ore and this ship's own tagged ore remain usable.
+            std::int64_t protected_other_ship=0;
+            if(snapshot_version_>=123)for(const auto& [lot_id,lot]:station_ore_lots_){
+                (void)lot_id;
+                if(lot.station==actor.dock_station && lot.owner==c.issuer &&
+                   lot.source_ship!=c.actor){
+                    if(lot.tonnes<0 || lot.tonnes>h->second.ore-protected_other_ship)
+                        throw std::logic_error("station ore provenance exceeds physical hangar");
+                    protected_other_ship+=lot.tonnes;
+                }
+            }
+            const auto permitted_hangar_ore=h->second.ore-protected_other_ship;
             if (c.action == Action::LoadOre) {
                 if (loaded_cargo_liters(actor) > actor.cargo_capacity*1000-1000) {
                     result.result = Outcome::CargoFull; return result;
                 }
                 const auto moved = std::min({c.amount, h->second.ore, (actor.cargo_capacity*1000-loaded_cargo_liters(actor))/1000});
+                if(moved>permitted_hangar_ore){result.result=Outcome::Unauthorized;return result;}
+                if(snapshot_version_>=123)
+                    move_station_ore_lots(c.actor,actor.dock_station,c.issuer,moved,false,c.id);
                 actor.cargo += moved; h->second.ore -= moved;
                 result.transferred = moved;
             } else {
@@ -4445,9 +4544,12 @@ Event Simulation::execute(const Command& c) {
                 const auto market_affordable = m->second.credits/price;
                 const auto moved = std::min({c.amount, h->second.ore, wallet_room, market_affordable});
                 if (moved == 0) {result.result = Outcome::InsufficientFunds; return result;}
+                if(moved>permitted_hangar_ore){result.result=Outcome::Unauthorized;return result;}
                 const auto payout = moved*price;
                 m->second.credits -= payout;
                 balance += payout;
+                if(snapshot_version_>=123)
+                    consume_station_ore_lots(c.actor,actor.dock_station,c.issuer,moved,true);
                 m->second.ore += moved;
                 h->second.ore -= moved;
                 result.transferred = moved;
@@ -5651,8 +5753,11 @@ Event Simulation::execute(const Command& c) {
                     }
                     const auto hall=communities_.count(c.target)?communities_.at(c.target).attendants:0;
                     const auto medics=clinics_.count(c.target)?clinics_.at(c.target).medics:0;
+                    const auto refinery_staff=station_refineries_.count(c.target)?
+                        station_refineries_.at(c.target).assigned_workers:0;
                     if(hi!=habitats_.end() &&
-                       hall+medics+c.amount+assigned_policy_inspectors(c.target)>hi->second.residents){
+                       hall+medics+refinery_staff+c.amount+
+                       assigned_policy_inspectors(c.target)>hi->second.residents){
                         result.result=Outcome::NoResources;return result;
                     }
                     u.technicians=c.amount;
@@ -5695,7 +5800,9 @@ Event Simulation::execute(const Command& c) {
                     const auto clinic_staff=clinics_.count(c.target)?clinics_.at(c.target).medics:0;
                     const auto patients=clinics_.count(c.target)?clinics_.at(c.target).active_cases:0;
                     if(h.residents+c.amount+farm_crew<patients ||
-                       h.residents+c.amount<(ui==utilities_.end()?0:ui->second.technicians)+community_staff+clinic_staff+assigned_policy_inspectors(c.target)){
+                       h.residents+c.amount<(ui==utilities_.end()?0:ui->second.technicians)+
+                           (station_refineries_.count(c.target)?station_refineries_.at(c.target).assigned_workers:0)+
+                           community_staff+clinic_staff+assigned_policy_inspectors(c.target)){
                         result.result=Outcome::NoResources;return result;
                     }
                     if(snapshot_version_>=40 && c.amount>0){
@@ -5849,6 +5956,103 @@ Event Simulation::execute(const Command& c) {
             snapshot_version_=std::max(snapshot_version_,10);
             return result;
         }
+        case Action::BuildStationRefinery: {
+            // The plant is installed at a real player-built site, not gifted
+            // by the station UI or a new save. Modules are finite ship goods.
+            const auto* site=find(c.target);
+            const auto utility=utilities_.find(c.target);
+            auto colony=colony_ships_.find(c.actor);
+            if(!site || site->type!=EntityType::Station ||
+               !built_outposts_.count(c.target) ||
+               built_outposts_.at(c.target).source_colony_ship!=c.actor ||
+               site->owner_id!=c.issuer || actor.owner_id!=c.issuer ||
+               colony==colony_ships_.end() || !colony->second.crew ||
+               actor.dock_state!=DockState::Docked || actor.dock_station!=c.target){
+                result.result=Outcome::Unauthorized;return result;
+            }
+            if(station_refineries_.count(c.target) || c.amount!=1){
+                result.result=Outcome::InvalidTarget;return result;
+            }
+            if(utility==utilities_.end() || utility->second.source_ship!=c.actor ||
+               utility->second.technicians<1 || utility->second.condition<=0){
+                result.result=Outcome::InsufficientCrew;return result;
+            }
+            if(colony->second.modules<2){result.result=Outcome::NoResources;return result;}
+            colony->second.modules-=2;
+            --utility->second.technicians; // same finite trained resident, reassigned
+            StationRefineryPlant plant{};
+            plant.station=c.target;plant.source_ship=c.actor;plant.owner=c.issuer;
+            plant.commissioned_receipt=c.id;
+            station_refineries_.emplace(c.target,std::move(plant));
+            snapshot_version_=std::max(snapshot_version_,123);
+            result.transferred=4;result.result=Outcome::Applied;return result;
+        }
+        case Action::RefineStationOre: {
+            const auto* site=find(c.target);
+            const auto fit=station_refineries_.find(c.target);
+            const auto h=hangars_.find({c.target,c.issuer});
+            if(!site || site->type!=EntityType::Station ||
+               fit==station_refineries_.end() ||
+               fit->second.owner!=c.issuer || fit->second.source_ship!=c.actor ||
+               actor.owner_id!=c.issuer || actor.dock_state!=DockState::Docked ||
+               actor.dock_station!=c.target || h==hangars_.end()){
+                result.result=Outcome::Unauthorized;return result;
+            }
+            // Physical station presence if this persona is registered.
+            if(const auto person=player_people_.find(c.issuer);
+               person!=player_people_.end() &&
+               (person->second.state!=PlayerPersonState::AtStation ||
+                person->second.physical_station!=c.target)){
+                result.result=Outcome::Unauthorized;return result;
+            }
+            const auto lot_it=station_ore_lots_.find(static_cast<std::uint64_t>(c.amount));
+            if(lot_it==station_ore_lots_.end() || lot_it->second.station!=c.target ||
+               lot_it->second.owner!=c.issuer || lot_it->second.taxonomy>2 ||
+               !lot_it->second.unload_receipt){
+                result.result=Outcome::InvalidTarget;return result;
+            }
+            const auto util=utilities_.find(c.target);
+            if(util==utilities_.end() || util->second.condition<=0 ||
+               !util->second.powered || util->second.stored_energy<=0){
+                result.result=Outcome::ModuleOffline;return result;
+            }
+            auto& plant=fit->second;
+            station_refining::Facility engine{};
+            engine.station=plant.station;engine.source_ship=plant.source_ship;
+            engine.owner=plant.owner;engine.installed_modules=plant.embodied_modules;
+            engine.assigned_workers=plant.assigned_workers;
+            engine.power_units=util->second.stored_energy;
+            engine.processed_tonnes=plant.processed_tonnes;
+            engine.ready_tick=plant.ready_tick;engine.last_receipt=plant.last_receipt;
+            engine.mineral_kg=plant.mineral_kg;
+            station_refining::OreLot source{c.target,lot_it->second.rock,c.issuer,
+                lot_it->second.unload_receipt,
+                static_cast<AsteroidClass>(lot_it->second.taxonomy),lot_it->second.tonnes};
+            auto& hangar=hangars_.at({c.target,c.issuer});
+            auto status=station_refining::refine_one_tonne(hangar,source,engine,
+                c.issuer,c.target,tick_,c.id);
+            if(status.status!=station_refining::Status::Applied){
+                result.result=status.status==station_refining::Status::NoOre?
+                    Outcome::NoResources:status.status==station_refining::Status::CoolingDown?
+                    Outcome::CooldownActive:Outcome::InvalidArgument;
+                return result;
+            }
+            plant.processed_tonnes=engine.processed_tonnes;
+            plant.ready_tick=engine.ready_tick;plant.last_receipt=engine.last_receipt;
+            plant.mineral_kg.swap(engine.mineral_kg);
+            const auto power_used=util->second.stored_energy-engine.power_units;
+            if(power_used!=1 || util->second.consumed_energy>
+               std::numeric_limits<std::int64_t>::max()-power_used)
+                throw std::runtime_error("station refinery utility power ledger overflow");
+            util->second.stored_energy=engine.power_units;
+            util->second.consumed_energy+=power_used;
+            auto& record=station_ore_lots_.at(lot_it->first);
+            record.tonnes=source.remaining_tonnes;
+            if(!record.tonnes)station_ore_lots_.erase(lot_it);
+            result.transferred=status.processed_kg;
+            snapshot_version_=std::max(snapshot_version_,123);
+            result.result=Outcome::Applied;return result;
+        }
         case Action::RefineMineral:
         case Action::FabricateMaterialModule:
         case Action::RefineOre:
@@ -5898,6 +6102,8 @@ Event Simulation::execute(const Command& c) {
             if(c.amount<1 || c.amount>1000 || c.target!=0){result.result=Outcome::InvalidArgument;return result;}
             if(c.action==Action::RefineOre){
                 if(actor.cargo<c.amount){result.result=Outcome::NoResources;return result;}
+                if(snapshot_version_>=123)
+                    consume_station_ore_lots(c.actor,0,c.issuer,c.amount,false);
                 actor.cargo-=c.amount;industry.refined+=c.amount;
                 result.transferred=c.amount;
             }else if(c.action==Action::FabricateModule){
@@ -5983,10 +6189,18 @@ void Simulation::process_automatic_mining() {
         if (status != Outcome::Applied) { stop_mining(actor_id, status); continue; }
         auto& rock = entities_.at(job.target);
         const auto n = std::min({job.amount_per_tick, rock.ore, (ship.cargo_capacity*1000-loaded_cargo_liters(ship))/1000});
-        if(n>0 && colony_ships_.count(actor_id) &&
-           (geology_.count(job.target)||local_deposit_taxonomy(job.target)))
+        const auto g=geology_.find(job.target);
+        const auto local=local_deposit_taxonomy(job.target);
+        const bool geological=g!=geology_.end() || local.has_value();
+        if(n>0 && snapshot_version_<123 && colony_ships_.count(actor_id) && geological)
             transfer_geological_minerals(actor_id,job.target,n);
-        else ship.cargo += n;
+        else {
+            ship.cargo += n;
+            if(snapshot_version_>=123 && n>0)
+                track_station_ore_mining(actor_id,job.target,job.start_command_id,n,
+                    g!=geology_.end()?static_cast<std::uint8_t>(g->second.taxonomy):
+                    local?static_cast<std::uint8_t>(*local):3);
+        }
         rock.ore -= n;
         snapshot_version_ = std::max(snapshot_version_, 2);
         activity_events_.push_back({tick_, ActivityKind::AutoMiningTransfer, job.start_command_id,
@@ -12257,7 +12471,7 @@ void Simulation::steps(std::uint64_t count) {
 
 std::string Simulation::canonical_state() const {
     std::ostringstream out;
-    out << ( snapshot_version_ >= 122 ? "galaxy-kernel-v122|" : snapshot_version_ >= 121 ? "galaxy-kernel-v121|" : snapshot_version_ >= 120 ? "galaxy-kernel-v120|" : snapshot_version_ >= 119 ? "galaxy-kernel-v119|" : snapshot_version_ >= 118 ? "galaxy-kernel-v118|" : snapshot_version_ >= 117 ? "galaxy-kernel-v117|" : snapshot_version_ >= 116 ? "galaxy-kernel-v116|" : snapshot_version_ >= 115 ? "galaxy-kernel-v115|" : snapshot_version_ >= 114 ? "galaxy-kernel-v114|" : snapshot_version_ >= 113 ? "galaxy-kernel-v113|" : snapshot_version_ >= 112 ? "galaxy-kernel-v112|" : snapshot_version_ >= 111 ? "galaxy-kernel-v111|" : snapshot_version_ >= 110 ? "galaxy-kernel-v110|" : snapshot_version_ >= 109 ? "galaxy-kernel-v109|" : snapshot_version_ >= 108 ? "galaxy-kernel-v108|" : snapshot_version_ >= 107 ? "galaxy-kernel-v107|" : snapshot_version_ >= 106 ? "galaxy-kernel-v106|" : snapshot_version_ >= 105 ? "galaxy-kernel-v105|" : snapshot_version_ >= 104 ? "galaxy-kernel-v104|" : snapshot_version_ >= 103 ? "galaxy-kernel-v103|" : snapshot_version_ >= 102 ? "galaxy-kernel-v102|" : snapshot_version_ >= 101 ? "galaxy-kernel-v101|" : snapshot_version_ >= 100 ? "galaxy-kernel-v100|" : snapshot_version_ >= 99 ? "galaxy-kernel-v99|" : snapshot_version_ >= 98 ? "galaxy-kernel-v98|" : snapshot_version_ >= 97 ? "galaxy-kernel-v97|" : snapshot_version_ >= 96 ? "galaxy-kernel-v96|" : snapshot_version_ >= 95 ? "galaxy-kernel-v95|" : snapshot_version_ >= 94 ? "galaxy-kernel-v94|" : snapshot_version_ >= 93 ? "galaxy-kernel-v93|" : snapshot_version_ >= 92 ? "galaxy-kernel-v92|" : snapshot_version_ >= 91 ? "galaxy-kernel-v91|" : snapshot_version_ >= 90 ? "galaxy-kernel-v90|" : snapshot_version_ >= 89 ? "galaxy-kernel-v89|" : snapshot_version_ >= 88 ? "galaxy-kernel-v88|" : snapshot_version_ >= 87 ? "galaxy-kernel-v87|" : snapshot_version_ >= 86 ? "galaxy-kernel-v86|" : snapshot_version_ >= 85 ? "galaxy-kernel-v85|" : snapshot_version_ >= 84 ? "galaxy-kernel-v84|" : snapshot_version_ >= 83 ? "galaxy-kernel-v83|" : snapshot_version_ >= 82 ? "galaxy-kernel-v82|" : snapshot_version_ >= 81 ? "galaxy-kernel-v81|" : snapshot_version_ >= 80 ? "galaxy-kernel-v80|" : snapshot_version_ >= 79 ? "galaxy-kernel-v79|" : snapshot_version_ >= 78 ? "galaxy-kernel-v78|" : snapshot_version_ >= 77 ? "galaxy-kernel-v77|" : snapshot_version_ >= 76 ? "galaxy-kernel-v76|" : snapshot_version_ >= 75 ? "galaxy-kernel-v75|" : snapshot_version_ >= 74 ? "galaxy-kernel-v74|" : snapshot_version_ >= 73 ? "galaxy-kernel-v73|" : snapshot_version_ >= 72 ? "galaxy-kernel-v72|" : snapshot_version_ >= 71 ? "galaxy-kernel-v71|" : snapshot_version_ >= 70 ? "galaxy-kernel-v70|" : snapshot_version_ >= 69 ? "galaxy-kernel-v69|" : snapshot_version_ >= 68 ? "galaxy-kernel-v68|" : snapshot_version_ >= 67 ? "galaxy-kernel-v67|" : snapshot_version_ >= 66 ? "galaxy-kernel-v66|" : snapshot_version_ >= 65 ? "galaxy-kernel-v65|" : snapshot_version_ >= 64 ? "galaxy-kernel-v64|" : snapshot_version_ >= 63 ? "galaxy-kernel-v63|" : snapshot_version_ >= 62 ? "galaxy-kernel-v62|" : snapshot_version_ >= 61 ? "galaxy-kernel-v61|" : snapshot_version_ >= 60 ? "galaxy-kernel-v60|" : snapshot_version_ >= 59 ? "galaxy-kernel-v59|" : snapshot_version_ >= 58 ? "galaxy-kernel-v58|" : snapshot_version_ >= 57 ? "galaxy-kernel-v57|" : snapshot_version_ >= 56 ? "galaxy-kernel-v56|" : snapshot_version_ >= 53 ? "galaxy-kernel-v53|" : snapshot_version_ >= 52 ? "galaxy-kernel-v52|" : snapshot_version_ >= 49 ? "galaxy-kernel-v49|" : snapshot_version_ >= 48 ? "galaxy-kernel-v48|" : snapshot_version_ >= 44 ? "galaxy-kernel-v44|" : snapshot_version_ >= 41 ? "galaxy-kernel-v41|" : snapshot_version_ >= 40 ? "galaxy-kernel-v40|" : snapshot_version_ >= 39 ? "galaxy-kernel-v39|" : snapshot_version_ >= 38 ? "galaxy-kernel-v38|" : snapshot_version_ >= 37 ? "galaxy-kernel-v37|" : snapshot_version_ >= 36 ? "galaxy-kernel-v36|" : snapshot_version_ >= 35 ? "galaxy-kernel-v35|" : snapshot_version_ >= 34 ? "galaxy-kernel-v34|" : snapshot_version_ >= 33 ? "galaxy-kernel-v33|" : snapshot_version_ >= 32 ? "galaxy-kernel-v32|" : snapshot_version_ >= 31 ? "galaxy-kernel-v31|" : snapshot_version_ >= 30 ? "galaxy-kernel-v30|" : snapshot_version_ >= 29 ? "galaxy-kernel-v29|" : snapshot_version_ >= 28 ? "galaxy-kernel-v28|" : snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
+    out << ( snapshot_version_ >= 123 ? "galaxy-kernel-v123|" : snapshot_version_ >= 122 ? "galaxy-kernel-v122|" : snapshot_version_ >= 121 ? "galaxy-kernel-v121|" : snapshot_version_ >= 120 ? "galaxy-kernel-v120|" : snapshot_version_ >= 119 ? "galaxy-kernel-v119|" : snapshot_version_ >= 118 ? "galaxy-kernel-v118|" : snapshot_version_ >= 117 ? "galaxy-kernel-v117|" : snapshot_version_ >= 116 ? "galaxy-kernel-v116|" : snapshot_version_ >= 115 ? "galaxy-kernel-v115|" : snapshot_version_ >= 114 ? "galaxy-kernel-v114|" : snapshot_version_ >= 113 ? "galaxy-kernel-v113|" : snapshot_version_ >= 112 ? "galaxy-kernel-v112|" : snapshot_version_ >= 111 ? "galaxy-kernel-v111|" : snapshot_version_ >= 110 ? "galaxy-kernel-v110|" : snapshot_version_ >= 109 ? "galaxy-kernel-v109|" : snapshot_version_ >= 108 ? "galaxy-kernel-v108|" : snapshot_version_ >= 107 ? "galaxy-kernel-v107|" : snapshot_version_ >= 106 ? "galaxy-kernel-v106|" : snapshot_version_ >= 105 ? "galaxy-kernel-v105|" : snapshot_version_ >= 104 ? "galaxy-kernel-v104|" : snapshot_version_ >= 103 ? "galaxy-kernel-v103|" : snapshot_version_ >= 102 ? "galaxy-kernel-v102|" : snapshot_version_ >= 101 ? "galaxy-kernel-v101|" : snapshot_version_ >= 100 ? "galaxy-kernel-v100|" : snapshot_version_ >= 99 ? "galaxy-kernel-v99|" : snapshot_version_ >= 98 ? "galaxy-kernel-v98|" : snapshot_version_ >= 97 ? "galaxy-kernel-v97|" : snapshot_version_ >= 96 ? "galaxy-kernel-v96|" : snapshot_version_ >= 95 ? "galaxy-kernel-v95|" : snapshot_version_ >= 94 ? "galaxy-kernel-v94|" : snapshot_version_ >= 93 ? "galaxy-kernel-v93|" : snapshot_version_ >= 92 ? "galaxy-kernel-v92|" : snapshot_version_ >= 91 ? "galaxy-kernel-v91|" : snapshot_version_ >= 90 ? "galaxy-kernel-v90|" : snapshot_version_ >= 89 ? "galaxy-kernel-v89|" : snapshot_version_ >= 88 ? "galaxy-kernel-v88|" : snapshot_version_ >= 87 ? "galaxy-kernel-v87|" : snapshot_version_ >= 86 ? "galaxy-kernel-v86|" : snapshot_version_ >= 85 ? "galaxy-kernel-v85|" : snapshot_version_ >= 84 ? "galaxy-kernel-v84|" : snapshot_version_ >= 83 ? "galaxy-kernel-v83|" : snapshot_version_ >= 82 ? "galaxy-kernel-v82|" : snapshot_version_ >= 81 ? "galaxy-kernel-v81|" : snapshot_version_ >= 80 ? "galaxy-kernel-v80|" : snapshot_version_ >= 79 ? "galaxy-kernel-v79|" : snapshot_version_ >= 78 ? "galaxy-kernel-v78|" : snapshot_version_ >= 77 ? "galaxy-kernel-v77|" : snapshot_version_ >= 76 ? "galaxy-kernel-v76|" : snapshot_version_ >= 75 ? "galaxy-kernel-v75|" : snapshot_version_ >= 74 ? "galaxy-kernel-v74|" : snapshot_version_ >= 73 ? "galaxy-kernel-v73|" : snapshot_version_ >= 72 ? "galaxy-kernel-v72|" : snapshot_version_ >= 71 ? "galaxy-kernel-v71|" : snapshot_version_ >= 70 ? "galaxy-kernel-v70|" : snapshot_version_ >= 69 ? "galaxy-kernel-v69|" : snapshot_version_ >= 68 ? "galaxy-kernel-v68|" : snapshot_version_ >= 67 ? "galaxy-kernel-v67|" : snapshot_version_ >= 66 ? "galaxy-kernel-v66|" : snapshot_version_ >= 65 ? "galaxy-kernel-v65|" : snapshot_version_ >= 64 ? "galaxy-kernel-v64|" : snapshot_version_ >= 63 ? "galaxy-kernel-v63|" : snapshot_version_ >= 62 ? "galaxy-kernel-v62|" : snapshot_version_ >= 61 ? "galaxy-kernel-v61|" : snapshot_version_ >= 60 ? "galaxy-kernel-v60|" : snapshot_version_ >= 59 ? "galaxy-kernel-v59|" : snapshot_version_ >= 58 ? "galaxy-kernel-v58|" : snapshot_version_ >= 57 ? "galaxy-kernel-v57|" : snapshot_version_ >= 56 ? "galaxy-kernel-v56|" : snapshot_version_ >= 53 ? "galaxy-kernel-v53|" : snapshot_version_ >= 52 ? "galaxy-kernel-v52|" : snapshot_version_ >= 49 ? "galaxy-kernel-v49|" : snapshot_version_ >= 48 ? "galaxy-kernel-v48|" : snapshot_version_ >= 44 ? "galaxy-kernel-v44|" : snapshot_version_ >= 41 ? "galaxy-kernel-v41|" : snapshot_version_ >= 40 ? "galaxy-kernel-v40|" : snapshot_version_ >= 39 ? "galaxy-kernel-v39|" : snapshot_version_ >= 38 ? "galaxy-kernel-v38|" : snapshot_version_ >= 37 ? "galaxy-kernel-v37|" : snapshot_version_ >= 36 ? "galaxy-kernel-v36|" : snapshot_version_ >= 35 ? "galaxy-kernel-v35|" : snapshot_version_ >= 34 ? "galaxy-kernel-v34|" : snapshot_version_ >= 33 ? "galaxy-kernel-v33|" : snapshot_version_ >= 32 ? "galaxy-kernel-v32|" : snapshot_version_ >= 31 ? "galaxy-kernel-v31|" : snapshot_version_ >= 30 ? "galaxy-kernel-v30|" : snapshot_version_ >= 29 ? "galaxy-kernel-v29|" : snapshot_version_ >= 28 ? "galaxy-kernel-v28|" : snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
         << '|' << rng_state_ << '\n';
     if (snapshot_version_>=5) for(const auto system:systems_)out<<"system|"<<system<<'\n';
     if(snapshot_version_>=120)for(const auto& [system,origin]:galactic_system_origins_)
@@ -12827,6 +13041,23 @@ std::string Simulation::canonical_state() const {
         for (const auto& [key, h] : hangars_)
             out << "hangar|" << key.first << '|' << key.second << '|' << h.ore << '|' << h.capacity << '\n';
     }
+    if(snapshot_version_>=123){
+        out<<"stationlotnext|"<<next_station_ore_lot_id_<<'\n';
+        for(const auto& [id,l]:station_ore_lots_){
+            out<<"stationorelot|"<<id<<'|'<<l.mine_command<<'|'<<l.mined_tick<<'|'
+               <<l.unload_receipt<<'|'<<l.rock<<'|'<<l.source_ship<<'|'
+               <<l.station<<'|'<<l.owner<<'|'<<unsigned(l.taxonomy)<<'|'
+               <<l.tonnes<<'\n';
+        }
+        for(const auto& [id,f]:station_refineries_){
+            out<<"stationrefinery|"<<id<<'|'<<f.source_ship<<'|'<<f.owner<<'|'
+               <<f.embodied_modules<<'|'<<f.assigned_workers<<'|'
+               <<f.commissioned_receipt<<'|'<<f.ready_tick<<'|'
+               <<f.last_receipt<<'|'<<f.processed_tonnes<<'\n';
+            for(const auto& [mineral,kg]:f.mineral_kg)
+                out<<"stationmineral|"<<id<<'|'<<mineral<<'|'<<kg<<'\n';
+        }
+    }
     if (snapshot_version_ >= 4) {
         for (const auto& [id,m] : markets_)
             out << "market|" << id << '|' << m.ore << '|' << m.credits << '|' << m.price_per_ore << '\n';
@@ -13084,12 +13315,12 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
     if (!std::getline(in, line)) throw std::runtime_error("snapshot: missing header");
     auto h = fields(line);
     require_fields(h, 5);
-    if (h[0] != "galaxy-kernel-v122" && h[0] != "galaxy-kernel-v121" && h[0] != "galaxy-kernel-v120" && h[0] != "galaxy-kernel-v119" && h[0] != "galaxy-kernel-v118" && h[0] != "galaxy-kernel-v117" && h[0] != "galaxy-kernel-v116" && h[0] != "galaxy-kernel-v115" && h[0] != "galaxy-kernel-v114" && h[0] != "galaxy-kernel-v113" && h[0] != "galaxy-kernel-v112" && h[0] != "galaxy-kernel-v111" && h[0] != "galaxy-kernel-v110" && h[0] != "galaxy-kernel-v109" && h[0] != "galaxy-kernel-v108" && h[0] != "galaxy-kernel-v107" && h[0] != "galaxy-kernel-v106" && h[0] != "galaxy-kernel-v105" && h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27" && h[0] != "galaxy-kernel-v28" && h[0] != "galaxy-kernel-v29" && h[0] != "galaxy-kernel-v30" && h[0] != "galaxy-kernel-v31" && h[0] != "galaxy-kernel-v32" && h[0] != "galaxy-kernel-v33" && h[0] != "galaxy-kernel-v34" && h[0] != "galaxy-kernel-v35" && h[0] != "galaxy-kernel-v36" && h[0] != "galaxy-kernel-v37" && h[0] != "galaxy-kernel-v38" && h[0] != "galaxy-kernel-v39" && h[0] != "galaxy-kernel-v40" && h[0] != "galaxy-kernel-v41" && h[0] != "galaxy-kernel-v44" && h[0] != "galaxy-kernel-v48" && h[0] != "galaxy-kernel-v49" && h[0] != "galaxy-kernel-v52" && h[0] != "galaxy-kernel-v53" && h[0] != "galaxy-kernel-v56" && h[0] != "galaxy-kernel-v57" && h[0] != "galaxy-kernel-v58" && h[0] != "galaxy-kernel-v59" && h[0] != "galaxy-kernel-v60" && h[0] != "galaxy-kernel-v61" && h[0] != "galaxy-kernel-v62" && h[0] != "galaxy-kernel-v63" && h[0] != "galaxy-kernel-v64" && h[0] != "galaxy-kernel-v65" && h[0] != "galaxy-kernel-v66" && h[0] != "galaxy-kernel-v67" && h[0] != "galaxy-kernel-v68" && h[0] != "galaxy-kernel-v69" && h[0] != "galaxy-kernel-v70" && h[0] != "galaxy-kernel-v71" && h[0] != "galaxy-kernel-v72" && h[0] != "galaxy-kernel-v73" && h[0] != "galaxy-kernel-v74" && h[0] != "galaxy-kernel-v75" && h[0] != "galaxy-kernel-v76" && h[0] != "galaxy-kernel-v77" && h[0] != "galaxy-kernel-v78" && h[0] != "galaxy-kernel-v79" && h[0] != "galaxy-kernel-v80" && h[0] != "galaxy-kernel-v81" && h[0] != "galaxy-kernel-v82" && h[0] != "galaxy-kernel-v83" && h[0] != "galaxy-kernel-v84" && h[0] != "galaxy-kernel-v85" && h[0] != "galaxy-kernel-v86" && h[0] != "galaxy-kernel-v87" && h[0] != "galaxy-kernel-v88" && h[0] != "galaxy-kernel-v89" && h[0] != "galaxy-kernel-v90" && h[0] != "galaxy-kernel-v91" && h[0] != "galaxy-kernel-v92" && h[0] != "galaxy-kernel-v93" && h[0] != "galaxy-kernel-v94" && h[0] != "galaxy-kernel-v95" && h[0] != "galaxy-kernel-v96" && h[0] != "galaxy-kernel-v97" && h[0] != "galaxy-kernel-v98" && h[0] != "galaxy-kernel-v99" && h[0] != "galaxy-kernel-v100" && h[0] != "galaxy-kernel-v101" && h[0] != "galaxy-kernel-v102" && h[0] != "galaxy-kernel-v103" && h[0] != "galaxy-kernel-v104") throw std::runtime_error("snapshot: unsupported version");
+    if (h[0] != "galaxy-kernel-v123" && h[0] != "galaxy-kernel-v122" && h[0] != "galaxy-kernel-v121" && h[0] != "galaxy-kernel-v120" && h[0] != "galaxy-kernel-v119" && h[0] != "galaxy-kernel-v118" && h[0] != "galaxy-kernel-v117" && h[0] != "galaxy-kernel-v116" && h[0] != "galaxy-kernel-v115" && h[0] != "galaxy-kernel-v114" && h[0] != "galaxy-kernel-v113" && h[0] != "galaxy-kernel-v112" && h[0] != "galaxy-kernel-v111" && h[0] != "galaxy-kernel-v110" && h[0] != "galaxy-kernel-v109" && h[0] != "galaxy-kernel-v108" && h[0] != "galaxy-kernel-v107" && h[0] != "galaxy-kernel-v106" && h[0] != "galaxy-kernel-v105" && h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27" && h[0] != "galaxy-kernel-v28" && h[0] != "galaxy-kernel-v29" && h[0] != "galaxy-kernel-v30" && h[0] != "galaxy-kernel-v31" && h[0] != "galaxy-kernel-v32" && h[0] != "galaxy-kernel-v33" && h[0] != "galaxy-kernel-v34" && h[0] != "galaxy-kernel-v35" && h[0] != "galaxy-kernel-v36" && h[0] != "galaxy-kernel-v37" && h[0] != "galaxy-kernel-v38" && h[0] != "galaxy-kernel-v39" && h[0] != "galaxy-kernel-v40" && h[0] != "galaxy-kernel-v41" && h[0] != "galaxy-kernel-v44" && h[0] != "galaxy-kernel-v48" && h[0] != "galaxy-kernel-v49" && h[0] != "galaxy-kernel-v52" && h[0] != "galaxy-kernel-v53" && h[0] != "galaxy-kernel-v56" && h[0] != "galaxy-kernel-v57" && h[0] != "galaxy-kernel-v58" && h[0] != "galaxy-kernel-v59" && h[0] != "galaxy-kernel-v60" && h[0] != "galaxy-kernel-v61" && h[0] != "galaxy-kernel-v62" && h[0] != "galaxy-kernel-v63" && h[0] != "galaxy-kernel-v64" && h[0] != "galaxy-kernel-v65" && h[0] != "galaxy-kernel-v66" && h[0] != "galaxy-kernel-v67" && h[0] != "galaxy-kernel-v68" && h[0] != "galaxy-kernel-v69" && h[0] != "galaxy-kernel-v70" && h[0] != "galaxy-kernel-v71" && h[0] != "galaxy-kernel-v72" && h[0] != "galaxy-kernel-v73" && h[0] != "galaxy-kernel-v74" && h[0] != "galaxy-kernel-v75" && h[0] != "galaxy-kernel-v76" && h[0] != "galaxy-kernel-v77" && h[0] != "galaxy-kernel-v78" && h[0] != "galaxy-kernel-v79" && h[0] != "galaxy-kernel-v80" && h[0] != "galaxy-kernel-v81" && h[0] != "galaxy-kernel-v82" && h[0] != "galaxy-kernel-v83" && h[0] != "galaxy-kernel-v84" && h[0] != "galaxy-kernel-v85" && h[0] != "galaxy-kernel-v86" && h[0] != "galaxy-kernel-v87" && h[0] != "galaxy-kernel-v88" && h[0] != "galaxy-kernel-v89" && h[0] != "galaxy-kernel-v90" && h[0] != "galaxy-kernel-v91" && h[0] != "galaxy-kernel-v92" && h[0] != "galaxy-kernel-v93" && h[0] != "galaxy-kernel-v94" && h[0] != "galaxy-kernel-v95" && h[0] != "galaxy-kernel-v96" && h[0] != "galaxy-kernel-v97" && h[0] != "galaxy-kernel-v98" && h[0] != "galaxy-kernel-v99" && h[0] != "galaxy-kernel-v100" && h[0] != "galaxy-kernel-v101" && h[0] != "galaxy-kernel-v102" && h[0] != "galaxy-kernel-v103" && h[0] != "galaxy-kernel-v104") throw std::runtime_error("snapshot: unsupported version");
     const auto sys = u64(h[1]);
     if (sys == 0 || sys > std::numeric_limits<std::uint32_t>::max())
         throw std::runtime_error("snapshot: invalid system");
     Simulation result(u64(h[4]), static_cast<std::uint32_t>(sys));
-    result.snapshot_version_ = h[0] == "galaxy-kernel-v122" ? 122 : h[0] == "galaxy-kernel-v121" ? 121 : h[0] == "galaxy-kernel-v120" ? 120 : h[0] == "galaxy-kernel-v119" ? 119 : h[0] == "galaxy-kernel-v118" ? 118 : h[0] == "galaxy-kernel-v117" ? 117 : h[0] == "galaxy-kernel-v116" ? 116 : h[0] == "galaxy-kernel-v115" ? 115 : h[0] == "galaxy-kernel-v114" ? 114 : h[0] == "galaxy-kernel-v113" ? 113 : h[0] == "galaxy-kernel-v112" ? 112 : h[0] == "galaxy-kernel-v111" ? 111 : h[0] == "galaxy-kernel-v110" ? 110 : h[0] == "galaxy-kernel-v109" ? 109 : h[0] == "galaxy-kernel-v108" ? 108 : h[0] == "galaxy-kernel-v107" ? 107 : h[0] == "galaxy-kernel-v106" ? 106 : h[0] == "galaxy-kernel-v105" ? 105 : h[0] == "galaxy-kernel-v104" ? 104 : h[0] == "galaxy-kernel-v103" ? 103 : h[0] == "galaxy-kernel-v102" ? 102 : h[0] == "galaxy-kernel-v101" ? 101 : h[0] == "galaxy-kernel-v100" ? 100 : h[0] == "galaxy-kernel-v99" ? 99 : h[0] == "galaxy-kernel-v98" ? 98 : h[0] == "galaxy-kernel-v97" ? 97 : h[0] == "galaxy-kernel-v96" ? 96 : h[0] == "galaxy-kernel-v95" ? 95 : h[0] == "galaxy-kernel-v94" ? 94 : h[0] == "galaxy-kernel-v93" ? 93 : h[0] == "galaxy-kernel-v92" ? 92 : h[0] == "galaxy-kernel-v91" ? 91 : h[0] == "galaxy-kernel-v90" ? 90 : h[0] == "galaxy-kernel-v89" ? 89 : h[0] == "galaxy-kernel-v88" ? 88 : h[0] == "galaxy-kernel-v87" ? 87 : h[0] == "galaxy-kernel-v86" ? 86 : h[0] == "galaxy-kernel-v85" ? 85 : h[0] == "galaxy-kernel-v84" ? 84 : h[0] == "galaxy-kernel-v83" ? 83 : h[0] == "galaxy-kernel-v82" ? 82 : h[0] == "galaxy-kernel-v81" ? 81 : h[0] == "galaxy-kernel-v80" ? 80 : h[0] == "galaxy-kernel-v79" ? 79 : h[0] == "galaxy-kernel-v78" ? 78 : h[0] == "galaxy-kernel-v77" ? 77 : h[0] == "galaxy-kernel-v76" ? 76 : h[0] == "galaxy-kernel-v75" ? 75 : h[0] == "galaxy-kernel-v74" ? 74 : h[0] == "galaxy-kernel-v73" ? 73 : h[0] == "galaxy-kernel-v72" ? 72 : h[0] == "galaxy-kernel-v71" ? 71 : h[0] == "galaxy-kernel-v70" ? 70 : h[0] == "galaxy-kernel-v69" ? 69 : h[0] == "galaxy-kernel-v68" ? 68 : h[0] == "galaxy-kernel-v67" ? 67 : h[0] == "galaxy-kernel-v66" ? 66 : h[0] == "galaxy-kernel-v65" ? 65 : h[0] == "galaxy-kernel-v64" ? 64 : h[0] == "galaxy-kernel-v63" ? 63 : h[0] == "galaxy-kernel-v62" ? 62 : h[0] == "galaxy-kernel-v61" ? 61 : h[0] == "galaxy-kernel-v60" ? 60 : h[0] == "galaxy-kernel-v59" ? 59 : h[0] == "galaxy-kernel-v58" ? 58 : h[0] == "galaxy-kernel-v57" ? 57 : h[0] == "galaxy-kernel-v56" ? 56 : h[0] == "galaxy-kernel-v53" ? 53 : h[0] == "galaxy-kernel-v52" ? 52 : h[0] == "galaxy-kernel-v49" ? 49 : h[0] == "galaxy-kernel-v48" ? 48 : h[0] == "galaxy-kernel-v44" ? 44 : h[0] == "galaxy-kernel-v41" ? 41 : h[0] == "galaxy-kernel-v40" ? 40 : h[0] == "galaxy-kernel-v39" ? 39 : h[0] == "galaxy-kernel-v38" ? 38 : h[0] == "galaxy-kernel-v37" ? 37 : h[0] == "galaxy-kernel-v36" ? 36 : h[0] == "galaxy-kernel-v35" ? 35 : h[0] == "galaxy-kernel-v34" ? 34 : h[0] == "galaxy-kernel-v33" ? 33 : h[0] == "galaxy-kernel-v32" ? 32 : h[0] == "galaxy-kernel-v31" ? 31 : h[0] == "galaxy-kernel-v30" ? 30 : h[0] == "galaxy-kernel-v29" ? 29 : h[0] == "galaxy-kernel-v28" ? 28 : h[0] == "galaxy-kernel-v27" ? 27 : h[0] == "galaxy-kernel-v26" ? 26 : h[0] == "galaxy-kernel-v25" ? 25 : h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
+    result.snapshot_version_ = h[0] == "galaxy-kernel-v123" ? 123 : h[0] == "galaxy-kernel-v122" ? 122 : h[0] == "galaxy-kernel-v121" ? 121 : h[0] == "galaxy-kernel-v120" ? 120 : h[0] == "galaxy-kernel-v119" ? 119 : h[0] == "galaxy-kernel-v118" ? 118 : h[0] == "galaxy-kernel-v117" ? 117 : h[0] == "galaxy-kernel-v116" ? 116 : h[0] == "galaxy-kernel-v115" ? 115 : h[0] == "galaxy-kernel-v114" ? 114 : h[0] == "galaxy-kernel-v113" ? 113 : h[0] == "galaxy-kernel-v112" ? 112 : h[0] == "galaxy-kernel-v111" ? 111 : h[0] == "galaxy-kernel-v110" ? 110 : h[0] == "galaxy-kernel-v109" ? 109 : h[0] == "galaxy-kernel-v108" ? 108 : h[0] == "galaxy-kernel-v107" ? 107 : h[0] == "galaxy-kernel-v106" ? 106 : h[0] == "galaxy-kernel-v105" ? 105 : h[0] == "galaxy-kernel-v104" ? 104 : h[0] == "galaxy-kernel-v103" ? 103 : h[0] == "galaxy-kernel-v102" ? 102 : h[0] == "galaxy-kernel-v101" ? 101 : h[0] == "galaxy-kernel-v100" ? 100 : h[0] == "galaxy-kernel-v99" ? 99 : h[0] == "galaxy-kernel-v98" ? 98 : h[0] == "galaxy-kernel-v97" ? 97 : h[0] == "galaxy-kernel-v96" ? 96 : h[0] == "galaxy-kernel-v95" ? 95 : h[0] == "galaxy-kernel-v94" ? 94 : h[0] == "galaxy-kernel-v93" ? 93 : h[0] == "galaxy-kernel-v92" ? 92 : h[0] == "galaxy-kernel-v91" ? 91 : h[0] == "galaxy-kernel-v90" ? 90 : h[0] == "galaxy-kernel-v89" ? 89 : h[0] == "galaxy-kernel-v88" ? 88 : h[0] == "galaxy-kernel-v87" ? 87 : h[0] == "galaxy-kernel-v86" ? 86 : h[0] == "galaxy-kernel-v85" ? 85 : h[0] == "galaxy-kernel-v84" ? 84 : h[0] == "galaxy-kernel-v83" ? 83 : h[0] == "galaxy-kernel-v82" ? 82 : h[0] == "galaxy-kernel-v81" ? 81 : h[0] == "galaxy-kernel-v80" ? 80 : h[0] == "galaxy-kernel-v79" ? 79 : h[0] == "galaxy-kernel-v78" ? 78 : h[0] == "galaxy-kernel-v77" ? 77 : h[0] == "galaxy-kernel-v76" ? 76 : h[0] == "galaxy-kernel-v75" ? 75 : h[0] == "galaxy-kernel-v74" ? 74 : h[0] == "galaxy-kernel-v73" ? 73 : h[0] == "galaxy-kernel-v72" ? 72 : h[0] == "galaxy-kernel-v71" ? 71 : h[0] == "galaxy-kernel-v70" ? 70 : h[0] == "galaxy-kernel-v69" ? 69 : h[0] == "galaxy-kernel-v68" ? 68 : h[0] == "galaxy-kernel-v67" ? 67 : h[0] == "galaxy-kernel-v66" ? 66 : h[0] == "galaxy-kernel-v65" ? 65 : h[0] == "galaxy-kernel-v64" ? 64 : h[0] == "galaxy-kernel-v63" ? 63 : h[0] == "galaxy-kernel-v62" ? 62 : h[0] == "galaxy-kernel-v61" ? 61 : h[0] == "galaxy-kernel-v60" ? 60 : h[0] == "galaxy-kernel-v59" ? 59 : h[0] == "galaxy-kernel-v58" ? 58 : h[0] == "galaxy-kernel-v57" ? 57 : h[0] == "galaxy-kernel-v56" ? 56 : h[0] == "galaxy-kernel-v53" ? 53 : h[0] == "galaxy-kernel-v52" ? 52 : h[0] == "galaxy-kernel-v49" ? 49 : h[0] == "galaxy-kernel-v48" ? 48 : h[0] == "galaxy-kernel-v44" ? 44 : h[0] == "galaxy-kernel-v41" ? 41 : h[0] == "galaxy-kernel-v40" ? 40 : h[0] == "galaxy-kernel-v39" ? 39 : h[0] == "galaxy-kernel-v38" ? 38 : h[0] == "galaxy-kernel-v37" ? 37 : h[0] == "galaxy-kernel-v36" ? 36 : h[0] == "galaxy-kernel-v35" ? 35 : h[0] == "galaxy-kernel-v34" ? 34 : h[0] == "galaxy-kernel-v33" ? 33 : h[0] == "galaxy-kernel-v32" ? 32 : h[0] == "galaxy-kernel-v31" ? 31 : h[0] == "galaxy-kernel-v30" ? 30 : h[0] == "galaxy-kernel-v29" ? 29 : h[0] == "galaxy-kernel-v28" ? 28 : h[0] == "galaxy-kernel-v27" ? 27 : h[0] == "galaxy-kernel-v26" ? 26 : h[0] == "galaxy-kernel-v25" ? 25 : h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
     result.tick_ = u64(h[2]);
     result.next_entity_id_ = u64(h[3]);
     if (result.next_entity_id_ == 0) throw std::runtime_error("snapshot: invalid next entity ID");
@@ -15081,7 +15312,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             c.id = u64(f[1]); c.execute_tick = u64(f[2]); c.sequence = u64(f[3]);
             c.issuer = u64(f[4]); c.actor = u64(f[5]); c.target = u64(f[6]);
             auto action = u64(f[7]);
-            if (action > (result.snapshot_version_ >= 108 ? static_cast<unsigned>(Action::CancelWorkshopJob) : result.snapshot_version_ >= 107 ? static_cast<unsigned>(Action::RelieveWorkshopShift) : result.snapshot_version_ >= 106 ? static_cast<unsigned>(Action::CancelWorkshopShift) : result.snapshot_version_ >= 105 ? static_cast<unsigned>(Action::TrainWorkshopTrade) : result.snapshot_version_ >= 104 ? static_cast<unsigned>(Action::FireShipWeapon) : result.snapshot_version_ >= 101 ? static_cast<unsigned>(Action::HackConfuse) : result.snapshot_version_ >= 100 ? static_cast<unsigned>(Action::SetHardpointPower) : result.snapshot_version_ >= 69 ? static_cast<unsigned>(Action::CancelSurveyFocus) : result.snapshot_version_ >= 66 ? static_cast<unsigned>(Action::LaunchGeologicalDrone) : result.snapshot_version_ >= 65 ? static_cast<unsigned>(Action::RecoverSurveyProbe) : result.snapshot_version_ >= 64 ? static_cast<unsigned>(Action::ConfigureExplorationScanner) : result.snapshot_version_ >= 63 ? static_cast<unsigned>(Action::SurveyLocal) : result.snapshot_version_ >= 62 ? static_cast<unsigned>(Action::SalvageWreck) : result.snapshot_version_ >= 59 ? static_cast<unsigned>(Action::HostRegisterDependent) : result.snapshot_version_ >= 58 ? static_cast<unsigned>(Action::HostColonyDeparture) : result.snapshot_version_ >= 56 ? static_cast<unsigned>(Action::HostTransferConsignedStock) : result.snapshot_version_ >= 53 ? static_cast<unsigned>(Action::HostReturnConstructedStock) : result.snapshot_version_ >= 52 ? static_cast<unsigned>(Action::HostEscrowConstructedStock) : result.snapshot_version_ >= 48 ? static_cast<unsigned>(Action::HostSplitEvacuatePassengers) : result.snapshot_version_ >= 41 ? static_cast<unsigned>(Action::HostSettleMigrant) : result.snapshot_version_ >= 39 ? static_cast<unsigned>(Action::HostMobileStabilize) : result.snapshot_version_ >= 38 ? static_cast<unsigned>(Action::HostTreatInjuries) : result.snapshot_version_ >= 37 ? static_cast<unsigned>(Action::HostResolveMixedFerryLoss) : result.snapshot_version_ >= 36 ? static_cast<unsigned>(Action::HostDestroyPassengerFerry) : result.snapshot_version_ >= 35 ? static_cast<unsigned>(Action::HostEvacuatePassengers) : result.snapshot_version_ >= 32 ? static_cast<unsigned>(Action::HostDisembarkPassengers) : result.snapshot_version_ >= 30 ? static_cast<unsigned>(Action::CompleteConveyorRoute) : result.snapshot_version_ >= 29 ? static_cast<unsigned>(Action::PlaceFactoryEquipment) : result.snapshot_version_ >= 28 ? static_cast<unsigned>(Action::ConstructWorkshopLink) : result.snapshot_version_ >= 27 ? static_cast<unsigned>(Action::ConstructStorageLink) : result.snapshot_version_ >= 26 ? static_cast<unsigned>(Action::TransferStorageNodeStack) : result.snapshot_version_ >= 25 ? static_cast<unsigned>(Action::TransferStorageStack) : result.snapshot_version_ >= 24 ? static_cast<unsigned>(Action::TransferWorkshopStack) : result.snapshot_version_ >= 23 ? static_cast<unsigned>(Action::TransferWorkshopFinalOutput) : result.snapshot_version_ >= 22 ? static_cast<unsigned>(Action::TransferWorkshopOutput) : result.snapshot_version_ >= 21 ? static_cast<unsigned>(Action::HostCrewLoss) : result.snapshot_version_ >= 20 ? static_cast<unsigned>(Action::AssignFarmMentor) : result.snapshot_version_ >= 19 ? static_cast<unsigned>(Action::AssignPolicyInspectors) : result.snapshot_version_ >= 18 ? static_cast<unsigned>(Action::TransferWaterworksFeed) : result.snapshot_version_ >= 17 ? static_cast<unsigned>(Action::ConstructReclaimer) : result.snapshot_version_ >= 16 ? static_cast<unsigned>(Action::AssignClinicStaff) : result.snapshot_version_ >= 15 ? static_cast<unsigned>(Action::AssignCommunityStaff) : result.snapshot_version_ >= 14 ? static_cast<unsigned>(Action::SetUtilityMaintenance) : result.snapshot_version_ >= 13 ? static_cast<unsigned>(Action::RepairUtility) : result.snapshot_version_ >= 12 ? static_cast<unsigned>(Action::AssignHabitatResidents) : result.snapshot_version_ >= 11 ? static_cast<unsigned>(Action::AssignFarmWorkers) : result.snapshot_version_ >= 10 ? static_cast<unsigned>(Action::LoadLifeWater) : result.snapshot_version_ >= 9 ? static_cast<unsigned>(Action::FabricateMaterialModule) : result.snapshot_version_ >= 7 ? static_cast<unsigned>(Action::ConstructOutpost) : result.snapshot_version_ >= 6 ? static_cast<unsigned>(Action::DeliverGateSpares) : result.snapshot_version_ >= 5 ? static_cast<unsigned>(Action::SetGatePairOnline) : result.snapshot_version_ >= 4 ? static_cast<unsigned>(Action::SellOre) : static_cast<unsigned>(Action::UnloadOre))) throw std::runtime_error("snapshot: invalid action version="+std::to_string(result.snapshot_version_)+" action="+std::to_string(action));
+            if (action > (result.snapshot_version_ >= 123 ? static_cast<unsigned>(Action::RefineStationOre) : result.snapshot_version_ >= 108 ? static_cast<unsigned>(Action::CancelWorkshopJob) : result.snapshot_version_ >= 107 ? static_cast<unsigned>(Action::RelieveWorkshopShift) : result.snapshot_version_ >= 106 ? static_cast<unsigned>(Action::CancelWorkshopShift) : result.snapshot_version_ >= 105 ? static_cast<unsigned>(Action::TrainWorkshopTrade) : result.snapshot_version_ >= 104 ? static_cast<unsigned>(Action::FireShipWeapon) : result.snapshot_version_ >= 101 ? static_cast<unsigned>(Action::HackConfuse) : result.snapshot_version_ >= 100 ? static_cast<unsigned>(Action::SetHardpointPower) : result.snapshot_version_ >= 69 ? static_cast<unsigned>(Action::CancelSurveyFocus) : result.snapshot_version_ >= 66 ? static_cast<unsigned>(Action::LaunchGeologicalDrone) : result.snapshot_version_ >= 65 ? static_cast<unsigned>(Action::RecoverSurveyProbe) : result.snapshot_version_ >= 64 ? static_cast<unsigned>(Action::ConfigureExplorationScanner) : result.snapshot_version_ >= 63 ? static_cast<unsigned>(Action::SurveyLocal) : result.snapshot_version_ >= 62 ? static_cast<unsigned>(Action::SalvageWreck) : result.snapshot_version_ >= 59 ? static_cast<unsigned>(Action::HostRegisterDependent) : result.snapshot_version_ >= 58 ? static_cast<unsigned>(Action::HostColonyDeparture) : result.snapshot_version_ >= 56 ? static_cast<unsigned>(Action::HostTransferConsignedStock) : result.snapshot_version_ >= 53 ? static_cast<unsigned>(Action::HostReturnConstructedStock) : result.snapshot_version_ >= 52 ? static_cast<unsigned>(Action::HostEscrowConstructedStock) : result.snapshot_version_ >= 48 ? static_cast<unsigned>(Action::HostSplitEvacuatePassengers) : result.snapshot_version_ >= 41 ? static_cast<unsigned>(Action::HostSettleMigrant) : result.snapshot_version_ >= 39 ? static_cast<unsigned>(Action::HostMobileStabilize) : result.snapshot_version_ >= 38 ? static_cast<unsigned>(Action::HostTreatInjuries) : result.snapshot_version_ >= 37 ? static_cast<unsigned>(Action::HostResolveMixedFerryLoss) : result.snapshot_version_ >= 36 ? static_cast<unsigned>(Action::HostDestroyPassengerFerry) : result.snapshot_version_ >= 35 ? static_cast<unsigned>(Action::HostEvacuatePassengers) : result.snapshot_version_ >= 32 ? static_cast<unsigned>(Action::HostDisembarkPassengers) : result.snapshot_version_ >= 30 ? static_cast<unsigned>(Action::CompleteConveyorRoute) : result.snapshot_version_ >= 29 ? static_cast<unsigned>(Action::PlaceFactoryEquipment) : result.snapshot_version_ >= 28 ? static_cast<unsigned>(Action::ConstructWorkshopLink) : result.snapshot_version_ >= 27 ? static_cast<unsigned>(Action::ConstructStorageLink) : result.snapshot_version_ >= 26 ? static_cast<unsigned>(Action::TransferStorageNodeStack) : result.snapshot_version_ >= 25 ? static_cast<unsigned>(Action::TransferStorageStack) : result.snapshot_version_ >= 24 ? static_cast<unsigned>(Action::TransferWorkshopStack) : result.snapshot_version_ >= 23 ? static_cast<unsigned>(Action::TransferWorkshopFinalOutput) : result.snapshot_version_ >= 22 ? static_cast<unsigned>(Action::TransferWorkshopOutput) : result.snapshot_version_ >= 21 ? static_cast<unsigned>(Action::HostCrewLoss) : result.snapshot_version_ >= 20 ? static_cast<unsigned>(Action::AssignFarmMentor) : result.snapshot_version_ >= 19 ? static_cast<unsigned>(Action::AssignPolicyInspectors) : result.snapshot_version_ >= 18 ? static_cast<unsigned>(Action::TransferWaterworksFeed) : result.snapshot_version_ >= 17 ? static_cast<unsigned>(Action::ConstructReclaimer) : result.snapshot_version_ >= 16 ? static_cast<unsigned>(Action::AssignClinicStaff) : result.snapshot_version_ >= 15 ? static_cast<unsigned>(Action::AssignCommunityStaff) : result.snapshot_version_ >= 14 ? static_cast<unsigned>(Action::SetUtilityMaintenance) : result.snapshot_version_ >= 13 ? static_cast<unsigned>(Action::RepairUtility) : result.snapshot_version_ >= 12 ? static_cast<unsigned>(Action::AssignHabitatResidents) : result.snapshot_version_ >= 11 ? static_cast<unsigned>(Action::AssignFarmWorkers) : result.snapshot_version_ >= 10 ? static_cast<unsigned>(Action::LoadLifeWater) : result.snapshot_version_ >= 9 ? static_cast<unsigned>(Action::FabricateMaterialModule) : result.snapshot_version_ >= 7 ? static_cast<unsigned>(Action::ConstructOutpost) : result.snapshot_version_ >= 6 ? static_cast<unsigned>(Action::DeliverGateSpares) : result.snapshot_version_ >= 5 ? static_cast<unsigned>(Action::SetGatePairOnline) : result.snapshot_version_ >= 4 ? static_cast<unsigned>(Action::SellOre) : static_cast<unsigned>(Action::UnloadOre))) throw std::runtime_error("snapshot: invalid action version="+std::to_string(result.snapshot_version_)+" action="+std::to_string(action));
             c.action = static_cast<Action>(action);
             auto tx = i64(f[8]), ty = i64(f[9]);
             if (tx < std::numeric_limits<int>::min() || tx > std::numeric_limits<int>::max() ||
@@ -15410,6 +15641,45 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 capacity > 1000000000LL || ore > capacity ||
                 !result.hangars_.emplace(std::make_pair(station, owner), StationHangar{ore, capacity}).second)
                 throw std::runtime_error("snapshot: invalid station hangar");
+        } else if(f[0]=="stationlotnext" && result.snapshot_version_>=123){
+            require_fields(f,2);
+            auto next=u64(f[1]);
+            if(!next || result.next_station_ore_lot_id_!=1)
+                throw std::runtime_error("snapshot: duplicate/corrupt lot generator");
+            result.next_station_ore_lot_id_=next;
+        } else if(f[0]=="stationorelot" && result.snapshot_version_>=123){
+            require_fields(f,11);
+            StationOreCustodyLot l{};
+            l.id=u64(f[1]);l.mine_command=u64(f[2]);l.mined_tick=u64(f[3]);
+            l.unload_receipt=u64(f[4]);l.rock=u64(f[5]);l.source_ship=u64(f[6]);
+            l.station=u64(f[7]);l.owner=u64(f[8]);
+            const auto taxonomy=u64(f[9]);l.tonnes=i64(f[10]);
+            if(!l.id || !l.mine_command || !l.rock || !l.source_ship ||
+               !l.owner || taxonomy>3 || l.tonnes<=0 || l.tonnes>1000000000 ||
+               l.mined_tick>result.tick_ || l.station && !l.unload_receipt ||
+               !result.station_ore_lots_.emplace(l.id,l).second)
+                throw std::runtime_error("snapshot: invalid station ore provenance");
+            result.station_ore_lots_.at(l.id).taxonomy=static_cast<std::uint8_t>(taxonomy);
+        } else if(f[0]=="stationrefinery" && result.snapshot_version_>=123){
+            require_fields(f,10);
+            const auto site=u64(f[1]),ship=u64(f[2]),owner=u64(f[3]);
+            StationRefineryPlant p{};
+            p.station=site;p.source_ship=ship;p.owner=owner;
+            p.embodied_modules=i64(f[4]);p.assigned_workers=i64(f[5]);
+            p.commissioned_receipt=u64(f[6]);p.ready_tick=u64(f[7]);
+            p.last_receipt=u64(f[8]);p.processed_tonnes=i64(f[9]);
+            if(!site || !ship || !owner || p.embodied_modules!=2 ||
+               p.assigned_workers!=1 || !p.commissioned_receipt ||
+               p.processed_tonnes<0 || p.processed_tonnes>1000000000 ||
+               !result.station_refineries_.emplace(site,p).second)
+                throw std::runtime_error("snapshot: invalid station refinery");
+        } else if(f[0]=="stationmineral" && result.snapshot_version_>=123){
+            require_fields(f,4);
+            const auto site=u64(f[1]);const auto kg=i64(f[3]);
+            if(!site || kg<=0 || kg>1000000000 || !is_known_mineral(f[2]) ||
+               !result.station_refineries_.count(site) ||
+               !result.station_refineries_.at(site).mineral_kg.emplace(f[2],kg).second)
+                throw std::runtime_error("snapshot: invalid station mineral output");
         } else if (f[0] == "market" && result.snapshot_version_ >= 4) {
             require_fields(f,5);
             const auto id=u64(f[1]); const auto ore=i64(f[2]),credits=i64(f[3]),price=i64(f[4]);
@@ -16428,6 +16698,43 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
     for(const auto& [id,e]:result.entities_){
         if(e.type==EntityType::Station && e.owner_id && !result.built_outposts_.count(id))
             throw std::runtime_error("snapshot: player station lacks construction origin");
+    }
+    if(result.snapshot_version_>=123){
+        std::map<EntityId,std::int64_t> aboard;
+        std::map<std::pair<EntityId,PlayerId>,std::int64_t> stored;
+        for(const auto& [id,l]:result.station_ore_lots_){
+            const auto ship=result.find(l.source_ship);
+            const auto* site=l.station?result.find(l.station):nullptr;
+            if(id>=result.next_station_ore_lot_id_ ||
+               !ship || (ship->type!=EntityType::Ship && ship->type!=EntityType::Wreck) ||
+               ship->owner_id!=l.owner ||
+               (l.station && (!site || site->type!=EntityType::Station ||
+                              !result.hangar(l.station,l.owner))))
+                throw std::runtime_error("snapshot: source lot custody invalid");
+            if(l.station)stored[{l.station,l.owner}]+=l.tonnes;
+            else aboard[l.source_ship]+=l.tonnes;
+        }
+        for(const auto& [ship,n]:aboard)
+            if(n>result.entities_.at(ship).cargo)
+                throw std::runtime_error("snapshot: ship tagged ore exceeds physical cargo");
+        for(const auto& [site,n]:stored)
+            if(n>result.hangars_.at(site).ore)
+                throw std::runtime_error("snapshot: station tagged ore exceeds physical hangar");
+        for(const auto& [site,f]:result.station_refineries_){
+            const auto* e=result.find(site);
+            const auto* ship=result.find(f.source_ship);
+            const auto residents=result.habitats_.find(site);
+            const auto utility=result.utilities_.find(site);
+            if(!e || e->type!=EntityType::Station || e->owner_id!=f.owner ||
+               residents==result.habitats_.end() ||
+               utility==result.utilities_.end() ||
+               residents->second.residents<utility->second.technicians+f.assigned_workers ||
+               !ship || !result.colony_ships_.count(f.source_ship) ||
+               !result.built_outposts_.count(site) ||
+               result.built_outposts_.at(site).source_colony_ship!=f.source_ship ||
+               !result.utilities_.count(site))
+                throw std::runtime_error("snapshot: invalid constructed refinery provenance");
+        }
     }
     for (const auto& [key, hangar] : result.hangars_) {
         (void)hangar;
@@ -17799,6 +18106,9 @@ void Simulation::swap(Simulation& other) noexcept {
     swap(probe_report_delay_ticks_,other.probe_report_delay_ticks_);
     survey_probes_.swap(other.survey_probes_);
     hangars_.swap(other.hangars_);
+    swap(next_station_ore_lot_id_,other.next_station_ore_lot_id_);
+    station_ore_lots_.swap(other.station_ore_lots_);
+    station_refineries_.swap(other.station_refineries_);
     markets_.swap(other.markets_);
     wallets_.swap(other.wallets_);
     gate_ops_.swap(other.gate_ops_);
@@ -17869,6 +18179,18 @@ std::int64_t Simulation::total_ore() const {
         if(mass<0 || mass>std::numeric_limits<std::int64_t>::max()-total)
             throw std::overflow_error("invalid colony ore equivalent");
         total+=mass;
+    }
+    if(snapshot_version_>=123)for(const auto& [station,plant]:station_refineries_){
+        (void)station;
+        if(plant.embodied_modules!=2 || total>std::numeric_limits<std::int64_t>::max()-4)
+            throw std::overflow_error("invalid station refinery embodied modules");
+        total+=4;
+        for(const auto& [mineral,kg]:plant.mineral_kg){
+            if(!is_known_mineral(mineral) || kg<0 ||
+               kg>1000000000-colony_cargo_kg)
+                throw std::overflow_error("invalid station mineral stock");
+            colony_cargo_kg+=kg;
+        }
     }
     // SHIP-01A.1: material already removed from the colony's four-module
     // inventory remains in the physically built yard at 2 ore/module.

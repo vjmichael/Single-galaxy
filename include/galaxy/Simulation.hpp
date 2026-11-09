@@ -119,12 +119,31 @@ struct PhysicalCelestialBody {
 };
 
 enum class EntityType { Ship, Asteroid, Station, Stargate, Wreck };
-enum class Action { Thrust, Mine, StartMining, StopMining, RequestUndock, RequestDock, UnloadOre, LoadOre, SellOre, RequestJump, SetGatePairOnline, SetGateStaff, DeliverGateSpares, RefineOre, FabricateModule, ConstructOutpost, RefineMineral, FabricateMaterialModule, PlantCrops, HarvestCrops, RecycleWater, RecycleCompost, ProduceOxygen, LoadLifeWater, ConstructFarm, TransferFarmStock, AssignFarmWorkers, ConstructHabitat, TransferHabitatStock, AssignHabitatResidents, ConstructUtility, RepairUtility, TransferUtilitySpares, AssignUtilityTechnicians, SetUtilityMaintenance, ConstructCommunity, TransferCommunityStock, AssignCommunityStaff, ConstructClinic, TransferClinicStock, AssignClinicStaff, ConstructReclaimer, ConstructWaterworks, TransferWaterworksFeed, SetPolicyAssurance, AssignPolicyInspectors, AssignFarmMentor, HostDestroyShip, HostCrewLoss, ConstructWorkshop, TransferWorkshopFeed, AssignWorkshopOperator, TransferWorkshopOutput, ConstructWorkshopFinisher, AssignWorkshopFinisher, TransferWorkshopFinalOutput, TransferWorkshopStack, ConstructStorage, TransferStorageStack, ConstructStorageNode, TransferStorageNodeStack, ConstructStorageLink, ConstructWorkshopLink, PlaceFactoryEquipment, PlaceConveyorCell, CompleteConveyorRoute, HostEmbarkPassengers, HostDisembarkPassengers, HostStrandFerry, HostResumeFerry, HostEvacuatePassengers, HostDestroyPassengerFerry, HostResolveMixedFerryLoss, HostTrainMedic, HostTriageRescued, HostTreatInjuries, HostScheduleMedicShift, HostLoadMedicalKit, HostMobileStabilize, HostSettleMigrant, HostSplitEvacuatePassengers, HostEscrowConstructedStock, HostReturnConstructedStock, HostTransferConsignedStock, HostColonyDeparture, HostRegisterDependent, FireTrainingWeapon, SalvageWreck, SurveyLocal, ConfigureExplorationScanner, DeploySurveyProbe, ScanSurveyProbe, RecoverSurveyProbe, LaunchGeologicalDrone, FocusSurveyProbe, CancelSurveyFocus, SetHardpointPower, ConfigureCyberModule, SetCyberIsolation, HackConfuse, FireShipWeapon, TrainWorkshopTrade, StartWorkshopShift, CancelWorkshopShift, RelieveWorkshopShift, AppointWorkshopSupervisor, MentorWorkshopTrade, ApproveWorkshopJob, CancelWorkshopJob };
+enum class Action { Thrust, Mine, StartMining, StopMining, RequestUndock, RequestDock, UnloadOre, LoadOre, SellOre, RequestJump, SetGatePairOnline, SetGateStaff, DeliverGateSpares, RefineOre, FabricateModule, ConstructOutpost, RefineMineral, FabricateMaterialModule, PlantCrops, HarvestCrops, RecycleWater, RecycleCompost, ProduceOxygen, LoadLifeWater, ConstructFarm, TransferFarmStock, AssignFarmWorkers, ConstructHabitat, TransferHabitatStock, AssignHabitatResidents, ConstructUtility, RepairUtility, TransferUtilitySpares, AssignUtilityTechnicians, SetUtilityMaintenance, ConstructCommunity, TransferCommunityStock, AssignCommunityStaff, ConstructClinic, TransferClinicStock, AssignClinicStaff, ConstructReclaimer, ConstructWaterworks, TransferWaterworksFeed, SetPolicyAssurance, AssignPolicyInspectors, AssignFarmMentor, HostDestroyShip, HostCrewLoss, ConstructWorkshop, TransferWorkshopFeed, AssignWorkshopOperator, TransferWorkshopOutput, ConstructWorkshopFinisher, AssignWorkshopFinisher, TransferWorkshopFinalOutput, TransferWorkshopStack, ConstructStorage, TransferStorageStack, ConstructStorageNode, TransferStorageNodeStack, ConstructStorageLink, ConstructWorkshopLink, PlaceFactoryEquipment, PlaceConveyorCell, CompleteConveyorRoute, HostEmbarkPassengers, HostDisembarkPassengers, HostStrandFerry, HostResumeFerry, HostEvacuatePassengers, HostDestroyPassengerFerry, HostResolveMixedFerryLoss, HostTrainMedic, HostTriageRescued, HostTreatInjuries, HostScheduleMedicShift, HostLoadMedicalKit, HostMobileStabilize, HostSettleMigrant, HostSplitEvacuatePassengers, HostEscrowConstructedStock, HostReturnConstructedStock, HostTransferConsignedStock, HostColonyDeparture, HostRegisterDependent, FireTrainingWeapon, SalvageWreck, SurveyLocal, ConfigureExplorationScanner, DeploySurveyProbe, ScanSurveyProbe, RecoverSurveyProbe, LaunchGeologicalDrone, FocusSurveyProbe, CancelSurveyFocus, SetHardpointPower, ConfigureCyberModule, SetCyberIsolation, HackConfuse, FireShipWeapon, TrainWorkshopTrade, StartWorkshopShift, CancelWorkshopShift, RelieveWorkshopShift, AppointWorkshopSupervisor, MentorWorkshopTrade, ApproveWorkshopJob, CancelWorkshopJob, BuildStationRefinery, RefineStationOre };
 enum class Outcome { Applied, InvalidActor, Unauthorized, InvalidTarget, OutOfRange, InvalidArgument, NoResources, CargoFull, NotMining, NotInSpace, NotDocked, InTransition, ShipMoving, HangarFull, InsufficientFunds, WrongSystem, GateOffline, NotColonyShip, InsufficientCrew, ModuleOffline, CooldownActive, AttackResisted };
 enum class ActivityKind { AsteroidDespawned, AutoMiningTransfer, MiningStopped, Undocked, Docked, JumpCompleted, ShipDestroyed, NpcLost, AutoStorageTransfer, NpcRendezvous, PlayerRescued };
 enum class DockState { InSpace, Docked, Undocking, Docking };
 enum class ShipJumpState { Ready, Jumping, ArrivalCloak };
 struct StationHangar { std::int64_t ore = 0; std::int64_t capacity = 0; };
+// PLAY-STATION-03B v123: custody shares original ship cargo/hangar ore, never
+// carries an independent extra tonne. Mining receipts and rock taxonomy persist
+// through split transfers. A zero station means ship hold; a nonzero station
+// means the owner-private physical hangar. No duplicate mineral extraction.
+struct StationOreCustodyLot {
+    std::uint64_t id=0,mine_command=0,mined_tick=0,unload_receipt=0;
+    EntityId rock=0,source_ship=0,station=0;
+    PlayerId owner=0;
+    std::uint8_t taxonomy=3; // 0..2 known class, 3 unclassified (never refinery input)
+    std::int64_t tonnes=0;
+};
+struct StationRefineryPlant {
+    EntityId station=0,source_ship=0;
+    PlayerId owner=0;
+    std::int64_t embodied_modules=2,assigned_workers=1;
+    std::uint64_t commissioned_receipt=0,ready_tick=0,last_receipt=0;
+    std::int64_t processed_tonnes=0;
+    std::map<std::string,std::int64_t> mineral_kg;
+};
 struct StationMarket { std::int64_t ore = 0; std::int64_t credits = 0; std::int64_t price_per_ore = 0; };
 // B6.6: one durable record for both directional endpoints of a physical gate link.
 // Counts are intentionally not individual NPCs yet; labor recruitment and logistics
@@ -1290,6 +1309,11 @@ public:
     // Initial-world only; station purchases ore at a fixed bid from finite reserves.
     void configure_market(EntityId station_id, std::int64_t bid, std::int64_t reserve);
     const StationHangar* hangar(EntityId station_id, PlayerId owner) const;
+    const StationRefineryPlant* station_refinery(EntityId station_id) const;
+    const std::map<std::uint64_t, StationOreCustodyLot>& station_ore_lots() const { return station_ore_lots_; }
+    // Explicit genesis opt-in: does not gift power, equipment, labor or ore.
+    // Existing v122 saves retain their old onboard geological mining rules.
+    void enable_station_ore_provenance();
     const StationMarket* market(EntityId station_id) const;
     std::int64_t wallet(PlayerId owner) const;
     const std::map<EntityId, StationMarket>& markets() const { return markets_; }
@@ -1844,6 +1868,15 @@ private:
     std::uint64_t probe_report_delay_ticks_=10;
     std::map<std::uint64_t,DeployedSurveyProbe> survey_probes_;
     std::map<std::pair<EntityId, PlayerId>, StationHangar> hangars_;
+    std::uint64_t next_station_ore_lot_id_=1;
+    std::map<std::uint64_t, StationOreCustodyLot> station_ore_lots_;
+    std::map<EntityId, StationRefineryPlant> station_refineries_;
+    void track_station_ore_mining(EntityId ship,EntityId rock,std::uint64_t command,
+                                  std::int64_t tonnes,std::uint8_t taxonomy);
+    void move_station_ore_lots(EntityId ship,EntityId station,PlayerId owner,
+                               std::int64_t tonnes,bool to_station,std::uint64_t command);
+    void consume_station_ore_lots(EntityId ship,EntityId station,PlayerId owner,
+                                  std::int64_t tonnes,bool at_station);
     std::map<EntityId, StationMarket> markets_;
     std::map<PlayerId, std::int64_t> wallets_;
     std::map<std::pair<EntityId,EntityId>,GateOperations> gate_ops_;
