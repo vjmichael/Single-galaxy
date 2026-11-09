@@ -13,6 +13,8 @@ assert 'for body in station_space.get_children()' in m and 'for body in ship_spa
 assert 'body.collision_layer = 1 if in_station else 0' in m
 assert 'body.collision_layer = 0 if in_station else 1' in m
 assert '_show_native_location(last_station_player_state == 4)' in m
+assert 'Process start alone is NOT proof of ship custody' in m
+assert '_show_native_location(false)' not in m.split('func _on_native_player_connection(',1)[1].split('func _on_native_ship_intents(',1)[0]
 assert '_show_native_location(false) # verified original owned ship pose' in m
 assert '_show_native_location(true) # station first' in m
 assert '_geometry_parent.add_child(hatch)' in m
