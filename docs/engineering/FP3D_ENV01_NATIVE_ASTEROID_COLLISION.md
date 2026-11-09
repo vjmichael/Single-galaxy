@@ -21,3 +21,50 @@ The original **fresh test station** genesis, plus the finite original-rock test 
 Godot validates that an impact is from the already-verified owner/ship/session/request/tick, requires in-space custody, and displays an explicit solid-contact notice. Exterior rendering converts original native XYZ millimetres to Godot X/Z horizontal and Y vertical, anchored to the verified avatar/camera rather than the static station origin; no Godot collision body or alternate physics writer was added. An authentic child-pipe test runs the explicit native ship to the finite rock, checks the recorded event, stopped velocity, source/cargo conservation, denied replay, and SQLite restart. A separate Godot script tests both legacy and v125 synthetic frames, invalid event-tick rejection and metre/axis render mapping.
 
 **Acceptance remains open:** source implementation is committed, but this log is not evidence that exact-head Linux/MSVC compilation, real child SQLite execution, real Godot 4.7.2 parsing, or physical Windows gameplay has succeeded. Inspect those jobs and repair genuine failures. The projected hull remains a provisional 1-m sphere; complex mesh hulls, other collision objects, truly accurate camera placement and broadphase indexing are future work.
+
+
+## FP3D-ENV-01F — verified native flight-and-target instrumentation (2026-11-09)
+
+The actual Godot 3D cockpit now displays **a read-only pilot target instrument**
+computed from the same original C++ ship and asteroid observation frames as the
+physical collision system. This is a navigation and gameplay-usability step
+toward flying to a rock, equipping a real mining drill later, returning and
+docking without inventing a second world or free resources.
+
+**Committed integration:**
+- New `desktop_godot/world/native_flight_instruments.gd` consumes only an
+  authenticated original `SHIP` + `ROCK` / `ROCKNONE` pair with matching
+  original ship ID, tick and SQLite world-generation, and with original ship
+  `dock=0`. All observations are admitted upstream by the existing C++ pipe
+  protocol validator; the pure UI helper repeats identity/epoch and dock checks
+  to fail closed against stale mixing.
+- A fresh native `SHIP` frame invalidates the previous asteroid instrument
+  until a corresponding new `ROCK` frame is received. Disconnect clears both
+  retained frames and replaces the readout with an offline status.
+- Instrument shows native yaw, selected finite rock identity, approach bearing
+  (turn LEFT/RIGHT/AHEAD), vertical offset (ABOVE/BELOW), range, whole-hull
+  **clearance from the original conservative 5.2 m sphere + 1 mm contact skin**,
+  and signed target-directed closing/receding velocity in original mm/tick.
+  These are derived displays of *present* authoritative state, not movement
+  prediction, collision resolution, AI steering, docking commands or mining.
+- A **verified impact** label requires an original same-rock same-tick
+  `ShipAsteroidContact` receipt. The UI never manufactures such an event.
+- The live Godot scene test adds checks that the displayed instrument joins
+  the actual original C++ host collision receipt and agrees with safe hull
+  clearance/bearing. A separate Godot `SceneTree` smoke covers 15 synthetic
+  identity, replay, tick, generation, stale, bearing, clearance, radial speed,
+  collision and empty-target cases. Python
+  `test_fp3d_env01f_pilot_contract.py` is **source-only**, and cannot
+  establish native/engine/pass acceptance.
+
+**Next original-world interactive gameplay steps:** end-group real Linux/Windows
+native compilation plus Godot scene acceptance, physical Windows camera/GPU
+playtest; station/ship/wreck collision layers and realistic hull contact;
+then real manufactured ship mining equipment, exact one-tonne rock-to-cargo
+transfer, return docking, unloading and refinery intake. Continue using the
+one-task-group CI gate (no per-commit workflows). Ship modules remain
+**deferred** until the 3D world passes physically installed game acceptance.
+
+**Acceptance state:** implementation and test recipes are committed to the
+draft branch, not yet executed on the exact new Windows/Linux PR head.
+Do not treat synthetic/contract checks as genuine Godot/SQLite/GPU evidence.
