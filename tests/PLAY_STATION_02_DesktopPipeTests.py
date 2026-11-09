@@ -19,6 +19,17 @@ with tempfile.TemporaryDirectory() as root:
         assert reply, line
         return reply
     p, initial = start_station()
+    # Two native hosts may never simultaneously own the same SQLite world.
+    # The denial must precede opening the original PersistentWorld save.
+    for competing_executable, args in (
+        (station_exe, [save, '--explicit-test-station']),
+        (cockpit_exe, [save])):
+        contender = subprocess.Popen([str(competing_executable), *args],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, text=True)
+        stdout, stderr = contender.communicate(timeout=6)
+        assert contender.returncode != 0 and 'native writer already active' in stderr, (stdout, stderr)
+        assert not stdout, 'a rejected competing writer emitted native authority frames'
     session = initial[2]
     generation = int(initial[5]); ship = int(initial[11])
     assert initial[6] == '4' and initial[8] == '0' and initial[9] == '1600', initial
