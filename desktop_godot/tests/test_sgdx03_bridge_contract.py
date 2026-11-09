@@ -30,6 +30,18 @@ checks={
         and "PR_SET_PDEATHSIG" in supervisor,
     "opt-in Windows second-chance dump":"capture_second_chance(" in supervisor
         and "DEBUG_ONLY_THIS_PROCESS" in supervisor,
+    "expired three-second PID cannot hide live guardians":all(
+        "if _last_shutdown_pid > 0:" in sources[name] and
+        "if OS.is_process_running(_last_shutdown_pid):" in sources[name] and
+        "return _last_shutdown_pid" in sources[name] and
+        "refusing overlapping native session" in sources[name] and
+        "_last_shutdown_msec < 3000" not in sources[name]
+        for name in ("ship","station")),
+    "expired handoff never enables unauthoritative walking":(
+        "player.use_native_authority(false)" not in
+        (root/"world/main.gd").read_text().split(
+            'if Time.get_ticks_msec() - _handoff_started_msec > 3000:',1)[1]
+            .split('var destination := _handoff_target',1)[0]),
 }
 for key,ok in checks.items():
     assert ok,key
