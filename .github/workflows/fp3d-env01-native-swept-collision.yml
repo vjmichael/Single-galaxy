@@ -29,12 +29,28 @@ jobs:
         run: |
           set -euxo pipefail
           cmake -S . -B build/fp3d-env01 -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
-          cmake --build build/fp3d-env01 --parallel 2 --target galaxy_fp3d_env01_swept_collision_tests galaxy_play_station04a_original_asteroid_contact_tests galaxy_fp3d03b_cockpit_flight_tests
+          cmake --build build/fp3d-env01 --parallel 2 --target galaxy_fp3d_env01_swept_collision_tests galaxy_play_station04a_original_asteroid_contact_tests galaxy_fp3d03b_cockpit_flight_tests galaxy_play_station04a_native_rock_seed galaxy_desktop_player_host
       - name: Execute native collision, previous physics and persistence regression
         shell: bash
         run: |
           set -euxo pipefail
-          ctest --test-dir build/fp3d-env01 --no-tests=error --timeout 160 --output-on-failure --output-junit fp3d-env01-linux.xml -R '^galaxy_(fp3d_env01_swept_collision|play_station04a_original_asteroid_contact|fp3d03b_cockpit_flight)$'
+          ctest --test-dir build/fp3d-env01 --no-tests=error --timeout 160 --output-on-failure --output-junit fp3d-env01-linux.xml -R '^galaxy_(fp3d_env01_(swept_collision|native_collision_pipe)|play_station04a_original_(asteroid_contact|rock_native_pipe)|fp3d03b_(cockpit_flight|native_flight_pipe))
+      - name: Verify Godot 4.7.2 original impact receipts and 3D viewer mapping
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python desktop_godot/tests/test_native_asteroid_contact_contract.py
+          sudo apt-get install -y unzip
+          mkdir -p "$RUNNER_TEMP/fp3d-env01-godot" build/fp3d-env01/godot-logs
+          curl --fail --location --retry 3 --retry-delay 5 -o "$RUNNER_TEMP/fp3d-env01-godot/godot.zip" https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
+          unzip -oq "$RUNNER_TEMP/fp3d-env01-godot/godot.zip" -d "$RUNNER_TEMP/fp3d-env01-godot"
+          G="$RUNNER_TEMP/fp3d-env01-godot/Godot_v4.7.2-stable_linux.x86_64"
+          chmod +x "$G"
+          "$G" --version
+          "$G" --headless --path desktop_godot --editor --quit 2>&1 | tee build/fp3d-env01/godot-logs/import.log
+          for test in native_player_protocol_smoke.gd native_asteroid_contact_smoke.gd fp3d_env01_collision_receipt_smoke.gd; do
+            "$G" --headless --path desktop_godot --script "res://tests/$test" 2>&1 | tee "build/fp3d-env01/godot-logs/$test.log"
+          done
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -42,6 +58,59 @@ jobs:
           path: |
             fp3d-env01-linux.xml
             build/fp3d-env01/Testing/Temporary/LastTest.log
+            build/fp3d-env01/godot-logs/*.log
+            build/fp3d-env01/CMakeFiles/CMakeConfigureLog.yaml
+          if-no-files-found: warn
+  windows-native:
+    name: Windows MSVC original 3D collision and SQLite restart
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install real SQLite dependency
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $vcpkg=$env:VCPKG_INSTALLATION_ROOT
+          if(-not $vcpkg){$vcpkg='C:\vcpkg'}
+          & (Join-Path $vcpkg 'vcpkg.exe') install sqlite3:x64-windows --classic
+          if($LASTEXITCODE -ne 0){throw 'vcpkg sqlite failed'}
+          "SG_TOOLCHAIN=$(Join-Path $vcpkg 'scripts\buildsystems\vcpkg.cmake')" >> $env:GITHUB_ENV
+          (Join-Path $vcpkg 'installed\x64-windows\bin') >> $env:GITHUB_PATH
+      - name: Compile original collision integration using MSVC
+        shell: pwsh
+        run: |
+          cmake -S . -B build/fp3d-env01 -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF "-DCMAKE_TOOLCHAIN_FILE=$env:SG_TOOLCHAIN" -DVCPKG_TARGET_TRIPLET=x64-windows
+          if($LASTEXITCODE -ne 0){throw 'MSVC original 3D configure failed'}
+          cmake --build build/fp3d-env01 --config Release --parallel 2 --target galaxy_fp3d_env01_swept_collision_tests galaxy_play_station04a_original_asteroid_contact_tests galaxy_fp3d03b_cockpit_flight_tests galaxy_play_station04a_native_rock_seed galaxy_desktop_player_host
+          if($LASTEXITCODE -ne 0){throw 'MSVC original 3D compile failed'}
+      - name: Execute genuine Windows native swept collision and restart
+        shell: pwsh
+        run: |
+          ctest --test-dir build/fp3d-env01 -C Release --no-tests=error --timeout 160 --output-on-failure --output-junit fp3d-env01-windows.xml -R '^galaxy_(fp3d_env01_swept_collision|play_station04a_original_asteroid_contact|fp3d03b_cockpit_flight)$'
+          if($LASTEXITCODE -ne 0){throw 'MSVC 3D collision original SQLite test failed'}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fp3d-env01-windows-native-${{ github.sha }}
+          path: |
+            fp3d-env01-windows.xml
+            build/fp3d-env01/Testing/Temporary/LastTest.log
+            build/fp3d-env01/godot-logs/*.log
+            build/fp3d-env01/CMakeFiles/CMakeConfigureLog.yaml
+          if-no-files-found: warn
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fp3d-env01-linux-native-${{ github.sha }}
+          path: |
+            fp3d-env01-linux.xml
+            build/fp3d-env01/Testing/Temporary/LastTest.log
+            build/fp3d-env01/godot-logs/*.log
             build/fp3d-env01/CMakeFiles/CMakeConfigureLog.yaml
           if-no-files-found: warn
   windows-native:
@@ -65,12 +134,12 @@ jobs:
         run: |
           cmake -S . -B build/fp3d-env01 -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF "-DCMAKE_TOOLCHAIN_FILE=$env:SG_TOOLCHAIN" -DVCPKG_TARGET_TRIPLET=x64-windows
           if($LASTEXITCODE -ne 0){throw 'MSVC original 3D configure failed'}
-          cmake --build build/fp3d-env01 --config Release --parallel 2 --target galaxy_fp3d_env01_swept_collision_tests galaxy_play_station04a_original_asteroid_contact_tests galaxy_fp3d03b_cockpit_flight_tests
+          cmake --build build/fp3d-env01 --config Release --parallel 2 --target galaxy_fp3d_env01_swept_collision_tests galaxy_play_station04a_original_asteroid_contact_tests galaxy_fp3d03b_cockpit_flight_tests galaxy_play_station04a_native_rock_seed galaxy_desktop_player_host
           if($LASTEXITCODE -ne 0){throw 'MSVC original 3D compile failed'}
       - name: Execute genuine Windows native swept collision and restart
         shell: pwsh
         run: |
-          ctest --test-dir build/fp3d-env01 -C Release --no-tests=error --timeout 160 --output-on-failure --output-junit fp3d-env01-windows.xml -R '^galaxy_(fp3d_env01_swept_collision|play_station04a_original_asteroid_contact|fp3d03b_cockpit_flight)$'
+          ctest --test-dir build/fp3d-env01 -C Release --no-tests=error --timeout 160 --output-on-failure --output-junit fp3d-env01-windows.xml -R '^galaxy_(fp3d_env01_(swept_collision|native_collision_pipe)|play_station04a_original_(asteroid_contact|rock_native_pipe)|fp3d03b_(cockpit_flight|native_flight_pipe))
           if($LASTEXITCODE -ne 0){throw 'MSVC 3D collision original SQLite test failed'}
       - uses: actions/upload-artifact@v4
         if: always()
@@ -79,5 +148,18 @@ jobs:
           path: |
             fp3d-env01-windows.xml
             build/fp3d-env01/Testing/Temporary/LastTest.log
+            build/fp3d-env01/godot-logs/*.log
+            build/fp3d-env01/CMakeFiles/CMakeConfigureLog.yaml
+          if-no-files-found: warn
+
+          if($LASTEXITCODE -ne 0){throw 'MSVC 3D collision original SQLite test failed'}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fp3d-env01-windows-native-${{ github.sha }}
+          path: |
+            fp3d-env01-windows.xml
+            build/fp3d-env01/Testing/Temporary/LastTest.log
+            build/fp3d-env01/godot-logs/*.log
             build/fp3d-env01/CMakeFiles/CMakeConfigureLog.yaml
           if-no-files-found: warn
