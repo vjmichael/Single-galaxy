@@ -335,6 +335,9 @@ jobs:
             throw 'Extracted Windows package failed exact-SHA native/bundled-engine smoke; no published ZIP allowed'
           }
           Copy-Item -LiteralPath $resultPath -Destination 'build/fp3d-env01/godot-logs/installed-package-preflight.json' -Force
+          # Negative native Windows PowerShell 5.1 gate: mutate only the
+          # extracted engine digest, require exact hash refusal, restore.
+          & ./desktop_godot/build_tools/Test-BundledRuntimeTamper.ps1 -ExtractedGame $installedGame -EvidenceDirectory 'build/fp3d-env01/godot-logs'
       - uses: actions/upload-artifact@v4
         with:
           name: SingleGalaxy-FP3D-SGDX03-Windows-${{ needs.validate.outputs.sha }}
