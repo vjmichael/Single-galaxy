@@ -141,3 +141,41 @@ a physically constructed station refinery, exact kg mineral output, and
 save/restart/last-ship loss. No free drill, hand mining, client ore, or
 fabricated replacement ship. Use one acceptance gate at group completion,
 not a CI job per implementation commit.
+
+## FP3D-WIN-01 — actual Windows acceptance instrumentation (2026-11-09)
+
+See [Windows physical acceptance plan](FP3D_WINDOWS_PHYSICAL_ACCEPTANCE.md).
+The automated original C++/SGDX/Godot live scene test now includes an
+optional **non-headless** renderer path using
+`SG_FP3D_VISUAL_CAPTURE_DIR`: only actual `frame_post_draw` viewport
+pixels are accepted, with four PNGs SHA-256-joined to real original-world
+docked cabin, undocked camera, stopped solid asteroid contact and same-save
+SGDX restart. The original SQLite source ship tick/generation/position,
+finite rock and cargo must be unchanged after restart, and the initial
+contact receipt must not be replayed. A headless or blank renderer is a
+**failure**, not visually accepted gameplay.
+
+A separate Windows PowerShell driver
+`desktop_godot/build_tools/Test-WindowedNativeGodot.ps1` starts a genuinely
+windowed Godot editor on an original C++ finite rock seed, rejects missing,
+duplicate or non-rendered image evidence, and verifies native-joined
+camera/rock/docking/restart conditions. The **delivered ZIP itself** must pass
+`Verify-PrecompiledPackage.ps1` (Windows x64 PE headers, exact source SHA,
+original Godot sources, supervisor/hosts, SQLite DLL and no private saves or
+minidumps) before publication. Official Godot 4.7.2 release assets are
+SHA-256 pinned in the single consolidated CI workflow, not trusted on filename.
+
+The physical player may press **F11** within the on-screen game (explicit
+opt-in, captures the **Godot viewport only**, never Windows desktop) to
+attach a SHA-256 image and admitted original station or ship/rock receipts to
+the precompiled Windows launcher evidence ZIP. The launcher still states
+`WINDOW-CLOSED-NEEDS-MANUAL-OBSERVATION`; it cannot claim physical GPU
+camera quality or sustained play from a zero-exit engine or screenshots.
+
+**Status:** implementation/test admission committed to PR #125, but no
+genuine Windows MSVC/MDMP or Godot 4.7.2 windowed runner result, installed
+GPU play approval or current-head precompiled ZIP is claimed until actual
+Windows jobs run and upload passing logs and visual evidence. Earlier 18/18
+local GCC Debug and Release native Linux tests remain independently verified,
+but do not accept the new Godot windowed path. Do not unlock experimental
+ship modules or free gameplay mining from source-only evidence.
