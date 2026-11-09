@@ -45,14 +45,14 @@ func _host_path() -> String:
 		return ProjectSettings.globalize_path("res://native/" + binary)
 	return OS.get_executable_path().get_base_dir().path_join("native").path_join(binary)
 
-func start() -> void:
+func start(save_override: String = "") -> void:
 	if _active:
 		return
 	var path := _host_path()
 	if not FileAccess.file_exists(path):
 		_status("NATIVE PLAYER HOST MISSING: " + path)
 		return
-	var save := OS.get_user_data_dir().path_join("single_galaxy_authoritative.sqlite")
+	var save := save_override if not save_override.is_empty() else OS.get_user_data_dir().path_join("single_galaxy_authoritative.sqlite")
 	var result := OS.execute_with_pipe(path, PackedStringArray([save]), false)
 	if result.is_empty() or not result.has("stdio") or not result.has("pid"):
 		_status("NATIVE PLAYER HOST LAUNCH FAILED")
