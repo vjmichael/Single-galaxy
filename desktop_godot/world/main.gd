@@ -89,6 +89,7 @@ func _ready() -> void:
 	native_station_session.status_changed.connect(_on_native_player_status)
 	native_station_session.connection_changed.connect(_on_native_station_connection)
 	refinery_terminal.refine_requested.connect(_on_native_refine_requested)
+	refinery_terminal.unload_requested.connect(_on_native_unload_requested)
 	refinery_terminal.terminal_closed.connect(_hide_refinery_terminal)
 
 func _setup_environment() -> void:
@@ -486,6 +487,13 @@ func _on_native_refine_requested(lot_id: int) -> void:
 	# No client-side yields or refining; send only the selected original lot ID.
 	if native_station_session != null and native_station_session.is_active() and last_station_player_state == 4:
 		native_station_session.submit_refining(lot_id)
+
+func _on_native_unload_requested() -> void:
+	# No local inventory mutation or replacement mining mechanic.
+	# The station C++ host rechecks physical proximity, actual owned docked
+	# ship and one tonne of cargo before committing original SQLite.
+	if native_station_session != null and native_station_session.is_active() and last_station_player_state == 4:
+		native_station_session.unload_owned_ship_tonne()
 
 func _hide_refinery_terminal() -> void:
 	if is_instance_valid(refinery_terminal):
