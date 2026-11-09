@@ -21,6 +21,16 @@ func _initialize() -> void:
 		push_error("native collision receipt lost its original rock/tick")
 		quit(1)
 		return
+	# Original yaw: 0 degrees advances +native X / +Godot X;
+	# 90 degrees advances +native Y / -Godot Z. The exterior
+	# camera rides the verified hull, rather than free mouse yaw.
+	var hull_0 := Basis(Vector3.UP, SCENE.native_heading_to_godot_yaw(0))
+	var hull_90 := Basis(Vector3.UP, SCENE.native_heading_to_godot_yaw(90))
+	if (hull_0 * Vector3.RIGHT).distance_to(Vector3.RIGHT)>0.0001 or \
+		(hull_90 * Vector3.RIGHT).distance_to(Vector3.FORWARD)>0.0001:
+		push_error("native ship yaw does not match Godot exterior geometry")
+		quit(1)
+		return
 	var pos := SCENE.native_rock_visual_offset({"dx_mm":25000,"dy_mm":-2000,"dz_mm":3000})
 	if pos.distance_to(Vector3(25,3,2))>0.0001:
 		push_error("incorrect native millimetres-to-Godot axis mapping")
