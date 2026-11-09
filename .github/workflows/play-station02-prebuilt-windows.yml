@@ -1,5 +1,17 @@
 name: PLAY-STATION-02 prebuilt Windows station + cockpit
 on:
+  # This workflow is introduced on a feature branch; push guarantees it can
+  # execute before the new workflow exists on the default branch.
+  push:
+    branches:
+      - sg/play-station02-native-spawn-board-20261108
+    paths:
+      - 'desktop_godot/**'
+      - 'src/**'
+      - 'include/**'
+      - 'tests/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/play-station02-prebuilt-windows.yml'
   pull_request:
     paths:
       - 'desktop_godot/**'
