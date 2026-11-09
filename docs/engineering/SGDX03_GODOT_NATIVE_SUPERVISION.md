@@ -122,3 +122,48 @@ source-only reviews, but do **not** certify Windows MSVC, Godot 4.7.2 engine,
 an installed Windows archive, real GPU play or private Windows MDMP/ACL.
 The exact latest PR head must still be admitted through the single central
 GitHub Actions Windows/Linux task-group workflow; PR remains draft.
+
+## 2026-11-09 actual GitHub Windows MSVC acceptance failure and targeted repair
+
+The consolidated run
+[42679508383](https://github.com/vjmichael/Single-galaxy/actions/runs/42679508383)
+executed genuine `windows-2022` MSVC native compilation of the original
+C++ kernel, native cockpit/station/observer hosts, SGDX supervisor, fault
+child and source fixtures. **Compilation SUCCEEDED.** vcpkg SQLite x64
+install also succeeded. The native CTest group then executed **19 actual
+Windows tests**, with **15 passing** and **four failures**. The failed
+tests were:
+
+- `galaxy_server_dx_sqlite_recovery`
+- `galaxy_fp3d03b_native_flight_pipe`
+- `galaxy_play_station04c_native_unload_pipe`
+- `galaxy_sgdx03_godot_native_bridge`
+
+The real log for all four showed `PermissionError: [WinError 32]` while
+`tempfile.TemporaryDirectory` attempted to unlink each test's SQLite
+database. For SGDX02, the test had already printed a **successful** process
+supervisor/rollback/retry receipt before the cleanup exception. Independent
+test assertions (collision/custody/refinery etc.) passed in the other
+cases until final cleanup. Do not misclassify the overall Windows group
+as passed: CTest was **15/19 FAILURE**, and the workflow correctly
+**skipped** Godot, package verification and windowed play.
+
+**Demonstrated failure mechanism:** Python's SQLite connection context
+manager `with sqlite3.connect(...) as con:` commits/rolls back its
+transaction but **does not close** the connection on exit. Linux permits
+unlink of an open database, masking that resource leak; Windows correctly
+refuses deletion of the live handle. The four source tests have now been
+repaired with `contextlib.closing(sqlite3.connect(...))`; write transactions
+retain `with con:` to ensure commit/rollback before the explicit close.
+The repair covers all seven SQLite test connection contexts in these four
+test programs. **No native broker or Windows process security bypass was
+added**, no ignore-errors deletion, fake passing receipt or Windows-only
+test skip.
+
+**Evidence status:** Windows MSVC compilation is genuinely verified on
+the preceding exact PR head `4019e611...`; the four connection-closure
+repairs and subsequent FP3D-WIN02 bundled-runtime source have **not yet**
+executed in Windows CI. A single final task-group rerun is required; inspect
+actual CTest Windows results, original Godot 4.7.2 on Windows/Linux,
+minidumps/NTFS ACLs and the self-contained packaged ZIP before promotion.
+This is separate from the owner's physical GPU playtest.
