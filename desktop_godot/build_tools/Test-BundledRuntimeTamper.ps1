@@ -21,9 +21,38 @@ $original=(Get-Content -LiteralPath $manifest -Raw).Trim()
 if($original -notmatch '^[0-9a-f]{64}$'){throw 'Original source engine digest malformed'}
 $actual=(Get-FileHash -LiteralPath $engine -Algorithm SHA256).Hash.ToLowerInvariant()
 if($actual -cne $original){throw 'Extracted engine already corrupt before negative test'}
+
+# The actual double-click .cmd launches Windows PowerShell 5.1, not pwsh 7.
+# Prove a clean packaged game can complete its real bundled engine smoke in
+# that exact interpreter BEFORE deliberately corrupting the digest.
+$windowsPowershell=Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+if(-not(Test-Path -LiteralPath $windowsPowershell -PathType Leaf)){
+  throw 'Actual Windows PowerShell 5.1 unavailable'
+}
+$positiveOut=Join-Path $logDir 'powershell-5_1-clean-stdout.log'
+$positiveErr=Join-Path $logDir 'powershell-5_1-clean-stderr.log'
+$clean=Start-Process -FilePath $windowsPowershell -ArgumentList @(
+  '-NoProfile','-ExecutionPolicy','Bypass','-File',('"' + $launcher + '"'),
+  '-VerifyOnly'
+) -Wait -PassThru -RedirectStandardOutput $positiveOut -RedirectStandardError $positiveErr
+if($clean.ExitCode -ne 0){
+  throw 'Real Windows PowerShell 5.1 could not run the unmodified bundled native/Godot ZIP; inspect clean smoke logs'
+}
+$cleanReport=Join-Path $game 'playtest-logs\result.json'
+if(-not(Test-Path -LiteralPath $cleanReport -PathType Leaf)){
+  throw 'Real Windows PowerShell 5.1 did not write a verified package receipt'
+}
+$cleanResult=Get-Content -LiteralPath $cleanReport -Raw | ConvertFrom-Json
+if($cleanResult.result -cne 'BUNDLED-PACKAGE-HEADLESS-PREFLIGHT-VERIFIED-NO-GPU-CLAIM' -or
+   $cleanResult.engine_mode -cne 'BUNDLED-VERIFIED' -or
+   $cleanResult.engine_sha256 -cne $original){
+  throw 'Real Windows PowerShell 5.1 package smoke did not attest the original bundled engine'
+}
+Copy-Item -LiteralPath $cleanReport -Destination (Join-Path $logDir 'powershell-5_1-clean-preflight.json') -Force
+
 $record=[ordered]@{
   schema='SG-FP3D-BUNDLED-TAMPER-01';type='manifest-mismatch'
-  original_engine_sha256=$actual;result='BLOCKED';exit_code=$null
+  original_engine_sha256=$actual;clean_powershell5_preflight='PASS';result='BLOCKED';exit_code=$null
 }
 try {
   # This is a syntactically valid digest, but not the true engine hash.
@@ -33,10 +62,6 @@ try {
   $stdout=Join-Path $logDir 'tampered-launch-stdout.log'
   $stderr=Join-Path $logDir 'tampered-launch-stderr.log'
   # Match the real player's double-click Windows PowerShell 5.1 runtime.
-  $windowsPowershell=Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
-  if(-not(Test-Path -LiteralPath $windowsPowershell -PathType Leaf)){
-    throw 'Actual Windows PowerShell 5.1 unavailable'
-  }
   $p=Start-Process -FilePath $windowsPowershell -ArgumentList @(
     '-NoProfile','-ExecutionPolicy','Bypass','-File',('"' + $launcher + '"'),
     '-VerifyOnly'
