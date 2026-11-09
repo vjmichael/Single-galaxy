@@ -52,8 +52,8 @@ func _exercise() -> void:
 		quit(1)
 		return
 	ui.present(states[2])
-	if ui._lots.item_count != 1 or not ui._unload_button.disabled:
-		push_error("04C station UI failed to observe already unloaded rock lot")
+	if ui._lots.item_count != 1 or ui._unload_button.disabled:
+		push_error("04C station UI failed to display sourced lot or eligible original vessel; ship cargo rechecked by C++ on click")
 		quit(1)
 		return
 	ui.present(states[1])
