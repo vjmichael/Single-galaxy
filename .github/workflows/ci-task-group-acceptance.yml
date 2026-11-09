@@ -278,6 +278,7 @@ jobs:
             Copy-Item (Join-Path desktop_godot $dir) (Join-Path $game $dir) -Recurse -Force
           }
           Copy-Item desktop_godot/RUN_STATION_PLAYTEST_WINDOWS.cmd $game
+          Copy-Item desktop_godot/START_SINGLE_GALAXY_WINDOWS.cmd (Join-Path $root 'START_SINGLE_GALAXY_WINDOWS.cmd')
           New-Item -ItemType Directory -Force (Join-Path $game 'native') | Out-Null
           foreach($name in @('galaxy_desktop_station_host.exe','galaxy_desktop_player_host.exe','galaxy_desktop_readonly_host.exe','galaxy_server_dx_supervisor.exe')){
             $compiled=Join-Path 'build/fp3d-env01/Release' $name
@@ -312,7 +313,7 @@ jobs:
             'License: MIT, see LICENSE.txt'
             'This editor binary is bundled only as the current native Godot 3D runtime.'
           ) | Set-Content -LiteralPath (Join-Path $runtime 'PROVENANCE.txt')
-          'Double-click desktop_godot/RUN_STATION_PLAYTEST_WINDOWS.cmd. Includes pinned Godot 4.7.2 Windows runtime and original C++/SQLite hosts; no installation, compiler or download. All ship/station/observer hosts must use bundled SGDX supervisor and Windows Job Object. Optional crash minidump SGDX_WINDOWS_MINIDUMP=1 contains private memory. Human GPU/camera approval still required.' | Set-Content (Join-Path $root 'START_HERE.txt')
+          'Double-click START_SINGLE_GALAXY_WINDOWS.cmd at the extracted ZIP root (or desktop_godot/RUN_STATION_PLAYTEST_WINDOWS.cmd). Includes pinned Godot 4.7.2 Windows runtime and original C++/SQLite hosts; no installation, compiler or download. All ship/station/observer hosts must use bundled SGDX supervisor and Windows Job Object. Optional crash minidump SGDX_WINDOWS_MINIDUMP=1 contains private memory. Human GPU/camera approval still required.' | Set-Content (Join-Path $root 'START_HERE.txt')
           Compress-Archive -Path (Join-Path $root '*') -DestinationPath build/SingleGalaxy_FP3D_SGDX03_Windows_Precompiled.zip -Force
           # Validate the DELIVERABLE ZIP, then execute the unpacked artifact's
           # own included Godot, original scene, native hosts and headless smoke.
