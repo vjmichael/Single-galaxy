@@ -1,4 +1,4 @@
-name: CI one-time task-group dispatch repair
+name: CI task-group dispatch — superseded native repair
 
 # Github did not schedule the 2026-11-09 request-file push even though the
 # default-branch group workflow is active. This one-shot maintenance bootstrap
@@ -50,16 +50,59 @@ jobs:
             if(workflow.path !== '.github/workflows/ci-task-group-acceptance.yml' ||
                workflow.state !== 'active')
               throw new Error('Expected default-branch task-group gate active: '+workflow.state);
-            // Do not start another acceptance run if a direct manual group
-            // dispatch has already been attempted during this group session.
+            // Exactly one authorized replacement: old PR head 71917aa9
+            // was superseded by a single repair commit after 17/17 native
+            // local Linux regressions passed. Never cancel any assigned job
+            // or actual running test. Check exact GitHub state first.
+            const supersededId=42663279182;
             const {data: existing} = await github.rest.actions.listWorkflowRuns({
               owner,repo,workflow_id:workflow.id,event:'workflow_dispatch',
               per_page:30
             });
             const newOnes=existing.workflow_runs.filter(r=>
-              r.created_at >= '2026-11-09T16:40:00Z');
+              r.id!==supersededId && r.created_at>='2026-11-09T17:18:00Z');
             if(newOnes.length)
-              throw new Error('An end-group dispatch already exists: '+newOnes.map(r=>r.id).join(','));
+              throw new Error('Other group dispatch exists: '+newOnes.map(r=>r.id).join(','));
+            const {data: old}=await github.rest.actions.getWorkflowRun({
+              owner,repo,run_id:supersededId
+            });
+            if(old.head_sha==='')throw new Error('Missing old head SHA');
+            if(old.status==='queued'){
+              const {data: oldJobs}=await github.rest.actions.listJobsForWorkflowRun({
+                owner,repo,run_id:supersededId,per_page:30
+              });
+              if(oldJobs.jobs.some(j=>j.status!=='queued' ||
+                   (j.runner_id && j.runner_id!==0) || j.started_at))
+                throw new Error('Refuse to cancel a job with an assigned runner');
+              await github.rest.actions.cancelWorkflowRun({
+                owner,repo,run_id:supersededId
+              });
+              core.info('Cancellation requested for superseded queued run '+supersededId);
+            }else if(old.status!=='completed' || old.conclusion!=='cancelled'){
+              throw new Error('Old gate started or completed without cancellation: '+old.status);
+            }
+            // The cancel endpoint is asynchronous; require observable
+            // cancellation before scheduling the one corrected SHA run.
+            let canceled=false;
+            for(let n=0;n<25;n++){
+              const {data: confirm}=await github.rest.actions.getWorkflowRun({
+                owner,repo,run_id:supersededId
+              });
+              if(confirm.status==='completed' && confirm.conclusion==='cancelled'){
+                canceled=true;break;
+              }
+              if(confirm.status!=='queued' && confirm.status!=='in_progress')
+                throw new Error('Unrecognized old gate status '+confirm.status);
+              await new Promise(resolve=>setTimeout(resolve,1200));
+            }
+            if(!canceled)throw new Error('Old gate cancellation not yet independently confirmed; no replacement dispatched');
+            // Re-check new dispatch history before sending exactly one.
+            const {data: recheck}=await github.rest.actions.listWorkflowRuns({
+              owner,repo,workflow_id:workflow.id,event:'workflow_dispatch',per_page:30
+            });
+            if(recheck.workflow_runs.some(r=>
+              r.id!==supersededId && r.created_at>='2026-11-09T17:18:00Z'))
+              throw new Error('Another dispatch appeared during cancellation');
             const started_at=new Date().toISOString();
             await github.rest.actions.createWorkflowDispatch({
               owner,repo,workflow_id:workflow.id,ref:'main',
