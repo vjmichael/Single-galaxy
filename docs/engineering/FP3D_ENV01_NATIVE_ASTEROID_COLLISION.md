@@ -1,0 +1,9 @@
+# FP3D-ENV-01 — original native swept asteroid contact (3D-first)
+
+Draft native implementation on independent world-first branch from PR #123 (04A), not experimental module PR #124. Creator intentionally defers all ship module features until 3D world is genuinely playable.
+
+Version 125 is explicit new-world genesis opt-in after enabling actual high-order galactic coordinates; legacy world movement is unchanged. For each in-space original ship, before its normal v120 absolute galactic integrator advances, the kernel checks a bounded list of same-system original asteroids. A portable integer center-to-segment sphere sweep uses actual original ship velocity, x/y/z, asteroid geological radius and a provisional 1m ship collision sphere. Contact cancels only that tick's movement, sets all native velocity axes to zero, and produces an original durable `ShipAsteroidContact` activity event (source ship ID, asteroid ID, tick). It does not damage the ship or create resources. The exact original pose remains the sole authority and Godot only observes it.
+
+The minimal obstacle radius is conservative; this **does not** claim realistic collision impulses, variable hull geometry, ship-ship/station collision, perfect asteroid meshes, or installed Godot visual parity. Those remain open issue #114 follow-on subtasks. Legacy saves never silently acquire different physics. No 04B equipment feature is imported.
+
+**Native acceptance required:** compile original C++ on Linux and MSVC Windows, sweep a fast thin obstacle, glancing contact, tangent near-miss, full vertical separation and escape, then run original PersistentWorld to prove the ship cannot cross a real physical rock, no ore or hull gained, event persisted and exact canonical snapshot survives SQLite restart. Add spatial index/scaling, across-cell trajectory, real collisions in Godot, camera alignment and installed test after this first correctness slice.

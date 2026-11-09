@@ -2263,3 +2263,12 @@ if(BUILD_TESTING)
       PROPERTIES TIMEOUT 90)
   endif()
 endif()
+
+# FP3D-ENV-01: real v125 3D asteroid obstacle sweep and SQLite restart.
+if(BUILD_TESTING)
+  add_executable(galaxy_fp3d_env01_swept_collision_tests tests/FP3D_ENV01_SweptCollisionTests.cpp)
+  target_link_libraries(galaxy_fp3d_env01_swept_collision_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_fp3d_env01_swept_collision COMMAND galaxy_fp3d_env01_swept_collision_tests
+    ${CMAKE_CURRENT_BINARY_DIR}/fp3d_env01_collision.sqlite)
+  set_tests_properties(galaxy_fp3d_env01_swept_collision PROPERTIES TIMEOUT 120)
+endif()
