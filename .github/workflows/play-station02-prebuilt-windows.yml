@@ -1,0 +1,182 @@
+name: PLAY-STATION-02 prebuilt Windows station + cockpit
+on:
+  push:
+    branches:
+      - sg/play-station02-native-spawn-board-20261108
+    paths:
+      - 'desktop_godot/**'
+      - 'src/**'
+      - 'include/**'
+      - 'tests/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/play-station02-prebuilt-windows.yml'
+  pull_request:
+    paths:
+      - 'desktop_godot/**'
+      - 'src/**'
+      - 'include/**'
+      - 'tests/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/play-station02-prebuilt-windows.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: play-station02-prebuilt-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  godot-parse:
+    name: Real Godot 4.7.2 parser and scene contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Check all Godot source preload targets and consistent indentation
+        shell: bash
+        run: |
+          python desktop_godot/tests/test_gdscript_preload_sanity.py
+          python desktop_godot/tests/test_authorized_input_contract.py
+          python desktop_godot/tests/test_station_boarding_contract.py
+          python desktop_godot/tests/test_station_visual_contract.py
+      - name: Download OFFICIAL Linux Godot 4.7.2 only on GitHub runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/godot"
+          curl --fail --location --retry 3 --retry-delay 5 \
+            -o "$RUNNER_TEMP/godot/godot.zip" \
+            https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
+          unzip -oq "$RUNNER_TEMP/godot/godot.zip" -d "$RUNNER_TEMP/godot"
+          chmod +x "$RUNNER_TEMP/godot/Godot_v4.7.2-stable_linux.x86_64"
+          "$RUNNER_TEMP/godot/Godot_v4.7.2-stable_linux.x86_64" --version | tee godot-version.txt
+          grep -q '^4.7.2.stable' godot-version.txt
+      - name: Execute actual Godot scene parser and gameplay-view smokes
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/station-godot-evidence
+          GODOT="$RUNNER_TEMP/godot/Godot_v4.7.2-stable_linux.x86_64"
+          "$GODOT" --headless --path desktop_godot --editor --quit \
+            2>&1 | tee build/station-godot-evidence/project-import.log
+          for SCRIPT in godot_smoke.gd station_visual_smoke.gd native_player_protocol_smoke.gd native_station_protocol_smoke.gd; do
+            "$GODOT" --headless --path desktop_godot --script "res://tests/$SCRIPT" \
+              2>&1 | tee "build/station-godot-evidence/$SCRIPT.log"
+          done
+      - name: Archive Godot parser evidence, including failures
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: play-station02-godot-parse-evidence-${{ github.sha }}
+          path: |
+            godot-version.txt
+            build/station-godot-evidence/*.log
+          if-no-files-found: warn
+
+  windows-package:
+    name: MSVC Windows native hosts and downloadable precompiled Godot project
+    needs: godot-parse
+    runs-on: windows-2022
+    timeout-minutes: 80
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Setup SQLite C++ build dependency on GitHub runner ONLY
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vcpkg = $env:VCPKG_INSTALLATION_ROOT
+          if (-not $vcpkg) { $vcpkg='C:\vcpkg' }
+          $exe = Join-Path $vcpkg 'vcpkg.exe'
+          if (-not (Test-Path $exe)) {throw "GitHub Windows runner vcpkg missing: $exe"}
+          & $exe install sqlite3:x64-windows --classic
+          if ($LASTEXITCODE -ne 0) {throw "GitHub-hosted SQLite build dependency failed"}
+          "SG_VCPKG_TOOLCHAIN=$(Join-Path $vcpkg 'scripts\buildsystems\vcpkg.cmake')" >> $env:GITHUB_ENV
+      - name: Configure current original C++ world and both Windows native hosts
+        shell: pwsh
+        run: |
+          cmake -S . -B build/station02-win -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF "-DCMAKE_TOOLCHAIN_FILE=$env:SG_VCPKG_TOOLCHAIN" -DVCPKG_TARGET_TRIPLET=x64-windows
+          if ($LASTEXITCODE -ne 0) {throw "Original C++ CMake configure failed on real Windows MSVC"}
+      - name: Build real Windows original-world hosts and regression targets
+        shell: pwsh
+        run: |
+          cmake --build build/station02-win --config Release --parallel 2 --target galaxy_desktop_station_host galaxy_desktop_player_host galaxy_play_station_boarding_tests galaxy_fp3d03b_cockpit_flight_tests galaxy_play_station_mining_refining_e2e
+          if ($LASTEXITCODE -ne 0) {throw "Real Windows original C++ build failed"}
+      - name: Execute real native Windows docking/boarding/cockpit regression
+        shell: pwsh
+        run: |
+          ctest --test-dir build/station02-win -C Release -R '^(galaxy_play_station_boarding|galaxy_play_station02_native_pipe|galaxy_fp3d03b_cockpit_flight|galaxy_fp3d03b_native_flight_pipe|galaxy_play_station_mining_refining_e2e)$' --timeout 180 --output-on-failure --output-junit build/station02-win/station02-windows-tests.xml
+          if ($LASTEXITCODE -ne 0) {throw "Real Windows original-world tests failed"}
+      - name: Download official Godot 4.7.2 editor on CI runner only
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build/godot472 | Out-Null
+          $url='https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_win64.exe.zip'
+          Invoke-WebRequest -Uri $url -OutFile build/godot472/godot.zip
+          Expand-Archive build/godot472/godot.zip -DestinationPath build/godot472 -Force
+          $godot=Get-ChildItem build/godot472 -Filter '*win64_console.exe' -Recurse | Select-Object -First 1
+          if (-not $godot) {$godot=Get-ChildItem build/godot472 -Filter '*win64.exe' -Recurse | Select-Object -First 1}
+          if (-not $godot) {throw "Official Godot 4.7.2 Windows executable missing after extraction"}
+          "SG_GODOT_EXE=$($godot.FullName)" >> $env:GITHUB_ENV
+      - name: Execute real Godot parser / scene smokes on Windows
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force -Path build/station02-win/godot-logs | Out-Null
+          $g=$env:SG_GODOT_EXE
+          & $g --version
+          if ($LASTEXITCODE -ne 0) {throw "Godot Windows version check failed"}
+          & $g --headless --path desktop_godot --editor --quit 2>&1 | Out-File build/station02-win/godot-logs/import.txt
+          if ($LASTEXITCODE -ne 0) {throw "Godot Windows project import failed"}
+          foreach($s in @('godot_smoke.gd','station_visual_smoke.gd','native_player_protocol_smoke.gd','native_station_protocol_smoke.gd')){
+            & $g --headless --path desktop_godot --script "res://tests/$s" 2>&1 | Out-File "build/station02-win/godot-logs/$s.txt"
+            if ($LASTEXITCODE -ne 0) {throw "Godot Windows real scene/parser failed: $s"}
+          }
+      - name: Assemble zip that NEVER invokes CMake on the user's PC
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $root='build/PLAY-STATION-02-Windows-prebuilt'
+          $game=Join-Path $root 'desktop_godot'
+          New-Item -ItemType Directory -Force -Path $game | Out-Null
+          Copy-Item desktop_godot/project.godot $game -Force
+          Copy-Item desktop_godot/world (Join-Path $game 'world') -Recurse -Force
+          Copy-Item desktop_godot/tests (Join-Path $game 'tests') -Recurse -Force
+          Copy-Item desktop_godot/build_tools/Launch-PrebuiltStation.ps1 (Join-Path $game 'Launch-PrebuiltStation.ps1') -Force
+          Copy-Item desktop_godot/RUN_STATION_PLAYTEST_WINDOWS.cmd $game -Force
+          New-Item -ItemType Directory -Force -Path (Join-Path $game 'native') | Out-Null
+          $exeDir='build/station02-win/Release'
+          foreach($name in @('galaxy_desktop_station_host.exe','galaxy_desktop_player_host.exe')){
+            $p=Join-Path $exeDir $name
+            if (-not (Test-Path $p)) {throw "Native Windows binary $name not compiled"}
+            Copy-Item $p (Join-Path $game 'native') -Force
+          }
+          # Launcher expects build_tools/ as source checkout; preserve same path.
+          New-Item -ItemType Directory -Force -Path (Join-Path $game 'build_tools') | Out-Null
+          Move-Item (Join-Path $game 'Launch-PrebuiltStation.ps1') (Join-Path $game 'build_tools/Launch-PrebuiltStation.ps1') -Force
+          "Original repository exact SHA: ${{ github.sha }}" | Set-Content (Join-Path $root 'SOURCE_SHA.txt')
+          "Unzip. Double-click desktop_godot/RUN_STATION_PLAYTEST_WINDOWS.cmd and select your already-installed Godot 4.7.2 EXE. No local compiler/CMake needed." | Set-Content (Join-Path $root 'START_HERE.txt')
+          Compress-Archive -Path (Join-Path $root '*') -DestinationPath build/SingleGalaxy_Station_02_Windows_Precompiled.zip -Force
+          if (-not (Test-Path build/SingleGalaxy_Station_02_Windows_Precompiled.zip)) {throw 'Package missing'}
+      - name: Upload compiled Windows downloadable game package
+        uses: actions/upload-artifact@v4
+        with:
+          name: SingleGalaxy-Station-02-Windows-Precompiled-${{ github.sha }}
+          path: build/SingleGalaxy_Station_02_Windows_Precompiled.zip
+          if-no-files-found: error
+      - name: Preserve Windows compiler, native test and Godot engine evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: play-station02-windows-build-evidence-${{ github.sha }}
+          path: |
+            build/station02-win/station02-windows-tests.xml
+            build/station02-win/Testing/Temporary/LastTest.log
+            build/station02-win/godot-logs/*.txt
+            build/station02-win/CMakeFiles/CMakeConfigureLog.yaml
+          if-no-files-found: warn
