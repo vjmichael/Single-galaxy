@@ -336,7 +336,7 @@ func _build_hud() -> void:
 	scope_label.text = "LOCAL MOVEMENT TEST ONLY — NOT CONNECTED TO NATIVE GALAXY"
 	contents.add_child(scope_label)
 	status_label = Label.new()
-	status_label.text = "H station, E board/exit | R refinery | P cockpit, E sit | WASD walk | A/D yaw, arrows thrust | B brake, G dock"
+	status_label.text = "H station, E board/exit | R refinery | P cockpit, E sit | WASD walk | V exterior | B brake, G dock | F11 capture viewport"
 	contents.add_child(status_label)
 	native_label = Label.new()
 	native_label.text = "NATIVE: H enters station player test. Walk toward marked hatch (0,0), E boards. P switches to ship cockpit."
@@ -404,6 +404,12 @@ func _advance_native_handoff() -> void:
 		player.use_native_authority(false)
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F11:
+		# A deliberate operator action: capture only the game's Godot viewport,
+		# never the Windows desktop or any other application.
+		call_deferred("_capture_operator_view")
+		get_viewport().set_input_as_handled()
+		return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_V:
 		if native_player_session != null and native_player_session.is_active() and _last_native_dock == 0 and last_station_player_state == 0:
 			_external_requested = not _external_requested
@@ -510,6 +516,58 @@ func _hide_refinery_terminal() -> void:
 		refinery_terminal.visible = false
 	if is_instance_valid(player) and get_window().has_focus():
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
+func _capture_operator_view() -> void:
+	var directory := OS.get_environment("SG_FP3D_OPERATOR_CAPTURE_DIR")
+	if directory.is_empty():
+		_on_native_player_status("F11 viewport evidence requires the packaged Windows playtest launcher")
+		return
+	var station_authorized := native_station_session != null and native_station_session.is_active() and last_station_player_state == 4
+	var flight_authorized := native_player_session != null and native_player_session.is_active()
+	var joined: Dictionary = FLIGHT_INSTRUMENTS.from_verified_frames(_verified_flight_ship, _verified_flight_rock)
+	if not station_authorized and (not flight_authorized or joined.is_empty()):
+		_on_native_player_status("F11 refused: connect original H station or P ship and receive verified native frames")
+		return
+	if DirAccess.make_dir_recursive_absolute(directory) != OK:
+		_on_native_player_status("F11 cannot create private playtest evidence directory")
+		return
+	await RenderingServer.frame_post_draw
+	var image: Image = get_viewport().get_texture().get_image()
+	if image == null or image.is_empty() or image.get_width() < 640 or image.get_height() < 360:
+		_on_native_player_status("F11 capture failed: no usable rendered game viewport")
+		return
+	var id := str(Time.get_ticks_usec())
+	var filename := "operator-" + id + ".png"
+	var file_path := directory.path_join(filename)
+	if image.save_png(file_path) != OK:
+		_on_native_player_status("F11 failed to save rendered viewport")
+		return
+	var receipt := {
+		"schema":"SG-FP3D-OPERATOR-01", "source":"explicit-F11-Godot-viewport",
+		"wall_time_unix":Time.get_unix_time_from_system(),
+		"image":filename, "image_sha256":FileAccess.get_sha256(file_path),
+		"image_width":image.get_width(), "image_height":image.get_height(),
+		"display_backend":DisplayServer.get_name(),
+		"native_flight_joined":not joined.is_empty(),
+		"station_person":native_station_session._person.duplicate(true) if station_authorized else {},
+		"original_ship":_verified_flight_ship.duplicate(true) if not joined.is_empty() else {},
+		"original_rock":_verified_flight_rock.duplicate(true) if not joined.is_empty() else {},
+		"original_target_instrument":joined,
+		"exterior_camera":is_instance_valid(exterior_camera) and exterior_camera.current,
+		"person_camera":is_instance_valid(player) and is_instance_valid(player.camera) and player.camera.current,
+		"operator_visual_judgment":"NOT YET RECORDED"
+	}
+	var log_path := directory.path_join("operator-viewport-receipts.jsonl")
+	var f := FileAccess.open(log_path, FileAccess.READ_WRITE)
+	if f == null:
+		f = FileAccess.open(log_path, FileAccess.WRITE)
+	if f == null:
+		_on_native_player_status("F11 screenshot saved, but native receipt could not be written")
+		return
+	f.seek_end()
+	f.store_line(JSON.stringify(receipt))
+	f.close()
+	_on_native_player_status("F11 original-world viewport captured: " + filename)
 
 func _record_native_projection(kind: String, evidence: Dictionary) -> void:
 	# CLIENT-OBSERVED evidence only; original SQLite journal remains authoritative.
