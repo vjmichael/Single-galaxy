@@ -10,8 +10,13 @@ runner = (root / "build_tools/Test-StationGodot.ps1").read_text(encoding="utf-8"
 builder = (root / "build_tools/Build-Windows.ps1").read_text(encoding="utf-8")
 cmd = (root / "RUN_STATION_PLAYTEST_WINDOWS.cmd").read_text(encoding="utf-8")
 player = (root / "world/player_controller.gd").read_text(encoding="utf-8")
+station_client = (root / "world/native_station_session.gd").read_text(encoding="utf-8")
+cockpit_client = (root / "world/native_player_session.gd").read_text(encoding="utf-8")
 
 checks = {
+    "avatar-height-matches-capsule": "const AVATAR_CENTER_HEIGHT_M := 0.90" in main,
+    "station-host-in-project": 'var project_host := ProjectSettings.globalize_path("res://native/" + binary)' in station_client,
+    "cockpit-host-in-project": 'var project_host := ProjectSettings.globalize_path("res://native/" + binary)' in cockpit_client,
     "station-room": '"StationInterior_Prototype"' in main,
     "cabin-room": '"ShipInterior_Prototype"' in main,
     "hatch": '"Station_Hangar_Entry_At_Zero"' in main,
