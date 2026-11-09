@@ -86,7 +86,7 @@ func _ready() -> void:
 	native_station_session = NATIVE_STATION_SESSION.new()
 	native_station_session.person_received.connect(_on_native_station_person)
 	native_station_session.refinery_received.connect(_on_native_refinery_state)
-	native_station_session.status_changed.connect(_on_native_player_status)
+	native_station_session.status_changed.connect(_on_native_station_status)
 	native_station_session.connection_changed.connect(_on_native_station_connection)
 	refinery_terminal.refine_requested.connect(_on_native_refine_requested)
 	refinery_terminal.unload_requested.connect(_on_native_unload_requested)
@@ -474,6 +474,16 @@ func _on_native_station_connection(connected: bool) -> void:
 		player.use_native_authority(connected)
 	if is_instance_valid(scope_label):
 		scope_label.text = "NATIVE STATION PLAYER (ORIGINAL SQLITE)" if connected else "STATION NATIVE DISCONNECTED"
+
+func _on_native_station_status(message: String) -> void:
+	_on_native_player_status(message)
+	# An original C++ DENY must leave the terminal in a visible refused state.
+	# Do not report success or synthesize a new lot while a host request fails.
+	if is_instance_valid(refinery_terminal) and refinery_terminal.visible and (
+		message.begins_with("Station action #") or
+		message.begins_with("Station response timed out") or
+		message.begins_with("Native station host exited")):
+		refinery_terminal.report_error(message)
 
 func _on_native_refinery_state(snapshot: Dictionary) -> void:
 	# Original C++ station host performed all authorization and inventory changes.
