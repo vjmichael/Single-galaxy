@@ -10,7 +10,7 @@ set "rc=%ERRORLEVEL%"
 echo.
 if not "%rc%"=="0" (
   echo PLAYTEST BLOCKED - see playtest-logs and SingleGalaxy_Station_Playtest_Evidence.zip
-  echo If native hosts are missing, download the compiled Windows artifact from PR 119 Actions.
+  echo If native hosts are missing, use the exact-sha compiled Windows ZIP from the SGDX03 task-group Actions run for PR 125.
 ) else (
   echo Godot window exited; camera and human gameplay verification are separate.
 )
