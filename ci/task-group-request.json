@@ -1,7 +1,7 @@
 {
   "schema": "SG-CI-GATE-01",
   "task_group": "SGDX03",
-  "source_sha": "d5f5e8102f28d014c0b399100fa420a7a9a94e5f",
+  "source_sha": "a2832226ae805911c16f48c99a2024d9981dda82",
   "pr_number": 125,
-  "note": "ONE exact-head end-of-group SGDX03 FP3D-WIN01/WIN02 Windows/Linux native + real Godot + precompiled ZIP + tampered runtime rejection + non-headless viewport gate. Prior Windows and Linux 19/19 native CTest passed including private real Windows MDMP and SQLite repairs. Latest Godot 4.7.2 parser found and we repaired two F11 bool inferred values and two refinery Dictionary/Array inferred values; explicit source regression checks added. The packaged ZIP runtime now checks BOTH real stdout/stderr and uses 90-second bounded child processes. Workflow captures extracted image's real parser logs and original-source screenshot receipts. Do NOT promote draft or claim GPU user-PC acceptance without actual physical playtest; no manufactured mining until then."
+  "note": "ONE consolidated SGDX03/FP3D-WIN02 final exact-head Windows/Linux group after demonstrated Godot 4.7.2 unnamed CollisionShape3D false locator: real previous Windows native 19/19 + Linux native 19/19 and original C++ Godot undock/dock/swept rock impact/SQLite recovery PASS; Windows packaged Godot ZIP passes source/PE64/MIT/SHA, but its station_visual_smoke #3 rejected an auto-named real collision child. Test now requires one actual CollisionShape3D child BY TYPE and exact dimensions; source regression admission added. Re-execute full Windows MSVC/MDMP/SQLite, real Godot scenes, extracted ZIP smoke/negative bundled-engine tamper, real non-headless screenshot and Linux native/engine. Upload ZIP only after all native/Godot/package checks pass; no physical-GPU claim. Keep PR125 draft; defer manufactured mining hardware."
 }
