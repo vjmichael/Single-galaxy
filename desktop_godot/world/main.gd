@@ -18,6 +18,7 @@ var native_session
 var native_player_session
 var native_station_session
 var station_test_save_selected := false
+var last_station_player_state := -1
 var native_markers: Node3D
 var _fps_accumulator := 0.0
 
@@ -171,7 +172,7 @@ func _build_hud() -> void:
 	scope_label.text = "LOCAL MOVEMENT TEST ONLY — NOT CONNECTED TO NATIVE GALAXY"
 	contents.add_child(scope_label)
 	status_label = Label.new()
-	status_label.text = "H station native, E board/exist | P cockpit native, E sit | WASD walking | AD yaw, arrows thrust, B brake"
+	status_label.text = "H station native, E board/exit | P cockpit native, E sit | WASD walking | AD yaw, arrows thrust, B brake"
 	contents.add_child(status_label)
 	native_label = Label.new()
 	native_label.text = "NATIVE: H enters station player test. Walk toward marked hatch (0,0), E boards. P switches to ship cockpit."
@@ -209,6 +210,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		if native_player_session.is_active():
 			native_player_session.stop("NATIVE FPS stopped by player; pose saved")
 		else:
+			if station_test_save_selected and last_station_player_state != 0:
+				_on_native_player_status("Board your existing ship first; cockpit is unavailable while at station")
+				get_viewport().set_input_as_handled()
+				return
 			if native_station_session.is_active():
 				native_station_session.stop("Station writer closed before ship cockpit session")
 			if native_session.is_active():
@@ -234,6 +239,7 @@ func _on_native_station_connection(connected: bool) -> void:
 		scope_label.text = "NATIVE STATION PLAYER (ORIGINAL SQLITE)" if connected else "STATION NATIVE DISCONNECTED"
 
 func _on_native_station_person(person: Dictionary) -> void:
+	last_station_player_state = int(person["state"])
 	if is_instance_valid(player):
 		player.use_native_seat(false)
 		player.global_position = Vector3(float(person["x_mm"]) / 1000.0, 1.45,
