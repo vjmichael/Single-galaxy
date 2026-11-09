@@ -106,9 +106,13 @@ func _read_stderr() -> String:
 	raw = raw.replace("\r", " ").replace("\n", " ").replace("\t", " ")
 	return raw.substr(0, 220)
 
-func stop(message: String = "Native telemetry disconnected") -> void:
+func stop(message: String = "Native telemetry disconnected", graceful: bool = false) -> void:
 	if _active and _pid > 0 and OS.is_process_running(_pid):
-		OS.kill(_pid) # child is only the read-only observer
+		if graceful and _stdio != null:
+			_stdio.store_line("QUIT")
+			_stdio.flush()
+		else:
+			OS.kill(_pid) # SGDX holds actual child/descendants, not a direct unsupervised host
 	_active = false
 	_pid = -1
 	_stdio = null

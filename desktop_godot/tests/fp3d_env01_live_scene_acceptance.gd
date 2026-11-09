@@ -156,7 +156,7 @@ func _run() -> void:
 	if _error.is_empty() and not collided:
 		_fail("no real swept collision reached after 70 original forward commands")
 	if is_instance_valid(_game) and is_instance_valid(_game.native_player_session):
-		_game.native_player_session.stop("04D integrated CI acceptance closed")
+		_game.native_player_session.stop("04D integrated CI acceptance closed", true)
 	await process_frame
 	if not _error.is_empty():
 		quit(1)

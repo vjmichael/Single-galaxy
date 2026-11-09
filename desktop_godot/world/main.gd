@@ -402,19 +402,19 @@ func _unhandled_input(event: InputEvent) -> void:
 			return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_H:
 		if native_station_session.is_active():
-			native_station_session.stop("Station test session stopped")
+			native_station_session.stop("Station test session stopped", true)
 		else:
 			var exiting_pid: int = native_player_session.process_id()
 			if native_player_session.is_active():
-				native_player_session.stop("Ship session closed before station connection")
+				native_player_session.stop("Ship session closed before station connection", true)
 			if native_session.is_active():
-				native_session.stop("Observer closed before station connection")
+				native_session.stop("Observer closed before station connection", true)
 			_schedule_native_handoff("station", exiting_pid)
 		get_viewport().set_input_as_handled()
 		return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_P:
 		if native_player_session.is_active():
-			native_player_session.stop("NATIVE FPS stopped by player; pose saved")
+			native_player_session.stop("NATIVE FPS stopped by player; pose saved", true)
 		else:
 			if station_test_save_selected and last_station_player_state != 0:
 				_on_native_player_status("Board your existing ship first; cockpit is unavailable while at station")
@@ -422,9 +422,9 @@ func _unhandled_input(event: InputEvent) -> void:
 				return
 			var exiting_pid: int = native_station_session.process_id()
 			if native_station_session.is_active():
-				native_station_session.stop("Station writer closed before ship cockpit session")
+				native_station_session.stop("Station writer closed before ship cockpit session", true)
 			if native_session.is_active():
-				native_session.stop("Read-only observer stopped for native FPS writer")
+				native_session.stop("Read-only observer stopped for native FPS writer", true)
 			_schedule_native_handoff("ship", exiting_pid)
 		get_viewport().set_input_as_handled()
 		return
@@ -433,7 +433,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			_on_native_status("O read-only disabled while P authoritative writer is active")
 			return
 		if native_session.is_active():
-			native_session.stop("READ ONLY — stopped by player; last verified frame retained; O reconnects")
+			native_session.stop("READ ONLY — stopped by player; last verified frame retained; O reconnects", true)
 		else:
 			native_session.start()
 		get_viewport().set_input_as_handled()

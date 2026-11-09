@@ -339,12 +339,20 @@ func interact_hangar() -> void:
 	_last_send = Time.get_ticks_msec()
 	_send("%s|%d|%d|%d|%d" % [verb, _session, req, _generation, target])
 
-func stop(message: String = "Station session closed") -> void:
+func stop(message: String = "Station session closed", graceful: bool = false) -> void:
 	if _pid > 0:
 		_last_shutdown_pid = _pid
 		_last_shutdown_msec = Time.get_ticks_msec()
 	if _active and _pid > 0 and OS.is_process_running(_pid):
-		OS.kill(_pid)
+		if graceful and _stdout != null:
+			# The original host exits only after explicit QUIT. SGDX then
+			# records a clean exit and releases the writer/Job Object.
+			_stdout.store_line("QUIT")
+			_stdout.flush()
+		else:
+			# Malformed protocol, untrusted response or timeout: fail closed.
+			# Killing this supervisor kills the native process custody tree.
+			OS.kill(_pid)
 	_pid = -1
 	_active = false
 	_stdout = null
