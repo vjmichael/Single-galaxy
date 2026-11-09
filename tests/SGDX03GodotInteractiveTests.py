@@ -204,7 +204,7 @@ def check_original_world(root):
     p3.kill()
     p3.communicate(timeout=12)
     resumed = subprocess.run(command(save, native, save),
-                             input="QUIT\\n",capture_output=True,text=True,timeout=15)
+                             input="QUIT\n",capture_output=True,text=True,timeout=15)
     assert resumed.returncode == 0, (resumed.returncode,resumed.stderr[:600])
     records = resumed.stdout.splitlines()
     assert len(records) >= 3 and records[0].startswith("POSE|1|") and (
