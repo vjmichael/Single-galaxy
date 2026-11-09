@@ -1,0 +1,154 @@
+name: CI queue hygiene — cancel superseded queued PR runs
+
+# Bootstrap once when this maintenance workflow itself is installed on main.
+# Thereafter run only by deliberate workflow_dispatch. Not a per-commit CI gate.
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/ci-queue-hygiene.yml']
+  workflow_dispatch:
+    inputs:
+      max_cancellations:
+        description: 'Max stale queued PR runs to request cancellation for (1..900)'
+        required: false
+        default: '900'
+      dry_run:
+        description: 'Audit only; do not request cancellation'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: sg-queue-hygiene
+  cancel-in-progress: false
+
+jobs:
+  prune-superseded-pr-runs:
+    if: github.repository == 'vjmichael/Single-galaxy'
+    name: Cancel queued PR runs on superseded source commits only
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Inspect branch tips and cancel stale queued PR runs
+        id: prune
+        uses: actions/github-script@v7
+        env:
+          GH_QUEUE_MAX: ${{ inputs.max_cancellations || '900' }}
+          GH_QUEUE_DRY_RUN: ${{ inputs.dry_run || 'false' }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const {owner, repo} = context.repo;
+            const capped = Number.parseInt(process.env.GH_QUEUE_MAX || '900', 10);
+            const limit = Number.isFinite(capped) ? Math.min(900, Math.max(1, capped)) : 900;
+            const dryRun = String(process.env.GH_QUEUE_DRY_RUN).toLowerCase() === 'true';
+            const out = {
+              schema: 'SG-CI-QUEUE-01',
+              time_utc: new Date().toISOString(),
+              repo: owner + '/' + repo,
+              maintenance_run_id: context.runId,
+              max_cancellations: limit,
+              dry_run: dryRun,
+              scanned: 0, eligible: 0, requested: 0, failures: 0,
+              current_head_preserved: 0, non_pr_preserved: 0,
+              records: [], errors: []
+            };
+            // Snapshot IDs before cancellations: paging a moving queue can
+            // otherwise skip runs. Queue data is bounded to 30 pages.
+            const candidates = [];
+            for (let page = 1; page <= 30; ++page) {
+              const response = await github.rest.actions.listWorkflowRunsForRepo({
+                owner, repo, event: 'pull_request',
+                status: 'queued', page, per_page: 100
+              });
+              const batch = response.data.workflow_runs || [];
+              for (const run of batch) candidates.push({
+                id: run.id, event: run.event, status: run.status,
+                head_branch: run.head_branch, head_sha: run.head_sha,
+                head_repo: run.head_repository?.full_name || '',
+                name: run.name, html_url: run.html_url
+              });
+              if (batch.length < 100) break;
+            }
+            out.scanned = candidates.length;
+            const branchHeads = new Map();
+            async function branchTip(name) {
+              if (!branchHeads.has(name)) {
+                try {
+                  const response = await github.rest.repos.getBranch({
+                    owner, repo, branch: name
+                  });
+                  branchHeads.set(name, response.data.commit.sha);
+                } catch (e) {
+                  // Do not assume missing/deleted/forked branches are stale.
+                  branchHeads.set(name, null);
+                  out.errors.push('branch tip unavailable: ' + name + ' ' + e.status);
+                }
+              }
+              return branchHeads.get(name);
+            }
+            for (const run of candidates) {
+              if (run.event !== 'pull_request' ||
+                  run.status !== 'queued' ||
+                  run.head_repo !== owner + '/' + repo ||
+                  !run.head_branch || !run.head_sha) {
+                out.non_pr_preserved++;
+                continue;
+              }
+              const current = await branchTip(run.head_branch);
+              if (!current) continue;
+              if (run.head_sha === current) {
+                out.current_head_preserved++;
+                continue;
+              }
+              out.eligible++;
+              if (out.requested >= limit) continue;
+              const record = {
+                id: run.id, name: run.name, branch: run.head_branch,
+                old_head_sha: run.head_sha, current_head_sha: current,
+                url: run.html_url,
+                reason: 'queued run superseded by current same-repository branch head'
+              };
+              if (dryRun) {
+                record.outcome = 'dry_run_only';
+              } else {
+                try {
+                  await github.rest.actions.cancelWorkflowRun({owner, repo, run_id: run.id});
+                  record.outcome = 'cancel_requested';
+                  out.requested++;
+                } catch (e) {
+                  record.outcome = 'cancel_error_' + (e.status || 'unknown');
+                  out.failures++;
+                  out.errors.push('run ' + run.id + ': ' + (e.message || e));
+                }
+              }
+              out.records.push(record);
+            }
+            fs.writeFileSync('sg-ci-queue-prune.json', JSON.stringify(out, null, 2) + '\n');
+            core.info('Scanned ' + out.scanned + ', stale queued ' + out.eligible +
+                      ', cancellation requests ' + out.requested +
+                      ', errors ' + out.failures +
+                      ', current-head preserved ' + out.current_head_preserved);
+            await core.summary
+              .addHeading('Single-Galaxy superseded PR queue hygiene')
+              .addTable([
+                [{data:'Measure',header:true},{data:'Value',header:true}],
+                ['Queued PR runs scanned',String(out.scanned)],
+                ['Superseded queued runs found',String(out.eligible)],
+                ['Cancellation requests',String(out.requested)],
+                ['API cancellation errors',String(out.failures)],
+                ['Current-head runs preserved',String(out.current_head_preserved)]
+              ]).write();
+            if (out.failures) core.setFailed('Some stale queued cancellation API calls failed; see manifest.');
+      - name: Preserve exact cleanup audit manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sg-ci-queue-prune-${{ github.run_id }}
+          path: sg-ci-queue-prune.json
+          if-no-files-found: warn
