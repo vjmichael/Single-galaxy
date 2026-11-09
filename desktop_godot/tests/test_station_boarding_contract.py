@@ -9,6 +9,9 @@ assert 'KEY_H' in m and 'KEY_F8' not in m and 'KEY_F7' not in m
 assert 'native_station_session.start()' in m
 assert 'StationInterior_Prototype' in m and 'ShipInterior_Prototype' in m
 assert 'func _show_native_location(in_station: bool)' in m
+assert 'for body in station_space.get_children()' in m and 'for body in ship_space.get_children()' in m
+assert 'body.collision_layer = 1 if in_station else 0' in m
+assert 'body.collision_layer = 0 if in_station else 1' in m
 assert '_show_native_location(last_station_player_state == 4)' in m
 assert '_show_native_location(false) # verified original owned ship pose' in m
 assert '_show_native_location(true) # station first' in m
