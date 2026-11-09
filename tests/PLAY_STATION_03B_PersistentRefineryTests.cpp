@@ -31,11 +31,13 @@ int main(int argc,char** argv){
   CHECK(argc==2);
   const std::string db=argv[1],copy=db+".copy";
   erase_db(db);erase_db(copy);
-  std::uint64_t id=1000;EntityId ship=0,station=0,rock=0,lot_id=0;
+  std::uint64_t id=1000;EntityId ship=0,ship_b=0,station=0,rock=0,lot_id=0;
   std::int64_t initial_mass=0;
   {
     Simulation seed(12304);
     ship=seed.add_colony_ship(7,{0,0},100,24);
+    // Additional finite owned hull in test genesis: never spawned as a rescue.
+    ship_b=seed.add_ship(7,{0,0},10);
     seed.provision_colony_genesis(ship,1000,3000,1000,1000,1000);
     const auto bulk=seed.add_asteroid({2000,0},70);
     rock=seed.add_geological_asteroid({3000,0},AsteroidClass::Metallic,10,5000);
@@ -86,6 +88,16 @@ int main(int argc,char** argv){
     CHECK(w.world().find(ship)->cargo==0);
     CHECK(w.world().station_ore_lots().at(lot_id).station==station);
     CHECK(w.world().station_ore_lots().at(lot_id).unload_receipt!=0);
+    CHECK(w.world().total_material_kg()==initial_mass);
+    // Two real owned ships may dock at the same original station, but a
+    // second hull cannot load tagged geological ore with another source hull.
+    CHECK(send(w,id,ship_b,Action::RequestDock,station).result==Outcome::Applied);
+    w.steps(2);
+    CHECK(w.world().find(ship_b)->dock_state==DockState::Docked);
+    CHECK(send(w,id,ship_b,Action::LoadOre,station,1).result==Outcome::Unauthorized);
+    CHECK(w.world().hangar(station,7)->ore==1);
+    CHECK(w.world().find(ship_b)->cargo==0);
+    CHECK(w.world().station_ore_lots().at(lot_id).source_ship==ship);
     CHECK(w.world().total_material_kg()==initial_mass);
     CHECK(w.register_player_at_station(7,station));
     w.steps(35); // utility generation and site staff are real simulation ticks
