@@ -47,6 +47,16 @@ try {
   New-Item -ItemType Directory -Force -Path $staging | Out-Null
   Expand-Archive -LiteralPath $archivePath -DestinationPath $staging -Force
   $game=Join-Path $staging 'desktop_godot'
+  $entry=Join-Path $staging 'START_SINGLE_GALAXY_WINDOWS.cmd'
+  if(-not(Test-Path -LiteralPath $entry -PathType Leaf)){
+    throw 'Self-contained Windows ZIP missing root-level double-click launcher'
+  }
+  $entryText=Get-Content -LiteralPath $entry -Raw
+  if($entryText -notmatch 'RUN_STATION_PLAYTEST_WINDOWS' -or
+     $entryText -match '(?i)(curl|powershell\s+-command\s+invoke-webrequest|download)'){
+    throw 'Root Windows playtest launcher does not delegate to the bundled original game'
+  }
+  $game=Join-Path $staging 'desktop_godot'
   if(-not(Test-Path -LiteralPath $game -PathType Container)){
     throw 'ZIP does not contain the original desktop_godot project folder'
   }
