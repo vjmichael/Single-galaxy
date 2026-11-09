@@ -34,6 +34,13 @@ checks = {
     "repaired-recursive-collider-smoke": 'station_space.find_children("*", "StaticBody3D", true, false)' in smoke,
     "original-smoke-no-root-only-assertion": "for node in root_scene.get_children():" not in smoke,
     "scene-visual-smoke": '"station/cabin real collider inventory incomplete"' in visual,
+    "godot-472-dynamic-crate-shape-by-real-type": (
+        "for child in native_crate.get_children()" in visual
+        and "child is CollisionShape3D" in visual
+        and "var native_shape: CollisionShape3D = null" in visual
+        and 'native_crate.get_node_or_null("CollisionShape3D")' not in visual
+        and "native_box.size.distance_to(Vector3(0.8,1.6,1.0))" in visual
+    ),
     "synthetic-test-honesty": "Frames are SYNTHETIC" in visual,
     "visual-headless-in-export": "'station-visual-scene-smoke'" in builder,
     "windows-runner-builds-exact-native": "native-build" in runner and "galaxy_desktop_station_host" in runner and "galaxy_desktop_player_host" in runner,
