@@ -1,7 +1,7 @@
 {
   "schema": "SG-CI-GATE-01",
-  "task_group": "NONE",
-  "source_sha": "",
-  "pr_number": 0,
-  "note": "Placeholder only. At the end of a completed task group replace with SGDX03 plus exact current PR head SHA to trigger one Windows/Linux gate."
+  "task_group": "SGDX03",
+  "source_sha": "71917aa99aed790b6d2ba2a4598d5e20a94fead5",
+  "pr_number": 125,
+  "note": "END-OF-TASK-GROUP gate FP3D-ENV-01G/H: original C++ station/cockpit docking and recovery, physical walking/obstacles, native asteroid, SQLite persistent ore/refinery, actual Godot scene and Windows MSVC. Do not mark installed GPU physical acceptance until creator playtest."
 }
