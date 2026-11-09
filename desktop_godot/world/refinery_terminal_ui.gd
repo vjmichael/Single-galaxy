@@ -112,8 +112,8 @@ func present(snapshot: Dictionary) -> void:
 			taxonomy_names[taxonomy]]
 		_lots.add_item(label)
 		_lots.set_item_metadata(_lots.item_count - 1, int(lot["id"]))
-	var products := snapshot.get("minerals", {})
-	var names := products.keys()
+	var products: Dictionary = snapshot.get("minerals", {})
+	var names: Array = products.keys()
 	names.sort()
 	var rows := PackedStringArray()
 	for product in names:
