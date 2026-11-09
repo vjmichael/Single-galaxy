@@ -120,7 +120,7 @@ jobs:
           python desktop_godot/tests/test_station_visual_contract.py
           ctest --test-dir build/fp3d-env01 --no-tests=error --timeout 200 \
             --output-on-failure --output-junit fp3d-env01-linux.xml \
-            -R '^(galaxy_fp3d_env01_(swept_collision|native_collision_pipe)|galaxy_play_station04a_original_(asteroid_contact|rock_native_pipe)|galaxy_play_station_(boarding|mining_refining_e2e)|galaxy_play_station02_native_pipe|galaxy_play_station03(b_persistent_refinery|c_refinery_native_pipe)|galaxy_fp3d03b_(cockpit_flight|native_flight_pipe)|galaxy_sgdx03_godot_(native_bridge|source_admission)|galaxy_server_dx_(supervisor|sqlite_recovery|game_hosts)|galaxy_fp3d02b_native_desktop_readonly)$'
+            -R '^(galaxy_fp3d_env01_(swept_collision|native_collision_pipe)|galaxy_play_station04a_original_(asteroid_contact|rock_native_pipe)|galaxy_play_station_(boarding|mining_refining_e2e)|galaxy_play_station02_native_pipe|galaxy_play_station03(b_persistent_refinery|c_refinery_native_pipe)|galaxy_play_station04c_native_unload_pipe|galaxy_fp3d03b_(cockpit_flight|native_flight_pipe)|galaxy_sgdx03_godot_(native_bridge|source_admission)|galaxy_server_dx_(supervisor|sqlite_recovery|game_hosts)|galaxy_fp3d02b_native_desktop_readonly)$'
       - name: Real Godot 4.7.2 scene launches SGDX and the actual original C++ host
         shell: bash
         run: |
@@ -198,7 +198,7 @@ jobs:
           python desktop_godot/tests/test_fp3d_env01g_world_parity_contract.py
           python desktop_godot/tests/test_station_visual_contract.py
           if($LASTEXITCODE -ne 0){throw 'Fail-closed source bridge check failed'}
-          ctest --test-dir build/fp3d-env01 -C Release --no-tests=error --timeout 200 --output-on-failure --output-junit fp3d-env01-windows.xml -R '^(galaxy_fp3d_env01_(swept_collision|native_collision_pipe)|galaxy_play_station04a_original_(asteroid_contact|rock_native_pipe)|galaxy_play_station_(boarding|mining_refining_e2e)|galaxy_play_station02_native_pipe|galaxy_play_station03(b_persistent_refinery|c_refinery_native_pipe)|galaxy_fp3d03b_(cockpit_flight|native_flight_pipe)|galaxy_sgdx03_godot_(native_bridge|source_admission)|galaxy_server_dx_(supervisor|sqlite_recovery|game_hosts)|galaxy_fp3d02b_native_desktop_readonly)$'
+          ctest --test-dir build/fp3d-env01 -C Release --no-tests=error --timeout 200 --output-on-failure --output-junit fp3d-env01-windows.xml -R '^(galaxy_fp3d_env01_(swept_collision|native_collision_pipe)|galaxy_play_station04a_original_(asteroid_contact|rock_native_pipe)|galaxy_play_station_(boarding|mining_refining_e2e)|galaxy_play_station02_native_pipe|galaxy_play_station03(b_persistent_refinery|c_refinery_native_pipe)|galaxy_play_station04c_native_unload_pipe|galaxy_fp3d03b_(cockpit_flight|native_flight_pipe)|galaxy_sgdx03_godot_(native_bridge|source_admission)|galaxy_server_dx_(supervisor|sqlite_recovery|game_hosts)|galaxy_fp3d02b_native_desktop_readonly)$'
           if($LASTEXITCODE -ne 0){throw 'Real native SGDX/SQLite/Windows MDMP gate failed'}
       - name: Windows Godot 4.7.2 real SGDX supervised cockpit, collision and camera
         shell: pwsh
