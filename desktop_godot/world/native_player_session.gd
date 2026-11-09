@@ -20,6 +20,8 @@ var _ship := 0
 var _initial_ship_seen := false
 var _last_ship_telemetry_request := -1
 var _last_contact_request := -1
+var _current_rock_id := 0
+var _mining_tool_online := false
 var _dock_state := -1
 var _flight_cycle := 0
 var _seat_sequence := -1
@@ -86,6 +88,8 @@ func start(save_override: String = "") -> void:
 	_initial_ship_seen = false
 	_last_ship_telemetry_request = -1
 	_last_contact_request = -1
+	_current_rock_id = 0
+	_mining_tool_online = false
 	_dock_state = -1
 	_flight_cycle = 0
 	_seat_sequence = -1
@@ -237,14 +241,19 @@ func _accept_ship(parts: PackedStringArray) -> void:
 			return
 		_initial_ship_seen = true
 	else:
-		if not _initial_ship_seen or _pending_kind != "FLIGHT" or request != _pending or \
+		if not _initial_ship_seen or _pending_kind not in ["FLIGHT", "MINE", "FIT", "UNFIT", "FAB", "POWER"] or request != _pending or \
 			command_id < 1152921504606846976 or tick <= _tick or generation <= _generation:
 			stop("Unrequested or stale native flight acknowledgement")
 			return
+		var completed_kind := _pending_kind
 		_pending = 0
 		_pending_kind = ""
 		_tick = tick
 		_generation = generation
+		if completed_kind == "MINE":
+			_status("Original mining receipt #%d: %s; ore and cargo readback follows" % [command_id, "EXACT 1 TONNE" if outcome == 0 else "DENIED %d" % outcome])
+		elif completed_kind in ["FIT", "UNFIT", "FAB", "POWER"]:
+			_status("Original equipment receipt #%d: %s" % [command_id, "APPLIED" if outcome == 0 else "DENIED %d" % outcome])
 	_last_ship_telemetry_request = request
 	_dock_state = dock
 	ship_state_received.emit({"ship":ship,"command_id":command_id,"outcome":outcome,
@@ -303,10 +312,42 @@ func _accept_original_asteroid(parts: PackedStringArray) -> void:
 		stop("Native ore stock or mining tool status invalid")
 		return
 	_last_contact_request = request
+	_current_rock_id = rock_id if present else 0
+	_mining_tool_online = installed == 1
 	asteroid_contact_received.emit({"found":present,"rock":rock_id,
 		"ore_tonnes":ore,"dx_mm":dx,"dy_mm":dy,"dz_mm":dz,"radius_mm":radius,
 		"taxonomy":taxonomy,"ship":ship,"tick":tick,"generation":generation,
 		"cargo_tonnes":cargo,"cargo_capacity":capacity,"mining_tool_online":installed})
+
+func submit_mining() -> void:
+	_send_equipment("MINE", _current_rock_id)
+
+func submit_fitting(remove: bool = false) -> void:
+	_send_equipment("UNFIT" if remove else "FIT", 1)
+
+func submit_fabrication() -> void:
+	_send_equipment("FAB", 1)
+
+func toggle_mining_power() -> void:
+	_send_equipment("POWER", 0 if _mining_tool_online else 1)
+
+func _send_equipment(kind: String, value: int) -> void:
+	# The host owns material, tool, identity, distance, capacity and receipts.
+	if not _active or _session <= 0 or not _seated or not _initial_ship_seen or _pending != 0 or (kind == "MINE" and value <= 0):
+		_status("Mining requires a seated pilot, confirmed rock and idle native writer")
+		return
+	var now := Time.get_ticks_msec()
+	if now - _last_send_msec < 110:
+		return
+	var req := _next_request
+	_next_request += 1
+	_pending = req
+	_pending_kind = kind
+	_last_send_msec = now
+	if not _stdout.store_line("%s|%d|%d|%d|%d" % [kind,_session,req,_seat_sequence,value]):
+		stop("Native equipment write failed; reconnect to verify original world")
+		return
+	_stdout.flush()
 
 func submit_flight(actions: PackedStringArray) -> void:
 	if not _active or _session <= 0 or not _seated or not _initial_ship_seen or \

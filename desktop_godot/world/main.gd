@@ -263,7 +263,7 @@ func _build_hud() -> void:
 	scope_label.text = "LOCAL MOVEMENT TEST ONLY — NOT CONNECTED TO NATIVE GALAXY"
 	contents.add_child(scope_label)
 	status_label = Label.new()
-	status_label.text = "H station, E board | R refinery terminal | P cockpit, E sit | WASD walk | A/D yaw, arrows thrust, B brake"
+	status_label.text = "H station, E board | R refinery terminal | P cockpit, E sit | WASD walk | A/D yaw, arrows thrust, B brake | G fabricate, F fit, M mine 1t, K power, U unfit"
 	contents.add_child(status_label)
 	native_label = Label.new()
 	native_label.text = "NATIVE: H enters station player test. Walk toward marked hatch (0,0), E boards. P switches to ship cockpit."
@@ -325,6 +325,23 @@ func _advance_native_handoff() -> void:
 		player.use_native_authority(false)
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode in [KEY_M, KEY_F, KEY_G, KEY_K, KEY_U]:
+		if native_player_session == null or not native_player_session.is_active():
+			_on_native_player_status("Mining requires the P native cockpit and an existing owned ship")
+		else:
+			match event.keycode:
+				KEY_M:
+					native_player_session.submit_mining()
+				KEY_F:
+					native_player_session.submit_fitting()
+				KEY_G:
+					native_player_session.submit_fabrication()
+				KEY_K:
+					native_player_session.toggle_mining_power()
+				KEY_U:
+					native_player_session.submit_fitting(true)
+		get_viewport().set_input_as_handled()
+		return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_V:
 		if native_player_session != null and native_player_session.is_active() and _last_native_dock == 0 and last_station_player_state == 0:
 			_external_requested = not _external_requested
@@ -505,11 +522,11 @@ func _on_native_asteroid_contact(contact: Dictionary) -> void:
 		var range_m := Vector3(float(contact["dx_mm"]),float(contact["dy_mm"]),float(contact["dz_mm"])).length() / 1000.0
 		asteroid_label.text = "ROCK #%d | %.1fm | %d t finite ore | ship cargo %d/%d t | mining tool: %s | V exterior" % [
 			int(contact["rock"]),range_m,int(contact["ore_tonnes"]),int(contact["cargo_tonnes"]),
-			int(contact["cargo_capacity"]),"ONLINE" if int(contact["mining_tool_online"]) == 1 else "NOT FITTED"]
+			int(contact["cargo_capacity"]),"ONLINE" if int(contact["mining_tool_online"]) == 1 else "OFFLINE/NOT FITTED"]
 	else:
 		asteroid_label.text = "No original asteroid within 30m | ship cargo %d/%d t | mining tool: %s" % [
 			int(contact["cargo_tonnes"]),int(contact["cargo_capacity"]),
-			"ONLINE" if int(contact["mining_tool_online"]) == 1 else "NOT FITTED"]
+			"ONLINE" if int(contact["mining_tool_online"]) == 1 else "OFFLINE/NOT FITTED"]
 
 func _on_native_player_seat_intent() -> void:
 	if native_station_session != null and native_station_session.is_active():
