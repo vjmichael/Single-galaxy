@@ -21,6 +21,8 @@ var station_space: Node3D
 var ship_space: Node3D
 var space_preview: Node3D
 var native_asteroid_mesh: MeshInstance3D
+var exterior_ship_visual: Node3D
+var exterior_camera: Camera3D
 var asteroid_label: Label
 var _external_requested := false
 var _last_native_dock := -1
@@ -224,6 +226,39 @@ func _build_native_space_preview() -> void:
 	native_asteroid_mesh.material_override = material
 	native_asteroid_mesh.visible = false
 	space_preview.add_child(native_asteroid_mesh)
+	# Greybox ship hull is 8m long, 2.5m high, with visible wings spanning
+	# ~6m. The ORIGINAL C++ physics uses a conservative 5.2m bounding sphere.
+	# Neither these meshes nor the camera writes any collision or ship pose.
+	exterior_ship_visual = Node3D.new()
+	exterior_ship_visual.name = "OriginalShip_VisualHullOnly"
+	space_preview.add_child(exterior_ship_visual)
+	var body := MeshInstance3D.new()
+	body.name = "8m native hull proxy"
+	var body_mesh := BoxMesh.new()
+	body_mesh.size = Vector3(8.0, 2.5, 3.0)
+	body.mesh = body_mesh
+	body.material_override = material
+	exterior_ship_visual.add_child(body)
+	for side in [-1,1]:
+		var wing := MeshInstance3D.new()
+		wing.name = "Native hull wing" + str(side)
+		var wing_mesh := BoxMesh.new()
+		wing_mesh.size = Vector3(5.5, 0.3, 1.4)
+		wing.mesh = wing_mesh
+		wing.material_override = material
+		wing.position = Vector3(-0.25, -0.45, float(side) * 2.35)
+		exterior_ship_visual.add_child(wing)
+	exterior_camera = Camera3D.new()
+	exterior_camera.name = "OriginalShip_ThirdPersonCamera"
+	exterior_camera.position = Vector3(-16.0, 7.0, 0.0)
+	exterior_camera.fov = 72.0
+	exterior_ship_visual.add_child(exterior_camera)
+	exterior_camera.look_at(space_preview.global_position + Vector3(0.0, 0.6, 0.0), Vector3.UP)
+	exterior_camera.current = false
+
+static func native_heading_to_godot_yaw(heading: int) -> float:
+	# Original yaw 0 = +X; 90 = +native Y = -Godot Z.
+	return deg_to_rad(float(heading % 360))
 
 func _show_native_location(in_station: bool) -> void:
 	# The only callers after genesis are verified native PERSON and POSE frames.
@@ -245,10 +280,13 @@ func _show_native_location(in_station: bool) -> void:
 	if is_instance_valid(space_preview):
 		space_preview.visible = exterior
 		if exterior and is_instance_valid(player):
-			# Keep the observed rock relative to the ship's current viewer,
-			# not a fixed station/world origin; the original C++ pose is
-			# NEVER changed by this visual-only camera anchor.
+			# Anchor the read-only ship/rock pair to the viewer. Local rock XYZ
+			# stays in inertial space; only the visual hull/camera rotate with
+			# the trusted original C++ heading.
 			space_preview.global_position = player.global_position
+	if is_instance_valid(exterior_camera) and is_instance_valid(player) and is_instance_valid(player.camera):
+		exterior_camera.current = exterior
+		player.camera.current = not exterior
 
 func _build_player() -> void:
 	player = CharacterBody3D.new()
@@ -470,6 +508,10 @@ func _on_native_player_connection(connected: bool) -> void:
 			native_asteroid_mesh.visible = false
 		if not station_test_save_selected:
 			_show_native_location(true)
+		if is_instance_valid(exterior_camera):
+			exterior_camera.current = false
+		if is_instance_valid(player) and is_instance_valid(player.camera):
+			player.camera.current = true
 	if is_instance_valid(player):
 		player.use_native_authority(connected)
 	if not connected and is_instance_valid(ship_label):
@@ -488,6 +530,8 @@ func _on_native_ship_state(ship: Dictionary) -> void:
 	var states := ["IN SPACE", "DOCKED", "UNDOCKING", "DOCKING"]
 	var dock: int = int(ship["dock"])
 	_last_native_dock = dock
+	if is_instance_valid(exterior_ship_visual):
+		exterior_ship_visual.rotation.y = native_heading_to_godot_yaw(int(ship["heading"]))
 	if dock != 0:
 		_external_requested = false
 	_show_native_location(last_station_player_state == 4)
