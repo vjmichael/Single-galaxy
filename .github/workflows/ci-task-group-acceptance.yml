@@ -258,6 +258,9 @@ jobs:
           "Exact source SHA: $head" | Set-Content (Join-Path $root 'SOURCE_SHA.txt')
           'RUN_STATION_PLAYTEST_WINDOWS.cmd uses your existing Godot 4.7.2. All ship/station/observer native hosts must use the bundled SGDX supervisor, Windows Job Object and private process incidents. Optional crash minidump: SGDX_WINDOWS_MINIDUMP=1 (contains private memory). Playtest needs actual GPU/camera observation before final acceptance.' | Set-Content (Join-Path $root 'START_HERE.txt')
           Compress-Archive -Path (Join-Path $root '*') -DestinationPath build/SingleGalaxy_FP3D_SGDX03_Windows_Precompiled.zip -Force
+          # Validate the deliverable ZIP, not merely the compiled build targets.
+          & ./desktop_godot/build_tools/Verify-PrecompiledPackage.ps1 -Archive 'build/SingleGalaxy_FP3D_SGDX03_Windows_Precompiled.zip' -ExpectedSourceSha $head -EvidenceFile 'build/fp3d-env01/godot-logs/packaging-result.json'
+          if($LASTEXITCODE -ne 0){throw 'Actual delivered ZIP package verification failed'}
       - uses: actions/upload-artifact@v4
         with:
           name: SingleGalaxy-FP3D-SGDX03-Windows-${{ needs.validate.outputs.sha }}
