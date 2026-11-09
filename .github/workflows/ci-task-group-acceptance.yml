@@ -416,6 +416,9 @@ jobs:
             build/fp3d-env01/Testing/Temporary/LastTest.log
             build/fp3d-env01/godot-logs/*.log
             build/fp3d-env01/godot-logs/*.json
+            build/fp3d-env01/installed-image/desktop_godot/playtest-logs/*.log
+            build/fp3d-env01/installed-image/desktop_godot/playtest-logs/result.json
+            build/fp3d-env01/installed-image/desktop_godot/runtime/PROVENANCE.txt
           if-no-files-found: warn
       - name: Enforce ALL real native, Godot, packaged Windows and windowed gates
         if: always()
