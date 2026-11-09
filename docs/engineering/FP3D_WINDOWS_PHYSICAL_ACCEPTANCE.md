@@ -296,3 +296,38 @@ Four genuine non-headless rendered frames (dock, exterior, collision,
 reopened SQLite world) and the creator's own physical-PC GPU judgment
 remain separate release criteria. Keep PR #125 in draft; do not unlock
 manufactured mining equipment.
+
+## Actual WinPS5 process handle repair — consolidated run 42721988390
+
+The [next exact-head run](https://github.com/vjmichael/Single-galaxy/actions/runs/42721988390)
+again verified genuine Windows native C++ compilation and real Windows Godot
+4.7.2; 18/19 native CTests passed, while the *source-only*
+`galaxy_fp3d_win01_source_contract` failed because it still matched a
+previous `$exited=$p.HasExited` literal after the repaired implementation
+changed to an explicit Boolean cast. That source-contract string was updated
+without relaxing any runtime acceptance.
+
+The unmodified Windows PowerShell 5.1 package test still failed with an
+unavailable `ExitCode` even after `$p.WaitForExit()` on the PowerShell
+`Start-Process -PassThru` wrapper. No script error was observed; CLI
+wrapper SHA-256 and standard PowerShell 7 smoke were valid. This is now
+treated as a proven **PowerShell Process-wrapper result-observation
+defect**, not an authorized reason to ignore an absent exit code.
+
+The newest source repair avoids PowerShell's `Start-Process` wrapper
+altogether for CLI smokes: create a fresh
+`System.Diagnostics.ProcessStartInfo` / `Process`, explicitly set
+`UseShellExecute=false`, redirect BOTH output streams, drain them
+asynchronously to prevent deadlocks, enforce `WaitForExit(90000)`, then
+read `Process.ExitCode` directly as a required numeric value.
+Nonzero, missing status or Godot parser errors still block the player.
+Actual on-screen playback continues to use the GUI executable.
+The original official Godot console companion, separate checksums and
+negative engine-tamper test remain mandatory.
+
+**Pending evidence:** an exact-head consolidated native Windows/Linux
+gate must prove the .NET direct-process path under *actual Windows
+PowerShell 5.1*, a clean positive package launch, exact corrupt-engine
+denial/restore, and four native-joined non-headless frames. Only then
+issue the Windows ZIP for creator-run physical-GPU acceptance. PR draft
+and equipment deferral remain unchanged.
