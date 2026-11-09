@@ -1,0 +1,41 @@
+name: CI one-time exact-head source evidence export
+
+# One-time *source transfer* for independent local Linux reproduction while
+# native Windows/Linux group runners are backlogged. Not an acceptance gate.
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/ci-source-snapshot-export.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  source-snapshot:
+    if: github.repository == 'vjmichael/Single-galaxy'
+    runs-on: ubuntu-slim
+    timeout-minutes: 15
+    steps:
+      - name: Check out exact PR #125 task-group source
+        uses: actions/checkout@v4
+        with:
+          ref: 71917aa99aed790b6d2ba2a4598d5e20a94fead5
+          persist-credentials: false
+      - name: Verify immutable source SHA and export
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          expected="71917aa99aed790b6d2ba2a4598d5e20a94fead5"
+          test "$actual" = "$expected" || { echo "SOURCE SHA MISMATCH" >&2; exit 1; }
+          name="single-galaxy-fp3d-source-$expected.tar.gz"
+          tar -czf "$RUNNER_TEMP/$name" --exclude=.git --exclude=build -C "$GITHUB_WORKSPACE" .
+          ( cd "$RUNNER_TEMP" && sha256sum "$name" > "$name.sha256" )
+          printf 'SOURCE_SHA=%s\n' "$actual"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SingleGalaxy-exact-head-source-71917aa9
+          path: |
+            ${{ runner.temp }}/single-galaxy-fp3d-source-71917aa99aed790b6d2ba2a4598d5e20a94fead5.tar.gz
+            ${{ runner.temp }}/single-galaxy-fp3d-source-71917aa99aed790b6d2ba2a4598d5e20a94fead5.tar.gz.sha256
+          if-no-files-found: error
