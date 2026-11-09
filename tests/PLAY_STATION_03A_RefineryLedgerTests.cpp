@@ -27,6 +27,10 @@ int main() {
     CHECK(refine_one_tonne(hangar,lot,unstaffed,7,17,1,201).status==Status::NoWorker);
     auto dark=plant;dark.power_units=0;
     CHECK(refine_one_tonne(hangar,lot,dark,7,17,1,201).status==Status::NoPower);
+    auto full=plant;full.mineral_kg["nickel_iron"]=1000000000;
+    CHECK(refine_one_tonne(hangar,lot,full,7,17,1,201).status==Status::StockFull);
+    auto negative=plant;negative.mineral_kg["nickel_iron"]=-1;
+    CHECK(refine_one_tonne(hangar,lot,negative,7,17,1,201).status==Status::StockFull);
     CHECK(hangar.ore==1 && lot.remaining_tonnes==1 && kilograms(plant)==0);
     CHECK(refine_one_tonne(hangar,lot,plant,7,17,1,201).status==Status::Applied);
     CHECK(hangar.ore==0 && lot.remaining_tonnes==0);
