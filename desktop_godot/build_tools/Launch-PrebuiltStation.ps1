@@ -5,6 +5,27 @@
 param([string]$GodotExe="",[switch]$SkipHeadlessSmoke,[switch]$VerifyOnly)
 Set-StrictMode -Version Latest
 $ErrorActionPreference="Stop"
+
+# The single-click player path must work under Windows PowerShell 5.1 even
+# when Microsoft.PowerShell.Utility/Get-FileHash is missing. The .NET SHA-256
+# engine is built into Windows and is not a new dependency or authority.
+function Get-LocalSha256([string]$FullPath){
+  if(-not(Test-Path -LiteralPath $FullPath -PathType Leaf)){
+    throw "Required bundled file absent for SHA-256 identity check: $FullPath"
+  }
+  $stream=[System.IO.File]::OpenRead($FullPath)
+  try {
+    $hasher=[System.Security.Cryptography.SHA256]::Create()
+    try {
+      $hash=$hasher.ComputeHash($stream)
+      return ([System.BitConverter]::ToString($hash)).Replace('-','').ToLowerInvariant()
+    } finally {
+      if($hasher -ne $null){$hasher.Dispose()}
+    }
+  } finally {
+    if($stream -ne $null){$stream.Dispose()}
+  }
+}
 $project=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $station=Join-Path $project 'native\galaxy_desktop_station_host.exe'
 $pilot=Join-Path $project 'native\galaxy_desktop_player_host.exe'
@@ -48,7 +69,7 @@ try {
     if($expected -notmatch '^[0-9a-f]{64}$'){
       throw "Bundled Godot SHA-256 manifest malformed"
     }
-    $actual=(Get-FileHash -LiteralPath $GodotExe -Algorithm SHA256).Hash.ToLowerInvariant()
+    $actual=(Get-LocalSha256 $GodotExe)
     if($actual -cne $expected){
       throw "Bundled Godot SHA-256 does not match release-derived package manifest"
     }
@@ -131,7 +152,7 @@ try {
         $picture=Join-Path $logDir $record.image
         if($record.schema -eq 'SG-FP3D-OPERATOR-01' -and
            (Test-Path -LiteralPath $picture -PathType Leaf) -and
-           (Get-FileHash -LiteralPath $picture -Algorithm SHA256).Hash -ieq $record.image_sha256){
+           (Get-LocalSha256 $picture) -ieq $record.image_sha256){
           $captureCount++
           if($record.native_flight_joined -or $record.station_person.state -eq 4){$verifiedCaptureCount++}
         }
@@ -141,10 +162,10 @@ try {
   $manifest=[ordered]@{
     task='FP3D-WIN02-BUNDLED-RUNTIME';godot=$GodotExe
     engine_mode=if($GodotExe -eq (Join-Path $project 'runtime\Godot_v4.7.2-stable_win64.exe')){'BUNDLED-VERIFIED'}else{'EXPLICIT-DEVELOPER-OVERRIDE'}
-    engine_sha256=if(Test-Path -LiteralPath $GodotExe -PathType Leaf){(Get-FileHash -LiteralPath $GodotExe -Algorithm SHA256).Hash.ToLowerInvariant()}else{''}
-    native_station_hash=if(Test-Path $station){(Get-FileHash $station -Algorithm SHA256).Hash}else{''}
-    native_cockpit_hash=if(Test-Path $pilot){(Get-FileHash $pilot -Algorithm SHA256).Hash}else{''}
-    sgdx_supervisor_hash=if(Test-Path $supervisor){(Get-FileHash $supervisor -Algorithm SHA256).Hash}else{''}
+    engine_sha256=if(Test-Path -LiteralPath $GodotExe -PathType Leaf){(Get-LocalSha256 $GodotExe)}else{''}
+    native_station_hash=if(Test-Path $station){(Get-LocalSha256 $station).ToUpperInvariant()}else{''}
+    native_cockpit_hash=if(Test-Path $pilot){(Get-LocalSha256 $pilot).ToUpperInvariant()}else{''}
+    sgdx_supervisor_hash=if(Test-Path $supervisor){(Get-LocalSha256 $supervisor).ToUpperInvariant()}else{''}
     build_sha=if(Test-Path $shaManifest){(Get-Content -LiteralPath $shaManifest -Raw).Trim()}else{''}
     verified_game_viewport_screenshots=$captureCount
     verified_native_frame_screenshots=$verifiedCaptureCount
