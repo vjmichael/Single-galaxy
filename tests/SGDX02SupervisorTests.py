@@ -128,7 +128,7 @@ def check(supervisor, child):
         assert item["core_opt_in"] is False
         if os.name == "nt":
             assert item["reason"] == "unhandled_exception"
-            assert item["detail"] == "crash-time minidump recorded"
+            assert item["detail"] == "crash-time minidump recorded", item
             dumps = list((pathlib.Path(str(save)+".diagnostics")).glob("crash-*.dmp"))
             assert len(dumps) == 1, "opt-in second-chance dump missing"
             assert dumps[0].read_bytes()[:4] == b"MDMP", "not a Windows minidump"
