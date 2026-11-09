@@ -70,7 +70,8 @@ and label that a physical GPU pass.
 
 After a **real** Windows package artifact exists, extract it to a writable
 folder. Do **not** use an old ZIP or build from source on the user's PC.
-Double-click `desktop_godot/RUN_STATION_PLAYTEST_WINDOWS.cmd`. The launcher
+Double-click the ZIP root's `START_SINGLE_GALAXY_WINDOWS.cmd` (which
+delegates to `desktop_godot/RUN_STATION_PLAYTEST_WINDOWS.cmd`). The launcher
 checks native hosts, SGDX, exact source SHA and the **bundled** Godot 4.7.2
 runtime's SHA-256 and version, then runs the actual packaged scene's Godot
 smoke tests and opens the window. The default path uses the included editor
