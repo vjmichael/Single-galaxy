@@ -209,7 +209,8 @@ func _accept_refinery_line(f: PackedStringArray) -> void:
 			"workers":int(f[9]), "powered":int(f[10]), "energy":int(f[11]),
 			"ready_tick":int(f[12]), "ore_tonnes":int(f[13]),
 			"mineral_total_kg":int(f[14]), "shown_lots":shown,
-			"all_lots":all_lots, "mineral_count":minerals}
+			"all_lots":all_lots, "mineral_count":minerals,
+			"eligible_ship":int(_person.get("eligible_ship", 0))}
 		_refinery_lots.clear()
 		_refinery_minerals.clear()
 		_refinery_receiving = true
@@ -259,7 +260,7 @@ func _accept_refinery_line(f: PackedStringArray) -> void:
 		var total := 0
 		for amount in _refinery_minerals.values():
 			total += int(amount)
-		if int(f[4]) != int(_refinery_header["tick"]) or int(f[5]) != int(_refinery_header["generation"]) or int(f[6]) != _refinery_lots.size() or int(f[7]) != _refinery_minerals.size() or total != int(_refinery_header["mineral_total_kg"]) or result not in [0, 1, 2] or (result == 1 and transferred != 1000) or (result != 1 and transferred != 0):
+		if int(f[4]) != int(_refinery_header["tick"]) or int(f[5]) != int(_refinery_header["generation"]) or int(f[6]) != _refinery_lots.size() or int(f[7]) != _refinery_minerals.size() or total != int(_refinery_header["mineral_total_kg"]) or result not in [0, 1, 2, 3, 4] or (result == 1 and transferred != 1000) or (result == 3 and transferred != 1) or (result not in [1, 3] and transferred != 0):
 			stop("Refinery snapshot and original commit receipt mismatch")
 			return
 		_refinery_receiving = false
@@ -270,12 +271,13 @@ func _accept_refinery_line(f: PackedStringArray) -> void:
 		state["lots"] = _refinery_lots.duplicate(true)
 		state["minerals"] = _refinery_minerals.duplicate(true)
 		state["result"] = result
-		state["transferred_kg"] = transferred
+		state["transferred_kg"] = transferred if result == 1 else 0
+		state["unloaded_tonnes"] = transferred if result == 3 else 0
 		_refinery_header.clear()
 		_refinery_lots.clear()
 		_refinery_minerals.clear()
 		refinery_received.emit(state)
-		_status("Refined 1 tonne into station minerals" if result == 1 else "Station refinery snapshot received" if result == 0 else "Original station refinery command refused")
+		_status("Refined 1 tonne into station minerals" if result == 1 else "Unloaded 1 original tonne into the station hangar" if result == 3 else "Station refinery snapshot received" if result == 0 else "Original station cargo/refinery command refused")
 		return
 	stop("Unknown refinery source frame")
 
@@ -298,6 +300,23 @@ func submit_refining(lot_id: int) -> void:
 	_pending = request
 	_last_send = Time.get_ticks_msec()
 	_send("REFINE|%d|%d|%d|%d" % [_session,request,_generation,lot_id])
+
+func unload_owned_ship_tonne() -> void:
+	# The ship ID originates in the latest authenticated PERSON receipt.
+	# It is a selector only: native C++ independently checks station, ownership,
+	# docking, cargo, terminal distance and the one-tonne journaled command.
+	if not _active or _session <= 0 or _pending != 0 or int(_person.get("state", -1)) != 4:
+		_status("Unloading requires a real station resident and an idle original host")
+		return
+	var ship_id := int(_person.get("eligible_ship", 0))
+	if ship_id <= 0:
+		_status("No eligible existing owned docked ship to unload")
+		return
+	var request := _next_request
+	_next_request += 1
+	_pending = request
+	_last_send = Time.get_ticks_msec()
+	_send("UNLOAD|%d|%d|%d|%d" % [_session,request,_generation,ship_id])
 
 func _send(command: String) -> void:
 	if not _stdout.store_line(command):
