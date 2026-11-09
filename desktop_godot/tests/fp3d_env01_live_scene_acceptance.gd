@@ -156,7 +156,31 @@ func _run() -> void:
 	if _error.is_empty() and not collided:
 		_fail("no real swept collision reached after 70 original forward commands")
 	if is_instance_valid(_game) and is_instance_valid(_game.native_player_session):
-		_game.native_player_session.stop("04D integrated CI acceptance closed", true)
+		var sgdx_pid: int = _game.native_player_session.process_id()
+		_game.native_player_session.stop("SGDX-03 integrated native acceptance closed", true)
+		# A clean original QUIT must let SGDX write its final private receipt.
+		if sgdx_pid > 0:
+			for attempt in range(80):
+				if not OS.is_process_running(sgdx_pid):
+					break
+				await create_timer(0.05).timeout
+			if OS.is_process_running(sgdx_pid) and _error.is_empty():
+				_fail("SGDX supervised original host failed to release after clean QUIT")
+		if _error.is_empty():
+			var directory := path + ".diagnostics"
+			var found_real_receipt := false
+			if DirAccess.dir_exists_absolute(directory):
+				for file_name in DirAccess.get_files_at(directory):
+					if not file_name.begins_with("process-") or not file_name.ends_with(".json"):
+						continue
+					var record = JSON.parse_string(FileAccess.get_file_as_string(
+						directory.path_join(file_name)))
+					if record is Dictionary and record.get("role", "") == "godot_ship" and \
+							record.get("reason", "") == "clean_exit":
+						found_real_receipt = true
+						break
+			if not found_real_receipt:
+				_fail("Godot bypassed SGDX or clean original process evidence missing")
 	await process_frame
 	if not _error.is_empty():
 		quit(1)
