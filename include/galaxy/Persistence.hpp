@@ -932,6 +932,11 @@ public:
         FailPoint fail=FailPoint::None);
     bool register_player_person(PlayerId owner,EntityId aboard,
         FailPoint fail=FailPoint::None);
+    bool register_player_at_station(PlayerId owner,EntityId station,
+        FailPoint fail=FailPoint::None);
+    bool station_player_action(PlayerId owner,EntityId station,EntityId ship,
+        StationPlayerAction action,std::int64_t dx,std::int64_t dz,
+        std::uint64_t receipt,FailPoint fail=FailPoint::None);
     bool grant_player_rescue_consent(PlayerId owner,EntityId receiver,
         std::uint64_t consent_id,FailPoint fail=FailPoint::None);
     bool revoke_player_rescue_consent(PlayerId owner,std::uint64_t consent_id,
@@ -1266,7 +1271,8 @@ private:
     // to the ORIGINAL world snapshot/STEP/journal transaction; not public IPC.
     void step_with_cell_worker(const NativeCellWorkerTick* token,
                                FailPoint fail,
-                               const std::function<void(sqlite3*,std::uint64_t)>& trusted_interior_effect={});
+                               const std::function<void(sqlite3*,std::uint64_t)>& trusted_interior_effect={},
+                               const std::function<void(Simulation&)>& trusted_station_mutation={});
 
     // Only the trusted regional production bridge may attach a physical
     // inventory escrow effect to this canonical world command.
