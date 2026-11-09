@@ -140,7 +140,7 @@ checks = {
         and "Get-LocalSha256 $CliGodotExe" in gui_launcher
         and "Start-Process -FilePath $CliGodotExe" in gui_launcher
         and "Start-Process -FilePath $GodotExe" in gui_launcher
-        and "$exited=$p.HasExited" in gui_launcher
+        and "$exited=[bool]$p.HasExited" in gui_launcher
         and "godot_console_sha256=" in gui_launcher
         and "Verify-Pe64 $console" in package
         and "godot_console_companion_pe64_sha256" in package
