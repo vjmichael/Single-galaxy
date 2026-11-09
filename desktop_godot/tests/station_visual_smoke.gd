@@ -51,7 +51,7 @@ func _run() -> void:
     # This test does not write SQLite or grant ship authority to the UI.
     stage.call("_on_native_station_person", {"state":4,"station":1,"ship":0,
         "eligible_ship":2,"x_mm":1600,"z_mm":0})
-    if not station.visible or cabin.visible or absf(player.global_position.x - 1.6) > 0.001:
+    if not station.visible or cabin.visible or absf(player.global_position.x - 1.6) > 0.001 or absf(player.global_position.y - 0.9) > 0.02:
         _fail("station PERSON was not projected to station geometry")
         return
     stage.call("_on_native_station_person", {"state":0,"station":1,"ship":2,
