@@ -1,5 +1,7 @@
 // FP3D-ENV-01 — portable integer swept collision and original-world replay.
 #include "galaxy/NativeSweptCollision.hpp"
+#include "galaxy/GalacticCoordinates.hpp"
+#include <limits>
 #include "galaxy/Persistence.hpp"
 #include <filesystem>
 #include <iostream>
@@ -18,6 +20,39 @@ static void primitive_geometry(){
     REQUIRE(swept_ship_rock({1000,0,0},{500,0,0},500)); // cannot advance deeper
     REQUIRE(!swept_ship_rock({1000,0,0},{-500,0,0},500)); // escape initial penetration
 }
+static void high_order_seam_geometry(){
+    // The 100km *render/partition* cell cannot be an invisible physics wall.
+    using galaxy::galactic::Axis;
+    using galaxy::galactic::Point;
+    const auto edge=galaxy::galactic::kSectorEdgeMm;
+    const auto cell=galaxy::galactic::kCellMm;
+    const Point origin{{27,edge-10000},{-8,edge-5000},{3,cell-7000}};
+    auto rock=galaxy::galactic::advance(origin,{25000,0,0});
+    REQUIRE(rock && rock->x.sector==28 && origin.x.sector==27);
+    auto q=galaxy::galactic::nearby_displacement(*rock,origin);
+    REQUIRE(q && q->x_mm==25000 && q->y_mm==0 && q->z_mm==0);
+    REQUIRE(swept_ship_rock({q->x_mm,q->y_mm,q->z_mm},{20000,0,0},10000));
+    const auto moved=galaxy::galactic::advance(origin,{20000,0,0});
+    REQUIRE(moved && moved->x.sector==28);
+    auto reverse=galaxy::galactic::nearby_displacement(origin,*moved);
+    REQUIRE(reverse && reverse->x_mm==-20000);
+    const Point inner{{-12,cell-4000},{9,edge-3000},{2,edge-1000}};
+    const auto diagonal=galaxy::galactic::advance(inner,{12000,6000,3000});
+    REQUIRE(diagonal && diagonal->y.sector==10 &&
+            diagonal->z.sector==3);
+    const auto offset=galaxy::galactic::nearby_displacement(*diagonal,inner);
+    REQUIRE(offset && offset->x_mm==12000 && offset->y_mm==6000 &&
+            offset->z_mm==3000);
+    REQUIRE(swept_ship_rock({offset->x_mm,offset->y_mm,offset->z_mm},
+                            {20000,10000,5000},2500));
+    REQUIRE(!swept_ship_rock({12000,6000,11000},{20000,10000,0},1000));
+    // A distant sector is genuinely distant, never a modulo-local contact.
+    const Point remote{{30,1000},{9,edge-3000},{2,edge-1000}};
+    REQUIRE(!galaxy::galactic::nearby_displacement(remote,inner));
+    const Point max_sect{{std::numeric_limits<std::int64_t>::max(),edge-100},
+                          {0,0},{0,0}};
+    REQUIRE(!galaxy::galactic::advance(max_sect,{200,0,0}));
+}
 static Event send(PersistentWorld& world,std::uint64_t id,EntityId ship,int x){
     Command c{};
     c.id=id;c.sequence=id;c.execute_tick=world.world().tick()+1;
@@ -33,6 +68,7 @@ static Event send(PersistentWorld& world,std::uint64_t id,EntityId ship,int x){
 int main(int argc,char** argv){
     if(argc!=2)return 2;
     primitive_geometry();
+    high_order_seam_geometry();
     const std::string path=argv[1];
     const auto cleanup=[&]{
         std::error_code ec;
@@ -45,8 +81,14 @@ int main(int argc,char** argv){
         const auto ship=seed.add_colony_ship(7,{0,0},24,2);
         const auto rock=seed.add_geological_asteroid({25000,0},
             AsteroidClass::Metallic,10,900);
+        // The real rock and ship lie on OPPOSITE sector sides after
+        // the 25m original genesis offset. This tests original SQLite motion,
+        // not merely the standalone swept-geometry helper.
         seed.enable_native_galactic_physics({
-            {1,galactic::Point{{0,100000},{0,100000},{0,100000}}}});
+            {1,galactic::Point{
+                {27,galactic::kSectorEdgeMm-10000},
+                {-8,galactic::kSectorEdgeMm-5000},
+                {3,galactic::kCellMm-7000}}}});
         seed.enable_native_swept_asteroid_collision();
         const auto initial_mass=seed.total_material_kg();
         std::uint64_t contact_tick=0;std::string expected_snapshot;
@@ -65,6 +107,9 @@ int main(int argc,char** argv){
             REQUIRE(contact_tick>0);
             const auto* vessel=world.world().find(ship);
             REQUIRE(vessel && vessel->position.x<14000);
+            REQUIRE(vessel->physical_galactic_authoritative);
+            REQUIRE(vessel->physical_galactic.x.sector==28);
+            REQUIRE(world.world().find(rock)->physical_galactic.x.sector==28);
             REQUIRE(vessel->velocity.x==0 && vessel->velocity.y==0 &&
                     vessel->velocity_z_mm_per_tick==0);
             REQUIRE(vessel->hull==100);
@@ -90,7 +135,7 @@ int main(int argc,char** argv){
             REQUIRE(has_real_contact);
         }
         cleanup();
-        std::cout<<"FP3D-ENV-01 original native collision PASS: integer swept obstacles, fast/tangent/vertical/miss/escape, no rock penetration, bounded movement, real durable event, unchanged ore/hull/mass, SQLite restart\n";
+        std::cout<<"FP3D-ENV-01 original native collision, inter-sector X/Y/Z seams and 100km cell crossings PASS: integer swept obstacles, fast/tangent/vertical/miss/escape, no rock penetration, bounded movement, real durable event, unchanged ore/hull/mass, SQLite restart\n";
         return 0;
     }catch(const std::exception& e){std::cerr<<e.what()<<'\n';cleanup();return 1;}
 }

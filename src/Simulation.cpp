@@ -12426,12 +12426,13 @@ void Simulation::step() {
             if(snapshot_version_>=125 &&
                (entity.velocity.x || entity.velocity.y || entity.velocity_z_mm_per_tick)){
                 EntityId contact=0;
-                std::size_t asteroid_count=0;
+                // This is a narrow-phase count. Distant same-system rocks
+                // must never crash an otherwise valid large stellar system.
+                // Later use a proper spatial index to avoid the full scan.
+                std::size_t nearby_count=0;
                 for(const auto& [rock_id,rock]:entities_){
                     if(rock.type!=EntityType::Asteroid || rock.ore<=0 ||
                        rock.system_id!=entity.system_id)continue;
-                    if(++asteroid_count>8192)
-                        throw std::runtime_error("native collision needs a bounded spatial index");
                     if(!rock.physical_galactic_authoritative ||
                        !entity.physical_galactic_authoritative)
                         throw std::runtime_error("unproven native collision geometry");
@@ -12441,6 +12442,24 @@ void Simulation::step() {
                     const auto geology=geology_.find(rock_id);
                     const std::int64_t radius=geology==geology_.end()?500:
                         geology->second.radius_m*1000;
+                    if(radius<1 || radius>native_collision::kMaxRockRadiusMm)
+                        throw std::runtime_error("invalid native asteroid collider radius");
+                    // Swept three-axis broadphase in true physical mm;
+                    // no local cell projection and no sector concatenation.
+                    const auto within=[&](std::int64_t d,std::int64_t speed){
+                        const auto cap=radius+
+                            native_collision::kPrototypeShipRadiusMm+
+                            native_collision::kMaxSpeedPerAxisMm+2;
+                        return d>=-cap && d<=cap &&
+                               speed>=-native_collision::kMaxSpeedPerAxisMm &&
+                               speed<=native_collision::kMaxSpeedPerAxisMm;
+                    };
+                    if(!within(offset->x_mm,entity.velocity.x) ||
+                       !within(offset->y_mm,entity.velocity.y) ||
+                       !within(offset->z_mm,entity.velocity_z_mm_per_tick))
+                        continue;
+                    if(++nearby_count>8192)
+                        throw std::runtime_error("native collision dense bucket requires a spatial index");
                     if(native_collision::swept_ship_rock(
                         {offset->x_mm,offset->y_mm,offset->z_mm},
                         {entity.velocity.x,entity.velocity.y,
