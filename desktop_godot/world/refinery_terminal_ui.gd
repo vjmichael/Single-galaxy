@@ -2,12 +2,14 @@ extends PanelContainer
 ## PLAY-STATION-03C: strictly read-only display of the C++ station refinery.
 ## The ONLY emitted operation is the selected physical lot identifier.
 signal refine_requested(lot_id: int)
+signal unload_requested()
 signal terminal_closed()
 
 var _lots: ItemList
 var _status: Label
 var _minerals: Label
 var _refine_button: Button
+var _unload_button: Button
 var _current := {}
 
 func _ready() -> void:
@@ -35,6 +37,12 @@ func _ready() -> void:
 	_minerals = Label.new()
 	_minerals.text = "Minerals: no native inventory received"
 	column.add_child(_minerals)
+	_unload_button = Button.new()
+	_unload_button.text = "Unload 1 tonne from owned docked ship"
+	_unload_button.tooltip_text = "Original C++ checks actual cargo, ownership, dock and terminal distance"
+	_unload_button.disabled = true
+	_unload_button.pressed.connect(_on_unload_pressed)
+	column.add_child(_unload_button)
 	_refine_button = Button.new()
 	_refine_button.text = "Refine selected one-tonne lot"
 	_refine_button.disabled = true
@@ -54,12 +62,16 @@ func show_waiting() -> void:
 		_status.text = "Contacting original C++ station host..."
 	if is_instance_valid(_refine_button):
 		_refine_button.disabled = true
+	if is_instance_valid(_unload_button):
+		_unload_button.disabled = true
 
 func report_error(message: String) -> void:
 	if is_instance_valid(_status):
 		_status.text = message
 	if is_instance_valid(_refine_button):
 		_refine_button.disabled = true
+	if is_instance_valid(_unload_button):
+		_unload_button.disabled = true
 
 func present(snapshot: Dictionary) -> void:
 	# NEVER render optimistic ore or assign a local amount to inventory.
@@ -84,6 +96,10 @@ func present(snapshot: Dictionary) -> void:
 		text += "\nNative commit: %d kg refined into station storage" % int(snapshot.get("transferred_kg", 0))
 	elif int(snapshot.get("result", 0)) == 2:
 		text += "\nOriginal C++ refused the last refining command"
+	elif int(snapshot.get("result", 0)) == 3:
+		text += "\nNative commit: %d physical tonne moved into station storage" % int(snapshot.get("unloaded_tonnes", 0))
+	elif int(snapshot.get("result", 0)) == 4:
+		text += "\nOriginal C++ refused the last unloading command"
 	_status.text = text
 	_lots.clear()
 	var taxonomy_names := ["carbonaceous", "silicate", "metallic"]
@@ -104,6 +120,7 @@ func present(snapshot: Dictionary) -> void:
 		rows.append("%s: %d kg" % [str(product).replace("_", " "), int(products[product])])
 	_minerals.text = "Station stock: " + (", ".join(rows) if rows.size() > 0 else "none")
 	_update_refine_button(0)
+	_unload_button.disabled = int(snapshot.get("eligible_ship", 0)) <= 0
 	if not installed or not powered or workers <= 0 or energy <= 0 or tonne < 1:
 		_refine_button.disabled = true
 
@@ -126,3 +143,12 @@ func _on_refine_pressed() -> void:
 	_refine_button.disabled = true
 	_status.text = "Submitted original lot #%d; awaiting SQLite commit receipt..." % source_lot
 	refine_requested.emit(source_lot)
+
+func _on_unload_pressed() -> void:
+	if not is_instance_valid(_unload_button) or _unload_button.disabled:
+		return
+	# Do not change displayed inventory until a new original REFEND
+	# receipt and source-verified lot snapshot arrive from SQLite.
+	_unload_button.disabled = true
+	_status.text = "Requesting one-tonne physical unload; awaiting original SQLite receipt..."
+	unload_requested.emit()
