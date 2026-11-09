@@ -41,7 +41,16 @@ func _run() -> void:
     if native_crate == null or native_crate.position.distance_to(Vector3(1.6,0.8,0.0)) > 0.001:
         _fail("visible cabin cargo obstruction does not match native movement map")
         return
-    var native_shape := native_crate.get_node_or_null("CollisionShape3D") as CollisionShape3D
+    # The live Godot 4.7.2 scene creates CollisionShape3D.new() without
+    # giving it a literal node name. An auto-generated @CollisionShape3D@
+    # path is not the stable identity; inspect its actual runtime TYPE.
+    var native_shape: CollisionShape3D = null
+    for child in native_crate.get_children():
+        if child is CollisionShape3D:
+            if native_shape != null:
+                _fail("original native crate has multiple physics shapes")
+                return
+            native_shape = child as CollisionShape3D
     if native_shape == null:
         _fail("Godot cabin obstacle collision shape absent")
         return
