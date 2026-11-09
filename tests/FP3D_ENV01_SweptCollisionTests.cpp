@@ -11,14 +11,30 @@ using namespace galaxy;
 using namespace galaxy::native_collision;
 #define REQUIRE(x) do{if(!(x))throw std::runtime_error(std::string("FP3D-ENV-01 line ")+std::to_string(__LINE__)+": " #x);}while(false)
 static void primitive_geometry(){
+    // The entire 8m hull and wing span fit within the conservative 5.2m proxy.
+    REQUIRE(kShipBoundingRadiusMm==5200);
     REQUIRE(swept_ship_rock({10000,0,0},{20000,0,0},500)); // high speed across thin obstacle
-    REQUIRE(swept_ship_rock({10000,1400,0},{20000,0,0},500)); // glancing 3D contact
-    REQUIRE(!swept_ship_rock({10000,3000,0},{20000,0,0},500)); // near miss
-    REQUIRE(!swept_ship_rock({10000,0,3000},{20000,0,0},500)); // true vertical separation
+    REQUIRE(swept_ship_rock({10000,5500,0},{20000,0,0},500)); // glancing 3D contact
+    REQUIRE(!swept_ship_rock({10000,7000,0},{20000,0,0},500)); // near miss
+    REQUIRE(!swept_ship_rock({10000,0,7000},{20000,0,0},500)); // true vertical separation
     REQUIRE(!swept_ship_rock({10000,0,0},{-10000,0,0},500)); // receding
     REQUIRE(!swept_ship_rock({10000,0,0},{0,0,0},500)); // no phantom static contact
     REQUIRE(swept_ship_rock({1000,0,0},{500,0,0},500)); // cannot advance deeper
     REQUIRE(!swept_ship_rock({1000,0,0},{-500,0,0},500)); // escape initial penetration
+    auto first=first_swept_ship_rock_contact({25000,0,0},{20000,0,0},10000);
+    REQUIRE(first && first->first_contact_subtick>0 &&
+            first->first_contact_subtick<kSubtickScale);
+    REQUIRE(first->safe_delta.x>=9700 && first->safe_delta.x<9800);
+    REQUIRE(first->safe_delta.y==0 && first->safe_delta.z==0);
+    const auto radius=10000+kShipBoundingRadiusMm+kContactSkinMm;
+    REQUIRE(25000-first->safe_delta.x>radius); // never land inside solid proxy
+    const auto farther=first_swept_ship_rock_contact({35000,0,0},{20000,0,0},10000);
+    REQUIRE(farther && farther->first_contact_subtick>first->first_contact_subtick);
+    const auto adjacent=first_swept_ship_rock_contact({20000,0,0},{20000,0,0},10000);
+    REQUIRE(adjacent && adjacent->first_contact_subtick<first->first_contact_subtick);
+    // At an existing overlap, a ship can back away rather than be trapped.
+    auto inward=first_swept_ship_rock_contact({1000,0,0},{20000,0,0},500);
+    REQUIRE(inward && inward->first_contact_subtick==0 && inward->safe_delta.x==0);
 }
 static void high_order_seam_geometry(){
     // The 100km *render/partition* cell cannot be an invisible physics wall.
@@ -86,7 +102,7 @@ int main(int argc,char** argv){
         // not merely the standalone swept-geometry helper.
         seed.enable_native_galactic_physics({
             {1,galactic::Point{
-                {27,galactic::kSectorEdgeMm-10000},
+                {27,galactic::kSectorEdgeMm-4000},
                 {-8,galactic::kSectorEdgeMm-5000},
                 {3,galactic::kCellMm-7000}}}});
         seed.enable_native_swept_asteroid_collision();
@@ -106,7 +122,10 @@ int main(int argc,char** argv){
             }
             REQUIRE(contact_tick>0);
             const auto* vessel=world.world().find(ship);
-            REQUIRE(vessel && vessel->position.x<14000);
+            REQUIRE(vessel && vessel->position.x>9000 && vessel->position.x<10000);
+            // The ship advances to the first safe contact millimetre,
+            // rather than freezing at the beginning of its whole tick.
+            REQUIRE(vessel->position.x>0);
             REQUIRE(vessel->physical_galactic_authoritative);
             REQUIRE(vessel->physical_galactic.x.sector==28);
             REQUIRE(world.world().find(rock)->physical_galactic.x.sector==28);
