@@ -12419,16 +12419,14 @@ void Simulation::step() {
         Entity& entity = pair.second;
         if (entity.type != EntityType::Ship || entity.dock_state != DockState::InSpace || entity.jump_state != ShipJumpState::Ready) continue;
         if(snapshot_version_>=120){
-            // FP3D-ENV-01/v125 opt-in: conservative swept 3D solid-asteroid
-            // contact BEFORE moving the real ship. No Godot collision oracle,
-            // resource mint or teleport. Stops the entire proposed movement
-            // for this tick; the original durable activity event exposes why.
-            if(snapshot_version_>=125 &&
-               (entity.velocity.x || entity.velocity.y || entity.velocity_z_mm_per_tick)){
-                EntityId contact=0;
-                // This is a narrow-phase count. Distant same-system rocks
-                // must never crash an otherwise valid large stellar system.
-                // Later use a proper spatial index to avoid the full scan.
+            // FP3D-ENV-01D: physical original ship movement happens ONCE,
+            // with the first actual 3D impact resolved to a safe millimetre.
+            // Godot cannot move the authoritative ship or choose impact pose.
+            native_collision::Delta3 accepted{
+                entity.velocity.x,entity.velocity.y,entity.velocity_z_mm_per_tick};
+            EntityId contact=0;
+            std::uint32_t earliest=native_collision::kSubtickScale+1;
+            if(snapshot_version_>=125 && (accepted.x||accepted.y||accepted.z)){
                 std::size_t nearby_count=0;
                 for(const auto& [rock_id,rock]:entities_){
                     if(rock.type!=EntityType::Asteroid || rock.ore<=0 ||
@@ -12438,47 +12436,39 @@ void Simulation::step() {
                         throw std::runtime_error("unproven native collision geometry");
                     const auto offset=galactic::nearby_displacement(
                         rock.physical_galactic,entity.physical_galactic);
-                    if(!offset)continue;
+                    if(!offset)continue; // distant sector; not a fake wall
                     const auto geology=geology_.find(rock_id);
                     const std::int64_t radius=geology==geology_.end()?500:
                         geology->second.radius_m*1000;
                     if(radius<1 || radius>native_collision::kMaxRockRadiusMm)
                         throw std::runtime_error("invalid native asteroid collider radius");
-                    // Swept three-axis broadphase in true physical mm;
-                    // no local cell projection and no sector concatenation.
-                    const auto within=[&](std::int64_t d,std::int64_t speed){
+                    const auto within=[&](std::int64_t d){
                         const auto cap=radius+
-                            native_collision::kPrototypeShipRadiusMm+
-                            native_collision::kMaxSpeedPerAxisMm+2;
-                        return d>=-cap && d<=cap &&
-                               speed>=-native_collision::kMaxSpeedPerAxisMm &&
-                               speed<=native_collision::kMaxSpeedPerAxisMm;
+                            native_collision::kShipBoundingRadiusMm+
+                            native_collision::kMaxSpeedPerAxisMm+
+                            native_collision::kContactSkinMm;
+                        return d>=-cap && d<=cap;
                     };
-                    if(!within(offset->x_mm,entity.velocity.x) ||
-                       !within(offset->y_mm,entity.velocity.y) ||
-                       !within(offset->z_mm,entity.velocity_z_mm_per_tick))
-                        continue;
+                    if(!within(offset->x_mm)||!within(offset->y_mm)||
+                       !within(offset->z_mm))continue;
                     if(++nearby_count>8192)
-                        throw std::runtime_error("native collision dense bucket requires a spatial index");
-                    if(native_collision::swept_ship_rock(
+                        throw std::runtime_error("native collision dense bucket needs spatial index");
+                    const auto hit=native_collision::first_swept_ship_rock_contact(
                         {offset->x_mm,offset->y_mm,offset->z_mm},
                         {entity.velocity.x,entity.velocity.y,
-                         entity.velocity_z_mm_per_tick},radius)){
-                        contact=rock_id;break;
+                         entity.velocity_z_mm_per_tick},radius);
+                    if(hit && (!contact || hit->first_contact_subtick<earliest ||
+                       (hit->first_contact_subtick==earliest && rock_id<contact))){
+                        contact=rock_id;
+                        earliest=hit->first_contact_subtick;
+                        accepted=hit->safe_delta;
                     }
                 }
-                if(contact){
-                    entity.velocity={};
-                    entity.velocity_z_mm_per_tick=0;
-                    activity_events_.push_back({tick_,ActivityKind::ShipAsteroidContact,
-                        0,entity.id,contact,Outcome::Applied,0});
-                    continue; // no tunneling and no invented ore/hull damage
-                }
             }
-            // v120 is the authoritative motion integrator. The finite XY/Z
-            // fields are compatibility projections, never the physics source.
+            // The higher-order original absolute position is the sole source
+            // of truth. Even a contact which traverses a sector edge is legal.
             const auto next=galactic::advance(entity.physical_galactic,
-                {entity.velocity.x,entity.velocity.y,entity.velocity_z_mm_per_tick});
+                {accepted.x,accepted.y,accepted.z});
             if(!entity.physical_galactic_authoritative || !next)
                 throw std::overflow_error("native galactic flight sector exhausted");
             entity.physical_galactic=*next;
@@ -12488,10 +12478,15 @@ void Simulation::step() {
                     std::numeric_limits<std::int64_t>::min() :
                     std::numeric_limits<std::int64_t>::max());
             };
-            entity.position.x=project(entity.position.x,entity.velocity.x);
-            entity.position.y=project(entity.position.y,entity.velocity.y);
-            entity.position_z_mm=project(entity.position_z_mm,
-                                         entity.velocity_z_mm_per_tick);
+            entity.position.x=project(entity.position.x,accepted.x);
+            entity.position.y=project(entity.position.y,accepted.y);
+            entity.position_z_mm=project(entity.position_z_mm,accepted.z);
+            if(contact){
+                entity.velocity={};
+                entity.velocity_z_mm_per_tick=0;
+                activity_events_.push_back({tick_,ActivityKind::ShipAsteroidContact,
+                    0,entity.id,contact,Outcome::Applied,0});
+            }
         }else if(snapshot_version_>=119){
             // True native three-axis flight: the old +/-1000 km local
             // rectangle is no longer a collision or velocity wall.
