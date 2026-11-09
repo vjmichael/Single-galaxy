@@ -1,6 +1,7 @@
 """Real child-stdio test against the original C++ flight host (Python is test-only)."""
 import sqlite3,subprocess,sys,tempfile,time
 from pathlib import Path
+from contextlib import closing
 
 exe=Path(sys.argv[1]);assert exe.is_file(),exe
 with tempfile.TemporaryDirectory() as temp:
@@ -54,7 +55,7 @@ with tempfile.TemporaryDirectory() as temp:
     assert send(p,f"FLIGHT|{epoch}|12|1|X1000")==["DENY","1","12","invalid-flight-action"]
     p.stdin.write("QUIT\n");p.stdin.flush()
     assert p.wait(timeout=4)==0,p.stderr.read()
-    with sqlite3.connect(save) as db:
+    with closing(sqlite3.connect(save)) as db:
         rows=db.execute("SELECT action,outcome FROM historical_events WHERE command_id IS NOT NULL").fetchall()
         assert len(rows)>=6,rows
         assert db.execute("SELECT seated,seq FROM sg_fp3d03a_seat WHERE owner=7").fetchone()==(1,1)
