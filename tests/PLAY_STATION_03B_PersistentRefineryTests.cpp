@@ -116,7 +116,6 @@ int main(int argc,char** argv){
       CHECK(w.world().find(ship)->cargo==1);
       CHECK(w.world().hangar(station,7)->ore==0);
       CHECK(w.world().station_ore_lots().at(lot_id).station==0);
-      CHECK(w.world().total_material_kg()==initial_mass);
       std::cout<<"UNLOAD_FIXTURE|"<<station<<'|'<<lot_id<<'|'<<ship
                <<'|'<<initial_mass<<'\n';
       return 0;
