@@ -16,7 +16,7 @@ enum class SeatFailPoint { None, AfterSeatReceipt, AfterSeatUpdate };
 // strafe, NOT fictional pitch. Vertical pitch/roll remain separate gates.
 enum class PilotFailPoint { None, AfterAcceptance };
 enum class PilotControl { Undock, YawLeft, YawRight, Forward, Reverse,
-                          StrafePort, StrafeStarboard, Counterthrust };
+                          StrafePort, StrafeStarboard, Counterthrust, Dock };
 struct FlightState {
     EntityId ship=0;
     std::uint64_t tick=0,generation=0;

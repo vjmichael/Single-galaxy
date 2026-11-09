@@ -47,6 +47,9 @@ with tempfile.TemporaryDirectory() as temp:
     assert port[5]=="0" and int(port[13])<0,port
     brake=send(p,f"FLIGHT|{epoch}|10|1|BRAKE")
     assert brake[5]=="0" and abs(int(brake[12]))<abs(int(port[12])) and abs(int(brake[13]))<abs(int(port[13])),brake
+    dock=send(p,f"FLIGHT|{epoch}|11|1|DCK")
+    assert dock[0]=="SHIP" and dock[5]=="0" and dock[16]=="1",dock
+    assert [int(dock[9]),int(dock[10]),int(dock[11])]==[0,0,0],dock
     # No client-given actor identity or arbitrary vector ever enters FLIGHT.
     assert send(p,f"FLIGHT|{epoch}|11|1|X1000")==["DENY","1","11","invalid-flight-action"]
     p.stdin.write("QUIT\n");p.stdin.flush()
@@ -57,10 +60,12 @@ with tempfile.TemporaryDirectory() as temp:
         assert db.execute("SELECT seated,seq FROM sg_fp3d03a_seat WHERE owner=7").fetchone()==(1,1)
     restarted,pose2,ship2=open_host()
     assert pose2[11:]==["1","1"],pose2
-    assert ship2[15]=="0" and ship2[16]=="0" and int(ship2[9])>0,ship2
+    assert ship2[15]=="0" and ship2[16]=="1",ship2
+    depart=send(restarted,f"FLIGHT|{pose2[2]}|1|1|UND")
+    assert depart[0]=="SHIP" and depart[5]=="0" and depart[16]=="0",depart
     assert pose2[2]!=epoch,"session epoch must change across process restart"
-    stopped=send(restarted,f"SEAT|{pose2[2]}|1|1|0")
+    stopped=send(restarted,f"SEAT|{pose2[2]}|2|1|0")
     assert stopped[:2]==["ACK","1"] and stopped[11:]==["0","2"],stopped
     restarted.stdin.close()
     assert restarted.wait(timeout=4)==0,restarted.stderr.read()
-print("FP3D03B native pipe PASS: seat-gated undock, actual yaw/velocity, brake, original SQLite receipts, restart")
+print("FP3D03B native pipe PASS: seat-gated undock + return dock, original velocity/SQLite berth recovery")

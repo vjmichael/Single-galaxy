@@ -109,6 +109,7 @@ void send_rock_contact(std::uint64_t session,std::uint64_t req,
 }
 bool flight_action(std::string_view name,PilotControl& out){
     if(name=="UND")out=PilotControl::Undock;
+    else if(name=="DCK")out=PilotControl::Dock;
     else if(name=="LEFT")out=PilotControl::YawLeft;
     else if(name=="RIGHT")out=PilotControl::YawRight;
     else if(name=="FWD")out=PilotControl::Forward;

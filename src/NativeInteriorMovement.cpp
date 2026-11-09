@@ -1,4 +1,5 @@
 #include "galaxy/NativeInteriorMovement.hpp"
+#include "galaxy/NativeDockingTarget.hpp"
 #include <algorithm>
 #include <limits>
 #include <sstream>
@@ -461,6 +462,13 @@ std::optional<Outcome> InteriorMovement::pilot(PlayerId owner,
     switch(control){
         case PilotControl::Undock:
             c.action=Action::RequestUndock;break;
+        case PilotControl::Dock: {
+            const auto station=docking::nearest_original_station(world_.world(),*ship);
+            if(!station)return std::nullopt;
+            c.action=Action::RequestDock;
+            c.target=*station;
+            break;
+        }
         case PilotControl::YawLeft:c.amount=-15;break;
         case PilotControl::YawRight:c.amount=15;break;
         case PilotControl::Forward:
@@ -497,13 +505,16 @@ std::optional<Outcome> InteriorMovement::pilot(PlayerId owner,
     for(std::size_t i=before;i<events.size();++i)
         if(events[i].command_id==c.id)result=events[i].result;
     if(!result)throw std::runtime_error("flight command lacks execution receipt");
-    if(control==PilotControl::Undock&&*result==Outcome::Applied){
+    if((control==PilotControl::Undock || control==PilotControl::Dock) &&
+       *result==Outcome::Applied){
         // Original docking state transitions require two further world ticks.
         // Only advance bounded canonical simulation; never set dock_state
         // directly or fabricate a completion receipt.
         for(int i=0;i<Simulation::kDockTransitionTicks+1;++i){
             const auto* current=world_.world().find(pose.ship);
-            if(!current||current->dock_state!=DockState::Undocking)break;
+            if(!current || (control==PilotControl::Undock ?
+                current->dock_state!=DockState::Undocking :
+                current->dock_state!=DockState::Docking))break;
             world_.step();
         }
     }

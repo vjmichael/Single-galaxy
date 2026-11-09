@@ -1,4 +1,5 @@
 #include "galaxy/NativeInteriorMovement.hpp"
+#include "galaxy/NativeDockingTarget.hpp"
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
@@ -21,6 +22,14 @@ int main(int argc,char** argv){
    need(initial.register_player_person(7,own_ship),"register original pilot-person");
    PersistentWorld world(save,std::move(initial));
    InteriorMovement cockpit(save,world);
+   {
+    Simulation far(0xC023);
+    (void)far.add_station({0,0});
+    const auto vessel=far.add_ship(7,{20000,0},24);
+    const auto* candidate=far.find(vessel);
+    need(candidate && !docking::nearest_original_station(far,*candidate),
+         "original host refuses station too far away");
+   }
    need(!cockpit.pilot(7,0,kFlightTag|1,PilotControl::Undock),
         "unseated input denied");
    need(!world.world().has_pending_cockpit_flight(),"no rejected pending command");
@@ -57,6 +66,22 @@ int main(int argc,char** argv){
    need(f.vx<speed_x&&f.vy>speed_y,"counterthrust damps original velocity");
    need(!cockpit.pilot(7,1,kFlightTag|9,PilotControl::Forward),
         "same canonical command ID never replays");
+   need(f.vx==0 && f.vy==0 && f.vz==0,
+        "ship must be stationary for original return docking");
+   need(world.world().find(own_ship)->dock_station==0,
+        "undocked original station identity is cleared");
+   need(cockpit.pilot(7,1,kFlightTag|10,PilotControl::Dock)==Outcome::Applied,
+        "native seat-authorized return dock near authentic station");
+   f=cockpit.flight_state(7);
+   need(f.dock==DockState::Docked && f.x==0 && f.y==0 &&
+        !world.world().has_pending_cockpit_flight(),
+        "native return dock finishes, co-locates at station and persists");
+   need(!cockpit.pilot(7,1,kFlightTag|11,PilotControl::Dock),
+        "cannot dock an already berthed ship");
+   need(cockpit.pilot(7,1,kFlightTag|12,PilotControl::Undock)==Outcome::Applied,
+        "same owned ship can depart again after docking");
+   need(cockpit.flight_state(7).dock==DockState::InSpace,
+        "return-to-space transition completed without creating replacement vessel");
    need(cockpit.set_seated(7,1,901,false),"stand in same hull");
    need(!cockpit.pilot(7,2,kFlightTag|10,PilotControl::Forward),
         "standing player cannot pilot");
@@ -74,14 +99,14 @@ int main(int argc,char** argv){
    need(cockpit.set_seated(7,2,902,true),"sit after restart");
    bool injected=false;
    try{
-    (void)cockpit.pilot(7,3,kFlightTag|11,PilotControl::YawRight,
+    (void)cockpit.pilot(7,3,kFlightTag|13,PilotControl::Dock,
                        PilotFailPoint::AfterAcceptance);
    }catch(const std::runtime_error& e){
     injected=std::string(e.what()).find("injected cockpit flight")!=std::string::npos;
    }
    need(injected&&world.world().has_pending_cockpit_flight(),
         "crash leaves visible pending original flight command");
-   need(!cockpit.pilot(7,3,kFlightTag|12,PilotControl::Forward),
+   need(!cockpit.pilot(7,3,kFlightTag|14,PilotControl::Forward),
         "pending command fails closed");
   }
   {
@@ -91,7 +116,7 @@ int main(int argc,char** argv){
         "interrupted command survives SQLite restart and must block native host");
   }
   std::cout<<"FP3D03B source test executable PASS: original yaw, thrust, counterthrust,"
-              " undock, seat authority, SQLite restart, pending-flight fail-closed\n";
+              " dock/undock, seat authority, SQLite restart, pending-dock fail-closed\n";
  }catch(const std::exception& e){
   std::cerr<<"FP3D03B FAIL: "<<e.what()<<'\n';return 1;
  }
