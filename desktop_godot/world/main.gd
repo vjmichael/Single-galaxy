@@ -7,6 +7,7 @@ const NATIVE_SESSION := preload("res://world/native_session.gd")
 const NATIVE_PLAYER_SESSION := preload("res://world/native_player_session.gd")
 const NATIVE_STATION_SESSION := preload("res://world/native_station_session.gd")
 const REFINERY_TERMINAL_UI := preload("res://world/refinery_terminal_ui.gd")
+const FLIGHT_INSTRUMENTS := preload("res://world/native_flight_instruments.gd")
 const MONOCHROME := Color(0.76, 0.76, 0.76, 1.0)
 # Visual capsule center for 1.75 m tall collider; original C++ X/Z unchanged.
 const AVATAR_CENTER_HEIGHT_M := 0.90
@@ -24,6 +25,9 @@ var native_asteroid_mesh: MeshInstance3D
 var exterior_ship_visual: Node3D
 var exterior_camera: Camera3D
 var asteroid_label: Label
+var flight_instrument_label: Label
+var _verified_flight_ship: Dictionary = {}
+var _verified_flight_rock: Dictionary = {}
 var _external_requested := false
 var _last_native_dock := -1
 var _geometry_parent: Node3D
@@ -321,6 +325,10 @@ func _build_hud() -> void:
 	asteroid_label = Label.new()
 	asteroid_label.text = "ASTEROID: awaiting verified original ship contact"
 	contents.add_child(asteroid_label)
+	flight_instrument_label = Label.new()
+	flight_instrument_label.name = "ReadOnlyOriginalPilotInstrument"
+	flight_instrument_label.text = "FLIGHT SENSOR: awaiting matching original SHIP + ROCK receipts"
+	contents.add_child(flight_instrument_label)
 	ship_label = Label.new()
 	ship_label.text = "SHIP: native physical state not yet verified"
 	contents.add_child(ship_label)
@@ -503,6 +511,11 @@ func _on_native_station_person(person: Dictionary) -> void:
 func _on_native_player_connection(connected: bool) -> void:
 	# Process start alone is NOT proof of ship custody; wait for POSE.
 	if not connected:
+		_verified_flight_ship.clear()
+		_verified_flight_rock.clear()
+		if is_instance_valid(flight_instrument_label):
+			flight_instrument_label.text = "FLIGHT SENSOR: offline; previous native contacts are no longer live"
+	if not connected:
 		_external_requested = false
 		if is_instance_valid(native_asteroid_mesh):
 			native_asteroid_mesh.visible = false
@@ -519,12 +532,24 @@ func _on_native_player_connection(connected: bool) -> void:
 	if is_instance_valid(scope_label):
 		scope_label.text = "NATIVE IN-SHIP POSE + ORIGINAL C++ FLIGHT (TEST GEOMETRY)" if connected else "LOCAL MOVEMENT TEST ONLY — NOT CONNECTED TO NATIVE GALAXY"
 
+func _refresh_native_flight_instruments() -> void:
+	if not is_instance_valid(flight_instrument_label):
+		return
+	# A new SHIP tick invalidates the prior rock until this very tick has a
+	# corresponding, original C++ ROCK/ROCKNONE observation.
+	var projection: Dictionary = FLIGHT_INSTRUMENTS.from_verified_frames(
+		_verified_flight_ship, _verified_flight_rock)
+	flight_instrument_label.text = FLIGHT_INSTRUMENTS.display(projection)
+
 func _on_native_ship_intents(actions: PackedStringArray) -> void:
 	if native_player_session != null:
 		native_player_session.submit_flight(actions)
 
 func _on_native_ship_state(ship: Dictionary) -> void:
 	_record_native_projection("SHIP", ship)
+	_verified_flight_ship = ship.duplicate(true)
+	_verified_flight_rock.clear()
+	_refresh_native_flight_instruments()
 	if not is_instance_valid(ship_label):
 		return
 	var states := ["IN SPACE", "DOCKED", "UNDOCKING", "DOCKING"]
@@ -546,6 +571,8 @@ func _on_native_asteroid_contact(contact: Dictionary) -> void:
 	if native_player_session == null or not native_player_session.is_active():
 		return
 	_record_native_projection("ROCK", contact)
+	_verified_flight_rock = contact.duplicate(true)
+	_refresh_native_flight_instruments()
 	if not is_instance_valid(native_asteroid_mesh):
 		return
 	var found := bool(contact["found"])
