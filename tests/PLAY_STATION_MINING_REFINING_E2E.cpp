@@ -23,6 +23,38 @@ static Event execute(PersistentWorld& w, std::uint64_t& next, PlayerId owner,
     const auto out=w.world().events().back();
     CHECK(out.command_id==c.id);return out;
 }
+static void lost_ship_no_free_replacement(const std::string& save) {
+    std::error_code ec;
+    for(auto suffix:{"","-wal","-shm"})fs::remove(save+suffix,ec);
+    Simulation seed(0x5310);
+    const auto station=seed.add_station({0,0});
+    const auto victim=seed.spawn_ship_docked(7,station,8,8);
+    const auto attacker=seed.add_colony_ship(8,{1000,0},8,2);
+    seed.provision_starter_exploration_scanner(attacker);
+    {
+        PersistentWorld w(save,std::move(seed));
+        CHECK(station_launch::available_ship(w.world(),7,station)==victim);
+        std::uint64_t id=320000;
+        CHECK(execute(w,id,7,victim,Action::RequestUndock,station).result==Outcome::Applied);
+        w.steps(2);
+        CHECK(w.world().find(victim)->dock_state==DockState::InSpace);
+        CHECK(w.submit_testing_destroy_ship(attacker,victim,++id));
+        w.step();
+        CHECK(w.world().find(victim)->type==EntityType::Wreck);
+        CHECK(!station_launch::available_ship(w.world(),7,station));
+        CHECK(w.world().find(victim)->owner_id==7);
+    }
+    {
+        PersistentWorld w(save,Simulation(0x5311));
+        CHECK(w.world().find(victim)->type==EntityType::Wreck);
+        CHECK(!station_launch::available_ship(w.world(),7,station));
+        for(const auto& [id,e]:w.world().entities())
+            if(e.owner_id==7)CHECK(e.type!=EntityType::Ship);
+        std::cout<<"PLAY-STATION-01 fleet loss: last player's original ship became "
+                    "a wreck; no replacement spawned; station offers zero eligible vessels after restart PASS\n";
+    }
+}
+
 static void geological_minerals_round_trip(const std::string& save) {
     std::error_code clean_error;
     for(auto suffix:{"","-wal","-shm"}) fs::remove(save+suffix,clean_error);
@@ -181,6 +213,7 @@ int main(int argc,char** argv) {
                         "exactly one refined ore-equivalent and player custody persisted PASS\n";
         }
         geological_minerals_round_trip(db.string()+".geological.sqlite");
+        lost_ship_no_free_replacement(db.string()+".lost.sqlite");
         return 0;
     }catch(const std::exception& e){
         std::cerr<<"PLAY-STATION-01 FAILED: "<<e.what()<<'\n';return 1;
