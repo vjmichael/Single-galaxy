@@ -1,7 +1,7 @@
 {
   "schema": "SG-CI-GATE-01",
   "task_group": "SGDX03",
-  "source_sha": "7b78db4de492754830aa7100c1777f3939e6e914",
+  "source_sha": "d5f5e8102f28d014c0b399100fa420a7a9a94e5f",
   "pr_number": 125,
-  "note": "ONE consolidated SGDX03/FP3D Windows+Linux exact-head repair gate: previous run 42707287157 genuinely passed all 19 MSVC Windows CTests including 2 real private crash-time MDMP and 4 repaired SQLite tests, and Linux 19/19. Actual Godot 4.7.2 failed to parse main.gd two untyped F11 Boolean variables and timed out on a failed script. Source now explicitly types both as bool. Native Godot runner checks SCRIPT ERROR/Parse Error even on exit 0 and bounds every subprocess per step; continues collecting ZIP/renderer evidence without false success. Must execute real Godot scenes, hash-checked source+official Godot Windows ZIP, installed-image headless smoke and tamper refusal, on-screen camera/asteroid/restart screenshots. Never promote draft PR or enable mining hardware without physical Windows GPU playtest."
+  "note": "ONE exact-head end-of-group SGDX03 FP3D-WIN01/WIN02 Windows/Linux native + real Godot + precompiled ZIP + tampered runtime rejection + non-headless viewport gate. Prior Windows and Linux 19/19 native CTest passed including private real Windows MDMP and SQLite repairs. Latest Godot 4.7.2 parser found and we repaired two F11 bool inferred values and two refinery Dictionary/Array inferred values; explicit source regression checks added. The packaged ZIP runtime now checks BOTH real stdout/stderr and uses 90-second bounded child processes. Workflow captures extracted image's real parser logs and original-source screenshot receipts. Do NOT promote draft or claim GPU user-PC acceptance without actual physical playtest; no manufactured mining until then."
 }
