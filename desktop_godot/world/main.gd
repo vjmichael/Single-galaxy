@@ -7,6 +7,8 @@ const NATIVE_SESSION := preload("res://world/native_session.gd")
 const NATIVE_PLAYER_SESSION := preload("res://world/native_player_session.gd")
 const NATIVE_STATION_SESSION := preload("res://world/native_station_session.gd")
 const MONOCHROME := Color(0.76, 0.76, 0.76, 1.0)
+# Visual capsule center for 1.75 m tall collider; original C++ X/Z unchanged.
+const AVATAR_CENTER_HEIGHT_M := 0.90
 var material: StandardMaterial3D
 var player # assigned CharacterBody3D with runtime PlayerController.gd; signals are script-defined
 var scope_label: Label
@@ -205,7 +207,7 @@ func _show_native_location(in_station: bool) -> void:
 func _build_player() -> void:
 	player = CharacterBody3D.new()
 	player.name = "LocalGrayboxPerson_NOT_NATIVE_PLAYER"
-	player.position = Vector3(0, 1.45, 12.0)
+	player.position = Vector3(0, AVATAR_CENTER_HEIGHT_M, 12.0)
 	player.set_script(PLAYER_SCRIPT)
 	add_child(player)
 	player.inspected.connect(_on_inspected)
@@ -358,7 +360,7 @@ func _on_native_station_person(person: Dictionary) -> void:
 	_show_native_location(last_station_player_state == 4)
 	if is_instance_valid(player):
 		player.use_native_seat(false)
-		player.global_position = Vector3(float(person["x_mm"]) / 1000.0, 1.45,
+		player.global_position = Vector3(float(person["x_mm"]) / 1000.0, AVATAR_CENTER_HEIGHT_M,
 			float(person["z_mm"]) / 1000.0)
 	if is_instance_valid(ship_label):
 		ship_label.text = "STATION #%d | %s | available owned ship #%d | position (%.2f, %.2f)m" % [
@@ -413,7 +415,7 @@ func _on_native_player_pose(pose: Dictionary) -> void:
 	if is_instance_valid(player):
 		player.use_native_seat(bool(pose["seated"]))
 		player.global_position = Vector3(float(pose["x_mm"]) / 1000.0,
-			1.45, float(pose["z_mm"]) / 1000.0)
+			AVATAR_CENTER_HEIGHT_M, float(pose["z_mm"]) / 1000.0)
 
 func _on_native_player_status(message: String) -> void:
 	if is_instance_valid(native_label):
