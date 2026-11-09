@@ -1,7 +1,7 @@
 {
   "schema": "SG-CI-GATE-01",
   "task_group": "SGDX03",
-  "source_sha": "bb532cd6226a64adbaec8963143c5e5be13cf801",
+  "source_sha": "7b78db4de492754830aa7100c1777f3939e6e914",
   "pr_number": 125,
-  "note": "One consolidated SGDX03+FP3D-WIN02 final current-head native Windows/Linux/Godot/ZIP/render gate. Prior genuine MSVC 17/19 proves all four SQLite WinError32 fixes PASS, but SGDX-02 supervisor and SGDX-03 bridge failed because real second-chance Windows private MDMP unavailable. Try true second-chance DbgHelp MiniDumpWithThreadInfo then protected MiniDumpNormal, surface non-sensitive Win32 failure stage; no fake MDMP, tests still require MDMP/private NTFS ACL. One Windows task group also gathers Godot and installed ZIP evidence even if native failures, but final gate remains hard failed and ZIP never published unless native/Godot/package passed. Linux Godot process/download bounded after older runners hung. Physical creator GPU playtest deferred until verified artifact exists; PR stays draft, mining modules deferred."
+  "note": "ONE consolidated SGDX03/FP3D Windows+Linux exact-head repair gate: previous run 42707287157 genuinely passed all 19 MSVC Windows CTests including 2 real private crash-time MDMP and 4 repaired SQLite tests, and Linux 19/19. Actual Godot 4.7.2 failed to parse main.gd two untyped F11 Boolean variables and timed out on a failed script. Source now explicitly types both as bool. Native Godot runner checks SCRIPT ERROR/Parse Error even on exit 0 and bounds every subprocess per step; continues collecting ZIP/renderer evidence without false success. Must execute real Godot scenes, hash-checked source+official Godot Windows ZIP, installed-image headless smoke and tamper refusal, on-screen camera/asteroid/restart screenshots. Never promote draft PR or enable mining hardware without physical Windows GPU playtest."
 }
