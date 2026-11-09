@@ -19,6 +19,11 @@ var native_player_session
 var native_station_session
 var station_test_save_selected := false
 var last_station_player_state := -1
+# One SQLite world has only one native writer. Wait for the old child to
+# actually terminate before launching the station/cockpit replacement.
+var _handoff_target := ""
+var _handoff_pid := -1
+var _handoff_started_msec := 0
 var native_markers: Node3D
 var _fps_accumulator := 0.0
 
@@ -193,17 +198,57 @@ func _build_hud() -> void:
 func _on_inspected(display_name: String) -> void:
 	status_label.text = "Inspected: " + display_name + " (prototype only; no native action)"
 
+func _schedule_native_handoff(target: String, outgoing_pid: int) -> void:
+	# Process shutdown is not proof that SQLite's WAL writer was released.
+	# Never start a replacement child until the outgoing PID is truly dead.
+	_handoff_target = target
+	_handoff_pid = outgoing_pid
+	_handoff_started_msec = Time.get_ticks_msec()
+	if is_instance_valid(player):
+		player.use_native_authority(true) # no unjournaled walking during handoff
+	_advance_native_handoff()
+
+func _advance_native_handoff() -> void:
+	if _handoff_target.is_empty():
+		return
+	if _handoff_pid > 0 and OS.is_process_running(_handoff_pid):
+		if Time.get_ticks_msec() - _handoff_started_msec > 3000:
+			# Fail closed, rather than launching two original-world writers.
+			_handoff_target = ""
+			_on_native_player_status("Native writer handoff aborted: previous process still alive; world unchanged")
+			if is_instance_valid(player):
+				player.use_native_authority(false)
+		return
+	var destination := _handoff_target
+	_handoff_target = ""
+	_handoff_pid = -1
+	if destination == "station":
+		station_test_save_selected = true
+		last_station_player_state = -1 # only fresh native PERSON can unlock P
+		native_station_session.start()
+	elif destination == "ship":
+		var save_override := OS.get_user_data_dir().path_join("single_galaxy_station_test.sqlite") if station_test_save_selected else ""
+		native_player_session.start(save_override)
+	# If launching the replacement failed, do not keep an inert authority lock.
+	if is_instance_valid(player) and not native_station_session.is_active() and not native_player_session.is_active():
+		player.use_native_authority(false)
+
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and (event.keycode == KEY_H or event.keycode == KEY_P):
+		if not _handoff_target.is_empty():
+			_on_native_player_status("Native writer change in progress; original save remains locked to one writer")
+			get_viewport().set_input_as_handled()
+			return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_H:
 		if native_station_session.is_active():
 			native_station_session.stop("Station test session stopped")
 		else:
+			var exiting_pid: int = native_player_session.process_id()
 			if native_player_session.is_active():
 				native_player_session.stop("Ship session closed before station connection")
 			if native_session.is_active():
 				native_session.stop("Observer closed before station connection")
-			station_test_save_selected = true
-			native_station_session.start()
+			_schedule_native_handoff("station", exiting_pid)
 		get_viewport().set_input_as_handled()
 		return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_P:
@@ -214,12 +259,12 @@ func _unhandled_input(event: InputEvent) -> void:
 				_on_native_player_status("Board your existing ship first; cockpit is unavailable while at station")
 				get_viewport().set_input_as_handled()
 				return
+			var exiting_pid: int = native_station_session.process_id()
 			if native_station_session.is_active():
 				native_station_session.stop("Station writer closed before ship cockpit session")
 			if native_session.is_active():
 				native_session.stop("Read-only observer stopped for native FPS writer")
-			var save_override := OS.get_user_data_dir().path_join("single_galaxy_station_test.sqlite") if station_test_save_selected else ""
-			native_player_session.start(save_override)
+			_schedule_native_handoff("ship", exiting_pid)
 		get_viewport().set_input_as_handled()
 		return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_O:
@@ -256,7 +301,7 @@ func _on_native_player_connection(connected: bool) -> void:
 	if not connected and is_instance_valid(ship_label):
 		ship_label.text = "SHIP: native host disconnected; previous readout not live"
 	if is_instance_valid(scope_label):
-		scope_label.text = "NATIVE IN-SHIP POSE + COCKPIT STATE (TEST ROOM; NO FLIGHT/DISEMBARK)" if connected else "LOCAL MOVEMENT TEST ONLY — NOT CONNECTED TO NATIVE GALAXY"
+		scope_label.text = "NATIVE IN-SHIP POSE + ORIGINAL C++ FLIGHT (TEST GEOMETRY)" if connected else "LOCAL MOVEMENT TEST ONLY — NOT CONNECTED TO NATIVE GALAXY"
 
 func _on_native_ship_intents(actions: PackedStringArray) -> void:
 	if native_player_session != null:
@@ -337,6 +382,7 @@ func _exit_tree() -> void:
 		native_station_session.stop("Native station client closed")
 
 func _process(delta: float) -> void:
+	_advance_native_handoff()
 	if native_session != null:
 		native_session.poll()
 	if native_player_session != null:
