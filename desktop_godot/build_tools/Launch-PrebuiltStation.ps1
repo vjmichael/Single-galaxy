@@ -134,36 +134,48 @@ try {
       # The exact extracted ZIP's engine must execute each real parser/scene
       # check under a bounded lifetime. Godot may return exit 0 despite
       # reporting GDScript parser errors, so inspect BOTH real output streams.
-      $p=Start-Process -FilePath $CliGodotExe -ArgumentList $suite -NoNewWindow -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+      # WinPS5 Start-Process returns a Process wrapper that we observed
+      # report HasExited=True yet expose a NULL ExitCode, even with an
+      # explicit WaitForExit. Own a FRESH System.Diagnostics.Process
+      # directly, never infer success from stdout or an absent status.
+      $info=New-Object System.Diagnostics.ProcessStartInfo
+      $info.FileName=$CliGodotExe
+      $info.Arguments=[string]::Join(' ',$suite)
+      $info.WorkingDirectory=[IO.Path]::GetDirectoryName($CliGodotExe)
+      $info.UseShellExecute=$false
+      $info.CreateNoWindow=$true
+      $info.RedirectStandardOutput=$true
+      $info.RedirectStandardError=$true
+      $child=New-Object System.Diagnostics.Process
+      $child.StartInfo=$info
       try {
-        # PowerShell 5.1's Wait-Process -Id does NOT synchronize the
-        # original Start-Process -PassThru object reliably: the same
-        # observed clean native editor run had HasExited=True, but
-        # ExitCode=$null. Wait on THIS exact .NET Process object instead.
-        # Then verify its typed exit code, never accept null as success.
-        $completed=[bool]$p.WaitForExit(90000)
-        if(-not $completed){
-          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
-          throw "Bundled Godot headless smoke #$index timed out after 90 seconds"
+        if(-not $child.Start()){throw "Godot CLI process did not start"}
+        # Drain both pipes concurrently to prevent Windows stdout/stderr
+        # deadlocks before waiting for bounded process completion.
+        $outTask=$child.StandardOutput.ReadToEndAsync()
+        $errTask=$child.StandardError.ReadToEndAsync()
+        if(-not [bool]$child.WaitForExit(90000)){
+          try {$child.Kill()} catch {}
+          throw "Godot headless smoke #$index exceeded 90-second limit"
         }
-        $p.WaitForExit()
-        $p.Refresh()
-        $exited=[bool]$p.HasExited
-        $exitValue=$p.ExitCode
-        if(-not $exited -or $null -eq $exitValue){
-          throw "Bundled Godot smoke #$index has no confirmed process exit code under Windows PowerShell"
-        }
+        $child.WaitForExit()
+        $outputText=$outTask.GetAwaiter().GetResult()
+        $errorText=$errTask.GetAwaiter().GetResult()
+        [IO.File]::WriteAllText($stdout,$outputText)
+        [IO.File]::WriteAllText($stderr,$errorText)
+        if(-not $child.HasExited){throw "Godot process still live after wait"}
+        $exitValue=$child.ExitCode
+        if($null -eq $exitValue){throw "Actual .NET Process.ExitCode unexpectedly absent"}
         $code=[int]$exitValue
       } catch {
-        throw "Bundled Godot headless smoke #$index process wait failed: $_. See $stdout and $stderr. Game was not launched."
+        throw "Bundled Godot headless smoke #$index process execution failed: $_. See $stdout and $stderr. Game was not launched."
+      } finally {
+        $child.Dispose()
       }
-      $output=(
-        (Get-Content -LiteralPath $stdout -Raw -ErrorAction SilentlyContinue | Out-String) +
-        (Get-Content -LiteralPath $stderr -Raw -ErrorAction SilentlyContinue | Out-String)
-      )
+      $output=$outputText+$errorText
       $errors=($output -match '(?im)SCRIPT ERROR:|ERROR: Failed to load script|Parse Error:|Error at \(')
       if($code -ne 0 -or $errors){
-        throw "Bundled Godot console smoke #$index failed: exited=$exited code=$code parser_error=$errors executable=$CliGodotExe. See $stdout and $stderr. Game was not launched."
+        throw "Bundled Godot console smoke #$index failed: code=$code parser_error=$errors executable=$CliGodotExe. See $stdout and $stderr. Game was not launched."
       }
     }
     Write-Host 'Bundled Godot 4.7.2 parser/scene checks passed.'
