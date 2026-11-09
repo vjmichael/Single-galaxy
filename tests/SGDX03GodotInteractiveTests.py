@@ -196,6 +196,25 @@ def check_original_world(root):
     assert p2.wait(timeout=15) == 0,p2.stderr.read()
     assert receipts(save)[-1]["reason"] == "clean_exit"
 
+    # Abrupt guardian loss against the ACTUAL original game. SGDX Windows
+    # Job Object and Linux parent-death custody must relinquish the SQLite
+    # writer before a new supervised owner can open the same saved world.
+    p3, pose3, vessel3, rock3 = start_original(save)
+    assert vessel3[16] == "0" and rock3[7] == rock and rock3[8] == stock
+    p3.kill()
+    p3.communicate(timeout=12)
+    resumed = subprocess.run(command(save, native, save),
+                             input="QUIT\\n",capture_output=True,text=True,timeout=15)
+    assert resumed.returncode == 0, (resumed.returncode,resumed.stderr[:600])
+    records = resumed.stdout.splitlines()
+    assert len(records) >= 3 and records[0].startswith("POSE|1|") and (
+        "ROCK|1|" in records[2]), records[:4]
+    restored = records[2].split("|")
+    assert restored[7] == rock and restored[8] == stock
+    with sqlite3.connect(save) as con:
+        assert con.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    assert receipts(save)[-1]["reason"] == "clean_exit"
+
 with tempfile.TemporaryDirectory(prefix="sgdx03_godot_") as tmp:
     root=Path(tmp)
     check_faults(root)
