@@ -356,9 +356,9 @@ func _advance_native_handoff() -> void:
 		if Time.get_ticks_msec() - _handoff_started_msec > 3000:
 			# Fail closed, rather than launching two original-world writers.
 			_handoff_target = ""
-			_on_native_player_status("Native writer handoff aborted: previous process still alive; world unchanged")
-			if is_instance_valid(player):
-				player.use_native_authority(false)
+			_on_native_player_status("Native writer handoff blocked: prior SGDX guardian still alive; retry after it exits")
+			# Remain in native-authority mode: local Godot walking cannot silently
+			# replace a live original C++ world while recovery is unresolved.
 		return
 	var destination := _handoff_target
 	_handoff_target = ""
