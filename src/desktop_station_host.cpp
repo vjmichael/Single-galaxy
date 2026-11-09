@@ -84,7 +84,8 @@ int main(int argc,char** argv){
    const bool exiting=f.size()==5&&f[0]=="EXIT";
    const bool view=f.size()==5&&f[0]=="REFVIEW";
    const bool refine=f.size()==5&&f[0]=="REFINE";
-   if(!walking&&!boarding&&!exiting&&!view&&!refine){deny(0,"malformed");continue;}
+   const bool unload=f.size()==5&&f[0]=="UNLOAD";
+   if(!walking&&!boarding&&!exiting&&!view&&!refine&&!unload){deny(0,"malformed");continue;}
    std::uint64_t requested_session=0,req=0,expected=0,ship=0;
    std::int64_t dx=0,dz=0;
    if(!parse(f[1],requested_session)||!parse(f[2],req)||!parse(f[3],expected)||
@@ -97,7 +98,7 @@ int main(int argc,char** argv){
    const auto now=std::chrono::steady_clock::now();
    if(now-last<std::chrono::milliseconds(45)){deny(req,"rate");continue;}
    const auto& person=world.world().player_people().at(kOwner);
-   if(view || refine){
+   if(view || refine || unload){
     if(!station_refinery_protocol::accessible(person) ||
        (view && ship!=person.physical_station)){
        deny(req,"refinery-terminal-distance-or-custody");continue;
@@ -133,6 +134,42 @@ int main(int argc,char** argv){
           throw std::runtime_error("refinery world journal did not return exact command");
        result=event.result==Outcome::Applied?1:2;
        transferred=event.transferred;
+    }
+    if(unload){
+       // The original PERSON receipt identifies the owned physical station.
+       // A client-supplied ship ID is only a selector: revalidate the actual
+       // docked vessel, station and finite cargo on every command.
+       const auto eligible=station_launch::available_ship(
+           world.world(),kOwner,person.physical_station);
+       const auto* vessel=world.world().find(ship);
+       if(!eligible || *eligible!=ship || !vessel ||
+          vessel->owner_id!=kOwner || vessel->dock_state!=DockState::Docked ||
+          vessel->dock_station!=person.physical_station || vessel->cargo<1){
+          deny(req,"no-owned-docked-ship-with-ore");continue;
+       }
+       Command c{};
+       c.id=receipt_prefix|req;
+       c.sequence=c.id;
+       c.execute_tick=world.world().tick()+1;
+       c.action=Action::UnloadOre;
+       c.actor=ship;
+       c.target=person.physical_station;
+       c.issuer=kOwner;
+       c.amount=1; // one physical tonne; never accept client-supplied mass
+       if(!world.submit(c)){
+          deny(req,"original-unload-not-authorized");continue;
+       }
+       // No optimistic Godot cargo update; the SQLite STEP and original
+       // lot-provenance ledger are authoritative after a durable commit.
+       world.step();
+       galaxy::server_dx::committed_breadcrumb(world.world().tick(),world.generation());
+       const auto& event=world.world().events().back();
+       if(event.command_id!=c.id)
+          throw std::runtime_error("unload world journal did not return exact command");
+       result=event.result==Outcome::Applied?3:4;
+       transferred=event.result==Outcome::Applied?event.transferred:0;
+       if(transferred<0 || transferred>1)
+          throw std::runtime_error("invalid original single-tonne unload receipt");
     }
     last=now;
     std::cout<<station_refinery_protocol::make_snapshot(world,kOwner,session,req,result,transferred)<<std::flush;
