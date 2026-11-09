@@ -6,6 +6,7 @@ const PLAYER_SCRIPT := preload("res://world/player_controller.gd")
 const NATIVE_SESSION := preload("res://world/native_session.gd")
 const NATIVE_PLAYER_SESSION := preload("res://world/native_player_session.gd")
 const NATIVE_STATION_SESSION := preload("res://world/native_station_session.gd")
+const REFINERY_TERMINAL_UI := preload("res://world/refinery_terminal_ui.gd")
 const MONOCHROME := Color(0.76, 0.76, 0.76, 1.0)
 # Visual capsule center for 1.75 m tall collider; original C++ X/Z unchanged.
 const AVATAR_CENTER_HEIGHT_M := 0.90
@@ -22,6 +23,7 @@ var _geometry_parent: Node3D
 var native_session
 var native_player_session
 var native_station_session
+var refinery_terminal
 var station_test_save_selected := false
 var last_station_player_state := -1
 # One SQLite world has only one native writer. Wait for the old child to
@@ -70,8 +72,11 @@ func _ready() -> void:
 	player.native_ship_intents.connect(_on_native_ship_intents)
 	native_station_session = NATIVE_STATION_SESSION.new()
 	native_station_session.person_received.connect(_on_native_station_person)
+	native_station_session.refinery_received.connect(_on_native_refinery_state)
 	native_station_session.status_changed.connect(_on_native_player_status)
 	native_station_session.connection_changed.connect(_on_native_station_connection)
+	refinery_terminal.refine_requested.connect(_on_native_refine_requested)
+	refinery_terminal.terminal_closed.connect(_hide_refinery_terminal)
 
 func _setup_environment() -> void:
 	var env := Environment.new()
@@ -152,6 +157,8 @@ func _build_station() -> void:
 	_solid_box("Control room west", Vector3(-14, 2.0, -22), Vector3(18, 4, 0.4))
 	_solid_box("Control room east", Vector3(14, 2.0, -22), Vector3(18, 4, 0.4))
 	_solid_box("Hangar gangway", Vector3(0, 0.015, -4.5), Vector3(1.6, 0.03, 9))
+	# Visual marker only. The original host authorizes access at (3m,0m).
+	_solid_box("Station refinery terminal (R)", Vector3(3.0, 0.85, 0), Vector3(0.65, 1.7, 0.65))
 
 func _build_objects() -> void:
 	_solid_cylinder("NPC prototype — no arms", Vector3(0.0, 1.0, -5.0), 2, 0.38)
@@ -229,7 +236,7 @@ func _build_hud() -> void:
 	scope_label.text = "LOCAL MOVEMENT TEST ONLY — NOT CONNECTED TO NATIVE GALAXY"
 	contents.add_child(scope_label)
 	status_label = Label.new()
-	status_label.text = "H station native, E board/exit | P cockpit native, E sit | WASD walking | AD yaw, arrows thrust, B brake"
+	status_label.text = "H station, E board | R refinery terminal | P cockpit, E sit | WASD walk | A/D yaw, arrows thrust, B brake"
 	contents.add_child(status_label)
 	native_label = Label.new()
 	native_label.text = "NATIVE: H enters station player test. Walk toward marked hatch (0,0), E boards. P switches to ship cockpit."
@@ -246,6 +253,8 @@ func _build_hud() -> void:
 	reticle.add_theme_font_size_override("font_size", 25)
 	reticle.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
 	hud.add_child(reticle)
+	refinery_terminal = REFINERY_TERMINAL_UI.new()
+	hud.add_child(refinery_terminal)
 
 func _on_inspected(display_name: String) -> void:
 	status_label.text = "Inspected: " + display_name + " (prototype only; no native action)"
@@ -286,6 +295,18 @@ func _advance_native_handoff() -> void:
 		player.use_native_authority(false)
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_R:
+		if native_station_session == null or not native_station_session.is_active() or last_station_player_state != 4:
+			_on_native_player_status("Connect as a real station resident with H before using refinery")
+		else:
+			if is_instance_valid(refinery_terminal) and refinery_terminal.visible:
+				_hide_refinery_terminal()
+			else:
+				refinery_terminal.show_waiting()
+				Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+				native_station_session.request_refinery_view()
+		get_viewport().set_input_as_handled()
+		return
 	if event is InputEventKey and event.pressed and not event.echo and (event.keycode == KEY_H or event.keycode == KEY_P):
 		if not _handoff_target.is_empty():
 			_on_native_player_status("Native writer change in progress; original save remains locked to one writer")
@@ -330,10 +351,31 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 
 func _on_native_station_connection(connected: bool) -> void:
+	if not connected:
+		_hide_refinery_terminal()
 	if is_instance_valid(player):
 		player.use_native_authority(connected)
 	if is_instance_valid(scope_label):
 		scope_label.text = "NATIVE STATION PLAYER (ORIGINAL SQLITE)" if connected else "STATION NATIVE DISCONNECTED"
+
+func _on_native_refinery_state(snapshot: Dictionary) -> void:
+	# Original C++ station host performed all authorization and inventory changes.
+	if native_station_session == null or not native_station_session.is_active() or last_station_player_state != 4:
+		return
+	_record_native_projection("REFINERY", snapshot)
+	if is_instance_valid(refinery_terminal):
+		refinery_terminal.present(snapshot)
+
+func _on_native_refine_requested(lot_id: int) -> void:
+	# No client-side yields or refining; send only the selected original lot ID.
+	if native_station_session != null and native_station_session.is_active() and last_station_player_state == 4:
+		native_station_session.submit_refining(lot_id)
+
+func _hide_refinery_terminal() -> void:
+	if is_instance_valid(refinery_terminal):
+		refinery_terminal.visible = false
+	if is_instance_valid(player) and get_window().has_focus():
+		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 func _record_native_projection(kind: String, evidence: Dictionary) -> void:
 	# CLIENT-OBSERVED evidence only; original SQLite journal remains authoritative.
@@ -357,6 +399,8 @@ func _record_native_projection(kind: String, evidence: Dictionary) -> void:
 func _on_native_station_person(person: Dictionary) -> void:
 	_record_native_projection("PERSON", person)
 	last_station_player_state = int(person["state"])
+	if last_station_player_state != 4:
+		_hide_refinery_terminal()
 	_show_native_location(last_station_player_state == 4)
 	if is_instance_valid(player):
 		player.use_native_seat(false)
@@ -420,6 +464,8 @@ func _on_native_player_pose(pose: Dictionary) -> void:
 func _on_native_player_status(message: String) -> void:
 	if is_instance_valid(native_label):
 		native_label.text = message
+	if is_instance_valid(refinery_terminal) and refinery_terminal.visible and ("refused" in message or "timed out" in message):
+		refinery_terminal.report_error(message)
 
 func _on_native_status(message: String) -> void:
 	if is_instance_valid(native_label):
