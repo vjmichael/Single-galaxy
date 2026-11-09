@@ -1,5 +1,13 @@
 # FP3D-ENV-01 — original native swept asteroid contact (3D-first)
 
+**Latest revision, 2026-11-09:** The initial 1-m / whole-tick stop
+descriptions below record the historical 01A–01C implementation and are
+**superseded** by 01D/01E: a 5.2-m whole-graybox-hull conservative proxy,
+first-safe-millimetre native advancement, camera yaw and real Godot/SGDX
+integration. 01F adds receipt-joined pilot navigation. These remain draft
+pending actual exact-head Windows/Linux and physical Windows playtest gates.
+
+
 Draft native implementation on independent world-first branch from PR #123 (04A), not experimental module PR #124. Creator intentionally defers all ship module features until 3D world is genuinely playable.
 
 Version 125 is explicit new-world genesis opt-in after enabling actual high-order galactic coordinates; legacy world movement is unchanged. For each in-space original ship, before its normal v120 absolute galactic integrator advances, the kernel checks a bounded list of same-system original asteroids. A portable integer center-to-segment sphere sweep uses actual original ship velocity, x/y/z, asteroid geological radius and a provisional 1m ship collision sphere. Contact cancels only that tick's movement, sets all native velocity axes to zero, and produces an original durable `ShipAsteroidContact` activity event (source ship ID, asteroid ID, tick). It does not damage the ship or create resources. The exact original pose remains the sole authority and Godot only observes it.
