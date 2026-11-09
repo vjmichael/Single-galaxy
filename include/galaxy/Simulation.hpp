@@ -92,7 +92,9 @@ struct NpcFlightOrder {
 // NPC-RESP-02/v98: one real player persona independent of fleet cockpit state.
 // Identity is not a clone of an NPC; physical custody transitions require
 // their own later independently authorized gameplay receipts.
-enum class PlayerPersonState : std::uint8_t {AboardOwnShip=0,Rescued=1,Detained=2,Stranded=3};
+enum class PlayerPersonState : std::uint8_t {AboardOwnShip=0,Rescued=1,Detained=2,Stranded=3,AtStation=4};
+// PLAY-STATION-02: host-validated finite station traversal and ship transfer.
+enum class StationPlayerAction : std::uint8_t { Walk=1, Board=2, Disembark=3 };
 struct PlayerPerson {
     PlayerId owner=0;
     EntityId home_ship=0;
@@ -102,6 +104,9 @@ struct PlayerPerson {
     std::uint64_t registered_tick=0,last_receipt=0,last_update_tick=0;
     EntityId consent_ship=0;
     std::uint64_t consent_id=0,rescue_flight=0; // v99 consent and original physical evidence
+    // v122: ONLY AtStation may have a physical station and on-foot XYZ.
+    EntityId physical_station=0;
+    std::int64_t station_x_mm=0,station_z_mm=0;
 };
 enum class CelestialKind {Star=0,Planet=1,Moon=2,DebrisRegion=3};
 struct PhysicalCelestialBody {
@@ -1374,6 +1379,12 @@ public:
     // Explicit genesis or authenticated registration; not implied by pilot selection.
     // This cannot perform rescue or arrest, which need original physical receipts.
     bool register_player_person(PlayerId owner,EntityId aboard);
+    // Registered real PERSON may begin at a real station without any ship.
+    bool register_player_at_station(PlayerId owner,EntityId station);
+    // Only the trusted host should supply owner, receipt and bounded actions.
+    bool station_player_action(PlayerId owner,EntityId station,EntityId ship,
+        StationPlayerAction action,std::int64_t dx,std::int64_t dz,
+        std::uint64_t receipt);
     bool grant_player_rescue_consent(PlayerId owner,EntityId receiving_ship,
         std::uint64_t consent_id);
     bool revoke_player_rescue_consent(PlayerId owner,std::uint64_t consent_id);
