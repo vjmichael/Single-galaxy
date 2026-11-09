@@ -73,8 +73,8 @@ func _run() -> void:
 		_fail("real 3D ship / camera / asteroid scene nodes absent")
 		quit(1)
 		return
-	if _game.exterior_ship_visual.get_child_count() != 3:
-		_fail("expected exactly one 8m hull plus two finite wings")
+	if _game.exterior_ship_visual.get_child_count() != 4:
+		_fail("expected 8m hull, two wings and mounted third-person camera")
 		quit(1)
 		return
 	var session = _game.native_player_session
