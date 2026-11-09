@@ -6,6 +6,7 @@ project = Path(__file__).resolve().parents[1]
 root = project.parent
 scene = (project / "tests/fp3d_env01_live_scene_acceptance.gd").read_text(encoding="utf-8")
 game = (project / "world/main.gd").read_text(encoding="utf-8")
+refinery = (project / "world/refinery_terminal_ui.gd").read_text(encoding="utf-8")
 station = (project / "world/native_station_session.gd").read_text(encoding="utf-8")
 flight = (project / "world/native_player_session.gd").read_text(encoding="utf-8")
 gui_launcher = (project / "build_tools/Launch-PrebuiltStation.ps1").read_text(encoding="utf-8")
@@ -17,6 +18,14 @@ tamper = (project / "build_tools/Test-BundledRuntimeTamper.ps1").read_text(encod
 root_launcher = (project / "START_SINGLE_GALAXY_WINDOWS.cmd").read_text(encoding="utf-8")
 
 checks = {
+    "godot-472-strict-types-in-actual-ui": (
+        "var station_authorized: bool =" in game
+        and "var flight_authorized: bool =" in game
+        and 'var products: Dictionary = snapshot.get("minerals", {})' in refinery
+        and "var names: Array = products.keys()" in refinery
+        and "var products := snapshot.get(" not in refinery
+        and "var names := products.keys()" not in refinery
+    ),
     "real-window-not-headless": (
         'DisplayServer.get_name().to_lower() == "headless"' in scene
         and "await RenderingServer.frame_post_draw" in scene
