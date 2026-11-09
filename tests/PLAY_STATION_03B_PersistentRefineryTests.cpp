@@ -28,8 +28,33 @@ static void erase_db(const std::string& path){
 }
 int main(int argc,char** argv){
  try{
-  CHECK(argc==2);
+  CHECK(argc==2 || (argc==3 &&
+      (std::string(argv[2])=="--03c-fixture" || std::string(argv[2])=="--03c-verify")));
   const std::string db=argv[1],copy=db+".copy";
+  const bool fixture=argc==3 && std::string(argv[2])=="--03c-fixture";
+  if(argc==3 && std::string(argv[2])=="--03c-verify"){
+    PersistentWorld state(db,Simulation(12304));
+    const auto& world=state.world();
+    CHECK(world.player_people().at(7).state==PlayerPersonState::AtStation);
+    const auto station=world.player_people().at(7).physical_station;
+    const auto* refinery=world.station_refinery(station);
+    CHECK(refinery && refinery->owner==7);
+    CHECK(world.hangar(station,7) && world.hangar(station,7)->ore==0);
+    CHECK(refinery->mineral_kg.at("nickel_iron")==860);
+    CHECK(refinery->mineral_kg.at("troilite")==80);
+    CHECK(refinery->mineral_kg.at("olivine")==30);
+    CHECK(refinery->mineral_kg.at("pyroxene")==15);
+    CHECK(refinery->mineral_kg.at("other")==15);
+    std::int64_t total=0;
+    for(const auto& [name,kg]:refinery->mineral_kg){(void)name;total+=kg;}
+    CHECK(total==1000);
+    for(const auto& [id,lot]:world.station_ore_lots()){
+      (void)id;CHECK(lot.station!=station || lot.tonnes==0);
+    }
+    CHECK(Simulation::from_snapshot(world.canonical_state()).canonical_state()==world.canonical_state());
+    std::cout<<"PLAY-STATION-03C VERIFY PASS station original SQLite 1000kg and no duplicate lot\n";
+    return 0;
+  }
   erase_db(db);erase_db(copy);
   std::uint64_t id=1000;EntityId ship=0,ship_b=0,station=0,rock=0,lot_id=0;
   std::int64_t initial_mass=0;
@@ -104,6 +129,10 @@ int main(int argc,char** argv){
     const auto* u=w.world().utility(station);
     std::cout<<"utility powered="<<u->powered<<" energy="<<u->stored_energy<<" cond="<<u->condition<<"\n";
     CHECK(u->powered && u->stored_energy>0);
+    if(fixture){
+      std::cout<<"FIXTURE|"<<station<<'|'<<lot_id<<'|'<<ship<<'|'<<initial_mass<<"\n";
+      return 0; // persist the owned, built, powered station and original ore lot
+    }
     auto wrong=send(w,id,ship,Action::RefineStationOre,station,lot_id,0,8);
     CHECK(wrong.result==Outcome::Unauthorized);
     CHECK(w.world().hangar(station,7)->ore==1);
