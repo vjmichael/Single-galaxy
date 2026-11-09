@@ -108,3 +108,17 @@ workers were queued rather than accepted. Request exactly **one** new gate
 on the final current PR head after group closeout and repair any real failures
 from its logs. PR #125 remains draft. No manufactured mining module is
 unlocked from this Linux result.
+
+### Independent optimized Linux Release rerun
+
+The same native source compiled under CMake `-DCMAKE_BUILD_TYPE=Release`
+(GCC 14.2 / SQLite 3.46.1) with **all** original-kernel, SGDX, station,
+cockpit, observer, simulated live hosts and physical/ore/regression targets.
+The complete **same 18-case CTest group** then completed as one local
+process with **18/18 PASS**, exit code **0**, elapsed **36.40 seconds**.
+Debug also independently passed 18/18 in 37.40 seconds. These are genuine
+native Linux compiler and child-process results for this task group, not
+source-only reviews, but do **not** certify Windows MSVC, Godot 4.7.2 engine,
+an installed Windows archive, real GPU play or private Windows MDMP/ACL.
+The exact latest PR head must still be admitted through the single central
+GitHub Actions Windows/Linux task-group workflow; PR remains draft.
