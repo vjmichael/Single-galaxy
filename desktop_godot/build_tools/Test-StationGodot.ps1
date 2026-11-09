@@ -98,6 +98,31 @@ try {
 } catch {
   Gate 'acceptance-failure' 'FAIL' ([string]$_)
 } finally {
+  # Godot's user:// path lives beneath the installed editor's per-project
+  # app_userdata directory. Copy only a file updated during THIS test run.
+  $userData=Join-Path $env:APPDATA 'Godot\app_userdata'
+  if(Test-Path -LiteralPath $userData){
+    $journal=Get-ChildItem -LiteralPath $userData -Filter 'sg_station_visual_acceptance.jsonl' -File -Recurse -ErrorAction SilentlyContinue |
+      Where-Object { $_.LastWriteTimeUtc -ge [DateTime]::Parse($started).ToUniversalTime() } |
+      Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+    if($journal){
+      Copy-Item -LiteralPath $journal.FullName -Destination (Join-Path $logs 'godot-observed-native-frames.jsonl') -Force
+      $rows=@()
+      foreach($line in (Get-Content -LiteralPath $journal.FullName)){
+        try {
+          $record=ConvertFrom-Json -InputObject $line
+          if($record.wall_unix -ge ([DateTimeOffset]::Parse($started)).ToUnixTimeSeconds()){
+            $rows+=,$record
+          }
+        } catch { }
+      }
+      $stationSeen=@($rows | Where-Object {$_.event -eq 'PERSON' -and $_.frame.state -eq 4}).Count -gt 0
+      $boardSeen=@($rows | Where-Object {$_.event -eq 'PERSON' -and $_.frame.state -eq 0}).Count -gt 0
+      $cockpitSeen=@($rows | Where-Object {$_.event -eq 'POSE'}).Count -gt 0
+      $undockSeen=@($rows | Where-Object {$_.event -eq 'SHIP' -and $_.frame.dock -eq 0}).Count -gt 0
+      Gate 'observed-client-native-sequence' 'INFO' "station=$stationSeen boarded=$boardSeen cockpit=$cockpitSeen undocked=$undockSeen; client observation, not 3D acceptance"
+    }
+  }
   $manifest=[ordered]@{test='PLAY-STATION-02';source_branch='sg/play-station02-native-spawn-board-20261108';started_utc=$started;completed_utc=[DateTime]::UtcNow.ToString('o');status=$status;gates=$checks}
   $manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $out 'acceptance.json') -Encoding UTF8
   $zip=Join-Path $root 'SingleGalaxy_Station_Visual_Windows_Evidence.zip'
