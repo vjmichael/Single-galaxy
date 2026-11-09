@@ -24,6 +24,8 @@ static Event execute(PersistentWorld& w, std::uint64_t& next, PlayerId owner,
     CHECK(out.command_id==c.id);return out;
 }
 static void geological_minerals_round_trip(const std::string& save) {
+    std::error_code clean_error;
+    for(auto suffix:{"","-wal","-shm"}) fs::remove(save+suffix,clean_error);
     Simulation seed(0x5303);
     const auto station=seed.add_station({0,0});
     const auto ship=seed.add_colony_ship(7,{1200,0},16,24);
