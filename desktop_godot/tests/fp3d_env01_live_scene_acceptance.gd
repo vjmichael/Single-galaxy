@@ -28,8 +28,8 @@ func _capture_visible(stage: String, ship: Dictionary, rock: Dictionary = {}) ->
 		_fail("Godot window has no real usable rendered viewport for " + stage)
 		return
 	var samples := {}
-	var xstep := maxi(1, frame.get_width() / 32)
-	var ystep := maxi(1, frame.get_height() / 18)
+	var xstep := maxi(1, int(frame.get_width() / 32))
+	var ystep := maxi(1, int(frame.get_height() / 18))
 	for y in range(0, frame.get_height(), ystep):
 		for x in range(0, frame.get_width(), xstep):
 			var c: Color = frame.get_pixel(x, y)
