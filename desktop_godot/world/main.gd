@@ -522,8 +522,8 @@ func _capture_operator_view() -> void:
 	if directory.is_empty():
 		_on_native_player_status("F11 viewport evidence requires the packaged Windows playtest launcher")
 		return
-	var station_authorized := native_station_session != null and native_station_session.is_active() and last_station_player_state == 4
-	var flight_authorized := native_player_session != null and native_player_session.is_active()
+	var station_authorized: bool = native_station_session != null and native_station_session.is_active() and last_station_player_state == 4
+	var flight_authorized: bool = native_player_session != null and native_player_session.is_active()
 	var joined: Dictionary = FLIGHT_INSTRUMENTS.from_verified_frames(_verified_flight_ship, _verified_flight_rock)
 	if not station_authorized and (not flight_authorized or joined.is_empty()):
 		_on_native_player_status("F11 refused: connect original H station or P ship and receive verified native frames")
