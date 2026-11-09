@@ -22,13 +22,13 @@
 - Denied unauthorized plant construction, double installation, refine before unload, wrong user and double refine. Proved \`FailPoint::AfterSnapshotWrite\` rollback, SQLite reopened after shutdown, independent \`PersistentWorld::recover_copy\`, and invalid forged processing \`resource_ledger\` amount rejected.
 - Exact GitHub file blob SHAs compared with compiled local sources:
   \`Simulation.hpp e74dbe9c088eb2050f1107f89948e3341363fe5e\`
-  \`Simulation.cpp de4511a98c7c3c944ad8c6435d77d95e777686d6\`
+  \`Simulation.cpp 3cf5dd0fb24c49b6db3827e7c551e34eac76275a\`
   \`Persistence.cpp 4cc0c45b22da8c3f9ecae6d434037c9152f69e87\`
-  \`PLAY_STATION_03B_PersistentRefineryTests.cpp d963d137a2e20c9dd61c4cfd28424816d60cd4c7\`.
+  \`PLAY_STATION_03B_PersistentRefineryTests.cpp 6955a7fba95445aac5f818c9270466b3b54c8eed\`.
 
 ## Open safety and gameplay gates
 
-- **Lot carrier transfer:** tagging currently retains original \`source_ship\`. Loading a tagged ore lot into a *different owned carrier* must either be independently authorized and move carrier custody atomically or be refused before mutating hangar stock; do not claim fleet-level transfer acceptance from single-ship proof.
+- **Cross-hull protected ore custody now tested:** A second owned vessel cannot load or sell the portion of a station hangar represented by another ship's source-linked geological lot. The original-world two-vessel SQLite E2E test verifies a refused LoadOre leaves the hangar, source lot, second ship cargo and world mass unchanged. General transfer between carriers remains a separate design gate.
 - Need stronger stock provenance on mixed bulk ore stacks, constructed/refinery power-loss variants, tamper variants and existing-save migration. The v123 path is genesis opt-in until explicit migration and the Windows/Linux CI accepted.
 - \`desktop_station_host\` has not yet added a \`REFINERY\` frame, \`BUILD_REFINERY\` / \`REFINE\` operator command, or Godot terminal. **Do not present this as a fully playable station refinery.**
 - No exact-head Windows OS compile, CTest, installer or interactive Godot refinery game acceptance yet. See CI on this PR and subsequent 03C/03D.
