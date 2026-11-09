@@ -4507,11 +4507,26 @@ Event Simulation::execute(const Command& c) {
             const auto h = hangars_.find({actor.dock_station,c.issuer});
             if (h == hangars_.end()) {result.result = Outcome::Unauthorized; return result;}
             if (h->second.ore == 0) {result.result = Outcome::NoResources; return result;}
+            // A second owned ship may not load or sell a geological tonne
+            // whose source/provenance still belongs to another physical hull.
+            // Bulk untagged ore and this ship's own tagged ore remain usable.
+            std::int64_t protected_other_ship=0;
+            if(snapshot_version_>=123)for(const auto& [lot_id,lot]:station_ore_lots_){
+                (void)lot_id;
+                if(lot.station==actor.dock_station && lot.owner==c.issuer &&
+                   lot.source_ship!=c.actor){
+                    if(lot.tonnes<0 || lot.tonnes>h->second.ore-protected_other_ship)
+                        throw std::logic_error("station ore provenance exceeds physical hangar");
+                    protected_other_ship+=lot.tonnes;
+                }
+            }
+            const auto permitted_hangar_ore=h->second.ore-protected_other_ship;
             if (c.action == Action::LoadOre) {
                 if (loaded_cargo_liters(actor) > actor.cargo_capacity*1000-1000) {
                     result.result = Outcome::CargoFull; return result;
                 }
                 const auto moved = std::min({c.amount, h->second.ore, (actor.cargo_capacity*1000-loaded_cargo_liters(actor))/1000});
+                if(moved>permitted_hangar_ore){result.result=Outcome::Unauthorized;return result;}
                 if(snapshot_version_>=123)
                     move_station_ore_lots(c.actor,actor.dock_station,c.issuer,moved,false,c.id);
                 actor.cargo += moved; h->second.ore -= moved;
@@ -4529,6 +4544,7 @@ Event Simulation::execute(const Command& c) {
                 const auto market_affordable = m->second.credits/price;
                 const auto moved = std::min({c.amount, h->second.ore, wallet_room, market_affordable});
                 if (moved == 0) {result.result = Outcome::InsufficientFunds; return result;}
+                if(moved>permitted_hangar_ore){result.result=Outcome::Unauthorized;return result;}
                 const auto payout = moved*price;
                 m->second.credits -= payout;
                 balance += payout;
