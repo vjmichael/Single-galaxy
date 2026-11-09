@@ -2280,3 +2280,23 @@ if(BUILD_TESTING)
     set_tests_properties(galaxy_fp3d_env01_native_collision_pipe PROPERTIES TIMEOUT 150)
   endif()
 endif()
+
+# SGDX-03: exact original Godot -> SGDX -> native C++ bidirectional pipe;
+# induced crash, externally killed child/supervisor, Linux SQLite recovery and
+# opt-in Windows second-chance private MDMP, independently from UI/snapshots.
+if(BUILD_TESTING AND Python3_Interpreter_FOUND)
+  add_test(NAME galaxy_sgdx03_godot_native_bridge
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/SGDX03GodotInteractiveTests.py
+      $<TARGET_FILE:galaxy_server_dx_supervisor>
+      $<TARGET_FILE:galaxy_server_dx_fault_child>
+      $<TARGET_FILE:galaxy_desktop_player_host>
+      $<TARGET_FILE:galaxy_play_station04a_native_rock_seed>)
+  set_tests_properties(galaxy_sgdx03_godot_native_bridge PROPERTIES
+    TIMEOUT 200 LABELS "sgdx;native-godot;sqlite;crash;minidump")
+  add_test(NAME galaxy_sgdx03_godot_source_admission
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/desktop_godot/tests/test_sgdx03_bridge_contract.py)
+  set_tests_properties(galaxy_sgdx03_godot_source_admission PROPERTIES
+    TIMEOUT 20 LABELS "sgdx;source-only")
+endif()
