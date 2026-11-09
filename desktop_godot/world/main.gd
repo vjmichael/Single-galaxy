@@ -8,7 +8,7 @@ const NATIVE_PLAYER_SESSION := preload("res://world/native_player_session.gd")
 const NATIVE_STATION_SESSION := preload("res://world/native_station_session.gd")
 const MONOCHROME := Color(0.76, 0.76, 0.76, 1.0)
 var material: StandardMaterial3D
-var player: CharacterBody3D
+var player # assigned CharacterBody3D with runtime PlayerController.gd; signals are script-defined
 var scope_label: Label
 var status_label: Label
 var fps_label: Label
