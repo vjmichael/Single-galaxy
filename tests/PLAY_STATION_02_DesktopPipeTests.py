@@ -30,6 +30,16 @@ with tempfile.TemporaryDirectory() as root:
         stdout, stderr = contender.communicate(timeout=6)
         assert contender.returncode != 0 and 'native writer already active' in stderr, (stdout, stderr)
         assert not stdout, 'a rejected competing writer emitted native authority frames'
+    # Kernel-released custody after abnormal termination: a process crash
+    # cannot permanently lock the save or duplicate the existing owned ship.
+    original_ship = initial[11]
+    original_session = initial[2]
+    p.kill()
+    assert p.wait(timeout=5) != 0
+    p, recovered = start_station()
+    assert recovered[2] != original_session and recovered[6] == '4'
+    assert recovered[11] == original_ship and recovered[9] == '1600', recovered
+    initial = recovered
     session = initial[2]
     generation = int(initial[5]); ship = int(initial[11])
     assert initial[6] == '4' and initial[8] == '0' and initial[9] == '1600', initial
