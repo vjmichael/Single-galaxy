@@ -37,3 +37,66 @@ Native tests cannot prove Godot 4.7.2 actually renders the mesh on the user's ph
 ## 04C–04D — full player-visible one-tonne loop (not yet complete)
 
 Visual mining effect driven by original executed receipt, return navigation, physical docking, `UnloadOre` into the real station hangar, station terminal `REFINE` one-tonne batch, actual 1,000kg station mineral inventory, restart and mass conservation. User-built refinery and module equipment must be created from finite workforce/materials rather than free test-fixture shortcuts. Then independently test the installed Windows Godot 4.7.2 game from station spawn → board → undock → fly → mine → dock → unload → refine.
+
+## 2026-11-09 — PLAY-STATION-04C: reviewed station unloading bridge (source implemented; native acceptance open)
+
+This is **not** a reversal of the creator's world-first order. Production mining
+modules, crafting, fitting and the cockpit M-mining command remain deferred
+until physically playable Windows 3D acceptance. PR #124 remains experimental.
+No unowned ore, automatic drill or Godot-authored inventory was introduced.
+
+The SGDX-supervised original **station** host now recognizes
+`UNLOAD|session|request|expected_sqlite_generation|owned_ship_id`.
+It accepts requests only from the authenticated station resident physically
+within 1.2m of the original terminal; the selected ship must independently
+exist, be owned, intact, available in the real station berth, docked there and
+carry at least one original tonne. The host does **not** trust an amount from
+Godot: it submits one `Action::UnloadOre` against the original owned vessel,
+executes `PersistentWorld::step`, verifies the exact command journal event
+and returns the existing source-owned `REFHEAD/REFLOT/REFMIN/REFEND` snapshot.
+Result code **3** means one original tonne unloaded; **4** means a denied
+world command; unchanged **1** means 1000kg refined and **2** denied refining.
+The Godot parser does not confuse tonnes with kilograms, requires exact
+session/request/tick/generation/lot count, and does not update inventory before
+an original receipt. The terminal exposes one controlled unload action.
+A stale, forged or empty ship cannot create stock.
+
+A test-only `--04c-fixture` extends the existing independent original-world
+03B test: construct legitimate materials, refinery and utility; execute an
+actual one-tonne geological `Mine`; physically redock; retain the genuine
+tagged ore on the docked owned hull. New
+`galaxy_play_station04c_native_unload_pipe` then launches the **real C++
+station host**, checks refused remote terminal use, invalid ship ID and stale
+generation, walks a persisted person into range, performs exactly one tonne of
+original unloading, verifies the tagged source lot, denies replay and an empty
+ship, refines that same lot to exactly 1000kg named minerals, and verifies
+`PRAGMA integrity_check`, original snapshot and restart continuity.
+Godot's synthetic 03C/04C parser smoke checks distinct result types; synthetic
+frames cannot substitute for native tests.
+
+**Evidence:** implementation, CTest registration and the additional native
+test have been committed to PR #125 with interim `[skip ci]`. The **single**
+central SGDX03 task-group Windows/Linux/Godot gate on main includes the 04C
+native test, but no 04C native run has completed on the updated source yet.
+As of source review, the preceding original SGDX03 run
+[42669612497](https://github.com/vjmichael/Single-galaxy/actions/runs/42669612497)
+had passed request authentication but Linux and Windows workers were queued,
+and that run was pinned to a **previous** PR head. It cannot accept the
+new 04C changes. No installed Windows physical GPU playtest is claimed.
+Full player mining remains unavailable because production equipment and
+authoritative mining ingress remain deferred.
+
+### Remaining 04C/04D playable loop gates
+
+1. Get actual current-head native Linux/MSVC and Godot 4.7.2 results after
+   task-group implementation review; fix demonstrated failures, preserving
+   one consolidated gate, not one CI job per commit.
+2. Complete Windows non-headless installed player flight/camera/ship-station
+   collision acceptance and prove station/cockpit host handoffs and durable
+   SQLite custody on a physical Windows machine.
+3. Only after world acceptance, integrate manufactured fitted mining equipment,
+   explicit native seated-pilot `M` action and verified one-tonne source debit,
+   while keeping missing/disabled equipment unable to mine.
+4. Run the complete live original-game `station -> board -> undock -> fly ->
+   mine -> return -> dock -> unload -> refine -> inspect persistent minerals`
+   playthrough, including crash/restart, resource conservation and no free hull.
