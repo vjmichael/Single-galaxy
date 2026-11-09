@@ -89,6 +89,13 @@ checks = {
         and "Godot Engine contributors" in engine_license
         and "Permission is hereby granted, free of charge" in engine_license
     ),
+    "extracted-zip-bundled-engine-preflight-does-not-claim-visual-pass": (
+        "[switch]$VerifyOnly" in gui_launcher
+        and "$VerifyOnly -and $SkipHeadlessSmoke" in gui_launcher
+        and "BUNDLED-PACKAGE-HEADLESS-PREFLIGHT-VERIFIED-NO-GPU-CLAIM" in gui_launcher
+        and "WINDOW-CLOSED-NEEDS-MANUAL-OBSERVATION" in gui_launcher
+        and "SingleGalaxy_Station_Playtest_Evidence.zip" in gui_launcher
+    ),
     "not-falsely-accepted-on-window-close": (
         "WINDOW-CLOSED-NEEDS-MANUAL-OBSERVATION" in gui_launcher
         and "human_gpu_visual_approval" in scene
