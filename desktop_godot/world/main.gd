@@ -333,7 +333,27 @@ func _on_native_station_connection(connected: bool) -> void:
 	if is_instance_valid(scope_label):
 		scope_label.text = "NATIVE STATION PLAYER (ORIGINAL SQLITE)" if connected else "STATION NATIVE DISCONNECTED"
 
+func _record_native_projection(kind: String, evidence: Dictionary) -> void:
+	# CLIENT-OBSERVED evidence only; original SQLite journal remains authoritative.
+	# Bounded local file for Windows physical playtest diagnosis, never a second save.
+	var path := "user://sg_station_visual_acceptance.jsonl"
+	var f := FileAccess.open(path, FileAccess.READ_WRITE)
+	if f == null:
+		f = FileAccess.open(path, FileAccess.WRITE)
+	if f == null:
+		return
+	if f.get_length() > 1048576:
+		f.close()
+		f = FileAccess.open(path, FileAccess.WRITE)
+		if f == null:
+			return
+	f.seek_end()
+	f.store_line(JSON.stringify({"source":"godot-observed-native-frame",
+		"event":kind,"wall_unix":Time.get_unix_time_from_system(),"frame":evidence}))
+	f.close()
+
 func _on_native_station_person(person: Dictionary) -> void:
+	_record_native_projection("PERSON", person)
 	last_station_player_state = int(person["state"])
 	_show_native_location(last_station_player_state == 4)
 	if is_instance_valid(player):
@@ -362,6 +382,7 @@ func _on_native_ship_intents(actions: PackedStringArray) -> void:
 		native_player_session.submit_flight(actions)
 
 func _on_native_ship_state(ship: Dictionary) -> void:
+	_record_native_projection("SHIP", ship)
 	if not is_instance_valid(ship_label):
 		return
 	var states := ["IN SPACE", "DOCKED", "UNDOCKING", "DOCKING"]
@@ -385,6 +406,7 @@ func _on_native_player_intent(heading: Vector3) -> void:
 		native_player_session.submit_motion(heading)
 
 func _on_native_player_pose(pose: Dictionary) -> void:
+	_record_native_projection("POSE", pose)
 	_show_native_location(false) # verified original owned ship pose
 	# The Godot avatar is positioned from ACKNOWLEDGED native SQL state ONLY.
 	# Vertical eye/physics meshes remain placeholder until full 3D native geometry.
