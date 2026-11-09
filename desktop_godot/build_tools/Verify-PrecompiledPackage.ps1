@@ -87,6 +87,34 @@ try {
     $pe[$file]=Verify-Pe64 $full
   }
   $checks['verified_windows_pe64']=$pe
+  # Self-contained playtest: the official 4.7.2 engine is inside this ZIP.
+  # The engine archive's published release SHA-256 is pinned in CI before
+  # extraction; independently hash the shipped executable against the
+  # exact-archive manifest after re-extracting the DELIVERED package.
+  $runtime=Join-Path $game 'runtime'
+  $engine=Join-Path $runtime 'Godot_v4.7.2-stable_win64.exe'
+  $engineHashPath=Join-Path $runtime 'GODOT_RUNTIME_SHA256.txt'
+  $engineLicense=Join-Path $runtime 'LICENSE.txt'
+  foreach($file in @($engine,$engineHashPath,$engineLicense)){
+    if(-not(Test-Path -LiteralPath $file -PathType Leaf)){
+      throw "Bundled Godot 4.7.2 Windows engine/hash/license absent: $file"
+    }
+  }
+  $engineHash=(Get-Content -LiteralPath $engineHashPath -Raw).Trim().ToLowerInvariant()
+  if($engineHash -notmatch '^[0-9a-f]{64}$'){
+    throw 'Bundled Godot runtime hash manifest malformed'
+  }
+  $actualHash=Verify-Pe64 $engine
+  if($actualHash -cne $engineHash){
+    throw 'Bundled Godot runtime hash fails after re-extracting the delivered ZIP'
+  }
+  $licenseText=Get-Content -LiteralPath $engineLicense -Raw
+  if($licenseText -notmatch 'Godot Engine contributors' -or
+     $licenseText -notmatch 'Permission is hereby granted, free of charge' -or
+     $licenseText -notmatch 'copyright notice'){
+    throw 'Bundled Godot upstream MIT license text missing or incomplete'
+  }
+  $checks['bundled_official_godot_pe64_sha256_license']=$actualHash
   # No private machine data or crash dumps may enter the end-user archive.
   $forbidden=Get-ChildItem -LiteralPath $staging -File -Recurse |
     Where-Object { $_.Name -match '(?i)\.(dmp|mdmp|sqlite|sqlite-wal|sqlite-shm)$' }
@@ -94,11 +122,12 @@ try {
   $checks['no_private_world_or_crash_dumps']='PASS'
   $launcher=Get-Content -LiteralPath (Join-Path $game 'build_tools/Launch-PrebuiltStation.ps1') -Raw
   if($launcher -notmatch 'SGDX_BUILD_SHA' -or $launcher -notmatch 'galaxy_server_dx_supervisor' -or
+     $launcher -notmatch 'GODOT_RUNTIME_SHA256' -or
      $launcher -notmatch '4\.7\.2' -or $launcher -notmatch 'Start-Process'){
     throw 'Package is missing supervised native/Godot version/windowed launch enforcement'
   }
-  $checks['supervised_installed_windowed_entry']='PASS'
-  $state['result']='PACKAGE_STRUCTURE_AND_WINDOWS_PE64_VERIFIED'
+  $checks['supervised_bundled_windowed_entry']='PASS'
+  $state['result']='BUNDLED_GODOT_AND_NATIVE_WINDOWS_PE64_VERIFIED'
 } catch {
   $state['error']=$_.Exception.Message
   throw
@@ -109,4 +138,4 @@ try {
   if(Test-Path -LiteralPath $staging){Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue}
   Write-Host "Package verification evidence: $evidencePath"
 }
-Write-Host "Original Windows x64 precompiled package PASS: $ExpectedSourceSha"
+Write-Host "Self-contained Windows x64 native+bundled-Godot package PASS: $ExpectedSourceSha"
