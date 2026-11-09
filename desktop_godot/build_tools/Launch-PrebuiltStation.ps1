@@ -76,19 +76,44 @@ try {
     }
     Write-Host 'Actual installed-Godot parser/scene checks passed.'
   }
-  Write-Host 'Game controls: H station, WASD walk, E board, P cockpit, E sit, U undock.'
+  # Screenshot key is opt-in; captures ONLY the game viewport plus read-only
+  # verified original C++ frames. No Windows desktop/screen recording.
+  $env:SG_FP3D_OPERATOR_CAPTURE_DIR=$logDir
+  Write-Host 'Game controls: H station, WASD walk, E board/exit, P cockpit, E sit, V exterior, G dock, F11 capture game viewport.'
+  Write-Host 'For physical playtest evidence, press F11 at native station, docked cockpit, exterior flight, asteroid contact and after restart.'
   $game=Start-Process -FilePath $GodotExe -ArgumentList @('--path',('"' + $project + '"')) -Wait -PassThru
-  Write-Host "Godot exited code $($game.ExitCode). This is not yet manual 3D-play acceptance."
+  Write-Host "Godot exited code $($game.ExitCode). Window close is NOT proof of physical gameplay acceptance."
   $pass=$game.ExitCode -eq 0
 } catch {
   Write-Host "PLAYTEST BLOCKED: $_" -ForegroundColor Red
 } finally {
+  Remove-Item Env:SG_FP3D_OPERATOR_CAPTURE_DIR -ErrorAction SilentlyContinue
+  $nativeReceipts=Join-Path $logDir 'operator-viewport-receipts.jsonl'
+  $captureCount=0
+  $verifiedCaptureCount=0
+  if(Test-Path -LiteralPath $nativeReceipts -PathType Leaf){
+    foreach($line in (Get-Content -LiteralPath $nativeReceipts -ErrorAction SilentlyContinue)){
+      try {
+        $record=$line | ConvertFrom-Json -ErrorAction Stop
+        $picture=Join-Path $logDir $record.image
+        if($record.schema -eq 'SG-FP3D-OPERATOR-01' -and
+           (Test-Path -LiteralPath $picture -PathType Leaf) -and
+           (Get-FileHash -LiteralPath $picture -Algorithm SHA256).Hash -ieq $record.image_sha256){
+          $captureCount++
+          if($record.native_flight_joined -or $record.station_person.state -eq 4){$verifiedCaptureCount++}
+        }
+      } catch { Write-Warning 'Invalid operator screenshot receipt; not counted as evidence.' }
+    }
+  }
   $manifest=[ordered]@{
     task='PLAY-STATION-02';godot=$GodotExe
     native_station_hash=if(Test-Path $station){(Get-FileHash $station -Algorithm SHA256).Hash}else{''}
     native_cockpit_hash=if(Test-Path $pilot){(Get-FileHash $pilot -Algorithm SHA256).Hash}else{''}
     sgdx_supervisor_hash=if(Test-Path $supervisor){(Get-FileHash $supervisor -Algorithm SHA256).Hash}else{''}
     build_sha=if(Test-Path $shaManifest){(Get-Content -LiteralPath $shaManifest -Raw).Trim()}else{''}
+    verified_game_viewport_screenshots=$captureCount
+    verified_native_frame_screenshots=$verifiedCaptureCount
+    operator_visual_acceptance='NOT ATTESTED: review actual PNGs and original SQLite receipts'
     result=if($pass){'WINDOW-CLOSED-NEEDS-MANUAL-OBSERVATION'}else{'BLOCKED'}
   }
   $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $logDir 'result.json') -Encoding UTF8
