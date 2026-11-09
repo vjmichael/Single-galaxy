@@ -37,7 +37,9 @@ checks = {
     "installed-godot-only": "4.7.2.stable" in runner and "No editor is downloaded" in runner,
     "windows-godot-real-process": "station_visual_smoke.gd" in runner and "Start-Process -FilePath $GodotExe" in runner,
     "user-invoked-hardware-play": "NEEDS-OBSERVATION" in runner,
-    "double-click-entry": "Test-StationGodot.ps1" in cmd,
+    "double-click-entry": "Launch-PrebuiltStation.ps1" in cmd,
+    "prebuilt-launcher-replaces-local-compiler": "Test-StationGodot.ps1" not in cmd,
+    "prebuilt-launcher-source": (root / "build_tools/Launch-PrebuiltStation.ps1").is_file(),
     "suppress-fake-godot-walking": "if authoritative_mode:" in player and "native_motion_intent.emit(direction)" in player
 }
 for name, ok in checks.items():
