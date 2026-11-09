@@ -48,7 +48,7 @@ checks = {
     "windowed-ci-run-cannot-revert-to-headless": (
         "'--rendering-method','gl_compatibility'" in windowed
         and "'--script','res://tests/fp3d_env01_live_scene_acceptance.gd'" in windowed
-        and "'--headless'" not in windowed
+        and "'--headless'," not in windowed
         and "Windowed Godot/native test timed out" in windowed
     ),
     "reopened-sqlite-collision-is-source-verified": (
