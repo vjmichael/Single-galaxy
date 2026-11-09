@@ -52,6 +52,14 @@ func _run() -> void:
     if station.get_node_or_null("Station_Hangar_Entry_At_Zero") == null:
         _fail("hangar entry hatch missing")
         return
+    var native_limit := station.get_node_or_null("NativeStationWalkEnvelope_16m_VisualOnly") as Node3D
+    if native_limit == null or native_limit.get_child_count() != 4:
+        _fail("original native station walk boundary not visible")
+        return
+    for strip in native_limit.get_children():
+        if not (strip is MeshInstance3D) or strip is CollisionObject3D:
+            _fail("native boundary strips must be visual only, not another physics writer")
+            return
     if not station.visible or cabin.visible:
         _fail("scene does not initially present station")
         return
