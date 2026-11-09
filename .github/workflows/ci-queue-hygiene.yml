@@ -24,14 +24,14 @@ permissions:
 
 concurrency:
   group: sg-queue-hygiene
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   prune-superseded-pr-runs:
     if: github.repository == 'vjmichael/Single-galaxy'
     name: Cancel queued PR runs on superseded source commits only
-    runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    runs-on: ubuntu-slim
+    timeout-minutes: 15
     steps:
       - name: Inspect branch tips and cancel stale queued PR runs
         id: prune
