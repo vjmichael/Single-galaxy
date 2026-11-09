@@ -2,6 +2,7 @@ extends RefCounted
 ## PLAY-STATION-02: optional explicit fixture, original C++ station person.
 ## This bridge never sets person/ship location in SQLite from Godot.
 signal person_received(person: Dictionary)
+signal refinery_received(snapshot: Dictionary)
 signal status_changed(message: String)
 signal connection_changed(connected: bool)
 
@@ -19,6 +20,10 @@ var _pending := 0
 var _last_send := -10000
 var _buffer := PackedByteArray()
 var _person := {}
+var _refinery_receiving := false
+var _refinery_header := {}
+var _refinery_lots: Array[Dictionary] = []
+var _refinery_minerals := {}
 
 func is_active() -> bool:
 	return _active
@@ -71,6 +76,10 @@ func start() -> void:
 	_last_send = -10000
 	_buffer.clear()
 	_person.clear()
+	_refinery_receiving = false
+	_refinery_header.clear()
+	_refinery_lots.clear()
+	_refinery_minerals.clear()
 	connection_changed.emit(true)
 	_status("Native station: waiting for original person state")
 
@@ -106,6 +115,9 @@ func _integer(value: String) -> bool:
 
 func _accept_line(line: String) -> void:
 	var f := line.split("|", false)
+	if f.size() > 0 and f[0] in ["REFHEAD", "REFLOT", "REFMIN", "REFEND"]:
+		_accept_refinery_line(f)
+		return
 	if f.size() == 4 and f[0] == "DENY" and f[1] == "2":
 		if not _integer(f[2]):
 			stop("Malformed native station denial")
@@ -113,6 +125,10 @@ func _accept_line(line: String) -> void:
 		var req := int(f[2])
 		if req == _pending:
 			_pending = 0
+			_refinery_receiving = false
+			_refinery_header.clear()
+			_refinery_lots.clear()
+			_refinery_minerals.clear()
 		_status("Station action #%d refused: %s" % [req, f[3]])
 		return
 	if f.size() != 13 or f[0] != "PERSON" or f[1] != "2":
@@ -155,6 +171,122 @@ func _accept_line(line: String) -> void:
 		"eligible_ship":eligible,"receipt":receipt,"generation":gen,"tick":tick}
 	person_received.emit(_person.duplicate(true))
 	_status("AT STATION" if state == 4 else "ABOARD OWN SHIP")
+
+func _accept_refinery_line(f: PackedStringArray) -> void:
+	var kind := f[0]
+	if kind == "REFHEAD":
+		if f.size() != 18 or _refinery_receiving or _pending <= 0:
+			stop("Unexpected refinery snapshot header")
+			return
+		for i in range(2, 18):
+			if not _integer(f[i]):
+				stop("Non-numeric original refinery header")
+				return
+		var session := int(f[2])
+		var request := int(f[3])
+		var tick := int(f[4])
+		var generation := int(f[5])
+		var station := int(f[6])
+		var shown := int(f[15])
+		var all_lots := int(f[16])
+		var minerals := int(f[17])
+		if session != _session or request != _pending or tick < _tick or generation < _generation or station <= 0 or station != int(_person.get("station", 0)) or int(_person.get("state", -1)) != 4 or shown < 0 or shown > 48 or all_lots < shown or minerals < 0 or minerals > 64 or int(f[7]) not in [0, 1] or int(f[10]) not in [0, 1] or int(f[13]) < 0 or int(f[14]) < 0:
+			stop("Original refinery snapshot contradicts station custody")
+			return
+		_refinery_header = {"station":station, "tick":tick, "generation":generation,
+			"installed":int(f[7]), "source_ship":int(f[8]),
+			"workers":int(f[9]), "powered":int(f[10]), "energy":int(f[11]),
+			"ready_tick":int(f[12]), "ore_tonnes":int(f[13]),
+			"mineral_total_kg":int(f[14]), "shown_lots":shown,
+			"all_lots":all_lots, "mineral_count":minerals}
+		_refinery_lots.clear()
+		_refinery_minerals.clear()
+		_refinery_receiving = true
+		return
+	if not _refinery_receiving or f.size() < 4 or not _integer(f[2]) or not _integer(f[3]) or int(f[2]) != _session or int(f[3]) != _pending:
+		stop("Unexpected refinery source frame")
+		return
+	if kind == "REFLOT":
+		if f.size() != 9 or _refinery_lots.size() >= int(_refinery_header["shown_lots"]):
+			stop("Refinery lot count exceeded source header")
+			return
+		for i in range(4, 9):
+			if not _integer(f[i]):
+				stop("Non-numeric refinery lot")
+				return
+		var lot_id := int(f[4])
+		if lot_id <= 0 or int(f[5]) <= 0 or int(f[6]) not in [0, 1, 2] or int(f[7]) <= 0 or int(f[8]) <= 0:
+			stop("Refinery lot has invalid physical provenance")
+			return
+		for lot in _refinery_lots:
+			if int(lot["id"]) == lot_id:
+				stop("Duplicate refinery lot in native snapshot")
+				return
+		_refinery_lots.append({"id":lot_id,"rock":int(f[5]),"taxonomy":int(f[6]),
+			"tonnes":int(f[7]),"unload_receipt":int(f[8])})
+		return
+	if kind == "REFMIN":
+		if f.size() != 6 or _refinery_minerals.size() >= int(_refinery_header["mineral_count"]) or not _integer(f[5]):
+			stop("Invalid refinery product frame")
+			return
+		var name := f[4]
+		if name.length() > 40 or not name.is_valid_identifier() or name.to_lower() != name or int(f[5]) <= 0 or _refinery_minerals.has(name):
+			stop("Refinery mineral product name or stock invalid")
+			return
+		_refinery_minerals[name] = int(f[5])
+		return
+	if kind == "REFEND":
+		if f.size() != 10:
+			stop("Invalid refinery receipt length")
+			return
+		for i in range(4, 10):
+			if not _integer(f[i]):
+				stop("Non-numeric original refinery receipt")
+				return
+		var result := int(f[8])
+		var transferred := int(f[9])
+		var total := 0
+		for amount in _refinery_minerals.values():
+			total += int(amount)
+		if int(f[4]) != int(_refinery_header["tick"]) or int(f[5]) != int(_refinery_header["generation"]) or int(f[6]) != _refinery_lots.size() or int(f[7]) != _refinery_minerals.size() or total != int(_refinery_header["mineral_total_kg"]) or result not in [0, 1, 2] or (result == 1 and transferred != 1000) or (result != 1 and transferred != 0):
+			stop("Refinery snapshot and original commit receipt mismatch")
+			return
+		_refinery_receiving = false
+		_generation = int(f[5])
+		_tick = int(f[4])
+		_pending = 0
+		var state := _refinery_header.duplicate(true)
+		state["lots"] = _refinery_lots.duplicate(true)
+		state["minerals"] = _refinery_minerals.duplicate(true)
+		state["result"] = result
+		state["transferred_kg"] = transferred
+		_refinery_header.clear()
+		_refinery_lots.clear()
+		_refinery_minerals.clear()
+		refinery_received.emit(state)
+		_status("Refined 1 tonne into station minerals" if result == 1 else "Station refinery snapshot received" if result == 0 else "Original station refinery command refused")
+		return
+	stop("Unknown refinery source frame")
+
+func request_refinery_view() -> void:
+	if not _active or _session <= 0 or _pending != 0 or int(_person.get("state", -1)) != 4:
+		_status("Refinery terminal requires an actual station resident")
+		return
+	var request := _next_request
+	_next_request += 1
+	_pending = request
+	_last_send = Time.get_ticks_msec()
+	_send("REFVIEW|%d|%d|%d|%d" % [_session,request,_generation,int(_person["station"])])
+
+func submit_refining(lot_id: int) -> void:
+	if not _active or _session <= 0 or _pending != 0 or int(_person.get("state", -1)) != 4 or lot_id <= 0:
+		_status("Refining request requires a selected original ore lot at the station")
+		return
+	var request := _next_request
+	_next_request += 1
+	_pending = request
+	_last_send = Time.get_ticks_msec()
+	_send("REFINE|%d|%d|%d|%d" % [_session,request,_generation,lot_id])
 
 func _send(command: String) -> void:
 	if not _stdout.store_line(command):
