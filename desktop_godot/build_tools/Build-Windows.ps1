@@ -174,6 +174,7 @@ try {
     Run-Godot 'engine-version' @('--version')
     Run-Godot 'project-import' @('--headless','--path',$rootDir,'--editor','--quit')
     Run-Godot 'runtime-smoke' @('--headless','--path',$rootDir,'--script','res://tests/godot_smoke.gd')
+    Run-Godot 'station-visual-scene-smoke' @('--headless','--path',$rootDir,'--script','res://tests/station_visual_smoke.gd')
     Run-Godot 'native-projection-contract' @('--headless','--path',$rootDir,'--script','res://tests/native_projection_smoke.gd')
     Run-Godot 'native-player-protocol' @('--headless','--path',$rootDir,'--script','res://tests/native_player_protocol_smoke.gd')
     Run-Godot 'native-station-protocol' @('--headless','--path',$rootDir,'--script','res://tests/native_station_protocol_smoke.gd')
