@@ -167,8 +167,16 @@ jobs:
           "$G" --version
           timeout --signal=TERM --kill-after=8s 100s "$G" --headless --path desktop_godot --editor --quit \
             2>&1 | tee build/fp3d-env01/godot-logs/import.log
+          if grep -E 'SCRIPT ERROR:|ERROR: Failed to load script|Parse Error:' build/fp3d-env01/godot-logs/import.log; then
+            echo 'Godot 4.7.2 import has real GDScript parser errors' >&2
+            exit 1
+          fi
           timeout --signal=TERM --kill-after=8s 75s "$G" --headless --path desktop_godot --quit-after 5 \
             2>&1 | tee build/fp3d-env01/godot-logs/scene.log
+          if grep -E 'SCRIPT ERROR:|ERROR: Failed to load script|Parse Error:' build/fp3d-env01/godot-logs/scene.log; then
+            echo 'Godot 4.7.2 actual scene has real GDScript errors' >&2
+            exit 1
+          fi
           cp build/fp3d-env01/galaxy_desktop_player_host \
             build/fp3d-env01/galaxy_desktop_station_host \
             build/fp3d-env01/galaxy_desktop_readonly_host \
@@ -178,9 +186,17 @@ jobs:
           build/fp3d-env01/galaxy_play_station04a_native_rock_seed "$SG_FP3D_E2E_SAVE"
           timeout --signal=TERM --kill-after=8s 180s "$G" --headless --path desktop_godot --script res://tests/fp3d_env01_live_scene_acceptance.gd \
             2>&1 | tee build/fp3d-env01/godot-logs/real-sgdx-cockpit.log
+          if grep -E 'SCRIPT ERROR:|ERROR: Failed to load script|Parse Error:' build/fp3d-env01/godot-logs/real-sgdx-cockpit.log; then
+            echo 'Godot 4.7.2 real native scene parser/runtime failure' >&2
+            exit 1
+          fi
           for test in native_player_protocol_smoke.gd native_asteroid_contact_smoke.gd native_station_protocol_smoke.gd native_station_refinery_protocol_smoke.gd station_visual_smoke.gd fp3d_env01_collision_receipt_smoke.gd fp3d_env01f_pilot_instruments_smoke.gd; do
             timeout --signal=TERM --kill-after=8s 90s "$G" --headless --path desktop_godot --script "res://tests/$test" \
               2>&1 | tee "build/fp3d-env01/godot-logs/$test.log"
+            if grep -E 'SCRIPT ERROR:|ERROR: Failed to load script|Parse Error:' "build/fp3d-env01/godot-logs/$test.log"; then
+              echo "Real Godot parser/runtime failed for $test" >&2
+              exit 1
+            fi
           done
       - uses: actions/upload-artifact@v4
         if: always()
