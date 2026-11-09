@@ -125,11 +125,13 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'Godot actual scene failure'}
           New-Item -ItemType Directory -Force desktop_godot/native | Out-Null
           Copy-Item build/fp3d-env01/Release/galaxy_desktop_player_host.exe desktop_godot/native -Force
-          $sqliteBin=Join-Path $env:VCPKG_INSTALLATION_ROOT 'installed\x64-windows\bin\sqlite3.dll'
+          $runtimeRoot=$env:VCPKG_INSTALLATION_ROOT
+          if(-not $runtimeRoot){$runtimeRoot='C:\vcpkg'}
+          $sqliteBin=Join-Path $runtimeRoot 'installed\x64-windows\bin\sqlite3.dll'
           if(-not(Test-Path $sqliteBin)){throw 'Actual Windows SQLite DLL not found'}
           Copy-Item $sqliteBin desktop_godot/native -Force
           $env:SG_FP3D_E2E_SAVE=(Join-Path (Resolve-Path build/fp3d-env01).Path 'live_native_world.sqlite')
-          & build/fp3d-env01/Release/galaxy_play_station04a_native_rock_seed.exe $env:SG_FP3D_E2E_SAVE
+          & (Resolve-Path 'build/fp3d-env01/Release/galaxy_play_station04a_native_rock_seed.exe').Path $env:SG_FP3D_E2E_SAVE
           if($LASTEXITCODE -ne 0){throw 'Actual C++ finite rock fixture failed'}
           & $g.FullName --headless --path desktop_godot --script res://tests/fp3d_env01_live_scene_acceptance.gd 2>&1 | Out-File build/fp3d-env01/godot-logs/live-native-scene.log
           if($LASTEXITCODE -ne 0){throw 'Godot and original C++ integrated live flight / camera / impact failed'}
@@ -155,7 +157,9 @@ jobs:
             if(-not(Test-Path $binary)){throw "Missing real compiled host: $name"}
             Copy-Item $binary (Join-Path $game 'native') -Force
           }
-          $sqliteBin=Join-Path $env:VCPKG_INSTALLATION_ROOT 'installed\x64-windows\bin\sqlite3.dll'
+          $runtimeRoot=$env:VCPKG_INSTALLATION_ROOT
+          if(-not $runtimeRoot){$runtimeRoot='C:\vcpkg'}
+          $sqliteBin=Join-Path $runtimeRoot 'installed\x64-windows\bin\sqlite3.dll'
           Copy-Item $sqliteBin (Join-Path $game 'native') -Force
           $head='${{ github.event.pull_request.head.sha || github.sha }}'
           "Exact source HEAD: $head" | Set-Content (Join-Path $root 'SOURCE_SHA.txt')
