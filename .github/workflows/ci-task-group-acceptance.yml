@@ -252,6 +252,7 @@ jobs:
       - name: Windows Godot 4.7.2 real SGDX supervised cockpit, collision and camera
         id: godot-gate
         continue-on-error: true
+        timeout-minutes: 20
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
@@ -268,9 +269,13 @@ jobs:
           & $g.FullName --version
           if($LASTEXITCODE -ne 0){throw 'Godot version check failed'}
           & $g.FullName --headless --path desktop_godot --editor --quit 2>&1 | Out-File build/fp3d-env01/godot-logs/import.log
-          if($LASTEXITCODE -ne 0){throw 'Godot import failed'}
+          if($LASTEXITCODE -ne 0 -or (Select-String -Path build/fp3d-env01/godot-logs/import.log -Pattern 'SCRIPT ERROR:|ERROR: Failed to load script|Parse Error:')){
+            throw 'Godot import failed or GDScript parser errors found'
+          }
           & $g.FullName --headless --path desktop_godot --quit-after 5 2>&1 | Out-File build/fp3d-env01/godot-logs/scene.log
-          if($LASTEXITCODE -ne 0){throw 'Actual scene failed'}
+          if($LASTEXITCODE -ne 0 -or (Select-String -Path build/fp3d-env01/godot-logs/scene.log -Pattern 'SCRIPT ERROR:|ERROR: Failed to load script|Parse Error:')){
+            throw 'Actual Godot scene failed or GDScript parser errors found'
+          }
           foreach($name in @('galaxy_desktop_player_host.exe','galaxy_desktop_station_host.exe','galaxy_desktop_readonly_host.exe','galaxy_server_dx_supervisor.exe')){
             Copy-Item (Join-Path 'build/fp3d-env01/Release' $name) desktop_godot/native -Force
           }
@@ -281,11 +286,15 @@ jobs:
           if($LASTEXITCODE -ne 0){throw 'Native finite-world fixture failed'}
           $env:SGDX_WINDOWS_MINIDUMP='1'
           & $g.FullName --headless --path desktop_godot --script res://tests/fp3d_env01_live_scene_acceptance.gd 2>&1 | Out-File build/fp3d-env01/godot-logs/real-sgdx-cockpit.log
-          if($LASTEXITCODE -ne 0){throw 'Real supervised C++/Godot collision-camera failure'}
+          if($LASTEXITCODE -ne 0 -or (Select-String -Path build/fp3d-env01/godot-logs/real-sgdx-cockpit.log -Pattern 'SCRIPT ERROR:|ERROR: Failed to load script|Parse Error:')){
+            throw 'Real supervised C++/Godot collision-camera or GDScript runtime failure'
+          }
           Remove-Item Env:SGDX_WINDOWS_MINIDUMP -ErrorAction SilentlyContinue
           foreach($test in @('native_player_protocol_smoke.gd','native_asteroid_contact_smoke.gd','native_station_protocol_smoke.gd','native_station_refinery_protocol_smoke.gd','station_visual_smoke.gd','fp3d_env01_collision_receipt_smoke.gd','fp3d_env01f_pilot_instruments_smoke.gd')){
             & $g.FullName --headless --path desktop_godot --script "res://tests/$test" 2>&1 | Out-File "build/fp3d-env01/godot-logs/$test.log"
-            if($LASTEXITCODE -ne 0){throw "Godot parser failed: $test"}
+            if($LASTEXITCODE -ne 0 -or (Select-String -Path "build/fp3d-env01/godot-logs/$test.log" -Pattern 'SCRIPT ERROR:|ERROR: Failed to load script|Parse Error:')){
+              throw "Godot parser/runtime failed: $test"
+            }
           }
       - name: Package only verified precompiled Windows SGDX game
         id: package-gate
