@@ -5,6 +5,8 @@ This is native Windows/Linux acceptance, not a stubbed Godot frame.
 """
 import ctypes
 import json
+import queue
+import threading
 import os
 from pathlib import Path
 import signal
@@ -33,6 +35,40 @@ def receipts(save):
     rows = sorted(directory.glob("process-*.json"))
     assert rows, f"Missing real SGDX sidecar under {directory}"
     return [json.loads(p.read_text(encoding="utf-8")) for p in rows]
+
+def bounded_line(process, phase, timeout_seconds=15):
+    """Bound every native pipe read, including missing startup/SGDX receipts.
+
+    A crashed or blocked supervisor can keep stdout open indefinitely. A
+    direct readline() hangs CTest without useful evidence; Windows pipe
+    handles are not selectable, so use a daemon reader and a deadline on
+    both operating systems. Never invent a receipt on timeout.
+    """
+    inbox = queue.Queue(maxsize=1)
+    def read():
+        try:
+            inbox.put((True, process.stdout.readline()))
+        except BaseException as error:
+            inbox.put((False, error))
+    threading.Thread(target=read, daemon=True).start()
+    try:
+        ok, line = inbox.get(timeout=timeout_seconds)
+    except queue.Empty:
+        process.kill()
+        try:
+            process.wait(timeout=4)
+        except subprocess.TimeoutExpired:
+            pass
+        raise AssertionError(
+            f"SGDX03 native pipe timed out at {phase}; "
+            f"guardian PID={process.pid} exit={process.poll()}") from None
+    if not ok:
+        raise AssertionError(f"SGDX03 native pipe failed at {phase}: {line!r}")
+    if not line:
+        raise AssertionError(
+            f"SGDX03 native pipe closed before {phase}; "
+            f"guardian PID={process.pid} exit={process.poll()}")
+    return line.strip()
 
 def process_dead(pid):
     if os.name == "nt":
@@ -84,7 +120,7 @@ def start_fault(save):
     child = subprocess.Popen(command(save, fault, "pipe"),
                              stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE, text=True, bufsize=1)
-    hello = child.stdout.readline().strip()
+    hello = bounded_line(child, "fault READY")
     assert hello.startswith("READY|"), hello
     return child, int(hello.split("|")[1])
 
@@ -101,7 +137,7 @@ def check_faults(root):
     forced = root / "pipe-forced.sqlite"
     p, pid = start_fault(forced)
     p.stdin.write("MOVE|7|1\n");p.stdin.flush()
-    assert p.stdout.readline().strip() == "ECHO|MOVE|7|1"
+    assert bounded_line(p, "forced ECHO") == "ECHO|MOVE|7|1"
     forced_kill(pid)
     out, err = p.communicate(timeout=18)
     assert p.returncode != 0 and "ECHO" not in out, (p.returncode,out,err)
@@ -143,11 +179,11 @@ def check_faults(root):
 def send(p, payload, needs_rock=False):
     time.sleep(0.075)
     p.stdin.write(payload + "\n");p.stdin.flush()
-    first = p.stdout.readline().strip().split("|")
+    first = bounded_line(p, "native ACK/SHIP").split("|")
     assert first and first[0] in ("ACK","DENY","SHIP"),first
     rock = None
     if needs_rock and first[0] == "SHIP":
-        rock = p.stdout.readline().strip().split("|")
+        rock = bounded_line(p, "native ROCK").split("|")
         assert rock[0] in ("ROCK","ROCKNONE"),rock
     return first,rock
 
@@ -155,9 +191,9 @@ def start_original(save):
     p = subprocess.Popen(command(save,native,save),stdin=subprocess.PIPE,
                          stdout=subprocess.PIPE,stderr=subprocess.PIPE,
                          text=True,bufsize=1)
-    pose=p.stdout.readline().strip().split("|")
-    ship=p.stdout.readline().strip().split("|")
-    rock=p.stdout.readline().strip().split("|")
+    pose=bounded_line(p, "original POSE").split("|")
+    ship=bounded_line(p, "original SHIP").split("|")
+    rock=bounded_line(p, "original initial ROCK").split("|")
     assert pose[:2] == ["POSE","1"] and ship[:2] == ["SHIP","1"] and rock[0] in (
         "ROCK","ROCKNONE"),(pose,ship,rock)
     assert ship[2] == pose[2] == rock[2]
