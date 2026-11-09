@@ -5,6 +5,7 @@ This verifies native PROCESS containment + SQLite transaction semantics. It is
 NOT a replacement for the original game's PersistentWorld journal acceptance.
 """
 import json
+from contextlib import closing
 import os
 import pathlib
 import signal
@@ -16,7 +17,7 @@ import time
 
 
 def inspect_database(db, expected_stock, expected_receipts):
-    with sqlite3.connect(db, timeout=3) as con:
+    with closing(sqlite3.connect(db, timeout=3)) as con:
         assert con.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
         assert con.execute("SELECT stock FROM inventory WHERE id=1").fetchone()[0] == expected_stock
         assert con.execute("SELECT COUNT(*) FROM receipts").fetchone()[0] == expected_receipts
@@ -57,7 +58,7 @@ con.execute("COMMIT")
 def test(supervisor):
     with tempfile.TemporaryDirectory(prefix="sgdx02_sqlite_") as folder:
         db=pathlib.Path(folder)/"original-like.sqlite"
-        with sqlite3.connect(db) as con:
+        with closing(sqlite3.connect(db)) as con, con:
             con.execute("CREATE TABLE inventory(id INTEGER PRIMARY KEY, stock INTEGER NOT NULL CHECK(stock>=0))")
             con.execute("INSERT INTO inventory VALUES(1,10)")
             con.execute("CREATE TABLE receipts(id TEXT PRIMARY KEY, amount INTEGER NOT NULL)")
@@ -87,7 +88,7 @@ def test(supervisor):
         if sys.platform.startswith("linux"):
             # A hard-killed guardian must not strand a write-locked child.
             reenter=pathlib.Path(folder)/"abrupt.sqlite"
-            with sqlite3.connect(reenter) as con:
+            with closing(sqlite3.connect(reenter)) as con, con:
                 con.execute("CREATE TABLE inventory(id INTEGER PRIMARY KEY,stock INTEGER)")
                 con.execute("INSERT INTO inventory VALUES(1,10)")
                 con.execute("CREATE TABLE receipts(id TEXT PRIMARY KEY,amount INTEGER)")
@@ -112,7 +113,7 @@ def test(supervisor):
                     raise AssertionError("SQLite child survived hard guardian loss")
                 inspect_database(reenter,10,0)
                 # Prove write lock released; no abandoned SQLite writer.
-                with sqlite3.connect(reenter,timeout=3) as con:
+                with closing(sqlite3.connect(reenter,timeout=3)) as con, con:
                     con.execute("BEGIN IMMEDIATE")
                     con.execute("ROLLBACK")
             finally:
