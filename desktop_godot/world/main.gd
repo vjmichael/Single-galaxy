@@ -190,8 +190,17 @@ func _show_native_location(in_station: bool) -> void:
 	# This never relocates a real PlayerPerson or writes a second world.
 	if is_instance_valid(station_space):
 		station_space.visible = in_station
+		# Godot visibility alone does NOT disable hidden collision bodies.
+		for body in station_space.get_children():
+			if body is CollisionObject3D:
+				body.collision_layer = 1 if in_station else 0
+				body.collision_mask = 1 if in_station else 0
 	if is_instance_valid(ship_space):
 		ship_space.visible = not in_station
+		for body in ship_space.get_children():
+			if body is CollisionObject3D:
+				body.collision_layer = 0 if in_station else 1
+				body.collision_mask = 0 if in_station else 1
 
 func _build_player() -> void:
 	player = CharacterBody3D.new()
