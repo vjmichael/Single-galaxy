@@ -12,6 +12,7 @@ func _exercise() -> void:
 	session.refinery_received.connect(func(state: Dictionary): states.append(state))
 	session._accept_line("PERSON|2|123|0|0|2|4|1|0|2400|0|2|0")
 	session._pending = 1
+	session._pending_refinery_kind = "VIEW"
 	session._accept_line("REFHEAD|3|123|1|0|2|1|1|2|1|1|2|4|1|0|1|1|0")
 	session._accept_line("REFLOT|3|123|1|6|91|2|1|12345")
 	session._accept_line("REFEND|3|123|1|0|2|1|0|0|0")
@@ -20,6 +21,7 @@ func _exercise() -> void:
 		quit(1)
 		return
 	session._pending = 2
+	session._pending_refinery_kind = "REFINE"
 	session._accept_line("REFHEAD|3|123|2|5|3|1|1|2|1|1|1|9|0|1000|0|0|5")
 	for part in ["nickel_iron|860", "troilite|80", "olivine|30", "pyroxene|15", "other|15"]:
 		session._accept_line("REFMIN|3|123|2|" + part)
@@ -32,6 +34,7 @@ func _exercise() -> void:
 	# 04C: an independently validated one-tonne UNLOAD is not a 1000kg
 	# refinery receipt. The lot is visible only after original source frames.
 	session._pending = 3
+	session._pending_refinery_kind = "UNLOAD"
 	session._accept_line("REFHEAD|3|123|3|6|4|1|1|2|1|1|2|4|1|1000|1|1|5")
 	session._accept_line("REFLOT|3|123|3|7|91|2|1|67890")
 	for part in ["nickel_iron|860", "troilite|80", "olivine|30", "pyroxene|15", "other|15"]:
@@ -43,6 +46,19 @@ func _exercise() -> void:
 		return
 	# Fresh 03C and 04C terminal states must distinguish stock from ability
 	# to unload; no optimistic mass is shown on a mere button press.
+	# The same numeric totals cannot turn a REFVIEW into a committed unload.
+	var wrong_kind = STATION.new()
+	var wrong_states := []
+	wrong_kind.refinery_received.connect(func(state: Dictionary): wrong_states.append(state))
+	wrong_kind._accept_line("PERSON|2|456|0|0|2|4|1|0|2400|0|2|0")
+	wrong_kind._pending = 1
+	wrong_kind._pending_refinery_kind = "VIEW"
+	wrong_kind._accept_line("REFHEAD|3|456|1|5|3|1|1|2|1|1|2|4|0|0|0|0|0")
+	wrong_kind._accept_line("REFEND|3|456|1|5|3|0|0|3|1")
+	if wrong_states.size() != 0:
+		push_error("04C accepted an unload receipt for a pending view request")
+		quit(1)
+		return
 	var ui = TERMINAL.new()
 	root.add_child(ui)
 	await process_frame
