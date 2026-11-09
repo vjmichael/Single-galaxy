@@ -5,7 +5,7 @@ extends SceneTree
 ## cannot establish human-visible rendered pixels or driver/GPU acceptance.
 const MAIN := preload("res://world/main.gd")
 const COLLISION_RADIUS_M := 15.201 # 10m original rock + 5.2m greybox ship + 1mm skin.
-var _game: Node3D
+var _game
 var _ship_frames: Array[Dictionary] = []
 var _rock_frames: Array[Dictionary] = []
 var _error := ""
@@ -81,17 +81,17 @@ func _run() -> void:
 	session.ship_state_received.connect(_on_ship)
 	session.asteroid_contact_received.connect(_on_rock)
 	session.start(path)
-	if not await _await_condition(_native_ready):
+	if not (await _await_condition(Callable(self, "_native_ready"))):
 		_fail("original C++ host did not deliver authenticated initial POSE, SHIP and ROCK")
 	elif _rock_frames.is_empty() or _rock_frames[-1]["impact_rock"] != 0:
 		_fail("initial fixture forged or replayed original collision")
 	else:
 		session.toggle_seat()
-		if not await _await_condition(_seat_ready):
+		if not (await _await_condition(Callable(self, "_seat_ready"))):
 			_fail("real owner could not seat in original cockpit")
 	if _error.is_empty():
 		session.submit_flight(PackedStringArray(["UND"]))
-		if not await _await_condition(_undocked):
+		if not (await _await_condition(Callable(self, "_undocked"))):
 			_fail("original ship did not complete undock")
 	if _error.is_empty():
 		_game._external_requested = true
@@ -107,7 +107,7 @@ func _run() -> void:
 			# does NOT call main._on_native_ship_state with synthetic data.
 			await create_timer(0.13).timeout
 			session.submit_flight(PackedStringArray(["FWD"]))
-			if not await _await_condition(_flight_done):
+			if not (await _await_condition(Callable(self, "_flight_done"))):
 				_fail("native flight writer did not respond")
 				break
 			if not session._active or _ship_frames.is_empty() or _rock_frames.is_empty():
