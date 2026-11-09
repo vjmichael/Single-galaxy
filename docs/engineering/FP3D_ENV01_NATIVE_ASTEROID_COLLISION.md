@@ -224,3 +224,34 @@ release artifact or approval.
 actual Windows-installed application, non-headless four-frame renderer
 acceptance, or manufactured/fitted ship mining equipment is claimed.
 Keep PR #125 **draft** until every corresponding gate has real evidence.
+
+### Exact Windows ZIP evidence from consolidated run 42713897568
+
+The actual Windows runner also completed **19/19 MSVC native CTests**,
+including SQLite handle cleanup, original flight/cargo/refinery custody,
+real fault-child second-chance MDMP bytes and protected process exits. It
+ran the authentic Godot 4.7.2 native C++ scene successfully; the
+`real-sgdx-cockpit.log` contains the original LIVE GODOT scene PASS.
+
+The deliverable ZIP was actually assembled, extracted and checked; its
+`packaging-result.json` reported
+`BUNDLED_GODOT_AND_NATIVE_WINDOWS_PE64_VERIFIED` and passed every
+native executable, SQLite DLL, original source-SHA, Godot PE64,
+official engine SHA-256/MIT license, single-click launcher and no private
+dump/save test. The **bundled engine** itself successfully ran
+headless smoke #1 and #2, but smoke #3 reported:
+`PLAY-STATION-02 GODOT visual smoke FAIL: Godot cabin obstacle collision shape absent`.
+The uploaded evidence artifact
+[Windows run evidence](https://github.com/vjmichael/Single-galaxy/actions/runs/42713897568)
+has both actual `godot-3-stderr.log` and original package manifest and
+`result.json` with `result=BLOCKED`, `engine_mode=BUNDLED-VERIFIED`.
+Thus **no unaccepted ZIP was uploaded as an approved release** and
+non-headless 3D screenshots were correctly skipped.
+
+The apparent absent shape was a **test locator error**, not an original
+3D world contact failure: the native crate had been constructed as an
+unnamed `CollisionShape3D`. The repair identifies a unique true
+`CollisionShape3D` child by runtime type and retains exact width/height/
+depth checks. The corresponding source-only contract rejects regression
+to the unstable name lookup. The fix still requires the next consolidated
+real Windows/Linux Godot run. **Human Windows GPU acceptance remains open.**
