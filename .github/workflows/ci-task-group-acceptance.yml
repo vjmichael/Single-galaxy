@@ -339,17 +339,27 @@ jobs:
           if(-not(Test-Path -LiteralPath $upstreamGodot -PathType Leaf)){
             throw 'Official Godot 4.7.2 Windows engine missing after verified release ZIP extraction'
           }
+          $upstreamConsole=Join-Path 'build/fp3d-env01/godot' 'Godot_v4.7.2-stable_win64_console.exe'
+          if(-not(Test-Path -LiteralPath $upstreamConsole -PathType Leaf)){
+            throw 'Official Godot 4.7.2 Windows release missing native CLI console wrapper'
+          }
           $runtimeGodot=Join-Path $runtime 'Godot_v4.7.2-stable_win64.exe'
+          $runtimeConsole=Join-Path $runtime 'Godot_v4.7.2-stable_win64_console.exe'
           Copy-Item -LiteralPath $upstreamGodot -Destination $runtimeGodot -Force
+          Copy-Item -LiteralPath $upstreamConsole -Destination $runtimeConsole -Force
           (Get-FileHash -LiteralPath $runtimeGodot -Algorithm SHA256).Hash.ToLowerInvariant() |
             Set-Content -LiteralPath (Join-Path $runtime 'GODOT_RUNTIME_SHA256.txt') -NoNewline
+          (Get-FileHash -LiteralPath $runtimeConsole -Algorithm SHA256).Hash.ToLowerInvariant() |
+            Set-Content -LiteralPath (Join-Path $runtime 'GODOT_CONSOLE_SHA256.txt') -NoNewline
           Copy-Item -LiteralPath 'desktop_godot/third_party/GODOT_LICENSE.txt' -Destination (Join-Path $runtime 'LICENSE.txt') -Force
           @(
             'Godot Engine 4.7.2-stable upstream redistribution'
             'Original asset: https://github.com/godotengine/godot-builds/releases/tag/4.7.2-stable'
             'Official Windows archive: Godot_v4.7.2-stable_win64.exe.zip'
             'Official archive SHA-256: 731980f9608d61333e5baf54a2ef17210acc7a538446c0cb9969f002aca1e953'
-            'Included executable SHA-256 is in GODOT_RUNTIME_SHA256.txt'
+            'GUI executable SHA-256 is in GODOT_RUNTIME_SHA256.txt'
+            'Official Windows CLI companion SHA-256 is in GODOT_CONSOLE_SHA256.txt'
+            'Windows PowerShell 5.1 smoke uses console companion; game uses GUI executable'
             'License: MIT, see LICENSE.txt'
             'This editor binary is bundled only as the current native Godot 3D runtime.'
           ) | Set-Content -LiteralPath (Join-Path $runtime 'PROVENANCE.txt')
