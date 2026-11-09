@@ -5,6 +5,7 @@ extends Node3D
 const PLAYER_SCRIPT := preload("res://world/player_controller.gd")
 const NATIVE_SESSION := preload("res://world/native_session.gd")
 const NATIVE_PLAYER_SESSION := preload("res://world/native_player_session.gd")
+const NATIVE_STATION_SESSION := preload("res://world/native_station_session.gd")
 const MONOCHROME := Color(0.76, 0.76, 0.76, 1.0)
 var material: StandardMaterial3D
 var player: CharacterBody3D
@@ -15,6 +16,8 @@ var native_label: Label
 var ship_label: Label
 var native_session
 var native_player_session
+var native_station_session
+var station_test_save_selected := false
 var native_markers: Node3D
 var _fps_accumulator := 0.0
 
@@ -43,6 +46,10 @@ func _ready() -> void:
 	player.native_motion_intent.connect(_on_native_player_intent)
 	player.native_seat_intent.connect(_on_native_player_seat_intent)
 	player.native_ship_intents.connect(_on_native_ship_intents)
+	native_station_session = NATIVE_STATION_SESSION.new()
+	native_station_session.person_received.connect(_on_native_station_person)
+	native_station_session.status_changed.connect(_on_native_player_status)
+	native_station_session.connection_changed.connect(_on_native_station_connection)
 
 func _setup_environment() -> void:
 	var env := Environment.new()
@@ -129,6 +136,15 @@ func _build_objects() -> void:
 	_solid_box("Ship wing L", Vector3(17.0, 0.65, -14.0), Vector3(4.2, 0.4, 4.0))
 	_solid_box("Ship wing R", Vector3(17.0, 0.65, -8.0), Vector3(4.2, 0.4, 4.0))
 	_solid_box("Docking control console", Vector3(7.6, 0.8, -12), Vector3(1.3, 1.6, 1.0))
+	# Nonblocking floor marker aligned with native station hangar threshold.
+	var hatch := MeshInstance3D.new()
+	hatch.name = "Station_Hangar_Entry_At_Zero"
+	var tile := BoxMesh.new()
+	tile.size = Vector3(1.2, 0.015, 1.2)
+	hatch.mesh = tile
+	hatch.material_override = material
+	hatch.position = Vector3(0.0, 0.02, 0.0)
+	add_child(hatch)
 
 func _build_player() -> void:
 	player = CharacterBody3D.new()
@@ -155,10 +171,10 @@ func _build_hud() -> void:
 	scope_label.text = "LOCAL MOVEMENT TEST ONLY — NOT CONNECTED TO NATIVE GALAXY"
 	contents.add_child(scope_label)
 	status_label = Label.new()
-	status_label.text = "P native | E sit/stand | ON FOOT: WASD walk | SEATED: AD yaw, WS strafe, arrows thrust, B brake, U undock"
+	status_label.text = "H station native, E board/exist | P cockpit native, E sit | WASD walking | AD yaw, arrows thrust, B brake"
 	contents.add_child(status_label)
 	native_label = Label.new()
-	native_label.text = "NATIVE: P enters persistent ship interior; O is read-only contact view"
+	native_label.text = "NATIVE: H enters station player test. Walk toward marked hatch (0,0), E boards. P switches to ship cockpit."
 	contents.add_child(native_label)
 	ship_label = Label.new()
 	ship_label.text = "SHIP: native physical state not yet verified"
@@ -177,13 +193,28 @@ func _on_inspected(display_name: String) -> void:
 	status_label.text = "Inspected: " + display_name + " (prototype only; no native action)"
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_H:
+		if native_station_session.is_active():
+			native_station_session.stop("Station test session stopped")
+		else:
+			if native_player_session.is_active():
+				native_player_session.stop("Ship session closed before station connection")
+			if native_session.is_active():
+				native_session.stop("Observer closed before station connection")
+			station_test_save_selected = true
+			native_station_session.start()
+		get_viewport().set_input_as_handled()
+		return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_P:
 		if native_player_session.is_active():
 			native_player_session.stop("NATIVE FPS stopped by player; pose saved")
 		else:
+			if native_station_session.is_active():
+				native_station_session.stop("Station writer closed before ship cockpit session")
 			if native_session.is_active():
 				native_session.stop("Read-only observer stopped for native FPS writer")
-			native_player_session.start()
+			var save_override := OS.get_user_data_dir().path_join("single_galaxy_station_test.sqlite") if station_test_save_selected else ""
+			native_player_session.start(save_override)
 		get_viewport().set_input_as_handled()
 		return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_O:
@@ -195,6 +226,23 @@ func _unhandled_input(event: InputEvent) -> void:
 		else:
 			native_session.start()
 		get_viewport().set_input_as_handled()
+
+func _on_native_station_connection(connected: bool) -> void:
+	if is_instance_valid(player):
+		player.use_native_authority(connected)
+	if is_instance_valid(scope_label):
+		scope_label.text = "NATIVE STATION PLAYER (ORIGINAL SQLITE)" if connected else "STATION NATIVE DISCONNECTED"
+
+func _on_native_station_person(person: Dictionary) -> void:
+	if is_instance_valid(player):
+		player.use_native_seat(false)
+		player.global_position = Vector3(float(person["x_mm"]) / 1000.0, 1.45,
+			float(person["z_mm"]) / 1000.0)
+	if is_instance_valid(ship_label):
+		ship_label.text = "STATION #%d | %s | available owned ship #%d | position (%.2f, %.2f)m" % [
+			int(person["station"]), "ON FOOT" if int(person["state"]) == 4 else "ABOARD SHIP",
+			int(person["eligible_ship"]), float(person["x_mm"])/1000.0,
+			float(person["z_mm"])/1000.0]
 
 func _on_native_player_connection(connected: bool) -> void:
 	if is_instance_valid(player):
@@ -220,11 +268,15 @@ func _on_native_ship_state(ship: Dictionary) -> void:
 		int(ship["vx"]), int(ship["vy"]), int(ship["vz"])]
 
 func _on_native_player_seat_intent() -> void:
-	if native_player_session != null:
+	if native_station_session != null and native_station_session.is_active():
+		native_station_session.interact_hangar()
+	elif native_player_session != null:
 		native_player_session.toggle_seat()
 
 func _on_native_player_intent(heading: Vector3) -> void:
-	if native_player_session != null:
+	if native_station_session != null and native_station_session.is_active():
+		native_station_session.submit_walk(heading)
+	elif native_player_session != null:
 		native_player_session.submit_motion(heading)
 
 func _on_native_player_pose(pose: Dictionary) -> void:
@@ -275,12 +327,16 @@ func _exit_tree() -> void:
 		native_session.stop("Native client closed")
 	if native_player_session != null:
 		native_player_session.stop("Native FPS client closed")
+	if native_station_session != null:
+		native_station_session.stop("Native station client closed")
 
 func _process(delta: float) -> void:
 	if native_session != null:
 		native_session.poll()
 	if native_player_session != null:
 		native_player_session.poll()
+	if native_station_session != null:
+		native_station_session.poll()
 
 	_fps_accumulator += delta
 	if _fps_accumulator >= 0.5 and is_instance_valid(fps_label):
