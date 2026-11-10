@@ -1318,6 +1318,16 @@ if(BUILD_TESTING)
     COMMAND galaxy_play13d_live_planet_survey_tests)
 endif()
 
+# STAGE6-A: same saved celestial body and original owner-scoped watershed cell,
+# immutable galaxy anchor, stale observation refusal and real SQLite restart.
+if(BUILD_TESTING)
+  add_executable(galaxy_stage6_original_planet_surface_tests
+    tests/STAGE6_OriginalPlanetSurfaceTests.cpp)
+  target_link_libraries(galaxy_stage6_original_planet_surface_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_stage6_original_planet_surface
+    COMMAND galaxy_stage6_original_planet_surface_tests)
+endif()
+
 # PLAY-13D.3 source-backed planetary site construction/farm/extraction persistence.
 if(BUILD_TESTING)
   # PLAY-13D: control roles share one physical ship and inventory model.
