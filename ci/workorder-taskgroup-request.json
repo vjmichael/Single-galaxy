@@ -2,6 +2,6 @@
   "schema": "SG-WORKORDER-GATE-01",
   "task_group": "STAGE6",
   "pr_number": 127,
-  "source_sha": "b7099d21b16522b35e05918d56f8e9ae46870193",
-  "note": "Fourth single exact-head full 22-test Windows/Linux original-world acceptance. Verify repaired v56 host consignment deserialization with strict issuer/cargo fields, finite ship depletion, NPC/shuttle original region, conserved world matter, cross-platform historical recovery, Stage6/WO4, and diagnostic root of original planetary site mass and NPC receipt mismatch. No release promotion without complete native evidence."
+  "source_sha": "c7ec2fc0655e668537882902ce970373ee133c2d",
+  "note": "One exact-head Windows/Linux 22-test acceptance after legal-residence v85-only fixture migration, v58 SQLite cleanup after object destruction and WO3 module custody diagnostics. Preserve original SQLite genesis/journal checks. Inspect genuine failures: WO3 v86 historic source issue #128, utility mass, third party signed Thrust, flight delivery receipt, and native windows transport. No parallel duplicate jobs."
 }
