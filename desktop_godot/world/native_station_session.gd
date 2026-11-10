@@ -18,6 +18,11 @@ var _generation := -1
 var _tick := -1
 var _next_request := 1
 var _pending := 0
+# One user E press can arrive before a pending authoritative WALK receipt.
+# Keep it for that one acknowledgement only; NEVER enqueue a second writer,
+# replay a rejected action or issue a BOARD from local visual proximity.
+var _pending_walk := 0
+var _queued_hangar_intent := false
 var _last_send := -10000
 var _buffer := PackedByteArray()
 var _person := {}
@@ -84,6 +89,8 @@ func start() -> void:
 	_generation = -1
 	_tick = -1
 	_pending = 0
+	_pending_walk = 0
+	_queued_hangar_intent = false
 	_pending_refinery_kind = ""
 	_next_request = 1
 	_last_send = -10000
@@ -138,6 +145,10 @@ func _accept_line(line: String) -> void:
 		var req := int(f[2])
 		if req == _pending:
 			_pending = 0
+			if req == _pending_walk:
+				_pending_walk = 0
+				_queued_hangar_intent = false
+				_status("Native WALK rejected; press E again after reaching the hatch")
 			_pending_refinery_kind = ""
 			_refinery_receiving = false
 			_refinery_header.clear()
@@ -179,12 +190,20 @@ func _accept_line(line: String) -> void:
 			stop("Station acknowledgement is stale or unrequested")
 			return
 		_pending = 0
+	var last_walk_confirmed: bool = req > 0 and req == _pending_walk
+	if last_walk_confirmed:
+		_pending_walk = 0
 	_generation = gen
 	_tick = tick
 	_person = {"state":state,"station":station,"ship":ship,"x_mm":x,"z_mm":z,
 		"eligible_ship":eligible,"receipt":receipt,"generation":gen,"tick":tick}
 	person_received.emit(_person.duplicate(true))
 	_status("AT STATION" if state == 4 else "ABOARD OWN SHIP")
+	if last_walk_confirmed and _queued_hangar_intent:
+		_queued_hangar_intent = false
+		# The E press is only an INTENT. Submit it against the NEW original
+		# committed PERSON/generation; C++ repeats the distance/custody check.
+		interact_hangar()
 
 func _accept_refinery_line(f: PackedStringArray) -> void:
 	var kind := f[0]
@@ -347,11 +366,20 @@ func submit_walk(heading: Vector3) -> void:
 	var req := _next_request
 	_next_request += 1
 	_pending = req
+	_pending_walk = req
 	_last_send = now
 	_send("WALK|%d|%d|%d|%d|%d" % [_session, req, _generation, dx, dz])
 
 func interact_hangar() -> void:
-	if not _active or _session <= 0 or _pending != 0:
+	if not _active or _session <= 0:
+		_status("Press H and wait for the original station PERSON before boarding")
+		return
+	if _pending != 0:
+		if _pending == _pending_walk and int(_person.get("state", -1)) == 4:
+			_queued_hangar_intent = true
+			_status("E received — waiting for native walking confirmation before boarding")
+		else:
+			_status("Native station action pending — retry E after its receipt")
 		return
 	var state := int(_person.get("state", -1))
 	var verb := ""
@@ -395,6 +423,8 @@ func stop(message: String = "Station session closed", graceful: bool = false) ->
 	_stdout = null
 	_stderr = null
 	_pending = 0
+	_pending_walk = 0
+	_queued_hangar_intent = false
 	_pending_refinery_kind = ""
 	connection_changed.emit(false)
 	_status(message)
