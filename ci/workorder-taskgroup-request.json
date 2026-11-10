@@ -1,0 +1,7 @@
+{
+  "schema": "SG-WORKORDER-GATE-01",
+  "task_group": "WO1",
+  "pr_number": 87,
+  "source_sha": "7f8338bd0ef3dd8adf73a479fc5d20e9f6131259",
+  "note": "One grouped Windows/Linux compiler+Node+CTests, real named-NPC original industry WIP, conserved mass, independent SQLite restart. No broad CI fanout; creator industry-first roadmap."
+}
