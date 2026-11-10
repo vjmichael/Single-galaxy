@@ -639,6 +639,22 @@ func _refresh_interaction_prompt() -> void:
 		var key_to_hatch: String = INTERACTION_PROMPTS.hatch_direction_key(person, player.global_transform.basis)
 		if not key_to_hatch.is_empty():
 			display += "  |  Hold " + key_to_hatch + " toward hatch"
+	# A frozen-looking viewport must expose the distinct input gates. This
+	# display never grants a SEAT, SHIP receipt or second client authority.
+	if is_instance_valid(status_label):
+		if ship_connected:
+			if not seated:
+				status_label.text = "PILOT WAIT | Original C++ SEAT receipt required"
+			elif not get_window().has_focus():
+				status_label.text = "PILOT PAUSED | Click game to focus; saved ship unchanged"
+			elif Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
+				status_label.text = "KEYBOARD FLIGHT READY | Up/Down thrust, A/D yaw | Click for mouse steering"
+			else:
+				status_label.text = "PILOT READY | Up/Down thrust, A/D yaw, B brake, G dock"
+		elif station_connected:
+			status_label.text = "COLONY TO DOCK | WASD walk, E board existing ship"
+		else:
+			status_label.text = "Connecting original world | No unverified movement"
 	if interaction_label.text != display:
 		interaction_label.text = display
 	# The two-line flight/missing-miner explanation must not be clipped by
