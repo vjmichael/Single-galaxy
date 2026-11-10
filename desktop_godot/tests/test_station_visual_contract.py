@@ -55,6 +55,23 @@ checks = {
         and "_colony_return_pending" in main
         and "_colony_return_armed" in main
     ),
+    "focused-keyboard-flight-with-visible-mouse": (
+        "func _collect_native_pilot_actions() -> PackedStringArray:" in player
+        and "if get_window().has_focus():\n\\t\\t\\tif native_seated and native_in_ship:".replace("\\t", chr(9)) in player
+        and 'elif not native_in_ship and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:' in player
+        and "if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and \\" in player
+        and 'pilot_actions.append("FWD")' in player
+        and 'pilot_actions.append("LEFT")' in player
+        and 'Input.mouse_mode = Input.MOUSE_MODE_VISIBLE' in action_smoke
+        and 'free_cursor_actions.has("FWD")' in action_smoke
+        and 'free_cursor_actions.has("LEFT")' in action_smoke
+        and 'docked_actions.has("UND")' in action_smoke
+        and 'unseated player generated forbidden original flight intent' in action_smoke
+        and 'on-foot station player generated forbidden ship thrust intent' in action_smoke
+        and 'KEYBOARD FLIGHT READY' in main
+        and 'PILOT PAUSED' in main
+        and 'PILOT WAIT' in main
+    ),
     "pilot-only-auto-seat-after-original-board": (
         "func _ensure_native_pilot_role() -> void:" in main
         and 'not native_player_session._initial_ship_seen' in main
