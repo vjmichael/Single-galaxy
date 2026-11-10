@@ -331,6 +331,8 @@ func _show_native_location(in_station: bool) -> void:
 			if body is CollisionObject3D:
 				body.collision_layer = 0 if in_station or exterior else 1
 				body.collision_mask = 0 if in_station or exterior else 1
+	if is_instance_valid(flight_panel):
+		flight_panel.visible = not in_station and not _verified_flight_ship.is_empty()
 	if is_instance_valid(space_preview):
 		space_preview.visible = exterior
 		if exterior and is_instance_valid(player):
@@ -353,47 +355,83 @@ func _build_player() -> void:
 func _build_hud() -> void:
 	var hud := CanvasLayer.new()
 	add_child(hud)
+	# Keep status in one compact top-left card, while ship-only telemetry is
+	# in a distinct top-right card. No diagnostic row has an absolute Y value
+	# overlapping the dynamic text above it (observed on physical Radeon PC).
 	var panel := PanelContainer.new()
-	panel.position = Vector2(15, 15)
-	panel.custom_minimum_size = Vector2(680, 72)
-	panel.size = Vector2(680, 72)
+	panel.name = "SystemStatusPanel"
+	panel.position = Vector2(14, 14)
+	panel.custom_minimum_size = Vector2(520, 0)
+	var system_style := StyleBoxFlat.new()
+	system_style.bg_color = Color(0.06, 0.08, 0.11, 0.90)
+	system_style.set_corner_radius_all(6)
+	system_style.set_content_margin_all(10)
+	panel.add_theme_stylebox_override("panel", system_style)
 	hud.add_child(panel)
 	var contents := VBoxContainer.new()
-	contents.custom_minimum_size = Vector2(650, 0)
+	contents.custom_minimum_size = Vector2(500, 0)
+	contents.add_theme_constant_override("separation", 4)
 	panel.add_child(contents)
 	var title := Label.new()
-	title.text = "SINGLE-GALAXY | STANDALONE GRAYBOX FPS 0.0.1"
-	title.add_theme_font_size_override("font_size", 18)
+	title.text = "SINGLE-GALAXY  |  GRAYBOX PLAYTEST"
+	title.add_theme_font_size_override("font_size", 17)
 	contents.add_child(title)
 	scope_label = Label.new()
-	scope_label.text = "LOCAL MOVEMENT TEST ONLY — NOT CONNECTED TO NATIVE GALAXY"
+	scope_label.text = "LOCAL WALKING — Press H for native station"
 	contents.add_child(scope_label)
-	status_label = Label.new()
-	status_label.text = "H station | WASD walk | E interact | P cockpit | U undock | G dock | Esc mouse | window X exit | F11 capture"
-	contents.add_child(status_label)
 	native_label = Label.new()
-	native_label.text = "NATIVE: Press H to connect. Board at the cyan hatch marker, not the white hull."
+	native_label.text = "Press H to connect; cyan floor beacon marks the real boarding hatch"
 	contents.add_child(native_label)
-	asteroid_label = Label.new()
-	asteroid_label.text = "ASTEROID: awaiting verified original ship contact"
-	contents.add_child(asteroid_label)
+	ship_label = Label.new()
+	ship_label.text = "Original ship not yet connected"
+	contents.add_child(ship_label)
+	status_label = Label.new()
+	status_label.text = "H station  |  E interact  |  P cockpit  |  U undock  |  Esc mouse  |  window X exit"
+	status_label.add_theme_font_size_override("font_size", 12)
+	contents.add_child(status_label)
+	for line in [scope_label, native_label, ship_label, status_label]:
+		line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+
+	flight_panel = PanelContainer.new()
+	flight_panel.name = "FlightTelemetryPanel"
+	flight_panel.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
+	flight_panel.offset_left = -492.0
+	flight_panel.offset_right = -14.0
+	flight_panel.offset_top = 14.0
+	flight_panel.visible = false # no live SHIP/ROCK until original C++ frames
+	var flight_style := StyleBoxFlat.new()
+	flight_style.bg_color = Color(0.07, 0.11, 0.15, 0.92)
+	flight_style.set_corner_radius_all(6)
+	flight_style.set_content_margin_all(10)
+	flight_panel.add_theme_stylebox_override("panel", flight_style)
+	hud.add_child(flight_panel)
+	var flight_contents := VBoxContainer.new()
+	flight_contents.custom_minimum_size = Vector2(458, 0)
+	flight_contents.add_theme_constant_override("separation", 5)
+	flight_panel.add_child(flight_contents)
+	var flight_title := Label.new()
+	flight_title.text = "FLIGHT TELEMETRY — ORIGINAL C++"
+	flight_title.add_theme_font_size_override("font_size", 15)
+	flight_contents.add_child(flight_title)
 	flight_instrument_label = Label.new()
 	flight_instrument_label.name = "ReadOnlyOriginalPilotInstrument"
+	flight_instrument_label.text = "Awaiting verified original SHIP + ROCK receipts"
 	flight_instrument_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	flight_instrument_label.custom_minimum_size = Vector2(650.0, 40.0)
-	flight_instrument_label.text = "FLIGHT SENSOR: awaiting matching original SHIP + ROCK receipts"
-	contents.add_child(flight_instrument_label)
-	ship_label = Label.new()
-	ship_label.text = "SHIP: native physical state not yet verified"
-	contents.add_child(ship_label)
-	# Long C++ status/flight frames must wrap into separate rows, rather
-	# than overwrite each other on smaller physical Windows displays.
-	for line in [scope_label, status_label, native_label, asteroid_label,
-			flight_instrument_label, ship_label]:
-		line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	flight_contents.add_child(flight_instrument_label)
+	asteroid_label = Label.new()
+	asteroid_label.text = "No verified asteroid contact"
+	asteroid_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	flight_contents.add_child(asteroid_label)
+
 	fps_label = Label.new()
-	fps_label.position = Vector2(16, 105)
-	fps_label.add_theme_font_size_override("font_size", 15)
+	fps_label.name = "FPSReadout"
+	fps_label.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
+	fps_label.offset_left = 15.0
+	fps_label.offset_right = 310.0
+	fps_label.offset_top = -31.0
+	fps_label.offset_bottom = -8.0
+	fps_label.add_theme_font_size_override("font_size", 14)
+	fps_label.text = "FPS: measuring"
 	hud.add_child(fps_label)
 	var reticle := Label.new()
 	reticle.text = "+"
@@ -857,5 +895,5 @@ func _process(delta: float) -> void:
 
 	_fps_accumulator += delta
 	if _fps_accumulator >= 0.5 and is_instance_valid(fps_label):
-		fps_label.text = "FPS: %d | Godot physics 60 Hz | primitive monochrome scene" % Engine.get_frames_per_second()
+		fps_label.text = "FPS: %d  |  Phys: 60Hz" % Engine.get_frames_per_second()
 		_fps_accumulator = 0.0
