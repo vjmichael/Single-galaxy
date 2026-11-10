@@ -1,0 +1,87 @@
+name: WO4 original economic allocation, consumption, and regional demand
+on:
+  pull_request:
+    paths:
+      - 'include/galaxy/WO4ResourceDemand.hpp'
+      - 'include/galaxy/WO4Allocation.hpp'
+      - 'include/galaxy/WO4LocalAllocation.hpp'
+      - 'include/galaxy/WO4ConsumptionProfiles.hpp'
+      - 'include/galaxy/WO4RegionalDistribution.hpp'
+      - 'include/galaxy/WO4MaterialAllocation.hpp'
+      - 'include/galaxy/WO4GoodsRegional.hpp'
+      - 'tests/WO4MaterialAllocationTests.cpp'
+      - 'tests/WO4ResourceDemandTests.cpp'
+      - 'tests/WO3PlanetaryUtilityTests.cpp'
+      - 'src/Industry01Catalog.generated.cpp'
+      - 'src/MacroNeeds.cpp'
+      - 'include/galaxy/WO3ColonyOperations.hpp'
+      - 'src/Simulation.cpp'
+      - 'src/Persistence.cpp'
+      - 'include/galaxy/Simulation.hpp'
+      - 'include/galaxy/Persistence.hpp'
+      - 'CMakeLists.txt'
+      - '.github/workflows/wo4-resource-demand.yml'
+  workflow_dispatch:
+concurrency:
+  group: sg-wo4-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  physical-source:
+    name: Exact original inventory and SQLite (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify checked-out source SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="${{ github.event.pull_request.head.sha || github.sha }}"
+          actual="$(git rev-parse HEAD)"
+          echo "Requested WO4 source: $expected"
+          echo "Running WO4 source:   $actual"
+          test "$actual" = "$expected"
+          cmake --version
+      - name: Install system SQLite SDK
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlite3-dev ninja-build
+      - name: Install Windows SQLite SDK
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vcpkg = Join-Path $env:VCPKG_INSTALLATION_ROOT 'vcpkg.exe'
+          if (-not (Test-Path $vcpkg)) { throw 'Windows vcpkg SDK missing' }
+          & $vcpkg install sqlite3:x64-windows --clean-after-build
+          if ($LASTEXITCODE -ne 0) { throw 'Windows SQLite SDK install failed' }
+      - name: Configure Linux original kernel
+        if: runner.os == 'Linux'
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+      - name: Configure Windows original kernel
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tc = Join-Path $env:VCPKG_INSTALLATION_ROOT 'scripts/buildsystems/vcpkg.cmake'
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$tc" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'Windows original configure failed' }
+      - name: Build WO4 and upstream original colony regression
+        run: cmake --build build --config Release --parallel 2 --target galaxy_wo4_resource_demand_tests galaxy_wo4_material_allocation_tests galaxy_wo3_colony_operations_tests galaxy_wo3_planetary_housing_tests galaxy_wo3_planetary_utility_tests galaxy_wo2_industry_workforce_tests
+      - name: Verify owner, physical stocks, and copy-recovered original SQLite
+        run: ctest --test-dir build -C Release --output-on-failure --output-junit build/wo4-actual-results.xml -R "^galaxy_(wo4_resource_demand|wo4_material_allocation|wo3_colony_operations|wo3_planetary_housing|wo3_planetary_utility|wo2_industry_workforce)$"
+      - name: Retain executed native test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wo4-${{ matrix.os }}-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            build/wo4-actual-results.xml
+            build/Testing/Temporary/LastTest.log
+            build/Testing/Temporary/LastTestsFailed.log
+          if-no-files-found: warn
+          retention-days: 14

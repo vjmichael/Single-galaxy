@@ -1,4 +1,5 @@
 #include "galaxy/WO3ColonyOperations.hpp"
+#include "galaxy/WO4ResourceDemand.hpp"
 #include "galaxy/WO2IndustryWorkforce.hpp"
 #include "galaxy/Persistence.hpp"
 #include "galaxy/NpcAppearanceGenome.hpp"
@@ -104,10 +105,8 @@ int main() {
         w.world(),7,ship,orbital,false,operator_id,22,true);
     CHECK(assignment && w.submit(*assignment));w.step();
     CHECK(w.world().events().back().result==Outcome::Applied);
-    // All subsequent planet/shuttle/housing/utility racks must come from
-    // FINITE original mined/refined matter, not an implicitly free module.
-    // 80 refined ore - initial 20 x 2 modules = 40 remaining refined ore.
-    // Form 16 additional actual modules (32 ore) before leaving this site.
+    // Physically conserve original mined ore through the downstream
+    // housing/shuttle/utility module construction, not a free rack.
     act(w,ship,23,Action::FabricateModule,0,16);
     act(w,ship,24,Action::ConstructWorkshopFinisher,orbital);
     w.steps(8);
@@ -228,6 +227,33 @@ int main() {
     CHECK(w.start_planetary_housing(7,ship,key,81200));
     w.steps(80);
     CHECK(w.world().planetary_sites().at(key).housing_phase==2);
+    // WO4-A: a physically built WO3 surface participates in demand
+    // observation from its REAL deposited provisions and its existing
+    // per-site live people census. A forecast cannot move stock.
+    const auto demand_before=w.world().state_hash();
+    const auto pressure=economy04::observe_owner_world(
+        w.world(),7,ship,economy04::Policy{4,1});
+    CHECK(pressure && pressure->still_current(w.world()));
+    CHECK(!economy04::observe_owner_world(w.world(),8,ship));
+    const auto surface_pressure=std::find_if(
+        pressure->compartments.begin(),pressure->compartments.end(),
+        [&](const auto& row) {
+            return row.kind==economy04::CompartmentKind::PlanetarySurface &&
+                   row.planetary_key==key;
+        });
+    CHECK(surface_pressure!=pressure->compartments.end());
+    const auto native_census=colony03::audit_planetary_surface(
+        w.world(),7,ship,key);
+    CHECK(native_census.has_value());
+    CHECK(surface_pressure->current_consumers==
+          static_cast<std::uint64_t>(native_census->current_surface_consumers));
+    CHECK(surface_pressure->needs[0].physically_present_kg==
+          w.world().planetary_sites().at(key).food_kg);
+    CHECK(surface_pressure->needs[1].physically_present_kg==
+          w.world().planetary_sites().at(key).water_kg);
+    CHECK(surface_pressure->needs[2].physically_present_kg==
+          w.world().planetary_sites().at(key).oxygen_kg);
+    CHECK(w.world().state_hash()==demand_before);
     CHECK(!w.start_planetary_surface_utility(8,ship,key,81400,builder));
     CHECK(!w.start_planetary_surface_utility(7,ship,key,81400,pilot));
     CHECK(!w.start_planetary_surface_utility(7,ship,key,81400,builder));
@@ -643,6 +669,50 @@ int main() {
             CHECK(audit_resident && audit_resident->admitted_households==1 &&
                   audit_resident->present_registered_children==1 &&
                   audit_resident->installed_beds==8);
+            // The actual registered ART02 child is already in the landed
+            // family's physical shuttle manifest. Legal admission changes
+            // residence but must NOT double its life-support demand.
+            const auto& landed_family=service.world().planetary_shuttles().at(key);
+            CHECK(landed_family.flight_phase==2 &&
+                  landed_family.family.stage==2 &&
+                  landed_family.family.child_ids.size()==1);
+            const auto unique_consumers=std::int64_t{2}+
+                static_cast<std::int64_t>(landed_family.disembarked_ids.size())+
+                1+static_cast<std::int64_t>(landed_family.passenger_ids.size())+
+                static_cast<std::int64_t>(landed_family.family.child_ids.size());
+            CHECK(audit_resident->current_surface_consumers==unique_consumers);
+            const auto admitted_pressure=economy04::observe_owner_world(
+                service.world(),7,ship,economy04::Policy{4,1});
+            CHECK(admitted_pressure.has_value());
+            const auto demand_site=std::find_if(
+                admitted_pressure->compartments.begin(),
+                admitted_pressure->compartments.end(),
+                [&](const auto& compartment){
+                    return compartment.kind==
+                               economy04::CompartmentKind::PlanetarySurface &&
+                           compartment.planetary_key==key;
+                });
+            CHECK(demand_site!=admitted_pressure->compartments.end() &&
+                  demand_site->current_consumers==
+                      static_cast<std::uint64_t>(unique_consumers));
+            // Read-only diagnostics are insufficient if the physical
+            // simulation itself still charges a child twice. Run a separate
+            // original snapshot to the next 20-tick life-support boundary
+            // and bound its actual local waste by unique real consumers.
+            auto native_cycle=Simulation::from_snapshot(
+                service.world().canonical_state());
+            while(native_cycle.tick()%20!=19)native_cycle.step();
+            const auto before_cycle=colony03::audit_planetary_surface(
+                native_cycle,7,ship,key);
+            CHECK(before_cycle.has_value());
+            const auto waste_before=
+                native_cycle.planetary_sites().at(key).organic_waste_kg;
+            native_cycle.step();
+            const auto waste_after=
+                native_cycle.planetary_sites().at(key).organic_waste_kg;
+            CHECK(waste_after>=waste_before);
+            CHECK(waste_after-waste_before<=
+                  before_cycle->current_surface_consumers);
             const auto admitted_copy=(folder/"household_admitted.sqlite").string();
             PersistentWorld::recover_copy(service_db,admitted_copy);
             {
