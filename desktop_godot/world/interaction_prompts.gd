@@ -65,11 +65,11 @@ static func hint(station_active: bool, person: Dictionary, ship_active: bool,
 		return "Station identity not ready — no interaction authorized"
 	if ship_active:
 		if not ship_seated:
-			return "Press %s to Sit at the Pilot Seat" % interact_key
+			return "Automatic pilot seating — awaiting original C++ SEAT receipt"
 		if dock_state == 1:
-			return "Press U to Undock  |  Mouse / A,D native steer  •  V camera"
+			return "THIRD-PERSON PILOT | Press U to Undock  •  Mouse / A,D turn"
 		if dock_state == 0:
-			# No client-side mining, fake throttle or invented asteroid controls.
-			return "FLIGHT | Mouse/A,D turn • ↑/↓ thrust • B brake • G dock near station\nMINING LOCKED — original C++ equipment not fitted yet"
+			# No cabin walking, free-look toggle, client miner or fake ore.
+			return "THIRD-PERSON FLIGHT | Mouse/A,D turn • ↑/↓ thrust • B brake • G dock\nMINING LOCKED — original C++ equipment not fitted yet"
 		return "Waiting for verified original ship docking status"
 	return "Connecting to your original saved station automatically..."
