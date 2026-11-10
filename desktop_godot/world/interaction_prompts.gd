@@ -71,4 +71,4 @@ static func hint(station_active: bool, person: Dictionary, ship_active: bool,
 		if dock_state == 0:
 			return "Up/Down — Thrust  |  V — Exterior camera  |  B — Brake  |  G — Dock nearby"
 		return "Waiting for verified original ship docking status"
-	return "Press H — Connect to the native station before boarding your ship"
+	return "Connecting to your original saved station automatically..."
