@@ -48,7 +48,10 @@ def prepare(source):
         raise RuntimeError("source must be clean before adding capture")
     path = source / SOURCE_TEST
     original = path.read_text(encoding="utf-8")
-    anchor = '        CHECK(w.world().canonical_state().rfind("galaxy-kernel-v85|",0)==0);'
+    # The vintage source checks the v85 header twice; the individual
+    # disembarked-visitor arrival receipt is unique and comes after v85
+    # is durably committed by the original PersistentWorld.
+    anchor = '        CHECK(w.world().planetary_shuttles().at(key).visitor_arrival_receipts.at(passenger)==81001);'
     if original.count(anchor) != 1:
         raise RuntimeError("real native v85 checkpoint anchor missing/ambiguous")
     source_injection = (
