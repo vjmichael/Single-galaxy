@@ -6,6 +6,8 @@ extends SceneTree
 
 var game: Node3D
 var _error := ""
+var _walk_generation := 0
+var _former_pid := -1
 
 func _initialize() -> void:
 	call_deferred("_run")
@@ -33,10 +35,13 @@ func _ship_ready() -> bool:
 		int(game.native_player_session._sequence) >= 0 and \
 		bool(game.native_player_session._initial_ship_seen)
 
-func _walk_ack(generation: int) -> bool:
+func _walk_ack() -> bool:
 	return not is_instance_valid(game) or not game.native_station_session.is_active() or \
 		(game.native_station_session._pending == 0 and \
-		int(game.native_station_session._generation) > generation)
+		int(game.native_station_session._generation) > _walk_generation)
+
+func _old_writer_closed() -> bool:
+	return _former_pid > 0 and not OS.is_process_running(_former_pid)
 
 func _make_scene() -> void:
 	var scene := load("res://world/main.tscn") as PackedScene
@@ -68,7 +73,7 @@ func _run() -> void:
 	# Reproduce standalone game auto-connect explicitly under a script runner.
 	game._player_session_autoconnect = true
 	game._open_saved_station_automatically()
-	if not (await _wait_for(_station_ready)):
+	if not (await _wait_for(Callable(self, "_station_ready"))):
 		_fail("automatic original PERSON missing: " + str(game.native_label.text))
 		quit(1)
 		return
@@ -91,10 +96,10 @@ func _run() -> void:
 		return
 	for index in range(12):
 		var native = game.native_station_session
-		var generation: int = int(native._generation)
+		_walk_generation = int(native._generation)
 		await create_timer(0.14).timeout
 		native.submit_walk(Vector3.LEFT)
-		if not (await _wait_for(func() -> bool: return _walk_ack(generation), 4.0)):
+		if not (await _wait_for(Callable(self, "_walk_ack"), 4.0)):
 			_fail("original station WALK did not acknowledge step " + str(index))
 			quit(1)
 			return
@@ -108,7 +113,7 @@ func _run() -> void:
 		quit(1)
 		return
 	game.native_station_session.interact_hangar()
-	if not (await _wait_for(_ship_ready, 16.0)):
+	if not (await _wait_for(Callable(self, "_ship_ready"), 16.0)):
 		_fail("E BOARD did not automatically hand off saved SQLite to cockpit: " + str(game.native_label.text))
 		quit(1)
 		return
@@ -117,10 +122,10 @@ func _run() -> void:
 		_fail("ship ready without an original BOARD receipt or second writer still active")
 		quit(1)
 		return
-	var old_pid: int = game.native_player_session.process_id()
+	_former_pid = game.native_player_session.process_id()
 	game.queue_free()
 	await process_frame
-	if not (await _wait_for(func() -> bool: return not OS.is_process_running(old_pid), 8.0)):
+	if not (await _wait_for(Callable(self, "_old_writer_closed"), 8.0)):
 		_fail("original cockpit writer survived forced game close; cannot safely restart")
 		quit(1)
 		return
@@ -133,7 +138,7 @@ func _run() -> void:
 	await process_frame
 	game._player_session_autoconnect = true
 	game._open_saved_station_automatically()
-	if not (await _wait_for(_ship_ready, 20.0)):
+	if not (await _wait_for(Callable(self, "_ship_ready"), 20.0)):
 		_fail("saved boarded ship did not reopen automatically without H/P: " + str(game.native_label.text))
 		quit(1)
 		return
