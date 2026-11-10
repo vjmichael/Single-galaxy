@@ -67,8 +67,9 @@ static func hint(station_active: bool, person: Dictionary, ship_active: bool,
 		if not ship_seated:
 			return "Press %s to Sit at the Pilot Seat" % interact_key
 		if dock_state == 1:
-			return "Press U to Undock  |  Leave the colony for space"
+			return "Press U to Undock  |  Mouse / A,D native steer  •  V camera"
 		if dock_state == 0:
-			return "SPACE-FARING  |  Up/Down thrust  •  V exterior  •  B brake  •  G dock"
+			# No client-side mining, fake throttle or invented asteroid controls.
+			return "FLIGHT | Mouse/A,D turn • ↑/↓ thrust • B brake • G dock near station\nMINING LOCKED — original C++ equipment not fitted yet"
 		return "Waiting for verified original ship docking status"
 	return "Connecting to your original saved station automatically..."
