@@ -104,6 +104,11 @@ int main() {
         w.world(),7,ship,orbital,false,operator_id,22,true);
     CHECK(assignment && w.submit(*assignment));w.step();
     CHECK(w.world().events().back().result==Outcome::Applied);
+    // All subsequent planet/shuttle/housing/utility racks must come from
+    // FINITE original mined/refined matter, not an implicitly free module.
+    // 80 refined ore - initial 20 x 2 modules = 40 remaining refined ore.
+    // Form 16 additional actual modules (32 ore) before leaving this site.
+    act(w,ship,23,Action::FabricateModule,0,16);
     act(w,ship,24,Action::ConstructWorkshopFinisher,orbital);
     w.steps(8);
     CHECK(w.world().workshop(orbital)->panels_kg>=3);
