@@ -89,16 +89,36 @@ def main() -> None:
         if not path.is_file():
             raise AssertionError(f"missing genuine native binary: {path}")
     with tempfile.TemporaryDirectory(prefix="SG_colony_—_owned_world_") as tmp:
-        root = Path(tmp)
-        verify_native(
-            args.supervisor, args.station,
-            root / "Colony — Departure Dock.sqlite", "utf8_station", True,
+        root = Path(tmp) / "Colony — profile" / "Dock — ship"
+        root.mkdir(parents=True)
+        cases = (
+            (args.station, root / "Colony — Departure Dock.sqlite", "utf8_station", True),
+            (args.cockpit, root / "White Ship — Cockpit.sqlite", "utf8_cockpit", False),
         )
-        verify_native(
-            args.supervisor, args.cockpit,
-            root / "White Ship — Cockpit.sqlite", "utf8_cockpit", False,
-        )
-    print("FP3D-WIN-UTF8 PASS: two authentic SGDX children, preserved Unicode SQLite filenames and private diagnostics")
+        for host, db, role, station in cases:
+            # A restart must reopen the SAME original-world SQLite path.
+            # Stat identity and the schema inventory guard against deleting
+            # or silently substituting a fresh profile during Unicode recovery.
+            verify_native(args.supervisor, host, db, role, station)
+            before = db.stat()
+            with sqlite3.connect(db) as connection:
+                schema_before = tuple(connection.execute(
+                    "SELECT name, type FROM sqlite_master "
+                    "WHERE name NOT LIKE 'sqlite_%' ORDER BY name, type"
+                ))
+            verify_native(args.supervisor, host, db, role, station)
+            after = db.stat()
+            with sqlite3.connect(db) as connection:
+                schema_after = tuple(connection.execute(
+                    "SELECT name, type FROM sqlite_master "
+                    "WHERE name NOT LIKE 'sqlite_%' ORDER BY name, type"
+                ))
+            if before.st_ino != after.st_ino or before.st_dev != after.st_dev:
+                raise AssertionError(f"{role} replaced existing SQLite world on restart")
+            if schema_before != schema_after:
+                raise AssertionError(f"{role} changed SQLite world schema on restart")
+            print(f"{role} PASS: Unicode nested directory and same-file restart")
+    print("FP3D-WIN-UTF8 PASS: four authentic SGDX launches, Unicode SQLite reopen and private diagnostics")
 
 
 if __name__ == "__main__":
