@@ -19,3 +19,12 @@
 - **STAGE6-F:** one exact-head native Windows/Linux CTest gate plus installed Windows Radeon AI Pro R9700 frame pacing, save/restart parity and visual inspection.
 
 This work **does not bypass WO3/WO4/WO5**; it is deliberately downstream and remains draft until the physical logistics stack is accepted.
+
+## STAGE6-B/C native implementation update (2026-11-10)
+
+- `Stage6PlanetTiles.hpp` derives **bounded, non-authoritative 3D tile vertices and triangle indices** exclusively from `observe_planet_surface` and current `scan_planetary_geography` receipts, retaining body/system identity, source elevation and full world state hash. 5 × 12 latitude/longitude tile bands, maximum 4 tiles per request and exact adjacent edges; the longitude wrap uses one same source cell at 72 ≡ 0 rather than adding an independent fake planet. This is a CPU-side mesh description; no Godot planet viewport has been executed.
+- `STAGE6_OriginalPlanetSurfaceTests.cpp` now tests the 3D mesh vertex and adjacency/seam positions at full/coarse LOD, original owner and body denial, invalid and repeated tile bounds, stale ticks, and independent SQLite-copy vertex parity.
+- `Stage6AuthorizedLanding.hpp` is a strict **read-only** original-shuttle landing receipt join: actual surface location, current original owner/source ship, physically landed shuttle phase 2, original recorded descent ID, nonmoving flight request, and named original pilot NPC currently at the real surface. It **does not** authorize player landing, camera relocation or any cargo creation.
+- `STAGE6_AuthorizedLandingTests.cpp` uses real mined/refined modules, original named construction crew, actual planet transit/site, original shuttle pilot, three native descent ticks and receipt, copied SQLite restart, physical ascent and one-use refusal.
+- Exact-head native Linux/Windows Stage 6 acceptance is in the opt-in original work-order matrix (with WO2/WO3/WO4/WO5); it is **not accepted until the jobs truly compile and run**.
+- Actual real-time native 3D Godot visualization, streamed GPU LOD/collision, physical Radeon R9700 frame timing, full climate and planet genesis, and separately authorized player landing are **still not implemented/accepted**. Do not claim a player travelled to a surface from these test receipts.
