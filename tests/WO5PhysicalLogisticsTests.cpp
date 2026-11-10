@@ -28,6 +28,7 @@ int main() {
     seed.provision_colony_genesis(foreign,1000,3000,1000,1000,1000);
     seed.enable_individual_workforce();
     const auto mass=seed.total_ore();
+    const auto original_material=seed.total_material_kg();
     const auto db=(folder/"world.sqlite").string();
     PersistentWorld w(db,std::move(seed));
     // A shortage is real but it does NOT give an imaginary planet, shuttle,
@@ -36,7 +37,8 @@ int main() {
         w.world(),7,economy04::Policy{32,1});
     CHECK(board && board->still_current(w.world()));
     CHECK(!board->shortages.empty());
-    CHECK(w.world().total_ore()==mass);
+    CHECK(w.world().total_ore()==mass &&
+          w.world().total_material_kg()==original_material);
     economy04::CarrierRequest fake{};
     fake.source.source_ship=first;
     fake.source.physical_location=first;
@@ -102,19 +104,23 @@ int main() {
     CHECK(w.world().local_delivery_board().empty());
     CHECK(w.world().intercolony_freight().empty());
     CHECK(w.world().state_hash()==original &&
-          w.world().total_ore()==mass);
+          w.world().total_ore()==mass &&
+          w.world().total_material_kg()==original_material);
     // The independent original recovery tool requires an actually persisted
     // world-step checkpoint after genesis. A new-world-only SQLite is not a
     // historical replay fixture; take a legitimate native STEP instead of
     // bypassing the recovery guard or forging an earlier checkpoint.
     w.step();
     CHECK(w.world().total_ore()==mass &&
+          w.world().total_material_kg()<=original_material &&
           w.world().local_delivery_board().empty() &&
           w.world().intercolony_freight().empty());
+    const auto checkpoint_material=w.world().total_material_kg();
     const auto copy=(folder/"copy.sqlite").string();
     PersistentWorld::recover_copy(db,copy);
     PersistentWorld restored(copy,Simulation(94106));
-    CHECK(restored.world().state_hash()==w.world().state_hash());
+    CHECK(restored.world().state_hash()==w.world().state_hash() &&
+          restored.world().total_material_kg()==checkpoint_material);
     CHECK(restored.world().local_delivery_board().empty());
     CHECK(restored.world().intercolony_freight().empty());
     std::cout<<"WO5 original route/cargo/owner/host fail-closed guards: OK\n";
