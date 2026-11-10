@@ -732,6 +732,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_P:
+		if _player_session_autoconnect:
+			_on_native_player_status("P developer stop is disabled in gameplay; dock and E to leave your ship")
+			get_viewport().set_input_as_handled()
+			return
 		if native_player_session.is_active():
 			native_player_session.stop("NATIVE FPS stopped by player; pose saved", true)
 		else:
@@ -1018,7 +1022,7 @@ func _on_native_asteroid_contact(contact: Dictionary) -> void:
 		var visual_radius := maxf(0.3, float(contact["radius_mm"]) / 1000.0)
 		native_asteroid_mesh.scale = Vector3.ONE * visual_radius
 		var range_m := Vector3(float(contact["dx_mm"]),float(contact["dy_mm"]),float(contact["dz_mm"])).length() / 1000.0
-		asteroid_label.text = "ROCK #%d | %.1fm | %d t finite ore | ship cargo %d/%d t | mining tool: %s | V exterior" % [
+		asteroid_label.text = "ROCK #%d | %.1fm | %d t finite ore | ship cargo %d/%d t | mining tool: %s | PILOT 3RD-PERSON" % [
 			int(contact["rock"]),range_m,int(contact["ore_tonnes"]),int(contact["cargo_tonnes"]),
 			int(contact["cargo_capacity"]),"ONLINE" if int(contact["mining_tool_online"]) == 1 else "NOT FITTED"]
 	else:
@@ -1054,8 +1058,9 @@ func _on_native_player_seat_intent() -> void:
 func _on_native_player_intent(heading: Vector3) -> void:
 	if native_station_session != null and native_station_session.is_active():
 		native_station_session.submit_walk(heading)
-	elif native_player_session != null:
-		native_player_session.submit_motion(heading)
+	# PILOT-ONLY: intentionally NEVER route cabin MOVE to native cockpit,
+	# even when a stale/extra Godot emitter calls this handler directly.
+	# The only in-ship user controls are authorized original FLIGHT verbs.
 
 func _on_native_player_pose(pose: Dictionary) -> void:
 	_record_native_projection("POSE", pose)
@@ -1073,7 +1078,12 @@ func _on_native_player_pose(pose: Dictionary) -> void:
 
 func _on_native_player_status(message: String) -> void:
 	if is_instance_valid(native_label):
-		native_label.text = message
+		# The real native SEAT=0 acknowledgement is an invisible stage of a
+		# direct docked EXIT. Never advertise free cabin walking during handoff.
+		if _colony_return_pending and message.begins_with("NATIVE ON FOOT"):
+			native_label.text = "DOCKED EXIT — original C++ seat release verified, transferring to colony"
+		else:
+			native_label.text = message
 	if is_instance_valid(refinery_terminal) and refinery_terminal.visible and ("refused" in message or "timed out" in message):
 		refinery_terminal.report_error(message)
 
