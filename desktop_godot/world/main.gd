@@ -9,6 +9,7 @@ const NATIVE_STATION_SESSION := preload("res://world/native_station_session.gd")
 const REFINERY_TERMINAL_UI := preload("res://world/refinery_terminal_ui.gd")
 const FLIGHT_INSTRUMENTS := preload("res://world/native_flight_instruments.gd")
 const INTERACTION_PROMPTS := preload("res://world/interaction_prompts.gd")
+const COLONY_DOCK_LAYOUT := preload("res://world/colony_dock_layout.gd")
 const STATION_GRAY := Color(0.47, 0.51, 0.55, 1.0)
 const SHIP_WHITE := Color(0.96, 0.97, 0.99, 1.0)
 # Visual capsule center for 1.75 m tall collider; original C++ X/Z unchanged.
@@ -72,6 +73,9 @@ func _ready() -> void:
 	_geometry_parent = station_space
 	_build_station()
 	_build_objects()
+	# Procedural, visual-only colony -> dock -> berth transition. Native
+	# station-person coordinates, SQLite ownership and boarding are unchanged.
+	COLONY_DOCK_LAYOUT.build(station_space)
 	ship_space = Node3D.new()
 	ship_space.name = "ShipInterior_Prototype"
 	add_child(ship_space)
@@ -145,7 +149,7 @@ func _enter_cockpit_after_verified_board() -> void:
 func _setup_environment() -> void:
 	var env := Environment.new()
 	env.background_mode = Environment.BG_COLOR
-	env.background_color = Color(0.10, 0.10, 0.10)
+	env.background_color = Color(0.15, 0.19, 0.25)
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	env.ambient_light_color = Color(0.63, 0.63, 0.63)
 	env.ambient_light_energy = 0.7
@@ -214,16 +218,19 @@ func _solid_cylinder(label: String, pos: Vector3, height: float, radius: float) 
 
 func _build_station() -> void:
 	_solid_box("Station floor", Vector3(0, -0.25, 0), Vector3(64, 0.5, 64))
-	# Four outer boundaries: no holes in the play test area.
-	_solid_box("North perimeter", Vector3(0, 2.0, -32), Vector3(64, 4, 0.5))
-	_solid_box("South perimeter", Vector3(0, 2.0, 32), Vector3(64, 4, 0.5))
-	_solid_box("East perimeter", Vector3(32, 2.0, 0), Vector3(0.5, 4, 64))
-	_solid_box("West perimeter", Vector3(-32, 2.0, 0), Vector3(0.5, 4, 64))
-	# Wide-open doorway and a simple accessible station corridor.
-	_solid_box("Hall west wall", Vector3(-5.0, 2.0, -7), Vector3(0.4, 4, 28))
-	_solid_box("Hall east wall", Vector3(5.0, 2.0, -7), Vector3(0.4, 4, 28))
-	_solid_box("Control room west", Vector3(-14, 2.0, -22), Vector3(18, 4, 0.4))
-	_solid_box("Control room east", Vector3(14, 2.0, -22), Vector3(18, 4, 0.4))
+	# Open-air surface colony: perimeter barriers, rather than a giant
+	# enclosed box. The native +/-5 m corridor remains the REAL walk fence.
+	_solid_box("North perimeter", Vector3(0, 0.75, -32), Vector3(64, 1.5, 0.5))
+	_solid_box("South perimeter", Vector3(0, 0.75, 32), Vector3(64, 1.5, 0.5))
+	_solid_box("East perimeter", Vector3(32, 0.75, 0), Vector3(0.5, 1.5, 64))
+	_solid_box("West perimeter", Vector3(-32, 0.75, 0), Vector3(0.5, 1.5, 64))
+	# These gray low walls correspond to the existing original C++ native
+	# hallway blockers at x=-5m and x=+5m. The colony blocks beyond are
+	# visual skyline, not pass-through colliding fake structures.
+	_solid_box("Hall west wall", Vector3(-5.0, 0.65, -7), Vector3(0.4, 1.3, 28))
+	_solid_box("Hall east wall", Vector3(5.0, 0.65, -7), Vector3(0.4, 1.3, 28))
+	_solid_box("Control room west", Vector3(-14, 0.8, -22), Vector3(18, 1.6, 0.4))
+	_solid_box("Control room east", Vector3(14, 0.8, -22), Vector3(18, 1.6, 0.4))
 	_solid_box("Hangar gangway", Vector3(0, 0.015, -4.5), Vector3(1.6, 0.03, 9))
 	# Visual marker only. The original host authorizes access at (3m,0m).
 	_solid_box("Station refinery terminal (R)", Vector3(3.0, 0.85, 0), Vector3(0.65, 1.7, 0.65))
@@ -249,12 +256,15 @@ func _build_objects() -> void:
 	_solid_box("Resource crate 01", Vector3(-2.3, 0.65, -2.5), Vector3(1.3, 1.3, 1.3))
 	_solid_box("Resource crate 02", Vector3(3, 0.45, 0), Vector3(0.9, 0.9, 0.9))
 	_solid_cylinder("Asteroid sample", Vector3(16, 1.3, 2), 2.6, 1.35)
-	# A silhouette made from boxes to prove scale and collision, not an asset pipeline.
-	# Visible hull aligned to the station hangar corridor. Boarding authority
-	# remains the original native (0,0) hatch, NOT a local mesh hitbox.
-	_solid_box("Docked owned ship hull (visual)", Vector3(0, 1.25, -11.0), Vector3(8, 2.5, 3.2))
-	_solid_box("Ship wing L (visual)", Vector3(0, 0.65, -14.0), Vector3(4.2, 0.4, 4.0))
-	_solid_box("Ship wing R (visual)", Vector3(0, 0.65, -8.0), Vector3(4.2, 0.4, 4.0))
+	# Actual original owned ShipID is now legible as a white landed craft on
+	# the DOCK deck, within sight of colony arrival and its native boarding
+	# checkpoint. The dark canopy/landing legs live in visual-only layout data.
+	# BOARD is still granted ONLY by original C++ at station (0,0).
+	_solid_box("Docked owned ship hull (visual)", Vector3(0, 1.34, -4.90), Vector3(3.0, 2.35, 4.0))
+	_solid_box("Ship wing L (visual)", Vector3(-2.05, 0.67, -5.35), Vector3(2.4, 0.35, 2.7))
+	_solid_box("Ship wing R (visual)", Vector3(2.05, 0.67, -5.35), Vector3(2.4, 0.35, 2.7))
+	# The original refinery terminal remains x=3m,z=0. Dock service
+	# consoles are decorative; don't invent a second authoritative control.
 	_solid_box("Docking control console", Vector3(3.9, 0.8, -0.5), Vector3(1.3, 1.6, 1.0))
 	# Nonblocking floor marker aligned with native station hangar threshold.
 	var hatch := MeshInstance3D.new()
@@ -275,7 +285,7 @@ func _build_objects() -> void:
 	_geometry_parent.add_child(hatch)
 	var beacon := Label3D.new()
 	beacon.name = "BoardingHatch_WorldSign_VisualOnly"
-	beacon.text = "BOARDING HATCH\nE WHEN PROMPTED"
+	beacon.text = "SHIP BOARDING POINT\nE WHEN PROMPTED"
 	beacon.position = Vector3(0.0, 2.15, 0.0)
 	beacon.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	beacon.pixel_size = 0.006
@@ -414,20 +424,20 @@ func _build_hud() -> void:
 	contents.add_theme_constant_override("separation", 4)
 	panel.add_child(contents)
 	var title := Label.new()
-	title.text = "SINGLE-GALAXY  |  GRAYBOX PLAYTEST"
+	title.text = "SINGLE-GALAXY  |  COLONY / DEPARTURES"
 	title.add_theme_font_size_override("font_size", 17)
 	contents.add_child(title)
 	scope_label = Label.new()
 	scope_label.text = "Connecting to original saved world..."
 	contents.add_child(scope_label)
 	native_label = Label.new()
-	native_label.text = "Connecting to your saved station automatically..."
+	native_label.text = "COLONY — connecting to your saved world..."
 	contents.add_child(native_label)
 	ship_label = Label.new()
 	ship_label.text = "Original ship not yet connected"
 	contents.add_child(ship_label)
 	status_label = Label.new()
-	status_label.text = "WASD walk  |  E interact  |  U undock  |  V camera  |  Esc mouse  |  X exit"
+	status_label.text = "COLONY  >  DOCK  >  SPACE  |  WASD walk  |  E board  |  U undock  |  V camera"
 	status_label.add_theme_font_size_override("font_size", 12)
 	contents.add_child(status_label)
 	for line in [scope_label, native_label, ship_label, status_label]:
