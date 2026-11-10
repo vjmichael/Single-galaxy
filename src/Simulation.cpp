@@ -2228,6 +2228,19 @@ bool Simulation::submit(const Command& c) {
         c.action==Action::HostDestroyPassengerFerry?36:35);
     if(c.action==Action::TrainWorkshopTrade)
         snapshot_version_=std::max(snapshot_version_,105);
+    // A trusted old-world command entering v105 must prepare the existing
+    // original ship's frame and celestial registry before saving its journal.
+    // Strict snapshot decode remains unchanged and never self-heals forgery.
+    if(snapshot_version_>=71) {
+        bool missing_physical_system=false;
+        for(const auto id:systems_)
+            if(!physical_celestial_systems_.count(id)) {
+                missing_physical_system=true;
+                break;
+            }
+        if(missing_physical_system)ensure_physical_celestial_systems();
+        ensure_ship_frame_registry();
+    }
     submitted_ids_.insert(c.id);
     commands_[c.execute_tick].push_back(c);
     return true;
