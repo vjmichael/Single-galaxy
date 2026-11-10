@@ -49,6 +49,10 @@ func _run() -> void:
 	if session._pending != 0:
 		_fail("E sent BEFORE native command rate interval")
 		return
+	session.interact_hangar() # repeat user press while original cooldown active
+	if session._pending != 0 or not session._queued_hangar_intent:
+		_fail("second E bypassed exactly-once queued BOARD cooldown")
+		return
 	await create_timer(0.18).timeout
 	session._dispatch_queued_hangar_if_ready()
 	if session._pending != 10 or session._queued_hangar_intent:
