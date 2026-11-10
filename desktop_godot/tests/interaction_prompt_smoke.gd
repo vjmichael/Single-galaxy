@@ -105,14 +105,15 @@ func _run() -> void:
 	if not PROMPTS.hint(true,aboard,false,false,1,false,"E").contains("opening your ship cockpit"):
 		_fail("native boarded PERSON not offered cockpit handoff")
 		return
-	if not PROMPTS.hint(false,{},true,false,1,false,"E").contains("Press E to Sit"):
-		_fail("on-foot native cockpit not offered seat request")
+	if not PROMPTS.hint(false,{},true,false,1,false,"E").contains("Automatic pilot seating"):
+		_fail("a boarded player was incorrectly offered a cabin walk/seat toggle")
 		return
 	if not PROMPTS.hint(false,{},true,true,1,false,"E").contains("Press U to Undock"):
 		_fail("seated original docked ship not offered undock key")
 		return
-	if not PROMPTS.hint(false,{},true,true,0,false,"E").contains("V"):
-		_fail("undocked native ship not shown exterior controls")
+	if not PROMPTS.hint(false,{},true,true,0,false,"E").contains("THIRD-PERSON FLIGHT") or \
+			PROMPTS.hint(false,{},true,true,0,false,"E").contains("V exterior"):
+		_fail("the seated native ship did not advertise mandatory third-person view")
 		return
 	if PROMPTS.hint(true,near,false,false,1,true,"E").contains("Press E"):
 		_fail("interrupted SQLite writer handoff still offered active boarding")
@@ -139,7 +140,29 @@ func _run() -> void:
 			not PROMPTS.hint(false,{},true,true,0,false,"E").contains("MINING LOCKED"):
 		_fail("native cockpit missing discoverable mouse steering or truthful not-fitted mining gate")
 		return
+	# Static engine-only visual test: never fabricate a C++ aboard receipt.
+	# The genuine SGDX/PERSON/POSE round-trip is covered separately.
+	stage._external_requested = false
+	stage._show_native_location(false)
+	pilot.use_native_ship_custody(true)
+	if not stage.space_preview.visible or stage.ship_space.visible or \
+			not stage.exterior_camera.current or pilot.camera.current or not pilot.native_in_ship:
+		_fail("docked ship falsely showed an explorable cabin or a first-person camera")
+		return
+	stage._last_native_dock = 0
+	stage._show_native_location(false)
+	if not stage.exterior_camera.current or pilot.camera.current or \
+			not stage.space_preview.visible or stage.ship_space.visible:
+		_fail("in-space ship camera failed permanent third-person rule")
+		return
+	stage._show_native_location(true)
+	pilot.use_native_ship_custody(false)
+	if not pilot.camera.current or stage.space_preview.visible or \
+			not stage.station_space.visible or pilot.native_in_ship:
+		_fail("leaving ship did not restore colony first-person camera/custody")
+		return
 	stage.queue_free()
+	print("FP3D-PILOT-01 REAL GODOT VISUAL PASS: docked and flying always third-person, no cabin, colony restores first-person")
 	print("FP3D-UX-04 REAL GODOT PILOT UX PASS: native mouse-turn intent, inertial visual-only yaw markers, held-dock affordance and truthful no-miner guidance")
 	print("FP3D-UX-02 real Godot visual/input PASS: visible cyan boarding tile + beacon above gangway, gray station/white hull, separate HUD, E prompts match native 600mm hatch/1200mm refinery")
 	quit(0)
