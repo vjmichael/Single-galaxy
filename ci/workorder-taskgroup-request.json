@@ -2,6 +2,6 @@
   "schema": "SG-WORKORDER-GATE-01",
   "task_group": "WO3",
   "pr_number": 89,
-  "source_sha": "26d6fff3e414b9161c139901f31644178d590615",
-  "note": "ONE exact-head native Windows/Linux WO3 original planetary colony operations acceptance after WO1 #42840388816 and WO2 #42843209254 both passed on their independently pinned source branches. WO3 PR89 is a direct descendant of accepted WO2 source c40302e22c8743e12865c4d2f02f3aa23b3e8735 (ahead-only). Require true MSVC/GCC compilation, native WO3 housing, solar/HVAC/recycling, shuttle physical delivery, named-person work supervisor, visitor/custody and original SQLite recover-copy/tamper tests; preserve upstream WO2/WO1 and colony regressions. No client-side space mining, fake children/residency, new infrastructure or per-commit CI. Treat result as source/original-world native acceptance only, never physical installed Radeon 3D gameplay; repair demonstrated failures before next group."
+  "source_sha": "05bb66dfe9c73b1619f97e850ecdb4083203b9ee",
+  "note": "ONE exact-head WO3 native rerun after actual run #42848745399 Windows+Linux both failed BEFORE CMake configuration at source CMakeLists.txt:1885: invalid // comments, NOT original-world compilation/test failure. WO3 feature commit 05bb66d replaces exactly two invalid CMake comments with # (no test-target changes). Compile genuine MSVC and GCC, run original WO1/WO2/WO3 native CTest, SQLite recover-copy/ledger, housing/shuttle/real named worker and surface utility/consumption/visitor custody as group. Original 3D Radeon GPU and mined ore remain separately unaccepted. No per-commit CI, no invented native pass."
 }
