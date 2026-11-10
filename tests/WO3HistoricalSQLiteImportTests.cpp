@@ -9,6 +9,7 @@
 #include <map>
 #include <stdexcept>
 #include <string>
+#include <utility>
 using namespace galaxy;
 namespace fs=std::filesystem;
 static void demand(bool ok,const char* why){
@@ -30,8 +31,9 @@ int main(int argc,char** argv){
     // Immutable source must not be edited; all work happens in a recovered
     // independent database after original journal/checkpoint verification.
     PersistentWorld::recover_copy(source.string(),before);
-    std::uint64_t original_hash=0,original_mass=0,original_people=0;
+    std::uint64_t original_hash=0,original_matter=0,original_ore=0,original_people=0;
     std::map<std::uint64_t,std::uint64_t> legacy_addresses;
+    std::map<std::uint64_t,std::pair<transport::LocationKind,std::uint64_t>> original_residences;
     {
         PersistentWorld history(before,Simulation(613));
         const auto& old=history.world();
@@ -40,10 +42,14 @@ int main(int argc,char** argv){
         demand(old.tick()>0 && history.generation()>2,
                "historical source has no actual native command history");
         original_hash=old.state_hash();
-        original_mass=old.total_ore();
+        original_matter=old.total_material_kg();
+        original_ore=old.total_ore();
         original_people=old.npc_records().size();
         for(const auto& [id,person]:old.npc_records()){
             const auto address=person.legal_residence();
+            demand(original_residences.emplace(id,
+                       std::make_pair(address.kind,address.id)).second,
+                   "duplicate original NPC identity");
             if(address.kind!=transport::LocationKind::PlanetarySite)continue;
             bool matched=false;
             for(const auto& [key,site]:old.planetary_sites()){
@@ -83,9 +89,18 @@ int main(int argc,char** argv){
                imported->host_request_id==request &&
                imported->legal_addresses==legacy_addresses,
                "import changed historical legal identities or provenance");
-        demand(history.world().total_ore()==original_mass &&
+        // Ore alone misses supplies, original shuttle holds and other matter.
+        demand(history.world().total_material_kg()==original_matter &&
+               history.world().total_ore()==original_ore &&
                history.world().npc_records().size()==original_people,
-               "historical import minted people or resources");
+               "historical import changed conserved matter or people");
+        for(const auto& [id,expected]:original_residences){
+            const auto it=history.world().npc_records().find(id);
+            demand(it!=history.world().npc_records().end() &&
+                   it->second.legal_residence().kind==expected.first &&
+                   it->second.legal_residence().id==expected.second,
+                   "historical import moved an original NPC");
+        }
         demand(history.world().canonical_state().rfind("galaxy-kernel-v115|",0)==0,
                "historical import did not produce versioned v115 state");
     }
@@ -96,9 +111,17 @@ int main(int argc,char** argv){
         const auto& imported=history.world().legacy_planetary_residence_import();
         demand(imported && imported->source_hash==original_hash &&
                imported->legal_addresses==legacy_addresses &&
-               history.world().total_ore()==original_mass &&
+               history.world().total_material_kg()==original_matter &&
+               history.world().total_ore()==original_ore &&
                history.world().npc_records().size()==original_people,
-               "independent SQLite restart lost historical legal-address proof");
+               "independent SQLite restart lost historical matter or legal-address proof");
+        for(const auto& [id,expected]:original_residences){
+            const auto it=history.world().npc_records().find(id);
+            demand(it!=history.world().npc_records().end() &&
+                   it->second.legal_residence().kind==expected.first &&
+                   it->second.legal_residence().id==expected.second,
+                   "independent SQLite restart changed original NPC residence");
+        }
     }
     std::cout<<"PASS WO3-F authentic v86 source journal, one-use legal import, "
                 "rollback, mass, original people and independent SQLite recovery\n";
