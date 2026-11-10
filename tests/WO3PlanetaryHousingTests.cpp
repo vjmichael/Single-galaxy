@@ -90,10 +90,11 @@ int main() {
     w.steps(240);
     CHECK(w.world().planetary_spaceport_operational(choice.body,
                                                    choice.lat,choice.lon));
-    // Historical residence migration requires an immutable archived native
-    // v86 SQLite journal and matching source/binary SHA-256. It is tested in
-    // galaxy_wo3_historical_sqlite_import, not invented from this modern
-    // post-genesis simulation. See issue #128.
+    // Real housing construction and custody acceptance belongs to this test.
+    // Historical v86 residence migration is a SEPARATE native CTest using
+    // an immutable archived SQLite original + source SHA provenance.
+    // A hand-edited post-genesis Simulation can never be the genesis of a
+    // historical database; see WO3 historical fixture issue #128.
     CHECK(!w.start_planetary_housing(7,ship,key,81200));
     const auto before_house=colony03::assess_surface_supplies(
         w.world(),7,ship,key);
