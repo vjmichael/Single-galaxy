@@ -63,6 +63,33 @@ const INPUT_CONFIG := preload("res://world/input_contract.gd")
 var camera: Camera3D
 var sight: RayCast3D
 
+# Cosmetic camera interpolation is strictly behind an acknowledged native
+# PERSON state. The player's authoritative Godot proxy position is snapped
+# directly to every original C++ WALK receipt, never predicted or written.
+const MAX_VISUAL_WALK_STEP_M := 0.20
+const CAMERA_RECENTER_HZ := 18.0
+
+func apply_native_station_pose(confirmed_position: Vector3, smooth_view: bool) -> void:
+	var old_avatar: Vector3 = global_position
+	var old_camera: Vector3 = camera.global_position if is_instance_valid(camera) else confirmed_position
+	global_position = confirmed_position
+	if not is_instance_valid(camera):
+		return
+	if smooth_view and old_avatar.distance_to(confirmed_position) <= MAX_VISUAL_WALK_STEP_M:
+		# Retain the last displayed camera point, then ease only toward
+		# the NEW already-confirmed position. Cannot move the physical actor.
+		camera.global_position = old_camera
+	else:
+		# First login, restore from dock, or an unusually large real
+		# positional discontinuity must never animate a fictitious journey.
+		camera.position = Vector3(0.0, EYE_HEIGHT, 0.0)
+
+func _process(delta: float) -> void:
+	if authoritative_mode and not native_in_ship and is_instance_valid(camera) and camera.current:
+		camera.position = camera.position.lerp(
+			Vector3(0.0, EYE_HEIGHT, 0.0),
+			clampf(delta * CAMERA_RECENTER_HZ, 0.0, 1.0))
+
 func _ready() -> void:
 	INPUT_CONFIG.install()
 	var collision := CollisionShape3D.new()
