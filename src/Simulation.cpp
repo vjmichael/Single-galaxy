@@ -14246,7 +14246,17 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                  c.action!=Action::HostSplitEvacuatePassengers &&
                  c.action!=Action::HostColonyDeparture &&
                  c.action!=Action::HostRegisterDependent &&
+                 c.action!=Action::HostTransferConsignedStock &&
                  c.issuer==Simulation::kServerAuthority) ||
+                (c.action==Action::HostTransferConsignedStock &&
+                 (result.snapshot_version_<56 ||
+                  c.issuer!=Simulation::kServerAuthority ||
+                  c.execute_tick!=result.tick_+1 || !c.actor || !c.target ||
+                  c.amount<1 || c.amount>1000 ||
+                  (c.thrust_x!=1 && c.thrust_x!=2) ||
+                  (c.thrust_y!=0 && c.thrust_y!=1) ||
+                  c.transport_id || !c.passenger_ids.empty() ||
+                  c.secondary_receiver || c.secondary_transport)) ||
                 ((c.action==Action::RefineOre || c.action==Action::FabricateModule ||
                   c.action==Action::ConstructOutpost) && (c.target!=0 || c.thrust_x || c.thrust_y ||
                   c.amount<1 || c.amount>1000 ||
