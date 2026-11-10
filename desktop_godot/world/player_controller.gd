@@ -110,6 +110,47 @@ func _unhandled_input(event: InputEvent) -> void:
 		camera.rotation.x = clamp(camera.rotation.x - event.relative.y * MOUSE_SENSITIVITY, -1.45, 1.45)
 		get_viewport().set_input_as_handled()
 
+func _collect_native_pilot_actions() -> PackedStringArray:
+	# User input is only a proposal; C++ owns the authorization and movement.
+	# Keep this separable for real-Godot action-press tests with cursor released.
+	var denied := PackedStringArray()
+	if not authoritative_mode or not native_in_ship or not native_seated:
+		return denied
+	var pilot_actions := PackedStringArray()
+	if native_dock_state == 1 and Input.is_action_pressed("ship_undock"):
+		pilot_actions.append("UND")
+	# Hold G for one available native command slot; just_pressed
+	# could be lost while a prior 110ms flight request was pending.
+	# Only ask in space; the C++ host still checks approach speed/range.
+	if native_dock_state == 0 and Input.is_action_pressed("ship_dock"):
+		pilot_actions.append("DCK")
+	if Input.is_action_pressed("ship_counterthrust"):
+		pilot_actions.append("BRAKE")
+	if Input.is_action_pressed("ship_yaw_left"):
+		pilot_actions.append("LEFT")
+	if Input.is_action_pressed("ship_yaw_right"):
+		pilot_actions.append("RIGHT")
+	# Mouse steering is an alternative to A/D, not an extra command
+	# source that fights an explicitly held keyboard steering axis.
+	if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and \
+			not Input.is_action_pressed("ship_yaw_left") and not Input.is_action_pressed("ship_yaw_right"):
+		if Time.get_ticks_msec() <= _mouse_yaw_valid_until_ms:
+			if _mouse_yaw_direction < 0:
+				pilot_actions.append("LEFT")
+			elif _mouse_yaw_direction > 0:
+				pilot_actions.append("RIGHT")
+		else:
+			_mouse_yaw_direction = 0
+	if Input.is_action_pressed("ship_strafe_port"):
+		pilot_actions.append("PORT")
+	if Input.is_action_pressed("ship_strafe_starboard"):
+		pilot_actions.append("STAR")
+	if Input.is_action_pressed("ship_thrust_forward"):
+		pilot_actions.append("FWD")
+	if Input.is_action_pressed("ship_thrust_reverse"):
+		pilot_actions.append("REV")
+	return pilot_actions
+
 func _physics_process(delta: float) -> void:
 	if authoritative_mode:
 		# Native mode NEVER applies Godot movement or jumps. Only the trusted
@@ -128,39 +169,7 @@ func _physics_process(delta: float) -> void:
 			if native_seated and native_in_ship:
 				# Only intentional physical control requests. C++ retains ship motion,
 				# yaw, thrust admission and persistent world authority.
-				var pilot_actions := PackedStringArray()
-				if native_dock_state == 1 and Input.is_action_pressed("ship_undock"):
-					pilot_actions.append("UND")
-				# Hold G for one available native command slot; just_pressed
-				# could be lost while a prior 110ms flight request was pending.
-				# Only ask in space; the C++ host still checks approach speed/range.
-				if native_dock_state == 0 and Input.is_action_pressed("ship_dock"):
-					pilot_actions.append("DCK")
-				if Input.is_action_pressed("ship_counterthrust"):
-					pilot_actions.append("BRAKE")
-				if Input.is_action_pressed("ship_yaw_left"):
-					pilot_actions.append("LEFT")
-				if Input.is_action_pressed("ship_yaw_right"):
-					pilot_actions.append("RIGHT")
-				# Mouse steering is an alternative to A/D, not an extra command
-				# source that fights an explicitly held keyboard steering axis.
-				if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and \
-						not Input.is_action_pressed("ship_yaw_left") and not Input.is_action_pressed("ship_yaw_right"):
-					if Time.get_ticks_msec() <= _mouse_yaw_valid_until_ms:
-						if _mouse_yaw_direction < 0:
-							pilot_actions.append("LEFT")
-						elif _mouse_yaw_direction > 0:
-							pilot_actions.append("RIGHT")
-					else:
-						_mouse_yaw_direction = 0
-				if Input.is_action_pressed("ship_strafe_port"):
-					pilot_actions.append("PORT")
-				if Input.is_action_pressed("ship_strafe_starboard"):
-					pilot_actions.append("STAR")
-				if Input.is_action_pressed("ship_thrust_forward"):
-					pilot_actions.append("FWD")
-				if Input.is_action_pressed("ship_thrust_reverse"):
-					pilot_actions.append("REV")
+				var pilot_actions := _collect_native_pilot_actions()
 				if not pilot_actions.is_empty():
 					native_ship_intents.emit(pilot_actions)
 			elif not native_in_ship and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
