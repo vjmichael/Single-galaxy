@@ -589,7 +589,10 @@ func _advance_native_handoff() -> void:
 		native_player_session.start(save_override)
 	# If launching the replacement failed, do not keep an inert authority lock.
 	if is_instance_valid(player) and not native_station_session.is_active() and not native_player_session.is_active():
-		player.use_native_authority(false)
+		# Standalone never falls back to a fake freely walking local avatar
+		# after failed native startup. In isolated script-only tests, the
+		# original local-preview behavior remains explicit.
+		player.use_native_authority(_player_session_autoconnect)
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F11:
@@ -663,7 +666,7 @@ func _on_native_station_connection(connected: bool) -> void:
 	if is_instance_valid(player):
 		# Keep local unjournaled walking disabled during a protected role
 		# handoff or while the native cockpit owns this saved world.
-		player.use_native_authority(connected or not _handoff_target.is_empty() or (native_player_session != null and native_player_session.is_active()))
+		player.use_native_authority(_player_session_autoconnect or connected or not _handoff_target.is_empty() or (native_player_session != null and native_player_session.is_active()))
 	if is_instance_valid(scope_label):
 		scope_label.text = "NATIVE STATION — WAITING FOR ORIGINAL PERSON" if connected else "STATION NATIVE DISCONNECTED"
 
@@ -787,6 +790,8 @@ func _on_native_station_person(person: Dictionary) -> void:
 	_station_connection_failure = ""
 	if is_instance_valid(retry_station_button):
 		retry_station_button.visible = false
+	if is_instance_valid(scope_label):
+		scope_label.text = "STATION CONNECTED — ORIGINAL C++ / SQLITE" if last_station_player_state == 4 else "BOARDING CONFIRMED — ORIGINAL C++ / SQLITE"
 	if last_station_player_state != 4:
 		_hide_refinery_terminal()
 	_show_native_location(last_station_player_state == 4)
@@ -822,11 +827,11 @@ func _on_native_player_connection(connected: bool) -> void:
 		if is_instance_valid(player) and is_instance_valid(player.camera):
 			player.camera.current = true
 	if is_instance_valid(player):
-		player.use_native_authority(connected)
+		player.use_native_authority(_player_session_autoconnect or connected or (native_station_session != null and native_station_session.is_active()) or not _handoff_target.is_empty())
 	if not connected and is_instance_valid(ship_label):
 		ship_label.text = "SHIP: native host disconnected; previous readout not live"
 	if is_instance_valid(scope_label):
-		scope_label.text = "NATIVE IN-SHIP POSE + ORIGINAL C++ FLIGHT (TEST GEOMETRY)" if connected else "LOCAL MOVEMENT TEST ONLY — NOT CONNECTED TO NATIVE GALAXY"
+		scope_label.text = "NATIVE IN-SHIP POSE + ORIGINAL C++ FLIGHT" if connected else "Native cockpit unavailable — original saved world retained"
 
 func _refresh_native_flight_instruments() -> void:
 	if not is_instance_valid(flight_instrument_label):
