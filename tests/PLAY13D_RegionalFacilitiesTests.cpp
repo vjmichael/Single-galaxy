@@ -480,10 +480,15 @@ static void scenario(const fs::path& db, bool farming,
         // The ordinary v85 route needs the explicit v86 migration. The
         // manufactured shipyard path already advanced to v92 with legal
         // residence persisted; never downgrade its canonical world.
-        if(!manufactured)
+        // Only historical v85 worlds require the one-time native migration.
+        // A manufactured or supervised NPC freight scenario may already be
+        // v92/v95; migration must never downgrade its original receipts.
+        const bool legacy_v85=visitor_state.rfind("galaxy-kernel-v85|",0)==0;
+        if(legacy_v85)
             upgraded_residence.upgrade_legal_residence_snapshot_format();
         const auto v86_state=upgraded_residence.canonical_state();
-        CHECK(v86_state.rfind((manufactured?"galaxy-kernel-v92|":"galaxy-kernel-v86|"),0)==0);
+        CHECK(v86_state.rfind(legacy_v85?"galaxy-kernel-v86|":
+              visitor_state.substr(0,visitor_state.find('|')+1),0)==0);
         CHECK(Simulation::from_snapshot(v86_state).canonical_state()==v86_state);
         CHECK(Simulation::from_snapshot(v86_state).npc_records().at(passenger)
               .legal_residence()==expected_home);
