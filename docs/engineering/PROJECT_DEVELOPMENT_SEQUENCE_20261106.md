@@ -1,9 +1,9 @@
 # Single-Galaxy — Owner-directed 20-stage development sequence
 
-> **WO1 reconciliation (2026-11-10):** Integrated original WO1 PR #87 catalogue-count/LF source fixes and current closeout ledger into this stacked branch without altering WO2's NPC workforce implementation. Native acceptance remains evidence-gated; preserve owner-directed WO1→WO2→WO3→WO4→WO5 sequence.
+> **WO1–WO3 integration reconciliation (2026-11-10):** Stacked native-acceptance source fixes from the previous work-order parent merged without replacing this stage's implementation or historical stage-specific notes. The parent WO1→WO2→WO3→WO4→WO5 dependency order is retained. Each stage still requires separately evidenced exact-head native testing.
 
 
-> **Stage 2 now active (2026-11-06):** WO2 [draft PR #88](https://github.com/vjmichael/Single-galaxy/pull/88) records native worker/staffing and industry profession mapping; [engineering ledger](WO2_NPC_WORK_MANAGEMENT_20261106.md). WO1 source is implemented on draft #87 but native acceptance still pending. WO2 is **in progress**; WO3 has not begun.
+> **Stage 3 now active (2026-11-06):** The owner authorized WO3 planetary colonies and operations while WO2 draft PR #88's native Windows/Linux acceptance remains open. WO3-A source adds original owner-approved facility construction proposals and physical site/NPC/inventory audits without treating orbital outposts as permanently housed planets. [WO3 ledger](WO3_PLANETARY_COLONY_OPERATIONS_20261106.md). WO1 source on draft #87 and WO2 source on draft #88 are not native accepted or merged.
 
 > **Stage 1 progress:** WO1 source implementation is recorded on [draft PR #87](https://github.com/vjmichael/Single-galaxy/pull/87); its native CI acceptance is still pending. **Stage 2 has begun** on stacked draft PR #88, including native worker/profession source and WO2-G provisional coverage checks. Neither stage is merged/accepted as an installed release.
 **Recorded November 6, 2026.** This supersedes earlier suggestions to prioritize full player gameplay, native 3D production or multiplayer ahead of the world simulation. **This is the order in which major feature areas should receive concentrated development work.** Existing prototype implementations remain useful foundations, not evidence that an area is finished.

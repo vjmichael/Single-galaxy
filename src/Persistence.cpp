@@ -605,6 +605,119 @@ std::uint64_t latest_generation(sqlite3* db) {
 class PersistentWorld::Store {
 public:
     bool manifest_transfer_allowed(const Command& c) const {return shipping::manifest_transfer_authorized(db_,c) && shipping::third_party_transfer_authorized(db_,c);}
+    // A canonical PhysicalDependent stores one guardian, while ART02 retains
+    // both birth parents. Until planetary family berths are atomic, an adult
+    // with an ART02 child cannot use the independent-adult shuttle interface.
+    // Consult the existing authoritative family registry, not a copied NPC
+    // roster or an assertion by the incoming client.
+    bool has_art02_child_parent(std::uint64_t adult_id) const {
+        if(!adult_id)return false;
+        Statement table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='npc_family_births'");
+        if(!table.row())return false; // no ART02 families registered in legacy DB
+        Statement children(db_,"SELECT 1 FROM npc_family_births "
+            "WHERE parent_a=? OR parent_b=? LIMIT 1");
+        children.text(1,std::to_string(adult_id));
+        children.text(2,std::to_string(adult_id));
+        return children.row(); // conservative for unproven custody/death
+    }
+    // Original ART02 and original physical-child bridge are both required.
+    // Even the co-parent's children must form ONE complete, colocated set.
+    // The same predicate is evaluated during booking and again at takeoff.
+    bool valid_planetary_family_births(const Simulation& world,EntityId ship,
+        std::uint64_t guardian,std::uint64_t co_parent,
+        const std::vector<std::uint64_t>& children,
+        EntityId expected_legal_residence=0) const {
+        if(!ship || !guardian || guardian==co_parent || children.empty() ||
+           children.size()>2 || !std::is_sorted(children.begin(),children.end()) ||
+           std::adjacent_find(children.begin(),children.end())!=children.end())
+            return false;
+        Statement table(db_,"SELECT name FROM sqlite_master WHERE type='table' "
+                         "AND name IN ('npc_family_births','sg_med_society_birth',"
+                         "'sg_colony_physical_child_authority','npc_family_moves')");
+        std::set<std::string> tables;
+        while(table.row())tables.insert(sqlite_str(table.get(),0));
+        if(tables.size()!=4)return false;
+        Statement births(db_,"SELECT child_id,parent_a,parent_b,settlement,scope "
+            "FROM npc_family_births WHERE parent_a=? OR parent_b=? "
+            "OR parent_a=? OR parent_b=? ORDER BY child_id");
+        births.text(1,std::to_string(guardian));
+        births.text(2,std::to_string(guardian));
+        births.text(3,std::to_string(co_parent));
+        births.text(4,std::to_string(co_parent));
+        std::vector<std::uint64_t> original;
+        std::string common_scope;
+        while(births.row()){
+            const auto id=parse_u64(sqlite3_column_text(births.get(),0));
+            const auto a=parse_u64(sqlite3_column_text(births.get(),1));
+            const auto b=parse_u64(sqlite3_column_text(births.get(),2));
+            const auto birthplace=parse_u64(sqlite3_column_text(births.get(),3));
+            const auto scope=sqlite_str(births.get(),4);
+            if(id<(1ULL<<62) || !id || !birthplace || !ship ||
+               scope.empty() || (co_parent &&
+                !((a==guardian && b==co_parent) ||
+                  (a==co_parent && b==guardian))) ||
+               (a!=guardian && b!=guardian &&
+                (!co_parent || (a!=co_parent && b!=co_parent))) ||
+               birthplace!=ship ||
+               (!common_scope.empty() && scope!=common_scope))
+                return false;
+            common_scope=scope;
+            // An active historical ferry dependent berth cannot be silently
+            // rebound to a planetary shuttle, even if the cached world
+            // happens to show the child at its original ship.
+            {
+                Statement active_table(db_,"SELECT 1 FROM sqlite_master "
+                    "WHERE type='table' AND name='sg_dependent_travel'");
+                if(active_table.row()) {
+                    Statement competing(db_,"SELECT 1 FROM sg_dependent_travel "
+                        "WHERE child_id=? AND status=1 LIMIT 1");
+                    competing.text(1,std::to_string(id));
+                    if(competing.row())return false;
+                }
+            }
+            const auto physical=world.physical_dependents().find(id);
+            if(physical==world.physical_dependents().end() ||
+               physical->second.home_ship!=ship ||
+               (physical->second.guardian_id!=guardian &&
+                physical->second.guardian_id!=co_parent) ||
+               world.npc_records().count(id) ||
+               world.npc_casualties().count(id))
+                return false;
+            Statement bridge(db_,"SELECT guardian_id,home_ship,command_id "
+                "FROM sg_colony_physical_child_authority WHERE child_id=?");
+            bridge.text(1,std::to_string(id));
+            if(!bridge.row() ||
+               parse_u64(sqlite3_column_text(bridge.get(),0))!=
+                    physical->second.guardian_id ||
+               parse_u64(sqlite3_column_text(bridge.get(),1))!=ship ||
+               parse_u64(sqlite3_column_text(bridge.get(),2))!=
+                    physical->second.registration_command ||
+               bridge.row())return false;
+            Statement natal(db_,"SELECT 1 FROM sg_med_society_birth "
+                "WHERE child_id=? AND family_scope=? AND home_ship=?");
+            natal.text(1,std::to_string(id));natal.text(2,scope);
+            natal.text(3,std::to_string(ship));
+            if(!natal.row() || natal.row())return false;
+            Statement dead(db_,"SELECT 1 FROM npc_family_deaths "
+                "WHERE scope=? AND npc_id=? LIMIT 1");
+            dead.text(1,scope);dead.text(2,std::to_string(id));
+            if(dead.row())return false;
+            // Flight is physical visitation, not a legal residence change.
+            // Born children with prior ART02 residence changes may not
+            // silently move through a ship-home-only contract.
+            Statement moved(db_,"SELECT destination FROM npc_family_moves "
+                "WHERE scope=? AND npc_id=? ORDER BY rowid DESC LIMIT 1");
+            moved.text(1,scope);moved.text(2,std::to_string(id));
+            const auto actual_address=moved.row()?
+                parse_u64(sqlite3_column_text(moved.get(),0)):ship;
+            if(actual_address!=(expected_legal_residence?
+                expected_legal_residence:ship))return false;
+            original.push_back(id);
+            if(original.size()>2)return false;
+        }
+        return original==children;
+    }
     std::string sqlite_path() const {
         const char* path=sqlite3_db_filename(db_,"main");
         if(!path)throw std::runtime_error("world SQLite file path unavailable");
@@ -4203,6 +4316,23 @@ public:
         }
         std::map<std::uint64_t, std::uint64_t> expected_event_generation;
         {
+            // A historical kind=2 row is not necessarily a clock STEP:
+            // older native host operations (shuttle load, housing rack,
+            // handover) commit a new SQLite snapshot without advancing the
+            // original simulation tick. Only a *strictly advancing* original
+            // tick can supply immutable GRSM event provenance.
+            // Honor existing journals unchanged: never rewrite or renumber
+            // their snapshots, authority, receipt IDs or hashes.
+            std::int64_t last_tick=0;
+            if(history_start){
+                Statement boundary(db_, "SELECT tick FROM operation_log WHERE generation=?");
+                boundary.i64(1,static_cast<std::int64_t>(history_start));
+                if(!boundary.row())
+                    throw std::runtime_error("SQLite: missing historical source tick");
+                last_tick=sqlite3_column_int64(boundary.get(),0);
+                if(last_tick<0 || boundary.row())
+                    throw std::runtime_error("SQLite: invalid historical source tick");
+            }
             Statement steps(db_, "SELECT generation,tick,kind,command FROM operation_log WHERE generation>? AND kind IN (1,2) ORDER BY generation");
             steps.i64(1, static_cast<std::int64_t>(history_start));
             std::map<std::uint64_t,std::uint64_t> tick_generation;
@@ -4210,6 +4340,10 @@ public:
                 const auto g = sqlite3_column_int64(steps.get(), 0);
                 const auto tick = sqlite3_column_int64(steps.get(), 1);
                 const auto kind = sqlite3_column_int(steps.get(), 2);
+                if(g<=0 || tick<0 || tick<last_tick)
+                    throw std::runtime_error("SQLite: regressive historical step chronology");
+                const bool advanced=tick>last_tick;
+                last_tick=tick;
                 // The v52 privileged warehouse action is one atomic submit+execute
                 // entry, stored as kind=1 for legacy operation_log compatibility.
                 // Its command is replayed through a tick in the same transaction.
@@ -4219,10 +4353,18 @@ public:
                     const auto type=decode_command(reinterpret_cast<const char*>(raw)).action;
                     if(type!=Action::HostEscrowConstructedStock &&
                        type!=Action::HostReturnConstructedStock)continue;
+                    if(!advanced)
+                        throw std::runtime_error("SQLite: privileged action has no original tick");
+                }else if(!advanced) {
+                    // This is a real original host snapshot/custody commit at
+                    // the *same* tick, not a second event-generating STEP.
+                    // It still retains its own original generation/hash and
+                    // every other existing native-side custody verifier.
+                    continue;
                 }
-                if (g <= 0 || tick <= 0 || !tick_generation.emplace(static_cast<std::uint64_t>(tick),
+                if(tick<=0 || !tick_generation.emplace(static_cast<std::uint64_t>(tick),
                     static_cast<std::uint64_t>(g)).second)
-                    throw std::runtime_error("SQLite: duplicate historical step generation");
+                    throw std::runtime_error("SQLite: duplicate advancing historical step");
             }
             for (const auto& [id,ev] : event_by_id) {
                 const auto it=tick_generation.find(ev.tick);
@@ -6027,6 +6169,9 @@ public:
             Statement table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
                                 "AND name='sg_society_migration'");
             const bool has_migration=table.row();
+            Statement planetary_household_table(db_,"SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='sg_planet_household_migration'");
+            const bool has_planetary_household=planetary_household_table.row();
             for(const auto& [id,c]:journal_commands){
                 if(c.action!=Action::HostSettleMigrant)continue;
                 const auto ev=event_by_id.find(id);
@@ -6044,10 +6189,35 @@ public:
                 Statement receipt(db_,"SELECT command_id FROM sg_regional_command_receipt "
                     "WHERE actor='society-migration-host'");
                 while(receipt.row()){
-                    if(!has_migration)throw std::runtime_error("SQLite: orphaned regional migration");
-                    Statement q(db_,"SELECT 1 FROM sg_society_migration WHERE command_id=?");
-                    q.text(1,sqlite_str(receipt.get(),0));
-                    if(!q.row() || q.row())throw std::runtime_error("SQLite: regional migration unlinked");
+                    // The v118 planetary family writer commits a distinct
+                    // receipt, but uses the same original regional authority.
+                    // Exactly one of the older migrant or new household
+                    // transactions must own each regional migration command.
+                    const auto id=sqlite_str(receipt.get(),0);
+                    bool linked=false;
+                    if(has_migration){
+                        Statement old(db_,"SELECT 1 FROM sg_society_migration "
+                                          "WHERE command_id=?");
+                        old.text(1,id);
+                        if(old.row()){
+                            if(old.row())throw std::runtime_error(
+                                "SQLite: duplicate society migration");
+                            linked=true;
+                        }
+                    }
+                    if(has_planetary_household){
+                        Statement household(db_,"SELECT 1 FROM sg_planet_household_migration "
+                                                 "WHERE request_id=?");
+                        household.text(1,id);
+                        if(household.row()){
+                            if(household.row() || linked)
+                                throw std::runtime_error(
+                                    "SQLite: colliding planetary and society migration");
+                            linked=true;
+                        }
+                    }
+                    if(!linked)
+                        throw std::runtime_error("SQLite: regional migration unlinked");
                 }
             }
             Statement family_table(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
@@ -6066,6 +6236,27 @@ public:
                         if(linked.row()){
                             if(linked.row())throw std::runtime_error("duplicate evacuation family move");
                             continue; // audited against the full world receipt below
+                        }
+                    }
+                    // The v118 household move writes THREE ART02 events
+                    // (guardian, co-parent and the existing registered child).
+                    // These are owned by the same atomic planetary receipt,
+                    // not by the older HostSettleMigrant command.
+                    if(has_planetary_household){
+                        Statement household(db_,"SELECT 1 FROM sg_planet_household_migration "
+                            "WHERE family_scope=? AND "
+                            "(request_id=? OR coparent_event=? OR child_event=?)");
+                        const auto scope=sqlite_str(q.get(),0);
+                        const auto event=sqlite_str(q.get(),1);
+                        household.text(1,scope);
+                        household.text(2,event);
+                        household.text(3,event);
+                        household.text(4,event);
+                        if(household.row()){
+                            if(household.row())
+                                throw std::runtime_error(
+                                    "SQLite: family event linked to multiple planetary households");
+                            continue; // validated against all three ART02 moves below
                         }
                     }
                     if(!has_migration)throw std::runtime_error("SQLite: family move without world effect");
@@ -6098,6 +6289,152 @@ public:
                             throw std::runtime_error("SQLite: household family move unlinked");
                     }else if(effect.row())
                         throw std::runtime_error("SQLite: duplicate family migration effect");
+                }
+            }
+            // WO3-E/v118: independently reconcile every legal household
+            // receipt against all three ART02 moves, the same regional
+            // transaction and the before/after original-world snapshots.
+            // A root, co-parent or child event cannot be accepted by merely
+            // existing in a table without its original family and site proof.
+            if(has_planetary_household){
+                Statement households(db_,"SELECT request_id,world_generation,tick,"
+                    "origin,destination,guardian,coparent,child,returning,"
+                    "family_scope,region_scope,region_revision,owner_generation,"
+                    "coparent_event,child_event FROM sg_planet_household_migration");
+                while(households.row()){
+                    const auto request=parse_u64(sqlite3_column_text(households.get(),0));
+                    const auto gen=sqlite3_column_int64(households.get(),1);
+                    const auto tick=sqlite3_column_int64(households.get(),2);
+                    const auto origin=parse_u64(sqlite3_column_text(households.get(),3));
+                    const auto destination=parse_u64(sqlite3_column_text(households.get(),4));
+                    const auto guardian=parse_u64(sqlite3_column_text(households.get(),5));
+                    const auto parent=parse_u64(sqlite3_column_text(households.get(),6));
+                    const auto child=parse_u64(sqlite3_column_text(households.get(),7));
+                    const auto returning=sqlite3_column_int64(households.get(),8);
+                    const auto scope=sqlite_str(households.get(),9);
+                    const auto region_scope=sqlite_str(households.get(),10);
+                    const auto region_revision=sqlite3_column_int64(households.get(),11);
+                    const auto owner_generation=sqlite3_column_int64(households.get(),12);
+                    const auto coparent_event=parse_u64(sqlite3_column_text(households.get(),13));
+                    const auto child_event=parse_u64(sqlite3_column_text(households.get(),14));
+                    if(!request || request%16 || request>
+                           std::numeric_limits<std::uint64_t>::max()-2 ||
+                       coparent_event!=request+1 || child_event!=request+2 ||
+                       gen<=1 || static_cast<std::uint64_t>(gen)>generation ||
+                       tick<=0 || !origin || !destination || origin==destination ||
+                       !guardian || !parent || guardian==parent ||
+                       child<(std::uint64_t{1}<<62) ||
+                       (returning!=0 && returning!=1) ||
+                       scope.empty() || region_scope.empty() ||
+                       region_revision<2 || owner_generation<1)
+                        throw std::runtime_error("SQLite: invalid planetary household receipt");
+                    const std::vector<std::pair<std::uint64_t,std::uint64_t>> members{
+                        {request,guardian},{coparent_event,parent},{child_event,child}};
+                    for(const auto& member:members){
+                        Statement move(db_,"SELECT npc_id,origin,destination,tick "
+                            "FROM npc_family_moves WHERE scope=? AND event_id=?");
+                        move.text(1,scope);
+                        move.text(2,std::to_string(member.first));
+                        if(!move.row() ||
+                           parse_u64(sqlite3_column_text(move.get(),0))!=member.second ||
+                           parse_u64(sqlite3_column_text(move.get(),1))!=origin ||
+                           parse_u64(sqlite3_column_text(move.get(),2))!=destination ||
+                           sqlite3_column_int64(move.get(),3)!=tick || move.row())
+                            throw std::runtime_error(
+                                "SQLite: planetary household ART02 move missing or forged");
+                    }
+                    Statement region(db_,"SELECT actor,request,revision,outcome "
+                        "FROM sg_regional_command_receipt WHERE scope=? AND command_id=?");
+                    region.text(1,region_scope);
+                    region.text(2,std::to_string(request));
+                    if(!region.row() ||
+                       sqlite_str(region.get(),0)!="society-migration-host" ||
+                       ![&](){
+                           const auto request_text=sqlite_str(region.get(),1);
+                           const auto prefix="society-migration-generation:"+
+                               std::to_string(tick)+":";
+                           const std::string suffix=":household:3";
+                           return request_text.size()>prefix.size()+suffix.size() &&
+                               request_text.compare(0,prefix.size(),prefix)==0 &&
+                               request_text.compare(request_text.size()-suffix.size(),
+                                                    suffix.size(),suffix)==0;
+                       }() ||
+                       sqlite3_column_int64(region.get(),2)!=region_revision ||
+                       sqlite3_column_int64(region.get(),3)!=1 || region.row())
+                        throw std::runtime_error(
+                            "SQLite: planetary household regional receipt missing");
+                    const auto read_state=[&](std::int64_t g){
+                        Statement snapshot(db_,"SELECT state FROM snapshots WHERE generation=?");
+                        snapshot.i64(1,g);
+                        if(!snapshot.row())throw std::runtime_error(
+                            "SQLite: planetary household world checkpoint missing");
+                        const auto* data=sqlite3_column_blob(snapshot.get(),0);
+                        const int n=sqlite3_column_bytes(snapshot.get(),0);
+                        if(!data || n<=0)throw std::runtime_error(
+                            "SQLite: empty planetary household world checkpoint");
+                        const std::string bytes(static_cast<const char*>(data),
+                                                static_cast<std::size_t>(n));
+                        if(snapshot.row())throw std::runtime_error(
+                            "SQLite: duplicate planetary household world checkpoint");
+                        return Simulation::from_snapshot(bytes);
+                    };
+                    const auto before=read_state(gen-1),after=read_state(gen);
+                    if(after.tick()!=static_cast<std::uint64_t>(tick) ||
+                       before.tick()!=after.tick() ||
+                       before.npc_records().size()!=after.npc_records().size() ||
+                       before.physical_dependents().size()!=
+                           after.physical_dependents().size())
+                        throw std::runtime_error(
+                            "SQLite: household migration changed world identities");
+                    bool matched=false;
+                    for(const auto& [key,site]:after.planetary_sites()){
+                        const auto entry=site.households.find(guardian);
+                        if(entry==site.households.end())continue;
+                        const auto& h=entry->second;
+                        if(h.co_parent_id!=parent || h.child_ids.size()!=1 ||
+                           h.child_ids.front()!=child ||
+                           (returning ? h.return_request!=request :
+                                        h.admission_request!=request))
+                            continue;
+                        const auto surface=site.surface_location;
+                        if((returning && (origin!=surface ||
+                                          destination!=site.source_ship)) ||
+                           (!returning && (origin!=site.source_ship ||
+                                           destination!=surface)) ||
+                           matched)
+                            throw std::runtime_error(
+                                "SQLite: planetary household endpoint mismatch");
+                        const auto earlier=before.planetary_sites().find(key);
+                        if(earlier==before.planetary_sites().end())
+                            throw std::runtime_error(
+                                "SQLite: household site missing before admission");
+                        const auto prev=earlier->second.households.find(guardian);
+                        if((!returning && prev!=earlier->second.households.end()) ||
+                           (returning && (prev==earlier->second.households.end() ||
+                                           prev->second.return_request ||
+                                           prev->second.admission_request!=h.admission_request)))
+                            throw std::runtime_error(
+                                "SQLite: household did not make one legal transition");
+                        for(const auto adult:{guardian,parent}){
+                            const auto b=before.npc_records().find(adult);
+                            const auto a=after.npc_records().find(adult);
+                            if(b==before.npc_records().end() ||
+                               a==after.npc_records().end() ||
+                               b->second.legal_residence().id!=origin ||
+                               a->second.legal_residence().id!=destination)
+                                throw std::runtime_error(
+                                    "SQLite: household adult legal residence mismatch");
+                        }
+                        const auto dependent=after.physical_dependents().find(child);
+                        if(dependent==after.physical_dependents().end() ||
+                           dependent->second.location!=
+                               (returning?site.source_ship:surface))
+                            throw std::runtime_error(
+                                "SQLite: household child custody mismatch");
+                        matched=true;
+                    }
+                    if(!matched)throw std::runtime_error(
+                        "SQLite: planetary household receipt has no world transition");
                 }
             }
             if(has_migration){
@@ -8944,11 +9281,53 @@ bool PersistentWorld::transfer_planetary_shuttle_visitor(PlayerId owner,EntityId
         (void)id;
         if(p.ship==ship)return false;
     }
+    // ART02 secondary parentage is not present on PhysicalDependent.
+    if(reboard && store_->has_art02_child_parent(npc))return false;
     auto next=world_;
     if(!next.transfer_planetary_shuttle_visitor(owner,ship,key,npc,reboard))
         return false;
     if(next.total_ore()!=resource_origin_)
         throw std::logic_error("planetary visitor transfer changed conserved matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::book_planetary_shuttle_family(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,std::uint64_t guardian,
+        std::uint64_t co_parent,const std::vector<std::uint64_t>& children,
+        std::uint64_t request_id,FailPoint fail) {
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    if(!store_->valid_planetary_family_births(
+        world_,ship,guardian,co_parent,children))return false;
+    auto next=world_;
+    if(!next.book_planetary_shuttle_family(
+        Simulation::kServerAuthority,owner,ship,key,guardian,co_parent,
+        children,request_id))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("family booking fabricated physical matter");
+    const auto verify=[&](sqlite3*,std::uint64_t) {
+        if(!store_->valid_planetary_family_births(
+            world_,ship,guardian,co_parent,children))
+            throw std::runtime_error("ART02 birth changed during family booking");
+    };
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail,nullptr,nullptr,verify);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::release_planetary_shuttle_family(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,FailPoint fail) {
+    auto next=world_;
+    if(!next.release_planetary_shuttle_family(
+        Simulation::kServerAuthority,owner,ship,key))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("family return clearance altered matter");
     store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
                    {},{},{},fail);
     world_.swap(next);
@@ -8961,6 +9340,7 @@ bool PersistentWorld::book_planetary_shuttle_passenger(PlayerId owner,EntityId s
         (void)id;
         if(p.ship==ship)return false;
     }
+    if(board && store_->has_art02_child_parent(npc))return false;
     auto next=world_;
     if(!next.book_planetary_shuttle_passenger(owner,ship,key,npc,board))
         return false;
@@ -8978,13 +9358,54 @@ bool PersistentWorld::launch_planetary_shuttle(PlayerId owner,EntityId ship,
         (void)id;
         if(p.ship==ship)return false;
     }
+    // Recheck actual ART02 parentage at takeoff, not only booking time.
+    // A birth recorded after an earlier booking must not strand a child.
+    if(const auto it=world_.planetary_shuttles().find(key);
+       it!=world_.planetary_shuttles().end()) {
+        if(store_->has_art02_child_parent(it->second.pilot_npc))
+            return false;
+        const auto& family=it->second.family;
+        if(family.stage && !store_->valid_planetary_family_births(
+            world_,ship,family.guardian_id,family.co_parent_id,
+            family.child_ids,(family.stage>=5 &&
+                world_.planetary_sites().count(key))?
+                world_.planetary_sites().at(key).surface_location:ship))
+            return false;
+        for(const auto adult:it->second.passenger_ids)
+            if(store_->has_art02_child_parent(adult) &&
+               (!family.stage ||
+                (adult!=family.guardian_id &&
+                 adult!=family.co_parent_id)))return false;
+    }
     auto next=world_;
     if(!next.launch_planetary_shuttle(owner,ship,key,request_id,ascend))
         return false;
     if(next.total_ore()!=resource_origin_)
         throw std::logic_error("shuttle takeoff altered conserved resources");
+    // Retry the ART02 query INSIDE the original SQLite world commit lock:
+    // no new child may appear between preflight and actual takeoff.
+    const auto source=world_.planetary_shuttles().find(key);
+    const auto verify=[&](sqlite3*,std::uint64_t) {
+        if(source==world_.planetary_shuttles().end())return;
+        const auto& original=source->second;
+        if(store_->has_art02_child_parent(original.pilot_npc))
+            throw std::runtime_error("pilot acquired an unmanifested child");
+        const auto& family=original.family;
+        if(family.stage && !store_->valid_planetary_family_births(
+            world_,ship,family.guardian_id,family.co_parent_id,
+            family.child_ids,(family.stage>=5 &&
+                world_.planetary_sites().count(key))?
+                world_.planetary_sites().at(key).surface_location:ship))
+            throw std::runtime_error("family changed during shuttle takeoff");
+        for(const auto adult:original.passenger_ids)
+            if(store_->has_art02_child_parent(adult) &&
+               (!family.stage ||
+                (adult!=family.guardian_id &&
+                 adult!=family.co_parent_id)))
+                throw std::runtime_error("unmanifested adult parent at takeoff");
+    };
     store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
-                   {},{},{},fail);
+                   {},{},{},fail,nullptr,nullptr,verify);
     world_.swap(next);
     ++generation_;
     return true;
@@ -9322,6 +9743,491 @@ bool PersistentWorld::build_planetary_shuttle(PlayerId owner,EntityId ship,const
     return true;
 }
 
+bool PersistentWorld::transfer_planetary_housing_module(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,bool load,FailPoint fail) {
+    for(const auto& [id,p]:world_.pending_celestial_transits_) {
+        (void)id;
+        if(p.ship==ship)return false;
+    }
+    auto next=world_;
+    if(!next.transfer_planetary_housing_module(owner,ship,key,load))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 housing module transfer changed world mass");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::start_planetary_housing(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,std::uint64_t id,FailPoint fail) {
+    auto next=world_;
+    if(!next.start_planetary_housing(owner,ship,key,id))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 original housing construction created matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::set_planetary_housing_pause(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool pause,FailPoint fail) {
+    auto next=world_;
+    if(!next.set_planetary_housing_pause(owner,ship,key,pause))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 construction pause changed world mass");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::start_planetary_surface_utility(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,std::uint64_t id,
+        std::uint64_t supervisor,FailPoint fail) {
+    auto next=world_;
+    if(!next.start_planetary_surface_utility(owner,ship,key,id,supervisor))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 surface utility fabricated physical matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::pause_planetary_surface_utility(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,bool pause,FailPoint fail) {
+    auto next=world_;
+    if(!next.pause_planetary_surface_utility(owner,ship,key,pause))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 surface utility pause changed physical matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+// The original PersistentWorld clone/SQLite commit is the only authority
+// for supervisor changes; failed copies never expose partial handovers.
+bool PersistentWorld::handover_planetary_surface_utility(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,std::uint64_t previous,
+        std::uint64_t replacement,std::uint64_t request_id,FailPoint fail) {
+    auto next=world_;
+    if(!next.handover_planetary_surface_utility(
+         owner,ship,key,previous,replacement,request_id))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 utility relief altered physical matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+// v113 original SQLite commit/copy/swap; failed commit preserves live site
+// modules, project progress and named workers.
+bool PersistentWorld::start_planetary_service_build(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,bool annex,
+        std::uint64_t order_id,std::uint64_t supervisor,FailPoint fail) {
+    auto next=world_;
+    if(!next.start_planetary_service_build(
+        owner,ship,key,annex,order_id,supervisor))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 service build created physical matter");
+    if(Simulation::from_snapshot(next.canonical_state()).state_hash()!=
+       next.state_hash())
+        throw std::logic_error("WO3 service project cannot restore");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::pause_planetary_service_build(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,bool annex,
+        bool paused,FailPoint fail) {
+    auto next=world_;
+    if(!next.pause_planetary_service_build(owner,ship,key,annex,paused))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 service pause altered physical matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::handover_planetary_service_build(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,bool annex,
+        std::uint64_t previous,std::uint64_t replacement,
+        std::uint64_t request_id,FailPoint fail) {
+    auto next=world_;
+    if(!next.handover_planetary_service_build(
+        owner,ship,key,annex,previous,replacement,request_id))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 supervisor relief altered physical matter");
+    if(Simulation::from_snapshot(next.canonical_state()).state_hash()!=
+       next.state_hash())
+        throw std::logic_error("WO3 supervisor history cannot restore");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::start_planetary_production_build(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,bool farm,
+        std::uint64_t order_id,std::uint64_t qualified_supervisor,
+        FailPoint fail) {
+    auto next=world_;
+    if(!next.start_planetary_production_build(
+        owner,ship,key,farm,order_id,qualified_supervisor))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 production build fabricated material");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::pause_planetary_production_build(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,bool farm,bool pause,
+        FailPoint fail) {
+    auto next=world_;
+    if(!next.pause_planetary_production_build(
+        owner,ship,key,farm,pause))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 production pause fabricated material");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::handover_planetary_production_build(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,bool farm,
+        std::uint64_t previous,std::uint64_t replacement,
+        std::uint64_t request_id,FailPoint fail) {
+    auto next=world_;
+    if(!next.handover_planetary_production_build(
+        owner,ship,key,farm,previous,replacement,request_id))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 production supervisor relief altered matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+// Trusted single-writer import of historical legal-only planetary addresses.
+// A failed copy/SQLite commit never changes the live world.
+bool PersistentWorld::host_import_legacy_planetary_residences(
+        PlayerId host_principal,std::uint64_t request_id,FailPoint fail) {
+    if(host_principal!=Simulation::kServerAuthority)return false;
+    auto next=world_;
+    if(!next.host_import_legacy_planetary_residences(
+        host_principal,request_id))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 historical residence import altered matter");
+    // The new canonical v115 record must already be independently readable
+    // before attempting to persist it. No fall-through old-address rewrite.
+    if(Simulation::from_snapshot(next.canonical_state()).state_hash()!=
+       next.state_hash())
+        throw std::logic_error("WO3 historical residence import cannot restore");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+// WO3-E/v118: the only legal household route between a physically built
+// planet and its original ship. The world snapshot, original ART02 people
+// and original ECON03 regional population all commit under ONE SQLite writer.
+bool PersistentWorld::commit_planetary_household_settlement(
+        const PlanetaryHouseholdSettlementPlan& p,FailPoint fail) {
+    if(p.expected_world_generation!=generation_ || !p.request_id ||
+       p.request_id%16 || p.request_id>
+           std::numeric_limits<std::uint64_t>::max()-3 ||
+       p.coparent_move_id!=p.request_id+1 ||
+       p.child_move_id!=p.request_id+2 ||
+       !p.owner || p.owner==Simulation::kServerAuthority ||
+       !p.ship || !p.guardian_id || !p.family_seed ||
+       p.family_scope.empty() || p.region_scope.empty() ||
+       p.origin_colony.empty() || p.destination_colony.empty() ||
+       p.origin_colony==p.destination_colony ||
+       !p.expected_region_revision || !p.expected_owner_generation ||
+       !p.guardian_consented || !p.coparent_consented)
+        return false;
+    const auto site=world_.planetary_sites().find(p.site);
+    const auto shuttle=world_.planetary_shuttles().find(p.site);
+    if(site==world_.planetary_sites().end() ||
+       shuttle==world_.planetary_shuttles().end() ||
+       site->second.owner!=p.owner || site->second.source_ship!=p.ship ||
+       shuttle->second.owner!=p.owner ||
+       shuttle->second.source_ship!=p.ship)return false;
+    const auto address=site->second.surface_location;
+    const auto& flight=shuttle->second.family;
+    std::uint64_t parent=0,child=0;
+    if(p.returning) {
+        const auto household=site->second.households.find(p.guardian_id);
+        if(household==site->second.households.end() ||
+           household->second.return_request ||
+           household->second.child_ids.size()!=1 ||
+           flight.stage!=7 ||
+           flight.guardian_id!=p.guardian_id ||
+           flight.co_parent_id!=household->second.co_parent_id ||
+           flight.child_ids!=household->second.child_ids)return false;
+        parent=household->second.co_parent_id;
+        child=household->second.child_ids.front();
+    }else {
+        if(flight.stage!=2 || flight.guardian_id!=p.guardian_id ||
+           !flight.co_parent_id || flight.child_ids.size()!=1)return false;
+        parent=flight.co_parent_id;child=flight.child_ids.front();
+    }
+    const auto origin=p.returning?address:p.ship;
+    const auto destination=p.returning?p.ship:address;
+    if(!store_->valid_planetary_family_births(
+        world_,p.ship,p.guardian_id,parent,{child},origin))
+        return false;
+    for(const auto person_id:{p.guardian_id,parent}) {
+        const auto n=world_.npc_records().find(person_id);
+        if(n==world_.npc_records().end() ||
+           n->second.home_ship!=p.ship ||
+           n->second.legal_residence()!=transport::Endpoint{
+               p.returning?transport::LocationKind::PlanetarySite:
+                           transport::LocationKind::ColonyShip,origin})
+            return false;
+    }
+    const auto dependent=world_.physical_dependents().find(child);
+    if(dependent==world_.physical_dependents().end() ||
+       dependent->second.home_ship!=p.ship ||
+       dependent->second.location!=(p.returning?p.ship:address))
+        return false;
+    // All three actual people must have the same original legal address.
+    const auto file=store_->sqlite_path();
+    NpcAppearanceStore family(file,p.family_scope,p.family_seed,
+        [&](std::uint64_t id){return world_.npc_records().count(id)!=0;});
+    const auto source=family.family_census(origin);
+    std::uint64_t dest_count=0,dest_revision=0;
+    bool destination_registered=false;
+    try {
+        const auto target=family.family_census(destination);
+        destination_registered=true;
+        dest_count=target.current_population;dest_revision=target.revision;
+    }catch(const std::out_of_range&) {
+        if(p.returning)return false; // original ship must already exist
+        // The first real planetary family may register a genuine ZERO census
+        // only WITH its first atomic inbound move, never ahead of the world.
+    }
+    if(source.revision!=p.expected_origin_family_revision ||
+       dest_revision!=p.expected_destination_family_revision ||
+       source.current_population<3 ||
+       family.current_residence(p.guardian_id)!=origin ||
+       family.current_residence(parent)!=origin ||
+       family.current_residence(child)!=origin)return false;
+    regional_events::CheckpointStore region(file,p.region_scope);
+    const auto projection=region.load();
+    if(!projection || projection->revision!=p.expected_region_revision)
+        return false;
+    regional_events::RegionalModeAuthority owner(region);
+    const auto custody=owner.state();
+    if(custody.owner!=regional_events::SimulationOwner::Cold ||
+       custody.phase!=regional_events::TransitionPhase::Stable ||
+       custody.generation!=p.expected_owner_generation ||
+       custody.checkpoint_revision!=projection->revision ||
+       projection->scheduler.colony(p.origin_colony).population!=
+           source.current_population ||
+       projection->scheduler.colony(p.destination_colony).population!=
+           dest_count)
+        return false;
+    auto next=world_;
+    const bool changed=p.returning?
+        next.finalize_planetary_household_return(
+            Simulation::kServerAuthority,p.owner,p.ship,p.site,
+            p.guardian_id,p.request_id):
+        next.settle_planetary_household(
+            Simulation::kServerAuthority,p.owner,p.ship,p.site,
+            p.request_id,p.guardian_consented,p.coparent_consented);
+    if(!changed)return false;
+    if(p.returning && !next.release_planetary_shuttle_family(
+            Simulation::kServerAuthority,p.owner,p.ship,p.site))
+        throw std::logic_error("committed return cannot release real shuttle");
+    if(next.total_ore()!=resource_origin_ ||
+       next.total_credits()!=credit_origin_ ||
+       next.npc_records().size()!=world_.npc_records().size() ||
+       next.physical_dependents().size()!=world_.physical_dependents().size())
+        throw std::logic_error("household settlement changed material or people");
+    if(Simulation::from_snapshot(next.canonical_state()).state_hash()!=
+       next.state_hash())
+        throw std::logic_error("household settlement cannot canonically restore");
+    const auto effect=[&](sqlite3* db,std::uint64_t new_generation) {
+        // The original world owns the only ART02 connection and transaction.
+        if(!store_->valid_planetary_family_births(
+            world_,p.ship,p.guardian_id,parent,{child},origin))
+            throw std::runtime_error("household birth or custody changed");
+        NpcAppearanceStore joined(db,p.family_scope,p.family_seed,
+            [&](std::uint64_t id){return next.npc_records().count(id)!=0;});
+        if(!p.returning && !destination_registered)
+            joined.register_settlement(destination,0);
+        const auto actual_src=joined.family_census(origin);
+        const auto actual_dst=joined.family_census(destination);
+        if(actual_src.revision!=p.expected_origin_family_revision ||
+           actual_dst.revision!=p.expected_destination_family_revision ||
+           actual_src.current_population!=source.current_population ||
+           actual_dst.current_population!=dest_count ||
+           joined.current_residence(p.guardian_id)!=origin ||
+           joined.current_residence(parent)!=origin ||
+           joined.current_residence(child)!=origin)
+            throw std::runtime_error("ART02 household CAS changed");
+        const auto authorize=[&](std::uint64_t adult,std::uint64_t from,
+                                 std::uint64_t to) {
+            if(from!=origin || to!=destination ||
+               (adult!=p.guardian_id && adult!=parent))return false;
+            const auto old=world_.npc_records().find(adult);
+            const auto now=next.npc_records().find(adult);
+            return old!=world_.npc_records().end() &&
+                now!=next.npc_records().end() &&
+                old->second.legal_residence().id==origin &&
+                now->second.legal_residence().id==destination;
+        };
+        const auto moves=joined.record_guardian_household_moves(
+            p.request_id,p.guardian_id,{{child,p.child_move_id}},
+            origin,destination,next.tick(),
+            p.expected_origin_family_revision,
+            p.expected_destination_family_revision,authorize,
+            parent,p.coparent_move_id);
+        if(moves.size()!=3)
+            throw std::runtime_error("incomplete original family census move");
+        const auto region_revision=
+            region.commit_migration_in_world_transaction(db,
+                p.expected_region_revision,p.expected_owner_generation,
+                next.tick(),p.origin_colony,p.destination_colony,
+                source.current_population,dest_count,
+                std::to_string(p.request_id),3,"society-migration-host");
+        run(db,"CREATE TABLE IF NOT EXISTS sg_planet_household_migration("
+            "request_id TEXT PRIMARY KEY,world_generation INTEGER NOT NULL,"
+            "tick INTEGER NOT NULL,origin TEXT NOT NULL,destination TEXT NOT NULL,"
+            "guardian TEXT NOT NULL,coparent TEXT NOT NULL,child TEXT NOT NULL,"
+            "returning INTEGER NOT NULL CHECK(returning IN (0,1)),"
+            "family_scope TEXT NOT NULL,region_scope TEXT NOT NULL,"
+            "region_revision INTEGER NOT NULL,owner_generation INTEGER NOT NULL,"
+            "coparent_event TEXT NOT NULL UNIQUE,child_event TEXT NOT NULL UNIQUE)");
+        Statement receipt(db,"INSERT INTO sg_planet_household_migration "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+        receipt.text(1,std::to_string(p.request_id));
+        receipt.i64(2,static_cast<std::int64_t>(new_generation));
+        receipt.i64(3,static_cast<std::int64_t>(next.tick()));
+        receipt.text(4,std::to_string(origin));
+        receipt.text(5,std::to_string(destination));
+        receipt.text(6,std::to_string(p.guardian_id));
+        receipt.text(7,std::to_string(parent));
+        receipt.text(8,std::to_string(child));
+        receipt.i64(9,p.returning?1:0);
+        receipt.text(10,p.family_scope);
+        receipt.text(11,p.region_scope);
+        receipt.i64(12,static_cast<std::int64_t>(region_revision));
+        receipt.i64(13,static_cast<std::int64_t>(p.expected_owner_generation));
+        receipt.text(14,std::to_string(p.coparent_move_id));
+        receipt.text(15,std::to_string(p.child_move_id));
+        receipt.execute();
+    };
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail,nullptr,nullptr,effect);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::book_planetary_household_return(PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,std::uint64_t guardian,
+        std::uint64_t request_id,FailPoint fail) {
+    const auto current=world_.planetary_sites().find(key);
+    if(current==world_.planetary_sites().end())return false;
+    const auto registered=current->second.households.find(guardian);
+    if(registered==current->second.households.end() ||
+       !registered->second.co_parent_id ||
+       registered->second.child_ids.size()!=1 ||
+       !store_->valid_planetary_family_births(
+           world_,ship,guardian,registered->second.co_parent_id,
+           registered->second.child_ids,
+           current->second.surface_location))
+        return false;
+    auto next=world_;
+    if(!next.book_planetary_household_return(
+        Simulation::kServerAuthority,owner,ship,key,guardian,request_id))
+        return false;
+    if(next.total_ore()!=resource_origin_)return false;
+    const auto verify=[&](sqlite3*,std::uint64_t) {
+        if(!store_->valid_planetary_family_births(
+            world_,ship,guardian,registered->second.co_parent_id,
+            registered->second.child_ids,
+            current->second.surface_location))
+            throw std::runtime_error("ART02 family changed at return booking");
+    };
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail,nullptr,nullptr,verify);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::settle_planetary_founder(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc_id,std::uint64_t request_id,
+        bool voluntary_consent_attested,FailPoint fail) {
+    if(store_->has_art02_child_parent(npc_id))return false;
+    auto next=world_;
+    if(!next.settle_planetary_founder(owner,ship,key,npc_id,request_id,
+                                      voluntary_consent_attested))return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 permanent residence fabricated stock");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
+bool PersistentWorld::settle_planetary_visitor(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc_id,std::uint64_t request_id,
+        bool consent,FailPoint fail) {
+    if(store_->has_art02_child_parent(npc_id))return false;
+    auto next=world_;
+    if(!next.settle_planetary_visitor(owner,ship,key,npc_id,request_id,consent))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 visitor immigration fabricated physical matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+bool PersistentWorld::depart_planetary_visitor(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc_id,std::uint64_t request_id,
+        bool consent,FailPoint fail) {
+    if(store_->has_art02_child_parent(npc_id))return false;
+    auto next=world_;
+    if(!next.depart_planetary_visitor(owner,ship,key,npc_id,request_id,consent))
+        return false;
+    if(next.total_ore()!=resource_origin_)
+        throw std::logic_error("WO3 visitor departure changed physical matter");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,nullptr,
+                   {},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+    return true;
+}
+
 bool PersistentWorld::load_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,bool water,std::int64_t kg,FailPoint fail) {
     return load_planetary_shuttle(owner,ship,key,
         water?ShuttleCargo::Water:ShuttleCargo::Food,kg,fail);
@@ -9367,6 +10273,7 @@ bool PersistentWorld::assign_planetary_shuttle_pilot(PlayerId owner,EntityId shi
         (void)id;
         if(p.ship==ship)return false;
     }
+    if(store_->has_art02_child_parent(npc))return false;
     auto next=world_;
     if(!next.assign_planetary_shuttle_pilot(owner,ship,key,npc))return false;
     if(next.total_ore()!=resource_origin_)

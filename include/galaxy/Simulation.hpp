@@ -495,6 +495,38 @@ struct OasisExtractor {
 // PLAY-13D.3: one persistent facility per physical body+surface cell.
 // All module tonnage is retained in embodied_ore. All stored resources are kg.
 // The ship remains the physical logistics origin; no free settlement population.
+// WO3-D/v112: one original owner-approved reassignment is an immutable
+// ticked chain link. The vector is bounded and persisted with the site.
+struct PlanetaryUtilityHandover {
+    std::uint64_t request_id=0, tick=0, previous=0, replacement=0;
+};
+// WO3-D v113: one project per original farm/extractor installation. The
+// original site holds all material; no duplicate production inventory exists.
+struct PlanetaryProductionProject {
+    std::uint8_t phase=0; // 0 absent/legacy, 1 constructing, 2 completed
+    std::uint64_t progress=0,order_id=0,supervisor=0;
+    std::uint64_t stalled_ticks=0,completed_tick=0;
+    bool paused=false;
+};
+// WO3-D/v117: additional original-module-backed surface services.
+// 0 annex adds four PHYSICAL beds; 1 medical-support bay provides a powered,
+// finite-infrastructure clinical workspace (never spontaneous medical cures).
+struct PlanetaryServiceProject {
+    std::uint8_t phase=0;
+    std::uint64_t progress=0,order_id=0,supervisor=0;
+    std::uint64_t stalled_ticks=0,completed_tick=0,powered_cycles=0;
+    bool paused=false;
+};
+// WO3-E/v118: one owner-attested, physically admitted ART02 household.
+/// Original high-range dependents are NOT workers or generated NPCs.
+/// Return receipts remain immutable even after all members reach home.
+struct PlanetaryHouseholdResidence {
+    std::uint64_t co_parent_id=0,booking_request=0,arrival_receipt=0;
+    std::uint64_t admission_request=0,admission_tick=0;
+    std::uint64_t return_request=0,return_tick=0;
+    std::uint8_t consent_mask=0; // both original parent attestations (3)
+    std::vector<std::uint64_t> child_ids;
+};
 struct PlanetarySiteFacility {
     planetary::PlanetaryRegionKey region{};
     PlayerId owner=0;
@@ -522,11 +554,69 @@ struct PlanetarySiteFacility {
     std::uint64_t stalled_cycles=0;
     std::uint64_t auto_extracted_kg=0;
     std::uint64_t repair_cycles=0;
+    // WO3-B/v109: material on this exact surface cell, delivered by the
+    // existing shuttle external module rack. A module is TWO ore-equivalent
+    // tonnes, not a kg of food or a remotely teleported ship resource.
+    std::uint8_t housing_modules=0; // 0..2 unconsumed local modules
+    std::uint8_t housing_phase=0; // 0 absent, 1 constructing, 2 complete
+    std::uint64_t housing_progress=0, housing_order_id=0;
+    std::uint64_t housing_stalled_ticks=0, housing_completed_tick=0;
+    bool housing_paused=false; // owner may suspend construction, never refund
+    std::uint64_t housing_supported_cycles=0,housing_shortages=0;
+    // WO3-E: only the TWO actual originally deployed founders may obtain
+    // first permanent legal planetary residence, after completed housing.
+    // IDs refer to canonical NpcRecord; the matching owner decisions are
+    // durable, single-use provenance, never a duplicate NPC population.
+    std::array<std::uint64_t,2> founder_residents{{0,0}};
+    std::array<std::uint64_t,2> founder_consent_requests{{0,0}};
+    // WO3-C/D v110: original surface utility built from TWO additional
+    // shuttle-delivered modules, supervised by an actually qualified NPC.
+    // Electricity is an energy unit, not matter; all recycled matter stays
+    // in the one canonical planetary site inventory.
+    std::uint8_t utility_phase=0; // 0 absent, 1 building, 2 operational
+    std::uint64_t utility_progress=0,utility_order_id=0;
+    std::uint64_t utility_supervisor=0,utility_stalled_ticks=0;
+    std::uint64_t utility_completed_tick=0;
+    bool utility_paused=false;
+    std::int64_t stored_electricity=0,brine_kg=0;
+    std::uint64_t utility_powered_cycles=0,hvac_cycles=0,utility_outages=0;
+    std::int64_t water_recycled_kg=0,oxygen_recycled_kg=0;
+    std::vector<PlanetaryUtilityHandover> utility_handovers{};
+    // 0=original planetary farm; 1=original oasis extractor.
+    std::array<PlanetaryProductionProject,2> production_projects{};
+    // Immutable original named-worker supervisory succession per project.
+    std::array<std::vector<PlanetaryUtilityHandover>,2> production_handovers{};
+    // v117: original two-module extra habitat and medical-support bay.
+    // Each project has one exact material escrow and qualified original NPC.
+    std::array<PlanetaryServiceProject,2> service_projects{};
+    std::array<std::vector<PlanetaryUtilityHandover>,2> service_handovers{};
+    std::map<std::uint64_t,PlanetaryHouseholdResidence> households{}; // v118
+    // WO3-E/v111: historical arrivals and voluntary departures of actual
+    // independent adult visitors. {descent receipt, admit request, exit request};
+    // an exit receipt remains forever to prevent request/identity replay.
+    std::map<std::uint64_t,std::array<std::uint64_t,3>> visitor_residency{};
 };
 using PlanetarySiteKey = std::tuple<std::uint64_t,std::uint16_t,std::uint16_t,std::uint32_t>;
+// WO3-E: an imported *historical legal address*, never a new household,
+// physical shuttle arrival, consent receipt or usable housing allocation.
+struct LegacyPlanetaryResidenceImport {
+    std::uint64_t source_version=0,source_hash=0;
+    std::uint64_t host_request_id=0,recorded_tick=0;
+    std::map<std::uint64_t,EntityId> legal_addresses; // original person -> surface location
+};
 // PLAY-13D: cargo identity is independent of player/NPC transport roles.
 // Nutrients are a finite, potentially planet-specific resource, not food.
-enum class ShuttleCargo : std::uint8_t { Water=0, Food=1, Nutrients=2 };
+enum class ShuttleCargo : std::uint8_t { Water=0, Food=1, Nutrients=2, Oxygen=3 };
+// WO3-E/v116: one physically booked ART02 dependent journey. Stage 1
+// is orbital booking, 2 is landed with the guardian, 3 is ascending,
+// 4 is completed back aboard the original colony ship. No legal residence
+// change or child immigration is inferred merely from visiting.
+struct PlanetaryFamilyShuttleJourney {
+    std::uint64_t guardian_id=0,co_parent_id=0,booking_request=0;
+    std::uint64_t outbound_receipt=0,return_receipt=0;
+    std::uint8_t stage=0;
+    std::vector<std::uint64_t> child_ids;
+};
 // 4C.2: docked-orbit shuttle, fabricated from real ship modules.
 // The captain is assigned but stays aboard the parent ship until 4C.3.
 struct PlanetaryShuttleState {
@@ -556,6 +646,13 @@ struct PlanetaryShuttleState {
     // v87: finite third cargo type. Appended to retain all old positional
     // aggregate construction and v80-v86 snapshot compatibility.
     std::int64_t nutrients_kg=0;
+    // WO3-B/v109: one 2-tonne external construction module. Separate from
+    // the existing 1-tonne internal consumables cargo hold and flight fuel.
+    std::uint8_t housing_module=0;
+    // WO3-C/v109: real tanked oxygen in the same original finite
+    // 1-tonne internal shuttle cargo hold (not a separate supply service).
+    std::int64_t oxygen_kg=0;
+    PlanetaryFamilyShuttleJourney family{}; // one durable, finite physical trip
 };
 // PLAY-13D.4F: finite local work board at the player's existing colony ship.
 // Multiple jobs may be posted, with only one claimed site-to-orbit delivery
@@ -1325,6 +1422,72 @@ public:
 
     // Install only with more real manufactured modules and appropriate ground.
     bool build_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key);
+    // Original planetary shuttle module rack: load/unload only at the
+    // corresponding physically landed surface or the owner orbital berth.
+    bool transfer_planetary_housing_module(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool load);
+    // Commit one original-world, owner-authorized finite construction job
+    // from TWO modules physically delivered to the same surface site.
+    bool start_planetary_housing(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t order_id);
+    bool set_planetary_housing_pause(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool pause);
+    // Real surface solar array/HVAC/recycler: two more landed modules,
+    // 60 supervised construction ticks and a current WO2 Shape certificate.
+    bool start_planetary_surface_utility(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t order_id,
+        std::uint64_t qualified_supervisor);
+    bool pause_planetary_surface_utility(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool pause);
+    // Approved physical supervisor relief. Never restarts the 60-tick
+    // construction or alters committed structural material.
+    bool handover_planetary_surface_utility(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t previous,
+        std::uint64_t replacement,std::uint64_t request_id);
+    // WO3-D/v113: two genuinely landed, physically available original
+    // modules, certified on-site crew, 40 original ticks and finite stock.
+    // v117: two real additional construction families with original site
+    // material, qualified named supervision, and immutable relief receipts.
+    bool start_planetary_service_build(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool annex,std::uint64_t order_id,
+        std::uint64_t supervisor);
+    bool pause_planetary_service_build(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool annex,bool paused);
+    bool handover_planetary_service_build(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool annex,std::uint64_t previous,
+        std::uint64_t replacement,std::uint64_t request_id);
+    bool start_planetary_production_build(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool farm,std::uint64_t order_id,
+        std::uint64_t qualified_supervisor);
+    bool pause_planetary_production_build(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool farm,bool pause);
+    bool handover_planetary_production_build(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool farm,std::uint64_t previous,
+        std::uint64_t replacement,std::uint64_t request_id);
+    // Admission of an already physically deployed named founder with
+    // trusted owner + voluntary-consent attestation and unique request ID.
+    // Does not invent NPCs or transfer visitors without arrival evidence.
+    // Trusted migration for an ALREADY recorded v86-v108 planetary legal
+    // residence. It does not move people, create housing, or grant new rights.
+    bool host_import_legacy_planetary_residences(PlayerId host_principal,
+        std::uint64_t request_id);
+    const std::optional<LegacyPlanetaryResidenceImport>&
+        legacy_planetary_residence_import() const noexcept {
+        return legacy_planetary_residence_import_;
+    }
+    bool settle_planetary_founder(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc_id,
+        std::uint64_t request_id,bool voluntary_consent_attested);
+    // Arrivals are only actual original-shuttle disembarkations with
+    // per-person retained descent receipts. Existing adults, no new NPCs.
+    bool settle_planetary_visitor(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc_id,
+        std::uint64_t request_id,bool voluntary_consent_attested);
+    // Only a physically landed original shuttle can reboard a voluntary
+    // departing resident; change of legal residence and seat is one mutation.
+    bool depart_planetary_visitor(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc_id,
+        std::uint64_t request_id,bool voluntary_consent_attested);
     bool load_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,bool water,std::int64_t kg);
     bool unload_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,bool water,std::int64_t kg);
     // Typed manifest: water, food and extracted nutrients use one physical
@@ -1334,6 +1497,29 @@ public:
     bool assign_planetary_shuttle_pilot(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,std::uint64_t npc);
     // Book/release actual named NPCs against the shuttle transport manifest.
     // Only orbital berth modifications; voyage departures move all occupants.
+    // Only a trusted PersistentWorld family/ART02 SQLite gate may call
+    // this after verifying immutable birth parentage and complete custody.
+    bool book_planetary_shuttle_family(PlayerId host_principal,
+        PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t guardian,
+        std::uint64_t co_parent,const std::vector<std::uint64_t>& children,
+        std::uint64_t request_id);
+    // After verified return to the parent ship, clear the active family
+    // booking while retaining its immutable once-used original request ID.
+    // v118: an explicit approved ART02 family census/physical residency
+    // bridge, NOT ordinary adult visitor immigration. PersistentWorld must
+    // complete matched SQLite family+regional effects in its writer lock.
+    bool settle_planetary_household(PlayerId host_principal,PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,
+        std::uint64_t request_id,bool guardian_consent,bool co_parent_consent);
+    bool book_planetary_household_return(PlayerId host_principal,PlayerId owner,
+        EntityId ship,const PlanetarySiteKey& key,
+        std::uint64_t guardian,std::uint64_t request_id);
+    bool finalize_planetary_household_return(PlayerId host_principal,
+        PlayerId owner,EntityId ship,const PlanetarySiteKey& key,
+        std::uint64_t guardian,std::uint64_t request_id);
+    bool release_planetary_shuttle_family(PlayerId host_principal,
+        PlayerId owner,EntityId ship,const PlanetarySiteKey& key);
     bool book_planetary_shuttle_passenger(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,std::uint64_t npc,bool board);
     // At surface: release a booked visitor from the shuttle, or rebook a
@@ -1579,6 +1765,7 @@ private:
     std::map<std::uint64_t,ShipyardCustomerOrder> shipyard_customer_orders_; // v93
     std::map<std::uint64_t,WorkDirective> work_directives_; // v94
     std::set<std::uint64_t> shuttle_flight_request_ids_; // v81 replay rejection
+    std::set<std::uint64_t> planetary_family_booking_ids_; // v116 immutable roster approvals
     std::map<std::uint64_t,PendingCelestialTransit> pending_celestial_transits_;
     std::map<std::uint64_t,CompletedCelestialTransit> completed_celestial_transits_;
     std::map<std::uint64_t,NpcFlightOrder> npc_flight_orders_; // v95 intent + proof
@@ -1638,6 +1825,7 @@ private:
     std::map<EntityId,OutpostStorage> storages_;
     std::map<EntityId, AsteroidGeology> geology_;
     std::vector<ActivityEvent> activity_events_;
+    std::optional<LegacyPlanetaryResidenceImport> legacy_planetary_residence_import_{};
     int snapshot_version_ = 1; // v30 adds durable route cells; v1-v29 remain readable
     std::map<std::uint64_t, std::vector<Command>> commands_;
     std::set<std::uint64_t> submitted_ids_;

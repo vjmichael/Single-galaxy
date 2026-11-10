@@ -248,6 +248,23 @@ struct SocietyMigrationPlan {
     transport::LocationKind destination_kind=transport::LocationKind::ColonyShip;
 };
 
+// WO3-E/v118: the one original ship <-> physically built planetary household.
+// Every other regional/family generation is supplied by trusted host state,
+// checked against the original ART02/ECON03 checkpoint, then CAS-committed.
+struct PlanetaryHouseholdSettlementPlan {
+    std::uint64_t expected_world_generation=0,request_id=0;
+    std::uint64_t expected_region_revision=0,expected_owner_generation=0;
+    std::uint64_t family_seed=0;
+    std::uint64_t expected_origin_family_revision=0;
+    std::uint64_t expected_destination_family_revision=0;
+    std::uint64_t coparent_move_id=0,child_move_id=0;
+    PlayerId owner=0;
+    EntityId ship=0;
+    PlanetarySiteKey site{};
+    std::uint64_t guardian_id=0;
+    bool returning=false,guardian_consented=false,coparent_consented=false;
+    std::string family_scope,region_scope,origin_colony,destination_colony;
+};
 // DEMOG-05q6e2: ART02 dependent identity has physical custody in the
 // trusted world SQLite transaction, without creating a playable NPC.
 struct DependentTravelPlan {
@@ -900,6 +917,70 @@ public:
         std::uint64_t first_npc,std::uint64_t second_npc,
         FailPoint fail=FailPoint::None);
     bool build_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,FailPoint fail=FailPoint::None);
+    // WO3-E v115: host-only reconciliation of existing v86-v108 legal
+    // planetary addresses. Requires a copied SQLite commit; never invents
+    // beds, shuttle arrivals, child custody, or independent consent.
+    bool host_import_legacy_planetary_residences(PlayerId host_principal,
+        std::uint64_t request_id,FailPoint fail=FailPoint::None);
+    // WO3-B: original-world atomic physical module handoff and finite
+    // owner-approved site construction. Uncommitted failures leave no effect.
+    bool transfer_planetary_housing_module(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool load,FailPoint fail=FailPoint::None);
+    bool start_planetary_housing(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t order_id,
+        FailPoint fail=FailPoint::None);
+    bool set_planetary_housing_pause(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool pause,
+        FailPoint fail=FailPoint::None);
+    bool start_planetary_surface_utility(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t order_id,
+        std::uint64_t qualified_supervisor,FailPoint fail=FailPoint::None);
+    bool pause_planetary_surface_utility(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool pause,FailPoint fail=FailPoint::None);
+    bool handover_planetary_surface_utility(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t previous,
+        std::uint64_t replacement,std::uint64_t request_id,
+        FailPoint fail=FailPoint::None);
+    bool start_planetary_service_build(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool annex,std::uint64_t order_id,
+        std::uint64_t supervisor,FailPoint fail=FailPoint::None);
+    bool pause_planetary_service_build(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool annex,bool paused,
+        FailPoint fail=FailPoint::None);
+    bool handover_planetary_service_build(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool annex,std::uint64_t previous,
+        std::uint64_t replacement,std::uint64_t request_id,
+        FailPoint fail=FailPoint::None);
+    bool start_planetary_production_build(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool farm,std::uint64_t order_id,
+        std::uint64_t qualified_supervisor,FailPoint fail=FailPoint::None);
+    bool pause_planetary_production_build(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool farm,bool pause,
+        FailPoint fail=FailPoint::None);
+    bool handover_planetary_production_build(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,bool farm,std::uint64_t previous,
+        std::uint64_t replacement,std::uint64_t request_id,
+        FailPoint fail=FailPoint::None);
+    // One physical, ART02 and regional-census legal household movement.
+    // No change is visible until all three authorities commit together.
+    bool commit_planetary_household_settlement(
+        const PlanetaryHouseholdSettlementPlan& plan,
+        FailPoint fail=FailPoint::None);
+    bool book_planetary_household_return(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t guardian,
+        std::uint64_t request_id,FailPoint fail=FailPoint::None);
+    bool settle_planetary_founder(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc_id,
+        std::uint64_t request_id,bool voluntary_consent_attested,
+        FailPoint fail=FailPoint::None);
+    bool settle_planetary_visitor(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc_id,
+        std::uint64_t request_id,bool voluntary_consent_attested,
+        FailPoint fail=FailPoint::None);
+    bool depart_planetary_visitor(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t npc_id,
+        std::uint64_t request_id,bool voluntary_consent_attested,
+        FailPoint fail=FailPoint::None);
     // Player's finite local logistics work board. NPC fulfillment advances
     // only within the existing atomic world step; no parallel job database.
     // One atomic construction admission: the same committed world debits
@@ -965,6 +1046,15 @@ public:
     bool load_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,ShuttleCargo cargo,std::int64_t kg,FailPoint fail=FailPoint::None);
     bool unload_planetary_shuttle(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,ShuttleCargo cargo,std::int64_t kg,FailPoint fail=FailPoint::None);
     bool assign_planetary_shuttle_pilot(PlayerId owner,EntityId ship,const PlanetarySiteKey& key,std::uint64_t npc,FailPoint fail=FailPoint::None);
+    // ART02-backed atomic household booking. Birth parentage and every
+    // original physical dependent are checked against authoritative SQLite
+    // under the writer lock, not accepted from a client-supplied roster.
+    bool book_planetary_shuttle_family(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,std::uint64_t guardian,
+        std::uint64_t co_parent,const std::vector<std::uint64_t>& children,
+        std::uint64_t request_id,FailPoint fail=FailPoint::None);
+    bool release_planetary_shuttle_family(PlayerId owner,EntityId ship,
+        const PlanetarySiteKey& key,FailPoint fail=FailPoint::None);
     bool book_planetary_shuttle_passenger(PlayerId owner,EntityId ship,
         const PlanetarySiteKey& key,std::uint64_t npc,bool board,
         FailPoint fail=FailPoint::None);

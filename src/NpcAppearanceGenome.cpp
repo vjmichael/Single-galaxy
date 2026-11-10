@@ -199,6 +199,42 @@ NpcAppearanceStore::NpcAppearanceStore(const std::string& path,std::string scope
                 throw std::runtime_error("unsupported existing family census constraint");
             }
         }
+        // WO3-E: an unoccupied, physically built planet is a real ZERO
+        // population destination. Older ART02 schemas require >=1 initial
+        // population; migrate that constraint transactionally without ever
+        // inventing a founding census member.
+        {
+            std::string ddl;
+            {
+                Statement schema(db_,"SELECT sql FROM sqlite_master "
+                    "WHERE type='table' AND name='npc_family_census'");
+                if(schema.step()!=SQLITE_ROW)
+                    throw std::runtime_error("missing family census schema");
+                ddl=reinterpret_cast<const char*>(sqlite3_column_text(schema.s,0));
+            }
+            if(ddl.find("initial_population>=1")!=std::string::npos){
+                sql_exec(db_,"BEGIN IMMEDIATE");
+                try {
+                    sql_exec(db_,"ALTER TABLE npc_family_census "
+                                 "RENAME TO npc_family_census_pre_planet_zero");
+                    sql_exec(db_,"CREATE TABLE npc_family_census("
+                        "scope TEXT NOT NULL, settlement TEXT NOT NULL,"
+                        "initial_population INTEGER NOT NULL CHECK(initial_population>=0),"
+                        "current_population INTEGER NOT NULL CHECK(current_population>=0),"
+                        "revision INTEGER NOT NULL CHECK(revision>=0),"
+                        "last_tick INTEGER NOT NULL CHECK(last_tick>=0),"
+                        "PRIMARY KEY(scope,settlement))");
+                    sql_exec(db_,"INSERT INTO npc_family_census SELECT * "
+                        "FROM npc_family_census_pre_planet_zero");
+                    sql_exec(db_,"DROP TABLE npc_family_census_pre_planet_zero");
+                    sql_exec(db_,"COMMIT");
+                }catch(...){
+                    sqlite3_exec(db_,"ROLLBACK",nullptr,nullptr,nullptr);
+                    throw;
+                }
+            }else if(ddl.find("initial_population>=0")==std::string::npos)
+                throw std::runtime_error("unsupported ART02 initial census constraint");
+        }
         sql_exec(db_,"CREATE TABLE IF NOT EXISTS npc_family_people("
             "scope TEXT NOT NULL,npc_id TEXT NOT NULL,settlement TEXT NOT NULL,"
             "born_tick INTEGER NOT NULL CHECK(born_tick>=0),"
@@ -364,7 +400,7 @@ NpcFamilyCensus read_census(sqlite3* db, const std::string& scope,std::uint64_t 
     r.current_population=static_cast<std::uint64_t>(sqlite3_column_int64(q.s,1));
     r.revision=static_cast<std::uint64_t>(sqlite3_column_int64(q.s,2));
     r.last_tick=static_cast<std::uint64_t>(sqlite3_column_int64(q.s,3));
-    if(!r.initial_population||r.initial_population>kMaxCensus||
+    if(r.initial_population>kMaxCensus||
        r.current_population>kMaxCensus)
         throw std::runtime_error("family census corrupt");
     return r;
@@ -372,7 +408,7 @@ NpcFamilyCensus read_census(sqlite3* db, const std::string& scope,std::uint64_t 
 } // namespace
 
 void NpcAppearanceStore::register_settlement(std::uint64_t settlement, std::uint64_t population){
-    if(!settlement||!population||population>kMaxCensus)
+    if(!settlement||population>kMaxCensus)
         throw std::invalid_argument("invalid family settlement baseline");
     begin();
     try {
