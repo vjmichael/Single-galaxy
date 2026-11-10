@@ -139,6 +139,41 @@ func _run() -> void:
 			not PROMPTS.hint(false,{},true,true,0,false,"E").contains("MINING LOCKED"):
 		_fail("native cockpit missing discoverable mouse steering or truthful not-fitted mining gate")
 		return
+	# R9700 physical failure regression: a released mouse cursor must NEVER
+	# suppress focused keyboard thrust/yaw on a verified seated ship. These
+	# are synthetic Input actions to test Godot intent only, not C++ physics.
+	pilot.use_native_authority(true)
+	pilot.use_native_ship_custody(true)
+	pilot.use_native_seat(true)
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	Input.action_press("ship_thrust_forward")
+	Input.action_press("ship_yaw_left")
+	Input.action_press("ship_undock")
+	var free_cursor_actions: PackedStringArray = pilot._collect_native_pilot_actions()
+	if not free_cursor_actions.has("FWD") or not free_cursor_actions.has("LEFT") or free_cursor_actions.has("UND"):
+		_fail("released mouse cursor suppressed native keyboard thrust/yaw or bypassed in-space undock gate")
+		return
+	pilot.use_native_dock_state(1)
+	Input.action_press("ship_dock")
+	var docked_actions: PackedStringArray = pilot._collect_native_pilot_actions()
+	if not docked_actions.has("UND") or docked_actions.has("DCK"):
+		_fail("docked keyboard U was suppressed or DCK bypassed original dock-state gating")
+		return
+	for action_name in ["ship_thrust_forward", "ship_yaw_left", "ship_undock", "ship_dock"]:
+		Input.action_release(action_name)
+	pilot.use_native_seat(false)
+	Input.action_press("ship_thrust_forward")
+	if not pilot._collect_native_pilot_actions().is_empty():
+		_fail("unseated player generated forbidden original flight intent")
+		return
+	pilot.use_native_seat(true)
+	pilot.use_native_ship_custody(false)
+	if not pilot._collect_native_pilot_actions().is_empty():
+		_fail("on-foot station player generated forbidden ship thrust intent")
+		return
+	Input.action_release("ship_thrust_forward")
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	print("FP3D-UX-05 REAL GODOT INTENT PASS: cursor released keyboard FWD/LEFT, dock/undock eligibility and fail-closed original seat/ship custody")
 	# Static engine-only visual test: never fabricate a C++ aboard receipt.
 	# The genuine SGDX/PERSON/POSE round-trip is covered separately.
 	stage._external_requested = false
