@@ -219,3 +219,37 @@ ZIP preflight, which must never mutate a player's world merely
 to verify the package. Real physical Radeon AI Pro R9700 confirmation
 remains the final acceptance gate; PR #125 remains draft and
 manufactured mining equipment remains deferred.
+
+### FP3D-UX-03: genuine native BOARD rate rejection found by end-to-end test
+
+The first real Godot→SGDX→C++→SQLite auto-start CI run
+[42745275267](https://github.com/vjmichael/Single-galaxy/actions/runs/42745275267)
+proved the original station autoconnects, loads an authoritative PERSON
+and accepts all 12 native WALK actions to the ±600mm hatch. It then
+failed the *real* original C++ BOARD command with
+`Station action #13 refused: rate`. The original host protects each
+accepted command with a **45ms wall-clock minimum interval**.
+The previous Godot bridge dispatched E immediately on receiving a
+WALK PERSON acknowledgement; a valid position did not waive C++ rate
+enforcement. Thus an actual player could have pressed E at the correct
+hatch and still not boarded.
+
+**Repair:** The bridge now retains exactly ONE explicit E through its
+authenticated WALK receipt and schedules it after a conservative
+130ms inter-command interval (and at least 75ms after a fresh WALK
+acknowledgement). The `poll()` loop sends this command only once using
+the newest PERSON generation. Additional E presses cannot preempt
+the pending intent, and WALK actions cannot overtake it. Native
+DENY, timeout, lost custody, process shutdown or role change clears
+the pending E; no rejection is silently retried. Exact C++ ownership,
+original destination and SQLite transaction gates remain unchanged.
+A real-Godot synthetic pipe regression covers both a pending WALK and
+a just-acknowledged idle WALK, duplicate E and refused WALK, and the
+hosted real native startup/WALK/BOARD/reopen test must now prove the
+fixed sequence against genuine C++.
+
+**Provenance:** the prior hosted Linux and Windows C++ compilation and
+native SQLite/SGDX tests remain valid for their exact former head,
+but neither substitutes for successful exact-head BOARD/restart
+verification or physical creator-R9700 gameplay. The current PR
+is still DRAFT; manufacturing/ore ship equipment stays deferred.
