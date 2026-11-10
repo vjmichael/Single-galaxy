@@ -23,6 +23,22 @@ static func action_key(action: String, fallback: String) -> String:
 						return name
 	return fallback
 
+static func hatch_direction_key(person: Dictionary, player_basis: Basis) -> String:
+	# Convert the authenticated native station displacement into the SAME
+	# locally oriented WASD frame used to submit trusted C++ WALK requests.
+	# This is guidance only: no movement/key injection or source-world writes.
+	if person.is_empty() or int(person.get("state", -1)) != 4:
+		return ""
+	var x_mm: int = int(person.get("x_mm", 0))
+	var z_mm: int = int(person.get("z_mm", 0))
+	if absi(x_mm) <= NATIVE_HATCH_AXIS_MM and absi(z_mm) <= NATIVE_HATCH_AXIS_MM:
+		return ""
+	var toward: Vector3 = Vector3(-float(x_mm), 0.0, -float(z_mm))
+	var local: Vector3 = player_basis.inverse() * toward
+	if absf(local.x) > absf(local.z):
+		return "D" if local.x > 0 else "A"
+	return "S" if local.z > 0 else "W"
+
 static func hint(station_active: bool, person: Dictionary, ship_active: bool,
 		ship_seated: bool, dock_state: int, handoff_pending: bool,
 		interact_key: String = "E") -> String:
