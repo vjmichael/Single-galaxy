@@ -218,7 +218,7 @@ checks = {
         (chr(9)*2 + "return" + chr(10))*2 not in action_smoke
         and '"the seated native ship did not advertise mandatory third-person view"' in action_smoke
         and '"in-space ship camera failed permanent third-person rule"' in action_smoke
-        and '"FP3D-PILOT-01 REAL GODOT VISUAL PASS"' in action_smoke
+        and 'FP3D-PILOT-01 REAL GODOT VISUAL PASS:' in action_smoke
         and "quit(0)" in action_smoke
     ),
     "live-engine-has-interaction-smoke": (
