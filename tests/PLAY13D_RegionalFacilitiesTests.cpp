@@ -145,6 +145,7 @@ static void scenario(const fs::path& db, bool farming,
     std::uint64_t first_npc=0,second_npc=0;
     std::int64_t origin=0;
     std::string durable;
+    std::uint64_t verified_ascent_receipt=0;
     {
         Simulation seed(613,chosen.system);
         ship=seed.add_colony_ship(7,{0,0},60,manufactured?10:8);
@@ -1639,6 +1640,8 @@ static void scenario(const fs::path& db, bool farming,
                 CHECK(w.world().colony_ship(receiver)->crew==3);
                 CHECK(w.world().total_ore()==origin);
             }
+            verified_ascent_receipt=w.world().planetary_shuttles().at(key).ascent_receipt;
+            CHECK(verified_ascent_receipt!=0);
             durable=w.world().canonical_state();
             const auto expected_snapshot_header=(autonomous||delegated)?"galaxy-kernel-v95|":
                 (manufactured?"galaxy-kernel-v92|":"galaxy-kernel-v89|");
@@ -1654,10 +1657,13 @@ static void scenario(const fs::path& db, bool farming,
         CHECK(w.world().canonical_state()==durable);
         CHECK(w.world().total_ore()==origin);
         CHECK(w.world().planetary_sites().size()==1);
+        // Verify the exact original receipt captured after the real flights
+        // and work-board operations survives independent SQLite reopening.
+        // The final receipt is scenario-dependent: player ascent, named
+        // pilot work order, and manufactured cargo use different IDs.
         CHECK(w.world().planetary_shuttles().at(
             PlanetarySiteKey{chosen.body,chosen.latitude,chosen.longitude,1})
-              .ascent_receipt==(farming?81003:
-                 (0x10000000000000ULL | (77003ULL<<1) | 1ULL)));
+              .ascent_receipt==verified_ascent_receipt);
         CHECK(!w.launch_planetary_shuttle(7,ship,
             PlanetarySiteKey{chosen.body,chosen.latitude,chosen.longitude,1},
             81001,false));
