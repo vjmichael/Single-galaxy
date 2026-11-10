@@ -13644,7 +13644,11 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             const auto mass=l.food_kg+l.water_kg+l.oxygen_kg+l.nutrients_kg+l.co2_kg+
                 l.crops_kg+l.compost_kg+l.wastewater_kg+l.organic_waste_kg+
                 l.sludge_kg+l.hydrogen_kg;
-            if(mass<1000 || mass>100000000 ||
+            // The 1,000 kg genesis allocation is not a permanent minimum:
+            // physical cargo transfer, consumption and shortages may leave
+            // even an empty ship reservoir. Nonnegative compartments and
+            // original whole-world mass conservation remain mandatory.
+            if(mass>100000000 ||
                (result.snapshot_version_<11 && mass%1000) || l.crops_ready_tick>result.tick_+1000000 ||
                l.cycles>result.tick_/20 || l.consecutive_supplied_cycles>l.cycles ||
                l.shortages>l.cycles || l.harvested_food_kg<0 || l.recovered_water_kg<0 ||
