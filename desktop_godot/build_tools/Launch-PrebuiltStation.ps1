@@ -123,6 +123,7 @@ try {
       @('--headless','--path',('"' + $project + '"'),'--script','res://tests/godot_smoke.gd'),
       @('--headless','--path',('"' + $project + '"'),'--script','res://tests/station_visual_smoke.gd'),
       @('--headless','--path',('"' + $project + '"'),'--script','res://tests/interaction_prompt_smoke.gd'),
+      @('--headless','--path',('"' + $project + '"'),'--script','res://tests/boarding_action_pipe_smoke.gd'),
       @('--headless','--path',('"' + $project + '"'),'--script','res://tests/native_player_protocol_smoke.gd'),
       @('--headless','--path',('"' + $project + '"'),'--script','res://tests/native_station_protocol_smoke.gd'),
       @('--headless','--path',('"' + $project + '"'),'--script','res://tests/native_station_refinery_protocol_smoke.gd')
