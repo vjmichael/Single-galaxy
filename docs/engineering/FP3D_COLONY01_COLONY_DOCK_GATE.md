@@ -85,3 +85,39 @@ previous Windows `SGDX supervisor configuration failure: invalid
 UTF-8 argument` must be independently rechecked, not assumed
 repaired by scene changes. Manufactured mining equipment remains
 deferred until physical 3D acceptance.
+
+## Windows native Unicode-path reliability repair
+
+Previous [native group 42747696255](https://github.com/vjmichael/Single-galaxy/actions/runs/42747696255)
+passed its original Windows native test compilation but the **real
+Windows Godot auto-start gate failed**, with original station host
+stderr `SQLite open: unable to open database file` and an SGDX
+private-diagnostic sidecar failure. The Godot application title
+`Single-Galaxy — Graybox FPS` includes an em dash; Windows CRT
+`main(int,char**)` argv may represent that Unicode pathname in the
+machine's active ANSI codepage rather than SQLite's required UTF-8.
+This explains how the original wide-API writer lease can appear to
+succeed while sqlite3's narrow UTF-8 open fails. It is a concrete
+hypothesis from the real log, not yet a native-tested fix.
+
+The updated original **station and cockpit** hosts now use Windows
+`wmain(wchar_t**)` and `WideCharToMultiByte(CP_UTF8,
+WC_ERR_INVALID_CHARS)` once. The original SQLite and
+`NativeInteriorMovement` receive those exact UTF-8 bytes, while the
+OS writer-lease path is decoded with `std::filesystem::u8path`.
+The separate SGDX supervisor also uses that Unicode-safe filesystem
+conversion for its private diagnostics and optional crash minidumps.
+On first launch, the Godot station bridge may create a **missing
+profile directory only**, not delete/replace a SQLite database.
+
+The new independent actual-process test
+`FP3D_WinUtf8NativePathTests.py` starts BOTH original C++ hosts
+under real SGDX supervision in temporary Unicode-named SQLite
+paths (including `—`), asserts real original PERSON/POSE frames,
+valid database content, private clean-exit SGDX receipts and no
+unverified fallback. It is required in the **single consolidated
+Linux/Windows acceptance group** before the real Godot auto-colony,
+BOARD, restart, extracted ZIP and four windowed frame gates.
+An older verified package **cannot be relabeled** with this newer
+source revision. Physical Radeon AI Pro R9700 acceptance remains
+separate and pending.
