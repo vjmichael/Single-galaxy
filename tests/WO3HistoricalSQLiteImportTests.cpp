@@ -93,6 +93,14 @@ int main(int argc,char** argv) {
         require(Simulation::from_snapshot(upgraded.canonical_state()).
                     canonical_state()==upgraded.canonical_state(),
                 "genuine v86 native upgraded snapshot failed roundtrip");
+        // Even in the authentic v86 in-memory format, a powerful host
+        // cannot declare planet legal addresses the native producer never made.
+        const auto v86_hash=upgraded.state_hash();
+        require(!upgraded.host_import_legacy_planetary_residences(
+                    Simulation::kServerAuthority,0x1A091700000001ULL) &&
+                upgraded.state_hash()==v86_hash &&
+                !upgraded.legacy_planetary_residence_import(),
+                "genuine v86 upgrade allowed an invented planetary migration");
         // No owner/host can import a planetary legal address that the vintage
         // producer never granted. These denials MUST NOT append a generation.
         constexpr std::uint64_t request=0x1A091700000001ULL;
