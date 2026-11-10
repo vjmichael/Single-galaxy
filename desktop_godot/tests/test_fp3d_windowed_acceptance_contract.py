@@ -63,6 +63,12 @@ checks = {
         and "'--headless'," not in windowed
         and "Windowed Godot/native test timed out" in windowed
     ),
+    "docked-original-pilot-must-stay-third-person-on-real-render": (
+        "$seen['01-docked-cabin'].camera_current -ne $true" in windowed
+        and "$seen['01-docked-cabin'].player_camera_current -ne $false" in windowed
+        and "Authentic docked native pilot must remain third-person" in windowed
+        and "$seen['01-docked-cabin'].player_camera_current -ne $true" not in windowed
+    ),
     "reopened-sqlite-collision-is-source-verified": (
         "$after.ship.tick -ne $impact.ship.tick" in windowed
         and "$after.rock.ore_tonnes -ne $impact.rock.ore_tonnes" in windowed
