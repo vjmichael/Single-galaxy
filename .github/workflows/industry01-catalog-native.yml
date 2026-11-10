@@ -1,0 +1,63 @@
+name: INDUSTRY-01 real recipes, original-world workshop and source catalogue
+on:
+  pull_request:
+    paths:
+      - 'data/industry/**'
+      - 'include/galaxy/Industry01Catalog.hpp'
+      - 'src/Industry01Catalog.generated.cpp'
+      - 'scripts/validate_industry01.js'
+      - 'scripts/generate_industry01_cpp.js'
+      - 'tests/INDUSTRY01_CatalogTests.js'
+      - 'tests/INDUSTRY01_NativeTests.cpp'
+      - 'src/Simulation.cpp'
+      - 'CMakeLists.txt'
+      - '.github/workflows/industry01-catalog-native.yml'
+  workflow_dispatch:
+concurrency:
+  group: industry01-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  original-world:
+    name: Candidate DAG + original native workshop + SQLite (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate item, recipe, recovery and demand data
+        run: |
+          node scripts/validate_industry01.js
+          node scripts/generate_industry01_cpp.js --check
+          node --test tests/INDUSTRY01_CatalogTests.js
+      - name: Install SQLite SDK (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlite3-dev
+      - name: Install SQLite SDK (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vcpkg = Join-Path $env:VCPKG_INSTALLATION_ROOT 'vcpkg.exe'
+          if (-not (Test-Path $vcpkg)) { throw 'Windows vcpkg SDK missing' }
+          & $vcpkg install sqlite3:x64-windows --clean-after-build
+          if ($LASTEXITCODE -ne 0) { throw 'SQLite SDK installation failed' }
+      - name: Configure original Linux game kernel
+        if: runner.os == 'Linux'
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+      - name: Configure original Windows game kernel
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tc = Join-Path $env:VCPKG_INSTALLATION_ROOT 'scripts/buildsystems/vcpkg.cmake'
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$tc" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'Native Windows configuration failed' }
+      - name: Compile original engine, industry recipe bridge and inherited tests
+        run: cmake --build build --config Release --parallel 2 --target galaxy_industry01_native_tests galaxy_econ02b1a_outpost_tests galaxy_econ02b2_inventory_tests galaxy_econ02b0_quantified_tests
+      - name: Execute named-NPC powered workshop, SQLite restart and mass tests
+        run: ctest --test-dir build -C Release --output-on-failure -R "^galaxy_(industry01_native_binding|econ02b1a_outpost_tests|econ02b2_inventory_tests|econ02b0_quantified_tests)$"

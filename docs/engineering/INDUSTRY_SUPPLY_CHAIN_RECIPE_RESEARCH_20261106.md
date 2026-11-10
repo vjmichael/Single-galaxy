@@ -1,4 +1,6 @@
 # Single-Galaxy Stage 1 — Real-world supply-chain and recipe research
+
+**Implementation progress (2026-11-06):** The first source-linked candidate material and service DAG is committed on the separate Industry branch. See [INDUSTRY01 first catalogue and remaining native integration work](INDUSTRY01_FIRST_PASS_CATALOG_20261106.md). It includes 96 candidate item classes, 69 illustrative closed-material recipes, 8 services and a guarded legacy conversion map; validation passed in V8, not native/world acceptance. The raw resource entries are future physical production handoffs, not immediately seeded resources.
 **Initial research brief, November 6, 2026.** Research-informed architecture and candidate *game* recipe families, **not** a final mass-calibrated production dataset or claims of completed runtime integration. Owner's binding 20-stage roadmap: [PROJECT_DEVELOPMENT_SEQUENCE_20261106.md](PROJECT_DEVELOPMENT_SEQUENCE_20261106.md). Industry precedes NPC work, settlements, economic allocation, transport integration, planets, population, travel, security, art and player gameplay.
 
 ## Research-based generalizations
