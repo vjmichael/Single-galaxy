@@ -2,6 +2,6 @@
   "schema": "SG-WORKORDER-GATE-01",
   "task_group": "WO5",
   "pr_number": 92,
-  "source_sha": "94068a389ce926df42d87137b5b9bebcaa6202ba",
-  "note": "WO5 TG1 33 native test exact-head after latest demonstrated fixes: original Versioned SQLite journal, native travel/cargo, strict retry and loss prevention, Windows SQLite fixture-owner teardown and farm original ascent receipt capture (before restore). The mandatory archived v86 source/binary/commit/SHA256 gate must fail closed until authentic immutable historical source exists; 32 other selected tests must pass on Windows and Ubuntu without skipping checks."
+  "source_sha": "14c4619e62de25c7b034a4828a9cea6486db6d1e",
+  "note": "WO3 historical migration contract audit: 2026-11-05 source d2cf352 v86 upgrade preserves ColonyShip legal residences; original native saved journal at v85 is produced with authentic pinned v86-era kernel, test-only observation, Git source blob and native binary+SQLite SHA256 manifests. No fake v86 planet resident, no altered genesis or skipped journal. Modern real v109+ planetary settlement positive tests are separate. Run all 33 registered WO3-WO5 exact-head Windows/Linux CTests including authenticated vintage original native DB, authorized denial and independent recovery."
 }
