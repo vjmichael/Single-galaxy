@@ -11,6 +11,15 @@ sources={
 supervisor=(root.parent/"src/server_dx_supervisor.cpp").read_text()
 dump_capture=(root.parent/"include/galaxy/ServerWindowsMinidump.hpp").read_text()
 checks={
+    "windows Unicode argv survives real Godot em-dash app userdata":(
+        "int wmain(int argc,wchar_t** argv)" in supervisor
+        and "WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS" in supervisor
+        and "static std::string utf8_argument(" in supervisor
+        and "utf8_argument(argv[i])" in supervisor
+        and "MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS" in supervisor
+        and "#else\nint main(int argc,char** argv)" in supervisor
+        and 'config/name="Single-Galaxy — Graybox FPS"' in (root/"project.godot").read_text()
+    ),
     "all paths use strict SGDX helper":all(
         'SGDX_LAUNCH.supervised_command(' in source for source in sources.values()),
     "no direct native writer launched":all(
