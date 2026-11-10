@@ -2,14 +2,14 @@
 """Source-only admission check; native subprocess and Godot engine are separate gates."""
 from pathlib import Path
 root=Path(__file__).resolve().parents[1]
-launcher=(root/"world/sgdx_process_launch.gd").read_text()
+launcher=(root/"world/sgdx_process_launch.gd").read_text(encoding="utf-8")
 sources={
-    "ship":(root/"world/native_player_session.gd").read_text(),
-    "station":(root/"world/native_station_session.gd").read_text(),
-    "observer":(root/"world/native_session.gd").read_text(),
+    "ship":(root/"world/native_player_session.gd").read_text(encoding="utf-8"),
+    "station":(root/"world/native_station_session.gd").read_text(encoding="utf-8"),
+    "observer":(root/"world/native_session.gd").read_text(encoding="utf-8"),
 }
-supervisor=(root.parent/"src/server_dx_supervisor.cpp").read_text()
-dump_capture=(root.parent/"include/galaxy/ServerWindowsMinidump.hpp").read_text()
+supervisor=(root.parent/"src/server_dx_supervisor.cpp").read_text(encoding="utf-8")
+dump_capture=(root.parent/"include/galaxy/ServerWindowsMinidump.hpp").read_text(encoding="utf-8")
 checks={
     "windows Unicode argv survives real Godot em-dash app userdata":(
         "int wmain(int argc,wchar_t** argv)" in supervisor
@@ -18,7 +18,7 @@ checks={
         and "utf8_argument(argv[i])" in supervisor
         and "MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS" in supervisor
         and "#else\nint main(int argc,char** argv)" in supervisor
-        and 'config/name="Single-Galaxy — Graybox FPS"' in (root/"project.godot").read_text()
+        and 'config/name="Single-Galaxy — Graybox FPS"' in (root/"project.godot").read_text(encoding="utf-8")
     ),
     "all paths use strict SGDX helper":all(
         'SGDX_LAUNCH.supervised_command(' in source for source in sources.values()),
@@ -64,7 +64,7 @@ checks={
         for name in ("ship","station")),
     "expired handoff never enables unauthoritative walking":(
         "player.use_native_authority(false)" not in
-        (root/"world/main.gd").read_text().split(
+        (root/"world/main.gd").read_text(encoding="utf-8").split(
             'if Time.get_ticks_msec() - _handoff_started_msec > 3000:',1)[1]
             .split('var destination := _handoff_target',1)[0]),
 }
