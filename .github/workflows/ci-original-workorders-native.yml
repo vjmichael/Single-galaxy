@@ -100,6 +100,23 @@ jobs:
         run: |
           cmake -S . -B build/original-wo -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$env:SG_TOOLCHAIN" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
           if($LASTEXITCODE -ne 0){throw 'C++ configure failed'}
+      - name: Produce source-pinned real historical v85 SQLite journal
+        if: env.WORK_GROUP == 'WO3' || env.WORK_GROUP == 'WO4' || env.WORK_GROUP == 'WO5' || env.WORK_GROUP == 'STAGE6'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tests/WO3HistoricalNativeProducer.py prepare historical-original-v86
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            cmake -S historical-original-v86 -B build/wo3-vintage -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$SG_TOOLCHAIN" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+            exe="build/wo3-vintage/Release/galaxy_play13d_regional_facilities_tests.exe"
+          else
+            cmake -S historical-original-v86 -B build/wo3-vintage -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+            exe="build/wo3-vintage/galaxy_play13d_regional_facilities_tests"
+          fi
+          cmake --build build/wo3-vintage --config Release --parallel 2 --target galaxy_play13d_regional_facilities_tests
+          export SG_WO3_HISTORICAL_CAPTURE_OUTPUT="$(python -c 'from pathlib import Path;print(Path("build/wo3-historical-v85.sqlite").resolve())')"
+          "$exe"
+          python tests/WO3HistoricalNativeProducer.py attest historical-original-v86 --binary "$exe" --sqlite "$SG_WO3_HISTORICAL_CAPTURE_OUTPUT" --manifest build/wo3-historical-v85-attestation.json --github-env "$GITHUB_ENV"
       - name: Compile industry, original NPC work and selected dependent work order
         shell: bash
         run: |
@@ -120,23 +137,6 @@ jobs:
           if [[ "$WORK_GROUP" == "STAGE6" ]]; then
             cmake --build build/original-wo --config Release --parallel 2 --target galaxy_stage6_godot_export galaxy_stage6_original_planet_surface_tests galaxy_stage6_authorized_landing_tests galaxy_play13d_planetary_geography_tests galaxy_play13d_planetary_watershed_tests galaxy_play13d_live_planet_survey_tests
           fi
-      - name: Produce source-pinned real historical v85 SQLite journal
-        if: env.WORK_GROUP == 'WO3' || env.WORK_GROUP == 'WO4' || env.WORK_GROUP == 'WO5' || env.WORK_GROUP == 'STAGE6'
-        shell: bash
-        run: |
-          set -euo pipefail
-          python tests/WO3HistoricalNativeProducer.py prepare historical-original-v86
-          if [[ "$RUNNER_OS" == "Windows" ]]; then
-            cmake -S historical-original-v86 -B build/wo3-vintage -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$SG_TOOLCHAIN" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
-            exe="build/wo3-vintage/Release/galaxy_play13d_regional_facilities_tests.exe"
-          else
-            cmake -S historical-original-v86 -B build/wo3-vintage -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
-            exe="build/wo3-vintage/galaxy_play13d_regional_facilities_tests"
-          fi
-          cmake --build build/wo3-vintage --config Release --parallel 2 --target galaxy_play13d_regional_facilities_tests
-          export SG_WO3_HISTORICAL_CAPTURE_OUTPUT="$(python -c 'from pathlib import Path;print(Path("build/wo3-historical-v85.sqlite").resolve())')"
-          "$exe"
-          python tests/WO3HistoricalNativeProducer.py attest historical-original-v86 --binary "$exe" --sqlite "$SG_WO3_HISTORICAL_CAPTURE_OUTPUT" --manifest build/wo3-historical-v85-attestation.json --github-env "$GITHUB_ENV"
       - name: Run exact-head physical original-world and SQLite recovery tests
         shell: bash
         run: |
