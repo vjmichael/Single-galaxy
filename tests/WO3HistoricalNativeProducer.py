@@ -87,7 +87,7 @@ def attest(source, binary, world, output, env_file):
     if not binary.is_file() or not world.is_file():
         raise RuntimeError("historical native binary or original journal missing")
     with world.open("rb") as f:
-        if f.read(16) != b"SQLite format 3\\0":
+        if f.read(16) != b"SQLite format 3\x00":
             raise RuntimeError("historical writer did not produce native SQLite")
     attestation = {
         "schema": "SG-WO3-HISTORICAL-NATIVE-V85-REPRODUCTION-01",
