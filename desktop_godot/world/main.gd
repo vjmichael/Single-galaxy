@@ -35,6 +35,9 @@ var asteroid_label: Label
 var flight_instrument_label: Label
 var _verified_flight_ship: Dictionary = {}
 var _verified_flight_rock: Dictionary = {}
+# The actual hull yaw is always set immediately from the committed C++ SHIP
+# receipt; ONLY the rendered exterior camera eases back toward its mount.
+var _exterior_camera_rest := Transform3D.IDENTITY
 var _external_requested := false
 var _last_native_dock := -1
 var _geometry_parent: Node3D
@@ -403,6 +406,7 @@ func _build_native_space_preview() -> void:
 	exterior_camera.fov = 72.0
 	exterior_ship_visual.add_child(exterior_camera)
 	exterior_camera.look_at(space_preview.global_position + Vector3(0.0, 0.6, 0.0), Vector3.UP)
+	_exterior_camera_rest = exterior_camera.transform
 	exterior_camera.current = false
 
 static func native_heading_to_godot_yaw(heading: int) -> float:
@@ -941,7 +945,14 @@ func _on_native_ship_state(ship: Dictionary) -> void:
 	if is_instance_valid(player):
 		player.use_native_dock_state(dock)
 	if is_instance_valid(exterior_ship_visual):
+		# Native state remains exact for the collision/camera receipt tests.
+		# Keep the current camera pose through discrete C++ yaw steps, then
+		# smoothly restore the camera's own local mount each display frame.
+		var smooth_camera: bool = is_instance_valid(exterior_camera) and exterior_camera.current
+		var camera_before := exterior_camera.global_transform if smooth_camera else Transform3D.IDENTITY
 		exterior_ship_visual.rotation.y = native_heading_to_godot_yaw(int(ship["heading"]))
+		if smooth_camera:
+			exterior_camera.global_transform = camera_before
 	if dock != 0:
 		_external_requested = false
 	_show_native_location(last_station_player_state == 4)
@@ -1061,6 +1072,11 @@ func _exit_tree() -> void:
 		native_station_session.stop("Native station client closed")
 
 func _process(delta: float) -> void:
+	# VISUAL ONLY: interpolate the spectator camera, not the original-world
+	# ship or camera authority. UI 60 FPS is not native C++ transaction rate.
+	if is_instance_valid(exterior_camera) and exterior_camera.current:
+		exterior_camera.transform = exterior_camera.transform.interpolate_with(
+			_exterior_camera_rest, clampf(delta * 12.0, 0.0, 1.0))
 	_advance_native_handoff()
 	if native_session != null:
 		native_session.poll()
