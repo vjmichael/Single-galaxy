@@ -106,7 +106,7 @@ jobs:
             cmake --build build/original-wo --config Release --parallel 2 --target galaxy_econ03c7modeauthoritytests galaxy_econ03c8bworldreconciliationtests v59_region_scoped_handoff v59_multi_destination_host v59_third_party_custody v59_world_finished_goods_logistics galaxy_shipping_status_bridge galaxy_wo5_physical_logistics_tests galaxy_play13d_regional_facilities_tests
           fi
           if [[ "$WORK_GROUP" == "STAGE6" ]]; then
-            cmake --build build/original-wo --config Release --parallel 2 --target galaxy_stage6_original_planet_surface_tests galaxy_stage6_authorized_landing_tests galaxy_play13d_planetary_geography_tests galaxy_play13d_planetary_watershed_tests galaxy_play13d_live_planet_survey_tests
+            cmake --build build/original-wo --config Release --parallel 2 --target galaxy_stage6_godot_export galaxy_stage6_original_planet_surface_tests galaxy_stage6_authorized_landing_tests galaxy_play13d_planetary_geography_tests galaxy_play13d_planetary_watershed_tests galaxy_play13d_live_planet_survey_tests
           fi
       - name: Run exact-head physical original-world and SQLite recovery tests
         shell: bash
