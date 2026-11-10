@@ -1326,6 +1326,11 @@ if(BUILD_TESTING)
   target_link_libraries(galaxy_stage6_original_planet_surface_tests PRIVATE galaxy_kernel)
   add_test(NAME galaxy_stage6_original_planet_surface
     COMMAND galaxy_stage6_original_planet_surface_tests)
+  add_executable(galaxy_stage6_authorized_landing_tests
+    tests/STAGE6_AuthorizedLandingTests.cpp)
+  target_link_libraries(galaxy_stage6_authorized_landing_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_stage6_authorized_landing
+    COMMAND galaxy_stage6_authorized_landing_tests)
 endif()
 
 # PLAY-13D.3 source-backed planetary site construction/farm/extraction persistence.
