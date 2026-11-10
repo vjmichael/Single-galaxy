@@ -1,5 +1,6 @@
 #include "galaxy/Industry01Catalog.hpp"
 #include "galaxy/Simulation.hpp"
+#include "galaxy/GalacticCoordinates.hpp"
 #include "galaxy/ShipStatusFitting.hpp"
 #include "galaxy/ShipSensorProfile.hpp"
 #include "galaxy/WorkPlanning.hpp"
@@ -103,6 +104,96 @@ void validate_site_conveyors(const OutpostStorage& st){
 } // namespace
 
 namespace {
+bool within_galactic_range(galactic::Point a,galactic::Point b,
+                           std::int64_t radius){
+    if(radius<0)return false;
+    const auto d=galactic::nearby_displacement(a,b);
+    if(!d)return false;
+    const long double r=radius, x=d->x_mm,y=d->y_mm,z=d->z_mm;
+    return std::fabs(x)<=r&&std::fabs(y)<=r&&std::fabs(z)<=r&&
+           x*x+y*y+z*z<=r*r;
+}
+galactic::Point coarse_galactic_point(galactic::Point p,std::int64_t quantum){
+    if(quantum<=0 || galactic::kSectorEdgeMm%quantum)
+        throw std::invalid_argument("invalid 3D survey quantization");
+    const auto snap=[&](galactic::Axis axis){
+        const auto r=axis.millimeters%quantum;
+        const auto delta=r>=quantum/2 ? quantum-r : -r;
+        const auto adjusted=galactic::normalize(axis,delta);
+        if(!adjusted)throw std::overflow_error("probe waypoint sector exhausted");
+        return *adjusted;
+    };
+    return {snap(p.x),snap(p.y),snap(p.z)};
+}
+std::int64_t projected_probe_axis(std::int64_t current,std::int64_t delta) {
+    const auto p=galactic::checked_add(current,delta);
+    return p.value_or(delta<0 ? std::numeric_limits<std::int64_t>::min() :
+                                   std::numeric_limits<std::int64_t>::max());
+}
+bool galactic_equal(galactic::Point a,galactic::Point b){return a==b;}
+bool move_galactic_toward(galactic::Point& location,
+    galactic::Point destination,std::int64_t max_mm,
+    Vector2& legacy_xy,std::int64_t& legacy_z) {
+    const auto d=galactic::nearby_displacement(destination,location);
+    if(!d)return false; // no physical instant motion across distant sectors
+    const long double x=d->x_mm,y=d->y_mm,z=d->z_mm;
+    const long double length=std::sqrt(x*x+y*y+z*z);
+    if(length==0)return true;
+    const auto next=[&](long double distance){
+        if(length<=max_mm)return static_cast<std::int64_t>(distance);
+        const auto part=static_cast<std::int64_t>(
+            std::round(distance*static_cast<long double>(max_mm)/length));
+        return part ? part : distance>0 ? std::int64_t{1}:std::int64_t{-1};
+    };
+    const galactic::Velocity displacement{next(x),next(y),next(z)};
+    const auto advanced=galactic::advance(location,displacement);
+    if(!advanced)throw std::overflow_error("survey flight sector overflow");
+    location=*advanced;
+    legacy_xy.x=projected_probe_axis(legacy_xy.x,displacement.x_mm_per_tick);
+    legacy_xy.y=projected_probe_axis(legacy_xy.y,displacement.y_mm_per_tick);
+    legacy_z=projected_probe_axis(legacy_z,displacement.z_mm_per_tick);
+    return location==destination;
+}
+double physical_distance_mm(const Entity& a,const Entity& b,bool three_dimensional){
+    if(a.physical_galactic_authoritative || b.physical_galactic_authoritative){
+        if(!a.physical_galactic_authoritative || !b.physical_galactic_authoritative)
+            return std::numeric_limits<double>::infinity();
+        const auto delta=galactic::nearby_displacement(
+            a.physical_galactic,b.physical_galactic);
+        if(!delta)return std::numeric_limits<double>::infinity();
+        return std::hypot(double(delta->x_mm),double(delta->y_mm),
+                          double(delta->z_mm));
+    }
+    if(three_dimensional)
+        return std::hypot(double(a.position.x)-b.position.x,
+                          double(a.position.y)-b.position.y,
+                          double(a.position_z_mm)-b.position_z_mm);
+    return std::hypot(double(a.position.x)-b.position.x,
+                      double(a.position.y)-b.position.y);
+}
+bool within_native_3d_range(const Entity& a,const Entity& b,
+                            std::int64_t radius) {
+    if(a.physical_galactic_authoritative || b.physical_galactic_authoritative){
+        if(!a.physical_galactic_authoritative ||
+           !b.physical_galactic_authoritative || radius<0)return false;
+        const auto delta=galactic::nearby_displacement(
+            a.physical_galactic,b.physical_galactic);
+        if(!delta)return false; // distant objects never become nearby by overflow
+        const long double x=delta->x_mm,y=delta->y_mm,z=delta->z_mm;
+        const long double limit=radius;
+        return std::fabs(x)<=limit && std::fabs(y)<=limit &&
+            std::fabs(z)<=limit && x*x+y*y+z*z<=limit*limit;
+    }
+    // Difference in extended precision avoids int64 subtraction overflow;
+    // all physical proximity dimensions are tested, not a flat XY shadow.
+    if(radius<0)return false;
+    const long double x=static_cast<long double>(a.position.x)-b.position.x;
+    const long double y=static_cast<long double>(a.position.y)-b.position.y;
+    const long double z=static_cast<long double>(a.position_z_mm)-b.position_z_mm;
+    const long double r=static_cast<long double>(radius);
+    if(std::fabs(x)>r || std::fabs(y)>r || std::fabs(z)>r)return false;
+    return x*x+y*y+z*z<=r*r;
+}
 std::int64_t clamp_velocity(std::int64_t v) {
     return std::clamp(v, -Simulation::kMaxVelocityMmPerTick, Simulation::kMaxVelocityMmPerTick);
 }
@@ -187,7 +278,16 @@ Simulation::Simulation(std::uint64_t seed, std::uint32_t system_id)
 bool Simulation::same_local_frame(EntityId a,EntityId b) const {
     const auto* x=find(a);
     const auto* y=find(b);
-    if(!x||!y||x->system_id!=y->system_id)return false;
+    if(!x||!y)return false;
+    if(snapshot_version_>=120){
+        // An orbital/local frame is a view and navigation attachment, NOT
+        // a collision or interaction wall. Both original entities have
+        // absolute primary galactic coordinates; each action still checks
+        // its real 3D physical range and original player/cargo authority.
+        return x->physical_galactic_authoritative &&
+               y->physical_galactic_authoritative;
+    }
+    if(x->system_id!=y->system_id)return false;
     const auto ax=ship_frames_.find(a),ay=ship_frames_.find(b);
     const auto li=local_entity_anchors_.find(a);
     const auto ri=local_entity_anchors_.find(b);
@@ -197,7 +297,115 @@ bool Simulation::same_local_frame(EntityId a,EntityId b) const {
         (ri==local_entity_anchors_.end()?0:ri->second):ay->second.anchor_body;
     return left==right;
 }
+void Simulation::enable_native_3d_physics() {
+    if(snapshot_version_>=119)return;
+    // Earlier genesis snapshots may have aggregate crew, not named NPCs.
+    // Materialize only already-existing finite crew at tick zero; a later
+    // legacy world without safe identity provenance must refuse migration.
+    if(snapshot_version_<20)enable_individual_workforce();
+    // The original v71 celestial/ship-frame migration is a prerequisite
+    // for the atomic 3D spatial index, never an independent position writer.
+    if(snapshot_version_<71)ensure_ship_frame_registry();
+    snapshot_version_=119;
+}
+void Simulation::enable_native_galactic_physics(
+    const std::map<std::uint32_t,galactic::Point>& origins) {
+    if(snapshot_version_>=120){
+        if(origins!=galactic_system_origins_)
+            throw std::runtime_error("conflicting immutable galactic registry");
+        return;
+    }
+    if(snapshot_version_<119)enable_native_3d_physics();
+    if(origins.size()!=systems_.size())
+        throw std::runtime_error("every original system requires a registered origin");
+    for(const auto system:systems_){
+        const auto origin=origins.find(system);
+        if(origin==origins.end() || !origin->second.valid())
+            throw std::runtime_error("missing or noncanonical real star origin");
+    }
+    // Resolve every exact pose before altering any entity. A malformed
+    // anchor or sector overflow cannot partially migrate an in-memory world.
+    std::map<EntityId,galactic::Point> migrated;
+    for(const auto& [id,e]:entities_){
+        auto absolute=origins.at(e.system_id);
+        CosmicPosition relative_frame{};
+        if(e.type==EntityType::Ship){
+            const auto frame=ship_frames_.find(id);
+            if(frame==ship_frames_.end() ||
+               frame->second.system!=e.system_id)
+                throw std::runtime_error("missing original ship frame for galactic upgrade");
+            relative_frame=frame->second.origin;
+        }else if(const auto anchor=local_entity_anchors_.find(id);
+                 anchor!=local_entity_anchors_.end()){
+            const auto found=physical_celestial_systems_.find(e.system_id);
+            if(found==physical_celestial_systems_.end())
+                throw std::runtime_error("anchored physical entity has no celestial system");
+            const auto body=std::find_if(found->second.begin(),found->second.end(),
+                [&](const PhysicalCelestialBody& b){return b.id==anchor->second;});
+            if(body==found->second.end())
+                throw std::runtime_error("anchored physical entity has no original body");
+            relative_frame=body->position;
+        }
+        const auto shifted=galactic::advance(absolute,
+            {relative_frame.x_mm,relative_frame.y_mm,relative_frame.z_mm});
+        if(!shifted)throw std::overflow_error("physical frame beyond galactic sectors");
+        absolute=*shifted;
+        const auto physical=galactic::advance(absolute,
+            {e.position.x,e.position.y,e.position_z_mm});
+        if(!physical)throw std::overflow_error("galactic physical genesis overflow");
+        migrated.emplace(id,*physical);
+    }
+    for(const auto& [id,point]:migrated){
+        auto& e=entities_.at(id);
+        e.physical_galactic=point;
+        e.physical_galactic_authoritative=true;
+    }
+    galactic_system_origins_=origins;
+    snapshot_version_=120;
+}
+void Simulation::enable_native_3d_probes(){
+    if(snapshot_version_>=121)return;
+    if(snapshot_version_<120 ||
+       galactic_system_origins_.size()!=systems_.size())
+        throw std::runtime_error("3D probe migration requires proven v120 galaxy");
+    // A v119 probe had only XY without an anchor-frame receipt. Refuse
+    // ambiguous frame custody instead of guessing a physical location.
+    for(const auto& [id,p]:survey_probes_){
+        const auto fr=ship_frames_.find(p.carrier);
+        if(fr!=ship_frames_.end() &&
+           (fr->second.anchor_body || fr->second.origin.x_mm ||
+            fr->second.origin.y_mm || fr->second.origin.z_mm))
+            throw std::runtime_error("legacy probe lacks exact anchor provenance");
+        if(!galactic_system_origins_.count(p.system))
+            throw std::runtime_error("legacy probe unknown galaxy origin");
+    }
+    const auto point=[&](std::uint32_t system,Vector2 xy,std::int64_t z){
+        const auto at=galactic_system_origins_.find(system);
+        if(at==galactic_system_origins_.end())
+            throw std::runtime_error("probe report unknown star origin");
+        const auto result=galactic::advance(at->second,{xy.x,xy.y,z});
+        if(!result)throw std::overflow_error("3D probe migration overflow");
+        return *result;
+    };
+    for(auto& [id,p]:survey_probes_){
+        (void)id;
+        p.galactic_position=point(p.system,p.position,0);
+        p.galactic_home=point(p.system,p.drone_home,0);
+        p.galactic_focus=point(p.system,p.focus_waypoint,0);
+        p.galactic_authoritative=true;
+    }
+    auto migrate_report=[&](DiscoveryRecord& d){
+        d.galactic_location=point(d.system,d.location,0);
+        d.galactic_authoritative=true;
+    };
+    for(auto& [key,d]:discoveries_){(void)key;migrate_report(d);}
+    for(auto& [key,p]:pending_probe_discoveries_){
+        (void)key;migrate_report(p.report);
+    }
+    snapshot_version_=121;
+}
 bool Simulation::valid_position(Vector2 p) const {
+    if(snapshot_version_>=119)return true; // finite int64 is not a local wall
     return p.x >= -kWorldBoundMm && p.x <= kWorldBoundMm &&
            p.y >= -kWorldBoundMm && p.y <= kWorldBoundMm;
 }
@@ -205,10 +413,23 @@ bool Simulation::valid_position(Vector2 p) const {
 EntityId Simulation::add_entity(Entity entity) {
     if (!valid_position(entity.position)) throw std::invalid_argument("entity out of system bounds");
     if (next_entity_id_ == std::numeric_limits<EntityId>::max()) throw std::overflow_error("entity IDs exhausted");
-    entity.id = next_entity_id_++;
-    entity.system_id = system_id_;
+    entity.id = next_entity_id_;
+    if(!entity.system_id)entity.system_id=system_id_;
+    if(!systems_.count(entity.system_id))
+        throw std::invalid_argument("physical entity genesis unknown star system");
+    if(snapshot_version_>=120){
+        const auto registered=galactic_system_origins_.find(entity.system_id);
+        if(registered==galactic_system_origins_.end())
+            throw std::runtime_error("new physical entity has no real star origin");
+        const auto physical=galactic::advance(registered->second,
+            {entity.position.x,entity.position.y,entity.position_z_mm});
+        if(!physical)throw std::overflow_error("galactic entity genesis overflow");
+        entity.physical_galactic=*physical;
+        entity.physical_galactic_authoritative=true;
+    }
     const auto id = entity.id;
     entities_.emplace(id, entity);
+    ++next_entity_id_;
     if(snapshot_version_>=71 && entity.type==EntityType::Ship)
         ship_frames_.emplace(id,ShipFrameCustody{entity.system_id,0,{}});
     return id;
@@ -867,14 +1088,26 @@ void Simulation::add_system(std::uint32_t system) {
 EntityId Simulation::add_station_in_system(std::uint32_t system, Vector2 position) {
     if (tick_ || !systems_.count(system)) throw std::invalid_argument("unknown or locked system");
     Entity entity; entity.type=EntityType::Station;entity.position=position;
-    const auto id=add_entity(entity);entities_.at(id).system_id=system;
+    entity.system_id=system;
+    if(snapshot_version_>=120){
+        const auto origin=galactic_system_origins_.find(system);
+        if(origin==galactic_system_origins_.end())
+            throw std::runtime_error("real new system has no registered galactic origin");
+    }
+    const auto id=add_entity(entity);
     snapshot_version_=std::max(snapshot_version_,5);return id;
 }
 EntityId Simulation::add_asteroid_in_system(std::uint32_t system, Vector2 position, std::int64_t ore) {
     if (tick_ || !systems_.count(system) || ore<=0 || ore>1000000000LL)
         throw std::invalid_argument("unknown system or ore");
     Entity entity;entity.type=EntityType::Asteroid;entity.position=position;entity.ore=ore;
-    const auto id=add_entity(entity);entities_.at(id).system_id=system;
+    entity.system_id=system;
+    if(snapshot_version_>=120){
+        const auto origin=galactic_system_origins_.find(system);
+        if(origin==galactic_system_origins_.end())
+            throw std::runtime_error("real new system has no registered galactic origin");
+    }
+    const auto id=add_entity(entity);
     snapshot_version_=std::max(snapshot_version_,5);return id;
 }
 EntityId Simulation::add_gate(std::uint32_t origin, Vector2 position,
@@ -886,7 +1119,12 @@ EntityId Simulation::add_gate(std::uint32_t origin, Vector2 position,
         throw std::invalid_argument("invalid stargate link");
     Entity gate;gate.type=EntityType::Stargate;gate.position=position;
     gate.gate_destination=destination;gate.gate_arrival=arrival;gate.gate_online=true;
-    const auto id=add_entity(gate);entities_.at(id).system_id=origin;
+    gate.system_id=origin;
+    // A gate belongs to the immutable physical origin of ITS system, not
+    // necessarily the original world's default system (system_id_).
+    if(snapshot_version_>=120 && !galactic_system_origins_.count(origin))
+        throw std::runtime_error("new gate system has no original star origin");
+    const auto id=add_entity(gate);
     snapshot_version_=std::max(snapshot_version_,5);return id;
 }
 void Simulation::configure_gate_operations(EntityId first, EntityId second,
@@ -936,7 +1174,13 @@ EntityId Simulation::spawn_ship_docked(PlayerId owner, EntityId station_id,
     entity.hull=100;entity.weapon_charges=12;
     entity.dock_state = DockState::Docked;
     entity.dock_station = station_id;
+    entity.system_id=station->system_id;
     const auto ship = add_entity(entity);
+    if(snapshot_version_>=120){
+        if(!station->physical_galactic_authoritative)
+            throw std::runtime_error("docked ship's real station has no physical pose");
+        entities_.at(ship).physical_galactic=station->physical_galactic;
+    }
     if (existing == hangars_.end()) hangars_.emplace(key, StationHangar{0, hangar_capacity});
     wallets_.emplace(owner,0);
     snapshot_version_ = std::max(snapshot_version_, 3);
@@ -1197,8 +1441,10 @@ bool Simulation::can_depart_colony(const Command& c) const {
        passengers_aboard(c.actor) || passengers_aboard(c.target))return false;
     const auto near=[&](const Entity* origin){
         if(!origin || origin->system_id!=receiver->system_id)return false;
-        const auto dx=origin->position.x-receiver->position.x;
-        const auto dy=origin->position.y-receiver->position.y;
+        if(snapshot_version_>=119 &&
+           !within_native_3d_range(*origin,*receiver,kDockingRangeMm))return false;
+        const auto dx=snapshot_version_>=120?0:origin->position.x-receiver->position.x;
+        const auto dy=snapshot_version_>=120?0:origin->position.y-receiver->position.y;
         return dx>=-kDockingRangeMm && dx<=kDockingRangeMm &&
                dy>=-kDockingRangeMm && dy<=kDockingRangeMm &&
                dx*dx+dy*dy<=kDockingRangeMm*kDockingRangeMm;
@@ -1509,8 +1755,10 @@ bool Simulation::submit(const Command& c) {
            source->system_id!=first->system_id||source->system_id!=second->system_id)
             return false;
         for(const auto receiver:{first,second}){
-            const auto dx=source->position.x-receiver->position.x;
-            const auto dy=source->position.y-receiver->position.y;
+            if(snapshot_version_>=119 &&
+               !within_native_3d_range(*source,*receiver,2500))return false;
+            const auto dx=snapshot_version_>=120?0:source->position.x-receiver->position.x;
+            const auto dy=snapshot_version_>=120?0:source->position.y-receiver->position.y;
             if(dx<-2500||dx>2500||dy<-2500||dy>2500||dx*dx+dy*dy>2500*2500)
                 return false;
         }
@@ -1780,8 +2028,11 @@ bool Simulation::submit(const Command& c) {
         if(incident_action && (ship->second.jump_state!=ShipJumpState::Ready ||
            ship->second.dock_state!=DockState::InSpace))return false;
         if(c.action==Action::HostEvacuatePassengers || c.action==Action::HostResolveMixedFerryLoss){
-            const auto dx=ship->second.position.x-endpoint->second.position.x;
-            const auto dy=ship->second.position.y-endpoint->second.position.y;
+            if(snapshot_version_>=119 &&
+               !within_native_3d_range(ship->second,endpoint->second,kDockingRangeMm))
+                return false;
+            const auto dx=snapshot_version_>=120?0:ship->second.position.x-endpoint->second.position.x;
+            const auto dy=snapshot_version_>=120?0:ship->second.position.y-endpoint->second.position.y;
             if(dx<-kDockingRangeMm || dx>kDockingRangeMm ||
                dy<-kDockingRangeMm || dy>kDockingRangeMm ||
                dx*dx+dy*dy>kDockingRangeMm*kDockingRangeMm)return false;
@@ -2264,16 +2515,20 @@ Outcome Simulation::mine_status(const Entity& actor, EntityId target) const {
     const auto it = entities_.find(target);
     if (it == entities_.end()) return depleted_.count(target) ? Outcome::NoResources : Outcome::InvalidTarget;
     const auto& asteroid = it->second;
-    if (asteroid.type != EntityType::Asteroid || asteroid.system_id != actor.system_id)
+    if (asteroid.type != EntityType::Asteroid ||
+        (snapshot_version_<120 && asteroid.system_id != actor.system_id))
         return Outcome::InvalidTarget;
     if(!same_local_frame(actor.id,target))return Outcome::OutOfRange;
-    const auto dx = actor.position.x - asteroid.position.x;
-    const auto dy = actor.position.y - asteroid.position.y;
     const auto* deposit=geology(target);
     // Surface mining: full radius matters for kilometre-scale physical deposits.
     const std::int64_t access=kMiningRangeMm+(deposit ? deposit->radius_m*1000 : 0);
-    if(dx < -access || dx > access || dy < -access || dy > access ||
-       dx*dx + dy*dy > access*access) return Outcome::OutOfRange;
+    if(snapshot_version_>=119 && !within_native_3d_range(actor,asteroid,access))
+        return Outcome::OutOfRange; // before potentially overflowing XY subtraction
+    const auto dx = snapshot_version_>=120?0:actor.position.x - asteroid.position.x;
+    const auto dy = snapshot_version_>=120?0:actor.position.y - asteroid.position.y;
+    if(snapshot_version_>=119 ? !within_native_3d_range(actor,asteroid,access) :
+       (dx < -access || dx > access || dy < -access || dy > access ||
+        dx*dx + dy*dy > access*access)) return Outcome::OutOfRange;
     if (loaded_cargo_liters(actor) > actor.cargo_capacity*1000-1000) return Outcome::CargoFull;
     if (asteroid.ore <= 0) return Outcome::NoResources;
     return Outcome::Applied;
@@ -2454,8 +2709,12 @@ Event Simulation::execute(const Command& c) {
            (vehicle.dock_state!=DockState::InSpace&&vehicle.dock_station!=c.target)){
             result.result=Outcome::InTransition;return result;
         }
-        const auto dx=vehicle.position.x-site->second.position.x;
-        const auto dy=vehicle.position.y-site->second.position.y;
+        if(snapshot_version_>=119 &&
+           !within_native_3d_range(vehicle,site->second,kDockingRangeMm)){
+            result.result=Outcome::OutOfRange;return result;
+        }
+        const auto dx=snapshot_version_>=120?0:vehicle.position.x-site->second.position.x;
+        const auto dy=snapshot_version_>=120?0:vehicle.position.y-site->second.position.y;
         if(dx<-kDockingRangeMm||dx>kDockingRangeMm||
            dy<-kDockingRangeMm||dy>kDockingRangeMm||
            dx*dx+dy*dy>kDockingRangeMm*kDockingRangeMm){
@@ -2586,8 +2845,12 @@ Event Simulation::execute(const Command& c) {
                ship->second.system_id!=site->second.system_id || c.amount<1 || c.amount>100){
                 result.result=Outcome::InvalidTarget;return result;
             }
-            const auto dx=ship->second.position.x-site->second.position.x;
-            const auto dy=ship->second.position.y-site->second.position.y;
+            if(snapshot_version_>=119 &&
+               !within_native_3d_range(ship->second,site->second,kDockingRangeMm)){
+                result.result=Outcome::OutOfRange;return result;
+            }
+            const auto dx=snapshot_version_>=120?0:ship->second.position.x-site->second.position.x;
+            const auto dy=snapshot_version_>=120?0:ship->second.position.y-site->second.position.y;
             if(dx<-kDockingRangeMm || dx>kDockingRangeMm ||
                dy<-kDockingRangeMm || dy>kDockingRangeMm ||
                dx*dx+dy*dy>kDockingRangeMm*kDockingRangeMm){result.result=Outcome::OutOfRange;return result;}
@@ -2638,11 +2901,14 @@ Event Simulation::execute(const Command& c) {
                medic->second.location==medic->second.home_ship &&
                entities_.count(medic->second.location) && entities_.count(c.actor)){
                 const auto& ship=entities_.at(medic->second.location),&site=entities_.at(c.actor);
-                const auto dx=ship.position.x-site.position.x,dy=ship.position.y-site.position.y;
-                crew=ship.type==EntityType::Ship && ship.owner_id==site.owner_id &&
-                     ship.system_id==site.system_id && dx>=-kDockingRangeMm && dx<=kDockingRangeMm &&
-                     dy>=-kDockingRangeMm && dy<=kDockingRangeMm &&
-                     dx*dx+dy*dy<=kDockingRangeMm*kDockingRangeMm;
+                if(snapshot_version_<119 ||
+                   within_native_3d_range(ship,site,kDockingRangeMm)){
+                    const auto dx=snapshot_version_>=120?0:ship.position.x-site.position.x,dy=snapshot_version_>=120?0:ship.position.y-site.position.y;
+                    crew=ship.type==EntityType::Ship && ship.owner_id==site.owner_id &&
+                         ship.system_id==site.system_id && dx>=-kDockingRangeMm && dx<=kDockingRangeMm &&
+                         dy>=-kDockingRangeMm && dy<=kDockingRangeMm &&
+                         dx*dx+dy*dy<=kDockingRangeMm*kDockingRangeMm;
+                }
             }
             if(clinic==clinics_.end() || medic==npcs_.end() || clinic->second.medics<1 ||
                (!resident && !crew) || c.amount<1 || c.amount>3 ||
@@ -2707,8 +2973,12 @@ Event Simulation::execute(const Command& c) {
            ship->second.owner_id!=station->second.owner_id){
             result.result=Outcome::InvalidTarget;return result;
         }
-        const auto dx=ship->second.position.x-station->second.position.x;
-        const auto dy=ship->second.position.y-station->second.position.y;
+        if(snapshot_version_>=119 &&
+           !within_native_3d_range(ship->second,station->second,kDockingRangeMm)){
+            result.result=Outcome::OutOfRange;return result;
+        }
+        const auto dx=snapshot_version_>=120?0:ship->second.position.x-station->second.position.x;
+        const auto dy=snapshot_version_>=120?0:ship->second.position.y-station->second.position.y;
         if(dx<-kDockingRangeMm || dx>kDockingRangeMm ||
            dy<-kDockingRangeMm || dy>kDockingRangeMm ||
            dx*dx+dy*dy>kDockingRangeMm*kDockingRangeMm){
@@ -2856,8 +3126,12 @@ Event Simulation::execute(const Command& c) {
             result.result=Outcome::InvalidTarget;return result;
         }
         for(const auto receiver:{first,second}){
-            const auto dx=source->position.x-receiver->position.x;
-            const auto dy=source->position.y-receiver->position.y;
+            if(snapshot_version_>=119 &&
+               !within_native_3d_range(*source,*receiver,2500)){
+                result.result=Outcome::OutOfRange;return result;
+            }
+            const auto dx=snapshot_version_>=120?0:source->position.x-receiver->position.x;
+            const auto dy=snapshot_version_>=120?0:source->position.y-receiver->position.y;
             if(dx<-2500||dx>2500||dy<-2500||dy>2500||dx*dx+dy*dy>2500*2500){
                 result.result=Outcome::OutOfRange;return result;
             }
@@ -3037,8 +3311,12 @@ Event Simulation::execute(const Command& c) {
                     result.result=Outcome::InvalidArgument;return result;
                 }
                 if(mixed){
-                    const auto dx=ship->second.position.x-endpoint->second.position.x;
-                    const auto dy=ship->second.position.y-endpoint->second.position.y;
+                    if(snapshot_version_>=119 &&
+                       !within_native_3d_range(ship->second,endpoint->second,kDockingRangeMm)){
+                        result.result=Outcome::OutOfRange;return result;
+                    }
+                    const auto dx=snapshot_version_>=120?0:ship->second.position.x-endpoint->second.position.x;
+                    const auto dy=snapshot_version_>=120?0:ship->second.position.y-endpoint->second.position.y;
                     if(dx<-kDockingRangeMm || dx>kDockingRangeMm ||
                        dy<-kDockingRangeMm || dy>kDockingRangeMm ||
                        dx*dx+dy*dy>kDockingRangeMm*kDockingRangeMm){
@@ -3085,18 +3363,24 @@ Event Simulation::execute(const Command& c) {
                 stop_mining(c.actor,Outcome::NotInSpace);
                 ship->second.type=EntityType::Wreck;
             ship->second.hull=0;ship->second.weapon_charges=0;ship->second.last_weapon_tick=0;ship->second.training_drone=false;
-                ship->second.velocity={};
+                ship->second.velocity={};ship->second.velocity_z_mm_per_tick=0;
                 activity_events_.push_back({tick_,ActivityKind::ShipDestroyed,c.id,c.actor,c.actor,Outcome::Applied,0});
             }else if(c.action==Action::HostStrandFerry){
                 voyage->second.status=3;voyage->second.stranded_reason=static_cast<unsigned>(c.amount);
                 voyage->second.stranded_tick=tick_;voyage->second.last_incident_id=c.id;
-                ship->second.velocity={};stop_mining(c.actor,Outcome::InTransition);
+                ship->second.velocity={};
+                if(snapshot_version_>=119)ship->second.velocity_z_mm_per_tick=0;
+                stop_mining(c.actor,Outcome::InTransition);
             }else if(c.action==Action::HostResumeFerry){
                 voyage->second.status=1;voyage->second.stranded_reason=0;
                 voyage->second.stranded_tick=0;voyage->second.last_incident_id=c.id;
             }else{
-                const auto dx=ship->second.position.x-endpoint->second.position.x;
-                const auto dy=ship->second.position.y-endpoint->second.position.y;
+                if(snapshot_version_>=119 &&
+                   !within_native_3d_range(ship->second,endpoint->second,kDockingRangeMm)){
+                    result.result=Outcome::OutOfRange;return result;
+                }
+                const auto dx=snapshot_version_>=120?0:ship->second.position.x-endpoint->second.position.x;
+                const auto dy=snapshot_version_>=120?0:ship->second.position.y-endpoint->second.position.y;
                 if(dx<-kDockingRangeMm || dx>kDockingRangeMm ||
                    dy<-kDockingRangeMm || dy>kDockingRangeMm ||
                    dx*dx+dy*dy>kDockingRangeMm*kDockingRangeMm){
@@ -3180,7 +3464,7 @@ Event Simulation::execute(const Command& c) {
             ship.hull=0;ship.weapon_charges=0;ship.last_weapon_tick=0;ship.training_drone=false;
             // Preserve former ship owner for salvage claims and victim attribution.
             // The Wreck entity is never an executable player ship.
-            ship.velocity={};
+            ship.velocity={};ship.velocity_z_mm_per_tick=0;
             activity_events_.push_back({tick_,ActivityKind::ShipDestroyed,c.id,c.actor,c.target,Outcome::Applied,0});
             snapshot_version_=std::max(snapshot_version_,21);
             result.result=Outcome::Applied;return result;
@@ -3264,18 +3548,34 @@ Event Simulation::execute(const Command& c) {
                     result.result=Outcome::InvalidTarget;return result;
                 }
                 const auto& asteroid=target->second;
-                if(asteroid.system_id!=actor.system_id){result.result=Outcome::WrongSystem;return result;}
+                if(snapshot_version_<121 && asteroid.system_id!=actor.system_id){result.result=Outcome::WrongSystem;return result;}
                 // Geological drones require a 10 km ship-to-target operating
                 // envelope. The device finishes its assigned mission autonomously
                 // if the carrier subsequently flies away.
                 constexpr auto range=kDroneControlRangeMm;
-                const auto dx=asteroid.position.x-actor.position.x;
-                const auto dy=asteroid.position.y-actor.position.y;
-                if(dx<-range||dx>range||dy<-range||dy>range||dx*dx+dy*dy>range*range){
+                if(snapshot_version_>=119 &&
+                   !within_native_3d_range(actor,asteroid,range)){
+                    result.result=Outcome::OutOfRange;return result;
+                }
+                const auto dx=snapshot_version_>=121?0:
+                    asteroid.position.x-actor.position.x;
+                const auto dy=snapshot_version_>=121?0:
+                    asteroid.position.y-actor.position.y;
+                if(snapshot_version_<121 &&
+                   (dx<-range||dx>range||dy<-range||dy>range||
+                    dx*dx+dy*dy>range*range)){
                     result.result=Outcome::OutOfRange;return result;
                 }
                 DeployedSurveyProbe drone{c.id,c.actor,c.issuer,actor.system_id,actor.position,tick_};
                 drone.drone_phase=1;drone.drone_target=c.target;drone.drone_home=actor.position;
+                if(snapshot_version_>=121){
+                    drone.position_z_mm=actor.position_z_mm;
+                    drone.drone_home_z_mm=actor.position_z_mm;
+                    drone.galactic_position=actor.physical_galactic;
+                    drone.galactic_home=actor.physical_galactic;
+                    drone.galactic_focus=actor.physical_galactic;
+                    drone.galactic_authoritative=true;
+                }
                 survey_probes_.emplace(c.id,drone);
                 --actor.survey_probes_carried;
                 result.transferred=1;result.result=Outcome::Applied;
@@ -3285,17 +3585,24 @@ Event Simulation::execute(const Command& c) {
                 if(probe_it==survey_probes_.end()||
                    probe_it->second.owner!=c.issuer||
                    probe_it->second.carrier!=c.actor||
-                   probe_it->second.system!=actor.system_id||
+                   (snapshot_version_<121 && probe_it->second.system!=actor.system_id)||
                    probe_it->second.drone_phase!=0){
                     result.result=Outcome::InvalidTarget;return result;
                 }
                 auto& survey=probe_it->second;
-                if(!within_deep_probe_link(survey.position.x-actor.position.x,
+                if(snapshot_version_>=121 ?
+                   !within_galactic_range(survey.galactic_position,
+                      actor.physical_galactic,kDeepSpaceProbeCommsRangeMm) :
+                   !within_deep_probe_link(survey.position.x-actor.position.x,
                                            survey.position.y-actor.position.y)){
                     result.result=Outcome::OutOfRange;return result;
                 }
                 if(c.action==Action::CancelSurveyFocus){
                     survey.focus_site=0;survey.focus_waypoint={};
+                    if(snapshot_version_>=121){
+                        survey.focus_z_mm=0;
+                        survey.galactic_focus=survey.galactic_position;
+                    }
                     result.result=Outcome::Applied;return result;
                 }
                 if(survey.focus_site){
@@ -3311,13 +3618,28 @@ Event Simulation::execute(const Command& c) {
                 }
                 survey.focus_site=found->id;
                 survey.focus_waypoint=found->coarse;
+                if(snapshot_version_>=121){
+                    const auto& physical=entities_.at(found->id);
+                    survey.focus_z_mm=found->coarse_z_mm;
+                    survey.galactic_focus=coarse_galactic_point(
+                        physical.physical_galactic,5000000);
+                }
                 snapshot_version_=std::max(snapshot_version_,69);
                 result.result=Outcome::Applied;
             }else if(c.action==Action::DeploySurveyProbe){
                 if(!actor.survey_probes_carried){result.result=Outcome::NoResources;return result;}
                 if(survey_probes_.size()>=1000){result.result=Outcome::InvalidArgument;return result;}
-                survey_probes_.emplace(c.id,DeployedSurveyProbe{
-                    c.id,c.actor,c.issuer,actor.system_id,actor.position,tick_});
+                DeployedSurveyProbe probe{
+                    c.id,c.actor,c.issuer,actor.system_id,actor.position,tick_};
+                if(snapshot_version_>=121){
+                    probe.position_z_mm=actor.position_z_mm;
+                    probe.drone_home_z_mm=actor.position_z_mm;
+                    probe.galactic_position=actor.physical_galactic;
+                    probe.galactic_home=actor.physical_galactic;
+                    probe.galactic_focus=actor.physical_galactic;
+                    probe.galactic_authoritative=true;
+                }
+                survey_probes_.emplace(c.id,probe);
                 --actor.survey_probes_carried;
                 result.transferred=1;result.result=Outcome::Applied;
             }else{
@@ -3327,27 +3649,43 @@ Event Simulation::execute(const Command& c) {
                     result.result=Outcome::InvalidTarget;return result;
                 }
                 const auto& probe=it->second;
-                if(probe.system!=actor.system_id){result.result=Outcome::WrongSystem;return result;}
+                if(snapshot_version_<121 && probe.system!=actor.system_id){result.result=Outcome::WrongSystem;return result;}
                 if(c.action==Action::ScanSurveyProbe){
                     if(probe.drone_phase||probe.focus_site){result.result=Outcome::InvalidTarget;return result;}
                     // 0.5 AU is the planned deep-space probe command budget.
                     // Native positions currently span only ~2,000 km per axis,
                     // so this limit will become meaningful with cosmic scaling.
-                    const auto dx=probe.position.x-actor.position.x;
-                    const auto dy=probe.position.y-actor.position.y;
-                    if(!within_deep_probe_link(dx,dy)){
+                    const auto dx=snapshot_version_>=121?0:probe.position.x-actor.position.x;
+                    const auto dy=snapshot_version_>=121?0:probe.position.y-actor.position.y;
+                    if(snapshot_version_>=121 ?
+                       !within_galactic_range(probe.galactic_position,
+                          actor.physical_galactic,kDeepSpaceProbeCommsRangeMm):
+                       !within_deep_probe_link(dx,dy)){
                         result.result=Outcome::OutOfRange;return result;
                     }
                     std::vector<DiscoveryRecord> candidates;
                     constexpr auto r=kProbeScanRangeMm;
                     for(const auto& [id,e]:entities_){
-                        if(e.type!=EntityType::Asteroid || e.system_id!=probe.system)continue;
-                        const auto dx=e.position.x-probe.position.x,dy=e.position.y-probe.position.y;
-                        if(dx< -r || dx>r || dy< -r || dy>r || dx*dx+dy*dy>r*r)continue;
+                        if(e.type!=EntityType::Asteroid ||
+                           (snapshot_version_<121 && e.system_id!=probe.system))continue;
+                        const auto dx=snapshot_version_>=121?0:e.position.x-probe.position.x;
+                        const auto dy=snapshot_version_>=121?0:e.position.y-probe.position.y;
+                        if(snapshot_version_>=121){
+                            if(!within_galactic_range(e.physical_galactic,
+                                probe.galactic_position,r))continue;
+                        }else if(dx< -r || dx>r || dy< -r || dy>r ||
+                                  dx*dx+dy*dy>r*r)continue;
                         const auto key=std::make_pair(c.issuer,id);
-                        if(!discoveries_.count(key)&&!pending_probe_discoveries_.count(key))
-                            candidates.push_back(DiscoveryRecord{c.issuer,id,e.system_id,e.position,
-                                tick_,(geology_.count(id)!=0||local_deposit_taxonomy(id).has_value())});
+                        if(!discoveries_.count(key)&&!pending_probe_discoveries_.count(key)){
+                            DiscoveryRecord observation{c.issuer,id,e.system_id,e.position,
+                                tick_,(geology_.count(id)!=0||local_deposit_taxonomy(id).has_value())};
+                            if(snapshot_version_>=121){
+                                observation.location_z_mm=e.position_z_mm;
+                                observation.galactic_location=e.physical_galactic;
+                                observation.galactic_authoritative=true;
+                            }
+                            candidates.push_back(observation);
+                        }
                     }
                     if(pending_probe_discoveries_.size()>10000-discoveries_.size()||
                        candidates.size()>10000-discoveries_.size()-pending_probe_discoveries_.size()||
@@ -3368,9 +3706,12 @@ Event Simulation::execute(const Command& c) {
                     result.result=Outcome::Applied;
                 }else{
                     constexpr auto r=kProbeRecoveryRangeMm;
-                    const auto dx=probe.position.x-actor.position.x;
-                    const auto dy=probe.position.y-actor.position.y;
-                    if(dx< -r || dx>r || dy< -r || dy>r || dx*dx+dy*dy>r*r){
+                    const auto dx=snapshot_version_>=121?0:probe.position.x-actor.position.x;
+                    const auto dy=snapshot_version_>=121?0:probe.position.y-actor.position.y;
+                    if(snapshot_version_>=121 ?
+                       !within_galactic_range(probe.galactic_position,
+                          actor.physical_galactic,r) :
+                       (dx< -r || dx>r || dy< -r || dy>r || dx*dx+dy*dy>r*r)){
                         result.result=Outcome::OutOfRange;return result;
                     }
                     if(probe.focus_site || (probe.drone_phase && probe.drone_phase!=3)){
@@ -3391,9 +3732,19 @@ Event Simulation::execute(const Command& c) {
                                 result.result=Outcome::InvalidArgument;return result;
                             }
                             const auto where=site!=entities_.end()?site->second.position:probe.position;
-                            discoveries_.emplace(key,DiscoveryRecord{probe.owner,
-                                probe.drone_target,probe.system,where,tick_,true,
-                                probe.taxonomy});
+                            DiscoveryRecord report{probe.owner,
+                                probe.drone_target,
+                                snapshot_version_>=121 && site!=entities_.end()?
+                                    site->second.system_id:probe.system,
+                                where,tick_,true,probe.taxonomy};
+                            if(snapshot_version_>=121){
+                                report.location_z_mm=site!=entities_.end()?
+                                    site->second.position_z_mm:probe.position_z_mm;
+                                report.galactic_location=site!=entities_.end()?
+                                    site->second.physical_galactic:probe.galactic_position;
+                                report.galactic_authoritative=true;
+                            }
+                            discoveries_.emplace(key,report);
                         }else discoveries_.at(key).survey_taxonomy=probe.taxonomy;
                     }
                     ++actor.survey_probes_carried;
@@ -3519,7 +3870,7 @@ Event Simulation::execute(const Command& c) {
                defender.dock_state!=DockState::InSpace) {
                 result.result=Outcome::InTransition;return result;
             }
-            if(defender.system_id!=actor.system_id ||
+            if((snapshot_version_<120 && defender.system_id!=actor.system_id) ||
                !same_local_frame(c.actor,c.target)) {
                 result.result=Outcome::OutOfRange;return result;
             }
@@ -3531,9 +3882,8 @@ Event Simulation::execute(const Command& c) {
             // original material-backed detection hardware.
             const auto acquisition=ship_sensors::detection_range_mm(
                 *this,actor,defender);
-            const auto physical_distance=std::hypot(
-                double(defender.position.x)-actor.position.x,
-                double(defender.position.y)-actor.position.y);
+            const auto physical_distance=physical_distance_mm(
+                actor,defender,snapshot_version_>=119);
             if(physical_distance>double(kHackRangeMm) ||
                physical_distance>double(acquisition)) {
                 result.result=Outcome::OutOfRange;return result;
@@ -3624,15 +3974,26 @@ Event Simulation::execute(const Command& c) {
             constexpr auto range=kLocalSurveyRangeMm;
             std::vector<DiscoveryRecord> candidates;
             for(const auto& [id,e]:entities_){
-                if(e.type!=EntityType::Asteroid || e.system_id!=actor.system_id ||
+                if(e.type!=EntityType::Asteroid ||
+                   (snapshot_version_<120 && e.system_id!=actor.system_id) ||
                    !same_local_frame(c.actor,id))continue;
-                const auto dx=e.position.x-actor.position.x,dy=e.position.y-actor.position.y;
-                if(dx<-range || dx>range || dy<-range || dy>range ||
-                   dx*dx+dy*dy>range*range)continue;
+                if(snapshot_version_>=119 &&
+                   !within_native_3d_range(actor,e,range))continue;
+                const auto dx=snapshot_version_>=120?0:e.position.x-actor.position.x;
+                const auto dy=snapshot_version_>=120?0:e.position.y-actor.position.y;
+                if(snapshot_version_>=119 ? !within_native_3d_range(actor,e,range) :
+                   (dx<-range || dx>range || dy<-range || dy>range ||
+                    dx*dx+dy*dy>range*range))continue;
                 auto key=std::make_pair(c.issuer,id);
                 if(!discoveries_.count(key)){
-                    candidates.push_back(DiscoveryRecord{c.issuer,id,e.system_id,e.position,
-                        tick_,geology_.count(id)!=0});
+                    DiscoveryRecord report{c.issuer,id,e.system_id,e.position,
+                        tick_,geology_.count(id)!=0};
+                    if(snapshot_version_>=121){
+                        report.location_z_mm=e.position_z_mm;
+                        report.galactic_location=e.physical_galactic;
+                        report.galactic_authoritative=true;
+                    }
+                    candidates.push_back(report);
                 }
             }
             if(candidates.size()>10000-discoveries_.size()){
@@ -3655,12 +4016,17 @@ Event Simulation::execute(const Command& c) {
                 result.result=Outcome::InvalidTarget;return result;
             }
             auto& wreck=it->second;
-            if(wreck.system_id!=actor.system_id){result.result=Outcome::WrongSystem;return result;}
+            if(snapshot_version_<120 && wreck.system_id!=actor.system_id){result.result=Outcome::WrongSystem;return result;}
             constexpr auto range=kSalvageRangeMm;
-            const auto dx=wreck.position.x-actor.position.x;
-            const auto dy=wreck.position.y-actor.position.y;
-            if(dx< -range || dx>range || dy< -range || dy>range ||
-               dx*dx+dy*dy>range*range){result.result=Outcome::OutOfRange;return result;}
+            if(snapshot_version_>=119 &&
+               !within_native_3d_range(actor,wreck,range)){
+                result.result=Outcome::OutOfRange;return result;
+            }
+            const auto dx=snapshot_version_>=120?0:wreck.position.x-actor.position.x;
+            const auto dy=snapshot_version_>=120?0:wreck.position.y-actor.position.y;
+            if(snapshot_version_>=119 ? !within_native_3d_range(actor,wreck,range) :
+               (dx< -range || dx>range || dy< -range || dy>range ||
+                dx*dx+dy*dy>range*range)){result.result=Outcome::OutOfRange;return result;}
             if(wreck.cargo==0){result.result=Outcome::NoResources;return result;}
             const auto free_liters=actor.cargo_capacity*1000-loaded_cargo_liters(actor);
             if(free_liters<1000){result.result=Outcome::CargoFull;return result;}
@@ -3700,9 +4066,26 @@ Event Simulation::execute(const Command& c) {
             if(!same_local_frame(actor.id,target.id)){
                 result.result=Outcome::OutOfRange;return result;
             }
-            const auto dx=target.position.x-actor.position.x;
-            const auto dy=target.position.y-actor.position.y;
-            const auto distance=std::hypot(double(dx),double(dy));
+            if(snapshot_version_>=119 &&
+               !within_native_3d_range(actor,target,kTrainingWeaponRangeMm)){
+                result.result=Outcome::OutOfRange;return result;
+            }
+            const auto relative=snapshot_version_>=120?
+                galactic::nearby_displacement(
+                    target.physical_galactic,actor.physical_galactic):
+                std::optional<CosmicPosition>{};
+            if(snapshot_version_>=120 && !relative){
+                result.result=Outcome::OutOfRange;return result;
+            }
+            const auto dx=snapshot_version_>=120?relative->x_mm:
+                target.position.x-actor.position.x;
+            const auto dy=snapshot_version_>=120?relative->y_mm:
+                target.position.y-actor.position.y;
+            const auto dz=snapshot_version_>=120?relative->z_mm:
+                target.position_z_mm-actor.position_z_mm;
+            const auto distance=snapshot_version_>=119 ?
+                std::hypot(double(dx),double(dy),double(dz)) :
+                std::hypot(double(dx),double(dy));
             const auto sensed=ship_sensors::detection_range_mm(
                 *this,actor,target);
             if(distance>double(kTrainingWeaponRangeMm) ||
@@ -3722,7 +4105,9 @@ Event Simulation::execute(const Command& c) {
                 double(dy)*std::sin(radians);
             const double lateral=double(dy)*std::cos(radians)-
                 double(dx)*std::sin(radians);
-            if(along<=0 || std::abs(lateral)>along){
+            if(along<=0 || (snapshot_version_>=119 ?
+                std::hypot(lateral,double(dz))>along :
+                std::abs(lateral)>along)){
                 result.result=Outcome::OutOfRange;return result;
             }
             // Crew and dependents have real, permanent identities. Until
@@ -3751,7 +4136,7 @@ Event Simulation::execute(const Command& c) {
                 target.weapon_charges=0;
                 target.last_weapon_tick=0;
                 target.training_drone=false;
-                target.velocity={};
+                target.velocity={};target.velocity_z_mm_per_tick=0;
                 if(target.manufactured_order_id)
                     ship_frames_.erase(target.id);
                 activity_events_.push_back({tick_,ActivityKind::ShipDestroyed,
@@ -3771,12 +4156,26 @@ Event Simulation::execute(const Command& c) {
                 result.result=Outcome::InvalidTarget;return result;
             }
             auto& drone=it->second;
-            if(drone.system_id!=actor.system_id){result.result=Outcome::WrongSystem;return result;}
-            const auto dx=drone.position.x-actor.position.x;
-            const auto dy=drone.position.y-actor.position.y;
+            if(snapshot_version_<120 && drone.system_id!=actor.system_id){result.result=Outcome::WrongSystem;return result;}
+            if(snapshot_version_>=119 &&
+               !within_native_3d_range(actor,drone,kTrainingWeaponRangeMm)){
+                result.result=Outcome::OutOfRange;return result;
+            }
+            const auto relative=snapshot_version_>=120?
+                galactic::nearby_displacement(
+                    drone.physical_galactic,actor.physical_galactic):
+                std::optional<CosmicPosition>{};
+            if(snapshot_version_>=120 && !relative){
+                result.result=Outcome::OutOfRange;return result;
+            }
+            const auto dx=snapshot_version_>=120?relative->x_mm:
+                drone.position.x-actor.position.x;
+            const auto dy=snapshot_version_>=120?relative->y_mm:
+                drone.position.y-actor.position.y;
             constexpr auto range=kTrainingWeaponRangeMm;
-            if(dx < -range || dx > range || dy < -range || dy > range ||
-               dx*dx+dy*dy>range*range){result.result=Outcome::OutOfRange;return result;}
+            if(snapshot_version_>=119 ? !within_native_3d_range(actor,drone,range) :
+               (dx < -range || dx > range || dy < -range || dy > range ||
+                dx*dx+dy*dy>range*range)){result.result=Outcome::OutOfRange;return result;}
             if(!actor.weapon_charges){result.result=Outcome::NoResources;return result;}
             if(actor.last_weapon_tick &&
                tick_-actor.last_weapon_tick<kTrainingWeaponCooldownTicks){
@@ -3795,7 +4194,7 @@ Event Simulation::execute(const Command& c) {
             drone.hull-=result.transferred;
             if(!drone.hull){
                 drone.type=EntityType::Wreck;drone.training_drone=false;
-                drone.weapon_charges=0;drone.last_weapon_tick=0;drone.velocity={};
+                drone.weapon_charges=0;drone.last_weapon_tick=0;drone.velocity={};drone.velocity_z_mm_per_tick=0;
             }
             snapshot_version_=std::max(snapshot_version_,62);
             result.result=Outcome::Applied;return result;
@@ -3807,7 +4206,8 @@ Event Simulation::execute(const Command& c) {
             if (actor.jump_state==ShipJumpState::Jumping) {
                 result.result=Outcome::InTransition;return result;
             }
-            if (actor.jump_state==ShipJumpState::ArrivalCloak && (c.thrust_x || c.thrust_y)) {
+            if (actor.jump_state==ShipJumpState::ArrivalCloak && (c.thrust_x || c.thrust_y ||
+                (snapshot_version_>=119 && (c.amount==1 || c.amount==-1)))) {
                 actor.jump_state=ShipJumpState::Ready;
                 actor.jump_ticks=0;
             }
@@ -3816,6 +4216,13 @@ Event Simulation::execute(const Command& c) {
                 return result;
             }
             if(c.amount){
+                if(snapshot_version_>=119 && (c.amount==1 || c.amount==-1) &&
+                   !c.thrust_x && !c.thrust_y){
+                    actor.velocity_z_mm_per_tick=clamp_velocity(
+                        actor.velocity_z_mm_per_tick+
+                        c.amount*kAccelerationMmPerTick2);
+                    result.result=Outcome::Applied;return result;
+                }
                 if((c.amount!=15 && c.amount!=-15) || c.thrust_x || c.thrust_y){result.result=Outcome::InvalidArgument;return result;}
                 actor.heading_deg=static_cast<std::uint16_t>((static_cast<int>(actor.heading_deg)+static_cast<int>(c.amount)+360)%360);
                 snapshot_version_=std::max(snapshot_version_,61);
@@ -3891,15 +4298,24 @@ Event Simulation::execute(const Command& c) {
             if (!station || station->type != EntityType::Station) {
                 result.result = Outcome::InvalidTarget; return result;
             }
-            if(station->system_id!=actor.system_id){result.result=Outcome::WrongSystem;return result;}
-            const auto dx = actor.position.x - station->position.x;
-            const auto dy = actor.position.y - station->position.y;
-            if (dx < -kDockingRangeMm || dx > kDockingRangeMm ||
-                dy < -kDockingRangeMm || dy > kDockingRangeMm ||
-                dx * dx + dy * dy > kDockingRangeMm * kDockingRangeMm) {
+            if(snapshot_version_<120 && station->system_id!=actor.system_id){
+                result.result=Outcome::WrongSystem;return result;
+            }
+            if(snapshot_version_>=119 &&
+               !within_native_3d_range(actor,*station,kDockingRangeMm)){
+                result.result=Outcome::OutOfRange;return result;
+            }
+            const auto dx = snapshot_version_>=120?0:actor.position.x - station->position.x;
+            const auto dy = snapshot_version_>=120?0:actor.position.y - station->position.y;
+            if (snapshot_version_>=119 ?
+                !within_native_3d_range(actor,*station,kDockingRangeMm) :
+                (dx < -kDockingRangeMm || dx > kDockingRangeMm ||
+                 dy < -kDockingRangeMm || dy > kDockingRangeMm ||
+                 dx * dx + dy * dy > kDockingRangeMm * kDockingRangeMm)) {
                 result.result = Outcome::OutOfRange; return result;
             }
-            if (actor.velocity.x != 0 || actor.velocity.y != 0) {
+            if (actor.velocity.x != 0 || actor.velocity.y != 0 ||
+                (snapshot_version_>=119 && actor.velocity_z_mm_per_tick!=0)) {
                 result.result = Outcome::ShipMoving; return result;
             }
             stop_mining(c.actor, Outcome::NotInSpace);
@@ -3991,17 +4407,25 @@ Event Simulation::execute(const Command& c) {
             if(actor.jump_state!=ShipJumpState::Ready){result.result=Outcome::InTransition;return result;}
             const auto* gate=find(c.target);
             if(!gate || gate->type!=EntityType::Stargate){result.result=Outcome::InvalidTarget;return result;}
-            if(gate->system_id!=actor.system_id){result.result=Outcome::WrongSystem;return result;}
+            if(snapshot_version_<120 && gate->system_id!=actor.system_id){
+                result.result=Outcome::WrongSystem;return result;
+            }
             if(!gate->gate_online){result.result=Outcome::GateOffline;return result;}
-            const auto dx=actor.position.x-gate->position.x;
-            const auto dy=actor.position.y-gate->position.y;
+            if(snapshot_version_>=119 &&
+               !within_native_3d_range(actor,*gate,kJumpActivationMm)){
+                result.result=Outcome::OutOfRange;return result;
+            }
+            const auto dx=snapshot_version_>=120?0:actor.position.x-gate->position.x;
+            const auto dy=snapshot_version_>=120?0:actor.position.y-gate->position.y;
             if(dx<-kJumpActivationMm || dx>kJumpActivationMm ||
                dy<-kJumpActivationMm || dy>kJumpActivationMm ||
                dx*dx+dy*dy>kJumpActivationMm*kJumpActivationMm){
                 result.result=Outcome::OutOfRange;return result;
             }
             stop_mining(c.actor,Outcome::NotInSpace);
-            actor.velocity={};actor.jump_state=ShipJumpState::Jumping;
+            actor.velocity={};
+            if(snapshot_version_>=119)actor.velocity_z_mm_per_tick=0;
+            actor.jump_state=ShipJumpState::Jumping;
             actor.jump_ticks=kJumpTransitTicks;actor.pending_gate=c.target;
             snapshot_version_=std::max(snapshot_version_,5);result.result=Outcome::Applied;return result;
         }
@@ -4065,7 +4489,11 @@ Event Simulation::execute(const Command& c) {
                (actor.dock_state!=DockState::InSpace && actor.dock_station!=c.target)){
                 result.result=Outcome::InTransition;return result;
             }
-            auto dx=actor.position.x-site->position.x,dy=actor.position.y-site->position.y;
+            if(snapshot_version_>=119 &&
+               !within_native_3d_range(actor,*site,kDockingRangeMm)){
+                result.result=Outcome::OutOfRange;return result;
+            }
+            auto dx=snapshot_version_>=120?0:actor.position.x-site->position.x,dy=snapshot_version_>=120?0:actor.position.y-site->position.y;
             if(dx < -kDockingRangeMm || dx>kDockingRangeMm ||
                dy < -kDockingRangeMm || dy>kDockingRangeMm ||
                dx*dx+dy*dy>kDockingRangeMm*kDockingRangeMm){
@@ -5438,8 +5866,31 @@ Event Simulation::execute(const Command& c) {
                 industry.modules-=4;
                 Entity station;station.type=EntityType::Station;
                 station.owner_id=actor.owner_id;station.position=site;
+                station.system_id=actor.system_id;
+                // A newly constructed outpost occupies the precise original
+                // ship's actual 3D/galactic coordinates, never an unrelated
+                // default system and never a remote finite XY coincidence.
+                if(snapshot_version_>=120 &&
+                   !actor.physical_galactic_authoritative)
+                    throw std::runtime_error("outpost build lost physical ship pose");
+                const auto ship_absolute=snapshot_version_>=120 ?
+                    std::optional<galactic::Point>(actor.physical_galactic):
+                    std::nullopt;
                 const auto id=add_entity(station);
-                entities_.at(id).system_id=actor.system_id;
+                if(ship_absolute){
+                    const auto dx=static_cast<long double>(site.x)-
+                                  static_cast<long double>(actor.position.x);
+                    const auto dy=static_cast<long double>(site.y)-
+                                  static_cast<long double>(actor.position.y);
+                    if(std::fabs(dx)>kDockingRangeMm ||
+                       std::fabs(dy)>kDockingRangeMm)
+                        throw std::runtime_error("outpost build left physical berth");
+                    const auto exact=galactic::advance(*ship_absolute,
+                        {static_cast<std::int64_t>(dx),
+                         static_cast<std::int64_t>(dy),0});
+                    if(!exact)throw std::overflow_error("outpost build sector exhausted");
+                    entities_.at(id).physical_galactic=*exact;
+                }
                 built_outposts_.emplace(id,BuiltOutpost{actor.id,8});
                 hangars_.emplace(std::make_pair(id,actor.owner_id),StationHangar{0,1000});
                 result.transferred=8;
@@ -5492,22 +5943,44 @@ void Simulation::process_station_transitions() {
         if (ship.transition_ticks == 0) throw std::logic_error("station transition missing countdown");
         if (--ship.transition_ticks != 0) continue;
         const auto station_it = entities_.find(ship.dock_station);
-        if (station_it == entities_.end() || station_it->second.type != EntityType::Station || station_it->second.system_id!=ship.system_id)
+        if (station_it == entities_.end() ||
+            station_it->second.type != EntityType::Station ||
+            (snapshot_version_<120 && station_it->second.system_id!=ship.system_id))
             throw std::logic_error("station disappeared during transition");
         const auto station_id = ship.dock_station;
         if (ship.dock_state == DockState::Undocking) {
             ship.dock_state = DockState::InSpace;
             ship.dock_station = 0;
-            ship.position.x = std::clamp(station_it->second.position.x + kUndockOffsetMm,
-                                         -kWorldBoundMm, kWorldBoundMm);
+            if(snapshot_version_>=119){
+                const auto x=station_it->second.position.x;
+                if(x>std::numeric_limits<std::int64_t>::max()-kUndockOffsetMm)
+                    throw std::overflow_error("3D undock coordinate overflow");
+                ship.position.x=x+kUndockOffsetMm;
+            }else{
+                ship.position.x = std::clamp(station_it->second.position.x + kUndockOffsetMm,
+                                             -kWorldBoundMm, kWorldBoundMm);
+            }
             ship.position.y = station_it->second.position.y;
+            if(snapshot_version_>=119)
+                ship.position_z_mm=station_it->second.position_z_mm;
+            if(snapshot_version_>=120){
+                const auto next=galactic::advance(
+                    station_it->second.physical_galactic,{kUndockOffsetMm,0,0});
+                if(!next)throw std::overflow_error("undock beyond galactic sectors");
+                ship.physical_galactic=*next;
+            }
             activity_events_.push_back({tick_, ActivityKind::Undocked, 0, ship.id, station_id, Outcome::Applied, 0});
         } else {
             ship.dock_state = DockState::Docked;
             ship.position = station_it->second.position;
+            if(snapshot_version_>=119)
+                ship.position_z_mm=station_it->second.position_z_mm;
+            if(snapshot_version_>=120)
+                ship.physical_galactic=station_it->second.physical_galactic;
             activity_events_.push_back({tick_, ActivityKind::Docked, 0, ship.id, station_id, Outcome::Applied, 0});
         }
         ship.velocity = {};
+        if(snapshot_version_>=119)ship.velocity_z_mm_per_tick=0;
         snapshot_version_ = std::max(snapshot_version_, 3);
     }
 }
@@ -5521,15 +5994,29 @@ void Simulation::process_jump_transitions() {
             ship.jump_state=ShipJumpState::Ready;continue;
         }
         const auto* gate=find(ship.pending_gate);
-        if(!gate || gate->type!=EntityType::Stargate || gate->system_id!=ship.system_id ||
-           !systems_.count(gate->gate_destination))throw std::logic_error("committed jump lost endpoint");
+        if(!gate || gate->type!=EntityType::Stargate ||
+           (snapshot_version_<120 && gate->system_id!=ship.system_id) ||
+           !systems_.count(gate->gate_destination))
+            throw std::logic_error("committed jump lost endpoint");
         const auto destination=gate->gate_destination;
         const auto gate_id=ship.pending_gate;
         const auto sign=(id%2)?-1:1;
         ship.system_id=destination;
         if(snapshot_version_>=71)ship_frames_.at(id)=ShipFrameCustody{destination,0,{}};
         ship.position={gate->gate_arrival.x+sign*12000,gate->gate_arrival.y};
-        ship.velocity={};ship.pending_gate=0;
+        if(snapshot_version_>=119)ship.position_z_mm=0;
+        if(snapshot_version_>=120){
+            const auto origin=galactic_system_origins_.find(destination);
+            if(origin==galactic_system_origins_.end())
+                throw std::runtime_error("jump requires immutable destination star");
+            const auto exact=galactic::advance(origin->second,
+                {ship.position.x,ship.position.y,0});
+            if(!exact)throw std::overflow_error("jump arrival sector exhausted");
+            ship.physical_galactic=*exact;
+        }
+        ship.velocity={};
+        if(snapshot_version_>=119)ship.velocity_z_mm_per_tick=0;
+        ship.pending_gate=0;
         ship.jump_state=ShipJumpState::ArrivalCloak;ship.jump_ticks=kArrivalCloakTicks;
         // 1 physical entity whose system partition changes atomically in v5 snapshot.
         // Cargo remains on the same ship; station inventories never move.
@@ -6442,8 +6929,14 @@ std::optional<Simulation::ExpeditionProspect> Simulation::assess_expedition(
     for(const auto site:manifest->second) {
         const auto it=entities_.find(site);
         if(!site || it==entities_.end())continue; // depleted tombstone
+        // Expedition resource totals describe THIS physical body. The
+        // new high-order frame-free interaction model must never convert
+        // another planet's reserves into local available resources.
+        const auto anchor=local_entity_anchors_.find(site);
         if(it->second.type!=EntityType::Asteroid ||
-           !same_local_frame(ship,site))throw std::logic_error("invalid expedition rock custody");
+           anchor==local_entity_anchors_.end() || anchor->second!=p.body ||
+           (snapshot_version_<120 && !same_local_frame(ship,site)))
+            throw std::logic_error("invalid expedition rock custody");
         const auto tonnes=std::uint64_t(it->second.ore);
         if(tonnes>std::numeric_limits<std::uint64_t>::max()-p.ore_tonnes)
             throw std::overflow_error("expedition ore overflow");
@@ -6465,7 +6958,11 @@ std::optional<Simulation::ExpeditionProspect> Simulation::assess_expedition(
         (void)facility;
         const auto it=entities_.find(site);
         if(it!=entities_.end()&&it->second.owner_id==authenticated_owner &&
-           same_local_frame(ship,site)) {p.local_supply_site=true;break;}
+           (snapshot_version_>=120 ?
+                within_native_3d_range(*e,it->second,kDockingRangeMm):
+                same_local_frame(ship,site))) {
+            p.local_supply_site=true;break;
+        }
     }
     return p;
 }
@@ -6509,6 +7006,21 @@ void Simulation::seed_celestial_local_region(std::uint64_t body_id) {
             rock.type=EntityType::Asteroid;
             rock.position=locations[i];
             rock.ore=allocations[i];
+            if(snapshot_version_>=120){
+                const auto origin=galactic_system_origins_.find(system);
+                const auto body=std::find_if(stars->second.begin(),stars->second.end(),
+                    [&](const PhysicalCelestialBody& b){return b.id==body_id;});
+                if(origin==galactic_system_origins_.end() ||
+                   body==stars->second.end())
+                    throw std::runtime_error("generated rock missing physical origin");
+                const auto anchored=galactic::advance(origin->second,
+                    {body->position.x_mm,body->position.y_mm,body->position.z_mm});
+                const auto absolute=anchored?galactic::advance(*anchored,
+                    {rock.position.x,rock.position.y,0}):std::nullopt;
+                if(!absolute)throw std::overflow_error("generated rock sector overflow");
+                rock.physical_galactic=*absolute;
+                rock.physical_galactic_authoritative=true;
+            }
             entities_.emplace(rock.id,rock);
             local_entity_anchors_.emplace(rock.id,body_id);
             manifest[i]=rock.id;
@@ -7886,8 +8398,12 @@ std::int64_t& supply_stack(ColonyLifeSupport& life,ShuttleCargo cargo) {
 bool freight_berth(const Entity& a,const Entity& b) {
     if(a.type!=EntityType::Ship || b.type!=EntityType::Ship ||
        a.dock_state!=DockState::InSpace || b.dock_state!=DockState::InSpace ||
-       a.jump_state!=ShipJumpState::Ready || b.jump_state!=ShipJumpState::Ready ||
-       a.system_id!=b.system_id)return false;
+       a.jump_state!=ShipJumpState::Ready || b.jump_state!=ShipJumpState::Ready)
+        return false;
+    if(a.physical_galactic_authoritative || b.physical_galactic_authoritative)
+        // In v120 the physical berth is not bounded by original star labels.
+        return within_native_3d_range(a,b,Simulation::kDockingRangeMm);
+    if(a.system_id!=b.system_id)return false;
     const auto dx=a.position.x-b.position.x;
     const auto dy=a.position.y-b.position.y;
     constexpr auto limit=Simulation::kDockingRangeMm;
@@ -8658,7 +9174,9 @@ bool Simulation::queue_npc_ship_rendezvous(
 // idempotency, issuer and timing, and original execute performs the actual
 // thrust/undock/dock effects on the same authoritative physical ship.
 bool Simulation::submit_npc_local_control(NpcFlightOrder& order,
-        Action action,EntityId target,int tx,int ty){
+        Action action,EntityId target,int tx,int ty,int tz){
+    if(tz && (snapshot_version_<119 || action!=Action::Thrust ||
+              tz<-1 || tz>1 || tx || ty))return false;
     constexpr std::uint64_t kNativeFlightCommandTag=(std::uint64_t{1}<<61);
     if((order.mode!=NpcFlightMode::LocalDock &&
         order.mode!=NpcFlightMode::LocalRendezvous) ||
@@ -8672,6 +9190,7 @@ bool Simulation::submit_npc_local_control(NpcFlightOrder& order,
     c.id=command_id;c.sequence=command_id;c.execute_tick=tick_+1;
     c.issuer=order.owner;c.actor=order.ship;c.target=target;
     c.action=action;c.thrust_x=tx;c.thrust_y=ty;
+    if(tz)c.amount=tz; // same native Thrust action; no new teleport verb
     if(!submit(c))return false;
     order.local_commands=next;
     order.last_local_command=command_id;
@@ -8756,6 +9275,18 @@ bool Simulation::complete_native_celestial_transit(std::uint64_t id){
            plan.destination_frame.origin};
     ship.position=plan.arrival_position;
     ship.velocity=plan.arrival_velocity;
+    if(snapshot_version_>=120){
+        const auto origin=galactic_system_origins_.find(plan.system);
+        if(origin==galactic_system_origins_.end())
+            throw std::runtime_error("celestial arrival missing system star");
+        const auto anchored=galactic::at_system_origin(
+            origin->second,plan.destination_frame.origin);
+        if(!anchored)throw std::overflow_error("celestial anchor sector exhausted");
+        const auto absolute=galactic::advance(*anchored,
+            {ship.position.x,ship.position.y,ship.position_z_mm});
+        if(!absolute)throw std::overflow_error("celestial arrival sector exhausted");
+        ship.physical_galactic=*absolute;
+    }
     pending_celestial_transits_.erase(id);
     completed_celestial_transits_.emplace(id,CompletedCelestialTransit{
         p.owner,p.ship,p.system,p.destination_body,tick_});
@@ -8878,6 +9409,12 @@ void Simulation::process_npc_flight_navigation(){
                 }else
                     (void)submit_npc_local_control(
                         order,Action::RequestDock,order.station);
+            }else if(snapshot_version_>=119 && nav.thrust_z){
+                // Native Action::Thrust encodes one vertical axis per
+                // command. The regular movement integrator still advances
+                // all existing velocity components this tick.
+                (void)submit_npc_local_control(
+                    order,Action::Thrust,0,0,0,nav.thrust_z);
             }else
                 (void)submit_npc_local_control(
                     order,Action::Thrust,0,nav.thrust_x,nav.thrust_y);
@@ -9245,9 +9782,19 @@ void Simulation::process_freighter_builds() {
         hull.manufactured_order_id=order.order_id;
         const auto actual_system=ship->second.system_id;
         const auto custody=frame->second;
+        hull.system_id=actual_system;
         const EntityId manufactured=add_entity(hull);
-        entities_.at(manufactured).system_id=actual_system;
         ship_frames_[manufactured]=custody;
+        if(snapshot_version_>=120){
+            // The freighter is physically constructed alongside its real
+            // source ship, not teleported to a default system origin.
+            const auto direction=hull.position.x>=ship->second.position.x?
+                std::int64_t{1000}:std::int64_t{-1000};
+            const auto exact=galactic::advance(
+                ship->second.physical_galactic,{direction,0,0});
+            if(!exact)throw std::overflow_error("shipyard launch sector exhausted");
+            entities_.at(manufactured).physical_galactic=*exact;
+        }
         order.launched_ship=manufactured;
         order.launched_tick=tick_;
         // The build order retains exactly 12 embodied material units as
@@ -11092,14 +11639,21 @@ std::vector<Simulation::SignatureHint> Simulation::coarse_probe_signatures(
     const double radius=double(range_mm); // host-enforced discovery envelope
     std::vector<SignatureHint> result;
     for(const auto& [id,e]:entities_) {
-        if(e.type!=EntityType::Asteroid||e.system_id!=carrier->second.system_id||
+        if(e.type!=EntityType::Asteroid||
+           (snapshot_version_<121 && e.system_id!=carrier->second.system_id)||
            !same_local_frame(ship,id)||discoveries_.count({owner,id}))continue;
-        if(std::hypot(double(e.position.x)-carrier->second.position.x,
+        if(snapshot_version_>=121){
+            if(!within_galactic_range(e.physical_galactic,
+                carrier->second.physical_galactic,range_mm))continue;
+        }else if(std::hypot(double(e.position.x)-carrier->second.position.x,
                       double(e.position.y)-carrier->second.position.y)>radius)continue;
         const auto quant=[](std::int64_t value){
-            return (value>=0 ? (value+q/2)/q : -((-value+q/2)/q))*q;
+            const auto base=value/q*q,rem=value%q;
+            const auto step=rem>=q/2?q:rem<=-q/2?-q:0;
+            return galactic::checked_add(base,step).value_or(base);
         };
-        result.push_back({id,{quant(e.position.x),quant(e.position.y)},5000000});
+        result.push_back({id,{quant(e.position.x),quant(e.position.y)},
+            5000000,snapshot_version_>=121?quant(e.position_z_mm):0});
         if(result.size()>=128)break;
     }
     return result;
@@ -11141,9 +11695,11 @@ bool Simulation::install_testing_confusion(EntityId source,EntityId target,
        b->type!=EntityType::Ship || !a->owner_id || !b->owner_id ||
        a->owner_id==b->owner_id || source==target ||
        a->system_id!=b->system_id || !same_local_frame(source,target) ||
-       std::hypot(double(a->position.x)-b->position.x,
-                  double(a->position.y)-b->position.y)>
-                  double(kTrainingWeaponRangeMm) ||
+       (snapshot_version_>=120 ?
+         !within_native_3d_range(*a,*b,kTrainingWeaponRangeMm) :
+         std::hypot(double(a->position.x)-b->position.x,
+                    double(a->position.y)-b->position.y)>
+                    double(kTrainingWeaponRangeMm)) ||
        !duration_ticks || duration_ticks>ship_status::Engine::kMaxDurationTicks ||
        tick_>std::numeric_limits<std::uint64_t>::max()-duration_ticks ||
        !exposed_hardpoint_mask || (exposed_hardpoint_mask&~std::uint8_t{3}) ||
@@ -11198,6 +11754,61 @@ void Simulation::step() {
     // destination is coarse; only a real sensor-distance check identifies it.
     if(snapshot_version_>=69)for(auto& [id,probe]:survey_probes_) {
         if(!probe.focus_site||probe.drone_phase)continue;
+        if(snapshot_version_>=121){
+            if(!probe.galactic_authoritative)
+                throw std::runtime_error("unproven original 3D probe custody");
+            constexpr std::int64_t step_mm=5000000;
+            const bool arrived=move_galactic_toward(probe.galactic_position,
+                probe.galactic_focus,step_mm,probe.position,probe.position_z_mm);
+            if(!arrived)continue;
+            const auto target=entities_.find(probe.focus_site);
+            if(target!=entities_.end() &&
+               target->second.type==EntityType::Asteroid &&
+               (snapshot_version_>=121 || target->second.system_id==probe.system)){
+                const auto& real=target->second;
+                if(!within_galactic_range(real.physical_galactic,
+                    probe.galactic_position,kProbeScanRangeMm) &&
+                   within_galactic_range(real.physical_galactic,
+                    probe.galactic_position,step_mm)){
+                    // Fine waypoint is revealed only after the probe actually
+                    // arrives in the coarse 5km 3D envelope.
+                    probe.galactic_focus=coarse_galactic_point(
+                        real.physical_galactic,25000);
+                    const auto quant=[](std::int64_t v){
+                        constexpr std::int64_t q=25000;
+                        const auto base=(v/q)*q;
+                        const auto r=v%q;
+                        const auto shift=r>=q/2?q:r<=-q/2?-q:0;
+                        return galactic::checked_add(base,shift).value_or(base);
+                    };
+                    probe.focus_waypoint={quant(real.position.x),
+                        quant(real.position.y)};
+                    probe.focus_z_mm=quant(real.position_z_mm);
+                    continue;
+                }
+                const auto key=std::make_pair(probe.owner,probe.focus_site);
+                if(within_galactic_range(real.physical_galactic,
+                        probe.galactic_position,kProbeScanRangeMm) &&
+                   !discoveries_.count(key)&&
+                   !pending_probe_discoveries_.count(key)&&
+                   pending_probe_discoveries_.size()+discoveries_.size()<10000 &&
+                   probe_report_delay_ticks_<=
+                       std::numeric_limits<std::uint64_t>::max()-tick_){
+                    DiscoveryRecord report{probe.owner,probe.focus_site,
+                        probe.system,real.position,tick_,
+                        geology_.count(probe.focus_site)!=0};
+                    report.location_z_mm=real.position_z_mm;
+                    report.galactic_location=real.physical_galactic;
+                    report.galactic_authoritative=true;
+                    pending_probe_discoveries_.emplace(key,
+                        PendingProbeDiscovery{report,probe.carrier,id,
+                            tick_+probe_report_delay_ticks_});
+                }
+            }
+            probe.focus_site=0;probe.focus_waypoint={};
+            probe.focus_z_mm=0;probe.galactic_focus=probe.galactic_position;
+            continue;
+        }
         auto& p=probe.position;
         const auto waypoint=probe.focus_waypoint;
         constexpr std::int64_t step_mm=5000000; // 5 km per simulation tick
@@ -11248,6 +11859,30 @@ void Simulation::step() {
     if(snapshot_version_>=66)for(auto& [id,p]:survey_probes_){
         (void)id;
         if(p.drone_phase!=1 && p.drone_phase!=2)continue;
+        if(snapshot_version_>=121){
+            if(!p.galactic_authoritative)
+                throw std::runtime_error("unproven 3D geological drone");
+            const auto target=entities_.find(p.drone_target);
+            const auto destination=p.drone_phase==1 &&
+                target!=entities_.end() &&
+                target->second.type==EntityType::Asteroid &&
+                (snapshot_version_>=121 || target->second.system_id==p.system)?
+                    target->second.physical_galactic:p.galactic_home;
+            const bool arrived=move_galactic_toward(p.galactic_position,
+                destination,2000,p.position,p.position_z_mm);
+            if(!arrived)continue;
+            if(p.drone_phase==2){p.drone_phase=3;continue;}
+            if(target!=entities_.end() &&
+               target->second.type==EntityType::Asteroid &&
+               (snapshot_version_>=121 || target->second.system_id==p.system) &&
+               geology_.count(p.drone_target)){
+                p.sample_ore=0;
+                p.taxonomy=1+static_cast<std::uint8_t>(
+                    geology_.at(p.drone_target).taxonomy);
+            }
+            p.drone_phase=2;
+            continue;
+        }
         const auto& destination=p.drone_phase==1?
             (entities_.count(p.drone_target)?entities_.at(p.drone_target).position:p.drone_home):
             p.drone_home;
@@ -11275,21 +11910,35 @@ void Simulation::step() {
         if(p.drone_phase!=3 || !p.taxonomy)continue;
         const auto ship=entities_.find(p.carrier);
         if(ship==entities_.end() || ship->second.type!=EntityType::Ship ||
-           ship->second.owner_id!=p.owner || ship->second.system_id!=p.system)
+           ship->second.owner_id!=p.owner ||
+           (snapshot_version_<121 && ship->second.system_id!=p.system))
             continue;
-        const auto dx=p.position.x-ship->second.position.x;
-        const auto dy=p.position.y-ship->second.position.y;
+        const auto dx=snapshot_version_>=121?0:p.position.x-ship->second.position.x;
+        const auto dy=snapshot_version_>=121?0:p.position.y-ship->second.position.y;
         constexpr auto range=kDroneControlRangeMm;
-        if(dx<-range || dx>range || dy<-range || dy>range ||
-           dx*dx+dy*dy>range*range)continue;
+        if(snapshot_version_>=121 ?
+           !within_galactic_range(p.galactic_position,
+                                 ship->second.physical_galactic,range) :
+           (dx<-range || dx>range || dy<-range || dy>range ||
+            dx*dx+dy*dy>range*range))continue;
         const auto key=std::make_pair(p.owner,p.drone_target);
         if(auto d=discoveries_.find(key);d!=discoveries_.end()){
             d->second.survey_taxonomy=p.taxonomy;
         }else if(discoveries_.size()<10000){
             const auto rock=entities_.find(p.drone_target);
             const auto position=rock!=entities_.end()?rock->second.position:p.position;
-            discoveries_.emplace(key,DiscoveryRecord{p.owner,p.drone_target,
-                p.system,position,tick_,true,p.taxonomy});
+            DiscoveryRecord found{p.owner,p.drone_target,
+                snapshot_version_>=121 && rock!=entities_.end()?
+                    rock->second.system_id:p.system,
+                position,tick_,true,p.taxonomy};
+            if(snapshot_version_>=121){
+                found.location_z_mm=rock!=entities_.end()?
+                    rock->second.position_z_mm:p.position_z_mm;
+                found.galactic_location=rock!=entities_.end()?
+                    rock->second.physical_galactic:p.galactic_position;
+                found.galactic_authoritative=true;
+            }
+            discoveries_.emplace(key,found);
         }
     }
     // v68: release verified discoveries after the ten-second nominal delay.
@@ -11302,19 +11951,25 @@ void Simulation::step() {
         const auto carrier=entities_.find(pending.carrier);
         if(carrier==entities_.end()||carrier->second.type!=EntityType::Ship||
            carrier->second.owner_id!=pending.report.owner||
-           carrier->second.system_id!=pending.report.system) {
+           (snapshot_version_<121 && carrier->second.system_id!=pending.report.system)) {
             ++it;continue;
         }
         const auto probe=survey_probes_.find(pending.probe_id);
         if(probe!=survey_probes_.end()) {
             if(probe->second.owner!=pending.report.owner||
                probe->second.carrier!=pending.carrier||
-               probe->second.system!=pending.report.system) {
+               (snapshot_version_<121 && probe->second.system!=pending.report.system)) {
                 ++it;continue;
             }
-            const auto dx=probe->second.position.x-carrier->second.position.x;
-            const auto dy=probe->second.position.y-carrier->second.position.y;
-            if(!within_deep_probe_link(dx,dy)){
+            const auto dx=snapshot_version_>=121?0:
+                probe->second.position.x-carrier->second.position.x;
+            const auto dy=snapshot_version_>=121?0:
+                probe->second.position.y-carrier->second.position.y;
+            if(snapshot_version_>=121 ?
+               !within_galactic_range(probe->second.galactic_position,
+                   carrier->second.physical_galactic,
+                   kDeepSpaceProbeCommsRangeMm) :
+               !within_deep_probe_link(dx,dy)){
                 ++it;continue;
             }
         }
@@ -11355,12 +12010,47 @@ void Simulation::step() {
     for (auto& pair : entities_) {
         Entity& entity = pair.second;
         if (entity.type != EntityType::Ship || entity.dock_state != DockState::InSpace || entity.jump_state != ShipJumpState::Ready) continue;
-        entity.position.x = std::clamp(entity.position.x + entity.velocity.x, -kWorldBoundMm, kWorldBoundMm);
-        entity.position.y = std::clamp(entity.position.y + entity.velocity.y, -kWorldBoundMm, kWorldBoundMm);
-        if (entity.position.x == kWorldBoundMm && entity.velocity.x > 0) entity.velocity.x = 0;
-        if (entity.position.x == -kWorldBoundMm && entity.velocity.x < 0) entity.velocity.x = 0;
-        if (entity.position.y == kWorldBoundMm && entity.velocity.y > 0) entity.velocity.y = 0;
-        if (entity.position.y == -kWorldBoundMm && entity.velocity.y < 0) entity.velocity.y = 0;
+        if(snapshot_version_>=120){
+            // v120 is the authoritative motion integrator. The finite XY/Z
+            // fields are compatibility projections, never the physics source.
+            const auto next=galactic::advance(entity.physical_galactic,
+                {entity.velocity.x,entity.velocity.y,entity.velocity_z_mm_per_tick});
+            if(!entity.physical_galactic_authoritative || !next)
+                throw std::overflow_error("native galactic flight sector exhausted");
+            entity.physical_galactic=*next;
+            const auto project=[](std::int64_t p,std::int64_t v){
+                const auto updated=galactic::checked_add(p,v);
+                return updated.value_or(v<0 ?
+                    std::numeric_limits<std::int64_t>::min() :
+                    std::numeric_limits<std::int64_t>::max());
+            };
+            entity.position.x=project(entity.position.x,entity.velocity.x);
+            entity.position.y=project(entity.position.y,entity.velocity.y);
+            entity.position_z_mm=project(entity.position_z_mm,
+                                         entity.velocity_z_mm_per_tick);
+        }else if(snapshot_version_>=119){
+            // True native three-axis flight: the old +/-1000 km local
+            // rectangle is no longer a collision or velocity wall.
+            // Integral overflow is a checked representability failure,
+            // NOT a gameplay border; higher galactic sectors are separate.
+            auto advance_axis=[](std::int64_t p,std::int64_t v){
+                if((v>0 && p>std::numeric_limits<std::int64_t>::max()-v) ||
+                   (v<0 && p<std::numeric_limits<std::int64_t>::min()-v))
+                    throw std::overflow_error("native 3D coordinate overflow");
+                return p+v;
+            };
+            entity.position.x=advance_axis(entity.position.x,entity.velocity.x);
+            entity.position.y=advance_axis(entity.position.y,entity.velocity.y);
+            entity.position_z_mm=advance_axis(
+                entity.position_z_mm,entity.velocity_z_mm_per_tick);
+        }else{
+            entity.position.x = std::clamp(entity.position.x + entity.velocity.x, -kWorldBoundMm, kWorldBoundMm);
+            entity.position.y = std::clamp(entity.position.y + entity.velocity.y, -kWorldBoundMm, kWorldBoundMm);
+            if (entity.position.x == kWorldBoundMm && entity.velocity.x > 0) entity.velocity.x = 0;
+            if (entity.position.x == -kWorldBoundMm && entity.velocity.x < 0) entity.velocity.x = 0;
+            if (entity.position.y == kWorldBoundMm && entity.velocity.y > 0) entity.velocity.y = 0;
+            if (entity.position.y == -kWorldBoundMm && entity.velocity.y < 0) entity.velocity.y = 0;
+        }
     }
     // New mining cycles use the moved position to check actual range per tick.
     process_automatic_mining();
@@ -11380,9 +12070,13 @@ void Simulation::steps(std::uint64_t count) {
 
 std::string Simulation::canonical_state() const {
     std::ostringstream out;
-    out << ( snapshot_version_ >= 118 ? "galaxy-kernel-v118|" : snapshot_version_ >= 117 ? "galaxy-kernel-v117|" : snapshot_version_ >= 116 ? "galaxy-kernel-v116|" : snapshot_version_ >= 115 ? "galaxy-kernel-v115|" : snapshot_version_ >= 114 ? "galaxy-kernel-v114|" : snapshot_version_ >= 113 ? "galaxy-kernel-v113|" : snapshot_version_ >= 112 ? "galaxy-kernel-v112|" : snapshot_version_ >= 111 ? "galaxy-kernel-v111|" : snapshot_version_ >= 110 ? "galaxy-kernel-v110|" : snapshot_version_ >= 109 ? "galaxy-kernel-v109|" : snapshot_version_ >= 108 ? "galaxy-kernel-v108|" : snapshot_version_ >= 107 ? "galaxy-kernel-v107|" : snapshot_version_ >= 106 ? "galaxy-kernel-v106|" : snapshot_version_ >= 105 ? "galaxy-kernel-v105|" : snapshot_version_ >= 104 ? "galaxy-kernel-v104|" : snapshot_version_ >= 103 ? "galaxy-kernel-v103|" : snapshot_version_ >= 102 ? "galaxy-kernel-v102|" : snapshot_version_ >= 101 ? "galaxy-kernel-v101|" : snapshot_version_ >= 100 ? "galaxy-kernel-v100|" : snapshot_version_ >= 99 ? "galaxy-kernel-v99|" : snapshot_version_ >= 98 ? "galaxy-kernel-v98|" : snapshot_version_ >= 97 ? "galaxy-kernel-v97|" : snapshot_version_ >= 96 ? "galaxy-kernel-v96|" : snapshot_version_ >= 95 ? "galaxy-kernel-v95|" : snapshot_version_ >= 94 ? "galaxy-kernel-v94|" : snapshot_version_ >= 93 ? "galaxy-kernel-v93|" : snapshot_version_ >= 92 ? "galaxy-kernel-v92|" : snapshot_version_ >= 91 ? "galaxy-kernel-v91|" : snapshot_version_ >= 90 ? "galaxy-kernel-v90|" : snapshot_version_ >= 89 ? "galaxy-kernel-v89|" : snapshot_version_ >= 88 ? "galaxy-kernel-v88|" : snapshot_version_ >= 87 ? "galaxy-kernel-v87|" : snapshot_version_ >= 86 ? "galaxy-kernel-v86|" : snapshot_version_ >= 85 ? "galaxy-kernel-v85|" : snapshot_version_ >= 84 ? "galaxy-kernel-v84|" : snapshot_version_ >= 83 ? "galaxy-kernel-v83|" : snapshot_version_ >= 82 ? "galaxy-kernel-v82|" : snapshot_version_ >= 81 ? "galaxy-kernel-v81|" : snapshot_version_ >= 80 ? "galaxy-kernel-v80|" : snapshot_version_ >= 79 ? "galaxy-kernel-v79|" : snapshot_version_ >= 78 ? "galaxy-kernel-v78|" : snapshot_version_ >= 77 ? "galaxy-kernel-v77|" : snapshot_version_ >= 76 ? "galaxy-kernel-v76|" : snapshot_version_ >= 75 ? "galaxy-kernel-v75|" : snapshot_version_ >= 74 ? "galaxy-kernel-v74|" : snapshot_version_ >= 73 ? "galaxy-kernel-v73|" : snapshot_version_ >= 72 ? "galaxy-kernel-v72|" : snapshot_version_ >= 71 ? "galaxy-kernel-v71|" : snapshot_version_ >= 70 ? "galaxy-kernel-v70|" : snapshot_version_ >= 69 ? "galaxy-kernel-v69|" : snapshot_version_ >= 68 ? "galaxy-kernel-v68|" : snapshot_version_ >= 67 ? "galaxy-kernel-v67|" : snapshot_version_ >= 66 ? "galaxy-kernel-v66|" : snapshot_version_ >= 65 ? "galaxy-kernel-v65|" : snapshot_version_ >= 64 ? "galaxy-kernel-v64|" : snapshot_version_ >= 63 ? "galaxy-kernel-v63|" : snapshot_version_ >= 62 ? "galaxy-kernel-v62|" : snapshot_version_ >= 61 ? "galaxy-kernel-v61|" : snapshot_version_ >= 60 ? "galaxy-kernel-v60|" : snapshot_version_ >= 59 ? "galaxy-kernel-v59|" : snapshot_version_ >= 58 ? "galaxy-kernel-v58|" : snapshot_version_ >= 57 ? "galaxy-kernel-v57|" : snapshot_version_ >= 53 ? "galaxy-kernel-v53|" : snapshot_version_ >= 52 ? "galaxy-kernel-v52|" : snapshot_version_ >= 49 ? "galaxy-kernel-v49|" : snapshot_version_ >= 48 ? "galaxy-kernel-v48|" : snapshot_version_ >= 44 ? "galaxy-kernel-v44|" : snapshot_version_ >= 41 ? "galaxy-kernel-v41|" : snapshot_version_ >= 40 ? "galaxy-kernel-v40|" : snapshot_version_ >= 39 ? "galaxy-kernel-v39|" : snapshot_version_ >= 38 ? "galaxy-kernel-v38|" : snapshot_version_ >= 37 ? "galaxy-kernel-v37|" : snapshot_version_ >= 36 ? "galaxy-kernel-v36|" : snapshot_version_ >= 35 ? "galaxy-kernel-v35|" : snapshot_version_ >= 34 ? "galaxy-kernel-v34|" : snapshot_version_ >= 33 ? "galaxy-kernel-v33|" : snapshot_version_ >= 32 ? "galaxy-kernel-v32|" : snapshot_version_ >= 31 ? "galaxy-kernel-v31|" : snapshot_version_ >= 30 ? "galaxy-kernel-v30|" : snapshot_version_ >= 29 ? "galaxy-kernel-v29|" : snapshot_version_ >= 28 ? "galaxy-kernel-v28|" : snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
+    out << ( snapshot_version_ >= 121 ? "galaxy-kernel-v121|" : snapshot_version_ >= 120 ? "galaxy-kernel-v120|" : snapshot_version_ >= 119 ? "galaxy-kernel-v119|" : snapshot_version_ >= 118 ? "galaxy-kernel-v118|" : snapshot_version_ >= 117 ? "galaxy-kernel-v117|" : snapshot_version_ >= 116 ? "galaxy-kernel-v116|" : snapshot_version_ >= 115 ? "galaxy-kernel-v115|" : snapshot_version_ >= 114 ? "galaxy-kernel-v114|" : snapshot_version_ >= 113 ? "galaxy-kernel-v113|" : snapshot_version_ >= 112 ? "galaxy-kernel-v112|" : snapshot_version_ >= 111 ? "galaxy-kernel-v111|" : snapshot_version_ >= 110 ? "galaxy-kernel-v110|" : snapshot_version_ >= 109 ? "galaxy-kernel-v109|" : snapshot_version_ >= 108 ? "galaxy-kernel-v108|" : snapshot_version_ >= 107 ? "galaxy-kernel-v107|" : snapshot_version_ >= 106 ? "galaxy-kernel-v106|" : snapshot_version_ >= 105 ? "galaxy-kernel-v105|" : snapshot_version_ >= 104 ? "galaxy-kernel-v104|" : snapshot_version_ >= 103 ? "galaxy-kernel-v103|" : snapshot_version_ >= 102 ? "galaxy-kernel-v102|" : snapshot_version_ >= 101 ? "galaxy-kernel-v101|" : snapshot_version_ >= 100 ? "galaxy-kernel-v100|" : snapshot_version_ >= 99 ? "galaxy-kernel-v99|" : snapshot_version_ >= 98 ? "galaxy-kernel-v98|" : snapshot_version_ >= 97 ? "galaxy-kernel-v97|" : snapshot_version_ >= 96 ? "galaxy-kernel-v96|" : snapshot_version_ >= 95 ? "galaxy-kernel-v95|" : snapshot_version_ >= 94 ? "galaxy-kernel-v94|" : snapshot_version_ >= 93 ? "galaxy-kernel-v93|" : snapshot_version_ >= 92 ? "galaxy-kernel-v92|" : snapshot_version_ >= 91 ? "galaxy-kernel-v91|" : snapshot_version_ >= 90 ? "galaxy-kernel-v90|" : snapshot_version_ >= 89 ? "galaxy-kernel-v89|" : snapshot_version_ >= 88 ? "galaxy-kernel-v88|" : snapshot_version_ >= 87 ? "galaxy-kernel-v87|" : snapshot_version_ >= 86 ? "galaxy-kernel-v86|" : snapshot_version_ >= 85 ? "galaxy-kernel-v85|" : snapshot_version_ >= 84 ? "galaxy-kernel-v84|" : snapshot_version_ >= 83 ? "galaxy-kernel-v83|" : snapshot_version_ >= 82 ? "galaxy-kernel-v82|" : snapshot_version_ >= 81 ? "galaxy-kernel-v81|" : snapshot_version_ >= 80 ? "galaxy-kernel-v80|" : snapshot_version_ >= 79 ? "galaxy-kernel-v79|" : snapshot_version_ >= 78 ? "galaxy-kernel-v78|" : snapshot_version_ >= 77 ? "galaxy-kernel-v77|" : snapshot_version_ >= 76 ? "galaxy-kernel-v76|" : snapshot_version_ >= 75 ? "galaxy-kernel-v75|" : snapshot_version_ >= 74 ? "galaxy-kernel-v74|" : snapshot_version_ >= 73 ? "galaxy-kernel-v73|" : snapshot_version_ >= 72 ? "galaxy-kernel-v72|" : snapshot_version_ >= 71 ? "galaxy-kernel-v71|" : snapshot_version_ >= 70 ? "galaxy-kernel-v70|" : snapshot_version_ >= 69 ? "galaxy-kernel-v69|" : snapshot_version_ >= 68 ? "galaxy-kernel-v68|" : snapshot_version_ >= 67 ? "galaxy-kernel-v67|" : snapshot_version_ >= 66 ? "galaxy-kernel-v66|" : snapshot_version_ >= 65 ? "galaxy-kernel-v65|" : snapshot_version_ >= 64 ? "galaxy-kernel-v64|" : snapshot_version_ >= 63 ? "galaxy-kernel-v63|" : snapshot_version_ >= 62 ? "galaxy-kernel-v62|" : snapshot_version_ >= 61 ? "galaxy-kernel-v61|" : snapshot_version_ >= 60 ? "galaxy-kernel-v60|" : snapshot_version_ >= 59 ? "galaxy-kernel-v59|" : snapshot_version_ >= 58 ? "galaxy-kernel-v58|" : snapshot_version_ >= 57 ? "galaxy-kernel-v57|" : snapshot_version_ >= 53 ? "galaxy-kernel-v53|" : snapshot_version_ >= 52 ? "galaxy-kernel-v52|" : snapshot_version_ >= 49 ? "galaxy-kernel-v49|" : snapshot_version_ >= 48 ? "galaxy-kernel-v48|" : snapshot_version_ >= 44 ? "galaxy-kernel-v44|" : snapshot_version_ >= 41 ? "galaxy-kernel-v41|" : snapshot_version_ >= 40 ? "galaxy-kernel-v40|" : snapshot_version_ >= 39 ? "galaxy-kernel-v39|" : snapshot_version_ >= 38 ? "galaxy-kernel-v38|" : snapshot_version_ >= 37 ? "galaxy-kernel-v37|" : snapshot_version_ >= 36 ? "galaxy-kernel-v36|" : snapshot_version_ >= 35 ? "galaxy-kernel-v35|" : snapshot_version_ >= 34 ? "galaxy-kernel-v34|" : snapshot_version_ >= 33 ? "galaxy-kernel-v33|" : snapshot_version_ >= 32 ? "galaxy-kernel-v32|" : snapshot_version_ >= 31 ? "galaxy-kernel-v31|" : snapshot_version_ >= 30 ? "galaxy-kernel-v30|" : snapshot_version_ >= 29 ? "galaxy-kernel-v29|" : snapshot_version_ >= 28 ? "galaxy-kernel-v28|" : snapshot_version_ >= 27 ? "galaxy-kernel-v27|" : snapshot_version_ >= 26 ? "galaxy-kernel-v26|" : snapshot_version_ >= 25 ? "galaxy-kernel-v25|" : snapshot_version_ >= 24 ? "galaxy-kernel-v24|" : snapshot_version_ >= 23 ? "galaxy-kernel-v23|" : snapshot_version_ >= 22 ? "galaxy-kernel-v22|" : snapshot_version_ >= 21 ? "galaxy-kernel-v21|" : snapshot_version_ >= 20 ? "galaxy-kernel-v20|" : snapshot_version_ >= 19 ? "galaxy-kernel-v19|" : snapshot_version_ >= 18 ? "galaxy-kernel-v18|" : snapshot_version_ >= 17 ? "galaxy-kernel-v17|" : snapshot_version_ >= 16 ? "galaxy-kernel-v16|" : snapshot_version_ >= 15 ? "galaxy-kernel-v15|" : snapshot_version_ >= 14 ? "galaxy-kernel-v14|" : snapshot_version_ >= 13 ? "galaxy-kernel-v13|" : snapshot_version_ >= 12 ? "galaxy-kernel-v12|" : snapshot_version_ >= 11 ? "galaxy-kernel-v11|" : snapshot_version_ >= 10 ? "galaxy-kernel-v10|" : snapshot_version_ >= 9 ? "galaxy-kernel-v9|" : snapshot_version_ >= 8 ? "galaxy-kernel-v8|" : snapshot_version_ >= 7 ? "galaxy-kernel-v7|" : snapshot_version_ >= 6 ? "galaxy-kernel-v6|" : snapshot_version_ >= 5 ? "galaxy-kernel-v5|" : snapshot_version_ >= 4 ? "galaxy-kernel-v4|" : snapshot_version_ == 3 ? "galaxy-kernel-v3|" : snapshot_version_ == 2 ? "galaxy-kernel-v2|" : "galaxy-kernel-v1|") << system_id_ << '|' << tick_ << '|' << next_entity_id_
         << '|' << rng_state_ << '\n';
     if (snapshot_version_>=5) for(const auto system:systems_)out<<"system|"<<system<<'\n';
+    if(snapshot_version_>=120)for(const auto& [system,origin]:galactic_system_origins_)
+        out<<"galacticorigin|"<<system<<'|'<<origin.x.sector<<'|'<<origin.x.millimeters
+           <<'|'<<origin.y.sector<<'|'<<origin.y.millimeters
+           <<'|'<<origin.z.sector<<'|'<<origin.z.millimeters<<'\n';
     if(snapshot_version_>=68)out<<"probelatency|"<<probe_report_delay_ticks_<<'\n';
     if(snapshot_version_>=70)for(const auto& [system,bodies]:physical_celestial_systems_)
         for(const auto& body:bodies)
@@ -11714,6 +12408,15 @@ std::string Simulation::canonical_state() const {
             for(const auto isolated:e.hardpoint_isolated)out<<'|'<<(isolated?1:0);
             out<<'|'<<e.last_hack_tick;
         }
+        if(snapshot_version_>=119)out<<'|'<<e.position_z_mm<<'|'<<e.velocity_z_mm_per_tick;
+        if(snapshot_version_>=120){
+            if(!e.physical_galactic_authoritative || !e.physical_galactic.valid())
+                throw std::runtime_error("invalid authoritative galactic entity");
+            const auto& p=e.physical_galactic;
+            out<<'|'<<p.x.sector<<'|'<<p.x.millimeters
+               <<'|'<<p.y.sector<<'|'<<p.y.millimeters
+               <<'|'<<p.z.sector<<'|'<<p.z.millimeters;
+        }
         out << '\n';
     }
     if(snapshot_version_>=100)for(const auto& e:ship_status_.records()){
@@ -11950,6 +12653,18 @@ std::string Simulation::canonical_state() const {
                <<'|'<<p.sample_ore<<'|'<<unsigned(p.taxonomy);
         if(snapshot_version_>=69)
             out<<'|'<<p.focus_site<<'|'<<p.focus_waypoint.x<<'|'<<p.focus_waypoint.y;
+        if(snapshot_version_>=121){
+            if(!p.galactic_authoritative || !p.galactic_position.valid() ||
+               !p.galactic_home.valid() || !p.galactic_focus.valid())
+                throw std::runtime_error("invalid 3D survey probe coordinates");
+            const auto emit=[&](galactic::Point g){
+                out<<'|'<<g.x.sector<<'|'<<g.x.millimeters
+                   <<'|'<<g.y.sector<<'|'<<g.y.millimeters
+                   <<'|'<<g.z.sector<<'|'<<g.z.millimeters;
+            };
+            out<<'|'<<p.position_z_mm<<'|'<<p.drone_home_z_mm<<'|'<<p.focus_z_mm;
+            emit(p.galactic_position);emit(p.galactic_home);emit(p.galactic_focus);
+        }
         out<<'\n';
     }
     if(snapshot_version_>=63)for(const auto& [key,d]:discoveries_){
@@ -11957,6 +12672,14 @@ std::string Simulation::canonical_state() const {
         out<<"discovery|"<<d.owner<<'|'<<d.site<<'|'<<d.system<<'|'<<d.location.x
            <<'|'<<d.location.y<<'|'<<d.first_tick<<'|'<<(d.geological?1:0);
         if(snapshot_version_>=67)out<<'|'<<unsigned(d.survey_taxonomy);
+        if(snapshot_version_>=121){
+            if(!d.galactic_authoritative || !d.galactic_location.valid())
+                throw std::runtime_error("invalid 3D discovery");
+            const auto& g=d.galactic_location;
+            out<<'|'<<d.location_z_mm<<'|'<<g.x.sector<<'|'<<g.x.millimeters
+               <<'|'<<g.y.sector<<'|'<<g.y.millimeters
+               <<'|'<<g.z.sector<<'|'<<g.z.millimeters;
+        }
         out<<'\n';
     }
     if(snapshot_version_>=68)for(const auto& [key,p]:pending_probe_discoveries_){
@@ -11965,7 +12688,16 @@ std::string Simulation::canonical_state() const {
         out<<"pendingprobe|"<<d.owner<<'|'<<d.site<<'|'<<d.system
            <<'|'<<d.location.x<<'|'<<d.location.y<<'|'<<d.first_tick
            <<'|'<<(d.geological?1:0)<<'|'<<p.carrier<<'|'<<p.probe_id
-           <<'|'<<p.ready_tick<<'\n';
+           <<'|'<<p.ready_tick;
+        if(snapshot_version_>=121){
+            if(!d.galactic_authoritative || !d.galactic_location.valid())
+                throw std::runtime_error("invalid pending 3D discovery");
+            const auto& g=d.galactic_location;
+            out<<'|'<<d.location_z_mm<<'|'<<g.x.sector<<'|'<<g.x.millimeters
+               <<'|'<<g.y.sector<<'|'<<g.y.millimeters
+               <<'|'<<g.z.sector<<'|'<<g.z.millimeters;
+        }
+        out<<'\n';
     }
     if (snapshot_version_ >= 2) {
         for (auto id : depleted_) out << "depleted|" << id << '\n';
@@ -12162,12 +12894,12 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
     if (!std::getline(in, line)) throw std::runtime_error("snapshot: missing header");
     auto h = fields(line);
     require_fields(h, 5);
-    if (h[0] != "galaxy-kernel-v118" && h[0] != "galaxy-kernel-v117" && h[0] != "galaxy-kernel-v116" && h[0] != "galaxy-kernel-v115" && h[0] != "galaxy-kernel-v114" && h[0] != "galaxy-kernel-v113" && h[0] != "galaxy-kernel-v112" && h[0] != "galaxy-kernel-v111" && h[0] != "galaxy-kernel-v110" && h[0] != "galaxy-kernel-v109" && h[0] != "galaxy-kernel-v108" && h[0] != "galaxy-kernel-v107" && h[0] != "galaxy-kernel-v106" && h[0] != "galaxy-kernel-v105" && h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27" && h[0] != "galaxy-kernel-v28" && h[0] != "galaxy-kernel-v29" && h[0] != "galaxy-kernel-v30" && h[0] != "galaxy-kernel-v31" && h[0] != "galaxy-kernel-v32" && h[0] != "galaxy-kernel-v33" && h[0] != "galaxy-kernel-v34" && h[0] != "galaxy-kernel-v35" && h[0] != "galaxy-kernel-v36" && h[0] != "galaxy-kernel-v37" && h[0] != "galaxy-kernel-v38" && h[0] != "galaxy-kernel-v39" && h[0] != "galaxy-kernel-v40" && h[0] != "galaxy-kernel-v41" && h[0] != "galaxy-kernel-v44" && h[0] != "galaxy-kernel-v48" && h[0] != "galaxy-kernel-v49" && h[0] != "galaxy-kernel-v52" && h[0] != "galaxy-kernel-v53" && h[0] != "galaxy-kernel-v57" && h[0] != "galaxy-kernel-v58" && h[0] != "galaxy-kernel-v59" && h[0] != "galaxy-kernel-v60" && h[0] != "galaxy-kernel-v61" && h[0] != "galaxy-kernel-v62" && h[0] != "galaxy-kernel-v63" && h[0] != "galaxy-kernel-v64" && h[0] != "galaxy-kernel-v65" && h[0] != "galaxy-kernel-v66" && h[0] != "galaxy-kernel-v67" && h[0] != "galaxy-kernel-v68" && h[0] != "galaxy-kernel-v69" && h[0] != "galaxy-kernel-v70" && h[0] != "galaxy-kernel-v71" && h[0] != "galaxy-kernel-v72" && h[0] != "galaxy-kernel-v73" && h[0] != "galaxy-kernel-v74" && h[0] != "galaxy-kernel-v75" && h[0] != "galaxy-kernel-v76" && h[0] != "galaxy-kernel-v77" && h[0] != "galaxy-kernel-v78" && h[0] != "galaxy-kernel-v79" && h[0] != "galaxy-kernel-v80" && h[0] != "galaxy-kernel-v81" && h[0] != "galaxy-kernel-v82" && h[0] != "galaxy-kernel-v83" && h[0] != "galaxy-kernel-v84" && h[0] != "galaxy-kernel-v85" && h[0] != "galaxy-kernel-v86" && h[0] != "galaxy-kernel-v87" && h[0] != "galaxy-kernel-v88" && h[0] != "galaxy-kernel-v89" && h[0] != "galaxy-kernel-v90" && h[0] != "galaxy-kernel-v91" && h[0] != "galaxy-kernel-v92" && h[0] != "galaxy-kernel-v93" && h[0] != "galaxy-kernel-v94" && h[0] != "galaxy-kernel-v95" && h[0] != "galaxy-kernel-v96" && h[0] != "galaxy-kernel-v97" && h[0] != "galaxy-kernel-v98" && h[0] != "galaxy-kernel-v99" && h[0] != "galaxy-kernel-v100" && h[0] != "galaxy-kernel-v101" && h[0] != "galaxy-kernel-v102" && h[0] != "galaxy-kernel-v103" && h[0] != "galaxy-kernel-v104") throw std::runtime_error("snapshot: unsupported version");
+    if (h[0] != "galaxy-kernel-v121" && h[0] != "galaxy-kernel-v120" && h[0] != "galaxy-kernel-v119" && h[0] != "galaxy-kernel-v118" && h[0] != "galaxy-kernel-v117" && h[0] != "galaxy-kernel-v116" && h[0] != "galaxy-kernel-v115" && h[0] != "galaxy-kernel-v114" && h[0] != "galaxy-kernel-v113" && h[0] != "galaxy-kernel-v112" && h[0] != "galaxy-kernel-v111" && h[0] != "galaxy-kernel-v110" && h[0] != "galaxy-kernel-v109" && h[0] != "galaxy-kernel-v108" && h[0] != "galaxy-kernel-v107" && h[0] != "galaxy-kernel-v106" && h[0] != "galaxy-kernel-v105" && h[0] != "galaxy-kernel-v1" && h[0] != "galaxy-kernel-v2" && h[0] != "galaxy-kernel-v3" && h[0] != "galaxy-kernel-v4" && h[0] != "galaxy-kernel-v5" && h[0] != "galaxy-kernel-v6" && h[0] != "galaxy-kernel-v7" && h[0] != "galaxy-kernel-v8" && h[0] != "galaxy-kernel-v9" && h[0] != "galaxy-kernel-v10" && h[0] != "galaxy-kernel-v11" && h[0] != "galaxy-kernel-v12" && h[0] != "galaxy-kernel-v13" && h[0] != "galaxy-kernel-v14" && h[0] != "galaxy-kernel-v15" && h[0] != "galaxy-kernel-v16" && h[0] != "galaxy-kernel-v17" && h[0] != "galaxy-kernel-v18" && h[0] != "galaxy-kernel-v19" && h[0] != "galaxy-kernel-v20" && h[0] != "galaxy-kernel-v21" && h[0] != "galaxy-kernel-v22" && h[0] != "galaxy-kernel-v23" && h[0] != "galaxy-kernel-v24" && h[0] != "galaxy-kernel-v25" && h[0] != "galaxy-kernel-v26" && h[0] != "galaxy-kernel-v27" && h[0] != "galaxy-kernel-v28" && h[0] != "galaxy-kernel-v29" && h[0] != "galaxy-kernel-v30" && h[0] != "galaxy-kernel-v31" && h[0] != "galaxy-kernel-v32" && h[0] != "galaxy-kernel-v33" && h[0] != "galaxy-kernel-v34" && h[0] != "galaxy-kernel-v35" && h[0] != "galaxy-kernel-v36" && h[0] != "galaxy-kernel-v37" && h[0] != "galaxy-kernel-v38" && h[0] != "galaxy-kernel-v39" && h[0] != "galaxy-kernel-v40" && h[0] != "galaxy-kernel-v41" && h[0] != "galaxy-kernel-v44" && h[0] != "galaxy-kernel-v48" && h[0] != "galaxy-kernel-v49" && h[0] != "galaxy-kernel-v52" && h[0] != "galaxy-kernel-v53" && h[0] != "galaxy-kernel-v57" && h[0] != "galaxy-kernel-v58" && h[0] != "galaxy-kernel-v59" && h[0] != "galaxy-kernel-v60" && h[0] != "galaxy-kernel-v61" && h[0] != "galaxy-kernel-v62" && h[0] != "galaxy-kernel-v63" && h[0] != "galaxy-kernel-v64" && h[0] != "galaxy-kernel-v65" && h[0] != "galaxy-kernel-v66" && h[0] != "galaxy-kernel-v67" && h[0] != "galaxy-kernel-v68" && h[0] != "galaxy-kernel-v69" && h[0] != "galaxy-kernel-v70" && h[0] != "galaxy-kernel-v71" && h[0] != "galaxy-kernel-v72" && h[0] != "galaxy-kernel-v73" && h[0] != "galaxy-kernel-v74" && h[0] != "galaxy-kernel-v75" && h[0] != "galaxy-kernel-v76" && h[0] != "galaxy-kernel-v77" && h[0] != "galaxy-kernel-v78" && h[0] != "galaxy-kernel-v79" && h[0] != "galaxy-kernel-v80" && h[0] != "galaxy-kernel-v81" && h[0] != "galaxy-kernel-v82" && h[0] != "galaxy-kernel-v83" && h[0] != "galaxy-kernel-v84" && h[0] != "galaxy-kernel-v85" && h[0] != "galaxy-kernel-v86" && h[0] != "galaxy-kernel-v87" && h[0] != "galaxy-kernel-v88" && h[0] != "galaxy-kernel-v89" && h[0] != "galaxy-kernel-v90" && h[0] != "galaxy-kernel-v91" && h[0] != "galaxy-kernel-v92" && h[0] != "galaxy-kernel-v93" && h[0] != "galaxy-kernel-v94" && h[0] != "galaxy-kernel-v95" && h[0] != "galaxy-kernel-v96" && h[0] != "galaxy-kernel-v97" && h[0] != "galaxy-kernel-v98" && h[0] != "galaxy-kernel-v99" && h[0] != "galaxy-kernel-v100" && h[0] != "galaxy-kernel-v101" && h[0] != "galaxy-kernel-v102" && h[0] != "galaxy-kernel-v103" && h[0] != "galaxy-kernel-v104") throw std::runtime_error("snapshot: unsupported version");
     const auto sys = u64(h[1]);
     if (sys == 0 || sys > std::numeric_limits<std::uint32_t>::max())
         throw std::runtime_error("snapshot: invalid system");
     Simulation result(u64(h[4]), static_cast<std::uint32_t>(sys));
-    result.snapshot_version_ = h[0] == "galaxy-kernel-v118" ? 118 : h[0] == "galaxy-kernel-v117" ? 117 : h[0] == "galaxy-kernel-v116" ? 116 : h[0] == "galaxy-kernel-v115" ? 115 : h[0] == "galaxy-kernel-v114" ? 114 : h[0] == "galaxy-kernel-v113" ? 113 : h[0] == "galaxy-kernel-v112" ? 112 : h[0] == "galaxy-kernel-v111" ? 111 : h[0] == "galaxy-kernel-v110" ? 110 : h[0] == "galaxy-kernel-v109" ? 109 : h[0] == "galaxy-kernel-v108" ? 108 : h[0] == "galaxy-kernel-v107" ? 107 : h[0] == "galaxy-kernel-v106" ? 106 : h[0] == "galaxy-kernel-v105" ? 105 : h[0] == "galaxy-kernel-v104" ? 104 : h[0] == "galaxy-kernel-v103" ? 103 : h[0] == "galaxy-kernel-v102" ? 102 : h[0] == "galaxy-kernel-v101" ? 101 : h[0] == "galaxy-kernel-v100" ? 100 : h[0] == "galaxy-kernel-v99" ? 99 : h[0] == "galaxy-kernel-v98" ? 98 : h[0] == "galaxy-kernel-v97" ? 97 : h[0] == "galaxy-kernel-v96" ? 96 : h[0] == "galaxy-kernel-v95" ? 95 : h[0] == "galaxy-kernel-v94" ? 94 : h[0] == "galaxy-kernel-v93" ? 93 : h[0] == "galaxy-kernel-v92" ? 92 : h[0] == "galaxy-kernel-v91" ? 91 : h[0] == "galaxy-kernel-v90" ? 90 : h[0] == "galaxy-kernel-v89" ? 89 : h[0] == "galaxy-kernel-v88" ? 88 : h[0] == "galaxy-kernel-v87" ? 87 : h[0] == "galaxy-kernel-v86" ? 86 : h[0] == "galaxy-kernel-v85" ? 85 : h[0] == "galaxy-kernel-v84" ? 84 : h[0] == "galaxy-kernel-v83" ? 83 : h[0] == "galaxy-kernel-v82" ? 82 : h[0] == "galaxy-kernel-v81" ? 81 : h[0] == "galaxy-kernel-v80" ? 80 : h[0] == "galaxy-kernel-v79" ? 79 : h[0] == "galaxy-kernel-v78" ? 78 : h[0] == "galaxy-kernel-v77" ? 77 : h[0] == "galaxy-kernel-v76" ? 76 : h[0] == "galaxy-kernel-v75" ? 75 : h[0] == "galaxy-kernel-v74" ? 74 : h[0] == "galaxy-kernel-v73" ? 73 : h[0] == "galaxy-kernel-v72" ? 72 : h[0] == "galaxy-kernel-v71" ? 71 : h[0] == "galaxy-kernel-v70" ? 70 : h[0] == "galaxy-kernel-v69" ? 69 : h[0] == "galaxy-kernel-v68" ? 68 : h[0] == "galaxy-kernel-v67" ? 67 : h[0] == "galaxy-kernel-v66" ? 66 : h[0] == "galaxy-kernel-v65" ? 65 : h[0] == "galaxy-kernel-v64" ? 64 : h[0] == "galaxy-kernel-v63" ? 63 : h[0] == "galaxy-kernel-v62" ? 62 : h[0] == "galaxy-kernel-v61" ? 61 : h[0] == "galaxy-kernel-v60" ? 60 : h[0] == "galaxy-kernel-v59" ? 59 : h[0] == "galaxy-kernel-v58" ? 58 : h[0] == "galaxy-kernel-v57" ? 57 : h[0] == "galaxy-kernel-v53" ? 53 : h[0] == "galaxy-kernel-v52" ? 52 : h[0] == "galaxy-kernel-v49" ? 49 : h[0] == "galaxy-kernel-v48" ? 48 : h[0] == "galaxy-kernel-v44" ? 44 : h[0] == "galaxy-kernel-v41" ? 41 : h[0] == "galaxy-kernel-v40" ? 40 : h[0] == "galaxy-kernel-v39" ? 39 : h[0] == "galaxy-kernel-v38" ? 38 : h[0] == "galaxy-kernel-v37" ? 37 : h[0] == "galaxy-kernel-v36" ? 36 : h[0] == "galaxy-kernel-v35" ? 35 : h[0] == "galaxy-kernel-v34" ? 34 : h[0] == "galaxy-kernel-v33" ? 33 : h[0] == "galaxy-kernel-v32" ? 32 : h[0] == "galaxy-kernel-v31" ? 31 : h[0] == "galaxy-kernel-v30" ? 30 : h[0] == "galaxy-kernel-v29" ? 29 : h[0] == "galaxy-kernel-v28" ? 28 : h[0] == "galaxy-kernel-v27" ? 27 : h[0] == "galaxy-kernel-v26" ? 26 : h[0] == "galaxy-kernel-v25" ? 25 : h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
+    result.snapshot_version_ = h[0] == "galaxy-kernel-v121" ? 121 : h[0] == "galaxy-kernel-v120" ? 120 : h[0] == "galaxy-kernel-v119" ? 119 : h[0] == "galaxy-kernel-v118" ? 118 : h[0] == "galaxy-kernel-v117" ? 117 : h[0] == "galaxy-kernel-v116" ? 116 : h[0] == "galaxy-kernel-v115" ? 115 : h[0] == "galaxy-kernel-v114" ? 114 : h[0] == "galaxy-kernel-v113" ? 113 : h[0] == "galaxy-kernel-v112" ? 112 : h[0] == "galaxy-kernel-v111" ? 111 : h[0] == "galaxy-kernel-v110" ? 110 : h[0] == "galaxy-kernel-v109" ? 109 : h[0] == "galaxy-kernel-v108" ? 108 : h[0] == "galaxy-kernel-v107" ? 107 : h[0] == "galaxy-kernel-v106" ? 106 : h[0] == "galaxy-kernel-v105" ? 105 : h[0] == "galaxy-kernel-v104" ? 104 : h[0] == "galaxy-kernel-v103" ? 103 : h[0] == "galaxy-kernel-v102" ? 102 : h[0] == "galaxy-kernel-v101" ? 101 : h[0] == "galaxy-kernel-v100" ? 100 : h[0] == "galaxy-kernel-v99" ? 99 : h[0] == "galaxy-kernel-v98" ? 98 : h[0] == "galaxy-kernel-v97" ? 97 : h[0] == "galaxy-kernel-v96" ? 96 : h[0] == "galaxy-kernel-v95" ? 95 : h[0] == "galaxy-kernel-v94" ? 94 : h[0] == "galaxy-kernel-v93" ? 93 : h[0] == "galaxy-kernel-v92" ? 92 : h[0] == "galaxy-kernel-v91" ? 91 : h[0] == "galaxy-kernel-v90" ? 90 : h[0] == "galaxy-kernel-v89" ? 89 : h[0] == "galaxy-kernel-v88" ? 88 : h[0] == "galaxy-kernel-v87" ? 87 : h[0] == "galaxy-kernel-v86" ? 86 : h[0] == "galaxy-kernel-v85" ? 85 : h[0] == "galaxy-kernel-v84" ? 84 : h[0] == "galaxy-kernel-v83" ? 83 : h[0] == "galaxy-kernel-v82" ? 82 : h[0] == "galaxy-kernel-v81" ? 81 : h[0] == "galaxy-kernel-v80" ? 80 : h[0] == "galaxy-kernel-v79" ? 79 : h[0] == "galaxy-kernel-v78" ? 78 : h[0] == "galaxy-kernel-v77" ? 77 : h[0] == "galaxy-kernel-v76" ? 76 : h[0] == "galaxy-kernel-v75" ? 75 : h[0] == "galaxy-kernel-v74" ? 74 : h[0] == "galaxy-kernel-v73" ? 73 : h[0] == "galaxy-kernel-v72" ? 72 : h[0] == "galaxy-kernel-v71" ? 71 : h[0] == "galaxy-kernel-v70" ? 70 : h[0] == "galaxy-kernel-v69" ? 69 : h[0] == "galaxy-kernel-v68" ? 68 : h[0] == "galaxy-kernel-v67" ? 67 : h[0] == "galaxy-kernel-v66" ? 66 : h[0] == "galaxy-kernel-v65" ? 65 : h[0] == "galaxy-kernel-v64" ? 64 : h[0] == "galaxy-kernel-v63" ? 63 : h[0] == "galaxy-kernel-v62" ? 62 : h[0] == "galaxy-kernel-v61" ? 61 : h[0] == "galaxy-kernel-v60" ? 60 : h[0] == "galaxy-kernel-v59" ? 59 : h[0] == "galaxy-kernel-v58" ? 58 : h[0] == "galaxy-kernel-v57" ? 57 : h[0] == "galaxy-kernel-v53" ? 53 : h[0] == "galaxy-kernel-v52" ? 52 : h[0] == "galaxy-kernel-v49" ? 49 : h[0] == "galaxy-kernel-v48" ? 48 : h[0] == "galaxy-kernel-v44" ? 44 : h[0] == "galaxy-kernel-v41" ? 41 : h[0] == "galaxy-kernel-v40" ? 40 : h[0] == "galaxy-kernel-v39" ? 39 : h[0] == "galaxy-kernel-v38" ? 38 : h[0] == "galaxy-kernel-v37" ? 37 : h[0] == "galaxy-kernel-v36" ? 36 : h[0] == "galaxy-kernel-v35" ? 35 : h[0] == "galaxy-kernel-v34" ? 34 : h[0] == "galaxy-kernel-v33" ? 33 : h[0] == "galaxy-kernel-v32" ? 32 : h[0] == "galaxy-kernel-v31" ? 31 : h[0] == "galaxy-kernel-v30" ? 30 : h[0] == "galaxy-kernel-v29" ? 29 : h[0] == "galaxy-kernel-v28" ? 28 : h[0] == "galaxy-kernel-v27" ? 27 : h[0] == "galaxy-kernel-v26" ? 26 : h[0] == "galaxy-kernel-v25" ? 25 : h[0] == "galaxy-kernel-v24" ? 24 : h[0] == "galaxy-kernel-v23" ? 23 : h[0] == "galaxy-kernel-v22" ? 22 : h[0] == "galaxy-kernel-v21" ? 21 : h[0] == "galaxy-kernel-v20" ? 20 : h[0] == "galaxy-kernel-v19" ? 19 : h[0] == "galaxy-kernel-v18" ? 18 : h[0] == "galaxy-kernel-v17" ? 17 : h[0] == "galaxy-kernel-v16" ? 16 : h[0] == "galaxy-kernel-v15" ? 15 : h[0] == "galaxy-kernel-v14" ? 14 : h[0] == "galaxy-kernel-v13" ? 13 : h[0] == "galaxy-kernel-v12" ? 12 : h[0] == "galaxy-kernel-v11" ? 11 : h[0] == "galaxy-kernel-v10" ? 10 : h[0] == "galaxy-kernel-v9" ? 9 : h[0] == "galaxy-kernel-v8" ? 8 : h[0] == "galaxy-kernel-v7" ? 7 : h[0] == "galaxy-kernel-v6" ? 6 : h[0] == "galaxy-kernel-v5" ? 5 : h[0] == "galaxy-kernel-v4" ? 4 : h[0] == "galaxy-kernel-v3" ? 3 : h[0] == "galaxy-kernel-v2" ? 2 : 1;
     result.tick_ = u64(h[2]);
     result.next_entity_id_ = u64(h[3]);
     if (result.next_entity_id_ == 0) throw std::runtime_error("snapshot: invalid next entity ID");
@@ -13098,7 +13830,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             if(n<2||n>500)throw std::runtime_error("snapshot: invalid probe response latency");
             result.probe_report_delay_ticks_=n;
         } else if(f[0]=="pendingprobe" && result.snapshot_version_>=68) {
-            require_fields(f,11);
+            require_fields(f,result.snapshot_version_>=121?18:11);
             PendingProbeDiscovery pending{};
             auto& d=pending.report;
             d.owner=u64(f[1]);d.site=u64(f[2]);
@@ -13109,6 +13841,14 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             pending.carrier=u64(f[8]);pending.probe_id=u64(f[9]);
             pending.ready_tick=u64(f[10]);
             d.geological=geology==1;
+            if(result.snapshot_version_>=121){
+                d.location_z_mm=i64(f[11]);
+                d.galactic_location={{i64(f[12]),i64(f[13])},
+                    {i64(f[14]),i64(f[15])},{i64(f[16]),i64(f[17])}};
+                if(!d.galactic_location.valid())
+                    throw std::runtime_error("invalid exact pending probe location");
+                d.galactic_authoritative=true;
+            }
             if(!d.owner||!d.site||d.site>=result.next_entity_id_||
                !system||system>std::numeric_limits<std::uint32_t>::max()||
                !d.first_tick||d.first_tick>result.tick_||
@@ -13122,7 +13862,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             if(!result.pending_probe_discoveries_.emplace(std::make_pair(d.owner,d.site),pending).second)
                 throw std::runtime_error("snapshot: duplicate pending probe observation");
         } else if(f[0]=="surveyprobe" && result.snapshot_version_>=65){
-            require_fields(f,result.snapshot_version_>=69?17:result.snapshot_version_>=66?14:8);
+            require_fields(f,result.snapshot_version_>=121?38:result.snapshot_version_>=69?17:result.snapshot_version_>=66?14:8);
             DeployedSurveyProbe p{};
             p.id=u64(f[1]);p.carrier=u64(f[2]);p.owner=u64(f[3]);
             const auto system=u64(f[4]);p.position={i64(f[5]),i64(f[6])};
@@ -13151,15 +13891,32 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                    (!p.focus_site && (p.focus_waypoint.x||p.focus_waypoint.y)))
                     throw std::runtime_error("snapshot: invalid probe focus");
             }
+            if(result.snapshot_version_>=121){
+                p.position_z_mm=i64(f[17]);p.drone_home_z_mm=i64(f[18]);
+                p.focus_z_mm=i64(f[19]);
+                p.galactic_position={{i64(f[20]),i64(f[21])},
+                    {i64(f[22]),i64(f[23])},{i64(f[24]),i64(f[25])}};
+                p.galactic_home={{i64(f[26]),i64(f[27])},
+                    {i64(f[28]),i64(f[29])},{i64(f[30]),i64(f[31])}};
+                p.galactic_focus={{i64(f[32]),i64(f[33])},
+                    {i64(f[34]),i64(f[35])},{i64(f[36]),i64(f[37])}};
+                if(!p.galactic_position.valid() || !p.galactic_home.valid() ||
+                   !p.galactic_focus.valid())
+                    throw std::runtime_error("invalid high-order probe axis");
+                p.galactic_authoritative=true;
+            }
             if(p.focus_site){
                 const auto site=result.entities_.find(p.focus_site);
                 if(site!=result.entities_.end()){
                     if(site->second.type!=EntityType::Asteroid||
-                       site->second.system_id!=system)
+                       (result.snapshot_version_<121 && site->second.system_id!=system))
                         throw std::runtime_error("snapshot: focused probe site mismatch");
                     const auto quant=[](std::int64_t value,std::int64_t quantum){
-                        return (value>=0 ? (value+quantum/2)/quantum :
-                            -((-value+quantum/2)/quantum))*quantum;
+                        const auto base=value/quantum*quantum;
+                        const auto rem=value%quantum;
+                        const auto step=rem>=quantum/2?quantum:
+                            rem<=-quantum/2?-quantum:0;
+                        return galactic::checked_add(base,step).value_or(base);
                     };
                     const Vector2 coarse{quant(site->second.position.x,5000000),
                                          quant(site->second.position.y,5000000)};
@@ -13171,6 +13928,15 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                                              p.focus_waypoint.y==refined.y;
                     if(!coarse_match&&!refined_match)
                         throw std::runtime_error("snapshot: forged probe waypoint");
+                    if(result.snapshot_version_>=121){
+                        const auto canonical_coarse=coarse_galactic_point(
+                            site->second.physical_galactic,5000000);
+                        const auto canonical_fine=coarse_galactic_point(
+                            site->second.physical_galactic,25000);
+                        if(!(p.galactic_focus==canonical_coarse) &&
+                           !(p.galactic_focus==canonical_fine))
+                            throw std::runtime_error("snapshot: forged 3D probe waypoint");
+                    }
                 }
             }
             if(!p.id || !p.carrier || !p.owner ||
@@ -13183,7 +13949,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             if(!result.survey_probes_.emplace(p.id,p).second)
                 throw std::runtime_error("snapshot: duplicate survey probe");
         } else if(f[0]=="discovery" && result.snapshot_version_>=63){
-            require_fields(f,result.snapshot_version_>=67?9:8);
+            require_fields(f,result.snapshot_version_>=121?16:result.snapshot_version_>=67?9:8);
             DiscoveryRecord d{};
             d.owner=u64(f[1]);d.site=u64(f[2]);
             const auto system=u64(f[3]),geo=u64(f[7]);
@@ -13194,6 +13960,14 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 if(klass>3 || (klass && !d.geological))
                     throw std::runtime_error("snapshot: invalid survey report");
                 d.survey_taxonomy=static_cast<std::uint8_t>(klass);
+            }
+            if(result.snapshot_version_>=121){
+                d.location_z_mm=i64(f[9]);
+                d.galactic_location={{i64(f[10]),i64(f[11])},
+                    {i64(f[12]),i64(f[13])},{i64(f[14]),i64(f[15])}};
+                if(!d.galactic_location.valid())
+                    throw std::runtime_error("invalid high-order discovery axis");
+                d.galactic_authoritative=true;
             }
             if(!d.owner || !d.site || d.site>=result.next_entity_id_ ||
                !system || system>std::numeric_limits<std::uint32_t>::max() ||
@@ -13231,8 +14005,20 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                !result.npc_cyber_operators_.emplace(
                    order.command_id,order).second)
                 throw std::runtime_error("snapshot: invalid NPC cyber operator receipt");
+        } else if(f[0]=="galacticorigin" && result.snapshot_version_>=120){
+            require_fields(f,8);
+            const auto system=u64(f[1]);
+            if(!system || system>std::numeric_limits<std::uint32_t>::max() ||
+               !parsed_systems.count(static_cast<std::uint32_t>(system)))
+                throw std::runtime_error("snapshot: unregistered galactic star");
+            const galactic::Point p{{i64(f[2]),i64(f[3])},
+                {i64(f[4]),i64(f[5])},{i64(f[6]),i64(f[7])}};
+            if(!p.valid() ||
+               !result.galactic_system_origins_.emplace(
+                    static_cast<std::uint32_t>(system),p).second)
+                throw std::runtime_error("snapshot: conflicting galactic star origin");
         } else if (f[0] == "entity") {
-            require_fields(f, result.snapshot_version_>=101 ? 41 : result.snapshot_version_>=100 ? 38 : result.snapshot_version_>=91 ? 36 : result.snapshot_version_>=65 ? 35 : result.snapshot_version_>=64 ? 34 : result.snapshot_version_>=62 ? 27 : result.snapshot_version_>=61 ? 23 : result.snapshot_version_>=5 ? 22 : result.snapshot_version_ >= 3 ? 15 : 12);
+            require_fields(f, result.snapshot_version_>=120 ? 49 : result.snapshot_version_>=119 ? 43 : result.snapshot_version_>=101 ? 41 : result.snapshot_version_>=100 ? 38 : result.snapshot_version_>=91 ? 36 : result.snapshot_version_>=65 ? 35 : result.snapshot_version_>=64 ? 34 : result.snapshot_version_>=62 ? 27 : result.snapshot_version_>=61 ? 23 : result.snapshot_version_>=5 ? 22 : result.snapshot_version_ >= 3 ? 15 : 12);
             Entity e;
             e.id = u64(f[1]);
             const auto es = u64(f[2]), type = u64(f[3]);
@@ -13342,7 +14128,26 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                     e.type!=EntityType::Wreck))
                     throw std::runtime_error("snapshot: invalid manufactured hull identity");
             }
-            if (!result.valid_position(e.position) ||
+            if(result.snapshot_version_>=119){
+                e.position_z_mm=i64(f[41]);
+                e.velocity_z_mm_per_tick=i64(f[42]);
+                if((e.type!=EntityType::Ship && e.type!=EntityType::Wreck &&
+                   (e.position_z_mm || e.velocity_z_mm_per_tick)) ||
+                   (e.type==EntityType::Wreck && e.velocity_z_mm_per_tick) ||
+                   e.velocity_z_mm_per_tick < -kMaxVelocityMmPerTick ||
+                   e.velocity_z_mm_per_tick > kMaxVelocityMmPerTick)
+                    throw std::runtime_error("snapshot: invalid 3D physical axis");
+            }
+            if(result.snapshot_version_>=120){
+                e.physical_galactic={{i64(f[43]),i64(f[44])},
+                    {i64(f[45]),i64(f[46])},{i64(f[47]),i64(f[48])}};
+                if(!e.physical_galactic.valid() ||
+                   !result.galactic_system_origins_.count(e.system_id))
+                    throw std::runtime_error("snapshot: forged galactic physical coordinate");
+                e.physical_galactic_authoritative=true;
+            }
+            if ((result.snapshot_version_<119 || (e.type!=EntityType::Ship && e.type!=EntityType::Wreck)) &&
+                !result.valid_position(e.position) ||
                 e.velocity.x < -kMaxVelocityMmPerTick || e.velocity.x > kMaxVelocityMmPerTick ||
                 e.velocity.y < -kMaxVelocityMmPerTick || e.velocity.y > kMaxVelocityMmPerTick ||
                 e.ore < 0 || e.cargo < 0 || e.cargo_capacity < 0 ||
@@ -14790,7 +15595,8 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 throw std::runtime_error("snapshot: invalid gate destination system");
             if(e.type==EntityType::Ship && e.jump_state==ShipJumpState::Jumping){
                 const auto* gate=result.find(e.pending_gate);
-                if(!gate || gate->type!=EntityType::Stargate || gate->system_id!=e.system_id)
+                if(!gate || gate->type!=EntityType::Stargate ||
+                   (result.snapshot_version_<120 && gate->system_id!=e.system_id))
                     throw std::runtime_error("snapshot: jumping ship has no valid origin gate");
             }
         }
@@ -15411,7 +16217,8 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
         if (entity.type != EntityType::Ship || entity.dock_state == DockState::InSpace) continue;
         const auto it = result.entities_.find(entity.dock_station);
         if (it == result.entities_.end() || it->second.type != EntityType::Station ||
-            it->second.system_id!=entity.system_id ||
+            (result.snapshot_version_<120 &&
+             it->second.system_id!=entity.system_id) ||
             !result.hangar(entity.dock_station, entity.owner_id))
             throw std::runtime_error("snapshot: dock state references missing station or private hangar");
         if ((entity.dock_state == DockState::Docked || entity.dock_state == DockState::Undocking) &&
@@ -15647,7 +16454,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             if(probe!=result.survey_probes_.end()&&
                (probe->second.owner!=p.report.owner||
                 probe->second.carrier!=p.carrier||
-                probe->second.system!=p.report.system))
+                (result.snapshot_version_<121 && probe->second.system!=p.report.system)))
                 throw std::runtime_error("snapshot: delayed probe ownership conflict");
         }
     }
@@ -15656,7 +16463,8 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
             const auto it=result.entities_.find(p.carrier);
             if(id!=p.id || it==result.entities_.end() ||
                (it->second.type!=EntityType::Ship && it->second.type!=EntityType::Wreck) ||
-               it->second.owner_id!=p.owner || it->second.system_id!=p.system ||
+               it->second.owner_id!=p.owner ||
+               (result.snapshot_version_<121 && it->second.system_id!=p.system) ||
                !it->second.fitting.probe_launcher() ||
                !result.submitted_ids_.count(p.id))
                 throw std::runtime_error("snapshot: survey probe has no valid physical carrier");
@@ -16688,6 +17496,7 @@ void Simulation::swap(Simulation& other) noexcept {
     using std::swap;
     swap(system_id_, other.system_id_);
     systems_.swap(other.systems_);
+    galactic_system_origins_.swap(other.galactic_system_origins_);
     swap(tick_, other.tick_);
     swap(next_entity_id_, other.next_entity_id_);
     swap(rng_state_, other.rng_state_);

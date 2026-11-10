@@ -1,6 +1,7 @@
 #pragma once
 
 #include "galaxy/Inventory.hpp"
+#include "galaxy/GalacticPhysicalPosition.hpp"
 #include "galaxy/Astronomy.hpp"
 #include "galaxy/PlanetaryGeography.hpp"
 #include "galaxy/NpcTransport.hpp"
@@ -926,6 +927,10 @@ struct Entity {
     PlayerId owner_id = 0; // 0 denotes environment-owned object
     Vector2 position{};
     Vector2 velocity{};
+    // SPACE-04B/v119: native physical third axis; x/y remain existing
+    // original journal fields and z is appended in v119 snapshots.
+    // All three axes are authoritative for v119 ship flight.
+    std::int64_t position_z_mm=0, velocity_z_mm_per_tick=0;
     std::uint16_t heading_deg = 0; // PLAY-04: yaw, clockwise from +X; authoritative and persistent
     std::int64_t hull = 0; // PLAY-08: v62 0 for non-ships, 100 for new player ships
     std::int64_t weapon_charges = 0; // finite starter training-weapon shots
@@ -957,6 +962,10 @@ struct Entity {
     // emission cooldown. Both live on this original durable physical ship.
     std::array<bool,2> hardpoint_isolated{{false,false}};
     std::uint64_t last_hack_tick=0;
+    // SPACE-04C/v120: the original physical coordinate. XY/Z above are
+    // compatibility projections and are never long-distance authority.
+    galactic::Point physical_galactic{};
+    bool physical_galactic_authoritative=false;
 };
 
 // PLAY-10: first observation is a durable owner-scoped fact; the source entity
@@ -978,6 +987,12 @@ struct DeployedSurveyProbe {
     // v69: mission target is coarse (5 km quantization), NOT oracle coordinates.
     EntityId focus_site=0;
     Vector2 focus_waypoint{};
+    // SPACE-04D/v121: complete original three-axis probe/mission custody.
+    // Legacy XY is a compatibility view; these exact galactic points drive
+    // 3D motion and range after versioned migration.
+    std::int64_t position_z_mm=0,drone_home_z_mm=0,focus_z_mm=0;
+    galactic::Point galactic_position{},galactic_home{},galactic_focus{};
+    bool galactic_authoritative=false;
 };
 struct DiscoveryRecord {
     PlayerId owner=0;
@@ -989,6 +1004,9 @@ struct DiscoveryRecord {
     // v67: non-destructive geological survey classification, 0 unknown;
     // 1 carbonaceous, 2 silicate, 3 metallic. Persists after drone recovery.
     std::uint8_t survey_taxonomy=0;
+    std::int64_t location_z_mm=0;
+    galactic::Point galactic_location{};
+    bool galactic_authoritative=false;
 };
 // v68: host-origin observation withheld from every player projection until
 // its scheduled report time and a valid carrier/probe link. Persisted in world.
@@ -1291,6 +1309,20 @@ public:
     void ensure_physical_celestial_systems();
     // Explicit atomic migration, NOT a travel command.
     void ensure_ship_frame_registry();
+    // SPACE-04B: explicit versioned migration; older saves retain v118
+    // bounded XY movement until the host opts into v119 3D mode.
+    void enable_native_3d_physics();
+    bool native_3d_physics() const {return snapshot_version_>=119;}
+    // Explicit, versioned upgrade with independently registered immutable
+    // original-star origins. Never infer absolute geography from client XY.
+    void enable_native_galactic_physics(
+        const std::map<std::uint32_t,galactic::Point>& registered_origins);
+    bool native_galactic_physics() const {return snapshot_version_>=120;}
+    void enable_native_3d_probes();
+    bool native_3d_probes() const {return snapshot_version_>=121;}
+    const std::map<std::uint32_t,galactic::Point>& galactic_system_origins() const {
+        return galactic_system_origins_;
+    }
     const std::map<EntityId,ShipFrameCustody>& ship_frames() const {return ship_frames_;}
     const std::map<std::uint64_t,PendingCelestialTransit>& pending_celestial_transits() const {
         return pending_celestial_transits_;
@@ -1331,7 +1363,9 @@ public:
     bool revoke_player_rescue_consent(PlayerId owner,std::uint64_t consent_id);
     bool complete_player_rescue(PlayerId owner,EntityId receiving_ship,
         std::uint64_t flight_id,std::uint64_t transfer_receipt);
-    // Different local frames never share ordinary spatial interactions.
+    // v119 and older: physical interaction is restricted by the original
+    // local frame. v120+: that frame is only a view; actual gameplay actions
+    // must still test the primary galactic 3D distance and native authority.
     bool same_local_frame(EntityId a,EntityId b) const;
     // PLAY-13C.4: finite existing mineral stock may be redistributed into
     // native local deposits; this never creates material from nothing.
@@ -1393,7 +1427,7 @@ public:
     const std::map<std::pair<PlayerId,EntityId>,DiscoveryRecord>& discoveries() const { return discoveries_; }
     std::size_t pending_probe_report_count() const {return pending_probe_discoveries_.size();}
     // Coarse, scan-range-limited contacts for the authenticated player only.
-    struct SignatureHint { EntityId id=0;Vector2 coarse{};std::int64_t uncertainty_mm=5000000; };
+    struct SignatureHint { EntityId id=0;Vector2 coarse{};std::int64_t uncertainty_mm=5000000;std::int64_t coarse_z_mm=0; };
     std::vector<SignatureHint> coarse_probe_signatures(PlayerId owner,EntityId ship,
         std::int64_t range_mm=500000000) const;
     // Read-only survey of deterministic system metadata; no fabricated physical bodies.
@@ -1721,7 +1755,7 @@ private:
     void process_npc_flight_navigation(); // same copied-state journaled step
     bool submit_npc_local_control(NpcFlightOrder& flight,
                                   Action action,EntityId target,
-                                  int thrust_x=0,int thrust_y=0);
+                                  int thrust_x=0,int thrust_y=0,int thrust_z=0);
     bool qualified_npc_flight_pilot(EntityId ship,std::uint64_t pilot) const;
     // ONE authoritative pilot chooser + ship/pilot exclusion for every
     // FLIGHT-01/02 mode and future docking/transit route adapter.
@@ -1744,6 +1778,9 @@ private:
 
     std::uint32_t system_id_;
     std::set<std::uint32_t> systems_;
+    // v120 original snapshot owns the immutable system geography after
+    // a verified host import; SQLite origin registry remains provenance.
+    std::map<std::uint32_t,galactic::Point> galactic_system_origins_;
     std::uint64_t tick_ = 0;
     std::uint64_t next_entity_id_ = 1;
     std::uint64_t rng_state_;

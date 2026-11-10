@@ -19,7 +19,7 @@ else()
 endif()
 add_library(galaxy_kernel STATIC src/PlanetaryAgriculture.cpp src/Simulation.cpp src/ColonyResilience.cpp
   src/ColonyRecovery.cpp src/ColonyPolicy.cpp src/PopulationCohorts.cpp
-    src/ColonyWaterSupply.cpp src/Persistence.cpp src/EconomyPrototype.cpp src/QuantifiedProduction.cpp src/Industry01Catalog.generated.cpp src/WO2ProfessionCatalog.generated.cpp src/Inventory.cpp src/InventoryLogistics.cpp src/FactoryLayout.cpp src/BlueprintConstruction.cpp src/HostBlueprintRegistry.cpp src/ClientContract.cpp src/Galaxy.cpp src/Navigation.cpp src/GateTransit.cpp src/Region.cpp
+    src/ColonyWaterSupply.cpp src/Persistence.cpp src/NativeCellProcessRunner.cpp src/EconomyPrototype.cpp src/QuantifiedProduction.cpp src/Industry01Catalog.generated.cpp src/WO2ProfessionCatalog.generated.cpp src/Inventory.cpp src/InventoryLogistics.cpp src/FactoryLayout.cpp src/BlueprintConstruction.cpp src/HostBlueprintRegistry.cpp src/ClientContract.cpp src/Galaxy.cpp src/Navigation.cpp src/GateTransit.cpp src/Region.cpp
   src/ColdColonyNeeds.cpp src/MacroNeeds.cpp src/ColonySafety.cpp src/ColonySafetyJournal.cpp src/ColonySafetyNotice.cpp src/ColonyDefense.cpp src/ColonyConflict.cpp src/TerritoryJournal.cpp src/CyberIncidentJournal.cpp src/ColonyEvacuation.cpp src/ColonyFamilyDeparture.cpp src/NpcAppearanceGenome.cpp src/MedicalSocietyBridge.cpp src/DependentIncidentAccounting.cpp src/DependentIncidentJournal.cpp src/DependentGuardianship.cpp src/SplitRescueIntent.cpp src/RegionalCheckpointStore.cpp src/RegionalPopulationAudit.cpp src/RegionalEventScheduler.cpp src/RegionalModeAuthority.cpp src/RegionalFactoryHandoff.cpp src/RegionalProductionNetwork.cpp src/RegionalShipmentReconciliation.cpp src/ShipmentManifest.cpp src/ThirdPartyShipment.cpp src/CanonicalShippingHost.cpp src/ShipmentStatusView.cpp
   src/RegionalHostCommands.cpp src/RegionalInterestManager.cpp src/RegionalCustodyLedger.cpp src/RegionalPersistentWorldBridge.cpp)
 target_include_directories(galaxy_kernel PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -1882,8 +1882,8 @@ if(BUILD_TESTING)
   add_test(NAME galaxy_wo2_industry_workforce COMMAND galaxy_wo2_industry_workforce_tests)
 endif()
 
-// WO3-A: proposal-only colony construction planning and original-world actual
-// facility, census, utility, immutable SQLite copies and material conservation.
+# WO3-A: proposal-only colony construction planning and original-world actual
+# facility, census, utility, immutable SQLite copies and material conservation.
 if(BUILD_TESTING)
   add_executable(galaxy_wo3_colony_operations_tests tests/WO3ColonyOperationsTests.cpp)
   target_link_libraries(galaxy_wo3_colony_operations_tests PRIVATE galaxy_kernel)
@@ -1925,4 +1925,76 @@ if(BUILD_TESTING)
     add_executable(galaxy_wo5_physical_logistics_tests tests/WO5PhysicalLogisticsTests.cpp)
     target_link_libraries(galaxy_wo5_physical_logistics_tests PRIVATE galaxy_kernel)
     add_test(NAME galaxy_wo5_physical_logistics COMMAND galaxy_wo5_physical_logistics_tests)
+endif()
+
+
+# SPACE-01/02/03: native, original-world 3D computational cell occupancy,
+# exact SQLite atomic migration, per-cell worker authority and WO5 freight
+# identity/recovery. No browser-only mock or second material ledger.
+if(BUILD_TESTING)
+  add_executable(galaxy_seamless_spatial_ownership_tests
+      tests/SeamlessSpatialOwnershipTests.cpp)
+  target_link_libraries(galaxy_seamless_spatial_ownership_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_seamless_spatial_ownership
+      COMMAND galaxy_seamless_spatial_ownership_tests)
+endif()
+
+# SPACE-04B: exact 3D floating-origin geometry (source foundation, not live flight).
+if(BUILD_TESTING)
+  add_executable(galaxy_floating_frame_tests tests/GalacticFloatingFrameTests.cpp)
+  target_link_libraries(galaxy_floating_frame_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_floating_frame COMMAND galaxy_floating_frame_tests)
+endif()
+
+# SPACE-04B/05: actual original v119 flight and fenced SQLite world steps.
+if(BUILD_TESTING)
+  add_executable(galaxy_native_3d_worker_tests tests/Native3DPhysicsWorkerTests.cpp)
+  target_link_libraries(galaxy_native_3d_worker_tests PRIVATE galaxy_kernel)
+  add_test(NAME galaxy_native_3d_worker COMMAND galaxy_native_3d_worker_tests)
+endif()
+
+find_package(Threads REQUIRED)
+target_link_libraries(galaxy_kernel PUBLIC Threads::Threads)
+
+# SPACE-04E: independent signed 128-bit native property oracle.
+# Windows shipping physics intentionally does NOT depend on __int128.
+if(BUILD_TESTING AND NOT MSVC AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  add_executable(galaxy_high_order_math_property_tests
+    tests/NativeHighOrderMathPropertyTests.cpp)
+  target_include_directories(galaxy_high_order_math_property_tests
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  add_test(NAME galaxy_high_order_math_property
+    COMMAND galaxy_high_order_math_property_tests)
+endif()
+
+# SPACE-05C: native subprocess never receives an original-world writer.
+add_executable(galaxy_native_cell_worker src/native_cell_worker.cpp)
+if(BUILD_TESTING)
+  add_executable(galaxy_native_cell_hang_worker tests/NativeCellHangWorker.cpp)
+  target_link_libraries(galaxy_native_cell_hang_worker PRIVATE Threads::Threads)
+endif()
+
+# SPACE-05C: independent 4x20 native process admission endurance and
+# deliberately hung-child process-tree timeout acceptance, no game DB.
+if(BUILD_TESTING)
+  add_executable(galaxy_native_cell_process_stress_tests
+    tests/NativeCellProcessStressTests.cpp)
+  target_link_libraries(galaxy_native_cell_process_stress_tests
+    PRIVATE galaxy_kernel Threads::Threads)
+  add_test(NAME galaxy_native_cell_process_stress
+    COMMAND galaxy_native_cell_process_stress_tests
+      $<TARGET_FILE:galaxy_native_cell_worker>
+      $<TARGET_FILE:galaxy_native_cell_hang_worker>)
+endif()
+
+# SPACE-04C/04D/05B: native high-order coordinates, 3D probes and bounded
+# active multi-cell original-world supervisor. Runs on Windows and Linux.
+if(BUILD_TESTING)
+  add_executable(galaxy_native_galactic_supervisor_tests
+    tests/NativeGalacticProbeSupervisorTests.cpp)
+  target_link_libraries(galaxy_native_galactic_supervisor_tests PRIVATE galaxy_kernel Threads::Threads)
+  add_test(NAME galaxy_native_galactic_supervisor
+           COMMAND galaxy_native_galactic_supervisor_tests
+             $<TARGET_FILE:galaxy_native_cell_worker>
+             $<TARGET_FILE:galaxy_native_cell_hang_worker>)
 endif()

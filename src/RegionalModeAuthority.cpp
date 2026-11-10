@@ -234,7 +234,7 @@ RegionalAuthorityState RegionalModeAuthority::prepare(const std::string& id,
     // WO5-E: same SQLite ownership transaction sees original physical
     // pickup/carrier/delivery state. Never let a cold/detailed owner flip
     // replay in-flight native freight as a new cold macro shipment.
-    galaxy::logistics05::require_native_freight_handoff_safe(store_.db_);
+    galaxy::logistics05::require_native_freight_handoff_safe(store_.db_,store_.scope_);
     if(s.generation!=gen || s.phase!=TransitionPhase::Stable || s.owner==target)
         throw std::runtime_error("stale or invalid regional handoff intent");
     const auto cp=store_.load();
@@ -271,7 +271,7 @@ RegionalAuthorityState RegionalModeAuthority::commit(const std::string& id,
     // WO5-E: same SQLite ownership transaction sees original physical
     // pickup/carrier/delivery state. Never let a cold/detailed owner flip
     // replay in-flight native freight as a new cold macro shipment.
-    galaxy::logistics05::require_native_freight_handoff_safe(store_.db_);
+    galaxy::logistics05::require_native_freight_handoff_safe(store_.db_,store_.scope_);
     auto candidate=cp->scheduler;
     const auto original_bytes=store_.encode(candidate);
     // Only host-owned SQLite changes, no external side effects, can share the

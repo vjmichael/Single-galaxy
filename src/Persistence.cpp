@@ -1,4 +1,6 @@
 #include "galaxy/Persistence.hpp"
+#include "galaxy/GalacticSystemRegistry.hpp"
+#include "galaxy/SeamlessSpatialOwnership.hpp"
 #include "galaxy/UniversalNpcMigration.hpp"
 #include "galaxy/CelestialFrameTransition.hpp"
 #include "galaxy/ColonySafety.hpp"
@@ -7171,7 +7173,8 @@ public:
                 const std::vector<ActivityEvent>& activity_delta, FailPoint fail,
                 const NpcMiningAssignment* npc_mining_assignment=nullptr,
                 const NpcFabricationAssignment* npc_fabrication_assignment=nullptr,
-                const std::function<void(sqlite3*,std::uint64_t)>& society_effect={}) {
+                const std::function<void(sqlite3*,std::uint64_t)>& society_effect={},
+                const NativeCellWorkerTick* cell_worker_token=nullptr) {
         if (state.total_ore() != origin || state.total_credits() != credit_origin)
             throw std::runtime_error("resource or credit conservation violation");
         const auto bytes = state.canonical_state();
@@ -7864,6 +7867,108 @@ public:
             op.text(4, std::to_string(state.state_hash()));
             op.i64(5, static_cast<std::int64_t>(state.tick()));
             op.execute();
+            // SPACE-01: update derived 3D computational cell custody inside
+            // the SAME SQLite world snapshot/journal transaction. Ship ID,
+            // finite NPC roster, carrier cargo and physical position remain
+            // solely in original Simulation. A fault rolls both back.
+            spatial::record_native_world_commit(
+                db_,state,expected_generation,next);
+            // SPACE-05: one authoritative admission point for EVERY native
+            // world-changing PersistentWorld API. Previously only step()
+            // checked leases, so submit/host operations could bypass them.
+            // This executes after the original spatial-index update but
+            // before COMMIT, inside the same BEGIN IMMEDIATE lock.
+            Statement lease_table(db_,"SELECT COUNT(*) FROM sqlite_master "
+               "WHERE type='table' AND name='sg_spatial_worker_lease'");
+            if(!lease_table.row())
+                throw std::runtime_error("spatial worker registry unreadable");
+            if(sqlite3_column_int64(lease_table.get(),0)==0){
+                if(cell_worker_token)
+                    throw std::runtime_error("no worker registry for leased commit");
+            }else{
+                Statement lease_count(db_,"SELECT COUNT(*) FROM sg_spatial_worker_lease");
+                if(!lease_count.row())
+                    throw std::runtime_error("spatial lease count unreadable");
+                const auto count=sqlite3_column_int64(lease_count.get(),0);
+                if(count==0){
+                    if(cell_worker_token)
+                        throw std::runtime_error("no active lease for worker commit");
+                }else{
+                    // Multiple physically occupied cells may have active
+                    // workers, but exactly ONE host-selected dispatch holds
+                    // the journal writer for this world generation.
+                    if(!cell_worker_token || count<1 ||
+                       (count>1 && cell_worker_token->dispatch_id.empty()))
+                        throw std::runtime_error(
+                            "multi-cell writer requires a durable fenced dispatch");
+                    const auto& token=*cell_worker_token;
+                    if(!spatial::parse_scope(token.canonical_cell_scope) ||
+                       token.trusted_worker.empty() ||
+                       token.trusted_worker.size()>128 ||
+                       !token.worker_epoch || !token.region_generation ||
+                       !token.checkpoint_revision)
+                        throw std::runtime_error("invalid worker commit token");
+                    Statement lease(db_,"SELECT a.worker,a.epoch,a.region_generation,"
+                      "a.checkpoint_revision,r.generation,r.checkpoint_revision,r.phase "
+                      "FROM sg_spatial_worker_lease a "
+                      "JOIN sg_regional_mode_authority r ON r.scope=a.scope "
+                      "WHERE a.scope=?");
+                    lease.text(1,token.canonical_cell_scope);
+                    if(!lease.row())
+                        throw std::runtime_error("worker lacks regional authority");
+                    const auto worker=sqlite3_column_text(lease.get(),0);
+                    if(!worker ||
+                       reinterpret_cast<const char*>(worker)!=token.trusted_worker ||
+                       sqlite3_column_int64(lease.get(),1)!=
+                           static_cast<sqlite3_int64>(token.worker_epoch) ||
+                       sqlite3_column_int64(lease.get(),2)!=
+                           static_cast<sqlite3_int64>(token.region_generation) ||
+                       sqlite3_column_int64(lease.get(),3)!=
+                           static_cast<sqlite3_int64>(token.checkpoint_revision) ||
+                       sqlite3_column_int64(lease.get(),4)!=
+                           static_cast<sqlite3_int64>(token.region_generation) ||
+                       sqlite3_column_int64(lease.get(),5)!=
+                           static_cast<sqlite3_int64>(token.checkpoint_revision) ||
+                       sqlite3_column_int(lease.get(),6)!=0 ||
+                       !spatial::verify_native_index(db_,state,next))
+                        throw std::runtime_error(
+                            "stale, forged or conflicting worker world commit");
+                    if(count>1 || !token.dispatch_id.empty()){
+                        if(token.dispatch_id.empty() ||
+                           token.dispatch_id.size()>128)
+                            throw std::runtime_error("missing global dispatch identity");
+                        Statement selected(db_,"SELECT scope,worker,epoch,"
+                            "region_generation,checkpoint_revision,status "
+                            "FROM sg_spatial_tick_dispatch "
+                            "WHERE world_generation=? AND claim_id=?");
+                        selected.i64(1,static_cast<std::int64_t>(
+                            expected_generation));
+                        selected.text(2,token.dispatch_id);
+                        if(!selected.row() ||
+                           sqlite_str(selected.get(),0)!=token.canonical_cell_scope ||
+                           sqlite_str(selected.get(),1)!=token.trusted_worker ||
+                           sqlite3_column_int64(selected.get(),2)!=
+                               static_cast<sqlite3_int64>(token.worker_epoch) ||
+                           sqlite3_column_int64(selected.get(),3)!=
+                               static_cast<sqlite3_int64>(token.region_generation) ||
+                           sqlite3_column_int64(selected.get(),4)!=
+                               static_cast<sqlite3_int64>(token.checkpoint_revision) ||
+                           sqlite3_column_int(selected.get(),5)!=0)
+                            throw std::runtime_error(
+                                "stale, unselected or already consumed global writer");
+                        Statement complete(db_,"UPDATE sg_spatial_tick_dispatch "
+                            "SET status=1,completed_generation=? "
+                            "WHERE world_generation=? AND claim_id=? AND status=0");
+                        complete.i64(1,static_cast<std::int64_t>(next));
+                        complete.i64(2,static_cast<std::int64_t>(
+                            expected_generation));
+                        complete.text(3,token.dispatch_id);
+                        complete.execute();
+                        if(sqlite3_changes(db_)!=1)
+                            throw std::runtime_error("global dispatch completion race");
+                    }
+                }
+            }
             if(society_effect)society_effect(db_,next);
             // AUTO-04D.2: same exclusive world transaction; no second writer.
             colony_safety::journal::record_world_commit(db_,state,expected_generation,next);
@@ -12234,6 +12339,26 @@ bool PersistentWorld::submit_testing_ship_confusion(
 }
 
 bool PersistentWorld::submit(const Command& command, FailPoint fail) {
+    return submit_with_cell_worker(command,nullptr,fail);
+}
+bool PersistentWorld::submit_as_cell_worker(
+        const Command& command,const NativeCellWorkerTick& token,
+        FailPoint fail) {
+    return submit_with_cell_worker(command,&token,fail);
+}
+bool PersistentWorld::submit_with_cell_worker(
+        const Command& command,const NativeCellWorkerTick* token,
+        FailPoint fail) {
+    // Physical command actor must already inhabit the worker's genuine
+    // original cell. Target range remains owned by original Simulation;
+    // a scope string is never a shortcut for player/crew authorization.
+    if(token){
+        const auto* actor=world_.find(command.actor);
+        const auto cell=spatial::ship_cell(world_,command.actor);
+        if(!actor || actor->type!=EntityType::Ship || !cell ||
+           spatial::scope(*cell)!=token->canonical_cell_scope)
+            throw std::runtime_error("worker cannot submit outside its original cell");
+    }
     // NPC-RESP-02B: independent character custody is authoritative for
     // PLAYER-operated ship controls. A rescued/detained person cannot
     // remotely pilot an abandoned hull by changing the selected cockpit.
@@ -12285,7 +12410,8 @@ bool PersistentWorld::submit(const Command& command, FailPoint fail) {
     if(!store_->manifest_transfer_allowed(command))return false;
     auto next = world_;
     if (!next.submit(command)) return false;
-    store_->commit(next, generation_, resource_origin_, credit_origin_, &command, {}, {}, {}, fail);
+    store_->commit(next, generation_, resource_origin_, credit_origin_,
+                   &command, {}, {}, {}, fail,nullptr,nullptr,{},token);
     world_.swap(next); // noexcept: in-memory state published only after COMMIT
     ++generation_;
     return true;
@@ -14189,7 +14315,108 @@ void PersistentWorld::settle_constructed_stock(const Command& command,
     world_.swap(next);++generation_;
 }
 
+void PersistentWorld::enable_native_3d_physics(FailPoint fail) {
+    if(world_.native_3d_physics())return;
+    auto next=world_;
+    next.enable_native_3d_physics();
+    // Refuse to publish a nonroundtripping or physically lossy migration.
+    if(Simulation::from_snapshot(next.canonical_state()).state_hash()!=
+       next.state_hash() || next.total_ore()!=resource_origin_ ||
+       next.total_credits()!=credit_origin_)
+        throw std::runtime_error("SPACE-04B native 3D migration not lossless");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,
+                   nullptr,{},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+}
+
+void PersistentWorld::enable_native_galactic_physics(
+        const std::string& native_sqlite,FailPoint fail) {
+    if(world_.native_galactic_physics())return;
+    if(native_sqlite.empty())
+        throw std::invalid_argument("original galaxy SQLite path required");
+    sqlite3* db=nullptr;
+    if(sqlite3_open_v2(native_sqlite.c_str(),&db,
+        SQLITE_OPEN_READONLY|SQLITE_OPEN_FULLMUTEX,nullptr)!=SQLITE_OK){
+        if(db)sqlite3_close_v2(db);
+        throw std::runtime_error("cannot read real original star origins");
+    }
+    std::map<std::uint32_t,galactic::Point> origins;
+    try{
+        if(!galactic::snapshot_match(db,*this))
+            throw std::runtime_error("stale native galaxy source during v120 upgrade");
+        galactic::Query q(db,"SELECT system,sector_x,mm_x,sector_y,mm_y,"
+            "sector_z,mm_z FROM sg_galaxy_system_origin ORDER BY system");
+        while(q.row()){
+            const auto system=q.n(0);
+            if(system<=0 ||
+               system>std::numeric_limits<std::uint32_t>::max())
+                throw std::runtime_error("untrusted system registry key");
+            const galactic::Point star{{q.n(1),q.n(2)},
+                {q.n(3),q.n(4)},{q.n(5),q.n(6)}};
+            if(!star.valid() ||
+               !origins.emplace(static_cast<std::uint32_t>(system),star).second)
+                throw std::runtime_error("invalid immutable galaxy registry");
+        }
+        sqlite3_close_v2(db);db=nullptr;
+    }catch(...){if(db)sqlite3_close_v2(db);throw;}
+    auto next=world_;
+    next.enable_native_galactic_physics(origins);
+    if(Simulation::from_snapshot(next.canonical_state()).state_hash()!=
+       next.state_hash() || next.total_ore()!=resource_origin_ ||
+       next.total_credits()!=credit_origin_)
+        throw std::runtime_error("v120 galaxy migration not lossless");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,
+                   nullptr,{},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+}
+
+void PersistentWorld::enable_native_3d_probes(FailPoint fail){
+    if(world_.native_3d_probes())return;
+    auto next=world_;
+    next.enable_native_3d_probes();
+    if(Simulation::from_snapshot(next.canonical_state()).state_hash()!=
+       next.state_hash() || next.total_ore()!=resource_origin_ ||
+       next.total_credits()!=credit_origin_)
+        throw std::runtime_error("v121 3D probes migration not lossless");
+    store_->commit(next,generation_,resource_origin_,credit_origin_,
+                   nullptr,{},{},{},fail);
+    world_.swap(next);
+    ++generation_;
+}
+
 void PersistentWorld::step(FailPoint fail) {
+    step_with_cell_worker(nullptr,fail);
+}
+void PersistentWorld::step_as_cell_worker(
+        const NativeCellWorkerTick& token,FailPoint fail) {
+    step_with_cell_worker(&token,fail);
+}
+void PersistentWorld::step_with_cell_worker(
+        const NativeCellWorkerTick* token,FailPoint fail) {
+    // SPACE-05: no active-worker authorization can make an ordinary host
+    // tick into a distributed writer. One original SQLite writer remains.
+    if(token){
+        if(token->canonical_cell_scope.empty() || token->trusted_worker.empty() ||
+           token->canonical_cell_scope.size()>256 ||
+           token->trusted_worker.size()>128 || !token->worker_epoch ||
+           !token->region_generation || !token->checkpoint_revision)
+            throw std::runtime_error("invalid native cell worker admission");
+        bool occupied=false;
+        for(const auto& [id,e]:world_.entities()){
+            if(e.type!=EntityType::Ship)continue;
+            const auto cell=spatial::ship_cell(world_,id);
+            if(!cell)
+                throw std::runtime_error("missing physical native ship residency");
+            if(spatial::scope(*cell)==token->canonical_cell_scope)
+                occupied=true;
+        }
+        if(!occupied)
+            throw std::runtime_error("worker dispatch has no occupied physical cell");
+        // The original Simulation::step still advances ALL entities once.
+        // This token elects its serialized writer, not per-cell physics.
+    }
     auto next = world_;
     const auto before = next.events().size();
     const auto before_activity = next.activity_events().size();
@@ -14225,7 +14452,14 @@ void PersistentWorld::step(FailPoint fail) {
     const std::vector<Event> new_events(next.events().begin() + static_cast<std::ptrdiff_t>(before), next.events().end());
     const std::vector<ActivityEvent> new_activity(
         next.activity_events().begin() + static_cast<std::ptrdiff_t>(before_activity), next.activity_events().end());
-    store_->commit(next, generation_, resource_origin_, credit_origin_, nullptr, new_events, due, new_activity, fail);
+    // Validation occurs under the original Store::commit BEGIN IMMEDIATE
+    // *after* the exact new world/spatial index is inserted and before COMMIT.
+    // Worker takeover, region handoff or stale world changes are serialized
+    // with this same lock. A refusal rolls back the entire simulated tick.
+    // Store::commit is the final admission authority for both worker
+    // ticks and EVERY other world mutation, under the original SQLite lock.
+    store_->commit(next, generation_, resource_origin_, credit_origin_, nullptr,
+                   new_events, due, new_activity, fail,nullptr,nullptr,{},token);
     world_.swap(next);
     ++generation_;
 }

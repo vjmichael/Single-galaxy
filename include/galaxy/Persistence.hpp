@@ -441,6 +441,19 @@ struct VerifiedSplitRescueIntent {
     std::vector<EntityId> receiving_ferries;
 };
 
+// SPACE-05: host-held admission token for one original physical world tick.
+// Never accept a worker identity/epoch from an unauthenticated player packet.
+struct NativeCellWorkerTick {
+    std::string canonical_cell_scope;
+    std::string trusted_worker;
+    std::uint64_t worker_epoch=0;
+    std::uint64_t region_generation=0;
+    std::uint64_t checkpoint_revision=0;
+    // SPACE-05B: nonempty when a durable global writer dispatch is selected.
+    // Legacy one-cell leased worlds may continue without a dispatch claim.
+    std::string dispatch_id;
+};
+
 class PersistentWorld {
     friend class industry::RegionalProductionNetwork;
     friend class shipping::ThirdPartyRegistry;
@@ -471,6 +484,12 @@ public:
     std::uint64_t colony_notification_opportunity_count() const;
     std::uint64_t colony_notification_acknowledgement_count() const;
     bool submit(const Command& command, FailPoint fail = FailPoint::None);
+    // SPACE-05: host-only leased submission. Runs all original player,
+    // NPC, shipping and command authorization, then revalidates the worker
+    // inside the same SQLite writer transaction as this command receipt.
+    bool submit_as_cell_worker(const Command& command,
+                               const NativeCellWorkerTick& token,
+                               FailPoint fail = FailPoint::None);
     // SHIP-STATUS-02: explicit trusted fixture to verify atomic world effects.
     // No real hacker hardware exists yet: NEVER expose as a player/network API.
     // Final attack admission will require original fitted emitter and legal
@@ -791,7 +810,20 @@ public:
                                      std::uint64_t command_id, FailPoint fail = FailPoint::None);
     bool submit_testing_crew_loss(EntityId colony_ship, std::int64_t count,
                                   std::uint64_t command_id, FailPoint fail = FailPoint::None);
+    // SPACE-04B: atomically migrate the SAME original world to v119 before
+    // its first genuine 3-axis physical tick; no parallel ship ledger.
+    void enable_native_3d_physics(FailPoint fail = FailPoint::None);
+    // SPACE-04C: imports all immutable original system origins and commits
+    // the v120 native high-order physical state in the same original journal.
+    void enable_native_galactic_physics(const std::string& native_sqlite,
+        FailPoint fail=FailPoint::None);
+    // SPACE-04D: durable v121 exact 3D native probe and discovery upgrade.
+    void enable_native_3d_probes(FailPoint fail=FailPoint::None);
     void step(FailPoint fail = FailPoint::None);
+    // The only leased-worker route to the original tick writer. Rejects stale
+    // authority *inside* the same SQLite BEGIN IMMEDIATE as world commit.
+    void step_as_cell_worker(const NativeCellWorkerTick& token,
+                             FailPoint fail = FailPoint::None);
     // TRUSTED HOST only; executes one due terminal ferry incident and commits
     // world snapshot, ART02 deaths, ECON03 population and receipts atomically.
     // For other ticks call step(); non-enrolled regions are refused.
@@ -1218,6 +1250,12 @@ public:
 
 
 private:
+    bool submit_with_cell_worker(const Command& command,
+                                 const NativeCellWorkerTick* token,
+                                 FailPoint fail);
+    void step_with_cell_worker(const NativeCellWorkerTick* token,
+                               FailPoint fail);
+
     // Only the trusted regional production bridge may attach a physical
     // inventory escrow effect to this canonical world command.
     void settle_constructed_stock(const Command&,

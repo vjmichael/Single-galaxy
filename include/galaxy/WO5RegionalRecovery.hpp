@@ -6,6 +6,7 @@
 // Region mode may change after observation: the actual host effect MUST
 // independently recheck its own original SQLite transaction admission.
 #include "galaxy/RegionalModeAuthority.hpp"
+#include "galaxy/SeamlessSpatialOwnership.hpp"
 #include "galaxy/Persistence.hpp"
 #include "galaxy/RegionalShipmentReconciliation.hpp"
 #include "galaxy/WO5FreightEvidence.hpp"
@@ -28,6 +29,10 @@ struct NativeRegionFreightAudit {
     std::uint64_t original_world_generation=0,world_tick=0,state_hash=0;
     std::vector<OriginalFreightEvidence> original_shipments;
     std::uint64_t awaiting=0,loaded=0,delivered=0;
+    // Spatial scopes count only native legs physically involving their
+    // cell; unrelated global traffic remains visible separately.
+    std::uint64_t unrelated_unresolved_original_freight=0;
+    bool spatial_region_verified=false;
     bool may_consider_detailed_only_work=false;
     bool has_unresolved_original_freight=false;
 };
@@ -109,6 +114,23 @@ observe_native_regional_recovery(
     }
     sqlite3_close(db);
     if(!same_database)return std::nullopt;
+    const auto spatial_cell=spatial::parse_scope(checkpoint.scope());
+    if(checkpoint.scope().compare(0,8,"spatial/")==0 &&
+       !spatial_cell)return std::nullopt;
+    if(spatial_cell){
+        sqlite3* linked=nullptr;
+        if(sqlite3_open_v2(world_sqlite_path.c_str(),&linked,
+            SQLITE_OPEN_READONLY|SQLITE_OPEN_FULLMUTEX,nullptr)!=SQLITE_OK){
+            if(linked)sqlite3_close(linked);
+            return std::nullopt;
+        }
+        bool verified=false;
+        try{verified=spatial::verify_native_index(
+            linked,physical.world(),physical.generation());}
+        catch(const std::exception&){verified=false;}
+        sqlite3_close(linked);
+        if(!verified)return std::nullopt;
+    }
     // Runs original v59 immutable receipt-prefix verification. This does
     // not imply third-party shipping consent; it checks historical facts.
     try{shipping::verify_regional_shipment_boundaries(world_sqlite_path);}
@@ -118,6 +140,7 @@ observe_native_regional_recovery(
     audit.owner_generation=before.generation;
     audit.checkpoint_revision=before.checkpoint_revision;
     audit.mode=before.owner;audit.phase=before.phase;
+    audit.spatial_region_verified=spatial_cell.has_value();
     audit.original_world_generation=physical.generation();
     audit.world_tick=physical.world().tick();
     audit.state_hash=physical.world().state_hash();
@@ -128,13 +151,25 @@ observe_native_regional_recovery(
             physical.world(),owner,id);
         if(!evidence)return std::nullopt;
         audit.original_shipments.push_back(*evidence);
-        if(evidence->original_stage==IntercolonyFreightStage::AwaitingPickup)
-            ++audit.awaiting;
-        else if(evidence->original_stage==IntercolonyFreightStage::Loaded)
-            ++audit.loaded;
-        else if(evidence->original_stage==IntercolonyFreightStage::Delivered &&
-                evidence->actual_arrival_proved)++audit.delivered;
-        else return std::nullopt;
+        bool region_involved=!spatial_cell;
+        if(spatial_cell){
+            for(const auto hull:{f.source_ship,f.carrier_ship,
+                                 f.destination_ship}){
+                const auto member=spatial::ship_cell(physical.world(),hull);
+                if(!member)return std::nullopt;
+                if(*member==*spatial_cell)region_involved=true;
+            }
+        }
+        if(evidence->original_stage==IntercolonyFreightStage::AwaitingPickup) {
+            if(region_involved)++audit.awaiting;
+            else ++audit.unrelated_unresolved_original_freight;
+        }else if(evidence->original_stage==IntercolonyFreightStage::Loaded){
+            if(region_involved)++audit.loaded;
+            else ++audit.unrelated_unresolved_original_freight;
+        }else if(evidence->original_stage==IntercolonyFreightStage::Delivered &&
+                evidence->actual_arrival_proved){
+            if(region_involved)++audit.delivered;
+        }else return std::nullopt;
     }
     audit.has_unresolved_original_freight=audit.awaiting||audit.loaded;
     // The call is only an audit; independent host write authorization is
