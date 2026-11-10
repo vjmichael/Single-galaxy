@@ -4070,6 +4070,73 @@ public:
                     throw std::runtime_error("SQLite: duplicate/unknown command in operation journal");
             }
         }
+        // Native NPC flight controls are submitted from within a committed
+        // original simulation STEP. Unlike external submits, they have no
+        // kind=1 operation_log row. Bind each one to its immutable SQLite
+        // origin, exact step hash/tick, original flight identity and acceptance
+        // receipt before using it as historical action provenance.
+        {
+            Statement exists(db_,"SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='sg_native_flight_controls'");
+            if(exists.row()){
+                Statement native(db_,"SELECT id,generation,flight_id,"
+                    "original_command,snapshot_hash,digest "
+                    "FROM sg_native_flight_controls ORDER BY generation,id");
+                constexpr std::uint64_t tag=std::uint64_t{1}<<61;
+                while(native.row()){
+                    const auto id=parse_u64(sqlite3_column_text(native.get(),0));
+                    const auto gen=sqlite3_column_int64(native.get(),1);
+                    const auto flight_id=parse_u64(sqlite3_column_text(native.get(),2));
+                    const auto record=sqlite_str(native.get(),3);
+                    const auto hash=sqlite_str(native.get(),4);
+                    const auto command=decode_command(record);
+                    const auto order=restored.npc_flight_orders().find(flight_id);
+                    if(gen<=1 || static_cast<std::uint64_t>(gen)>generation ||
+                       !(id&tag) || id!=command.id ||
+                       ((id&~tag)>>9)!=flight_id || !(id&511ULL) ||
+                       command.sequence!=id || command.amount ||
+                       command.transport_id || !command.passenger_ids.empty() ||
+                       command.secondary_receiver || command.secondary_transport ||
+                       (command.action!=Action::Thrust &&
+                        command.action!=Action::RequestDock &&
+                        command.action!=Action::RequestUndock) ||
+                       order==restored.npc_flight_orders().end() ||
+                       order->second.local_commands<(id&511ULL) ||
+                       order->second.owner!=command.issuer ||
+                       order->second.ship!=command.actor ||
+                       (order->second.mode!=NpcFlightMode::LocalDock &&
+                        order->second.mode!=NpcFlightMode::LocalRendezvous) ||
+                       !restored.has_command_id(id))
+                        throw std::runtime_error(
+                            "SQLite: native flight command lacks original authority");
+                    Statement source(db_,"SELECT kind,state_hash,tick FROM operation_log "
+                        "WHERE generation=?");
+                    source.i64(1,gen);
+                    if(!source.row() || sqlite3_column_int(source.get(),0)!=2 ||
+                       sqlite_str(source.get(),1)!=hash ||
+                       command.execute_tick!=
+                           static_cast<std::uint64_t>(
+                               sqlite3_column_int64(source.get(),2))+1 ||
+                       source.row())
+                        throw std::runtime_error(
+                            "SQLite: native command has no original STEP/hash");
+                    Statement accepted(db_,"SELECT accepted_generation FROM receipts WHERE id=?");
+                    accepted.text(1,std::to_string(id));
+                    if(!accepted.row() ||
+                       sqlite3_column_int64(accepted.get(),0)!=gen ||
+                       accepted.row())
+                        throw std::runtime_error(
+                            "SQLite: native flight acceptance receipt missing");
+                    const auto body=std::to_string(id)+"|"+std::to_string(gen)+"|"+
+                        std::to_string(flight_id)+"|"+record+"|"+hash;
+                    if(sqlite_str(native.get(),5)!=
+                           social_digest("native-flight-01",body) ||
+                       !journal_commands.emplace(id,command).second)
+                        throw std::runtime_error(
+                            "SQLite: forged or duplicate native flight command");
+                }
+            }
+        }
         // WO2-I: original SQLite accepted-command history proves the exact
         // shop, owner, worker and bounded window of every surviving shift.
         // The shift may expire without an extra command, but its source
@@ -7268,6 +7335,34 @@ public:
                 receipt.text(1,std::to_string(c.id));
                 receipt.i64(2,static_cast<std::int64_t>(next));
                 receipt.execute();
+                // A native controller's accepted command is not a kind=1
+                // external submit. Journal its original command and the
+                // step's independent state hash atomically, or the later
+                // historical-fact verifier cannot authenticate its source.
+                run(db_,"CREATE TABLE IF NOT EXISTS sg_native_flight_controls("
+                    "id TEXT PRIMARY KEY,generation INTEGER NOT NULL,"
+                    "flight_id TEXT NOT NULL,original_command TEXT NOT NULL,"
+                    "snapshot_hash TEXT NOT NULL,digest TEXT NOT NULL)");
+                run(db_,"CREATE TRIGGER IF NOT EXISTS sg_native_flight_immutable_u "
+                    "BEFORE UPDATE ON sg_native_flight_controls "
+                    "BEGIN SELECT RAISE(ABORT,'immutable native flight command'); END");
+                run(db_,"CREATE TRIGGER IF NOT EXISTS sg_native_flight_immutable_d "
+                    "BEFORE DELETE ON sg_native_flight_controls "
+                    "BEGIN SELECT RAISE(ABORT,'immutable native flight command'); END");
+                const auto command=command_record(c);
+                const auto hash=std::to_string(state.state_hash());
+                const auto body=std::to_string(c.id)+"|"+std::to_string(next)+"|"+
+                    std::to_string(flight_id)+"|"+command+"|"+hash;
+                Statement native(db_,"INSERT INTO sg_native_flight_controls "
+                    "(id,generation,flight_id,original_command,snapshot_hash,digest) "
+                    "VALUES(?,?,?,?,?,?)");
+                native.text(1,std::to_string(c.id));
+                native.i64(2,static_cast<sqlite3_int64>(next));
+                native.text(3,std::to_string(flight_id));
+                native.text(4,command);
+                native.text(5,hash);
+                native.text(6,social_digest("native-flight-01",body));
+                native.execute();
             }
             if(npc_mining_assignment){
                 const auto& e=*npc_mining_assignment;
