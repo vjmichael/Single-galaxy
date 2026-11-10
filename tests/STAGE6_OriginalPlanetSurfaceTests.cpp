@@ -26,6 +26,9 @@ int main(){
         Simulation genesis(777,1);
         ship=genesis.add_colony_ship(7,{0,0},50,5);
         genesis.provision_colony_genesis(ship,1000,1000,1000,1000,1000);
+        // Original named worker roster must exist BEFORE the physical
+        // celestial catalogue upgrades the snapshot to modern NPC format.
+        genesis.enable_individual_workforce();
         genesis.provision_starter_exploration_scanner(ship);
         PersistentWorld native(db,std::move(genesis));
         native.ensure_physical_celestial_systems();
