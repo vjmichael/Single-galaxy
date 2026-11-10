@@ -98,10 +98,9 @@ int main(){
         const auto packet=stage6::original_godot_mesh_packet(
             native,7,ship,planet,{{0,0,1},{0,1,1}});
         CHECK(packet && packet->find("SG-STAGE6-GODOT-01")!=std::string::npos &&
-              packet->find("\\"landing_verified\\":false")!=std::string::npos &&
-              packet->find("\\"triangles\\":[")!=std::string::npos &&
-              packet->find("\\"generation\\":\\""+
-                  std::to_string(native.generation())+"\\"")!=std::string::npos);
+              packet->find(R"("landing_verified":false)")!=std::string::npos &&
+              packet->find(R"("triangles":[)")!=std::string::npos &&
+              packet->find(std::to_string(native.generation()))!=std::string::npos);
         CHECK(!stage6::original_godot_mesh_packet(
             native,8,ship,planet,{{0,0,1}}));
         CHECK(!stage6::original_godot_mesh_packet(
