@@ -15,8 +15,12 @@ const WALK_KEYS := {
 const PILOT_KEYS := {
 	"ship_yaw_left": KEY_A,
 	"ship_yaw_right": KEY_D,
-	"ship_strafe_port": KEY_W,
-	"ship_strafe_starboard": KEY_S,
+	# W/S are true vertical acceleration in the original v119+ 3D world.
+	# Z/C retain optional lateral strafe without competing with altitude.
+	"ship_ascend": KEY_W,
+	"ship_descend": KEY_S,
+	"ship_strafe_port": KEY_Z,
+	"ship_strafe_starboard": KEY_C,
 	"ship_thrust_forward": KEY_UP,
 	"ship_thrust_reverse": KEY_DOWN,
 	"ship_counterthrust": KEY_B,
