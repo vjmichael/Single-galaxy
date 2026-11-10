@@ -39,6 +39,8 @@ static func from_verified_frames(ship: Dictionary, rock: Dictionary) -> Dictiona
 	if target_id <= 0 or distance_mm < MIN_VECTOR_MM or rock_radius_mm <= 0.0:
 		return {} # refuse impossible target, never synthesize a zero-distance bearing
 	var heading_deg := float(ship.get("heading", 0))
+	# With Godot native +Y mapped to visual -Z, positive relative bearing
+	# points LEFT of the displayed third-person ship, never RIGHT.
 	var bearing_deg := wrapf(rad_to_deg(atan2(target_delta.y, target_delta.x)) -
 		heading_deg, -180.0, 180.0)
 	var radial_rate_mm_tick := Vector3(float(ship.get("vx", 0)),
@@ -63,12 +65,12 @@ static func display(readout: Dictionary) -> String:
 		return "FLIGHT SENSOR: awaiting matching original SHIP + ROCK receipts"
 	var speed := float(readout["speed_mm_tick"])
 	if not bool(readout["found"]):
-		return "NATIVE FLIGHT | yaw %d° | speed %.0f mm/tick | no verified rock within 30m" % [
+		return "NATIVE FLIGHT | yaw %d° | SPEED %.0f mm/tick | no verified rock within 30m" % [
 			int(readout["heading"]), speed]
 	var relative_bearing := float(readout["bearing_deg"])
 	var turn := "AHEAD"
 	if absf(relative_bearing) >= 5.0:
-		turn = "RIGHT" if relative_bearing > 0.0 else "LEFT"
+		turn = "LEFT" if relative_bearing > 0.0 else "RIGHT"
 	var relative_height := float(readout["height_m"])
 	var vertical := "LEVEL"
 	if absf(relative_height) >= 0.5:
