@@ -2,6 +2,6 @@
   "schema": "SG-WORKORDER-GATE-01",
   "task_group": "WO3",
   "pr_number": 89,
-  "source_sha": "656c45d507008a7b512320d72253a7f19968700a",
-  "note": "ONE repaired exact-head WO3 original colony Windows/Linux gate after actual #42849076660 both real compilers passed CMake configure but GCC and MSVC C++ both rejected Simulation.cpp:12715 mixed signed and unsigned const auto snapshot declarations (GCC inconsistent auto deduction; MSVC C3538). Fix commit 656c45d separates u64 and i64 fields preserving original offsets, values and integrity rules; no bypass. Run genuine WO1/WO2/WO3 native compile, CTest and SQLite copied recovery, and repair only actual further failures. No per-commit fanout, no deployed Radeon gameplay or mining claim."
+  "source_sha": "b7f8efa3f7e0afc2dc7c8dc3b798f33db3d90a04",
+  "note": "ONE original WO3 exact-head native Windows/Linux gate after #42849760969: MSVC + GCC kernel compilation now succeeded; both OS failed compiling TESTS/WO3PlanetaryUtilityTests.cpp:510+ missing declaration imports for actual NpcAppearanceStore and regional_events::CheckpointStore/Scheduler/RegionalModeAuthority/cold_colony::State. Feature b7f8efa3 adds actual NpcAppearanceGenome.hpp and RegionalModeAuthority.hpp includes to the existing unchanged strong original ART02 household/region/SQLite tests. Require independent MSVC/GCC WO3 compiled test, executable physical shuttle, utility, residency, failed atomic SQLite copy and no deleted parent proof. Retain upstream WO2/WO1 gates; no weakening, no automatic CI fanout or physical GPU acceptance."
 }
