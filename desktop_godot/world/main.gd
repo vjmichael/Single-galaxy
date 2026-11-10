@@ -285,7 +285,7 @@ func _build_objects() -> void:
 	_geometry_parent.add_child(hatch)
 	var beacon := Label3D.new()
 	beacon.name = "BoardingHatch_WorldSign_VisualOnly"
-	beacon.text = "SHIP BOARDING POINT\nE WHEN PROMPTED"
+	beacon.text = "BOARDING HATCH\nE WHEN PROMPTED"
 	beacon.position = Vector3(0.0, 2.15, 0.0)
 	beacon.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	beacon.pixel_size = 0.006
