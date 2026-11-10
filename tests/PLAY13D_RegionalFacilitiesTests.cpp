@@ -1631,9 +1631,13 @@ static void scenario(const fs::path& db, bool farming,
                 CHECK(w.world().total_ore()==origin);
             }
             durable=w.world().canonical_state();
-            CHECK(durable.rfind(autonomous?"galaxy-kernel-v95|":
+            const auto expected_snapshot_header=autonomous?"galaxy-kernel-v95|":
                 delegated?"galaxy-kernel-v94|":
-                (manufactured?"galaxy-kernel-v92|":"galaxy-kernel-v89|"),0)==0);
+                (manufactured?"galaxy-kernel-v92|":"galaxy-kernel-v89|");
+            if(durable.rfind(expected_snapshot_header,0)!=0)
+                throw std::runtime_error("unexpected physical freight snapshot version: expected "+
+                    std::string(expected_snapshot_header)+" actual "+
+                    durable.substr(0,durable.find('|')));
             CHECK(Simulation::from_snapshot(durable).canonical_state()==durable);
         }
     }
