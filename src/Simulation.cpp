@@ -2348,6 +2348,11 @@ Event Simulation::execute(const Command& c) {
                c.action!=Action::SetHardpointPower &&
                c.action!=Action::SetCyberIsolation &&
                c.action!=Action::HackConfuse &&
+               // HostRegisterDependent records a born child with the
+               // guardian already physically aboard this exact ship. It
+               // performs no remote ship control or surface interaction.
+               // Its strict server/guardian/custody gates run below.
+               c.action!=Action::HostRegisterDependent &&
                c.action!=Action::Mine &&
                c.action!=Action::StartMining &&
                c.action!=Action::StopMining){
