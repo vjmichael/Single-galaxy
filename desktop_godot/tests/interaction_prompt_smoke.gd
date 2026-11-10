@@ -130,7 +130,7 @@ func _run() -> void:
 			PILOT_CONTROLLER.native_mouse_yaw_direction(0.5) != 0:
 		_fail("mouse steer must map to bounded native RIGHT/LEFT intent, not client camera yaw")
 		return
-	var pilot: CharacterBody3D = stage.find_child("LocalGrayboxPerson_NOT_NATIVE_PLAYER", true, false)
+	var pilot = stage.find_child("LocalGrayboxPerson_NOT_NATIVE_PLAYER", true, false)
 	if pilot == null:
 		_fail("no original native-action-only cockpit controller")
 		return
