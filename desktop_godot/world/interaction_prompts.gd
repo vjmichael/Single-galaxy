@@ -67,9 +67,9 @@ static func hint(station_active: bool, person: Dictionary, ship_active: bool,
 		if not ship_seated:
 			return "Automatic pilot seating — awaiting original C++ SEAT receipt"
 		if dock_state == 1:
-			return "THIRD-PERSON PILOT | Press U to Undock  •  Mouse / A,D turn"
+			return "THIRD-PERSON PILOT | U undock  •  A/D or mouse turn  •  W/S vertical"
 		if dock_state == 0:
 			# No cabin walking, free-look toggle, client miner or fake ore.
-			return "THIRD-PERSON FLIGHT | Mouse/A,D turn • ↑/↓ thrust • B brake • G dock\nMINING LOCKED — original C++ equipment not fitted yet"
+			return "THIRD-PERSON FLIGHT | A/D turn • W/S ascend/descend • ↑/↓ forward/reverse • B brake • G dock\nMINING LOCKED — original C++ equipment not fitted yet"
 		return "Waiting for verified original ship docking status"
 	return "Connecting to your original saved station automatically..."
