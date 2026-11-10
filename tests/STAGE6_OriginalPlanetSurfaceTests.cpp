@@ -1,4 +1,4 @@
-#include "galaxy/Stage6PlanetTiles.hpp"
+#include "galaxy/Stage6GodotPacket.hpp"
 #include <cmath>
 #include <chrono>
 #include <filesystem>
@@ -93,6 +93,22 @@ int main(){
                   std::abs(a.y-z.y)<1e-12 &&
                   std::abs(a.z-z.z)<1e-12);
         }
+        // The Godot transport is derived exclusively from authenticated
+        // original native tiles, never a second resource or landing world.
+        const auto packet=stage6::original_godot_mesh_packet(
+            native,7,ship,planet,{{0,0,1},{0,1,1}});
+        CHECK(packet && packet->find("SG-STAGE6-GODOT-01")!=std::string::npos &&
+              packet->find("\\"landing_verified\\":false")!=std::string::npos &&
+              packet->find("\\"triangles\\":[")!=std::string::npos &&
+              packet->find("\\"generation\\":\\""+
+                  std::to_string(native.generation())+"\\"")!=std::string::npos);
+        CHECK(!stage6::original_godot_mesh_packet(
+            native,8,ship,planet,{{0,0,1}}));
+        CHECK(!stage6::original_godot_mesh_packet(
+            native,7,ship,planet,{{0,0,1},{0,0,1}}));
+        CHECK(!stage6::original_godot_mesh_packet(
+            native,7,ship,planet,{{0,0,1}},
+            PlanetarySiteKey{planet,17,22,1})); // no invented landing
         CHECK(!stage6::stream_original_render_tiles(
             native,8,ship,planet,{{0,0,1}}));
         CHECK(!stage6::stream_original_render_tiles(
