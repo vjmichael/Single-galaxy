@@ -147,7 +147,7 @@ func _retry_original_station() -> void:
 		_on_native_player_status("Station already connected. Walk to the cyan boarding hatch and press E.")
 		return
 	if native_player_session.is_active():
-		_on_native_player_status("Your original ship is already connected. Press E at the cockpit seat.")
+		_on_native_player_status("Your ship is connected in pilot-only third-person mode. U undocks; E disembarks only after returning to the dock.")
 		return
 	_station_connection_failure = ""
 	_station_connect_attempted = true
