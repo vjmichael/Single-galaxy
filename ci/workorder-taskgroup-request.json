@@ -3,5 +3,5 @@
   "task_group": "WO5",
   "pr_number": 92,
   "source_sha": "bc3c92a8f319e23b3d5987255ccdd6a9d1141cab",
-  "note": "Task Group 1 consolidated exact-head Windows/Linux WO3-WO5 acceptance: 33 native CTests including original colony facility/housing/utility, mandatory authentic v86 historical SQLite+producer executable+SHA256 import, B70, material allocation, region authority, physical freight, NPC transport, manufactured consignments, independent SQLite recovery. DO NOT skip or fabricate historical provenance; expect explicit failure until original archived source is supplied. Preserve all tested outcomes and publish native logs."
+  "note": "REPAIRED WORKFLOW HEAD 207ef83: one exact-head WO3-WO5 native Windows/Linux gate, 33 selected CTests including authentic historical v86 migration. Prior workflow update malformed by suffix interpolation and produced runless failures 42917860115/42917907298; YAML reconstructed from last known-good commit. Do not bypass immutable v86 source provenance; retain native CTest JUnit and copy SQLite receipts. Verified WO5 current PR head bc3c92a."
 }
