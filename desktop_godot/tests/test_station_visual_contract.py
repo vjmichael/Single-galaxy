@@ -96,8 +96,14 @@ checks = {
     ),
     "visual-regions-never-authorize-boarding": (
         "VISUAL-ONLY" in colony_dock
-        and "CollisionShape3D" in colony_dock
-        and "create NO collision or boarding callback" in colony_dock
+        and "var node := MeshInstance3D.new()" in colony_dock
+        and "var sign := Label3D.new()" in colony_dock
+        and not any(forbidden in colony_dock for forbidden in (
+            "CollisionShape3D.new(", "CollisionObject3D.new(", "StaticBody3D.new(",
+            "Area3D.new(", "CharacterBody3D.new(", "RigidBody3D.new(",
+            ".connect(", "interact_hangar(", "station_player_action(",
+            "submit_walk(", "submit_flight("))
+        )
         and 'find_children("*", "CollisionObject3D", true, false)' in colony_smoke
         and "eligible_ship" in colony_smoke
         and 'return "Press %s to Board' in action_hints
