@@ -81,7 +81,7 @@ checks = {
         and 'Pilot-only third-person camera is fixed while aboard' in main
         and 'THIRD-PERSON FLIGHT' in action_hints
         and '"docked ship falsely showed an explorable cabin or a first-person camera"' in action_smoke
-        and '"real docking exposed a walkable cabin or released the pilot seat"' in auto_start_smoke
+        and '"real redocking exposed a walkable cabin or released the pilot seat"' in auto_start_smoke
     ),
     "unexpected-host-exit-writes-bounded-diagnostic-not-world": (
         "func _unexpected_native_exit()" in station_client
