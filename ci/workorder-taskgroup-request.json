@@ -3,5 +3,5 @@
   "task_group": "STAGE6",
   "pr_number": 127,
   "source_sha": "7c34b15043891dba98c488b00860918728972c8e",
-  "note": "One authoritative final Stage6 exact-head Windows/Linux acceptance, 23 selected native tests: WO3 original housing and family utility admission/return/restart, mandatory independent historical v86 SQLite+binary SHA256 import gate (FAIL if no authentic source; issue128), passing WO4 and WO5 genuine freight; build Godot native exporter and check owner-scoped terrain packet, collision mesh topology. No second world, no relaxed genesis/journal/mass authority; no claim of physical Radeon or Godot engine playback."
+  "note": "CORRECTED 23-test exact-head Windows/Linux gate with MANDATORY archived v86 historical SQLite binary+source SHA256 verification. Prior source run 42896639592 accidentally excluded this case due Stage6 CTest regex override; do not count it as historical acceptance. Keep failed historical gate visible until immutable archive evidence supplied. Recheck original WO3 housing/utility+restart, WO4/WO5 real freight, native Godot exporter."
 }
