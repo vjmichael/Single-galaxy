@@ -2,6 +2,6 @@
   "schema": "SG-WORKORDER-GATE-01",
   "task_group": "STAGE6",
   "pr_number": 127,
-  "source_sha": "c7ec2fc0655e668537882902ce970373ee133c2d",
-  "note": "One exact-head Windows/Linux 22-test acceptance after legal-residence v85-only fixture migration, v58 SQLite cleanup after object destruction and WO3 module custody diagnostics. Preserve original SQLite genesis/journal checks. Inspect genuine failures: WO3 v86 historic source issue #128, utility mass, third party signed Thrust, flight delivery receipt, and native windows transport. No parallel duplicate jobs."
+  "source_sha": "9415f80f32b35171e7f982055853a00a9d1199e0",
+  "note": "One exact-head native Windows/Linux 22-test matrix on new Stage6 integration head. Verify original native NPC flight commands get one acceptance receipt in SAME SQLite transaction and original delivery receipts on tick590, no forged grants; exact preserved shuttle ascent ID across SQLite reopen; physical dependent registration diagnostic; Windows v56 third-party close-before-delete. Keep WO3 historical provenance issue #128 open; no weakening genesis, resource, receipts, permissions. No auto CI fanout."
 }
