@@ -121,8 +121,11 @@ func _physics_process(delta: float) -> void:
 		# Native C++ still authorizes the actual boarding/seat transition.
 		if get_window().has_focus() and Input.is_action_just_pressed("fps_inspect"):
 			native_seat_intent.emit()
-		if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and get_window().has_focus():
-			if native_seated:
+		# Keyboard pilot inputs need an active foreground window, not cursor
+		# capture. Esc or an OS/UI cursor release must never immobilize a
+		# verified native pilot. Relative mouse yaw still requires capture.
+		if get_window().has_focus():
+			if native_seated and native_in_ship:
 				# Only intentional physical control requests. C++ retains ship motion,
 				# yaw, thrust admission and persistent world authority.
 				var pilot_actions := PackedStringArray()
@@ -141,7 +144,8 @@ func _physics_process(delta: float) -> void:
 					pilot_actions.append("RIGHT")
 				# Mouse steering is an alternative to A/D, not an extra command
 				# source that fights an explicitly held keyboard steering axis.
-				if not Input.is_action_pressed("ship_yaw_left") and not Input.is_action_pressed("ship_yaw_right"):
+				if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and \
+						not Input.is_action_pressed("ship_yaw_left") and not Input.is_action_pressed("ship_yaw_right"):
 					if Time.get_ticks_msec() <= _mouse_yaw_valid_until_ms:
 						if _mouse_yaw_direction < 0:
 							pilot_actions.append("LEFT")
@@ -159,7 +163,8 @@ func _physics_process(delta: float) -> void:
 					pilot_actions.append("REV")
 				if not pilot_actions.is_empty():
 					native_ship_intents.emit(pilot_actions)
-			elif not native_in_ship:
+			elif not native_in_ship and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+				# Walking still requires captured mouse and original PERSON custody.
 				var axis := Input.get_vector("fps_left", "fps_right", "fps_forward", "fps_backward")
 				var direction := (global_transform.basis * Vector3(axis.x, 0.0, axis.y)).normalized()
 				native_motion_intent.emit(direction)
