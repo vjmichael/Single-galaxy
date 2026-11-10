@@ -218,6 +218,7 @@ jobs:
             fp3d-env01-linux.xml
             build/fp3d-env01/Testing/Temporary/LastTest.log
             build/fp3d-env01/godot-logs/*.log
+            build/fp3d-env01/godot-logs/*.stderr
           if-no-files-found: warn
   windows-native:
     needs: validate
@@ -297,6 +298,11 @@ jobs:
             $stdout=Get-Content -LiteralPath $Log -Raw -ErrorAction SilentlyContinue
             $stderr=Get-Content -LiteralPath $errLog -Raw -ErrorAction SilentlyContinue
             if($p.ExitCode -ne 0 -or ($stdout+$stderr) -match 'SCRIPT ERROR:|ERROR: Failed to load script|Parse Error:'){
+              # Exact native Windows errors used to be hidden because only
+              # stdout (*.log), not *.log.stderr, was uploaded. Report both
+              # (bounded to CI-only fixture output; never creator private data).
+              if($stdout){Write-Host ("Godot stdout tail for "+$Log+": "+$stdout.Substring([Math]::Max(0,$stdout.Length-4000)))}
+              if($stderr){Write-Host ("Godot stderr tail for "+$Log+": "+$stderr.Substring([Math]::Max(0,$stderr.Length-4000)))}
               throw "Real Godot native or GDScript parser failure at $Log (exit $($p.ExitCode))"
             }
           }
@@ -449,6 +455,7 @@ jobs:
             fp3d-env01-windows.xml
             build/fp3d-env01/Testing/Temporary/LastTest.log
             build/fp3d-env01/godot-logs/*.log
+            build/fp3d-env01/godot-logs/*.stderr
             build/fp3d-env01/godot-logs/*.json
             build/fp3d-env01/installed-image/desktop_godot/playtest-logs/*.log
             build/fp3d-env01/installed-image/desktop_godot/playtest-logs/result.json
