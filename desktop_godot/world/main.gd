@@ -68,6 +68,12 @@ var _colony_return_pending := false
 var _pilot_auto_seat_attempted := false
 var native_markers: Node3D
 var _fps_accumulator := 0.0
+# Bounded, allocation-free per-frame interval capture. This is MAIN LOOP
+# pacing, not GPU-only time; compare hardware only on the physical R9700.
+const FRAME_PACING_CAPACITY := 600
+var _frame_delta_ms := PackedFloat32Array()
+var _frame_next := 0
+var _frame_count := 0
 # The Godot sidecar is diagnostics, NEVER an alternative SQLite world.
 # Buffer native-observed receipts; synchronous open/write/close for every
 # SHIP + ROCK ack caused unnecessary per-command desktop I/O jitter.
@@ -82,6 +88,7 @@ var _station_connect_attempted := false
 var _station_connection_failure := ""
 
 func _ready() -> void:
+	_frame_delta_ms.resize(FRAME_PACING_CAPACITY)
 	material = StandardMaterial3D.new()
 	material.albedo_color = STATION_GRAY
 	material.roughness = 1.0
@@ -876,6 +883,37 @@ func _hide_refinery_terminal() -> void:
 	if is_instance_valid(player) and get_window().has_focus():
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
+func _record_frame_timing(delta: float) -> void:
+	# Never allocate or sort in the hot render loop, or create an artificial
+	# stutter while measuring the actual station/cockpit presentation.
+	if delta <= 0.0 or delta > 5.0 or _frame_delta_ms.size() != FRAME_PACING_CAPACITY:
+		return
+	_frame_delta_ms[_frame_next] = minf(delta * 1000.0, 5000.0)
+	_frame_next = (_frame_next + 1) % FRAME_PACING_CAPACITY
+	_frame_count = mini(_frame_count + 1, FRAME_PACING_CAPACITY)
+
+func _frame_timing_summary() -> Dictionary:
+	if _frame_count <= 0:
+		return {"metric":"Godot main-loop frame interval (NOT GPU render time)", "samples":0}
+	var ordered := PackedFloat32Array()
+	var sum_ms := 0.0
+	var over_33_ms := 0
+	for i in range(_frame_count):
+		var ms: float = _frame_delta_ms[i]
+		ordered.append(ms)
+		sum_ms += ms
+		if ms > 33.333:
+			over_33_ms += 1
+	ordered.sort()
+	var mid: int = mini(ordered.size() - 1, int(ceil(ordered.size() * 0.50)) - 1)
+	var p95: int = mini(ordered.size() - 1, int(ceil(ordered.size() * 0.95)) - 1)
+	var p99: int = mini(ordered.size() - 1, int(ceil(ordered.size() * 0.99)) - 1)
+	return {"metric":"Godot main-loop frame interval (NOT GPU render time)",
+		"samples":_frame_count, "mean_ms":sum_ms / float(_frame_count),
+		"p50_ms":ordered[mid], "p95_ms":ordered[p95], "p99_ms":ordered[p99],
+		"max_ms":ordered[ordered.size() - 1],
+		"frames_over_33ms":over_33_ms}
+
 func _capture_operator_view() -> void:
 	var directory := OS.get_environment("SG_FP3D_OPERATOR_CAPTURE_DIR")
 	if directory.is_empty():
@@ -907,6 +945,7 @@ func _capture_operator_view() -> void:
 		"image":filename, "image_sha256":FileAccess.get_sha256(file_path),
 		"image_width":image.get_width(), "image_height":image.get_height(),
 		"display_backend":DisplayServer.get_name(),
+		"frame_pacing":_frame_timing_summary(),
 		"native_flight_joined":not joined.is_empty(),
 		"station_person":native_station_session._person.duplicate(true) if station_authorized else {},
 		"original_ship":_verified_flight_ship.duplicate(true) if not joined.is_empty() else {},
@@ -1206,6 +1245,7 @@ func _exit_tree() -> void:
 		native_station_session.stop("Native station client closed")
 
 func _process(delta: float) -> void:
+	_record_frame_timing(delta)
 	# VISUAL ONLY: interpolate the spectator camera, not the original-world
 	# ship or camera authority. UI 60 FPS is not native C++ transaction rate.
 	if is_instance_valid(exterior_camera) and exterior_camera.current:
@@ -1226,5 +1266,9 @@ func _process(delta: float) -> void:
 
 	_fps_accumulator += delta
 	if _fps_accumulator >= 0.5 and is_instance_valid(fps_label):
-		fps_label.text = "FPS: %d  |  Phys: 60Hz" % Engine.get_frames_per_second()
+		if _show_technical_details:
+			var timing: Dictionary = _frame_timing_summary()
+			fps_label.text = "FPS %d | p95 %.1f ms | >33ms %d/%d" % [
+				Engine.get_frames_per_second(), float(timing.get("p95_ms", 0.0)),
+				int(timing.get("frames_over_33ms", 0)), int(timing.get("samples", 0))]
 		_fps_accumulator = 0.0
