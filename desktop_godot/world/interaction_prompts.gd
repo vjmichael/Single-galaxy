@@ -53,22 +53,22 @@ static func hint(station_active: bool, person: Dictionary, ship_active: bool,
 			var z: int = int(person.get("z_mm", 0))
 			var eligible: int = int(person.get("eligible_ship", 0))
 			if eligible > 0 and absi(x) <= NATIVE_HATCH_AXIS_MM and absi(z) <= NATIVE_HATCH_AXIS_MM:
-				return "Press %s — Board owned ship #%d at the glowing hatch" % [interact_key, eligible]
+				return "Press %s to Board  |  Owned ship #%d at colony departure dock" % [interact_key, eligible]
 			var dx: int = x - REFINERY_CENTER_X_MM
 			if dx * dx + z * z <= REFINERY_RADIUS_MM * REFINERY_RADIUS_MM:
 				return "Press R — Use station refinery terminal"
 			if eligible <= 0:
 				return "No existing eligible docked ship — boarding unavailable"
-			return "Find the CYAN BOARDING HATCH floor marker (%.1f m away)" % (Vector2(float(x), float(z)).length() / 1000.0)
+			return "COLONY → DOCK  |  Follow cyan boarding walkway (%.1f m)" % (Vector2(float(x), float(z)).length() / 1000.0)
 		if state == 0:
-			return "Press P — Enter your boarded ship's cockpit  |  %s — Disembark" % interact_key
+			return "Boarding complete — opening your ship cockpit for departure"
 		return "Station identity not ready — no interaction authorized"
 	if ship_active:
 		if not ship_seated:
-			return "Approach the cockpit console, then press %s to request the pilot seat" % interact_key
+			return "Press %s to Sit at the Pilot Seat" % interact_key
 		if dock_state == 1:
-			return "Press U — Undock your original ship"
+			return "Press U to Undock  |  Leave the colony for space"
 		if dock_state == 0:
-			return "Up/Down — Thrust  |  V — Exterior camera  |  B — Brake  |  G — Dock nearby"
+			return "SPACE-FARING  |  Up/Down thrust  •  V exterior  •  B brake  •  G dock"
 		return "Waiting for verified original ship docking status"
 	return "Connecting to your original saved station automatically..."
