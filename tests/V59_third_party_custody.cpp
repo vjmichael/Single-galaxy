@@ -245,8 +245,8 @@ int main(){
   // Accelerate then decelerate exactly 25 km at 0.25 km/tick².
   // Arrival at a *system* is insufficient; the carrier must actually reach
   // the independently owned warehouse's docking radius before delivery.
-  for(int i=0;i<10;++i)send_as(w,9600+static_cast<std::uint64_t>(i),8,carrier,Action::Thrust,0,1,1);
-  for(int i=0;i<10;++i)send_as(w,9610+static_cast<std::uint64_t>(i),8,carrier,Action::Thrust,0,1,-1);
+  for(int i=0;i<10;++i)send_as(w,9600+static_cast<std::uint64_t>(i),8,carrier,Action::Thrust,0,0,1);
+  for(int i=0;i<10;++i)send_as(w,9610+static_cast<std::uint64_t>(i),8,carrier,Action::Thrust,0,0,-1);
   ck(w.world().find(carrier)->velocity.x==0,"carrier did not brake at receiving warehouse");
   for(const auto& name:{"frames-third-party","panels-third-party"}){
    const auto k=std::string(name)=="frames-third-party"?"aluminum_frames":"aluminum_panels";
