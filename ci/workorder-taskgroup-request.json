@@ -2,6 +2,6 @@
   "schema": "SG-WORKORDER-GATE-01",
   "task_group": "STAGE6",
   "pr_number": 127,
-  "source_sha": "0d97b1f7e0baddda0647e8ca8304ff255c8ec5a2",
-  "note": "Single pinned 22-test WO3 utility family admission/return/restart reconciliation, exact genuine household custody, WO4 WO5 freight stage6. Historical v86 genuine pre109 SQLite fixture provenance remains separately required by issue128; do not bypass original genesis validation."
+  "source_sha": "ea3be573bfeddf6bbf8572ab04f4263a48923a58",
+  "note": "One exact head Windows/Linux 22-test native custody and restart matrix with WO3 household generation pins and post-admission manifest tests; compile Stage6 Godot mesh packet exporter and test original owner/body, bounded 3D meshes, denied landing, stale hash; preserve separate authentic pre-v109 SQLite migration source requirement #128. Do not claim physical R9700 or actual Godot executable validation from CI."
 }
