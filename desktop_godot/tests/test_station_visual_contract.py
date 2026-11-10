@@ -215,7 +215,7 @@ checks = {
         and "prompt.mouse_filter = Control.MOUSE_FILTER_IGNORE" in main
     ),
     "interaction-smoke-must-reach-flight-and-pilot-assertions": (
-        "\\t\\treturn\\n\\t\\treturn\\n" not in action_smoke
+        (chr(9)*2 + "return" + chr(10))*2 not in action_smoke
         and '"the seated native ship did not advertise mandatory third-person view"' in action_smoke
         and '"in-space ship camera failed permanent third-person rule"' in action_smoke
         and '"FP3D-PILOT-01 REAL GODOT VISUAL PASS"' in action_smoke
