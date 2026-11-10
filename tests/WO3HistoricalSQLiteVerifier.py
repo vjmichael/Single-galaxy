@@ -74,6 +74,10 @@ def main():
     print("Authentic v86 SQLite verified; historical source", source_commit,
           "SQLite SHA-256", original_sha.lower())
     subprocess.run([sys.argv[1], str(world)], check=True)
+    # Recovery must never alter either immutable historical input. Detect
+    # accidental journal checkpointing, binary replacement or write-through.
+    verify(original, original_sha, "immutable archived v86 SQLite after native test")
+    verify(binary, binary_sha, "historical v86 executable after native test")
 
 
 if __name__ == "__main__":
