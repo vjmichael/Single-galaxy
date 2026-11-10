@@ -49,6 +49,10 @@ var last_station_player_state := -1
 var _handoff_target := ""
 var _handoff_pid := -1
 var _handoff_started_msec := 0
+# A real space -> dock transition arms on-foot return. Never infer it from
+# the client camera or a mere docked snapshot at initial cockpit start.
+var _colony_return_armed := false
+var _colony_return_pending := false
 var native_markers: Node3D
 var _fps_accumulator := 0.0
 # Former developer-only H toggle is no longer needed during normal play.
@@ -145,6 +149,13 @@ func _enter_cockpit_after_verified_board() -> void:
 	var exiting_pid: int = native_station_session.process_id()
 	native_station_session.stop("Native boarding committed; transferring verified SQLite writer", true)
 	_schedule_native_handoff("ship", exiting_pid)
+
+func _exit_docked_ship_after_verified_station_person() -> void:
+	if not _colony_return_pending or not native_station_session.is_active() or last_station_player_state != 0:
+		return
+	# C++ independently checks real station/ship ownership and dock state.
+	# A failed or denied EXIT never creates a local walking player.
+	native_station_session.interact_hangar()
 
 func _setup_environment() -> void:
 	var env := Environment.new()
@@ -814,7 +825,15 @@ func _on_native_station_person(person: Dictionary) -> void:
 			int(person["station"]), "ON FOOT" if int(person["state"]) == 4 else "ABOARD SHIP",
 			int(person["eligible_ship"]), float(person["x_mm"])/1000.0,
 			float(person["z_mm"])/1000.0]
-	if last_station_player_state == 0 and _player_session_autoconnect:
+	if last_station_player_state == 4 and _colony_return_pending:
+		# Only the original EXIT receipt permits returning to colony walking.
+		_colony_return_pending = false
+		_colony_return_armed = false
+	if last_station_player_state == 0 and _colony_return_pending:
+		# This PERSON is a live C++ aboard receipt, not a new BOARD. Submit
+		# one original EXIT through the station host after its genesis frame.
+		call_deferred("_exit_docked_ship_after_verified_station_person")
+	if last_station_player_state == 0 and _player_session_autoconnect and not _colony_return_pending:
 		# A genuine saved BOARD (also on restart) must automatically open
 		# the cockpit, never demand another developer-only P key.
 		call_deferred("_enter_cockpit_after_verified_board")
@@ -865,6 +884,10 @@ func _on_native_ship_state(ship: Dictionary) -> void:
 		return
 	var states := ["IN SPACE", "DOCKED", "UNDOCKING", "DOCKING"]
 	var dock: int = int(ship["dock"])
+	if _last_native_dock == 0 and dock == 1 and last_station_player_state == 0:
+		_colony_return_armed = true # verified C++ return docking, not client input
+	if dock == 0:
+		_colony_return_armed = false
 	_last_native_dock = dock
 	if is_instance_valid(exterior_ship_visual):
 		exterior_ship_visual.rotation.y = native_heading_to_godot_yaw(int(ship["heading"]))
@@ -913,8 +936,16 @@ func _on_native_player_seat_intent() -> void:
 		return
 	if native_station_session != null and native_station_session.is_active():
 		native_station_session.interact_hangar()
-	elif native_player_session != null:
-		native_player_session.toggle_seat()
+	elif native_player_session != null and native_player_session.is_active():
+		if _colony_return_armed and not native_player_session._seated and _last_native_dock == 1 and not _colony_return_pending:
+			# Stand after genuine return docking, then E disembarks. Stop the
+			# cockpit guardian before admitting the station SQLite writer.
+			_colony_return_pending = true
+			var outgoing_pid: int = native_player_session.process_id()
+			native_player_session.stop("Returning to original colony dock", true)
+			_schedule_native_handoff("station", outgoing_pid)
+		else:
+			native_player_session.toggle_seat()
 
 func _on_native_player_intent(heading: Vector3) -> void:
 	if native_station_session != null and native_station_session.is_active():
