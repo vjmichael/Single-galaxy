@@ -2,6 +2,6 @@
   "schema": "SG-WORKORDER-GATE-01",
   "task_group": "STAGE6",
   "pr_number": 127,
-  "source_sha": "9415f80f32b35171e7f982055853a00a9d1199e0",
-  "note": "One exact-head native Windows/Linux 22-test matrix on new Stage6 integration head. Verify original native NPC flight commands get one acceptance receipt in SAME SQLite transaction and original delivery receipts on tick590, no forged grants; exact preserved shuttle ascent ID across SQLite reopen; physical dependent registration diagnostic; Windows v56 third-party close-before-delete. Keep WO3 historical provenance issue #128 open; no weakening genesis, resource, receipts, permissions. No auto CI fanout."
+  "source_sha": "e83b3648ecde412e13eb6ab0ec2b5d3f1b761116",
+  "note": "One exact-head native Windows/Linux work-order gate: verify original NPC flight acceptance receipts, exact native ascent receipts on SQLite reopen, WO3 server-authenticated HostRegisterDependent on anchored real ship with unchanged guardian restrictions, genuine v97 native rendezvous snapshot, and Windows closed SQLite fixture cleanup. Historical v86 source #128 must remain red pending immutable authentic source provenance; never weaken genesis/journal/resource verification."
 }
