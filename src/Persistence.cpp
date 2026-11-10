@@ -6298,7 +6298,7 @@ public:
             // existing in a table without its original family and site proof.
             if(has_planetary_household){
                 Statement households(db_,"SELECT request_id,world_generation,tick,"
-                    "origin,destination,guardian,coparent,child,returning,"
+                    "origin,destination,guardian,coparent,child,\"returning\","
                     "family_scope,region_scope,region_revision,owner_generation,"
                     "coparent_event,child_event FROM sg_planet_household_migration");
                 while(households.row()){
@@ -10199,7 +10199,7 @@ bool PersistentWorld::commit_planetary_household_settlement(
             "request_id TEXT PRIMARY KEY,world_generation INTEGER NOT NULL,"
             "tick INTEGER NOT NULL,origin TEXT NOT NULL,destination TEXT NOT NULL,"
             "guardian TEXT NOT NULL,coparent TEXT NOT NULL,child TEXT NOT NULL,"
-            "returning INTEGER NOT NULL CHECK(returning IN (0,1)),"
+            "\"returning\" INTEGER NOT NULL CHECK(\"returning\" IN (0,1)),"
             "family_scope TEXT NOT NULL,region_scope TEXT NOT NULL,"
             "region_revision INTEGER NOT NULL,owner_generation INTEGER NOT NULL,"
             "coparent_event TEXT NOT NULL UNIQUE,child_event TEXT NOT NULL UNIQUE)");
