@@ -117,6 +117,8 @@ bool flight_action(std::string_view name,PilotControl& out){
     else if(name=="REV")out=PilotControl::Reverse;
     else if(name=="PORT")out=PilotControl::StrafePort;
     else if(name=="STAR")out=PilotControl::StrafeStarboard;
+    else if(name=="ASC")out=PilotControl::Ascend;
+    else if(name=="DES")out=PilotControl::Descend;
     else if(name=="BRAKE")out=PilotControl::Counterthrust;
     else return false;
     return true;
