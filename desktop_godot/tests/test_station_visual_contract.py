@@ -102,7 +102,7 @@ checks = {
             "CollisionShape3D.new(", "CollisionObject3D.new(", "StaticBody3D.new(",
             "Area3D.new(", "CharacterBody3D.new(", "RigidBody3D.new(",
             ".connect(", "interact_hangar(", "station_player_action(",
-            "submit_walk(", "submit_flight("))
+            "submit_walk(", "submit_flight(")
         )
         and 'find_children("*", "CollisionObject3D", true, false)' in colony_smoke
         and "eligible_ship" in colony_smoke
