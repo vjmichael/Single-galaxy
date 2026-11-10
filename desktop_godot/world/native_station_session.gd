@@ -389,6 +389,14 @@ func interact_hangar() -> void:
 		if target <= 0:
 			_status("NO AVAILABLE SHIP: build or recover an existing vessel")
 			return
+		# This is a UX preflight only. The original C++ transaction still
+		# independently checks exact hatch distance, ownership and docking.
+		# Never send an obviously doomed BOARD far from the native hatch.
+		var x_mm: int = int(_person.get("x_mm", 2147483647))
+		var z_mm: int = int(_person.get("z_mm", 2147483647))
+		if absi(x_mm) > 600 or absi(z_mm) > 600:
+			_status("Get closer to the CYAN BOARDING HATCH, then press E (native position %.2f, %.2f m)" % [float(x_mm)/1000.0,float(z_mm)/1000.0])
+			return
 		verb = "BOARD"
 	elif state == 0:
 		target = int(_person.get("station", 0))
