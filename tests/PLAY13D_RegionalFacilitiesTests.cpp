@@ -725,6 +725,11 @@ static void scenario(const fs::path& db, bool farming,
             chosen.latitude,chosen.longitude,0));
         CHECK(w.world().planetary_sites().size()==1);
         CHECK(w.world().total_ore()==origin);
+        // Both farm and oasis scenarios have a real native ascent receipt.
+        // The extended freight block below only runs for the oasis route;
+        // leaving this unset made farm reopen comparisons test against zero.
+        verified_ascent_receipt=w.world().planetary_shuttles().at(key).ascent_receipt;
+        CHECK(verified_ascent_receipt!=0);
         durable=w.world().canonical_state();
         CHECK(durable.rfind((manufactured?"galaxy-kernel-v92|":"galaxy-kernel-v85|"),0)==0);
         CHECK(Simulation::from_snapshot(durable).canonical_state()==durable);
