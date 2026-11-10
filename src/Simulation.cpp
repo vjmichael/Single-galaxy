@@ -2196,6 +2196,21 @@ bool Simulation::submit(const Command& c) {
         c.action==Action::HostDestroyPassengerFerry?36:35);
     if(c.action==Action::TrainWorkshopTrade)
         snapshot_version_=std::max(snapshot_version_,105);
+    // A valid original command can advance an old world directly to the
+    // WO2 v105-v108 snapshot format. Before committing its pending journal,
+    // derive ONLY existing ships' deterministic physical frame custody and
+    // physically registered celestial systems. Do not mutate a deserialized
+    // untrusted snapshot or remove the strict v71 restore-integrity gate.
+    if(snapshot_version_>=71) {
+        bool missing_physical_system=false;
+        for(const auto id:systems_)
+            if(!physical_celestial_systems_.count(id)) {
+                missing_physical_system=true;
+                break;
+            }
+        if(missing_physical_system)ensure_physical_celestial_systems();
+        ensure_ship_frame_registry();
+    }
     submitted_ids_.insert(c.id);
     commands_[c.execute_tick].push_back(c);
     return true;
