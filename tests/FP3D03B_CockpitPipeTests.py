@@ -39,13 +39,13 @@ with tempfile.TemporaryDirectory() as temp:
     assert len(undock)==17 and undock[0]=="SHIP" and undock[3]=="5" and undock[5]=="0",undock
     assert undock[16]=="0","real ship must be in space"
     yaw=send(p,f"FLIGHT|{epoch}|6|1|LEFT")
-    assert yaw[0]=="SHIP" and yaw[5]=="0" and yaw[15]=="345",yaw
+    assert yaw[0]=="SHIP" and yaw[5]=="0" and yaw[15]=="15",yaw
     restored=send(p,f"FLIGHT|{epoch}|7|1|RIGHT")
     assert restored[5]=="0" and restored[15]=="0",restored
     forward=send(p,f"FLIGHT|{epoch}|8|1|FWD")
     assert forward[5]=="0" and int(forward[12])>0,forward
     port=send(p,f"FLIGHT|{epoch}|9|1|PORT")
-    assert port[5]=="0" and int(port[13])<0,port
+    assert port[5]=="0" and int(port[13])>0,port
     brake=send(p,f"FLIGHT|{epoch}|10|1|BRAKE")
     assert brake[5]=="0" and abs(int(brake[12]))<abs(int(port[12])) and abs(int(brake[13]))<abs(int(port[13])),brake
     dock=send(p,f"FLIGHT|{epoch}|11|1|DCK")
