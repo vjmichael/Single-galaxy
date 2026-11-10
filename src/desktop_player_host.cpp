@@ -145,6 +145,10 @@ static int run_host(int argc,char** argv){
         const auto ship=seed.spawn_ship_docked(kLocalOwner,station,24,60);
         if(!seed.register_player_person(kLocalOwner,ship))
             throw std::runtime_error("player-person bootstrap refused");
+        // A genuinely NEW standalone cockpit fixture has native vertical
+        // propulsion. Existing SQLite worlds load their own original format;
+        // they are never silently upgraded or reset by the desktop host.
+        seed.enable_native_3d_physics();
         PersistentWorld world(save_utf8,std::move(seed));
         InteriorMovement person(save_utf8,world);
         if(world.world().has_pending_cockpit_flight())
