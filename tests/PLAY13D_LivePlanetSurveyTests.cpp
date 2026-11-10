@@ -10,10 +10,12 @@ namespace fs=std::filesystem;
 int main() {
   const auto db=fs::temp_directory_path()/
     ("sg_pgf_live_"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count())+".sqlite");
+  // Cleanup runs outside the try scope as well; archive identity must live
+  // outside it for genuine native Windows/Linux compilation and cleanup.
+  const auto archive=db.string()+".survey.sqlite";
   try {
     EntityId ship=0;std::uint64_t planet=0;
     planetary::GeographicSite original{};
-    const auto archive=db.string()+".survey.sqlite";
     {
       Simulation seed(777,1);
       ship=seed.add_colony_ship(7,{0,0},50,5);
