@@ -103,6 +103,14 @@ int main() {
     CHECK(w.world().intercolony_freight().empty());
     CHECK(w.world().state_hash()==original &&
           w.world().total_ore()==mass);
+    // The independent original recovery tool requires an actually persisted
+    // world-step checkpoint after genesis. A new-world-only SQLite is not a
+    // historical replay fixture; take a legitimate native STEP instead of
+    // bypassing the recovery guard or forging an earlier checkpoint.
+    w.step();
+    CHECK(w.world().total_ore()==mass &&
+          w.world().local_delivery_board().empty() &&
+          w.world().intercolony_freight().empty());
     const auto copy=(folder/"copy.sqlite").string();
     PersistentWorld::recover_copy(db,copy);
     PersistentWorld restored(copy,Simulation(94106));
