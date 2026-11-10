@@ -17,6 +17,8 @@ terminal = (root / "world/refinery_terminal_ui.gd").read_text(encoding="utf-8")
 native_unload_test = (root.parent / "tests/PLAY_STATION_04C_UnloadPipeTests.py").read_text(encoding="utf-8")
 action_hints = (root / "world/interaction_prompts.gd").read_text(encoding="utf-8")
 action_smoke = (root / "tests/interaction_prompt_smoke.gd").read_text(encoding="utf-8")
+boarding_smoke = (root / "tests/boarding_action_pipe_smoke.gd").read_text(encoding="utf-8")
+player_controller = (root / "world/player_controller.gd").read_text(encoding="utf-8")
 
 checks = {
     "avatar-height-matches-capsule": "const AVATAR_CENTER_HEIGHT_M := 0.90" in main,
@@ -30,6 +32,33 @@ checks = {
         "hatch_color.albedo_color = Color(0.08, 0.89, 0.96, 1.0)" in main
         and 'hatch.name = "Station_Hangar_Entry_At_Zero"' in main
         and "MeshInstance3D.new()" in main
+    ),
+    "visible-native-hatch-not-under-floor": (
+        'hatch.position = Vector3(0.0, 0.0775, 0.0)' in main
+        and 'beacon.name = "BoardingHatch_WorldSign_VisualOnly"' in main
+        and "hatch.position.y < 0.065" in action_smoke
+    ),
+    "station-gray-ship-white-hud-separation": (
+        "const STATION_GRAY := Color(0.47, 0.51, 0.55, 1.0)" in main
+        and "const SHIP_WHITE := Color(0.96, 0.97, 0.99, 1.0)" in main
+        and "white_hull" in main
+        and 'panel.name = "SystemStatusPanel"' in main
+        and 'flight_panel.name = "FlightTelemetryPanel"' in main
+        and "flight_panel.visible = not in_station" in main
+        and "fps_label.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)" in main
+    ),
+    "E-press-is-focus-only-not-mouse-capture": (
+        'get_window().has_focus() and Input.is_action_just_pressed("fps_inspect")' in player_controller
+        and "native_seat_intent.emit()" in player_controller
+    ),
+    "native-E-after-WALK-single-use-custody": (
+        "var _pending_walk := 0" in station_client
+        and "var _queued_hangar_intent := false" in station_client
+        and "_pending == _pending_walk" in station_client
+        and "last_walk_confirmed and _queued_hangar_intent" in station_client
+        and 'interact_hangar()' in station_client
+        and "BOARD|77|10|3|5" in boarding_smoke
+        and "station-custody-or-distance" in boarding_smoke
     ),
     "native-custody-only-interaction-hints": (
         "const NATIVE_HATCH_AXIS_MM := 600" in action_hints
@@ -50,7 +79,7 @@ checks = {
         and "prompt.mouse_filter = Control.MOUSE_FILTER_IGNORE" in main
     ),
     "live-engine-has-interaction-smoke": (
-        "FP3D-UX-01 real Godot interaction prompt PASS" in action_smoke
+        "FP3D-UX-02 real Godot visual/input PASS" in action_smoke
         and "600" in action_smoke
         and "eligible_ship" in action_smoke
         and "Press H" in action_smoke
