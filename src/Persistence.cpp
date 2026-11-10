@@ -7200,7 +7200,8 @@ public:
                 const std::vector<ActivityEvent>& activity_delta, FailPoint fail,
                 const NpcMiningAssignment* npc_mining_assignment=nullptr,
                 const NpcFabricationAssignment* npc_fabrication_assignment=nullptr,
-                const std::function<void(sqlite3*,std::uint64_t)>& society_effect={}) {
+                const std::function<void(sqlite3*,std::uint64_t)>& society_effect={},
+                const std::vector<Command>& native_flight_controls={}) {
         if (state.total_ore() != origin || state.total_credits() != credit_origin)
             throw std::runtime_error("resource or credit conservation violation");
         const auto bytes = state.canonical_state();
@@ -7233,6 +7234,39 @@ public:
                 Statement receipt(db_, "INSERT INTO receipts(id,accepted_generation) VALUES(?,?)");
                 receipt.text(1, std::to_string(accepted->id));
                 receipt.i64(2, static_cast<std::int64_t>(next));
+                receipt.execute();
+            }
+            // FLIGHT-04B: the deterministic native NPC flight controller may
+            // submit its next ORIGINAL ship-control command within world.step.
+            // Its acceptance must be journaled in the SAME transaction as the
+            // snapshot that first contains it; execution on the following
+            // tick must never rely on a fabricated/missing receipt.
+            constexpr std::uint64_t native_tag=std::uint64_t{1}<<61;
+            std::set<std::uint64_t> seen_native;
+            for(const auto& c:native_flight_controls) {
+                const auto flight_id=(c.id & ~native_tag)>>9;
+                const auto flight=state.npc_flight_orders().find(flight_id);
+                if(!(c.id & native_tag) || !c.id ||
+                   !seen_native.insert(c.id).second ||
+                   c.sequence!=c.id || c.execute_tick!=state.tick()+1 ||
+                   flight==state.npc_flight_orders().end() ||
+                   flight->second.last_local_command!=c.id ||
+                   flight->second.local_commands==0 ||
+                   flight->second.local_commands>511 ||
+                   (c.id & 511ULL)!=flight->second.local_commands ||
+                   flight->second.owner!=c.issuer ||
+                   flight->second.ship!=c.actor ||
+                   (flight->second.mode!=NpcFlightMode::LocalDock &&
+                    flight->second.mode!=NpcFlightMode::LocalRendezvous) ||
+                   (c.action!=Action::Thrust &&
+                    c.action!=Action::RequestUndock &&
+                    c.action!=Action::RequestDock))
+                    throw std::runtime_error(
+                        "native NPC flight command lacks original pilot/order custody");
+                Statement receipt(db_,
+                    "INSERT INTO receipts(id,accepted_generation) VALUES(?,?)");
+                receipt.text(1,std::to_string(c.id));
+                receipt.i64(2,static_cast<std::int64_t>(next));
                 receipt.execute();
             }
             if(npc_mining_assignment){
@@ -14311,7 +14345,26 @@ void PersistentWorld::step(FailPoint fail) {
     const std::vector<Event> new_events(next.events().begin() + static_cast<std::ptrdiff_t>(before), next.events().end());
     const std::vector<ActivityEvent> new_activity(
         next.activity_events().begin() + static_cast<std::ptrdiff_t>(before_activity), next.activity_events().end());
-    store_->commit(next, generation_, resource_origin_, credit_origin_, nullptr, new_events, due, new_activity, fail);
+    // The native flight controller can schedule one authenticated ORIGINAL
+    // ship-control command per order for the next tick during next.step().
+    // Only those commands, proven against the saved order identity, receive
+    // an acceptance record. Arbitrary player/host commands are not enrolled.
+    std::vector<Command> native_flight_controls;
+    constexpr std::uint64_t native_tag=std::uint64_t{1}<<61;
+    if(auto it=next.commands_.find(next.tick()+1);
+       it!=next.commands_.end()) {
+        for(const auto& c:it->second)
+            if(c.id & native_tag) {
+                const auto flight_id=(c.id & ~native_tag)>>9;
+                const auto order=next.npc_flight_orders().find(flight_id);
+                if(order!=next.npc_flight_orders().end() &&
+                   order->second.last_local_command==c.id)
+                    native_flight_controls.push_back(c);
+            }
+    }
+    store_->commit(next, generation_, resource_origin_, credit_origin_,
+                   nullptr, new_events, due, new_activity, fail,
+                   nullptr,nullptr,{},native_flight_controls);
     world_.swap(next);
     ++generation_;
 }
