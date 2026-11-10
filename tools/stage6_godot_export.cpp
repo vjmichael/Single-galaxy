@@ -36,9 +36,9 @@ galaxy::stage6::RenderTileAddress parse_tile(const std::string& value) {
             decimal_byte(value.substr(b+1))};
 }
 void publish_packet(const fs::path& destination,const std::string& content) {
-    const auto staging=fs::path(destination.string()+".stage6."+
-        std::to_string(std::chrono::steady_clock::now().
-            time_since_epoch().count())+".tmp");
+    fs::path staging=destination;
+    staging += ".stage6."+std::to_string(std::chrono::steady_clock::now().
+        time_since_epoch().count())+".tmp";
     struct Cleanup {fs::path p;~Cleanup(){
         std::error_code ec;fs::remove(p,ec);
     }} cleanup{staging};
