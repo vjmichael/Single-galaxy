@@ -11,12 +11,14 @@ namespace galaxy::fp3d {
 // disembark, networking, Godot movement, or remote actor-authorization API.
 enum class MoveFailPoint { None, AfterStepReceipt, AfterPoseUpdate };
 enum class SeatFailPoint { None, AfterSeatReceipt, AfterSeatUpdate };
-// Ship-local acceleration uses the ORIGINAL 2D yaw/velocity integrator.
-// Yaw is 15 degrees per accepted command; port/starboard are translational
-// strafe, NOT fictional pitch. Vertical pitch/roll remain separate gates.
+// The original ship's 2D yaw/planar thrust remains authoritative. In saved
+// v119+ 3D worlds only, W/S propose genuine +Z/-Z translational acceleration
+// through original Action::Thrust and the same seat-bound SQLite journal.
+// This is vertical strafe, NOT an invented visual pitch/roll control.
 enum class PilotFailPoint { None, AfterAcceptance };
 enum class PilotControl { Undock, YawLeft, YawRight, Forward, Reverse,
-                          StrafePort, StrafeStarboard, Counterthrust, Dock };
+                          StrafePort, StrafeStarboard, Counterthrust, Dock,
+                          Ascend, Descend };
 struct FlightState {
     EntityId ship=0;
     std::uint64_t tick=0,generation=0;
