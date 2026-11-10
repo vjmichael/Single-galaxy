@@ -2,6 +2,6 @@
   "schema": "SG-WORKORDER-GATE-01",
   "task_group": "STAGE6",
   "pr_number": 127,
-  "source_sha": "2ca372510c5de5d9d1422ce5128ac38fd4415a92",
-  "note": "Second pinned native integration run after correcting workflow YAML; same exact Stage 6 head 2ca372510c5de5d9d1422ce5128ac38fd4415a92, now including original native NPC delegation, regional cold/detailed recovery, shipping status, manufactured and vital freight, WO3/WO4 and Stage 6. Do not hide any test failures or bypass journal verification."
+  "source_sha": "e6e99b2d278b55a302ca0ba1f34879294a928cd9",
+  "note": "Third pinned full 22-test native Windows/Linux acceptance after correcting v56 snapshot allowlist, original workforce genesis sequencing, physical orbital nutrient load/unload fixture, strict journal custody handling, and richer uncompromised life/site invariant diagnostics. Verify all WO3/WO4/WO5/regional/NPC/Stage6 selected CTests; retain exact-head failures."
 }
