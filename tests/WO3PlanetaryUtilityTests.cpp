@@ -113,7 +113,10 @@ int main() {
     for(std::uint64_t id=280;id<283;++id) {
         auto training=workforce02::approved_original_trade_training(
             w.world(),7,ship,orbital,builder,WorkshopTrade::Shape,id,true);
-        CHECK(training && w.submit(*training));w.step();
+        // Diagnose REAL WO2 practice admission: distinguish missing
+        // original workshop/crew/power from SQLite command refusal.
+        CHECK(training);
+        CHECK(w.submit(*training));w.step();
         CHECK(w.world().events().back().result==Outcome::Applied);
     }
     CHECK(w.world().workshop_trade_certified(builder,WorkshopTrade::Shape));
@@ -136,7 +139,10 @@ int main() {
     for(std::uint64_t id=310;id<313;++id) {
         const auto training=workforce02::approved_original_trade_training(
             w.world(),7,ship,orbital,trained_partner,WorkshopTrade::Shape,id,true);
-        CHECK(training && w.submit(*training));w.step();
+        // Diagnose REAL WO2 practice admission: distinguish missing
+        // original workshop/crew/power from SQLite command refusal.
+        CHECK(training);
+        CHECK(w.submit(*training));w.step();
         CHECK(w.world().events().back().result==Outcome::Applied);
     }
     CHECK(w.world().workshop_trade_certified(
@@ -156,7 +162,10 @@ int main() {
     for(std::uint64_t id=320;id<323;++id) {
         const auto training=workforce02::approved_original_trade_training(
             w.world(),7,ship,orbital,trained_visitor,WorkshopTrade::Shape,id,true);
-        CHECK(training && w.submit(*training));w.step();
+        // Diagnose REAL WO2 practice admission: distinguish missing
+        // original workshop/crew/power from SQLite command refusal.
+        CHECK(training);
+        CHECK(w.submit(*training));w.step();
         CHECK(w.world().events().back().result==Outcome::Applied);
     }
     CHECK(w.world().workshop_trade_certified(
