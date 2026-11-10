@@ -16,7 +16,7 @@ static func action_key(action: String, fallback: String) -> String:
 	if InputMap.has_action(action):
 		for event in InputMap.action_get_events(action):
 			if event is InputEventKey:
-				var key: Key = event.physical_keycode
+				var key: int = event.physical_keycode
 				if key != KEY_NONE:
 					var name: String = OS.get_keycode_string(key)
 					if not name.is_empty():
