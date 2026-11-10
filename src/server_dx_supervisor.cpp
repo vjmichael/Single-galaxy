@@ -5,6 +5,7 @@
 #include <climits>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -218,7 +219,7 @@ static int run(const Args& args){
         return_code=incident.exit_code;
     }else incident.reason="unknown_exit";
     if(return_code!=0 || args.record_clean){
-        if(!dx::record_process_incident(args.save,incident))
+        if(!dx::record_process_incident(std::filesystem::u8path(args.save),incident))
             std::cerr<<"SGDX-02 diagnostic sidecar write failed\n";
     }
     return return_code;
@@ -360,7 +361,7 @@ static int run(const Args& args){
                         crashed=true;reply=DBG_EXCEPTION_NOT_HANDLED;
                         if(!dump_written)
                             dump_written=dx::windows_dump::capture_second_chance(
-                                args.save,pi,event,dump_name,&dump_failure);
+                                std::filesystem::u8path(args.save),pi,event,dump_name,&dump_failure);
                     }
                 }
                 if(event.dwDebugEventCode==EXIT_PROCESS_DEBUG_EVENT)
@@ -403,7 +404,7 @@ static int run(const Args& args){
             "no second-chance exception observed";
     CloseHandle(pi.hThread);CloseHandle(pi.hProcess);CloseHandle(job);
     if(incident.exit_code!=0 || args.record_clean)
-        if(!dx::record_process_incident(args.save,incident))
+        if(!dx::record_process_incident(std::filesystem::u8path(args.save),incident))
             std::cerr<<"SGDX-02 diagnostic sidecar write failed\n";
     return outcome==WAIT_TIMEOUT?124:static_cast<int>(status);
 }
