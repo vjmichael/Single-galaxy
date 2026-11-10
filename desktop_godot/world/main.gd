@@ -957,7 +957,7 @@ func _on_native_player_connection(connected: bool) -> void:
 	if not connected and is_instance_valid(ship_label):
 		ship_label.text = "SHIP: native host disconnected; previous readout not live"
 	if is_instance_valid(scope_label):
-		scope_label.text = "NATIVE IN-SHIP POSE + ORIGINAL C++ FLIGHT" if connected else "Native cockpit unavailable — original saved world retained"
+		scope_label.text = "PILOT LOCKED | THIRD-PERSON | ORIGINAL C++ FLIGHT" if connected else "Native cockpit unavailable — original saved world retained"
 
 func _refresh_native_flight_instruments() -> void:
 	if not is_instance_valid(flight_instrument_label):
@@ -1082,6 +1082,8 @@ func _on_native_player_status(message: String) -> void:
 		# direct docked EXIT. Never advertise free cabin walking during handoff.
 		if _colony_return_pending and message.begins_with("NATIVE ON FOOT"):
 			native_label.text = "DOCKED EXIT — original C++ seat release verified, transferring to colony"
+		elif _player_session_autoconnect and message.begins_with("NATIVE SEATED (P stop)"):
+			native_label.text = message.replace("(P stop)", "(third-person pilot)")
 		else:
 			native_label.text = message
 	if is_instance_valid(refinery_terminal) and refinery_terminal.visible and ("refused" in message or "timed out" in message):
