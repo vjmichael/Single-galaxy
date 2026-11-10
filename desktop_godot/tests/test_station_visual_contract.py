@@ -268,6 +268,24 @@ checks = {
         and 'native_crate.get_node_or_null("CollisionShape3D")' not in visual
         and "native_box.size.distance_to(Vector3(0.8,1.6,1.0))" in visual
     ),
+    "f3-optional-engineering-overlay": (
+        "event.keycode == KEY_F3" in main
+        and "func _toggle_technical_details() -> void:" in main
+        and "func _apply_technical_hud() -> void:" in main
+        and "primary_speed_label.name = \"PlayerSpeedReadout\"" in main
+        and "stage._toggle_technical_details()" in action_smoke
+        and "not prompt.visible" in action_smoke
+        and "event.keycode == KEY_F11" in main
+    ),
+    "camera-smooth-only-after-authenticated-station-step": (
+        "func apply_native_station_pose(confirmed_position: Vector3, smooth_view: bool)" in player
+        and "global_position = confirmed_position" in player
+        and "camera.global_position = old_camera" in player
+        and "player.apply_native_station_pose(" in main
+        and "float(person[\"x_mm\"])" in main
+        and "float(person[\"z_mm\"])" in main
+        and "pilot._process(1.0)" in action_smoke
+    ),
     "synthetic-test-honesty": "Frames are SYNTHETIC" in visual,
     "visual-headless-in-export": "'station-visual-scene-smoke'" in builder,
     "windows-runner-builds-exact-native": "native-build" in runner and "galaxy_desktop_station_host" in runner and "galaxy_desktop_player_host" in runner,
