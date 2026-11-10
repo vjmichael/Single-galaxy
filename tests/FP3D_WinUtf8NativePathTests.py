@@ -9,6 +9,7 @@ main() can silently convert to ANSI rather than sqlite3's required UTF-8.
 """
 from __future__ import annotations
 import argparse
+from contextlib import closing
 import json
 import sqlite3
 import subprocess
@@ -101,14 +102,14 @@ def main() -> None:
             # or silently substituting a fresh profile during Unicode recovery.
             verify_native(args.supervisor, host, db, role, station)
             before = db.stat()
-            with sqlite3.connect(db) as connection:
+            with closing(sqlite3.connect(db)) as connection:
                 schema_before = tuple(connection.execute(
                     "SELECT name, type FROM sqlite_master "
                     "WHERE name NOT LIKE 'sqlite_%' ORDER BY name, type"
                 ))
             verify_native(args.supervisor, host, db, role, station)
             after = db.stat()
-            with sqlite3.connect(db) as connection:
+            with closing(sqlite3.connect(db)) as connection:
                 schema_after = tuple(connection.execute(
                     "SELECT name, type FROM sqlite_master "
                     "WHERE name NOT LIKE 'sqlite_%' ORDER BY name, type"
