@@ -70,11 +70,14 @@ int main(int argc,char** argv) {
         // or its transactional sidecars while exporting a visual packet.
         const auto canonical_source=fs::weakly_canonical(source);
         const auto canonical_output=fs::weakly_canonical(output);
+        fs::path wal=canonical_source,shm=canonical_source,journal=canonical_source;
+        wal += "-wal";
+        shm += "-shm";
+        journal += "-journal";
         if(canonical_source==canonical_output ||
            (fs::exists(output) && fs::equivalent(source,output)) ||
-           canonical_output==fs::path(canonical_source.string()+"-wal") ||
-           canonical_output==fs::path(canonical_source.string()+"-shm") ||
-           canonical_output==fs::path(canonical_source.string()+"-journal"))
+           canonical_output==wal || canonical_output==shm ||
+           canonical_output==journal)
             throw std::invalid_argument("refusing to overwrite original SQLite data");
         const auto owner=static_cast<galaxy::PlayerId>(std::stoull(argv[2]));
         const auto ship=static_cast<galaxy::EntityId>(std::stoull(argv[3]));
