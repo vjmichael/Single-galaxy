@@ -120,15 +120,20 @@ int main() {
         CHECK(w.world().events().back().result==Outcome::Applied);
     }
     CHECK(w.world().workshop_trade_certified(builder,WorkshopTrade::Shape));
-    act(w,ship,290,Action::AssignUtilityTechnicians,orbital,0);
-    act(w,ship,291,Action::AssignHabitatResidents,orbital,-2);
+    // The original WO2 practice gate REQUIRES the named trainee to be an
+    // ACTUAL locally assigned habitat resident. We cannot certify a shipboard
+    // NPC by simply targeting a distant original workshop: physically move
+    // two additional named people into existing staffed habitat slots FIRST.
+    // 4 residents total, 2 original + 2 new; no new NPC or shadow staff.
+    act(w,ship,292,Action::AssignHabitatResidents,orbital,2);
+    CHECK(w.world().habitat(orbital)->residents==4);
     // A second actual named worker earns three physical Shape credits
     // before deployment. Supervisor relief must not conjure a certificate.
     std::uint64_t trained_partner=0;
     for(const auto& [id,n]:w.world().npc_records()) {
         if(id!=builder && id!=operator_id && n.home_ship==ship &&
-           n.location==ship && n.role==NpcRole::Ship &&
-           w.world().npc_available_for_duty(id)) {
+           n.location==orbital && n.assigned_site==orbital &&
+           n.role==NpcRole::Habitat && w.world().npc_available_for_duty(id)) {
             trained_partner=id;
             break;
         }
@@ -150,8 +155,9 @@ int main() {
     std::uint64_t trained_visitor=0;
     for(const auto& [id,n]:w.world().npc_records()) {
         if(id!=builder && id!=trained_partner && id!=operator_id &&
-           n.home_ship==ship && n.location==ship &&
-           n.role==NpcRole::Ship && w.world().npc_available_for_duty(id)) {
+           n.home_ship==ship && n.location==orbital &&
+           n.assigned_site==orbital && n.role==NpcRole::Habitat &&
+           w.world().npc_available_for_duty(id)) {
             trained_visitor=id;
             break;
         }
@@ -170,6 +176,12 @@ int main() {
     }
     CHECK(w.world().workshop_trade_certified(
         trained_visitor,WorkshopTrade::Shape));
+    // The exact four original named workers now return from their real
+    // habitat duty to the ship before celestial transit. The workshop
+    // operator/finisher retains qualification receipts, never shadow crew.
+    act(w,ship,290,Action::AssignUtilityTechnicians,orbital,0);
+    act(w,ship,291,Action::AssignHabitatResidents,orbital,-4);
+    CHECK(w.world().habitat(orbital)->residents==0);
     CHECK(w.world().npc_records().at(builder).location==ship);
     CHECK(w.world().npc_available_for_duty(builder));
     CHECK(w.begin_celestial_transit(7,ship,chosen.body,90001));
