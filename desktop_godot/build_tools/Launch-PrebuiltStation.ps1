@@ -122,6 +122,7 @@ try {
       @('--headless','--path',('"' + $project + '"'),'--editor','--quit'),
       @('--headless','--path',('"' + $project + '"'),'--script','res://tests/godot_smoke.gd'),
       @('--headless','--path',('"' + $project + '"'),'--script','res://tests/station_visual_smoke.gd'),
+      @('--headless','--path',('"' + $project + '"'),'--script','res://tests/colony_dock_smoke.gd'),
       @('--headless','--path',('"' + $project + '"'),'--script','res://tests/interaction_prompt_smoke.gd'),
       @('--headless','--path',('"' + $project + '"'),'--script','res://tests/boarding_action_pipe_smoke.gd'),
       @('--headless','--path',('"' + $project + '"'),'--script','res://tests/native_player_protocol_smoke.gd'),
