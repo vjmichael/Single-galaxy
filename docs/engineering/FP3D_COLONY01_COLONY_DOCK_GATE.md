@@ -27,8 +27,9 @@ First-person flow:
    host-paced request, never a client-side teleport. Only the C++/SQLite
    original BOARD receipt allows the station→cockpit handoff.
 5. **SPACE-FARING.** The original saved ship's cockpit opens
-   automatically after verified boarding. Pilot seating is automatic and the third-person camera is fixed (FP3D-PILOT-01); undocking still
-   obey original ship authority, and flight instruments remain separate.
+   automatically after verified boarding. Pilot seating is automatic,
+   and the third-person camera remains fixed (FP3D-PILOT-01).
+   Undocking obeys original ship authority; flight instruments remain read-only.
    On return, native docking and disembark reenter the colony dock.
 
 ## Coordinate and persistence invariants
