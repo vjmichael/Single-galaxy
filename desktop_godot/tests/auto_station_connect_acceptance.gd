@@ -68,7 +68,7 @@ func _run() -> void:
 	# Reproduce standalone game auto-connect explicitly under a script runner.
 	game._player_session_autoconnect = true
 	game._open_saved_station_automatically()
-	if not await _wait_for(_station_ready):
+	if not (await _wait_for(_station_ready)):
 		_fail("automatic original PERSON missing: " + str(game.native_label.text))
 		quit(1)
 		return
@@ -84,7 +84,7 @@ func _run() -> void:
 		return
 	# Native genesis x=1600mm/z=0. Exactly 12 authorized -90mm moves
 	# cross the original C++ hatch square without teleporting a client avatar.
-	var person := game.native_station_session._person
+	var person: Dictionary = game.native_station_session._person
 	if int(person.get("x_mm", -1)) != 1600:
 		_fail("original genesis no longer starts at 1600mm (world may be foreign)")
 		quit(1)
@@ -94,7 +94,7 @@ func _run() -> void:
 		var generation: int = int(native._generation)
 		await create_timer(0.14).timeout
 		native.submit_walk(Vector3.LEFT)
-		if not await _wait_for(func() -> bool: return _walk_ack(generation), 4.0):
+		if not (await _wait_for(func() -> bool: return _walk_ack(generation), 4.0)):
 			_fail("original station WALK did not acknowledge step " + str(index))
 			quit(1)
 			return
@@ -108,7 +108,7 @@ func _run() -> void:
 		quit(1)
 		return
 	game.native_station_session.interact_hangar()
-	if not await _wait_for(_ship_ready, 16.0):
+	if not (await _wait_for(_ship_ready, 16.0)):
 		_fail("E BOARD did not automatically hand off saved SQLite to cockpit: " + str(game.native_label.text))
 		quit(1)
 		return
@@ -120,7 +120,7 @@ func _run() -> void:
 	var old_pid: int = game.native_player_session.process_id()
 	game.queue_free()
 	await process_frame
-	if not await _wait_for(func() -> bool: return not OS.is_process_running(old_pid), 8.0):
+	if not (await _wait_for(func() -> bool: return not OS.is_process_running(old_pid), 8.0)):
 		_fail("original cockpit writer survived forced game close; cannot safely restart")
 		quit(1)
 		return
@@ -133,7 +133,7 @@ func _run() -> void:
 	await process_frame
 	game._player_session_autoconnect = true
 	game._open_saved_station_automatically()
-	if not await _wait_for(_ship_ready, 20.0):
+	if not (await _wait_for(_ship_ready, 20.0)):
 		_fail("saved boarded ship did not reopen automatically without H/P: " + str(game.native_label.text))
 		quit(1)
 		return
