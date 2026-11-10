@@ -1665,9 +1665,19 @@ static void scenario(const fs::path& db, bool farming,
         // and work-board operations survives independent SQLite reopening.
         // The final receipt is scenario-dependent: player ascent, named
         // pilot work order, and manufactured cargo use different IDs.
-        CHECK(w.world().planetary_shuttles().at(
+        const auto recovered_ascent=w.world().planetary_shuttles().at(
             PlanetarySiteKey{chosen.body,chosen.latitude,chosen.longitude,1})
-              .ascent_receipt==verified_ascent_receipt);
+              .ascent_receipt;
+        if(recovered_ascent!=verified_ascent_receipt)
+            throw std::runtime_error(
+                "original shuttle ascent receipt differs after SQLite restart: "
+                "expected="+std::to_string(verified_ascent_receipt)+
+                " actual="+std::to_string(recovered_ascent)+
+                " scenario="+(farming?std::string("farm"):std::string("oasis"))+
+                " manufactured="+std::to_string(manufactured)+
+                " autonomous="+std::to_string(autonomous)+
+                " delegated="+std::to_string(delegated)+
+                " rendezvous="+std::to_string(rendezvous_freight));
         CHECK(!w.launch_planetary_shuttle(7,ship,
             PlanetarySiteKey{chosen.body,chosen.latitude,chosen.longitude,1},
             81001,false));
