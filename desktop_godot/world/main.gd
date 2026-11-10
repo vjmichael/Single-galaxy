@@ -487,6 +487,10 @@ func _refresh_interaction_prompt() -> void:
 		station_connected, person, ship_connected, seated,
 		_last_native_dock, not _handoff_target.is_empty(),
 		INTERACTION_PROMPTS.action_key("fps_inspect", "E"))
+	if station_connected and _handoff_target.is_empty() and is_instance_valid(player) and not person.is_empty() and int(person.get("eligible_ship", 0)) > 0:
+		var key_to_hatch: String = INTERACTION_PROMPTS.hatch_direction_key(person, player.global_transform.basis)
+		if not key_to_hatch.is_empty():
+			display += "  |  Hold " + key_to_hatch + " toward hatch"
 	if interaction_label.text != display:
 		interaction_label.text = display
 
@@ -817,6 +821,10 @@ func _on_native_asteroid_contact(contact: Dictionary) -> void:
 			int(contact["impact_rock"]), int(contact["impact_tick"])]
 
 func _on_native_player_seat_intent() -> void:
+	# E cannot unexpectedly trigger station BOARD while the player is working
+	# with the visible refinery overlay; the world still remains C++-owned.
+	if is_instance_valid(refinery_terminal) and refinery_terminal.visible:
+		return
 	if native_station_session != null and native_station_session.is_active():
 		native_station_session.interact_hangar()
 	elif native_player_session != null:
