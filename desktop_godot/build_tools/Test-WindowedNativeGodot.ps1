@@ -78,9 +78,13 @@ try {
     $hashes[$sha]=$true
   }
   if($hashes.Count -lt 3){throw 'Unchanged repeated screenshot pixels do not prove 3D transitions'}
+  # The capture stage keeps its historical name for artifact compatibility,
+  # but its contents MUST show the native pilot's exterior camera, never
+  # an explorable cabin or first-person camera, even before undock.
   if($seen['01-docked-cabin'].ship.dock -ne 1 -or
-     $seen['01-docked-cabin'].player_camera_current -ne $true){
-    throw 'Authentic docked original-world cabin / player camera not recorded'
+     $seen['01-docked-cabin'].camera_current -ne $true -or
+     $seen['01-docked-cabin'].player_camera_current -ne $false){
+    throw 'Authentic docked native pilot must remain third-person, not cabin-first-person'
   }
   if($seen['02-exterior-flight'].ship.dock -ne 0 -or
      $seen['02-exterior-flight'].camera_current -ne $true){
