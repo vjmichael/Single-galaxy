@@ -23,6 +23,10 @@ var _pending := 0
 # replay a rejected action or issue a BOARD from local visual proximity.
 var _pending_walk := 0
 var _queued_hangar_intent := false
+var _queued_hangar_ready_msec := 0
+# Native host rejects a command <45ms after the prior accepted command.
+# Conservative 130ms spacing avoids asynchronous WALK->BOARD rate denials.
+const NATIVE_HANGAR_COMMAND_GAP_MS := 130
 var _last_send := -10000
 var _buffer := PackedByteArray()
 var _person := {}
@@ -124,6 +128,7 @@ func start() -> void:
 	_pending = 0
 	_pending_walk = 0
 	_queued_hangar_intent = false
+	_queued_hangar_ready_msec = 0
 	_pending_refinery_kind = ""
 	_next_request = 1
 	_last_send = -10000
@@ -164,6 +169,8 @@ func poll() -> void:
 	if not OS.is_process_running(_pid):
 		var failure := _unexpected_native_exit()
 		stop(failure)
+		return
+	_dispatch_queued_hangar_if_ready()
 
 func _integer(value: String) -> bool:
 	return not value.is_empty() and value.length() <= 19 and value.is_valid_int()
@@ -183,6 +190,7 @@ func _accept_line(line: String) -> void:
 			if req == _pending_walk:
 				_pending_walk = 0
 				_queued_hangar_intent = false
+				_queued_hangar_ready_msec = 0
 				_status("Native WALK rejected; press E again after reaching the hatch")
 			_pending_refinery_kind = ""
 			_refinery_receiving = false
@@ -235,10 +243,11 @@ func _accept_line(line: String) -> void:
 	person_received.emit(_person.duplicate(true))
 	_status("AT STATION" if state == 4 else "ABOARD OWN SHIP")
 	if last_walk_confirmed and _queued_hangar_intent:
-		_queued_hangar_intent = false
-		# The E press is only an INTENT. Submit it against the NEW original
-		# committed PERSON/generation; C++ repeats the distance/custody check.
-		interact_hangar()
+		# Fresh PERSON does not waive original C++'s per-command rate gate.
+		# Wait before dispatching ONE explicit E, with current generation.
+		_queued_hangar_ready_msec = maxi(Time.get_ticks_msec() + 75,
+			_last_send + NATIVE_HANGAR_COMMAND_GAP_MS)
+		_status("E received — synchronizing original station boarding after WALK receipt")
 
 func _accept_refinery_line(f: PackedStringArray) -> void:
 	var kind := f[0]
@@ -386,7 +395,7 @@ func _send(command: String) -> void:
 	_stdout.flush()
 
 func submit_walk(heading: Vector3) -> void:
-	if not _active or _session <= 0 or _pending != 0 or _person.get("state", -1) != 4:
+	if not _active or _session <= 0 or _pending != 0 or _queued_hangar_intent or _person.get("state", -1) != 4:
 		return
 	if heading.length_squared() < 0.01:
 		return
@@ -405,13 +414,25 @@ func submit_walk(heading: Vector3) -> void:
 	_last_send = now
 	_send("WALK|%d|%d|%d|%d|%d" % [_session, req, _generation, dx, dz])
 
+func _dispatch_queued_hangar_if_ready() -> void:
+	if not _queued_hangar_intent or not _active or _session <= 0 or _pending != 0 or _queued_hangar_ready_msec <= 0:
+		return
+	if Time.get_ticks_msec() < _queued_hangar_ready_msec:
+		return
+	_queued_hangar_intent = false
+	_queued_hangar_ready_msec = 0
+	# No local boarding authority: the C++ transaction revalidates the
+	# current original PERSON, ship custody, distance and docking.
+	interact_hangar()
+
 func interact_hangar() -> void:
 	if not _active or _session <= 0:
-		_status("Press H and wait for the original station PERSON before boarding")
+		_status("Original station not connected; use Retry after a real failure")
 		return
 	if _pending != 0:
 		if _pending == _pending_walk and int(_person.get("state", -1)) == 4:
 			_queued_hangar_intent = true
+			_queued_hangar_ready_msec = 0
 			_status("E received — waiting for native walking confirmation before boarding")
 		else:
 			_status("Native station action pending — retry E after its receipt")
@@ -441,10 +462,16 @@ func interact_hangar() -> void:
 		verb = "EXIT"
 	else:
 		return
+	var now: int = Time.get_ticks_msec()
+	if now - _last_send < NATIVE_HANGAR_COMMAND_GAP_MS:
+		_queued_hangar_intent = true
+		_queued_hangar_ready_msec = _last_send + NATIVE_HANGAR_COMMAND_GAP_MS
+		_status("E received — waiting for original C++ command cooldown")
+		return
 	var req := _next_request
 	_next_request += 1
 	_pending = req
-	_last_send = Time.get_ticks_msec()
+	_last_send = now
 	_send("%s|%d|%d|%d|%d" % [verb, _session, req, _generation, target])
 
 func stop(message: String = "Station session closed", graceful: bool = false) -> void:
@@ -468,6 +495,7 @@ func stop(message: String = "Station session closed", graceful: bool = false) ->
 	_pending = 0
 	_pending_walk = 0
 	_queued_hangar_intent = false
+	_queued_hangar_ready_msec = 0
 	_pending_refinery_kind = ""
 	connection_changed.emit(false)
 	_status(message)
