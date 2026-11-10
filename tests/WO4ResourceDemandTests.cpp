@@ -308,6 +308,11 @@ int main(){
             [](const Grant& g){return g.vital==Vital::Water;});
         CHECK(next_grant!=live_plan->grants.end());
         const auto unchanged=fault.world().state_hash();
+        const auto initial_generation=fault.generation();
+        const auto initial_tick=fault.world().tick();
+        const auto original_events=fault.world().events().size();
+        const auto source_water=fault.world().life_support(ship)->water_kg;
+        const auto destination_water=fault.world().habitat(site)->life.water_kg;
         bool interrupted=false;
         try {
             (void)commit_owner_approved_local_vital(
@@ -315,8 +320,17 @@ int main(){
                 FailPoint::AfterReceiptWrite);
         }catch(const std::exception&){interrupted=true;}
         CHECK(interrupted);
-        CHECK(fault.world().state_hash()==unchanged);
+        // Original PersistentWorld::submit is a separate DURABLE SQLite
+        // transaction. The successful accepted/pending command changes the
+        // state hash and generation even though step(AfterReceiptWrite)
+        // fails atomically. Never pretend the original command was absent.
+        CHECK(fault.world().state_hash()!=unchanged);
+        CHECK(fault.generation()==initial_generation+1);
         CHECK(fault.world().has_command_id(11));
+        CHECK(fault.world().tick()==initial_tick &&
+              fault.world().events().size()==original_events);
+        CHECK(fault.world().life_support(ship)->water_kg==source_water &&
+              fault.world().habitat(site)->life.water_kg==destination_water);
         fault.step(); // original durable pending command, not resubmission
         CHECK(fault.world().events().back().command_id==11 &&
               fault.world().events().back().result==Outcome::Applied &&
