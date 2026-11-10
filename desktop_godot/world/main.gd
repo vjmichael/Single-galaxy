@@ -1,5 +1,5 @@
 extends Node3D
-## Self-contained monochrome FPS test arena: primitive meshes and true
+## Self-contained two-tone gray station / white ship FPS: primitive meshes and true
 ## Godot physics collisions. NOT a replacement writer for native galaxy state.
 
 const PLAYER_SCRIPT := preload("res://world/player_controller.gd")
@@ -9,10 +9,13 @@ const NATIVE_STATION_SESSION := preload("res://world/native_station_session.gd")
 const REFINERY_TERMINAL_UI := preload("res://world/refinery_terminal_ui.gd")
 const FLIGHT_INSTRUMENTS := preload("res://world/native_flight_instruments.gd")
 const INTERACTION_PROMPTS := preload("res://world/interaction_prompts.gd")
-const MONOCHROME := Color(0.76, 0.76, 0.76, 1.0)
+const STATION_GRAY := Color(0.47, 0.51, 0.55, 1.0)
+const SHIP_WHITE := Color(0.96, 0.97, 0.99, 1.0)
 # Visual capsule center for 1.75 m tall collider; original C++ X/Z unchanged.
 const AVATAR_CENTER_HEIGHT_M := 0.90
 var material: StandardMaterial3D
+var ship_material: StandardMaterial3D
+var flight_panel: PanelContainer
 var player # assigned CharacterBody3D with runtime PlayerController.gd; signals are script-defined
 var scope_label: Label
 var status_label: Label
@@ -49,9 +52,13 @@ var _fps_accumulator := 0.0
 
 func _ready() -> void:
 	material = StandardMaterial3D.new()
-	material.albedo_color = MONOCHROME
+	material.albedo_color = STATION_GRAY
 	material.roughness = 1.0
 	material.metallic = 0.0
+	ship_material = StandardMaterial3D.new()
+	ship_material.albedo_color = SHIP_WHITE
+	ship_material.roughness = 0.78
+	ship_material.metallic = 0.06
 	_setup_environment()
 	station_space = Node3D.new()
 	station_space.name = "StationInterior_Prototype"
@@ -120,7 +127,11 @@ func _solid_box(label: String, pos: Vector3, dimensions: Vector3) -> StaticBody3
 	var box := BoxMesh.new()
 	box.size = dimensions
 	mesh.mesh = box
-	mesh.material_override = material
+	# The owned docked hull and actual cockpit have a consistent white visual
+	# identity. Station architecture remains gray. Materials are presentation
+	# only and never imply a second physical vessel.
+	var white_hull: bool = _geometry_parent == ship_space or label.begins_with("Docked owned ship") or label.begins_with("Ship wing")
+	mesh.material_override = ship_material if white_hull else material
 	body.add_child(mesh)
 	var collision := CollisionShape3D.new()
 	var shape := BoxShape3D.new()
@@ -216,8 +227,21 @@ func _build_objects() -> void:
 	hatch_color.albedo_color = Color(0.08, 0.89, 0.96, 1.0)
 	hatch_color.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	hatch.material_override = hatch_color
-	hatch.position = Vector3(0.0, 0.02, 0.0)
+	# The gangway is a solid surface with top Y=0.03 m. The former marker
+	# ended at Y=0.0275 m: hidden UNDER that floor! Its top is now 0.085 m.
+	# The marker has no collision, and the server's 600mm hatch stays (0,0).
+	hatch.position = Vector3(0.0, 0.0775, 0.0)
 	_geometry_parent.add_child(hatch)
+	var beacon := Label3D.new()
+	beacon.name = "BoardingHatch_WorldSign_VisualOnly"
+	beacon.text = "BOARDING HATCH\nE WHEN PROMPTED"
+	beacon.position = Vector3(0.0, 2.15, 0.0)
+	beacon.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	beacon.pixel_size = 0.006
+	beacon.font_size = 42
+	beacon.modulate = Color(0.12, 1.0, 1.0, 1.0)
+	beacon.no_depth_test = true
+	_geometry_parent.add_child(beacon)
 
 func _build_ship_interior() -> void:
 	# A separate visual cabin with the same 16 m prototype interior bounds as
@@ -267,7 +291,7 @@ func _build_native_space_preview() -> void:
 	var body_mesh := BoxMesh.new()
 	body_mesh.size = Vector3(8.0, 2.5, 3.0)
 	body.mesh = body_mesh
-	body.material_override = material
+	body.material_override = ship_material
 	exterior_ship_visual.add_child(body)
 	for side in [-1,1]:
 		var wing := MeshInstance3D.new()
@@ -275,7 +299,7 @@ func _build_native_space_preview() -> void:
 		var wing_mesh := BoxMesh.new()
 		wing_mesh.size = Vector3(5.5, 0.3, 1.4)
 		wing.mesh = wing_mesh
-		wing.material_override = material
+		wing.material_override = ship_material
 		wing.position = Vector3(-0.25, -0.45, float(side) * 2.35)
 		exterior_ship_visual.add_child(wing)
 	exterior_camera = Camera3D.new()
