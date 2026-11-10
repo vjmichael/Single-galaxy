@@ -24,7 +24,7 @@ jobs:
           script: |
             const fs=require('fs');
             const req=JSON.parse(fs.readFileSync('ci/workorder-taskgroup-request.json','utf8'));
-            const allowed={WO1:{pr:87,branch:'industry/industry01-recipe-foundation-20261106'},WO2:{pr:88,branch:'industry/wo2-npc-work-management-20261106'}};
+            const allowed={WO1:{pr:87,branch:'industry/industry01-recipe-foundation-20261106'},WO2:{pr:88,branch:'industry/wo2-npc-work-management-20261106'},WO3:{pr:89,branch:'industry/wo3-colony-operations-20261106'},WO4:{pr:91,branch:'industry/wo4-resource-demand-20261107'},WO5:{pr:92,branch:'industry/wo5-physical-logistics-20261107'}};
             const e=allowed[req.task_group];
             if (req.schema!=='SG-WORKORDER-GATE-01' || !e || req.pr_number!==e.pr || !/^[0-9a-f]{40}$/.test(req.source_sha))
               throw Error('Unsupported group, PR or SHA');
@@ -88,23 +88,38 @@ jobs:
         run: |
           cmake -S . -B build/original-wo -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$env:SG_TOOLCHAIN" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
           if($LASTEXITCODE -ne 0){throw 'C++ configure failed'}
-      - name: Compile bounded original industry tests
+      - name: Compile industry, original NPC work and selected dependent work order
         shell: bash
         run: |
           set -euo pipefail
           cmake --build build/original-wo --config Release --parallel 2 --target galaxy_industry01_native_tests galaxy_econ02b1a_outpost_tests galaxy_econ02b2_inventory_tests galaxy_econ02b0_quantified_tests
-          if [[ "$WORK_GROUP" == "WO2" ]]; then
+          if [[ "$WORK_GROUP" != "WO1" ]]; then
             cmake --build build/original-wo --config Release --parallel 2 --target galaxy_wo2_industry_workforce_tests galaxy_econ02b1b_connected_tests galaxy_work01b2_native_capacity_tests v59_medical_care v59_medical_recovery
           fi
-      - name: Execute genuine CTest and independent SQLite recovery
+          if [[ "$WORK_GROUP" == "WO3" || "$WORK_GROUP" == "WO4" || "$WORK_GROUP" == "WO5" ]]; then
+            cmake --build build/original-wo --config Release --parallel 2 --target galaxy_wo3_colony_operations_tests galaxy_wo3_planetary_housing_tests galaxy_wo3_planetary_utility_tests galaxy_b70_colony_core_tests galaxy_b70e_colony_farms_tests galaxy_b70f_habitation_tests galaxy_b70l_waterworks_tests galaxy_econ02a_workshop_tests galaxy_play13d_planetary_agriculture_tests
+          fi
+          if [[ "$WORK_GROUP" == "WO4" || "$WORK_GROUP" == "WO5" ]]; then
+            cmake --build build/original-wo --config Release --parallel 2 --target galaxy_wo4_resource_demand_tests galaxy_wo4_material_allocation_tests
+          fi
+          if [[ "$WORK_GROUP" == "WO5" ]]; then
+            cmake --build build/original-wo --config Release --parallel 2 --target galaxy_econ03c7modeauthoritytests galaxy_econ03c8bworldreconciliationtests v59_region_scoped_handoff v59_multi_destination_host v59_third_party_custody v59_world_finished_goods_logistics galaxy_shipping_status_bridge galaxy_wo5_physical_logistics_tests galaxy_play13d_regional_facilities_tests
+          fi
+      - name: Run exact-head physical original-world and SQLite recovery tests
         shell: bash
         run: |
           set -euo pipefail
           pattern='^galaxy_(industry01_native_binding|econ02b1a_outpost_tests|econ02b2_inventory_tests|econ02b0_quantified_tests)$'
           if [[ "$WORK_GROUP" == "WO2" ]]; then
             pattern='^galaxy_(wo2_industry_workforce|industry01_native_binding|econ02b1a_outpost_tests|econ02b1b_connected_tests|econ02b2_inventory_tests|econ02b0_quantified_tests|work01b2_native_capacity)$|^v59_medical_(care|recovery)$'
+          elif [[ "$WORK_GROUP" == "WO3" ]]; then
+            pattern='^galaxy_(wo3_planetary_utility|wo3_planetary_housing|wo3_colony_operations|b70_colony_core_tests|b70e_colony_farms_tests|b70f_habitation_tests|b70l_waterworks_tests|econ02a_workshop_tests|play13d_planetary_agriculture|industry01_native_binding|wo2_industry_workforce)$'
+          elif [[ "$WORK_GROUP" == "WO4" ]]; then
+            pattern='^galaxy_(wo4_resource_demand|wo4_material_allocation|wo3_colony_operations|wo3_planetary_housing|wo3_planetary_utility|wo2_industry_workforce|industry01_native_binding)$'
+          elif [[ "$WORK_GROUP" == "WO5" ]]; then
+            pattern='^(v59_(multi_destination_host|region_scoped_handoff|third_party_custody|world_finished_goods_logistics)|galaxy_(econ03c7modeauthoritytests|econ03c8bworldreconciliationtests|shipping_transport_real_world_tests|work01c_native_transport_executors|wo5_physical_logistics|wo4_resource_demand|wo4_material_allocation|wo3_planetary_utility|wo3_planetary_housing|wo2_industry_workforce|industry01_native_binding|ship01c_manufactured_freight|flight04b_real_freight))$'
           fi
-          ctest --test-dir build/original-wo -C Release --no-tests=error --timeout 200 --output-on-failure --output-junit workorder-native.xml -R "$pattern"
+          ctest --test-dir build/original-wo -C Release --no-tests=error --timeout 360 --output-on-failure --output-junit workorder-native.xml -R "$pattern"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
