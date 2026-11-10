@@ -38,8 +38,14 @@ func _ship_ready() -> bool:
 func _seat_ready() -> bool:
 	return _ship_ready() and game.native_player_session._pending == 0 and game.native_player_session._seated
 
-func _standing() -> bool:
-	return _ship_ready() and game.native_player_session._pending == 0 and not game.native_player_session._seated
+func _third_person_locked() -> bool:
+	return _ship_ready() and game.space_preview.visible and \
+		game.exterior_camera.current and not game.player.camera.current and \
+		not game.ship_space.visible and game.player.native_in_ship
+
+func _unchanged_pilot_seat(before_sequence: int) -> bool:
+	return _ship_ready() and game.native_player_session._seated and \
+		int(game.native_player_session._seat_sequence) == before_sequence
 
 func _undocked() -> bool:
 	return _ship_ready() and game.native_player_session._pending == 0 and game.native_player_session._dock_state == 0
@@ -137,6 +143,23 @@ func _run() -> void:
 		_fail("ship ready without an original BOARD receipt or second writer still active")
 		quit(1)
 		return
+	# A BOARD now authorizes pilot-only automatic C++ SEAT, not a walkable
+	# cabin or another explicit E. Third-person applies even before U.
+	if not (await _wait_for(Callable(self, "_seat_ready"), 8.0)):
+		_fail("native automatic pilot seating was not committed after BOARD")
+		quit(1)
+		return
+	if not _third_person_locked():
+		_fail("BOARD did not immediately lock third-person/no-cabin state")
+		quit(1)
+		return
+	var first_seat_seq: int = int(game.native_player_session._seat_sequence)
+	game._on_native_player_seat_intent() # E must NOT stand even while docked
+	await create_timer(0.15).timeout
+	if not _unchanged_pilot_seat(first_seat_seq):
+		_fail("E escaped the locked pilot seat while docked")
+		quit(1)
+		return
 	_former_pid = game.native_player_session.process_id()
 	game.queue_free()
 	await process_frame
@@ -161,12 +184,10 @@ func _run() -> void:
 		_fail("restart did not preserve original aboard custody")
 		quit(1)
 		return
-	# Complete the genuine return loop in the SAME user-data SQLite world:
-	# cockpit E seat -> U undock -> G dock -> E stand -> E native EXIT.
-	# No synthetic frames, second concurrent writer, or teleport.
-	game.native_player_session.toggle_seat()
-	if not (await _wait_for(Callable(self, "_seat_ready"), 6.0)):
-		_fail("saved ship could not enter real pilot seat")
+	# Saved BOARD remains a persisted original C++ automatic SEAT after
+	# restart. No cockpit E to sit, no walkable cabin or free-look V toggle.
+	if not (await _wait_for(Callable(self, "_seat_ready"), 8.0)) or not _third_person_locked():
+		_fail("restart did not preserve automatic pilot-seat/third-person rule")
 		quit(1)
 		return
 	await create_timer(0.14).timeout
@@ -175,29 +196,38 @@ func _run() -> void:
 		_fail("original ship failed real undocking after restart")
 		quit(1)
 		return
+	var flying_seat_sequence: int = int(game.native_player_session._seat_sequence)
+	game._on_native_player_seat_intent() # E cannot stand/leave ship in space
+	await create_timer(0.15).timeout
+	if not _unchanged_pilot_seat(flying_seat_sequence) or not _third_person_locked():
+		_fail("E or third-person camera rule allowed ship exploration in space")
+		quit(1)
+		return
 	await create_timer(0.14).timeout
 	game.native_player_session.submit_flight(PackedStringArray(["DCK"]))
 	if not (await _wait_for(Callable(self, "_redocked"), 8.0)):
 		_fail("original redocking did not arm real colony disembark")
 		quit(1)
 		return
-	await create_timer(0.14).timeout
-	game._on_native_player_seat_intent() # E stands, cannot exit while seated
-	if not (await _wait_for(Callable(self, "_standing"), 6.0)):
-		_fail("E did not stand at original docked ship")
+	if not _third_person_locked() or not game.native_player_session._seated:
+		_fail("real redocking exposed a walkable cabin or released the pilot seat")
 		quit(1)
 		return
 	await create_timer(0.14).timeout
-	game._on_native_player_seat_intent() # E closes cockpit, opens station, EXIT
+	game._on_native_player_seat_intent() # ONE E: seat receipt + station EXIT
 	if not (await _wait_for(Callable(self, "_colony_returned"), 20.0)):
 		_fail("native EXIT failed to return same SQLite person to colony: " + str(game.native_label.text))
 		quit(1)
 		return
-	if game.last_station_player_state != 4 or game._colony_return_armed or game.station_space == null or not game.station_space.visible:
+	if game.last_station_player_state != 4 or game._colony_return_armed or \
+			game.station_space == null or not game.station_space.visible or \
+			game.space_preview.visible or game.player.native_in_ship or \
+			not game.player.camera.current:
 		_fail("return had no verified on-foot colony person and visible station")
 		quit(1)
 		return
 	game.queue_free()
 	await process_frame
-	print("FP3D-UX-03 REAL GODOT AUTO-STATION PASS: no H/P, original C++ WALK/E BOARD, cockpit restart, seat/undock/redock/stand/E EXIT, same SQLite single writer")
+	print("FP3D-PILOT-01 REAL GODOT PASS: BOARD auto-seat, fixed third-person, no cabin walking, E blocked in space, ONE E docked EXIT, original SQLite one writer")
+	print("FP3D-UX-03 REAL GODOT AUTO-STATION PASS: no H/P, original C++ WALK/E BOARD, cockpit restart, auto-seat/undock/redock/one-E EXIT, same SQLite single writer")
 	quit(0)
