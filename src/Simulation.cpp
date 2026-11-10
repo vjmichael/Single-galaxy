@@ -15481,7 +15481,9 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                 std::int64_t(site.extractor ||
                              site.production_projects[1].phase!=0)+
                 std::int64_t(site.housing_phase!=0)+
-                std::int64_t(site.utility_phase!=0));
+                std::int64_t(site.utility_phase!=0)+
+                std::int64_t(site.service_projects[0].phase!=0)+
+                std::int64_t(site.service_projects[1].phase!=0));
             if(site.embodied_ore!=expected_installed)
                 throw std::runtime_error("snapshot: invalid regional module custody");
             if(site.extractor && !result.oasis_reserves_.count(site.region.body))
@@ -16961,7 +16963,9 @@ std::int64_t Simulation::total_ore() const {
                                    std::int64_t(site.extractor ||
                                      site.production_projects[1].phase!=0)+
                                    std::int64_t(site.housing_phase!=0)+
-                                   std::int64_t(site.utility_phase!=0)) ||
+                                   std::int64_t(site.utility_phase!=0)+
+                                   std::int64_t(site.service_projects[0].phase!=0)+
+                                   std::int64_t(site.service_projects[1].phase!=0)) ||
            site.embodied_ore>std::numeric_limits<std::int64_t>::max()-total)
             throw std::overflow_error("invalid planetary installation mass (body "+std::to_string(std::get<0>(key))+", embodied "+std::to_string(site.embodied_ore)+", housing phase "+std::to_string(site.housing_phase)+", utility phase "+std::to_string(site.utility_phase)+", farm "+std::to_string(site.farm)+", extractor "+std::to_string(site.extractor)+", production A "+std::to_string(site.production_projects[0].phase)+", production B "+std::to_string(site.production_projects[1].phase)+")");
         total+=site.embodied_ore+2*site.housing_modules;
