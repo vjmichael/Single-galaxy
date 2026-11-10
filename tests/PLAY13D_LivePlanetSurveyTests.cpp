@@ -19,6 +19,9 @@ int main() {
     {
       Simulation seed(777,1);
       ship=seed.add_colony_ship(7,{0,0},50,5);
+      // A modern physical celestial snapshot must retain the original
+      // actual named crew; never invent missing NPCs during recovery.
+      seed.enable_individual_workforce();
       seed.provision_starter_exploration_scanner(ship);
       PersistentWorld world(db.string(),std::move(seed));
       world.ensure_physical_celestial_systems();
