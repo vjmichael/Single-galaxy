@@ -48,7 +48,8 @@ def verify_native(supervisor: Path, host: Path, db: Path, role: str,
         )
     if not db.is_file():
         raise AssertionError(f"{role} did not create original SQLite file")
-    with sqlite3.connect(db) as sqlite:
+    sqlite = sqlite3.connect(db)
+    try:
         integrity = sqlite.execute("PRAGMA integrity_check").fetchone()[0]
         if integrity != "ok":
             raise AssertionError(f"{role} persisted invalid SQLite: {integrity}")
@@ -57,6 +58,9 @@ def verify_native(supervisor: Path, host: Path, db: Path, role: str,
         ).fetchone()[0]
         if tables < 10:
             raise AssertionError(f"{role} did not create original world schema")
+    finally:
+        # sqlite3 context-manager alone does NOT close Windows file handles.
+        sqlite.close()
     directory = Path(str(db) + ".diagnostics")
     receipts = list(directory.glob("process-*.json"))
     if not receipts:
