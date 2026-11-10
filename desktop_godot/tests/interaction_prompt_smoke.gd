@@ -32,8 +32,33 @@ func _run() -> void:
 		_fail("original (0,0) hatch mesh not visible")
 		return
 	var accent := hatch.material_override as StandardMaterial3D
-	if accent == null or accent.albedo_color.b < 0.9 or absf(hatch.position.z) > 0.001:
-		_fail("bright visual-only hatch marker missing at original native zero")
+	if accent == null or accent.albedo_color.b < 0.9 or absf(hatch.position.z) > 0.001 or hatch.position.y < 0.065:
+		_fail("cyan hatch marker still hidden under station gangway surface")
+		return
+	var sign := stage.get_node_or_null("StationInterior_Prototype/BoardingHatch_WorldSign_VisualOnly") as Label3D
+	if sign == null or not sign.text.contains("BOARDING HATCH") or sign.position.y < 1.5:
+		_fail("native (0,0) hatch lacks elevated legible world-space sign")
+		return
+	var station_floor := stage.get_node_or_null("StationInterior_Prototype/Station floor") as StaticBody3D
+	var ship_hull := stage.get_node_or_null("StationInterior_Prototype/Docked owned ship hull (visual)") as StaticBody3D
+	if station_floor == null or ship_hull == null:
+		_fail("station and original owned ship visual geometry missing")
+		return
+	var gray_mesh := station_floor.get_child(0) as MeshInstance3D
+	var white_mesh := ship_hull.get_child(0) as MeshInstance3D
+	if gray_mesh == null or white_mesh == null:
+		_fail("original station or ship geometry lacks colored mesh")
+		return
+	var gray_mat := gray_mesh.material_override as StandardMaterial3D
+	var white_mat := white_mesh.material_override as StandardMaterial3D
+	if gray_mat == null or white_mat == null or gray_mat.albedo_color.r > 0.6 or white_mat.albedo_color.r < 0.9:
+		_fail("station must be medium gray and original ship clearly white")
+		return
+	var system := stage.find_child("SystemStatusPanel", true, false) as PanelContainer
+	var flight := stage.find_child("FlightTelemetryPanel", true, false) as PanelContainer
+	var fps := stage.find_child("FPSReadout", true, false) as Label
+	if system == null or flight == null or fps == null or flight.visible or fps.anchor_top < 0.9:
+		_fail("HUD is not segmented into compact status, hidden idle flight and bottom FPS")
 		return
 	if PROMPTS.action_key("fps_inspect", "E") != "E":
 		_fail("HUD prompt action key does not match live InputMap E")
@@ -75,5 +100,5 @@ func _run() -> void:
 		_fail("interrupted SQLite writer handoff still offered active boarding")
 		return
 	stage.queue_free()
-	print("FP3D-UX-01 real Godot interaction prompt PASS: bright hatch, dynamic InputMap E, exact original C++ 600mm boarding/1200mm refinery, safe native source-bound guidance; synthetic UI fixture only")
+	print("FP3D-UX-02 real Godot visual/input PASS: visible cyan boarding tile + beacon above gangway, gray station/white hull, separate HUD, E prompts match native 600mm hatch/1200mm refinery")
 	quit(0)
