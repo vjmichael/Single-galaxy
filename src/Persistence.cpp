@@ -7290,7 +7290,7 @@ public:
                 update.text(4, std::to_string(ev.command_id));
                 update.execute();
                 if (sqlite3_changes(db_) != 1)
-                    throw std::runtime_error("missing/double execution receipt");
+                    throw std::runtime_error("missing/double execution receipt for original command "+std::to_string(ev.command_id)+" at tick "+std::to_string(ev.tick));
                 // Same transaction as receipts, physical resource ledgers and
                 // snapshot. A rejected action is recorded as rejected, never
                 // inferred to have harmed people, ships or cargo.
