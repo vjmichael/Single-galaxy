@@ -488,6 +488,17 @@ std::optional<Outcome> InteriorMovement::pilot(PlayerId owner,
         case PilotControl::StrafeStarboard:
             c.thrust_x=-forward_y;c.thrust_y=forward_x;break;
         case PilotControl::Counterthrust:
+            // The original v119 Action::Thrust uses amount=+/-1 for Z and
+            // cannot combine Z acceleration with X/Y in one command. Brake
+            // each axis through independently journaled native steps.
+            if(world_.world().native_3d_physics() &&
+               ship->velocity_z_mm_per_tick>=Simulation::kAccelerationMmPerTick2){
+                c.amount=-1;break;
+            }
+            if(world_.world().native_3d_physics() &&
+               ship->velocity_z_mm_per_tick<=-Simulation::kAccelerationMmPerTick2){
+                c.amount=1;break;
+            }
             if(ship->velocity.x>=Simulation::kAccelerationMmPerTick2)c.thrust_x=-1;
             else if(ship->velocity.x<=-Simulation::kAccelerationMmPerTick2)c.thrust_x=1;
             if(ship->velocity.y>=Simulation::kAccelerationMmPerTick2)c.thrust_y=-1;
