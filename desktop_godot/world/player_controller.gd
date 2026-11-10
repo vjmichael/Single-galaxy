@@ -149,6 +149,12 @@ func _collect_native_pilot_actions() -> PackedStringArray:
 		pilot_actions.append("FWD")
 	if Input.is_action_pressed("ship_thrust_reverse"):
 		pilot_actions.append("REV")
+	# Only native v119+ original C++ may apply actual vertical velocity.
+	# Godot does not move or elevate the visible ship locally.
+	if Input.is_action_pressed("ship_ascend"):
+		pilot_actions.append("ASC")
+	if Input.is_action_pressed("ship_descend"):
+		pilot_actions.append("DES")
 	return pilot_actions
 
 func _physics_process(delta: float) -> void:
