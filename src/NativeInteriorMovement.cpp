@@ -469,8 +469,16 @@ std::optional<Outcome> InteriorMovement::pilot(PlayerId owner,
             c.target=*station;
             break;
         }
-        case PilotControl::YawLeft:c.amount=-15;break;
-        case PilotControl::YawRight:c.amount=15;break;
+        // Native +Y points to Godot -Z (visual left from the +X-forward
+        // rear camera). Previous LEFT=-15 reversed A/D for the human pilot.
+        case PilotControl::YawLeft:c.amount=15;break;
+        case PilotControl::YawRight:c.amount=-15;break;
+        case PilotControl::Ascend:
+            if(!world_.world().native_3d_physics())return std::nullopt;
+            c.amount=1;break;
+        case PilotControl::Descend:
+            if(!world_.world().native_3d_physics())return std::nullopt;
+            c.amount=-1;break;
         case PilotControl::Forward:
             c.thrust_x=forward_x;c.thrust_y=forward_y;break;
         case PilotControl::Reverse:
