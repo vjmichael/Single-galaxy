@@ -734,8 +734,21 @@ static void scenario(const fs::path& db, bool farming,
             const auto ship_before=w.world().life_support(ship)->nutrients_kg;
             CHECK(!w.load_planetary_shuttle(8,ship,key,
                 ShuttleCargo::Nutrients,500));
-            CHECK(!w.load_planetary_shuttle(7,ship,key,
-                ShuttleCargo::Nutrients,500)); // still docked in orbit
+            // Orbit-side loading from the real ship is legitimate; it does
+            // NOT withdraw one kilogram from the remote surface. Return that
+            // same cargo to the ship before requesting surface collection.
+            const auto orbit_site_nutrients=
+                w.world().planetary_sites().at(key).nutrients_kg;
+            const auto orbit_ship_nutrients=
+                w.world().life_support(ship)->nutrients_kg;
+            CHECK(w.load_planetary_shuttle(7,ship,key,
+                ShuttleCargo::Nutrients,500));
+            CHECK(w.world().planetary_sites().at(key).nutrients_kg==
+                  orbit_site_nutrients);
+            CHECK(w.unload_planetary_shuttle(7,ship,key,
+                ShuttleCargo::Nutrients,500));
+            CHECK(w.world().life_support(ship)->nutrients_kg==
+                  orbit_ship_nutrients);
             CHECK(w.launch_planetary_shuttle(7,ship,key,81006,false));
             w.steps(3);
             CHECK(w.world().planetary_shuttles().at(key).flight_phase==2);
