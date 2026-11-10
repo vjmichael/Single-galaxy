@@ -9060,6 +9060,7 @@ public:
         std::string reconstructed;
         std::int64_t ore = -1;
         bool found = false;
+        std::string last_checkpoint_rejection;
         while (cp.row()) {
             const auto gen = static_cast<std::uint64_t>(sqlite3_column_int64(cp.get(), 0));
             const auto size = sqlite3_column_bytes(cp.get(), 1);
@@ -9107,11 +9108,16 @@ public:
                 reconstructed = sim.canonical_state();
                 found = true;
                 break;
-            } catch (const std::exception&) {
-                // Try another retained checkpoint. Never guess around missing operations.
+            } catch (const std::exception& e) {
+                // Record why a candidate failed but never substitute a guessed
+                // checkpoint or bypass original command and receipt validation.
+                last_checkpoint_rejection = e.what();
             }
         }
-        if (!found) throw std::runtime_error("recovery: cannot verify latest state; refusing repair");
+        if (!found) throw std::runtime_error(
+            "recovery: cannot verify latest state; refusing repair" +
+            (last_checkpoint_rejection.empty() ? std::string{} :
+             " (last checkpoint: " + last_checkpoint_rejection + ")"));
         run(db_, "BEGIN IMMEDIATE");
         try {
             if (latest_generation(db_) != newest) throw std::runtime_error("recovery: source changed");
