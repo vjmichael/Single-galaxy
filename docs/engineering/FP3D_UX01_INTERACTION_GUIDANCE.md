@@ -146,3 +146,27 @@ gate; publish an updated exact-source ZIP only after it passes;
 then the creator must actually board, sit, undock, collide, dock
 and restart on the physical R9700. PR #125 remains DRAFT and
 manufactured mining equipment remains deferred.
+
+### Post-feedback boarding guidance refinement
+
+The lower interaction panel now derives a **single next WASD direction**
+from the current original `PERSON(x_mm,z_mm)` and the actual Godot
+player/camera yaw using `Basis.inverse()`; the display updates as the
+player turns. At the true native genesis x=1600mm/z=0 with default facing,
+it says **Hold A toward hatch**. After turning +90° it correctly says
+**Hold W**, and guidance disappears at the genuine ±600mm boarding bound.
+This is purely read-only routing; it never injects keys or alters custody.
+
+The top-left status panel is now compact, status labels auto-wrap, FPS is
+fixed bottom-left and flight SHIP/ROCK telemetry appears separately at
+upper right only after verified original flight observations. This also
+implements the creator's requested **gray station / white ship** visual
+separation.
+
+A real Windows/Linux Godot smoke verifies both directions and the
+threshold; the file-backed synthetic pipe regression verifies one
+explicit E buffered through an in-flight native WALK and a subsequent
+native BOARD command using the newly acknowledged generation. The C++
+host remains the only boarding authority. After source changes, an
+updated exact-head consolidated Windows/Linux/Godot/ZIP gate remains
+mandatory before giving the creator a replacement package.
