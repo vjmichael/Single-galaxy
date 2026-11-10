@@ -38,6 +38,16 @@ const JUMP_SPEED := 4.5
 const MOUSE_SENSITIVITY := 0.0019
 const MOUSE_STEER_THRESHOLD_PX := 2.5
 const MOUSE_STEER_WINDOW_MS := 150
+
+static func native_mouse_yaw_direction(relative_x: float) -> int:
+	# Pure intent classification. The C++ original accepts/rejects the
+	# resulting LEFT/RIGHT command under seat, epoch and resource custody.
+	if relative_x > MOUSE_STEER_THRESHOLD_PX:
+		return 1
+	if relative_x < -MOUSE_STEER_THRESHOLD_PX:
+		return -1
+	return 0
+
 const EYE_HEIGHT := 0.58
 const GRAVITY := 17.0
 const INPUT_CONFIG := preload("res://world/input_contract.gd")
@@ -78,8 +88,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			# In the pilot seat the mouse STEERS the original ship, not a
 			# detached graybox camera. A short bounded intent window avoids
 			# queued turns continuing after physical mouse motion stops.
-			if absf(event.relative.x) >= MOUSE_STEER_THRESHOLD_PX:
-				_mouse_yaw_direction = 1 if event.relative.x > 0 else -1
+			var requested_yaw := native_mouse_yaw_direction(event.relative.x)
+			if requested_yaw != 0:
+				_mouse_yaw_direction = requested_yaw
 				_mouse_yaw_valid_until_ms = Time.get_ticks_msec() + MOUSE_STEER_WINDOW_MS
 		else:
 			rotate_y(-event.relative.x * MOUSE_SENSITIVITY)
