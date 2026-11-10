@@ -4316,6 +4316,23 @@ public:
         }
         std::map<std::uint64_t, std::uint64_t> expected_event_generation;
         {
+            // A historical kind=2 row is not necessarily a clock STEP:
+            // older native host operations (shuttle load, housing rack,
+            // handover) commit a new SQLite snapshot without advancing the
+            // original simulation tick. Only a *strictly advancing* original
+            // tick can supply immutable GRSM event provenance.
+            // Honor existing journals unchanged: never rewrite or renumber
+            // their snapshots, authority, receipt IDs or hashes.
+            std::int64_t last_tick=0;
+            if(history_start){
+                Statement boundary(db_, "SELECT tick FROM operation_log WHERE generation=?");
+                boundary.i64(1,static_cast<std::int64_t>(history_start));
+                if(!boundary.row())
+                    throw std::runtime_error("SQLite: missing historical source tick");
+                last_tick=sqlite3_column_int64(boundary.get(),0);
+                if(last_tick<0 || boundary.row())
+                    throw std::runtime_error("SQLite: invalid historical source tick");
+            }
             Statement steps(db_, "SELECT generation,tick,kind,command FROM operation_log WHERE generation>? AND kind IN (1,2) ORDER BY generation");
             steps.i64(1, static_cast<std::int64_t>(history_start));
             std::map<std::uint64_t,std::uint64_t> tick_generation;
@@ -4323,6 +4340,10 @@ public:
                 const auto g = sqlite3_column_int64(steps.get(), 0);
                 const auto tick = sqlite3_column_int64(steps.get(), 1);
                 const auto kind = sqlite3_column_int(steps.get(), 2);
+                if(g<=0 || tick<0 || tick<last_tick)
+                    throw std::runtime_error("SQLite: regressive historical step chronology");
+                const bool advanced=tick>last_tick;
+                last_tick=tick;
                 // The v52 privileged warehouse action is one atomic submit+execute
                 // entry, stored as kind=1 for legacy operation_log compatibility.
                 // Its command is replayed through a tick in the same transaction.
@@ -4332,10 +4353,18 @@ public:
                     const auto type=decode_command(reinterpret_cast<const char*>(raw)).action;
                     if(type!=Action::HostEscrowConstructedStock &&
                        type!=Action::HostReturnConstructedStock)continue;
+                    if(!advanced)
+                        throw std::runtime_error("SQLite: privileged action has no original tick");
+                }else if(!advanced) {
+                    // This is a real original host snapshot/custody commit at
+                    // the *same* tick, not a second event-generating STEP.
+                    // It still retains its own original generation/hash and
+                    // every other existing native-side custody verifier.
+                    continue;
                 }
-                if (g <= 0 || tick <= 0 || !tick_generation.emplace(static_cast<std::uint64_t>(tick),
+                if(tick<=0 || !tick_generation.emplace(static_cast<std::uint64_t>(tick),
                     static_cast<std::uint64_t>(g)).second)
-                    throw std::runtime_error("SQLite: duplicate historical step generation");
+                    throw std::runtime_error("SQLite: duplicate advancing historical step");
             }
             for (const auto& [id,ev] : event_by_id) {
                 const auto it=tick_generation.find(ev.tick);
