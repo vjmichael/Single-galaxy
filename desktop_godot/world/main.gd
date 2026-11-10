@@ -411,7 +411,12 @@ func _refresh_interaction_prompt() -> void:
 	if not is_instance_valid(interaction_label):
 		return
 	var station_connected: bool = native_station_session != null and native_station_session.is_active()
-	var ship_connected: bool = native_player_session != null and native_player_session.is_active()
+	var ship_process_active: bool = native_player_session != null and native_player_session.is_active()
+	# Launching a guardian is not proof of an admitted native cockpit POSE.
+	var ship_connected: bool = ship_process_active and int(native_player_session._sequence) >= 0
+	if ship_process_active and not ship_connected:
+		interaction_label.text = "Connecting cockpit — waiting for verified original C++ ship pose"
+		return
 	var person: Dictionary = {}
 	if station_connected:
 		person = native_station_session._person
