@@ -1,4 +1,5 @@
 #include "galaxy/NativeWriterLease.hpp"
+#include "galaxy/NativeWindowsUtf8Argv.hpp"
 #include "galaxy/ServerBreadcrumb.hpp"
 // FP3D-02F: no-browser, no-Python native desktop command ingress.
 // Stdio is an OS-local child pipe; host owns the fixed single-player authority.
@@ -125,11 +126,15 @@ void deny(std::uint64_t id,const char* reason){
     std::cout<<"DENY|1|"<<id<<'|'<<reason<<'\n'<<std::flush;
 }
 }
-int main(int argc,char** argv){
+static int run_host(int argc,char** argv){
     if(argc!=2){std::cerr<<"Usage: galaxy_desktop_player_host SQLITE_PATH\n";return 2;}
     try{
-        const fs::path save(argv[1]);
-        if(save.empty()||save.string().size()>1024||
+        const std::string save_utf8(argv[1]);
+   // sqlite3_open_v2 takes UTF-8; NativeWriterLease uses an accurately
+   // decoded Windows filesystem path. Never round-trip via path.string(),
+   // which may convert it back into a non-UTF8 active code page.
+   const fs::path save=fs::u8path(save_utf8);
+        if(save.empty()||save_utf8.size()>1024||
            (!save.parent_path().empty()&&!fs::exists(save.parent_path())))
             throw std::invalid_argument("invalid native world save path");
         NativeWriterLease custody(save);
@@ -138,8 +143,8 @@ int main(int argc,char** argv){
         const auto ship=seed.spawn_ship_docked(kLocalOwner,station,24,60);
         if(!seed.register_player_person(kLocalOwner,ship))
             throw std::runtime_error("player-person bootstrap refused");
-        PersistentWorld world(save.string(),std::move(seed));
-        InteriorMovement person(save.string(),world);
+        PersistentWorld world(save_utf8,std::move(seed));
+        InteriorMovement person(save_utf8,world);
         if(world.world().has_pending_cockpit_flight())
             throw std::runtime_error("Interrupted cockpit flight command pending in original journal; refusing silent replay");
         const std::uint64_t session=new_epoch();
@@ -221,3 +226,18 @@ int main(int argc,char** argv){
         std::cerr<<"FP3D native player host aborted: "<<e.what()<<'\n';return 1;
     }
 }
+
+#ifdef _WIN32
+int wmain(int argc,wchar_t** argv){
+    try {
+        auto utf8=galaxy::windows_utf8_argv::convert_all(argc,argv);
+        auto pointers=galaxy::windows_utf8_argv::views(utf8);
+        return run_host(argc,pointers.data());
+    }catch(const std::exception& error){
+        std::cerr<<"Windows native host UTF-8 startup error: "<<error.what()<<'\n';
+        return 2;
+    }
+}
+#else
+int main(int argc,char** argv){return run_host(argc,argv);}
+#endif
