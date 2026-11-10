@@ -1,6 +1,8 @@
 # Single-Galaxy — Owner-directed 20-stage development sequence
 
 > **Stage 1 progress:** WO1 research, cataloguing, source-generated C++ registry and the two existing real-workshop bindings implemented on [draft PR #87](https://github.com/vjmichael/Single-galaxy/pull/87). [Exact source/verification gate ledger](INDUSTRY01_WO1_SOURCE_CLOSEOUT_20261106.md). Native CI is not yet green; **WO2 is next, not underway**.
+> **November 10, 2026 execution update:** The 20-stage order below remains binding. WO1 source implementation exists; later WO2, WO3, WO4, and WO5 source work was also begun in separate stacked draft branches, but they are **not equivalent to complete, integrated, native-accepted work orders**. Return to WO1 acceptance and move through WO2→WO3→WO4→WO5 closure in order before treating Stage 6 (Planet Generation) as the primary new feature group. Earlier player 3D demo and physical playtest defects are separately tracked, not a replacement roadmap. The WO1 November 9 native results exposed an obsolete 98-item C++ test expectation against the validated 100-item catalogue and Windows CRLF checkout drift in the generated C++ registry. Both have narrow branch fixes; acceptance must be demonstrated by fresh exact-head Windows/Linux execution, not by source edits alone. Do not start automatic CI fanout for each branch.
+
 **Recorded November 6, 2026.** This supersedes earlier suggestions to prioritize full player gameplay, native 3D production or multiplayer ahead of the world simulation. **This is the order in which major feature areas should receive concentrated development work.** Existing prototype implementations remain useful foundations, not evidence that an area is finished.
 
 ## Binding order
