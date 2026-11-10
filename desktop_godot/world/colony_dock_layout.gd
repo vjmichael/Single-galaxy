@@ -107,8 +107,8 @@ static func build(station: Node3D) -> void:
 	station.add_child(dock)
 	_box(dock, "Dock charcoal deck", Vector3(0.0, 0.042, -4.0),
 		Vector3(9.0, 0.06, 7.8), DOCK_DECK)
-	_box(dock, "Ship embarkation ramp", Vector3(0.0, 0.084, -1.6),
-		Vector3(1.5, 0.014, 3.2), Color(0.48, 0.54, 0.58, 1.0))
+	_box(dock, "Ship embarkation ramp", Vector3(0.0, 0.084, -1.9),
+		Vector3(1.5, 0.014, 2.8), Color(0.48, 0.54, 0.58, 1.0))
 	# Non-colliding berth markings guide the eye to the OWNED white ship.
 	for side in [-1, 1]:
 		var edge_x: float = float(side)*3.9
@@ -120,5 +120,22 @@ static func build(station: Node3D) -> void:
 			Vector3(0.23, 0.25, 0.23), PATH_COLOR, true)
 	_sign(dock, "Departure dock label", "DEPARTURES  /  TO SPACE",
 		Vector3(0.0, 3.8, -4.6), COLONY_LIGHT)
+	# Make it visibly a SPACECRAFT instead of an anonymous white container.
+	# The existing white owned hull/wing bodies are built by main.gd,
+	# while these non-colliding details add landing gear, hatch and canopy.
+	_box(dock, "Owned ship dark cockpit canopy", Vector3(0.0, 2.23, -3.55),
+		Vector3(1.8, 0.64, 1.35), Color(0.19, 0.28, 0.37, 1.0))
+	_box(dock, "Owned ship nose highlight", Vector3(0.0, 1.29, -2.66),
+		Vector3(1.52, 0.63, 0.40), Color(0.91, 0.94, 0.97, 1.0))
+	_box(dock, "Owned ship entrance dark seam", Vector3(0.0, 1.05, -2.42),
+		Vector3(0.88, 1.5, 0.06), Color(0.16, 0.22, 0.29, 1.0))
+	for side in [-1, 1]:
+		var x: float = 1.05*float(side)
+		_box(dock, "Owned ship landing leg %d" % side,
+			Vector3(x, 0.42, -6.25), Vector3(0.19, 0.80, 0.22),
+			Color(0.69, 0.72, 0.76, 1.0))
+		_box(dock, "Owned ship landing foot %d" % side,
+			Vector3(x, 0.075, -6.25), Vector3(0.46, 0.10, 0.5),
+			Color(0.74, 0.77, 0.81, 1.0))
 	# White hull, ramp and active (0,0) checkpoint share the central axis.
 	# This builder deliberately creates NO collision or boarding callback.
