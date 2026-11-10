@@ -55,6 +55,34 @@ checks = {
         and "_colony_return_pending" in main
         and "_colony_return_armed" in main
     ),
+    "pilot-only-auto-seat-after-original-board": (
+        "func _ensure_native_pilot_role() -> void:" in main
+        and 'not native_player_session._initial_ship_seen' in main
+        and 'native_player_session.toggle_seat()' in main
+        and '_pilot_auto_seat_attempted = true' in main
+        and 'func use_native_ship_custody(aboard: bool)' in player
+        and 'elif not native_in_ship:' in player
+        and 'func _on_native_player_intent(heading: Vector3)' in main
+        and 'native_player_session.submit_motion(heading)' not in main
+        and 'Callable(self, "_seat_ready")' in auto_start_smoke
+        and '"E escaped the locked pilot seat while docked"' in auto_start_smoke
+        and '"E or third-person camera rule allowed ship exploration in space"' in auto_start_smoke
+        and '"Godot still sent cabin MOVE despite original pilot-only custody"' in auto_start_smoke
+    ),
+    "pilot-only-third-person-and-one-verified-docked-E": (
+        'var exterior := not in_station' in main
+        and 'func _complete_docked_disembark_after_native_seat_release()' in main
+        and '_colony_return_pending = true' in main
+        and 'call_deferred("_complete_docked_disembark_after_native_seat_release")' in main
+        and '_schedule_native_handoff("station", outgoing_pid)' in main
+        and 'call_deferred("_exit_docked_ship_after_verified_station_person")' in main
+        and 'native_station_session.interact_hangar()' in main
+        and 'P developer stop is disabled in gameplay' in main
+        and 'Pilot-only third-person camera is fixed while aboard' in main
+        and 'THIRD-PERSON FLIGHT' in action_hints
+        and '"docked ship falsely showed an explorable cabin or a first-person camera"' in action_smoke
+        and '"real docking exposed a walkable cabin or released the pilot seat"' in auto_start_smoke
+    ),
     "unexpected-host-exit-writes-bounded-diagnostic-not-world": (
         "func _unexpected_native_exit()" in station_client
         and 'user://sg_station_last_failure.json' in station_client
@@ -195,7 +223,12 @@ checks = {
     "separate-physics": "for body in station_space.get_children()" in main and "for body in ship_space.get_children()" in main,
     "no-invisible-collision": "body.collision_layer = 0 if in_station or exterior else 1" in main and "body.collision_layer = 1 if in_station else 0" in main and "body.collision_mask = 0 if in_station or exterior else 1" in main,
     "native-station-frame-only": "_show_native_location(last_station_player_state == 4)" in main,
-    "native-pose-frame-only": '_record_native_projection("POSE", pose)' in main and '_show_native_location(false) # verified original owned ship pose' in main,
+    "native-pose-frame-only": (
+        '_record_native_projection("POSE", pose)' in main
+        and 'player.use_native_ship_custody(true)' in main
+        and 'player.use_native_seat(bool(pose["seated"]))' in main
+        and '_show_native_location(false)' in main
+    ),
     "native-ship-telemetry": '_record_native_projection("SHIP", ship)' in main,
     "logged-client-evidence-not-second-save": '"godot-observed-native-frame"' in main and "sg_station_visual_acceptance.jsonl" in main,
     "bounded-client-evidence": "1048576" in main,
