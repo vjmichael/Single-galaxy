@@ -648,9 +648,9 @@ func _refresh_interaction_prompt() -> void:
 			elif not get_window().has_focus():
 				status_label.text = "PILOT PAUSED | Click game to focus; saved ship unchanged"
 			elif Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
-				status_label.text = "KEYBOARD FLIGHT READY | Up/Down thrust, A/D yaw | Click for mouse steering"
+				status_label.text = "PILOT READY | A/D turn, W/S vertical, ↑/↓ thrust | Click for mouse yaw"
 			else:
-				status_label.text = "PILOT READY | Up/Down thrust, A/D yaw, B brake, G dock"
+				status_label.text = "PILOT READY | A/D turn, W/S vertical, ↑/↓ thrust, B brake, G dock"
 		elif station_connected:
 			status_label.text = "COLONY TO DOCK | WASD walk, E board existing ship"
 		else:
@@ -1014,11 +1014,13 @@ func _on_native_ship_state(ship: Dictionary) -> void:
 		if smooth_camera:
 			exterior_camera.global_transform = camera_before
 	_show_native_location(last_station_player_state == 4)
-	ship_label.text = "ORIGINAL SHIP #%d | %s | yaw %d° | position (%.1f, %.1f, %.1f)m | velocity (%d, %d, %d)mm/tick" % [
+	# Speed is the single main velocity readout in the verified flight panel.
+	# The raw native Vx/Vy/Vz components remain in F11 evidence, not a
+	# confusing second cockpit velocity indicator.
+	ship_label.text = "ORIGINAL SHIP #%d | %s | yaw %d° | position (%.1f, %.1f, %.1f)m" % [
 		int(ship["ship"]), states[dock], int(ship["heading"]),
 		float(ship["x_mm"]) / 1000.0, float(ship["y_mm"]) / 1000.0,
-		float(ship["z_mm"]) / 1000.0,
-		int(ship["vx"]), int(ship["vy"]), int(ship["vz"])]
+		float(ship["z_mm"]) / 1000.0]
 
 func _on_native_asteroid_contact(contact: Dictionary) -> void:
 	# Real original ship snapshot, never a client-spawned resource.
