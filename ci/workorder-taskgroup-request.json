@@ -2,6 +2,6 @@
   "schema": "SG-WORKORDER-GATE-01",
   "task_group": "STAGE6",
   "pr_number": 127,
-  "source_sha": "e6e99b2d278b55a302ca0ba1f34879294a928cd9",
-  "note": "Third pinned full 22-test native Windows/Linux acceptance after correcting v56 snapshot allowlist, original workforce genesis sequencing, physical orbital nutrient load/unload fixture, strict journal custody handling, and richer uncompromised life/site invariant diagnostics. Verify all WO3/WO4/WO5/regional/NPC/Stage6 selected CTests; retain exact-head failures."
+  "source_sha": "b7099d21b16522b35e05918d56f8e9ae46870193",
+  "note": "Fourth single exact-head full 22-test Windows/Linux original-world acceptance. Verify repaired v56 host consignment deserialization with strict issuer/cargo fields, finite ship depletion, NPC/shuttle original region, conserved world matter, cross-platform historical recovery, Stage6/WO4, and diagnostic root of original planetary site mass and NPC receipt mismatch. No release promotion without complete native evidence."
 }
