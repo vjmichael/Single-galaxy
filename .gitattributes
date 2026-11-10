@@ -1,0 +1,3 @@
+# Keep the generated registry byte-identical on Windows and Linux.
+# The generator emits LF; Git checkout must not convert it to CRLF.
+src/Industry01Catalog.generated.cpp text eol=lf
