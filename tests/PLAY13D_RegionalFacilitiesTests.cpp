@@ -158,7 +158,8 @@ static void scenario(const fs::path& db, bool farming,
         if(!manufactured)
             seed.provision_colony_genesis(freighter,1000,1000,1000,1000,1000);
         seed.provision_colony_genesis(receiver,1000,1000,1000,1000,1000);
-        if(autonomous)seed.provision_starter_exploration_scanner(receiver);
+        // Named crew must be materialized before scanner provisioning upgrades
+        // the original world beyond the genesis-only workforce migration.
         seed.enable_individual_workforce();
         seed.provision_starter_exploration_scanner(ship);
         if(!manufactured)seed.provision_starter_exploration_scanner(freighter);
