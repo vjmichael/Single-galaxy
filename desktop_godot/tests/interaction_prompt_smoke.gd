@@ -65,6 +65,23 @@ func _run() -> void:
 	if system == null or flight == null or fps == null or flight.visible or fps.anchor_top < 0.9:
 		_fail("HUD is not segmented into compact status, hidden idle flight and bottom FPS")
 		return
+	# F3 hides only read-only engineering detail. Interaction and the
+	# original station/ship command path remain present in both modes.
+	if stage._show_technical_details or stage.scope_label.visible or \
+			stage.ship_label.visible or stage.fps_label.visible or \
+			stage.native_label.visible or not stage.status_label.visible or not prompt.visible:
+		_fail("normal gameplay should default to F3 diagnostics hidden while native guidance stays visible")
+		return
+	stage._toggle_technical_details()
+	if not stage._show_technical_details or not stage.scope_label.visible or \
+			not stage.ship_label.visible or not stage.fps_label.visible or \
+			not stage.native_label.visible or not prompt.visible:
+		_fail("F3 must show original C++ diagnostic details without hiding gameplay prompts")
+		return
+	stage._toggle_technical_details()
+	if stage._show_technical_details or stage.scope_label.visible or not prompt.visible:
+		_fail("F3 must hide technical detail on the second press")
+		return
 	if PROMPTS.action_key("fps_inspect", "E") != "E":
 		_fail("HUD prompt action key does not match live InputMap E")
 		return
@@ -182,6 +199,23 @@ func _run() -> void:
 		_fail("on-foot station player generated forbidden ship thrust intent")
 		return
 	Input.action_release("ship_thrust_forward")
+	# The physical player proxy jumps EXACTLY to original 90mm WALK
+	# receipts, while ONLY the local eye camera eases between them.
+	pilot.global_position = Vector3(0.0, 0.9, 0.0)
+	pilot.camera.position = Vector3(0.0, pilot.EYE_HEIGHT, 0.0)
+	pilot.apply_native_station_pose(Vector3(0.09, 0.9, 0.0), true)
+	if absf(pilot.global_position.x - 0.09) > 0.0001 or \
+			pilot.camera.global_position.x >= 0.09:
+		_fail("native 90mm walking receipt not applied exactly or visual camera was snapped")
+		return
+	pilot._process(1.0)
+	if absf(pilot.camera.global_position.x - 0.09) > 0.0001:
+		_fail("render-only station camera did not settle onto confirmed original pose")
+		return
+	pilot.apply_native_station_pose(Vector3(4.0, 0.9, 0.0), true)
+	if absf(pilot.camera.global_position.x - 4.0) > 0.0001:
+		_fail("untrusted large native discontinuity was interpolated instead of snapped")
+		return
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	print("FP3D-UX-05 REAL GODOT INTENT PASS: cursor released keyboard FWD/LEFT, dock/undock eligibility and fail-closed original seat/ship custody")
 	# Static engine-only visual test: never fabricate a C++ aboard receipt.
