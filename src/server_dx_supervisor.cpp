@@ -408,6 +408,41 @@ static int run(const Args& args){
     return outcome==WAIT_TIMEOUT?124:static_cast<int>(status);
 }
 #endif
+#ifdef _WIN32
+// Windows CRT narrow argv uses the machine's active ANSI code page, not
+// necessarily UTF-8. Godot's normal project/user-data folder contains an
+// em dash ("Single-Galaxy — Graybox FPS"). Its narrow argv becomes CP1252
+// byte 0x97 on many physical Windows systems. Reinterpreting that as UTF-8
+// in widen() fails closed before the first original station PERSON frame.
+// Use genuine Unicode process startup, then convert ONCE to validated UTF-8.
+// Existing parse/authorization semantics are identical on both platforms.
+static std::string utf8_argument(const wchar_t* argument){
+    if(!argument)throw std::invalid_argument("null Windows argument");
+    const int needed=WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,argument,-1,
+                                        nullptr,0,nullptr,nullptr);
+    if(needed<=0)throw std::invalid_argument("invalid Windows Unicode command argument");
+    std::string encoded(static_cast<std::size_t>(needed),'\0');
+    if(WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,argument,-1,
+                           encoded.data(),needed,nullptr,nullptr)!=needed)
+        throw std::invalid_argument("Windows command line UTF-8 conversion failed");
+    encoded.pop_back(); // exclude terminating NUL
+    return encoded;
+}
+int wmain(int argc,wchar_t** argv){
+    try{
+        std::vector<std::string> utf8;
+        utf8.reserve(static_cast<std::size_t>(argc));
+        for(int i=0;i<argc;++i)utf8.push_back(utf8_argument(argv[i]));
+        std::vector<char*> pointers;
+        pointers.reserve(utf8.size());
+        for(auto& arg:utf8)pointers.push_back(arg.data());
+        return run(parse(argc,pointers.data()));
+    }catch(const std::exception& e){
+        std::cerr<<"SGDX-02 supervisor configuration failure: "<<e.what()<<'\n';
+        return 64;
+    }
+}
+#else
 int main(int argc,char** argv){
     try{return run(parse(argc,argv));}
     catch(const std::exception& e){
@@ -415,3 +450,4 @@ int main(int argc,char** argv){
         return 64;
     }
 }
+#endif
