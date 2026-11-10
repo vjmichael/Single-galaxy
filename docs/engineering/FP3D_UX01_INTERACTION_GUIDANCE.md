@@ -170,3 +170,52 @@ native BOARD command using the newly acknowledged generation. The C++
 host remains the only boarding authority. After source changes, an
 updated exact-head consolidated Windows/Linux/Godot/ZIP gate remains
 mandatory before giving the creator a replacement package.
+
+## FP3D-UX-03 — no manual H or P in normal player flow (creator Radeon R9700)
+
+The creator's latest real Windows screenshot confirms a better HUD and
+visible cyan boarding sign, but the panel says **STATION NATIVE DISCONNECTED:
+Native station host exited; saved player location retained**. Pressing
+H gives no useful result. These symptoms are a **real blocker**: the
+standalone Godot scene is visible but the supervised C++ host is not
+running. A rendered gray station alone cannot authorize boarding.
+
+**Correct product behavior:** launch the saved original station and
+register a valid C++ PERSON automatically on player window start.
+H was a temporary manual development test switch; it should not be
+part of first-person gameplay and must no longer toggle a healthy
+station/ship host off. A genuine E BOARD receipt automatically requests
+the protected station→cockpit SQLite writer handoff, without P. E in the
+cockpit requests the native seat; U undocks after a real docked SHIP
+receipt. On reopen, a saved PERSON already aboard is routed into the
+cockpit automatically through the same protected handoff.
+
+**Failure behavior:** do NOT silently create/recreate a save, grant
+local Godot movement as if the station were still authoritative, or
+start an unsupervised writer. Native startup is attempted once. On a
+failed or prematurely exited C++/SGDX child, the UI presents a real
+connection failure, a **Retry connection to saved station** button,
+and H as an optional recovery shortcut only. The client captures up
+to 4 KiB of child stderr AFTER process exit, retains one bounded
+`sg_station_last_failure.json` in private Godot user data, and if the
+creator launched via the standard packaged playtest CMD also writes
+that bounded diagnostic to `desktop_godot/playtest-logs/` for inclusion
+in `SingleGalaxy_Station_Playtest_Evidence.zip`. No private SQLite,
+dumps or screen recordings are included in that diagnostic. The exact
+root cause of the creator's existing world exit is **not established**
+without its native stderr; no claim of repairing that specific cause
+is permitted until actual physical evidence arrives.
+
+**Testing:** use genuine Godot 4.7.2 + SGDX + original C++/SQLite in
+one consolidated native Windows/Linux gate. Dedicated CI-only sandbox
+test `auto_station_connect_acceptance.gd` refuses any preexisting
+world; explicitly invokes the production auto-start entrypoint,
+verifies original PERSON at x=1600mm, 12 admitted 90mm WALK updates,
+E BOARD with original custody, automatic station→cockpit handoff, then
+reopens the SAME saved player already aboard without H/P or a second
+writer. Run only under `SG_FP3D_CI_AUTOSTART=1` and fresh dedicated
+XDG_DATA_HOME/APPDATA. This test is NOT run in the user's extracted
+ZIP preflight, which must never mutate a player's world merely
+to verify the package. Real physical Radeon AI Pro R9700 confirmation
+remains the final acceptance gate; PR #125 remains draft and
+manufactured mining equipment remains deferred.
