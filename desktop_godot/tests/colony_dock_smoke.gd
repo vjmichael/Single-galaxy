@@ -21,10 +21,13 @@ func _run() -> void:
 	root.add_child(stage)
 	await process_frame
 	var station := stage.get_node_or_null("StationInterior_Prototype") as Node3D
-	var colony := station.get_node_or_null("ColonyArrival") as Node3D if station != null else null
-	var walkway := station.get_node_or_null("ColonyToDockWalkway") as Node3D if station != null else null
-	var dock := station.get_node_or_null("SpacefaringDock") as Node3D if station != null else null
-	if station == null or colony == null or walkway == null or dock == null:
+	if station == null:
+		_fail("original authoritative station scene root missing")
+		return
+	var colony := station.get_node_or_null("ColonyArrival") as Node3D
+	var walkway := station.get_node_or_null("ColonyToDockWalkway") as Node3D
+	var dock := station.get_node_or_null("SpacefaringDock") as Node3D
+	if colony == null or walkway == null or dock == null:
 		_fail("missing one of the distinct COLONY / WALKWAY / SPACEFARING DOCK regions")
 		return
 	if colony.get_child_count() < 10 or dock.get_child_count() < 10 or walkway.get_child_count() < 5:
@@ -58,9 +61,15 @@ func _run() -> void:
 		_fail("white ship lacks a visible spacecraft nose/canopy identity")
 		return
 	var hull := station.get_node_or_null("Docked owned ship hull (visual)") as StaticBody3D
-	var ship_mesh := hull.get_child(0) as MeshInstance3D if hull != null else null
-	var ship_color := ship_mesh.material_override as StandardMaterial3D if ship_mesh != null else null
-	if hull == null or hull.position.distance_to(Vector3(0.0,1.34,-4.9)) > 0.001 or ship_color == null or ship_color.albedo_color.r < 0.9:
+	if hull == null:
+		_fail("no original white docked spacecraft")
+		return
+	var ship_mesh := hull.get_child(0) as MeshInstance3D
+	if ship_mesh == null:
+		_fail("ship has no actual visible mesh")
+		return
+	var ship_color := ship_mesh.material_override as StandardMaterial3D
+	if hull.position.distance_to(Vector3(0.0,1.34,-4.9)) > 0.001 or ship_color == null or ship_color.albedo_color.r < 0.9:
 		_fail("white owned spacecraft not docked near the pedestrian embarkation bridge")
 		return
 	var deck_color := berth.material_override as StandardMaterial3D
