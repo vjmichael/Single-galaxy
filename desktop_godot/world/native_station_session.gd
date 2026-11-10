@@ -31,6 +31,39 @@ var _pending_refinery_kind := "" # VIEW, REFINE or UNLOAD; never reuse a stale r
 var _refinery_header := {}
 var _refinery_lots: Array[Dictionary] = []
 var _refinery_minerals := {}
+var _last_startup_diagnostic := ""
+
+func _write_station_diagnostic(reason: String, detail: String) -> void:
+	# No SQLite, private minidumps, memory dumps or captured desktop content.
+	# Exactly one bounded local failure summary is overwritten on each error,
+	# with an optional copy beside the user's explicit playtest evidence ZIP.
+	var report := JSON.stringify({"schema":"SG-FP3D-START-01",
+		"unix_time":Time.get_unix_time_from_system(),
+		"reason":reason.substr(0, 320),
+		"stderr":detail.substr(0, 2048),
+		"native_person_admitted":_session > 0})
+	var destinations := PackedStringArray(["user://sg_station_last_failure.json"])
+	var capture_dir: String = OS.get_environment("SG_FP3D_OPERATOR_CAPTURE_DIR")
+	if not capture_dir.is_empty() and capture_dir.is_absolute_path() and DirAccess.dir_exists_absolute(capture_dir):
+		destinations.append(capture_dir.path_join("sg_station_last_failure.json"))
+	for destination in destinations:
+		var f := FileAccess.open(destination, FileAccess.WRITE)
+		if f != null:
+			f.store_string(report + "\n")
+			f.close()
+
+func _unexpected_native_exit() -> String:
+	var native_error := ""
+	# This is read only AFTER the supervised child has exited. Never block
+	# the active game loop by draining a still-running process's stderr.
+	if _stderr != null:
+		native_error = _stderr.get_buffer(4096).get_string_from_utf8().strip_edges()
+	var reason := "Original station C++/SGDX child exited unexpectedly"
+	_write_station_diagnostic(reason, native_error)
+	_last_startup_diagnostic = native_error.substr(0, 300)
+	if native_error.is_empty():
+		return reason + "; your world is unchanged. H retries safely; see sg_station_last_failure.json"
+	return reason + ": " + native_error.replace("\r", " ").replace("\n", " ").substr(0, 190) + " (H retry; saved world unchanged)"
 
 func is_active() -> bool:
 	return _active
@@ -96,6 +129,7 @@ func start() -> void:
 	_last_send = -10000
 	_buffer.clear()
 	_person.clear()
+	_last_startup_diagnostic = ""
 	_refinery_receiving = false
 	_refinery_header.clear()
 	_refinery_lots.clear()
@@ -128,7 +162,8 @@ func poll() -> void:
 		stop("Station response timed out; reconnect to verify original state")
 		return
 	if not OS.is_process_running(_pid):
-		stop("Native station host exited; saved player location retained")
+		var failure := _unexpected_native_exit()
+		stop(failure)
 
 func _integer(value: String) -> bool:
 	return not value.is_empty() and value.length() <= 19 and value.is_valid_int()
