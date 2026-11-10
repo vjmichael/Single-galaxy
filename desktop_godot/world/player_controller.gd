@@ -68,9 +68,13 @@ func _physics_process(delta: float) -> void:
 		# Native mode NEVER applies Godot movement or jumps. Only the trusted
 		# C++ operation-journal transaction may advance the player position.
 		velocity = Vector3.ZERO
+		# E is a focused-window action, not a mouse-capture action. The old
+		# implementation silently ignored boarding when the Windows cursor was
+		# released with Esc or after clicking the standalone game controls.
+		# Native C++ still authorizes the actual boarding/seat transition.
+		if get_window().has_focus() and Input.is_action_just_pressed("fps_inspect"):
+			native_seat_intent.emit()
 		if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and get_window().has_focus():
-			if Input.is_action_just_pressed("fps_inspect"):
-				native_seat_intent.emit()
 			if native_seated:
 				# Only intentional physical control requests. C++ retains ship motion,
 				# yaw, thrust admission and persistent world authority.
