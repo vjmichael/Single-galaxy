@@ -648,7 +648,7 @@ func _refresh_interaction_prompt() -> void:
 			elif not get_window().has_focus():
 				status_label.text = "PILOT PAUSED | Click game to focus; saved ship unchanged"
 			elif Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
-				status_label.text = "PILOT READY | A/D turn, W/S vertical, ↑/↓ thrust | Click for mouse yaw"
+				status_label.text = "KEYBOARD FLIGHT READY | A/D turn, W/S vertical, ↑/↓ thrust | Click for mouse yaw"
 			else:
 				status_label.text = "PILOT READY | A/D turn, W/S vertical, ↑/↓ thrust, B brake, G dock"
 		elif station_connected:
