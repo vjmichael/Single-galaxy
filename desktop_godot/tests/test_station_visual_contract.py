@@ -85,6 +85,15 @@ checks = {
         'get_window().has_focus() and Input.is_action_just_pressed("fps_inspect")' in player_controller
         and "native_seat_intent.emit()" in player_controller
     ),
+    "real-native-command-rate-gate-not-bypassed": (
+        "const NATIVE_HANGAR_COMMAND_GAP_MS := 130" in station_client
+        and "_queued_hangar_ready_msec" in station_client
+        and "Time.get_ticks_msec() + 75" in station_client
+        and "func _dispatch_queued_hangar_if_ready()" in station_client
+        and "One boarding request already queued" in station_client
+        and "E sent BEFORE native command rate interval" in boarding_smoke
+        and "second E bypassed exactly-once queued BOARD cooldown" in boarding_smoke
+    ),
     "native-E-after-WALK-single-use-custody": (
         "var _pending_walk := 0" in station_client
         and "var _queued_hangar_intent := false" in station_client
