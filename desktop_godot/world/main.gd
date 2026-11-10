@@ -1160,6 +1160,7 @@ func _on_native_player_status(message: String) -> void:
 			native_label.text = message.replace("(P stop)", "(third-person pilot)")
 		else:
 			native_label.text = message
+	_apply_technical_hud()
 	if is_instance_valid(refinery_terminal) and refinery_terminal.visible and ("refused" in message or "timed out" in message):
 		refinery_terminal.report_error(message)
 
@@ -1167,6 +1168,7 @@ func _on_native_status(message: String) -> void:
 	if is_instance_valid(native_label):
 		native_label.text = "NATIVE: " + message
 		# Keep the reason visible until another explicit user action changes it.
+	_apply_technical_hud()
 
 func _on_native_snapshot(frame: Dictionary) -> void:
 	# Render verified native contacts as NON-COLLIDING visual indicators only.
