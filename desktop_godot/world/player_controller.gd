@@ -8,7 +8,15 @@ signal native_seat_intent()
 signal native_ship_intents(actions: PackedStringArray)
 var native_seated := false
 var native_dock_state := -1
+var native_in_ship := false
 var authoritative_mode := false
+
+func use_native_ship_custody(aboard: bool) -> void:
+	# This is a verified original PERSON/POSE presentation flag only.
+	# Do not enable cabin walking between BOARD and native seat receipt.
+	native_in_ship = aboard
+	if aboard:
+		velocity = Vector3.ZERO
 # Physical mouse motion suggests yaw intent only; the actual 15-degree turn
 # remains a per-command, journaled original C++ decision. There is NO client
 # integration of a fake ship heading/velocity.
@@ -84,10 +92,15 @@ func _unhandled_input(event: InputEvent) -> void:
 			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 			get_viewport().set_input_as_handled()
 	elif event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and get_window().has_focus():
-		if authoritative_mode and native_seated:
-			# In the pilot seat the mouse STEERS the original ship, not a
-			# detached graybox camera. A short bounded intent window avoids
-			# queued turns continuing after physical mouse motion stops.
+		if authoritative_mode and native_in_ship:
+			# Boarding locks the entire cabin into a single pilot role.
+			# Only a verified native SEAT receipt enables ship steering; no
+			# speculative mouse look, boarding animation or on-foot exploration.
+			if not native_seated:
+				get_viewport().set_input_as_handled()
+				return
+			# The pilot mouse requests an original C++ yaw action instead of
+			# rotating a disconnected Godot cockpit camera.
 			var requested_yaw := native_mouse_yaw_direction(event.relative.x)
 			if requested_yaw != 0:
 				_mouse_yaw_direction = requested_yaw
@@ -146,10 +159,11 @@ func _physics_process(delta: float) -> void:
 					pilot_actions.append("REV")
 				if not pilot_actions.is_empty():
 					native_ship_intents.emit(pilot_actions)
-			else:
+			elif not native_in_ship:
 				var axis := Input.get_vector("fps_left", "fps_right", "fps_forward", "fps_backward")
 				var direction := (global_transform.basis * Vector3(axis.x, 0.0, axis.y)).normalized()
 				native_motion_intent.emit(direction)
+			# Aboard but awaiting SEAT: native walk is intentionally impossible.
 		return
 	# The arrow keys NEVER generate thrust while on foot. No input auto-repeat needed.
 	if not is_on_floor():
