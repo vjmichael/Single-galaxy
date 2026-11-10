@@ -390,7 +390,9 @@ int main(){
   ck(w.world().total_material_kg()==original_mass,
      "world mass changed after two finished-product releases");
   std::cout<<"v55 immutable shipment identity + reserving cargo commands + v54 mined -> fabricated -> returned -> real ship -> multi-system jump -> new constructed warehouse; rollback/replay PASS\n";
-  for(const auto& file:{path,copy,corrupt,badledger})std::filesystem::remove(file);
-  return 0;
+  // SQLite-bearing PersistentWorld, checkpoint and region owners are still
+  // live here. Release them before removing the database on Windows.
  }catch(const std::exception& e){std::cerr<<"v53 return FAIL: "<<e.what()<<'\n';return 1;}
+ for(const auto& file:{path,copy,corrupt,badledger})std::filesystem::remove(file);
+ return 0;
 }
