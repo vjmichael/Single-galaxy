@@ -21,6 +21,10 @@ boarding_smoke = (root / "tests/boarding_action_pipe_smoke.gd").read_text(encodi
 auto_start_smoke = (root / "tests/auto_station_connect_acceptance.gd").read_text(encoding="utf-8")
 colony_dock = (root / "world/colony_dock_layout.gd").read_text(encoding="utf-8")
 colony_smoke = (root / "tests/colony_dock_smoke.gd").read_text(encoding="utf-8")
+utf8_windows = (root.parent / "include/galaxy/NativeWindowsUtf8Argv.hpp").read_text(encoding="utf-8")
+cockpit_host_source = (root.parent / "src/desktop_player_host.cpp").read_text(encoding="utf-8")
+sgdx_host_source = (root.parent / "src/server_dx_supervisor.cpp").read_text(encoding="utf-8")
+unicode_pipe_test = (root.parent / "tests/FP3D_WinUtf8NativePathTests.py").read_text(encoding="utf-8")
 player_controller = (root / "world/player_controller.gd").read_text(encoding="utf-8")
 
 checks = {
@@ -54,6 +58,19 @@ checks = {
     "station-host-supervised-project-binary": "SGDX_LAUNCH.native_host_path(binary)" in station_client and 'SGDX_LAUNCH.supervised_command(save, "godot_station", exe,' in station_client and 'OS.execute_with_pipe(spec["path"], spec["args"], false)' in station_client,
     "cockpit-host-supervised-project-binary": "SGDX_LAUNCH.native_host_path(binary)" in cockpit_client and 'SGDX_LAUNCH.supervised_command(save, "godot_ship", path, PackedStringArray([save]))' in cockpit_client and 'OS.execute_with_pipe(spec["path"], spec["args"], false)' in cockpit_client,
     "refuse-unguarded-native-launch": "refusing unsupervised" in station_client and "refusing unsupervised" in cockpit_client,
+    "windows-utf8-native-sqlite-and-private-sgdx-paths": (
+        "WideCharToMultiByte(" in utf8_windows
+        and "WC_ERR_INVALID_CHARS" in utf8_windows
+        and "int wmain(int argc,wchar_t** argv)" in station_host
+        and "int wmain(int argc,wchar_t** argv)" in cockpit_host_source
+        and "fs::u8path(save_utf8)" in station_host
+        and "fs::u8path(save_utf8)" in cockpit_host_source
+        and "PersistentWorld world(save_utf8" in station_host
+        and "PersistentWorld world(save_utf8" in cockpit_host_source
+        and "std::filesystem::u8path(args.save)" in sgdx_host_source
+        and "Colony — Departure Dock.sqlite" in unicode_pipe_test
+        and "White Ship — Cockpit.sqlite" in unicode_pipe_test
+    ),
     "colony-origin-matches-original-person": (
         "const COLONY_SPAWN := Vector3(1.6, 0.0, 0.0)" in colony_dock
         and "const DOCK_GATE := Vector3(0.0, 0.0, 0.0)" in colony_dock
