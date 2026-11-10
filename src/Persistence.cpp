@@ -9092,7 +9092,48 @@ public:
                         if (command.action == Action::HostEscrowConstructedStock ||
                             command.action == Action::HostReturnConstructedStock) sim.step();
                     } else if (kind == 2) {
-                        sim.step();
+                        const auto recorded_tick=static_cast<std::uint64_t>(
+                            sqlite3_column_int64(journal.get(),4));
+                        if(recorded_tick==sim.tick()+1) {
+                            // Only an advancing original clock row is a STEP.
+                            sim.step();
+                        } else if(recorded_tick==sim.tick()) {
+                            // Historical host custody transactions also use
+                            // kind=2, but do not advance simulation time.
+                            // They cannot be reconstructed by fabricating a
+                            // STEP. Require the original retained snapshot
+                            // and independent journal checksum/tick/resource
+                            // witnesses before proceeding to later operations.
+                            Statement witness(db_,
+                                "SELECT state,checksum,ore_total,credit_total "
+                                "FROM snapshots WHERE generation=?");
+                            witness.i64(1,static_cast<std::int64_t>(g));
+                            if(!witness.row())
+                                throw std::runtime_error(
+                                    "recovery: missing same-tick custody checkpoint");
+                            const auto size=sqlite3_column_bytes(witness.get(),0);
+                            const auto* raw=static_cast<const char*>(
+                                sqlite3_column_blob(witness.get(),0));
+                            if(size<=0 || size>16*1024*1024 || !raw)
+                                throw std::runtime_error(
+                                    "recovery: invalid same-tick custody snapshot");
+                            auto recorded=Simulation::from_snapshot(
+                                std::string(raw,static_cast<std::size_t>(size)));
+                            const auto expected_hash=parse_u64(
+                                sqlite3_column_text(journal.get(),3));
+                            if(recorded.tick()!=recorded_tick ||
+                               recorded.state_hash()!=expected_hash ||
+                               recorded.state_hash()!=parse_u64(
+                                   sqlite3_column_text(witness.get(),1)) ||
+                               recorded.total_ore()!=ore ||
+                               recorded.total_ore()!=sqlite3_column_int64(witness.get(),2) ||
+                               recorded.total_credits()!=credit_total ||
+                               recorded.total_credits()!=sqlite3_column_int64(witness.get(),3))
+                                throw std::runtime_error(
+                                    "recovery: same-tick custody witness mismatch");
+                            sim=std::move(recorded);
+                        } else throw std::runtime_error(
+                            "recovery: regressive or missing native step");
                     } else throw std::runtime_error("recovery: invalid journal kind");
                     if (sim.state_hash() != parse_u64(sqlite3_column_text(journal.get(), 3)) ||
                         sim.tick() != static_cast<std::uint64_t>(sqlite3_column_int64(journal.get(), 4)) ||
