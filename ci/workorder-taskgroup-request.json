@@ -1,7 +1,7 @@
 {
   "schema": "SG-WORKORDER-GATE-01",
-  "task_group": "WO2",
-  "pr_number": 88,
-  "source_sha": "c40302e22c8743e12865c4d2f02f3aa23b3e8735",
-  "note": "ONE exact-head WO2 native rerun, after Windows+Linux #42841332717 compiled and passed 8/9 CTests but original WO2 dedicated test failed copied SQLite restore: snapshot: missing or wrong ship frame custody. Correct original trusted command v105 admission must initialize honest v70 physical systems/v71 shipframe for existing ship BEFORE submitted command snapshot, while still rejecting tampered snapshots at decode; new native regression checks shipframe and real physical system before recover_copy. Maintain original WO1 13 JS/4 CTests, WO2 6 JS/9 CTests, real C++ MSVC/GCC and SQLite. No unrelated workflows."
+  "task_group": "WO3",
+  "pr_number": 89,
+  "source_sha": "26d6fff3e414b9161c139901f31644178d590615",
+  "note": "ONE exact-head native Windows/Linux WO3 original planetary colony operations acceptance after WO1 #42840388816 and WO2 #42843209254 both passed on their independently pinned source branches. WO3 PR89 is a direct descendant of accepted WO2 source c40302e22c8743e12865c4d2f02f3aa23b3e8735 (ahead-only). Require true MSVC/GCC compilation, native WO3 housing, solar/HVAC/recycling, shuttle physical delivery, named-person work supervisor, visitor/custody and original SQLite recover-copy/tamper tests; preserve upstream WO2/WO1 and colony regressions. No client-side space mining, fake children/residency, new infrastructure or per-commit CI. Treat result as source/original-world native acceptance only, never physical installed Radeon 3D gameplay; repair demonstrated failures before next group."
 }
