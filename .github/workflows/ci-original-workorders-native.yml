@@ -123,7 +123,18 @@ jobs:
             pattern='^(v59_(multi_destination_host|region_scoped_handoff|third_party_custody|world_finished_goods_logistics)|galaxy_(econ03c7modeauthoritytests|econ03c8bworldreconciliationtests|shipping_transport_real_world_tests|work01c_native_transport_executors|wo5_physical_logistics|wo4_resource_demand|wo4_material_allocation|wo3_planetary_utility|wo3_planetary_housing|wo2_industry_workforce|industry01_native_binding|ship01c_manufactured_freight|flight04b_real_freight))$'
           fi
           if [[ "$WORK_GROUP" == "STAGE6" ]]; then
-            pattern='^(galaxy_stage6_(original_planet_surface|authorized_landing)|galaxy_play13d_(planetary_geography|planetary_watershed|live_planet_survey)|v59_(multi_destination_host|region_scoped_handoff|third_party_custody|world_finished_goods_logistics)|galaxy_(wo5_physical_logistics|wo4_resource_demand|wo4_material_allocation|wo3_planetary_utility|wo3_planetary_housing|wo2_industry_workforce|industry01_native_binding|ship01c_manufactured_freight|flight04b_real_freight))$'
+            pattern='^(galaxy_stage6_(original_planet_surface|authorized_landing)|galaxy_play13d_(planetary_geography|planetary_watershed|live_planet_survey)|v59_(multi_destination_host|region_scoped_handoff|third_party_custody|world_finished_goods_logistics)|galaxy_(econ03c7modeauthoritytests|econ03c8bworldreconciliationtests|work01c_native_transport_executors|shipping_transport_real_world_tests|wo5_physical_logistics|wo4_resource_demand|wo4_material_allocation|wo3_planetary_utility|wo3_planetary_housing|wo2_industry_workforce|industry01_native_binding|ship01c_manufactured_freight|flight04b_real_freight))
+          fi
+          ctest --test-dir build/original-wo -C Release --no-tests=error --timeout 360 --output-on-failure --output-junit workorder-native.xml -R "$pattern"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: original-${{ needs.validate.outputs.group }}-${{ matrix.os }}-${{ needs.validate.outputs.sha }}
+          path: |
+            build/original-wo/workorder-native.xml
+            build/original-wo/Testing/Temporary/LastTest.log
+          if-no-files-found: warn
+
           fi
           ctest --test-dir build/original-wo -C Release --no-tests=error --timeout 360 --output-on-failure --output-junit workorder-native.xml -R "$pattern"
       - uses: actions/upload-artifact@v4
