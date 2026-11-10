@@ -13,7 +13,7 @@ func _fail(message: String) -> void:
 	push_error("FP3D-UX-02 boarding intent smoke FAIL: " + message)
 	quit(1)
 
-func _setup(person_x: int, pending_walk: bool) -> RefCounted:
+func _setup(person_x: int, pending_walk: bool) -> Variant:
 	var session := STATION.new()
 	session._active = true
 	session._session = 77
