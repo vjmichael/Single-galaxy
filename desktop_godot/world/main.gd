@@ -49,6 +49,11 @@ var _handoff_pid := -1
 var _handoff_started_msec := 0
 var native_markers: Node3D
 var _fps_accumulator := 0.0
+# Former developer-only H toggle is no longer needed during normal play.
+# Standalone script tests keep native fixtures under explicit test control.
+var _player_session_autoconnect := false
+var _station_connect_attempted := false
+var _station_connection_failure := ""
 
 func _ready() -> void:
 	material = StandardMaterial3D.new()
@@ -100,6 +105,39 @@ func _ready() -> void:
 	refinery_terminal.refine_requested.connect(_on_native_refine_requested)
 	refinery_terminal.unload_requested.connect(_on_native_unload_requested)
 	refinery_terminal.terminal_closed.connect(_hide_refinery_terminal)
+	_player_session_autoconnect = not Engine.is_editor_hint() and not OS.get_cmdline_args().has("--script")
+	if _player_session_autoconnect:
+		call_deferred("_open_saved_station_automatically")
+
+func _open_saved_station_automatically() -> void:
+	if _station_connect_attempted:
+		return
+	_station_connect_attempted = true
+	_station_connection_failure = ""
+	_on_native_player_status("Connecting to your original saved station...")
+	# One SQLite writer, whether we are launching or changing roles.
+	# A missing, damaged or locked save is NEVER automatically replaced.
+	_schedule_native_handoff("station", native_player_session.process_id())
+
+func _retry_original_station() -> void:
+	if native_station_session.is_active():
+		_on_native_player_status("Station already connected. Walk to the cyan boarding hatch and press E.")
+		return
+	if native_player_session.is_active():
+		_on_native_player_status("Your original ship is already connected. Press E at the cockpit seat.")
+		return
+	_station_connection_failure = ""
+	_station_connect_attempted = true
+	_on_native_player_status("Retrying your saved station without resetting the world...")
+	_schedule_native_handoff("station", native_station_session.process_id())
+
+func _enter_cockpit_after_verified_board() -> void:
+	if not _player_session_autoconnect or not native_station_session.is_active() or last_station_player_state != 0 or not _handoff_target.is_empty():
+		return
+	_on_native_player_status("Boarding confirmed by original C++ — opening your ship cockpit...")
+	var exiting_pid: int = native_station_session.process_id()
+	native_station_session.stop("Native boarding committed; transferring verified SQLite writer", true)
+	_schedule_native_handoff("ship", exiting_pid)
 
 func _setup_environment() -> void:
 	var env := Environment.new()
@@ -380,13 +418,13 @@ func _build_hud() -> void:
 	scope_label.text = "LOCAL WALKING — Press H for native station"
 	contents.add_child(scope_label)
 	native_label = Label.new()
-	native_label.text = "Press H to connect; cyan floor beacon marks the real boarding hatch"
+	native_label.text = "Connecting to your saved station automatically..."
 	contents.add_child(native_label)
 	ship_label = Label.new()
 	ship_label.text = "Original ship not yet connected"
 	contents.add_child(ship_label)
 	status_label = Label.new()
-	status_label.text = "H station  |  E interact  |  P cockpit  |  U undock  |  Esc mouse  |  window X exit"
+	status_label.text = "WASD walk  |  E interact  |  U undock  |  V camera  |  Esc mouse  |  X exit"
 	status_label.add_theme_font_size_override("font_size", 12)
 	contents.add_child(status_label)
 	for line in [scope_label, native_label, ship_label, status_label]:
@@ -464,7 +502,7 @@ func _build_hud() -> void:
 	interaction_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	interaction_label.add_theme_font_size_override("font_size", 18)
 	interaction_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	interaction_label.text = "Press H — Connect to native station before boarding"
+	interaction_label.text = "Connecting to saved station..."
 	prompt.add_child(interaction_label)
 	refinery_terminal = REFINERY_TERMINAL_UI.new()
 	hud.add_child(refinery_terminal)
@@ -478,6 +516,9 @@ func _refresh_interaction_prompt() -> void:
 	var ship_connected: bool = ship_process_active and int(native_player_session._sequence) >= 0
 	if ship_process_active and not ship_connected:
 		interaction_label.text = "Connecting cockpit — waiting for verified original C++ ship pose"
+		return
+	if _station_connect_attempted and not station_connected and not ship_process_active and _handoff_target.is_empty():
+		interaction_label.text = "Station unavailable — H to retry safely" if not _station_connection_failure.is_empty() else "Connecting to saved station..."
 		return
 	var person: Dictionary = {}
 	if station_connected:
@@ -565,15 +606,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 			return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_H:
-		if native_station_session.is_active():
-			native_station_session.stop("Station test session stopped", true)
-		else:
-			var exiting_pid: int = native_player_session.process_id()
-			if native_player_session.is_active():
-				native_player_session.stop("Ship session closed before station connection", true)
-			if native_session.is_active():
-				native_session.stop("Observer closed before station connection")
-			_schedule_native_handoff("station", exiting_pid)
+		# Retry is for troubleshooting. H NEVER stops a healthy native writer
+		# and is not part of the player's normal boarding/flight controls.
+		_retry_original_station()
 		get_viewport().set_input_as_handled()
 		return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_P:
@@ -606,11 +641,18 @@ func _on_native_station_connection(connected: bool) -> void:
 	if not connected:
 		_hide_refinery_terminal()
 	if is_instance_valid(player):
-		player.use_native_authority(connected)
+		# Keep local unjournaled walking disabled during a protected role
+		# handoff or while the native cockpit owns this saved world.
+		player.use_native_authority(connected or not _handoff_target.is_empty() or (native_player_session != null and native_player_session.is_active()))
 	if is_instance_valid(scope_label):
-		scope_label.text = "NATIVE STATION PLAYER (ORIGINAL SQLITE)" if connected else "STATION NATIVE DISCONNECTED"
+		scope_label.text = "NATIVE STATION — WAITING FOR ORIGINAL PERSON" if connected else "STATION NATIVE DISCONNECTED"
 
 func _on_native_station_status(message: String) -> void:
+	# Expose a real persisted failure reason instead of "H didn't work".
+	if message.begins_with("SGDX-SUPERVISED station:"):
+		_station_connection_failure = ""
+	elif message.contains("failed") or message.contains("exited") or message.contains("missing") or message.contains("timed out") or message.contains("still alive"):
+		_station_connection_failure = message
 	_on_native_player_status(message)
 	# An original C++ DENY must leave the terminal in a visible refused state.
 	# Do not report success or synthesize a new lot while a host request fails.
@@ -720,6 +762,7 @@ func _record_native_projection(kind: String, evidence: Dictionary) -> void:
 func _on_native_station_person(person: Dictionary) -> void:
 	_record_native_projection("PERSON", person)
 	last_station_player_state = int(person["state"])
+	_station_connection_failure = ""
 	if last_station_player_state != 4:
 		_hide_refinery_terminal()
 	_show_native_location(last_station_player_state == 4)
@@ -732,6 +775,10 @@ func _on_native_station_person(person: Dictionary) -> void:
 			int(person["station"]), "ON FOOT" if int(person["state"]) == 4 else "ABOARD SHIP",
 			int(person["eligible_ship"]), float(person["x_mm"])/1000.0,
 			float(person["z_mm"])/1000.0]
+	if last_station_player_state == 0 and _player_session_autoconnect:
+		# A genuine saved BOARD (also on restart) must automatically open
+		# the cockpit, never demand another developer-only P key.
+		call_deferred("_enter_cockpit_after_verified_board")
 
 func _on_native_player_connection(connected: bool) -> void:
 	# Process start alone is NOT proof of ship custody; wait for POSE.
