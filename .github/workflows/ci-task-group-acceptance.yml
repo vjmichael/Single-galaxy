@@ -259,11 +259,18 @@ jobs:
         continue-on-error: true
         shell: pwsh
         run: |
-          python desktop_godot/tests/test_sgdx03_bridge_contract.py
-          python desktop_godot/tests/test_fp3d_env01f_pilot_contract.py
-          python desktop_godot/tests/test_fp3d_env01g_world_parity_contract.py
-          python desktop_godot/tests/test_station_visual_contract.py
-          if($LASTEXITCODE -ne 0){throw 'Fail-closed source bridge check failed'}
+          # PowerShell does not stop automatically when a native process returns
+          # nonzero. Check EACH independent admission; otherwise a later PASS
+          # conceals the preceding source-contract failure on Windows.
+          foreach($contract in @(
+            'desktop_godot/tests/test_sgdx03_bridge_contract.py',
+            'desktop_godot/tests/test_fp3d_env01f_pilot_contract.py',
+            'desktop_godot/tests/test_fp3d_env01g_world_parity_contract.py',
+            'desktop_godot/tests/test_station_visual_contract.py'
+          )){
+            python $contract
+            if($LASTEXITCODE -ne 0){throw "Fail-closed source bridge contract failed: $contract"}
+          }
           ctest --test-dir build/fp3d-env01 -C Release --no-tests=error --timeout 200 --output-on-failure --output-junit fp3d-env01-windows.xml -R '^(galaxy_fp3d_env01_(swept_collision|native_collision_pipe)|galaxy_play_station04a_original_(asteroid_contact|rock_native_pipe)|galaxy_play_station_(boarding|mining_refining_e2e)|galaxy_play_station02_native_pipe|galaxy_play_station03(b_persistent_refinery|c_refinery_native_pipe)|galaxy_play_station04c_native_unload_pipe|galaxy_fp3d03b_(cockpit_flight|native_flight_pipe)|galaxy_sgdx03_godot_(native_bridge|source_admission)|galaxy_server_dx_(supervisor|sqlite_recovery|game_hosts)|galaxy_fp3d02b_native_desktop_readonly|galaxy_fp3d_win01_source_contract)$'
           if($LASTEXITCODE -ne 0){throw 'Real native SGDX/SQLite/Windows MDMP gate failed'}
           python tests/FP3D_WinUtf8NativePathTests.py --supervisor build/fp3d-env01/Release/galaxy_server_dx_supervisor.exe --station build/fp3d-env01/Release/galaxy_desktop_station_host.exe --cockpit build/fp3d-env01/Release/galaxy_desktop_player_host.exe
