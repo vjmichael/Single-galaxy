@@ -13649,7 +13649,7 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                l.cycles>result.tick_/20 || l.consecutive_supplied_cycles>l.cycles ||
                l.shortages>l.cycles || l.harvested_food_kg<0 || l.recovered_water_kg<0 ||
                l.harvested_food_kg>100000000 || l.recovered_water_kg>100000000)
-                throw std::runtime_error("snapshot: invalid life-support record");
+                throw std::runtime_error("snapshot: invalid life-support record (ship "+std::to_string(id)+", mass "+std::to_string(mass)+", cycles "+std::to_string(l.cycles)+", tick "+std::to_string(result.tick_)+")");
             result.life_support_.emplace(id,l);
         } else if(f[0]=="farm" && result.snapshot_version_>=11){
             require_fields(f,27);
@@ -16949,7 +16949,7 @@ std::int64_t Simulation::total_ore() const {
                                    std::int64_t(site.housing_phase!=0)+
                                    std::int64_t(site.utility_phase!=0)) ||
            site.embodied_ore>std::numeric_limits<std::int64_t>::max()-total)
-            throw std::overflow_error("invalid planetary installation mass");
+            throw std::overflow_error("invalid planetary installation mass (body "+std::to_string(std::get<0>(key))+", embodied "+std::to_string(site.embodied_ore)+", housing phase "+std::to_string(site.housing_phase)+", utility phase "+std::to_string(site.utility_phase)+")");
         total+=site.embodied_ore+2*site.housing_modules;
         const auto kg=site.water_kg+site.nutrients_kg+site.food_kg+
                       site.wastewater_kg+site.oxygen_kg+site.co2_kg+
