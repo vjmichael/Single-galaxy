@@ -345,7 +345,7 @@ func _build_hud() -> void:
 	scope_label.text = "LOCAL MOVEMENT TEST ONLY — NOT CONNECTED TO NATIVE GALAXY"
 	contents.add_child(scope_label)
 	status_label = Label.new()
-	status_label.text = "H native station | WASD walk | E interact | P cockpit | U undock | G dock | F11 screenshot"
+	status_label.text = "H station | WASD walk | E interact | P cockpit | U undock | G dock | Esc mouse | window X exit | F11 capture"
 	contents.add_child(status_label)
 	native_label = Label.new()
 	native_label.text = "NATIVE: Press H to connect. Board at the cyan hatch marker, not the white hull."
