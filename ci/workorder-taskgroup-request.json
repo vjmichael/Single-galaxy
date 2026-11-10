@@ -2,6 +2,6 @@
   "schema": "SG-WORKORDER-GATE-01",
   "task_group": "STAGE6",
   "pr_number": 127,
-  "source_sha": "49f77a4f2b5e63e16cd431fff6a5ec87e43ecc3f",
-  "note": "One exact-head Windows/Linux native 23-test WO3-5 Stage6 gate. Build authentic historical v86 SQLite import test separately, fail closed without original binary and SQLite SHA256 (issue128), verify WO3 household original before/after generation retention and physical family return; compile original Godot render-only exporter and verify owner-gated packet/triangles. Report no physical R9700 or actual Godot runtime acceptance."
+  "source_sha": "7c34b15043891dba98c488b00860918728972c8e",
+  "note": "One authoritative final Stage6 exact-head Windows/Linux acceptance, 23 selected native tests: WO3 original housing and family utility admission/return/restart, mandatory independent historical v86 SQLite+binary SHA256 import gate (FAIL if no authentic source; issue128), passing WO4 and WO5 genuine freight; build Godot native exporter and check owner-scoped terrain packet, collision mesh topology. No second world, no relaxed genesis/journal/mass authority; no claim of physical Radeon or Godot engine playback."
 }
