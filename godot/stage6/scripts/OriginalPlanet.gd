@@ -41,6 +41,11 @@ func _process(delta: float) -> void:
         "schema": "SG-STAGE6-FRAME-01",
         "original_generation": loaded_generation,
         "original_hash": loaded_hash,
+        "original_body_id": _source_body,
+        "resident_tiles": _resident_tiles.size(),
+        "video_adapter": RenderingServer.get_video_adapter_name(),
+        "video_adapter_vendor": RenderingServer.get_video_adapter_vendor(),
+        "rendering_driver": RenderingServer.get_current_rendering_driver_name(),
         "measured_frames": n,
         "p50_ms": _frame_ms[int(floor(float(n - 1) * 0.50))],
         "p95_ms": _frame_ms[int(floor(float(n - 1) * 0.95))],
@@ -182,6 +187,10 @@ func load_verified_packet(packet_path: String) -> void:
     _source_ship = source_ship
     for tile in tiles:
         _append_native_tile(tile)
+    # Measure 300 stable client frames after the latest terrain-cache change,
+    # instead of mixing page-in spikes with a different resident tile count.
+    _frame_ms.clear()
+    _completed_measurement = false
     # There is no player teleport here. A true descent receipt remains an
     # ORIGINAL native server authority, not a height-map or collision event.
     if data.get("landing_verified", false) == true:
