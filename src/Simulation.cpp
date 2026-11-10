@@ -16967,7 +16967,7 @@ std::int64_t Simulation::total_ore() const {
                                    std::int64_t(site.service_projects[0].phase!=0)+
                                    std::int64_t(site.service_projects[1].phase!=0)) ||
            site.embodied_ore>std::numeric_limits<std::int64_t>::max()-total)
-            throw std::overflow_error("invalid planetary installation mass (body "+std::to_string(std::get<0>(key))+", embodied "+std::to_string(site.embodied_ore)+", housing phase "+std::to_string(site.housing_phase)+", utility phase "+std::to_string(site.utility_phase)+", farm "+std::to_string(site.farm)+", extractor "+std::to_string(site.extractor)+", production A "+std::to_string(site.production_projects[0].phase)+", production B "+std::to_string(site.production_projects[1].phase)+")");
+            throw std::overflow_error("invalid planetary installation mass (body "+std::to_string(std::get<0>(key))+", embodied "+std::to_string(site.embodied_ore)+", housing phase "+std::to_string(site.housing_phase)+", utility phase "+std::to_string(site.utility_phase)+", farm "+std::to_string(site.farm)+", extractor "+std::to_string(site.extractor)+", production A "+std::to_string(site.production_projects[0].phase)+", production B "+std::to_string(site.production_projects[1].phase)+", service A "+std::to_string(site.service_projects[0].phase)+", service B "+std::to_string(site.service_projects[1].phase)+", staged housing modules "+std::to_string(site.housing_modules)+")");
         total+=site.embodied_ore+2*site.housing_modules;
         const auto kg=site.water_kg+site.nutrients_kg+site.food_kg+
                       site.wastewater_kg+site.oxygen_kg+site.co2_kg+
