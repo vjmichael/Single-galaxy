@@ -82,7 +82,7 @@ func _run() -> void:
 		_fail("WASD guidance did not clear at native boarding threshold")
 		return
 	var ready: String = PROMPTS.hint(true,near,false,false,-1,false,"E")
-	if not ready.contains("Press E") or not ready.contains("ship #2"):
+	if not ready.contains("Press E to Board") or not ready.contains("ship #2"):
 		_fail("authorized PERSON at the exact 600mm square boundary lacks E boarding guidance")
 		return
 	var far: Dictionary = {"state":4,"x_mm":601,"z_mm":-600,"eligible_ship":2}
@@ -101,13 +101,13 @@ func _run() -> void:
 		_fail("real 1200mm native refinery accessibility did not show R")
 		return
 	var aboard: Dictionary = {"state":0,"x_mm":0,"z_mm":0,"eligible_ship":2}
-	if not PROMPTS.hint(true,aboard,false,false,1,false,"E").contains("Press P"):
+	if not PROMPTS.hint(true,aboard,false,false,1,false,"E").contains("opening your ship cockpit"):
 		_fail("native boarded PERSON not offered cockpit handoff")
 		return
-	if not PROMPTS.hint(false,{},true,false,1,false,"E").contains("press E"):
+	if not PROMPTS.hint(false,{},true,false,1,false,"E").contains("Press E to Sit"):
 		_fail("on-foot native cockpit not offered seat request")
 		return
-	if not PROMPTS.hint(false,{},true,true,1,false,"E").contains("Press U"):
+	if not PROMPTS.hint(false,{},true,true,1,false,"E").contains("Press U to Undock"):
 		_fail("seated original docked ship not offered undock key")
 		return
 	if not PROMPTS.hint(false,{},true,true,0,false,"E").contains("V"):
