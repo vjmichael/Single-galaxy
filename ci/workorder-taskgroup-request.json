@@ -2,6 +2,6 @@
   "schema": "SG-WORKORDER-GATE-01",
   "task_group": "WO5",
   "pr_number": 92,
-  "source_sha": "bc3c92a8f319e23b3d5987255ccdd6a9d1141cab",
-  "note": "REPAIRED WORKFLOW HEAD 207ef83: one exact-head WO3-WO5 native Windows/Linux gate, 33 selected CTests including authentic historical v86 migration. Prior workflow update malformed by suffix interpolation and produced runless failures 42917860115/42917907298; YAML reconstructed from last known-good commit. Do not bypass immutable v86 source provenance; retain native CTest JUnit and copy SQLite receipts. Verified WO5 current PR head bc3c92a."
+  "source_sha": "cc58e4029881b617b7b53a070efb5e954efd97b1",
+  "note": "WO5 Task Group 1 exact-head follow-up after ten genuine initial failures in 42918449911. Promote the previously passing Stage6 producer-source fix to original native flight/custody receipts, same-tick checkpoint integrity, historical action parser, preserved household before/after snapshots, genuine PLAY13D oasis/staffing/cargo/ascent receipts, V59 owner custody and housing/utility assertions. Re-run all 33 existing Windows/Linux CTests; historical v86 authentic source remains mandatory and knowingly missing, so do not mark group complete from remaining passes."
 }
