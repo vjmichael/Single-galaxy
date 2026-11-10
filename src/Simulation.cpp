@@ -12715,10 +12715,11 @@ Simulation Simulation::from_snapshot(const std::string& bytes) {
                         const auto stage=u64(f[46]),built=u64(f[47]),
                             order_id=u64(f[48]),supervisor=u64(f[49]),
                             stalled=u64(f[50]),finished=u64(f[51]),
-                            paused=u64(f[52]),energy=i64(f[53]),
-                            brine=i64(f[54]),powered=u64(f[55]),
-                            hvac=u64(f[56]),outages=u64(f[57]),
-                            water_out=i64(f[58]),oxygen_out=i64(f[59]);
+                            paused=u64(f[52]);
+                        const auto energy=i64(f[53]),brine=i64(f[54]);
+                        const auto powered=u64(f[55]),hvac=u64(f[56]),
+                            outages=u64(f[57]);
+                        const auto water_out=i64(f[58]),oxygen_out=i64(f[59]);
                         if(stage>2 || built>60 || paused>1 ||
                            energy<0 || energy>120 || brine<0 || brine>1000000 ||
                            water_out<0 || oxygen_out<0 ||
