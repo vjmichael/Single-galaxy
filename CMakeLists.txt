@@ -1318,6 +1318,12 @@ if(BUILD_TESTING)
     COMMAND galaxy_play13d_live_planet_survey_tests)
 endif()
 
+# STAGE6-D: operator-only read-only export from genuine saved SQLite
+# celestial terrain into Godot 4 JSON ArrayMesh/collision format.
+# Rendering does not authorize player or NPC landing.
+add_executable(galaxy_stage6_godot_export tools/stage6_godot_export.cpp)
+target_link_libraries(galaxy_stage6_godot_export PRIVATE galaxy_kernel)
+
 # STAGE6-A: same saved celestial body and original owner-scoped watershed cell,
 # immutable galaxy anchor, stale observation refusal and real SQLite restart.
 if(BUILD_TESTING)
