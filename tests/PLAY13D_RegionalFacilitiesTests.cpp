@@ -27,7 +27,12 @@ static Chosen select_site(bool farm) {
             if(farm && (body.orbital_radius_milli_au<2200 ||
                         body.orbital_radius_milli_au>12000))continue;
             if(!farm) {
-                if(!sample.celestial_oasis_prospect(body.id)->candidate)continue;
+                const auto prospect=sample.celestial_oasis_prospect(body.id);
+                if(!prospect || !prospect->candidate)continue;
+                // Source lookup requires the same finite original genesis reserve
+                // that scenario() installs before PersistentWorld is created.
+                // Merely surveying a potential oasis does not create matter.
+                sample.provision_oasis_reserve_genesis(body.id,8000,4000);
                 const auto source=sample.planetary_oasis_source_region(7,ship,body.id);
                 if(source)return {system,body.id,source->latitude,source->longitude};
                 continue;
