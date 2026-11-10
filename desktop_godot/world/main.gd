@@ -526,7 +526,7 @@ func _refresh_interaction_prompt() -> void:
 	if ship_process_active and not ship_connected:
 		interaction_label.text = "Connecting cockpit — waiting for verified original C++ ship pose"
 		return
-	if _player_session_autoconnect and not _station_connect_attempted and not station_connected:
+	if not _station_connect_attempted and not station_connected:
 		interaction_label.text = "Connecting to saved station..."
 		return
 	if _station_connect_attempted and not station_connected and not ship_process_active and _handoff_target.is_empty():
