@@ -253,3 +253,43 @@ native SQLite/SGDX tests remain valid for their exact former head,
 but neither substitutes for successful exact-head BOARD/restart
 verification or physical creator-R9700 gameplay. The current PR
 is still DRAFT; manufacturing/ore ship equipment stays deferred.
+
+### FP3D-UX-03: exact native Windows host-exit cause verified in CI
+
+After the genuine C++ rate-limiter repair, consolidated
+[run #42746474316](https://github.com/vjmichael/Single-galaxy/actions/runs/42746474316)
+passed 19/19 native CTests on each OS and **Linux real Godot 4.7.2
+autoconnect → 12 original WALK actions → BOARD → supervised protected
+cockpit → same SQLite save restart**. Windows real Godot E2E instead
+failed at its very first PERSON: the bounded stderr was
+`SGDX-02 supervisor configuration failure: invalid UTF-8 argument`.
+All Windows MSVC/SQLite/MDMP tests, ZIP PowerShell 5.1 headless smokes,
+tamper denial and four genuine windowed frames passed individually,
+but the final acceptance failed as required. The generated ZIP is NOT
+a release-accepted automatic boarding build.
+
+**Root cause:** `server_dx_supervisor.cpp` Windows `main(int,char**)`
+receives **ACP narrow argv** from the Windows CRT, not necessarily
+UTF-8. The project name `Single-Galaxy — Graybox FPS` contains an
+**em dash** and its default `Godot/app_userdata/` saved-world directory
+contains that character. Under Windows CP1252 the path includes byte
+`0x97`, which `MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS)`
+correctly rejects. Thus SGDX exited BEFORE the original C++ host could
+start, leaving the screenshot's `STATION NATIVE DISCONNECTED`.
+
+**Native repair:** On Windows use `wmain(int,wchar_t**)`, convert each
+Unicode command token via `WideCharToMultiByte(CP_UTF8,
+WC_ERR_INVALID_CHARS)` to canonical validated UTF-8, then retain the
+existing strict parsed role/save/host command. The existing supervisor
+`MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS)` now safely
+round-trips the actual Godot Unicode project path when launching
+the original child. Linux retains unchanged `main(int,char**)`.
+No fallback to lossy ACP paths, no deletion/renaming of a user profile,
+no escape from Windows Job Object custody, and no modifying the
+original SQLite world to work around the path error.
+
+`test_sgdx03_bridge_contract.py` now asserts Windows `wmain`,
+strict Unicode-to-UTF-8 conversion and the real em dash project
+name; the fresh isolated Windows Godot auto boarding test remains
+mandatory. A new exact-head consolidated native Windows/Linux/ZIP
+gate must pass before issuing a replacement creator playtest.
