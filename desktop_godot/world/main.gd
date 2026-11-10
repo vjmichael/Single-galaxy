@@ -606,6 +606,13 @@ func _refresh_interaction_prompt() -> void:
 			display += "  |  Hold " + key_to_hatch + " toward hatch"
 	if interaction_label.text != display:
 		interaction_label.text = display
+	# The two-line flight/missing-miner explanation must not be clipped by
+	# the single-line colony action banner height.
+	var banner := interaction_label.get_parent() as PanelContainer
+	if is_instance_valid(banner):
+		var desired_top: float = -120.0 if display.contains("\n") else -100.0
+		if banner.offset_top != desired_top:
+			banner.offset_top = desired_top
 
 func _on_inspected(display_name: String) -> void:
 	# An incidental object-inspection ray must never replace the real
