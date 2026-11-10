@@ -1,7 +1,7 @@
 {
   "schema": "SG-WORKORDER-GATE-01",
-  "task_group": "WO3",
-  "pr_number": 89,
-  "source_sha": "d0ff03c99e5af139784f95db0294ff0049e75d70",
-  "note": "ONE original WO3 exact-head Windows/Linux acceptance after specific real 42861272290 failure at WO3-C line 144: approved_original_trade_training returned null because prior fixture removed both habitat residents; original WO2 training requires physically present, eligible, on-site Habitat role. Commit d0ff03c uses original named NPCs: assign 2 extra real habitat residents via original command, train site-located Shape workers with original recorded credits, then release technician duty and return 4 residents to ship before celestial launch. Preserve original owner/crew, no fake certificate or altered core admission. B70 Windows handle repair already passed both OS. v86 advanced-snapshot new-DB fixture correctly remains failing; issue #128 genuine-source historical binary/SQLite needed; do not weaken zero-tick genesis, fabricate original SQLite or mark whole WO3 green until authentic fixture accepted. ONE run, preserve all logs."
+  "task_group": "WO4",
+  "pr_number": 91,
+  "source_sha": "1ac98349ee699442642f28abbe9d8fa50701c584",
+  "note": "ONE consolidated genuine native WO4 and upstream WO3/WO2 exact-head Windows/Linux acceptance on integrated draft WO4 head 1ac98349. WO4 branch now has explicit two-parent merges of WO3 original fixture repairs: correct enum/material source, correct B70 Windows SQLite handle, original onsite WO2 Shape training, plus separately ore-funded module fabrication using 16 units from 32 mined/refined ore (NO free material). New WO4 test checks NO invented named crew or credentials on resource-distribution projections and copied SQLite. Capture individual CTest results for galaxy_wo4_resource_demand, galaxy_wo4_material_allocation, galaxy_wo3_planetary_utility and WO2. Genuine historical v86 new-DB fixture remains deliberately not green (issue #128); do not suppress it or weaken constructor. No automatic CI fanout."
 }
