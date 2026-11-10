@@ -1,6 +1,8 @@
 #include "galaxy/WO3ColonyOperations.hpp"
 #include "galaxy/WO2IndustryWorkforce.hpp"
 #include "galaxy/Persistence.hpp"
+#include "galaxy/NpcAppearanceGenome.hpp"
+#include "galaxy/RegionalModeAuthority.hpp"
 #include <sqlite3.h>
 #include <chrono>
 #include <filesystem>
