@@ -41,6 +41,11 @@ assert 'ship_yaw_left' in keys and 'ship_yaw_right' in keys
 assert 'ship_strafe_port' in keys and 'ship_strafe_starboard' in keys
 assert 'ship_thrust_forward' in keys and 'ship_thrust_reverse' in keys
 assert 'ship_counterthrust' in keys and 'ship_undock' in keys and 'ship_dock' in keys
+assert '"ship_ascend": KEY_W' in keys and '"ship_descend": KEY_S' in keys
+assert '"ship_yaw_left": KEY_A' in keys and '"ship_yaw_right": KEY_D' in keys
+assert '"ship_thrust_forward": KEY_UP' in keys and '"ship_thrust_reverse": KEY_DOWN' in keys
+assert '"ship_strafe_port": KEY_W' not in keys and '"ship_strafe_starboard": KEY_S' not in keys
+assert 'pilot_actions.append("ASC")' in c and 'pilot_actions.append("DES")' in c
 assert 'pilot_actions.append("DCK")' in c and 'PilotControl::Dock' not in m
 assert 'native-player-protocol' in b
 assert "'native-player-host' 'PASS'" in b
