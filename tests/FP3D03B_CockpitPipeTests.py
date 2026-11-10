@@ -53,6 +53,20 @@ with tempfile.TemporaryDirectory() as temp:
     assert [int(dock[9]),int(dock[10]),int(dock[11])]==[0,0,0],dock
     # No client-given actor identity or arbitrary vector ever enters FLIGHT.
     assert send(p,f"FLIGHT|{epoch}|12|1|X1000")==["DENY","1","12","invalid-flight-action"]
+    # Actual v119+ original STEP + SQLite: W/S must change Z, never fake
+    # height in Godot or reuse the planar forward/reverse throttle.
+    redepart=send(p,f"FLIGHT|{epoch}|13|1|UND")
+    assert redepart[5]=="0" and redepart[16]=="0",redepart
+    ascend=send(p,f"FLIGHT|{epoch}|14|1|ASC")
+    assert ascend[5]=="0" and int(ascend[14])==250 and int(ascend[11])==250,ascend
+    level=send(p,f"FLIGHT|{epoch}|15|1|DES")
+    assert level[5]=="0" and int(level[14])==0 and int(level[11])==250,level
+    descend=send(p,f"FLIGHT|{epoch}|16|1|DES")
+    assert descend[5]=="0" and int(descend[14])==-250 and int(descend[11])==0,descend
+    vertical_brake=send(p,f"FLIGHT|{epoch}|17|1|BRAKE")
+    assert vertical_brake[5]=="0" and int(vertical_brake[14])==0,vertical_brake
+    back_to_station=send(p,f"FLIGHT|{epoch}|18|1|DCK")
+    assert back_to_station[5]=="0" and back_to_station[16]=="1",back_to_station
     p.stdin.write("QUIT\n");p.stdin.flush()
     assert p.wait(timeout=4)==0,p.stderr.read()
     with closing(sqlite3.connect(save)) as db:
