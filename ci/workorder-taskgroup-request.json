@@ -1,7 +1,7 @@
 {
   "schema": "SG-WORKORDER-GATE-01",
-  "task_group": "STAGE6",
-  "pr_number": 127,
-  "source_sha": "7c34b15043891dba98c488b00860918728972c8e",
-  "note": "CORRECTED 23-test exact-head Windows/Linux gate with MANDATORY archived v86 historical SQLite binary+source SHA256 verification. Prior source run 42896639592 accidentally excluded this case due Stage6 CTest regex override; do not count it as historical acceptance. Keep failed historical gate visible until immutable archive evidence supplied. Recheck original WO3 housing/utility+restart, WO4/WO5 real freight, native Godot exporter."
+  "task_group": "WO5",
+  "pr_number": 92,
+  "source_sha": "bc3c92a8f319e23b3d5987255ccdd6a9d1141cab",
+  "note": "Task Group 1 consolidated exact-head Windows/Linux WO3-WO5 acceptance: 33 native CTests including original colony facility/housing/utility, mandatory authentic v86 historical SQLite+producer executable+SHA256 import, B70, material allocation, region authority, physical freight, NPC transport, manufactured consignments, independent SQLite recovery. DO NOT skip or fabricate historical provenance; expect explicit failure until original archived source is supplied. Preserve all tested outcomes and publish native logs."
 }
