@@ -1643,7 +1643,11 @@ static void scenario(const fs::path& db, bool farming,
             verified_ascent_receipt=w.world().planetary_shuttles().at(key).ascent_receipt;
             CHECK(verified_ascent_receipt!=0);
             durable=w.world().canonical_state();
-            const auto expected_snapshot_header=(autonomous||delegated)?"galaxy-kernel-v95|":
+            // Genuine local ship rendezvous enables v97 identity/custody.
+            // Do not expect the earlier v95 autonomous-flight header after
+            // the original owner-authorized rendezvous is constructed.
+            const auto expected_snapshot_header=rendezvous_freight?"galaxy-kernel-v97|":
+                (autonomous||delegated)?"galaxy-kernel-v95|":
                 (manufactured?"galaxy-kernel-v92|":"galaxy-kernel-v89|");
             if(durable.rfind(expected_snapshot_header,0)!=0)
                 throw std::runtime_error("unexpected physical freight snapshot version: expected "+
