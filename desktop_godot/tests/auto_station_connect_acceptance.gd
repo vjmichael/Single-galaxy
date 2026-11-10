@@ -153,6 +153,16 @@ func _run() -> void:
 		_fail("BOARD did not immediately lock third-person/no-cabin state")
 		quit(1)
 		return
+	# An unexpected duplicate native input emitter must not revive cabin
+	# movement: the real Godot main handler refuses ALL ship MOVE.
+	var original_cabin_walk: int = int(game.native_player_session._sequence)
+	game.player.native_motion_intent.emit(Vector3.LEFT)
+	await create_timer(0.14).timeout
+	if int(game.native_player_session._sequence) != original_cabin_walk or \
+			game.native_player_session._pending != 0:
+		_fail("Godot still sent cabin MOVE despite original pilot-only custody")
+		quit(1)
+		return
 	var first_seat_seq: int = int(game.native_player_session._seat_sequence)
 	game._on_native_player_seat_intent() # E must NOT stand even while docked
 	await create_timer(0.15).timeout
