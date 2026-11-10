@@ -89,9 +89,11 @@ int main(){
     REQUIRE(w.world().total_ore()==total);
     const auto copy=temporary("recovery");
     PersistentWorld::recover_copy(db.string(),copy.string());
-    PersistentWorld restored(copy.string(),Simulation(1));
-    REQUIRE(restored.world().canonical_state()==w.world().canonical_state());
-    REQUIRE(restored.world().built_outposts().count(outpost)==1);
+    {
+      PersistentWorld restored(copy.string(),Simulation(1));
+      REQUIRE(restored.world().canonical_state()==w.world().canonical_state());
+      REQUIRE(restored.world().built_outposts().count(outpost)==1);
+    } // Windows SQLite WAL/SHM file handles must close BEFORE remove_all.
     fs::remove_all(copy.parent_path());
   }
   {
