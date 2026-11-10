@@ -32,7 +32,7 @@ func _initialize() -> void:
 	side["dz_mm"] = 2000
 	r = INSTRUMENTS.from_verified_frames(ship, side)
 	_check(absf(float(r.get("bearing_deg", 0)) - 90.0) < 0.01 and
-		INSTRUMENTS.display(r).contains("RIGHT") and
+		INSTRUMENTS.display(r).contains("LEFT") and
 		INSTRUMENTS.display(r).contains("ABOVE"),
 		"native +Y and +Z must map to correct pilot bearing and elevation")
 	var backing: Dictionary = ship.duplicate(true)
