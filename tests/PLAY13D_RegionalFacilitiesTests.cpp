@@ -477,7 +477,11 @@ static void scenario(const fs::path& db, bool farming,
             transport::LocationKind::ColonyShip,ship};
         CHECK(upgraded_residence.npc_records().at(passenger).legal_residence()==
               expected_home);
-        upgraded_residence.upgrade_legal_residence_snapshot_format();
+        // The ordinary v85 route needs the explicit v86 migration. The
+        // manufactured shipyard path already advanced to v92 with legal
+        // residence persisted; never downgrade its canonical world.
+        if(!manufactured)
+            upgraded_residence.upgrade_legal_residence_snapshot_format();
         const auto v86_state=upgraded_residence.canonical_state();
         CHECK(v86_state.rfind((manufactured?"galaxy-kernel-v92|":"galaxy-kernel-v86|"),0)==0);
         CHECK(Simulation::from_snapshot(v86_state).canonical_state()==v86_state);
