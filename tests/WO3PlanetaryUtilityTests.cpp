@@ -70,11 +70,13 @@ int main() {
     Simulation seed(613,chosen.system);
     const auto ship=seed.add_colony_ship(7,{0,0},200,8);
     seed.provision_colony_genesis(ship,1000,3000,1000,1000,1000);
+    // Materialize named existing crew at genesis, BEFORE geology advances
+    // the canonical snapshot format beyond the pristine migration gate.
+    seed.enable_individual_workforce();
     seed.provision_starter_exploration_scanner(ship);
     const auto bulk=seed.add_asteroid({2000,0},150);
     const auto silicate=seed.add_geological_asteroid({1000,0},
         AsteroidClass::Silicate,30,2500);
-    seed.enable_individual_workforce();
     seed.ensure_physical_celestial_systems();
     seed.ensure_ship_frame_registry();
     const auto initial_mass=seed.total_ore();
