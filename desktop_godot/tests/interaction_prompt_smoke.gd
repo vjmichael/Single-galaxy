@@ -63,7 +63,19 @@ func _run() -> void:
 	if PROMPTS.action_key("fps_inspect", "E") != "E":
 		_fail("HUD prompt action key does not match live InputMap E")
 		return
+	# The creator's initial original station spawn is x=1600mm. With the
+	# default yaw the next intuitive move is A toward the cyan (0,0) tile.
+	var spawn: Dictionary = {"state":4,"x_mm":1600,"z_mm":0,"eligible_ship":2}
+	if PROMPTS.hatch_direction_key(spawn, Basis.IDENTITY) != "A":
+		_fail("initial native station spawn lacks camera-relative A hatch guidance")
+		return
+	if PROMPTS.hatch_direction_key(spawn, Basis(Vector3.UP, PI / 2.0)) != "W":
+		_fail("camera-turn no longer updates boarding guidance to actual WASD")
+		return
 	var near: Dictionary = {"state":4,"x_mm":600,"z_mm":-600,"eligible_ship":2}
+	if PROMPTS.hatch_direction_key(near, Basis.IDENTITY) != "":
+		_fail("WASD guidance did not clear at native boarding threshold")
+		return
 	var ready: String = PROMPTS.hint(true,near,false,false,-1,false,"E")
 	if not ready.contains("Press E") or not ready.contains("ship #2"):
 		_fail("authorized PERSON at the exact 600mm square boundary lacks E boarding guidance")
