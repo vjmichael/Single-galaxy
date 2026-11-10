@@ -85,23 +85,28 @@ func _run() -> void:
         return
     stage.call("_on_native_station_person", {"state":0,"station":1,"ship":2,
         "eligible_ship":2,"x_mm":0,"z_mm":0})
-    if station.visible or not cabin.visible:
-        _fail("BOARD PERSON did not switch visible location")
+    var external = stage.get_node_or_null("NativeAsteroidExternalView") as Node3D
+    if external == null or station.visible or cabin.visible or not external.visible or \
+            not stage.exterior_camera.current or player.camera.current:
+        _fail("BOARD PERSON did not switch directly into third-person ship view")
         return
-    if not _is_active(station_bodies, false) or not _is_active(cabin_bodies, true):
-        _fail("invisible station walls still block boarded player")
+    if not _is_active(station_bodies, false) or not _is_active(cabin_bodies, false):
+        _fail("either hidden station or forbidden cabin still has collisions")
         return
     stage.call("_on_native_player_pose", {"x_mm":0,"y_mm":0,"z_mm":0,"seated":true})
-    if not bool(player.get("native_seated")) or not cabin.visible:
-        _fail("ship POSE did not preserve cockpit authority projection")
+    if not bool(player.get("native_seated")) or not bool(player.get("native_in_ship")) or \
+            cabin.visible or not external.visible or not stage.exterior_camera.current:
+        _fail("ship POSE exposed walking/interior instead of permanent third-person pilot")
         return
     stage.call("_on_native_station_person", {"state":4,"station":1,"ship":0,
         "eligible_ship":2,"x_mm":0,"z_mm":0})
-    if not station.visible or cabin.visible or bool(player.get("native_seated")):
-        _fail("disembark PERSON did not restore station and clear seat")
+    if not station.visible or cabin.visible or external.visible or \
+            bool(player.get("native_seated")) or bool(player.get("native_in_ship")) or \
+            not player.camera.current:
+        _fail("disembark PERSON did not restore colony first-person or clear ship custody")
         return
     if not _is_active(station_bodies, true) or not _is_active(cabin_bodies, false):
         _fail("disembark collision layer restoration failed")
         return
-    print("PLAY-STATION-02 GODOT visual smoke PASS: station/hangar, verified-frame projection, boarding/disembark, two-way collision visibility (synthetic frames; not native runtime)")
+    print("PLAY-STATION-02 GODOT visual smoke PASS: original PERSON/POSE projections, third-person only when boarded, no active cabin collisions, first-person only after colony EXIT (synthetic frames; native runtime tested separately)")
     quit(0)
