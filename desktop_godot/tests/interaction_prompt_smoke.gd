@@ -3,6 +3,7 @@ extends SceneTree
 ## interaction hints. PERSON fixtures are synthetic for UI only: not
 ## acceptance of authorization, the original C++ server or ship control.
 const PROMPTS := preload("res://world/interaction_prompts.gd")
+const PILOT_CONTROLLER := preload("res://world/player_controller.gd")
 
 func _initialize() -> void:
 	call_deferred("_run")
@@ -116,6 +117,29 @@ func _run() -> void:
 	if PROMPTS.hint(true,near,false,false,1,true,"E").contains("Press E"):
 		_fail("interrupted SQLite writer handoff still offered active boarding")
 		return
+	# FP3D-UX04: engine-constructed visual-only orientation stars are fixed
+	# in the viewer's inertial reference, not real C++ asteroid contacts.
+	var bearings := stage.get_node_or_null(
+		"NativeAsteroidExternalView/VisualOnlyBearingDots_NOT_NativeContacts") as MultiMeshInstance3D
+	if bearings == null or bearings.multimesh == null or bearings.multimesh.instance_count != 20 or \
+			not bearings.find_children("*", "CollisionObject3D", true, false).is_empty():
+		_fail("native ship has no non-colliding independent yaw reference when no rock is in sensor")
+		return
+	if PILOT_CONTROLLER.native_mouse_yaw_direction(5.0) != 1 or \
+			PILOT_CONTROLLER.native_mouse_yaw_direction(-5.0) != -1 or \
+			PILOT_CONTROLLER.native_mouse_yaw_direction(0.5) != 0:
+		_fail("mouse steer must map to bounded native RIGHT/LEFT intent, not client camera yaw")
+		return
+	var pilot: CharacterBody3D = stage.find_child("LocalGrayboxPerson_NOT_NATIVE_PLAYER", true, false)
+	if pilot == null:
+		_fail("no original native-action-only cockpit controller")
+		return
+	pilot.use_native_dock_state(0)
+	if pilot.native_dock_state != 0 or not PROMPTS.hint(false,{},true,true,0,false,"E").contains("Mouse/A,D turn") or \
+			not PROMPTS.hint(false,{},true,true,0,false,"E").contains("MINING LOCKED"):
+		_fail("native cockpit missing discoverable mouse steering or truthful not-fitted mining gate")
+		return
 	stage.queue_free()
+	print("FP3D-UX-04 REAL GODOT PILOT UX PASS: native mouse-turn intent, inertial visual-only yaw markers, held-dock affordance and truthful no-miner guidance")
 	print("FP3D-UX-02 real Godot visual/input PASS: visible cyan boarding tile + beacon above gangway, gray station/white hull, separate HUD, E prompts match native 600mm hatch/1200mm refinery")
 	quit(0)
