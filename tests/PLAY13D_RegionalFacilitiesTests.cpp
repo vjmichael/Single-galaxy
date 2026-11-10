@@ -1635,8 +1635,7 @@ static void scenario(const fs::path& db, bool farming,
                 CHECK(w.world().total_ore()==origin);
             }
             durable=w.world().canonical_state();
-            const auto expected_snapshot_header=autonomous?"galaxy-kernel-v95|":
-                delegated?"galaxy-kernel-v94|":
+            const auto expected_snapshot_header=(autonomous||delegated)?"galaxy-kernel-v95|":
                 (manufactured?"galaxy-kernel-v92|":"galaxy-kernel-v89|");
             if(durable.rfind(expected_snapshot_header,0)!=0)
                 throw std::runtime_error("unexpected physical freight snapshot version: expected "+
