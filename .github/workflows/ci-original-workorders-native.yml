@@ -1,0 +1,115 @@
+name: SG original work-order acceptance — pinned Windows and Linux
+# Explicit request only. No PR synchronization or general push fanout.
+on:
+  push:
+    branches: [main]
+    paths: ['ci/workorder-taskgroup-request.json']
+permissions:
+  contents: read
+  pull-requests: read
+concurrency:
+  group: original-workorder-${{ github.sha }}
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.pin.outputs.sha }}
+      group: ${{ steps.pin.outputs.group }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: pin
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs=require('fs');
+            const req=JSON.parse(fs.readFileSync('ci/workorder-taskgroup-request.json','utf8'));
+            const allowed={WO1:{pr:87,branch:'industry/industry01-recipe-foundation-20261106'},WO2:{pr:88,branch:'industry/wo2-npc-work-management-20261106'}};
+            const e=allowed[req.task_group];
+            if (req.schema!=='SG-WORKORDER-GATE-01' || !e || req.pr_number!==e.pr || !/^[0-9a-f]{40}$/.test(req.source_sha))
+              throw Error('Unsupported group, PR or SHA');
+            const {data:pr}=await github.rest.pulls.get({...context.repo,pull_number:e.pr});
+            if (pr.state!=='open' || pr.head.repo.full_name!==context.repo.owner+'/'+context.repo.repo ||
+                pr.head.ref!==e.branch || pr.head.sha!==req.source_sha)
+              throw Error('Stale or untrusted original work-order source');
+            core.setOutput('sha',req.source_sha);
+            core.setOutput('group',req.task_group);
+            core.info('Pinned '+req.task_group+' PR #'+e.pr+' to '+req.source_sha);
+  native:
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 100
+    env:
+      WORK_GROUP: ${{ needs.validate.outputs.group }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify canonical industry and optional WO2 generated data
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/validate_industry01.js
+          node scripts/generate_industry01_cpp.js --check
+          node --test tests/INDUSTRY01_CatalogTests.js
+          if [[ "$WORK_GROUP" == "WO2" ]]; then
+            node scripts/validate_wo2_professions.js
+            node scripts/generate_wo2_professions.js --check
+            node --test tests/WO2_ProfessionCatalogTests.js
+          fi
+      - name: Install SQLite Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlite3-dev ninja-build
+      - name: Install SQLite Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vcpkg=$env:VCPKG_INSTALLATION_ROOT
+          if(-not $vcpkg){$vcpkg='C:\vcpkg'}
+          & (Join-Path $vcpkg 'vcpkg.exe') install sqlite3:x64-windows --classic
+          if($LASTEXITCODE -ne 0){throw 'SQLite SDK install failed'}
+          "SG_TOOLCHAIN=$(Join-Path $vcpkg 'scripts\buildsystems\vcpkg.cmake')" >> $env:GITHUB_ENV
+      - name: Configure Linux original C++
+        if: runner.os == 'Linux'
+        run: cmake -S . -B build/original-wo -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+      - name: Configure Windows original C++
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake -S . -B build/original-wo -G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$env:SG_TOOLCHAIN" -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=OFF
+          if($LASTEXITCODE -ne 0){throw 'C++ configure failed'}
+      - name: Compile bounded original industry tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build build/original-wo --config Release --parallel 2 --target galaxy_industry01_native_tests galaxy_econ02b1a_outpost_tests galaxy_econ02b2_inventory_tests galaxy_econ02b0_quantified_tests
+          if [[ "$WORK_GROUP" == "WO2" ]]; then
+            cmake --build build/original-wo --config Release --parallel 2 --target galaxy_wo2_industry_workforce_tests galaxy_econ02b1b_connected_tests galaxy_work01b2_native_capacity_tests v59_medical_care v59_medical_recovery
+          fi
+      - name: Execute genuine CTest and independent SQLite recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          pattern='^galaxy_(industry01_native_binding|econ02b1a_outpost_tests|econ02b2_inventory_tests|econ02b0_quantified_tests)$'
+          if [[ "$WORK_GROUP" == "WO2" ]]; then
+            pattern='^galaxy_(wo2_industry_workforce|industry01_native_binding|econ02b1a_outpost_tests|econ02b1b_connected_tests|econ02b2_inventory_tests|econ02b0_quantified_tests|work01b2_native_capacity)$|^v59_medical_(care|recovery)$'
+          fi
+          ctest --test-dir build/original-wo -C Release --no-tests=error --timeout 200 --output-on-failure --output-junit workorder-native.xml -R "$pattern"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: original-${{ needs.validate.outputs.group }}-${{ matrix.os }}-${{ needs.validate.outputs.sha }}
+          path: |
+            build/original-wo/workorder-native.xml
+            build/original-wo/Testing/Temporary/LastTest.log
+          if-no-files-found: warn
