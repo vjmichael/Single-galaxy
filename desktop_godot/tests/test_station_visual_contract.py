@@ -47,6 +47,13 @@ checks = {
         and "flight_panel.visible = not in_station" in main
         and "fps_label.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)" in main
     ),
+    "native-person-and-camera-relative-hatch-direction": (
+        "static func hatch_direction_key(person: Dictionary, player_basis: Basis)" in action_hints
+        and "player_basis.inverse() * toward" in action_hints
+        and 'display += "  |  Hold " + key_to_hatch + " toward hatch"' in main
+        and 'hatch_direction_key(spawn, Basis.IDENTITY) != "A"' in action_smoke
+        and 'hatch_direction_key(spawn, Basis(Vector3.UP, PI / 2.0)) != "W"' in action_smoke
+    ),
     "E-press-is-focus-only-not-mouse-capture": (
         'get_window().has_focus() and Input.is_action_just_pressed("fps_inspect")' in player_controller
         and "native_seat_intent.emit()" in player_controller
