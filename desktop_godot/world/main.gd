@@ -56,6 +56,10 @@ var _handoff_started_msec := 0
 # the client camera or a mere docked snapshot at initial cockpit start.
 var _colony_return_armed := false
 var _colony_return_pending := false
+# Boarding automatically requests exactly one original native SEAT.
+# A refused seat is not retried in a loop: keep the player locked in the
+# third-person pilot view until the saved state is independently corrected.
+var _pilot_auto_seat_attempted := false
 var native_markers: Node3D
 var _fps_accumulator := 0.0
 # The Godot sidecar is diagnostics, NEVER an alternative SQLite world.
@@ -159,6 +163,32 @@ func _enter_cockpit_after_verified_board() -> void:
 	var exiting_pid: int = native_station_session.process_id()
 	native_station_session.stop("Native boarding committed; transferring verified SQLite writer", true)
 	_schedule_native_handoff("ship", exiting_pid)
+
+func _complete_docked_disembark_after_native_seat_release() -> void:
+	# The user never stands/explores inside the ship. A single E at the
+	# verified returned dock initiated the original C++ seat-release receipt;
+	# only that receipt permits closing the cockpit writer and trying EXIT.
+	if not _colony_return_pending or _last_native_dock != 1 or \
+			native_player_session == null or not native_player_session.is_active() or \
+			native_player_session._seated or native_player_session._pending != 0 or \
+			!_handoff_target.is_empty():
+		return
+	var outgoing_pid: int = native_player_session.process_id()
+	native_player_session.stop("Verified docked pilot EXIT; releasing original SQLite writer", true)
+	_schedule_native_handoff("station", outgoing_pid)
+
+func _ensure_native_pilot_role() -> void:
+	# Live standalone cockpit ONLY: never issue a synthetic seat receipt.
+	# Tests with explicitly managed native drivers keep their own control.
+	if not _player_session_autoconnect or _pilot_auto_seat_attempted or \
+			_colony_return_pending or last_station_player_state != 0 or \
+			native_player_session == null or not native_player_session.is_active() or \
+			native_player_session._session <= 0 or \
+			not native_player_session._initial_ship_seen or \
+			native_player_session._pending != 0 or native_player_session._seated:
+		return
+	_pilot_auto_seat_attempted = true
+	native_player_session.toggle_seat()
 
 func _exit_docked_ship_after_verified_station_person() -> void:
 	if not _colony_return_pending or not native_station_session.is_active() or last_station_player_state != 0:
@@ -423,7 +453,10 @@ func _show_native_location(in_station: bool) -> void:
 			if body is CollisionObject3D:
 				body.collision_layer = 1 if in_station else 0
 				body.collision_mask = 1 if in_station else 0
-	var exterior := not in_station and _external_requested and _last_native_dock == 0
+	# PILOT-ONLY: third-person external camera in every native aboard
+	# state, whether docked, undocking or flying. No cabin exploration mode
+	# and no V toggle; the native C++ hull heading remains authoritative.
+	var exterior := not in_station
 	if is_instance_valid(ship_space):
 		ship_space.visible = not in_station and not exterior
 		for body in ship_space.get_children():
@@ -485,7 +518,7 @@ func _build_hud() -> void:
 	ship_label.text = "Original ship not yet connected"
 	contents.add_child(ship_label)
 	status_label = Label.new()
-	status_label.text = "COLONY  >  DOCK  >  SPACE  |  WASD walk  |  E board  |  U undock  |  V camera"
+	status_label.text = "COLONY > DOCK > SPACE | WASD on foot | E board | auto pilot | 3rd-person ship"
 	status_label.add_theme_font_size_override("font_size", 12)
 	contents.add_child(status_label)
 	for line in [scope_label, native_label, ship_label, status_label]:
@@ -598,8 +631,10 @@ func _refresh_interaction_prompt() -> void:
 		station_connected, person, ship_connected, seated,
 		_last_native_dock, not _handoff_target.is_empty(),
 		INTERACTION_PROMPTS.action_key("fps_inspect", "E"))
-	if ship_connected and _colony_return_armed and _last_native_dock == 1 and not seated:
-		display = "Press E to Disembark  |  Return to colony departure dock"
+	if ship_connected and _colony_return_pending:
+		display = "Exiting docked ship — verifying original seat release and SQLite handoff"
+	elif ship_connected and _colony_return_armed and _last_native_dock == 1 and seated:
+		display = "Press E to Disembark  |  Direct return to colony departure dock"
 	if station_connected and _handoff_target.is_empty() and is_instance_valid(player) and not person.is_empty() and int(person.get("eligible_ship", 0)) > 0:
 		var key_to_hatch: String = INTERACTION_PROMPTS.hatch_direction_key(person, player.global_transform.basis)
 		if not key_to_hatch.is_empty():
@@ -669,11 +704,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_V:
-		if native_player_session != null and native_player_session.is_active() and _last_native_dock == 0 and last_station_player_state == 0:
-			_external_requested = not _external_requested
-			_show_native_location(false)
-		else:
-			_on_native_player_status("External V view requires your real undocked ship")
+		# Explicitly non-toggleable: every native aboard view is third-person.
+		_on_native_player_status("Pilot-only third-person camera is fixed while aboard")
 		get_viewport().set_input_as_handled()
 		return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_R:
@@ -877,6 +909,7 @@ func _on_native_station_person(person: Dictionary) -> void:
 		_hide_refinery_terminal()
 	_show_native_location(last_station_player_state == 4)
 	if is_instance_valid(player):
+		player.use_native_ship_custody(last_station_player_state == 0)
 		player.use_native_seat(false)
 		player.global_position = Vector3(float(person["x_mm"]) / 1000.0, AVATAR_CENTER_HEIGHT_M,
 			float(person["z_mm"]) / 1000.0)
@@ -900,6 +933,8 @@ func _on_native_station_person(person: Dictionary) -> void:
 
 func _on_native_player_connection(connected: bool) -> void:
 	# Process start alone is NOT proof of ship custody; wait for POSE.
+	if connected:
+		_pilot_auto_seat_attempted = false
 	if not connected:
 		_verified_flight_ship.clear()
 		_verified_flight_rock.clear()
@@ -909,12 +944,10 @@ func _on_native_player_connection(connected: bool) -> void:
 		_external_requested = false
 		if is_instance_valid(native_asteroid_mesh):
 			native_asteroid_mesh.visible = false
-		if not station_test_save_selected:
-			_show_native_location(true)
-		if is_instance_valid(exterior_camera):
-			exterior_camera.current = false
-		if is_instance_valid(player) and is_instance_valid(player.camera):
-			player.camera.current = true
+		# If a known native aboard writer failed, leave the third-person ship
+		# view visible but disable input rather than exposing a fake walkable
+		# cabin. Only a fresh original PERSON can return to colony walking.
+		_show_native_location(last_station_player_state == 4)
 	if is_instance_valid(player):
 		player.use_native_authority(_player_session_autoconnect or connected or (native_station_session != null and native_station_session.is_active()) or not _handoff_target.is_empty())
 	if not connected and is_instance_valid(ship_label):
@@ -960,8 +993,6 @@ func _on_native_ship_state(ship: Dictionary) -> void:
 		exterior_ship_visual.rotation.y = native_heading_to_godot_yaw(int(ship["heading"]))
 		if smooth_camera:
 			exterior_camera.global_transform = camera_before
-	if dock != 0:
-		_external_requested = false
 	_show_native_location(last_station_player_state == 4)
 	ship_label.text = "ORIGINAL SHIP #%d | %s | yaw %d° | position (%.1f, %.1f, %.1f)m | velocity (%d, %d, %d)mm/tick" % [
 		int(ship["ship"]), states[dock], int(ship["heading"]),
@@ -1006,15 +1037,19 @@ func _on_native_player_seat_intent() -> void:
 	if native_station_session != null and native_station_session.is_active():
 		native_station_session.interact_hangar()
 	elif native_player_session != null and native_player_session.is_active():
-		if _colony_return_armed and not native_player_session._seated and _last_native_dock == 1 and not _colony_return_pending:
-			# Stand after genuine return docking, then E disembarks. Stop the
-			# cockpit guardian before admitting the station SQLite writer.
+		if _colony_return_pending:
+			return # one original EXIT transaction already in progress
+		if _colony_return_armed and _last_native_dock == 1 and \
+				native_player_session._seated and native_player_session._pending == 0:
+			# E is DISembark only. Internally obtain one native seat-release
+			# receipt, then close cockpit writer and let native station EXIT
+			# authorize the on-foot colony. Never show cabin walk in between.
 			_colony_return_pending = true
-			var outgoing_pid: int = native_player_session.process_id()
-			native_player_session.stop("Returning to original colony dock", true)
-			_schedule_native_handoff("station", outgoing_pid)
-		else:
 			native_player_session.toggle_seat()
+		elif _last_native_dock == 0:
+			_on_native_player_status("Pilot seat locked in space; return to the colony and dock first")
+		else:
+			_on_native_player_status("Pilot-only ship: U to depart; after returning and docking, E to disembark")
 
 func _on_native_player_intent(heading: Vector3) -> void:
 	if native_station_session != null and native_station_session.is_active():
@@ -1024,13 +1059,17 @@ func _on_native_player_intent(heading: Vector3) -> void:
 
 func _on_native_player_pose(pose: Dictionary) -> void:
 	_record_native_projection("POSE", pose)
-	_show_native_location(false) # verified original owned ship pose
-	# The Godot avatar is positioned from ACKNOWLEDGED native SQL state ONLY.
-	# Vertical eye/physics meshes remain placeholder until full 3D native geometry.
+	# Use ONLY the acknowledged native SQLite pose. Even if the original
+	# seat-release receipt says ON FOOT during authorized disembark, the
+	# ship stays third-person and no cabin walking is exposed.
 	if is_instance_valid(player):
+		player.use_native_ship_custody(true)
 		player.use_native_seat(bool(pose["seated"]))
 		player.global_position = Vector3(float(pose["x_mm"]) / 1000.0,
 			AVATAR_CENTER_HEIGHT_M, float(pose["z_mm"]) / 1000.0)
+	_show_native_location(false)
+	if _colony_return_pending and not bool(pose["seated"]) and _last_native_dock == 1:
+		call_deferred("_complete_docked_disembark_after_native_seat_release")
 
 func _on_native_player_status(message: String) -> void:
 	if is_instance_valid(native_label):
@@ -1091,6 +1130,7 @@ func _process(delta: float) -> void:
 		native_player_session.poll()
 	if native_station_session != null:
 		native_station_session.poll()
+	_ensure_native_pilot_role()
 	_refresh_interaction_prompt()
 	if not _native_visual_evidence_buffer.is_empty() and \
 			Time.get_ticks_msec() - _last_visual_evidence_flush_ms >= NATIVE_EVIDENCE_FLUSH_INTERVAL_MS:
