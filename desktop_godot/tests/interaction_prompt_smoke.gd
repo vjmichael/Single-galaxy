@@ -24,15 +24,16 @@ func _run() -> void:
 		_fail("separate, non-clickable action banner missing from real game")
 		return
 	var text := prompt.get_node_or_null("InteractionAction") as Label
-	if text == null or not text.text.contains("Press H") or not text.autowrap_mode == TextServer.AUTOWRAP_WORD_SMART:
+	if text == null or not text.text.contains("Press H") or text.autowrap_mode != TextServer.AUTOWRAP_WORD_SMART:
 		_fail("unauthenticated player not directed toward H native connection")
 		return
 	var hatch := stage.get_node_or_null("StationInterior_Prototype/Station_Hangar_Entry_At_Zero") as MeshInstance3D
-	if hatch == null or hatch.material_override == null or hatch.material_override.albedo_color.b < 0.9 or absf(hatch.position.z) > 0.001:
-		_fail("bright non-colliding original (0,0) hatch marker not visible")
+	if hatch == null:
+		_fail("original (0,0) hatch mesh not visible")
 		return
-	if hatch is CollisionObject3D:
-		_fail("visual-only boarding hatch obtained unauthorized physics identity")
+	var accent := hatch.material_override as StandardMaterial3D
+	if accent == null or accent.albedo_color.b < 0.9 or absf(hatch.position.z) > 0.001:
+		_fail("bright visual-only hatch marker missing at original native zero")
 		return
 	if PROMPTS.action_key("fps_inspect", "E") != "E":
 		_fail("HUD prompt action key does not match live InputMap E")
