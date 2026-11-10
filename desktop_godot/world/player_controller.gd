@@ -7,15 +7,28 @@ signal native_motion_intent(heading: Vector3)
 signal native_seat_intent()
 signal native_ship_intents(actions: PackedStringArray)
 var native_seated := false
+var native_dock_state := -1
 var authoritative_mode := false
+# Physical mouse motion suggests yaw intent only; the actual 15-degree turn
+# remains a per-command, journaled original C++ decision. There is NO client
+# integration of a fake ship heading/velocity.
+var _mouse_yaw_direction := 0
+var _mouse_yaw_valid_until_ms := 0
+
+func use_native_dock_state(dock_state: int) -> void:
+	native_dock_state = dock_state
+
 
 func use_native_authority(enabled: bool) -> void:
 	authoritative_mode = enabled
 	if not enabled:
 		native_seated = false
+		_mouse_yaw_direction = 0
 	velocity = Vector3.ZERO
 
 func use_native_seat(seated: bool) -> void:
+	if native_seated != seated:
+		_mouse_yaw_direction = 0
 	native_seated = seated
 	velocity = Vector3.ZERO
 
@@ -23,6 +36,8 @@ const WALK_SPEED := 5.0
 const RUN_SPEED := 7.5
 const JUMP_SPEED := 4.5
 const MOUSE_SENSITIVITY := 0.0019
+const MOUSE_STEER_THRESHOLD_PX := 2.5
+const MOUSE_STEER_WINDOW_MS := 150
 const EYE_HEIGHT := 0.58
 const GRAVITY := 17.0
 const INPUT_CONFIG := preload("res://world/input_contract.gd")
@@ -58,8 +73,16 @@ func _unhandled_input(event: InputEvent) -> void:
 		if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
 			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 			get_viewport().set_input_as_handled()
-	elif event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
-		rotate_y(-event.relative.x * MOUSE_SENSITIVITY)
+	elif event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and get_window().has_focus():
+		if authoritative_mode and native_seated:
+			# In the pilot seat the mouse STEERS the original ship, not a
+			# detached graybox camera. A short bounded intent window avoids
+			# queued turns continuing after physical mouse motion stops.
+			if absf(event.relative.x) >= MOUSE_STEER_THRESHOLD_PX:
+				_mouse_yaw_direction = 1 if event.relative.x > 0 else -1
+				_mouse_yaw_valid_until_ms = Time.get_ticks_msec() + MOUSE_STEER_WINDOW_MS
+		else:
+			rotate_y(-event.relative.x * MOUSE_SENSITIVITY)
 		camera.rotation.x = clamp(camera.rotation.x - event.relative.y * MOUSE_SENSITIVITY, -1.45, 1.45)
 		get_viewport().set_input_as_handled()
 
@@ -79,9 +102,12 @@ func _physics_process(delta: float) -> void:
 				# Only intentional physical control requests. C++ retains ship motion,
 				# yaw, thrust admission and persistent world authority.
 				var pilot_actions := PackedStringArray()
-				if Input.is_action_pressed("ship_undock"):
+				if native_dock_state == 1 and Input.is_action_pressed("ship_undock"):
 					pilot_actions.append("UND")
-				if Input.is_action_just_pressed("ship_dock"):
+				# Hold G for one available native command slot; just_pressed
+				# could be lost while a prior 110ms flight request was pending.
+				# Only ask in space; the C++ host still checks approach speed/range.
+				if native_dock_state == 0 and Input.is_action_pressed("ship_dock"):
 					pilot_actions.append("DCK")
 				if Input.is_action_pressed("ship_counterthrust"):
 					pilot_actions.append("BRAKE")
@@ -89,6 +115,16 @@ func _physics_process(delta: float) -> void:
 					pilot_actions.append("LEFT")
 				if Input.is_action_pressed("ship_yaw_right"):
 					pilot_actions.append("RIGHT")
+				# Mouse steering is an alternative to A/D, not an extra command
+				# source that fights an explicitly held keyboard steering axis.
+				if not Input.is_action_pressed("ship_yaw_left") and not Input.is_action_pressed("ship_yaw_right"):
+					if Time.get_ticks_msec() <= _mouse_yaw_valid_until_ms:
+						if _mouse_yaw_direction < 0:
+							pilot_actions.append("LEFT")
+						elif _mouse_yaw_direction > 0:
+							pilot_actions.append("RIGHT")
+					else:
+						_mouse_yaw_direction = 0
 				if Input.is_action_pressed("ship_strafe_port"):
 					pilot_actions.append("PORT")
 				if Input.is_action_pressed("ship_strafe_starboard"):
@@ -136,5 +172,7 @@ func _notification(what: int) -> void:
 		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 		# On focus loss, motion axes come exclusively from physical key state;
 		# reset motion explicitly to avoid moving a ship/character behind another app.
+		_mouse_yaw_direction = 0
+		_mouse_yaw_valid_until_ms = 0
 		velocity.x = 0.0
 		velocity.z = 0.0
