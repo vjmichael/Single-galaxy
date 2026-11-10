@@ -192,7 +192,7 @@ try {
     # Screenshot key is opt-in; captures ONLY the game viewport plus read-only
     # verified original C++ frames. No Windows desktop/screen recording.
     $env:SG_FP3D_OPERATOR_CAPTURE_DIR=$logDir
-    Write-Host 'Game starts your ORIGINAL SAVED station automatically: WASD walk to cyan hatch, E board (cockpit opens automatically), E pilot seat, U undock, V exterior, G dock, F11 capture. H only safely retries a failed connection.'
+    Write-Host 'Original saved colony starts automatically: WASD walk to cyan hatch, E board (auto native pilot seat and permanent third-person camera), mouse/A,D steer, U undock, B brake, G dock near colony, ONE E disembark after return docking, F11 capture. No cabin exploration or V toggle. H retries a failed station connection only.'
     Write-Host 'For physical playtest evidence, press F11 at native station, docked cockpit, exterior flight, asteroid contact and after restart.'
     $game=Start-Process -FilePath $GodotExe -ArgumentList @('--path',('"' + $project + '"')) -Wait -PassThru
     Write-Host "Godot exited code $($game.ExitCode). Window close is NOT proof of physical gameplay acceptance."
