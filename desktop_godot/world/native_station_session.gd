@@ -429,6 +429,9 @@ func interact_hangar() -> void:
 	if not _active or _session <= 0:
 		_status("Original station not connected; use Retry after a real failure")
 		return
+	if _queued_hangar_intent and _pending == 0:
+		_status("One boarding request already queued — waiting for native cooldown")
+		return
 	if _pending != 0:
 		if _pending == _pending_walk and int(_person.get("state", -1)) == 4:
 			_queued_hangar_intent = true
