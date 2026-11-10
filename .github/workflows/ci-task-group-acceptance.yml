@@ -198,6 +198,18 @@ jobs:
               exit 1
             fi
           done
+          # Fresh CI-only original-world sandbox. NO user data or arbitrary
+          # demo reset. This is a real Godot -> SGDX -> C++/SQLite round trip:
+          # launch station automatically, walk, E board, cockpit, reopen save.
+          mkdir -p "$RUNNER_TEMP/fp3d-autostart-data"
+          SG_FP3D_CI_AUTOSTART=1 XDG_DATA_HOME="$RUNNER_TEMP/fp3d-autostart-data" \
+            timeout --signal=TERM --kill-after=8s 150s "$G" --headless --path desktop_godot \
+            --script res://tests/auto_station_connect_acceptance.gd \
+            2>&1 | tee build/fp3d-env01/godot-logs/auto_station_connect_acceptance.gd.log
+          if grep -E 'SCRIPT ERROR:|ERROR: Failed to load script|Parse Error:' build/fp3d-env01/godot-logs/auto_station_connect_acceptance.gd.log; then
+            echo "Real automatic original station save/BOARD/reopen test failed" >&2
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -303,6 +315,18 @@ jobs:
           Remove-Item Env:SGDX_WINDOWS_MINIDUMP -ErrorAction SilentlyContinue
           foreach($test in @('native_player_protocol_smoke.gd','native_asteroid_contact_smoke.gd','native_station_protocol_smoke.gd','native_station_refinery_protocol_smoke.gd','station_visual_smoke.gd','interaction_prompt_smoke.gd','boarding_action_pipe_smoke.gd','fp3d_env01_collision_receipt_smoke.gd','fp3d_env01f_pilot_instruments_smoke.gd')){
             Invoke-BoundedGodot -Arguments @('--headless','--path','desktop_godot','--script',"res://tests/$test") -Log "build/fp3d-env01/godot-logs/$test.log" -MaxSeconds 75
+          }
+          # Genuine native gameplay on a fresh, isolated CI-only Godot
+          # userdata directory. Do not touch a creator's existing SQLite.
+          $oldAppData=$env:APPDATA
+          $env:APPDATA=(Join-Path $env:RUNNER_TEMP 'fp3d-autostart-data')
+          $env:SG_FP3D_CI_AUTOSTART='1'
+          New-Item -ItemType Directory -Force $env:APPDATA | Out-Null
+          try {
+            Invoke-BoundedGodot -Arguments @('--headless','--path','desktop_godot','--script','res://tests/auto_station_connect_acceptance.gd') -Log 'build/fp3d-env01/godot-logs/auto_station_connect_acceptance.gd.log' -MaxSeconds 150
+          } finally {
+            $env:APPDATA=$oldAppData
+            Remove-Item Env:SG_FP3D_CI_AUTOSTART -ErrorAction SilentlyContinue
           }
       - name: Package only verified precompiled Windows SGDX game
         id: package-gate
