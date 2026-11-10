@@ -8093,6 +8093,13 @@ public:
             Statement immigration_settled(db_,"SELECT 1 FROM sqlite_master "
                 "WHERE type='table' AND name='sg_colony_voluntary_immigration_settled'");
             const bool has_immigration_settled=immigration_settled.row();
+            // A WO3 legal household receipt is accepted only if restore can
+            // independently inspect the exact original before/after world
+            // snapshots. Pin both generations for each immutable receipt.
+            Statement household_provenance(db_,
+                "SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='sg_planet_household_migration'");
+            const bool has_household_provenance=household_provenance.row();
             const std::string prune_sql=std::string(
                 "DELETE FROM snapshots WHERE generation > 1 AND generation < ?")+
                 (incident_cases_exist ? " AND generation NOT IN "
@@ -8152,6 +8159,11 @@ public:
                     : "")+
                 (has_immigration_settled ? " AND generation NOT IN "
                     "(SELECT world_generation FROM sg_colony_voluntary_immigration_settled)"
+                    : "")+
+                (has_household_provenance ? " AND generation NOT IN "
+                    "(SELECT world_generation FROM sg_planet_household_migration)"
+                    " AND generation NOT IN "
+                    "(SELECT world_generation-1 FROM sg_planet_household_migration)"
                     : "")+
                 // Bind subjective diplomacy to BOTH the original physical
                 // incident and the later real NPC belief/decision generation.
