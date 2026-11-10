@@ -105,6 +105,9 @@ int main() {
         w.world(),7,ship,orbital,false,operator_id,22,true);
     CHECK(assignment && w.submit(*assignment));w.step();
     CHECK(w.world().events().back().result==Outcome::Applied);
+    // Physically conserve original mined ore through the downstream
+    // housing/shuttle/utility module construction, not a free rack.
+    act(w,ship,23,Action::FabricateModule,0,16);
     act(w,ship,24,Action::ConstructWorkshopFinisher,orbital);
     w.steps(8);
     CHECK(w.world().workshop(orbital)->panels_kg>=3);
