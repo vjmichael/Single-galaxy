@@ -108,7 +108,14 @@ func start() -> void:
 		return
 	# Same original game world as the native in-ship cockpit host, but never
 	# two writers at once. The host creates fixtures only for a NEW save.
-	var save := OS.get_user_data_dir().path_join("single_galaxy_station_test.sqlite")
+	# A fresh Windows Godot profile may not yet have its app_userdata
+	# directory. Create ONLY the directory, never replace any SQLite world.
+	var save_dir: String = OS.get_user_data_dir()
+	if not DirAccess.dir_exists_absolute(save_dir):
+		if DirAccess.make_dir_recursive_absolute(save_dir) != OK:
+			_status("Saved colony directory is not writable; refusing to reset or substitute SQLite world")
+			return
+	var save := save_dir.path_join("single_galaxy_station_test.sqlite")
 	var spec := SGDX_LAUNCH.supervised_command(save, "godot_station", exe,
 		PackedStringArray([save, "--explicit-test-station"]))
 	if spec.is_empty():
