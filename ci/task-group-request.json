@@ -1,7 +1,7 @@
 {
   "schema": "SG-CI-GATE-01",
   "task_group": "SGDX03",
-  "source_sha": "3dee305d40045b2284faa5143241423a0a11724c",
+  "source_sha": "02464dc18f46a0147ea092291586e41753a651f4",
   "pr_number": 125,
-  "note": "ONE final FP3D-COLONY-01 / SGDX03 group gate: exact PR125 SHA, real Windows/Linux native SGDX+Unicode em-dash nested SQLite path twice per host with same file identity, actual Godot colony automatic PERSON→12 WALK→E BOARD→single-writer cockpit→saved restart→seat→UND→DCK→stand→E EXIT back to colony; full native CTest, real Godot scene, bundled Windows ZIP, tamper rejection and windowed original frames. No interim per-commit CI; physical Radeon R9700 approval and manufactured mining equipment remain deferred. Genuine OS logs required before acceptance."
+  "note": "SGDX03 consolidated exact-head follow-up after genuine run 42754267482: Linux native compilation PASS but pre-CTest source gate rejected old BOARD success text; Windows MSVC compile PASS, Windows standalone Godot native E BOARD→cockpit→UND→DCK→stand→E EXIT PASS, bundled ZIP hash/tamper preflight PASS, genuine Windows 4-frame renderer PASS, yet native source contract failed on Windows-specific read_text ANSI decode and obsolete boarding success text. Updated both source contracts on PR head; no change to native C++ authorization or acceptance requirements. Rerun one complete Windows/Linux pinned group including Unicode SQLite supervised native restarts, CTest, Godot actual board/disembark, ZIP upload gate and windowed receipts. Physical Radeon R9700 manual test remains open."
 }
