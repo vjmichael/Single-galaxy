@@ -2,6 +2,6 @@
   "schema": "SG-WORKORDER-GATE-01",
   "task_group": "WO3",
   "pr_number": 89,
-  "source_sha": "cb855dca32fbd74c97ddcc4a99937409a7ff2fcd",
-  "note": "ONE exact-head original WO3 native rerun after actual #42851093652 both GCC/MSVC compiled all targets then ran 11 tests 8 PASS/3 FAIL: B70 colony core legacy Thrust command had amount=1 interpreted as invalid yaw, fixed explicitly amount=0 plus Applied receipt; WO3 utility genesis called enable_individual_workforce AFTER geology had increased snapshot version to >=20, now moved before geology. Keep WO3 housing historical-v86 positive migration FAIL visible: currently test attempts PersistentWorld on a new SQLite using already-advanced nonzero Simulation, which the correct pristine-genesis invariant rejects. DO NOT relax that guard or pretend the historical migration is accepted. Rerun source cb855... to verify two repairs and expose any further genuine failures; no CI fanout."
+  "source_sha": "d7ec65638f1528b0a7b38b70a882347602c536eb",
+  "note": "ONE exact-head WO3 original Windows MSVC/Linux GCC run after genuine #42852383174 two invariant fails plus Windows B70 handle cleanup. Preserve strict historical v86 SQLite: new-db constructor correctly refuses already progressed snapshot, see authentic fixture issue #128; DO NOT suppress test, falsify historical ledger or relax invariant. Head d7ec656 moves `PersistentWorld restored` destruction BEFORE Windows B70 remove_all; splits utility training && submit test assertions into separate CHECK(training); CHECK(w.submit(*training)); to identify exact missing WO2 native preflight versus command denial. Compile and run actual original WO3, WO2, WO4/WO5 downstream CTests, capture exact failures, no duplicative CI fanout. Source-only until both OS pass."
 }
