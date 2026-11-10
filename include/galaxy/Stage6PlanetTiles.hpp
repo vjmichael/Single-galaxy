@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <optional>
 #include <set>
+#include <utility>
 #include <vector>
 
 namespace galaxy::stage6 {
@@ -58,13 +59,17 @@ inline std::vector<unsigned> sampled_axis(unsigned start,unsigned end,
     out.push_back(end);
     return out; // always includes the exact neighboring tile edge
 }
-inline RenderVertex visual_vertex(const planetary::GeographicSite& s){
+inline RenderVertex visual_vertex(const planetary::GeographicSite& s,
+                                  unsigned unwrapped_lon){
     const auto lat=static_cast<unsigned>(s.key.latitude);
     const auto lon=static_cast<unsigned>(s.key.longitude);
     // Cell-center latitudes keep polar rings finite until an actual polar-cap
     // reconstruction gate. Longitude 72 is EXACTLY longitude 0.
     const double phi=(-90.0+(double(lat)+0.5)*5.0)*(kPi/180.0);
-    const double lambda=(-180.0+(double(lon)+0.5)*5.0)*(kPi/180.0);
+    // At the longitude seam, the final right-edge sample is 72 (not 0).
+    // 182.5 degrees and -177.5 degrees occupy one same physical meridian;
+    // do not create a triangle crossing the entire globe at the wrap.
+    const double lambda=(-180.0+(double(unwrapped_lon)+0.5)*5.0)*(kPi/180.0);
     const auto h=s.landscape.region.elevation;
     const double r=1.0+double(h)*kVisualHeightPerSurveyUnit;
     return {r*std::cos(phi)*std::cos(lambda),
@@ -104,7 +109,7 @@ inline std::optional<RenderTile> make_original_render_tile(
                 sample->surveyed_cell.key.revision!=
                     result.observed.surveyed_cell.key.revision)
             return std::nullopt;
-        result.vertices.push_back(visual_vertex(sample->surveyed_cell));
+        result.vertices.push_back(visual_vertex(sample->surveyed_cell,unwrapped_lon));
     }
     const auto width=result.longitude_vertices;
     for(std::size_t y=0;y+1<result.latitude_vertices;++y){
