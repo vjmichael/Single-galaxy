@@ -2,6 +2,6 @@
   "schema": "SG-WORKORDER-GATE-01",
   "task_group": "WO3",
   "pr_number": 89,
-  "source_sha": "b7f8efa3f7e0afc2dc7c8dc3b798f33db3d90a04",
-  "note": "ONE original WO3 exact-head native Windows/Linux gate after #42849760969: MSVC + GCC kernel compilation now succeeded; both OS failed compiling TESTS/WO3PlanetaryUtilityTests.cpp:510+ missing declaration imports for actual NpcAppearanceStore and regional_events::CheckpointStore/Scheduler/RegionalModeAuthority/cold_colony::State. Feature b7f8efa3 adds actual NpcAppearanceGenome.hpp and RegionalModeAuthority.hpp includes to the existing unchanged strong original ART02 household/region/SQLite tests. Require independent MSVC/GCC WO3 compiled test, executable physical shuttle, utility, residency, failed atomic SQLite copy and no deleted parent proof. Retain upstream WO2/WO1 gates; no weakening, no automatic CI fanout or physical GPU acceptance."
+  "source_sha": "cb855dca32fbd74c97ddcc4a99937409a7ff2fcd",
+  "note": "ONE exact-head original WO3 native rerun after actual #42851093652 both GCC/MSVC compiled all targets then ran 11 tests 8 PASS/3 FAIL: B70 colony core legacy Thrust command had amount=1 interpreted as invalid yaw, fixed explicitly amount=0 plus Applied receipt; WO3 utility genesis called enable_individual_workforce AFTER geology had increased snapshot version to >=20, now moved before geology. Keep WO3 housing historical-v86 positive migration FAIL visible: currently test attempts PersistentWorld on a new SQLite using already-advanced nonzero Simulation, which the correct pristine-genesis invariant rejects. DO NOT relax that guard or pretend the historical migration is accepted. Rerun source cb855... to verify two repairs and expose any further genuine failures; no CI fanout."
 }
