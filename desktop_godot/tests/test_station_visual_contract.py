@@ -15,6 +15,8 @@ cockpit_client = (root / "world/native_player_session.gd").read_text(encoding="u
 station_host = (root.parent / "src/desktop_station_host.cpp").read_text(encoding="utf-8")
 terminal = (root / "world/refinery_terminal_ui.gd").read_text(encoding="utf-8")
 native_unload_test = (root.parent / "tests/PLAY_STATION_04C_UnloadPipeTests.py").read_text(encoding="utf-8")
+action_hints = (root / "world/interaction_prompts.gd").read_text(encoding="utf-8")
+action_smoke = (root / "tests/interaction_prompt_smoke.gd").read_text(encoding="utf-8")
 
 checks = {
     "avatar-height-matches-capsule": "const AVATAR_CENTER_HEIGHT_M := 0.90" in main,
@@ -24,6 +26,35 @@ checks = {
     "station-room": '"StationInterior_Prototype"' in main,
     "cabin-room": '"ShipInterior_Prototype"' in main,
     "hatch": '"Station_Hangar_Entry_At_Zero"' in main,
+    "real-highlighted-nonblocking-hatch": (
+        "hatch_color.albedo_color = Color(0.08, 0.89, 0.96, 1.0)" in main
+        and 'hatch.name = "Station_Hangar_Entry_At_Zero"' in main
+        and "MeshInstance3D.new()" in main
+    ),
+    "native-custody-only-interaction-hints": (
+        "const NATIVE_HATCH_AXIS_MM := 600" in action_hints
+        and "absi(x) <= NATIVE_HATCH_AXIS_MM" in action_hints
+        and "absi(z) <= NATIVE_HATCH_AXIS_MM" in action_hints
+        and "eligible > 0" in action_hints
+        and "if station_active:" in action_hints
+        and "if handoff_pending:" in action_hints
+        and "REFINERY_RADIUS_MM := 1200" in action_hints
+    ),
+    "HUD-native-action-guidance-not-second-physics": (
+        'const INTERACTION_PROMPTS := preload("res://world/interaction_prompts.gd")' in main
+        and 'prompt.name = "InteractionPrompt"' in main
+        and 'interaction_label.name = "InteractionAction"' in main
+        and "INTERACTION_PROMPTS.hint(" in main
+        and "native_station_session._person" in main
+        and "native_player_session._sequence" in main
+        and "prompt.mouse_filter = Control.MOUSE_FILTER_IGNORE" in main
+    ),
+    "live-engine-has-interaction-smoke": (
+        "FP3D-UX-01 real Godot interaction prompt PASS" in action_smoke
+        and "600" in action_smoke
+        and "eligible_ship" in action_smoke
+        and "Press H" in action_smoke
+    ),
     "separate-physics": "for body in station_space.get_children()" in main and "for body in ship_space.get_children()" in main,
     "no-invisible-collision": "body.collision_layer = 0 if in_station or exterior else 1" in main and "body.collision_layer = 1 if in_station else 0" in main and "body.collision_mask = 0 if in_station or exterior else 1" in main,
     "native-station-frame-only": "_show_native_location(last_station_player_state == 4)" in main,
