@@ -10801,8 +10801,18 @@ void PersistentWorld::step_with_dependent_registration(FailPoint fail){
     if(next.events().size()!=before+1 ||
        next.events().back().command_id!=cmd.id ||
        next.events().back().result!=Outcome::Applied ||
-       !next.physical_dependents().count(cmd.transport_id))
-        throw std::runtime_error("dependent occupancy was not physically applied");
+       !next.physical_dependents().count(cmd.transport_id)) {
+        const auto outcome=next.events().empty() ? -1 :
+            static_cast<int>(next.events().back().result);
+        const auto guardian=next.npc_records().find(cmd.passenger_ids.front());
+        const auto location=guardian==next.npc_records().end() ?
+            std::uint64_t{0} : guardian->second.location;
+        throw std::runtime_error(
+            "dependent occupancy was not physically applied (command "+
+            std::to_string(cmd.id)+", outcome "+std::to_string(outcome)+
+            ", actor "+std::to_string(cmd.actor)+
+            ", guardian location "+std::to_string(location)+")");
+    }
     const std::vector<Event> delta(next.events().begin()+
         static_cast<std::ptrdiff_t>(before),next.events().end());
     const std::vector<ActivityEvent> activity(next.activity_events().begin()+
