@@ -2,6 +2,6 @@
   "schema": "SG-WORKORDER-GATE-01",
   "task_group": "WO1",
   "pr_number": 87,
-  "source_sha": "7f8338bd0ef3dd8adf73a479fc5d20e9f6131259",
-  "note": "One grouped Windows/Linux compiler+Node+CTests, real named-NPC original industry WIP, conserved mass, independent SQLite restart. No broad CI fanout; creator industry-first roadmap."
+  "source_sha": "7ed9fad0ffe55edcd9887a1ef2cd6f63301c3627",
+  "note": "One exact-head WO1 grouped Windows/Linux rerun after actual 42838857095 GCC+MSVC compilation failures in Simulation.cpp and CyberIncidentJournal.cpp. Corrected invalid iterator boolean checks, heterogeneous auto declarations, LocalSpaceFrame anchor_body_id, forward declaration for original shuttle custody, and cyber incident differently typed vectors. Previous Windows/LF and catalog100 fixes remain. Keep strict original native compile, 4 CTests, original SQLite WIP and mass, and Node generated exact-parity. No automatic PR fanout."
 }
