@@ -106,7 +106,7 @@ func _ready() -> void:
 	refinery_terminal.refine_requested.connect(_on_native_refine_requested)
 	refinery_terminal.unload_requested.connect(_on_native_unload_requested)
 	refinery_terminal.terminal_closed.connect(_hide_refinery_terminal)
-	_player_session_autoconnect = not Engine.is_editor_hint() and not OS.get_cmdline_args().has("--script")
+	_player_session_autoconnect = not Engine.is_editor_hint() and DisplayServer.get_name() != "headless" and not OS.get_cmdline_args().has("--script")
 	if _player_session_autoconnect:
 		call_deferred("_open_saved_station_automatically")
 
